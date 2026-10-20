@@ -157,7 +157,7 @@ func TestCheckOnlyPreviewRequiresConfirmationAndExposesOnlyCurrentFlags(t *testi
 	if err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("expected confirmation error, got %v", err)
 	}
-	if !strings.Contains(output.String(), "--showConfig") {
+	if !strings.Contains(output.String(), "Check configuration only") {
 		t.Fatal(output.String())
 	}
 	if _, err := os.Stat(".testoptimization"); !os.IsNotExist(err) {

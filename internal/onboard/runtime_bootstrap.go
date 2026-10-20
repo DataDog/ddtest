@@ -22,18 +22,40 @@ func symbolicConditionValue(value any) bool {
 	return ok && strings.ContainsRune(text, 0)
 }
 
-func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) string {
+func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, commands []TestCommand, frameworks ...string) string {
+	runnerOnly := len(commands) > 0 && len(frameworks) > 0 && frameworks[0] == "vitest"
+	for _, command := range commands {
+		words, err := shellquote.Split(command.Command)
+		runnerOnly = runnerOnly && err == nil && len(words) > 0 && IsDDTestCommand(words[0])
+	}
+	if runnerOnly {
+		for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+			for _, key := range []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT", "DD_TRACE_ENABLED", "DD_CIVISIBILITY_ENABLED", "DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV"} {
+				if _, ok := env[key]; ok {
+					return "Custom ddtest worker instrumentation requires review: " + key
+				}
+			}
+		}
+		return ""
+	}
+	return checkJestBootstrap(workflow, job, step, row, frameworks...)
+}
+
+func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {
 	options, err := effectiveBootstrapOptions(workflow, job, step, row, true)
 	if err == nil && !strings.ContainsAny(options, "$`'") {
 		words, err := shellquote.Split(options)
 		if err == nil {
-			requireFound := false
+			requireFound, importFound := false, false
 			for i, word := range words {
+				if word == "--import=\x00DD_ACTION_IMPORT\x00" || (word == "--import" && i+1 < len(words) && words[i+1] == "\x00DD_ACTION_IMPORT\x00") {
+					importFound = true
+				}
 				if word == "--require="+actionPreload || ((word == "-r" || word == "--require") && i+1 < len(words) && words[i+1] == actionPreload) {
 					requireFound = true
 				}
 			}
-			if requireFound {
+			if requireFound && (len(frameworks) == 0 || frameworks[0] != "vitest" || importFound) {
 				return ""
 			}
 		}

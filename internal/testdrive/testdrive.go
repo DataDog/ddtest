@@ -52,6 +52,8 @@ type Testdrive struct {
 	reportModels             *[]reportModel
 	workflowRoot             string
 	configurationRoot        string
+	vitestRunner             bool
+	isolated                 bool
 	jestProject              jestProject
 	probeLintSkipped         bool
 	commandReviewReason      string
@@ -151,7 +153,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
 		if err != nil {
-			return nil, fmt.Errorf("resolve Jest repository root: %w", err)
+			return nil, fmt.Errorf("resolve JavaScript repository root: %w", err)
 		}
 	}
 	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
@@ -193,8 +195,18 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		session.persistent = true
 	}
 	if runner.Name() == "vitest" {
-		command, args, err = vitestTestdriveCommand(session.Directory())
-		if err != nil {
+		if settings.GetVitestConfig() != "" {
+			return nil, fmt.Errorf("--vitest-config applies to plan/run; select the testdrive config in --command, for example --command 'npx vitest run --config ci.ts'")
+		}
+		command, args = "npx", []string{"vitest", "run"}
+		if selected := strings.TrimSpace(settings.GetCommand()); selected != "" {
+			words, splitErr := shellquote.Split(selected)
+			if splitErr != nil || len(words) == 0 {
+				return nil, fmt.Errorf("invalid Vitest command: %s", selected)
+			}
+			command, args = words[0], words[1:]
+		}
+		if _, err := vitestArguments(command, args); err != nil {
 			return nil, err
 		}
 	}
@@ -276,6 +288,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		drive.preflight = drive.checkJestPreflight
 	}
+	if runner.Name() == "vitest" {
+		drive.preflight = drive.checkVitestPreflight
+	}
 	if installer, ok := detectedPlatform.(*platform.JavaScript); ok {
 		drive.resolveJSTracer = installer.ResolveRegistryTracer
 		drive.resolveJSTags = installer.RegistryTracerTags
@@ -321,7 +336,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 
 	if t.checkOnly {
-		_, _ = fmt.Fprintln(output, "Check configuration only: load Jest configuration with --showConfig, resolve tracer metadata and review static CI runtimes. No tracer installation or tests; write .testoptimization/testdrive.json. Jest configuration may execute project JavaScript. CI execution and Datadog backend processing remain untested.")
+		_, _ = fmt.Fprintln(output, "Check configuration only: load the selected framework configuration, resolve tracer metadata and review static CI runtimes. No tracer installation or tests; write .testoptimization/testdrive.json. Framework configuration may execute project JavaScript. CI execution and Datadog backend processing remain untested.")
 		return
 	}
 	command, args := t.executionCommand()
@@ -336,7 +351,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintln(output, "\nRun:")
 	if supportsValidationFramework(t.framework.Name()) {
 		_, _ = fmt.Fprintln(output, "  - compare the original suite without instrumentation and with reporting-only instrumentation; repeat differing pairs")
-		_, _ = fmt.Fprintln(output, "  - discover a temporary probe with the original Jest configuration; check retries, EFD, skipping, quarantine, disabled tests and attempt-to-fix per selected project")
+		_, _ = fmt.Fprintln(output, "  - discover a temporary probe with the original framework configuration; check retries, EFD, skipping, quarantine, disabled tests and attempt-to-fix per selected project")
 		_, _ = fmt.Fprintln(output, "  - keep .testoptimization/testdrive.json and .testoptimization/report.html; remove owned probes, temporary tracer and run files")
 	}
 	if supportsValidationFramework(t.framework.Name()) {
@@ -418,7 +433,16 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		return errors.Join(t.discoveryError, finishValidation(output, t.repositoryRoot, result))
 	}
 
-	result, runErr := t.run(ctx, output)
+	var result validationResult
+	var runErr error
+	if t.framework.Name() == "vitest" && t.usesVitestRunner() {
+		child := *t
+		child.workflowRoot = t.repositoryRoot
+		child.preflight = child.checkVitestPreflight
+		result, runErr = child.runPreparedConfiguration(ctx, output, &configurationResult{})
+	} else {
+		result, runErr = t.run(ctx, output)
+	}
 	result.Framework = t.framework.Name()
 	result.FocusedCommand = frameworkFeaturePolicies[t.framework.Name()].Configurations && strings.TrimSpace(settings.GetCommand()) != ""
 	if frameworkFeaturePolicies[t.framework.Name()].Configurations {
@@ -585,9 +609,13 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			if err := t.verifyInstalledSelection(ctx, installation.Path, &result); err != nil {
 				return result, err
 			}
-			result.Preflight.Verdict = checkJestSupport(*result.Preflight, *result.Selection)
+			if t.framework.Name() == "vitest" {
+				result.Preflight.Verdict = checkVitestSupport(*result.Preflight, *result.Selection)
+			} else {
+				result.Preflight.Verdict = checkJestSupport(*result.Preflight, *result.Selection)
+			}
 			if result.Preflight.Verdict.Status != "compatible" {
-				return result, fmt.Errorf("jest preflight: %s", result.Preflight.Verdict.Reason)
+				return result, fmt.Errorf("%s preflight: %s", t.framework.Name(), result.Preflight.Verdict.Reason)
 			}
 		}
 		runErr = t.runJavaScriptValidation(ctx, output, session, installation.Path, &result)
@@ -605,11 +633,6 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}()
 
 	command, args := t.executionCommand()
-	if t.framework.Name() == "vitest" {
-		if err := writeVitestEntrypoint(session.Directory()); err != nil {
-			return result, err
-		}
-	}
 	_, _ = fmt.Fprintf(output, "Running %s...\n", shellquote.Join(append([]string{command}, args...)...))
 	env := t.environment(installation.Path, server.URL(), session.ID())
 	maps.Copy(env, installation.Env)

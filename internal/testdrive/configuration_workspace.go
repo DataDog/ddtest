@@ -46,9 +46,25 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if item.Directory == "" {
 		item.Directory = "."
 	}
+	if t.framework.Name() == "vitest" && t.usesVitestRunner() {
+		t.vitestRunner = true
+		var err error
+		if t.command == "ddtest" {
+			t.command, err = os.Executable()
+		} else {
+			t.command, err = exec.LookPath(t.command)
+		}
+		if err != nil {
+			return result, err
+		}
+		t.command, err = filepath.Abs(t.command)
+		if err != nil {
+			return result, err
+		}
+	}
 	original, workspace := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
-	if !t.checkOnly && len(item.Prerequisites) > 0 {
+	if !t.checkOnly && (len(item.Prerequisites) > 0 || t.usesVitestRunner()) {
 		parent, err := os.MkdirTemp("", "ddtest-configuration-")
 		if err != nil {
 			return result, err
@@ -89,13 +105,14 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		return result, err
 	}
 	defer func() { runErr = errors.Join(runErr, os.Chdir(cwd)) }()
-	if filepath.IsAbs(t.command) && workspace != original {
+	if filepath.IsAbs(t.command) && workspace != original && !t.vitestRunner {
 		if relative, err := filepath.Rel(original, t.command); err == nil && filepath.IsLocal(relative) {
 			t.command = filepath.Join(workspace, relative)
 		}
 	}
 	t.repositoryRoot, t.configurationRoot = workspace, checkout
 	t.configurationSourceRoot = original
+	t.isolated = workspace != original
 	executor := t.executor
 	// Earlier setup must not inherit variables declared only on the test step.
 	t.executor = configurationExecutor{executor, isolatedCIEnvironment(nil, original, checkout)}
@@ -122,7 +139,11 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	t.refreshConfigurationTracer(ctx)
 	if t.preflight != nil {
-		t.preflight = t.checkJestPreflight
+		if t.framework.Name() == "vitest" {
+			t.preflight = t.checkVitestPreflight
+		} else {
+			t.preflight = t.checkJestPreflight
+		}
 	}
 	return t.runPreparedChecksOrTests(ctx, output)
 }

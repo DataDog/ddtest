@@ -14,6 +14,9 @@ import (
 	"github.com/DataDog/ddtest/internal/environment"
 )
 
+//go:embed instructions/vitest.md
+var vitestInstructions string
+
 //go:embed instructions/github.md
 var gitHubInstructions string
 
@@ -38,7 +41,9 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
 		_, _ = fmt.Fprintf(output, "Run `ddtest testdrive --framework %s` to check the setup locally.\n", name)
 		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
-		return nil
+		if name != "vitest" {
+			return nil
+		}
 	}
 
 	_, _ = fmt.Fprintln(output)
@@ -47,6 +52,9 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 }
 
 func instructions(language, name string) string {
+	if language == "javascript" && name == "vitest" {
+		return strings.ReplaceAll(vitestInstructions, "ddtest testdrive", "ddtest testdrive --framework vitest")
+	}
 	actionLanguage := language
 	var bootstrap string
 	switch language {

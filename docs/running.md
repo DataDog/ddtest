@@ -251,7 +251,12 @@ replaces configured `spec` entries with each worker's assigned files:
 ddtest run --platform javascript --framework mocha --command "pnpm exec mocha --parallel"
 ```
 
-Vitest uses a direct Node API integration and does not accept `--command`.
+`plan` and `run` use Vitest’s direct Node API integration and do not accept `--command`.
+For validation, `testdrive --command "npx vitest run --config ci.ts"` preserves
+the actual CLI path. To validate ddtest’s runner instead, use
+`testdrive --command "ddtest run --framework vitest --vitest-config ci.ts"`.
+Testdrive records the execution path and verifies each worker’s exact file
+assignment in a disposable copy; customer plans are preserved.
 Use `--vitest-config` to select a configuration file; see
 [Vitest integration](#vitest-integration) for migration instructions.
 
@@ -638,3 +643,26 @@ repeat pairs, while aggregate execution counts include each primary run once.
 Configuration runs remain sequential while platform detection uses a scoped
 process working directory; changing all adapters to explicit working directories
 belongs to the after-stack refactor.
+### Vitest testdrive validation
+
+Run `ddtest testdrive --framework vitest --all --check-only --yes` to inspect
+all statically discovered CI configurations without running tests or installing
+a tracer. Then run `ddtest testdrive --framework vitest --all --yes` for separate
+baseline/reporting comparisons and six controlled feature scenarios per
+configuration. Both native CLI invocations and supported `ddtest run` commands
+are recognized. Unknown setup and runner options remain unvalidated.
+
+For a focused check, use `--command "npx vitest run --config ci.ts"` instead of
+`--all`. Preserve CI's configuration and selection options. Testdrive requires
+one Node project with the forks or threads pool; browser, typechecking and
+multiple-project configurations are explicitly inconclusive. Known version
+constraints follow dd-trace capabilities; a preflight pass alone does not prove
+support. Matching pre-existing test failures are acceptable when outcomes and
+telemetry agree. A failed feature scenario keeps validation incomplete.
+
+The JSON report includes `execution_path` (`vitest-cli` or
+`ddtest-run-node-api`), native counts and worker evidence. Skipping on the runner
+path requires a successful backend negotiation and an empty persisted plan,
+with no worker started. Keep `.testoptimization/testdrive.json` and
+`.testoptimization/report.html`; raw events and temporary probes are removed.
+Tests use a local mock backend. Real CI and Datadog processing are not exercised.

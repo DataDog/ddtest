@@ -70,6 +70,9 @@ type validationRun struct {
 	framework                       string
 	Name                            string
 	Command                         string
+	ExecutionPath                   string
+	Workers                         int
+	PlannerSkipped                  bool
 	Instrumented                    bool
 	ProbeMode                       string
 	ProbeCoverageThresholdsDisabled bool
@@ -92,6 +95,9 @@ type testCounts struct {
 
 type runSummary struct {
 	Role                            runRole             `json:"role"`
+	ExecutionPath                   string              `json:"execution_path,omitempty"`
+	Workers                         int                 `json:"workers,omitempty"`
+	PlannerSkipped                  bool                `json:"probe_skipped_by_planner,omitempty"`
 	Configuration                   string              `json:"configuration,omitempty"`
 	NativeCounts                    *executionCounts    `json:"native_counts,omitempty"`
 	ProbeLintSkipped                bool                `json:"probe_lint_skipped,omitempty"`
@@ -111,7 +117,7 @@ type runSummary struct {
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{Role: r.Role, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+	summary := runSummary{Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)

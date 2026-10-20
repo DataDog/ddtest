@@ -39,6 +39,8 @@ type jestProject struct {
 }
 
 type jestPreflight struct {
+	VitestProjects      []vitestProject       `json:"vitest_projects,omitempty"`
+	ExecutionPath       string                `json:"execution_path,omitempty"`
 	Verdict             verdict               `json:"verdict"`
 	Command             string                `json:"command"`
 	Node                string                `json:"node"`
@@ -255,7 +257,11 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 	result.Scope = &scope
 	check := checkConfigurationCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
 	result.CIRuntime = &check
-	if err := t.checkJestPreflight(ctx, output, &result); err != nil {
+	preflight := t.checkJestPreflight
+	if t.framework.Name() == "vitest" {
+		preflight = t.checkVitestPreflight
+	}
+	if err := preflight(ctx, output, &result); err != nil {
 		result.Error = err.Error()
 		return err
 	}

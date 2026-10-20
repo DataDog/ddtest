@@ -66,7 +66,7 @@ func yarnImplicitInstall(words []string) bool {
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" {
+	if framework != "jest" && framework != "vitest" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 

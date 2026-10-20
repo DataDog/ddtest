@@ -108,3 +108,8 @@ resolve collisions that runner distribution cannot avoid.
 ## Testdrive-only configuration check
 
 See [testdrive configuration checks](running.md#testdrive-configuration-checks) for command flags, result fields and limitations.
+Vitest testdrive supports native CLI commands and supported `ddtest run` commands.
+Use `--all --check-only --yes` before `--all --yes`, or select a focused command
+with `--command "npx vitest run --config ci.ts"`. The `--vitest-config` option is
+for `plan`/`run`; express testdrive's config in its selected command. See
+[Vitest validation](running.md#vitest-testdrive-validation) for scope and evidence.

@@ -97,7 +97,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			require.Contains(t, preview.String(), displayName(name))
 			_, err = os.Stat(filepath.Join(root, ".testoptimization"))
 			require.True(t, os.IsNotExist(err), "preview must be read-only")
-			if name == "jest" {
+			if supportsValidationFramework(name) {
 				return
 			} // Paired validation has separate real-run tests.
 			run.environmentFailure = nil

@@ -342,6 +342,14 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		result.Reason = "The scenario could not collect usable runner results or reported setup/configuration errors."
 		return result
 	}
+	if feature == "skipping" && run.ExecutionPath == "ddtest-run-node-api" && run.PlannerSkipped {
+		return featureResult{Name: feature, Status: "passed", Reason: "ddtest's planner received the skippable probe, reported 100% skipped, and produced an empty execution plan. The command succeeded without starting a Vitest worker or executing a test body. This validates planner skipping on the ddtest run path."}
+	}
+	if feature == "skipping" && run.framework == "vitest" && run.Facts.SkippableRequests == 0 {
+		result.Status = "inconclusive"
+		result.Reason = "The Vitest tracer did not request skippable suites. Check this tracer release's Vitest Test Impact Analysis support; a successful reporting run does not prove skipping is supported. Real Datadog credentials are not required."
+		return result
+	}
 	if run.ExitCode != 0 {
 		if d := run.Skipping; d != nil && d.PathMismatch && d.SkippableRequests > 0 {
 			result.Reason = "The mock returned the control's test.source.file, but that path differs from both repository-relative and project-relative probe paths. The probe executed instead of skipping; inspect the recorded skipping path mismatch. Preserve the original framework configuration. Real Datadog credentials are not required."
@@ -392,7 +400,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 			nativeSkip++
 		}
 	}
-	nativeRepeated := nativePass >= 2
+	nativeRepeated := nativePass >= 2 || (run.framework == "vitest" && nativePass == 1)
 	success := false
 	switch feature {
 	case "auto-retries":
