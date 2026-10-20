@@ -10,8 +10,10 @@ import (
 	"os"
 )
 
-// Native commands and their helpers share this run's cleanup boundary, even
-// when a helper cannot run its own exit handler. Never change the caller's env.
+// Native commands and their helpers share the session's cleanup boundary, even
+// when a helper cannot run its own exit handler. Use its short root rather than
+// nested scenario labels: Chrome creates a bounded Unix socket beneath TMPDIR.
+// Never change the caller's env.
 func (r *validationRun) ownTemporaryDirectory(directory string, env map[string]string) error {
 	temporary, err := os.MkdirTemp(directory, "tmp-")
 	if err != nil {

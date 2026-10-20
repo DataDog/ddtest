@@ -179,7 +179,7 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 	if err := session.watchmanEnvironment(env); err != nil {
 		return run, err
 	}
-	if err := run.ownTemporaryDirectory(directory, env); err != nil {
+	if err := run.ownTemporaryDirectory(session.Directory(), env); err != nil {
 		return run, err
 	}
 	configureScenarioEnvironment(env, scenario.Feature)

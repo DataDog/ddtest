@@ -187,7 +187,7 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 		}
 	}()
 	env := t.environment(preload, server.URL(), session.ID()+" "+name)
-	if err := run.ownTemporaryDirectory(directory, env); err != nil {
+	if err := run.ownTemporaryDirectory(session.Directory(), env); err != nil {
 		return run, err
 	}
 	configureScenarioEnvironment(env, scenario.Feature)

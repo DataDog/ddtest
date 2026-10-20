@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -124,6 +126,7 @@ func TestAllJavaScriptRunsOwnChildScratch(t *testing.T) {
 				relative, err := filepath.Rel(session.Directory(), temporary)
 				require.NoError(t, err)
 				require.True(t, filepath.IsLocal(relative), temporary)
+				require.Equal(t, session.Directory(), filepath.Dir(temporary), "scenario labels must not lengthen native socket paths")
 				require.FileExists(t, filepath.Join(temporary, "ready"))
 				// No state from the baseline/reporting run enters the next child.
 				copies, err := filepath.Glob(filepath.Join(temporary, "helper-copy-*"))
@@ -142,6 +145,26 @@ func TestAllJavaScriptRunsOwnChildScratch(t *testing.T) {
 			require.Equal(t, cache, os.Getenv("npm_config_cache"))
 		})
 	}
+}
+
+func TestRunScratchSupportsChromeSingletonSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix domain socket path limit")
+	}
+	t.Setenv("TMPDIR", "/tmp")
+	session, err := NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
+	var run validationRun
+	env := map[string]string{}
+	require.NoError(t, run.ownTemporaryDirectory(session.Directory(), env))
+	// Chrome creates its own scoped temporary directory before binding this
+	// socket. Test the real kernel limit rather than just asserting a length.
+	chrome, err := os.MkdirTemp(env["TMPDIR"], ".org.chromium.Chromium.")
+	require.NoError(t, err)
+	listener, err := net.Listen("unix", filepath.Join(chrome, "SingletonSocket"))
+	require.NoError(t, err)
+	require.NoError(t, listener.Close())
 }
 
 func TestSessionRemovesChildScratchAfterCommandExit(t *testing.T) {

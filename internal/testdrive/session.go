@@ -35,8 +35,11 @@ func NewSession() (*Session, error) {
 
 // Planning permits an exact preview without creating any scratch files.
 func planSession() *Session {
-	id := "ddtest-testdrive-" + time.Now().UTC().Format(sessionTimeFormat) + "-" + rand.Text()
-	return &Session{id: id, directory: filepath.Join(os.TempDir(), id)}
+	token := rand.Text()
+	id := "ddtest-testdrive-" + time.Now().UTC().Format(sessionTimeFormat) + "-" + token
+	// Keep the descriptive report ID, but leave room for native helper sockets
+	// beneath TMPDIR (notably Chrome's SingletonSocket on Linux).
+	return &Session{id: id, directory: filepath.Join(os.TempDir(), "ddtest-"+token[:16])}
 }
 
 func (s *Session) create() error {

@@ -19,7 +19,7 @@ func TestNewSessionUsesTemporaryStorage(t *testing.T) {
 	t.Chdir(repositoryRoot)
 	session, err := NewSession()
 	require.NoError(t, err)
-	require.Equal(t, session.ID(), filepath.Base(session.Directory()))
+	require.NotEqual(t, session.ID(), filepath.Base(session.Directory()), "report IDs must not make native temporary paths too long")
 	require.DirExists(t, session.Directory())
 	files, err := os.ReadDir(repositoryRoot)
 	require.NoError(t, err)
