@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestCookieParserSetupRejectsOpaqueCommands(t *testing.T) {
+func TestShellSetupRejectsOpaqueCommands(t *testing.T) {
 	root := t.TempDir()
 	for _, shell := range []string{"bash -c {0}", "bash -o custom {0}", "bash pipefail {0}", "python {0}"} {
 		require.False(t, supportedCIShell(shell))
@@ -25,11 +25,11 @@ func TestCookieParserSetupRejectsOpaqueCommands(t *testing.T) {
 }
 
 func TestMatrixDiagnosticsRetainCausesAndScope(t *testing.T) {
-	result := groupMatrixDiagnostics([]string{
-		"ci.yml / test map[node:18] / step 2 (opaque): custom setup needs review",
-		"ci.yml / test map[node:20] / step 2 (opaque): custom setup needs review",
-		"ci.yml / test map[node:22] / step 2 (opaque): custom setup needs review",
-		"ci.yml / test map[node:22] / step 3 (other): different cause",
+	result := groupMatrixDiagnostics([]scopeDiagnostic{
+		{commandLocation{Workflow: "ci.yml", Job: "test", Matrix: map[string]any{"node": 18}, Step: 2, Command: "opaque"}, "custom setup needs review"},
+		{commandLocation{Workflow: "ci.yml", Job: "test", Matrix: map[string]any{"node": 20}, Step: 2, Command: "opaque"}, "custom setup needs review"},
+		{commandLocation{Workflow: "ci.yml", Job: "test", Matrix: map[string]any{"node": 22}, Step: 2, Command: "opaque"}, "custom setup needs review"},
+		{commandLocation{Workflow: "ci.yml", Job: "test", Matrix: map[string]any{"node": 22}, Step: 3, Command: "other"}, "different cause"},
 	})
 	require.Len(t, result, 2)
 	require.Contains(t, result[0], "custom setup needs review")

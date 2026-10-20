@@ -21,6 +21,7 @@ import (
 // an unresolved component is still inconclusive; it must not hide custom wrappers.
 type commandResolution struct {
 	OtherFramework bool
+	Setup          []string
 
 	Tests   []TestCommand
 	Builds  []BuildCommand
@@ -71,21 +72,22 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if strings.ContainsAny(directory, "$`~") || (directory != "" && !filepath.IsLocal(directory)) {
 		return unresolvedCommand("Cannot statically resolve repository working-directory: " + directory)
 	}
-	if result, ok := resolveReleaseInput(filepath.Join(root, directory), step.Run, framework); ok {
+	resolvedDirectory, err := repositoryDirectory(root, root, directory)
+	if err != nil {
+		return unresolvedCommand("Cannot resolve repository working-directory: " + repositoryError(root, err))
+	}
+	if result, ok := resolveReleaseInput(resolvedDirectory, step.Run, framework); ok {
 		return result
 	}
-	if jsonPackagingStep(step.Run) {
-		return commandResolution{Review: true, Reason: "JSON packaging transformation is outside " + framework + " validation; review separately if its output is used by tests."}
-	}
-	if legacyCodecovUpload(step.Run) {
-		return commandResolution{Review: true, Reason: "Legacy Codecov upload is outside identified " + framework + " entry points; the downloaded script is not inspected or validated."}
+	if literalDataRedirect(step.Run) {
+		return commandResolution{Review: true, Reason: "Literal data transformation requires separate review: " + step.Run, Setup: []string{"File output changes require separate validation: " + step.Run}}
 	}
 	if result, ok := resolveCIShell(root, workflow, job, step, framework); ok {
 		return result
 	}
 
 	remaining := 256
-	result := resolveJestSequence(root, filepath.Join(root, directory), step.Run, nil, &remaining, framework)
+	result := resolveJestSequence(root, resolvedDirectory, step.Run, nil, &remaining, framework)
 
 	if _, err := staticCommands(step.Run); err != nil {
 		if metadata, ok := resolveMetadataStep(root, workflow, job, step, framework); ok {
@@ -95,53 +97,8 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if !result.Matched && result.Reason == "" && result.ReviewReason != "" {
 		result.Review, result.Reason = true, result.ReviewReason
 	}
-	if result.UnknownExecutable && !result.Matched && separateCIEntryPoint(workflow, job, step) {
-		result.Review = true
-		result.Reason = "Build, publishing, or documentation entry point was not identified as " + framework + "; review separately if it also runs tests. " + result.Reason
-	}
-	return result
-}
 
-// Scope by explicit commands, never job/step names or comments. These unresolved
-// entry points remain visible for review; this is not proof they cannot run tests.
-// Instrumented steps and unknown test wrappers must still block validation.
-func separateCIEntryPoint(workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
-	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
-		if env["NODE_OPTIONS"] != "" {
-			return false
-		}
-	}
-	commands, err := staticCommands(step.Run)
-	if err != nil || len(commands) != 1 {
-		return false
-	}
-	words := commands[0]
-	if len(words) == 2 && words[0] == "npx" && words[1] == "semantic-release" {
-		return true
-	}
-	if len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm", "bun"}, words[0]) {
-		return false
-	}
-	args := words[1:]
-	if words[0] == "npm" {
-		_, args, _ = npmPrefix(args)
-	}
-	if len(args) == 0 {
-		return false
-	}
-	if args[0] == "run" || args[0] == "run-script" {
-		args = args[1:]
-	} else if words[0] == "npm" {
-		return false
-	}
-	if len(args) != 1 {
-		return false
-	}
-	if slices.Contains([]string{"test:perf", "perf", "benchmark"}, args[0]) {
-		return true
-	}
-	name, _, _ := strings.Cut(args[0], ":")
-	return slices.Contains([]string{"build", "build-storybook", "storybook", "docs", "release", "api-extractor", "bundlewatch"}, name)
+	return result
 }
 
 // Resolve only ordinary static commands and package script aliases. Never run
@@ -158,7 +115,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 
 	commands, err := discoverCommands(command)
 	if err != nil {
-		return unresolvedCommand(err.Error())
+		return unresolvedCommand(repositoryError(root, err))
 	}
 	var result commandResolution
 	var setup []string
@@ -171,7 +128,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 		previousChain = fragment.Chain
 		words := fragment.Words
 		if fragment.Reason != "" {
-			result.Reason = fragment.Reason
+			result.Reason = joinDiagnostic(result.Reason, fragment.Reason)
 			result.UnknownExecutable = false
 			continue
 		}
@@ -197,7 +154,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			continue
 		}
 		if mutatesCIFiles(shellquote.Join(words...)) {
-			setup = append(setup, "CI file or dependency changes require separate validation: "+shellquote.Join(words...))
+			setup = append(setup, "CI file or dependency changes require separate validation: "+shellCommand(words))
 		}
 		part := resolveJestWords(root, directory, words, stack, remaining, frameworks...)
 		for i := range part.Tests {
@@ -208,6 +165,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			}
 		}
 		result.Tests = append(result.Tests, part.Tests...)
+		setup = append(setup, part.Setup...)
 
 		result.Builds = append(result.Builds, part.Builds...)
 		result.SingleJest = len(commands) == 1 && part.SingleJest
@@ -219,6 +177,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 				result.Reason = part.Reason
 				result.UnknownExecutable = part.UnknownExecutable
 			} else {
+				result.Reason = joinDiagnostic(result.Reason, part.Reason)
 				result.UnknownExecutable = result.UnknownExecutable && part.UnknownExecutable
 			}
 		}
@@ -233,10 +192,11 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 		}
 	}
 
+	result.Setup = append(result.Setup, setup...)
 	return result
 }
 
-func resolveJestWords(root, directory string, words, stack []string, remaining *int, frameworks ...string) commandResolution {
+func resolveJestWords(root, directory string, words, stack []string, remaining *int, frameworks ...string) (result commandResolution) {
 	framework := "jest"
 	if len(frameworks) > 0 {
 		framework = frameworks[0]
@@ -245,14 +205,34 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	if len(words) == 0 {
 		return commandResolution{}
 	}
-	command := shellquote.Join(words...)
-	var assignments []string
-	for len(words) > 0 && strings.Contains(words[0], "=") {
+	command := shellCommand(words)
+	assignments := map[string]string{}
+	defer func() { applyCommandEnvironment(&result, assignments) }()
+	if len(words) > 0 && (words[0] == "cross-env" || words[0] == "cross-env-shell") {
+		words = words[1:]
+		for _, word := range words {
+			if strings.ContainsAny(word, "$`") {
+				return unresolvedCommand("Dynamic cross-env expansion requires review: " + command)
+			}
+		}
+	}
+	for len(words) > 0 && shellAssignment(words[0]) {
 		key, _, _ := strings.Cut(words[0], "=")
-		if key == "NODE_OPTIONS" || key == "PATH" || strings.HasPrefix(key, "DD_") {
+		if key == "NODE_OPTIONS" {
+			if strings.TrimPrefix(words[0], key+"=") == "" {
+				return unresolvedCommand("Command resets instrumentation environment: " + command)
+			}
+			value, err := ordinaryNodeOptions(strings.TrimPrefix(words[0], key+"="))
+			if err != nil {
+				return unresolvedCommand(repositoryError(root, err))
+			}
+			words[0] = key + "=" + value
+		}
+		if key == "PATH" || strings.HasPrefix(key, "DD_") {
 			return unresolvedCommand("Command overrides instrumentation or executable selection: " + command)
 		}
-		assignments = append(assignments, words[0])
+		key, value, _ := strings.Cut(words[0], "=")
+		assignments[key] = value
 		words = words[1:]
 	}
 	if len(words) == 0 {
@@ -267,16 +247,16 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	if words[0] == "npm" {
 		prefix, args, err := npmPrefix(words[1:])
 		if err != nil {
-			return unresolvedCommand(err.Error())
+			return unresolvedCommand(repositoryError(root, err))
 		}
 		if prefix != "" {
 			target, err := repositoryDirectory(root, directory, prefix)
 			if err != nil {
-				return unresolvedCommand(err.Error())
+				return unresolvedCommand(repositoryError(root, err))
 			}
 			result := resolveJestWords(root, target, append([]string{"npm"}, args...), stack, remaining, frameworks...)
 			if result.Evidence != "" {
-				result.Evidence = command + " (in " + target + ") -> " + result.Evidence
+				result.Evidence = command + " (in " + repositoryPath(root, target) + ") -> " + result.Evidence
 			}
 			// Local flag forwarding from the repository root is not validated
 			// for a test runner in a different package directory.
@@ -306,45 +286,20 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
 		return commandResolution{Matched: true, SingleJest: true, Evidence: command,
-			Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append(assignments, append([]string{runner}, words[1:]...)...)...)}}}
+			Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}}}
 	}
 
+	if tool, ok := discoveryTools[words[0]]; ok {
+		return resolveDiscoveryTool(root, directory, words, framework, tool)
+	}
+	if words[0] == "node" && literalNodeJest(words) {
+		relative := repositoryPath(root, directory)
+		return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{Directory: relative, Command: shellquote.Join(words...)}}}
+	}
 	if slices.Equal(words, []string{"corepack", "enable"}) {
 		return commandResolution{}
 	}
 	switch words[0] {
-	case "echo", "printf", "true", "false", "eslint", "standard", "prettier", "oxlint", "oxfmt", "mkdir", "cp", "knip":
-		return commandResolution{}
-	case "unbuild", "rollup", "webpack", "tsup", "tsc", "tsgo", "bunchee":
-		if words[0] == "bunchee" {
-			return commandResolution{Reason: "Cannot statically resolve command: " + command, UnknownExecutable: true}
-		}
-		if (words[0] == "tsc" || words[0] == "tsgo") && slices.Contains(words[1:], "--noEmit") {
-			return commandResolution{ReviewReason: "Type checking is outside " + framework + " validation: " + command}
-		}
-		canonicalRoot, _ := filepath.EvalSymlinks(root)
-		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
-		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
-		build := BuildCommand{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append(assignments, words...)...)}
-		result := commandResolution{Builds: []BuildCommand{build}}
-		if words[0] != "tsc" && words[0] != "tsgo" {
-			result.ReviewReason = "Build/tool command is outside " + framework + " validation; review its configuration separately if it also runs tests: " + command
-		}
-		return result
-	case "jest", "playwright", "vitest", "mocha", "cypress", "cucumber-js", "tap", "mochify":
-		return commandResolution{OtherFramework: true, ReviewReason: "Other test framework is outside " + framework + " validation: " + command}
-	case "flow", "bundlewatch", "api-extractor", "docusaurus", "documentation", "automd", "codecov", "vitepress", "ls-engines", "lockfile-lint", "remark", "ban", "publint", "gherkin-lint":
-		return commandResolution{ReviewReason: "Build/tool command is outside " + framework + " validation; review its configuration separately if it also runs tests: " + command}
-	case "clean-publish":
-		return reviewReleaseLifecycle(directory, command, framework, []string{"prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"})
-	case "pkg-pr-new":
-		if len(words) > 1 && words[1] == "publish" {
-			return reviewReleaseLifecycle(directory, command, framework, []string{"prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"})
-		}
-		return unresolvedCommand("Unknown publication command: " + command)
-	case "turbo":
-
-		return unresolvedCommand("Cannot statically resolve command: " + command)
 	case "git":
 		if gitReleaseOperation(words) {
 			return commandResolution{ReviewReason: "Git release operation is outside " + framework + " validation; review separately, including any Git hooks: " + command}
@@ -412,19 +367,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return unresolvedCommand("npm script arguments without -- require review: " + command)
 		}
 		result := resolvePackageScript(root, directory, name, forwarded, stack, command, remaining, frameworks...)
-		for i := range result.Tests {
-			if len(assignments) > 0 {
-				result.Tests[i].Command = shellquote.Join(assignments...) + " " + result.Tests[i].Command
-				for j := range result.Tests[i].Prerequisites {
-					result.Tests[i].Prerequisites[j].Command = shellquote.Join(assignments...) + " " + result.Tests[i].Prerequisites[j].Command
-				}
-			}
-		}
-		for i := range result.Builds {
-			if len(assignments) > 0 {
-				result.Builds[i].Command = shellquote.Join(assignments...) + " " + result.Builds[i].Command
-			}
-		}
+
 		return result
 	default:
 		return commandResolution{Reason: "Cannot statically resolve command: " + command, UnknownExecutable: true}
@@ -433,16 +376,18 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 
 func resolvePackageScript(root, directory, name string, args, stack []string, command string, remaining *int, frameworks ...string) commandResolution {
 
-	key := filepath.Join(directory, "package.json") + ":" + name
+	key := repositoryPath(root, filepath.Join(directory, "package.json")) + ":" + name
 	if slices.Contains(stack, key) {
 		return unresolvedCommand("Package script cycle: " + strings.Join(append(slices.Clone(stack), key), " -> "))
 	}
 	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
 	if err != nil {
-		return unresolvedCommand("Cannot read package.json for " + command + ": " + err.Error())
+		return unresolvedCommand("Cannot read package.json for " + command + ": " + repositoryError(root, err))
 	}
 	var manifest struct {
-		Scripts map[string]string `json:"scripts"`
+		Scripts         map[string]string `json:"scripts"`
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
 	}
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return unresolvedCommand("Cannot parse package.json: " + err.Error())
@@ -450,11 +395,13 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	script, ok := manifest.Scripts[name]
 
 	if !ok {
-		if name == "flow" && (strings.HasPrefix(command, "yarn flow") || strings.HasPrefix(command, "pnpm flow")) {
-			return resolveJestWords(root, directory, append([]string{"flow"}, args...), stack, remaining, frameworks...)
+		if strings.HasPrefix(command, "yarn ") && name == "jest" {
+			if manifest.Dependencies["jest"] != "" || manifest.DevDependencies["jest"] != "" {
+				return resolveJestWords(root, directory, append([]string{"jest"}, args...), stack, remaining, frameworks...)
+			}
+			return unresolvedCommand("Cannot establish Yarn binary jest from repository dependencies in " + repositoryPath(root, directory))
 		}
-
-		return unresolvedCommand("No package.json script named " + name + " in " + directory)
+		return unresolvedCommand("No package.json script named " + name + " in " + repositoryPath(root, directory))
 	}
 	var lifecycle string
 	for _, hook := range []string{"pre" + name, "post" + name} {

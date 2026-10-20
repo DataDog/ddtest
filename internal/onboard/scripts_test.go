@@ -27,7 +27,7 @@ func TestStaticJestScriptResolution(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{
 		"test": "jest --config 'config/jest unit.js'", "coverage": "npm run test -- --coverage",
-		"lint": "eslint ./src/**", "t": "eslint .", "hooked": "jest", "prehooked": "node setup.js", "ci": "npm run lint && npm run coverage",
+		"lint": "eslint ./src", "t": "eslint .", "hooked": "jest", "prehooked": "node setup.js", "ci": "npm run lint && npm run coverage",
 		"loop": "npm run loop", "first": "npm run second", "second": "npm run first",
 		"custom": "node scripts/test.js", "dynamic": "npm run \"$SUITE\"",
 		"reset": "NODE_OPTIONS='' jest", "compound": "echo 'jest && npm test'; npm run coverage",

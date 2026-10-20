@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Fixture adapted from express-validator CI; discovery never executes its commands.
 const expressValidatorWorkflow = `jobs:
   test:
     runs-on: ubuntu-latest

@@ -7,22 +7,47 @@ package onboard
 
 import (
 	"encoding/json"
+	"mvdan.cc/sh/v3/syntax"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/kballard/go-shellquote"
 )
 
-// Recognize only one literal jq filter with JSON input/output paths. Do not
-// relax the general shell parser for pipelines, expansion or chained commands.
-var jsonRedirect = regexp.MustCompile("^jq[ \\t]+(?:'[^']*'|\"[^\"$`]*\")[ \\t]+([a-zA-Z0-9_./-]+\\.json)[ \\t]*>[ \\t]*([a-zA-Z0-9_./-]+\\.json)[ \\t]*$")
-
-func jsonPackagingStep(command string) bool {
-	match := jsonRedirect.FindStringSubmatch(command)
-	return len(match) == 3 && filepath.IsLocal(match[1]) && filepath.IsLocal(match[2])
+// Classify a single literal data-tool invocation with a local output redirect.
+// Never accept substitutions, command chains, arbitrary wrappers or external paths.
+func literalDataRedirect(command string) bool {
+	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
+	if err != nil || len(file.Stmts) != 1 {
+		return false
+	}
+	stmt := file.Stmts[0]
+	if stmt.Background || stmt.Negated || len(stmt.Redirs) != 1 {
+		return false
+	}
+	redirect := stmt.Redirs[0]
+	if redirect.Op != syntax.RdrOut || redirect.N != nil {
+		return false
+	}
+	output, err := literalShellWord(redirect.Word)
+	if err != nil || !filepath.IsLocal(output) {
+		return false
+	}
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Assigns) != 0 || len(call.Args) != 3 {
+		return false
+	}
+	var words []string
+	for _, word := range call.Args {
+		value, err := literalShellWord(word)
+		if err != nil {
+			return false
+		}
+		words = append(words, value)
+	}
+	return words[0] == "jq" && !strings.HasPrefix(words[1], "-") && filepath.IsLocal(words[2])
 }
 
 func resolveNpmPublish(directory string, words []string, framework string) commandResolution {
@@ -56,11 +81,8 @@ func resolveNpmPublish(directory string, words []string, framework string) comma
 			hooks = append(hooks, "prepublish")
 		}
 		for _, hook := range hooks {
-			if hook == "publish" && strings.TrimSpace(manifest.Scripts[hook]) == "clean-publish" {
-				continue
-			}
 			if manifest.Scripts[hook] != "" {
-				return unresolvedCommand("Package publish lifecycle script " + hook + " in " + target + " requires review; it may run tests")
+				return unresolvedCommand("Package publish lifecycle script " + hook + " in " + repositoryPath(directory, target) + " requires review; it may run tests")
 			}
 		}
 	}

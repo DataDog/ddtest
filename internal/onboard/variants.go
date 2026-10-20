@@ -35,7 +35,19 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		if key == "PATH" || key == "NODE_PATH" {
 			return step, nil, fmt.Errorf("CI environment overrides executable/module selection: %s", key)
 		}
-		if key == "NODE_OPTIONS" || strings.HasPrefix(key, "DD_") {
+		if key == "NODE_OPTIONS" {
+			ordinary, err := resolveNodeOptions(value, row, conditionEnvironment(workflow, job, step, row))
+			if err != nil {
+				return step, nil, err
+			}
+			if ordinary == "" {
+				delete(env, key)
+			} else {
+				env[key] = ordinary
+			}
+			continue
+		}
+		if strings.HasPrefix(key, "DD_") {
 			delete(env, key)
 			continue
 		}
@@ -58,6 +70,9 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	}
 	var expansionErr error
 	syntax.Walk(file, func(node syntax.Node) bool {
+		if word, ok := node.(*syntax.Word); ok && unquotedGlob(word) {
+			expansionErr = fmt.Errorf("unquoted shell pathname expansion requires review")
+		}
 		if parameter, ok := node.(*syntax.ParamExp); ok {
 			value, exists := env[parameter.Param.Value]
 			if !exists || parameter.Index != nil || parameter.Slice != nil || parameter.Repl != nil || parameter.Exp != nil || parameter.Excl || parameter.Length || strings.ContainsAny(value, " \t\n*?[") {

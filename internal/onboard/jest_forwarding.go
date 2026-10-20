@@ -67,7 +67,7 @@ func forwardJestScript(root, command string, depth int, count *int) (string, err
 		if len(words) == 0 {
 			return "", fmt.Errorf("standalone environment assignment requires review")
 		}
-		part := shellquote.Join(words...)
+		part := shellCommand(words)
 		resolution := resolveJestCommand(root, part, nil)
 		if resolution.Matched {
 			switch words[0] {

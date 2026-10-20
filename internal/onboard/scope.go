@@ -5,7 +5,6 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
-	"strings"
 )
 
 // TestCommand identifies an explicit framework invocation, not the surrounding
@@ -15,9 +14,10 @@ type TestCommand struct {
 	Directory        string            `json:"directory"`
 	Command          string            `json:"command"`
 	Environment      map[string]string `json:"environment,omitempty"`
-	Locations        []string          `json:"locations,omitempty"`
-	Prerequisites    []BuildCommand    `json:"prerequisites,omitempty"`
-	UnvalidatedSetup []string          `json:"unvalidated_setup,omitempty"`
+	locations        []commandLocation
+	Locations        []string       `json:"locations,omitempty"`
+	Prerequisites    []BuildCommand `json:"prerequisites,omitempty"`
+	UnvalidatedSetup []string       `json:"unvalidated_setup,omitempty"`
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same
@@ -51,6 +51,7 @@ func yarnImplicitInstall(words []string) bool {
 // Unknown fragments stay visible alongside known test invocations.
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	var scope ValidationScope
+	var allUnresolved, allReview []scopeDiagnostic
 	if framework != "jest" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
@@ -79,7 +80,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				}
 				var pendingSetup []string
 				var preparation []BuildCommand
-				var unresolved, review []string
+				var unresolved, review []scopeDiagnostic
 				var commands []TestCommand
 				for i, step := range job.Steps {
 
@@ -87,13 +88,12 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 					if conditionErr == nil && !active {
 						continue
 					}
-					jobLabel := name
-					if len(row) > 0 {
-						jobLabel += fmt.Sprint(" ", row)
-					}
-					location := fmt.Sprintf("%s / %s / step %d (%s)", workflow.Path, jobLabel, stepNumber(step, i), step.Run)
+					location := commandLocation{Workflow: workflow.Path, Job: name, Matrix: maps.Clone(row), Step: stepNumber(step, i), Command: step.Run}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
 					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+					for _, setup := range resolution.Setup {
+						unresolved = append(unresolved, scopeDiagnostic{location, setup})
+					}
 					if conditionErr != nil && resolved.Run != "" && resolution.Reason == "" && !resolution.Matched && len(resolution.Builds) == 0 {
 						resolution.Review, resolution.Reason = true, "Condition affects only a recognized non-test command; review separately: "+conditionErr.Error()
 					}
@@ -107,42 +107,42 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 					}
 					if resolution.Review {
 						for j := range resolution.Builds {
-							resolution.Builds[j].Environment = maps.Clone(env)
+							resolution.Builds[j].Environment = mergeEnvironment(env, resolution.Builds[j].Environment)
 						}
 						preparation = append(preparation, resolution.Builds...)
-						review = append(review, location+": "+resolution.Reason)
+						pendingSetup = append(pendingSetup, resolution.Setup...)
+						review = append(review, scopeDiagnostic{location, resolution.Reason})
 						continue
 					}
 					if resolution.Reason != "" {
-						unresolved = append(unresolved, location+": "+resolution.Reason)
+						unresolved = append(unresolved, scopeDiagnostic{location, resolution.Reason})
 					}
 					if resolution.ReviewReason != "" {
-						review = append(review, location+": "+resolution.ReviewReason)
+						review = append(review, scopeDiagnostic{location, resolution.ReviewReason})
 					}
 					for j := range resolution.Builds {
-						resolution.Builds[j].Environment = maps.Clone(env)
+						resolution.Builds[j].Environment = mergeEnvironment(env, resolution.Builds[j].Environment)
 					}
 					for _, entry := range resolution.Tests {
 
 						for j := range entry.Prerequisites {
-							entry.Prerequisites[j].Environment = maps.Clone(env)
+							entry.Prerequisites[j].Environment = mergeEnvironment(env, entry.Prerequisites[j].Environment)
 						}
 						entry.Prerequisites = append(slices.Clone(preparation), entry.Prerequisites...)
 						entry.UnvalidatedSetup = append(slices.Clone(pendingSetup), entry.UnvalidatedSetup...)
-						entry.Environment = env
+						entry.Environment = mergeEnvironment(env, entry.Environment)
 						entry.Directory = filepath.ToSlash(filepath.Clean(entry.Directory))
-						entry.Locations = []string{location}
+						entry.locations = []commandLocation{location}
 						commands = append(commands, entry)
 					}
 					if resolution.Reason != "" {
-						pendingSetup = append(pendingSetup, location+": "+resolution.Reason)
+						pendingSetup = append(pendingSetup, location.String()+": "+resolution.Reason)
 					}
-					if !resolution.Matched {
-						preparation = append(preparation, resolution.Builds...)
-					}
+					preparation = append(preparation, resolution.Builds...)
+					pendingSetup = append(pendingSetup, resolution.Setup...)
 				}
-				scope.Unresolved = append(scope.Unresolved, unresolved...)
-				scope.Review = append(scope.Review, review...)
+				allUnresolved = append(allUnresolved, unresolved...)
+				allReview = append(allReview, review...)
 				for _, entry := range commands {
 					index := slices.IndexFunc(scope.Commands, func(previous TestCommand) bool {
 						return previous.Directory == entry.Directory && previous.Command == entry.Command && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
@@ -150,14 +150,19 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 					if index < 0 {
 						scope.Commands = append(scope.Commands, entry)
 					} else {
-						scope.Commands[index].Locations = append(scope.Commands[index].Locations, entry.Locations...)
+						scope.Commands[index].locations = append(scope.Commands[index].locations, entry.locations...)
 					}
 				}
 			}
 		}
 	}
-	scope.Unresolved = groupMatrixDiagnostics(scope.Unresolved)
-	scope.Review = groupMatrixDiagnostics(scope.Review)
+	scope.Unresolved = append(scope.Unresolved, groupMatrixDiagnostics(allUnresolved)...)
+	scope.Review = append(scope.Review, groupMatrixDiagnostics(allReview)...)
+	for i := range scope.Commands {
+		for _, location := range scope.Commands[i].locations {
+			scope.Commands[i].Locations = append(scope.Commands[i].Locations, location.String())
+		}
+	}
 	return scope, nil
 }
 
@@ -182,43 +187,4 @@ func mutatesCIFiles(command string) bool {
 		}
 	}
 	return false
-}
-
-// Keep repeated setup/parse failures readable without hiding their affected
-// matrix scope. Per-test locations and runtime findings retain all consumers.
-func groupMatrixDiagnostics(messages []string) []string {
-	type group struct {
-		text string
-		rows []string
-	}
-	groups := []group{}
-	indexes := map[string]int{}
-	for _, message := range messages {
-		prefix, rest, matrix := strings.Cut(message, " map[")
-		row, suffix, end := strings.Cut(rest, "] / step ")
-		key := message
-		if matrix && end {
-			key = prefix + " / step " + suffix
-		} else {
-			row = ""
-		}
-		index, exists := indexes[key]
-		if !exists {
-			index = len(groups)
-			indexes[key] = index
-			groups = append(groups, group{text: key})
-		}
-		if row != "" && !slices.Contains(groups[index].rows, row) {
-			groups[index].rows = append(groups[index].rows, row)
-		}
-	}
-	result := make([]string, 0, len(groups))
-	for _, group := range groups {
-		text := group.text
-		if len(group.rows) > 0 {
-			text += fmt.Sprintf(" [affects %d matrix entries; e.g. %s]", len(group.rows), strings.Join(group.rows[:min(2, len(group.rows))], "; "))
-		}
-		result = append(result, text)
-	}
-	return result
 }

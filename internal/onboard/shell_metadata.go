@@ -30,6 +30,13 @@ func resolveMetadataStep(root string, workflow ciWorkflow, job runtimeJob, step 
 		child := step
 		child.Run = command
 		part := resolveTestStep(root, workflow, job, child, "javascript", framework)
+		for i := range part.Tests {
+			part.Tests[i].Prerequisites = append(slices.Clone(result.Builds), part.Tests[i].Prerequisites...)
+			part.Tests[i].UnvalidatedSetup = append(slices.Clone(result.Setup), part.Tests[i].UnvalidatedSetup...)
+		}
+		result.Tests = append(result.Tests, part.Tests...)
+		result.Builds = append(result.Builds, part.Builds...)
+		result.Setup = append(result.Setup, part.Setup...)
 		result.Matched = result.Matched || part.Matched
 		if part.Evidence != "" {
 			result.Evidence += part.Evidence + "; "

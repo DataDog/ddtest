@@ -35,7 +35,19 @@ func TestVariantPreparationPreservesMatrixAndConditions(t *testing.T) {
 	scope, err := DiscoverValidationScope(root, "jest")
 	require.NoError(t, err)
 	require.Empty(t, scope.Unresolved)
-	require.Len(t, scope.Commands, 5)
+	var variants []string
+	for _, command := range scope.Commands {
+		if len(command.Prerequisites) == 0 {
+			variants = append(variants, "source")
+			continue
+		}
+		if command.Environment["REACT_VER"] != "" {
+			variants = append(variants, "react:"+command.Environment["REACT_VER"])
+			continue
+		}
+		variants = append(variants, command.Prerequisites[1].Command)
+	}
+	require.ElementsMatch(t, []string{"source", "react:18.0.0", "react:19.0.0", `sed -i~ s/src/dist/ jest.config.mts`, `sed -i~ s/src/dist\\/esm/ jest.config.mts`}, variants)
 	for i := 0; i < 2; i++ {
 		require.Len(t, scope.Commands[i].Prerequisites, 2)
 		require.Equal(t, "rollup -c", scope.Commands[i].Prerequisites[0].Command)
@@ -58,7 +70,7 @@ func TestVariantExpansionDoesNotExecuteShellOrUseAmbientVariables(t *testing.T) 
 		_, _, err := resolveVariantStep(ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command, Env: map[string]string{"REACT_VER": "18"}}, nil)
 		require.Error(t, err)
 	}
-	step, env, err := resolveVariantStep(ciWorkflow{}, runtimeJob{}, runtimeStep{Run: `sed -i~ "1s/^/import.meta.env.MODE='${NODE_ENV}';/" tests/*.tsx`, Env: map[string]string{"NODE_ENV": "development"}}, nil)
+	step, env, err := resolveVariantStep(ciWorkflow{}, runtimeJob{}, runtimeStep{Run: `sed -i~ "1s/^/import.meta.env.MODE='${NODE_ENV}';/" tests/example.tsx`, Env: map[string]string{"NODE_ENV": "development"}}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "development", env["NODE_ENV"])
 	require.Contains(t, step.Run, "development")

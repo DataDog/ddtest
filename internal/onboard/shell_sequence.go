@@ -77,6 +77,9 @@ func discoverCommands(command string) ([]commandFragment, error) {
 // Expand quoting/escapes from the parsed word, never variables or executable
 // substitutions. Discovery and scoped edits share this one shell grammar.
 func literalShellWord(word *syntax.Word) (string, error) {
+	if unquotedGlob(word) {
+		return "", fmt.Errorf("unquoted shell pathname expansion requires review")
+	}
 	valid := true
 	syntax.Walk(word, func(node syntax.Node) bool {
 		switch node.(type) {
@@ -128,4 +131,21 @@ func literalCall(stmt *syntax.Stmt) ([]string, error) {
 		words = append(words, value)
 	}
 	return words, nil
+}
+
+func unquotedGlob(word *syntax.Word) bool {
+	for _, part := range word.Parts {
+		if literal, ok := part.(*syntax.Lit); ok {
+			for i := 0; i < len(literal.Value); i++ {
+				if literal.Value[i] == '\\' {
+					i++
+					continue
+				}
+				if strings.ContainsRune("*?[", rune(literal.Value[i])) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

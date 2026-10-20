@@ -153,7 +153,7 @@ func runtimeValue(value string, row map[string]any) (string, error) {
 	if strings.Contains(value, "${{") {
 		return "", fmt.Errorf("cannot statically resolve %s", value)
 	}
-	return strings.TrimSpace(value), nil
+	return value, nil
 }
 
 var numericNode = regexp.MustCompile(`^v?([0-9]+)(?:\.([0-9]+|x|\*))?(?:\.([0-9]+|x|\*))?$`)

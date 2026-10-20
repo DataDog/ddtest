@@ -40,8 +40,8 @@ func TestScopeDirectoryChangesAndUnsafeInputs(t *testing.T) {
 		require.Empty(t, resolveJestCommand(root, command, nil).Reason)
 	}
 	require.NotEmpty(t, resolveJestCommand(root, "yarn --unknown-option", nil).Reason)
-	require.Equal(t, "CI=true jest run", ValidationCommands(root, "CI=true npx jest run", "jest")[0].Command, "do not discard shell environment for batch execution")
-	require.Equal(t, "CI=true jest", ValidationCommands(root, "CI=true npm test", "jest")[0].Command, "preserve environment through package aliases")
+	require.Equal(t, "jest run", ValidationCommands(root, "CI=true npx jest run", "jest")[0].Command, "do not discard shell environment for batch execution")
+	require.Equal(t, "jest", ValidationCommands(root, "CI=true npm test", "jest")[0].Command, "preserve environment through package aliases")
 }
 
 func TestPartialShellDiscoveryPreservesStateBoundaries(t *testing.T) {

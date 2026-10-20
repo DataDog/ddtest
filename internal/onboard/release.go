@@ -50,11 +50,6 @@ func reviewReleaseLifecycle(directory, command, framework string, hooks []string
 		return unresolvedCommand("Cannot inspect release lifecycle scripts: " + err.Error())
 	}
 	for _, hook := range hooks {
-		// A recognized publication wrapper is still reviewed separately; it is
-		// not an opaque test hook. Other scripts, including chains, stay blocked.
-		if hook == "publish" && strings.TrimSpace(manifest.Scripts[hook]) == "clean-publish" {
-			continue
-		}
 		if manifest.Scripts[hook] != "" {
 			return unresolvedCommand("Release lifecycle script " + hook + " requires review alongside " + command + "; it may run tests")
 		}

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Fixture adapted from class-validator CI; assertions describe generic command selection.
 const classValidatorWorkflow = `jobs:
   tests:
     runs-on: ubuntu-latest
@@ -90,5 +91,5 @@ func TestJestCommandSelectionFallbackAndUnsafeCI(t *testing.T) {
 	writeScripts(t, root, map[string]string{"test": "jest"})
 	require.NoError(t, os.WriteFile(workflow, []byte("jobs:\n  test:\n    steps:\n      - run: jest\n        working-directory: packages/foo\n"), 0644))
 	_, err = JestValidationCommand(root)
-	require.ErrorContains(t, err, "working directory")
+	require.ErrorContains(t, err, "packages")
 }
