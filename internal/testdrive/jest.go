@@ -79,6 +79,10 @@ func readRunnerResults(path, label string, run *validationRun) {
 	for _, suite := range result.TestResults {
 		if len(suite.AssertionResults) == 0 && suite.Status == "failed" {
 			run.SuiteErrors = append(run.SuiteErrors, suite.Name+": "+failureSignature(suite.Message))
+		} else if suite.Message != "" && suite.Status == "failed" {
+			// The aggregate message also contains hook errors after assertions ran.
+			// Compare it without treating the intentional probe assertion as setup failure.
+			run.SuiteFailures = append(run.SuiteFailures, suite.Name+": "+failureSignature(suite.Message))
 		}
 		for _, test := range suite.AssertionResults {
 			parsed := jestTest{File: filepath.Clean(suite.Name), Name: test.FullName, Status: test.Status,
@@ -180,10 +184,10 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 	// Package scripts can already set coverageDirectory. Jest treats duplicate
 	// string options as arrays, so normalize only our override before parsing.
 	coverageDirectory := filepath.Join(directory, "coverage")
-	if err := redirectJestCoverage(directory, coverageDirectory, env); err != nil {
+	resultPath := filepath.Join(directory, "jest-results.json")
+	if err := redirectJestArguments(directory, coverageDirectory, resultPath, probePath, env); err != nil {
 		return run, err
 	}
-	resultPath := filepath.Join(directory, "jest-results.json")
 	args := appendJestArgs(t.command, t.args, "--json", "--outputFile", resultPath, "--coverageDirectory", coverageDirectory)
 	if probePath != "" {
 		// A single synthetic test cannot meet whole-project coverage thresholds.
@@ -265,6 +269,7 @@ func executedTests(run validationRun) int {
 func outcomeKeys(run validationRun) []string {
 	keys := []string{fmt.Sprintf("exit=%d", run.ExitCode), "result=" + run.ResultError}
 	keys = append(keys, run.SuiteErrors...)
+	keys = append(keys, run.SuiteFailures...)
 	for _, test := range run.Tests {
 		keys = append(keys, test.File+" › "+test.Name+": "+test.Status+"\n"+test.Failure)
 	}

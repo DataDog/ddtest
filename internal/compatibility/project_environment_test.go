@@ -90,6 +90,8 @@ process.on('exit', () => {
 	writeFixture(t, root, "worker.cjs", `const assert = require('assert');
 const fs = require('fs');
 if (process.argv.includes('--showConfig')) {
+  // This synthetic runner implements the runtime snapshot produced by the Jest entry-point probe.
+  if (process.env.DDTEST_JEST_PREFLIGHT) fs.writeFileSync(process.env.DDTEST_JEST_PREFLIGHT, JSON.stringify({node:process.version, executable:process.execPath, arguments:process.argv.slice(2)}));
   assert.strictEqual(global.ddtestTracer, undefined);
   console.log(JSON.stringify({ version: '30.2.0', configs: [{ rootDir: process.cwd(), testRunner: 'jest-circus/runner' }] }));
 } else if (process.argv.includes('--listTests')) {
@@ -128,7 +130,7 @@ if (process.argv.includes('--showConfig')) {
 		// successful worker startup must not produce a passing validation verdict.
 		require.ErrorContains(t, err, "validation is incomplete", output.String())
 		data, err := os.ReadFile(filepath.Join(root, "worker-ran"))
-		require.NoError(t, err)
+		require.NoError(t, err, output.String())
 		require.Contains(t, string(data), "baseline\ninstrumented\n")
 		data, err = os.ReadFile(filepath.Join(root, ".testoptimization", "testdrive.json"))
 		require.NoError(t, err)

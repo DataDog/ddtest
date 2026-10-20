@@ -8,10 +8,13 @@ package testdrive
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
@@ -47,7 +50,65 @@ func unavailableFeatures(result *validationResult, reason string) {
 }
 
 func createJestProbe(root string, baseline validationRun) (string, error) {
-	return createProbe(root, baseline, probeSource)
+	return createJestProjectProbe(root, baseline, jestProject{})
+}
+
+func createJestProjectProbe(root string, baseline validationRun, project jestProject) (string, error) {
+	// Pick the same eligible source as createProbe before choosing module syntax.
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	for _, candidate := range baseline.Tests {
+		if candidate.Status != "passed" && candidate.Status != "failed" {
+			continue
+		}
+		path, err := filepath.EvalSymlinks(candidate.File)
+		if err != nil {
+			continue
+		}
+		relative, err := filepath.Rel(canonical, path)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		baseline.Tests = []jestTest{candidate}
+		break
+	}
+	source := probeSource
+	if project.InjectGlobals != nil && !*project.InjectGlobals {
+		if len(baseline.Tests) == 0 {
+			return "", errors.New("no executed test is available to locate a probe")
+		}
+		path := baseline.Tests[0].File
+		esm := filepath.Ext(path) == ".mjs" || slices.Contains(project.ExtensionsToTreatAsEsm, filepath.Ext(path))
+		if filepath.Ext(path) == ".js" {
+			for directory := filepath.Dir(path); ; directory = filepath.Dir(directory) {
+				data, err := os.ReadFile(filepath.Join(directory, "package.json"))
+				if err == nil {
+					var manifest struct {
+						Type string `json:"type"`
+					}
+					if err := json.Unmarshal(data, &manifest); err != nil {
+						return "", err
+					}
+					esm = manifest.Type == "module"
+					break
+				}
+				if !os.IsNotExist(err) {
+					return "", err
+				}
+				if filepath.Dir(directory) == directory {
+					break
+				}
+			}
+		}
+		prefix := "const {test} = require('@jest/globals');\n"
+		if esm {
+			prefix = "import {test} from '@jest/globals';\n"
+		}
+		source = prefix + source
+	}
+	return createProbe(root, baseline, source)
 }
 
 func createProbe(root string, baseline validationRun, sourceText string) (string, error) {
@@ -101,12 +162,20 @@ func (t *Testdrive) runJestFeatures(ctx context.Context, output io.Writer, sessi
 		}
 		firstFeature, firstRun := len(result.Features), len(result.Runs)
 		runner := *t
+		runner.jestProject = project
 		if len(result.Preflight.Projects) > 1 && (project.DisplayName.Name == "" || names[project.DisplayName.Name] != 1) {
 			unavailableFeatures(result, "Cannot unambiguously select this Jest project: a unique displayName is required for per-project feature validation. The original configuration was preserved.")
 		} else {
 			if len(result.Preflight.Projects) > 1 {
 				var selected bool
-				runner.args, selected = projectArgs(t.command, t.args, project.DisplayName.Name)
+				selectionArgs := t.args
+				if result.Preflight.Arguments != nil {
+					selectionArgs = result.Preflight.Arguments
+				}
+				_, selected = projectArgs("jest", selectionArgs, project.DisplayName.Name)
+				if selected {
+					runner.args, selected = projectArgs(t.command, t.args, project.DisplayName.Name)
+				}
 				if !selected {
 					result.ProjectChecks = append(result.ProjectChecks, projectProbeCheck{Project: label, Root: project.Root, Excluded: true})
 					continue
@@ -143,7 +212,7 @@ func (t *Testdrive) runJestProjectFeatures(ctx context.Context, output io.Writer
 	for _, path := range files {
 		baseline.Tests = append(baseline.Tests, jestTest{File: path, Status: "passed"})
 	}
-	probePath, err := createJestProbe(t.repositoryRoot, baseline)
+	probePath, err := createJestProjectProbe(t.repositoryRoot, baseline, t.jestProject)
 	if err != nil {
 		unavailableFeatures(result, err.Error())
 		return nil

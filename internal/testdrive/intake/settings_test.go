@@ -164,3 +164,19 @@ func TestSkippingUsesTheRequestedProtocolLevel(t *testing.T) {
 		require.JSONEq(t, tc.want, string(result.Data[0]))
 	}
 }
+
+func TestKnownTestsIncludeTheEmittedModule(t *testing.T) {
+	response := httptest.NewRecorder()
+	scenarioHandler(Scenario{Feature: "early-flake-detection", Module: "named project"}).ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.KnownTestsURLPath, bytes.NewBufferString(`{}`)))
+	require.Equal(t, http.StatusOK, response.Code)
+	var data struct {
+		Data struct {
+			Attributes struct {
+				Tests map[string]json.RawMessage `json:"tests"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &data))
+	require.JSONEq(t, `{}`, string(data.Data.Attributes.Tests["named project"]))
+	require.JSONEq(t, `{}`, string(data.Data.Attributes.Tests["jest"]))
+}

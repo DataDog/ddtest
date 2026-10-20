@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -87,4 +88,48 @@ func TestUndiscoveredProbeCannotValidateWrongProject(t *testing.T) {
 	data, err := os.ReadFile(source)
 	require.NoError(t, err)
 	require.Equal(t, "original", string(data))
+}
+
+func TestProjectSelectionReadsExpandedScriptArguments(t *testing.T) {
+	run := preparedTestdrive(t)
+	run.command = "npm"
+	run.args = []string{"test"}
+	run.executor = discoveryExecutor(func(args []string) ([]byte, error) { return []byte("[]"), nil })
+	first, second := jestProject{}, jestProject{}
+	first.DisplayName.Name = "A"
+	second.DisplayName.Name = "B"
+	result := validationResult{Framework: "jest", Preflight: &jestPreflight{Projects: []jestProject{first, second}, Arguments: []string{"--selectProjects", "A"}}}
+	require.NoError(t, run.runJestFeatures(t.Context(), &bytes.Buffer{}, nil, "", &result))
+	require.Len(t, result.ProjectChecks, 2)
+	require.Equal(t, "A", result.ProjectChecks[0].Project)
+	require.True(t, result.ProjectChecks[1].Excluded)
+	require.Len(t, result.Features, 6, "excluded project must not receive another project's validation")
+}
+
+func TestJestProbeImportsTheAPIWhenGlobalsAreDisabled(t *testing.T) {
+	for _, tc := range []struct {
+		extension, packageType, prefix string
+		esmExtensions                  []string
+	}{
+		{".cjs", "module", "const {test}", nil},
+		{".mjs", "commonjs", "import {test}", nil},
+		{".js", "module", "import {test}", nil},
+		{".js", "commonjs", "const {test}", nil},
+		{".ts", "module", "const {test}", nil},
+		{".ts", "module", "import {test}", []string{".ts"}},
+	} {
+		t.Run(tc.extension+tc.packageType+tc.prefix, func(t *testing.T) {
+			root := t.TempDir()
+			requireWriteFile(t, filepath.Join(root, "package.json"), `{"type":"`+tc.packageType+`"}`)
+			source := filepath.Join(root, "one.test"+tc.extension)
+			requireWriteFile(t, source, "original")
+			disabled := false
+			probe, err := createJestProjectProbe(root, validationRun{Tests: []jestTest{{File: source, Status: "passed"}}}, jestProject{InjectGlobals: &disabled, ExtensionsToTreatAsEsm: tc.esmExtensions})
+			require.NoError(t, err)
+			defer func() { require.NoError(t, removeProbe(root, probe)) }()
+			data, err := os.ReadFile(probe)
+			require.NoError(t, err)
+			require.True(t, strings.HasPrefix(string(data), tc.prefix), string(data))
+		})
+	}
 }

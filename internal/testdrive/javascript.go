@@ -2,7 +2,7 @@ package testdrive
 
 import (
 	"encoding/json"
-	"github.com/kballard/go-shellquote"
+	"github.com/DataDog/ddtest/internal/environment"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,7 +22,7 @@ func javascriptEnvironment(ciInitPath string) map[string]string {
 }
 
 func stripDatadogNodeOptions(value string) string {
-	fields, err := shellquote.Split(value)
+	fields, err := environment.SplitNodeOptions(value)
 	if err != nil {
 		return value
 	}
@@ -44,16 +44,13 @@ func stripDatadogNodeOptions(value string) string {
 		if strings.HasPrefix(field, "-r") && isDatadogNodePreload(strings.TrimPrefix(field, "-r")) {
 			continue
 		}
-		if strings.ContainsAny(field, " \t\r\n\"") {
-			field = strconv.Quote(field)
-		}
 		kept = append(kept, field)
 	}
-	return strings.Join(kept, " ")
+	return environment.JoinNodeOptions(kept)
 }
 
 func isDatadogNodePreload(value string) bool {
-	value = strings.Trim(value, `"'`)
+	value = strings.ReplaceAll(value, `\`, "/")
 	return value == "dd-trace/ci/init" || value == "dd-trace/register.js" || strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/ci/init.js") ||
 		strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/register.js")
 }

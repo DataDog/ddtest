@@ -42,6 +42,7 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	jestProject          jestProject
 	preflightEnvironment map[string]string
 	discoveryError       error
 	preflight            func(context.Context, io.Writer, *validationResult) error

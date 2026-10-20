@@ -38,7 +38,7 @@ func newHandler() http.Handler { return scenarioHandler(Scenario{}) }
 func scenarioHandler(scenario Scenario) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+constants.SettingsURLPath, func(w http.ResponseWriter, r *http.Request) { handleScenarioSettings(w, r, scenario) })
-	mux.HandleFunc("POST "+constants.KnownTestsURLPath, handleKnownTests)
+	mux.HandleFunc("POST "+constants.KnownTestsURLPath, func(w http.ResponseWriter, r *http.Request) { handleKnownTests(w, r, scenario) })
 	mux.HandleFunc("POST "+constants.SkippableTestsURLPath, func(w http.ResponseWriter, r *http.Request) { handleSkippableTests(w, r, scenario) })
 	mux.HandleFunc("POST "+constants.TestManagementTestsURLPath, func(w http.ResponseWriter, r *http.Request) { handleTestManagement(w, r, scenario) })
 	mux.HandleFunc("POST "+constants.SearchCommitsURLPath, func(w http.ResponseWriter, _ *http.Request) {
@@ -101,12 +101,15 @@ func handleScenarioSettings(w http.ResponseWriter, request *http.Request, scenar
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-func handleKnownTests(w http.ResponseWriter, _ *http.Request) {
+func handleKnownTests(w http.ResponseWriter, _ *http.Request, scenario Scenario) {
 	// JavaScript tracers validate the module entry before enabling EFD. Return
 	// an empty dataset for every supported runner, preserving Jest's retry loop.
 	tests := make(map[string]any)
 	for _, name := range []string{"jest", "webdriverio", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest", "rspec", "minitest"} {
 		tests[name] = map[string]any{}
+	}
+	if scenario.Module != "" {
+		tests[scenario.Module] = map[string]any{}
 	}
 	writeJSON(w, map[string]any{
 		"data": map[string]any{

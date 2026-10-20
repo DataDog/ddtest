@@ -59,6 +59,7 @@ type validationRun struct {
 	ResultError                     string
 	Tests                           []jestTest
 	SuiteErrors                     []string
+	SuiteFailures                   []string
 	Facts                           intake.Facts
 }
 

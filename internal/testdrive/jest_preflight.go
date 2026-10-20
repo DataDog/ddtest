@@ -30,9 +30,11 @@ type jestProject struct {
 	DisplayName struct {
 		Name string `json:"name"`
 	} `json:"displayName"`
-	Runner      string `json:"testRunner"`
-	Environment string `json:"testEnvironment"`
-	Root        string `json:"rootDir"`
+	Runner                 string   `json:"testRunner"`
+	Environment            string   `json:"testEnvironment"`
+	Root                   string   `json:"rootDir"`
+	InjectGlobals          *bool    `json:"injectGlobals,omitempty"`
+	ExtensionsToTreatAsEsm []string `json:"extensionsToTreatAsEsm,omitempty"`
 }
 
 type jestPreflight struct {

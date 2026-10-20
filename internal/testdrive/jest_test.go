@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
@@ -382,4 +383,39 @@ func TestCommandDiagnosticRetainsBoundedFailureTail(t *testing.T) {
 	require.True(t, strings.HasSuffix(diagnostic, failure))
 	require.NotContains(t, diagnostic, "\x1b")
 	require.Equal(t, diagnostic, (validationRun{Diagnostic: diagnostic}).summary().Diagnostic)
+}
+
+func TestBaselinePreservesWindowsNodePreloads(t *testing.T) {
+	for _, options := range []string{`--require C:\repo\setup.cjs --require C:\repo\node_modules\dd-trace\ci\init.js`, `--require "C:\\repo space\\setup.cjs" --import dd-trace/register.js`} {
+		got := stripDatadogNodeOptions(options)
+		require.NotContains(t, got, "dd-trace")
+		words, err := environment.SplitNodeOptions(got)
+		require.NoError(t, err)
+		want := `C:\repo\setup.cjs`
+		if strings.Contains(options, "repo space") {
+			want = `C:\repo space\setup.cjs`
+		}
+		require.Equal(t, []string{"--require", want}, words)
+	}
+}
+
+func TestSuiteFailureAfterAssertionsChangesCompatibility(t *testing.T) {
+	root := t.TempDir()
+	baseline := testRun("failed", 1)
+	instrumented := testRun("failed", 1)
+	for index, message := range []string{"existing assertion failure", "existing assertion failure\nadditional teardown error"} {
+		path := filepath.Join(root, "results.json")
+		data, err := json.Marshal(map[string]any{"testResults": []any{map[string]any{"name": "/project/test.js", "status": "failed", "message": message, "assertionResults": []any{map[string]any{"fullName": "works", "status": "failed"}}}}})
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, data, 0600))
+		run := &baseline
+		if index == 1 {
+			run = &instrumented
+		}
+		run.Tests = nil
+		readJestResults(path, run)
+		require.Empty(t, run.SuiteErrors, "ordinary failed assertions must remain valid probe controls")
+	}
+	require.Equal(t, "suspected regression", compareJest(withoutTelemetry(baseline), instrumented).Status)
+	require.Equal(t, "compatible", compareJest(withoutTelemetry(instrumented), instrumented).Status)
 }

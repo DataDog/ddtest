@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -64,7 +65,13 @@ func projectArgs(command string, args []string, name string) ([]string, bool) {
 }
 
 func (t *Testdrive) discoverJestTests(ctx context.Context, probe string) ([]string, string, error) {
-	args := appendJestArgs(t.command, t.args, "--listTests", "--json")
+	directory, err := os.MkdirTemp("", "ddtest-jest-discovery-")
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = os.RemoveAll(directory) }()
+	resultPath := filepath.Join(directory, "paths.json")
+	args := appendJestArgs(t.command, t.args, "--listTests", "--json", "--outputFile", resultPath)
 	if probe != "" {
 		args = withJestProbe(t.command, args, probe)
 	}
@@ -81,9 +88,16 @@ func (t *Testdrive) discoverJestTests(ctx context.Context, probe string) ([]stri
 	if probe != "" {
 		env["DDTEST_JEST_PROBE"] = "1"
 	}
+	if err := redirectJestArguments(directory, "", resultPath, probe, env); err != nil {
+		return nil, command, err
+	}
 	data, err := t.executor.CombinedOutput(ctx, t.command, args, env)
 	if err != nil {
 		return nil, command, fmt.Errorf("jest --listTests failed: %w; %s", err, commandDiagnostic(data))
+	}
+	// Jest versions that honor outputFile write their list there instead of stdout.
+	if results, err := os.ReadFile(resultPath); err == nil {
+		data = results
 	}
 	// Package managers may print banners before the JSON array.
 	for i, value := range data {
