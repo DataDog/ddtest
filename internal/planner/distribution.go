@@ -128,6 +128,19 @@ func testFileWeightsForFiles(cacheWeights map[string]int, testFiles []string) ma
 // For multiple runners: distributes files using weighted list scheduling and writes to separate runner files
 // For single runner: copies test-files.txt content to runner-0
 func (tp *TestPlanner) CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOutputPath string) error {
+	if tp.planMetadata.Platform == "python" && parallelRunners <= 1 && hasDuplicateBasenames(testFiles) {
+		// Single-runner distribution copies files without separating them, so
+		// pytest same-basename import collisions cannot be avoided here.
+		for _, group := range basenameCollisionGroups(testFiles) {
+			files := make([]string, 0, len(group))
+			for _, file := range group {
+				files = append(files, file.path)
+			}
+			slog.Warn("Same-basename test files share a single runner; pytest import collisions cannot be avoided",
+				"basename", filepath.Base(files[0]), "files", files,
+				"hint", "use more parallel runners, add __init__.py packages, or rename files")
+		}
+	}
 	if parallelRunners > 1 {
 		// Distribute test files across parallel runners using weighted list scheduling.
 		distribution := tp.DistributeWeightedTestFiles(testFiles, parallelRunners)
