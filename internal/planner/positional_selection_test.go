@@ -72,7 +72,7 @@ func TestPositionalSelectionNarrowsFrameworkDiscovery(t *testing.T) {
 					planner := newTestPlannerWithDefaults()
 					if mode == "full" {
 						// Also covers restored caches: they use the same processing path.
-						err = planner.recordFullDiscoveryResults(tests, resolved, newSkippableMatcher(api.NewSkippables(), nil))
+						err = planner.recordFullDiscoveryResults(tests, resolved, newSkippableMatcher(api.NewSkippables(), nil), nil)
 					} else {
 						err = planner.recordFastDiscoveryFallbackFiles(files)
 					}

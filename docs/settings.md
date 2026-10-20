@@ -61,8 +61,11 @@ or `--tests-location`, filters to `.py` source files, and respects exclusions an
 positional selection. It does not enumerate test functions, classes, fixtures,
 or parametrized cases. A file
 is omitted only when its backend suite is skippable and the backend suite
-metadata maps it to a selected source file. New files and suites without source
-metadata remain runnable; a dotted module name or matching filename alone is
+metadata maps it to a selected source file. This mapping requirement holds in
+both discovery modes: forcing full test discovery restores collection and
+the discovery cache but never changes which files suite mode may skip.
+New files and suites without source metadata remain runnable; a dotted module
+name or matching filename alone is
 not enough to skip a file. Source metadata is obtained with suite durations,
 but a valid duration value is not required to apply the skip.
 

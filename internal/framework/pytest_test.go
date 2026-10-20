@@ -327,6 +327,45 @@ func TestPyTest_FileDiscoveryFiltersNonPythonFiles(t *testing.T) {
 	}
 }
 
+func TestPyTest_FileDiscoveryFiltersNonTestDirectories(t *testing.T) {
+	t.Chdir(t.TempDir())
+	// Virtualenvs conventionally live inside the repository root and
+	// installed packages ship test_* modules that match discovery patterns.
+	for _, file := range []string{
+		"tests/test_case.py",
+		".venv/lib/python3.12/site-packages/ddtrace/testing/internal/test_data.py",
+		"venv/lib/python3.12/site-packages/pkg/test_helper.py",
+		"tests/__pycache__/test_case.py",
+		".tox/py312/lib/python3.12/site-packages/pkg/test_helper.py",
+		"node_modules/pkg/test_case.py",
+	} {
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pytest := NewPytest(&testPlatform{})
+	for _, selection := range []discovery.TestFileSet{
+		{Pattern: "**/test_*"},
+		{ExplicitFiles: []string{
+			"tests/test_case.py",
+			".venv/lib/python3.12/site-packages/ddtrace/testing/internal/test_data.py",
+			"venv/lib/python3.12/site-packages/pkg/test_helper.py",
+			"node_modules/pkg/test_case.py",
+		}},
+	} {
+		files, err := pytest.DiscoverTestFiles(t.Context(), selection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(files, []string{"tests/test_case.py"}) {
+			t.Fatalf("DiscoverTestFiles(%+v) = %v, want only tests/test_case.py", selection, files)
+		}
+	}
+}
+
 func TestPyTest_RunTests_WithCommandOverride(t *testing.T) {
 	testFiles := []string{"tests/test_user.py"}
 

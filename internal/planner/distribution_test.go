@@ -462,7 +462,7 @@ func TestTestSplitBuilderDistributeFiles(t *testing.T) {
 	}
 
 	builder := newTestSplitBuilder(2)
-	result := builder.distributeFiles(testFiles)
+	result := builder.distributeFiles(testFiles, false)
 	expected := [][]string{
 		{"slow.rb"},
 		{"medium.rb", "fast.rb"},
@@ -645,5 +645,76 @@ func assertDistribution(t *testing.T, result, expected [][]string) {
 		if !slices.Equal(result[i], expected[i]) {
 			t.Errorf("runner %d = %v, expected %v", i, result[i], expected[i])
 		}
+	}
+}
+
+func TestTestSplitBuilderDistributeFilesBasenameAffinity(t *testing.T) {
+	testFiles := map[string]int{
+		"tests/unit/test_same.py":        10,
+		"tests/integration/test_same.py": 5,
+		"tests/test_other.py":            1,
+	}
+
+	b := newTestSplitBuilder(2)
+	result := b.distributeFiles(testFiles, true)
+	if len(result) != 2 {
+		t.Fatalf("distribution has %d runners, want 2", len(result))
+	}
+	for _, runner := range result {
+		basenames := map[string]bool{}
+		for _, file := range runner {
+			basename := filepath.Base(file)
+			if basenames[basename] {
+				t.Fatalf("runner %v contains duplicate basename %s", runner, basename)
+			}
+			basenames[basename] = true
+		}
+	}
+	// All files must be distributed exactly once.
+	distributed := map[string]int{}
+	for _, runner := range result {
+		for _, file := range runner {
+			distributed[file]++
+		}
+	}
+	for file, count := range distributed {
+		if count != 1 {
+			t.Fatalf("file %s distributed %d times", file, count)
+		}
+	}
+	for file := range testFiles {
+		if distributed[file] != 1 {
+			t.Fatalf("file %s missing from distribution", file)
+		}
+	}
+}
+
+func TestTestSplitBuilderDistributeFilesBasenameAffinityDisabledForOtherPlatforms(t *testing.T) {
+	// Ruby tolerates same-basename spec files; affinity must not rearrange
+	// the default weighted distribution.
+	testFiles := map[string]int{
+		"spec/unit/order_spec.rb":   3,
+		"spec/system/order_spec.rb": 2,
+	}
+	b2 := newTestSplitBuilder(2)
+	result := b2.distributeFiles(testFiles, false)
+	assertDistribution(t, result, [][]string{{"spec/unit/order_spec.rb"}, {"spec/system/order_spec.rb"}})
+}
+
+func TestTestPlannerDistributeWeightedTestFilesBasenameAffinityPythonOnly(t *testing.T) {
+	testFiles := map[string]int{
+		"tests_a/test_same.py": 4,
+		"tests_b/test_same.py": 4,
+	}
+	pythonPlanner := newTestPlannerWithDefaults()
+	pythonPlanner.planMetadata.Platform = "python"
+	result := pythonPlanner.DistributeWeightedTestFiles(testFiles, 2)
+	for i, runner := range result {
+		if len(runner) != 1 {
+			t.Fatalf("python runner %d = %v, want exactly one file (same-basename files must be separated)", i, runner)
+		}
+	}
+	if result[0][0] == result[1][0] {
+		t.Fatal("same-basename files ended up on the same runner")
 	}
 }
