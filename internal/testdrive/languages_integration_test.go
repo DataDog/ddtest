@@ -11,14 +11,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-// Python/Ruby currently collect real telemetry; they do not claim the paired
-// comparison or feature validation implemented for JavaScript frameworks.
+// Pytest validates native results and controlled features. Ruby retains its
+// reporting-only telemetry contract.
 func TestPublicPythonRubyTestdrives(t *testing.T) {
 	if os.Getenv("DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST") == "" {
 		t.Skip("set DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST=1")
@@ -31,7 +32,7 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 		name, command string
 		files         map[string]string
 	}{
-		{"pytest", "python -m pytest", map[string]string{"requirements.txt": "pytest==8.4.2\n", "pytest.ini": "[pytest]\n", "test_one.py": "def test_adds():\n    assert 1 + 1 == 2\n"}},
+		{"pytest", "python -m pytest", map[string]string{"requirements.txt": "pytest==8.4.2\nddtrace==4.16.0\n", "pytest.ini": "[pytest]\n", "app.py": "def add(a, b):\n    return a + b\n", "test_one.py": "from app import add\ndef test_adds():\n    assert add(1, 1) == 2\n"}},
 		{"rspec", "bundle exec rspec", map[string]string{"Gemfile": "source 'https://rubygems.org'\ngem 'rspec', '3.13.1'\n", "spec/one_spec.rb": "RSpec.describe 'addition' do\n  it('adds') { expect(1 + 1).to eq(2) }\nend\n"}},
 		{"minitest", "bundle exec rake test", map[string]string{"Gemfile": "source 'https://rubygems.org'\ngem 'rake', '13.3.0'\ngem 'minitest', '5.25.5'\n", "Rakefile": "require 'rake/testtask'\nRake::TestTask.new(:test) { |t| t.pattern = 'test/**/*_test.rb' }\n", "test/one_test.rb": "require 'minitest/autorun'\nclass AdditionTest < Minitest::Test\n  def test_adds\n    assert_equal 2, 1 + 1\n  end\nend\n"}},
 	} {
@@ -44,11 +45,14 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 				integrationFile(t, root, name, contents)
 			}
 			env := []string{}
+			pythonVersion := ""
 			if fixture.name == "pytest" {
 				venv := filepath.Join(t.TempDir(), "venv")
 				integrationCommand(t, ctx, root, nil, "python3", "-m", "venv", venv)
 				env = append(env, "PATH="+filepath.Join(venv, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"), "VIRTUAL_ENV="+venv)
 				integrationCommand(t, ctx, root, env, filepath.Join(venv, "bin", "python"), "-m", "pip", "install", "-r", "requirements.txt")
+				pythonVersion = strings.TrimSpace(integrationCommand(t, ctx, root, env, filepath.Join(venv, "bin", "python"), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"))
+				env = append(env, "DD_GIT_REPOSITORY_URL=https://github.com/example/ddtest-pytest-fixture", "DD_GIT_COMMIT_SHA=0123456789012345678901234567890123456789", "DD_GIT_BRANCH=main", "DD_GIT_COMMIT_MESSAGE=pytest validation fixture")
 			} else {
 				env = append(env, "BUNDLE_PATH="+filepath.Join(t.TempDir(), "bundle"), "BUNDLE_USER_HOME="+t.TempDir())
 				integrationCommand(t, ctx, root, env, "bundle", "lock")
@@ -58,10 +62,19 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 			for _, flags := range [][]string{nil, {"--instructions"}} {
 				args := append([]string{"onboard", "--framework", fixture.name}, flags...)
 				instructions := integrationCommand(t, ctx, root, env, binary, args...)
-				for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json", "telemetry_only", "UNVALIDATED", "INCOMPLETE", "--agent", "--format", "summary.final_response", "scratch files"} {
+				for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json", "telemetry_only", "UNVALIDATED", "INCOMPLETE", "--agent", "--format", "summary.final_response"} {
 					require.NotContains(t, instructions, invalid)
 				}
-				require.Contains(t, instructions, "Run the local, credential-free setup check")
+				if fixture.name == "pytest" {
+					require.Contains(t, instructions, "--all --check-only --yes")
+					require.Contains(t, instructions, "baseline/reporting-only comparison")
+				} else {
+					require.Contains(t, instructions, "Run the local, credential-free setup check")
+					require.NotContains(t, instructions, "scratch files")
+				}
+			}
+			if fixture.name == "pytest" {
+				integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    steps:\n      - uses: actions/setup-python@v6\n        with:\n          python-version: '"+pythonVersion+"'\n      - uses: datadog/test-visibility-github-action@v3\n        with:\n          languages: python\n          python-tracer-version: '4.16.0'\n      - run: "+fixture.command+"\n")
 			}
 			for _, mode := range []struct {
 				name string
@@ -100,15 +113,22 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 						require.Equal(t, previous, current, "unsupported modes must not execute tests or replace evidence")
 						return
 					}
-					require.NoError(t, err, "a passing command with events retains main's exit 0: %s", output)
-					require.Contains(t, string(output), "Test events received.")
-					require.NotContains(t, string(output), "INCOMPLETE")
+					require.NoError(t, err, "%s", output)
+					if fixture.name == "pytest" {
+						require.Contains(t, string(output), "COMPLETE LOCALLY")
+					} else {
+						require.Contains(t, string(output), "Test events received.")
+						require.NotContains(t, string(output), "INCOMPLETE")
+					}
 					data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
 					require.NoError(t, err, string(output))
 					var report struct {
-						Framework string
-						Success   bool
-						Runs      []struct {
+						Framework     string
+						Success       bool
+						Compatibility struct{ Status string }
+						Features      []struct{ Name, Status string }
+						Summary       struct{ Status string }
+						Runs          []struct {
 							Name           string
 							ExitCode       int `json:"exit_code"`
 							Instrumented   bool
@@ -121,13 +141,29 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 					var fields map[string]json.RawMessage
 					require.NoError(t, json.Unmarshal(data, &fields))
 					require.NotContains(t, fields, "telemetry_only")
-					require.NotContains(t, fields, "summary")
 					require.NotContains(t, string(data), "INCOMPLETE")
-					require.Len(t, report.Runs, 1)
-					require.Equal(t, "reporting-only", report.Runs[0].Name)
-					require.True(t, report.Runs[0].Instrumented)
-					require.Zero(t, report.Runs[0].ExitCode, string(output))
-					require.Equal(t, 1, report.Runs[0].TestEventCount)
+					reportingIndex := 0
+					if fixture.name == "pytest" {
+						require.Equal(t, "COMPLETE LOCALLY", report.Summary.Status)
+						require.Equal(t, "compatible", report.Compatibility.Status)
+						require.Len(t, report.Features, 6)
+						for _, feature := range report.Features {
+							require.Equal(t, "passed", feature.Status, feature.Name)
+						}
+						require.GreaterOrEqual(t, len(report.Runs), 2)
+						require.Equal(t, "baseline", report.Runs[0].Name)
+						require.False(t, report.Runs[0].Instrumented)
+						require.Zero(t, report.Runs[0].ExitCode)
+						reportingIndex = 1
+					} else {
+						require.NotContains(t, fields, "summary")
+						require.Len(t, report.Runs, 1)
+					}
+					reporting := report.Runs[reportingIndex]
+					require.Equal(t, "reporting-only", reporting.Name)
+					require.True(t, reporting.Instrumented)
+					require.Zero(t, reporting.ExitCode, string(output))
+					require.Equal(t, 1, reporting.TestEventCount)
 					for name, contents := range fixture.files {
 						after, err := os.ReadFile(filepath.Join(root, name))
 						require.NoError(t, err)

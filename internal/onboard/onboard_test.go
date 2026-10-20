@@ -300,9 +300,8 @@ func TestInstructionsUseV3WithoutTracerPinsAndKeepBothReports(t *testing.T) {
 	}
 }
 
-func TestPythonRubyInstructionsKeepSelectedLanguageSetup(t *testing.T) {
+func TestRubyInstructionsKeepSelectedLanguageSetup(t *testing.T) {
 	for _, fixture := range []struct{ language, framework, initialization string }{
-		{"python", "pytest", "PYTEST_ADDOPTS=--ddtrace"},
 		{"ruby", "rspec", "RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument"},
 		{"ruby", "minitest", "RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument"},
 	} {

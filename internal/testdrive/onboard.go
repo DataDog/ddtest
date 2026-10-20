@@ -623,7 +623,7 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 	if validation == nil {
 		return fmt.Errorf("no saved validation report")
 	}
-	if !supportsValidationFramework(validation.Framework) {
+	if !supportsValidationFramework(validation.Framework) || validation.Framework == "pytest" {
 		result := onboard.AgentResult{Status: "unsupported", Phase: "report", Code: "framework_unsupported", Reason: "Controlled validation is not available for this framework.", NextAction: "report_result"}
 		return errors.Join(fmt.Errorf("%s", result.Reason), onboard.RenderAgentResult(output, result, format))
 	}

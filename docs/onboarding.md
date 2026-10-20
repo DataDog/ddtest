@@ -185,8 +185,9 @@ No Datadog account or Agent is needed. Testdrive links to an HTML report at
 non-interactive sessions, `--framework` to select a runner, and `--command` for
 package scripts or custom setup.
 
-The frameworks listed above can collect local telemetry. Compatibility and feature validation covers Jest, Vitest, Playwright, Mocha,
-Cypress, Cucumber, WebdriverIO and Python with pytest. Other frameworks and unsupported configurations remain
+The frameworks listed above can collect local telemetry. Compatibility and feature
+validation covers Jest, Vitest, Playwright, Mocha, Cypress, Cucumber, WebdriverIO
+and Python with pytest. Other frameworks and unsupported configurations remain
 explicitly unvalidated. If a repository contains several
 runners, select one with `--framework`. Use `--command` to select a custom entry
 point or a small representative part of a large suite:
@@ -339,7 +340,7 @@ and `.testoptimization/testdrive.json`.
 
 ### Python with pytest
 
-For Python/pytest, activatethe project's test environment, then run:
+For Python/pytest, activate the project's test environment, then run:
 
 ```sh
 ddtest onboard --framework pytest

@@ -371,7 +371,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintf(output, "  - save the command execution and received event counts in %s\n", reportPath)
 	}
 	_, _ = fmt.Fprintf(output, "  - save the instrumented suite findings in %s\n", htmlReportPath(""))
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "mocha" || t.framework.Name() == "cucumber" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "mocha" || t.framework.Name() == "cucumber" || t.framework.Name() == "pytest" {
 		_, _ = fmt.Fprintln(output, "  - disable coverage thresholds only for isolated probes, preserving coverage collection and the original full-suite thresholds")
 	}
 	_, _ = fmt.Fprintln(output, "  - keep the upstream HTML findings report and compact JSON validation report; remove temporary probes, tracer, traffic, and run files")
