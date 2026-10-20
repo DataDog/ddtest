@@ -107,8 +107,8 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 		// to a source file, so forcing full discovery cannot change which
 		// files are skipped.
 		if match.kind == skippableMatchTIASuite {
-			if _, ok := tp.sourceFileForSuite(match.suiteKey, testFramework); !ok {
-				slog.Debug("Skippable suite has no backend source-file mapping; keeping suite runnable",
+			if sourceFile, ok := tp.sourceFileForSuite(match.suiteKey, testFramework); !ok || sourceFile != normalizedSourceFile {
+				slog.Debug("Skippable suite has no matching source-file mapping; keeping suite runnable",
 					"module", match.suiteKey.Module, "suite", match.suiteKey.Suite)
 				match = skippableMatch{}
 			}
