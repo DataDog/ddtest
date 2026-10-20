@@ -83,7 +83,7 @@ func vitestPlannerSkippedProbe(directory, root, probe string, scenario intake.Sc
 	if scenario.Feature != "skipping" || probe == "" || run.ExitCode != 0 || run.Facts.SkippableRequests == 0 || run.Facts.TestEventCount != 0 || len(run.Tests) != 0 {
 		return false
 	}
-	relative, err := filepath.Rel(root, probe)
+	relative, err := filepath.Rel(run.root, probe)
 	if err != nil || filepath.ToSlash(relative) != scenario.SourceFile {
 		return false
 	}
@@ -161,7 +161,7 @@ func collectVitestWorkerResults(directory, root string, run *validationRun) erro
 		if len(reported) == 0 && len(assignment.Selected) == 1 && run.Name == "skipping" && run.ExitCode == 0 && run.Facts.TestEventCount == 0 && run.Skipping != nil && run.Skipping.SkippedByITR {
 			// Vitest omits ITR-skipped suites from its native JSON. Accept only
 			// the isolated probe whose matching suite-skip event was received.
-			file, err := filepath.EvalSymlinks(filepath.Join(root, run.Skipping.SourceFile))
+			file, err := filepath.EvalSymlinks(filepath.Join(run.root, run.Skipping.SourceFile))
 			if err == nil && file == assignment.Selected[0] {
 				reported = []string{file}
 			}

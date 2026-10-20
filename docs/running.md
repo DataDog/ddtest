@@ -666,3 +666,9 @@ path requires a successful backend negotiation and an empty persisted plan,
 with no worker started. Keep `.testoptimization/testdrive.json` and
 `.testoptimization/report.html`; raw events and temporary probes are removed.
 Tests use a local mock backend. Real CI and Datadog processing are not exercised.
+
+Vitest package-script shorthand (`pnpm vitest` or `yarn vitest` when that script
+exists) must use `--all` for setup-aware discovery, or an explicitly reviewed
+`exec vitest` command. Unsupported CI runner environment settings and preloads
+are reported as unvalidated. Probe selection uses the installed CLI parser;
+validation-owned scalar options are replaced rather than duplicated.

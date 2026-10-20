@@ -7,11 +7,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
@@ -63,6 +65,10 @@ type vitestErrorExecutor struct{ t *testing.T }
 func (e vitestErrorExecutor) CombinedOutput(_ context.Context, _ string, args []string, _ map[string]string) ([]byte, error) {
 	require.Contains(e.t, args, "--reporter=default")
 	require.Contains(e.t, args, "--reporter=json")
+	if separator := slices.Index(args, "--"); separator >= 0 {
+		require.Less(e.t, slices.Index(args, "--reporter=json"), separator, "validation flags must precede the argument terminator")
+	}
+
 	for _, arg := range args {
 		if path, ok := strings.CutPrefix(arg, "--outputFile="); ok {
 			requireWriteFile(e.t, path, `{"success":true,"testResults":[{"name":"probe.test.ts","assertionResults":[{"fullName":"ddtest validation probe","status":"passed"}]}]}`)
@@ -262,7 +268,8 @@ func TestVitestConfigurationIntegration(t *testing.T) {
 	if modules == "" {
 		t.Skip("set DDTEST_VITEST_NODE_MODULES")
 	}
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	t.Chdir(root)
 	require.NoError(t, os.Symlink(modules, filepath.Join(root, "node_modules")))
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"type":"module"}`)
@@ -276,4 +283,80 @@ func TestVitestConfigurationIntegration(t *testing.T) {
 	require.Equal(t, "forks", projects[0].Pool)
 	require.Len(t, files, 1)
 	require.Equal(t, "one.test.js", filepath.Base(files[0]))
+
+	probe := filepath.Join(root, "controlled.test.js")
+	requireWriteFile(t, probe, `throw new Error('probe discovery must not execute tests')`)
+	drive.args = []string{"vitest", "run", "--config", "vitest.config.mjs", "one.test.js"}
+	_, _, files, err = drive.inspectVitest(t.Context(), t.TempDir(), probe)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	require.Equal(t, "controlled.test.js", filepath.Base(files[0]))
+	require.NotContains(t, drive.vitestProbeArguments, "one.test.js")
+}
+
+func TestVitestManagerShorthandDoesNotIgnorePackageScripts(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"vitest":"cross-env MODE=ci vitest --config ci.ts"}}`)
+	for _, manager := range []string{"pnpm", "yarn"} {
+		_, err := vitestArguments(manager, []string{"vitest", "--coverage"})
+		require.ErrorContains(t, err, "--all")
+		args, err := vitestArguments(manager, []string{"exec", "vitest", "--config", "ci.ts"})
+		require.NoError(t, err)
+		require.Equal(t, []string{"--config", "ci.ts"}, args)
+	}
+}
+
+type vitestConfigurationExecutor struct{ version string }
+
+func (e vitestConfigurationExecutor) CombinedOutput(context.Context, string, []string, map[string]string) ([]byte, error) {
+	return []byte(`__DDTEST_VITEST_CONFIG__{"version":"` + e.version + `","node":"24.14.1","projects":[{"pool":"forks"}],"files":[]}`), nil
+}
+
+func TestVitestSourceBuildDefersOnlyUntilInstalledMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name, version      string
+		checkOnly, blocked bool
+	}{
+		{"full source build", "4.1.11", false, false}, {"check-only needs metadata", "4.1.11", true, true}, {"known incompatible framework", "1.5.0", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			drive := preparedTestdrive(t)
+			drive.framework = framework.NewVitest(platform.NewJavaScript())
+			drive.platform = platform.NewJavaScript()
+			drive.command, drive.args = "vitest", []string{"run"}
+			drive.tracerVersion, drive.checkOnly = "git:local-source", tc.checkOnly
+			drive.executor = vitestConfigurationExecutor{version: tc.version}
+			drive.nodeVersion = func() string { return "24.14.1" }
+			t.Setenv("DD_TRACE_PACKAGE", "")
+			t.Setenv("NODE_OPTIONS", "")
+			result := validationResult{CIRuntime: &onboard.RuntimeCheck{Status: "not applicable"}}
+			err := drive.checkVitestPreflight(t.Context(), &bytes.Buffer{}, &result)
+			require.Equal(t, tc.blocked, err != nil)
+			if tc.blocked {
+				return
+			}
+			require.Equal(t, "inconclusive", result.Preflight.Verdict.Status)
+			tracer := filepath.Join(t.TempDir(), "dd-trace")
+			require.NoError(t, os.MkdirAll(filepath.Join(tracer, "ci"), 0700))
+			requireWriteFile(t, filepath.Join(tracer, "package.json"), `{"version":"6.20.1","engines":{"node":">=22"}}`)
+			require.NoError(t, verifyInstalledSelection(filepath.Join(tracer, "ci/init.js"), &result))
+			require.Equal(t, "compatible", checkVitestSupport(*result.Preflight, *result.Selection).Status)
+		})
+	}
+}
+
+func TestVitestValidationFlagsPrecedeArgumentTerminator(t *testing.T) {
+	drive := preparedTestdrive(t)
+	drive.command, drive.args = "npx", []string{"vitest", "run", "--", "src"}
+	drive.executor = vitestErrorExecutor{t}
+	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
+		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
+	}
+	session, err := NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
+	run, err := drive.runVitest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", "baseline", false, intake.Scenario{}, "", "")
+	require.NoError(t, err)
+	require.Empty(t, run.ResultError)
 }

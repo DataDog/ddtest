@@ -7,9 +7,12 @@ package onboard
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -30,11 +33,41 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	}
 	if runnerOnly {
 		for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
-			for _, key := range []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT", "DD_TRACE_ENABLED", "DD_CIVISIBILITY_ENABLED", "DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV"} {
-				if _, ok := env[key]; ok {
+			for _, key := range slices.Sorted(maps.Keys(env)) {
+				if strings.HasPrefix(key, "DD_TEST_OPTIMIZATION_RUNNER_") || key == "DD_TRACE_PACKAGE" || key == "DD_TRACE_ESM_IMPORT" || key == "DD_TRACE_ENABLED" || key == "DD_CIVISIBILITY_ENABLED" {
 					return "Custom ddtest worker instrumentation requires review: " + key
 				}
 			}
+		}
+		options, err := effectiveBootstrapOptions(workflow, job, step, row, true)
+		if err != nil {
+			return "Cannot resolve ddtest worker NODE_OPTIONS: " + err.Error()
+		}
+		words, err := environment.SplitNodeOptions(options)
+		if err != nil {
+			return "Cannot parse ddtest worker NODE_OPTIONS: " + err.Error()
+		}
+		for i := 0; i < len(words); i++ {
+			key, module, inline := strings.Cut(words[i], "=")
+			preload := key == "-r" || key == "--require" || key == "--import" || key == "--loader" || key == "--experimental-loader"
+			if strings.HasPrefix(key, "-r") && len(key) > 2 {
+				key, module, inline = "-r", key[2:], true
+				preload = true
+			}
+			if !preload {
+				continue
+			}
+			if !inline {
+				i++
+				if i >= len(words) {
+					return "Missing ddtest worker NODE_OPTIONS module"
+				}
+				module = words[i]
+			}
+			if (key == "-r" || key == "--require") && module == actionPreload || key == "--import" && module == "\x00DD_ACTION_IMPORT\x00" {
+				continue
+			}
+			return "Custom ddtest worker preload requires review. Use the action's DD_TRACE_PACKAGE/DD_TRACE_ESM_IMPORT exports; local replacement does not prove this CI module resolves: " + module
 		}
 		return ""
 	}

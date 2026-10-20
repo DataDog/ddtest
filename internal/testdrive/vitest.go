@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
@@ -50,7 +51,22 @@ func vitestArguments(command string, args []string) ([]string, error) {
 	case "vitest", "vitest.mjs":
 		return slices.Clone(args), nil
 	case "pnpm", "yarn", "npx":
-		if len(args) > 0 && args[0] == "exec" {
+		if (base == "pnpm" || base == "yarn") && len(args) > 0 && args[0] == "vitest" {
+			data, err := os.ReadFile("package.json")
+			if err != nil && !os.IsNotExist(err) {
+				return nil, fmt.Errorf("inspect package scripts: %w", err)
+			}
+			if err == nil {
+				var manifest struct{ Scripts map[string]string }
+				if err := json.Unmarshal(data, &manifest); err != nil {
+					return nil, fmt.Errorf("inspect package scripts: %w", err)
+				}
+				if _, exists := manifest.Scripts["vitest"]; exists {
+					return nil, fmt.Errorf("%s vitest selects a package script; use testdrive --all to resolve its setup and configuration, or an explicit %s exec vitest command after reviewing required setup", base, base)
+				}
+			}
+		}
+		if base != "npx" && len(args) > 0 && args[0] == "exec" {
 			args = args[1:]
 		}
 		if len(args) > 0 && args[0] == "vitest" {
@@ -64,7 +80,7 @@ func vitestArguments(command string, args []string) ([]string, error) {
 	return nil, fmt.Errorf("vitest validation needs the actual Vitest executable and options in --command; review and run required setup first, preserving CI's config, selection and coverage options")
 }
 
-func (t *Testdrive) inspectVitest(ctx context.Context, directory string) (string, []vitestProject, []string, error) {
+func (t *Testdrive) inspectVitest(ctx context.Context, directory string, probe ...string) (string, []vitestProject, []string, error) {
 	command := t.command
 	if t.usesVitestRunner() {
 		command = "ddtest"
@@ -80,7 +96,15 @@ func (t *Testdrive) inspectVitest(ctx context.Context, directory string) (string
 	env := testEnvironment("http://127.0.0.1:1", "vitest-preflight")
 	env["NODE_OPTIONS"] = stripDatadogNodeOptions(t.nodeOptions())
 	env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
-	data, err := t.executor.CombinedOutput(ctx, "node", []string{"--input-type=module", "--eval", vitestConfigScript, string(encoded), filepath.Join(directory, "vite-cache")}, env)
+	selectedProbe := ""
+	if len(probe) > 0 {
+		selectedProbe = probe[0]
+	}
+	node := "node"
+	if filepath.Base(t.command) == "node" || filepath.Base(t.command) == "node.exe" {
+		node = t.command
+	}
+	data, err := t.executor.CombinedOutput(ctx, node, []string{"--input-type=module", "--eval", vitestConfigScript, string(encoded), filepath.Join(directory, "vite-cache"), selectedProbe}, env)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("inspect Vitest configuration: %w: %s", err, commandDiagnostic(data))
 	}
@@ -90,12 +114,22 @@ func (t *Testdrive) inspectVitest(ctx context.Context, directory string) (string
 		return "", nil, nil, fmt.Errorf("vitest configuration did not return its discovery result")
 	}
 	var config struct {
-		Version  string
-		Projects []vitestProject
-		Files    []string
+		Version        string
+		Node           string
+		Executable     string
+		ProbeArguments []string
+		Projects       []vitestProject
+		Files          []string
 	}
 	if err := json.NewDecoder(strings.NewReader(string(data[start+len(marker):]))).Decode(&config); err != nil {
 		return "", nil, nil, err
+	}
+	t.vitestNode, t.vitestExecutable = config.Node, config.Executable
+	if selectedProbe != "" && !t.usesVitestRunner() {
+		if len(config.ProbeArguments) == 0 {
+			return "", nil, nil, fmt.Errorf("vitest did not resolve probe arguments")
+		}
+		t.vitestProbeArguments = append(slices.Clone(t.args[:len(t.args)-len(args)]), config.ProbeArguments...)
 	}
 	return config.Version, config.Projects, config.Files, nil
 }
@@ -119,6 +153,9 @@ func (t *Testdrive) checkVitestPreflight(ctx context.Context, output io.Writer, 
 	}
 	defer func() { _ = os.RemoveAll(directory) }()
 	check.Version, check.VitestProjects, _, err = t.inspectVitest(ctx, directory)
+	if t.vitestNode != "" {
+		check.Node, check.Executable = t.vitestNode, t.vitestExecutable
+	}
 	if err != nil {
 		check.Verdict.Reason = "ddtest could not inspect this Vitest configuration: " + reportText(err.Error())
 		return err
@@ -141,7 +178,7 @@ func (t *Testdrive) checkVitestPreflight(ctx context.Context, output io.Writer, 
 	check.Verdict = checkVitestSupport(*check, selection)
 	_, _ = fmt.Fprintf(output, "Vitest %s; Node %s; tracer %s (%s). Preflight: %s — %s\n", check.Version, check.Node, result.Tracer, selection.Source, check.Verdict.Status, check.Verdict.Reason)
 	t.recommendTracer(ctx, output, result)
-	if check.Verdict.Status != "compatible" {
+	if check.Verdict.Status != "compatible" && (check.Verdict.Status == "incompatible" || !strings.HasPrefix(selection.Requested, "git:") || t.checkOnly) {
 		return fmt.Errorf("vitest preflight: %s", check.Verdict.Reason)
 	}
 	return nil
@@ -212,16 +249,32 @@ func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *Se
 	}
 	resultPath := filepath.Join(directory, "vitest-results.json")
 	// Vitest's JSON reporter can omit unhandled errors even when they cause exit 1.
-	args := append(slices.Clone(t.args), "--run", "--no-cache", "--reporter=default", "--reporter=json", "--outputFile="+resultPath, "--coverage.reportsDirectory="+filepath.Join(directory, "coverage"))
+	args := slices.Clone(t.args)
+	if probePath != "" && len(t.vitestProbeArguments) > 0 {
+		args = slices.Clone(t.vitestProbeArguments)
+	}
+	args, err = vitestValidationArguments(args, probePath != "")
+	if err != nil {
+		return run, err
+	}
+	validationArgs := []string{"--run", "--no-cache", "--reporter=default", "--reporter=json", "--outputFile=" + resultPath, "--coverage.reportsDirectory=" + filepath.Join(directory, "coverage")}
 	if probePath != "" {
-		args = append(args, probePath, "--testNamePattern=^"+probeName+"$")
+		if len(t.vitestProbeArguments) == 0 {
+			args = append(args, probePath)
+		}
+		validationArgs = append(validationArgs, "--testNamePattern=^"+probeName+"$")
 		// Only probe thresholds are relaxed. Collection and full-suite thresholds stay intact.
 		for _, metric := range []string{"lines", "branches", "functions", "statements"} {
-			args = append(args, "--coverage.thresholds."+metric+"=0")
+			validationArgs = append(validationArgs, "--coverage.thresholds."+metric+"=0")
 		}
 		run.ProbeCoverageThresholdsDisabled = true
 		env["DDTEST_PROBE_MODE"] = probeMode
 	}
+	index := framework.FrameworkSeparator(t.command, args, "vitest")
+	if index < 0 {
+		index = len(args)
+	}
+	args = slices.Insert(args, index, validationArgs...)
 	if t.usesVitestRunner() {
 		args, err = t.vitestRunnerArgs(directory, preload, probePath, instrumented, env)
 		if err != nil {
@@ -294,10 +347,7 @@ func (t *Testdrive) runVitestFeatures(ctx context.Context, output io.Writer, ses
 	}
 	defer func() { runErr = errors.Join(runErr, removeProbe(t.repositoryRoot, probePath)) }()
 	runner := *t
-	if !t.usesVitestRunner() {
-		runner.args = append(slices.Clone(t.args), probePath)
-	}
-	_, projects, files, err := runner.inspectVitest(ctx, session.Directory())
+	_, projects, files, err := runner.inspectVitest(ctx, session.Directory(), probePath)
 	if t.usesVitestRunner() {
 		// Native discovery checks inclusion; the actual plan/worker assertions
 		// below enforce exact selection without CLI substring filters.
@@ -308,7 +358,7 @@ func (t *Testdrive) runVitestFeatures(ctx context.Context, output io.Writer, ses
 		return nil
 	}
 	run := func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
-		return t.runVitest(ctx, output, session, preload, runSpec{Name: name, Role: roleProbeFeature, Instrumented: true, Scenario: scenario, ProbePath: probePath, ProbeMode: mode})
+		return runner.runVitest(ctx, output, session, preload, runSpec{Name: name, Role: roleProbeFeature, Instrumented: true, Scenario: scenario, ProbePath: probePath, ProbeMode: mode})
 	}
 	return runProbeFeatures(run, result)
 }

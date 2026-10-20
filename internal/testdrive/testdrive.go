@@ -52,6 +52,9 @@ type Testdrive struct {
 	reportModels             *[]reportModel
 	workflowRoot             string
 	configurationRoot        string
+	vitestProbeArguments     []string
+	vitestNode               string
+	vitestExecutable         string
 	vitestRunner             bool
 	isolated                 bool
 	jestProject              jestProject

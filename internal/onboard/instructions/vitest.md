@@ -8,8 +8,10 @@ Keep the existing tests, CI matrix, setup and coverage options. Work in this ord
 1. Review the required configurations and CI consumers discovered by testdrive, including Release jobs and their build prerequisites. Use `ddtest testdrive --all --check-only --yes` to inspect every configuration. For a focused diagnostic only, select an explicit command:
 
    ```shell
-   ddtest testdrive --command "pnpm vitest --coverage" --check-only --yes
+   ddtest testdrive --command "pnpm exec vitest --coverage" --check-only --yes
    ```
+
+   If `pnpm vitest` or `yarn vitest` names a package script, use `--all` so discovery resolves its setup; shorthand is not silently treated as a binary. Unsupported CI runner environment settings and custom preloads stay unvalidated.
 
    Preserve the original test options; `vitest bench` is a separate, unvalidated mode and must not be instrumented on the strength of these test results. Preflight resolves the framework configuration, local Node and an exact tracer release without installing it or running tests. If metadata fails, fix registry/sandbox access and retry; do not guess an older version from cached web pages or the action default.
 2. Add or update the action before the first Vitest step in every test job. Pin the exact resolved release in `js-tracer-version` and use it with local `--tracer-version`. The action default may lag npm. Existing project dependencies take precedence; changing them requires an explicit dependency decision.

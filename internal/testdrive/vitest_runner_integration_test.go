@@ -32,6 +32,7 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 	}
 	integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    steps:\n      - run: ddtest run --framework vitest --vitest-config vitest.config.js --min-parallelism 2 --max-parallelism 2\n      - run: vitest run --config vitest.config.js\n")
 	integrationFile(t, root, ".testoptimization/runner/parallel-runners.txt", "customer's existing plan")
+	integrationFile(t, root, "customer.json", "existing customer report")
 	integrationCommand(t, ctx, root, nil, "npm", "install", "--no-audit", "--no-fund")
 	for _, mode := range []struct {
 		name            string
@@ -40,9 +41,49 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 	}{
 		{"mixed CI paths", []string{"--all"}, 12, 2},
 		{"explicit CLI", []string{"--command", "npx vitest run --config vitest.config.js"}, 6, 1},
+		{"CLI positional", []string{"--command", "npx vitest run --config vitest.config.js src/endOfYear --testNamePattern adds --outputFile customer.json --coverage.reportsDirectory customer-coverage"}, 6, 1},
+		{"CLI terminator", []string{"--command", "npx vitest run --config vitest.config.js -- src"}, 6, 1},
 		{"explicit runner", []string{"--command", "ddtest run --framework vitest --vitest-config vitest.config.js --min-parallelism 2 --max-parallelism 2"}, 6, 1},
+		{"package runner", []string{"--all"}, 6, 1},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
+			if mode.name == "package runner" {
+				pkg := filepath.Join(root, "packages/app")
+				require.NoError(t, os.MkdirAll(pkg, 0700))
+				for _, name := range []string{"node_modules", "src", "vitest.config.js", "package.json"} {
+					require.NoError(t, os.Rename(filepath.Join(root, name), filepath.Join(pkg, name)))
+				}
+				integrationFile(t, root, "package.json", `{}`)
+				integrationFile(t, root, "vitest.config.js", `throw new Error('root config must not be loaded')`)
+				integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    steps:\n      - run: ddtest run --framework vitest --vitest-config vitest.config.js --min-parallelism 2 --max-parallelism 2\n        working-directory: packages/app\n")
+			}
+
+			if mode.name == "package runner" {
+				check := exec.CommandContext(ctx, binary, "testdrive", "--framework", "vitest", "--all", "--check-only", "--yes")
+				check.Dir = root
+				output, err := check.CombinedOutput()
+				require.Error(t, err, string(output)) // intentionally missing CI installation
+				data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
+				require.NoError(t, err)
+				var inspection struct {
+					Error          string
+					Runs           []any
+					Configurations []struct {
+						Preflight struct {
+							Verdict        struct{ Status string }
+							VitestProjects []struct{ Root string } `json:"vitest_projects"`
+						}
+					}
+				}
+				require.NoError(t, json.Unmarshal(data, &inspection))
+				require.Empty(t, inspection.Error)
+				require.Empty(t, inspection.Runs)
+				require.Len(t, inspection.Configurations, 1)
+				preflight := inspection.Configurations[0].Preflight
+				require.Equal(t, "compatible", preflight.Verdict.Status)
+				require.Len(t, preflight.VitestProjects, 1)
+				require.True(t, strings.HasSuffix(filepath.ToSlash(preflight.VitestProjects[0].Root), "/packages/app"))
+			}
 			command := exec.CommandContext(ctx, binary, append([]string{"testdrive", "--framework", "vitest", "--yes"}, mode.args...)...)
 			command.Dir = root
 			output, err := command.CombinedOutput()
@@ -82,12 +123,14 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 			}
 			require.Equal(t, mode.paths, len(paths))
 			for _, run := range report.Runs[:2] {
-				if mode.name == "explicit CLI" {
+				if strings.Contains(mode.name, "CLI") {
 					require.Equal(t, "vitest-cli", run.ExecutionPath)
 				} else {
 					require.Equal(t, "ddtest-run-node-api", run.ExecutionPath)
 					require.Equal(t, 2, run.Workers)
 				}
+				// Native Vitest's substring filter selects both fixture files here;
+				// preserve its actual behavior rather than infer a file count.
 				require.Equal(t, 2, run.TestCounts.Passed)
 			}
 			require.Len(t, report.Features, mode.features)
@@ -99,6 +142,9 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 			}
 		})
 	}
+	customerReport, err := os.ReadFile(filepath.Join(root, "customer.json"))
+	require.NoError(t, err)
+	require.Equal(t, "existing customer report", string(customerReport))
 	plan, err := os.ReadFile(filepath.Join(root, ".testoptimization/runner/parallel-runners.txt"))
 	require.NoError(t, err)
 	require.Equal(t, "customer's existing plan", string(plan))

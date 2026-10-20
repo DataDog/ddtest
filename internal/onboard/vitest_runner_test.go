@@ -48,3 +48,20 @@ func TestVitestScopeKeepsCLIAndRunnerDistinct(t *testing.T) {
 	}, "vitest")
 	require.Equal(t, "compatible", result.Status, "%+v", result.Jobs)
 }
+
+func TestVitestRunnerCIRejectsUnreproducedInputsAndPreloads(t *testing.T) {
+	commands := []TestCommand{{Command: "ddtest run --framework vitest"}}
+	for key, value := range map[string]string{"DD_TEST_OPTIMIZATION_RUNNER_CI_NODE": "1", "DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION": "subset/*.ts", "DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM": "2"} {
+		step := runtimeStep{Env: map[string]string{key: value}}
+		require.NotEmpty(t, checkTestBootstrap(ciWorkflow{}, runtimeJob{}, step, nil, commands, "vitest"), key)
+		_, _, err := resolveVariantStep(ciWorkflow{}, runtimeJob{}, step, nil, "vitest")
+		require.ErrorContains(t, err, key)
+	}
+	for _, options := range []string{"-r dd-trace/ci/init", "--require=dd-trace/ci/init", "-rdd-trace/ci/init", "--import dd-trace/register.js"} {
+		reason := checkTestBootstrap(ciWorkflow{}, runtimeJob{}, runtimeStep{Env: map[string]string{"NODE_OPTIONS": options}}, nil, commands, "vitest")
+		require.Contains(t, reason, "local replacement does not prove")
+	}
+	for _, options := range []string{"", "--conditions=development", "-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}"} {
+		require.Empty(t, checkTestBootstrap(ciWorkflow{}, runtimeJob{}, runtimeStep{Env: map[string]string{"NODE_OPTIONS": options}}, nil, commands, "vitest"))
+	}
+}

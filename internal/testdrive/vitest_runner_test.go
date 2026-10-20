@@ -94,7 +94,7 @@ func TestPlannerSkippingRequiresPositiveEvidence(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, constants.RunnerDirectory), 0755))
 	probe := filepath.Join(root, "probe.test.ts")
 	scenario := intake.Scenario{Feature: "skipping", SourceFile: "probe.test.ts"}
-	run := validationRun{Facts: intake.Facts{SkippableRequests: 1}}
+	run := validationRun{root: root, Facts: intake.Facts{SkippableRequests: 1}}
 	require.False(t, vitestPlannerSkippedProbe(directory, root, probe, scenario, run), "no output is not evidence of skipping")
 	requireWriteFile(t, filepath.Join(root, constants.TestFilesOutputPath), "")
 	requireWriteFile(t, filepath.Join(root, constants.SkippablePercentageOutputPath), "100.00")
