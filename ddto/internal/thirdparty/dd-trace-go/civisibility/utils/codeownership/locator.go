@@ -108,6 +108,16 @@ func Discover(locations Locations) (*Resolver, error) {
 	}
 	return nil, nil
 }
+
+// DiscoverIn selects the host's first CODEOWNERS location in directory itself,
+// without looking for a Git root, and matches paths relative to directory.
+func DiscoverIn(directory string, locations Locations) (*Resolver, error) {
+	directory, err := absoluteDirectory(directory)
+	if err != nil || directory == "" {
+		return nil, err
+	}
+	return discoverAt(directory, directory, locations)
+}
 func discoverAt(root, workspace string, locations Locations) (*Resolver, error) {
 	dialect := detectDialect(root, locations.Repository, locations.Provider)
 	folders := []string{".github", "", "docs"}

@@ -74,7 +74,8 @@ func TestDirectorySemantics(t *testing.T) {
 		{"/pkg/*", "/pkg/child", true}, {"/pkg/*", "/pkg/child/deep", false},
 		{"/pkg/**/mobile*", "/pkg/mobile-tests", true}, {"/pkg/**/mobile*", "/pkg/a/mobile-tests/deep", true},
 		{"/pkg/**", "/pkg", true}, {"tests/", "/pkg/tests", true}, {"tests/", "/pkg/mytests", false},
-		{"/*", "/", true}, {"/pkg/[ab]/", "/pkg/a", false},
+		{"/*", "/", true}, {"/*", "/pkg", true}, {"/*", "/pkg/deep", false}, {"/*/", "/pkg/deep", true},
+		{"*", "/pkg/deep", true}, {"/pkg/[ab]/", "/pkg/a", false},
 	} {
 		t.Run(tc.pattern+tc.directory, func(t *testing.T) {
 			c, _ := Parse(strings.NewReader(tc.pattern+" @owner"), GitHub)
@@ -83,6 +84,13 @@ func TestDirectorySemantics(t *testing.T) {
 				t.Fatalf("matched=%t owners=%v", match, got.Owners())
 			}
 		})
+	}
+	// GitLab roots /* the same way.
+	gitLab, _ := Parse(strings.NewReader("/* @owner"), GitLab)
+	for directory, want := range map[string]bool{"/": true, "/pkg": true, "/pkg/deep": false} {
+		if _, match := gitLab.MatchDirectory(directory); match != want {
+			t.Fatalf("GitLab /* %s: matched=%t", directory, match)
+		}
 	}
 	c, _ := Parse(strings.NewReader("* @global\n/pkg/"), GitHub)
 	got, ok := c.MatchDirectory("/pkg")

@@ -1296,29 +1296,45 @@ devices, which is the usual case for a tmpfs `/tmp`. After the upload,
 directory stayed in the temporary directory, and the fallback left a directory
 with git's `.idx` and `.rev` files in the user's working tree.
 
-Here the fallback is the repository's common git directory: it holds the
-objects, so the move succeeds, and the working tree never receives a temporary
-directory. `git rev-parse --git-common-dir` runs without command telemetry, so
-git metrics match the SDK. A failed attempt or an empty result removes its
+Here the fallback is the repository's objects directory: git writes each
+temporary pack there before it moves it, so the move succeeds, and the working
+tree never receives a temporary directory. `git rev-parse --git-path objects`
+follows `GIT_OBJECT_DIRECTORY` and runs without command telemetry, so git
+metrics match the SDK. Git ignores the extra directory: `git fsck` is clean and
+`git count-objects -v` reports no garbage. A failed attempt or an empty result removes its
 directory, and `RemovePackFiles` removes the directory after the upload.
 
 Before the first attempt, `packObjectsFolders` compares the filesystems of the
-temporary directory and the git directory: device numbers on Unix, volume names
-on Windows. When they differ, git could not move its pack, so it packs once, in
-the git directory, instead of repeating the whole pack after a failure. The
+temporary directory and the objects directory: device numbers on Unix, volume
+names on Windows. When they differ, git could not move its pack, so it packs
+once, in the objects directory, instead of repeating the whole pack after a
+failure. The
 failed attempt also left git's temporary `tmp_idx_*` and `tmp_rev_*` files in
 the repository's `objects/pack` directory on every run. Where the filesystems
-cannot be compared, the temporary directory is still tried first. The git directory is now looked up before every packing, which adds one
-`git rev-parse` when the temporary directory works.
+cannot be compared, the temporary directory is still tried first. The objects
+directory is looked up before every packing, which adds one `git rev-parse`
+when the temporary directory works.
 
 Checks: `TestRemovePackFilesRemovesTemporaryDirectory`,
-`TestPackFilesFallBackToGitDirectory`, `TestFailedPackFilesLeaveNoDirectory`,
+`TestPackFilesFallBackToObjectsDirectory`, `TestPackFilesFallBackToMovedObjectsDirectory`, `TestFailedPackFilesLeaveNoDirectory`,
 `TestPackObjectsSkipsTemporaryDirectoryOnAnotherFilesystem`
 and the git upload parity case, where Mini must leave its temporary directory
 empty. The fake git in these tests and in `TestCreatePackFilesMissingPackFile`
 skips the options before the command, which cmd also splits at `=` for
 `git.bat`, and the tests check that `pack-objects` ran, so Windows exercises the
 same paths.
+
+## Git test fixtures
+
+Git sets `GIT_DIR`, `GIT_INDEX_FILE` and related variables for hooks. The
+`civisibility/utils` and `cligit` tests create repositories and commits with
+the inherited environment, so run from a hook their commits could reach the
+caller's repository, and an inherited `GIT_CONFIG` would receive their
+`git config` writes. A `TestMain` in each package, in
+[`utils/git_fixture_env_test.go`](civisibility/utils/git_fixture_env_test.go)
+and [`cligit/cligit_test.go`](civisibility/cligit/cligit_test.go), unsets the
+variables that select a repository before any test runs. The integration tests
+already pass an explicit environment to their fixtures.
 
 ## Parallel retry accounting
 
@@ -2234,7 +2250,12 @@ first resolution. Test-only resets require stopped readers.
 
 `civisibility/utils/codeownership/` owns host-specific discovery, parsing and compiled
 file/directory matching. `utils/codeowners_discovery.go` supplies CI context and caches
-its resolver. The package implements GitHub and GitLab rules, including
+its resolver. It reads the CI workspace's CODEOWNERS with `DiscoverIn`, without
+looking for an enclosing Git root, because paths from `-trimpath` builds are
+relative to the repository. A workspace without the file has no rules, so the
+Git worker and the test processes agree. An unreadable workspace is retried.
+Only an unknown or missing workspace falls back to the current and binary
+directories, the SDK base's last resort. The package implements GitHub and GitLab rules, including
 inline-comment differences, ownerless GitHub rules, sections, defaults,
 exclusions, roles and character classes. File selection follows each host's
 location priority, including `docs/CODEOWNERS`.
@@ -2257,8 +2278,8 @@ exclusions. Owner unions allocate only when another section adds an owner;
 small lists use slices and large lists use a map, preserving declaration order.
 
 Directory queries use an explicit target: a trailing slash includes the package
-itself, terminal `/*` selects direct children, and other directory patterns can
-be inherited. No guessed filename determines the service. File and service
+itself, terminal `/*` selects direct children (a rooted `/*` also the root
+package), and other directory patterns can be inherited. No guessed filename determines the service. File and service
 caches retain their process lifetimes. The [package guide](../../../docs/codeownership.md)
 describes the contracts and Go tests to keep during an SDK update.
 

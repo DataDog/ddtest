@@ -2,6 +2,7 @@
 package utils
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -33,27 +34,41 @@ func GetCodeOwnersWithStatus() (*codeownership.Resolver, bool) {
 		return codeowners, true
 	}
 	tags := GetCITagsReadOnly()
-	workspace := tags[constants.CIWorkspacePath]
-	sourceRoot := ""
-	if location := testPackageSource.Load(); location != nil && filepath.IsAbs(location.source) {
-		sourceRoot = filepath.Dir(location.source)
+	locations := codeownership.Locations{
+		Workspace:  tags[constants.CIWorkspacePath],
+		Repository: tags[constants.GitRepositoryURL],
+		Provider:   tags[constants.CIProviderName],
 	}
-	if workspace == "" {
-		// Standalone test binaries may not have CI workspace metadata.
-		workspace, _ = os.Getwd()
-		if sourceRoot == "" {
-			sourceRoot = filepath.Dir(os.Args[0])
-		}
-	} else if sourceRoot != "" {
-		// A dependency's compiler path must not select another checkout's rules.
-		if _, inside := relativePathInsideWorkspace(canonicalServiceDirectory(workspace), canonicalServiceDirectory(sourceRoot)); !inside {
-			sourceRoot = ""
+	var rules *codeownership.Resolver
+	var err error
+	var info os.FileInfo
+	if locations.Workspace != "" {
+		info, err = os.Stat(locations.Workspace)
+		if errors.Is(err, os.ErrNotExist) {
+			err = nil
 		}
 	}
-	rules, err := codeownership.Discover(codeownership.Locations{
-		Workspace: workspace, SourceRoot: sourceRoot,
-		Repository: tags[constants.GitRepositoryURL], Provider: tags[constants.CIProviderName],
-	})
+	switch {
+	case err != nil:
+		// An unreadable workspace is retried, like an unreadable file.
+	case info != nil && info.IsDir():
+		// Source paths are relative to the workspace, the repository root, so
+		// its CODEOWNERS file is read without looking for an enclosing Git root.
+		// Without one, there are no rules: ddto's Git worker and every test
+		// process must reach the same decision, whatever their directories.
+		rules, err = codeownership.DiscoverIn(locations.Workspace, locations)
+	default:
+		// Standalone test binaries may have no CI workspace, or one that does
+		// not exist where they run: as a last resort, look in the current
+		// directory, then in the binary's directory.
+		workingDirectory, _ := os.Getwd()
+		for _, directory := range []string{workingDirectory, filepath.Dir(os.Args[0])} {
+			rules, err = codeownership.DiscoverIn(directory, locations)
+			if err != nil || rules != nil {
+				break
+			}
+		}
+	}
 	if err != nil {
 		logger.Debug("civisibility: CODEOWNERS discovery failed: %s", err)
 		return nil, false

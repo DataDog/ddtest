@@ -84,6 +84,38 @@ func TestGetCodeOwnersRetriesIOFailure(t *testing.T) {
 		t.Fatal(got.Tag())
 	}
 }
+
+// An unreadable workspace is retried; it never falls back to the current
+// directory's file.
+func TestGetCodeOwnersRetriesWorkspaceIOFailure(t *testing.T) {
+	parent := t.TempDir()
+	workspace := filepath.Join(parent, "workspace")
+	if err := os.Symlink("workspace", workspace); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	workingDir := t.TempDir()
+	t.Chdir(workingDir)
+	resetCodeOwnersTestState(t, workspace)
+	writeCodeOwnersFile(t, filepath.Join(workingDir, "CODEOWNERS"), "* @wrong")
+	if c, complete := GetCodeOwnersWithStatus(); c != nil || complete {
+		t.Fatalf("I/O failure cached or fell back: %v %t", c, complete)
+	}
+	if err := os.Remove(workspace); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeCodeOwnersFile(t, filepath.Join(workspace, "CODEOWNERS"), "* @fixed")
+	c, complete := GetCodeOwnersWithStatus()
+	if c == nil || !complete {
+		t.Fatalf("%v %t", c, complete)
+	}
+	if got, _ := c.Match("/a.go"); got.FirstOwner() != "@fixed" {
+		t.Fatal(got.Tag())
+	}
+}
+
 func TestGetCodeOwnersUsesProviderAndOfficialLocation(t *testing.T) {
 	root := t.TempDir()
 	resetCodeOwnersTestState(t, root)
@@ -106,6 +138,80 @@ func TestGetCodeOwnersUsesProviderAndOfficialLocation(t *testing.T) {
 	c = GetCodeOwners()
 	got, _ = c.Match("/a.go")
 	if got.FirstOwner() != "@root" {
+		t.Fatal(got.Tag())
+	}
+}
+
+// Source paths are relative to the CI workspace, so a workspace inside a Git
+// checkout reads its own CODEOWNERS locations and not the enclosing root's.
+func TestGetCodeOwnersReadsOnlyTheWorkspace(t *testing.T) {
+	root := t.TempDir()
+	for _, folder := range []string{".git", ".github", "internal"} {
+		if err := os.Mkdir(filepath.Join(root, folder), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeCodeOwnersFile(t, filepath.Join(root, ".github", "CODEOWNERS"), "* @root")
+	workspace := filepath.Join(root, "internal")
+	t.Chdir(t.TempDir())
+	resetCodeOwnersTestState(t, workspace)
+	if c, complete := GetCodeOwnersWithStatus(); c != nil || !complete {
+		t.Fatalf("enclosing root selected: %v %t", c, complete)
+	}
+	writeCodeOwnersFile(t, filepath.Join(workspace, "CODEOWNERS"), "/config/ @workspace")
+	ResetCodeOwnersForTesting()
+	got, ok := GetCodeOwners().Match("/config/config.go")
+	if !ok || got.FirstOwner() != "@workspace" {
+		t.Fatal(got.Tag())
+	}
+}
+
+// An existing workspace without CODEOWNERS has no rules, even when the test's
+// directory has a file: the Git worker, which runs elsewhere, decides the same.
+func TestGetCodeOwnersDoesNotFallBackFromAnExistingWorkspace(t *testing.T) {
+	workingDir := t.TempDir()
+	t.Chdir(workingDir)
+	resetCodeOwnersTestState(t, t.TempDir())
+	writeCodeOwnersFile(t, filepath.Join(workingDir, "CODEOWNERS"), "* @package")
+	if c, complete := GetCodeOwnersWithStatus(); c != nil || !complete {
+		t.Fatalf("fell back to the working directory: %v %t", c, complete)
+	}
+}
+
+// A binary that runs where its CI workspace does not exist still finds the
+// CODEOWNERS file in its current directory.
+func TestGetCodeOwnersFallsBackToWorkingDirectory(t *testing.T) {
+	workingDir := t.TempDir()
+	t.Chdir(workingDir)
+	resetCodeOwnersTestState(t, filepath.Join(t.TempDir(), "missing-workspace"))
+	writeCodeOwnersFile(t, filepath.Join(workingDir, "CODEOWNERS"), "/fallback @owner")
+	c, complete := GetCodeOwnersWithStatus()
+	if c == nil || !complete {
+		t.Fatalf("%v %t", c, complete)
+	}
+	if got, ok := c.Match("/fallback"); !ok || got.FirstOwner() != "@owner" {
+		t.Fatal(got.Tag())
+	}
+}
+
+// The last-resort file keeps the callers' repository-relative paths, even when
+// the current directory is inside a Git checkout.
+func TestGetCodeOwnersFallbackKeepsPaths(t *testing.T) {
+	root := t.TempDir()
+	workingDir := filepath.Join(root, "pkg")
+	for _, dir := range []string{filepath.Join(root, ".git"), workingDir} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(workingDir)
+	resetCodeOwnersTestState(t, filepath.Join(t.TempDir(), "missing-workspace"))
+	writeCodeOwnersFile(t, filepath.Join(workingDir, "CODEOWNERS"), "* @global\n/pkg/a_test.go @specific")
+	c := GetCodeOwners()
+	if c == nil {
+		t.Fatal("missing rules")
+	}
+	if got, ok := c.Match("/pkg/a_test.go"); !ok || got.FirstOwner() != "@specific" {
 		t.Fatal(got.Tag())
 	}
 }

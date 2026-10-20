@@ -188,3 +188,28 @@ func TestDiscoverySnapshotAndOversizedSelection(t *testing.T) {
 		t.Fatal("fell back to lower-priority file")
 	}
 }
+
+// DiscoverIn reads only the given directory: it neither selects the enclosing
+// Git root's file nor rebases paths onto it.
+func TestDiscoverInUsesOnlyTheDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeRules(t, root, "", "* @root")
+	writeRules(t, root, "pkg", "* @global\n/pkg/a_test.go @specific")
+	resolver, err := DiscoverIn(filepath.Join(root, "pkg"), Locations{})
+	if err != nil || resolver == nil {
+		t.Fatalf("%v %v", resolver, err)
+	}
+	if got, _ := resolver.Match("/pkg/a_test.go"); got.FirstOwner() != "@specific" {
+		t.Fatalf("owner %q", got.FirstOwner())
+	}
+	empty := filepath.Join(root, "empty")
+	if err := os.Mkdir(empty, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if resolver, err := DiscoverIn(empty, Locations{}); err != nil || resolver != nil {
+		t.Fatalf("parent file selected: %v %v", resolver, err)
+	}
+}

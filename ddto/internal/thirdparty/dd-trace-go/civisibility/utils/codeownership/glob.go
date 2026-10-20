@@ -13,6 +13,8 @@ const maximumMatchSteps = 65536
 type globPattern struct {
 	segments []globSegment
 	prefix   string
+	// matchesRoot also matches the repository root, for a rooted /*.
+	matchesRoot bool
 }
 type globSegment struct {
 	globstar, requiresSegment bool
@@ -67,12 +69,15 @@ func compileGlobs(pattern string, dialect Dialect) (globPattern, globPattern, bo
 	if trailing || dialect == GitHub && (literalLastSegment(pattern) || anchoredFilenamePrefix) {
 		file.addGlobstar(trailing)
 	}
-	if strings.Trim(pattern, "/") == "*" {
+	if strings.Trim(pattern, "/") == "*" && (!rooted || trailing) {
 		directory.segments = directory.segments[:0]
 		directory.addGlobstar(false)
 	} else if trailing || last > first && parts[last-1] != "*" {
 		directory.addGlobstar(false)
 	}
+	// A rooted /* owns the root package and its direct children, as any other
+	// terminal /* owns direct children only.
+	directory.matchesRoot = rooted && !trailing && strings.Trim(pattern, "/") == "*"
 	// A rooted literal prefix cannot backtrack. Compare it once instead of
 	// splitting the same path and checking each literal for every rule.
 	prefixLength, prefixSegments := 0, 0
@@ -185,6 +190,9 @@ func literalLastSegment(pattern string) bool {
 // Both wildcard levels backtrack only to the latest star. They do not recurse
 // or allocate while matching an already normalized GitHub path.
 func (g globPattern) match(value string) bool {
+	if g.matchesRoot && len(value) <= 1 {
+		return true
+	}
 	patternIndex, start, star, starStart := 0, -1, -1, -1
 	if g.prefix != "" {
 		if !strings.HasPrefix(value, g.prefix) || len(value) > len(g.prefix) && value[len(g.prefix)] != '/' {

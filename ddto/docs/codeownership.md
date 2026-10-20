@@ -9,18 +9,26 @@ environment variables and the priority of an explicit `DD_SERVICE`.
 ## Discovery and matching
 
 `Discover` finds the repository root from the workspace, including Git
-worktrees whose `.git` is a file. It selects a dialect from the repository URL,
-then the CI provider. A lone `.gitlab/CODEOWNERS` file selects GitLab when
-neither identifies the host.
+worktrees whose `.git` is a file, and `DiscoverIn` reads one directory. Both
+select a dialect from the repository URL, then the CI provider. A lone
+`.gitlab/CODEOWNERS` file selects GitLab when neither identifies the host.
 
 | Dialect | File priority | Rule behavior |
 | --- | --- | --- |
 | GitHub | `.github/CODEOWNERS`, `CODEOWNERS`, `docs/CODEOWNERS` | Last matching rule wins. An ownerless rule clears ownership. Inline comments are supported. |
 | GitLab | `CODEOWNERS`, `docs/CODEOWNERS`, `.gitlab/CODEOWNERS` | Sections match independently and combine their owners. Defaults, exclusions, roles and character classes are supported. |
 
-The resolver rebases paths to the repository root and rejects traversal outside
-it. The CI adapter in `utils/codeowners_discovery.go` caches both successful
-lookup and missing files for the process. A read error leaves the lookup
+The resolver from `Discover` rebases paths to the repository root, and both
+reject traversal outside it. The CI adapter in `utils/codeowners_discovery.go`
+uses `DiscoverIn` on the CI workspace. Source paths are relative to the
+workspace, and paths from `-trimpath` builds to the repository, so rebasing
+onto a Git root above the workspace would prefix the latter twice. A workspace
+without a CODEOWNERS file has no rules, so ddto's Git worker and every test
+process decide the same. An unreadable workspace is retried, like an
+unreadable file. Only when the workspace is unknown or does not exist where the
+binary runs does the adapter try the current directory, then the binary's
+directory. It caches both successful lookup and missing files for the
+process. A read error leaves the lookup
 eligible for a retry. A selected oversized GitHub file yields empty rules
 instead of falling back to another file.
 
@@ -54,7 +62,8 @@ immediate files.
 
 `MatchDirectory` selects ownership for a package without guessing a filename.
 A trailing slash includes the directory itself; terminal `/*` selects direct
-children. Other directory patterns can be inherited by descendant packages.
+children, and a rooted `/*` also selects the root package. Other directory
+patterns can be inherited by descendant packages.
 For example, `/pkg/**/mobile*` can own `pkg/mobile-tests/subpackage`.
 
 Matching uses Go runes and the Unicode tables from the Go toolchain, so `?`

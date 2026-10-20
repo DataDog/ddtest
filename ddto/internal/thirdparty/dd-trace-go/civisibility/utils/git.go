@@ -734,9 +734,9 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 	var err error
 
 	// Git can throw a cross device error if the temporal folder is in a different drive than the .git folder (eg. symbolic link)
-	// to handle this edge case, we first try with a temp folder and if we fail then we try in the git directory, which
-	// shares a device with the objects and keeps the working tree free of temporary files. A directory that ends
-	// without pack files is removed; RemovePackFiles removes the rest after the upload.
+	// to handle this edge case, we first try with a temp folder and if we fail then we try in the git objects directory,
+	// where git writes the temporary pack it moves, which also keeps the working tree free of temporary files. A directory
+	// that ends without pack files is removed; RemovePackFiles removes the rest after the upload.
 	for _, folder := range packObjectsFolders() {
 		if folder == "" {
 			continue
@@ -784,13 +784,13 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 
 // packObjectsFolders lists where pack-objects may write, in order. Git moves
 // each pack out of the objects directory, so a temporary directory known to be
-// on another filesystem than the git directory would only fail first.
+// on another filesystem than the objects would only fail first.
 func packObjectsFolders() []string {
-	temporary, gitDir := os.TempDir(), gitCommonDir()
-	if gitDir != "" && differentFilesystems(temporary, gitDir) {
-		return []string{gitDir}
+	temporary, objectsDir := os.TempDir(), gitObjectsDir()
+	if objectsDir != "" && differentFilesystems(temporary, objectsDir) {
+		return []string{objectsDir}
 	}
-	return []string{temporary, gitDir}
+	return []string{temporary, objectsDir}
 }
 
 // RemovePackFiles deletes pack files from CreatePackFiles together with their
@@ -808,11 +808,11 @@ func RemovePackFiles(packFiles []string) {
 	}
 }
 
-// gitCommonDir returns the absolute path of the git directory that holds the
-// repository's objects, or "" when git cannot report it. It records no command
-// telemetry, so git metrics stay those of the SDK.
-func gitCommonDir() string {
-	out, err := execGitString(telemetry.NotSpecifiedCommandsType, "rev-parse", "--git-common-dir")
+// gitObjectsDir returns the absolute path of the repository's objects
+// directory, which GIT_OBJECT_DIRECTORY may move, or "" when git cannot report
+// it. It records no command telemetry, so git metrics stay those of the SDK.
+func gitObjectsDir() string {
+	out, err := execGitString(telemetry.NotSpecifiedCommandsType, "rev-parse", "--git-path", "objects")
 	if err != nil || out == "" || strings.HasPrefix(out, "-") {
 		return ""
 	}

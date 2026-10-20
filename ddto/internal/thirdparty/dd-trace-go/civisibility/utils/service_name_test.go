@@ -39,6 +39,7 @@ func TestCodeOwnersPackageService(t *testing.T) {
 		{name: "owner removal", enabled: "true", rules: "* @org/team\n/pkg/", directory: "pkg", want: "service-not-owned"},
 		{name: "no matching rule", enabled: "true", rules: "/another/ @org/team", directory: "pkg", want: "service-not-owned"},
 		{name: "root package", enabled: "true", rules: "/* @org/root", directory: ".", want: "service-root"},
+		{name: "root wildcard excludes nested packages", enabled: "true", rules: "* @org/fallback\n/* @org/root", directory: "pkg/deep", want: "service-fallback"},
 		{name: "repeated placeholder", enabled: "true", format: "$(owner)-$(owner)", rules: "* @org/team", directory: "pkg", want: "team-team"},
 		{name: "literal format", enabled: "true", format: "literal-service", rules: "* @org/team", directory: "pkg", want: "literal-service"},
 	} {
