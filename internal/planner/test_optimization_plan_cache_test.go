@@ -9,12 +9,37 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
 func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
+	// Select only the simulated provider, including when this test runs in CI.
+	for _, key := range []string{
+		"APPVEYOR", "TF_BUILD", "BITBUCKET_COMMIT", "BUDDY", "BUILDKITE", "CIRCLECI",
+		"GITHUB_SHA", "JENKINS_URL", "TEAMCITY_VERSION", "TRAVIS", "BITRISE_BUILD_SLUG",
+		"CF_BUILD_ID", "CODEBUILD_INITIATOR", "DRONE",
+	} {
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("GITLAB_CI", "true")
+	t.Setenv("CI_COMMIT_AUTHOR", "Test Author <test@example.com>")
+	t.Setenv("CI_JOB_ID", "plan-job-123")
+	t.Setenv("CI_JOB_NAME", "plan")
+	t.Setenv("CI_JOB_URL", "https://gitlab.com/example/project/-/jobs/123")
+	t.Setenv("CI_PIPELINE_ID", "pipeline-456")
+	t.Setenv("CI_PROJECT_PATH", "example/project")
+	t.Setenv("CI_PIPELINE_IID", "456")
+	t.Setenv("CI_PIPELINE_URL", "https://gitlab.com/example/project/-/pipelines/456")
+	t.Setenv("CI_JOB_STAGE", "planning")
+	t.Setenv("DD_API_KEY", "must-not-be-stored")
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -62,6 +87,33 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 	if !strings.Contains(string(cacheData), `"planMetadata"`) {
 		t.Fatalf("Expected test optimization plan cache to store planMetadata, got: %s", string(cacheData))
 	}
+	if strings.Contains(string(cacheData), "must-not-be-stored") {
+		t.Fatal("plan cache contains an API key")
+	}
+	for tag, want := range map[string]string{
+		constants.CIProviderName:   "gitlab",
+		constants.CIJobID:          "plan-job-123",
+		constants.CIJobName:        "plan",
+		constants.CIJobURL:         "https://gitlab.com/example/project/-/jobs/123",
+		constants.CIPipelineID:     "pipeline-456",
+		constants.CIPipelineName:   "example/project",
+		constants.CIPipelineNumber: "456",
+		constants.CIPipelineURL:    "https://gitlab.com/example/project/-/pipelines/456",
+		constants.CIStageName:      "planning",
+	} {
+		if got := runner.planMetadata.CITags[tag]; got != want {
+			t.Fatalf("planning CI tag %s = %q, want %q", tag, got, want)
+		}
+	}
+	for tag := range runner.planMetadata.CITags {
+		if _, allowed := constants.TestParallelizationPlanEnvVars[tag]; !allowed {
+			t.Fatalf("unexpected planning CI tag %s", tag)
+		}
+	}
+
+	// Loading the artifact in another job must retain the planning job identity.
+	t.Setenv("CI_JOB_ID", "run-job-789")
+	environment.ResetCITags()
 
 	restored := NewWithDependencies(
 		nil, nil,

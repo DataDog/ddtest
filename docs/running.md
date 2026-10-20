@@ -174,6 +174,41 @@ already set. If you set `DD_TEST_SESSION_NAME` yourself, DDTest preserves it and
 expands the same `{{nodeIndex}}` and `{{workerIndex}}` placeholders before
 starting each worker.
 
+### Planning-job correlation
+
+`ddtest plan` records the planning job's CI provider, job ID, name and URL,
+pipeline ID, name, display name, number and URL, and stage name (when available)
+in the plan cache under `planMetadata.ciTags`. Upload and download the complete
+`.testoptimization` plan artifact as usual to carry these values between jobs.
+
+Every test process started by `ddtest run` receives
+`DD_TEST_PARALLELIZATION_ENABLED=true` and the planning job's metadata in:
+
+| Environment variable | Tracer tag |
+| --- | --- |
+| `DD_TEST_PARALLELIZATION_ENABLED` | `test.parallelization.enabled` |
+| `DD_TEST_PARALLELIZATION_PLAN_PROVIDER_NAME` | `test.parallelization.plan.provider.name` |
+| `DD_TEST_PARALLELIZATION_PLAN_JOB_ID` | `test.parallelization.plan.job.id` |
+| `DD_TEST_PARALLELIZATION_PLAN_JOB_NAME` | `test.parallelization.plan.job.name` |
+| `DD_TEST_PARALLELIZATION_PLAN_JOB_URL` | `test.parallelization.plan.job.url` |
+| `DD_TEST_PARALLELIZATION_PLAN_PIPELINE_ID` | `test.parallelization.plan.pipeline.id` |
+| `DD_TEST_PARALLELIZATION_PLAN_PIPELINE_NAME` | `test.parallelization.plan.pipeline.name` |
+| `DD_TEST_PARALLELIZATION_PLAN_PIPELINE_DISPLAY_NAME` | `test.parallelization.plan.pipeline.display_name` |
+| `DD_TEST_PARALLELIZATION_PLAN_PIPELINE_NUMBER` | `test.parallelization.plan.pipeline.number` |
+| `DD_TEST_PARALLELIZATION_PLAN_PIPELINE_URL` | `test.parallelization.plan.pipeline.url` |
+| `DD_TEST_PARALLELIZATION_PLAN_STAGE_NAME` | `test.parallelization.plan.stage.name` |
+
+Tracing libraries supporting this contract attach the tags to test sessions,
+modules, suites, and tests. The enabled tag uses the boolean string `true`,
+consistent with other Test Optimization boolean tags.
+The test process still inherits the execution job's CI environment, which the
+tracer uses for its normal `ci.*` tags. Planning values take precedence over
+inherited values and `--worker-env` overrides for these reserved variables.
+Missing fields are passed as empty values and omitted from tracer tags.
+Older plan artifacts and local plans without CI metadata still enable the
+parallelization tag without inventing a planning job identity. This also
+applies when `ddtest run` creates its own plan or uses only one worker.
+
 ## Custom Commands
 
 Use `--command` to override the framework's default base test command where

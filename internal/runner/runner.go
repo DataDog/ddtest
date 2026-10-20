@@ -115,6 +115,7 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 	ciNode := settings.GetCiNode()
 	startTime := time.Now()
 	executor := newTestExecutor(ctx, framework, workerEnvMap, tr.planner)
+	executor.planCITags = planMetadata.CITags
 	var executionResult runExecutionResult
 	if ciNode >= 0 {
 		executionResult = executor.runCINode(ciNode, settings.GetCiNodeWorkers())

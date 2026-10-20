@@ -51,6 +51,7 @@ type PlanMetadata struct {
 	TestSkippingLevel string            `json:"testSkippingLevel,omitempty"`
 	OSTags            map[string]string `json:"osTags"`
 	RuntimeTags       map[string]string `json:"runtimeTags"`
+	CITags            map[string]string `json:"ciTags,omitempty"`
 }
 
 func NewPlanMetadata(tags map[string]string, platformName, frameworkName string, testSkippingLevel settings.TestSkippingLevel) PlanMetadata {
@@ -68,7 +69,8 @@ func (p PlanMetadata) IsZero() bool {
 		p.Framework == "" &&
 		p.TestSkippingLevel == "" &&
 		len(p.OSTags) == 0 &&
-		len(p.RuntimeTags) == 0
+		len(p.RuntimeTags) == 0 &&
+		len(p.CITags) == 0
 }
 
 type TestPlanner struct {
@@ -302,8 +304,15 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	forceFullTestDiscovery := settings.GetForceFullTestDiscovery()
 	strictDiscovery := settings.GetStrictDiscovery()
 	fullDiscoveryNeeded := fullTestDiscoverySupported && (isTestLevelSkipping || forceFullTestDiscovery)
-	tp.runInfo = runmetadata.New(environment.GetCITags())
+	ciTags := environment.GetCITags()
+	tp.runInfo = runmetadata.New(ciTags)
 	tp.planMetadata = NewPlanMetadata(tags, detectedPlatform.Name(), testFramework.Name(), testSkippingLevel)
+	tp.planMetadata.CITags = make(map[string]string)
+	for key := range constants.TestParallelizationPlanEnvVars {
+		if value := ciTags[key]; value != "" {
+			tp.planMetadata.CITags[key] = value
+		}
+	}
 	if tp.optimizationClient == nil {
 		if tp.newOptimizationClient == nil {
 			return errcode.New(errcode.PlanOptimizationClientCreationFailed, "failed to create optimization client: missing client factory")
