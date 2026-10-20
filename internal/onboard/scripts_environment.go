@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -90,7 +91,7 @@ func ordinaryNodeOptions(value string) (string, error) {
 	if strings.ContainsAny(value, "$`") {
 		return "", errors.New("dynamic NODE_OPTIONS requires review")
 	}
-	words, err := shellquote.Split(value)
+	words, err := environment.SplitNodeOptions(value)
 	if err != nil {
 		return "", err
 	}
@@ -119,7 +120,7 @@ func ordinaryNodeOptions(value string) (string, error) {
 		}
 		kept = append(kept, word)
 	}
-	return shellquote.Join(kept...), nil
+	return environment.JoinNodeOptions(kept), nil
 }
 
 func literalNodeJest(words []string) bool {

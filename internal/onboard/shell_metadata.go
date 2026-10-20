@@ -33,6 +33,9 @@ func resolveMetadataStep(root string, workflow ciWorkflow, job runtimeJob, step 
 		for i := range part.Tests {
 			part.Tests[i].Prerequisites = append(slices.Clone(result.Builds), part.Tests[i].Prerequisites...)
 			part.Tests[i].UnvalidatedSetup = append(slices.Clone(result.Setup), part.Tests[i].UnvalidatedSetup...)
+			if result.Reason != "" {
+				part.Tests[i].UnvalidatedSetup = append(part.Tests[i].UnvalidatedSetup, result.Reason)
+			}
 		}
 		result.Tests = append(result.Tests, part.Tests...)
 		result.Builds = append(result.Builds, part.Builds...)
@@ -70,8 +73,14 @@ func metadataInvocations(command string) ([]string, bool) {
 	var commands []string
 	addLiteral := func(stmt *syntax.Stmt) bool {
 		text := printNode(stmt)
-		if _, err := staticCommands(text); err != nil {
+		literal, err := staticCommands(text)
+		if err != nil {
 			return false
+		}
+		for _, words := range literal {
+			if len(words) > 0 && words[0] == "cd" {
+				return false
+			}
 		}
 		commands = append(commands, text)
 		return len(commands) <= 64

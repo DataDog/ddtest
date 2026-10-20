@@ -89,13 +89,27 @@ func expandCompositeSteps(root, source string, steps []runtimeStep) []runtimeSte
 			child.Number = step.Number
 			child.Source = fmt.Sprintf("%s / step %d", filepath.ToSlash(relative), i+1)
 			child.Parents = append(slices.Clone(step.Parents), step.If)
+			resolveInput := func(value string) string {
+				return inputReference.ReplaceAllStringFunc(value, func(reference string) string {
+					match := inputReference.FindStringSubmatch(reference)
+					if resolved, ok := inputs[match[1]]; ok {
+						return resolved
+					}
+					return reference
+				})
+			}
+			child.Run = resolveInput(child.Run)
+			child.WorkingDirectory = resolveInput(child.WorkingDirectory)
+			child.Shell = resolveInput(child.Shell)
+			child.If = resolveInput(child.If)
+			child.Uses = resolveInput(child.Uses)
 			child.With = maps.Clone(child.With)
 			for key, value := range child.With {
-				if match := inputReference.FindStringSubmatch(strings.TrimSpace(value)); match != nil {
-					if resolved, ok := inputs[match[1]]; ok {
-						child.With[key] = resolved
-					}
-				}
+				child.With[key] = resolveInput(value)
+			}
+			child.Env = maps.Clone(child.Env)
+			for key, value := range child.Env {
+				child.Env[key] = resolveInput(value)
 			}
 			env := maps.Clone(step.Env)
 			if env == nil {
@@ -122,7 +136,7 @@ func expandCompositeSteps(root, source string, steps []runtimeStep) []runtimeSte
 	return result
 }
 
-var inputReference = regexp.MustCompile(`^\$\{\{\s*inputs\.([a-zA-Z0-9_-]+)\s*\}\}$`)
+var inputReference = regexp.MustCompile(`\$\{\{\s*inputs\.([a-zA-Z0-9_-]+)\s*\}\}`)
 
 func localActionPath(root, uses string) (string, error) {
 	if !filepath.IsLocal(uses) || strings.Contains(uses, "${{") {

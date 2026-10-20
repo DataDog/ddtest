@@ -55,6 +55,9 @@ func resolveDiscoveryTool(root, directory string, words []string, framework stri
 	command := shellquote.Join(words...)
 	switch tool {
 	case metadataTool:
+		if words[0] == "printf" && len(words) > 1 && words[1] == "-v" {
+			return unresolvedCommand("Shell variable assignment requires review: " + command)
+		}
 		return commandResolution{}
 	case frameworkTool:
 		return commandResolution{OtherFramework: true, ReviewReason: "Other test framework is outside " + framework + " validation: " + command}

@@ -170,7 +170,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 		result.Builds = append(result.Builds, part.Builds...)
 		result.SingleJest = len(commands) == 1 && part.SingleJest
 		if part.ReviewReason != "" {
-			result.ReviewReason = part.ReviewReason
+			result.ReviewReason = joinDiagnostic(result.ReviewReason, part.ReviewReason)
 		}
 		if part.Reason != "" {
 			if result.Reason == "" {
@@ -256,13 +256,18 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		}
 	}
 	if (words[0] == "npx" || words[0] == "pnpx") || (len(words) > 1 && ((words[0] == "pnpm" || words[0] == "npm") && words[1] == "exec" || words[0] == "pnpm" && words[1] == "dlx")) {
+		npmExec := words[0] == "npm"
 		if words[0] == "npx" || words[0] == "pnpx" {
 			words = words[1:]
 		} else {
 			words = words[2:]
 		}
 
-		if len(words) > 0 && words[0] == "--" {
+		if npmExec {
+			if separator := slices.Index(words, "--"); separator >= 0 {
+				words = slices.Delete(words, separator, separator+1)
+			}
+		} else if len(words) > 0 && words[0] == "--" {
 			words = words[1:]
 		}
 		if len(words) == 0 {
@@ -396,7 +401,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	var lifecycle string
 	for _, hook := range []string{"pre" + name, "post" + name} {
 		if manifest.Scripts[hook] != "" {
-			lifecycle = "Package lifecycle script " + hook + " requires review alongside " + command
+			lifecycle = joinDiagnostic(lifecycle, "Package lifecycle script "+hook+" requires review alongside "+command)
 		}
 	}
 	if len(args) > 0 {
@@ -409,11 +414,14 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	// and orchestration, when expansion cannot represent that build alone.
 	if name == "build" && !result.Matched && orchestratedBuild(root, directory, script, manifest.Scripts, stack, remaining, frameworks...) {
 		relative, _ := filepath.Rel(root, directory)
-		return commandResolution{Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
+		return commandResolution{Reason: lifecycle, Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
 	}
 
 	if lifecycle != "" {
-		result.Reason = lifecycle
+		result.Reason = joinDiagnostic(result.Reason, lifecycle)
+		for i := range result.Tests {
+			result.Tests[i].UnvalidatedSetup = append(result.Tests[i].UnvalidatedSetup, lifecycle)
+		}
 		result.UnknownExecutable = false
 	}
 	if result.Reason != "" {

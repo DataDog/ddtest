@@ -97,13 +97,16 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 					if conditionErr != nil && resolved.Run != "" && resolution.Reason == "" && !resolution.Matched && len(resolution.Builds) == 0 {
 						resolution.Review, resolution.Reason = true, "Condition affects only a recognized non-test command; review separately: "+conditionErr.Error()
 					}
+					if len(resolution.Builds) > 0 && (conditionErr != nil || envErr != nil) {
+						resolution.Review = false
+					}
 					if conditionErr != nil && !resolution.Review {
 						pendingSetup = append(pendingSetup, conditionErr.Error())
-						resolution.Reason = conditionErr.Error()
+						resolution.Reason = joinDiagnostic(resolution.Reason, conditionErr.Error())
 					}
 					if envErr != nil && !resolution.Review {
 						pendingSetup = append(pendingSetup, envErr.Error())
-						resolution.Reason = envErr.Error()
+						resolution.Reason = joinDiagnostic(resolution.Reason, envErr.Error())
 					}
 					if resolution.Review {
 						for j := range resolution.Builds {
@@ -179,7 +182,7 @@ func mutatesCIFiles(command string) bool {
 		return false
 	} // Already retained as unresolved setup.
 	for _, words := range commands {
-		if len(words) > 0 && slices.Contains([]string{"sed", "cp", "mv", "rm", "patch"}, words[0]) {
+		if len(words) > 0 && slices.Contains([]string{"sed", "cp", "mv", "rm", "patch", "rimraf", "rsync"}, words[0]) {
 			return true
 		}
 		if len(words) > 1 && slices.Contains([]string{"pnpm", "yarn", "bun"}, words[0]) && words[1] == "add" {

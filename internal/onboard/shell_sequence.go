@@ -80,6 +80,11 @@ func literalShellWord(word *syntax.Word) (string, error) {
 	if unquotedGlob(word) {
 		return "", fmt.Errorf("unquoted shell pathname expansion requires review")
 	}
+	if len(word.Parts) > 0 {
+		if literal, ok := word.Parts[0].(*syntax.Lit); ok && strings.HasPrefix(literal.Value, "~") {
+			return "", fmt.Errorf("shell tilde expansion requires review")
+		}
+	}
 	valid := true
 	syntax.Walk(word, func(node syntax.Node) bool {
 		switch node.(type) {
