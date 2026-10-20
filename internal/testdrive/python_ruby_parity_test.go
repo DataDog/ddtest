@@ -11,19 +11,16 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
-	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPythonRubyExitCodeMatchesMain(t *testing.T) {
+func TestPythonExitCodeMatchesMain(t *testing.T) {
 	for _, fixture := range []struct {
 		language string
 		runner   framework.Framework
 	}{
 		{"python", framework.NewPytest(platform.NewPython())},
-		{"ruby", framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest))},
-		{"ruby", framework.NewMinitest(platform.NewRuby(settings.TestSkippingLevelTest))},
 	} {
 		t.Run(fixture.runner.Name(), func(t *testing.T) {
 			for _, tc := range []struct {
@@ -120,8 +117,8 @@ func TestPythonRubyAndCypressPreviewsDoNotPromiseUnsupportedChecks(t *testing.T)
 	}
 }
 
-func TestPythonRubyReportsDoNotEnterAgentValidation(t *testing.T) {
-	for _, name := range []string{"pytest", "rspec", "minitest"} {
+func TestPythonReportsDoNotEnterAgentValidation(t *testing.T) {
+	for _, name := range []string{"pytest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)

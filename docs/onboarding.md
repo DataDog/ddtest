@@ -237,3 +237,20 @@ report links. Both `--agent` and `--format json` emit exactly one JSON object on
 stale results cannot produce a fresh completion claim. A later check-only attempt retains the full run’s binding; it does not create new execution evidence. Editing the public report cannot certify it or inject a saved recovery executable. Saved command options and `--report --detail plan` from the report are used only after receipt verification. Missing/expired private receipts require full validation again. A plain `testdrive` run replaces the report without the workflow checks or binding, so `--report` returns `plain_report` with the workflow command to run; a check-only run keeps the earlier binding and plan.
 Do not run extra cache audits or rewrite the verdict. Actual CI execution and
 Datadog backend processing remain untested.
+
+## Ruby validation
+
+RSpec and Minitest support plain `ddtest testdrive --all --check-only --yes`
+and full `ddtest testdrive --all --yes` validation. Native baseline and
+reporting-only results, real application coverage and all six feature controls
+are checked independently for each discovered command and Gemfile. Matching
+pre-existing test failures are permitted; missing native results or telemetry
+remain incomplete. Ruby validation uses disposable repository copies and
+preserves the original Gemfile and lockfile, including fallback tracer installs.
+
+Numeric CI Ruby selections are checked against the resolved tracer's RubyGems
+requirements. Other engines and floating selections require separate validation
+or explicit instrumentation exclusions that preserve their original test steps.
+Ruby agent/JSON coordination and automatic CI edits remain unsupported.
+Run `ddtest onboard --framework rspec` (or `minitest`) for the manual setup
+steps, then retain both reports and the final response from plain testdrive.
