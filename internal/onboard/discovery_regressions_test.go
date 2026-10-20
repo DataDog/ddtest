@@ -229,3 +229,22 @@ func TestConditionalNodeOptionsKeepOrdinaryRuntimeFlags(t *testing.T) {
 	require.Equal(t, map[string]string{"NODE_OPTIONS": "--experimental-vm-modules"}, scope.Commands[0].Environment)
 	require.Equal(t, 2, len(scope.Commands[0].Locations), "both matrix consumers must survive expression resolution")
 }
+
+func TestConditionalSetupCarriesToFollowingSteps(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  test:
+    steps:
+      - run: |
+          if npm -ps ls nyc | grep -q nyc; then
+            cp ci.js jest.config.js && jest --config first.js
+          else
+            jest --config second.js
+          fi
+      - run: jest --config later.js
+`)
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Equal(t, []string{"jest --config first.js", "jest --config second.js", "jest --config later.js"}, commandNames(scope.Commands))
+	require.NotEmpty(t, scope.Unresolved)
+	require.Contains(t, strings.Join(scope.Commands[2].UnvalidatedSetup, "\n"), "cp ci.js jest.config.js")
+}

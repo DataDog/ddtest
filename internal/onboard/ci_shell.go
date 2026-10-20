@@ -127,6 +127,7 @@ func resolveCIShell(root string, workflow ciWorkflow, job runtimeJob, step runti
 				result.Matched = true
 				result.Tests = append(result.Tests, part.Tests...)
 				result.Builds = append(result.Builds, part.Builds...)
+				result.Setup = append(result.Setup, part.Setup...)
 			}
 			result.Evidence = "Both branches of the npm package-presence condition; original commands retained."
 			return result, true
