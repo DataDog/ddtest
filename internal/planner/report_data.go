@@ -250,6 +250,7 @@ type planningReportStats struct {
 	discoveryDuration               time.Duration
 	tiaSkippableTestsApplied        int
 	uniqueTIASkippableSuitesApplied map[testSuiteKey]struct{}
+	tiaSkippedTestsByFile           map[string]int
 	disabledTestsApplied            int
 	unskippableMarkerSuitesForced   int
 }
@@ -257,6 +258,7 @@ type planningReportStats struct {
 func newPlanningReportStats() planningReportStats {
 	return planningReportStats{
 		uniqueTIASkippableSuitesApplied: make(map[testSuiteKey]struct{}),
+		tiaSkippedTestsByFile:           make(map[string]int),
 	}
 }
 

@@ -1311,8 +1311,10 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeForceFullDiscovery(t *test
 		report.Planning.Skipping.FullySkippedFiles != 1 {
 		t.Errorf("expected full discovery skipping application report, got %+v", report.Planning.Skipping)
 	}
-	if got := telemetryClient.value("itr_skipped", "event_type:suite"); got != 3 {
-		t.Errorf("itr_skipped suite count = %v, want 3", got)
+	if got := telemetryClient.value("itr_skipped", "event_type:suite"); got != 1 {
+		// Only the fully skipped suite's file is omitted; the guarded suite and
+		// the mixed file remain runnable, so the plan skipped one suite.
+		t.Errorf("itr_skipped suite count = %v, want 1", got)
 	}
 	if got := telemetryClient.value("itr_unskippable", "event_type:suite"); got != 0 {
 		t.Errorf("itr_unskippable suite count = %v, want 0", got)
@@ -1831,8 +1833,11 @@ func TestTestPlanner_PreparePlanningData_TestLevelFullDiscoveryKeepsUnskippableM
 	if unguardedAggregate.NumTests != 1 || unguardedAggregate.NumTestsSkipped != 1 {
 		t.Fatalf("expected unguarded test to remain skipped, got %+v", unguardedAggregate)
 	}
-	if got := telemetryClient.value("itr_skipped", "event_type:test"); got != 2 {
-		t.Errorf("itr_skipped test count = %v, want 2", got)
+	if got := telemetryClient.value("itr_skipped", "event_type:test"); got != 1 {
+		// The plan omits only the unguarded (fully skippable) file's test. The
+		// guarded file is retained; its test is skipped and counted by the
+		// tracer at runtime instead.
+		t.Errorf("itr_skipped test count = %v, want 1", got)
 	}
 	if got := telemetryClient.value("itr_unskippable", "event_type:test"); got != 0 {
 		t.Errorf("itr_unskippable test count = %v, want 0", got)
@@ -1854,13 +1859,44 @@ func TestTestPlanner_RecordFullDiscoveryResults_SuiteSkippablesSkipDiscoveredTes
 		},
 	}
 
-	if err := runner.recordFullDiscoveryResults(tests, discovery.TestFileSet{Pattern: "**/*"}, newSkippableMatcher(skippables, nil)); err != nil {
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		SuiteSourceFiles: map[string]string{
+			"Order": "spec/models/order_spec.rb",
+		},
+	}
+	if err := runner.recordFullDiscoveryResults(tests, discovery.TestFileSet{Pattern: "**/*"}, newSkippableMatcher(skippables, nil), mockFramework); err != nil {
 		t.Fatalf("recordFullDiscoveryResults() should not fail, got: %v", err)
 	}
 
 	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Order"}]
 	if aggregate.NumTests != 2 || aggregate.NumTestsSkipped != 2 {
 		t.Fatalf("expected whole suite to be skipped, got %+v", aggregate)
+	}
+}
+
+func TestTestPlanner_RecordFullDiscoveryResults_SuiteSkippableWithoutMappingStaysRunnable(t *testing.T) {
+	runner := newTestPlannerWithDefaults()
+	tests := []testoptimization.Test{
+		{Module: "rspec", Suite: "Order", Name: "first", SuiteSourceFile: "spec/models/order_spec.rb"},
+		{Module: "rspec", Suite: "Order", Name: "second", SuiteSourceFile: "spec/models/order_spec.rb"},
+	}
+	skippables := api.Skippables{
+		Suites: api.SkippableSuites{
+			{Module: "rspec", Suite: "Order"}: true,
+		},
+	}
+	// No suite durations and no framework mapping: the backend metadata does
+	// not map the suite to a source file, so the suite must stay runnable in
+	// full discovery exactly as it does in fast suite-mode planning.
+	unmappedFramework := &MockFramework{FrameworkName: "rspec", SuiteSourceFiles: map[string]string{}}
+	if err := runner.recordFullDiscoveryResults(tests, discovery.TestFileSet{Pattern: "**/*"}, newSkippableMatcher(skippables, nil), unmappedFramework); err != nil {
+		t.Fatalf("recordFullDiscoveryResults() should not fail, got: %v", err)
+	}
+
+	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Order"}]
+	if aggregate.NumTests != 2 || aggregate.NumTestsSkipped != 0 {
+		t.Fatalf("expected unmapped skippable suite to stay runnable, got %+v", aggregate)
 	}
 }
 
@@ -4135,7 +4171,7 @@ func TestTestPlanner_RecordFullDiscoveryResults_AppliesExcludeAfterSubdirNormali
 		},
 	}
 
-	err := runner.recordFullDiscoveryResults(tests, discovery.TestFileSet{Pattern: "**/*"}, newSkippableMatcher(api.NewSkippables(), nil))
+	err := runner.recordFullDiscoveryResults(tests, discovery.TestFileSet{Pattern: "**/*"}, newSkippableMatcher(api.NewSkippables(), nil), nil)
 	if err != nil {
 		t.Fatalf("recordFullDiscoveryResults() should not fail, got: %v", err)
 	}
