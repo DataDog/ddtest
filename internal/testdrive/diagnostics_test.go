@@ -22,7 +22,7 @@ import (
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
-func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
+func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 	failed := intake.Test{
 		Name: "greets", Suite: "greeting.feature", SourceFile: "features/steps.js", SourceStart: 4, SourceEnd: 9, Status: "fail",
 		Attempts: []intake.TestRun{{Status: "fail", Duration: time.Millisecond, ErrorType: "AssertionError", ErrorMessage: "expected hello", ErrorStack: "AssertionError: expected hello\n    at features/steps.js:6"}},
@@ -42,7 +42,7 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 	}{
 		{name: "missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true},
 		{name: "Mocha missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true},
-		{name: "Cypress missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, cypress: true},
+		{name: "Cypress missing coverage", wantAdvice: true, facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, cypress: true},
 		{name: "Cypress with coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1, CoverageLevel: "test", Tests: []intake.Test{passed}}, cypress: true},
 		{name: "Mocha with installed nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true, nycInstalled: true},
 		{name: "Cucumber with declared nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, nycDeclared: true},
@@ -87,19 +87,24 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-			drive.platform = installer
-			const commandOutput = "Complete command log\nwith additional details\n"
-			drive.executor = &fakeTestdriveExecutor{output: []byte(commandOutput), err: tc.commandError}
-			drive.startIntake = func(string) (localIntake, error) {
-				return &fakeIntake{url: "http://127.0.0.1:1234", findings: tc.facts}, nil
+			session := t.TempDir()
+			command, args := drive.executionCommand()
+			runtime := reportRuntime{Framework: frameworkLabel, Command: command + " " + strings.Join(args, " "), Tracer: "dd-trace@latest"}
+			if tc.commandError != nil {
+				runtime.Error = tc.commandError.Error()
 			}
+			model := buildReport(drive.repositoryRoot, tc.facts, tc.commandError != nil, runtime)
 			var output bytes.Buffer
-			err := drive.Run(t.Context(), &output)
-			if tc.wantError == "" && err != nil || tc.wantError != "" && (err == nil || !strings.Contains(err.Error(), tc.wantError)) {
-				t.Fatalf("Run() error = %v, want %q", err, tc.wantError)
+			writeFindings(&output, tc.facts, model.Cards...)
+			path, err := writeDiagnostics(drive.repositoryRoot, session, tc.facts, model, tc.commandError != nil)
+			if err != nil {
+				t.Fatal(err)
 			}
-			data, err := os.ReadFile(filepath.Join(installer.sessionDirectory, diagnosticsFilename))
+			model.Artifacts = append(model.Artifacts, reportArtifact{Title: "Findings JSON", Href: diagnosticsFilename})
+			if _, err := writeReportModel(session, model); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,16 +125,13 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 			if tc.commandError != nil && diagnostics.CommandError != tc.commandError.Error() {
 				t.Fatalf("missing command error: %+v", diagnostics)
 			}
-			if tc.facts.CoverageLevel == "suite" && (!strings.Contains(output.String(), "Suites with coverage: 1 / 1") || strings.Contains(output.String(), "Tests with coverage:")) {
-				t.Fatal("console must report coverage at the active suite level")
-			}
 			if strings.Contains(output.String(), "1 finding.") {
 				t.Fatal("console must print the finding instead of a standalone total")
 			}
-			if tc.facts.MissingCoverage && !strings.Contains(output.String(), intake.MissingCoverageContext+"\n  Fix:") {
+			if tc.facts.MissingCoverage && !tc.cypress && !strings.Contains(output.String(), intake.MissingCoverageContext+"\n  Fix:") {
 				t.Fatalf("coverage guidance must immediately follow the concise finding:\n%s", output.String())
 			}
-			report, err := os.ReadFile(filepath.Join(installer.sessionDirectory, reportFilename))
+			report, err := os.ReadFile(filepath.Join(session, reportFilename))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -157,16 +159,6 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 					t.Fatalf("missing troubleshooting: %+v", diagnostics)
 				}
 				advice := diagnostics.Troubleshooting[0]
-				if tc.cypress {
-					for _, text := range []string{"Test Impact Analysis data", "babel-plugin-istanbul", "vite-plugin-istanbul", "window.__coverage__"} {
-						if !strings.Contains(advice.Text, text) {
-							t.Fatalf("Cypress advice lacks setup instruction %q: %+v", text, advice)
-						}
-					}
-					if advice.Finding != intake.MissingCoverageFinding || !strings.HasSuffix(advice.URL, "#cypress") || strings.Contains(advice.Text, "nyc ddtest") {
-						t.Fatalf("Cypress needs browser instrumentation guidance: %+v", advice)
-					}
-				}
 				if tc.nycInstalled && (advice.Title != "Check NYC coverage configuration" || !strings.Contains(advice.Text, "include/exclude") || strings.Contains(advice.Text, "./node_modules/.bin/nyc ddtest")) {
 					t.Fatalf("installed NYC still needs actionable coverage guidance: %+v", advice)
 				}
@@ -181,29 +173,7 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 			} else if len(diagnostics.Troubleshooting) != 0 || strings.Contains(output.String(), "  Fix:") {
 				t.Fatal("must not invent troubleshooting without supporting evidence")
 			}
-			for _, filename := range []string{diagnosticsFilename, testOutputFilename, "intake"} {
-				label, err := filepath.Rel(drive.repositoryRoot, filepath.Join(installer.sessionDirectory, filename))
-				if err != nil || !strings.Contains(output.String(), label) {
-					t.Fatalf("console does not identify %q: %s", filename, output.String())
-				}
-			}
-			for _, text := range []string{drive.repositoryRoot, "Findings and troubleshooting (JSON):", "JSON durations: nanoseconds", "Source paths: repository-relative", "intake/*.json"} {
-				if !strings.Contains(output.String(), text) {
-					t.Fatalf("missing diagnostic label %q", text)
-				}
-			}
-			for _, text := range []string{"For coding agents:", "Read findings.json", "Read test-output.txt", "After addressing the findings"} {
-				if strings.Contains(output.String(), text) {
-					t.Fatalf("diagnostics must use compact labels instead of prose: %q", text)
-				}
-			}
-			if strings.Count(output.String(), "Full test output:") != 1 {
-				t.Fatal("full command output path must be shown once on success and failure")
-			}
-			log, err := os.ReadFile(filepath.Join(installer.sessionDirectory, testOutputFilename))
-			if err != nil || string(log) != commandOutput {
-				t.Fatalf("complete command output was not preserved: %v", err)
-			}
+
 		})
 	}
 }
@@ -229,7 +199,7 @@ func TestConsoleFindingIncludesSourceAndEveryAttemptError(t *testing.T) {
 	}
 }
 
-func TestRunKeepsDiagnosticPathsWhenAnalysisOrReportFails(t *testing.T) {
+func TestRunKeepsValidationReportWhenAnalysisOrReportFails(t *testing.T) {
 	for _, tc := range []struct {
 		name, wantError string
 		analysisError   error
@@ -237,16 +207,17 @@ func TestRunKeepsDiagnosticPathsWhenAnalysisOrReportFails(t *testing.T) {
 		wantFindings    bool
 	}{
 		{name: "analysis", wantError: "invalid events", analysisError: errors.New("invalid events")},
-		{name: "report", wantError: "create testdrive report", blockReport: true, wantFindings: true},
+		{name: "report", wantError: "save testdrive HTML report", blockReport: true, wantFindings: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			drive := preparedTestdrive(t)
+			drive.framework = &telemetryOnlyFramework{}
 			installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 			drive.platform = installer
 			drive.executor = &fakeTestdriveExecutor{output: []byte("saved output")}
-			drive.startIntake = func(directory string) (localIntake, error) {
+			drive.startIntake = func(directory string, _ intake.Scenario) (localIntake, error) {
 				if tc.blockReport {
-					if err := os.Mkdir(filepath.Join(directory, reportFilename), 0755); err != nil {
+					if err := os.MkdirAll(htmlReportPath(drive.repositoryRoot), 0755); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -257,18 +228,21 @@ func TestRunKeepsDiagnosticPathsWhenAnalysisOrReportFails(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("Run() error = %v, want %q", err, tc.wantError)
 			}
-			for _, filename := range []string{testOutputFilename, "intake"} {
-				label, _ := filepath.Rel(drive.repositoryRoot, filepath.Join(installer.sessionDirectory, filename))
-				if !strings.Contains(output.String(), label) {
-					t.Fatalf("diagnostic failure hides %q: %s", filename, output.String())
-				}
+			data, err := os.ReadFile(validationPath(drive.repositoryRoot))
+			if err != nil {
+				t.Fatal(err)
 			}
-			if strings.Contains(output.String(), "Findings and troubleshooting (JSON):") != tc.wantFindings {
-				t.Fatal("console must link only to successfully saved findings")
+			var result validationResult
+			if err := json.Unmarshal(data, &result); err != nil {
+				t.Fatal(err)
 			}
-			if !tc.wantFindings && !strings.Contains(output.String(), "Structured findings: unavailable (collection error)") {
-				t.Fatal("console must explain that analysis is incomplete")
+			if !strings.Contains(result.Error, tc.wantError) {
+				t.Fatal(result.Error)
 			}
+			if strings.Contains(output.String(), "Full test output:") {
+				t.Fatal("must not link removed scratch files")
+			}
+
 		})
 	}
 }

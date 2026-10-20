@@ -46,7 +46,7 @@ func TestMochaTestdriveNYCPreviewAndExecution(t *testing.T) {
 			drive.command, drive.args = tc.command, tc.args
 			drive.framework = framework.NewMocha(platform.NewJavaScript())
 			if tc.jest {
-				drive.framework = framework.NewJest(platform.NewJavaScript())
+				drive.framework = &telemetryOnlyFramework{}
 			}
 			if tc.installed {
 				nyc := filepath.Join(drive.repositoryRoot, "node_modules", ".bin", "nyc")
@@ -71,7 +71,7 @@ func TestMochaTestdriveNYCPreviewAndExecution(t *testing.T) {
 			drive.platform = installer
 			executor := &fakeTestdriveExecutor{}
 			drive.executor = executor
-			drive.startIntake = func(string) (localIntake, error) {
+			drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 				return &fakeIntake{url: "http://127.0.0.1:1234", findings: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1}}, nil
 			}
 			var output bytes.Buffer
@@ -80,11 +80,11 @@ func TestMochaTestdriveNYCPreviewAndExecution(t *testing.T) {
 			require.Equal(t, wantArgs, executor.args)
 			require.Equal(t, tc.command, drive.command)
 			require.Equal(t, tc.args, drive.args)
-			data, err := os.ReadFile(filepath.Join(installer.sessionDirectory, diagnosticsFilename))
+			data, err := os.ReadFile(validationPath(drive.repositoryRoot))
 			require.NoError(t, err)
-			var diagnostics runDiagnostics
+			var diagnostics validationResult
 			require.NoError(t, json.Unmarshal(data, &diagnostics))
-			require.Equal(t, wantDisplay, diagnostics.Command)
+			require.Equal(t, wantDisplay, diagnostics.Runs[0].Command)
 			require.Contains(t, output.String(), "  Command: "+wantDisplay)
 		})
 	}

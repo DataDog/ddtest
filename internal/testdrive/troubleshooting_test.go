@@ -15,8 +15,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddtest/internal/framework"
-	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
@@ -40,31 +38,22 @@ func TestRunFailureFindingsAcrossReportConsoleAndJSON(t *testing.T) {
 		{name: "explicit pytest loading with autoload disabled", framework: "pytest", command: "pytest", log: "1 passed", facts: intake.Facts{TestEventCount: 1, TestCount: 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			drive := preparedTestdrive(t)
-			drive.framework = framework.NewVitest(platform.NewJavaScript())
+			root, session := t.TempDir(), t.TempDir()
+			runtime := reportRuntime{Framework: "Vitest", Command: tc.command, Output: tc.log}
 			if tc.framework == "pytest" {
-				drive.framework = framework.NewPytest(platform.NewPython())
-				drive.language = "python"
-				t.Setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
-				if tc.kind == "" {
-					t.Setenv("PYTEST_PLUGINS", "ddtrace.testing.internal.pytest.entry_point")
-				}
+				runtime.Framework = "pytest"
 			}
-			drive.command, drive.args = tc.command, nil
-			installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-			drive.platform = installer
-			drive.executor = &fakeTestdriveExecutor{output: []byte(tc.log), err: tc.err}
-			drive.startIntake = func(string) (localIntake, error) {
-				return &fakeIntake{url: "http://127.0.0.1:1234", findings: tc.facts}, nil
+			if tc.err != nil {
+				runtime.Error = tc.err.Error()
 			}
+			model := buildReport(root, tc.facts, tc.err != nil, runtime)
 			var console bytes.Buffer
-			runErr := drive.Run(t.Context(), &console)
-			if tc.kind == "" {
-				require.NoError(t, runErr)
-			} else {
-				require.Error(t, runErr)
-			}
-			data, err := os.ReadFile(filepath.Join(drive.session.Directory(), diagnosticsFilename))
+			writeFindings(&console, tc.facts, model.Cards...)
+			path, err := writeDiagnostics(root, session, tc.facts, model, tc.err != nil)
+			require.NoError(t, err)
+			_, err = writeReportModel(session, model)
+			require.NoError(t, err)
+			data, err := os.ReadFile(path)
 			require.NoError(t, err)
 			var diagnostics runDiagnostics
 			require.NoError(t, json.Unmarshal(data, &diagnostics))
@@ -81,7 +70,7 @@ func TestRunFailureFindingsAcrossReportConsoleAndJSON(t *testing.T) {
 			require.Equal(t, "error", diagnostics.Findings[0].Severity)
 			require.Equal(t, "1 finding.", diagnostics.Summary)
 			require.NotContains(t, console.String(), "1 finding.")
-			page, err := os.ReadFile(filepath.Join(drive.session.Directory(), reportFilename))
+			page, err := os.ReadFile(filepath.Join(session, reportFilename))
 			require.NoError(t, err)
 			report := string(page)
 			require.Contains(t, report, `<article class="problem-card" data-kind="`+tc.kind+`" data-severity="error">`)

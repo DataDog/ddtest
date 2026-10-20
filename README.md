@@ -24,8 +24,10 @@ ddtest onboard    # GitHub Actions setup instructions
 ddtest testdrive  # Preview, confirm, and run tests locally
 ```
 
+For Jest, testdrive compares the original test suite without and with instrumentation, then validates six advanced features using temporary probes. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
+
 No Datadog account or Agent is needed. Testdrive links to an HTML report under
-`.testoptimization/testdrive/`. Use `--yes` after reviewing the preview in
+`.testoptimization/report.html` with a compact `.testoptimization/testdrive.json`. Use `--yes` after reviewing the preview in
 non-interactive sessions, `--framework` to select a runner, and `--command` for
 package scripts or custom setup.
 

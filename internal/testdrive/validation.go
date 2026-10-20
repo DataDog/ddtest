@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,6 +20,8 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
 type verdict struct {
@@ -36,6 +39,114 @@ type featureResult struct {
 	Reason  string `json:"reason"`
 }
 
+// Detailed results feed validation and the HTML findings report, not compact JSON.
+type validationRun struct {
+	temporaryRoot                   string
+	commandOutput                   string
+	commandError                    error
+	Project                         string
+	Skipping                        *skippingDiagnostic
+	root                            string
+	framework                       string
+	Name                            string
+	Command                         string
+	Instrumented                    bool
+	ProbeMode                       string
+	ProbeCoverageThresholdsDisabled bool
+	ProbeLintSkipped                bool
+	Diagnostic                      string
+	ExitCode                        int
+	ResultError                     string
+	Tests                           []jestTest
+	SuiteErrors                     []string
+	Facts                           intake.Facts
+}
+
+type testCounts struct {
+	Passed  int `json:"passed"`
+	Failed  int `json:"failed"`
+	Skipped int `json:"skipped"`
+	Other   int `json:"other"`
+}
+
+type runSummary struct {
+	NativeCounts                    *executionCounts    `json:"native_counts,omitempty"`
+	ProbeLintSkipped                bool                `json:"probe_lint_skipped,omitempty"`
+	Project                         string              `json:"project,omitempty"`
+	Skipping                        *skippingDiagnostic `json:"skipping,omitempty"`
+	Name                            string              `json:"name"`
+	Command                         string              `json:"command,omitempty"`
+	Instrumented                    bool                `json:"instrumented"`
+	ProbeMode                       string              `json:"probe_mode,omitempty"`
+	ProbeCoverageThresholdsDisabled bool                `json:"probe_coverage_thresholds_disabled,omitempty"`
+	Diagnostic                      string              `json:"diagnostic,omitempty"`
+	ExitCode                        *int                `json:"exit_code"`
+	ResultError                     string              `json:"result_error,omitempty"`
+	TestCounts                      testCounts          `json:"test_counts"`
+	SuiteErrorCount                 int                 `json:"suite_error_count"`
+	TestEventCount                  int                 `json:"test_event_count"`
+}
+
+func (r validationRun) summary() runSummary {
+	summary := runSummary{Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
+	if r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") {
+		summary.NativeCounts = nativeExecutionCounts(r)
+	}
+	// A setup failure before execution must not look like a successful command.
+	if r.Command != "" {
+		exitCode := r.ExitCode
+		summary.ExitCode = &exitCode
+	}
+	for _, test := range r.Tests {
+		switch test.Status {
+		case "passed":
+			summary.TestCounts.Passed++
+		case "failed":
+			summary.TestCounts.Failed++
+		case "pending", "skipped", "todo", "disabled":
+			summary.TestCounts.Skipped++
+		default:
+			summary.TestCounts.Other++
+		}
+	}
+	return summary
+}
+
+type validationResult struct {
+	SchemaVersion int `json:"schema_version"`
+	ReportingCounts    *executionCounts         `json:"reporting_counts,omitempty"`
+	Scope              *onboard.ValidationScope `json:"scope,omitempty"`
+	Cleanup            *verdict                 `json:"cleanup,omitempty"`
+	HTMLReportCurrent  bool                     `json:"html_report_current"`
+	Session            string                   `json:"session"`
+	CompletedAt        time.Time                `json:"completed_at"`
+	CheckOnly          bool                     `json:"check_only"`
+	ChecksPassed       bool                     `json:"checks_passed"`
+	LocalSuccess       bool                     `json:"local_success"`
+	Preflight          *jestPreflight           `json:"preflight,omitempty"`
+	ProjectChecks      []projectProbeCheck      `json:"project_checks,omitempty"`
+	Selection          *platform.JSSelection    `json:"tracer_selection,omitempty"`
+	TracerSource       string                   `json:"tracer_source,omitempty"`
+	CISelection        *verdict                 `json:"ci_tracer_selection,omitempty"`
+	CIExecution        verdict                  `json:"ci_execution"`
+	Success            bool                     `json:"success"`
+	WorkingDirectory   string                   `json:"working_directory"`
+	Error              string                   `json:"error,omitempty"`
+	Framework          string                   `json:"framework"`
+	Tracer             string                   `json:"tracer"`
+	CIRuntime          *onboard.RuntimeCheck    `json:"ci_runtime,omitempty"`
+	Compatibility      verdict                  `json:"compatibility"`
+	Features           []featureResult          `json:"features"`
+	Runs               []runSummary             `json:"runs"`
+	Summary            validationSummary        `json:"summary,omitzero"`
+	LastExecution      *validationEvidence      `json:"last_execution,omitempty"`
+	ConfigurationCheck validationEvidence       `json:"configuration_check"`
+	Retained           *retainedExecution       `json:"retained_execution,omitempty"`
+}
+
+const maxReportDifferences = 10
+
 // Bound diagnostics too: install errors can contain entire package-manager logs.
 func reportText(value string) string {
 	const limit = 1024
@@ -50,6 +161,123 @@ const validationFilename = "testdrive.json"
 
 func validationPath(repositoryRoot string) string {
 	return filepath.Join(repositoryRoot, constants.PlanDirectory, validationFilename)
+}
+
+func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
+	if result.Framework != "" && !supportsValidationFramework(result.Framework) {
+		result.Error = reportText(result.Error)
+		result.CompletedAt = time.Now().UTC()
+		result.WorkingDirectory = repositoryRoot
+		result.Success = result.Error == ""
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return fmt.Errorf("encode testdrive results: %w", err)
+		}
+		if err := writeValidation(validationPath(repositoryRoot), append(data, '\n')); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(output, "\nResults JSON: %s\n", validationPath(""))
+		return nil
+	}
+	if !result.CheckOnly && result.ReportingCounts == nil {
+		result.ReportingCounts = reportingExecutionCounts(result.Runs)
+	}
+	prepareValidationResult(repositoryRoot, &result)
+	if err := retainExecution(repositoryRoot, &result); err != nil {
+		return err
+	}
+	setValidationEvidence(&result)
+	result.Summary = summarizeValidation(result)
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode validation results: %w", err)
+	}
+	path := validationPath(repositoryRoot)
+	if err := writeValidation(path, append(data, '\n')); err != nil {
+		return err
+	}
+
+	if result.CIRuntime != nil {
+		_, _ = fmt.Fprintf(output, "\nCI runtime compatibility: %s\n%s\n", result.CIRuntime.Status, result.CIRuntime.Reason)
+		for _, job := range result.CIRuntime.Jobs {
+			label := job.Workflow + " / " + job.Job
+			if job.Step != 0 {
+				label += fmt.Sprintf(" / step %d", job.Step)
+			}
+			if job.Source != "" {
+				label += " (" + job.Source + ")"
+			}
+			if job.Node != "" {
+				label += " / Node " + job.Node
+			}
+			if job.NodeResolution != nil {
+				label += " => " + job.NodeResolution.Version + " (" + job.NodeResolution.Source + ")"
+			}
+			_, _ = fmt.Fprintf(output, "  - %s: %s — %s", label, job.Status, job.Reason)
+			if job.Tracer != "" {
+				_, _ = fmt.Fprintf(output, " (%s; requires %s)", job.Tracer, job.Requirement)
+			}
+			_, _ = fmt.Fprintln(output)
+		}
+		for _, entry := range result.CIRuntime.Review {
+			_, _ = fmt.Fprintf(output, "  - Review separately: %s / %s / step %d (%s): %s\n", entry.Workflow, entry.Job, entry.Step, entry.Command, entry.Reason)
+		}
+	}
+	if result.CISelection != nil {
+		_, _ = fmt.Fprintf(output, "\nCI tracer agreement: %s — %s\n", result.CISelection.Status, result.CISelection.Reason)
+	}
+	if result.CheckOnly {
+		_, _ = fmt.Fprintln(output, "Configuration checks only. Compatibility tests and features were not rerun by this invocation.")
+	}
+	_, _ = fmt.Fprintf(output, "\nCompatibility (this invocation): %s\n%s\n", result.Compatibility.Status, result.Compatibility.Reason)
+	for _, difference := range result.Compatibility.Differences {
+		_, _ = fmt.Fprintf(output, "  - %s\n", difference)
+	}
+	if result.Error != "" {
+		_, _ = fmt.Fprintf(output, "Validation error: %s\n", result.Error)
+	}
+	for _, feature := range result.Features {
+		label := feature.Name
+		if feature.Project != "" {
+			label = feature.Project + "/" + label
+		}
+		_, _ = fmt.Fprintf(output, "Feature %s: %s — %s\n", label, feature.Status, feature.Reason)
+	}
+	_, _ = fmt.Fprintf(output, "\nValidation verdict: %s\nLocal validation: %s\n", result.Summary.Status, result.Summary.LocalValidation)
+	if len(result.Summary.BlockingChecks) > 0 {
+		_, _ = fmt.Fprintf(output, "Blocking checks: %s\n", strings.Join(result.Summary.BlockingChecks, "; "))
+	}
+	_, _ = fmt.Fprintf(output, "CI configuration: %s\nCI execution: not exercised\nReal Datadog credentials required for these local checks: no\nPreserve this verdict in the onboarding response. A failed local feature check is not explained by missing real Datadog credentials.\n", result.Summary.CIConfiguration)
+	if retained := result.Retained; retained != nil {
+		previous := retained.Result
+		_, _ = fmt.Fprintf(output, "\nLast full execution: %s / %s\nLocal execution: %s earlier; not rerun\n%s\n", previous.Session, previous.CompletedAt.Format(time.RFC3339), result.LastExecution.Status, retained.Reason)
+		for _, feature := range previous.Features {
+			if feature.Status != "passed" {
+				_, _ = fmt.Fprintf(output, "Earlier feature check: %s/%s %s\n", feature.Project, feature.Name, feature.Status)
+			}
+		}
+		_, _ = fmt.Fprintln(output, "Keep the earlier commands and feature results in retained_execution.result when reporting onboarding progress.")
+	}
+	_, _ = fmt.Fprintf(output, "Datadog library: %s · %s\nResults JSON: %s\n", result.Tracer, result.TracerSource, validationPath(""))
+	_, _ = fmt.Fprintln(output, "Keep this JSON report and the HTML findings report after cleanup, including when validation fails.")
+	if result.CheckOnly && result.ChecksPassed {
+		return nil
+	}
+	if !result.Success {
+		return fmt.Errorf("validation is incomplete or found an unexpected difference; see %s", path)
+	}
+	return nil
+}
+
+func commandExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	return -1
 }
 
 // Write next to the destination and rename only a complete report. Concurrent
@@ -109,34 +337,20 @@ func compareCISelection(check onboard.RuntimeCheck, localVersion string) *verdic
 	return result
 }
 
-type validationResult struct {
-	SchemaVersion    int                      `json:"schema_version"`
-	CompletedAt      time.Time                `json:"completed_at"`
-	CheckOnly        bool                     `json:"check_only"`
-	ChecksPassed     bool                     `json:"checks_passed"`
-	Preflight        *jestPreflight           `json:"preflight,omitempty"`
-	Selection        *platform.JSSelection    `json:"tracer_selection,omitempty"`
-	TracerSource     string                   `json:"tracer_source,omitempty"`
-	CISelection      *verdict                 `json:"ci_tracer_selection,omitempty"`
-	CIExecution      verdict                  `json:"ci_execution"`
-	WorkingDirectory string                   `json:"working_directory"`
-	Error            string                   `json:"error,omitempty"`
-	Framework        string                   `json:"framework"`
-	Tracer           string                   `json:"tracer"`
-	CIRuntime        *onboard.RuntimeCheck    `json:"ci_runtime,omitempty"`
-	Scope            *onboard.ValidationScope `json:"scope,omitempty"`
-	Compatibility    verdict                  `json:"compatibility"`
-	Features         []featureResult          `json:"features"`
-}
-
-func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
+func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	result.SchemaVersion = 1
-	result.Compatibility = verdict{Status: onboard.StatusNotExercised, Reason: "Configuration checks only; paired execution was not exercised."}
-	result.Features = []featureResult{{Name: "all", Status: onboard.StatusNotExercised, Reason: "Configuration checks only."}}
 	result.CompletedAt = time.Now().UTC()
 	result.WorkingDirectory = repositoryRoot
-	result.CIExecution = verdict{Status: onboard.StatusNotExercised, Reason: "Local-only validation; CI execution and Datadog backend processing were not exercised."}
-	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == onboard.StatusCompatible
+	result.CIExecution = verdict{Status: "not exercised", Reason: "Local-only validation; CI execution and Datadog backend processing were not exercised."}
+	result.LocalSuccess = result.Compatibility.Status == "compatible" && result.Error == "" && featureChecksPassed(result.Framework, result.Features)
+	if supportsValidationFramework(result.Framework) {
+		result.LocalSuccess = result.LocalSuccess && hasValidationPair(*result)
+	}
+	result.Success = result.LocalSuccess
+	if supportsValidationFramework(result.Framework) {
+		result.Success = result.Success && result.HTMLReportCurrent && result.Cleanup != nil && result.Cleanup.Status == "passed"
+	}
+	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
 	if result.Scope != nil {
 		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved) == 0
 		for _, command := range result.Scope.Commands {
@@ -144,10 +358,13 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		}
 	}
 	if result.CISelection != nil {
-		result.ChecksPassed = result.ChecksPassed && result.CISelection.Status == onboard.StatusCompatible
+		result.Success = result.Success && result.CISelection.Status == "compatible"
+		result.ChecksPassed = result.ChecksPassed && result.CISelection.Status == "compatible"
 	}
 	if result.CIRuntime != nil {
-		result.ChecksPassed = result.ChecksPassed && (result.CIRuntime.Status == onboard.StatusCompatible || result.CIRuntime.Status == onboard.StatusNotApplicable)
+		ciOK := result.CIRuntime.Status == "compatible" || result.CIRuntime.Status == "not applicable"
+		result.Success = result.Success && ciOK
+		result.ChecksPassed = result.ChecksPassed && ciOK
 		check := *result.CIRuntime
 		check.Reason = reportText(check.Reason)
 		check.Jobs = slices.Clone(check.Jobs)
@@ -163,51 +380,19 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		result.CIRuntime = &check
 	}
 	result.Error = reportText(result.Error)
-	data, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode validation results: %w", err)
+	result.Compatibility.Reason = reportText(result.Compatibility.Reason)
+	result.Compatibility.DifferenceCount = len(result.Compatibility.Differences)
+	result.Compatibility.Differences = slices.Clone(result.Compatibility.Differences[:min(len(result.Compatibility.Differences), maxReportDifferences)])
+	for i, difference := range result.Compatibility.Differences {
+		result.Compatibility.Differences[i] = reportText(difference)
 	}
-	path := validationPath(repositoryRoot)
-	if err := writeValidation(path, append(data, '\n')); err != nil {
-		return err
+	result.Features = slices.Clone(result.Features)
+	for i, feature := range result.Features {
+		result.Features[i].Reason = reportText(feature.Reason)
 	}
-	if result.CIRuntime != nil {
-		_, _ = fmt.Fprintf(output, "\nCI runtime compatibility: %s\n%s\n", result.CIRuntime.Status, result.CIRuntime.Reason)
-		for _, job := range result.CIRuntime.Jobs {
-			label := job.Workflow + " / " + job.Job
-			if job.Step != 0 {
-				label += fmt.Sprintf(" / step %d", job.Step)
-			}
-			if job.Source != "" {
-				label += " (" + job.Source + ")"
-			}
-			if job.Node != "" {
-				label += " / Node " + job.Node
-			}
-			if job.NodeResolution != nil {
-				label += " => " + job.NodeResolution.Version + " (" + job.NodeResolution.Source + ")"
-			}
-			_, _ = fmt.Fprintf(output, "  - %s: %s — %s", label, job.Status, job.Reason)
-			if job.Tracer != "" {
-				_, _ = fmt.Fprintf(output, " (%s; requires %s)", job.Tracer, job.Requirement)
-			}
-			_, _ = fmt.Fprintln(output)
-		}
-		for _, entry := range result.CIRuntime.Review {
-			_, _ = fmt.Fprintf(output, "  - Review separately: %s / %s / step %d (%s): %s\n", entry.Workflow, entry.Job, entry.Step, entry.Command, entry.Reason)
-		}
+	if result.CheckOnly {
+		result.Success = false
+		result.LocalSuccess = false
 	}
 
-	if result.CISelection != nil {
-		_, _ = fmt.Fprintf(output, "\nCI tracer agreement: %s — %s\n", result.CISelection.Status, result.CISelection.Reason)
-	}
-	_, _ = fmt.Fprintln(output, "Configuration checks only. Compatibility tests and features were not rerun by this invocation.")
-	if result.Error != "" {
-		_, _ = fmt.Fprintf(output, "Validation error: %s\n", result.Error)
-	}
-	_, _ = fmt.Fprintf(output, "Results JSON: %s\n", validationPath(""))
-	if result.ChecksPassed {
-		return nil
-	}
-	return fmt.Errorf("configuration checks are incomplete or incompatible; see %s", path)
 }

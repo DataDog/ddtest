@@ -32,7 +32,7 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 		name, manifest, command string
 		files                   map[string]string
 	}{
-		{"jest", `{"scripts":{"test":"jest"},"devDependencies":{"jest":"30.5.1"}}`, "npm test", map[string]string{"one.test.js": `test('adds', () => expect(1+1).toBe(2));`}},
+		{"jest", `{"scripts":{"test":"jest --runInBand"},"devDependencies":{"jest":"30.5.1"}}`, "npm test", map[string]string{"one.test.js": `test('adds', () => expect(1+1).toBe(2));`}},
 		{"mocha", `{"scripts":{"test":"mocha"},"devDependencies":{"mocha":"11.7.5"}}`, "npm test", map[string]string{"test/one.js": `const assert = require('node:assert'); it('adds', () => assert.equal(1+1,2));`}},
 		{"vitest", `{"type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"3.2.4"}}`, "npm test", map[string]string{"one.test.js": `import {test,expect} from 'vitest'; test('adds', () => expect(1+1).toBe(2));`}},
 		{"playwright", `{"scripts":{"test":"playwright test"},"devDependencies":{"@playwright/test":"1.55.1"}}`, "npm test", map[string]string{"one.spec.js": `const {test,expect} = require('@playwright/test'); test('adds', () => expect(1+1).toBe(2));`}},
@@ -80,32 +80,38 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			}
 			onboard := integrationCommand(t, ctx, root, env, binary, "onboard")
 			require.Contains(t, onboard, "datadog/test-visibility-github-action@v3")
+			if fixture.name == "jest" {
+				integrationCommand(t, ctx, root, env, "npm", "install", "--no-save", "--package-lock=false", "dd-trace@6.15.0")
+				integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '24'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: js, js-tracer-version: '6.15.0'}\n      - run: npm test\n        env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}\n")
+			}
 			output := integrationCommand(t, ctx, root, env, binary, "testdrive", "--yes")
-			require.Contains(t, output, "Test events received.")
+			if fixture.name != "jest" {
+				require.Contains(t, output, "Test events received.")
+			} else {
+				require.Contains(t, output, "Compatibility (this invocation): compatible")
+			}
 			require.Contains(t, output, "Open report:")
-			reports, err := filepath.Glob(filepath.Join(root, ".testoptimization", "testdrive", "*", "report.html"))
+			reports, err := filepath.Glob(filepath.Join(root, ".testoptimization", "report.html"))
 			require.NoError(t, err)
 			require.Len(t, reports, 1)
 			contents, err := os.ReadFile(reports[0])
 			require.NoError(t, err)
 			require.Contains(t, string(contents), `id="run-details"`)
-			traffic, err := filepath.Glob(filepath.Join(filepath.Dir(reports[0]), "intake", "*citestcycle.json"))
+			reportData, err := os.ReadFile(filepath.Join(root, ".testoptimization", "testdrive.json"))
 			require.NoError(t, err)
-			require.NotEmpty(t, traffic)
+			require.Contains(t, string(reportData), "test_event_count")
+
 			if fixture.name == "cypress" {
-				// Reuse the isolated installation from outside the project. Browser
-				// instrumentation must come from this tracer too, without a local
-				// dd-trace dependency or a DDTest config/support wrapper.
-				externalModules := filepath.Join(t.TempDir(), "node_modules")
-				require.NoError(t, os.Rename(filepath.Join(filepath.Dir(reports[0]), "node_modules"), externalModules))
-				preload := filepath.Join(externalModules, "dd-trace", "ci", "init.js")
+				external := t.TempDir()
+				integrationCommand(t, ctx, root, env, "npm", "install", "--prefix", external, "--no-audit", "--no-fund", "dd-trace@6.15.0")
+				preload := filepath.Join(external, "node_modules", "dd-trace", "ci", "init.js")
 				require.NoError(t, os.Remove(filepath.Join(root, "original-hook.txt")))
 				reused := integrationCommand(t, ctx, root, append(env, "DD_TRACE_PACKAGE="+preload), binary, "testdrive", "--yes")
 				require.Contains(t, reused, "reuse installed dd-trace")
 				require.Contains(t, reused, "Test events received.")
 				require.NotContains(t, reused, "Installing dd-trace")
-				t.Log(strings.TrimSpace(reused))
 			}
+
 			for name, contents := range before {
 				if (fixture.name == "rspec" || fixture.name == "minitest") && (name == "Gemfile" || name == "Gemfile.lock") {
 					continue // bundle add updates Ruby dependency files.
@@ -144,8 +150,40 @@ func integrationCommand(t *testing.T, ctx context.Context, directory string, env
 	t.Helper()
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), env...)
+	command.Env = integrationEnvironment(env)
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s %v:\n%s", name, args, output)
 	return string(output)
+}
+
+func retainIntegrationReports(t *testing.T, root, framework string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		for _, name := range []string{"testdrive.json", "report.html"} {
+			data, err := os.ReadFile(filepath.Join(root, ".testoptimization", name))
+			if os.IsNotExist(err) {
+				continue
+			}
+			require.NoError(t, err)
+			if name == "testdrive.json" {
+				t.Logf("Failed validation report:\n%s", data)
+			}
+			if directory := os.Getenv("DDTEST_FRAMEWORK_REPORTS"); directory != "" {
+				require.NoError(t, os.MkdirAll(directory, 0755))
+				require.NoError(t, os.WriteFile(filepath.Join(directory, framework+"-"+name), data, 0600))
+			}
+		}
+	})
+}
+func integrationEnvironment(env []string) []string {
+	var result []string
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "DD_") && !strings.HasPrefix(entry, "DATADOG_") {
+			result = append(result, entry)
+		}
+	}
+	return append(result, env...)
 }

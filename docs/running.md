@@ -583,3 +583,5 @@ execution-only success and run fields. Full testdrive is still required to check
 behavior and telemetry; neither local mode proves real Datadog backend processing.
 Other frameworks do not support check-only in this step. These flags have no
 environment-variable binding.
+
+For Jest, full testdrive compares native results without and with instrumentation, then checks advanced features with temporary tests under the original configuration. Matching existing failures do not alone fail compatibility. It writes compact JSON and an HTML report; local checks do not execute CI or prove backend processing.

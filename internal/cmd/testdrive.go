@@ -24,7 +24,7 @@ func newTestdriveCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "testdrive",
 		Short: "Try Test Optimization on the local test suite",
-		Long:  "Runs the detected test suite once with Datadog Test Optimization and a local intake. No Datadog API key is required. With --check-only, inspect Jest configuration and static CI/tracer compatibility without installing a tracer or running tests.",
+		Long:  "For Jest, compares native test results without and with instrumentation, then checks advanced features using temporary probes under the original configuration. Matching existing test failures are acceptable. Other frameworks run reporting-only checks against a local intake. No Datadog API key is required. With --check-only, inspect Jest configuration and static CI/tracer compatibility without installing a tracer or running tests.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.NoArgs(cmd, args); err != nil {
 				return err

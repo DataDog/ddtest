@@ -241,3 +241,29 @@ func checkConfigurationCIRuntimes(ctx context.Context, packageRoot, frameworkNam
 	}
 	return check
 }
+
+func verifyInstalledSelection(preload string, result *validationResult) error {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(preload)), "package.json"))
+	if err != nil {
+		return err
+	}
+	var manifest struct {
+		Version string `json:"version"`
+		Engines struct {
+			Node string `json:"node"`
+		} `json:"engines"`
+	}
+	if err = json.Unmarshal(data, &manifest); err != nil {
+		return err
+	}
+	if result.Selection.Version != "" && manifest.Version != result.Selection.Version {
+		return fmt.Errorf("installed dd-trace %s differs from preflight selection %s", manifest.Version, result.Selection.Version)
+	}
+	result.Selection.Version = manifest.Version
+	result.Selection.Node = manifest.Engines.Node
+	result.Tracer = "dd-trace@" + manifest.Version
+	if result.CIRuntime != nil {
+		result.CISelection = compareCISelection(*result.CIRuntime, manifest.Version)
+	}
+	return nil
+}

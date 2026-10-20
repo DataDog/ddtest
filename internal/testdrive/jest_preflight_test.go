@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -147,7 +148,10 @@ func TestJestCheckOnlyIntegration(t *testing.T) {
 	t.Cleanup(func() { viper.Reset(); settings.Init() })
 	run, err := Prepare(PrepareOptions{TracerVersion: "latest", CheckOnly: true})
 	require.NoError(t, err)
-	run.startIntake = func(string) (localIntake, error) { t.Fatal("check-only started an intake"); return nil, nil }
+	run.startIntake = func(string, intake.Scenario) (localIntake, error) {
+		t.Fatal("check-only started an intake")
+		return nil, nil
+	}
 	var output bytes.Buffer
 	require.NoError(t, run.Run(t.Context(), &output), output.String())
 	require.NoFileExists(t, filepath.Join(root, "test-executed"))
@@ -186,7 +190,10 @@ func TestCheckOnlyDiscoveryFailureReplacesEarlierPassingReport(t *testing.T) {
 	require.Error(t, run.discoveryError)
 	executor := &preflightExecutor{}
 	run.executor = executor
-	run.startIntake = func(string) (localIntake, error) { t.Fatal("discovery failure started an intake"); return nil, nil }
+	run.startIntake = func(string, intake.Scenario) (localIntake, error) {
+		t.Fatal("discovery failure started an intake")
+		return nil, nil
+	}
 	var output bytes.Buffer
 	run.Preview(&output)
 	before, err := os.ReadFile(validationPath(root))
