@@ -69,7 +69,7 @@ jobs:
 
       - name: Configure Datadog Test Optimization
         if: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' }}
-        uses: datadog/test-visibility-github-action@1abae93083b69778facd7ee11f89184306c999e6 # v3.2.0
+        uses: datadog/test-visibility-github-action@7ce545f228901e4ac4ef0b45d946120f1c4124e0 # v3.3.0
         with:
           languages: go
           # Pin upstream Go 1.27 compatibility fixes until they reach a stable
