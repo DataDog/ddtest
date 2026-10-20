@@ -62,7 +62,10 @@ type runSpec struct {
 type validationRun struct {
 	ReplacedReporters []string
 	Role              runRole
+	FrameworkNode     string
 	NativeCommand     string
+	ProbeExecutions   *int
+	Coverage          *coverageSummary
 	ExecutionContext  string `json:"execution_context,omitempty"`
 	temporaryRoot     string
 	commandOutput     string
@@ -100,18 +103,22 @@ type testCounts struct {
 }
 
 type coverageSummary struct {
-	Reason       string  `json:"reason,omitempty"`
-	Ratio        float64 `json:"covered_test_ratio"`
-	Status       string  `json:"status"`
-	CoveredTests int     `json:"covered_tests"`
-	TotalTests   int     `json:"total_tests"`
-	Level        string  `json:"level,omitempty"`
+	InvalidFiles []string `json:"invalid_files,omitempty"`
+	InvalidCount int      `json:"invalid_file_count,omitempty"`
+	Reason       string   `json:"reason,omitempty"`
+	Ratio        float64  `json:"covered_test_ratio"`
+	Status       string   `json:"status"`
+	CoveredTests int      `json:"covered_tests"`
+	TotalTests   int      `json:"total_tests"`
+	Level        string   `json:"level,omitempty"`
 }
 
 type runSummary struct {
 	ReplacedReporters               []string            `json:"replaced_reporters,omitempty"`
 	Role                            runRole             `json:"role"`
+	FrameworkNode                   string              `json:"framework_node,omitempty"`
 	NativeCommand                   string              `json:"native_command,omitempty"`
+	ProbeExecutions                 *int                `json:"probe_executions,omitempty"`
 	ExecutionContext                string              `json:"execution_context,omitempty"`
 	Coverage                        *coverageSummary    `json:"coverage,omitempty"`
 	ExecutionPath                   string              `json:"execution_path,omitempty"`
@@ -136,12 +143,12 @@ type runSummary struct {
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+	summary := runSummary{Coverage: r.Coverage, FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)
 	}
-	if r.framework == "mocha" && r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") && r.Facts.TestCount > 0 {
+	if summary.Coverage == nil && r.framework == "mocha" && r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") && r.Facts.TestCount > 0 {
 		status := "observed"
 		if r.Facts.CoveredTestCount == 0 {
 			status = "not observed"
@@ -537,6 +544,9 @@ func missingRealCoverageReason(result validationResult) string {
 }
 
 func missingRealCoverage(result validationResult) bool {
+	if skippingPolicy(result.Framework).Status != "required" {
+		return false
+	}
 	for _, run := range result.Runs {
 		if run.Coverage != nil && run.Coverage.Status != "observed" {
 			return true

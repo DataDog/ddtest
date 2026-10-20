@@ -119,3 +119,5 @@ the corresponding selected-command option; an explicit command config wins. See
 See [Mocha validation](running.md#mocha-testdrive-validation) for commands, coverage requirements and limitations.
 
 Playwright testdrive accepts a simple original CLI command through `--command`, or discovers CI commands through `--all`. The supported controls and browser supervision are described in [Playwright validation](running.md#playwright-validation). No browser or project options are guessed.
+
+Cypress `testdrive --all` preserves discovered CLI and action-API selections. Use `--command` for an explicit original headless alias, including its server setup. Cloud recording/grouping is disabled locally, and TIA/application coverage validation is deferred. See [Cypress validation](running.md#cypress-validation).

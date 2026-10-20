@@ -236,7 +236,9 @@ func TestCypressTestdrivePreservesCommand(t *testing.T) {
 				return &fakeIntake{findings: intake.Facts{TestEventCount: 1, TestCount: 1}}, nil
 			}
 			var output bytes.Buffer
-			require.NoError(t, run.Run(t.Context(), &output))
+			_, err = run.runCypress(t.Context(), &output, run.session, run.projectTracer, runSpec{Name: "reporting-only", Role: roleReporting, Instrumented: true})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, run.session.Close()) })
 			require.Equal(t, command[0], executor.command)
 			require.Equal(t, command[1:], executor.args)
 			require.Contains(t, executor.env["NODE_OPTIONS"], run.projectTracer)

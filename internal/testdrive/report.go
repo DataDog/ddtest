@@ -234,6 +234,9 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "not supported" && covered == 0 {
 		coverageValue, coverageTone = "Not supported ("+info.Framework+")", "info"
 	}
+	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "deferred" {
+		coverageValue, coverageTone, coverageTooltip = "Not validated (deferred)", "info", policy.Reason
+	}
 	model := reportModel{
 		Summary:       "No findings.",
 		NoTestEvents:  findings.TestEventCount == 0,
@@ -275,7 +278,10 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "not supported" && findings.TestEventCount > 0 {
 		model.Cards = append(model.Cards, reportCard{Kind: strings.ToLower(info.Framework) + "-coverage-unavailable", Severity: "info", Title: info.Framework + " coverage and skipping are not supported", Count: 1, Context: policy.Reason})
 	}
-	if findings.MissingCoverage && skippingPolicy(strings.ToLower(info.Framework)).Status != "not supported" {
+	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "deferred" {
+		model.Cards = append(model.Cards, reportCard{Kind: strings.ToLower(info.Framework) + "-tia-deferred", Severity: "info", Title: info.Framework + " Test Impact Analysis validation is deferred", Count: 1, Context: policy.Reason})
+	}
+	if findings.MissingCoverage && skippingPolicy(strings.ToLower(info.Framework)).Status == "required" {
 		model.Cards = append(model.Cards, reportCard{
 			Kind: intake.MissingCoverageFinding, Scope: coverageFindingScope, Severity: "warning", Title: "Coverage not reported", Count: 1,
 			Context: intake.MissingCoverageContext,

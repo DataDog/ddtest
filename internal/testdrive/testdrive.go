@@ -45,6 +45,8 @@ type localIntake interface {
 type Testdrive struct {
 	configurationSourceRoot  string
 	scopeCommand             string
+	cypress                  *onboard.CypressCommand
+	cypressCommand           string
 	playwrightGuard          bool
 	playwrightProject        string
 	configurationEnvironment map[string]string
@@ -152,14 +154,14 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
 	if all && !frameworkFeaturePolicies[runner.Name()].Configurations {
-		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Mocha and Playwright only")
+		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Mocha, Playwright and Cypress only")
 	}
 
 	var discoveryError error
 	var selectedPlan onboard.TestCommand
 	var preflightEnvironment map[string]string
 	if configurationOnly && !frameworkFeaturePolicies[runner.Name()].CheckOnly {
-		return nil, fmt.Errorf("configuration preflight currently supports Jest, Vitest, Mocha and Playwright only")
+		return nil, fmt.Errorf("configuration preflight currently supports Jest, Vitest, Mocha, Playwright and Cypress only")
 	}
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
@@ -206,6 +208,19 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			words, splitErr := shellquote.Split(selected)
 			if splitErr != nil || len(words) == 0 {
 				discoveryError = fmt.Errorf("invalid Playwright command: %s", selected)
+			} else {
+				command, args = words[0], words[1:]
+			}
+		}
+	}
+	if runner.Name() == "cypress" && !all {
+		selected, resolveErr := onboard.CypressValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		if resolveErr != nil {
+			discoveryError = resolveErr
+		} else if selected != "" {
+			words, splitErr := shellquote.Split(selected)
+			if splitErr != nil || len(words) == 0 {
+				discoveryError = fmt.Errorf("invalid Cypress command: %s", selected)
 			} else {
 				command, args = words[0], words[1:]
 			}
@@ -311,6 +326,11 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		drive.command = drive.configurationExecutable(drive.command)
 	}
 	drive.allConfigurations = all
+	if runner.Name() == "cypress" && !all && strings.TrimSpace(settings.GetCommand()) == "" {
+		if scope, err := onboard.DiscoverValidationScope(repositoryRoot, "cypress"); err == nil && len(scope.Commands) > 0 {
+			drive.allConfigurations = true
+		}
+	}
 	drive.scopeCommand = scopeCommand
 	drive.allowReviewedBuilds = configuration.AllowReviewedBuilds
 	drive.commandTimeout = timeout
@@ -323,6 +343,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		drive.preflight = drive.checkJestPreflight
+	}
+	if runner.Name() == "cypress" {
+		drive.preflight = drive.checkCypressPreflight
 	}
 	if runner.Name() == "vitest" {
 		drive.preflight = drive.checkVitestPreflight
@@ -394,7 +417,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	if supportsValidationFramework(t.framework.Name()) {
 		_, _ = fmt.Fprintln(output, "  - compare the original suite without instrumentation and with reporting-only instrumentation; repeat differing pairs")
 		_, _ = fmt.Fprintln(output, "  - discover a temporary probe with the original framework configuration; check retries, EFD, skipping, quarantine, disabled tests and attempt-to-fix per selected project")
-		if policy := skippingPolicy(t.framework.Name()); policy.Status == "not supported" {
+		if policy := skippingPolicy(t.framework.Name()); policy.Status == "not supported" || policy.Status == "deferred" {
 			_, _ = fmt.Fprintln(output, "  - TIA skipping/per-test coverage: "+policy.Status+"; "+policy.Reason)
 		}
 		_, _ = fmt.Fprintln(output, "  - keep .testoptimization/testdrive.json and .testoptimization/report.html; remove owned probes, temporary tracer and run files")
@@ -486,10 +509,13 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	var result validationResult
 	if t.discoveryError != nil {
 		result, runErr = t.run(ctx, output)
-	} else if t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
+	} else if t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
 		child := *t
 		child.workflowRoot = t.repositoryRoot
 		child.preflight = child.checkVitestPreflight
+		if child.framework.Name() == "cypress" {
+			child.preflight = child.checkCypressPreflight
+		}
 		if child.framework.Name() == "playwright" {
 			child.preflight = child.checkPlaywrightPreflight
 		}
@@ -700,7 +726,9 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			}
 			if t.framework.Name() == "vitest" {
 				result.Preflight.Verdict = checkVitestSupport(*result.Preflight, *result.Selection)
-			} else if t.framework.Name() == "playwright" {
+			} else if t.framework.Name() == "cypress" {
+				result.Preflight.Verdict = checkCypressSupport(*result.Preflight, *result.Selection)
+			} else if t.framework.Name() == "cypress" || t.framework.Name() == "playwright" {
 				result.Preflight.Verdict = checkPlaywrightSupport(*result.Preflight, *result.Selection)
 			} else if t.framework.Name() == "mocha" {
 				result.Preflight.Verdict = checkMochaSupport(*result.Preflight, *result.Selection)
@@ -838,7 +866,12 @@ func writeRunFindings(output io.Writer, findings intake.Facts, trafficRetained b
 		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. %s\n", strings.Join(findings.ConfigurationErrors, ", "), inspectionHint(trafficRetained, "Inspect the captured traffic and test output."))
 	}
 	count := len(findings.ConfigurationErrors)
+	coverageDeferred := false
 	for _, finding := range cards {
+		if finding.Kind == "cypress-tia-deferred" {
+			coverageDeferred = true
+			_, _ = fmt.Fprintln(output, "Info: "+finding.Context)
+		}
 		if finding.Scope != runFindingScope {
 			continue
 		}
@@ -849,7 +882,7 @@ func writeRunFindings(output io.Writer, findings intake.Facts, trafficRetained b
 	if findings.TestEventCount == 0 {
 		_, _ = fmt.Fprintln(output, "Test findings unavailable: no test events were received.")
 	}
-	if findings.MissingCoverage {
+	if findings.MissingCoverage && !coverageDeferred {
 		count++
 		_, _ = fmt.Fprintln(output, intake.MissingCoverageContext)
 		writeTroubleshooting(output, cards, intake.MissingCoverageFinding)

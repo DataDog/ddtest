@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -146,7 +147,16 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 	var runErrors []error
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
+		if entry.Cypress != nil && entry.Cypress.Platform == "windows" && runtime.GOOS != "windows" {
+			item.Error = "Windows Cypress configuration was not executed on this " + runtime.GOOS + " host. Use a matching runner; this variant remains unvalidated."
+			result.Configurations = append(result.Configurations, item)
+			continue
+		}
 		words, parseErr := shellquote.Split(entry.Command)
+		if entry.Cypress != nil {
+			words = []string{"node"}
+			parseErr = nil
+		}
 		if _, err := localSetupDirectory(t.repositoryRoot, entry.Directory); err != nil {
 			parseErr = err
 		}
@@ -178,6 +188,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			}
 		}
 		child := *t
+		child.cypress, child.cypressCommand = entry.Cypress, entry.Command
 		child.workflowRoot = t.repositoryRoot
 		child.allConfigurations = false
 		child.session = planSession()
@@ -190,6 +201,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
 		child.preflight = child.checkJestPreflight
+		if child.framework.Name() == "cypress" {
+			child.preflight = child.checkCypressPreflight
+		}
 		if child.framework.Name() == "playwright" {
 			child.preflight = child.checkPlaywrightPreflight
 		}

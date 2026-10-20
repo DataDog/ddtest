@@ -415,6 +415,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 
 func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
 	run := t.runJest
+	if t.framework.Name() == "cypress" {
+		run = t.runCypress
+	}
 	if t.framework.Name() == "playwright" {
 		run = t.runPlaywright
 	}
@@ -456,6 +459,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	}
 	if t.framework.Name() == "vitest" {
 		return t.runVitestFeatures(ctx, output, session, preload, baseline, result)
+	}
+	if t.framework.Name() == "cypress" {
+		return t.runCypressFeatures(ctx, output, session, preload, baseline, result)
 	}
 	if t.framework.Name() == "playwright" {
 		return t.runPlaywrightFeatures(ctx, output, session, preload, baseline, result)

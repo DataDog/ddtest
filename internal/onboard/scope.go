@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -13,7 +14,8 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
-	ProbeCoverageThresholdsDisabled bool `json:"-"`
+	Cypress                         *CypressCommand `json:"cypress,omitempty"`
+	ProbeCoverageThresholdsDisabled bool            `json:"-"`
 	mochaIstanbul                   bool
 	LifecycleHooks                  []string `json:"lifecycle_hooks,omitempty"`
 	mochaRunnerArgs                 []string
@@ -79,7 +81,7 @@ func yarnImplicitInstall(words []string) bool {
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" {
+	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
@@ -90,6 +92,17 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if framework == "cypress" {
+				candidate := false
+				for _, step := range job.Steps {
+					resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
+					candidate = candidate || !resolution.Review && (resolution.Matched || resolution.Reason != "")
+				}
+				if !candidate {
+					scope.Review = append(scope.Review, workflow.Path+" / "+name+": no "+framework+" invocation identified; action implementations and job conditions are outside this local validation scope.")
+					continue
+				}
+			}
 
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
@@ -110,13 +123,16 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				var unresolved, review []scopeDiagnostic
 				var commands []TestCommand
 				for i, step := range job.Steps {
+					if framework == "cypress" && strings.Split(strings.ToLower(step.Uses), "@")[0] == githubAction && step.Run == "" && step.ResolutionError == "" {
+						step.If = ""
+					}
 					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 					if conditionErr == nil && !active {
 						continue
 					}
 					location := commandLocation{Workflow: workflow.Path, Job: name, Matrix: maps.Clone(row), Step: stepNumber(step, i), Command: step.Run}
-					if framework == "playwright" && strings.Split(step.Uses, "@")[0] == "actions/upload-artifact" && step.Run == "" && step.ResolutionError == "" {
-						review = append(review, scopeDiagnostic{location, "artifact upload is outside local Playwright execution"})
+					if (framework == "playwright" || framework == "cypress") && strings.Split(step.Uses, "@")[0] == "actions/upload-artifact" && step.Run == "" && step.ResolutionError == "" {
+						review = append(review, scopeDiagnostic{location, "artifact upload is outside local " + framework + " execution"})
 						continue
 					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
@@ -188,7 +204,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				allReview = append(allReview, review...)
 				for _, entry := range commands {
 					index := slices.IndexFunc(scope.Commands, func(previous TestCommand) bool {
-						return previous.Directory == entry.Directory && previous.Command == entry.Command && previous.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
+						return reflect.DeepEqual(previous.Cypress, entry.Cypress) && previous.Directory == entry.Directory && previous.Command == entry.Command && previous.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
 					})
 					if index < 0 {
 						scope.Commands = append(scope.Commands, entry)
