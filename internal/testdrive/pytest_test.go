@@ -164,6 +164,17 @@ func TestPytestWorkflowPreservesStandaloneValidation(t *testing.T) {
 	}
 }
 
+func TestPytestPreviewDescribesControlledValidation(t *testing.T) {
+	drive := &Testdrive{repositoryRoot: t.TempDir(), language: "python", framework: framework.NewPytest(nil), command: "test", session: planSession()}
+	var output bytes.Buffer
+	drive.Preview(&output)
+	for _, expected := range []string{"Python runtimes", "compare native JSON results", "temporary probe test", "EFD, skipping", "disable coverage thresholds only for isolated probes"} {
+		require.Contains(t, output.String(), expected)
+	}
+	require.NotContains(t, output.String(), "Node runtimes")
+	require.NotContains(t, output.String(), "reporting-only telemetry")
+}
+
 func TestPytestAllRetainsUnsupportedPackageDirectory(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))

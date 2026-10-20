@@ -133,8 +133,8 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 			drive.Preview(&output)
 			err = drive.Run(t.Context(), &output)
 			if outcome == "ready" {
-				require.NoError(t, err)
-				require.NotContains(t, output.String(), "INCOMPLETE")
+				require.ErrorContains(t, err, "validation is incomplete")
+				require.Contains(t, output.String(), "INCOMPLETE")
 				require.Equal(t, python, installer.options.Command)
 				require.Equal(t, "uv", executor.command)
 				require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest", "--ddtrace"}, executor.args)

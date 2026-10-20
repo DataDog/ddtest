@@ -477,7 +477,7 @@ func TestPreviewChoosesTracerBeforeConfirmation(t *testing.T) {
 }
 
 func TestPythonTemporaryEnvironmentCleanup(t *testing.T) {
-	for _, outcome := range []string{"success", "install failure", "intake failure", "test failure", "canceled"} {
+	for _, outcome := range []string{"events without native results", "install failure", "intake failure", "test failure", "canceled"} {
 		t.Run(outcome, func(t *testing.T) {
 			root := t.TempDir()
 			installer := &fakeTracer{}
@@ -505,8 +505,11 @@ func TestPythonTemporaryEnvironmentCleanup(t *testing.T) {
 				return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
 			}
 			err := drive.Run(t.Context(), &bytes.Buffer{})
-			if (err == nil) != (outcome == "success") {
-				t.Fatalf("Run() error = %v", err)
+			if err == nil {
+				t.Fatal("incomplete validation must return an error")
+			}
+			if outcome == "events without native results" && !strings.Contains(err.Error(), "validation is incomplete") {
+				t.Fatal(err)
 			}
 			directory := installer.options.Directory
 			owned := filepath.Dir(directory)
