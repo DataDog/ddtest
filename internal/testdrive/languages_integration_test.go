@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -59,10 +58,10 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 			for _, flags := range [][]string{nil, {"--instructions"}} {
 				args := append([]string{"onboard", "--framework", fixture.name}, flags...)
 				instructions := integrationCommand(t, ctx, root, env, binary, args...)
-				for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json"} {
+				for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json", "telemetry_only", "UNVALIDATED", "INCOMPLETE", "--agent", "--format", "summary.final_response", "scratch files"} {
 					require.NotContains(t, instructions, invalid)
 				}
-				require.Contains(t, instructions, "telemetry_only: true")
+				require.Contains(t, instructions, "Run the local, credential-free setup check")
 			}
 			for _, mode := range []struct {
 				name string
@@ -77,39 +76,39 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 					command := exec.CommandContext(ctx, binary, args...)
 					command.Dir = root
 					command.Env = integrationEnvironment(env)
+					var previous []byte
+					if mode.name != "plain" {
+						var err error
+						previous, err = os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
+						require.NoError(t, err)
+					}
 					output, err := command.CombinedOutput()
-					require.NoError(t, err, "a successful telemetry-only check retains exit 0: %s", output)
-					if mode.name == "plain" {
-						require.Contains(t, string(output), "Test events received.")
-					} else {
+					if mode.name != "plain" {
+						require.Error(t, err, "Python/Ruby agent workflows belong to their follow-up PRs")
 						var result struct {
 							Status      string
-							NextAction  string   `json:"next_action"`
+							Code        string
 							NextCommand []string `json:"next_command"`
-							JSONReport  string   `json:"json_report"`
 						}
-						require.NoError(t, json.NewDecoder(strings.NewReader(string(output))).Decode(&result), string(output))
-						require.Equal(t, "telemetry_only", result.Status)
-						require.Equal(t, "report_result", result.NextAction)
+						require.True(t, json.Valid(output), string(output))
+						require.NoError(t, json.Unmarshal(output, &result))
+						require.Equal(t, "unsupported", result.Status)
+						require.Equal(t, "framework_unsupported", result.Code)
 						require.Empty(t, result.NextCommand)
-						require.FileExists(t, result.JSONReport)
-						if mode.name == "json" {
-							require.True(t, json.Valid(output), string(output))
-						}
+						current, readErr := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
+						require.NoError(t, readErr)
+						require.Equal(t, previous, current, "unsupported modes must not execute tests or replace evidence")
+						return
 					}
+					require.NoError(t, err, "a passing command with events retains main's exit 0: %s", output)
+					require.Contains(t, string(output), "Test events received.")
+					require.NotContains(t, string(output), "INCOMPLETE")
 					data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
 					require.NoError(t, err, string(output))
 					var report struct {
-						Framework     string
-						Success       bool
-						TelemetryOnly bool `json:"telemetry_only"`
-						Summary       struct {
-							Status          string
-							LocalValidation string `json:"local_validation"`
-						}
-						Compatibility struct{ Status string }
-						Features      []struct{ Name, Status string }
-						Runs          []struct {
+						Framework string
+						Success   bool
+						Runs      []struct {
 							Name           string
 							ExitCode       int `json:"exit_code"`
 							Instrumented   bool
@@ -118,13 +117,12 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 					}
 					require.NoError(t, json.Unmarshal(data, &report))
 					require.Equal(t, fixture.name, report.Framework)
-					require.False(t, report.Success)
-					require.True(t, report.TelemetryOnly)
-					require.Equal(t, "INCOMPLETE", report.Summary.Status)
-					require.Equal(t, "UNVALIDATED (TELEMETRY ONLY)", report.Summary.LocalValidation)
-					require.Equal(t, "inconclusive", report.Compatibility.Status)
-					require.Len(t, report.Features, 1)
-					require.Equal(t, "unvalidated", report.Features[0].Status)
+					require.True(t, report.Success)
+					var fields map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal(data, &fields))
+					require.NotContains(t, fields, "telemetry_only")
+					require.NotContains(t, fields, "summary")
+					require.NotContains(t, string(data), "INCOMPLETE")
 					require.Len(t, report.Runs, 1)
 					require.Equal(t, "reporting-only", report.Runs[0].Name)
 					require.True(t, report.Runs[0].Instrumented)

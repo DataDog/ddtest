@@ -64,11 +64,19 @@ func Run(output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if _, err := environment.DetectRepositoryCIProvider(repositoryRoot); err != nil {
+	provider, err := environment.DetectRepositoryCIProvider(repositoryRoot)
+	if err != nil {
 		return fmt.Errorf("onboard: %w", err)
 	}
 	language := detectedPlatform.Name()
 	name := runner.Name()
+	if language != "javascript" {
+		github, ok := provider.(*environment.GitHub)
+		if !ok {
+			return fmt.Errorf("onboard does not support CI provider %s", provider.Name())
+		}
+		return onboardGitHub(output, github, repositoryRoot, language, name)
+	}
 
 	discovery, err := findWorkflows(repositoryRoot, language, name)
 	workflows, configured := discovery.Workflows, discovery.Configured
@@ -296,7 +304,8 @@ func instructions(language, name string) string {
 	case "ruby":
 		bootstrap = rubyBootstrap
 	}
-	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap).Replace(renderGitHubInstructions(language))
+	tracerSetting := actionLanguage + "-tracer-version: '' # Latest release"
+	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap, "__TRACER_SETTING__", tracerSetting).Replace(renderGitHubInstructions(language))
 	return strings.ReplaceAll(text, "ddtest testdrive", "ddtest testdrive --framework "+name)
 }
 

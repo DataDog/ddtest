@@ -170,7 +170,6 @@ type validationResult struct {
 	Session            string                   `json:"session"`
 	CompletedAt        time.Time                `json:"completed_at"`
 	CheckOnly          bool                     `json:"check_only"`
-	TelemetryOnly      bool                     `json:"telemetry_only,omitempty"`
 	ChecksPassed       bool                     `json:"checks_passed"`
 	LocalSuccess       bool                     `json:"local_success"`
 	Preflight          *jestPreflight           `json:"preflight,omitempty"`
@@ -188,7 +187,7 @@ type validationResult struct {
 	Compatibility      verdict                  `json:"compatibility"`
 	Features           []featureResult          `json:"features"`
 	Runs               []runSummary             `json:"runs"`
-	Summary            validationSummary        `json:"summary"`
+	Summary            validationSummary        `json:"summary,omitzero"`
 	LastExecution      *validationEvidence      `json:"last_execution,omitempty"`
 	ConfigurationCheck validationEvidence       `json:"configuration_check"`
 	Retained           *retainedExecution       `json:"retained_execution,omitempty"`
@@ -213,6 +212,20 @@ func validationPath(repositoryRoot string) string {
 }
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
+	if result.Framework == "pytest" || result.Framework == "rspec" || result.Framework == "minitest" {
+		result.CompletedAt = time.Now().UTC()
+		result.WorkingDirectory = repositoryRoot
+		result.Success = result.Error == ""
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return fmt.Errorf("encode testdrive results: %w", err)
+		}
+		if err := writeValidation(validationPath(repositoryRoot), append(data, '\n')); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(output, "\nResults JSON: %s\n", validationPath(""))
+		return nil
+	}
 	if !result.CheckOnly && result.ReportingCounts == nil {
 		result.ReportingCounts = reportingExecutionCounts(result.Runs)
 	}
@@ -304,11 +317,6 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	_, _ = fmt.Fprintln(output, "Keep this JSON report and the HTML findings report after cleanup, including when validation fails.")
 	_, _ = fmt.Fprintf(output, "\nFINAL ONBOARDING RESPONSE — copy summary.final_response verbatim as the opening of your reply. Do not prepend a completion claim or reinterpret failed telemetry checks. Workflow edits can be finished while onboarding remains INCOMPLETE. Add only workflow edits and cleanup afterward.\n\n%s\n", result.Summary.FinalResponse)
 	if result.CheckOnly && result.ChecksPassed {
-		return nil
-	}
-	// Preserve Python/Ruby's telemetry-only exit contract without certifying
-	// compatibility or features for which there are no controlled adapters yet.
-	if result.TelemetryOnly && result.Error == "" {
 		return nil
 	}
 	if result.Summary.SelectedValidation != nil && result.Summary.SelectedValidation.Status == "PASSED" {

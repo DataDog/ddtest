@@ -282,7 +282,7 @@ func newJestRepository(t *testing.T, workflow string) string {
 }
 
 func TestInstructionsUseV3WithoutTracerPinsAndKeepBothReports(t *testing.T) {
-	for language, framework := range map[string]string{"javascript": "jest", "python": "pytest", "ruby": "rspec"} {
+	for language, framework := range map[string]string{"javascript": "jest"} {
 		output := instructions(language, framework)
 		for _, expected := range []string{"datadog/test-visibility-github-action@v3", "Results JSON", "report.html", "testdrive.json", "--tracer-version", "summary.final_response"} {
 			if !strings.Contains(output, expected) {
@@ -305,10 +305,10 @@ func TestPythonRubyInstructionsKeepSelectedLanguageSetup(t *testing.T) {
 	} {
 		t.Run(fixture.framework, func(t *testing.T) {
 			output := instructions(fixture.language, fixture.framework)
-			for _, required := range []string{fixture.initialization, "ddtest testdrive --framework " + fixture.framework + " --yes", "telemetry_only: true", "UNVALIDATED (TELEMETRY ONLY)"} {
+			for _, required := range []string{fixture.initialization, "ddtest testdrive --framework " + fixture.framework, "-tracer-version: '' # Latest release"} {
 				require.Contains(t, output, required)
 			}
-			for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json", "coverageThreshold", "__FRAMEWORK__", "[[if"} {
+			for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json", "coverageThreshold", "__FRAMEWORK__", "[[if", "telemetry_only", "UNVALIDATED", "INCOMPLETE", "--agent", "--format", "summary.final_response", "Cleanup after local validation"} {
 				require.NotContains(t, output, invalid)
 			}
 			_, yamlText, found := strings.Cut(output, "```yaml\n")

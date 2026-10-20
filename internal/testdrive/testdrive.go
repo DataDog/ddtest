@@ -351,7 +351,11 @@ func (t *Testdrive) Preview(output io.Writer) {
 	} else {
 		_, _ = fmt.Fprintln(output, "  - collect reporting-only telemetry; compatibility and features remain unvalidated for this framework")
 	}
-	_, _ = fmt.Fprintf(output, "  - update the validation report at %s; retain the latest paired execution as historical evidence until another pair runs\n", reportPath)
+	if supportsValidationFramework(t.framework.Name()) {
+		_, _ = fmt.Fprintf(output, "  - update the validation report at %s; retain the latest paired execution as historical evidence until another pair runs\n", reportPath)
+	} else {
+		_, _ = fmt.Fprintf(output, "  - save the command execution and received event counts in %s\n", reportPath)
+	}
 	_, _ = fmt.Fprintf(output, "  - save the instrumented suite findings in %s\n", htmlReportPath(""))
 	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "mocha" || t.framework.Name() == "cucumber" {
 		_, _ = fmt.Fprintln(output, "  - disable coverage thresholds only for isolated probes, preserving coverage collection and the original full-suite thresholds")
@@ -566,7 +570,6 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		runErr = t.runJavaScriptValidation(ctx, output, session, installation.Path, &result)
 		return
 	}
-	result.TelemetryOnly = t.language == "python" || t.language == "ruby"
 	server, err := t.startIntake(session.Directory(), intake.Scenario{})
 	if err != nil {
 		return result, err
@@ -659,12 +662,10 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	result.Runs[0].TestEventCount = findings.TestEventCount
 	execution.Facts = findings
 	runErr = t.writeHTMLReport(output, &result, execution)
-	if result.TelemetryOnly {
-		if testErr != nil {
-			runErr = errors.Join(runErr, fmt.Errorf("%s failed after sending %d test event(s): %w", t.framework.Name(), findings.TestEventCount, testErr))
-		} else if findings.TestEventCount == 0 {
-			runErr = errors.Join(runErr, fmt.Errorf("%s command exited successfully, but Test Optimization sent no test events", t.framework.Name()))
-		}
+	if testErr != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("%s failed after sending %d test event(s): %w", t.framework.Name(), findings.TestEventCount, testErr))
+	} else if findings.TestEventCount == 0 {
+		runErr = errors.Join(runErr, fmt.Errorf("%s command exited successfully, but Test Optimization sent no test events", t.framework.Name()))
 	}
 	return
 }

@@ -42,9 +42,6 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if !supportsValidationFramework(name) && options.Format == "verbose" && !options.Apply {
 		return t.Run(ctx, output)
 	}
-	if !supportsValidationFramework(name) && !options.Apply && (t.language == "python" || t.language == "ruby") && options.Resume == "" && options.FactsFile == "" {
-		return t.telemetryWorkflow(ctx, output, options.Format)
-	}
 	result := onboard.AgentResult{Status: "running", Phase: "discovery", NextAction: "run_command", NextCommand: onboard.OnboardingCommand(name)}
 	if !options.Apply {
 		result.NextCommand = []string{result.NextCommand[0], "testdrive", "--framework", name, "--agent", "--yes"}
@@ -624,6 +621,10 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 	}
 	if validation == nil {
 		return fmt.Errorf("no saved validation report")
+	}
+	if !supportsValidationFramework(validation.Framework) {
+		result := onboard.AgentResult{Status: "unsupported", Phase: "report", Code: "framework_unsupported", Reason: "Controlled validation is not available for this framework.", NextAction: "report_result"}
+		return errors.Join(fmt.Errorf("%s", result.Reason), onboard.RenderAgentResult(output, result, format))
 	}
 	result := onboard.AgentResult{Status: "validation_failed", Phase: "report", NextAction: "report_result", JSONReport: validationPath(root)}
 	current, err := InputFingerprint(ctx, root)

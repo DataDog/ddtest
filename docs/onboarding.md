@@ -201,8 +201,8 @@ For Cypress, testdrive compares native results and telemetry, then requires five
 controls: automatic retries, early flake detection, quarantine, disabled tests and
 attempt-to-fix. **TIA skipping and application coverage validation are deferred**,
 not passed or unsupported by the tracer. Missing application Istanbul coverage
-alone does not block a local pass. Do not change application builds or install
-coverage dependencies for testdrive; preserve any existing coverage setup. The
+alone does not block a local pass. ddtest does not check Cypress TIA or application
+coverage yet; preserve any existing coverage setup. The
 plan, HTML and JSON disclose the deferral. A local pass does not validate Cypress
 TIA, actual CI execution or Datadog backend processing.
 
@@ -329,17 +329,17 @@ configuration makes `success` false even if every local test matches. Repositori
 without detected GitHub Actions test jobs can still pass local validation; their
 CI runtime result is explicitly `not applicable`. The suite's own failures do not
 automatically fail validation.
-Python and Ruby retain their telemetry-only exit contract: exit 0 means the test
+Python and Ruby retain their existing exit contract: exit 0 means the test
 command succeeded and test events reached the local intake. A failed command,
 missing events, or a setup/reporting/cleanup failure returns a nonzero exit code.
-The JSON records `telemetry_only: true`, `success: false`, and an `INCOMPLETE`
-onboarding verdict with `UNVALIDATED (TELEMETRY ONLY)` local validation. Compatibility
-and advanced features remain unvalidated until controlled adapters exist; exit 0
-does not certify onboarding for these languages.
-The same telemetry check and exit-code rules apply to plain output, `--format json`
-and `--agent`. Structured output reports `status: telemetry_only` on a successful
-telemetry check and `next_action: report_result`, with no automatic retry command.
-These modes do not add controlled validation adapters.
+Onboarding instructions remain identical to main for pytest, RSpec and Minitest.
+Their plain testdrive reports command execution and received events without adding
+a compatibility/feature onboarding verdict. `--format json` and `--agent` return
+`unsupported` with no `next_command`; full Python/Ruby validation belongs to the
+separate language changes. The one intentional user-visible change for these
+languages is the shared report location: `.testoptimization/report.html` and
+`.testoptimization/testdrive.json` replace per-run `.testoptimization/testdrive/<id>/`
+report directories.
 
 The local intake supports agentless traffic; Agent/EVP routing is not supported.
 No results are sent to Datadog. Temporary installations and run files are removed;

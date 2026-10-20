@@ -52,6 +52,9 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(output, "\nOpen report: %s\nThis HTML shows instrumented suite findings. Compatibility, feature checks and the onboarding verdict are in %s.\n", terminalLink(url, htmlReportPath("")), validationPath(""))
+	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(url, htmlReportPath("")))
+	if supportsValidationFramework(t.framework.Name()) {
+		_, _ = fmt.Fprintf(output, "This HTML shows instrumented suite findings. Compatibility, feature checks and the onboarding verdict are in %s.\n", validationPath(""))
+	}
 	return nil
 }

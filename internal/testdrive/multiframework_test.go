@@ -59,7 +59,7 @@ printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$las
 						return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
 					}
 					require.NoError(t, drive.Run(t.Context(), &output))
-					require.Contains(t, output.String(), "UNVALIDATED (TELEMETRY ONLY)")
+					require.NotContains(t, output.String(), "INCOMPLETE")
 					require.True(t, strings.HasPrefix(executor.env["RUBYOPT"], preloads+" "))
 					require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
 					report, err := os.ReadFile(htmlReportPath(root))
@@ -112,9 +112,9 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			}
 			var output bytes.Buffer
 			require.NoError(t, run.Run(t.Context(), &output))
-			require.Contains(t, output.String(), "UNVALIDATED (TELEMETRY ONLY)")
-			require.Contains(t, output.String(), "Compatibility: inconclusive")
-			require.Contains(t, output.String(), "unvalidated")
+			require.NotContains(t, output.String(), "INCOMPLETE")
+			require.NotContains(t, output.String(), "Validation verdict")
+			require.Contains(t, output.String(), "Test events received.")
 			require.Contains(t, output.String(), displayName(name)+": Passed")
 			require.Contains(t, output.String(), "Tests with coverage: 0 / 1")
 			require.Equal(t, "ddtest-testdrive", executor.env["DD_API_KEY"])

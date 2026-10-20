@@ -28,10 +28,9 @@ the CI setup, then validate with the customer's actual headless command.
    instrumentation is missing, report the concrete diagnostics and review the
    documented manual Cypress plugin/support setup.
 4. Cypress Test Impact Analysis (TIA skipping and application coverage validation)
-   is deferred in testdrive. Do not add Istanbul instrumentation, coverage build
-   paths or coverage dependencies for this validation. Preserve any existing
-   coverage setup. A successful run does not validate Cypress TIA; report it as
-   deferred, not passed or unsupported by the tracer.
+   is deferred in testdrive. ddtest does not check Cypress TIA or application
+   coverage yet; preserve any existing coverage setup. A successful run does not
+   validate Cypress TIA; report it as deferred, not passed or unsupported by the tracer.
 5. Before final validation, run the repository checks appropriate to any config
    or startup source files you edited, including their existing lint rules.
    Run ddtest testdrive --framework cypress --all --tracer-version <exact-release>

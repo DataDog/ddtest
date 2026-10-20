@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -17,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPythonRubyTelemetryExitCode(t *testing.T) {
+func TestPythonRubyExitCodeMatchesMain(t *testing.T) {
 	for _, fixture := range []struct {
 		language string
 		runner   framework.Framework
@@ -27,66 +26,68 @@ func TestPythonRubyTelemetryExitCode(t *testing.T) {
 		{"ruby", framework.NewMinitest(platform.NewRuby(settings.TestSkippingLevelTest))},
 	} {
 		t.Run(fixture.runner.Name(), func(t *testing.T) {
-			for _, format := range []string{"verbose", "agent", "json"} {
-				t.Run(format, func(t *testing.T) {
-					for _, tc := range []struct {
-						name                 string
-						events               int
-						commandErr, closeErr error
-						passed               bool
-					}{
-						{"telemetry received", 1, nil, nil, true},
-						{"no telemetry", 0, nil, nil, false},
-						{"test command failed", 1, errors.New("tests failed"), nil, false},
-						{"canceled command", 1, context.Canceled, nil, false},
-						{"intake close failed", 1, nil, errors.New("intake failed"), false},
-					} {
-						t.Run(tc.name, func(t *testing.T) {
-							root := t.TempDir()
-							drive := &Testdrive{
-								repositoryRoot: root, language: fixture.language, framework: fixture.runner,
-								command: "test", platform: &fakeTracer{}, executor: &fakeTestdriveExecutor{err: tc.commandErr},
-								startIntake: func(string, intake.Scenario) (localIntake, error) {
-									return &fakeIntake{findings: intake.Facts{TestEventCount: tc.events}, closeErr: tc.closeErr}, nil
-								},
-							}
-							var output bytes.Buffer
-							err := drive.Workflow(t.Context(), &output, WorkflowOptions{Format: format})
-							require.Equal(t, tc.passed, err == nil, "error: %v\n%s", err, output.String())
-							if format != "verbose" {
-								var result onboard.AgentResult
-								require.NoError(t, json.NewDecoder(strings.NewReader(output.String())).Decode(&result))
-								require.Equal(t, "report_result", result.NextAction)
-								require.Empty(t, result.NextCommand, "completed or failed telemetry checks must not suggest retrying themselves")
-								if tc.passed {
-									require.Equal(t, "telemetry_only", result.Status)
-									require.Contains(t, output.String(), "UNVALIDATED (TELEMETRY ONLY)")
-								} else {
-									require.Equal(t, "validation_failed", result.Status)
-								}
-								if format == "json" {
-									require.True(t, json.Valid(output.Bytes()), output.String())
-								}
-							}
-							if tc.commandErr != nil {
-								require.ErrorIs(t, err, tc.commandErr)
-							}
-							data, err := os.ReadFile(validationPath(root))
-							require.NoError(t, err)
-							var report validationResult
-							require.NoError(t, json.Unmarshal(data, &report))
-							require.False(t, report.Success, "telemetry does not prove full validation")
-							require.False(t, report.LocalSuccess)
-							require.Equal(t, "INCOMPLETE", report.Summary.Status)
-							if tc.passed {
-								require.Equal(t, "UNVALIDATED (TELEMETRY ONLY)", report.Summary.LocalValidation)
-								require.Equal(t, "inconclusive", report.Compatibility.Status)
-								require.Equal(t, "unvalidated", report.Features[0].Status)
-							} else {
-								require.NotEmpty(t, report.Error)
-							}
-						})
+			for _, tc := range []struct {
+				name                 string
+				events               int
+				commandErr, closeErr error
+				reportFailure        bool
+				passed               bool
+			}{
+				{name: "events received", events: 1, passed: true},
+				{name: "no events"},
+				{name: "command failed", events: 1, commandErr: errors.New("tests failed")},
+				{name: "canceled command", events: 1, commandErr: context.Canceled},
+				{name: "intake failed", events: 1, closeErr: errors.New("intake failed")},
+				{name: "report failed", events: 1, reportFailure: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					root := t.TempDir()
+					if tc.reportFailure {
+						require.NoError(t, os.MkdirAll(validationPath(root), 0755))
 					}
+					drive := &Testdrive{
+						repositoryRoot: root, language: fixture.language, framework: fixture.runner,
+						command: "test", platform: &fakeTracer{}, executor: &fakeTestdriveExecutor{err: tc.commandErr},
+						startIntake: func(string, intake.Scenario) (localIntake, error) {
+							return &fakeIntake{findings: intake.Facts{TestEventCount: tc.events}, closeErr: tc.closeErr}, nil
+						},
+					}
+					var output bytes.Buffer
+					err := drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "verbose"})
+					require.Equal(t, tc.passed, err == nil, "error: %v\n%s", err, output.String())
+					if tc.commandErr != nil {
+						require.ErrorIs(t, err, tc.commandErr)
+					}
+					for _, invalid := range []string{"INCOMPLETE", "UNVALIDATED (TELEMETRY ONLY)", "FINAL ONBOARDING RESPONSE"} {
+						require.NotContains(t, output.String(), invalid)
+					}
+					if !tc.reportFailure {
+						data, err := os.ReadFile(validationPath(root))
+						require.NoError(t, err)
+						var report map[string]json.RawMessage
+						require.NoError(t, json.Unmarshal(data, &report))
+						require.NotContains(t, report, "telemetry_only")
+						require.NotContains(t, report, "summary")
+						var success bool
+						require.NoError(t, json.Unmarshal(report["success"], &success))
+						require.Equal(t, tc.passed, success)
+					}
+				})
+			}
+			for _, format := range []string{"agent", "json"} {
+				t.Run(format, func(t *testing.T) {
+					root := t.TempDir()
+					executor := &fakeTestdriveExecutor{}
+					drive := &Testdrive{repositoryRoot: root, language: fixture.language, framework: fixture.runner, command: "test", executor: executor}
+					var output bytes.Buffer
+					require.Error(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: format}))
+					var result onboard.AgentResult
+					require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+					require.Equal(t, "unsupported", result.Status)
+					require.Equal(t, "framework_unsupported", result.Code)
+					require.Empty(t, result.NextCommand)
+					require.Empty(t, executor.command)
+					require.NoFileExists(t, validationPath(root))
 				})
 			}
 		})
@@ -113,6 +114,25 @@ func TestPythonRubyAndCypressPreviewsDoNotPromiseUnsupportedChecks(t *testing.T)
 				require.Contains(t, output.String(), "application coverage validation are deferred")
 				require.NotContains(t, output.String(), "EFD, skipping")
 			}
+		})
+	}
+}
+
+func TestPythonRubyReportsDoNotEnterAgentValidation(t *testing.T) {
+	for _, name := range []string{"pytest", "rspec", "minitest"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			data, err := json.Marshal(validationResult{Framework: name, Success: true})
+			require.NoError(t, err)
+			require.NoError(t, writeValidation(validationPath(root), data))
+			var output bytes.Buffer
+			require.Error(t, RenderReport(t.Context(), &output, "json"))
+			var result onboard.AgentResult
+			require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+			require.Equal(t, "unsupported", result.Status)
+			require.Empty(t, result.NextCommand)
+			require.NotContains(t, output.String(), "INCOMPLETE")
 		})
 	}
 }

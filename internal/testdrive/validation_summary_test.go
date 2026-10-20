@@ -245,6 +245,20 @@ func TestHandoffSummarizesUnexecutedCypressConsumer(t *testing.T) {
 	require.NotContains(t, validationHandoff(result), "Mocha")
 }
 
+func TestMissingRealCoverageNamesSelectedFramework(t *testing.T) {
+	for _, name := range []string{"mocha", "cucumber"} {
+		t.Run(name, func(t *testing.T) {
+			result := validationResult{Framework: name, Compatibility: verdict{Status: "compatible"},
+				Runs: []runSummary{{Name: "reporting-only", Instrumented: true, Coverage: &coverageSummary{Status: "not observed"}}}}
+			blockers := strings.Join(summarizeValidation(result).BlockingChecks, "\n")
+			require.Contains(t, blockers, displayName(name)+" real-suite coverage was not observed")
+			if name == "cucumber" {
+				require.NotContains(t, blockers, "Mocha")
+			}
+		})
+	}
+}
+
 func TestCompactHandoffKeepsExecutedScopeCountsAndRepositoryBlockersSeparate(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "customer project")
 	require.NoError(t, os.MkdirAll(filepath.Dir(htmlReportPath(root)), 0755))

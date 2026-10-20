@@ -210,9 +210,6 @@ func summarizeValidation(result validationResult) validationSummary {
 	if result.LocalSuccess {
 		summary.LocalValidation = "PASSED"
 	}
-	if result.TelemetryOnly && result.Error == "" {
-		summary.LocalValidation = "UNVALIDATED (TELEMETRY ONLY)"
-	}
 	if result.CheckOnly {
 		summary.LocalValidation = "NOT EXERCISED"
 		summary.BlockingChecks = append(summary.BlockingChecks, "paired execution and features not exercised (--check-only)")
@@ -239,7 +236,7 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	if !result.CheckOnly {
 		if missingRealCoverage(result) {
-			summary.BlockingChecks = append(summary.BlockingChecks, "Mocha real-suite coverage was not observed. Synthetic skipping probes do not validate coverage of the customer's source. Check NYC instrument/include settings and ESM instrumentation; preserve existing coverage thresholds.")
+			summary.BlockingChecks = append(summary.BlockingChecks, displayName(result.Framework)+" real-suite coverage was not observed. Synthetic skipping probes do not validate coverage of the customer's source. Check NYC instrument/include settings and ESM instrumentation; preserve existing coverage thresholds.")
 		}
 		if result.Compatibility.Status != "compatible" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility "+result.Compatibility.Status)
