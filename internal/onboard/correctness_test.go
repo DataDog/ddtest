@@ -17,6 +17,8 @@ func TestCucumberCoverageInsertionUsesExecutablePosition(t *testing.T) {
 		"npx --no-install -- cucumber-js features",
 		"npx cucumber-js features",
 		"npx -- cucumber-js features",
+		"npm exec -- cucumber-js features",
+		"npm exec --no -- cucumber-js features",
 		"cross-env DEBUG=cucumber-js:* cucumber-js features",
 	} {
 		t.Run(command, func(t *testing.T) {
@@ -38,6 +40,9 @@ func TestCucumberCoverageInsertionUsesExecutablePosition(t *testing.T) {
 			require.Contains(t, script, "nyc -- ")
 			if strings.Contains(command, "npx") {
 				require.Contains(t, script, "npx --no-install")
+			}
+			if strings.Contains(command, "npm exec") {
+				require.Contains(t, script, "npm exec --no -- nyc -- cucumber-js")
 			}
 			remaining := 256
 			resolution := resolveJestSequence(root, root, cucumberDiscoveryScript(script), nil, &remaining, "cucumber")

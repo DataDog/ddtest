@@ -330,7 +330,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		} else {
 			words = words[2:]
 		}
-		if (framework == "mocha" || framework == "cypress" || framework == "cucumber") && len(words) > 0 && words[0] == "--no-install" {
+		if (framework == "mocha" || framework == "cypress" || framework == "cucumber") && len(words) > 0 && slices.Contains([]string{"--no-install", "--no"}, words[0]) {
 			words = words[1:]
 		}
 		if len(words) > 0 && words[0] == "--" {

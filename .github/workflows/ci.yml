@@ -415,7 +415,50 @@ jobs:
         env:
           DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
           DDTEST_CHROME_BINARY: /usr/bin/google-chrome
+          DDTEST_FRAMEWORK_REPORTS: ${{ runner.temp }}/ddtest-workflow-reports
         run: xvfb-run -a go test -v ./internal/testdrive -run '^TestPublicFrameworkTestdrives/${{ matrix.framework }}$' -count=1 -timeout=20m
+      - name: Retain failed testdrive reports
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: testdrive-${{ matrix.framework }}
+          path: ${{ runner.temp }}/ddtest-workflow-reports
+          if-no-files-found: ignore
+          retention-days: 7
+
+  testdrive-language-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [pytest, rspec, minitest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: matrix.framework == 'pytest'
+        with:
+          python-version: '3.12'
+      - uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
+        if: matrix.framework != 'pytest'
+        with:
+          ruby-version: '3.4'
+      - name: Run Python or Ruby testdrive
+        env:
+          DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
+          DDTEST_FRAMEWORK_REPORTS: ${{ runner.temp }}/ddtest-workflow-reports
+        run: go test -v ./internal/testdrive -run '^TestPublicPythonRubyTestdrives/${{ matrix.framework }}$' -count=1 -timeout=20m
+      - name: Retain failed testdrive reports
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: testdrive-${{ matrix.framework }}
+          path: ${{ runner.temp }}/ddtest-workflow-reports
+          if-no-files-found: ignore
+          retention-days: 7
 
   lint:
     runs-on: ubuntu-latest

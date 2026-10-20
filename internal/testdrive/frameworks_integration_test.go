@@ -53,6 +53,9 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "project space")
 			require.NoError(t, os.MkdirAll(root, 0755))
+			root, err := filepath.EvalSymlinks(root)
+			require.NoError(t, err)
+			retainIntegrationReports(t, root, fixture.name)
 			integrationCommand(t, ctx, root, nil, "git", "init", "-q")
 			integrationFile(t, root, ".gitignore", "node_modules/\n/.testoptimization/\n/coverage/\n/.nyc_output/\n")
 			integrationFile(t, root, "src/add.cjs", "module.exports=(a,b)=>a+b;\n")
@@ -65,7 +68,9 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			manifest, err := json.Marshal(pkg)
 			require.NoError(t, err)
 			integrationFile(t, root, "package.json", string(manifest))
-			env := []string{"CYPRESS_CACHE_FOLDER=" + filepath.Join(t.TempDir(), "cypress"), "PLAYWRIGHT_BROWSERS_PATH=" + filepath.Join(t.TempDir(), "playwright")}
+			// Simulate this fixture's CI checkout even locally. Copied configurations
+			// must rebase it without disabling provider detection to pass.
+			env := []string{"CYPRESS_CACHE_FOLDER=" + filepath.Join(t.TempDir(), "cypress"), "PLAYWRIGHT_BROWSERS_PATH=" + filepath.Join(t.TempDir(), "playwright"), "GITHUB_ACTIONS=true", "GITHUB_WORKSPACE=" + root}
 			integrationCommand(t, ctx, root, env, "npm", "install", "--no-audit", "--no-fund")
 			if fixture.name == "playwright" {
 				integrationCommand(t, ctx, root, env, "npx", "--no-install", "playwright", "install", "chromium")
@@ -152,7 +157,7 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 				integrationFile(t, root, "one.spec.js", `const {test}=require('@playwright/test');test('unsupported child',()=>{require('node:child_process').spawn('/bin/sh',['-c','exit 0'],{detached:true,argv0:'custom',stdio:'ignore'});});`)
 				command := exec.CommandContext(ctx, binary, "testdrive", "--framework", "playwright", "--all", "--agent", "--yes", "--format", "json")
 				command.Dir = root
-				command.Env = append(os.Environ(), env...)
+				command.Env = integrationEnvironment(env)
 				blocked, err := command.CombinedOutput()
 				require.Error(t, err, string(blocked))
 				lines := strings.Split(strings.TrimSpace(string(blocked)), "\n")
@@ -169,6 +174,29 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 	}
 }
 
+func retainIntegrationReports(t *testing.T, root, framework string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		for _, name := range []string{"testdrive.json", "report.html"} {
+			data, err := os.ReadFile(filepath.Join(root, ".testoptimization", name))
+			if os.IsNotExist(err) {
+				continue
+			}
+			require.NoError(t, err)
+			if name == "testdrive.json" {
+				t.Logf("Failed validation report:\n%s", data)
+			}
+			if directory := os.Getenv("DDTEST_FRAMEWORK_REPORTS"); directory != "" {
+				require.NoError(t, os.MkdirAll(directory, 0755))
+				require.NoError(t, os.WriteFile(filepath.Join(directory, framework+"-"+name), data, 0600))
+			}
+		}
+	})
+}
+
 func integrationFile(t *testing.T, root, name, contents string) {
 	t.Helper()
 	path := filepath.Join(root, name)
@@ -180,13 +208,18 @@ func integrationCommand(t *testing.T, ctx context.Context, directory string, env
 	t.Helper()
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = directory
-	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, "DD_") && !strings.HasPrefix(entry, "DATADOG_") {
-			command.Env = append(command.Env, entry)
-		}
-	}
-	command.Env = append(command.Env, env...)
+	command.Env = integrationEnvironment(env)
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s %v:\n%s", name, args, output)
 	return string(output)
+}
+
+func integrationEnvironment(env []string) []string {
+	var result []string
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "DD_") && !strings.HasPrefix(entry, "DATADOG_") {
+			result = append(result, entry)
+		}
+	}
+	return append(result, env...)
 }

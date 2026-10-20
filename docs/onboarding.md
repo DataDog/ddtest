@@ -70,6 +70,13 @@ Edited probes are preserved and reported as a blocker. Probe records survive in
 the private `.testoptimization/.probes/` directory until cleanup; a successful run
 leaves only the two reports. Cypress probes use configuration-selected modes, so
 there is no source rewrite between scenarios and abandoned probes are skipped.
+
+Probe publication requires hard-link support and a test directory on the same
+filesystem as `.testoptimization/.probes/`. A cross-filesystem mount or a
+filesystem without hard links leaves feature checks inconclusive with
+`probe_publication_unsupported`; ddtest preserves existing files and does not
+fall back to a non-atomic write. Run validation from a checkout on one supported
+filesystem, including its test directories, then retry.
 Source fingerprints include submodules and untracked nested repositories.
 
 Browser comparisons use native-result observers and process supervision in both

@@ -186,7 +186,7 @@ func cucumberCoverageEdit(script string) (int, int, string, error) {
 		} else if i+1 < len(call.Args) && slices.Contains([]string{"npm", "pnpm"}, call.Args[i].Lit()) && call.Args[i+1].Lit() == "exec" {
 			i += 2
 		}
-		for i < len(call.Args) && slices.Contains([]string{"--no-install", "--"}, call.Args[i].Lit()) {
+		for i < len(call.Args) && slices.Contains([]string{"--no-install", "--no", "--"}, call.Args[i].Lit()) {
 			i++
 		}
 		if i < len(call.Args) && filepath.Base(call.Args[i].Lit()) == "cucumber-js" {
@@ -200,6 +200,9 @@ func cucumberCoverageEdit(script string) (int, int, string, error) {
 				if call.Args[launcher].Lit() == "npx" {
 					offset = int(call.Args[launcher].Pos().Offset())
 					insertion = "npx --no-install nyc -- "
+				} else if call.Args[launcher].Lit() == "npm" {
+					offset = int(call.Args[launcher].Pos().Offset())
+					insertion = "npm exec --no -- nyc -- "
 				}
 			}
 		}

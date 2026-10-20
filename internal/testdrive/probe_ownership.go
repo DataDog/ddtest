@@ -9,13 +9,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 )
 
 type probeOwnership struct {
 	Root string `json:"root"`
 	Path string `json:"path"`
 	Hash string `json:"sha256"`
-	Peer string `json:"peer,omitempty"`
+	Peer string `json:"peer"`
 }
 
 // Recovery is called only after the repository workflow lock is acquired.
@@ -52,11 +53,6 @@ func probeOwnershipDirectory(root string) (string, error) {
 func probeOwnershipPath(root, probe string) (string, error) {
 	directory, err := probeOwnershipDirectory(root)
 	return filepath.Join(directory, fmt.Sprintf("%x.json", sha256.Sum256([]byte(probe)))), err
-}
-
-func recordProbe(root, probe string, contents []byte) error {
-	record := probeOwnership{Root: canonicalWorkflowRoot(root), Path: probe, Hash: fmt.Sprintf("%x", sha256.Sum256(contents))}
-	return writeProbeRecord(record)
 }
 
 func writeProbeRecord(record probeOwnership) error {
@@ -113,21 +109,22 @@ func ownedProbeContents(record probeOwnership) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("owned probe is no longer a regular file: %s", record.Path)
 	}
-	if record.Peer != "" {
-		directory, err := probeOwnershipDirectory(record.Root)
-		if err != nil {
-			return nil, err
-		}
-		if filepath.Dir(record.Peer) != directory {
-			return nil, fmt.Errorf("invalid probe ownership peer")
-		}
-		peer, err := os.Lstat(record.Peer)
-		if err != nil {
-			return nil, err
-		}
-		if !peer.Mode().IsRegular() || !os.SameFile(info, peer) {
-			return nil, fmt.Errorf("probe was replaced or never published; preserve it: %s", record.Path)
-		}
+	if record.Peer == "" {
+		return nil, fmt.Errorf("probe ownership peer is missing")
+	}
+	directory, err := probeOwnershipDirectory(record.Root)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.Dir(record.Peer) != directory {
+		return nil, fmt.Errorf("invalid probe ownership peer")
+	}
+	peer, err := os.Lstat(record.Peer)
+	if err != nil {
+		return nil, err
+	}
+	if !peer.Mode().IsRegular() || !os.SameFile(info, peer) {
+		return nil, fmt.Errorf("probe was replaced or never published; preserve it: %s", record.Path)
 	}
 	data, err := os.ReadFile(record.Path)
 	if err != nil {
@@ -153,8 +150,12 @@ func removeProbe(root, probe string) error {
 		return fmt.Errorf("probe ownership does not match this repository: %s", path)
 	}
 	_, err = ownedProbeContents(record)
-	if err != nil && !os.IsNotExist(err) {
-		return err
+	if err != nil {
+		// A missing private peer is not evidence that the published probe vanished.
+		// Preserve its record and the source file until identity can be verified.
+		if _, probeErr := os.Lstat(probe); !os.IsNotExist(probeErr) {
+			return err
+		}
 	}
 	if err == nil {
 		if err := os.Remove(probe); err != nil {
@@ -212,15 +213,12 @@ func createOwnedProbe(root, probe string, contents []byte) error {
 		record, _ := probeOwnershipPath(root, probe)
 		_ = os.Remove(record)
 		_ = os.Remove(temporary)
-		return err
+		return probePublicationError(err)
 	}
 	return nil
 }
 
 func recoverProbes(root string) error {
-	if err := recoverLegacyProbes(root); err != nil {
-		return err
-	}
 	directory, err := probeOwnershipDirectory(root)
 	if err != nil {
 		return err
@@ -270,49 +268,11 @@ func recoverProbes(root string) error {
 	return nil
 }
 
-// Older releases kept ownership in TMPDIR. Recover those records when still
-// available, but write new records beside the reports so reboot cleanup is safe.
-func recoverLegacyProbes(root string) error {
-	directory := filepath.Join(os.TempDir(), fmt.Sprintf("ddtest-probes-%d", os.Getuid()), fmt.Sprintf("%x", sha256.Sum256([]byte(canonicalWorkflowRoot(root)))))
-	info, err := os.Lstat(directory)
-	if os.IsNotExist(err) {
-		return nil
+var errProbePublicationUnsupported = errors.New("probe_publication_unsupported")
+
+func probePublicationError(err error) error {
+	if errors.Is(err, syscall.EXDEV) || errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.ENOSYS) {
+		return fmt.Errorf("%w: validation probes require hard-link support and a test directory on the same filesystem as .testoptimization/.probes: %w", errProbePublicationUnsupported, err)
 	}
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
-		return fmt.Errorf("legacy probe ownership storage must be private")
-	}
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		path := filepath.Join(directory, entry.Name())
-		record, err := readProbeOwnership(path)
-		if err != nil {
-			return err
-		}
-		if record.Root != canonicalWorkflowRoot(root) || entry.Name() != fmt.Sprintf("%x.json", sha256.Sum256([]byte(record.Path))) {
-			return fmt.Errorf("invalid legacy probe ownership record")
-		}
-		_, err = ownedProbeContents(record)
-		if err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		if err == nil {
-			if err := os.Remove(record.Path); err != nil {
-				return err
-			}
-		}
-		if err := os.Remove(path); err != nil {
-			return err
-		}
-	}
-	_ = os.Remove(directory)
-	return nil
+	return fmt.Errorf("publish validation probe without replacing existing files: %w", err)
 }

@@ -32,3 +32,19 @@ func TestConfigurationCopyIsIndependentAndRejectsEscapingLinks(t *testing.T) {
 	cancel()
 	require.ErrorIs(t, copyConfiguration(ctx, source, t.TempDir()), context.Canceled)
 }
+
+func TestIsolatedCIEnvironmentUsesCopiedCheckout(t *testing.T) {
+	t.Setenv("GITHUB_WORKSPACE", "/original/checkout")
+	t.Setenv("CI_PROJECT_DIR", "/original/gitlab")
+	t.Setenv("GITHUB_SHA", "unchanged-commit")
+	environment := map[string]string{"CIRCLE_WORKING_DIRECTORY": "/original/circle", "CI_PROJECT_DIR": "", "CUSTOM_SETTING": "preserved"}
+	workspace := t.TempDir()
+	result := isolatedCIEnvironment(environment, workspace)
+	require.Equal(t, workspace, result["GITHUB_WORKSPACE"])
+	require.Equal(t, workspace, result["CIRCLE_WORKING_DIRECTORY"])
+	require.Empty(t, result["CI_PROJECT_DIR"], "an explicit empty override remains empty")
+	require.Equal(t, "preserved", result["CUSTOM_SETTING"])
+	require.NotContains(t, result, "GITHUB_SHA", "commit/provider metadata must remain inherited")
+	require.Equal(t, "/original/checkout", os.Getenv("GITHUB_WORKSPACE"))
+	require.Equal(t, "/original/circle", environment["CIRCLE_WORKING_DIRECTORY"])
+}

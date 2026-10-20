@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -114,7 +115,10 @@ func TestProbeCreationNeverReplacesCustomerFiles(t *testing.T) {
 func TestUnpublishedProbeContentsAreRecovered(t *testing.T) {
 	root := t.TempDir()
 	probe := filepath.Join(root, "probe.test.js")
-	require.NoError(t, recordProbe(root, probe, []byte("complete contents")))
+	contents := []byte("complete contents")
+	peer, err := probeContentsFile(root, contents)
+	require.NoError(t, err)
+	require.NoError(t, writeProbeRecord(probeOwnership{Root: canonicalWorkflowRoot(root), Path: probe, Hash: fmt.Sprintf("%x", sha256.Sum256(contents)), Peer: peer}))
 	directory, err := probeOwnershipDirectory(root)
 	require.NoError(t, err)
 	requireWriteFile(t, filepath.Join(directory, "contents-interrupted"), "partial")
@@ -135,19 +139,28 @@ func TestProbeOwnershipRejectsCheckoutRecordsAndSymlinks(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestRecoverProbeFromPreviousTemporaryStorage(t *testing.T) {
+func TestProbePublicationExplainsUnsupportedFilesystem(t *testing.T) {
+	err := probePublicationError(&os.LinkError{Op: "link", Old: "private-contents", New: "probe.test.js", Err: syscall.EXDEV})
+	require.ErrorIs(t, err, errProbePublicationUnsupported)
+	require.ErrorIs(t, err, syscall.EXDEV)
+	require.ErrorContains(t, err, "same filesystem as .testoptimization/.probes")
+	err = probePublicationError(os.ErrExist)
+	require.NotErrorIs(t, err, errProbePublicationUnsupported)
+	require.ErrorIs(t, err, os.ErrExist)
+}
+
+func TestProbeRecoveryPreservesRecordWhenPeerIsMissing(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("TMPDIR", t.TempDir())
-	probe := filepath.Join(root, "old-probe.test.js")
+	probe := filepath.Join(root, "probe.test.js")
 	require.NoError(t, createOwnedProbe(root, probe, []byte("owned")))
-	current, err := probeOwnershipPath(root, probe)
+	path, err := probeOwnershipPath(root, probe)
 	require.NoError(t, err)
-	legacy := filepath.Join(os.TempDir(), fmt.Sprintf("ddtest-probes-%d", os.Getuid()), fmt.Sprintf("%x", sha256.Sum256([]byte(canonicalWorkflowRoot(root)))))
-	require.NoError(t, os.MkdirAll(legacy, 0700))
-	require.NoError(t, os.Rename(current, filepath.Join(legacy, filepath.Base(current))))
-	require.NoError(t, recoverProbes(root))
-	require.NoFileExists(t, probe)
-	require.NoDirExists(t, legacy)
+	record, err := readProbeOwnership(path)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(record.Peer))
+	require.Error(t, recoverProbes(root))
+	require.FileExists(t, probe)
+	require.FileExists(t, path, "missing identity evidence must not silently orphan a published probe")
 }
 
 func TestAbandonedCypressProbeIsSkipped(t *testing.T) {

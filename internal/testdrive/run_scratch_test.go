@@ -113,8 +113,7 @@ func TestAllJavaScriptRunsOwnChildScratch(t *testing.T) {
 				probe := ""
 				if mode == "probe-pass-control" {
 					probe = filepath.Join(drive.repositoryRoot, "probe.js")
-					requireWriteFile(t, probe, "")
-					require.NoError(t, recordProbe(drive.repositoryRoot, probe, nil))
+					require.NoError(t, createOwnedProbe(drive.repositoryRoot, probe, nil))
 					t.Cleanup(func() { require.NoError(t, removeProbe(drive.repositoryRoot, probe)) })
 				}
 				_, err := run(t.Context(), io.Discard, session, "/trace/ci/init.js", mode, mode != "baseline", intake.Scenario{}, probe, "pass")
