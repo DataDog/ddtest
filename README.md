@@ -24,7 +24,7 @@ ddtest onboard    # GitHub Actions setup instructions
 ddtest testdrive  # Preview, confirm, and run tests locally
 ```
 
-For Jest, Vitest and Mocha, testdrive compares the original test suite without and with instrumentation, then validates six advanced features using temporary probes. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
+For Jest, Vitest, Mocha and Playwright, testdrive compares the original test suite without and with instrumentation, then validates supported advanced features using temporary probes. Playwright reports TIA skipping and per-test coverage as unsupported. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
 
 No Datadog account or Agent is needed. Testdrive links to an HTML report under
 `.testoptimization/report.html` with a compact `.testoptimization/testdrive.json`. Use `--yes` after reviewing the preview in

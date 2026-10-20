@@ -186,9 +186,13 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		}
 		child.command = words[0]
 		child.args = words[1:]
+		child.playwrightGuard = entry.ExitOnFailure
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
 		child.preflight = child.checkJestPreflight
+		if child.framework.Name() == "playwright" {
+			child.preflight = child.checkPlaywrightPreflight
+		}
 		if child.framework.Name() == "vitest" {
 			child.preflight = child.checkVitestPreflight
 		}

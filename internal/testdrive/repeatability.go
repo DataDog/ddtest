@@ -23,15 +23,15 @@ func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrument
 			return result
 		}
 	}
-	type identity struct{ file, name string }
+	type identity struct{ file, name, playwright string }
 	outcomes := [4]map[identity][]string{}
 	identities := map[identity]bool{}
 	for i, run := range []validationRun{baseline, instrumented, baselineAgain, instrumentedAgain} {
 		outcomes[i] = map[identity][]string{}
 		for _, test := range run.Tests {
-			key := identity{test.File, test.Name}
+			key := identity{test.File, test.Name, playwrightLabel(test)}
 			identities[key] = true
-			outcomes[i][key] = append(outcomes[i][key], test.Status+"\n"+test.Failure)
+			outcomes[i][key] = append(outcomes[i][key], test.Status+"\n"+test.Failure+playwrightOutcome(test))
 		}
 		for _, values := range outcomes[i] {
 			slices.Sort(values)
@@ -45,7 +45,7 @@ func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrument
 		if c := strings.Compare(a.name, b.name); c != 0 {
 			return c
 		}
-		return 0
+		return strings.Compare(a.playwright, b.playwright)
 	})
 	var recurring, variable []string
 	for _, key := range keys {
@@ -57,7 +57,7 @@ func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrument
 		if relative, err := filepath.Rel(baseline.root, file); err == nil && filepath.IsLocal(relative) {
 			file = relative
 		}
-		label := file + " › " + key.name
+		label := file + " › " + key.name + key.playwright
 		if slices.Equal(a, c) && slices.Equal(b, d) {
 			recurring = append(recurring, "Recurring difference in both pairs: "+label+"; baseline: "+outcomeDescription(a)+"; instrumented: "+outcomeDescription(b))
 		} else {

@@ -40,6 +40,7 @@ type jestProject struct {
 
 type jestPreflight struct {
 	RunnerBinary        *runnerBinary         `json:"runner_binary,omitempty"`
+	PlaywrightProjects  []playwrightProject   `json:"playwright_projects,omitempty"`
 	VitestProjects      []vitestProject       `json:"vitest_projects,omitempty"`
 	ExecutionPath       string                `json:"execution_path,omitempty"`
 	Verdict             verdict               `json:"verdict"`

@@ -18,6 +18,9 @@ import (
 //go:embed instructions/mocha.md
 var mochaInstructions string
 
+//go:embed instructions/playwright.md
+var playwrightInstructions string
+
 //go:embed instructions/vitest.md
 var vitestInstructions string
 
@@ -30,7 +33,7 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		return err
 	}
 	var scope *ValidationScope
-	if language == "javascript" && name == "mocha" {
+	if language == "javascript" && (name == "mocha" || name == "playwright") {
 		discovered, err := DiscoverValidationScope(repositoryRoot, name)
 		if err != nil {
 			return err
@@ -78,6 +81,9 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 }
 
 func instructions(language, name string) string {
+	if language == "javascript" && name == "playwright" {
+		return strings.ReplaceAll(playwrightInstructions, "ddtest testdrive", "ddtest testdrive --framework playwright")
+	}
 	if language == "javascript" && name == "mocha" {
 		return strings.ReplaceAll(mochaInstructions, "ddtest testdrive", "ddtest testdrive --framework mocha")
 	}

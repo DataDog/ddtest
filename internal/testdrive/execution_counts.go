@@ -45,6 +45,11 @@ func nativeExecutionCounts(run validationRun) *executionCounts {
 			break
 		}
 		identity := sourceTestIdentity{Framework: run.framework, File: filepath.ToSlash(file), Name: normalizeOwnedTemporaryPath(run, test.Name), Project: run.Project}
+		if test.Playwright != nil {
+			identity.Project = test.Playwright.Project
+			identity.Browser = test.Playwright.Browser
+			identity.Repeat = test.Playwright.Repeat
+		}
 		if _, duplicate := counts.identities[identity]; duplicate {
 			counts.Reason = "Source-test identities are unavailable because native file/name identities repeat within a configuration."
 			break

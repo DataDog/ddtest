@@ -24,6 +24,7 @@ type TestCommand struct {
 	ScopeCommand      string            `json:"-"` // Original invocation before adding a forwarding wrapper.
 	ProbeLintSkipped  bool              `json:"probe_lint_skipped,omitempty"`
 	ReviewReason      string            `json:"review_reason,omitempty"`
+	ExitOnFailure bool `json:"exit_on_failure,omitempty"`
 	Resolution        string            `json:"resolution,omitempty"`
 	Directory         string            `json:"directory"`
 	Command           string            `json:"command"`
@@ -78,7 +79,7 @@ func yarnImplicitInstall(words []string) bool {
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" && framework != "mocha" {
+	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
@@ -109,6 +110,10 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				var unresolved, review []scopeDiagnostic
 				var commands []TestCommand
 				for i, step := range job.Steps {
+					if framework == "playwright" && strings.Split(step.Uses, "@")[0] == "actions/upload-artifact" && step.Run == "" && step.ResolutionError == "" {
+						scope.Review = append(scope.Review, workflow.Path+" / "+name+": artifact upload is outside local Playwright execution")
+						continue
+					}
 
 					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 					if conditionErr == nil && !active {

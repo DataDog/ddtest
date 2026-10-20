@@ -231,6 +231,9 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	} else if strings.EqualFold(info.Framework, "cypress") && covered < total {
 		coverageTooltip = "Cypress collects Test Impact Analysis coverage from instrumented code in the browser. API-only tests that do not load that code may have no coverage."
 	}
+	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "not supported" && covered == 0 {
+		coverageValue, coverageTone = "Not supported ("+info.Framework+")", "info"
+	}
 	model := reportModel{
 		Summary:       "No findings.",
 		NoTestEvents:  findings.TestEventCount == 0,
@@ -269,7 +272,10 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			Context:  fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. %s", findings.EmptyCoverageEntryCount, inspectionHint(!info.TrafficDeleted, "Inspect the captured traffic.")),
 		})
 	}
-	if findings.MissingCoverage {
+	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "not supported" && findings.TestEventCount > 0 {
+		model.Cards = append(model.Cards, reportCard{Kind: strings.ToLower(info.Framework) + "-coverage-unavailable", Severity: "info", Title: info.Framework + " coverage and skipping are not supported", Count: 1, Context: policy.Reason})
+	}
+	if findings.MissingCoverage && skippingPolicy(strings.ToLower(info.Framework)).Status != "not supported" {
 		model.Cards = append(model.Cards, reportCard{
 			Kind: intake.MissingCoverageFinding, Scope: coverageFindingScope, Severity: "warning", Title: "Coverage not reported", Count: 1,
 			Context: intake.MissingCoverageContext,

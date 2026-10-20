@@ -751,3 +751,13 @@ The preview lists retained lifecycle hooks and warns that any may upload or
 publish, including through indirect scripts. Those hooks run in the disposable
 copy for both comparisons; synthetic probes omit them while retaining the
 runner's scoped environment and working directory.
+
+### Playwright validation
+
+Use `ddtest testdrive --framework playwright --all --check-only --yes` to list the discovered test configuration and check runtime/tracer compatibility without installing a tracer or executing tests. Install the repository dependencies and required Playwright browsers first. Configuration loading executes project JavaScript.
+
+Run `ddtest testdrive --framework playwright --all --yes` for all discovered commands, or replace `--all` with `--command 'npm test'` for a simple package alias. Testdrive runs in a temporary checkout, preserving the Playwright configuration, browser projects and native retries. It captures native results with the same reporter and process supervisor in both modes, redirects artifacts, compares test identities/attempts/failures and exit codes, and checks local telemetry. Matching existing failures are acceptable. This baseline disables dd-trace but is not an unmodified shell execution.
+
+Each executed project gets separate retries, EFD, quarantine, disabled-test and attempt-to-fix controls. Playwright TIA skipping and per-test coverage are unsupported; the report records that exception without counting it as a passing check. Opaque setup, incomplete native results or unsupported detached process options keep validation incomplete. Owned server/browser processes stop when validation ends or the owning connection closes; reused customer servers are preserved.
+
+Keep `.testoptimization/report.html` and `testdrive.json`. HTML retains full test-command output; JSON retains bounded diagnostics and aggregate evidence. Actual CI and Datadog backend processing remain untested locally.
