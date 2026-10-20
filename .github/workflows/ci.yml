@@ -547,7 +547,7 @@ jobs:
         with:
           node-version: '24'
       - name: Install Playwright testdrive fixture dependencies
-        run: npm install --prefix "$RUNNER_TEMP/playwright-testdrive" playwright@11.7.6 nyc@17.1.0 dd-trace@6.20.1 --no-audit --no-fund
+        run: npm install --prefix "$RUNNER_TEMP/playwright-testdrive" @playwright/test@1.55.1 dd-trace@6.20.1 --no-audit --no-fund
       - name: Install Chromium
         run: "$RUNNER_TEMP/playwright-testdrive/node_modules/.bin/playwright install --with-deps chromium"
       - name: Validate browser execution, existing failures and supervised cleanup
