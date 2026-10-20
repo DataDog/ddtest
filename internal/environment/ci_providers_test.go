@@ -56,6 +56,30 @@ func setDetectedProvider(t *testing.T, providerName string) {
 	t.Cleanup(ResetCITags)
 }
 
+func TestCIWorkspaceExtractionUsesSharedMapping(t *testing.T) {
+	t.Setenv("CI_COMMIT_AUTHOR", "Test User <test@example.com>")
+	for _, variable := range CIWorkspaceEnvironmentVariables() {
+		t.Setenv(variable, filepath.Join(t.TempDir(), variable))
+	}
+	seen := map[string]bool{}
+	for _, extract := range providers {
+		tags := extract()
+		provider := tags[constants.CIProviderName]
+		variable := ciWorkspaceEnvironmentVariables[provider]
+		workspace := tags[constants.CIWorkspacePath]
+		if variable == "" && workspace == "" {
+			continue
+		}
+		if variable == "" || workspace != os.Getenv(variable) {
+			t.Errorf("provider %s checkout %q does not use mapped variable %q", provider, workspace, variable)
+		}
+		seen[variable] = true
+	}
+	if len(seen) != len(CIWorkspaceEnvironmentVariables()) {
+		t.Errorf("not every mapped checkout variable is used by a provider: %v", seen)
+	}
+}
+
 func TestDetectCIProvider_GitHub(t *testing.T) {
 	setDetectedProvider(t, "github")
 

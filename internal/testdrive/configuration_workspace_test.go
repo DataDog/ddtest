@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,4 +48,19 @@ func TestIsolatedCIEnvironmentUsesCopiedCheckout(t *testing.T) {
 	require.NotContains(t, result, "GITHUB_SHA", "commit/provider metadata must remain inherited")
 	require.Equal(t, "/original/checkout", os.Getenv("GITHUB_WORKSPACE"))
 	require.Equal(t, "/original/circle", environment["CIRCLE_WORKING_DIRECTORY"])
+}
+
+func TestIsolatedCIEnvironmentRebasesEveryProviderCheckout(t *testing.T) {
+	names := environment.CIWorkspaceEnvironmentVariables()
+	for _, name := range names {
+		t.Setenv(name, "/original/checkout")
+	}
+	workspace := t.TempDir()
+	result := isolatedCIEnvironment(nil, workspace)
+	for _, name := range names {
+		require.Equal(t, workspace, result[name], name)
+		overrides := map[string]string{name: ""}
+		require.Empty(t, isolatedCIEnvironment(overrides, workspace)[name], "explicit empty override for %s", name)
+		require.Equal(t, "/original/checkout", os.Getenv(name))
+	}
 }

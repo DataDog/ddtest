@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/onboard"
 )
 
@@ -157,17 +158,13 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 // Tracers resolve repository-relative source and skip paths against the CI
 // checkout. A disposable copy must advertise its own root while retaining the
 // provider, commit, job and other CI metadata.
-func isolatedCIEnvironment(environment map[string]string, workspace string) map[string]string {
-	result := maps.Clone(environment)
+func isolatedCIEnvironment(overrides map[string]string, workspace string) map[string]string {
+	result := maps.Clone(overrides)
 	if result == nil {
 		result = map[string]string{}
 	}
-	for _, name := range []string{
-		"GITHUB_WORKSPACE", "CI_PROJECT_DIR", "CIRCLE_WORKING_DIRECTORY", "WORKSPACE",
-		"APPVEYOR_BUILD_FOLDER", "BUILD_SOURCESDIRECTORY", "BITBUCKET_CLONE_DIR",
-		"BITRISE_SOURCE_DIR", "BUILDKITE_BUILD_CHECKOUT_PATH", "TRAVIS_BUILD_DIR", "DRONE_WORKSPACE",
-	} {
-		value, configured := environment[name]
+	for _, name := range environment.CIWorkspaceEnvironmentVariables() {
+		value, configured := overrides[name]
 		if !configured {
 			value = os.Getenv(name)
 		}

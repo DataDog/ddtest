@@ -271,7 +271,9 @@ func recoverProbes(root string) error {
 var errProbePublicationUnsupported = errors.New("probe_publication_unsupported")
 
 func probePublicationError(err error) error {
-	if errors.Is(err, syscall.EXDEV) || errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.ENOSYS) {
+	// CreateHardLink returns Windows ERROR_NOT_SAME_DEVICE (17), not EXDEV.
+	windowsCrossDevice := runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(17))
+	if errors.Is(err, syscall.EXDEV) || errors.Is(err, errors.ErrUnsupported) || windowsCrossDevice {
 		return fmt.Errorf("%w: validation probes require hard-link support and a test directory on the same filesystem as .testoptimization/.probes: %w", errProbePublicationUnsupported, err)
 	}
 	return fmt.Errorf("publish validation probe without replacing existing files: %w", err)

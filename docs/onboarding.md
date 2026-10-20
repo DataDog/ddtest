@@ -314,14 +314,19 @@ other ranges. This checks the declared setup-node runtime, not arbitrary shell
 commands that might later change Node. It does not execute CI or prove bootstrap
 correctness, remote instrumentation, or Datadog backend connectivity.
 
-The command exits successfully only when local compatibility, all feature checks,
+For supported JavaScript frameworks, the command exits successfully only when local compatibility, all feature checks,
 and the applicable CI runtime check succeed. A runtime incompatibility or unknown
 configuration makes `success` false even if every local test matches. Repositories
 without detected GitHub Actions test jobs can still pass local validation; their
 CI runtime result is explicitly `not applicable`. The suite's own failures do not
 automatically fail validation.
-Other frameworks collect reporting-only telemetry and return an inconclusive
-validation result until adapters exist.
+Python and Ruby retain their telemetry-only exit contract: exit 0 means the test
+command succeeded and test events reached the local intake. A failed command,
+missing events, or a setup/reporting/cleanup failure returns a nonzero exit code.
+The JSON records `telemetry_only: true`, `success: false`, and an `INCOMPLETE`
+onboarding verdict with `UNVALIDATED (TELEMETRY ONLY)` local validation. Compatibility
+and advanced features remain unvalidated until controlled adapters exist; exit 0
+does not certify onboarding for these languages.
 
 The local intake supports agentless traffic; Agent/EVP routing is not supported.
 No results are sent to Datadog. Temporary installations and run files are removed;

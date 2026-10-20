@@ -129,7 +129,8 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 			drive.Preview(&output)
 			err = drive.Run(t.Context(), &output)
 			if outcome == "ready" {
-				require.ErrorContains(t, err, "validation is incomplete")
+				require.NoError(t, err)
+				require.Contains(t, output.String(), "UNVALIDATED (TELEMETRY ONLY)")
 				require.Equal(t, python, installer.options.Command)
 				require.Equal(t, "uv", executor.command)
 				require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest"}, executor.args)

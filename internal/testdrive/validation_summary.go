@@ -207,6 +207,9 @@ func summarizeValidation(result validationResult) validationSummary {
 	if result.LocalSuccess {
 		summary.LocalValidation = "PASSED"
 	}
+	if result.TelemetryOnly && result.Error == "" {
+		summary.LocalValidation = "UNVALIDATED (TELEMETRY ONLY)"
+	}
 	if result.CheckOnly {
 		summary.LocalValidation = "NOT EXERCISED"
 		summary.BlockingChecks = append(summary.BlockingChecks, "paired execution and features not exercised (--check-only)")

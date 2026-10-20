@@ -564,6 +564,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		runErr = t.runJavaScriptValidation(ctx, output, session, installation.Path, &result)
 		return
 	}
+	result.TelemetryOnly = t.language == "python" || t.language == "ruby"
 	server, err := t.startIntake(session.Directory(), intake.Scenario{})
 	if err != nil {
 		return result, err
@@ -656,6 +657,13 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	result.Runs[0].TestEventCount = findings.TestEventCount
 	execution.Facts = findings
 	runErr = t.writeHTMLReport(output, &result, execution)
+	if result.TelemetryOnly {
+		if testErr != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("%s failed after sending %d test event(s): %w", t.framework.Name(), findings.TestEventCount, testErr))
+		} else if findings.TestEventCount == 0 {
+			runErr = errors.Join(runErr, fmt.Errorf("%s command exited successfully, but Test Optimization sent no test events", t.framework.Name()))
+		}
+	}
 	return
 }
 

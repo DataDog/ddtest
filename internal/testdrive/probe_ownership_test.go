@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -140,11 +141,13 @@ func TestProbeOwnershipRejectsCheckoutRecordsAndSymlinks(t *testing.T) {
 }
 
 func TestProbePublicationExplainsUnsupportedFilesystem(t *testing.T) {
-	err := probePublicationError(&os.LinkError{Op: "link", Old: "private-contents", New: "probe.test.js", Err: syscall.EXDEV})
-	require.ErrorIs(t, err, errProbePublicationUnsupported)
-	require.ErrorIs(t, err, syscall.EXDEV)
-	require.ErrorContains(t, err, "same filesystem as .testoptimization/.probes")
-	err = probePublicationError(os.ErrExist)
+	for _, cause := range []error{syscall.EXDEV, syscall.ENOTSUP, syscall.ENOSYS, errors.ErrUnsupported} {
+		err := probePublicationError(&os.LinkError{Op: "link", Old: "private-contents", New: "probe.test.js", Err: cause})
+		require.ErrorIs(t, err, errProbePublicationUnsupported)
+		require.ErrorIs(t, err, cause)
+		require.ErrorContains(t, err, "same filesystem as .testoptimization/.probes")
+	}
+	err := probePublicationError(os.ErrExist)
 	require.NotErrorIs(t, err, errProbePublicationUnsupported)
 	require.ErrorIs(t, err, os.ErrExist)
 }

@@ -489,7 +489,7 @@ func TestPythonTemporaryEnvironmentCleanup(t *testing.T) {
 				return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
 			}
 			err := drive.Run(t.Context(), &bytes.Buffer{})
-			if err == nil {
+			if (err == nil) != (outcome == "success") {
 				t.Fatalf("Run() error = %v", err)
 			}
 			directory := installer.options.Directory

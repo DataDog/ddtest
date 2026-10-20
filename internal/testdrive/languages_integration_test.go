@@ -58,13 +58,18 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 			command.Dir = root
 			command.Env = integrationEnvironment(env)
 			output, err := command.CombinedOutput()
-			require.Error(t, err, "telemetry alone must not declare onboarding complete: %s", output)
+			require.NoError(t, err, "a successful telemetry-only check retains exit 0: %s", output)
+			require.Contains(t, string(output), "Test events received.")
 			data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
 			require.NoError(t, err, string(output))
 			var report struct {
 				Framework     string
 				Success       bool
-				Summary       struct{ Status string }
+				TelemetryOnly bool `json:"telemetry_only"`
+				Summary       struct {
+					Status          string
+					LocalValidation string `json:"local_validation"`
+				}
 				Compatibility struct{ Status string }
 				Features      []struct{ Name, Status string }
 				Runs          []struct {
@@ -77,7 +82,9 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 			require.NoError(t, json.Unmarshal(data, &report))
 			require.Equal(t, fixture.name, report.Framework)
 			require.False(t, report.Success)
+			require.True(t, report.TelemetryOnly)
 			require.Equal(t, "INCOMPLETE", report.Summary.Status)
+			require.Equal(t, "UNVALIDATED (TELEMETRY ONLY)", report.Summary.LocalValidation)
 			require.Equal(t, "inconclusive", report.Compatibility.Status)
 			require.Len(t, report.Features, 1)
 			require.Equal(t, "unvalidated", report.Features[0].Status)

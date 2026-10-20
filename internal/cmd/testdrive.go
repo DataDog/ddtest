@@ -22,7 +22,7 @@ func newTestdriveCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "testdrive",
 		Short: "Try Test Optimization on the local test suite",
-		Long:  "Validates Jest/Vitest/Playwright/Mocha/Cypress/Cucumber/WebdriverIO compatibility with paired runs and controlled feature scenarios against a local intake. Other frameworks collect telemetry but remain unvalidated. No Datadog API key is required.",
+		Long:  "Validates Jest/Vitest/Playwright/Mocha/Cypress/Cucumber/WebdriverIO compatibility with paired runs and controlled feature scenarios against a local intake. Python/Ruby retain telemetry-only checks: exit 0 means the command succeeded and sent test events; compatibility and features remain unvalidated. No Datadog API key is required.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.NoArgs(cmd, args); err != nil {
 				return err

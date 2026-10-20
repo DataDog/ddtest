@@ -170,6 +170,7 @@ type validationResult struct {
 	Session            string                   `json:"session"`
 	CompletedAt        time.Time                `json:"completed_at"`
 	CheckOnly          bool                     `json:"check_only"`
+	TelemetryOnly      bool                     `json:"telemetry_only,omitempty"`
 	ChecksPassed       bool                     `json:"checks_passed"`
 	LocalSuccess       bool                     `json:"local_success"`
 	Preflight          *jestPreflight           `json:"preflight,omitempty"`
@@ -303,6 +304,11 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	_, _ = fmt.Fprintln(output, "Keep this JSON report and the HTML findings report after cleanup, including when validation fails.")
 	_, _ = fmt.Fprintf(output, "\nFINAL ONBOARDING RESPONSE — copy summary.final_response verbatim as the opening of your reply. Do not prepend a completion claim or reinterpret failed telemetry checks. Workflow edits can be finished while onboarding remains INCOMPLETE. Add only workflow edits and cleanup afterward.\n\n%s\n", result.Summary.FinalResponse)
 	if result.CheckOnly && result.ChecksPassed {
+		return nil
+	}
+	// Preserve Python/Ruby's telemetry-only exit contract without certifying
+	// compatibility or features for which there are no controlled adapters yet.
+	if result.TelemetryOnly && result.Error == "" {
 		return nil
 	}
 	if result.Summary.SelectedValidation != nil && result.Summary.SelectedValidation.Status == "PASSED" {
