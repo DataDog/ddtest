@@ -39,6 +39,9 @@ func unresolvedCommand(reason string) commandResolution {
 }
 
 func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, language, framework string) commandResolution {
+	if framework == "pytest" {
+		return resolvePythonStep(root, workflow, job, step)
+	}
 	if language == "javascript" && framework == "cucumber" && (strings.TrimSpace(step.Run) == "exit 0" || strings.TrimSpace(step.Run) == "exit 1") {
 		return commandResolution{Review: true, Reason: "CI status gate is outside Cucumber execution"}
 	}

@@ -32,6 +32,7 @@ type jestProject struct {
 }
 
 type jestPreflight struct {
+	Python              string                       `json:"python,omitempty"`
 	WebdriverIO         *framework.WebdriverIOConfig `json:"webdriverio,omitempty"`
 	ExecutionPath       string                       `json:"execution_path,omitempty"`
 	Verdict             verdict                      `json:"verdict"`

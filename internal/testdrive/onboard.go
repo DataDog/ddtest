@@ -39,7 +39,8 @@ func (t *Testdrive) Onboard(ctx context.Context, output io.Writer, explicitVersi
 
 func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options WorkflowOptions) error {
 	name := t.framework.Name()
-	if !supportsValidationFramework(name) && options.Format == "verbose" && !options.Apply {
+	standalonePython := t.language == "python" && options.Resume == "" && options.FactsFile == ""
+	if (!supportsValidationFramework(name) || standalonePython) && options.Format == "verbose" && !options.Apply {
 		return t.Run(ctx, output)
 	}
 	result := onboard.AgentResult{Status: "running", Phase: "discovery", NextAction: "run_command", NextCommand: onboard.OnboardingCommand(name)}
@@ -622,7 +623,7 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 	if validation == nil {
 		return fmt.Errorf("no saved validation report")
 	}
-	if !supportsValidationFramework(validation.Framework) {
+	if !supportsValidationFramework(validation.Framework) || validation.Framework == "pytest" {
 		result := onboard.AgentResult{Status: "unsupported", Phase: "report", Code: "framework_unsupported", Reason: "Controlled validation is not available for this framework.", NextAction: "report_result"}
 		return errors.Join(fmt.Errorf("%s", result.Reason), onboard.RenderAgentResult(output, result, format))
 	}

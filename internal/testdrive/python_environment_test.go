@@ -73,6 +73,7 @@ func TestPythonProbePreservesEnvironmentSelectors(t *testing.T) {
 		args, prefix []string
 	}{
 		{"uv", []string{"run", "--no-sync", "python", "-m", "pytest"}, []string{"run", "--no-sync", "python"}},
+		{"uv", []string{"run", "--no-default-groups", "--group", "tests", "pytest"}, []string{"run", "--no-sync", "--no-default-groups", "--group", "tests", "python"}},
 		{"uv", []string{"run", "--project", "project space", "--python", "python3.13", "--package=member", "pytest", "-k", "example"}, []string{"run", "--no-sync", "--project", "project space", "--python", "python3.13", "--package=member", "python"}},
 		{"uv", []string{"run", "--locked", "--", "python", "-m", "pytest"}, []string{"run", "--no-sync", "--locked", "--", "python"}},
 		{"python3.13", []string{"-W", "error", "-m", "pytest"}, []string{"-W", "error"}},
@@ -119,6 +120,9 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 			require.NoDirExists(t, drive.session.Directory())
 			installer := &fakeTracer{}
 			drive.platform = installer
+			// This fixture tests environment selection and cleanup. Real pytest
+			// preflight and paired execution have separate integration coverage.
+			drive.preflight = nil
 			executor := &fakeTestdriveExecutor{}
 			drive.executor = executor
 			drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
@@ -129,11 +133,11 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 			drive.Preview(&output)
 			err = drive.Run(t.Context(), &output)
 			if outcome == "ready" {
-				require.NoError(t, err)
-				require.NotContains(t, output.String(), "INCOMPLETE")
+				require.ErrorContains(t, err, "validation is incomplete")
+				require.Contains(t, output.String(), "INCOMPLETE")
 				require.Equal(t, python, installer.options.Command)
 				require.Equal(t, "uv", executor.command)
-				require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest"}, executor.args)
+				require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest", "--ddtrace"}, executor.args)
 			} else {
 				require.Error(t, err)
 				require.Empty(t, installer.options.Directory)

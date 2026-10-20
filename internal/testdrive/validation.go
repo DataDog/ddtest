@@ -159,6 +159,7 @@ func (r validationRun) summary() runSummary {
 
 type validationResult struct {
 	Workflow           *WorkflowEvidence        `json:"workflow,omitempty"`
+	PythonSelection    *onboard.PythonRelease   `json:"python_tracer_selection,omitempty"`
 	ReportingCounts    *executionCounts         `json:"reporting_counts,omitempty"`
 	FocusedCommand     bool                     `json:"focused_command,omitempty"`
 	CIBaseline         []string                 `json:"ci_matrix_baseline"`
@@ -212,7 +213,7 @@ func validationPath(repositoryRoot string) string {
 }
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
-	if result.Framework == "pytest" || result.Framework == "rspec" || result.Framework == "minitest" {
+	if result.Framework == "rspec" || result.Framework == "minitest" {
 		result.CompletedAt = time.Now().UTC()
 		result.WorkingDirectory = repositoryRoot
 		result.Success = result.Error == ""
@@ -261,6 +262,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 			}
 			if job.Node != "" {
 				label += " / Node " + job.Node
+			}
+			if job.Python != "" {
+				label += " / Python " + job.Python
 			}
 			if job.NodeResolution != nil {
 				label += " => " + job.NodeResolution.Version + " (" + job.NodeResolution.Source + ")"

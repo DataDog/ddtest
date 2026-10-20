@@ -185,9 +185,9 @@ No Datadog account or Agent is needed. Testdrive links to an HTML report at
 non-interactive sessions, `--framework` to select a runner, and `--command` for
 package scripts or custom setup.
 
-The frameworks listed above can collect local telemetry. JavaScript compatibility
-and feature validation covers Jest, Vitest, Playwright, Mocha, Cypress, Cucumber
-and WebdriverIO. Other frameworks and unsupported configurations remain
+The frameworks listed above can collect local telemetry. Compatibility and feature
+validation covers Jest, Vitest, Playwright, Mocha, Cypress, Cucumber, WebdriverIO
+and Python with pytest. Other frameworks and unsupported configurations remain
 explicitly unvalidated. If a repository contains several
 runners, select one with `--framework`. Use `--command` to select a custom entry
 point or a small representative part of a large suite:
@@ -329,17 +329,44 @@ configuration makes `success` false even if every local test matches. Repositori
 without detected GitHub Actions test jobs can still pass local validation; their
 CI runtime result is explicitly `not applicable`. The suite's own failures do not
 automatically fail validation.
-Python and Ruby retain their existing exit contract: exit 0 means the test
-command succeeded and test events reached the local intake. A failed command,
-missing events, or a setup/reporting/cleanup failure returns a nonzero exit code.
-Onboarding instructions remain identical to main for pytest, RSpec and Minitest.
-Their plain testdrive reports command execution and received events without adding
-a compatibility/feature onboarding verdict. `--format json` and `--agent` return
-`unsupported` with no `next_command`; full Python/Ruby validation belongs to the
-separate language changes. The one intentional user-visible change for these
-languages is the shared report location: `.testoptimization/report.html` and
-`.testoptimization/testdrive.json` replace per-run `.testoptimization/testdrive/<id>/`
-report directories.
+Ruby retains its existing exit contract: exit 0 means the test command succeeded
+and test events reached the local intake. A failed command, missing events, or a
+setup/reporting/cleanup failure returns a nonzero exit code. RSpec and Minitest
+onboarding instructions remain identical to main. Their plain testdrive reports
+execution and event counts without a compatibility/feature onboarding verdict.
+Python and Ruby coordinator modes (`--format json`, `--agent`, automatic CI edits
+and resume) remain unsupported. Reports live at `.testoptimization/report.html`
+and `.testoptimization/testdrive.json`.
+
+### Python with pytest
+
+For Python/pytest, activate the project's test environment, then run:
+
+```sh
+ddtest onboard --framework pytest
+ddtest testdrive --framework pytest --all --check-only --yes
+ddtest testdrive --framework pytest --all --tracer-version <resolved-release> --yes
+```
+
+Pytest validation compares native results with and without instrumentation,
+including parametrized tests, class methods, skipped tests, failure details, and
+exit codes. It then checks retries, early flake detection, test skipping,
+quarantine, disabled tests, and attempt-to-fix using temporary probes under the
+existing pytest configuration. Full-suite coverage thresholds remain enabled;
+isolated probes disable pytest-cov's threshold only. This workflow requires
+pytest >=7 and ddtrace >=4.11. An installed tracer takes precedence over the
+fallback version; CI must select the same release and a compatible Python.
+
+Discovered direct pytest, Python, uv, and poetry commands retain their options
+and CI environments. `uv run` uses `--no-sync`; install test dependencies first.
+Without `--command`, discovered CI configurations are validated together.
+Use `--command 'python -m pytest tests -c pytest.ini'` for a focused command.
+Tox/nox wrappers, dynamic setup, and commands in other working directories remain
+unvalidated; enter the selected test environment and validate its actual pytest
+command. Local execution does not certify other Python/OS environments or run CI.
+After edits, rerun full validation: `--check-only` preserves prior execution only
+as historical evidence. Keep both HTML and JSON reports after cleanup.
+
 
 The local intake supports agentless traffic; Agent/EVP routing is not supported.
 No results are sent to Datadog. Temporary installations and run files are removed;

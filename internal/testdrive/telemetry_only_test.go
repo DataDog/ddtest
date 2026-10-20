@@ -16,12 +16,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPythonRubyExitCodeMatchesMain(t *testing.T) {
+func TestRubyExitCodeMatchesMain(t *testing.T) {
 	for _, fixture := range []struct {
 		language string
 		runner   framework.Framework
 	}{
-		{"python", framework.NewPytest(platform.NewPython())},
 		{"ruby", framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest))},
 		{"ruby", framework.NewMinitest(platform.NewRuby(settings.TestSkippingLevelTest))},
 	} {
@@ -94,12 +93,12 @@ func TestPythonRubyExitCodeMatchesMain(t *testing.T) {
 	}
 }
 
-func TestPythonRubyAndCypressPreviewsDoNotPromiseUnsupportedChecks(t *testing.T) {
+func TestRubyAndCypressPreviewsDoNotPromiseUnsupportedChecks(t *testing.T) {
 	for _, fixture := range []struct {
 		language string
 		runner   framework.Framework
 	}{
-		{"python", framework.NewPytest(nil)}, {"ruby", framework.NewRSpec(nil)}, {"ruby", framework.NewMinitest(nil)}, {"javascript", framework.NewCypress(nil)},
+		{"ruby", framework.NewRSpec(nil)}, {"ruby", framework.NewMinitest(nil)}, {"javascript", framework.NewCypress(nil)},
 	} {
 		t.Run(fixture.runner.Name(), func(t *testing.T) {
 			drive := &Testdrive{repositoryRoot: t.TempDir(), language: fixture.language, framework: fixture.runner, command: "test", session: planSession()}

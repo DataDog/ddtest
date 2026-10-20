@@ -50,6 +50,9 @@ var cucumberInstructions string
 //go:embed instructions/webdriverio.md
 var webdriverIOInstructions string
 
+//go:embed instructions/pytest.md
+var pytestInstructions string
+
 // Run detects the first supported onboarding path and prints its instructions.
 func Run(output io.Writer) error {
 	repositoryRoot, err := os.Getwd()
@@ -70,7 +73,7 @@ func Run(output io.Writer) error {
 	}
 	language := detectedPlatform.Name()
 	name := runner.Name()
-	if language != "javascript" {
+	if language != "javascript" && name != "pytest" {
 		github, ok := provider.(*environment.GitHub)
 		if !ok {
 			return fmt.Errorf("onboard does not support CI provider %s", provider.Name())
@@ -94,7 +97,7 @@ func Run(output io.Writer) error {
 		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
 	}
 	_, _ = fmt.Fprintln(output, "\n"+strings.TrimSpace(scratchCleanupInstructions))
-	if name == "jest" || name == "vitest" || name == "playwright" || name == "mocha" || name == "cucumber" || name == "webdriverio" {
+	if name == "jest" || name == "vitest" || name == "playwright" || name == "mocha" || name == "cucumber" || name == "webdriverio" || name == "pytest" {
 		scope, err := DiscoverValidationScope(repositoryRoot, name)
 		if err != nil {
 			return err
@@ -141,7 +144,7 @@ func Run(output io.Writer) error {
 		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest, Vitest, Playwright, Mocha, Cypress and Cucumber projects also check CI runtime compatibility; configurations without a validation adapter remain unvalidated.\n", name)
 		_, _ = fmt.Fprintln(output, "After it finishes, share the validation verdict, CI runtime compatibility and feature results using the final response block printed by testdrive. Copy its absolute Markdown report links verbatim, each on its own line; do not shorten them to relative paths or replace them with file:// URLs.")
 		_, _ = fmt.Fprintln(output, "Keep .testoptimization/report.html and .testoptimization/testdrive.json after cleanup, even on failure. Do not declare validation complete while any required check is failed or inconclusive.")
-		if name != "vitest" && name != "playwright" && name != "mocha" && name != "cucumber" && name != "webdriverio" {
+		if name != "vitest" && name != "playwright" && name != "mocha" && name != "cucumber" && name != "webdriverio" && name != "pytest" {
 			return nil
 		}
 	}
@@ -239,6 +242,11 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 					hasAction = hasAction || languages == "all" || slices.Contains(strings.Fields(languages), actionLanguage)
 				}
 				resolution := resolveTestStep(root, workflow, job, step, language, name)
+				if name == "pytest" {
+					// Retain configuration-aware tox/nox onboarding discovery. Local
+					// execution scope separately marks wrappers as unvalidated.
+					resolution = commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, name)}
+				}
 				if resolution.Review {
 					result.Review = append(result.Review, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), step.Run, resolution.Reason))
 					continue
@@ -271,6 +279,9 @@ func renderGitHubInstructions(language string) string {
 }
 
 func instructions(language, name string) string {
+	if language == "python" && name == "pytest" {
+		return pytestInstructions
+	}
 	if language == "javascript" && name == "webdriverio" {
 		return strings.ReplaceAll(webdriverIOInstructions, "ddtest testdrive", "ddtest testdrive --framework webdriverio")
 	}

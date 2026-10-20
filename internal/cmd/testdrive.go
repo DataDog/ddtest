@@ -22,7 +22,7 @@ func newTestdriveCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "testdrive",
 		Short: "Try Test Optimization on the local test suite",
-		Long:  "Validates Jest/Vitest/Playwright/Mocha/Cypress/Cucumber/WebdriverIO compatibility with paired runs and controlled feature scenarios against a local intake. Python/Ruby retain the existing execution checks: exit 0 means the command succeeded and sent test events; agent/JSON workflows are unsupported. No Datadog API key is required.",
+		Long:  "Validates Jest/Vitest/Playwright/Mocha/Cypress/Cucumber/WebdriverIO/pytest compatibility with paired runs and controlled feature scenarios against a local intake. Ruby retains execution checks: exit 0 means the command succeeded and sent test events. Python/Ruby agent/JSON workflows are unsupported. No Datadog API key is required.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.NoArgs(cmd, args); err != nil {
 				return err
@@ -33,8 +33,8 @@ func newTestdriveCommand() *cobra.Command {
 	}
 	var version, facts, format, resume, detail string
 	var checkOnly, all, agent, report bool
-	command.Flags().BoolVar(&all, "all", false, "Run known chained build prerequisites, validate every discovered Jest/Vitest/Playwright/Mocha/Cypress/Cucumber/WebdriverIO CI command, and aggregate one report pair")
-	command.Flags().BoolVar(&checkOnly, "check-only", false, "Check Jest/Vitest/Playwright/Mocha/Cypress/Cucumber/WebdriverIO and static CI configuration without installing a tracer or running tests")
+	command.Flags().BoolVar(&all, "all", false, "Run known chained build prerequisites, validate every discovered Jest/Vitest/Playwright/Mocha/Cypress/Cucumber/WebdriverIO/pytest CI command, and aggregate one report pair")
+	command.Flags().BoolVar(&checkOnly, "check-only", false, "Check Jest/Vitest/Playwright/Mocha/Cypress/Cucumber/WebdriverIO/pytest and static CI configuration without installing a tracer or running tests")
 	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
 	command.Flags().BoolVar(&agent, "agent", false, "Use the shared coordinator and compact agent result protocol")

@@ -111,6 +111,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			words = []string{"node"}
 			parseErr = nil
 		}
+		if t.framework.Name() == "pytest" && filepath.Clean(entry.Directory) != "." {
+			parseErr = fmt.Errorf("configuration in %s needs validation from that package directory; --all currently executes root-package commands only for pytest", entry.Directory)
+		}
 		if _, err := localSetupDirectory(t.repositoryRoot, entry.Directory); err != nil {
 			parseErr = err
 		}
@@ -145,6 +148,17 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			child.tracerVersion = result.Selection.Version
 		}
 		child.command = t.configurationExecutable(words[0])
+		if t.framework.Name() == "pytest" {
+			child.pytestEnvironment = maps.Clone(entry.Environment)
+			child.command = words[0]
+			if (words[0] == "python" || words[0] == "python.exe") && t.environmentInfo.Executable != "" {
+				child.command = t.environmentInfo.Executable
+			}
+			// Preflight selects this command's runtime and tracer afresh; the
+			// default interpreter's diagnostics do not describe this environment.
+			child.environmentInfo = environmentInfo{Runtime: "Python", Source: "Discovered CI command"}
+			child.environmentFailure = nil
+		}
 		child.args = words[1:]
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
@@ -174,8 +188,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if result.Preflight == nil {
 			result.Preflight = execution.Preflight
 		}
-		if result.Selection == nil {
+		if result.Selection == nil && result.PythonSelection == nil {
 			result.Selection = execution.Selection
+			result.PythonSelection = execution.PythonSelection
 			result.Tracer = execution.Tracer
 			result.TracerSource = execution.TracerSource
 		}

@@ -53,6 +53,13 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		maps.Copy(env, layer)
 	}
 	for key, value := range env {
+		if len(frameworks) > 0 && frameworks[0] == "pytest" && key == "PYTEST_ADDOPTS" {
+			value = strings.ReplaceAll(value, "${{ env.PYTEST_ADDOPTS }}", "")
+		}
+		if len(frameworks) > 0 && frameworks[0] == "pytest" && key == "PYTHONPATH" && strings.TrimSpace(value) == "${{ env.PYTHONPATH }}" {
+			delete(env, key)
+			continue
+		}
 		// Local Cypress validation disables Cloud recording and uses the
 		// evaluator's private binary cache. Never resolve or forward CI keys
 		// and runner-specific cache paths for these managed settings.
@@ -65,7 +72,10 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			return step, nil, fmt.Errorf("CI environment overrides executable/module selection: %s", key)
 		}
 		applicationCoverage := len(frameworks) > 0 && frameworks[0] == "cypress" && key == "DD_TEST_COVERAGE"
-		if key == "NODE_OPTIONS" || strings.HasPrefix(key, "DD_") && !applicationCoverage {
+		// Preserve pytest's application DD_* settings. The local mock owns
+		// credentials/endpoints; feature switches are overridden at execution.
+		pythonEnvironment := len(frameworks) > 0 && frameworks[0] == "pytest" && !slices.Contains([]string{"DD_API_KEY", "DD_TRACE_AGENT_URL", "DD_CIVISIBILITY_AGENTLESS_URL"}, key)
+		if key == "NODE_OPTIONS" || strings.HasPrefix(key, "DD_") && !applicationCoverage && !pythonEnvironment {
 			delete(env, key)
 			continue
 		}

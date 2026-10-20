@@ -1,11 +1,11 @@
 ---
 name: ddtest-onboarding-eval
-description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js or WebdriverIO repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
+description: Evaluate ddtest onboarding on fresh open-source pytest, Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js or WebdriverIO repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
 ---
 
 # ddtest onboarding evaluation
 
-Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js and WebdriverIO; grade unsupported versions or configurations as unvalidated. This skill belongs to the
+Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover pytest, Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js and WebdriverIO; grade unsupported versions or configurations as unvalidated. This skill belongs to the
 **evaluator**, not the agent being tested. It is developer tooling in this repo;
 it is not embedded in the ddtest binary or installed in the target repository.
 
@@ -19,7 +19,7 @@ tested agent's global skill directories or target checkout.
 
 ## Prepare and run
 
-1. Select a public repository that actually runs Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js or WebdriverIO. Read its CI, package
+1. Select a public repository that actually runs pytest, Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js or WebdriverIO. Read its CI, package
    scripts, lockfile, runtime requirements, and ordinary repository instructions.
    Choose a commit and dependency installation command. Record the intended test
    command and relevant Node, package-manager, and framework versions outside the
@@ -42,6 +42,23 @@ tested agent's global skill directories or target checkout.
      --setup-command 'npm ci --no-audit --no-fund' \
      --output /absolute/path/outside-the-target/luxon-codex-01
    ```
+
+   For Python/pytest, pass `--framework pytest --python /absolute/path/to/python`.
+   The runner creates a private sibling venv before setup and activates it through
+   PATH, VIRTUAL_ENV and UV_PROJECT_ENVIRONMENT. Install the project's test
+   dependencies with repeatable setup commands, for example
+   `--setup-command 'python -m pip install -e . pytest==8.4.2'` plus the project's
+   other test dependencies. Python's interpreter and final ddtest runtime are
+   recorded independently; each agent gets a fresh environment. pip and uv caches
+   remain inside the owned trial root.
+
+   `--isolate-agent-config` disables Codex user configuration, apps and plugins,
+   or enables Claude safe mode, retaining CLI authentication. Use this when the
+   normal CLI profile has a live Datadog connector. Record this isolation as an
+   experiment limitation: custom settings/skills are unavailable, and Claude
+   safe mode also disables CLAUDE.md discovery. Inspect ordinary repository
+   instructions before selecting this mode; do not silently omit instructions
+   that are material to the tested project.
 
    Repeat with `--agent claude` and a **new output directory**. The runner always
    creates a new temporary clone, copies only the executable to a sibling `bin`
@@ -68,7 +85,7 @@ tested agent's global skill directories or target checkout.
    > Use ddtest in /temporary/trial/bin and onboard this repository to test-optimization.
 
    For a requested framework-only trial in a mixed repository, pass
-   `--framework playwright` (or `jest`/`vitest`/`mocha`/`cypress`/`cucumber`/`webdriverio`). This adds only
+   `--framework playwright` (or `pytest`/`jest`/`vitest`/`mocha`/`cypress`/`cucumber`/`webdriverio`). This adds only
    “for playwright only” to the prompt and records the scope in `run.json`.
 
    No skill, grading rubric, feature list, runbook, previous results, extra system
