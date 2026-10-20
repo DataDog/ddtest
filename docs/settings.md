@@ -58,16 +58,19 @@ invalid arguments, and interruptions still fail the run in either mode.
 
 File discovery uses the existing pytest configuration/default file patterns,
 or `--tests-location`, filters to `.py` source files, and respects exclusions and
-positional selection. It does not enumerate test functions, classes, fixtures,
-or parametrized cases. A file
-is omitted only when its backend suite is skippable and the backend suite
-metadata maps it to a selected source file. This mapping requirement holds in
+positional selection. It excludes files under `.venv`, `venv`, `.tox`,
+`__pycache__`, `node_modules`, `site-packages`, and `.git` directories,
+including explicit file selections. It does not enumerate test functions,
+classes, fixtures, or parametrized cases. A file is omitted only when its
+backend suite is skippable and the backend suite metadata maps it to the same
+selected source file. Missing or stale mappings
+keep the collected file runnable. This mapping requirement holds in
 both discovery modes: forcing full test discovery restores collection and
 the discovery cache but never changes which files suite mode may skip.
 New files and suites without source metadata remain runnable; a dotted module
-name or matching filename alone is
-not enough to skip a file. Source metadata is obtained with suite durations,
-but a valid duration value is not required to apply the skip.
+name or matching filename alone is not enough to skip a file. Source metadata
+is obtained with suite durations, but a valid duration value is not required
+to apply the skip.
 
 Files containing `datadog_itr_unskippable`, or having an ancestor `conftest.py`
 containing it, remain runnable. This is a conservative text check: comments also
@@ -93,3 +96,11 @@ collection and cache behavior, including in suite mode; it is useful for
 diagnostics or refreshing a discovery cache. `--strict-discovery` alone does not
 force collection. To opt out, unset the environment variable or select
 `--test-skipping-mode test` and regenerate the plan.
+
+Python test files sharing a basename are assigned to separate runners when
+there are enough runners. If a group has more files than runners, DDTest keeps
+all files in the plan and warns that pytest import collisions remain possible.
+This also applies to a single runner. Splitting does not resolve collisions
+during full test collection, which runs before distribution. Add `__init__.py`
+packages, rename the files, or configure pytest's `--import-mode=importlib` to
+resolve collisions that runner distribution cannot avoid.

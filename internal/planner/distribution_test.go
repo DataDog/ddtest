@@ -651,8 +651,8 @@ func assertDistribution(t *testing.T, result, expected [][]string) {
 func TestTestSplitBuilderDistributeFilesBasenameAffinity(t *testing.T) {
 	testFiles := map[string]int{
 		"tests/unit/test_same.py":        10,
-		"tests/integration/test_same.py": 5,
-		"tests/test_other.py":            1,
+		"tests/integration/test_same.py": 1,
+		"tests/test_other.py":            11,
 	}
 
 	b := newTestSplitBuilder(2)
@@ -702,19 +702,58 @@ func TestTestSplitBuilderDistributeFilesBasenameAffinityDisabledForOtherPlatform
 }
 
 func TestTestPlannerDistributeWeightedTestFilesBasenameAffinityPythonOnly(t *testing.T) {
+	// With an 11-weight file placed first, ordinary weighted scheduling puts
+	// the 10- and 1-weight files together.
+	// Python must separate them; other platforms retain weighted scheduling.
 	testFiles := map[string]int{
-		"tests_a/test_same.py": 4,
-		"tests_b/test_same.py": 4,
+		"tests_a/test_same.py": 10,
+		"tests_b/test_same.py": 1,
+		"tests/test_other.py":  11,
 	}
-	pythonPlanner := newTestPlannerWithDefaults()
-	pythonPlanner.planMetadata.Platform = "python"
-	result := pythonPlanner.DistributeWeightedTestFiles(testFiles, 2)
-	for i, runner := range result {
-		if len(runner) != 1 {
-			t.Fatalf("python runner %d = %v, want exactly one file (same-basename files must be separated)", i, runner)
-		}
+	for _, platform := range []string{"python", "ruby", "javascript"} {
+		t.Run(platform, func(t *testing.T) {
+			planner := newTestPlannerWithDefaults()
+			planner.planMetadata.Platform = platform
+			result := planner.DistributeWeightedTestFiles(testFiles, 2)
+			expected := [][]string{{"tests/test_other.py"}, {"tests_a/test_same.py", "tests_b/test_same.py"}}
+			if platform == "python" {
+				expected = [][]string{{"tests_a/test_same.py"}, {"tests_b/test_same.py", "tests/test_other.py"}}
+			}
+			assertDistribution(t, result, expected)
+		})
 	}
-	if result[0][0] == result[1][0] {
-		t.Fatal("same-basename files ended up on the same runner")
+}
+
+func TestPythonDistributionPreservesFilesWithInsufficientRunners(t *testing.T) {
+	files := map[string]int{
+		"a/test_same.py":      10,
+		"b/test_same.py":      10,
+		"c/test_same.py":      10,
+		"d/test_same.py":      10,
+		"tests/test_other.py": 1,
+	}
+	for _, runners := range []int{-1, 0, 1, 2, 3} {
+		t.Run(fmt.Sprintf("runners=%d", runners), func(t *testing.T) {
+			planner := newTestPlannerWithDefaults()
+			planner.planMetadata.Platform = "python"
+			result := planner.DistributeWeightedTestFiles(files, runners)
+			if len(result) != max(1, runners) {
+				t.Fatalf("got %d runners", len(result))
+			}
+			seen := make(map[string]int)
+			for _, runner := range result {
+				for _, file := range runner {
+					seen[file]++
+				}
+			}
+			if len(seen) != len(files) {
+				t.Fatalf("distributed files = %v, want %v", seen, files)
+			}
+			for file := range files {
+				if seen[file] != 1 {
+					t.Fatalf("%s distributed %d times", file, seen[file])
+				}
+			}
+		})
 	}
 }
