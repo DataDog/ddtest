@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 type configurationExecutor struct {
@@ -60,11 +61,12 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if item.Directory == "" {
 		item.Directory = "."
 	}
-	if len(item.Prerequisites) == 0 && item.Directory == "." || t.checkOnly {
+	if item.Directory == "." && (len(item.Prerequisites) == 0 || t.checkOnly) {
 		if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 			return result, err
 		}
 		t.executor = configurationExecutor{t.executor, item.Environment}
+		t.refreshConfigurationTracer(ctx)
 		return t.run(ctx, output)
 	}
 	original := t.repositoryRoot
@@ -118,6 +120,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		t.command = t.configurationExecutable(filepath.Base(t.command))
 	}
 	t.executor = configurationExecutor{t.executor, isolatedCIEnvironment(item.Environment, workspace)}
+	t.refreshConfigurationTracer(ctx)
 	return t.run(ctx, output)
 }
 
@@ -203,4 +206,24 @@ func copyConfiguration(ctx context.Context, source, target string) error {
 		_, copyErr := io.Copy(out, in)
 		return errors.Join(copyErr, out.Close())
 	})
+}
+
+// A package command executes in its package directory while telemetry source
+// paths and cross-configuration native identities remain checkout-relative.
+func (t *Testdrive) checkoutRoot() string {
+	if t.configurationRoot != "" {
+		return t.configurationRoot
+	}
+	if t.gitRoot != "" {
+		return t.gitRoot
+	}
+	return t.repositoryRoot
+}
+
+func (t *Testdrive) refreshConfigurationTracer(ctx context.Context) {
+	if installer, ok := t.platform.(*platform.JavaScript); ok {
+		// Missing project dependencies select the normal temporary fallback.
+		// Never retain a path resolved in another package or outside this copy.
+		t.projectTracer, _ = installer.DetectTracer(ctx, platform.TracerOptions{Command: t.command, Args: t.args})
+	}
 }

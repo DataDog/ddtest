@@ -14,15 +14,19 @@ import (
 )
 
 type buildExecutor struct {
-	t           *testing.T
-	commands    []string
-	paths       []string
-	directories []string
-	nodeOptions []string
-	fail        bool
+	t            *testing.T
+	commands     []string
+	paths        []string
+	directories  []string
+	nodeOptions  []string
+	environments []map[string]string
+	arguments    [][]string
+	fail         bool
 }
 
 func (e *buildExecutor) CombinedOutput(_ context.Context, command string, args []string, env map[string]string) ([]byte, error) {
+	e.environments = append(e.environments, env)
+	e.arguments = append(e.arguments, args)
 	e.commands = append(e.commands, filepath.Base(command))
 	e.paths = append(e.paths, command)
 	e.nodeOptions = append(e.nodeOptions, env["NODE_OPTIONS"])
@@ -106,7 +110,7 @@ func TestBareTestCommandCannotCertifyRequiredBuild(t *testing.T) {
 	root := t.TempDir()
 	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest", Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "tsup"}}}}}
 	result := validationResult{Framework: "jest", Preflight: &jestPreflight{Command: "jest"}, Compatibility: verdict{Status: "compatible"}, Features: []featureResult{{Name: "retries", Status: "passed"}}}
-	setSingleConfigurationScope(root, &result, scope)
+	setSingleConfigurationScope(root, &result, scope, result.Preflight.Command)
 	require.Equal(t, "not exercised", result.Configurations[0].Status)
 	prepareValidationResult(root, &result)
 	require.False(t, result.Success)
@@ -135,4 +139,34 @@ func TestPackageBuildUsesItsLocalCompilerAndEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{directory}, executor.directories)
 	require.Equal(t, []string{"--max-old-space-size=2048"}, executor.nodeOptions)
+}
+
+func TestBuildRebasesCheckoutAndPreservesEmptyNodeOptions(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("GITHUB_WORKSPACE", "/customer/checkout")
+	t.Setenv("NODE_OPTIONS", "--conditions=development")
+	executor := &buildExecutor{t: t}
+	drive := Testdrive{repositoryRoot: root, executor: executor}
+	item := configurationResult{TestCommand: onboard.TestCommand{Environment: map[string]string{"NODE_OPTIONS": ""}, Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "tsc"}}}}
+	require.NoError(t, drive.runBuildPrerequisites(t.Context(), &bytes.Buffer{}, &item))
+	require.Equal(t, root, executor.environments[0]["GITHUB_WORKSPACE"])
+	require.Empty(t, executor.nodeOptions[0])
+	require.Equal(t, "/customer/checkout", os.Getenv("GITHUB_WORKSPACE"))
+}
+
+func TestPatchTargetsUseBuildWorkingDirectory(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	packageDir := filepath.Join(root, "packages", "app")
+	require.NoError(t, os.MkdirAll(packageDir, 0700))
+	requireWriteFile(t, filepath.Join(packageDir, "jest.config.js"), "package config")
+	requireWriteFile(t, filepath.Join(root, "jest.config.js"), "root config")
+	executor := &buildExecutor{t: t}
+	drive := Testdrive{repositoryRoot: root, executor: executor}
+	item := configurationResult{TestCommand: onboard.TestCommand{Prerequisites: []onboard.BuildCommand{{Directory: "packages/app", Command: "sed -i~ s/src/dist/ jest.config.js", Kind: "patch"}}}}
+	require.NoError(t, drive.runBuildPrerequisites(t.Context(), &bytes.Buffer{}, &item))
+	canonical, err := filepath.EvalSymlinks(packageDir)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(canonical, "jest.config.js"), executor.arguments[0][len(executor.arguments[0])-1])
 }

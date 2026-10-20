@@ -27,16 +27,29 @@ type configurationResult struct {
 	Preparation        []buildResult  `json:"preparation,omitempty"`
 }
 
-func setSingleConfigurationScope(root string, result *validationResult, scope onboard.ValidationScope) {
+func setSingleConfigurationScope(root string, result *validationResult, scope onboard.ValidationScope, executionCommand string) {
 	result.Scope = &scope
-	var selected []onboard.TestCommand
-	if result.Preflight != nil {
-		selected = onboard.ValidationCommands(root, result.Preflight.Command, result.Framework)
-	}
+	selected := onboard.ValidationCommands(root, executionCommand, result.Framework)
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Run testdrive --all after required setup to validate every discovered configuration."}}
 		for _, command := range selected {
-			if command.Command == entry.Command && command.Directory == entry.Directory && slices.EqualFunc(command.Prerequisites, entry.Prerequisites, onboard.EqualPreparation) && len(entry.UnvalidatedSetup) == 0 && maps.Equal(command.Environment, entry.Environment) {
+			// A tracer-only CI declaration normalizes to an explicit empty
+			// NODE_OPTIONS. Compare the actual local Node options as well,
+			// without treating inherited nonempty flags as that empty value.
+			actual := maps.Clone(command.Environment)
+			if required, ok := entry.Environment["NODE_OPTIONS"]; ok {
+				value, explicit := actual["NODE_OPTIONS"]
+				if !explicit {
+					value = os.Getenv("NODE_OPTIONS")
+				}
+				if stripDatadogNodeOptions(value) == required {
+					if actual == nil {
+						actual = map[string]string{}
+					}
+					actual["NODE_OPTIONS"] = required
+				}
+			}
+			if command.Command == entry.Command && command.Directory == entry.Directory && slices.EqualFunc(command.Prerequisites, entry.Prerequisites, onboard.EqualPreparation) && len(entry.UnvalidatedSetup) == 0 && maps.Equal(actual, entry.Environment) {
 				item.Compatibility = result.Compatibility
 				item.Preflight = result.Preflight
 				item.Error = result.Error

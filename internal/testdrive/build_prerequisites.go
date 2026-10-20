@@ -75,7 +75,7 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 		}
 		args := words[1:]
 		if build.Kind == "patch" {
-			matches, err := filepath.Glob(filepath.Join(t.repositoryRoot, words[len(words)-1]))
+			matches, err := filepath.Glob(filepath.Join(directory, words[len(words)-1]))
 			if err != nil || len(matches) == 0 {
 				return fmt.Errorf("patch prerequisite has no local matches: %s", build.Command)
 			}
@@ -101,7 +101,7 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 			nodeOptions = value
 		}
 		merged["NODE_OPTIONS"] = stripDatadogNodeOptions(nodeOptions)
-		data, err := setupOutput(ctx, t.executor, t.repositoryRoot, build.Directory, executable, args, merged)
+		data, err := setupOutput(ctx, t.executor, t.repositoryRoot, build.Directory, executable, args, isolatedCIEnvironment(merged, t.checkoutRoot()))
 		exitCode := commandExitCode(err)
 		build.ExitCode = &exitCode
 		build.Status = "passed"

@@ -54,11 +54,8 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			if err != nil {
 				return step, nil, err
 			}
-			if ordinary == "" {
-				delete(env, key)
-			} else {
-				env[key] = ordinary
-			}
+			// An explicit empty value must override the caller's Node options.
+			env[key] = ordinary
 			continue
 		}
 		if strings.HasPrefix(key, "DD_") {

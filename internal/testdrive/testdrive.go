@@ -57,26 +57,26 @@ type Testdrive struct {
 	preflight                func(context.Context, io.Writer, *validationResult) error
 	repositoryRoot           string
 	// Git checkout root; tracer source files are relative to it.
-	checkoutRoot             string
-	framework                framework.Framework
-	language                 string
-	command                  string
-	args                     []string
-	tracerLabel              string
-	platform                 platform.Platform
-	tracerVersion            string
-	projectTracer            string
-	session                  *Session
-	installCommand           string
-	installArgs              []string
-	executor                 commandExecutor
-	startIntake              func(string, intake.Scenario) (localIntake, error)
-	nodeVersion              func() string
-	environmentInfo          environmentInfo
-	environmentFailure       *reportCard
-	checkOnly                bool
-	resolveJSTags            func(context.Context) (map[string]string, error)
-	resolveJSTracer          func(context.Context, string) (platform.JSSelection, error)
+	gitRoot            string
+	framework          framework.Framework
+	language           string
+	command            string
+	args               []string
+	tracerLabel        string
+	platform           platform.Platform
+	tracerVersion      string
+	projectTracer      string
+	session            *Session
+	installCommand     string
+	installArgs        []string
+	executor           commandExecutor
+	startIntake        func(string, intake.Scenario) (localIntake, error)
+	nodeVersion        func() string
+	environmentInfo    environmentInfo
+	environmentFailure *reportCard
+	checkOnly          bool
+	resolveJSTags      func(context.Context) (map[string]string, error)
+	resolveJSTracer    func(context.Context, string) (platform.JSSelection, error)
 }
 
 // Prepare detects the repository and probes the selected test environment and tracer.
@@ -227,7 +227,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			checkoutRoot = canonical
 		}
 	}
-	drive := &Testdrive{checkoutRoot: checkoutRoot, probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
+	drive := &Testdrive{gitRoot: checkoutRoot, probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
@@ -366,7 +366,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 		if err != nil {
 			runErr = errors.Join(runErr, err)
 		} else {
-			setSingleConfigurationScope(t.repositoryRoot, &result, scope)
+			setSingleConfigurationScope(t.repositoryRoot, &result, scope, shellquote.Join(append([]string{t.command}, t.args...)...))
 		}
 	}
 	if runErr != nil {

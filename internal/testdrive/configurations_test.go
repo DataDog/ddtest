@@ -21,7 +21,7 @@ func TestSelectedCommandDoesNotCertifyOtherConfigurations(t *testing.T) {
 	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest"}, {Directory: ".", Command: "jest --config production.ts"}}}
 	result := completeValidationFixture("jest")
 	result.Preflight.Command = "npx jest"
-	setSingleConfigurationScope(root, &result, scope)
+	setSingleConfigurationScope(root, &result, scope, result.Preflight.Command)
 	require.Equal(t, "passed", result.Configurations[0].Status)
 	require.Equal(t, "not exercised", result.Configurations[1].Status)
 	prepareValidationResult(root, &result)
@@ -115,7 +115,7 @@ func TestSourceRunDoesNotValidateCIPreparedConfiguration(t *testing.T) {
 		{Directory: ".", Command: "jest"},
 		{Directory: ".", Command: "jest", UnvalidatedSetup: []string{"React dependency replacement"}},
 	}}
-	setSingleConfigurationScope(root, &result, scope)
+	setSingleConfigurationScope(root, &result, scope, result.Preflight.Command)
 	require.Equal(t, "passed", result.Configurations[0].Status)
 	require.Equal(t, "not exercised", result.Configurations[1].Status)
 	result.Success, result.LocalSuccess = true, true
@@ -153,4 +153,30 @@ func TestAllRecoversAnOwnedProbeBeforeResolvingSetup(t *testing.T) {
 	require.NoError(t, createOwnedProbe(drive.repositoryRoot, probe, []byte(probeSource)))
 	require.Error(t, drive.Run(t.Context(), &bytes.Buffer{}))
 	require.NoFileExists(t, probe, "an interrupted probe must not leak into a subsequent --all baseline")
+}
+
+func TestConfigurationScopeUsesExecutionRatherThanInspection(t *testing.T) {
+	root := t.TempDir()
+	result := completeValidationFixture("jest")
+	result.Preflight.Command = "jest --showConfig"
+	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest"}}}
+	setSingleConfigurationScope(root, &result, scope, "jest")
+	require.Equal(t, "passed", result.Configurations[0].Status)
+	require.True(t, result.Configurations[0].PairedExecution)
+}
+
+func TestCheckOnlyConfigurationPreservesPassingChecks(t *testing.T) {
+	result := validationResult{Framework: "jest", CheckOnly: true, Preflight: &jestPreflight{Verdict: verdict{Status: "compatible"}}, Configurations: []configurationResult{{Status: "not exercised"}}}
+	require.NoError(t, finishValidation(&bytes.Buffer{}, t.TempDir(), result))
+	prepareValidationResult(t.TempDir(), &result)
+	require.True(t, result.ChecksPassed)
+	require.False(t, result.Success)
+	require.False(t, result.LocalSuccess)
+}
+
+func TestPackageNativeIdentitiesKeepCheckoutPrefixes(t *testing.T) {
+	root := t.TempDir()
+	run := validationRun{root: root, framework: "jest", Tests: []jestTest{{File: filepath.Join(root, "packages/a/one.test.js"), Name: "test"}, {File: filepath.Join(root, "packages/b/one.test.js"), Name: "test"}}}
+	counts := nativeExecutionCounts(run)
+	require.Equal(t, 2, *counts.SourceTestIdentities)
 }

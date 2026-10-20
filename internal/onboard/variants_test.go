@@ -86,3 +86,17 @@ func TestVariantExpansionDoesNotExecuteShellOrUseAmbientVariables(t *testing.T) 
 		require.False(t, ok, command)
 	}
 }
+
+func TestDiscoveryPreservesExplicitEmptyNodeOptions(t *testing.T) {
+	for _, value := range []string{"", "-r ${{ env.DD_TRACE_PACKAGE }}"} {
+		root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - run: tsc\n        env: {NODE_OPTIONS: '"+value+"'}\n      - run: jest\n        env: {NODE_OPTIONS: '"+value+"'}\n")
+		scope, err := DiscoverValidationScope(root, "jest")
+		require.NoError(t, err)
+		require.Len(t, scope.Commands, 1)
+		require.Contains(t, scope.Commands[0].Environment, "NODE_OPTIONS")
+		require.Empty(t, scope.Commands[0].Environment["NODE_OPTIONS"])
+		require.Len(t, scope.Commands[0].Prerequisites, 1)
+		require.Contains(t, scope.Commands[0].Prerequisites[0].Environment, "NODE_OPTIONS")
+		require.Empty(t, scope.Commands[0].Prerequisites[0].Environment["NODE_OPTIONS"])
+	}
+}

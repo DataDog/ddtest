@@ -153,7 +153,8 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 	run.framework = "jest"
 	run.Instrumented = instrumented
 	run.ProbeMode = probeMode
-	run.root, run.checkoutRoot = t.repositoryRoot, t.checkoutRoot
+	run.root = t.checkoutRoot()
+	run.checkoutRoot = run.root
 	if err := ctx.Err(); err != nil {
 		return run, err
 	}

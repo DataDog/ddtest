@@ -2,8 +2,11 @@ package testdrive
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/environment"
@@ -78,4 +81,27 @@ func TestConfigurationNodeOptionsOverrideInheritedShellFlags(t *testing.T) {
 	}
 	drive := Testdrive{}
 	require.Equal(t, "--max-old-space-size=4096", drive.nodeOptions(), "a focused local command retains its actual shell settings")
+}
+
+func TestConfigurationCopyClosesEachFile(t *testing.T) {
+	if os.Getenv("DDTEST_COPY_LOW_FD_CHILD") != "1" {
+		if runtime.GOOS == "windows" {
+			t.Skip("requires POSIX descriptor limit")
+		}
+		shell, err := exec.LookPath("sh")
+		require.NoError(t, err)
+		cmd := exec.Command(shell, "-c", `ulimit -n 64; exec "$@"`, "copy-test", os.Args[0], "-test.run=^TestConfigurationCopyClosesEachFile$")
+		cmd.Env = append(os.Environ(), "DDTEST_COPY_LOW_FD_CHILD=1")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(output))
+		return
+	}
+	source, target := t.TempDir(), t.TempDir()
+	for i := range 256 {
+		requireWriteFile(t, filepath.Join(source, fmt.Sprintf("file-%d", i)), "contents")
+	}
+	require.NoError(t, copyConfiguration(t.Context(), source, target))
+	entries, err := os.ReadDir(target)
+	require.NoError(t, err)
+	require.Len(t, entries, 256)
 }
