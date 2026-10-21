@@ -1,7 +1,7 @@
 # Enable Datadog Test Optimization for Vitest on GitHub Actions
 
 Use `--all` to validate CI's native Vitest or `ddtest run` path. For diagnostics:
-`--command "ddtest run --vitest-config ci.ts"`. `plan`/`run` reject their own `--command`.
+`--command "ddtest run --framework vitest --vitest-config <your-config-file>"`. `plan`/`run` reject their own `--command`.
 
 Keep the existing tests, CI matrix, setup and coverage options. Work in this order:
 
@@ -14,7 +14,7 @@ Keep the existing tests, CI matrix, setup and coverage options. Work in this ord
    If `pnpm vitest` or `yarn vitest` names a package script, use `--all` so discovery resolves its setup; shorthand is not silently treated as a binary. Unsupported CI runner environment settings and custom preloads stay unvalidated.
 
    Preserve the original test options; `vitest bench` is a separate, unvalidated mode and must not be instrumented on the strength of these test results. Preflight resolves the framework configuration, local Node and an exact tracer release without installing it or running tests. If metadata fails, fix registry/sandbox access and retry; do not guess an older version from cached web pages or the action default.
-2. Add or update the action before the first Vitest step in every test job. Pin the exact resolved release in `js-tracer-version` and use it with local `--tracer-version`. The action default may lag npm. Existing project dependencies take precedence; changing them requires an explicit dependency decision.
+2. Add or update the action before the first Vitest step in every test job. Pin the exact resolved release to keep this Vitest validation reproducible: the action default may lack newer Vitest hooks even when ordinary reporting works. Set that release in `js-tracer-version` and use it with local `--tracer-version`. The action default may lag npm. Existing project dependencies take precedence; changing them requires an explicit dependency decision.
 
    ```yaml
    - name: Configure Datadog Test Optimization
@@ -50,7 +50,7 @@ Testdrive compares baseline and reporting-only outcomes with behavior-changing f
 
 Testdrive uses temporary tracer installations, probes and coverage storage; it reuses an existing tracer without changing dependencies. Keep `.testoptimization/report.html` and `.testoptimization/testdrive.json`, including after failures. No raw event archive is needed. Preparation copies are removed automatically. Remove only outputs created by your own commands; preserve pre-existing files and customer edits. Keep scratch files/caches under a unique temporary directory and remove that exact directory afterward. Verify Git and package exclusions and report anything that could not be cleaned up.
 
-Report the latest JSON verdict and both report paths. INCOMPLETE means onboarding is incomplete even if workflow edits are finished. Preserve failed-check explanations and list unvalidated configurations. A final check-only run does not replace execution evidence.
+Post every `Open report:` link. Report the latest JSON verdict and both report paths. INCOMPLETE means onboarding is incomplete even if workflow edits are finished. Preserve failed-check explanations and list unvalidated configurations. A final check-only run does not replace execution evidence.
 
 ## Ask a human to connect Datadog
 

@@ -7,27 +7,8 @@ const { createVitest, parseCLI } = await import(pathToFileURL(require.resolve('v
 const { version } = require('vitest/package.json')
 const major = Number(version.split('.')[0])
 const originalArguments = JSON.parse(process.argv[1])
-const parsed = parseCLI(['vitest', ...originalArguments])
-let { filter, options } = parsed
-let probeArguments
-if (process.argv[3]) {
-  // Use the installed CLI parser to distinguish positional file filters from
-  // option values, even when both contain the same text. Parsing the marker
-  // never loads configuration or executes tests. NUL cannot occur in real argv.
-  const marker = '\0ddtest positional filter\0'
-  const separator = originalArguments.indexOf('--')
-  const before = separator < 0 ? originalArguments : originalArguments.slice(0, separator)
-  probeArguments = before.filter((argument, index) => {
-    if (argument.startsWith('-') || !filter.includes(argument) || index === 0 && ['run', 'watch', 'dev', 'related'].includes(argument)) return true
-    const candidate = [...before]
-    candidate[index] = marker
-    try { return !parseCLI(['vitest', ...candidate]).filter.includes(marker) } catch { return true }
-  })
-  probeArguments.push(process.argv[3])
-  const parsedProbe = parseCLI(['vitest', ...probeArguments])
-  filter = parsedProbe.filter
-  options = parsedProbe.options
-}
+const normalized = validationArguments(originalArguments, parseCLI, process.argv[3])
+const { filter, options } = parseCLI(['vitest', ...normalized.arguments])
 process.env.TEST = 'true'
 process.env.VITEST = 'true'
 process.env.NODE_ENV ??= 'test'
@@ -42,7 +23,8 @@ try {
     : await vitest.globTestFiles(filter)
   console.log('__DDTEST_VITEST_CONFIG__' + JSON.stringify({
     version,
-    probeArguments,
+    arguments: normalized.arguments,
+    reporters: normalized.reporters ?? vitest.config.reporters,
     node: process.version,
     executable: process.execPath,
     projects: vitest.projects.map(project => ({

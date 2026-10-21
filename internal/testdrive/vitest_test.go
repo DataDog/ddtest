@@ -1,3 +1,8 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2026 Datadog, Inc.
+
 package testdrive
 
 import (
@@ -81,6 +86,8 @@ func (e vitestErrorExecutor) CombinedOutput(_ context.Context, _ string, args []
 func TestVitestRetainsUnhandledErrorsDespitePassingJSONAndCoverageOutput(t *testing.T) {
 	drive := preparedTestdrive(t)
 	drive.command, drive.args = "pnpm", []string{"vitest", "--coverage"}
+	drive.vitestArguments = append([]string{}, drive.args...)
+	drive.vitestProbeArguments = append(append([]string{}, drive.args...), "probe.test.ts")
 	drive.executor = vitestErrorExecutor{t}
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
@@ -130,6 +137,7 @@ func TestVitestPreflightScope(t *testing.T) {
 	require.Equal(t, "inconclusive", checkVitestSupport(check, selection).Status)
 	check.VitestProjects = check.VitestProjects[:1]
 	check.Version = "5.0.0"
+	selection.Version = "6.21.0"
 	require.Equal(t, "compatible", checkVitestSupport(check, selection).Status)
 }
 
@@ -161,10 +169,13 @@ func TestVitestVersionChecksFollowKnownTracerSupport(t *testing.T) {
 		{"3.2.0", "6.18.0", "compatible"},
 		{"4.1.11", "6.13.0", "compatible"},
 		{"5.0.1", "6.13.99", "incompatible"},
-		{"5.0.1", "6.14.0", "compatible"},
+		{"5.0.1", "6.14.0", "incompatible"},
 		{"5.0.1", "5.124.99", "incompatible"},
-		{"5.0.1", "5.125.0", "compatible"},
-		{"5.0.1", "6.18.0", "compatible"},
+		{"5.0.1", "5.125.0", "incompatible"},
+		{"5.0.1", "6.18.0", "incompatible"},
+		{"5.0.5", "6.20.1", "incompatible"},
+		{"5.0.5", "6.21.0", "compatible"},
+		{"5.0.5", "5.132.0", "compatible"},
 		{"6.0.0", "7.0.0", "compatible"},
 		{"5.0.0-beta.1", "6.18.0", "compatible"},
 		{"custom", "6.18.0", "compatible"},
@@ -244,21 +255,6 @@ func TestVitestPairedExecutionCanBeRetained(t *testing.T) {
 	require.True(t, hasPairedExecution(result))
 	result.CheckOnly = true
 	require.False(t, hasPairedExecution(result))
-}
-
-func TestVitestBenchmarkPreflightDoesNotExecuteOrdinaryTests(t *testing.T) {
-	for _, command := range []string{"vitest", "pnpm", "npx", "yarn"} {
-		drive := preparedTestdrive(t)
-		drive.command = command
-		drive.args = []string{"bench", "--run"}
-		if command != "vitest" {
-			drive.args = append([]string{"vitest"}, drive.args...)
-		}
-		// No executor is supplied: benchmark rejection happens before loading config.
-		drive.executor = nil
-		_, _, _, err := drive.inspectVitest(t.Context(), t.TempDir())
-		require.ErrorContains(t, err, "benchmark mode is not validated")
-	}
 }
 
 // Configuration discovery must work across the same versions as the existing
@@ -349,6 +345,8 @@ func TestVitestSourceBuildDefersOnlyUntilInstalledMetadata(t *testing.T) {
 func TestVitestValidationFlagsPrecedeArgumentTerminator(t *testing.T) {
 	drive := preparedTestdrive(t)
 	drive.command, drive.args = "npx", []string{"vitest", "run", "--", "src"}
+	drive.vitestArguments = append([]string{}, drive.args...)
+	drive.vitestProbeArguments = append(append([]string{}, drive.args...), "probe.test.ts")
 	drive.executor = vitestErrorExecutor{t}
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil

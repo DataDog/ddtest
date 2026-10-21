@@ -59,6 +59,7 @@ type runSpec struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
+	ReplacedReporters               []string
 	Role                            runRole
 	temporaryRoot                   string
 	commandOutput                   string
@@ -94,6 +95,7 @@ type testCounts struct {
 }
 
 type runSummary struct {
+	ReplacedReporters               []string            `json:"replaced_reporters,omitempty"`
 	Role                            runRole             `json:"role"`
 	ExecutionPath                   string              `json:"execution_path,omitempty"`
 	Workers                         int                 `json:"workers,omitempty"`
@@ -117,7 +119,7 @@ type runSummary struct {
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+	summary := runSummary{ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)

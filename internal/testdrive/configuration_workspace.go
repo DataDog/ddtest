@@ -49,15 +49,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if t.framework != nil && t.framework.Name() == "vitest" && t.usesVitestRunner() {
 		t.vitestRunner = true
 		var err error
-		if t.command == "ddtest" {
-			t.command, err = os.Executable()
-		} else {
-			t.command, err = exec.LookPath(t.command)
-		}
-		if err != nil {
-			return result, err
-		}
-		t.command, err = filepath.Abs(t.command)
+		t.command, err = resolveVitestRunnerBinary(t.repositoryRoot, item.Directory, t.command)
 		if err != nil {
 			return result, err
 		}

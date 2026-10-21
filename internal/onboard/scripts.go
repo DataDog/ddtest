@@ -284,9 +284,6 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		if framework == "jest" && jestMetadataOptions(words[1:]) {
 			return commandResolution{}
 		}
-		if framework == "vitest" && len(words) > 1 && words[1] == "bench" {
-			return commandResolution{ReviewReason: "Vitest benchmark mode is outside ordinary test validation: " + command}
-		}
 		canonicalRoot, _ := filepath.EvalSymlinks(root)
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)

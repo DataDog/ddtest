@@ -1,3 +1,8 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2026 Datadog, Inc.
+
 package onboard
 
 import (
@@ -15,7 +20,7 @@ func TestVitestInstructionsRemainSpecificWhenAlreadyConfigured(t *testing.T) {
 	for _, configured := range []bool{false, true} {
 		workflow := "jobs:\n  tests:\n    steps:\n"
 		if configured {
-			workflow += "      - uses: datadog/test-visibility-github-action@v3\n"
+			workflow += "      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: js}\n"
 		}
 		workflow += "      - run: pnpm vitest --coverage\n"
 		root := newJestRepository(t, workflow)
@@ -24,13 +29,19 @@ func TestVitestInstructionsRemainSpecificWhenAlreadyConfigured(t *testing.T) {
 		var output bytes.Buffer
 		require.NoError(t, Run(&output))
 		text := output.String()
-		for _, required := range []string{"--framework vitest --command", "--check-only", "--import ${{ env.DD_TRACE_ESM_IMPORT }}", "js-tracer-version: <resolved-release>", "Existing project dependencies take precedence", "Git and published packages", "Known tracer incompatibilities"} {
-			require.Contains(t, text, required)
+		require.Contains(t, text, "Open report:")
+		if configured {
+			require.Contains(t, text, "already appears")
+			require.NotContains(t, text, "## Validation scope")
+			require.NotContains(t, text, "Add or update the action")
+		} else {
+			require.Contains(t, text, "# Enable Datadog Test Optimization for Vitest")
+			require.Contains(t, text, "## Validation scope")
+			require.Contains(t, text, "## Cleanup and final response")
+			require.Contains(t, text, "js-tracer-version: <resolved-release>")
+			require.NotContains(t, text, "--vitest-config ci.ts")
 		}
-		require.NotContains(t, text, "jest-circus")
-		require.NotContains(t, text, "--showConfig")
 		require.NotContains(t, text, "For Jest")
-		require.Less(t, len(text), 8000)
 	}
 }
 

@@ -342,7 +342,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		result.Reason = "The scenario could not collect usable runner results or reported setup/configuration errors."
 		return result
 	}
-	if feature == "skipping" && run.ExecutionPath == "ddtest-run-node-api" && run.PlannerSkipped {
+	if feature == "skipping" && run.ExecutionPath == vitestNodeAPIPath && run.PlannerSkipped {
 		return featureResult{Name: feature, Status: "passed", Reason: "ddtest's planner received the skippable probe, reported 100% skipped, and produced an empty execution plan. The command succeeded without starting a Vitest worker or executing a test body. This validates planner skipping on the ddtest run path."}
 	}
 	if feature == "skipping" && run.framework == "vitest" && run.Facts.SkippableRequests == 0 {

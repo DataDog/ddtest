@@ -52,6 +52,8 @@ type Testdrive struct {
 	reportModels             *[]reportModel
 	workflowRoot             string
 	configurationRoot        string
+	vitestArguments          []string
+	vitestReporters          []string
 	vitestProbeArguments     []string
 	vitestNode               string
 	vitestExecutable         string
@@ -159,7 +161,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			return nil, fmt.Errorf("resolve JavaScript repository root: %w", err)
 		}
 	}
-	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
+	if runner.Name() == "jest" && !all {
 		var selected string
 		if configurationOnly {
 			var entry onboard.TestCommand
@@ -197,20 +199,16 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		session.directory = filepath.Join(repositoryRoot, ".testoptimization", "testdrive", session.ID())
 		session.persistent = true
 	}
-	if runner.Name() == "vitest" {
-		if settings.GetVitestConfig() != "" {
-			return nil, fmt.Errorf("--vitest-config applies to plan/run; select the testdrive config in --command, for example --command 'npx vitest run --config ci.ts'")
-		}
-		command, args = "npx", []string{"vitest", "run"}
-		if selected := strings.TrimSpace(settings.GetCommand()); selected != "" {
-			words, splitErr := shellquote.Split(selected)
+	if runner.Name() == "vitest" && !all {
+		selectedPlan, discoveryError = onboard.VitestValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		if discoveryError == nil {
+			words, splitErr := shellquote.Split(selectedPlan.Command)
 			if splitErr != nil || len(words) == 0 {
-				return nil, fmt.Errorf("invalid Vitest command: %s", selected)
+				discoveryError = fmt.Errorf("invalid Vitest command: %s", selectedPlan.Command)
+			} else {
+				command, args = words[0], words[1:]
 			}
-			command, args = words[0], words[1:]
-		}
-		if _, err := vitestArguments(command, args); err != nil {
-			return nil, err
+			preflightEnvironment = selectedPlan.Environment
 		}
 	}
 	originalCommand := shellquote.Join(append([]string{command}, args...)...)
@@ -277,6 +275,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
+	if runner.Name() == "vitest" && !onboard.IsDDTestCommand(drive.command) {
+		drive.command = drive.configurationExecutable(drive.command)
+	}
 	drive.allConfigurations = all
 	drive.scopeCommand = scopeCommand
 	drive.allowReviewedBuilds = configuration.AllowReviewedBuilds

@@ -1,3 +1,4 @@
+import { validationCoverage } from './vitest_validation.mjs'
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
@@ -25,10 +26,10 @@ const validation = !request.discover && process.env.DDTEST_VITEST_VALIDATION
 if (validation) {
   config.reporters = ['default', 'json']
   config.outputFile = resolve(validation.directory, `${process.pid}.results.json`)
-  config.coverage = { reportsDirectory: resolve(validation.directory, `${process.pid}.coverage`) }
+  config.coverage = validationCoverage(resolve(validation.directory, `${process.pid}.coverage`), validation.probe)
   if (validation.probe) {
     config.testNamePattern = validation.probe
-    config.coverage.thresholds = { lines: 0, branches: 0, functions: 0, statements: 0 }
+    config.retry = 0
   }
 }
 const context = major >= 5

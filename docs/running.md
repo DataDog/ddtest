@@ -672,3 +672,22 @@ exists) must use `--all` for setup-aware discovery, or an explicitly reviewed
 `exec vitest` command. Unsupported CI runner environment settings and preloads
 are reported as unvalidated. Probe selection uses the installed CLI parser;
 validation-owned scalar options are replaced rather than duplicated.
+
+Vitest validation replaces customer reporters and their output destinations with
+private native results, recording the replaced reporter names. It preserves
+full-suite filters, shards and coverage gates. Only synthetic probes drop those
+selections and relax all global/per-glob thresholds; coverage collection remains
+on. Both paths always disable coverage `autoUpdate`, so validation cannot rewrite
+the customer configuration. Unhandled errors participate in outcome comparison,
+even when test JSON and a pre-existing failing exit code are unchanged.
+
+Without `--command`, Vitest selects a single understood CI invocation or the
+package test script. Setup that cannot safely be separated requires `--all` or
+review. Only `run` and no-subcommand invocations are accepted; watch, benchmark,
+list, related and typecheck modes remain explicitly unvalidated. Supported
+`DD_TEST_OPTIMIZATION_RUNNER_*` settings become recorded command options on the
+Node API path; saved-plan, CI-node and custom-worker modes still require review.
+The runner report records the binary path/version used locally and warns about
+recognized different CI release pins. It does not certify execution of that
+remote binary. The controlled CI matrix exercises Vitest 3, 4 and 5; unknown
+future versions still require effective configuration and live feature evidence.

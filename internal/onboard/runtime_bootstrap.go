@@ -34,6 +34,9 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	if runnerOnly {
 		for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
 			for _, key := range slices.Sorted(maps.Keys(env)) {
+				if _, ok := VitestRunnerEnvironmentFlag(key); ok {
+					continue
+				}
 				if strings.HasPrefix(key, "DD_TEST_OPTIMIZATION_RUNNER_") || key == "DD_TRACE_PACKAGE" || key == "DD_TRACE_ESM_IMPORT" || key == "DD_TRACE_ENABLED" || key == "DD_CIVISIBILITY_ENABLED" {
 					return "Custom ddtest worker instrumentation requires review: " + key
 				}

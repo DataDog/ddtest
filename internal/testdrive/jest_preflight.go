@@ -39,6 +39,7 @@ type jestProject struct {
 }
 
 type jestPreflight struct {
+	RunnerBinary        *runnerBinary         `json:"runner_binary,omitempty"`
 	VitestProjects      []vitestProject       `json:"vitest_projects,omitempty"`
 	ExecutionPath       string                `json:"execution_path,omitempty"`
 	Verdict             verdict               `json:"verdict"`
@@ -196,6 +197,18 @@ func selectedJestProjects(check jestPreflight) []jestProject {
 		}
 	}
 	return selected
+}
+
+// Capability floors, not installation pins. Vitest 5's current transport hooks
+// require #10731 (5.132.0/6.21.0); initial support alone is insufficient.
+var vitestTracerMinimums = []struct {
+	VitestMajor   int
+	ExecutionPath string
+	Tracers       map[int]string
+}{
+	{0, "", map[int]string{5: "5.120.0", 6: "6.9.0"}},
+	{0, vitestNodeAPIPath, map[int]string{5: "5.125.0", 6: "6.14.0"}},
+	{5, "", map[int]string{5: "5.132.0", 6: "6.21.0"}},
 }
 
 func checkJestSupport(check jestPreflight, selection platform.JSSelection) verdict {

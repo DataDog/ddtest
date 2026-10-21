@@ -1,3 +1,8 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2026 Datadog, Inc.
+
 package testdrive
 
 import (
@@ -6,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -13,15 +19,20 @@ import (
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
+const (
+	vitestNodeAPIPath = "ddtest-run-node-api"
+	vitestCLIPath     = "vitest-cli"
+)
+
 func (t *Testdrive) vitestExecutionPath() string {
 	if t.usesVitestRunner() {
-		return "ddtest-run-node-api"
+		return vitestNodeAPIPath
 	}
-	return "vitest-cli"
+	return vitestCLIPath
 }
 
 func (t *Testdrive) usesVitestRunner() bool {
-	return t.vitestRunner || onboard.IsDDTestCommand(t.command)
+	return t.framework != nil && t.framework.Name() == "vitest" && (t.vitestRunner || onboard.IsDDTestCommand(t.command))
 }
 
 func (t *Testdrive) vitestRunnerArgs(directory, preload, probe string, instrumented bool, env map[string]string) ([]string, error) {
@@ -39,7 +50,14 @@ func (t *Testdrive) vitestRunnerArgs(directory, preload, probe string, instrumen
 			return nil, err
 		}
 	}
-	args := append([]string{"run"}, parsed.Options...)
+	options := slices.Clone(parsed.Options)
+	if probe != "" {
+		options = slices.DeleteFunc(options, func(arg string) bool {
+			key, _, _ := strings.Cut(arg, "=")
+			return key == "--tests-location" || key == "--tests-exclude-pattern"
+		})
+	}
+	args := append([]string{"run"}, options...)
 	files := parsed.Files
 	validation := map[string]string{"directory": directory}
 	if probe != "" {
@@ -92,7 +110,7 @@ func vitestPlannerSkippedProbe(directory, root, probe string, scenario intake.Sc
 		return false
 	}
 	percentage, err := os.ReadFile(filepath.Join(root, constants.SkippablePercentageOutputPath))
-	if err != nil || strings.TrimSpace(string(percentage)) != "100.00" {
+	if err != nil || !isFullySkippedPercentage(string(percentage)) {
 		return false
 	}
 	assignments, err := filepath.Glob(filepath.Join(directory, "*.assignment.json"))
@@ -192,4 +210,10 @@ func collectVitestWorkerResults(directory, root string, run *validationRun) erro
 	}
 	run.Workers = len(assignments)
 	return nil
+}
+
+// The planner writes a percentage; formatting/decimal precision is immaterial.
+func isFullySkippedPercentage(value string) bool {
+	percentage, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	return err == nil && percentage == 100
 }

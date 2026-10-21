@@ -41,9 +41,7 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
 		_, _ = fmt.Fprintf(output, "Run `ddtest testdrive --framework %s` to check the setup locally.\n", name)
 		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
-		if name != "vitest" {
-			return nil
-		}
+		return nil
 	}
 
 	_, _ = fmt.Fprintln(output)
