@@ -128,6 +128,27 @@ func TestPnPTracerMetadataUsesProjectLoaderWithoutInitializingTracer(t *testing.
 	require.Equal(t, "5.132.0", selected.Version)
 	require.NoFileExists(t, "TRACER_WAS_INITIALIZED")
 	require.NoDirExists(t, "node_modules")
+	external := filepath.Join(t.TempDir(), "external tracer", "dd-trace")
+	require.NoError(t, os.MkdirAll(filepath.Join(external, "ci"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(external, "package.json"), []byte(`{"version":"6.17.0","engines":{"node":">=22"}}`), 0600))
+	externalInit := filepath.Join(external, "ci", "init.js")
+	require.NoError(t, os.WriteFile(externalInit, []byte(`throw new Error('metadata must not initialize tracer')`), 0600))
+	for _, tc := range []struct{ name, nodeOptions, tracePackage string }{
+		{"package preload", "", externalInit},
+		{"Node preload", "--require " + fmt.Sprintf("%q", externalInit), ""},
+		{"Node preload takes precedence", "--require " + fmt.Sprintf("%q", externalInit), init},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NODE_OPTIONS", tc.nodeOptions)
+			t.Setenv("DD_TRACE_PACKAGE", tc.tracePackage)
+			selected, err := NewJavaScript().ResolveTestdriveTracer(t.Context(), TracerOptions{Version: "latest"})
+			require.NoError(t, err)
+			require.Equal(t, "project", selected.Source)
+			require.Equal(t, "6.17.0", selected.Version)
+			require.Equal(t, ">=22", selected.Node)
+			require.NoFileExists(t, "TRACER_WAS_INITIALIZED")
+		})
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".pnp.cjs"), []byte(`throw new Error('broken project loader')`), 0600))
 	_, err = NewJavaScript().ResolveTestdriveTracer(t.Context(), TracerOptions{Version: "latest"})
 	require.Error(t, err)

@@ -169,21 +169,24 @@ func TestUnknownReplacementSetupClearsPriorRuntime(t *testing.T) {
 }
 
 func TestConfigurationInspectionUsesGitHubCIDefaultAndExplicitOverrides(t *testing.T) {
-	for _, tc := range []struct{ workflow, job, step, command, want string }{
-		{"", "", "", "npm test", "true"},
-		{"env: {CI: 'false'}\n", "", "", "npm test", "false"},
-		{"env: {CI: 'false'}\n", "    env: {CI: job}\n", "", "npm test", "job"},
-		{"", "", "        env: {CI: step}\n", "npm test", "step"},
-		{"", "", "        env: {CI: step}\n", "CI=command jest", "command"},
-	} {
-		workflow := tc.workflow + "jobs:\n  tests:\n" + tc.job + "    steps:\n      - run: " + tc.command + "\n" + tc.step
-		root := newJestRepository(t, workflow)
-		entry, err := JestConfigurationCommand(root, "")
-		require.NoError(t, err)
-		require.Equal(t, tc.want, entry.Environment["CI"])
+	for _, key := range []string{"CI", "GITHUB_ACTIONS"} {
+		for _, tc := range []struct{ workflow, job, step, command, want string }{
+			{"", "", "", "npm test", "true"},
+			{"env: {CI: 'false'}\n", "", "", "npm test", "false"},
+			{"env: {CI: 'false'}\n", "    env: {CI: job}\n", "", "npm test", "job"},
+			{"", "", "        env: {CI: step}\n", "npm test", "step"},
+			{"", "", "        env: {CI: step}\n", "CI=command jest", "command"},
+		} {
+			workflow := tc.workflow + "jobs:\n  tests:\n" + tc.job + "    steps:\n      - run: " + tc.command + "\n" + tc.step
+			workflow = strings.ReplaceAll(workflow, "CI", key)
+			root := newJestRepository(t, workflow)
+			entry, err := JestConfigurationCommand(root, "")
+			require.NoError(t, err)
+			require.Equal(t, tc.want, entry.Environment[key])
+		}
 	}
-}
 
+}
 func TestCIBareNodeExecutableNamesUseSetupRuntime(t *testing.T) {
 	for _, name := range []string{"node", "node.exe"} {
 		workflow := strings.Replace(fmt.Sprintf(runtimeWorkflow, ""), "npm run test", name+" node_modules/jest/bin/jest.js", 1)

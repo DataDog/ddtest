@@ -42,10 +42,17 @@ func (j *JavaScript) ResolveTestdriveTracer(ctx context.Context, options TracerO
 		return selected, err
 	}
 	if loader != "" {
+		preload := nodeOptionsRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule)
+		if preload == "" {
+			preload = os.Getenv("DD_TRACE_PACKAGE")
+		}
+		if preload == "" {
+			preload = ddTraceCIInitModule
+		}
 		const metadata = `const fs=require('node:fs'),path=require('node:path');let init;
-try { init=require.resolve('dd-trace/ci/init'); } catch(error) { if(error.code==='MODULE_NOT_FOUND'){process.stdout.write('null');process.exit(0)} throw error; }
+try { init=require.resolve(process.argv[1]); } catch(error) { if(error.code==='MODULE_NOT_FOUND'){process.stdout.write('null');process.exit(0)} throw error; }
 process.stdout.write(fs.readFileSync(path.join(path.dirname(path.dirname(init)),'package.json'),'utf8'));`
-		data, _, err := j.executor.Output(ctx, "node", []string{"--require", loader, "-e", metadata}, map[string]string{"NODE_OPTIONS": "", "DD_TRACE_ENABLED": "false", "DD_CIVISIBILITY_ENABLED": "false"})
+		data, _, err := j.executor.Output(ctx, "node", []string{"--require", loader, "-e", metadata, "--", preload}, map[string]string{"NODE_OPTIONS": "", "DD_TRACE_ENABLED": "false", "DD_CIVISIBILITY_ENABLED": "false"})
 		if err != nil {
 			return selected, fmt.Errorf("read installed PnP tracer metadata: %w", err)
 		}
