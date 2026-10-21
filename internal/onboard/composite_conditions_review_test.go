@@ -85,3 +85,52 @@ func TestCompositeChildOverrideDoesNotChangeParentCondition(t *testing.T) {
 		}
 	}
 }
+
+func TestCompositeDynamicConditionInputsRemainUnresolved(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  tests:
+    steps:
+      - uses: ./.github/actions/test
+        with: {enabled: '${{ secrets.ENABLED }}'}
+`)
+	writeComposite(t, root, "test", `inputs:
+  enabled: {default: ''}
+runs:
+  using: composite
+  steps:
+    - if: inputs.enabled
+      run: jest
+      shell: bash
+`)
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved)
+	for _, command := range scope.Commands {
+		require.NotEmpty(t, command.UnvalidatedSetup)
+	}
+}
+
+func TestCompositeConditionInputsResolveKnownMatrixAndContext(t *testing.T) {
+	for _, tc := range []struct {
+		value      string
+		row        map[string]any
+		env        map[string]string
+		want       bool
+		unresolved bool
+	}{
+		{value: "${{ matrix.enabled }}", row: map[string]any{"enabled": ""}, want: false},
+		{value: "${{ matrix.enabled }}", row: map[string]any{"enabled": false}, want: true},
+		{value: "${{ matrix.enabled }}", row: map[string]any{"enabled": "yes"}, want: true},
+		{value: "${{ github.ref }}", env: map[string]string{"\x00github.ref": "refs/heads/main"}, want: true},
+		{value: "${{ secrets.ENABLED }}", unresolved: true},
+	} {
+		step := runtimeStep{If: "inputs.enabled", Inputs: map[string]string{"enabled": tc.value}}
+		got, err := stepCondition(step, tc.row, tc.env)
+		if tc.unresolved {
+			require.Error(t, err)
+			continue
+		}
+		require.NoError(t, err)
+		require.Equal(t, tc.want, got)
+	}
+}

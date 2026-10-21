@@ -35,7 +35,19 @@ func stepCondition(step runtimeStep, row map[string]any, environments ...map[str
 	for _, condition := range conditions {
 		env := conditionEnvironment(ciWorkflow{Env: base}, runtimeJob{}, runtimeStep{Env: condition.Env}, row)
 		for key, value := range condition.Inputs {
-			env["\x00inputs."+key] = value
+			resolved, err := runtimeValue(value, row)
+			if err != nil {
+				// A known workflow context is shared with the caller. Unknown
+				// secrets/expressions stay absent so reading them is inconclusive,
+				// rather than treating expression text as a nonempty string.
+				expression := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(value), "${{"), "}}"))
+				known, ok := env["\x00"+expression]
+				if !ok || strings.Contains(known, "${{") {
+					continue
+				}
+				resolved = known
+			}
+			env["\x00inputs."+key] = resolved
 		}
 		active, err := runtimeCondition(condition.Expression, row, env)
 		if err != nil || !active {
