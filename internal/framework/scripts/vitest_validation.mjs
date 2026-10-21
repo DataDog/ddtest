@@ -11,16 +11,22 @@ export function validationArguments(args, parseCLI, probe = '') {
   const separator = args.indexOf('--')
   const before = separator < 0 ? args : args.slice(0, separator)
   let commandIndex = -1
+  let firstPositional = -1
   for (let i = 0; i < before.length; i++) {
     if (before[i].startsWith('-')) continue
     const prefix = before.slice(0, i + 1)
     const candidate = [...prefix]
     candidate[i] = marker
     if (!parse(candidate).filter.includes(marker)) continue
+    firstPositional = i
     if (!parse(prefix).filter.includes(before[i])) commandIndex = i
     break
   }
-  const mode = commandIndex < 0 ? 'run' : before[commandIndex]
+  // Older Vitest treats newer command names (notably list in v1) as file
+  // filters. Reserve these modes consistently; ./list is an explicit path.
+  const first = before[firstPositional]
+  const reserved = ['bench', 'watch', 'dev', 'list', 'related'].includes(first)
+  const mode = commandIndex < 0 ? reserved ? first : 'run' : before[commandIndex]
   if (mode !== 'run') throw new Error(`Vitest ${mode} mode is not supported by testdrive; select the ordinary test command`)
   if (parsed.options.watch) throw new Error('Vitest watch mode is not supported by testdrive')
   const result = []

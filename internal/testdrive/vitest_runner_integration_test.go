@@ -48,7 +48,7 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &pkg))
 		tracer = pkg.Version
 	}
-	integrationFile(t, root, "package.json", fmt.Sprintf(`{"type":"module","scripts":{"test":"vitest run --config vitest.config.js"},"devDependencies":{"vitest":%q,"dd-trace":%q}}`, vitest, tracer))
+	integrationFile(t, root, "package.json", fmt.Sprintf(`{"type":"module","scripts":{"test":"vitest run --config vitest.config.js"},"devDependencies":{"vitest":%q,"@vitest/coverage-v8":%q,"dd-trace":%q}}`, vitest, vitest, tracer))
 	integrationFile(t, root, "vitest.config.js", `export default { test: { dir: 'src', pool: 'forks', maxWorkers: 1, coverage: { enabled:true, include:['src/value.js'], thresholds:{ autoUpdate:true, lines:90, 'src/**':{lines:90} } } } }`)
 	// CLI substring matching historically selected both of these for one
 	// assignment. The Node API must run each file on exactly one worker.
