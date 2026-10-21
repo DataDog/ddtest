@@ -148,10 +148,7 @@ func localPreparation(root, directory string, words []string) (BuildCommand, boo
 	if kind == "" {
 		return BuildCommand{}, false
 	}
-	relative, err := filepath.Rel(root, directory)
-	if err != nil {
-		return BuildCommand{}, false
-	}
+	relative := repositoryPath(root, directory)
 	return BuildCommand{Directory: filepath.ToSlash(relative), Command: shellquote.Join(words...), Kind: kind}, true
 }
 

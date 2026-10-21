@@ -413,7 +413,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	// Preserve the package manager's build entry point, including its lifecycle
 	// and orchestration, when expansion cannot represent that build alone.
 	if name == "build" && !result.Matched && orchestratedBuild(root, directory, script, manifest.Scripts, stack, remaining, frameworks...) {
-		relative, _ := filepath.Rel(root, directory)
+		relative := repositoryPath(root, directory)
 		return commandResolution{Reason: lifecycle, Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
 	}
 
