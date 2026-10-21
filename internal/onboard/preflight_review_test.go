@@ -167,3 +167,70 @@ func TestUnknownReplacementSetupClearsPriorRuntime(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigurationInspectionUsesGitHubCIDefaultAndExplicitOverrides(t *testing.T) {
+	for _, tc := range []struct{ workflow, job, step, command, want string }{
+		{"", "", "", "npm test", "true"},
+		{"env: {CI: 'false'}\n", "", "", "npm test", "false"},
+		{"env: {CI: 'false'}\n", "    env: {CI: job}\n", "", "npm test", "job"},
+		{"", "", "        env: {CI: step}\n", "npm test", "step"},
+		{"", "", "        env: {CI: step}\n", "CI=command jest", "command"},
+	} {
+		workflow := tc.workflow + "jobs:\n  tests:\n" + tc.job + "    steps:\n      - run: " + tc.command + "\n" + tc.step
+		root := newJestRepository(t, workflow)
+		entry, err := JestConfigurationCommand(root, "")
+		require.NoError(t, err)
+		require.Equal(t, tc.want, entry.Environment["CI"])
+	}
+}
+
+func TestCIBareNodeExecutableNamesUseSetupRuntime(t *testing.T) {
+	for _, name := range []string{"node", "node.exe"} {
+		workflow := strings.Replace(fmt.Sprintf(runtimeWorkflow, ""), "npm run test", name+" node_modules/jest/bin/jest.js", 1)
+		result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, func(context.Context, string, string) (tracerRequirement, error) {
+			return tracerRequirement{Version: "5.132.0", Node: ">=18"}, nil
+		})
+		require.Equal(t, StatusCompatible, result.Status)
+		for _, finding := range result.Jobs {
+			require.Equal(t, StatusCompatible, finding.Status)
+			require.NotEmpty(t, finding.Node)
+			require.Empty(t, finding.Code)
+		}
+	}
+}
+
+func TestSkippedNonJavaScriptActionCannotExcludeJest(t *testing.T) {
+	for _, language := range []string{"python", "ruby", "all"} {
+		workflow := `jobs:
+  valid:
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.0.0'}
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: js, js-tracer-version: '6.17.0'}
+      - run: npm test
+        env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}
+  skipped:
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.0.0'}
+      - uses: datadog/test-visibility-github-action@v3
+        if: false
+        with: {languages: ` + language + `, js-tracer-version: '6.17.0'}
+      - run: npm test
+`
+		result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, func(context.Context, string, string) (tracerRequirement, error) {
+			return tracerRequirement{Version: "6.17.0", Node: ">=22"}, nil
+		})
+		expectedStatus, expectedCode := StatusIncompatible, CodeMissingInstrumentation
+		if language == "all" {
+			expectedStatus, expectedCode = StatusCompatible, CodeExcludedRuntime
+		}
+		require.Equal(t, expectedStatus, result.Status)
+		for _, finding := range result.Jobs {
+			if finding.Job == "skipped" {
+				require.Equal(t, expectedCode, finding.Code)
+			}
+		}
+	}
+}

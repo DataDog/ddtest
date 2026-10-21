@@ -137,7 +137,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		command, args, source = pythonTestdriveCommand(repositoryRoot, command, args, strings.TrimSpace(settings.GetCommand()) != "")
 		environment, preflight = pythonEnvironmentInfo(ctx, command, args, source)
 	case "javascript":
-		environment = nodeEnvironmentInfo(ctx, command)
+		if !configurationOnly {
+			environment = nodeEnvironmentInfo(ctx, command)
+		}
 	case "ruby":
 		environment = rubyEnvironmentInfo(ctx)
 	}
@@ -146,7 +148,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		options.Command, options.Args = environment.Executable, nil
 	}
 	var projectTracer string
-	if preflight == nil {
+	if preflight == nil && !configurationOnly {
 		projectTracer, _ = detectedPlatform.DetectTracer(ctx, options)
 	}
 	var installCommand string

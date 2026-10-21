@@ -196,3 +196,24 @@ func TestNestedPackageDoesNotCertifyCheckoutCI(t *testing.T) {
 	result := validationResult{CheckOnly: true, CIRuntime: &check, Preflight: &jestPreflight{Verdict: verdict{Status: onboard.StatusCompatible}}}
 	require.Error(t, finishValidation(&bytes.Buffer{}, packageRoot, result))
 }
+
+func TestCheckOnlyPreparationDoesNotRunNodeStartupHooks(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("Node required")
+	}
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("TMPDIR", t.TempDir())
+	writeJestManifest(t, root)
+	hook := filepath.Join(root, "startup.cjs")
+	require.NoError(t, os.WriteFile(hook, []byte(`require('node:fs').writeFileSync('NODE_WAS_STARTED','bad')`), 0600))
+	t.Setenv("NODE_OPTIONS", "--require "+fmt.Sprintf("%q", hook))
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	run, err := Prepare(PrepareOptions{CheckOnly: true})
+	require.NoError(t, err)
+	run.Preview(&bytes.Buffer{})
+	require.NoFileExists(t, "NODE_WAS_STARTED")
+	require.NoDirExists(t, ".testoptimization")
+}

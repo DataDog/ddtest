@@ -234,13 +234,11 @@ func (state *runtimeState) trackNode(job runtimeJob, step runtimeStep, row map[s
 }
 
 func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) error {
-	languages, err := runtimeValue(step.With["languages"], row)
-	if err != nil {
+	selected, err := actionSelectsJavaScript(step, row)
+	if err != nil || !selected {
 		return err
 	}
-	if languages != "all" && !slices.Contains(strings.Fields(languages), "js") {
-		return nil
-	}
+
 	state.action = step.Uses
 	state.tracer, err = runtimeValue(step.With["js-tracer-version"], row)
 	if _, explicit := step.With["js-tracer-version"]; explicit && state.tracer == "" {
@@ -286,7 +284,11 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		}
 		if !active {
 			if uses == githubAction {
-				state.skippedAction = true
+				selected, err := actionSelectsJavaScript(step, row)
+				if err != nil && state.action == "" {
+					return fail(CodeUnverifiedExclusion, err.Error())
+				}
+				state.skippedAction = state.skippedAction || selected
 			}
 			continue
 		}
@@ -350,7 +352,7 @@ func evaluateRuntimeTest(ctx context.Context, workflow ciWorkflow, job runtimeJo
 	finding.Requirement = requirement.Node
 	for _, entry := range resolution.Tests {
 		words, _ := shellquote.Split(entry.Command)
-		if len(words) > 0 && words[0] != "node" && (filepath.Base(words[0]) == "node" || filepath.Base(words[0]) == "node.exe") {
+		if len(words) > 0 && !slices.Contains([]string{"node", "node.exe"}, words[0]) && (filepath.Base(words[0]) == "node" || filepath.Base(words[0]) == "node.exe") {
 			finding.Node, finding.NodeResolution = "", nil
 			finding.Code, finding.Reason = CodeRuntimeUnknown, "The test command selects an explicit Node executable; its CI version cannot be inferred from setup-node."
 			return finding
@@ -459,4 +461,12 @@ func fetchRuntimeMetadata(ctx context.Context, client *http.Client, address stri
 		return nil, fmt.Errorf("CI runtime metadata exceeds 1 MiB")
 	}
 	return data, nil
+}
+
+func actionSelectsJavaScript(step runtimeStep, row map[string]any) (bool, error) {
+	languages, err := runtimeValue(step.With["languages"], row)
+	if err != nil {
+		return false, err
+	}
+	return languages == "all" || slices.Contains(strings.Fields(languages), "js"), nil
 }
