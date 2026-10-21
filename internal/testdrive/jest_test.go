@@ -22,6 +22,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var jestFeatures = func() []string {
+	var names []string
+	for _, policy := range featurePolicies("jest") {
+		names = append(names, policy.Name)
+	}
+	return names
+}()
+
 func testRun(status string, exit int) validationRun {
 	traceStatus := map[string]string{"passed": "pass", "failed": "fail"}[status]
 	return validationRun{ExitCode: exit, Tests: []jestTest{{File: "/project/test.js", Name: "works", Status: status}}, Facts: intake.Facts{

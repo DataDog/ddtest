@@ -20,13 +20,21 @@ import (
 // Additional options go to the single Jest invocation, never a lint/setup step.
 // CI files are untouched, and && order, environment and Jest options survive.
 func ForwardJestCommand(root, command string) (string, error) {
+	plan, err := ForwardJestExecution(root, command)
+	return plan.Command, err
+}
+
+func ForwardJestExecution(root, command string) (TestCommand, error) {
 	resolution := resolveJestCommand(root, command, nil)
+	plan := func(command string, lint bool) TestCommand {
+		return TestCommand{Command: command, ProbeLintSkipped: lint, ReviewReason: resolution.Reason}
+	}
 	if !resolution.Matched || resolution.Reason != "" {
-		return command, nil // Explicit custom commands remain the caller's choice.
+		return plan(command, false), nil // Explicit custom commands remain the caller's choice.
 	}
 	commands, err := staticCommands(command)
 	if err != nil {
-		return "", err
+		return TestCommand{}, err
 	}
 	var words []string
 	if len(commands) == 1 {
@@ -36,29 +44,30 @@ func ForwardJestCommand(root, command string) (string, error) {
 	for _, test := range resolution.Tests {
 		runnerWords, err := shellquote.Split(test.Command)
 		if err != nil {
-			return "", err
+			return TestCommand{}, err
 		}
 		if slices.Contains(runnerWords, "--") {
-			return "", fmt.Errorf("positional Jest selection requires an explicit command")
+			return TestCommand{}, fmt.Errorf("positional Jest selection requires an explicit command")
 		}
 	}
 	if resolution.SingleJest && len(words) > 0 && !strings.Contains(words[0], "=") && appendsToRunner(root, words, 0) {
 		if words[0] == "npm" && !slices.Contains(words, "--") {
-			return command + " --", nil
+			return plan(command+" --", false), nil
 		}
 		if words[0] == "jest" {
 			words[0] = filepath.Join(root, "node_modules", ".bin", "jest")
-			return shellquote.Join(words...), nil
+			return plan(shellquote.Join(words...), false), nil
 		}
-		return command, nil
+		return plan(command, false), nil
 	}
 	count := 0
-	body, err := forwardJestScript(root, root, command, 0, &count)
+	skippedLint := false
+	body, err := forwardJestScript(root, root, command, 0, &count, &skippedLint)
 	if err != nil || count != 1 {
-		return "", fmt.Errorf("cannot forward probe options through %q: %v (Jest invocations: %d); use --command with the actual Jest executable, original options and required setup", command, err, count)
+		return TestCommand{}, fmt.Errorf("cannot forward probe options through %q: %v (Jest invocations: %d); use --command with the actual Jest executable, original options and required setup", command, err, count)
 	}
 	body = "PATH=" + shellquote.Join(filepath.Join(root, "node_modules", ".bin")) + ":\"$PATH\"; export PATH; " + body
-	return shellquote.Join("sh", "-c", body, "ddtest-jest"), nil
+	return plan(shellquote.Join("sh", "-c", body, "ddtest-jest"), skippedLint), nil
 }
 
 // Package managers append forwarded options to the raw script text. A comment
@@ -104,7 +113,7 @@ func appendsToRunner(directory string, words []string, depth int) bool {
 // Track cd like the shell does, and run each expanded package script in its own
 // subshell: the package manager's child process confines directory changes and
 // adds that package's local binaries to PATH.
-func forwardJestScript(root, directory, command string, depth int, count *int) (string, error) {
+func forwardJestScript(root, directory, command string, depth int, count *int, skippedLint *bool) (string, error) {
 	if depth >= 16 || strings.ContainsAny(command, ";\n") {
 		return "", fmt.Errorf("only bounded literal && sequences can be forwarded")
 	}
@@ -180,7 +189,7 @@ func forwardJestScript(root, directory, command string, depth int, count *int) (
 				if len(args) > 0 {
 					script += " " + shellquote.Join(args...)
 				}
-				part, err = forwardJestScript(root, directory, script, depth+1, count)
+				part, err = forwardJestScript(root, directory, script, depth+1, count, skippedLint)
 				if err != nil {
 					return "", err
 				}
@@ -193,6 +202,7 @@ func forwardJestScript(root, directory, command string, depth int, count *int) (
 			}
 		}
 		if !resolution.Matched && lintOnly(directory, shellquote.Join(words...), 0) {
+			*skippedLint = true
 			part = `if [ "${DDTEST_JEST_PROBE:-0}" = 1 ]; then :; else ` + part + `; fi`
 		}
 		if len(prefix) > 0 {

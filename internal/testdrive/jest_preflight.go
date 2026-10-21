@@ -112,6 +112,9 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	}
 	runtime, err := readJestRuntimeCapture(capture)
 	if err != nil {
+		if t.commandReviewReason != "" {
+			return fmt.Errorf("%w; command review: %s. Scripts that set NODE_OPTIONS must preserve inherited validation preloads", err, t.commandReviewReason)
+		}
 		return err
 	}
 	check.Node, check.Executable, check.Arguments = runtime.Node, runtime.Executable, runtime.Arguments

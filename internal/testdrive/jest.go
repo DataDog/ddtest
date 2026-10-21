@@ -198,7 +198,7 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 		args = appendJestArgs(t.command, probeJestArgs(t.command, args), "--testNamePattern", "^"+probeName+"$")
 		env["DDTEST_PROBE_MODE"] = probeMode
 		env["DDTEST_JEST_PROBE"] = "1"
-		run.ProbeLintSkipped = strings.Contains(strings.Join(t.args, " "), "DDTEST_JEST_PROBE")
+		run.ProbeLintSkipped = t.probeLintSkipped
 	}
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
 	run.Command = shellquote.Join(append([]string{t.command}, args...)...)

@@ -30,6 +30,8 @@ func stepDirectory(workflow ciWorkflow, job runtimeJob, step runtimeStep) string
 // JestValidationCommand selects a single root-level CI command without executing
 // code. Package scripts must forward added Jest flags to exactly one runner.
 // An empty result leaves repositories without a known script on the default.
+func JestExecutionCommand(root string) (TestCommand, error) { return selectJestCommand(root, true) }
+
 func JestValidationCommand(root string) (string, error) {
 	entry, err := selectJestCommand(root, true)
 	return entry.Command, err
@@ -106,7 +108,7 @@ func selectJestCommand(root string, forward bool) (TestCommand, error) {
 						add(entry)
 						continue
 					}
-					selected, err := ForwardJestCommand(root, resolved.Run)
+					selected, err := ForwardJestExecution(root, resolved.Run)
 					if err != nil {
 						return TestCommand{}, err
 					}
@@ -115,9 +117,9 @@ func selectJestCommand(root string, forward bool) (TestCommand, error) {
 						assignments = append(assignments, key+"="+env[key])
 					}
 					if len(assignments) > 0 {
-						selected = shellCommand(assignments) + " " + selected
+						selected.Command = shellCommand(assignments) + " " + selected.Command
 					}
-					add(TestCommand{Command: selected})
+					add(selected)
 				}
 			}
 		}
@@ -168,8 +170,7 @@ func selectJestCommand(root string, forward bool) (TestCommand, error) {
 			if !forward {
 				return configurationEntry(command, resolution)
 			}
-			selected, err := ForwardJestCommand(root, command)
-			return TestCommand{Command: selected}, err
+			return ForwardJestExecution(root, command)
 		}
 		if resolution.Matched || resolution.Reason != "" {
 			return TestCommand{}, fmt.Errorf("package script %q requires review before forwarding Jest options; use --command with the actual Jest invocation and setup", name)

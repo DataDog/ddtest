@@ -44,6 +44,8 @@ type localIntake interface {
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
 	jestProject          jestProject
+	probeLintSkipped     bool
+	commandReviewReason  string
 	preflightEnvironment map[string]string
 	discoveryError       error
 	preflight            func(context.Context, io.Writer, *validationResult) error
@@ -114,6 +116,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	command, args := runner.Command()
 	configurationOnly := configuration.CheckOnly
 	var discoveryError error
+	var selectedPlan onboard.TestCommand
 	var preflightEnvironment map[string]string
 	if configurationOnly && !frameworkFeaturePolicies[runner.Name()].CheckOnly {
 		return nil, fmt.Errorf("configuration preflight currently supports Jest only")
@@ -129,9 +132,11 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			entry, err = onboard.JestConfigurationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
 			selected, preflightEnvironment = entry.Command, entry.Environment
 		} else if override := strings.TrimSpace(settings.GetCommand()); override != "" {
-			selected, err = onboard.ForwardJestCommand(repositoryRoot, override)
+			selectedPlan, err = onboard.ForwardJestExecution(repositoryRoot, override)
+			selected = selectedPlan.Command
 		} else {
-			selected, err = onboard.JestValidationCommand(repositoryRoot)
+			selectedPlan, err = onboard.JestExecutionCommand(repositoryRoot)
+			selected = selectedPlan.Command
 		}
 		if err != nil {
 			discoveryError = err
@@ -198,7 +203,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 
-	drive := &Testdrive{projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
+	drive := &Testdrive{probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
@@ -804,6 +809,8 @@ func writeCommandFailure(output io.Writer, label string, data []byte) {
 
 func (t *Testdrive) finishStartupFailure(output io.Writer, err error) error {
 	result := validationResult{Framework: t.framework.Name(), CheckOnly: t.checkOnly, Error: err.Error(), Compatibility: verdict{Status: "inconclusive", Code: "recovery_failed", Reason: "Owned startup recovery did not finish."}}
- if t.checkOnly { result.Preflight=&jestPreflight{Verdict:verdict{Status:"inconclusive",Code:"recovery_failed",Reason:err.Error()}} }
+	if t.checkOnly {
+		result.Preflight = &jestPreflight{Verdict: verdict{Status: "inconclusive", Code: "recovery_failed", Reason: err.Error()}}
+	}
 	return errors.Join(err, finishValidation(output, t.repositoryRoot, result))
 }
