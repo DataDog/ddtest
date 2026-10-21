@@ -442,7 +442,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		child := *t
 		child.workflowRoot = t.repositoryRoot
 		child.preflight = child.checkVitestPreflight
-		result, runErr = child.runPreparedConfiguration(ctx, output, &configurationResult{})
+		result, runErr = child.runPreparedConfiguration(ctx, output, &configurationResult{TestCommand: onboard.TestCommand{Environment: child.configurationEnvironment}})
 	} else {
 		result, runErr = t.run(ctx, output)
 	}

@@ -269,3 +269,16 @@ func TestVitestUnhandledRegressionTriggersRepeatedPair(t *testing.T) {
 	require.Equal(t, "suspected regression", result.Compatibility.Status)
 	require.Equal(t, []runRole{roleBaseline, roleReporting, roleRepeat, roleRepeat}, []runRole{result.Runs[0].Role, result.Runs[1].Role, result.Runs[2].Role, result.Runs[3].Role})
 }
+
+func TestFocusedRunnerPreservesSelectedEnvironmentDuringInspection(t *testing.T) {
+	drive := preparedTestdrive(t)
+	drive.framework = framework.NewVitest(platform.NewJavaScript())
+	drive.command = "ddtest"
+	drive.args = []string{"run", "--framework", "vitest"}
+	drive.configurationEnvironment = map[string]string{"NODE_OPTIONS": "--conditions=ddtest-focused", "SCOPED_SETUP": "selected"}
+	executor := &fakeTestdriveExecutor{err: errors.New("stop after inspecting the selected environment")}
+	drive.executor = executor
+	require.Error(t, drive.Run(t.Context(), &bytes.Buffer{}))
+	require.Contains(t, executor.env["NODE_OPTIONS"], "--conditions=ddtest-focused")
+	require.Equal(t, "selected", executor.env["SCOPED_SETUP"])
+}
