@@ -471,21 +471,93 @@ func TestTestSplitBuilderDistributeFiles(t *testing.T) {
 	assertDistribution(t, result, expected)
 }
 
-func TestTestSplitBuilderDistributeSortedFiles(t *testing.T) {
-	files := []weightedTestFile{
-		{path: "slow.rb", weight: 3},
-		{path: "medium.rb", weight: 2},
-		{path: "fast.rb", weight: 1},
+func TestPrepareSplitFiles(t *testing.T) {
+	testFiles := map[string]int{
+		"tests_a/test_same.py": 10,
+		"tests_b/test_same.py": 1,
+		"tests/test_other.py":  11,
 	}
 
+	prepared := prepareSplitFiles(testFiles, true)
+	wantOrder := []string{"tests/test_other.py", "tests_a/test_same.py", "tests_b/test_same.py"}
+	gotOrder := make([]string, len(prepared.sortedFiles))
+	for i, file := range prepared.sortedFiles {
+		gotOrder[i] = file.path
+	}
+	if !slices.Equal(gotOrder, wantOrder) {
+		t.Fatalf("sortedFiles = %v, want %v", gotOrder, wantOrder)
+	}
+	wantGroups := [][]int{{1, 2}}
+	if !slices.EqualFunc(prepared.collisionGroups, wantGroups, func(a, b []int) bool { return slices.Equal(a, b) }) {
+		t.Fatalf("collisionGroups = %v, want %v", prepared.collisionGroups, wantGroups)
+	}
+	if wantInGroup := []bool{false, true, true}; !slices.Equal(prepared.inCollisionGroup, wantInGroup) {
+		t.Fatalf("inCollisionGroup = %v, want %v", prepared.inCollisionGroup, wantInGroup)
+	}
+
+	// Without basename affinity the collision bookkeeping stays empty.
+	plain := prepareSplitFiles(testFiles, false)
+	if len(plain.collisionGroups) != 0 || !slices.Equal(plain.inCollisionGroup, []bool{false, false, false}) {
+		t.Fatalf("affinity-disabled prepare = %+v, want no collision bookkeeping", plain)
+	}
+}
+
+func TestTestSplitBuilderPlacePreparedFiles(t *testing.T) {
+	testFiles := map[string]int{
+		"fast.rb":   1,
+		"medium.rb": 2,
+		"slow.rb":   3,
+	}
+	prepared := prepareSplitFiles(testFiles, false)
+
 	builder := newTestSplitBuilder(2)
-	result := builder.distributeSortedFiles(files)
+	result, collisions := builder.placePrepared(prepared)
 	expected := [][]string{
 		{"slow.rb"},
 		{"medium.rb", "fast.rb"},
 	}
-
 	assertDistribution(t, result, expected)
+	if len(collisions) != 0 {
+		t.Fatalf("unexpected collisions: %v", collisions)
+	}
+}
+
+func TestTestSplitBuilderPlacePreparedFilesLoadsOnlyMatchesRecorded(t *testing.T) {
+	// Load-only scoring must produce the same runner loads as the recorded
+	// placement that builds the split file lists.
+	testFiles := map[string]int{
+		"tests_a/test_same.py": 10,
+		"tests_b/test_same.py": 1,
+		"tests/test_other.py":  11,
+	}
+	prepared := prepareSplitFiles(testFiles, true)
+
+	loadsOnly := newTestSplitBuilder(2)
+	loadsOnly.placePreparedFiles(prepared, nil)
+
+	recorded := newTestSplitBuilder(2)
+	assignments := make([]int, len(prepared.sortedFiles))
+	collisions := recorded.placePreparedFiles(prepared, assignments)
+
+	if loadsOnly.score() != recorded.score() {
+		t.Fatalf("loads-only score %+v != recorded score %+v", loadsOnly.score(), recorded.score())
+	}
+	if len(collisions) != 0 {
+		t.Fatalf("unexpected collisions: %v", collisions)
+	}
+	for _, runnerIndex := range assignments {
+		if runnerIndex < 0 || runnerIndex >= 2 {
+			t.Fatalf("assignment %d out of range", runnerIndex)
+		}
+	}
+
+	// The recorded placement must reproduce the split distribution.
+	builder := newTestSplitBuilder(2)
+	result, collisions := builder.placePrepared(prepared)
+	assertDistribution(t, result, [][]string{{"tests_a/test_same.py"}, {"tests_b/test_same.py", "tests/test_other.py"}})
+	if len(collisions) != 0 {
+		t.Fatalf("unexpected collisions: %v", collisions)
+	}
 }
 
 func TestCreateTestSplits(t *testing.T) {

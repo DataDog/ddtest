@@ -17,9 +17,11 @@ func calculateParallelRunnerSplitSelection(testFileWeights map[string]int, minPa
 		targetTime:             targetTime,
 	}
 	// Candidate scoring simulates the same distribution split creation uses,
-	// so the reported plan matches the generated splits.
+	// so the reported plan matches the generated splits. The ordering and
+	// collision groups are prepared once and shared by every candidate.
+	prepared := prepareSplitFiles(testFileWeights, basenameAffinity)
 	scoreCandidate := func(parallelRunners int) splitScore {
-		return scoreRunnerSplit(testFileWeights, parallelRunners, basenameAffinity)
+		return scorePreparedRunnerSplit(prepared, parallelRunners)
 	}
 
 	// maxParallelism could be 0 or negative!
