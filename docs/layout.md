@@ -74,6 +74,10 @@ All values are strings; when no planning CI fields are available, `tags` is `{}`
 }
 ```
 
+`ddtest run` passes this file's absolute path through the private
+`_DD_TEST_PARALLELIZATION_METADATA_FILE` runtime parameter. This locator is
+independent of custom HTTP-cache manifest locations.
+
 This is an internal DDTest-to-library interface and may change or be removed
 without notice. Applications and CI configuration should not modify or depend on
 its contents. Libraries only read it when `_DD_TEST_PARALLELIZATION_ENABLED` is

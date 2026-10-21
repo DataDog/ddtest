@@ -1,6 +1,7 @@
 package constants
 
 const TestParallelizationEnabledEnvVar = "_DD_TEST_PARALLELIZATION_ENABLED"
+const TestParallelizationMetadataFileEnvVar = "_DD_TEST_PARALLELIZATION_METADATA_FILE"
 
 // TestParallelizationPlanTags maps planning-job CI tags to the tracer tags written
 // to plan-metadata.json. Keep this allowlist free of secrets and machine-specific

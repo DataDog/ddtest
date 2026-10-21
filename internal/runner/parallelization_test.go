@@ -61,6 +61,10 @@ func TestTestRunner_Run_EnablesParallelizationForEveryWorker(t *testing.T) {
 				if got := call.EnvMap[constants.TestOptimizationManifestFileEnvVar]; got != wantManifest {
 					t.Fatalf("manifest = %q, want %q", got, wantManifest)
 				}
+				wantMetadata := filepath.Join(filepath.Dir(wantManifest), "plan-metadata.json")
+				if got := call.EnvMap[constants.TestParallelizationMetadataFileEnvVar]; got != wantMetadata {
+					t.Fatalf("metadata file = %q, want %q", got, wantMetadata)
+				}
 
 				for envVar := range call.EnvMap {
 					if strings.HasPrefix(envVar, "DD_TEST_PARALLELIZATION_") || strings.HasPrefix(envVar, "_DD_TEST_PARALLELIZATION_PLAN_") {

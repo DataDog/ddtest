@@ -181,18 +181,23 @@ starting each worker.
 `.testoptimization` artifact as usual to carry these values between jobs.
 This file is written in every planning mode, independently of the HTTP cache.
 
-`ddtest run` sets `_DD_TEST_PARALLELIZATION_ENABLED=true` for every test worker,
-including single-worker runs. Supporting tracing libraries then read
-`plan-metadata.json` alongside the manifest identified by
-`TEST_OPTIMIZATION_MANIFEST_FILE` (or its `DD_TEST_OPTIMIZATION_MANIFEST_FILE`
-alias), falling back to `.testoptimization/` in the current working directory
-when no manifest location is supplied. DDTest does not inject individual
-planning metadata environment variables.
+`ddtest run` sets `_DD_TEST_PARALLELIZATION_ENABLED=true` and an absolute
+`_DD_TEST_PARALLELIZATION_METADATA_FILE` path for every test worker, including
+single-worker runs. The file locator points at the generated planning metadata,
+independently of any custom `TEST_OPTIMIZATION_MANIFEST_FILE` setting. DDTest
+preserves custom manifests for their existing HTTP-cache use.
 
-> **Internal interface:** This marker and metadata file are managed by DDTest and
-> are documented for reference only. They are not part of the public configuration
-> API and may change or be removed without notice. Do not set, modify, or depend
-> on them in application code or CI configuration.
+Supporting tracing libraries read the explicit metadata file. When no metadata
+locator is supplied, they look for `plan-metadata.json` alongside the manifest
+identified by `TEST_OPTIMIZATION_MANIFEST_FILE` (or its
+`DD_TEST_OPTIMIZATION_MANIFEST_FILE` alias), falling back to `.testoptimization/`
+in the current working directory when no manifest location is supplied.
+DDTest does not inject individual planning metadata environment variables.
+
+> **Internal interface:** These runtime parameters and the metadata file are
+> managed by DDTest and are documented for reference only. They are not part of
+> the public configuration API and may change or be removed without notice. Do not
+> set, modify, or depend on them in application code or CI configuration.
 
 The marker produces `test.parallelization.enabled:true`. DDTest maps the planning
 CI identity to final tracer tags in the file's `tags` object. Libraries apply these

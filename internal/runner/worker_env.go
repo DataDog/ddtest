@@ -21,7 +21,16 @@ func createWorkerEnv(workerEnvMap map[string]string, nodeIndex int, workerIndex 
 	workerEnv := replaceIndexPlaceholders(workerEnvMap, nodeIndex, workerIndex)
 	ensureTestSessionName(workerEnv, nodeIndex, workerIndex)
 	ensureManifestFile(workerEnv)
+	setPlanMetadataFile(workerEnv)
 	return workerEnv
+}
+
+func setPlanMetadataFile(workerEnv map[string]string) {
+	metadataPath, err := filepath.Abs(constants.PlanMetadataPath)
+	if err != nil {
+		metadataPath = constants.PlanMetadataPath
+	}
+	workerEnv[constants.TestParallelizationMetadataFileEnvVar] = metadataPath
 }
 
 func workerEnvKeys(workerEnv map[string]string) []string {
