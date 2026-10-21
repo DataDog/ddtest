@@ -33,14 +33,19 @@ func (j *JavaScript) ResolveTestdriveTracer(ctx context.Context, options TracerO
 		selected.Requested = "latest"
 	}
 	// PnP archives are readable through their Node loader, not Go's filesystem.
-	for _, loader := range []string{".pnp.cjs", ".pnp.js"} {
-		if _, err := os.Stat(loader); err != nil {
-			continue
-		}
+	root, err := os.Getwd()
+	if err != nil {
+		return selected, err
+	}
+	loader, err := FindPnPLoader(root)
+	if err != nil {
+		return selected, err
+	}
+	if loader != "" {
 		const metadata = `const fs=require('node:fs'),path=require('node:path');let init;
 try { init=require.resolve('dd-trace/ci/init'); } catch(error) { if(error.code==='MODULE_NOT_FOUND'){process.stdout.write('null');process.exit(0)} throw error; }
 process.stdout.write(fs.readFileSync(path.join(path.dirname(path.dirname(init)),'package.json'),'utf8'));`
-		data, _, err := j.executor.Output(ctx, "node", []string{"--require", "./" + loader, "-e", metadata}, map[string]string{"NODE_OPTIONS": "", "DD_TRACE_ENABLED": "false", "DD_CIVISIBILITY_ENABLED": "false"})
+		data, _, err := j.executor.Output(ctx, "node", []string{"--require", loader, "-e", metadata}, map[string]string{"NODE_OPTIONS": "", "DD_TRACE_ENABLED": "false", "DD_CIVISIBILITY_ENABLED": "false"})
 		if err != nil {
 			return selected, fmt.Errorf("read installed PnP tracer metadata: %w", err)
 		}
@@ -54,7 +59,6 @@ process.stdout.write(fs.readFileSync(path.join(path.dirname(path.dirname(init)),
 	if probeErr != nil {
 		path = "" // The platform falls back when the project check fails.
 	}
-	var err error
 	var data []byte
 	if path != "" {
 		selected.Source = "project"

@@ -50,7 +50,7 @@ jobs:
 }
 
 func TestCIRuntimeChangesNeverReuseSetupNode(t *testing.T) {
-	for _, command := range []string{"nvm use", "nvm install --lts", "n 16", "fnm use 16", "fnm exec 16 jest"} {
+	for _, command := range []string{"nvm use", "nvm install 22", "nvm install --lts", "n 16", "fnm use 16", "fnm exec 16 jest"} {
 		t.Run(command, func(t *testing.T) {
 			workflow := strings.Replace(fmt.Sprintf(runtimeWorkflow, ""), "      - run: npm run test", "      - run: "+command+"\n      - run: npm run test", 1)
 			result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, func(context.Context, string, string) (tracerRequirement, error) {

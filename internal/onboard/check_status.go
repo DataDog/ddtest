@@ -27,4 +27,5 @@ const (
 	CodeUnverifiedTracerMajor        string = "unverified_tracer_major"
 	CodeUnresolvedJestVersion        string = "unresolved_jest_version"
 	CodeUnsupportedJestConfiguration string = "unsupported_jest_configuration"
+	CodeNestedCIScope                string = "nested_ci_scope"
 )

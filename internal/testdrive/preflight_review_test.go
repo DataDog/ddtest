@@ -56,7 +56,7 @@ func TestInstalledJestResolvesWithPnPAndBinFallback(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("Node required")
 	}
-	for _, mode := range []string{"pnp", "local bin", "missing"} {
+	for _, mode := range []string{"pnp", "pnp workspace", "local bin", "missing"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)
@@ -67,14 +67,20 @@ func TestInstalledJestResolvesWithPnPAndBinFallback(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Dir(entry), 0700))
 			require.NoError(t, os.WriteFile(entry, []byte(`console.log('installed')`), 0600))
 			switch mode {
-			case "pnp":
+			case "pnp", "pnp workspace":
 				loader := fmt.Sprintf(`const m=require('module');const original=m._resolveFilename;m._resolveFilename=function(request,...args){if(request==='jest/bin/jest')return %q;return original.call(this,request,...args)}`, entry)
 				require.NoError(t, os.WriteFile(".pnp.cjs", []byte(loader), 0600))
 			case "local bin":
 				require.NoError(t, os.MkdirAll("node_modules/.bin", 0700))
 				require.NoError(t, os.Symlink(entry, "node_modules/.bin/jest"))
 			}
-			run := &Testdrive{repositoryRoot: root, args: []string{"--showConfig"}, executor: &ext.DefaultCommandExecutor{}}
+			packageRoot := root
+			if mode == "pnp workspace" {
+				packageRoot = filepath.Join(root, "packages", "app")
+				require.NoError(t, os.MkdirAll(packageRoot, 0700))
+				t.Chdir(packageRoot)
+			}
+			run := &Testdrive{repositoryRoot: packageRoot, args: []string{"--showConfig"}, executor: &ext.DefaultCommandExecutor{}}
 			command, args, err := run.installedJest(t.Context())
 			if mode == "missing" {
 				require.Error(t, err)
@@ -170,4 +176,23 @@ func TestJestSupportRulesCoverCICompatibilityMatrix(t *testing.T) {
 		}
 		require.True(t, compatible, "CI must exercise each verified tracer major's supported Jest range")
 	}
+}
+
+func TestNestedPackageDoesNotCertifyCheckoutCI(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("Git required")
+	}
+	root := t.TempDir()
+	require.NoError(t, exec.Command("git", "init", "-q", root).Run())
+	packageRoot := filepath.Join(root, "packages", "app")
+	require.NoError(t, os.MkdirAll(packageRoot, 0700))
+	t.Chdir(packageRoot)
+	require.NoError(t, os.WriteFile("package.json", []byte(`{"scripts":{"test":"jest"}}`), 0600))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".github", "workflows", "ci.yml"), []byte(`jobs: {tests: {steps: [{run: 'npm test'}]}}`), 0600))
+	check := checkConfigurationCIRuntimes(t.Context(), packageRoot, "jest")
+	require.Equal(t, onboard.StatusInconclusive, check.Status)
+	require.Equal(t, "nested_ci_scope", check.Review[0].Code)
+	result := validationResult{CheckOnly: true, CIRuntime: &check, Preflight: &jestPreflight{Verdict: verdict{Status: onboard.StatusCompatible}}}
+	require.Error(t, finishValidation(&bytes.Buffer{}, packageRoot, result))
 }

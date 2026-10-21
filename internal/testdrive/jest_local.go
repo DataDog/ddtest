@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/DataDog/ddtest/internal/platform"
 	"os"
 	"path/filepath"
 )
@@ -17,13 +18,14 @@ import (
 // package installation. This runs only after the user approves check-only.
 func (t *Testdrive) installedJest(ctx context.Context) (string, []string, error) {
 	args := []string{}
-	for _, name := range []string{".pnp.cjs", ".pnp.js"} {
-		path := filepath.Join(t.repositoryRoot, name)
-		if _, err := os.Stat(path); err == nil {
-			args = append(args, "--require", path)
-			break
-		}
+	loader, err := platform.FindPnPLoader(t.repositoryRoot)
+	if err != nil {
+		return "", nil, err
 	}
+	if loader != "" {
+		args = append(args, "--require", loader)
+	}
+
 	const resolver = `process.stdout.write(JSON.stringify(require.resolve('jest/bin/jest',{paths:[process.cwd()]})))`
 	data, err := t.executor.CombinedOutput(ctx, "node", append(args, "-e", resolver), map[string]string{"NODE_OPTIONS": "", "NODE_PATH": "", "DD_TRACE_ENABLED": "false", "DD_CIVISIBILITY_ENABLED": "false"})
 	var entry string

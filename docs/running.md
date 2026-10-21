@@ -563,7 +563,8 @@ ignoring CI job overhead, to get as close as possible to the target.
 
 Before running a Jest suite, use `ddtest testdrive --framework jest --check-only --yes`.
 Jest must already be installed and resolvable through the project, including Yarn
-Plug'n'Play. This mode loads configuration, reads registry/runtime metadata and
+Plug'n'Play workspace packages using an ancestor loader. Nested package checks
+remain incomplete when checkout-level workflows have not been validated. This mode loads configuration, reads registry/runtime metadata and
 writes `.testoptimization/testdrive.json`. It installs no tracer, runs no tests
 and edits no workflows. Unapplied prerequisites and unresolved CI environments
 make the checks incomplete. Run from the package directory; use `--command` only

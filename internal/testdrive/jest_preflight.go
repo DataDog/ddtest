@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/Masterminds/semver/v3"
@@ -203,11 +204,40 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 		return err
 	}
 	result.Scope = &scope
-	check := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
+	check := checkConfigurationCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
 	result.CIRuntime = &check
 	if err := t.checkJestPreflight(ctx, output, &result); err != nil {
 		result.Error = err.Error()
 		return err
 	}
 	return nil
+}
+
+// Full package/checkout scope coordination belongs to the configuration PR.
+// Until then, nested invocation must not certify CI it did not inspect.
+func checkConfigurationCIRuntimes(ctx context.Context, packageRoot, frameworkName string) onboard.RuntimeCheck {
+	check := onboard.CheckCIRuntimes(ctx, packageRoot, frameworkName)
+	checkout := git.GetSourceRoot()
+	if checkout == "" {
+		return check
+	}
+	canonicalPackage, _ := filepath.EvalSymlinks(packageRoot)
+	canonicalCheckout, _ := filepath.EvalSymlinks(checkout)
+	if canonicalPackage == canonicalCheckout {
+		return check
+	}
+	entries, err := os.ReadDir(filepath.Join(checkout, ".github", "workflows"))
+	if os.IsNotExist(err) {
+		return check
+	}
+	hasWorkflow := err != nil
+	for _, entry := range entries {
+		hasWorkflow = hasWorkflow || (!entry.IsDir() && (filepath.Ext(entry.Name()) == ".yml" || filepath.Ext(entry.Name()) == ".yaml"))
+	}
+	if hasWorkflow {
+		check.Status = onboard.StatusInconclusive
+		check.Reason = "Checkout-level GitHub Actions workflows were not validated from this package directory. Validate the checkout's CI/package scope before claiming configuration checks passed."
+		check.Review = append(check.Review, onboard.RuntimeFinding{Workflow: ".github/workflows", Status: onboard.StatusNotExercised, Code: onboard.CodeNestedCIScope, Reason: check.Reason})
+	}
+	return check
 }

@@ -227,7 +227,7 @@ func (state *runtimeState) trackNode(job runtimeJob, step runtimeStep, row map[s
 		state.source = step.Source
 		state.platform = nodeDistributionPlatform(job.RunsOn, step.With["architecture"], row)
 	} else if changesNodeRuntime(step.Run) {
-		state.node = nvmRuntime(step.Run) // Empty means the new selection is unknown.
+		state.node = "" // A run step cannot establish later shells' PATH without verified persistence.
 		state.source = step.Source
 		state.platform = nodeDistributionPlatform(job.RunsOn, "", row)
 	}
