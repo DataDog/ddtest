@@ -185,7 +185,10 @@ in the plan cache under `planMetadata.ciTags`. Upload and download the complete
 libraries that support this integration. No manual environment configuration
 is required. The handoff uses internal environment variables managed by DDTest.
 
-For reference, the internal environment-variable-to-tag mapping is:
+> **Internal interface:** These variables are managed by DDTest and are documented
+> for reference only. They are not part of the public configuration API and may
+> change or be removed without notice. Do not set or depend on them in application
+> code or CI configuration.
 
 | Environment variable | Tracer tag |
 | --- | --- |
