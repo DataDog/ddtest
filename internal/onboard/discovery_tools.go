@@ -10,6 +10,7 @@ type discoveryTool string
 
 const (
 	metadataTool  discoveryTool = "metadata"
+	failingTool   discoveryTool = "failing"
 	buildTool     discoveryTool = "build"
 	reviewTool    discoveryTool = "review"
 	frameworkTool discoveryTool = "framework"
@@ -22,7 +23,7 @@ var discoveryTools = map[string]discoveryTool{
 	"echo":        metadataTool,  // Shell builtin: prints its already-inspected literal arguments.
 	"printf":      metadataTool,  // Shell builtin: formats literal arguments; substitutions are inspected separately.
 	"true":        metadataTool,  // Shell builtin with no child command.
-	"false":       metadataTool,  // Shell builtin with no child command.
+	"false":       failingTool,   // Always fails; && followers cannot be assumed to execute.
 	"mkdir":       metadataTool,  // Creates directories; does not dispatch a test runner.
 	"cp":          metadataTool,  // Copies files; mutations are retained as setup diagnostics.
 	"jq":          reviewTool,    // Transforms data; only literal filters/paths are accepted for redirection.
@@ -54,6 +55,8 @@ var discoveryTools = map[string]discoveryTool{
 func resolveDiscoveryTool(root, directory string, words []string, framework string, tool discoveryTool) commandResolution {
 	command := shellquote.Join(words...)
 	switch tool {
+	case failingTool:
+		return unresolvedCommand("Failing shell command may prevent subsequent test execution: " + command)
 	case metadataTool:
 		if words[0] == "printf" && len(words) > 1 && strings.HasPrefix(words[1], "-v") {
 			return unresolvedCommand("Shell variable assignment requires review: " + command)
