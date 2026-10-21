@@ -208,6 +208,42 @@ func TestRunBatch_WorkerEnvManifestFileTakesPrecedence(t *testing.T) {
 	}
 }
 
+func TestRunBatch_MetadataFileIsIndependentOfCustomManifest(t *testing.T) {
+	for _, source := range []string{"process", "worker"} {
+		t.Run(source, func(t *testing.T) {
+			chdirForTest(t, t.TempDir())
+			t.Setenv(constants.TestOptimizationManifestFileEnvVar, "/tmp/process-cache/manifest.txt")
+			t.Setenv(constants.TestParallelizationMetadataFileEnvVar, "/tmp/stale-plan-metadata.json")
+			workerEnv := map[string]string{
+				constants.TestParallelizationMetadataFileEnvVar: "/tmp/worker-override.json",
+			}
+			wantManifest := "/tmp/process-cache/manifest.txt"
+			if source == "worker" {
+				wantManifest = "/tmp/worker-cache/manifest.txt"
+				workerEnv[constants.TestOptimizationManifestFileEnvVar] = wantManifest
+			}
+			framework := &MockFramework{FrameworkName: "mocha"}
+			if err := newTestExecutor(context.Background(), framework, workerEnv, roundRobinTestPlanner{}).runBatch([]string{"test.js"}, 0, 0); err != nil {
+				t.Fatal(err)
+			}
+			env := framework.GetRunTestsCalls()[0].EnvMap
+			if env[constants.TestOptimizationManifestFileEnvVar] != wantManifest {
+				t.Fatalf("custom manifest changed: %v", env)
+			}
+			wantMetadata, err := filepath.Abs(constants.PlanMetadataPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if env[constants.TestParallelizationMetadataFileEnvVar] != wantMetadata {
+				t.Fatalf("metadata path = %q, want %q", env[constants.TestParallelizationMetadataFileEnvVar], wantMetadata)
+			}
+			if workerEnv[constants.TestParallelizationMetadataFileEnvVar] != "/tmp/worker-override.json" {
+				t.Fatal("modified the caller's worker environment")
+			}
+		})
+	}
+}
+
 func TestWorkerEnvKeysReturnsSortedKeysWithoutValues(t *testing.T) {
 	keys := workerEnvKeys(map[string]string{
 		"Z_VAR":        "secret-z",

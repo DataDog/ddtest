@@ -15,6 +15,7 @@ troubleshooting, but they are DDTest implementation details.
 ```text
 .testoptimization/
   manifest.txt
+  plan-metadata.json
   runner/
     test-files.txt
     parallel-runners.txt
@@ -53,6 +54,36 @@ Plain text file containing the plan layout version.
 
 DDTest sets `TEST_OPTIMIZATION_MANIFEST_FILE` for worker processes to point at
 this file unless that environment variable is already set.
+
+### `.testoptimization/plan-metadata.json`
+
+Internal metadata captured by `ddtest plan` for tracing libraries. DDTest always
+writes this file, independently of the optional HTTP cache. Its `tags` object
+contains the final `test.parallelization.plan.*` tracer tags derived from the
+planning job's CI identity. The mapping is defined by DDTest in the
+[planning-job correlation reference](running.md#planning-job-correlation).
+All values are strings; when no planning CI fields are available, `tags` is `{}`.
+
+```json
+{
+  "tags": {
+    "test.parallelization.plan.provider.name": "gitlab",
+    "test.parallelization.plan.job.id": "101",
+    "test.parallelization.plan.job.url": "https://gitlab.example.com/project/-/jobs/101"
+  }
+}
+```
+
+`ddtest run` passes this file's absolute path through the private
+`_DD_TEST_PARALLELIZATION_METADATA_FILE` runtime parameter. This locator is
+independent of custom HTTP-cache manifest locations.
+
+This is an internal DDTest-to-library interface and may change or be removed
+without notice. Applications and CI configuration should not modify or depend on
+its contents. Libraries only read it when `_DD_TEST_PARALLELIZATION_ENABLED` is
+true, accept string-valued `test.parallelization.plan.*` tags, and preserve the
+execution job's normal CI tags. The enabled tag comes from the runtime marker;
+it is not stored in the file. Missing or corrupt data leaves only the enabled tag.
 
 ## Plan Files
 

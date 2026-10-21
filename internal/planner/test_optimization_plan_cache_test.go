@@ -2,6 +2,7 @@ package planner
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -106,9 +107,37 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 		}
 	}
 	for tag := range runner.planMetadata.CITags {
-		if _, allowed := constants.TestParallelizationPlanEnvVars[tag]; !allowed {
+		if _, allowed := constants.TestParallelizationPlanTags[tag]; !allowed {
 			t.Fatalf("unexpected planning CI tag %s", tag)
 		}
+	}
+
+	metadataData, err := os.ReadFile(constants.PlanMetadataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata struct {
+		Tags map[string]string `json:"tags"`
+	}
+	if err := json.Unmarshal(metadataData, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	wantTags := map[string]string{
+		"test.parallelization.plan.provider.name":   "gitlab",
+		"test.parallelization.plan.job.id":          "plan-job-123",
+		"test.parallelization.plan.job.name":        "plan",
+		"test.parallelization.plan.job.url":         "https://gitlab.com/example/project/-/jobs/123",
+		"test.parallelization.plan.pipeline.id":     "pipeline-456",
+		"test.parallelization.plan.pipeline.name":   "example/project",
+		"test.parallelization.plan.pipeline.number": "456",
+		"test.parallelization.plan.pipeline.url":    "https://gitlab.com/example/project/-/pipelines/456",
+		"test.parallelization.plan.stage.name":      "planning",
+	}
+	if !reflect.DeepEqual(metadata.Tags, wantTags) {
+		t.Fatalf("library metadata = %v, want %v", metadata.Tags, wantTags)
+	}
+	if strings.Contains(string(metadataData), "must-not-be-stored") {
+		t.Fatal("library metadata contains an API key")
 	}
 
 	// Loading the artifact in another job must retain the planning job identity.

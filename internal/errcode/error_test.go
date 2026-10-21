@@ -64,6 +64,7 @@ func TestFatalCodesAreUnique(t *testing.T) {
 		PlanFullDiscoveryResultsProcessingFailed,
 		PlanFastDiscoveryResultsProcessingFailed,
 		PlanManifestWriteFailed,
+		PlanMetadataWriteFailed,
 		PlanCacheWriteFailed,
 		PlanTestFilesWriteFailed,
 		PlanSkippablePercentageWriteFailed,

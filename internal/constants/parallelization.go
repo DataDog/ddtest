@@ -1,19 +1,20 @@
 package constants
 
 const TestParallelizationEnabledEnvVar = "_DD_TEST_PARALLELIZATION_ENABLED"
+const TestParallelizationMetadataFileEnvVar = "_DD_TEST_PARALLELIZATION_METADATA_FILE"
 
-// TestParallelizationPlanEnvVars maps planning-job CI tags to the private
-// environment variables consumed by tracing libraries. Keep this allowlist free
-// of secrets and machine-specific metadata such as workspace paths.
-var TestParallelizationPlanEnvVars = map[string]string{
-	CIProviderName:        "_DD_TEST_PARALLELIZATION_PLAN_PROVIDER_NAME",
-	CIPipelineID:          "_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_ID",
-	CIPipelineName:        "_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_NAME",
-	CIPipelineDisplayName: "_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_DISPLAY_NAME",
-	CIPipelineNumber:      "_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_NUMBER",
-	CIPipelineURL:         "_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_URL",
-	CIJobID:               "_DD_TEST_PARALLELIZATION_PLAN_JOB_ID",
-	CIJobName:             "_DD_TEST_PARALLELIZATION_PLAN_JOB_NAME",
-	CIJobURL:              "_DD_TEST_PARALLELIZATION_PLAN_JOB_URL",
-	CIStageName:           "_DD_TEST_PARALLELIZATION_PLAN_STAGE_NAME",
+// TestParallelizationPlanTags maps planning-job CI tags to the tracer tags written
+// to plan-metadata.json. Keep this allowlist free of secrets and machine-specific
+// metadata such as workspace paths.
+var TestParallelizationPlanTags = map[string]string{
+	CIProviderName:        "test.parallelization.plan.provider.name",
+	CIPipelineID:          "test.parallelization.plan.pipeline.id",
+	CIPipelineName:        "test.parallelization.plan.pipeline.name",
+	CIPipelineDisplayName: "test.parallelization.plan.pipeline.display_name",
+	CIPipelineNumber:      "test.parallelization.plan.pipeline.number",
+	CIPipelineURL:         "test.parallelization.plan.pipeline.url",
+	CIJobID:               "test.parallelization.plan.job.id",
+	CIJobName:             "test.parallelization.plan.job.name",
+	CIJobURL:              "test.parallelization.plan.job.url",
+	CIStageName:           "test.parallelization.plan.stage.name",
 }

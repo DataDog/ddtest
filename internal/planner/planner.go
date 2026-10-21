@@ -214,6 +214,10 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 		return errcode.WithCode(errcode.PlanManifestWriteFailed, fmt.Errorf("failed to write test optimization manifest: %w", err))
 	}
 
+	if err := writePlanMetadata(tp.planMetadata.CITags); err != nil {
+		return errcode.WithCode(errcode.PlanMetadataWriteFailed, err)
+	}
+
 	if err := tp.storeTestOptimizationPlanCache(); err != nil {
 		return errcode.WithCode(errcode.PlanCacheWriteFailed, fmt.Errorf("failed to store test optimization plan cache: %w", err))
 	}
@@ -308,7 +312,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	tp.runInfo = runmetadata.New(ciTags)
 	tp.planMetadata = NewPlanMetadata(tags, detectedPlatform.Name(), testFramework.Name(), testSkippingLevel)
 	tp.planMetadata.CITags = make(map[string]string)
-	for key := range constants.TestParallelizationPlanEnvVars {
+	for key := range constants.TestParallelizationPlanTags {
 		if value := ciTags[key]; value != "" {
 			tp.planMetadata.CITags[key] = value
 		}

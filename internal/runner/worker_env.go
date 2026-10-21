@@ -15,21 +15,39 @@ import (
 const (
 	nodeIndexPlaceholder   = "{{nodeIndex}}"
 	workerIndexPlaceholder = "{{workerIndex}}"
+	legacyPlanEnvPrefix    = "_DD_TEST_PARALLELIZATION_PLAN_"
 )
 
 func createWorkerEnv(workerEnvMap map[string]string, nodeIndex int, workerIndex int) map[string]string {
 	workerEnv := replaceIndexPlaceholders(workerEnvMap, nodeIndex, workerIndex)
+	clearLegacyPlanEnv(workerEnv)
 	ensureTestSessionName(workerEnv, nodeIndex, workerIndex)
 	ensureManifestFile(workerEnv)
+	setPlanMetadataFile(workerEnv)
 	return workerEnv
 }
 
-func addTestParallelizationEnv(workerEnv, planCITags map[string]string) {
-	workerEnv[constants.TestParallelizationEnabledEnvVar] = "true"
-	for tag, envVar := range constants.TestParallelizationPlanEnvVars {
-		// Empty values also clear inherited metadata from a different plan.
-		workerEnv[envVar] = planCITags[tag]
+func clearLegacyPlanEnv(workerEnv map[string]string) {
+	for key := range workerEnv {
+		if strings.HasPrefix(key, legacyPlanEnvPrefix) {
+			workerEnv[key] = ""
+		}
 	}
+	// Empty overrides also suppress values inherited from the ddtest process.
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, legacyPlanEnvPrefix) {
+			workerEnv[key] = ""
+		}
+	}
+}
+
+func setPlanMetadataFile(workerEnv map[string]string) {
+	metadataPath, err := filepath.Abs(constants.PlanMetadataPath)
+	if err != nil {
+		metadataPath = constants.PlanMetadataPath
+	}
+	workerEnv[constants.TestParallelizationMetadataFileEnvVar] = metadataPath
 }
 
 func workerEnvKeys(workerEnv map[string]string) []string {

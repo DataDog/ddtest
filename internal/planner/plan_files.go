@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,22 @@ import (
 
 	"github.com/DataDog/ddtest/internal/constants"
 )
+
+func writePlanMetadata(ciTags map[string]string) error {
+	tags := make(map[string]string)
+	for ciTag, tag := range constants.TestParallelizationPlanTags {
+		if value := ciTags[ciTag]; value != "" {
+			tags[tag] = value
+		}
+	}
+	data, err := json.Marshal(struct {
+		Tags map[string]string `json:"tags"`
+	}{Tags: tags})
+	if err != nil {
+		return fmt.Errorf("failed to encode plan metadata: %w", err)
+	}
+	return writePlanFile(constants.PlanMetadataPath, data)
+}
 
 func writeTestFilesArtifact(testFileWeights map[string]int) error {
 	testFileNames := make([]string, 0, len(testFileWeights))

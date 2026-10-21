@@ -905,6 +905,18 @@ func TestTestPlanner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
 	assertFileContent(t, constants.SkippablePercentageOutputPath, "0.00")
 
 	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
+
+	t.Run("metadata write failure fails planning", func(t *testing.T) {
+		if err := os.Remove(constants.PlanMetadataPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(constants.PlanMetadataPath, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := runner.Plan(context.Background()); errcode.CodeOf(err) != errcode.PlanMetadataWriteFailed {
+			t.Fatalf("Plan() = %v, want metadata write error", err)
+		}
+	})
 }
 
 func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery(t *testing.T) {

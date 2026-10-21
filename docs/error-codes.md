@@ -33,6 +33,7 @@ or API cause. Existing codes must not be reused for a different condition.
 | `plan_full_discovery_results_processing_failed` | Full-discovery results could not be matched to the configured test selection. |
 | `plan_fast_discovery_results_processing_failed` | Fast-discovery results could not be matched to the configured test selection. |
 | `plan_manifest_write_failed` | The Test Optimization manifest could not be written. |
+| `plan_metadata_write_failed` | The planning-job metadata file could not be written. |
 | `plan_cache_write_failed` | The Test Optimization plan cache could not be stored. |
 | `plan_test_files_write_failed` | The selected test-files artifact could not be written. |
 | `plan_skippable_percentage_write_failed` | The skippable-percentage artifact could not be written. |
