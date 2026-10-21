@@ -303,7 +303,11 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		_, _ = fmt.Fprintf(output, "Executed %s validations: %s — %s\n", displayName(result.Framework), execution.Status, execution.Reason)
 	}
 	if coverage := result.Summary.ConfigurationCoverage; coverage != nil {
-		_, _ = fmt.Fprintf(output, "Configuration coverage: %d/%d validated; %d executed, %d paired, %d blocked, %d not exercised.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised)
+		if coverage.Discovered > 0 {
+			_, _ = fmt.Fprintf(output, "Configuration coverage: %d/%d validated; %d executed, %d paired, %d blocked, %d not exercised, %d incomplete.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete)
+		} else {
+			_, _ = fmt.Fprintln(output, "Configuration coverage: no matching CI configurations discovered; current command evidence is reported separately.")
+		}
 	}
 	if selected := result.Summary.SelectedValidation; selected != nil {
 		_, _ = fmt.Fprintf(output, "Selected %s testdrive: %s — %s\n", displayName(result.Framework), selected.Status, selected.Reason)

@@ -42,6 +42,21 @@ func completeValidationFixture(name string) validationResult {
 	return result
 }
 
+func TestConfigurationCoveragePrintsTheCompleteStatusPartition(t *testing.T) {
+	result := focusedValidationFixture("jest")
+	result.Configurations = append(result.Configurations, configurationResult{Status: "incomplete"}, configurationResult{Status: "blocked"})
+	var output bytes.Buffer
+	require.NoError(t, finishValidation(&output, t.TempDir(), result))
+	coverage, _ := summarizeConfigurationCoverage(result)
+	require.Equal(t, coverage.Discovered, coverage.Validated+coverage.Blocked+coverage.NotExercised+coverage.Incomplete)
+	require.Equal(t, 1, coverage.Incomplete)
+	require.Contains(t, output.String(), "Configuration coverage: 1/4 validated; 1 executed, 1 paired, 1 blocked, 1 not exercised, 1 incomplete.")
+	output.Reset()
+	result.Configurations = nil
+	require.NoError(t, finishValidation(&output, t.TempDir(), result))
+	require.NotContains(t, output.String(), "0/0 validated")
+}
+
 func TestFocusedJestValidationKeepsUnvalidatedRepositoryScope(t *testing.T) {
 	for _, name := range []string{"jest"} {
 		t.Run(name, func(t *testing.T) {
