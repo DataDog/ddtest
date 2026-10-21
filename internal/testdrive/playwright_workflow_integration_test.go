@@ -58,7 +58,7 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 				write("package.json", `{"scripts":{"test":"playwright test --project desktop mobile --repeat-each=2 --shard=1/2"},"devDependencies":{"@playwright/test":"1.55.1","dd-trace":"6.20.1"}}`)
 			}
 			reporterLog := filepath.Join(t.TempDir(), "customer-reporter.jsonl")
-			write("customer,reporter.cjs", `module.exports=class {onTestEnd(){require('node:fs').appendFileSync(`+fmt.Sprintf("%q", reporterLog)+`,String(process.env.DD_TRACE_ENABLED)+'\n')}}`)
+			write("customer,reporter.cjs", `module.exports=class {onTestEnd(){require('node:fs').appendFileSync(`+fmt.Sprintf("%q", reporterLog)+`,String(process.env.DD_TRACE_ENABLED)+'|'+(process.env.PLAYWRIGHT_JUNIT_OUTPUT_NAME||'')+'\n')}}`)
 			write("server.cjs", `require('node:http').createServer((req,res)=>res.end('<h1>hello</h1>')).listen(`+strings.Split(address, ":")[1]+`,'127.0.0.1')`)
 			write("playwright.config.cjs", `module.exports={testDir:'test',reporter:[['./customer,reporter.cjs']],workers:1,retries:1,repeatEach:2,projects:[{name:'desktop',use:{browserName:'chromium'}},{name:'mobile',use:{browserName:'chromium'}}],webServer:{command:'node server.cjs',url:`+fmt.Sprintf("%q", "http://"+address)+`,reuseExistingServer:false,timeout:10000},use:{baseURL:`+fmt.Sprintf("%q", "http://"+address)+`}}`)
 			body := `await page.goto('/');await expect(page.locator('h1')).toHaveText('hello');`
@@ -163,8 +163,12 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 				require.Equal(t, expectedExecutions, report.ReportingCounts.TestExecutions)
 				customerOutput, readErr := os.ReadFile(reporterLog)
 				require.NoError(t, readErr)
-				require.Contains(t, string(customerOutput), "false\n")
-				require.Contains(t, string(customerOutput), "true\n")
+				require.Contains(t, string(customerOutput), "false|")
+				require.Contains(t, string(customerOutput), "true|")
+				if mode == "existing failure" {
+					require.Contains(t, string(customerOutput), "false|results.xml\n")
+					require.Contains(t, string(customerOutput), "true|results.xml\n")
+				}
 			}
 			require.NotNil(t, report.Cleanup)
 			require.Equal(t, "passed", report.Cleanup.Status)
