@@ -102,7 +102,7 @@ func adjustedRetryCount(execMeta *testExecutionMetadata, duration time.Duration)
 
 	// Automatic flaky tests retries are set to the configured value.
 	if execMeta.isFlakyTestRetriesEnabled {
-		return integrations.GetFlakyRetriesSettings().RetryCount
+		return flakyRetryCountForDuration(duration)
 	}
 
 	// No retries
@@ -235,4 +235,56 @@ func flakyRetryBudgetRemaining(settings *integrations.FlakyRetriesSetting) int64
 		return 0
 	}
 	return atomic.LoadInt64(&settings.RemainingTotalRetryCount)
+}
+
+// flakyRetryCountForDuration returns the automatic test retries count for a test whose first execution took
+// duration. Dynamic retry counts replace the flat DD_CIVISIBILITY_FLAKY_RETRY_COUNT value when configured.
+func flakyRetryCountForDuration(duration time.Duration) int64 {
+	flakyRetries := integrations.GetFlakyRetriesSettings()
+	if counts := flakyRetries.DynamicRetryCounts; counts != nil {
+		return counts[dynamicRetryDurationBucket(duration)]
+	}
+	return flakyRetries.RetryCount
+}
+
+// flakyRetryCountBeforeFirstExecution returns the automatic test retries count that decides whether a test gets
+// the retry wrapper. The dynamic count depends on the duration of the first execution, which has not run yet, so
+// the largest bucket count is used.
+func flakyRetryCountBeforeFirstExecution(flakyRetries *integrations.FlakyRetriesSetting) int64 {
+	counts := flakyRetries.DynamicRetryCounts
+	if counts == nil {
+		return flakyRetries.RetryCount
+	}
+	largest := counts[0]
+	for _, count := range counts[1:] {
+		largest = max(largest, count)
+	}
+	return largest
+}
+
+// dynamicRetryDurationBucket returns the dynamic automatic test retries bucket for the duration of a test's first
+// execution. The buckets are the EFD ones in efdRetryCountForDuration, but with inclusive upper bounds, so a first
+// execution of exactly 5s is in the first bucket.
+func dynamicRetryDurationBucket(duration time.Duration) int {
+	switch {
+	case duration <= 5*time.Second:
+		return 0
+	case duration <= 10*time.Second:
+		return 1
+	case duration <= 30*time.Second:
+		return 2
+	case duration <= 5*time.Minute:
+		return 3
+	default:
+		return 4
+	}
+}
+
+// recordFirstRetryAttemptDuration keeps the first execution's duration, which selects dynamic flaky retry counts,
+// and lets the caller adjust the retry count from it.
+func recordFirstRetryAttemptDuration(execOpts *executionOptions, execMeta *testExecutionMetadata, duration time.Duration) {
+	execOpts.initialDuration = duration
+	if execOpts.options.postAdjustRetryCount != nil {
+		execOpts.retryCount = execOpts.options.postAdjustRetryCount(execMeta, duration)
+	}
 }

@@ -230,6 +230,102 @@ func TestFinishCLISessionSkipsAnEmptySuccess(t *testing.T) {
 	}
 }
 
+// ddto's session is skipped as empty, as dd-trace-go #5697 reports a test
+// session that ran no tests, only when go test succeeded and every test
+// process that joined it ran nothing.
+func TestFinishCLISessionReportsAnEmptySession(t *testing.T) {
+	empty := map[string]any{constants.TestSessionEmptyReason: constants.TestSessionEmptyReasonZeroTests}
+	for _, tc := range []struct {
+		name       string
+		exitCode   int
+		tags       []map[string]any
+		wantStatus string
+		wantEmpty  bool
+	}{
+		{name: "every process empty", tags: []map[string]any{empty, empty}, wantStatus: constants.TestStatusSkip, wantEmpty: true},
+		{name: "one process ran tests", tags: []map[string]any{empty, {}}, wantStatus: constants.TestStatusPass},
+		{name: "go test failed", exitCode: 1, tags: []map[string]any{empty, empty}, wantStatus: constants.TestStatusFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetCIVisibilityBootstrapStateForTesting()
+			t.Cleanup(restoreCIVisibilityBootstrapForTesting)
+			var mu sync.Mutex
+			var events []map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/citestcycle") {
+					body, _ := io.ReadAll(r.Body)
+					mu.Lock()
+					events = append(events, decodeTestCycle(t, body)...)
+					mu.Unlock()
+				}
+				w.WriteHeader(http.StatusAccepted)
+			}))
+			t.Cleanup(server.Close)
+			t.Setenv("DD_CIVISIBILITY_AGENTLESS_ENABLED", "false")
+			t.Setenv("DD_TRACE_AGENT_URL", server.URL)
+			t.Setenv("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "false")
+			t.Setenv("DD_SERVICE", "svc")
+
+			dir := t.TempDir()
+			for i, tags := range tc.tags {
+				writeRecord(t, filepath.Join(dir, fmt.Sprintf("process-%d.jsonl", i)), utils.CLISessionRecordLine{Kind: "closed", Tags: tags})
+			}
+			start := time.Now().Add(-time.Minute)
+			summary, err := FinishCLISession(CLISessionEnd{Dir: dir, Session: utils.CLISession{ID: 7, WorkingDirectory: dir}, Start: start, Finish: time.Now(), ExitCode: tc.exitCode, GoVersion: runtime.Version()})
+			if err != nil || !summary.Sent {
+				t.Fatalf("summary %+v, %v", summary, err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			var session map[string]any
+			for _, event := range events {
+				if event["type"] == "test_session_end" {
+					session, _ = event["content"].(map[string]any)["meta"].(map[string]any)
+				}
+			}
+			if session == nil {
+				t.Fatalf("no session event among %v", events)
+			}
+			if session[constants.TestStatus] != tc.wantStatus {
+				t.Fatalf("status %v, want %s", session[constants.TestStatus], tc.wantStatus)
+			}
+			_, hasReason := session[constants.TestSessionEmptyReason]
+			_, hasSkipReason := session[constants.TestSkipReason]
+			if hasReason != tc.wantEmpty || hasSkipReason != tc.wantEmpty {
+				t.Fatalf("empty reason %v, skip reason %v; want them only for an empty session", session[constants.TestSessionEmptyReason], session[constants.TestSkipReason])
+			}
+		})
+	}
+}
+
+// A test process records that it ran nothing only when testing.M.Run also
+// succeeded: a TestMain can exit 0 after Run fails, as with -parallel=0.
+func TestCLISessionRecordsAnEmptyCloseOnlyOnSuccess(t *testing.T) {
+	resetCIVisibilityBootstrapStateForTesting()
+	disableAdditionalFeaturesForBootstrapTest()
+	t.Cleanup(restoreCIVisibilityBootstrapForTesting)
+	initializeCIVisibilityLifecycleForTesting()
+	for _, exitCode := range []int{0, 2} {
+		dir := t.TempDir()
+		file, err := os.Create(filepath.Join(dir, "process-a.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		session := CreateTestSession().(*tslvTestSession)
+		session.cliRecord, session.cliTags = utils.NewCLISessionRecordForTesting(file), map[string]any{}
+		session.Close(exitCode, WithTestSessionSkipIfEmpty())
+		_ = file.Close()
+		processes, err := readCLIProcesses(dir)
+		if err != nil || len(processes) != 1 || processes[0].closed == nil {
+			t.Fatalf("processes %v, %v", processes, err)
+		}
+		_, empty := processes[0].closed.Tags[constants.TestSessionEmptyReason]
+		if empty != (exitCode == 0) {
+			t.Fatalf("exit code %d: empty reason %v", exitCode, processes[0].closed.Tags[constants.TestSessionEmptyReason])
+		}
+	}
+}
+
 func writeRecord(t *testing.T, path string, lines ...utils.CLISessionRecordLine) {
 	t.Helper()
 	var data []byte

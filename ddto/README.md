@@ -249,6 +249,8 @@ Coverage still requires Go coverage flags.
 | `DD_CIVISIBILITY_FLAKY_RETRY_ENABLED` | Backend setting | Override automatic test retries. |
 | `DD_CIVISIBILITY_FLAKY_RETRY_COUNT` | `5` | Maximum retries per failing test when automatic retries are enabled. |
 | `DD_CIVISIBILITY_TOTAL_FLAKY_RETRY_COUNT` | `1000` | Automatic retry budget for one test-binary session. |
+| `DD_CIVISIBILITY_DYNAMIC_ATR_ENABLED` | `false` | Take each test's automatic retry count from its first execution's duration: up to 5s, 10s, 30s, 5m, and slower. `DD_CIVISIBILITY_FLAKY_RETRY_COUNT` is then ignored. |
+| `DD_CIVISIBILITY_DYNAMIC_ATR_BUCKETS` | Backend EFD counts | Five comma-separated retry counts from 1 to 20, one per duration bucket, for example `3,2,1,1,1`. Without it, the first four counts follow the backend's EFD slow test retries; the defaults are 10, 5, 3, 2 and 1. |
 | `DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED` | Backend setting | Override early flake detection; the backend must still enable known-test data. |
 | `DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_MAX_RETRIES` | `-1` | Nonnegative values cap EFD retries without increasing backend counts; negative values retain those counts. |
 | `DD_CIVISIBILITY_RETRY_EXECUTION_MODE` | `in_process` | `in_process` reuses the binary's process; `process` launches isolated retry children. |

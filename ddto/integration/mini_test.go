@@ -283,6 +283,8 @@ func TestMiniTestingCompatibility(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, enabled := range []bool{false, true} {
 				want := execute(t, dir, bins[0], tc.args, enabled, false)
+				want.wireEvents = withPortedEmptySession(want.wireEvents)
+				want.events = normalizedEvents(want.wireEvents)
 				got := execute(t, dir, bins[1], tc.args, enabled, false)
 				assertMiniEquivalent(t, want, got)
 				assertMiniCIAttributes(t, want.wireEvents, got.wireEvents)

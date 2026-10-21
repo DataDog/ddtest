@@ -52,7 +52,7 @@ policy combinations and counts are exported by every workflow run.
 | Pass, failure and skip | All six failure entrypoints, Helper stacks, three skip entrypoints/reasons, source locations and exit status | Verified |
 | Subtests and cleanup | Nested children, Context cancellation, cleanup order; disabled/quarantined children and subtest feature gate | Verified |
 | Parallel execution | Parallel children with count/shuffle; ATR in both execution modes; exact parallel coverage attribution under race | Verified |
-| Automatic test retries (ATR) | Recovery/exhaustion, zero budget, environment on/off override, process and in-process execution; parallel tests and coverage | Verified |
+| Automatic test retries (ATR) | Recovery/exhaustion, zero budget, environment on/off override, process and in-process execution; parallel tests and coverage | Verified; dynamic retry counts (dd-trace-go #5695, newer than the pinned SDK) are checked on Mini alone in `TestMiniDynamicFlakyRetries` |
 | Early flake detection (EFD) | New/known tests, retry cap, faulty-session abort; ATR combination, impacted known tests and parallel retry execution | Verified for these decisions; long slow-test duration thresholds have unit evidence only |
 | Test impact analysis / ITR | Skip, forced run, unskippable annotation, missing-line-coverage response; coverage, ATR/EFD, disabled/quarantined and attempt-to-fix combinations | Verified |
 | Impacted tests | Actual two-commit Git diff; known-test EFD reruns, ITR interaction, environment disable | Verified |
@@ -63,7 +63,7 @@ policy combinations and counts are exported by every workflow run.
 | CI logs | Actual logs intake JSON, test/trace correlation and line multiplicity; retries and manual hierarchy logs | Verified |
 | Git metadata and upload | Commit/base metadata, CODEOWNERS and actual Git pack upload when settings require it; original Git fixture assertions retained | Verified |
 | CI providers, version and session name | GitHub wire fixture; ported SDK provider fixtures, `DD_VERSION`, custom tags and explicit/job/command session naming | Verified at those levels; other providers have unit evidence |
-| Empty selection and list | Session-only events | Verified |
+| Empty selection and list | Session-only events; Mini reports the session as skipped, as dd-trace-go #5697 does | Verified; the pinned SDK predates #5697, a declared difference |
 | Fuzz roots, seeds and executable Examples | SDK PR #5442: 16 scenarios, manual/automatic, normal/deferred, atomic coverage and goleak | See the [78-comparison feature matrix](fuzz-examples.md); active mutations and workers emit no events |
 | Benchmarks | Same benchmark events, metric keys/types and run counts; values must be finite/nonnegative | Verified semantics; measured timings/allocations differ |
 | Panic, Goexit and timeout | Existing reference fixtures compare diagnostics, exit status and abnormal finalization. On testing's `-timeout`, the SDK sends nothing and Mini sends the tests and the session first, a declared difference | Verified for those fixtures |
@@ -100,7 +100,7 @@ a test event, while their module/suite/session are closed once by the controller
 | ATR recovery / exhaustion | 1 | 1 | 1 | 2 / 3 | 0 | Equal in both execution modes |
 | EFD new test | 1 | 1 | 1 | 3 | 0 | Equal in both execution modes |
 | Two package binaries | 2 | 2 | 2 | 2 | 0 | Equal |
-| Empty selection / list | 1 | 0 | 0 | 0 | 0 | Equal SDK limitation |
+| Empty selection / list | 1 | 0 | 0 | 0 | 0 | Equal counts; Mini skips the session, as dd-trace-go #5697 does |
 | Manual hierarchy | 1 | 2 | 4 | 12 | 1 | Equal |
 | Test with CI parent/child spans | 1 | 1 | 1 | 1 | 2 | Equal |
 | Testify suite with pass/skip methods | 1 | 1 | 2 | 3 | 0 | Equal, including hierarchy and method source metadata |
@@ -137,6 +137,11 @@ Only declared differences are normalized:
   may be inherited from consistent test values, following the approved contract.
   Session-only runs validate Mini's complete capabilities against the pinned
   declarations. Present but incorrect values and missing Mini fields fail.
+- The pinned SDK predates dd-trace-go #5697, which ddto ports. In a
+  session-only run, a successful SDK session is expected as the PR reports it:
+  `test.status:skip`, `test.skip_reason:No tests were executed` and
+  `test.session.empty_reason:zero_tests` (`withPortedEmptySession`). Mini's
+  events are compared as sent.
 - Benchmark measurement values may vary; names, types, run count and valid
   numeric values remain required. CI request counters are checked against each
   sender's requests because batching can differ. All other captured CI semantic

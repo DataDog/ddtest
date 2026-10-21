@@ -17,9 +17,9 @@
       "source": "internal/civisibility/integrations/civisibility_features_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_features_test.go",
       "source_sha256": "b305b518346a7916864815adf9b5dd0ab257ccc861bc8f4cff21d67a36e9d32e",
-      "adapted_sha256": "c449fa51f49634f0905e1882f54811c0b212eaf472e07d011fe577233d4fec62",
+      "adapted_sha256": "8fbfa4d39b48b3c4e17ea39db97ff061c38b9650d7a57bdfdc77c21ac4bb2d86",
       "kind": "full",
-      "adaptation": "Internal import relocation only; standard-library assertion helpers"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers; adds dd-trace-go #5695's dynamic retry tests with the port's client constructor"
     },
     {
       "source": "internal/civisibility/integrations/civisibility_http_client_test.go",
@@ -73,9 +73,9 @@
       "source": "internal/civisibility/utils/codeowners_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/codeowners_discovery_test.go",
       "source_sha256": "511b5a161ab3e368acb72ed960e009dbec106048a9dd0bfb55f13fba43935bf2",
-      "adapted_sha256": "7ae825d9daea7ddb32e9b6ac5a51d5919f8913e706aab8143112497c04adab61",
+      "adapted_sha256": "bd30e0531acaf60066482f0cff49b588b2e76456f7c374eb6100b38bdf38d740",
       "kind": "selected",
-      "adaptation": "Discovery/cache assertions retained through the new resolver. Parser expectations move to codeownership tests, using native Go rule tables and examples. Correct GitHub interior slash anchoring, host location priority, comments, GitLab defaults/exclusions and valid long-line handling. Mutable Entry/Section tests are replaced by immutable ownership tests. Upstream rooted filename-prefix and precedence cases are retained in codeownership/github_test.go; existing general glob support is preserved."
+      "adaptation": "Discovery/cache assertions retained through the new resolver. Parser expectations move to codeownership tests, using native Go rule tables and examples. Correct GitHub interior slash anchoring, host location priority, comments, GitLab defaults/exclusions and valid long-line handling. Mutable Entry/Section tests are replaced by immutable ownership tests. Upstream rooted filename-prefix and precedence cases are retained in codeownership/github_test.go; existing general glob support is preserved. Workspace-only discovery, the missing-workspace fallback and retried workspace errors are checked as in dd-trace-go #5663."
     },
     {
       "source": "internal/civisibility/utils/environmentTags_test.go",
@@ -773,7 +773,7 @@
           "source": "internal/civisibility/integrations/gotesting/testing_workloads_test.go",
           "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/testing_workloads_test.go",
           "source_sha256": "143475d3970c0ded6bbe602dc79906669a4538e312d159e318348bc374b72791",
-          "adaptation": "Import relocation; suite counters are read and restored by module and suite (testSuiteCounterKey); original assertions retained"
+          "adaptation": "Import relocation; suite counters are read and restored by module and suite (testSuiteCounterKey); original assertions retained; adds dd-trace-go #5697's TestInstrumentedAllWorkloads"
         }
       ],
       "fixtures_manifest": "testdata/fuzzexamples/SOURCE.json",

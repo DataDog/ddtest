@@ -1641,7 +1641,9 @@ test processes' runtime version, and the tracer, with the bootstrap's service ru
 (`ciVisibilityService`): no settings, Git upload, signal handler, logs or
 telemetry. The
 session starts with ddto, ends when go test exits, and has go test's exit code
-and status. Its tags merge the processes' records: counts add up, `true` and
+and status, or is skipped when nothing ran (see
+[empty test sessions](#empty-test-sessions)). Its tags merge the processes'
+records: counts add up, `true` and
 EFD's `faulty` win, and other values come from the first process. A process's
 coverage covers only its own run, so the session takes it only when that
 process is the only one that joined, and otherwise the statement total of the
@@ -2181,6 +2183,67 @@ place. Checks: `TestSubtestModuleName`, `TestQuarantinedSubtestIdentity` and
 `TestMiniHelperSubtestKeepsTheTestModule`, which fails without the port. The
 pinned SDK that parity compares with predates the fix; no parity scenario
 creates subtests from another package.
+
+## Dynamic automatic test retries
+
+dd-trace-go PR #5695 (`c5b8fe272`, open when ported) is newer than the recorded
+base and is ported; `feature_ports` records its revision of each file. With
+`DD_CIVISIBILITY_DYNAMIC_ATR_ENABLED`, a test's automatic retry count comes
+from its first execution's duration, with inclusive bucket bounds: up to 5s,
+10s, 30s, 5m, and slower. `DD_CIVISIBILITY_DYNAMIC_ATR_BUCKETS` sets the five
+counts; otherwise they follow the backend's EFD slow test retries from before
+`DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_MAX_RETRIES` caps them, with 10, 5, 3, 2
+and 1 for empty buckets. `FlakyRetriesSetting.DynamicRetryCounts` stays nil when
+the feature is off. The port reads both variables directly, so the PR's env
+registry entries do not apply. `dynamic_atr_retries.enabled` is added to
+`known_metrics.common.go`, as upstream main lists it.
+
+The port keeps line positions that error stacks show. In
+`gotesting/instrumentation.go`, the new `executionOptions.initialDuration`
+field takes the blank line after the struct, and the retry-wrapper check calls
+`flakyRetryCountBeforeFirstExecution`, appended to `gotesting/final_status.go`
+with the PR's other helpers, instead of adding lines and the `slices` import.
+In `gotesting/retry_attempt_integration.go`, `recordFirstRetryAttemptDuration`
+keeps the first execution's duration in the three lines that adjusted the
+retry count. The PR's `efd_faulty_session_test.go`, `retry_process_test.go` and
+`testcontroller_test.go` cases are not part of the port's tests, so
+`gotesting/dynamic_flaky_retries_test.go` ports them and
+`TestMiniDynamicFlakyRetries` checks retries with
+`DD_CIVISIBILITY_FLAKY_RETRY_COUNT=0`, also with
+`DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process`. It fails
+without the port.
+
+## Empty test sessions
+
+dd-trace-go PR #5697 (`ee74b3d79`, open when ported) is ported; `feature_ports`
+records its revision of each file. When `testing.M.Run` succeeds without
+running a test, benchmark, fuzz target or example, as with a `-run` filter that
+matches nothing, the session is reported as skipped with
+`test.skip_reason:No tests were executed` and
+`test.session.empty_reason:zero_tests`. The finalizer passes
+`WithTestSessionSkipIfEmpty` only when `instrumentedAllWorkloads` finds that
+every workload was wrapped to create a module. That method and
+`testingMSessionCloseOptions` live in local `gotesting/testing_session_close.go`,
+and `testing.go` takes the option in place of a blank line, so its lines keep
+their positions.
+
+ddto's own test session, which one `ddto test` command shares, has no modules
+in ddto's process. A test process that joined it records the empty reason in
+its close record instead, when `testing.M.Run` succeeded, and
+`FinishCLISession` skips the session only when go test succeeded, no process
+crashed, and every process that joined recorded it. `mergeCLISessionTags`
+leaves the tag out. A binary with its own session, as with
+`--session-per-binary`, follows the PR. Checks: `TestInstrumentedAllWorkloads`,
+`TestCLISessionRecordsAnEmptyCloseOnlyOnSuccess`,
+`TestFinishCLISessionReportsAnEmptySession` and `TestMiniEmptyTestSession`,
+which fails without the port. The port does not include the files of the PR's
+fuzz fixture scenario and `TestTestSessionSkipIfEmpty`:
+`TestMiniEmptyTestSession` runs a fuzz target and an Example,
+`TestFinishCLISessionReportsAnEmptySession` checks the cases without modules,
+and a per-binary session that ran a test, as in
+`TestMiniTestSessionSpansTheCommand`, still passes. The pinned SDK predates
+the PR, so the tests that compare Mini with it expect its session-only events
+as the PR reports them (`withPortedEmptySession`).
 
 ## Fuzz and executable Examples
 

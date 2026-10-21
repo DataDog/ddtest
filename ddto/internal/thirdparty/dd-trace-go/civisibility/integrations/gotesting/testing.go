@@ -447,7 +447,7 @@ func instrumentTestingMWithOptions(m *testing.M, wrapperOpts additionalFeatureWr
 		retireTestingMInstrumentation(m, claim)
 		releaseHookEpoch()
 		log.Debug("instrumentTestingM: finished with exit code: %d", exitCode)
-
+		closeOptions := testingMSessionCloseOptions(claim)
 		// Check for code coverage if enabled.
 		if testing.CoverMode() != "" {
 			isolatedCoverageMerged, err := coverage.FinalizeProcessCoverageProfiles()
@@ -463,7 +463,7 @@ func instrumentTestingMWithOptions(m *testing.M, wrapperOpts additionalFeatureWr
 				uploadFinalCoverageReport(settings)
 			}
 			if err != nil || !publishCoverage {
-				session.Close(exitCode)
+				session.Close(exitCode, closeOptions...)
 				coverage.CleanupRuntimeCoverageSnapshot()
 				integrations.ExitCiVisibility()
 				if deferredTerminalPanic != nil {
@@ -485,7 +485,7 @@ func instrumentTestingMWithOptions(m *testing.M, wrapperOpts additionalFeatureWr
 		}
 
 		// Close the session and return the exit code.
-		session.Close(exitCode)
+		session.Close(exitCode, closeOptions...)
 		coverage.CleanupRuntimeCoverageSnapshot()
 
 		// Finalize CI Visibility

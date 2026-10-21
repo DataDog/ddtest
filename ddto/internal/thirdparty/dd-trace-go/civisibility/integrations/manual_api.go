@@ -116,7 +116,8 @@ type TestSessionCloseOption func(*tslvTestSessionCloseOptions)
 
 // tslvTestSessionCloseOptions contains the options for closing a test session.
 type tslvTestSessionCloseOptions struct {
-	finishTime time.Time
+	finishTime  time.Time
+	skipIfEmpty bool
 	// crash replaces the exit-code error of a session that ends with a crash.
 	crash []ErrorOption
 }
@@ -132,6 +133,12 @@ func withTestSessionCrash(errType, message, stack string) TestSessionCloseOption
 // WithTestSessionFinishTime sets the finish time of the test session.
 func WithTestSessionFinishTime(finishTime time.Time) TestSessionCloseOption {
 	return func(o *tslvTestSessionCloseOptions) { o.finishTime = finishTime }
+}
+
+// WithTestSessionSkipIfEmpty reports a successful test session that has no modules as skipped.
+// Use it only when every test that runs creates a module, so an empty session means nothing ran.
+func WithTestSessionSkipIfEmpty() TestSessionCloseOption {
+	return func(o *tslvTestSessionCloseOptions) { o.skipIfEmpty = true }
 }
 
 // TestModuleStartOption represents an option that can be passed to GetOrCreateModule.

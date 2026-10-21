@@ -219,20 +219,25 @@ func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption)
 		defaults.finishTime = time.Now()
 	}
 
+	empty := defaults.skipIfEmpty && len(t.modules) == 0
 	for _, m := range t.modules {
 		m.Close()
 	}
 	t.modules = map[string]TestModule{}
 
 	if t.cliRecord != nil {
-		recordedTags = t.closeInCLISession(exitCode)
+		recordedTags = t.closeInCLISession(exitCode, empty)
 		t.reportFinished()
 		tracer.Flush()
 		return
 	}
 
 	setCIVisibilitySpanTag(t.span, constants.TestCommandExitCode, exitCode)
-	if exitCode == 0 {
+	if exitCode == 0 && empty {
+		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusSkip)
+		setCIVisibilitySpanTag(t.span, constants.TestSkipReason, constants.TestSessionEmptySkipReason)
+		setCIVisibilitySpanTag(t.span, constants.TestSessionEmptyReason, constants.TestSessionEmptyReasonZeroTests)
+	} else if exitCode == 0 {
 		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusPass)
 	} else if defaults.crash != nil {
 		t.SetError(defaults.crash...)
@@ -312,9 +317,10 @@ func (t *tslvTestSession) GetOrCreateModule(name string, options ...TestModuleSt
 
 // closeInCLISession closes a session that ddto owns: it records, for ddto's
 // session event, the exit code and the session tags that this process set,
-// including those that the CI tags carry, as Close does, and returns how many
-// tags it recorded. The session event itself is ddto's.
-func (t *tslvTestSession) closeInCLISession(exitCode int) int {
+// including those that the CI tags carry, as Close does, and whether the
+// process ran nothing, and returns how many tags it recorded. The session
+// event itself is ddto's.
+func (t *tslvTestSession) closeInCLISession(exitCode int, empty bool) int {
 	t.cliTagsMu.Lock()
 	tags := make(map[string]any, len(t.cliTags))
 	for key, value := range t.cliTags {
@@ -327,6 +333,11 @@ func (t *tslvTestSession) closeInCLISession(exitCode int) int {
 				tags[key] = value
 			}
 		}
+	}
+	// ddto's session is empty only when every test process that joined it ran
+	// nothing and succeeded, as Close requires of a session of its own.
+	if empty && exitCode == 0 {
+		tags[constants.TestSessionEmptyReason] = constants.TestSessionEmptyReasonZeroTests
 	}
 	t.cliRecord.Append(utils.CLISessionRecordLine{Kind: "closed", ExitCode: exitCode, Tags: tags})
 	t.closed = true

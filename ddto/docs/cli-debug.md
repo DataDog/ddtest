@@ -108,7 +108,10 @@ The log records:
   where the session's CI tags come from
   (`civisibility: test session CI tags directory=<dir> git_worker_record=<bool> git_timeout=<d>`)
   and what it sends
-  (`civisibility: sending ddto's test session id=<id> exit_code=<n> duration=<d> tags=<n> coverage=<pct> crashed_processes=<n>`).
+  (`civisibility: sending ddto's test session id=<id> exit_code=<n> duration=<d> tags=<n> coverage=<pct> crashed_processes=<n> empty=<bool>`),
+  where `empty=true` means that every process that joined ran nothing, so a
+  successful session is reported as skipped
+  ([empty test sessions](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#empty-test-sessions)).
   Then
   `test session sent=<bool> processes=<n> closed=<n> crashed=<n> recreated=<n> exit_code=<n>`
   counts the test processes that joined it, those that closed CI Visibility,

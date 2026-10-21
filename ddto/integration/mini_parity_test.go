@@ -3,6 +3,7 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -189,6 +190,31 @@ func hasOnlyCISessions(events []map[string]any) bool {
 		}
 	}
 	return true
+}
+
+// withPortedEmptySession reports the pinned SDK's events as dd-trace-go #5697,
+// which ddto ports and the pinned SDK predates, would: a session that ran
+// nothing and succeeded is skipped, with the reasons.
+func withPortedEmptySession(events []map[string]any) []map[string]any {
+	if !hasOnlyCISessions(events) {
+		return events
+	}
+	out := make([]map[string]any, len(events))
+	for i, event := range events {
+		out[i] = event
+		content, _ := event["content"].(map[string]any)
+		meta, _ := content["meta"].(map[string]any)
+		if meta["test.status"] != "pass" {
+			continue
+		}
+		meta = maps.Clone(meta)
+		meta["test.status"], meta["test.skip_reason"], meta["test.session.empty_reason"] = "skip", "No tests were executed", "zero_tests"
+		content = maps.Clone(content)
+		content["meta"] = meta
+		out[i] = maps.Clone(event)
+		out[i]["content"] = content
+	}
+	return out
 }
 
 func comparableCIWireEvents(want, got []map[string]any) ([]string, []string, error) {

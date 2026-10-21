@@ -646,7 +646,7 @@ func assertParityCase(t *testing.T, tc parityCase, want, got *parityReceiver, sd
 			}
 		}
 	}
-	assertMiniCIAttributes(t, comparableOracleEvents(t, want.events), comparableOracleEvents(t, got.events))
+	assertMiniCIAttributes(t, comparableOracleEvents(t, withPortedEmptySession(want.events)), comparableOracleEvents(t, got.events))
 	assertSidePayloadParity(t, want, got)
 	if len(want.payloads) > 0 && ciWireMetadata(t, &want.miniWireCapture) != ciWireMetadata(t, &got.miniWireCapture) {
 		t.Fatal("envelope metadata differs")

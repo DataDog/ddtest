@@ -56,6 +56,7 @@ var commonMetrics = []Declaration{
 	{Namespace: "civisibility", Type: "count", Name: "ddtest.cli.command"},
 	{Namespace: "civisibility", Type: "count", Name: "ddtest.itr_skippable_tests.is_empty"},
 	{Namespace: "civisibility", Type: "count", Name: "ddtest.planning.decision"},
+	{Namespace: "civisibility", Type: "count", Name: "dynamic_atr_retries.enabled"},
 	{Namespace: "civisibility", Type: "count", Name: "early_flake_detection.request"},
 	{Namespace: "civisibility", Type: "count", Name: "early_flake_detection.request_errors"},
 	{Namespace: "civisibility", Type: "count", Name: "endpoint_payload.dropped"},

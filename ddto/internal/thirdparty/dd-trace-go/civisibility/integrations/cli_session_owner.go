@@ -156,7 +156,8 @@ func FinishCLISession(end CLISessionEnd) (CLISessionSummary, error) {
 	for key, value := range merged {
 		session.SetTag(key, value)
 	}
-	log.Debug("civisibility: sending ddto's test session id=%d exit_code=%d duration=%s tags=%d coverage=%v crashed_processes=%d", end.Session.ID, end.ExitCode, end.Finish.Sub(end.Start), len(merged), merged[constants.CodeCoveragePercentageOfTotalLines], len(crashes))
+	empty := len(crashes) == 0 && cliSessionEmpty(processes)
+	log.Debug("civisibility: sending ddto's test session id=%d exit_code=%d duration=%s tags=%d coverage=%v crashed_processes=%d empty=%t", end.Session.ID, end.ExitCode, end.Finish.Sub(end.Start), len(merged), merged[constants.CodeCoveragePercentageOfTotalLines], len(crashes), empty)
 	for _, p := range crashes {
 		if p.closed == nil {
 			summary.Recreated += recreateCLIProcess(session, p, end.Finish)
@@ -165,11 +166,26 @@ func FinishCLISession(end CLISessionEnd) (CLISessionSummary, error) {
 	var closeOptions []TestSessionCloseOption
 	if len(crashes) != 0 {
 		closeOptions = append(closeOptions, withTestSessionCrash(crashError(crashes)))
+	} else if empty {
+		closeOptions = append(closeOptions, WithTestSessionSkipIfEmpty())
 	}
 	session.Close(end.ExitCode, append(closeOptions, WithTestSessionFinishTime(end.Finish))...)
 	tracer.Stop()
 	summary.Sent = true
 	return summary, nil
+}
+
+// cliSessionEmpty reports whether every test process that joined ddto's
+// session closed it without running anything, as dd-trace-go #5697 reports a
+// test session that ran no tests. One process that ran something keeps the
+// session as it is.
+func cliSessionEmpty(processes []*cliProcess) bool {
+	for _, p := range processes {
+		if p.closed == nil || p.closed.Tags[constants.TestSessionEmptyReason] != constants.TestSessionEmptyReasonZeroTests {
+			return false
+		}
+	}
+	return len(processes) != 0
 }
 
 // chdirForCITags makes dir the process's directory, as the test processes'
@@ -311,6 +327,8 @@ func mergeCLISessionTags(processes []*cliProcess, coverage *float64) map[string]
 			value := p.closed.Tags[key]
 			previous, seen := merged[key]
 			switch {
+			case key == constants.TestSessionEmptyReason:
+				// The session is empty only if every process is; see cliSessionEmpty.
 			case key == constants.CodeCoveragePercentageOfTotalLines:
 				coverageReports++
 				merged[key] = value
