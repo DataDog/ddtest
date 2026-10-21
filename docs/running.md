@@ -593,3 +593,45 @@ Frameworks without a controlled adapter retain their ordinary feature-enabled te
 ## Validate all discovered Jest configurations
 
 Use `ddtest testdrive --framework jest --all --yes` to validate every discovered Jest CI configuration. Known build prerequisites run in disposable copies. Use `--all --check-only` to inspect configurations without builds or tests. `--command` selects one command, without validating unrelated CI configurations. Both modes retain one HTML/JSON report pair.
+
+
+### Configuration execution and preparation
+
+A full controlled Jest testdrive exits 0 exactly when its JSON `success` is true;
+failed or incomplete validation exits 1. Build-tool exit codes remain in each
+preparation result. Check-only exits 0 for `checks_passed: true`, without claiming
+execution success. A focused `--command` pass certifies that command; the repository
+summary can remain INCOMPLETE for other configurations. Default execution and
+`--all` additionally require the discovered scope to be complete.
+
+Matching default/focused commands use a single unambiguous CI environment.
+Conflicting environments stay visible in `environment_differences`; use `--all`
+to validate them independently. Commands keep package-local dependencies and
+explicit Node executables. An arbitrary executable path still leaves static CI
+runtime compatibility unverified when its version cannot be inferred safely.
+
+Preparation runs customer code. Bundlers marked for review, package build lifecycle
+scripts and dependency changes require `--allow-reviewed-builds`; they may use the
+network. Missing tools are reported as `tool_not_installed`. Literal substitutions
+are applied by Go rather than system sed; regex/backreference patches require
+review. `--timeout` defaults to ten minutes per test/preparation command and kills
+its ordinary process group on expiry. Other frameworks retain their existing
+execution contract until their controlled adapter is added.
+
+Only preparation requires a copy. The preview estimates the logical bytes and
+execution checks free space before using clonefile/reflink, with an independent
+byte-copy fallback. Copies preserve timestamps, dependencies and links, retain Git
+metadata for source identities, and omit unrelated Git-ignored output/cache trees.
+PnP runtime/dependency and local environment inputs remain available. Declared
+config files and patch targets cannot resolve outside the checkout. Windows
+symlink creation can require Developer Mode or additional privilege.
+
+Marked abandoned configuration copies and sessions are recovered under the
+repository lock on the next invocation. Unmarked files and other repositories'
+storage are preserved. Failed full attempts replace old JSON evidence and remove
+stale HTML; check-only can retain one explicitly historical execution and leaves
+its HTML unchanged. HTML keeps every instrumented reporting snapshot, including
+repeat pairs, while aggregate execution counts include each primary run once.
+Configuration runs remain sequential while platform detection uses a scoped
+process working directory; changing all adapters to explicit working directories
+belongs to the after-stack refactor.

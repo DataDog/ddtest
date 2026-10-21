@@ -45,6 +45,7 @@ func TestPublicJestConfigurations(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root))
+	tracerVersion := integrationTracerVersion(t, modules)
 	data, err = command(root, "git", "init", "-q")
 	require.NoError(t, err, string(data))
 	write := func(name, value string) {
@@ -57,13 +58,14 @@ func TestPublicJestConfigurations(t *testing.T) {
 	write("one.test.js", `const {add}=require('./lib/add'); test('adds',()=>{expect(add(1,1)).toBe(2);expect(['source','built']).toContain(process.env.MODE);expect(process.env.NODE_OPTIONS).toContain('--max-old-space-size='+process.env.HEAP);expect(process.env.NODE_OPTIONS).not.toContain('4096');});`)
 	write("source.config.js", `module.exports={displayName:'Source',testMatch:['**/*.test.js'],testEnvironment:'node',watchman:false};`)
 	write("built.config.js", `module.exports={displayName:'Built',testMatch:['**/*.test.js'],testEnvironment:'node',watchman:false};`)
-	write(".github/workflows/ci.yml", `jobs:
+	write(".github/workflows/ci.yml", strings.ReplaceAll(`jobs:
   test:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-node@v4
         with: {node-version: '24'}
       - uses: datadog/test-visibility-github-action@v3
-        with: {languages: js, js-tracer-version: '6.15.0'}
+        with: {languages: js, js-tracer-version: 'TRACER_VERSION'}
       - run: npm run build
       - run: npm test -- --config source.config.js
         env:
@@ -75,7 +77,7 @@ func TestPublicJestConfigurations(t *testing.T) {
           MODE: built
           HEAP: '2048'
           NODE_OPTIONS: "--max-old-space-size=2048 -r ${{ env.DD_TRACE_PACKAGE }}"
-`)
+`, "TRACER_VERSION", tracerVersion))
 	original := map[string][]byte{}
 	for _, name := range []string{"package.json", "src/add.ts", "tsconfig.json", "one.test.js", "source.config.js", "built.config.js"} {
 		data, err := os.ReadFile(filepath.Join(root, name))
@@ -136,10 +138,11 @@ func TestPublicJestConfigurations(t *testing.T) {
 		require.NotEmpty(t, item.Preparation[0].Diagnostic)
 	}
 	require.Empty(t, failed.Runs)
-	require.NotNil(t, failed.Retained)
+	require.Nil(t, failed.Retained)
 	entries, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
 	require.NoError(t, err)
-	require.Len(t, entries, 2)
+	require.Len(t, entries, 1)
+	require.NoFileExists(t, htmlReportPath(root))
 	encoded, err := json.Marshal(failed)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "raw-event-stack")

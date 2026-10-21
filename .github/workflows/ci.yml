@@ -438,7 +438,7 @@ jobs:
       - name: Validate paired outcomes, all feature probes and cleanup
         env:
           DDTEST_JEST_NODE_MODULES: ${{ runner.temp }}/jest-testdrive/node_modules
-        run: go test -v ./internal/testdrive -run '^TestPublicJest(Testdrive|Configurations|PackageConfiguration)$' -count=1 -timeout=20m
+        run: go test -v ./internal/testdrive -run '^TestPublicJest(Testdrive|Configurations|PackageConfiguration|TwoPackageConfiguration)$' -count=1 -timeout=20m
 
   windows-probe-diagnostics:
     runs-on: windows-latest
