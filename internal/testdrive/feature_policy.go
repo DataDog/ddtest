@@ -36,7 +36,7 @@ var frameworkFeaturePolicies = map[string]frameworkPolicy{
 		{Name: "disabled", Status: "required"},
 		{Name: "attempt-to-fix", Status: "required"},
 	}},
-	"mocha": {Paired:true, CheckOnly:true, ProbeRecovery:true, Preflight:true, Configurations:true, Features: []featurePolicy{
+	"mocha": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"},
 		{Name: "early-flake-detection", Status: "required"},
 		{Name: "skipping", Status: "required"},

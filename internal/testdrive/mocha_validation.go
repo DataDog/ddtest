@@ -75,7 +75,9 @@ func checkMochaSupport(check jestPreflight, selection platform.JSSelection) verd
 	return verdict{Status: "compatible", Reason: "No known tracer/runtime incompatibility blocks Mocha. Paired execution and feature probes are still required."}
 }
 
-func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
+func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
+	run.Role = spec.Role
 	run.framework, run.root = "mocha", t.checkoutRoot()
 	run.Name, run.Instrumented, run.ProbeMode = name, instrumented, probeMode
 	directory := filepath.Join(session.Directory(), name)
@@ -214,6 +216,10 @@ func (t *Testdrive) runMochaFeatures(ctx context.Context, output io.Writer, sess
 	}
 	defer func() { runErr = errors.Join(runErr, removeProbe(t.repositoryRoot, probe)) }()
 	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
-		return t.runMocha(ctx, output, session, preload, name, true, scenario, probe, mode)
+		role := roleProbeFeature
+		if scenario.Feature == "" {
+			role = roleProbeControl
+		}
+		return t.runMocha(ctx, output, session, preload, runSpec{Name: name, Role: role, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
 	}, result)
 }

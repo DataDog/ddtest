@@ -135,7 +135,7 @@ func TestMochaChildScratchIsOwnedBySession(t *testing.T) {
 		session, err := NewSession()
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, session.Close()) })
-		_, err = drive.runMocha(t.Context(), io.Discard, session, "/trace/ci/init.js", "reporting-only", true, intake.Scenario{}, "", "")
+		_, err = drive.runMocha(t.Context(), io.Discard, session, "/trace/ci/init.js", runSpec{Name: "reporting-only", Role: roleReporting, Instrumented: true})
 		require.NoError(t, err)
 		relative, err := filepath.Rel(session.Directory(), executor.temporary)
 		require.NoError(t, err)

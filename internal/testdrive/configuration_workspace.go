@@ -136,6 +136,8 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if t.preflight != nil {
 		if t.framework.Name() == "vitest" {
 			t.preflight = t.checkVitestPreflight
+		} else if t.framework.Name() == "mocha" {
+			t.preflight = t.checkMochaPreflight
 		} else {
 			t.preflight = t.checkJestPreflight
 		}

@@ -225,13 +225,12 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	if len(words) == 0 {
 		return commandResolution{}
 	}
-	command := shellCommand(words)
 	words, assignments, err := commandEnvironment(words)
 	if err != nil {
 		return unresolvedCommand(err.Error())
 	}
 	defer func() { applyCommandEnvironment(&result, assignments) }()
-	command = shellCommand(words)
+	command := shellCommand(words)
 	if literalFileOperation(words) {
 		return commandResolution{}
 	}
@@ -521,7 +520,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 
 	// An npm alias without -- consumes newly appended runner flags. Expand
 	// this boundary when forwarding, while retaining already-safe aliases.
-	if result.SingleJest {
+	if result.SingleJest && !mocha {
 		commands, err := staticCommands(script)
 		if err == nil && len(commands) == 1 {
 			words, _, err := commandEnvironment(commands[0])
