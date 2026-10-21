@@ -236,7 +236,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration checks only; run --all without --check-only for all paired executions and features."}
 	}
 	if len(models) > 0 {
-		if err := writeConfigurationHTML(t.repositoryRoot, models); err != nil {
+		if err := writeConfigurationHTML(output, t.repositoryRoot, models); err != nil {
 			runErrors = append(runErrors, err)
 			for i := range result.Configurations {
 				if result.Configurations[i].Status == "passed" {
@@ -290,7 +290,7 @@ func labelConfigurationModel(model *reportModel, command string) {
 	}
 }
 
-func writeConfigurationHTML(root string, models []reportModel) error {
+func writeConfigurationHTML(output io.Writer, root string, models []reportModel) error {
 	model := reportModel{Aggregated: true, NoTestEvents: true, Summary: fmt.Sprintf("%d instrumented reporting snapshots retained, including repeated pairs. Aggregate execution counts include each primary reporting run once. See validation JSON for configuration completeness, compatibility and features.", len(models)), Artifacts: []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}}
 	var counts []*executionCounts
 	var commands, outputs, failures []string
@@ -340,7 +340,10 @@ func writeConfigurationHTML(root string, models []reportModel) error {
 	if err := testdriveReport.Execute(&content, model); err != nil {
 		return err
 	}
-	return writeValidation(htmlReportPath(root), content.Bytes())
+	if err := writeValidation(htmlReportPath(root), content.Bytes()); err != nil {
+		return err
+	}
+	return writeHTMLReportLink(output, root)
 }
 
 func offsetSuiteTests(suites []reportSuite, offset int) []reportSuite {

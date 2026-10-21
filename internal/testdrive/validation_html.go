@@ -51,13 +51,20 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 		return fmt.Errorf("save testdrive HTML report: %w", err)
 	}
 	result.HTMLReportCurrent = true
-	url, err := fileURL(path)
+	if err := writeHTMLReportLink(output, t.repositoryRoot); err != nil {
+		return err
+	}
+	if supportsValidationFramework(t.framework.Name()) {
+		_, _ = fmt.Fprintf(output, "This HTML shows instrumented suite findings. Compatibility, feature checks and the onboarding verdict are in %s.\n", validationPath(""))
+	}
+	return nil
+}
+
+func writeHTMLReportLink(output io.Writer, root string) error {
+	url, err := fileURL(htmlReportPath(root))
 	if err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(url, htmlReportPath("")))
-	if supportsValidationFramework(t.framework.Name()) {
-		_, _ = fmt.Fprintf(output, "This HTML shows instrumented suite findings. Compatibility, feature checks and the onboarding verdict are in %s.\n", validationPath(""))
-	}
 	return nil
 }

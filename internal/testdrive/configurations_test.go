@@ -55,7 +55,12 @@ func TestConfigurationReportsRemainOnePairAndKeepCommandLabels(t *testing.T) {
 	models := []reportModel{{Tests: []reportTest{{Label: "suite › test", Name: "test"}}, Suites: []reportSuite{{Name: "suite"}}}, {Tests: []reportTest{{Label: "suite › test", Name: "test"}}, Suites: []reportSuite{{Name: "suite"}}}}
 	labelConfigurationModel(&models[0], "jest")
 	labelConfigurationModel(&models[1], "jest --config production.ts")
-	require.NoError(t, writeConfigurationHTML(root, models))
+	var output bytes.Buffer
+	require.NoError(t, writeConfigurationHTML(&output, root, models))
+	require.Contains(t, output.String(), "Open report:")
+	url, err := fileURL(htmlReportPath(root))
+	require.NoError(t, err)
+	require.Contains(t, output.String(), url)
 	code := 0
 	result := completeValidationFixture("jest")
 	result.Runs = []runSummary{{Role: roleBaseline, Name: "baseline", Configuration: "jest", Command: "jest", ExitCode: &code}, {Role: roleReporting, Name: "reporting-only", Configuration: "jest", Command: "jest", Instrumented: true, ExitCode: &code}}
@@ -93,7 +98,7 @@ func TestCombinedHTMLPreservesCoverageLinksAndFullCommandOutput(t *testing.T) {
 		models = append(models, model)
 	}
 	for range 2 {
-		require.NoError(t, writeConfigurationHTML(root, models))
+		require.NoError(t, writeConfigurationHTML(&bytes.Buffer{}, root, models))
 		page, err := os.ReadFile(htmlReportPath(root))
 		require.NoError(t, err)
 		for i := range 2 {

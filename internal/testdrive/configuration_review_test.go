@@ -190,7 +190,7 @@ func TestRepeatedReportingModelsRemainVisibleWithoutDoubleCounting(t *testing.T)
 	repeated.EvidenceName = "reporting-only-repeat"
 	repeated.Runtime.Output = "repeat output"
 	root := t.TempDir()
-	require.NoError(t, writeConfigurationHTML(root, []reportModel{primary, repeated}))
+	require.NoError(t, writeConfigurationHTML(&bytes.Buffer{}, root, []reportModel{primary, repeated}))
 	page, err := os.ReadFile(htmlReportPath(root))
 	require.NoError(t, err)
 	require.Contains(t, string(page), "first output")

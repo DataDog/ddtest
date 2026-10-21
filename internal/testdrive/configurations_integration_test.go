@@ -86,6 +86,7 @@ func TestPublicJestConfigurations(t *testing.T) {
 	}
 	data, err = command(root, binary, "testdrive", "--framework", "jest", "--all", "--yes")
 	require.NoError(t, err, string(data))
+	require.Contains(t, string(data), "Open report:")
 	report := readValidationReport(t, root)
 	require.True(t, report.Success, string(data))
 	require.Equal(t, "PASSED", report.Summary.Status)

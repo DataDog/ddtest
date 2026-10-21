@@ -37,7 +37,7 @@ func TestAggregateCountsDistinguishRepeatedExecutionsWithoutDroppingContexts(t *
 		models = append(models, model)
 		runs = append(runs, run.summary())
 	}
-	require.NoError(t, writeConfigurationHTML(root, models))
+	require.NoError(t, writeConfigurationHTML(&bytes.Buffer{}, root, models))
 	page, err := os.ReadFile(htmlReportPath(root))
 	require.NoError(t, err)
 	require.Contains(t, string(page), "96 reported test executions · 32 source-test identities")
