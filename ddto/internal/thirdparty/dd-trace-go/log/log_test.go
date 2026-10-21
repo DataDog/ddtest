@@ -86,3 +86,31 @@ func TestLoggingRateWarningReachesLoggerThatReportsErrors(t *testing.T) {
 		t.Fatalf("logs %q; want the rate's warning", got)
 	}
 }
+
+type panickingLogger struct{}
+
+func (panickingLogger) Log(string) { panic("logger failure") }
+
+// A Logger that panics, when the caller recovers, leaves the logger lock
+// free, so UseLogger cannot block forever. Ported from dd-trace-go #5582.
+func TestPanickingLoggerReleasesLock(t *testing.T) {
+	undo := UseLogger(panickingLogger{})
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("the logger did not panic")
+			}
+		}()
+		Warn("boom")
+	}()
+	done := make(chan struct{})
+	go func() {
+		undo()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a panicking Logger left the logger lock held")
+	}
+}

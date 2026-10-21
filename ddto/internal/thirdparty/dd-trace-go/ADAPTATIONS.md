@@ -2245,6 +2245,17 @@ and a per-binary session that ran a test, as in
 the PR, so the tests that compare Mini with it expect its session-only events
 as the PR reports them (`withPortedEmptySession`).
 
+## Panicking loggers
+
+dd-trace-go PR #5582 (`b3ab4cb87`) is newer than the recorded base. Only its
+`log.go` change is ported, and `feature_ports` records that file's revision.
+`printMsg` releases the logger lock with `defer`, so a `Logger` that panics,
+when its caller recovers, does not leave the lock held. A held lock would block
+`UseLogger`, and then every log call. ddto installs no logger of its own
+outside tests. The revision's `ParseLevel`, used for `OTEL_LOG_LEVEL`, and its
+Feature Flags provider are APM and are not ported. Check:
+`TestPanickingLoggerReleasesLock`, from the PR, which fails without the port.
+
 ## Fuzz and executable Examples
 
 SDK PR #5442 is integrated in the recorded `main` base. `feature_ports` keeps
@@ -2281,7 +2292,13 @@ elsewhere. On Windows, the runtime's clock is coarser, so a wait measured on it
 could exceed the root's QPC-measured time and leave a zero or negative
 duration; the event then fell back to the wrapper's own clock, which includes
 the wait. `TestFuzzFinishTimeUsesKnownNativeDuration` and
-`TestNativeClockNestsInTestingDuration` check both. Go 1.28 replaces
+`TestNativeClockNestsInTestingDuration` check both. dd-trace-go #5673
+(`443dd2a55`) fixes the same skew upstream, still measuring the wait with
+`time.Since`: `capFuzzParallelSeedsWait` caps it at the root's elapsed
+QueryPerformanceCounter time, and `finish` reports a read zero or negative
+duration as zero length. A wait measured on testing's clock already
+stays within that time, and `fuzzFinishTime` already uses a read duration, so
+neither change is ported. Go 1.28 replaces
 `testing.common.start`'s highPrecisionTime with a time.Time, on Windows too:
 `initializeRetryAttemptStart` and `addRetryAttemptElapsed` then set and read
 it directly, and `startNativeClock` uses the runtime's clock on Windows, as

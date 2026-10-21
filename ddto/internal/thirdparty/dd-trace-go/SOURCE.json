@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "395d3c60a051935c02972b251af4cbc298945f6ac745276e0068df7c8fc653bf",
+      "sha256": "fc7b6baee85db50395b70a9a83419da9e127bfc489e8820b7327b1c4abc0f98b",
       "role": "local"
     },
     {
@@ -1964,14 +1964,14 @@
     },
     {
       "path": "log/log.go",
-      "sha256": "db186778f847924656986ef884ff691f58c1551266489e591ed8f1c411d87877",
+      "sha256": "41cfa08c3b8af54ef3359211d66218d02e4f0b6ac5350b846ffc5280468fc1bc",
       "role": "adapted",
       "source_path": "internal/log/log.go",
       "source_sha256": "021fafa9f8f8b154356fdf3a80a099cd949fecd9eba8d212946ee61597600e74"
     },
     {
       "path": "log/log_test.go",
-      "sha256": "78663ada13bf2d1ae99e60c9740f79df6516e978cbbf05ba6e9dd120b7dddaa7",
+      "sha256": "ccff779197217796c17b1b0cd7eadeafd90882e1b38ad81b37e61787516d6477",
       "role": "local"
     },
     {
@@ -2619,6 +2619,20 @@
           "path": "civisibility/integrations/manual_api_ddtestsession.go",
           "source_path": "internal/civisibility/integrations/manual_api_ddtestsession.go",
           "source_sha256": "1662dbe3366801667925820f49dfbacd979fa81b6b2e4f790a1f51d7b485d136"
+        }
+      ]
+    },
+    {
+      "name": "panicking-logger-unlock",
+      "pr": "https://github.com/DataDog/dd-trace-go/pull/5582",
+      "commit": "b3ab4cb876c121decaf6ca6a056d899b965dd476",
+      "base_commit": "049b8c1a3e9defc8e5c7a6e96e3019058a421a06",
+      "scope": "printMsg's deferred logger unlock only; the Feature Flags provider and the OTEL_LOG_LEVEL parser in that revision are APM.",
+      "files": [
+        {
+          "path": "log/log.go",
+          "source_path": "internal/log/log.go",
+          "source_sha256": "0fbc5649155020af8c3e7343ad829e929234b3418d41bed7722d03b5a7027e36"
         }
       ]
     }
