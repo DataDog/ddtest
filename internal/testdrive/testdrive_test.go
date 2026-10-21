@@ -434,7 +434,7 @@ func TestPreviewChoosesTracerBeforeConfirmation(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", bin)
-			drive, err := Prepare("6.15.0")
+			drive, err := Prepare(PrepareOptions{TracerVersion: "6.15.0"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -535,7 +535,7 @@ func TestPrepareJestUsesCanonicalRepositoryRoot(t *testing.T) {
 	}
 	t.Chdir(alias)
 	t.Setenv("PWD", alias)
-	drive, err := Prepare("latest")
+	drive, err := Prepare(PrepareOptions{TracerVersion: "latest"})
 	require.NoError(t, err)
 	canonical, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)

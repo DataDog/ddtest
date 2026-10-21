@@ -20,6 +20,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/Masterminds/semver/v3"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
@@ -41,7 +42,10 @@ func TestMissingJestNeverInvokesPackageDownloader(t *testing.T) {
 	t.Cleanup(func() { viper.Reset(); settings.Init() })
 	run, err := Prepare(PrepareOptions{CheckOnly: true})
 	require.NoError(t, err)
-	run.startIntake = func(string) (localIntake, error) { t.Fatal("check-only must not start intake"); return nil, nil }
+	run.startIntake = func(string, intake.Scenario) (localIntake, error) {
+		t.Fatal("check-only must not start intake")
+		return nil, nil
+	}
 	require.Error(t, run.Run(t.Context(), &bytes.Buffer{}))
 	var report validationResult
 	data, err := os.ReadFile(validationPath(root))

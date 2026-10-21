@@ -115,7 +115,7 @@ func (r validationRun) summary() runSummary {
 }
 
 type validationResult struct {
-	SchemaVersion int `json:"schema_version"`
+	SchemaVersion      int                      `json:"schema_version"`
 	ReportingCounts    *executionCounts         `json:"reporting_counts,omitempty"`
 	Scope              *onboard.ValidationScope `json:"scope,omitempty"`
 	Cleanup            *verdict                 `json:"cleanup,omitempty"`
@@ -146,6 +146,24 @@ type validationResult struct {
 	Retained           *retainedExecution       `json:"retained_execution,omitempty"`
 }
 
+func marshalValidation(result validationResult) ([]byte, error) {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
+	if !result.CheckOnly {
+		return json.MarshalIndent(result, "", "  ")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	for _, name := range []string{"success", "local_success", "runs"} {
+		delete(fields, name)
+	}
+	return json.MarshalIndent(fields, "", "  ")
+}
+
 const maxReportDifferences = 10
 
 // Bound diagnostics too: install errors can contain entire package-manager logs.
@@ -170,7 +188,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		result.CompletedAt = time.Now().UTC()
 		result.WorkingDirectory = repositoryRoot
 		result.Success = result.Error == ""
-		data, err := json.MarshalIndent(result, "", "  ")
+		data, err := marshalValidation(result)
 		if err != nil {
 			return fmt.Errorf("encode testdrive results: %w", err)
 		}
@@ -189,7 +207,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	}
 	setValidationEvidence(&result)
 	result.Summary = summarizeValidation(result)
-	data, err := json.MarshalIndent(result, "", "  ")
+	data, err := marshalValidation(result)
 	if err != nil {
 		return fmt.Errorf("encode validation results: %w", err)
 	}
@@ -340,6 +358,10 @@ func compareCISelection(check onboard.RuntimeCheck, localVersion string) *verdic
 
 func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	result.SchemaVersion = 1
+	if result.CheckOnly {
+		result.Compatibility = verdict{Status: onboard.StatusNotExercised, Reason: "Configuration checks only; paired execution was not exercised."}
+		result.Features = []featureResult{{Name: "all", Status: onboard.StatusNotExercised, Reason: "Configuration checks only."}}
+	}
 	result.CompletedAt = time.Now().UTC()
 	result.WorkingDirectory = repositoryRoot
 	result.CIExecution = verdict{Status: "not exercised", Reason: "Local-only validation; CI execution and Datadog backend processing were not exercised."}

@@ -103,13 +103,15 @@ func jestSeparator(command string, args []string) int {
 	if filepath.Base(command) != "jest" {
 		for i, arg := range args {
 			if filepath.Base(arg) == "jest" {
-				start = i+1
+				start = i + 1
 				break
 			}
 		}
 	}
 	index := slices.Index(args[start:], "--")
-	if index >= 0 { index += start }
+	if index >= 0 {
+		index += start
+	}
 	// npm consumes its first separator when forwarding script arguments.
 	if filepath.Base(command) == "npm" && index >= 0 && index == slices.Index(args, "--") {
 		if next := slices.Index(args[index+1:], "--"); next >= 0 {
