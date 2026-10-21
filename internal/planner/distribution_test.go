@@ -415,15 +415,15 @@ func TestSortedWeightedTestFiles(t *testing.T) {
 	}
 }
 
-func TestScoreSortedWeightedRunnerSplit(t *testing.T) {
-	files := []weightedTestFile{
-		{path: "slow.rb", weight: 10},
-		{path: "medium.rb", weight: 6},
-		{path: "fast.rb", weight: 4},
-		{path: "tiny.rb", weight: 2},
+func TestScoreRunnerSplit(t *testing.T) {
+	testFiles := map[string]int{
+		"slow.rb":   10,
+		"medium.rb": 6,
+		"fast.rb":   4,
+		"tiny.rb":   2,
 	}
 
-	result := scoreSortedWeightedRunnerSplit(files, 2)
+	result := scoreRunnerSplit(testFiles, 2, false)
 	expected := splitScore{
 		parallelRunners: 2,
 		wallTime:        12,
@@ -432,16 +432,16 @@ func TestScoreSortedWeightedRunnerSplit(t *testing.T) {
 	}
 
 	if result != expected {
-		t.Fatalf("scoreSortedWeightedRunnerSplit() = %+v, expected %+v", result, expected)
+		t.Fatalf("scoreRunnerSplit() = %+v, expected %+v", result, expected)
 	}
 }
 
-func TestScoreSortedWeightedRunnerSplit_UnavoidableEmptyRunners(t *testing.T) {
-	files := []weightedTestFile{
-		{path: "slow.rb", weight: 10},
+func TestScoreRunnerSplit_UnavoidableEmptyRunners(t *testing.T) {
+	testFiles := map[string]int{
+		"slow.rb": 10,
 	}
 
-	result := scoreSortedWeightedRunnerSplit(files, 3)
+	result := scoreRunnerSplit(testFiles, 3, false)
 	expected := splitScore{
 		parallelRunners: 3,
 		wallTime:        10,
@@ -450,7 +450,7 @@ func TestScoreSortedWeightedRunnerSplit_UnavoidableEmptyRunners(t *testing.T) {
 	}
 
 	if result != expected {
-		t.Fatalf("scoreSortedWeightedRunnerSplit() = %+v, expected %+v", result, expected)
+		t.Fatalf("scoreRunnerSplit() = %+v, expected %+v", result, expected)
 	}
 }
 

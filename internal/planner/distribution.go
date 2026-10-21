@@ -36,8 +36,14 @@ func (tp *TestPlanner) DistributeTestFiles(testFiles []string, parallelRunners i
 // same-basename files collected in one worker fail with an import file mismatch.
 func (tp *TestPlanner) DistributeWeightedTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
 	builder := newTestSplitBuilder(parallelRunners)
-	// Platform names are plain strings (see platform.Python.Name).
-	return builder.distributeFiles(testFiles, tp.planMetadata.Platform == "python")
+	return builder.distributeFiles(testFiles, tp.basenameAffinityEnabled())
+}
+
+// basenameAffinityEnabled reports whether files sharing a basename must be
+// kept on distinct runners (see DistributeWeightedTestFiles). Platform names
+// are plain strings (see platform.Python.Name).
+func (tp *TestPlanner) basenameAffinityEnabled() bool {
+	return tp.planMetadata.Platform == "python"
 }
 
 // hasDuplicateBasenames reports whether any two files share a basename.
@@ -211,11 +217,14 @@ func (s splitScore) totalRuntimeDuration() time.Duration {
 	return time.Duration(s.totalRuntime) * time.Millisecond
 }
 
-func scoreSortedWeightedRunnerSplit(files []weightedTestFile, parallelRunners int) splitScore {
+// scoreRunnerSplit scores a candidate runner count by simulating the exact
+// placement used to create test splits, including Python basename affinity
+// when enabled. Scoring must match split creation, or the selected runner
+// count could report a target-meeting plan whose generated splits miss the
+// target.
+func scoreRunnerSplit(testFiles map[string]int, parallelRunners int, basenameAffinity bool) splitScore {
 	builder := newTestSplitBuilder(parallelRunners)
-	for _, file := range files {
-		builder.addFile(file.weight)
-	}
+	builder.placeFiles(testFiles, basenameAffinity)
 	return builder.score()
 }
 
@@ -243,15 +252,27 @@ func (b *testSplitBuilder) addFile(weight int) int {
 }
 
 func (b *testSplitBuilder) distributeFiles(testFiles map[string]int, basenameAffinity bool) [][]string {
-	if basenameAffinity && hasDuplicateBasenames(testFiles) {
-		return b.distributeFilesWithBasenameAffinity(testFiles)
+	result, unavoidableCollisions := b.placeFiles(testFiles, basenameAffinity)
+	for basename, files := range unavoidableCollisions {
+		slog.Warn("Same-basename test files exceed the runner count; pytest import collisions cannot be avoided",
+			"basename", basename, "files", files, "parallelRunners", b.parallelRunners)
 	}
-	return b.distributeSortedFiles(sortedWeightedTestFiles(testFiles))
+	return result
 }
 
-// distributeFilesWithBasenameAffinity places files that share a basename on
-// distinct runners before distributing the remaining files normally.
-func (b *testSplitBuilder) distributeFilesWithBasenameAffinity(testFiles map[string]int) [][]string {
+// placeFiles distributes files across runners without logging, so candidate
+// scoring can reuse the exact split-creation placement.
+func (b *testSplitBuilder) placeFiles(testFiles map[string]int, basenameAffinity bool) ([][]string, map[string][]string) {
+	if basenameAffinity && hasDuplicateBasenames(testFiles) {
+		return b.placeFilesWithBasenameAffinity(testFiles)
+	}
+	return b.distributeSortedFiles(sortedWeightedTestFiles(testFiles)), nil
+}
+
+// placeFilesWithBasenameAffinity places files that share a basename on
+// distinct runners before distributing the remaining files normally. It
+// reports same-basename groups that could not be separated.
+func (b *testSplitBuilder) placeFilesWithBasenameAffinity(testFiles map[string]int) ([][]string, map[string][]string) {
 	result := make([][]string, b.parallelRunners)
 	for i := range result {
 		result[i] = []string{}
@@ -265,7 +286,7 @@ func (b *testSplitBuilder) distributeFilesWithBasenameAffinity(testFiles map[str
 			runnerIndex, ok := b.lightestUnusedRunner(usedRunners)
 			if !ok {
 				// More same-basename files than runners: the collision cannot be
-				// avoided; place the rest for balance and warn.
+				// avoided; place the rest for balance and report it.
 				unavoidableCollisions[filepath.Base(file.path)] = append(unavoidableCollisions[filepath.Base(file.path)], file.path)
 				runnerIndex = b.addFile(file.weight)
 			} else {
@@ -274,12 +295,6 @@ func (b *testSplitBuilder) distributeFilesWithBasenameAffinity(testFiles map[str
 			usedRunners[runnerIndex] = true
 			result[runnerIndex] = append(result[runnerIndex], file.path)
 			assigned[file.path] = true
-		}
-	}
-	if len(unavoidableCollisions) > 0 {
-		for basename, files := range unavoidableCollisions {
-			slog.Warn("Same-basename test files exceed the runner count; pytest import collisions cannot be avoided",
-				"basename", basename, "files", files, "parallelRunners", b.parallelRunners)
 		}
 	}
 
@@ -291,7 +306,7 @@ func (b *testSplitBuilder) distributeFilesWithBasenameAffinity(testFiles map[str
 		result[runnerIndex] = append(result[runnerIndex], file.path)
 	}
 
-	return result
+	return result, unavoidableCollisions
 }
 
 // lightestUnusedRunner returns the least-loaded runner whose index is not in

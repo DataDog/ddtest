@@ -14,7 +14,7 @@ import (
 const testParallelRunnerOverhead = 25 * time.Second
 
 func testCalculateParallelRunners(testFileWeights map[string]int, minParallelism, maxParallelism int) int {
-	return calculateParallelRunnerSplit(testFileWeights, minParallelism, maxParallelism, testParallelRunnerOverhead, 0).parallelRunners
+	return calculateParallelRunnerSplit(testFileWeights, minParallelism, maxParallelism, testParallelRunnerOverhead, 0, false).parallelRunners
 }
 
 func TestCalculateParallelRunners_MaxParallelismIsOne(t *testing.T) {
@@ -144,7 +144,7 @@ func TestCalculateParallelRunnerSplit_ReturnsSelectedScore(t *testing.T) {
 		"test5.rb": 6,
 	}
 
-	result := calculateParallelRunnerSplit(testFileWeights, 3, 4, testParallelRunnerOverhead, 0)
+	result := calculateParallelRunnerSplit(testFileWeights, 3, 4, testParallelRunnerOverhead, 0, false)
 	expected := splitScore{
 		parallelRunners: 3,
 		wallTime:        12,
@@ -201,7 +201,7 @@ func TestCalculateParallelRunnerSplit_RealGitHubActionsArtifacts(t *testing.T) {
 				)
 			}
 
-			result := calculateParallelRunnerSplit(fixture.TestFileWeights, 1, 8, testParallelRunnerOverhead, 0)
+			result := calculateParallelRunnerSplit(fixture.TestFileWeights, 1, 8, testParallelRunnerOverhead, 0, false)
 			if result.parallelRunners != tt.expectedParallelRunners {
 				t.Fatalf(
 					"calculateParallelRunnerSplit() = %d runners, expected %d; artifact selected %d before this fix",
@@ -236,7 +236,7 @@ func TestCalculateParallelRunnerSplit_ParallelRunnerOverheadTunesFanout(t *testi
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := calculateParallelRunnerSplit(fixture.TestFileWeights, 1, 8, tt.parallelRunnerOverhead, 0)
+			result := calculateParallelRunnerSplit(fixture.TestFileWeights, 1, 8, tt.parallelRunnerOverhead, 0, false)
 			if result.parallelRunners != tt.expectedParallelRunners {
 				t.Errorf("calculateParallelRunnerSplit() = %d runners, expected %d", result.parallelRunners, tt.expectedParallelRunners)
 			}
@@ -256,7 +256,7 @@ func TestCalculateParallelRunnerSplit_TargetTimeFiltersCandidateSplits(t *testin
 	parallelRunnerOverhead := 5 * time.Minute
 	targetTime := 2 * time.Minute
 
-	result := calculateParallelRunnerSplit(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime)
+	result := calculateParallelRunnerSplit(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime, false)
 	if result.parallelRunners != 2 {
 		t.Errorf("calculateParallelRunnerSplit() = %d runners, expected 2 to satisfy target time with the lowest selection score", result.parallelRunners)
 	}
@@ -278,7 +278,7 @@ func TestCalculateParallelRunnerSplit_TargetTimeImpossibleWarnsAndSelectsLowestW
 	parallelRunnerOverhead := 5 * time.Minute
 	targetTime := 59 * time.Second
 
-	result := calculateParallelRunnerSplitSelection(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime)
+	result := calculateParallelRunnerSplitSelection(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime, false)
 	if result.selected.parallelRunners != 4 {
 		t.Errorf("calculateParallelRunnerSplit() = %d runners, expected 4 from fallback lowest wall time split", result.selected.parallelRunners)
 	}
@@ -329,7 +329,7 @@ func TestCalculateParallelRunnerSplit_LogsCandidateSplits(t *testing.T) {
 		"test3.rb": 10,
 	}
 
-	_ = calculateParallelRunnerSplit(testFileWeights, 1, 3, testParallelRunnerOverhead, 0)
+	_ = calculateParallelRunnerSplit(testFileWeights, 1, 3, testParallelRunnerOverhead, 0, false)
 
 	logOutput := logs.String()
 	if strings.Count(logOutput, "Considered parallel runner split") != 3 ||
@@ -351,6 +351,51 @@ func BenchmarkCalculateParallelRunners20000TestFiles(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		_ = calculateParallelRunnerSplit(testFileWeights, 1, 256, testParallelRunnerOverhead, 0)
+		_ = calculateParallelRunnerSplit(testFileWeights, 1, 256, testParallelRunnerOverhead, 0, false)
+	}
+}
+
+func TestCalculateParallelRunnerSplit_BasenameAffinityScoresSplitCreation(t *testing.T) {
+	// Ordinary weighted scheduling predicts an 11s two-runner plan, but the
+	// Python basename-affinity split takes 12s with two runners. Selection
+	// must score the distribution that split creation generates, or a
+	// target-meeting plan is reported while the splits miss the target.
+	testFileWeights := map[string]int{
+		"checks/a/test_same.py": 10_000,
+		"checks/b/test_same.py": 1_000,
+		"checks/test_other.py":  11_000,
+	}
+	targetTime := 11 * time.Second
+
+	withoutAffinity := calculateParallelRunnerSplit(testFileWeights, 1, 3, 0, targetTime, false)
+	if withoutAffinity.parallelRunners != 2 || withoutAffinity.wallTime != 11_000 {
+		t.Fatalf("without affinity = %+v, expected the 2-runner split meeting the 11s target", withoutAffinity)
+	}
+
+	withAffinity := calculateParallelRunnerSplit(testFileWeights, 1, 3, 0, targetTime, true)
+	if withAffinity.parallelRunners != 3 || withAffinity.wallTime != 11_000 {
+		t.Fatalf("with affinity = %+v, expected 3 runners: the 2-runner affinity split takes 12s and misses the 11s target", withAffinity)
+	}
+
+	// Candidate scores must equal the wall time of the splits the planner
+	// actually generates for the same runner count.
+	planner := newTestPlannerWithDefaults()
+	planner.planMetadata.Platform = "python"
+	for runners := 1; runners <= 3; runners++ {
+		score := scoreRunnerSplit(testFileWeights, runners, true)
+		distribution := planner.DistributeWeightedTestFiles(testFileWeights, runners)
+		maxLoad := 0
+		for _, runnerFiles := range distribution {
+			load := 0
+			for _, file := range runnerFiles {
+				load += testFileWeights[file]
+			}
+			if load > maxLoad {
+				maxLoad = load
+			}
+		}
+		if score.wallTime != maxLoad {
+			t.Fatalf("runners=%d: candidate wall time %dms != generated split max load %dms", runners, score.wallTime, maxLoad)
+		}
 	}
 }

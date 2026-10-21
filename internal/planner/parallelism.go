@@ -7,20 +7,24 @@ import (
 
 // calculateParallelRunnerSplit determines the selected runner split by
 // estimating candidates between the configured min and max parallelism.
-func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism, maxParallelism int, parallelRunnerOverhead, targetTime time.Duration) splitScore {
-	return calculateParallelRunnerSplitSelection(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime).selected
+func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism, maxParallelism int, parallelRunnerOverhead, targetTime time.Duration, basenameAffinity bool) splitScore {
+	return calculateParallelRunnerSplitSelection(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime, basenameAffinity).selected
 }
 
-func calculateParallelRunnerSplitSelection(testFileWeights map[string]int, minParallelism, maxParallelism int, parallelRunnerOverhead, targetTime time.Duration) splitSelection {
-	files := sortedWeightedTestFiles(testFileWeights)
+func calculateParallelRunnerSplitSelection(testFileWeights map[string]int, minParallelism, maxParallelism int, parallelRunnerOverhead, targetTime time.Duration, basenameAffinity bool) splitSelection {
 	selector := splitSelector{
 		parallelRunnerOverhead: parallelRunnerOverhead,
 		targetTime:             targetTime,
 	}
+	// Candidate scoring simulates the same distribution split creation uses,
+	// so the reported plan matches the generated splits.
+	scoreCandidate := func(parallelRunners int) splitScore {
+		return scoreRunnerSplit(testFileWeights, parallelRunners, basenameAffinity)
+	}
 
 	// maxParallelism could be 0 or negative!
 	if maxParallelism <= 1 {
-		score := scoreSortedWeightedRunnerSplit(files, 1)
+		score := scoreCandidate(1)
 		selector.logCandidate(score)
 		selector.maybeWarnTargetTimeUnreachable(score, 1, 1)
 		return selector.selection(score, score, []splitScore{score})
@@ -37,23 +41,23 @@ func calculateParallelRunnerSplitSelection(testFileWeights map[string]int, minPa
 		minParallelism = maxParallelism
 	}
 
-	if len(files) == 0 {
-		score := scoreSortedWeightedRunnerSplit(files, minParallelism)
+	if len(testFileWeights) == 0 {
+		score := scoreCandidate(minParallelism)
 		selector.logCandidate(score)
 		selector.maybeWarnTargetTimeUnreachable(score, minParallelism, maxParallelism)
 		return selector.selection(score, score, []splitScore{score})
 	}
 
-	candidateMax := maxUsefulParallelism(minParallelism, maxParallelism, len(files))
+	candidateMax := maxUsefulParallelism(minParallelism, maxParallelism, len(testFileWeights))
 
-	bestWithoutTarget := scoreSortedWeightedRunnerSplit(files, minParallelism)
+	bestWithoutTarget := scoreCandidate(minParallelism)
 	lowestWallTime := bestWithoutTarget
 	bestWithinTarget := bestWithoutTarget
 	targetBestFound := selector.meetsTargetTime(bestWithoutTarget)
 	candidates := []splitScore{bestWithoutTarget}
 	selector.logCandidate(bestWithoutTarget)
 	for parallelRunners := minParallelism + 1; parallelRunners <= candidateMax; parallelRunners++ {
-		score := scoreSortedWeightedRunnerSplit(files, parallelRunners)
+		score := scoreCandidate(parallelRunners)
 		candidates = append(candidates, score)
 		selector.logCandidate(score)
 		if selector.better(score, bestWithoutTarget) {

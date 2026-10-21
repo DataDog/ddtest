@@ -233,6 +233,7 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 		settings.GetMaxParallelism(),
 		settings.GetParallelRunnerOverhead(),
 		settings.GetTargetTime(),
+		tp.basenameAffinityEnabled(),
 	)
 	parallelRunnerSplit := parallelRunnerSelection.selected
 	parallelRunners := parallelRunnerSplit.parallelRunners
