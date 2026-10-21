@@ -268,6 +268,8 @@ func (t *Testdrive) frameworkPreflight() func(context.Context, io.Writer, *valid
 		return t.checkPlaywrightPreflight
 	case "cypress":
 		return t.checkCypressPreflight
+	case "cucumber":
+		return t.checkCucumberPreflight
 	}
 	return nil
 }

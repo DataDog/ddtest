@@ -67,6 +67,9 @@ func recommendJavaScriptTracer(ctx context.Context, check jestPreflight, ci *onb
 			continue
 		}
 		support := checkJestSupport
+		if framework == "cucumber" {
+			support = checkCucumberSupport
+		}
 		if framework == "cypress" {
 			support = checkCypressSupport
 		}

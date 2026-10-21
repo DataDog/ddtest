@@ -579,3 +579,21 @@ jobs:
           DDTEST_CYPRESS_NODE_MODULES: ${{ runner.temp }}/cypress-testdrive/node_modules
           CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
         run: xvfb-run -a go test -v ./internal/testdrive -run '^(TestPublicCypressTestdrive|TestCypressTypeScriptWrapperTranspilesToCommonJS)$' -failfast -count=1 -timeout=30m
+
+  testdrive-cucumber-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install Cucumber testdrive fixture dependencies
+        run: npm install --prefix "$RUNNER_TEMP/cucumber-testdrive" @cucumber/cucumber@12.2.0 nyc@17.1.0 dd-trace@6.20.1 --no-audit --no-fund
+      - name: Validate native scenarios, matching failures and source coverage
+        env:
+          DDTEST_CUCUMBER_NODE_MODULES: ${{ runner.temp }}/cucumber-testdrive/node_modules
+        run: go test -v ./internal/testdrive -run '^TestPublicCucumberTestdrive$' -count=1 -timeout=10m

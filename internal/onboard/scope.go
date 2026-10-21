@@ -14,6 +14,7 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
+ cucumberProbeCommand string
 	CypressPackage                  string          `json:"cypress_package_directory,omitempty"`
 	Cypress                         *CypressCommand `json:"cypress,omitempty"`
 	Platform                        string          `json:"platform,omitempty"` // GOOS of the resolved hosted CI runner, when known.
@@ -83,7 +84,7 @@ func yarnImplicitInstall(words []string) bool {
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" {
+	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
@@ -94,7 +95,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
-			if framework == "cypress" {
+			if framework == "cypress" || framework == "cucumber" {
 				candidate := false
 				for _, step := range job.Steps {
 					resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)

@@ -63,7 +63,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		}
 		return commandResolution{}
 	}
-	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress") {
+	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber") {
 		return commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, framework)}
 	}
 	// GitHub expands these before the shell runs; they are not shell syntax.
@@ -299,7 +299,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			words = words[2:]
 		}
 
-		if (framework == "mocha" || framework == "cypress") && len(words) > 0 && slices.Contains([]string{"--no-install", "--no"}, words[0]) {
+		if (framework == "mocha" || framework == "cypress" || framework == "cucumber") && len(words) > 0 && slices.Contains([]string{"--no-install", "--no"}, words[0]) {
 			words = words[1:]
 		}
 		if npmExec {
@@ -323,6 +323,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		}
 	}
 	runner := framework
+	if framework == "cucumber" {
+		runner = "cucumber-js"
+	}
 
 	if words[0] == runner || words[0] == "./node_modules/.bin/"+runner || words[0] == "node_modules/.bin/"+runner || words[0] == filepath.Join(directory, "node_modules", ".bin", runner) {
 		if framework == "mocha" && mochaWatchMode(directory, words[1:]) {
@@ -340,10 +343,15 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		if framework == "playwright" && playwrightInteractiveMode(words[2:]) {
 			return unresolvedCommand("Playwright UI and debug modes are interactive and are not supported; select a finite test command")
 		}
+		probeCommand := ""
+		if framework == "cucumber" {
+			probeCommand = shellquote.Join(append([]string{runner}, words[1:]...)...)
+		}
+
 		canonicalRoot, _ := filepath.EvalSymlinks(root)
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
-		entry := TestCommand{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}
+		entry := TestCommand{cucumberProbeCommand: probeCommand, Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}
 		if framework == "cypress" {
 			if slices.Contains(words, "--component") {
 				return unresolvedCommand("Cypress component testing is not supported")
@@ -365,6 +373,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		return resolveCypressNode(root, directory, words)
 	}
 
+	if framework == "cucumber" && (filepath.Base(words[0]) == "nyc" || filepath.Base(words[0]) == "c8") {
+		return resolveMochaCoverage(root, directory, words, stack, remaining, framework)
+	}
 	if framework == "mocha" {
 		if words[0] == "mochify" || mochaBrowserShell(root, directory, words[0]) {
 			return commandResolution{ReviewReason: "Mochify browser tests are outside Node Mocha validation: " + command}
@@ -416,7 +427,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 
 		return unresolvedCommand("Unsupported script orchestration: " + command)
 	case "npm-run-all", "npm-run-all2", "run-s":
-		if framework != "mocha" || len(words) < 2 {
+		if (framework != "mocha" && framework != "cucumber") || len(words) < 2 {
 			return unresolvedCommand("Unsupported script orchestration: " + command)
 		}
 		var scripts []string
@@ -533,8 +544,12 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	}
 
 	mocha := len(frameworks) > 0 && frameworks[0] == "mocha"
+	cucumber := len(frameworks) > 0 && frameworks[0] == "cucumber"
+	if cucumber {
+		script = cucumberDiscoveryScript(script)
+	}
 	var result commandResolution
-	if (mocha || (len(frameworks) > 0 && frameworks[0] == "cypress")) && strings.HasPrefix(command, "npm ") {
+	if (mocha || cucumber || (len(frameworks) > 0 && frameworks[0] == "cypress")) && strings.HasPrefix(command, "npm ") {
 		// npm starts each lifecycle script in a fresh shell at the package root.
 		// Resolve them independently so an inner cd/export cannot affect the next hook.
 		singleInvocation := true
@@ -568,15 +583,22 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	if len(frameworks) > 0 && frameworks[0] == "cypress" && len(result.Tests) > 1 {
 		return unresolvedCommand("Multiple Cypress invocations in one package alias require ordered execution review; preserve the original alias: " + command)
 	}
-	if mocha && len(result.Tests) > 1 {
-		return unresolvedCommand("Multiple Mocha invocations in one package alias require ordered execution review; preserve the original alias: " + command)
+	if (mocha || cucumber) && len(result.Tests) > 1 {
+		label := "Mocha"
+		if cucumber {
+			label = "Cucumber"
+		}
+		return unresolvedCommand("Multiple " + label + " invocations in one package alias require ordered execution review; preserve the original alias: " + command)
 	}
-	if (mocha || (len(frameworks) > 0 && frameworks[0] == "cypress")) && lifecycle == "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
+	if (mocha || cucumber || (len(frameworks) > 0 && frameworks[0] == "cypress")) && lifecycle == "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
 		if !result.SingleJest && result.Tests[0].mochaProbeCommand == "" {
 			result.Tests[0].mochaProbeCommand = result.Tests[0].Command
 		}
 		result.SingleJest = true
 		result.MochaAuxiliary = false
+		if cucumber && (result.Tests[0].Directory != repositoryPath(root, directory) || len(result.Tests[0].Environment) > 0) {
+ return unresolvedCommand("Cucumber alias changes its inner working directory or environment; use an explicit scoped invocation after reviewing that setup: " + command)
+}
 		// The full alias starts at the caller for lifecycle fidelity; probes
 		// retain their resolved runner directory and scoped environment.
 		result.Tests[0].Directory = repositoryPath(root, directory)

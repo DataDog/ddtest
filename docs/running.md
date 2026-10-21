@@ -773,3 +773,28 @@ Install the repository dependencies and the required Cypress browser first. Run 
 Five controlled checks validate retries, early flake detection, quarantine, disabled tests and attempt-to-fix. **Cypress TIA skipping and application coverage validation are deferred**. They are neither passed nor unsupported by the tracer, and missing application coverage does not block those five controls. Preserve existing coverage instrumentation. Real Datadog/Cypress Cloud processing and actual CI execution are not exercised locally.
 
 Execution uses disposable copies and removes owned browser/server processes and artifacts. Keep the report pair in `.testoptimization/`; JSON records commands, observed counts and bounded diagnostics, while HTML retains full test output. Unknown environment-printing utilities remain setup review items rather than receiving repository-specific exemptions.
+
+### Cucumber validation
+
+`ddtest onboard --framework cucumber` prints the Cucumber setup, including early
+tracer initialization, NYC source coverage and scoped instrumentation for mixed
+framework repositories. It does not edit files.
+
+Run `ddtest testdrive --framework cucumber --all --check-only --yes` to inspect
+CI commands and runtime requirements, then omit `--check-only` to validate them
+in disposable copies. A focused command can use `--command 'npm test'`. The
+original command runs without dd-trace and with reporting-only instrumentation;
+matching existing failures are acceptable. The public message formatter supplies
+native scenario results, including hooks and final retry outcomes. Incomplete
+messages cannot certify compatibility.
+
+All six controls are required. Cucumber reports coverage at suite level; the
+report associates it with scenarios without claiming per-scenario precision.
+Feature/config/support files alone do not prove application coverage. Native ESM
+requires installed Istanbul instrumentation in addition to NYC. Unknown scripts,
+dynamic variables, orchestration globs and alias-specific working-directory or
+environment changes remain unvalidated with an explanation.
+
+Feature probes and their step definitions use the same recoverable ownership
+records as other adapters. Only the JSON/HTML report pair remains in the customer
+repository. Local checks do not exercise customer CI or Datadog processing.
