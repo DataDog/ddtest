@@ -7,9 +7,12 @@ package testdrive
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -20,6 +23,7 @@ type Session struct {
 	id         string
 	directory  string
 	persistent bool
+	root       string
 }
 
 // NewSession creates private scratch storage outside the customer repository.
@@ -52,6 +56,14 @@ func (s *Session) create() error {
 	if err := os.Mkdir(s.directory, 0700); err != nil {
 		return fmt.Errorf("create temporary testdrive session: %w", err)
 	}
+	marker, err := json.Marshal(sessionOwner{Root: s.root, User: os.Getuid()})
+	if err == nil {
+		err = os.WriteFile(filepath.Join(s.directory, ".ddtest-owner.json"), marker, 0600)
+	}
+	if err != nil {
+		_ = os.RemoveAll(s.directory)
+		return err
+	}
 	return nil
 }
 
@@ -74,4 +86,45 @@ func (s *Session) ID() string {
 // Directory returns the directory owned by the session.
 func (s *Session) Directory() string {
 	return s.directory
+}
+
+type sessionOwner struct {
+	Root string `json:"root"`
+	User int    `json:"user"`
+}
+
+// The caller holds the repository lock, so no matching marked session can be live.
+func recoverSessions(root string, output io.Writer) error {
+	entries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "ddtest-") {
+			continue
+		}
+		path := filepath.Join(os.TempDir(), entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil || !privateOwnedDirectory(info) {
+			continue
+		}
+		marker := filepath.Join(path, ".ddtest-owner.json")
+		info, err = os.Lstat(marker)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 || !ownedByCurrentUser(info) {
+			continue
+		}
+		data, err := os.ReadFile(marker)
+		if err != nil {
+			continue
+		}
+		var owner sessionOwner
+		if json.Unmarshal(data, &owner) != nil || owner.Root != canonicalWorkflowRoot(root) || owner.User != os.Getuid() {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("recover owned session: %w", err)
+		}
+		_, _ = fmt.Fprintf(output, "Recovered abandoned testdrive session: %s\n", entry.Name())
+	}
+	return nil
 }

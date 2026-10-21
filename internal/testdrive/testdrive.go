@@ -299,14 +299,18 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 		return err
 	}
 	defer func() { _ = lock.Close() }()
+	if err := recoverSessions(t.repositoryRoot, output); err != nil {
+		return t.finishStartupFailure(output, err)
+	}
+	if probeRecoveryEnabled() {
+		if err := recoverProbesWithOutput(t.repositoryRoot, output); err != nil {
+			return t.finishStartupFailure(output, err)
+		}
+	}
 	if t.checkOnly {
 		return t.runConfigurationChecks(ctx, output)
 	}
-	if supportsValidationFramework(t.framework.Name()) {
-		if err := recoverProbes(t.repositoryRoot); err != nil {
-			return err
-		}
-	}
+
 	result, runErr := t.run(ctx, output)
 	result.Framework = t.framework.Name()
 	if runErr != nil {
@@ -324,6 +328,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		session.directory = filepath.Join(t.repositoryRoot, ".testoptimization", "testdrive", session.ID())
 		session.persistent = true
 	}
+	session.root = canonicalWorkflowRoot(t.repositoryRoot)
 	if err := session.create(); err != nil {
 		return result, err
 	}
@@ -795,4 +800,10 @@ func writeCommandFailure(output io.Writer, label string, data []byte) {
 		_, _ = fmt.Fprintln(output, captured)
 	}
 	_, _ = fmt.Fprintf(output, "\nBounded diagnostic: %s\n", validationPath(""))
+}
+
+func (t *Testdrive) finishStartupFailure(output io.Writer, err error) error {
+	result := validationResult{Framework: t.framework.Name(), CheckOnly: t.checkOnly, Error: err.Error(), Compatibility: verdict{Status: "inconclusive", Code: "recovery_failed", Reason: "Owned startup recovery did not finish."}}
+ if t.checkOnly { result.Preflight=&jestPreflight{Verdict:verdict{Status:"inconclusive",Code:"recovery_failed",Reason:err.Error()}} }
+	return errors.Join(err, finishValidation(output, t.repositoryRoot, result))
 }

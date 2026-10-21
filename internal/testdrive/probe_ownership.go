@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -121,10 +122,13 @@ func ownedProbeContents(record probeOwnership) ([]byte, error) {
 	}
 	peer, err := os.Lstat(record.Peer)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("probe identity evidence is missing; move or delete %s, then rerun: %w", record.Path, err)
 	}
-	if !peer.Mode().IsRegular() || !os.SameFile(info, peer) {
-		return nil, fmt.Errorf("probe was replaced or never published; preserve it: %s", record.Path)
+	if !peer.Mode().IsRegular() {
+		return nil, fmt.Errorf("probe peer is not a regular file; move or delete %s, then rerun", record.Path)
+	}
+	if !os.SameFile(info, peer) {
+		return nil, fmt.Errorf("%w: %s", errProbeReplaced, record.Path)
 	}
 	data, err := os.ReadFile(record.Path)
 	if err != nil {
@@ -132,12 +136,16 @@ func ownedProbeContents(record probeOwnership) ([]byte, error) {
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256(data))
 	if hash != record.Hash {
-		return nil, fmt.Errorf("owned probe was modified; preserve and review it before retrying: %s", record.Path)
+		return nil, fmt.Errorf("owned probe was modified; move or delete %s, then rerun", record.Path)
 	}
 	return data, nil
 }
 
-func removeProbe(root, probe string) error {
+var errProbeReplaced = errors.New("probe was replaced or never published")
+
+func removeProbe(root, probe string) error { return removeProbeWithOutput(root, probe, io.Discard) }
+
+func removeProbeWithOutput(root, probe string, output io.Writer) error {
 	path, err := probeOwnershipPath(root, probe)
 	if err != nil {
 		return err
@@ -153,9 +161,13 @@ func removeProbe(root, probe string) error {
 	if err != nil {
 		// A missing private peer is not evidence that the published probe vanished.
 		// Preserve its record and the source file until identity can be verified.
-		if _, probeErr := os.Lstat(probe); !os.IsNotExist(probeErr) {
+		if _, probeErr := os.Lstat(probe); !os.IsNotExist(probeErr) && !errors.Is(err, errProbeReplaced) {
 			return err
 		}
+	}
+	if errors.Is(err, errProbeReplaced) {
+		relative, _ := filepath.Rel(root, probe)
+		_, _ = fmt.Fprintf(output, "Warning: preserved replaced probe %s; discarded its old ownership record.\n", relative)
 	}
 	if err == nil {
 		if err := os.Remove(probe); err != nil {
@@ -218,7 +230,9 @@ func createOwnedProbe(root, probe string, contents []byte) error {
 	return nil
 }
 
-func recoverProbes(root string) error {
+func recoverProbes(root string) error { return recoverProbesWithOutput(root, io.Discard) }
+
+func recoverProbesWithOutput(root string, output io.Writer) error {
 	directory, err := probeOwnershipDirectory(root)
 	if err != nil {
 		return err
@@ -227,6 +241,7 @@ func recoverProbes(root string) error {
 	if err != nil {
 		return err
 	}
+	var recoveryErr error
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -234,16 +249,25 @@ func recoverProbes(root string) error {
 		path := filepath.Join(directory, entry.Name())
 		record, err := readProbeOwnership(path)
 		if err != nil {
-			return err
+			recoveryErr = errors.Join(recoveryErr, err)
+			continue
 		}
 		expected, err := probeOwnershipPath(root, record.Path)
 		if err != nil || expected != path || record.Root != canonicalWorkflowRoot(root) {
-			return fmt.Errorf("invalid probe ownership record: %s", path)
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("invalid probe ownership record: %s", entry.Name()))
+			continue
 		}
-		if err := removeProbe(root, record.Path); err != nil {
-			return err
+		if err := removeProbeWithOutput(root, record.Path, output); err != nil {
+			recoveryErr = errors.Join(recoveryErr, err)
+			continue
 		}
+		relative, _ := filepath.Rel(root, record.Path)
+		_, _ = fmt.Fprintf(output, "Recovered probe ownership: %s\n", relative)
 	}
+	if recoveryErr != nil {
+		return recoveryErr
+	}
+
 	// Process manifests first; their private peers prove source-file identity.
 	// Only then remove unpublished staging files inside this owned directory.
 	for _, entry := range entries {

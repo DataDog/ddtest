@@ -8,8 +8,12 @@
 package testdrive
 
 import (
+	"errors"
+	"fmt"
 	"golang.org/x/sys/unix"
 	"os"
+	"path/filepath"
+	"syscall"
 )
 
 func lockWorkflowFile(file *os.File) error {
@@ -18,4 +22,31 @@ func lockWorkflowFile(file *os.File) error {
 		return errWorkflowBusy
 	}
 	return err
+}
+
+func workflowLockDirectory(string) string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("ddtest-workflow-locks-%d", os.Getuid()))
+}
+func ownedByCurrentUser(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == uint32(os.Getuid())
+}
+func privateDirectoryPermissions(info os.FileInfo) bool { return info.Mode().Perm() == 0700 }
+func openWorkflowFile(path string) (*os.File, error) {
+	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), path), nil
+}
+func releaseWorkflowFile(file *os.File) error {
+	current, err := os.Lstat(file.Name())
+	info, statErr := file.Stat()
+	if err == nil && statErr == nil && os.SameFile(info, current) {
+		err = os.Remove(file.Name())
+	}
+	if os.IsNotExist(err) {
+		err = nil
+	}
+	return errors.Join(err, statErr, file.Close())
 }

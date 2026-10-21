@@ -11,18 +11,30 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 var errWorkflowBusy = errors.New("another ddtest workflow is active")
 
-// OS locks are released even after a crash. The empty coordination file lives
-// outside the checkout and is reusable; never unlink a potentially locked inode.
-func acquireWorkflowLock(root string) (*os.File, error) {
+// OS locks are released after a crash. Unix releases remove the file while
+// holding its lock; acquisition verifies the pathname still names that inode.
+// Windows keeps one stable file per checkout because open locks cannot be unlinked.
+type workflowLock struct {
+	*os.File
+	once sync.Once
+	err  error
+}
+
+func (lock *workflowLock) Close() error {
+	lock.once.Do(func() { lock.err = releaseWorkflowFile(lock.File) })
+	return lock.err
+}
+func acquireWorkflowLock(root string) (*workflowLock, error) {
 	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, err
 	}
-	directory := filepath.Join(os.TempDir(), fmt.Sprintf("ddtest-workflow-locks-%d", os.Getuid()))
+	directory := workflowLockDirectory(canonical)
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return nil, err
 	}
@@ -30,17 +42,36 @@ func acquireWorkflowLock(root string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("workflow lock storage is not a real directory")
+	if !privateOwnedDirectory(info) {
+		return nil, fmt.Errorf("workflow lock storage must be a private directory owned by the current user")
 	}
 	path := filepath.Join(directory, fmt.Sprintf("%x.lock", sha256.Sum256([]byte(canonical))))
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, err
-	}
-	if err := lockWorkflowFile(file); err != nil {
+	for range 8 {
+		file, err := openWorkflowFile(path)
+		if err != nil {
+			return nil, err
+		}
+		info, err := file.Stat()
+		if err != nil || !info.Mode().IsRegular() || !ownedByCurrentUser(info) {
+			_ = file.Close()
+			return nil, fmt.Errorf("workflow lock must be a regular file owned by the current user")
+		}
+		if err := lockWorkflowFile(file); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		current, err := os.Lstat(path)
+		if err == nil && os.SameFile(info, current) {
+			return &workflowLock{File: file}, nil
+		}
 		_ = file.Close()
-		return nil, err
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
 	}
-	return file, nil
+	return nil, fmt.Errorf("workflow lock changed repeatedly; retry after other invocations finish")
+}
+
+func privateOwnedDirectory(info os.FileInfo) bool {
+	return info.IsDir() && info.Mode()&os.ModeSymlink == 0 && privateDirectoryPermissions(info) && ownedByCurrentUser(info)
 }

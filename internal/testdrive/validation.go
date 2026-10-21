@@ -205,6 +205,13 @@ func validationPath(repositoryRoot string) string {
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
 	result.SchemaVersion = 1
+	if !result.CheckOnly && !result.HTMLReportCurrent {
+		if info, err := os.Lstat(htmlReportPath(repositoryRoot)); err == nil && (info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
+			if err := os.Remove(htmlReportPath(repositoryRoot)); err != nil {
+				return err
+			}
+		}
+	}
 	if result.Framework != "" && !supportsValidationFramework(result.Framework) {
 		result.Error = reportText(result.Error)
 		result.CompletedAt = time.Now().UTC()

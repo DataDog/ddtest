@@ -2,6 +2,7 @@ package testdrive
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,6 +24,10 @@ func TestProbeRecoveryAfterKilledProcess(t *testing.T) {
 		lock, err := acquireWorkflowLock(root)
 		require.NoError(t, err)
 		defer func() { _ = lock.Close() }()
+		session := planSession()
+		session.root = canonicalWorkflowRoot(root)
+		require.NoError(t, session.create())
+		requireWriteFile(t, filepath.Join(root, "abandoned-session"), session.Directory())
 		probe, err := createProbe(root, validationRun{Tests: []jestTest{{File: filepath.Join(root, "real.test.js"), Status: "passed"}}}, "owned test")
 		require.NoError(t, err)
 		fmt.Println(probe)
@@ -48,6 +54,11 @@ func TestProbeRecoveryAfterKilledProcess(t *testing.T) {
 	lock, err := acquireWorkflowLock(root)
 	require.NoError(t, err, "the OS releases the killed owner's lock")
 	defer func() { require.NoError(t, lock.Close()) }()
+	session, err := os.ReadFile(filepath.Join(root, "abandoned-session"))
+	require.NoError(t, err)
+	require.DirExists(t, string(session))
+	require.NoError(t, recoverSessions(root, &bytes.Buffer{}))
+	require.NoDirExists(t, string(session))
 	require.NoError(t, recoverProbes(root))
 	require.NoFileExists(t, probe)
 	require.FileExists(t, filepath.Join(root, "real.test.js"))
@@ -175,8 +186,68 @@ func TestUnpublishedProbeCannotClaimExistingSameContents(t *testing.T) {
 	record := probeOwnership{Root: canonicalWorkflowRoot(root), Path: probe, Hash: fmt.Sprintf("%x", sha256.Sum256([]byte("same contents"))), Peer: peer}
 	require.NoError(t, writeProbeRecord(record))
 	// Emulate death after recording ownership but before the exclusive link.
-	require.Error(t, recoverProbes(root))
+	require.NoError(t, recoverProbes(root))
+	require.NoFileExists(t, peer)
 	data, err := os.ReadFile(probe)
 	require.NoError(t, err)
 	require.Equal(t, "same contents", string(data))
+}
+
+func TestRecoveryPreservesReplacedProbeAndDoesNotBlockLaterRuns(t *testing.T) {
+	root := t.TempDir()
+	probe := filepath.Join(root, "probe.test.js")
+	require.NoError(t, createOwnedProbe(root, probe, []byte("owned")))
+	replacement := filepath.Join(root, "replacement")
+	requireWriteFile(t, replacement, "owned")
+	require.NoError(t, os.Rename(replacement, probe))
+	var output bytes.Buffer
+	require.NoError(t, recoverProbesWithOutput(root, &output))
+	require.FileExists(t, probe)
+	require.Contains(t, output.String(), "preserved replaced probe probe.test.js")
+	require.NoError(t, recoverProbes(root))
+}
+
+func TestStartupRecoveryFailureReplacesEarlierSuccess(t *testing.T) {
+	run := preflightFixture(t, "30.2.0", "jest-circus/runner")
+	require.NoError(t, finishValidation(&bytes.Buffer{}, run.repositoryRoot, pairedReport("old success", "passed")))
+	probe := filepath.Join(run.repositoryRoot, "probe.test.js")
+	require.NoError(t, createOwnedProbe(run.repositoryRoot, probe, []byte("owned")))
+	requireWriteFile(t, probe, "edited by customer")
+	for _, checkOnly := range []bool{false, true} {
+		run.checkOnly = checkOnly
+		var output bytes.Buffer
+		require.ErrorContains(t, run.Run(t.Context(), &output), "move or delete")
+		report := readValidationReport(t, run.repositoryRoot)
+		require.False(t, report.Success)
+		require.NotEmpty(t, report.Error)
+		if checkOnly {
+			require.Equal(t, "recovery_failed", report.Preflight.Verdict.Code)
+		} else {
+			require.Equal(t, "recovery_failed", report.Compatibility.Code)
+		}
+		require.FileExists(t, probe)
+	}
+}
+
+func TestCheckOnlyAndLegacyRunsRecoverAbandonedProbes(t *testing.T) {
+	for _, checkOnly := range []bool{true, false} {
+		run := preflightFixture(t, "30.2.0", "jest-circus/runner")
+		probe := filepath.Join(run.repositoryRoot, "probe.test.js")
+		require.NoError(t, createOwnedProbe(run.repositoryRoot, probe, []byte("owned")))
+		if checkOnly {
+			run.checkOnly = true
+		} else {
+			run.framework = &telemetryOnlyFramework{}
+			run.preflight = nil
+			run.platform = &fakeTracer{preloadPath: "/trace/ci/init.js"}
+			run.executor = &fakeTestdriveExecutor{}
+			run.startIntake = func(string, intake.Scenario) (localIntake, error) {
+				return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
+			}
+		}
+		var output bytes.Buffer
+		require.NoError(t, run.Run(t.Context(), &output))
+		require.NoFileExists(t, probe)
+		require.Contains(t, output.String(), "Recovered probe ownership: probe.test.js")
+	}
 }

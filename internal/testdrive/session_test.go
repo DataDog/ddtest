@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"sync"
@@ -57,4 +58,25 @@ func TestNewSessionSupportsConcurrentRuns(t *testing.T) {
 		require.NoError(t, session.Close())
 	}
 	require.Len(t, seen, runCount)
+}
+
+func TestSessionRecoveryDeletesOnlyMarkedStorageForLockedRepository(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TMPDIR", t.TempDir())
+	owned := planSession()
+	owned.root = canonicalWorkflowRoot(root)
+	require.NoError(t, owned.create())
+	other := planSession()
+	other.root = canonicalWorkflowRoot(t.TempDir())
+	require.NoError(t, other.create())
+	t.Cleanup(func() { require.NoError(t, other.Close()) })
+	unmarked, err := os.MkdirTemp(os.TempDir(), "ddtest-customer-")
+	require.NoError(t, err)
+	requireWriteFile(t, filepath.Join(unmarked, "customer data"), "preserve")
+	var output bytes.Buffer
+	require.NoError(t, recoverSessions(root, &output))
+	require.NoDirExists(t, owned.Directory())
+	require.DirExists(t, other.Directory())
+	require.FileExists(t, filepath.Join(unmarked, "customer data"))
+	require.Contains(t, output.String(), "Recovered abandoned testdrive session")
 }

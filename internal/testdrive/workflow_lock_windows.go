@@ -8,6 +8,7 @@ package testdrive
 import (
 	"golang.org/x/sys/windows"
 	"os"
+	"path/filepath"
 )
 
 func lockWorkflowFile(file *os.File) error {
@@ -17,3 +18,16 @@ func lockWorkflowFile(file *os.File) error {
 	}
 	return err
 }
+
+func workflowLockDirectory(root string) string {
+	return filepath.Join(root, ".testoptimization", ".workflow-locks")
+}
+func ownedByCurrentUser(os.FileInfo) bool          { return true } // Access is inherited from the user's checkout/temporary directory.
+func privateDirectoryPermissions(os.FileInfo) bool { return true } // Unix mode bits do not describe Windows ACLs.
+func openWorkflowFile(path string) (*os.File, error) {
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, os.ErrPermission
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+}
+func releaseWorkflowFile(file *os.File) error { return file.Close() }

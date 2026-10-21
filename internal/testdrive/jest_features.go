@@ -221,7 +221,7 @@ func (t *Testdrive) runJestProjectFeatures(ctx context.Context, output io.Writer
 		unavailableFeatures(result, err.Error())
 		return nil
 	}
-	defer func() { runErr = errors.Join(runErr, removeProbe(t.repositoryRoot, probePath)) }()
+	defer func() { runErr = errors.Join(runErr, removeProbeWithOutput(t.repositoryRoot, probePath, output)) }()
 	check.Probe, _ = filepath.Rel(t.repositoryRoot, probePath)
 	files, check.ProbeDiscoveryCommand, err = t.discoverJestTests(ctx, probePath)
 	if err != nil || len(files) != 1 || filepath.Clean(files[0]) != filepath.Clean(probePath) {
