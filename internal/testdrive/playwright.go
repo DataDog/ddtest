@@ -51,6 +51,9 @@ func resolvedPlaywrightProbe(env map[string]string) (string, error) {
 
 const playwrightSkippingReason = "dd-trace-js does not support Test Impact Analysis skipping or per-test coverage for Playwright. This feature is not exercised and is not counted as a passed check."
 
+// --no-deps first shipped in 1.38; probes must exclude setup/teardown projects.
+const minimumPlaywrightMinor = 38
+
 type playwrightProject struct {
 	Name         string   `json:"name"`
 	Root         string   `json:"root"`
@@ -81,6 +84,8 @@ type playwrightResults struct {
 	} `json:"tests"`
 	Errors []string `json:"errors"`
 }
+
+var playwrightTelemetryStatuses = map[string]string{"passed": "pass", "failed": "fail", "timedOut": "fail", "interrupted": "fail", "skipped": "skip"}
 
 var playwrightLaunchNoise = []struct {
 	pattern     *regexp.Regexp
@@ -166,7 +171,7 @@ func (t *Testdrive) playwrightInvocation(args []string) (string, []string) {
 	return t.command, args
 }
 
-func (t *Testdrive) inspectPlaywright(ctx context.Context, directory, probe, project string) (playwrightResults, error) {
+func (t *Testdrive) inspectPlaywright(ctx context.Context, directory, probe, project string) (result playwrightResults, inspectErr error) {
 	directory, err := os.MkdirTemp(directory, "playwright-discovery-")
 	if err != nil {
 		return playwrightResults{}, err
@@ -181,7 +186,14 @@ func (t *Testdrive) inspectPlaywright(ctx context.Context, directory, probe, pro
 	env["NODE_OPTIONS"] = stripDatadogNodeOptions(t.nodeOptions())
 	env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	env["DDTEST_PLAYWRIGHT_REPORT"] = resultPath
-	args := playwrightArgs(t.command, t.args, "--list", "--reporter="+reporter)
+	env["PW_TEST_REPORTER"] = reporter
+	owner, err := t.ownPlaywrightProcesses(directory, env)
+	if err != nil {
+		return result, err
+	}
+	defer func() { inspectErr = errors.Join(inspectErr, owner.Close()) }()
+	env["NODE_OPTIONS"] += " --require " + strconv.Quote(filepath.Join(directory, "children.cjs"))
+	args := playwrightArgs(t.command, t.args, "--list")
 	if probe != "" {
 		if err := preparePlaywrightProbe(directory, env, probe, project); err != nil {
 			return playwrightResults{}, err
@@ -198,7 +210,7 @@ func (t *Testdrive) inspectPlaywright(ctx context.Context, directory, probe, pro
 		}
 	}
 	var run validationRun
-	result, err := readPlaywrightResults(resultPath, &run)
+	result, err = readPlaywrightResults(resultPath, &run)
 	if len(result.Errors) > 0 {
 		err = fmt.Errorf("playwright discovery: %s", strings.Join(result.Errors, "; "))
 	}
@@ -245,7 +257,7 @@ func checkPlaywrightSupport(check jestPreflight, selection platform.JSSelection)
 	if !known || len(check.PlaywrightProjects) == 0 {
 		return verdict{Status: "inconclusive", Reason: "The Playwright version and effective projects must be discovered."}
 	}
-	if major < 1 || major == 1 && minor < 38 {
+	if major < 1 || major == 1 && minor < minimumPlaywrightMinor {
 		return verdict{Status: "incompatible", Reason: "dd-trace Playwright optimization features require Playwright >=1.38.0."}
 	}
 	status, reason := onboard.CompareNodeRequirement(check.Node, selection.Node)
@@ -259,7 +271,7 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	run.Name, run.Instrumented, run.ProbeMode, run.root, run.framework = name, instrumented, probeMode, t.checkoutRoot(), "playwright"
-	run.ExecutionContext = "Both comparison modes use ddtest native-result observers and process supervision, with private process groups for non-IPC child launches. Baseline disables dd-trace; it is not an unmodified shell invocation."
+	run.ExecutionContext = "Both comparison modes add a native-result observer through PW_TEST_REPORTER and process supervision, with private process groups for non-IPC child launches. Configured reporters are preserved. Baseline disables dd-trace; it is not an unmodified shell invocation."
 	run.ExecutionPath = "playwright-cli"
 	directory := filepath.Join(session.Directory(), name)
 	if err := os.MkdirAll(directory, 0700); err != nil {
@@ -289,15 +301,19 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(children)
-	owner, err := startProcessOwner(directory, env)
+	owner, err := t.ownPlaywrightProcesses(directory, env)
 	if err != nil {
 		return run, err
 	}
 	env["DDTEST_PLAYWRIGHT_REPORT"] = filepath.Join(directory, "results.json")
+	if previous := os.Getenv("PW_TEST_REPORTER"); previous != "" {
+		run.ReplacedReporters = []string{"PW_TEST_REPORTER=" + previous}
+	}
+	env["PW_TEST_REPORTER"] = reporter
 	defer func() {
 		runErr = errors.Join(runErr, owner.Close())
 	}()
-	args := playwrightArgs(t.command, t.args, "--reporter=line,"+reporter, "--output="+filepath.Join(directory, "artifacts"))
+	args := playwrightArgs(t.command, t.args, "--output="+filepath.Join(directory, "artifacts"))
 	if probePath != "" {
 		if err := preparePlaywrightProbe(directory, env, probePath, t.playwrightProject); err != nil {
 			return run, err
@@ -323,7 +339,9 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 	}
 	// Playwright does not implement TIA coverage. Do not diagnose its absence as
 	// broken customer setup; the HTML includes an explicit capability notice.
-	run.Facts.MissingCoverage = false
+	if !frameworkFeaturePolicies[run.framework].SourceCoverage {
+		run.Facts.MissingCoverage = false
+	}
 	if probePath != "" {
 		run.NativeCommand, err = resolvedPlaywrightProbe(env)
 		if err != nil {
@@ -383,7 +401,7 @@ func verifyPlaywrightTelemetry(run validationRun) verdict {
 			return verdict{Status: "inconclusive", Reason: "Missing native Playwright identity."}
 		}
 		for _, attempt := range test.Playwright.Attempts {
-			status := map[string]string{"passed": "pass", "failed": "fail", "timedOut": "fail", "interrupted": "fail", "skipped": "skip"}[attempt.Status]
+			status := playwrightTelemetryStatuses[attempt.Status]
 			if status != "" {
 				counts[identity{test.File, test.Name, test.Playwright.Project, status}]++
 			}
@@ -454,7 +472,12 @@ func playwrightDisabledProbe(tags map[string]string, control intake.Test, run va
 	return len(run.Tests) == 1 && run.Tests[0].Playwright != nil && run.Tests[0].Playwright.Project == want && run.Tests[0].Status == "skipped"
 }
 
-const playwrightProbeSource = `import { test } from '@playwright/test';
+const playwrightProbeSource = `import { createRequire } from 'node:module';
+const localRequire = createRequire(process.env.DDTEST_PLAYWRIGHT_PROBE);
+let runner;
+try { runner = localRequire.resolve('@playwright/test'); }
+catch { runner = localRequire.resolve('playwright/test'); }
+const { test } = localRequire(runner);
 test('ddtest validation probe', async ({}, testInfo) => {
   if (process.env.DDTEST_PROBE_MODE === 'fail' ||
       (process.env.DDTEST_PROBE_MODE === 'fail-once' && testInfo.retry === 0)) {
@@ -464,7 +487,6 @@ test('ddtest validation probe', async ({}, testInfo) => {
 `
 
 func (t *Testdrive) runPlaywrightFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
-
 	projects := map[string]validationRun{}
 	for _, test := range baseline.Tests {
 		if test.Playwright != nil {
@@ -499,7 +521,11 @@ func (t *Testdrive) runPlaywrightFeatures(ctx context.Context, output io.Writer,
 			child := *t
 			child.playwrightProject = project
 			run := func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
-				value, err := child.runPlaywright(ctx, output, session, preload, runSpec{Name: fmt.Sprintf("project-%d/%s", i+1, name), Role: roleProbeFeature, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
+				role := roleProbeFeature
+				if scenario.Feature == "" || scenario.Feature == "reporting-only" {
+					role = roleProbeControl
+				}
+				value, err := child.runPlaywright(ctx, output, session, preload, runSpec{Name: fmt.Sprintf("project-%d/%s", i+1, name), Role: role, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
 				value.Name = name
 				return value, err
 			}

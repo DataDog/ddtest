@@ -143,7 +143,10 @@ func TestPlaywrightReporterUsesDeviceBrowserDefault(t *testing.T) {
 	reporter := filepath.Join(root, "reporter.cjs")
 	result := filepath.Join(root, "results.json")
 	requireWriteFile(t, reporter, playwrightReporter)
-	script := `const Reporter=require(process.argv[1]);
+	script := `const Module=require('node:module');const load=Module._load,resolve=Module._resolveFilename;
+ Module._resolveFilename=function(name,...args){if(name==='playwright/package.json')return require('node:path').join(require('node:path').dirname(process.argv[1]),'package.json');return resolve.call(this,name,...args)};
+ Module._load=function(name,...args){if(name.endsWith('/lib/reporters/line.js'))return {default:class{onBegin(){}onEnd(){}onError(){}}};return load.call(this,name,...args)};
+ const Reporter=require(process.argv[1]);
  const reporter=new Reporter();
  const project={name:'iPhone',testDir:'/repo/test',use:{defaultBrowserType:'webkit'}};
  const test={parent:{project:()=>project},titlePath:()=>['','iPhone','a.spec.ts','opens'],title:'opens',location:{file:'/repo/test/a.spec.ts'},results:[],repeatEachIndex:0,expectedStatus:'passed'};

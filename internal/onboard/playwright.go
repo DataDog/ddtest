@@ -12,10 +12,13 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
+// Bound shell AST parsing of an explicit terminal failure guard.
+const maximumPlaywrightCommandBytes = 16 * 1024
+
 // Recognize only a literal terminal failure guard. Arbitrary fallback commands,
 // shell state changes and successful exits still need review.
 func playwrightFailureGuard(command string) (string, bool) {
-	if len(command) > 16384 {
+	if len(command) > maximumPlaywrightCommandBytes {
 		return "", false
 	}
 	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
@@ -74,7 +77,11 @@ func PlaywrightValidationCommand(root, command string) (string, error) {
 	remaining := 256
 	resolution := resolveJestSequence(root, root, command, nil, &remaining, "playwright")
 	if resolution.Reason != "" || !resolution.SingleJest || len(resolution.Tests) != 1 || filepath.Clean(resolution.Tests[0].Directory) != "." || len(resolution.Tests[0].Prerequisites) > 0 {
-		return "", fmt.Errorf("playwright command cannot safely forward validation options: %s. Review required setup and use the actual Playwright command with --command", resolution.Reason)
+		reason := resolution.Reason
+		if reason == "" {
+			reason = "the command is not one root invocation with forwardable arguments"
+		}
+		return "", fmt.Errorf("playwright command cannot safely forward validation options: %s. Review required setup and use the actual Playwright command with --command", reason)
 	}
 	return command, nil
 }

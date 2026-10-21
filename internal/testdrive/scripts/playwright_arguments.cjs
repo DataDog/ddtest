@@ -42,7 +42,7 @@ if (process.argv[1] && process.env.DDTEST_PLAYWRIGHT_PROBE) {
     const file = '^' + process.env.DDTEST_PLAYWRIGHT_PROBE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'
     process.argv = [process.argv[0], process.argv[1], 'test', file, ...keep,
       '--project=' + process.env.DDTEST_PLAYWRIGHT_PROJECT,
-      '--repeat-each=1', '--retries=0', '--grep=ddtest validation probe$']
+      '--repeat-each=1', '--retries=0', '--no-deps', '--grep=ddtest validation probe$']
     fs.writeFileSync(process.env.DDTEST_PLAYWRIGHT_ARGUMENTS_REPORT, JSON.stringify(process.argv))
   }
 }

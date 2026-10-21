@@ -537,7 +537,10 @@ jobs:
 
   testdrive-playwright-workflow:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      npm_config_cache: ${{ runner.temp }}/playwright-testdrive/cache
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-testdrive/browsers
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -553,4 +556,4 @@ jobs:
       - name: Validate browser execution, existing failures and supervised cleanup
         env:
           DDTEST_PLAYWRIGHT_NODE_MODULES: ${{ runner.temp }}/playwright-testdrive/node_modules
-        run: go test -v ./internal/testdrive -run '^TestPublicPlaywrightTestdrive$' -count=1 -timeout=10m
+        run: go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects)$' -count=1 -timeout=18m

@@ -24,6 +24,12 @@ var processOwnerScript string
 //go:embed scripts/process_guard.cjs
 var processGuardScript string
 
+// Wait longer than the child SIGTERM grace so sockets can drain after SIGKILL.
+const processOwnerCloseTimeout = 5 * time.Second
+
+// Only the first structured failure is needed; bound a misbehaving child log.
+const processErrorLimit = 16384
+
 type processCleanupError struct{ error }
 type processSupervisionError struct{ Code, Reason string }
 
@@ -61,14 +67,18 @@ func startProcessOwner(directory string, env map[string]string) (*processOwner, 
 	return owner, err
 }
 
-func newProcessOwner() (*processOwner, error) {
+func processSocketBase() string {
 	socketBase := os.TempDir()
 	// Darwin Unix socket paths are limited to 104 bytes; customer TMPDIR paths
 	// can already exceed that before adding the private directory and socket.
 	if runtime.GOOS == "darwin" {
 		socketBase = "/tmp"
 	}
-	directory, err := os.MkdirTemp(socketBase, "ddtest-process-")
+	return socketBase
+}
+
+func newProcessOwner() (*processOwner, error) {
+	directory, err := os.MkdirTemp(processSocketBase(), "ddtest-process-")
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +125,7 @@ func (o *processOwner) Close() error {
 			cleanupErr = &processCleanupError{err}
 		}
 		return errors.Join(cleanupErr, o.supervisionError())
-	case <-time.After(5 * time.Second):
+	case <-time.After(processOwnerCloseTimeout):
 		o.clients.Range(func(key, _ any) bool { _ = key.(net.Conn).Close(); return true })
 		return &processCleanupError{fmt.Errorf("owned browser process did not release its live connection; retain %s", o.directory)}
 	}
@@ -130,7 +140,7 @@ func (o *processOwner) supervisionError() error {
 		return err
 	}
 	defer func() { _ = file.Close() }()
-	data, err := io.ReadAll(io.LimitReader(file, 16384))
+	data, err := io.ReadAll(io.LimitReader(file, processErrorLimit))
 	if err != nil {
 		return err
 	}
@@ -140,6 +150,51 @@ func (o *processOwner) supervisionError() error {
 			return err
 		}
 		return &processSupervisionError{Code: failure.Code, Reason: failure.Reason}
+	}
+	return nil
+}
+
+// Process sockets may need a shorter root than session storage on Darwin.
+// Record the same private repository ownership used for crash recovery.
+func (t *Testdrive) ownPlaywrightProcesses(directory string, env map[string]string) (*processOwner, error) {
+	owner, err := startProcessOwner(directory, env)
+	if err != nil {
+		return nil, err
+	}
+	if err := markSessionStorage(owner.directory, t.ownershipRoot()); err != nil {
+		return nil, errors.Join(err, owner.Close())
+	}
+	return owner, nil
+}
+
+// The repository lock excludes another live ddtest owner for this repository.
+func recoverProcessOwners(root string, output io.Writer) error {
+	paths, err := filepath.Glob(filepath.Join(processSocketBase(), "ddtest-process-*"))
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		info, err := os.Lstat(path)
+		if err != nil || !privateOwnedDirectory(info) {
+			continue
+		}
+		marker := filepath.Join(path, ".ddtest-owner.json")
+		info, err = os.Lstat(marker)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > processErrorLimit || !ownedByCurrentUser(info) {
+			continue
+		}
+		data, err := os.ReadFile(marker)
+		if err != nil {
+			continue
+		}
+		var owner sessionOwner
+		if json.Unmarshal(data, &owner) != nil || owner.Root != canonicalWorkflowRoot(root) || owner.User != os.Getuid() {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintln(output, "Recovered abandoned Playwright process ownership storage:", filepath.Base(path))
 	}
 	return nil
 }

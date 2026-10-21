@@ -110,16 +110,15 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				var unresolved, review []scopeDiagnostic
 				var commands []TestCommand
 				for i, step := range job.Steps {
-					if framework == "playwright" && strings.Split(step.Uses, "@")[0] == "actions/upload-artifact" && step.Run == "" && step.ResolutionError == "" {
-						scope.Review = append(scope.Review, workflow.Path+" / "+name+": artifact upload is outside local Playwright execution")
-						continue
-					}
-
 					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 					if conditionErr == nil && !active {
 						continue
 					}
 					location := commandLocation{Workflow: workflow.Path, Job: name, Matrix: maps.Clone(row), Step: stepNumber(step, i), Command: step.Run}
+					if framework == "playwright" && strings.Split(step.Uses, "@")[0] == "actions/upload-artifact" && step.Run == "" && step.ResolutionError == "" {
+						review = append(review, scopeDiagnostic{location, "artifact upload is outside local Playwright execution"})
+						continue
+					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
 					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
 					for _, setup := range resolution.Setup {

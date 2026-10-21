@@ -5,6 +5,7 @@ package testdrive
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,7 +22,7 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 	if err != nil {
 		t.Skip("Node is needed for the process lifecycle regression")
 	}
-	for _, mode := range []string{"node", "non-node", "non-detached", "exec-file", "fork-custom-env", "owner-crash"} {
+	for _, mode := range []string{"node", "non-node", "non-detached", "exec-file", "exec", "fork-custom-env", "owner-crash"} {
 		t.Run(mode, func(t *testing.T) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			require.NoError(t, err)
@@ -33,7 +35,7 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 			portFile := filepath.Join(dir, "port")
 			child := fmt.Sprintf(`const fs=require('node:fs');const s=require('node:net').createServer();s.listen(0,'127.0.0.1',()=>fs.writeFileSync(%q,String(s.address().port)));`, portFile)
 			parent := fmt.Sprintf(`const child=require('node:child_process').spawn(process.execPath,['-e',%q],{detached:true,stdio:'ignore'});child.unref();`, child)
-			if mode == "non-node" || mode == "non-detached" || mode == "exec-file" {
+			if mode == "non-node" || mode == "non-detached" || mode == "exec-file" || mode == "exec" {
 				python, err := exec.LookPath("python3")
 				if err != nil {
 					t.Skip("Python is needed for the non-Node group regression")
@@ -42,6 +44,9 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 				parent = fmt.Sprintf(`const child=require('node:child_process').spawn(%q,['-c',%q],{detached:%t,stdio:'ignore'});child.unref();`, python, script, mode == "non-node")
 				if mode == "exec-file" {
 					parent = fmt.Sprintf(`const child=require('node:child_process').execFile(%q,['-c',%q],{stdio:'ignore'});child.stdout.destroy();child.stderr.destroy();child.unref();`, python, script)
+				}
+				if mode == "exec" {
+					parent = fmt.Sprintf(`const child=require('node:child_process').exec(%q);child.stdout.destroy();child.stderr.destroy();child.unref();`, shellquote.Join(python, "-c", script))
 				}
 			}
 			if mode == "fork-custom-env" {
@@ -141,4 +146,112 @@ func TestUnsupportedDetachedSpawnInvalidatesValidation(t *testing.T) {
 	var failure *processSupervisionError
 	require.ErrorAs(t, owner.Close(), &failure)
 	require.Equal(t, "unsupported_detached_spawn", failure.Code)
+}
+
+func TestSupervisedSpawnPreservesNativeArgumentsAndErrors(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	denied := filepath.Join(directory, "not-executable")
+	require.NoError(t, os.WriteFile(denied, []byte("#!/bin/sh\nexit 0\n"), 0600))
+	script := `const cp=require('node:child_process');
+ const cwd=process.argv[1],denied=process.argv[2];
+ async function run(make){return new Promise(resolve=>{let output='';let c;
+ try{c=make()}catch(e){resolve({throw:e.code});return}
+ c.stdout?.on('data',b=>output+=b);c.on('error',e=>resolve({error:e.code}));
+ c.on('close',code=>resolve({code,output:output.trim()}))})}
+ (async()=>{const options={cwd,stdio:['ignore','pipe','pipe']};const result=[];
+ for(const make of [()=>cp.spawn('/bin/pwd'),()=>cp.spawn('/bin/pwd',[]),()=>cp.spawn('/bin/pwd',options),()=>cp.spawn('/bin/pwd',[],options),()=>cp.spawn('/bin/pwd',undefined,options),()=>cp.spawn('/bin/pwd',null,options),()=>cp.spawn('/bin/pwd',42,options),()=>cp.spawn('ddtest-missing-executable-731'),()=>cp.spawn(denied),()=>cp.spawn('/bin/pwd',[],{cwd:cwd+'/missing'})])result.push(await run(make));
+ console.log(JSON.stringify(result));})().catch(e=>{console.error(e);process.exitCode=1})`
+	invoke := func(supervised bool) []byte {
+		command := exec.CommandContext(t.Context(), node, "-e", script, directory, denied)
+		command.Env = os.Environ()
+		if supervised {
+			command.Env = append(command.Env, "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+		}
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, string(output))
+		return output
+	}
+	require.JSONEq(t, string(invoke(false)), string(invoke(true)))
+}
+
+func TestShortLivedChildrenReleaseGuardsWithoutLoadingPreloads(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	marker := filepath.Join(directory, "guard-loaded-preload")
+	preload := filepath.Join(directory, "marker.cjs")
+	requireWriteFile(t, preload, fmt.Sprintf(`if(process.argv[1]?.endsWith('process_guard.cjs'))require('node:fs').writeFileSync(%q,'loaded')`, marker))
+	script := `const cp=require('node:child_process');let remaining=24;for(let i=0;i<24;i++){const c=cp.spawn('/bin/sleep',['0.01'],{detached:true,stdio:'ignore'});c.on('close',()=>{if(--remaining===0)console.log('done')})}`
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, node, "-e", script)
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+preload+" --require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.Contains(t, string(output), "done")
+	require.Eventually(t, func() bool {
+		count := 0
+		owner.clients.Range(func(_, _ any) bool { count++; return true })
+		return count == 0
+	}, 5*time.Second, 50*time.Millisecond)
+	require.NoFileExists(t, marker)
+}
+
+func TestSupervisorToleratesDeletedPreloadsAndErrorDirectory(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	script := `const fs=require('node:fs');for(const name of ['children.cjs','process_owner.cjs','process_guard.cjs'])fs.unlinkSync(process.argv[1]+'/'+name);const c=require('node:child_process').spawn(process.execPath,['-e',"console.log('late child survived')"],{stdio:'inherit'});c.on('close',code=>process.exitCode=code)`
+	command := exec.CommandContext(t.Context(), node, "-e", script, directory)
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+filepath.Join(directory, "missing", "errors"))
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.Contains(t, string(output), "late child survived")
+}
+
+func TestSupervisedGuardSupportsDescriptorsAboveNine(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	script := `const assert=require('node:assert');const stdio=['ignore','ignore','pipe',...Array(9).fill('pipe')];const c=require('node:child_process').spawn('/bin/bash',['-c','echo high >&11; exit 7'],{stdio});let output='';c.stdio[11].on('data',b=>output+=b);c.stderr.pipe(process.stderr);for(let i=3;i<11;i++)c.stdio[i].destroy();c.on('close',code=>{assert.equal(code,7);assert.equal(output,'high\n')});`
+	command := exec.CommandContext(t.Context(), node, "-e", script)
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+func TestRecoverPlaywrightOwnershipStorageIsRepositoryScoped(t *testing.T) {
+	root := t.TempDir()
+	drive := &Testdrive{repositoryRoot: root}
+	owner, err := drive.ownPlaywrightProcesses(t.TempDir(), map[string]string{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	unrelated, err := os.MkdirTemp(processSocketBase(), "ddtest-process-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(unrelated)) })
+	require.NoError(t, markSessionStorage(unrelated, t.TempDir()))
+	// Simulate kernel closing the owner's listener on a crash, then the next run.
+	require.NoError(t, owner.listener.Close())
+	<-owner.accepted
+	require.NoError(t, recoverProcessOwners(root, io.Discard))
+	require.NoDirExists(t, owner.directory)
+	require.DirExists(t, unrelated)
 }

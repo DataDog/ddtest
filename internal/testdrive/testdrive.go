@@ -541,6 +541,9 @@ func (t *Testdrive) recoverStartup(output io.Writer) error {
 	if err := recoverSessions(t.repositoryRoot, output); err != nil {
 		return err
 	}
+	if err := recoverProcessOwners(t.repositoryRoot, output); err != nil {
+		return err
+	}
 	if !probeRecoveryEnabled() {
 		return nil
 	}
@@ -568,7 +571,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		cleanupErr := session.Close()
 		var supervision *processSupervisionError
 		if errors.As(runErr, &supervision) {
-			result.Compatibility = verdict{Status: "not exercised", Reason: supervision.Error()}
+			result.Compatibility = verdict{Status: "not exercised", Code: supervision.Code, Reason: supervision.Error()}
 		}
 		var processCleanup *processCleanupError
 		if errors.As(runErr, &processCleanup) {

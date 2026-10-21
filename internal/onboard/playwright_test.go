@@ -132,3 +132,30 @@ func TestPlaywrightReportsUnvalidatedBundlerAndAssetSetup(t *testing.T) {
 		})
 	}
 }
+
+func TestPlaywrightArtifactReviewRespectsConditionsAndMatrixGrouping(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  browser:
+    strategy:
+      matrix: {node: [20, 22]}
+    steps:
+      - run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: false
+      - uses: actions/upload-artifact@v4
+        if: always()
+`)
+	scope, err := DiscoverValidationScope(root, "playwright")
+	require.NoError(t, err)
+	require.Len(t, scope.Review, 1)
+	require.Contains(t, scope.Review[0], "artifact upload")
+	require.NotContains(t, scope.Review[0], "step 2")
+	require.Contains(t, scope.Review[0], "step 3")
+	for _, framework := range []string{"jest", "vitest", "mocha"} {
+		scope, err := DiscoverValidationScope(root, framework)
+		require.NoError(t, err)
+		for _, entry := range scope.Review {
+			require.NotContains(t, entry, "local Playwright execution")
+		}
+	}
+}

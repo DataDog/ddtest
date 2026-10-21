@@ -1,8 +1,12 @@
 const net = require('node:net')
 const fs = require('node:fs')
+// Allow graceful teardown, then stop a still-owned process/group definitively.
+const terminationGraceMilliseconds = 1000
 
 function recordFailure(reason, code = 'ownership_connection_failed') {
-  fs.appendFileSync(process.env.DDTEST_PROCESS_ERRORS, JSON.stringify({ code, reason }) + '\n')
+  if (!process.env.DDTEST_PROCESS_ERRORS) return
+  try { fs.appendFileSync(process.env.DDTEST_PROCESS_ERRORS, JSON.stringify({ code, reason }) + '\n') }
+  catch (error) { if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error }
 }
 
 // A failed initial connection must not kill customer code. It invalidates the
@@ -16,7 +20,7 @@ module.exports = function ownProcess(stop, keepAlive = false, ready = () => {}) 
     if (stopping) return
     stopping = true
     stop('SIGTERM')
-    setTimeout(() => stop('SIGKILL'), 1000).ref()
+    setTimeout(() => stop('SIGKILL'), terminationGraceMilliseconds).ref()
   }
   socket.on('connect', () => { connected = true; ready() })
   socket.setEncoding('utf8')
