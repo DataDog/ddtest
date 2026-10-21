@@ -36,9 +36,12 @@ func main() {
 		}
 		os.Exit(runner.RunTool(context.Background(), plan, args, os.Stdin, os.Stdout, os.Stderr))
 	}
+	// The go that ddto puts first on PATH for gotestsum is ddto: it runs as
+	// ddto go.
+	args, fromGoShim := runner.GoShimArgs(os.Args)
 	// ddto go test is ddto test, as go test is.
-	form, isTest := runner.TestCommand(os.Args[1:])
-	if isTest || runner.IsGoCommand(os.Args[1:]) {
+	form, isTest := runner.TestCommand(args)
+	if isTest || runner.IsGoCommand(args) {
 		if err := runner.NestGoCommand(); err != nil {
 			fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR:", err)
 			os.Exit(2)
@@ -46,25 +49,37 @@ func main() {
 	}
 	switch {
 	case isTest:
-	case len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-version"):
+	case len(args) == 1 && (args[0] == "--version" || args[0] == "-version"):
 		fmt.Println("ddto " + version.Tag)
 		os.Exit(0)
-	case len(os.Args) == 1 || os.Args[1] == "-h" || os.Args[1] == "-help" || os.Args[1] == "--help":
+	case len(args) == 0 || args[0] == "-h" || args[0] == "-help" || args[0] == "--help":
 		fmt.Fprintln(os.Stderr, "usage: ddto [go | orchestrion go | go tool orchestrion go] test [--runtime=mini|sdk] [--git-upload-timeout=1m] [--keep-ci-state[=file.zip]] [--panic-hook] [--session-per-binary] [--experimental-file-coverage] [go test flags] [packages] (default: mini)")
+		fmt.Fprintln(os.Stderr, "       ddto gotestsum [gotestsum flags] [-- go test flags]: reports the tests of gotestsum's go test")
 		fmt.Fprintln(os.Stderr, "       ddto command [arguments]: runs any other command unchanged, such as ddto go build ./...")
 		fmt.Fprintln(os.Stderr, "       ddto --version: prints the version")
-		if len(os.Args) == 1 {
+		if len(args) == 0 {
 			os.Exit(2)
 		}
 		os.Exit(0)
 	default:
+		// gotestsum runs go test itself, through the go shim that ddto puts
+		// first on its PATH.
+		if runner.IsGotestsum(args) {
+			if err := runner.UseGoShim(); err != nil {
+				fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" WARN:", err, "- running gotestsum without CI Visibility")
+			}
+		}
 		// Any other command runs unchanged, before ddto sets anything but
 		// DDTO_NESTED_GO for go: ddto in front of a go command, or any other,
 		// is transparent.
-		os.Exit(runner.ExecCommand(os.Args[1:]))
+		os.Exit(runner.ExecCommand(args))
 	}
 	ctx := runner.DebugCommand(context.Background(), form.Name)
-	cli, args, err := runner.ParseCLIArgs(form.Args)
+	// gotestsum's go test arguments are go test's: ddto's options are ddto's.
+	cli, args, err := runner.DefaultCLIOptions(), form.Args, error(nil)
+	if !fromGoShim {
+		cli, args, err = runner.ParseCLIArgs(form.Args)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR:", err)
 		os.Exit(2)

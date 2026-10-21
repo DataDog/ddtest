@@ -114,6 +114,7 @@ func pathExtensions() []string {
 func ExecCommand(args []string) int {
 	debug := debugFromContext(withCLIDebug(context.Background(), os.Stderr))
 	debug.printf("pass-through command=%q args=%d", args[0], len(args)-1)
+	debug.logGoShim()
 	path, err := exec.LookPath(args[0])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR:", err)

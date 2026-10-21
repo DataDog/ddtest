@@ -22,6 +22,7 @@
       "TestCLIGoTestIsTest",
       "TestCLIPassesOtherCommandsThrough",
       "TestCLIStopsWhenGoStartsDdto",
+      "TestGotestsumReportsTests",
       "TestMiniCLIRuntimeSelectionAndSourceRange",
       "TestMiniCLIStateDebugLog",
       "TestMiniCLIStateRequestsAhead",

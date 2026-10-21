@@ -46,6 +46,7 @@ func ExecWithCallerEnvironment(path string, args []string) int {
 func ExecCommand(args []string) int {
 	debug := passThroughDebug()
 	debug.printf("pass-through command=%q args=%d", args[0], len(args)-1)
+	debug.logGoShim()
 	err := execvp(args, debug)
 	fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR:", &fs.PathError{Op: "exec", Path: args[0], Err: err})
 	return commandStatus(err)

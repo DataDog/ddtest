@@ -42,6 +42,7 @@ func cliDebugEnabled() bool {
 func DebugCommand(ctx context.Context, name string) context.Context {
 	ctx = withCLIDebug(ctx, os.Stderr)
 	debugFromContext(ctx).printf("command=%q", name)
+	debugFromContext(ctx).logGoShim()
 	return ctx
 }
 
