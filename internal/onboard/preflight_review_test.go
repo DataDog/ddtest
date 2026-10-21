@@ -149,3 +149,21 @@ func TestSetupNodeSemverSelectorsAndPlatforms(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestUnknownReplacementSetupClearsPriorRuntime(t *testing.T) {
+	for _, replacement := range []string{
+		"      - uses: actions/setup-node@v4\n        with: {node-version-file: missing.nvmrc}\n",
+		"      - uses: actions/setup-node@v4\n        with: {node-version: '${{ inputs.runtime }}'}\n",
+	} {
+		workflow := strings.Replace(fmt.Sprintf(runtimeWorkflow, ""), "      - run: npm run test", replacement+"      - run: npm run test", 1)
+		result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, func(context.Context, string, string) (tracerRequirement, error) {
+			return tracerRequirement{Version: "6.17.0", Node: ">=22"}, nil
+		})
+		require.Equal(t, StatusInconclusive, result.Status)
+		for _, job := range result.Jobs {
+			require.Equal(t, CodeNodeResolution, job.Code)
+			require.Empty(t, job.Node)
+			require.Nil(t, job.NodeResolution)
+		}
+	}
+}

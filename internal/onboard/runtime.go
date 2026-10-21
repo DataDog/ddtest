@@ -278,6 +278,10 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		}
 		active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 		if err != nil {
+			if uses == "actions/setup-node" || changesNodeRuntime(step.Run) {
+				finding.Node = ""
+				finding.NodeResolution = nil
+			}
 			return fail(CodeUnresolvedCondition, err.Error())
 		}
 		if !active {
@@ -287,6 +291,10 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 			continue
 		}
 		if step.ResolutionError != "" {
+			if uses == "actions/setup-node" || changesNodeRuntime(step.Run) {
+				finding.Node = ""
+				finding.NodeResolution = nil
+			}
 			return fail(CodeNodeResolution, step.ResolutionError)
 		}
 		state.trackNode(job, step, row)
