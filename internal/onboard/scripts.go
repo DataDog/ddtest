@@ -247,7 +247,16 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		}
 
 		if npmExec {
-			if separator := slices.Index(words, "--"); separator >= 0 {
+			separator := slices.Index(words, "--")
+			for i, word := range words {
+				if i == separator {
+					break
+				}
+				if strings.HasPrefix(word, "-") {
+					return unresolvedCommand("npm exec options before -- require review: " + command)
+				}
+			}
+			if separator >= 0 {
 				words = slices.Delete(words, separator, separator+1)
 			}
 		} else if len(words) > 0 && words[0] == "--" {
@@ -339,12 +348,12 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			name = "test"
 		}
 		forwarded := args[1:]
-		if len(forwarded) > 0 && forwarded[0] == "--" {
+		if len(forwarded) > 0 && forwarded[0] == "--" && words[0] != "pnpm" {
 			forwarded = forwarded[1:]
 		} else if words[0] == "npm" && len(forwarded) > 0 {
 			return unresolvedCommand("npm script arguments without -- require review: " + command)
 		}
-		result := resolvePackageScript(root, directory, name, forwarded, stack, command, remaining, frameworks...)
+		result := resolvePackageScript(root, directory, name, forwarded, stack, shellCommand(words), remaining, frameworks...)
 
 		return result
 	default:
