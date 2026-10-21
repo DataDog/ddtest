@@ -117,7 +117,7 @@ func TestPnPTracerMetadataUsesProjectLoaderWithoutInitializingTracer(t *testing.
 	require.NoError(t, os.WriteFile(filepath.Join(tracer, "package.json"), []byte(`{"version":"5.132.0","engines":{"node":">=18"}}`), 0600))
 	init := filepath.Join(tracer, "ci", "init.js")
 	require.NoError(t, os.WriteFile(init, []byte(`require('fs').writeFileSync('TRACER_WAS_INITIALIZED','bad')`), 0600))
-	loader := fmt.Sprintf(`const m=require('module');const original=m._resolveFilename;m._resolveFilename=function(request,...args){if(request==='dd-trace/ci/init')return %q;return original.call(this,request,...args)}`, init)
+	loader := fmt.Sprintf(`const m=require('module');const original=m._resolveFilename;m._resolveFilename=function(request,...args){if(request.startsWith('node:'))throw new Error('Classic PnP does not recognize node: builtins');if(request==='dd-trace/ci/init')return %q;return original.call(this,request,...args)}`, init)
 	require.NoError(t, os.WriteFile(".pnp.cjs", []byte(loader), 0600))
 	packageRoot := filepath.Join(root, "packages", "app")
 	require.NoError(t, os.MkdirAll(packageRoot, 0700))
