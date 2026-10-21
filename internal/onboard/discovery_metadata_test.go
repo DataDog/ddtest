@@ -70,7 +70,7 @@ func TestExpressValidatorCIAndCommandDiscovery(t *testing.T) {
 	root := expressValidatorRepository(t)
 	command, err := JestValidationCommand(root)
 	require.NoError(t, err)
-	require.Equal(t, "npm test", command)
+	require.Equal(t, "npm test --", command)
 	result := checkCIRuntimes(t.Context(), root, nil, func(_ context.Context, action, version string) (tracerRequirement, error) {
 		require.Equal(t, githubAction+"@v3", action)
 		require.Equal(t, "6.17.0", version)
@@ -109,7 +109,7 @@ func TestUnknownCIEntryDoesNotBlockKnownLocalInvocation(t *testing.T) {
 	writeScripts(t, root, map[string]string{"test": "jest"})
 	command, err := JestValidationCommand(root)
 	require.NoError(t, err)
-	require.Equal(t, "npm test", command)
+	require.Equal(t, "npm test --", command)
 	result := checkCIRuntimes(t.Context(), root, nil, nil)
 	require.Equal(t, "incompatible", result.Status) // Known Jest step also lacks instrumentation.
 	require.Contains(t, result.Jobs[0].Reason, "unknown.js")

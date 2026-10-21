@@ -68,7 +68,7 @@ func TestClassValidatorCIRuntimesAndCommand(t *testing.T) {
 	require.False(t, result.Jobs[1].NodeResolution.ResolvedAt.IsZero())
 	command, err := JestValidationCommand(root)
 	require.NoError(t, err)
-	require.Equal(t, "npm run test:ci", command)
+	require.Equal(t, "npm run test:ci --", command)
 	discovery, err := findWorkflows(root, "javascript", "jest")
 	require.NoError(t, err)
 	require.Empty(t, discovery.Unresolved)
