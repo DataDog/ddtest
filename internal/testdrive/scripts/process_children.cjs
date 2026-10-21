@@ -83,9 +83,10 @@ rm -f "$ready"
 unset DDTEST_PROCESS_GUARD
 exec "$@"`
     env.DDTEST_PROCESS_GUARD = '1'
-    // Bash closes inherited descriptors above 9 as well (POSIX sh need not).
+    // Bash closes descriptors above 9; -p ignores ambient BASH_ENV/functions
+    // in this helper shell while leaving the target's environment untouched.
     return Reflect.apply(spawn, this, [{ ...options, file: '/bin/bash', detached: true,
-      args: ['/bin/bash', '-c', launcher, 'ddtest-owned-launcher', process.execPath, require.resolve('./process_guard.cjs'), options.file, ...args.slice(1)],
+      args: ['/bin/bash', '-p', '-c', launcher, 'ddtest-owned-launcher', process.execPath, require.resolve('./process_guard.cjs'), options.file, ...args.slice(1)],
       envPairs: Object.entries(env).map(([key, value]) => key + '=' + value) }])
   }
 }
