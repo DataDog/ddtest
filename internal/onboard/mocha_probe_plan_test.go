@@ -15,6 +15,7 @@ func TestMochaProbeCoverageOverrideAndRunnerScope(t *testing.T) {
 		writeScripts(t, root, map[string]string{"test": "cd packages/unit && npm test"})
 		writeScripts(t, filepath.Join(root, "packages/unit"), map[string]string{"test": "MODE=unit " + tool + " --all --check-coverage --functions=95 -- mocha test.cjs --retries 2"})
 		plan := MochaProbePlan(root, "npm test")
+		require.True(t, plan.ProbeCoverageThresholdsDisabled)
 		require.Equal(t, "packages/unit", plan.Directory)
 		require.Equal(t, map[string]string{"MODE": "unit"}, plan.Environment)
 		require.Equal(t, tool+" --all --functions=95 --check-coverage=false -- mocha test.cjs --retries 2", plan.Command)
@@ -77,4 +78,34 @@ func TestMochaLifecyclePreviewListsHooksAndSideEffects(t *testing.T) {
 	require.Contains(t, output.String(), "posttest -> codecov")
 	require.Contains(t, output.String(), "may upload coverage or publish")
 	require.Equal(t, "npm test", entries[0].Command)
+}
+
+func TestMochaDefaultCommandDoesNotBypassRejectedWatchScope(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  test:
+    steps:
+      - run: npm test
+`)
+	writeScripts(t, root, map[string]string{"test": "mocha --watch"})
+	_, err := MochaValidationCommand(root, "")
+	require.ErrorContains(t, err, "watch mode is not supported")
+}
+
+func TestMochaPackageOnlyDefaultPreservesAndValidatesAlias(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"test": "mocha --watch"})
+	_, err := MochaValidationCommand(root, "")
+	require.ErrorContains(t, err, "watch mode is not supported")
+	writeScripts(t, root, map[string]string{"test": "nyc -- mocha one.cjs"})
+	command, err := MochaValidationCommand(root, "")
+	require.NoError(t, err)
+	require.Equal(t, "npm test", command)
+}
+
+func TestMochaCoverageOverrideFlagRequiresCoverageWrapper(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"test": "mocha --grep=--check-coverage=false"})
+	plan := MochaProbePlan(root, "npm test")
+	require.Contains(t, plan.Command, "--check-coverage=false")
+	require.False(t, plan.ProbeCoverageThresholdsDisabled)
 }

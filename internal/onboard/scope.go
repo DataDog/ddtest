@@ -13,12 +13,13 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
-	mochaIstanbul         bool
-	LifecycleHooks        []string `json:"lifecycle_hooks,omitempty"`
-	mochaRunnerArgs       []string
-	mochaLookupDirectory  string
-	mochaProbeDirectory   string
-	mochaProbeEnvironment map[string]string
+	ProbeCoverageThresholdsDisabled bool `json:"-"`
+	mochaIstanbul                   bool
+	LifecycleHooks                  []string `json:"lifecycle_hooks,omitempty"`
+	mochaRunnerArgs                 []string
+	mochaLookupDirectory            string
+	mochaProbeDirectory             string
+	mochaProbeEnvironment           map[string]string
 
 	ScopeCommand      string            `json:"-"` // Original invocation before adding a forwarding wrapper.
 	ProbeLintSkipped  bool              `json:"probe_lint_skipped,omitempty"`

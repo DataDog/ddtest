@@ -152,6 +152,24 @@ func TestPublicMochaTestdrive(t *testing.T) {
 				require.False(t, strings.HasPrefix(entry.Name(), "ddtest"), path)
 				return nil
 			}))
+			if mode == "passing" {
+				write("package.json", `{"scripts":{"test":"mocha --watch"},"devDependencies":{"mocha":"11.7.6","dd-trace":"6.21.0"}}`)
+				// Every workflow consumer now resolves through that rejected alias.
+				write(".github/workflows/ci.yml", `jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm test
+`)
+				output, err = command(root, binary, "testdrive", "--framework", "mocha", "--yes")
+				require.Error(t, err)
+				require.NotContains(t, string(output), "Isolating configuration")
+				rejected := readValidationReport(t, root)
+				require.Contains(t, rejected.Error, "watch mode is not supported")
+				require.Empty(t, rejected.Runs)
+				require.False(t, rejected.HTMLReportCurrent)
+				require.NoFileExists(t, htmlReportPath(root))
+			}
 		})
 	}
 }

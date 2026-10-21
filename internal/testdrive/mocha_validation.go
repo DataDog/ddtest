@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -154,7 +153,7 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 		for key, value := range plan.Environment {
 			env[key] = value
 		}
-		run.ProbeCoverageThresholdsDisabled = strings.Contains(plan.Command, "--check-coverage=false")
+		run.ProbeCoverageThresholdsDisabled = plan.ProbeCoverageThresholdsDisabled
 		run.ProbeLintSkipped = plan.Command != original
 		if run.ProbeLintSkipped {
 			run.Diagnostic = "Synthetic probe uses the resolved Mocha entry point; companion checks and lifecycle hooks ran only in the full-suite comparison."

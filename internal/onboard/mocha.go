@@ -60,6 +60,7 @@ func resolveMochaCoverage(root, directory string, words, stack []string, remaini
 		return unresolvedCommand("Coverage wrapper needs one statically resolved Mocha invocation: " + result.Reason)
 	}
 	if probe := result.Tests[0].mochaProbeCommand; probe != "" {
+		result.Tests[0].ProbeCoverageThresholdsDisabled = true
 		result.Tests[0].mochaProbeCommand = shellquote.Join(relaxCoverageChecks(words[:i])...) + " " + probe
 	}
 	result.Tests[0].usesNYC = result.Tests[0].usesNYC || filepath.Base(words[0]) == "nyc"
@@ -77,13 +78,24 @@ func MochaValidationCommand(root, command string) (string, error) {
 			return "", fmt.Errorf("multiple Mocha CI commands discovered; use --all to validate each configuration")
 		}
 		if len(scope.Commands) == 0 {
-			return "", nil
+			if len(scope.Unresolved) > 0 {
+				return "", fmt.Errorf("mocha command discovery failed: %s", strings.Join(scope.Unresolved, "; "))
+			}
+			// Without a CI consumer, preserve the package's actual test alias
+			// instead of silently falling back to a different plain Mocha run.
+			var manifest struct{ Scripts map[string]string }
+			data, err := os.ReadFile(filepath.Join(root, "package.json"))
+			if err != nil || json.Unmarshal(data, &manifest) != nil || manifest.Scripts["test"] == "" {
+				return "", nil
+			}
+			command = "npm test"
+		} else {
+			item := scope.Commands[0]
+			if filepath.Clean(item.Directory) != "." || len(item.Prerequisites) > 0 || len(item.Environment) > 0 || len(item.UnvalidatedSetup) > 0 {
+				return "", fmt.Errorf("mocha CI setup requires --all and review of unresolved setup")
+			}
+			command = item.Command
 		}
-		item := scope.Commands[0]
-		if filepath.Clean(item.Directory) != "." || len(item.Prerequisites) > 0 || len(item.Environment) > 0 || len(item.UnvalidatedSetup) > 0 {
-			return "", fmt.Errorf("mocha CI setup requires --all and review of unresolved setup")
-		}
-		command = item.Command
 	}
 	remaining := 256
 	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
