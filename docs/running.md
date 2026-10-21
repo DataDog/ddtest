@@ -185,6 +185,22 @@ in the plan cache under `planMetadata.ciTags`. Upload and download the complete
 libraries that support this integration. No manual environment configuration
 is required. The handoff uses internal environment variables managed by DDTest.
 
+For reference, the internal environment-variable-to-tag mapping is:
+
+| Environment variable | Tracer tag |
+| --- | --- |
+| `_DD_TEST_PARALLELIZATION_ENABLED` | `test.parallelization.enabled` |
+| `_DD_TEST_PARALLELIZATION_PLAN_PROVIDER_NAME` | `test.parallelization.plan.provider.name` |
+| `_DD_TEST_PARALLELIZATION_PLAN_JOB_ID` | `test.parallelization.plan.job.id` |
+| `_DD_TEST_PARALLELIZATION_PLAN_JOB_NAME` | `test.parallelization.plan.job.name` |
+| `_DD_TEST_PARALLELIZATION_PLAN_JOB_URL` | `test.parallelization.plan.job.url` |
+| `_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_ID` | `test.parallelization.plan.pipeline.id` |
+| `_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_NAME` | `test.parallelization.plan.pipeline.name` |
+| `_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_DISPLAY_NAME` | `test.parallelization.plan.pipeline.display_name` |
+| `_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_NUMBER` | `test.parallelization.plan.pipeline.number` |
+| `_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_URL` | `test.parallelization.plan.pipeline.url` |
+| `_DD_TEST_PARALLELIZATION_PLAN_STAGE_NAME` | `test.parallelization.plan.stage.name` |
+
 Tracing libraries attach `test.parallelization.enabled` and the available
 `test.parallelization.plan.*` tags to test sessions, modules, suites, and tests.
 The enabled tag uses the boolean string `true`, consistent with other Test
