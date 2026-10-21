@@ -97,3 +97,23 @@ func TestCLIPrintsErrorsOnce(t *testing.T) {
 		})
 	}
 }
+
+type validationStatusError struct{ error }
+
+func (e validationStatusError) Unwrap() error { return e.error }
+func (e validationStatusError) ExitCode() int { return 1 }
+func TestRunUsesOuterValidationStatusInsteadOfBuildExitCode(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(executable, "-test.run=^TestRunPreservesProcessExitCode$")
+	command.Env = append(os.Environ(), "DDTEST_EXIT_CODE_HELPER=1")
+	cause := command.Run()
+	if cause == nil {
+		t.Fatal("expected helper failure")
+	}
+	if code := run(func() error { return validationStatusError{cause} }); code != 1 {
+		t.Fatalf("validation exit=%d, want1 despite nested tool exit7", code)
+	}
+}

@@ -36,6 +36,7 @@ func (n osSignalNotifier) Stop(c chan<- os.Signal) {
 }
 
 type DefaultCommandExecutor struct {
+	Timeout                time.Duration
 	signalNotifier         signalNotifier
 	terminationGracePeriod time.Duration
 }
@@ -99,16 +100,24 @@ func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, name string
 // CombinedOutputInDirectory preserves process-group cancellation for setup
 // commands without changing the calling process's working directory.
 func (e *DefaultCommandExecutor) CombinedOutputInDirectory(ctx context.Context, directory, name string, args []string, envMap map[string]string) ([]byte, error) {
+	ctx, cancel := e.commandContext(ctx)
+	defer cancel()
 	// no-dd-sa:go-security/command-injection
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = directory
 	applyEnvMap(cmd, envMap)
 	prepareCommand(cmd)
 
-	return cmd.CombinedOutput()
+	data, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	return data, err
 }
 
 func (e *DefaultCommandExecutor) Output(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, []byte, error) {
+	ctx, cancel := e.commandContext(ctx)
+	defer cancel()
 	// no-dd-sa:go-security/command-injection
 	cmd := exec.CommandContext(ctx, name, args...)
 	applyEnvMap(cmd, envMap)
@@ -119,10 +128,15 @@ func (e *DefaultCommandExecutor) Output(ctx context.Context, name string, args [
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	return stdout.Bytes(), stderr.Bytes(), err
 }
 
 func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []string, envMap map[string]string) error {
+	ctx, cancel := e.commandContext(ctx)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -221,4 +235,13 @@ func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []st
 			return err
 		}
 	}
+}
+
+// A zero timeout preserves ordinary plan/run behavior. Testdrive sets a per-run
+// bound shared by test, preparation and service commands; parent deadlines win.
+func (e *DefaultCommandExecutor) commandContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if e.Timeout > 0 {
+		return context.WithTimeout(ctx, e.Timeout)
+	}
+	return ctx, func() {}
 }
