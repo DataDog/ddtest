@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -781,5 +784,78 @@ func TestWrapExecProgram(t *testing.T) {
 	var native *nativeGoError
 	if err := wrapExecProgram(&plan, options{exec: "prog"}, t.TempDir()); !errors.As(err, &native) {
 		t.Fatalf("an unquotable program: %v, wrapper %q", err, plan.execWrapper)
+	}
+}
+
+// After go rejected the command while ddto prepared it, go test runs
+// natively and keeps its own status. Only when go test passes, the failure
+// was ddto's own, and ddto warns that the tests ran without CI Visibility.
+func TestRunGoAfterError(t *testing.T) {
+	t.Setenv(fakeToolEnv, "1")
+	ctx := context.WithValue(context.Background(), goLauncherKey{}, goLauncher{command: []string{os.Args[0]}})
+	cause := errors.New("resolve packages: exit status 1\ngo: -p must be a positive integer: 0")
+	for _, status := range []int{0, 1, 2} {
+		t.Setenv(fakeToolExitEnv, strconv.Itoa(status))
+		var stdout, stderr bytes.Buffer
+		code := runGoAfterError(ctx, t.TempDir(), []string{"-p=0", "./..."}, cause, nil, nil, &stdout, &stderr)
+		if code != status || stdout.String() != "test\n-p=0\n./...\n" {
+			t.Fatalf("exit %d, want %d; stdout %q", code, status, stdout.String())
+		}
+		warned := strings.Contains(stderr.String(), "WARN: resolve packages: exit status 1 - go test ran without CI Visibility")
+		if warned != (status == 0) || strings.Contains(stderr.String(), "positive integer") {
+			t.Fatalf("exit %d: stderr %q", status, stderr.String())
+		}
+	}
+	// Cancellation starts no go test.
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	var stdout bytes.Buffer
+	if code := runGoAfterError(canceled, t.TempDir(), []string{"./..."}, cause, nil, nil, &stdout, io.Discard); code != 2 || stdout.Len() != 0 {
+		t.Fatalf("canceled: exit %d, stdout %q", code, stdout.String())
+	}
+}
+
+// go reports a missing working directory itself, a file given as one, and a
+// -modfile without the .mod extension.
+func TestMissingGoInput(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "go.mod")
+	if err := os.WriteFile(file, []byte("module example.com/m\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		dir, modfile string
+		missing      bool
+	}{
+		{dir: dir},
+		{dir: dir, modfile: "alt.mod"},
+		{dir: filepath.Join(dir, "nonexistent"), missing: true},
+		{dir: file, missing: true},
+		{dir: dir, modfile: "alternate.txt", missing: true},
+	} {
+		if err := missingGoInput(tc.dir, tc.modfile); (err != nil) != tc.missing {
+			t.Errorf("missingGoInput(%q, %q) = %v", tc.dir, tc.modfile, err)
+		}
+	}
+}
+
+// Only go's own rejection of the caller's command or its input runs go test
+// natively; a -modfile that an overlay provides is not missing.
+func TestGoRejected(t *testing.T) {
+	exit := exec.Command(os.Args[0], "-test.run=^$", "-test.count=x").Run()
+	var rejected *goRejectedError
+	if !errors.As(goRejected(fmt.Errorf("resolve packages: %w", exit)), &rejected) {
+		t.Fatalf("go's exit status %v is not a rejection", exit)
+	}
+	if errors.As(goRejected(errors.New("other")), &rejected) || goRejected(nil) != nil {
+		t.Fatal("a failure without go's exit status is a rejection")
+	}
+	missing := &os.PathError{Op: "open", Path: "missing.mod", Err: os.ErrNotExist}
+	if !errors.As(userModfileError(&options{modfile: "missing.mod"}, missing), &rejected) || errors.As(userModfileError(&options{}, missing), &rejected) {
+		t.Fatal("userModfileError")
+	}
+	overlaid := filepath.Join(t.TempDir(), "virtual.mod")
+	if _, err := readModuleFile(overlaid, map[string]string{filepath.Clean(overlaid): os.Args[0]}); err != nil {
+		t.Fatalf("an overlay's -modfile: %v", err)
 	}
 }

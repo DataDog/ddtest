@@ -118,7 +118,8 @@ and preserves explicit values. Go's test cache works as with `go test`: the
 first run builds instrumented binaries and runs every package, and later runs
 report the packages that Go runs again. Add `-count=1` when every test must
 report on every run. Delivery errors are logged, and the command keeps Go's
-exit code.
+exit code. When go rejects the command, as with an invalid flag, go test
+reports the error itself, with its own exit status.
 The runtime is provided through temporary module files when needed, leaving
 your sources unchanged. Explicit `-mod=mod` still permits Go's own module edits.
 

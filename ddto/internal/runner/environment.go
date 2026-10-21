@@ -171,7 +171,8 @@ type goEnvironment struct {
 func readGoEnvironment(ctx context.Context, dir string) (*goEnvironment, error) {
 	out, err := goTool(ctx, dir, nil, "env", "-json", "GOMOD", "GOWORK", "GOMODCACHE", "GOVERSION", "GOROOT", "GOOS", "GOARCH", "GOHOSTOS", "GOHOSTARCH", "GOEXPERIMENT")
 	if err != nil {
-		return nil, err
+		// go env reads the caller's environment, such as GOFLAGS.
+		return nil, goRejected(err)
 	}
 	var environment goEnvironment
 	if err := json.Unmarshal([]byte(out), &environment); err != nil {

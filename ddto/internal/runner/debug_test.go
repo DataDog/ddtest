@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -107,7 +108,13 @@ func (failingDebugWriter) Write([]byte) (int, error) { return 0, errors.New("log
 
 func TestCLIDebugWriteFailure(t *testing.T) {
 	t.Setenv("DD_TRACE_DEBUG", "true")
-	if code := RunRuntime(t.Context(), []string{"-p"}, DefaultCLIOptions(), nil, io.Discard, failingDebugWriter{}); code != 2 {
+	// go test reports the parse error itself. Native go would write it to
+	// the broken writer's pipe and could end with SIGPIPE, so this go
+	// writes no error and exits 2, as go test does for -p.
+	t.Setenv(fakeToolEnv, "1")
+	t.Setenv(fakeToolExitEnv, "2")
+	ctx := context.WithValue(t.Context(), goLauncherKey{}, goLauncher{command: []string{os.Args[0]}})
+	if code := RunRuntime(ctx, []string{"-p"}, DefaultCLIOptions(), nil, io.Discard, failingDebugWriter{}); code != 2 {
 		t.Fatalf("broken debug writer changed parse-error exit=%d", code)
 	}
 }

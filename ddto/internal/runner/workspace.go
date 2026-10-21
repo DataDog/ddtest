@@ -97,8 +97,11 @@ func provideOlderModuleWorkspace(ctx context.Context, dir string, opts *options,
 		source = filepath.Join(dir, source)
 	}
 	data, err := readModuleFile(source, replacements)
-	if err != nil || compareGoVersion(moduleDirective(data, "go"), "1.25.0") >= 0 {
-		return err
+	if err != nil {
+		return userModfileError(opts, err)
+	}
+	if compareGoVersion(moduleDirective(data, "go"), "1.25.0") >= 0 {
+		return nil
 	}
 	if opts.mod == "mod" {
 		// Native -mod=mod may resolve missing client requirements. Do that
@@ -107,7 +110,7 @@ func provideOlderModuleWorkspace(ctx context.Context, dir string, opts *options,
 		args = append(args, opts.packages...)
 		cmd := goCommand(ctx, dir, args...)
 		if _, err := readPackages(ctx, cmd, "resolve client requirements"); err != nil {
-			return err
+			return goRejected(err)
 		}
 		data, err = readModuleFile(source, replacements)
 		if err != nil || compareGoVersion(moduleDirective(data, "go"), "1.25.0") >= 0 {

@@ -46,6 +46,11 @@ The log records:
   cannot reproduce how `go test` finds or starts it, `instrumentation bypass
   exec_program=unresolved`, `exec_program=unquotable` or `exec_helper=relative`
   follows the warning, and native `go test` runs.
+- When go rejects the command or its environment while ddto prepares it, as
+  with `-p=0`, an unknown flag in `GOFLAGS`, or a missing `-C` directory or
+  `-modfile`, `instrumentation bypass go_rejected="<reason>"`, and native
+  `go test` runs and reports the error with its own exit status. ddto adds a
+  warning only if that `go test` passes, which means the failure was ddto's.
 - With coverage, whether testing gets the in-memory per-test coverage hook:
   `per-test coverage in_memory_hook=true`, or `false` with the reason. A test
   process's own log says whether it uses the hook: `per-test coverage in
