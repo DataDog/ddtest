@@ -107,3 +107,49 @@ func TestNpmForwardsProbeOptionsToJest(t *testing.T) {
 		})
 	}
 }
+
+func TestForwardJestUsesParsedWordsAndRejectsRunnerTerminators(t *testing.T) {
+	root := t.TempDir()
+	for _, command := range []string{"jest # unit tests", "jest;"} {
+		selected, err := ForwardJestCommand(root, command)
+		require.NoError(t, err)
+		words, err := shellquote.Split(selected)
+		require.NoError(t, err)
+		require.Equal(t, []string{filepath.Join(root, "node_modules/.bin/jest")}, words)
+	}
+	writeScripts(t, root, map[string]string{"test": "jest -- tests/unit.test.js"})
+	for _, command := range []string{"jest -- tests/unit.test.js", "npm test"} {
+		_, err := ForwardJestCommand(root, command)
+		require.Error(t, err, command)
+	}
+}
+
+func TestNestedNpmAliasesForwardProbeOptionsToJest(t *testing.T) {
+	npm, err := exec.LookPath("npm")
+	if err != nil {
+		t.Skip("npm required to verify nested alias forwarding")
+	}
+	for _, script := range []string{"npm run unit", "npm run unit --"} {
+		root := t.TempDir()
+		writeScripts(t, root, map[string]string{"test": script, "unit": "jest"})
+		bin := filepath.Join(root, "node_modules/.bin")
+		require.NoError(t, os.MkdirAll(bin, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(bin, "jest"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > jest-args\n"), 0755))
+		selected, err := ForwardJestCommand(root, "npm test")
+		require.NoError(t, err)
+		words, err := shellquote.Split(selected)
+		require.NoError(t, err)
+		command := words[0]
+		if command == "npm" {
+			command = npm
+		}
+		cmd := exec.CommandContext(t.Context(), command, append(words[1:], "--listTests", "--json", "--runTestsByPath", "probe file.js")...)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "npm_config_cache="+t.TempDir())
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(output))
+		actual, err := os.ReadFile(filepath.Join(root, "jest-args"))
+		require.NoError(t, err)
+		require.Equal(t, "--listTests\n--json\n--runTestsByPath\nprobe file.js\n", string(actual), script)
+	}
+}

@@ -402,6 +402,18 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 
 	result := resolveJestSequence(root, directory, script, append(slices.Clone(stack), key), remaining, frameworks...)
 
+	// An npm alias without -- consumes newly appended runner flags. Expand
+	// this boundary when forwarding, while retaining already-safe aliases.
+	if result.SingleJest {
+		commands, err := staticCommands(script)
+		if err == nil && len(commands) == 1 {
+			words, _, err := commandEnvironment(commands[0])
+			if err == nil && words[0] == "npm" && !slices.Contains(words, "--") {
+				result.SingleJest = false
+			}
+		}
+	}
+
 	// Preserve the package manager's build entry point, including its lifecycle
 	// and orchestration, when expansion cannot represent that build alone.
 	if name == "build" && !result.Matched && orchestratedBuild(root, directory, script, manifest.Scripts, stack, remaining, frameworks...) {

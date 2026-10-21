@@ -24,9 +24,23 @@ func ForwardJestCommand(root, command string) (string, error) {
 	if !resolution.Matched || resolution.Reason != "" {
 		return command, nil // Explicit custom commands remain the caller's choice.
 	}
-	words, err := shellquote.Split(command)
+	commands, err := staticCommands(command)
 	if err != nil {
 		return "", err
+	}
+	var words []string
+	if len(commands) == 1 {
+		words = commands[0]
+		command = shellCommand(words)
+	}
+	for _, test := range resolution.Tests {
+		runnerWords, err := shellquote.Split(test.Command)
+		if err != nil {
+			return "", err
+		}
+		if slices.Contains(runnerWords, "--") {
+			return "", fmt.Errorf("positional Jest selection requires an explicit command")
+		}
 	}
 	if resolution.SingleJest && len(words) > 0 && !strings.Contains(words[0], "=") {
 		if words[0] == "npm" && !slices.Contains(words, "--") {
@@ -105,7 +119,7 @@ func forwardJestScript(root, command string, depth int, count *int) (string, err
 					return "", fmt.Errorf("package script or lifecycle requires review")
 				}
 				args = args[1:]
-				if len(args) > 0 && args[0] == "--" {
+				if len(args) > 0 && args[0] == "--" && words[0] != "pnpm" {
 					args = args[1:]
 				}
 				if len(args) > 0 {
