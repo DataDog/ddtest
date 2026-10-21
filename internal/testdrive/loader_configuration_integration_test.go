@@ -39,10 +39,10 @@ func TestPublicJestLoaderConfiguration(t *testing.T) {
 	write("add.js", `module.exports=(a,b)=>a+b`)
 	write("one.test.js", `test('adds',()=>expect(require('./add')(1,1)).toBe(2))`)
 	write(".pnp.cjs", fmt.Sprintf(`const Module=require('module');const original=Module._resolveFilename;
-const entries={'jest/bin/jest':%q,'jest/package.json':%q,'dd-trace/ci/init':%q};
+const entries={'jest/bin/jest':%q,'jest/package.json':%q,'dd-trace/ci/init':%q,'typescript/package.json':%q};
 Module._resolveFilename=function(request,...args){return entries[request]||original.call(this,request,...args)};
-`, filepath.Join(modules, "jest/bin/jest.js"), filepath.Join(modules, "jest/package.json"), filepath.Join(modules, "dd-trace/ci/init.js")))
-	write(".github/workflows/ci.yml", fmt.Sprintf(`jobs:
+`, filepath.Join(modules, "jest/bin/jest.js"), filepath.Join(modules, "jest/package.json"), filepath.Join(modules, "dd-trace/ci/init.js"), filepath.Join(modules, "typescript/package.json")))
+	workflow := fmt.Sprintf(`jobs:
   test:
     runs-on: ubuntu-latest
     steps:
@@ -52,7 +52,8 @@ Module._resolveFilename=function(request,...args){return entries[request]||origi
         with: {languages: js, js-tracer-version: '%s'}
       - run: npm test
         env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}
-`, version))
+`, version)
+	write(".github/workflows/ci.yml", workflow)
 	command := func(directory, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = directory
@@ -95,4 +96,16 @@ Module._resolveFilename=function(request,...args){return entries[request]||origi
 			}
 		}
 	}
+	// The same loader-only checkout must also execute installed build tools.
+	write("tsconfig.json", `{"compilerOptions":{"module":"CommonJS","outDir":"lib","types":[],"skipLibCheck":true},"files":["src/build.ts"]}`)
+	write("src/build.ts", `export const value=1`)
+	write("built.test.js", `test('built source',()=>expect(require('./lib/build').value).toBe(1))`)
+	write(".github/workflows/ci.yml", strings.Replace(workflow, "      - run: npm test", "      - run: tsc --project tsconfig.json\n      - run: npm test", 1))
+	data, err = command(root, binary, "testdrive", "--framework", "jest", "--all", "--yes")
+	require.NoError(t, err, string(data))
+	built := readValidationReport(t, root)
+	require.True(t, built.Success, string(data))
+	require.Equal(t, "passed", built.Configurations[0].Preparation[0].Status)
+	require.NoDirExists(t, filepath.Join(root, "lib"))
+	require.NoDirExists(t, filepath.Join(root, "node_modules"))
 }

@@ -153,7 +153,7 @@ func TestBuildRebasesCheckoutAndPreservesEmptyNodeOptions(t *testing.T) {
 	executor := &buildExecutor{t: t}
 	installFakeBuildTool(t, root, "tsc")
 	drive := Testdrive{repositoryRoot: root, executor: executor}
-	item := configurationResult{TestCommand: onboard.TestCommand{Environment: map[string]string{"NODE_OPTIONS": ""}, Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "tsc"}}}}
+	item := configurationResult{TestCommand: onboard.TestCommand{Environment: map[string]string{"NODE_OPTIONS": ""}, Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "tsc", Environment: map[string]string{"NODE_OPTIONS": ""}}}}}
 	require.NoError(t, drive.runBuildPrerequisites(t.Context(), &bytes.Buffer{}, &item))
 	require.Equal(t, root, executor.environments[0]["GITHUB_WORKSPACE"])
 	require.Empty(t, executor.nodeOptions[0])

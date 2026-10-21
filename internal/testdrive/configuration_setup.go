@@ -60,7 +60,10 @@ func validateConfigurationFiles(root, directory string, args, names []string) er
 		if strings.HasPrefix(arg, "--config=") {
 			paths = append(paths, strings.TrimPrefix(arg, "--config="))
 		}
-		if arg == "--config" && i+1 < len(args) {
+		if strings.HasPrefix(arg, "-c") && !strings.HasPrefix(arg, "--") && len(arg) > 2 {
+			paths = append(paths, strings.TrimPrefix(arg[2:], "="))
+		}
+		if (arg == "--config" || arg == "-c") && i+1 < len(args) {
 			paths = append(paths, args[i+1])
 		}
 	}

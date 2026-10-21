@@ -98,10 +98,11 @@ func matchingConfigurationEnvironment(root, framework, command string) map[strin
 			if !sameConfiguration(selected, entry) || len(entry.UnvalidatedSetup) > 0 {
 				continue
 			}
-			if matched && !maps.Equal(result, entry.Environment) {
+			candidate := mergeConfigurationEnvironment(entry.Environment, selected.Environment)
+			if matched && !maps.Equal(result, candidate) {
 				return nil
 			}
-			result = maps.Clone(entry.Environment)
+			result = candidate
 			matched = true
 		}
 	}

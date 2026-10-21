@@ -44,6 +44,8 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	configurationSourceRoot  string
+	scopeCommand             string
 	configurationEnvironment map[string]string
 	allowReviewedBuilds      bool
 	commandTimeout           time.Duration
@@ -215,9 +217,13 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	case "ruby":
 		environment = rubyEnvironmentInfo(ctx)
 	}
+	scopeCommand := selectedPlan.ScopeCommand
+	if scopeCommand == "" {
+		scopeCommand = shellquote.Join(append([]string{command}, args...)...)
+	}
 	var configurationEnvironment map[string]string
 	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
-		configurationEnvironment = matchingConfigurationEnvironment(repositoryRoot, runner.Name(), shellquote.Join(append([]string{command}, args...)...))
+		configurationEnvironment = matchingConfigurationEnvironment(repositoryRoot, runner.Name(), scopeCommand)
 	}
 	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args, Environment: configurationEnvironment}
 	if language == "python" && environment.Executable != "" {
@@ -247,6 +253,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
 	drive.allConfigurations = all
+	drive.scopeCommand = scopeCommand
 	drive.allowReviewedBuilds = configuration.AllowReviewedBuilds
 	drive.commandTimeout = timeout
 	if supportsValidationFramework(runner.Name()) {
@@ -410,7 +417,11 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		if err != nil {
 			runErr = errors.Join(runErr, err)
 		} else {
-			setSingleConfigurationScope(t.repositoryRoot, &result, scope, shellquote.Join(append([]string{t.command}, t.args...)...), t.configurationEnvironment)
+			command := t.scopeCommand
+			if command == "" {
+				command = shellquote.Join(append([]string{t.command}, t.args...)...)
+			}
+			setSingleConfigurationScope(t.repositoryRoot, &result, scope, command, t.configurationEnvironment)
 		}
 	}
 	if runErr != nil {

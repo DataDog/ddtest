@@ -77,6 +77,18 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 			build.Status = "passed"
 			continue
 		}
+		args := words[1:]
+		merged := mergeConfigurationEnvironment(build.Environment, env)
+		nodeOptions := os.Getenv("NODE_OPTIONS")
+		if value, exists := build.Environment["NODE_OPTIONS"]; exists {
+			nodeOptions = value
+		}
+		merged["NODE_OPTIONS"] = stripDatadogNodeOptions(nodeOptions)
+		original := t.configurationSourceRoot
+		if original == "" {
+			original = t.repositoryRoot
+		}
+		merged = isolatedCIEnvironment(merged, original, t.checkoutRoot())
 		executable := filepath.Join(t.repositoryRoot, "node_modules", ".bin", words[0])
 		localCompiler := filepath.Join(directory, "node_modules", ".bin", words[0])
 		if info, err := os.Stat(localCompiler); err == nil && !info.IsDir() {
@@ -88,22 +100,17 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 				build.Status, build.Code = "blocked", "tool_not_installed"
 				return fmt.Errorf("preparation tool not installed: %s", words[0])
 			}
-		} else if info, err := os.Stat(executable); err != nil || info.IsDir() {
-			build.Status, build.Code = "blocked", "tool_not_installed"
-			return fmt.Errorf("preparation tool not installed: %s; install project dependencies first", words[0])
+		} else if info, statErr := os.Stat(executable); statErr != nil || info.IsDir() {
+			executable, args, err = t.loaderPreparationTool(ctx, directory, words[0], args, merged)
+			if err != nil {
+				build.Status, build.Code = "blocked", "tool_not_installed"
+				if errors.Is(err, context.DeadlineExceeded) {
+					build.Status, build.Code = "failed", "preparation_timed_out"
+				}
+				return err
+			}
 		}
-		args := words[1:]
-
-		merged := mergeConfigurationEnvironment(item.Environment, build.Environment, env)
-		nodeOptions := os.Getenv("NODE_OPTIONS")
-		if value, exists := item.Environment["NODE_OPTIONS"]; exists {
-			nodeOptions = value
-		}
-		if value, exists := build.Environment["NODE_OPTIONS"]; exists {
-			nodeOptions = value
-		}
-		merged["NODE_OPTIONS"] = stripDatadogNodeOptions(nodeOptions)
-		data, err := setupOutput(ctx, t.executor, t.repositoryRoot, build.Directory, executable, args, isolatedCIEnvironment(merged, t.checkoutRoot()))
+		data, err := setupOutput(ctx, t.executor, t.repositoryRoot, build.Directory, executable, args, merged)
 		exitCode := commandExitCode(err)
 		build.ExitCode = &exitCode
 		build.Status = "passed"

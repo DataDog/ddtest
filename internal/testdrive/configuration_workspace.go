@@ -95,12 +95,16 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		}
 	}
 	t.repositoryRoot, t.configurationRoot = workspace, checkout
-	t.configurationEnvironment = isolatedCIEnvironment(item.Environment, checkout)
-	t.executor = configurationExecutor{t.executor, t.configurationEnvironment}
+	t.configurationSourceRoot = original
+	executor := t.executor
+	// Earlier setup must not inherit variables declared only on the test step.
+	t.executor = configurationExecutor{executor, isolatedCIEnvironment(nil, original, checkout)}
 	if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration preparation failed; tests were not started."}
 		return result, err
 	}
+	t.configurationEnvironment = isolatedCIEnvironment(item.Environment, original, checkout)
+	t.executor = configurationExecutor{executor, t.configurationEnvironment}
 	directory, err := localSetupDirectory(workspace, item.Directory)
 	if err != nil {
 		return result, err
@@ -126,13 +130,18 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 // Tracers resolve repository-relative source and skip paths against the CI
 // checkout. A disposable copy must advertise its own root while retaining the
 // provider, commit, job and other CI metadata.
-func isolatedCIEnvironment(overrides map[string]string, workspace string) map[string]string {
+func isolatedCIEnvironment(overrides map[string]string, original, workspace string) map[string]string {
 	result := maps.Clone(overrides)
 	if result == nil {
 		result = map[string]string{}
 	}
 	for _, name := range environment.CIWorkspaceEnvironmentVariables() {
 		value, configured := overrides[name]
+		// Names such as WORKSPACE can also be customer settings on another CI.
+		// Only an explicit reference to this checkout denotes a path to rebase.
+		if configured && (!filepath.IsAbs(value) || canonicalWorkflowRoot(value) != canonicalWorkflowRoot(original)) {
+			continue
+		}
 		if !configured {
 			value = os.Getenv(name)
 		}

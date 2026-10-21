@@ -13,6 +13,7 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
+	ScopeCommand     string            `json:"-"` // Original invocation before adding a forwarding wrapper.
 	ProbeLintSkipped bool              `json:"probe_lint_skipped,omitempty"`
 	ReviewReason     string            `json:"review_reason,omitempty"`
 	Resolution       string            `json:"resolution,omitempty"`

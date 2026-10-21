@@ -47,7 +47,7 @@ func TestIsolatedCIEnvironmentUsesCopiedCheckout(t *testing.T) {
 	t.Setenv("GITHUB_SHA", "unchanged-commit")
 	environment := map[string]string{"CIRCLE_WORKING_DIRECTORY": "/original/circle", "CI_PROJECT_DIR": "", "CUSTOM_SETTING": "preserved"}
 	workspace := t.TempDir()
-	result := isolatedCIEnvironment(environment, workspace)
+	result := isolatedCIEnvironment(environment, "/original/circle", workspace)
 	require.Equal(t, workspace, result["GITHUB_WORKSPACE"])
 	require.Equal(t, workspace, result["CIRCLE_WORKING_DIRECTORY"])
 	require.Empty(t, result["CI_PROJECT_DIR"], "an explicit empty override remains empty")
@@ -63,11 +63,11 @@ func TestIsolatedCIEnvironmentRebasesEveryProviderCheckout(t *testing.T) {
 		t.Setenv(name, "/original/checkout")
 	}
 	workspace := t.TempDir()
-	result := isolatedCIEnvironment(nil, workspace)
+	result := isolatedCIEnvironment(nil, "/original/checkout", workspace)
 	for _, name := range names {
 		require.Equal(t, workspace, result[name], name)
 		overrides := map[string]string{name: ""}
-		require.Empty(t, isolatedCIEnvironment(overrides, workspace)[name], "explicit empty override for %s", name)
+		require.Empty(t, isolatedCIEnvironment(overrides, "/original/checkout", workspace)[name], "explicit empty override for %s", name)
 		require.Equal(t, "/original/checkout", os.Getenv(name))
 	}
 }
