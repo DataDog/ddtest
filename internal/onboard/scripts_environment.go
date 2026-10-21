@@ -224,3 +224,20 @@ func resolveNodeOptions(value string, row map[string]any, env map[string]string)
 	}
 	return ordinaryNodeOptions(result.String())
 }
+
+// ParseValidationCommand uses the same literal-command and environment rules as
+// CI discovery. It never asks a shell to interpret an explicit test command.
+func ParseValidationCommand(command string) (string, []string, map[string]string, error) {
+	parts, err := staticCommands(command)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if len(parts) != 1 {
+		return "", nil, nil, errors.New("validation requires one literal command")
+	}
+	words, env, err := commandEnvironment(parts[0])
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return words[0], words[1:], env, nil
+}
