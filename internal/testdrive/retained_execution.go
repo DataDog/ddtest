@@ -49,6 +49,9 @@ func setValidationEvidence(result *validationResult) {
 }
 
 func executionStatus(result *validationResult) string {
+	if result.Compatibility.Status == "suspected regression" {
+		return "failed"
+	}
 	if result.LocalSuccess {
 		return "passed"
 	}
@@ -64,7 +67,7 @@ func hasPairedExecution(result validationResult) bool {
 // As with probe execution, callers must run testdrive invocations sequentially.
 func retainExecution(root string, result *validationResult) error {
 	result.Retained = nil
-	if hasPairedExecution(*result) {
+	if !result.CheckOnly || hasPairedExecution(*result) {
 		return nil
 	}
 	previous, err := readPreviousValidation(root)

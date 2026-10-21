@@ -20,8 +20,11 @@ func summarizeValidation(result validationResult) validationSummary {
 	if result.CheckOnly {
 		summary.LocalValidation = "NOT EXERCISED"
 	}
-	if result.Retained != nil && result.Retained.Result != nil {
+	if result.CheckOnly && result.Retained != nil && result.Retained.Result != nil {
 		summary.LocalValidation = strings.ToUpper(executionStatus(result.Retained.Result)) + " EARLIER; NOT RERUN"
+	}
+	if result.Compatibility.Status == "suspected regression" && !result.CheckOnly {
+		summary.Status, summary.LocalValidation = "FAILED", "FAILED"
 	}
 	if result.CIRuntime != nil {
 		summary.CIConfiguration = result.CIRuntime.Status
@@ -35,7 +38,7 @@ func summarizeValidation(result validationResult) validationSummary {
 	if result.CheckOnly {
 		summary.BlockingChecks = append(summary.BlockingChecks, "configuration checks only; paired execution and features were not rerun")
 	} else {
-		if result.Compatibility.Status != "compatible" {
+		if result.Compatibility.Status != "" && result.Compatibility.Status != "compatible" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility: "+result.Compatibility.Status)
 		}
 		for _, feature := range result.Features {
@@ -46,7 +49,9 @@ func summarizeValidation(result validationResult) validationSummary {
 		if !featureChecksPassed(result.Framework, result.Features) {
 			summary.BlockingChecks = append(summary.BlockingChecks, "not every project has every required feature result")
 		}
-		if result.Cleanup == nil || result.Cleanup.Status != "passed" {
+		if result.Cleanup == nil {
+			summary.BlockingChecks = append(summary.BlockingChecks, "owned cleanup was not exercised")
+		} else if result.Cleanup.Status != "passed" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "owned cleanup did not pass")
 		}
 		if !result.HTMLReportCurrent {

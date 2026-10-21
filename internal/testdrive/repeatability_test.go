@@ -15,7 +15,8 @@ func TestRepeatedComparisonRetainsRecurringDifferencesBesideVariableTests(t *tes
 	first := validationRun{ExitCode: 1, Tests: []jestTest{{File: "/repo/test.ts", Name: "memory", Status: "failed", Failure: "expected rounds > 1, received 0"}, {File: "/repo/test.ts", Name: "timing", Status: "failed"}}}
 	second := validationRun{ExitCode: 1, Tests: []jestTest{first.Tests[0], base.Tests[1]}}
 	got := compareRepeatedJavaScript(base, first, base, second)
-	require.Equal(t, "inconclusive", got.Status)
+	require.Equal(t, "suspected regression", got.Status)
+	require.Equal(t, "recurring_difference", got.Code)
 	require.Contains(t, got.Reason, "1 test identities have recurring differences")
 	require.Contains(t, got.Reason, "1 vary between repeats")
 	require.Contains(t, got.Differences[0], "Recurring difference in both pairs: test.ts › memory")
@@ -62,4 +63,12 @@ func TestRepeatedComparisonCountsDuplicateNamesAndBoundsReport(t *testing.T) {
 	var report validationResult
 	require.NoError(t, json.Unmarshal(data, &report))
 	require.Less(t, len([]rune(report.Compatibility.Differences[0])), 1100)
+}
+
+func TestRepeatedComparisonWithOnlyVariableDifferencesStaysInconclusive(t *testing.T) {
+	baseline := withoutTelemetry(testRun("passed", 0))
+	different := testRun("failed", 1)
+	got := compareRepeatedJavaScript(baseline, different, baseline, testRun("passed", 0))
+	require.Equal(t, "inconclusive", got.Status)
+	require.Equal(t, "varying_outcomes", got.Code)
 }

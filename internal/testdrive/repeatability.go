@@ -9,13 +9,13 @@ import (
 )
 
 // Retain recurring per-test differences even when other tests change between
-// repeats. This describes observations, not their cause; the verdict stays open.
+// repeats. Two pairs cannot rule out coincidental flakiness or establish a cause.
 func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrumentedAgain validationRun) verdict {
 	result := compareJest(baseline, instrumented)
 	if slices.Equal(outcomeKeys(baseline), outcomeKeys(baselineAgain)) && slices.Equal(outcomeKeys(instrumented), outcomeKeys(instrumentedAgain)) {
 		return result
 	}
-	result.Status = "inconclusive"
+	result.Status, result.Code = "inconclusive", "varying_outcomes"
 	result.Reason = "Outcomes changed between repeated runs; flakiness or changing setup prevents attributing the difference to instrumentation."
 	for _, run := range []validationRun{baseline, instrumented, baselineAgain, instrumentedAgain} {
 		if run.ResultError != "" {
@@ -68,6 +68,10 @@ func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrument
 	if len(recurring)+len(variable) > 0 {
 		result.Differences = append(recurring, variable...)
 	}
+	if len(recurring) > 0 {
+		result.Status, result.Code = "suspected regression", "recurring_difference"
+	}
+	result.Reason += " Only two pairs were observed; coincidental flakiness cannot be ruled out."
 	result.Reason += fmt.Sprintf(" %d test identities have recurring differences in both pairs; %d vary between repeats. Recurring differences still require investigation; this does not establish their cause.", len(recurring), len(variable))
 	return result
 }

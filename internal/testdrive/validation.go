@@ -203,7 +203,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	}
 	prepareValidationResult(repositoryRoot, &result)
 	if err := retainExecution(repositoryRoot, &result); err != nil {
-		return err
+		_, _ = fmt.Fprintf(output, "Warning: earlier execution evidence could not be retained: %s. Writing current results.\n", reportText(err.Error()))
 	}
 	setValidationEvidence(&result)
 	result.Summary = summarizeValidation(result)
@@ -316,7 +316,7 @@ func writeValidation(path string, data []byte) error {
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return fmt.Errorf("write validation report: %w", err)
 	}
-	if err := os.Rename(file.Name(), path); err != nil {
+	if err := replaceReportFile(file.Name(), path); err != nil {
 		return fmt.Errorf("replace validation report: %w", err)
 	}
 	return nil

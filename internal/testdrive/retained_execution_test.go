@@ -2,6 +2,7 @@ package testdrive
 
 import (
 	"bytes"
+	"encoding/json"
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
@@ -51,12 +52,32 @@ func TestCheckOnlyKeepsPairedCommandsAsHistoricalEvidence(t *testing.T) {
 		})
 	}
 }
-func TestUnreadableHistoricalReportIsLeftUnchanged(t *testing.T) {
+func TestUnreadableHistoricalReportDoesNotBlockCurrentResults(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0755))
 	requireWriteFile(t, validationPath(root), "not valid JSON")
 	require.Error(t, finishValidation(&bytes.Buffer{}, root, validationResult{Framework: "jest", CheckOnly: true}))
 	data, err := os.ReadFile(validationPath(root))
 	require.NoError(t, err)
-	require.Equal(t, "not valid JSON", string(data))
+	require.True(t, json.Valid(data))
+}
+
+func TestFailedFullRunNeverReusesEarlierPass(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, finishValidation(&bytes.Buffer{}, root, pairedReport("earlier pass", "passed")))
+	result := validationResult{Framework: "jest", Error: "intake failed before baseline"}
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
+	got := readValidationReport(t, root)
+	require.Nil(t, got.Retained)
+	require.Nil(t, got.LastExecution)
+	require.Equal(t, "INCOMPLETE", got.Summary.LocalValidation)
+}
+
+func TestReportsCanReplaceExistingDestinationTwice(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.html")
+	require.NoError(t, writeValidation(path, []byte("first")))
+	require.NoError(t, writeValidation(path, []byte("second")))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "second", string(data))
 }
