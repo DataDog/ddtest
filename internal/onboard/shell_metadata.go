@@ -26,9 +26,15 @@ func resolveMetadataStep(root string, workflow ciWorkflow, job runtimeJob, step 
 	}
 	var result commandResolution
 	allReviewed := true
+	previousChain := 0
 	for _, command := range commands {
+		if previousChain != 0 && previousChain != command.Chain && len(result.Builds) > 0 {
+			result.Setup = append(result.Setup, "Builds separated from tests by shell metadata or statement boundaries require shell exit-policy review; they are not conditional prerequisites.")
+			result.Builds = nil
+		}
+		previousChain = command.Chain
 		child := step
-		child.Run = command
+		child.Run = command.Text
 		part := resolveTestStep(root, workflow, job, child, "javascript", framework)
 		for i := range part.Tests {
 			part.Tests[i].Prerequisites = append(slices.Clone(result.Builds), part.Tests[i].Prerequisites...)
@@ -40,6 +46,7 @@ func resolveMetadataStep(root string, workflow ciWorkflow, job runtimeJob, step 
 		result.Tests = append(result.Tests, part.Tests...)
 		result.Builds = append(result.Builds, part.Builds...)
 		result.Setup = append(result.Setup, part.Setup...)
+		result.ReviewReason = joinDiagnostic(result.ReviewReason, part.ReviewReason)
 		result.Matched = result.Matched || part.Matched
 		if part.Evidence != "" {
 			result.Evidence += part.Evidence + "; "
@@ -57,7 +64,28 @@ func resolveMetadataStep(root string, workflow ciWorkflow, job runtimeJob, step 
 	return result, true
 }
 
-func metadataInvocations(command string) ([]string, bool) {
+type metadataInvocation struct {
+	Text  string
+	Chain int
+}
+
+// printf -v mutates shell state, even when its option is quoted. Share this
+// classification with the CI setup path instead of treating every printf as IO.
+func outputOnlyCall(call *syntax.CallExpr) bool {
+	if len(call.Args) == 0 {
+		return false
+	}
+	if call.Args[0].Lit() == "echo" {
+		return true
+	}
+	if call.Args[0].Lit() != "printf" || len(call.Args) < 2 {
+		return false
+	}
+	option, err := literalShellWord(call.Args[1])
+	return err == nil && !strings.HasPrefix(option, "-v")
+}
+
+func metadataInvocations(command string) ([]metadataInvocation, bool) {
 	if len(command) > 16384 {
 		return nil, false
 	}
@@ -70,7 +98,8 @@ func metadataInvocations(command string) ([]string, bool) {
 		_ = syntax.NewPrinter().Print(&out, node)
 		return out.String()
 	}
-	var commands []string
+	var commands []metadataInvocation
+	chain := 0
 	addLiteral := func(stmt *syntax.Stmt) bool {
 		text := printNode(stmt)
 		literal, err := staticCommands(text)
@@ -82,12 +111,12 @@ func metadataInvocations(command string) ([]string, bool) {
 				return false
 			}
 		}
-		commands = append(commands, text)
+		commands = append(commands, metadataInvocation{Text: text, Chain: chain})
 		return len(commands) <= 64
 	}
 	isEcho := func(stmt *syntax.Stmt) bool {
 		call, ok := stmt.Cmd.(*syntax.CallExpr)
-		return ok && len(call.Args) > 0 && slices.Contains([]string{"echo", "printf"}, call.Args[0].Lit())
+		return ok && outputOnlyCall(call)
 	}
 	isDiff := func(stmt *syntax.Stmt) bool {
 		text := printNode(stmt)
@@ -142,8 +171,10 @@ func metadataInvocations(command string) ([]string, bool) {
 						valid = false
 					}
 					for _, nested := range part.Stmts {
+						chain++
 						valid = valid && addLiteral(nested)
 					}
+					chain++
 					return false
 				default:
 					valid = false
@@ -154,6 +185,7 @@ func metadataInvocations(command string) ([]string, bool) {
 		return valid
 	}
 	for _, stmt := range file.Stmts {
+		chain++
 		if !visit(stmt, 0) {
 			return nil, false
 		}

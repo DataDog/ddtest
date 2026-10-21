@@ -128,6 +128,7 @@ func resolveCIShell(root string, workflow ciWorkflow, job runtimeJob, step runti
 				result.Tests = append(result.Tests, part.Tests...)
 				result.Builds = append(result.Builds, part.Builds...)
 				result.Setup = append(result.Setup, part.Setup...)
+				result.ReviewReason = joinDiagnostic(result.ReviewReason, part.ReviewReason)
 			}
 			result.Evidence = "Both branches of the npm package-presence condition; original commands retained."
 			return result, true
@@ -144,7 +145,17 @@ func resolveCIShell(root string, workflow ciWorkflow, job runtimeJob, step runti
 		if changesRuntime && nvmRuntime(step.Run) == "" {
 			return unresolvedCommand("NVM runtime selection could not be resolved; preserve this setup and review it."), true
 		}
-		return commandResolution{Review: true, Reason: "Recognized runtime/dependency/environment setup, not a test entry point. CI setup itself is not executed locally."}, true
+		var setup []string
+		syntax.Walk(file, func(node syntax.Node) bool {
+			if redirect, ok := node.(*syntax.Redirect); ok && redirect.Op == syntax.AppOut {
+				target := strings.Trim(shellText(redirect.Word), `"`)
+				if target == "$GITHUB_PATH" || target == "${GITHUB_PATH}" {
+					setup = append(setup, "CI PATH changes require separate validation: "+step.Run)
+				}
+			}
+			return true
+		})
+		return commandResolution{Review: true, Reason: "Recognized runtime/dependency/environment setup, not a test entry point. CI setup itself is not executed locally.", Setup: setup}, true
 	}
 	return commandResolution{}, false
 }
@@ -177,7 +188,7 @@ func knownCISetup(file *syntax.File) bool {
 			valid = !part.Background && !part.Coprocess && !part.Disown
 			for _, redir := range part.Redirs {
 				target := strings.Trim(shellText(redir.Word), `"`)
-				valid = valid && ((redir.Op == syntax.AppOut && (target == "$GITHUB_OUTPUT" || target == "$GITHUB_PATH")) || redir.Op == syntax.WordHdoc)
+				valid = valid && ((redir.Op == syntax.AppOut && (target == "$GITHUB_OUTPUT" || target == "${GITHUB_OUTPUT}" || target == "$GITHUB_PATH" || target == "${GITHUB_PATH}")) || redir.Op == syntax.WordHdoc)
 			}
 		case *syntax.ForClause, *syntax.WhileClause, *syntax.FuncDecl, *syntax.CaseClause, *syntax.ArithmCmd, *syntax.ProcSubst:
 			valid = false
@@ -206,7 +217,7 @@ func setupCall(call *syntax.CallExpr) bool {
 		return text == `readlink -f "$(which npm)"`
 	}
 	if name == "echo" || name == "printf" {
-		return len(call.Args) > 1 && call.Args[1].Lit() != "-v"
+		return outputOnlyCall(call)
 	}
 	words, err := staticCommands(text)
 	if err != nil || len(words) != 1 {
