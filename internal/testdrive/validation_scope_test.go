@@ -23,7 +23,7 @@ func focusedValidationFixture(name string) validationResult {
 			{TestCommand: onboard.TestCommand{Command: "npm test"}, Status: "passed", PairedExecution: true, ExecutionAttempted: true, Compatibility: verdict{Status: "compatible"}},
 			{TestCommand: onboard.TestCommand{Command: "npm run other", Resolution: "npm run other -> runner other"}, Status: "not exercised", Compatibility: verdict{Status: "not exercised"}},
 		},
-		Runs: []runSummary{{Name: "baseline", Command: "npm test", ExitCode: &exit}, {Name: "reporting-only", Command: "npm test", Instrumented: true, ExitCode: &exit}},
+		Runs: []runSummary{{Role: roleBaseline, Name: "baseline", Command: "npm test", ExitCode: &exit}, {Role: roleReporting, Name: "reporting-only", Command: "npm test", Instrumented: true, ExitCode: &exit}},
 	}
 	for _, policy := range featurePolicies(name) {
 		status := "passed"

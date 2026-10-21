@@ -24,7 +24,7 @@ func TestAggregateCountsDistinguishRepeatedExecutionsWithoutDroppingContexts(t *
 	var runs []runSummary
 	for configuration := range 3 {
 		workspace := filepath.Join(root, fmt.Sprintf("workspace-%d", configuration))
-		run := validationRun{Name: "reporting-only", Instrumented: true, root: workspace, Command: fmt.Sprintf("jest --configuration=%d", configuration)}
+		run := validationRun{Role: roleReporting, Name: "reporting-only", Instrumented: true, root: workspace, Command: fmt.Sprintf("jest --configuration=%d", configuration)}
 		for index := range 32 {
 			name := fmt.Sprintf("native test %d", index)
 			run.Tests = append(run.Tests, jestTest{File: filepath.Join(workspace, "test.js"), Name: name, Status: "passed"})
@@ -48,7 +48,7 @@ func TestAggregateCountsDistinguishRepeatedExecutionsWithoutDroppingContexts(t *
 	}
 	// Baselines and synthetic feature probes must not inflate the original-suite
 	// reporting counts. They still remain individual evidence in runs.
-	runs = append(runs, runSummary{Name: "baseline", NativeCounts: models[0].ExecutionCounts}, runSummary{Name: "reporting-only", Instrumented: true, ProbeMode: "pass", NativeCounts: models[0].ExecutionCounts})
+	runs = append(runs, runSummary{Role: roleBaseline, Name: "baseline", NativeCounts: models[0].ExecutionCounts}, runSummary{Role: roleProbeControl, Name: "reporting-only", Instrumented: true, ProbeMode: "pass", NativeCounts: models[0].ExecutionCounts})
 	_ = finishValidation(&bytes.Buffer{}, root, validationResult{Framework: "jest", Runs: runs})
 	result := readValidationReport(t, root)
 	require.NotNil(t, result.ReportingCounts)

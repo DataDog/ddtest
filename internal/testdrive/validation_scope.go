@@ -39,7 +39,7 @@ func hasValidationExecution(result validationResult) bool {
 		return false
 	}
 	for _, run := range result.Runs {
-		if run.Command != "" && run.ExitCode != nil && (run.Name == "baseline" || run.Name == "reporting-only") {
+		if run.Command != "" && run.ExitCode != nil && (run.Role == roleBaseline || run.Role == roleReporting) {
 			return true
 		}
 	}

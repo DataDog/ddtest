@@ -58,7 +58,7 @@ func TestConfigurationReportsRemainOnePairAndKeepCommandLabels(t *testing.T) {
 	require.NoError(t, writeConfigurationHTML(root, models))
 	code := 0
 	result := completeValidationFixture("jest")
-	result.Runs = []runSummary{{Name: "baseline", Configuration: "jest", Command: "jest", ExitCode: &code}, {Name: "reporting-only", Configuration: "jest", Command: "jest", Instrumented: true, ExitCode: &code}}
+	result.Runs = []runSummary{{Role: roleBaseline, Name: "baseline", Configuration: "jest", Command: "jest", ExitCode: &code}, {Role: roleReporting, Name: "reporting-only", Configuration: "jest", Command: "jest", Instrumented: true, ExitCode: &code}}
 	require.NoError(t, finishValidation(&bytes.Buffer{}, root, result))
 	html, err := os.ReadFile(htmlReportPath(root))
 	require.NoError(t, err)
