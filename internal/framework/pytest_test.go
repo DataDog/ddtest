@@ -482,3 +482,26 @@ func TestPyTest_RunTests(t *testing.T) {
 		t.Errorf("expected run env to override platform env, got %q", mockExecutor.capturedEnvMap["SHARED_VAR"])
 	}
 }
+
+func TestIsUnderExcludedDir(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		file string
+		want bool
+	}{
+		{name: "virtualenv layout", file: ".venv/lib/python3.12/site-packages/pkg/test_case.py", want: true},
+		{name: "bare venv", file: "venv/test_case.py", want: true},
+		{name: "tox environment", file: ".tox/py312/lib/test_case.py", want: true},
+		{name: "bytecode cache", file: "tests/__pycache__/test_case.py", want: true},
+		{name: "javascript dependencies", file: "node_modules/pkg/test_case.py", want: true},
+		{name: "project test file", file: "tests/test_case.py", want: false},
+		{name: "file whose basename embeds an excluded name", file: "tests/test_venv_case.py", want: false},
+		{name: "directory that only starts with an excluded name", file: "my-venv/test_case.py", want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isUnderExcludedDir(tt.file); got != tt.want {
+				t.Fatalf("isUnderExcludedDir(%q) = %v, want %v", tt.file, got, tt.want)
+			}
+		})
+	}
+}

@@ -108,9 +108,12 @@ var excludedTestDirs = []string{
 }
 
 // isUnderExcludedDir reports whether any path segment is a well-known
-// non-test directory.
+// non-test directory. Discovery returns slash-separated paths on every
+// platform, so normalize before splitting: on Windows filepath.Separator is
+// a backslash and an unnormalized path would stay a single segment, letting
+// dependency tests bypass the exclusion.
 func isUnderExcludedDir(file string) bool {
-	for _, segment := range strings.Split(file, string(filepath.Separator)) {
+	for _, segment := range strings.Split(utils.NormalizePath(file), "/") {
 		if slices.Contains(excludedTestDirs, segment) {
 			return true
 		}
