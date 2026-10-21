@@ -82,8 +82,8 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			if command.mochaESM && checkJestBootstrap(workflow, job, step, row, "vitest") != "" {
 				return "Mocha ESM inputs require the action's --import ${{ env.DD_TRACE_ESM_IMPORT }} alongside its require preload"
 			}
-			if !command.usesNYC {
-				return "Cannot verify Istanbul/NYC coverage setup for Mocha CI command: " + command.Command + ". Wrap the original command with npx --no-install nyc --; real source coverage is checked separately."
+			if !command.usesNYC && !command.mochaIstanbul {
+				return "Cannot verify Istanbul/NYC coverage setup for Mocha CI command: " + command.Command + ". Install nyc first (npm install --save-dev nyc), then wrap the original command with npx --no-install nyc --; real source coverage is checked separately."
 			}
 		}
 	}

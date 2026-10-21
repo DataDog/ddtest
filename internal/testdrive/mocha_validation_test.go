@@ -78,6 +78,7 @@ const Mocha=require('mocha/lib/mocha'); const mocha=new Mocha();
 assert.deepEqual(mocha.loadFiles(),[process.env.DDTEST_MOCHA_PROBE]);
 assert.equal(mocha.retryCount,0); assert.equal(mocha.options.timeout,1234);
 assert.equal(mocha.options.reporter,'custom');
+mocha.files=[]; assert.deepEqual(mocha.loadFiles(),[]);
 let callback=false; assert.equal(mocha.run(m=>{callback=true;assert.equal(m,mocha)}),mocha); assert.ok(callback);
 const options=require('mocha/lib/cli/options').loadOptions();
 assert.deepEqual(options._,[process.env.DDTEST_MOCHA_PROBE]); assert.equal(options.spec,undefined);
@@ -151,7 +152,7 @@ func TestMochaNativeObserverIntegration(t *testing.T) {
 	if modules == "" {
 		t.Skip("set DDTEST_MOCHA_NODE_MODULES")
 	}
-	for _, mode := range []string{"serial", "parallel", "setup probe", "missing source", "alias cwd"} {
+	for _, mode := range []string{"serial", "parallel", "setup probe", "missing source", "alias cwd", "external child", "nested child", "entry local", "TDD", "delay probe", "ESM"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.Symlink(modules, filepath.Join(root, "node_modules")))
@@ -189,10 +190,38 @@ func TestMochaNativeObserverIntegration(t *testing.T) {
 				require.NoError(t, err)
 				name, args = words[0], words[1:]
 			}
+			if mode == "external child" || mode == "nested child" {
+				helper := `require('node:child_process').execFileSync(process.execPath,['-e','console.log("helper")'],{cwd:require('node:os').tmpdir()})`
+				if mode == "nested child" {
+					requireWriteFile(t, filepath.Join(root, "nested.cjs"), `const exported=require('mocha');const Mocha=exported.Mocha||exported.default||exported;const runner=new Mocha();runner.suite.addTest(new Mocha.Test('nested',()=>{process.exit(7)}));runner.run()`)
+					helper = `const child=require('node:child_process').spawnSync(process.execPath,['nested.cjs']);require('node:assert/strict').equal(child.status,7)`
+				}
+				requireWriteFile(t, filepath.Join(root, "one.cjs"), `describe('math',()=>it('adds',()=>{`+helper+`}))`)
+			}
+			if mode == "entry local" {
+				require.NoError(t, os.Remove(filepath.Join(root, "node_modules")))
+				require.NoError(t, os.MkdirAll(filepath.Join(root, "packages/unit"), 0700))
+				require.NoError(t, os.Symlink(modules, filepath.Join(root, "packages/unit/node_modules")))
+				requireWriteFile(t, filepath.Join(root, "packages/unit/runner.cjs"), `const exported=require('mocha');const Mocha=exported.Mocha||exported.default||exported;const m=new Mocha();m.addFile('one.cjs');m.run(n=>{process.exitCode=n?1:0})`)
+				name = "node"
+				args = []string{"packages/unit/runner.cjs"}
+			}
+			if mode == "TDD" {
+				requireWriteFile(t, filepath.Join(root, "one.cjs"), `suite('math',()=>test('adds',()=>{}))`)
+				args = append(args, "--ui=tdd")
+			}
+			if mode == "ESM" {
+				requireWriteFile(t, filepath.Join(root, "one.mjs"), `import assert from 'node:assert/strict';describe('math',()=>it('adds',()=>assert.equal(1+1,2)))`)
+				args = []string{"one.mjs"}
+			}
+			if mode == "delay probe" {
+				requireWriteFile(t, filepath.Join(root, "probe.cjs"), mochaProbeSource)
+				args = append(args, "--delay")
+			}
 			command := exec.CommandContext(t.Context(), name, args...)
 			command.Dir = root
 			command.Env = append(os.Environ(), "NODE_OPTIONS=--require="+strconv.Quote(observer), "DDTEST_MOCHA_RESULTS="+directory)
-			if mode == "setup probe" {
+			if mode == "setup probe" || mode == "delay probe" {
 				command.Env = append(command.Env, "DDTEST_MOCHA_PROBE="+filepath.Join(root, "probe.cjs"))
 			}
 			output, err := command.CombinedOutput()
@@ -208,7 +237,7 @@ func TestMochaNativeObserverIntegration(t *testing.T) {
 			require.Len(t, run.Tests, 1)
 			require.Equal(t, "passed", run.Tests[0].Status)
 			want := "math adds"
-			if mode == "setup probe" {
+			if mode == "setup probe" || mode == "delay probe" {
 				want = probeName
 			}
 			if mode == "missing source" {
@@ -221,7 +250,7 @@ func TestMochaNativeObserverIntegration(t *testing.T) {
 
 func TestMochaCoverageGateRequiresRealSuiteEvidence(t *testing.T) {
 	for _, covered := range []int{0, 1} {
-		run := validationRun{framework: "mocha", Name: "reporting-only", Instrumented: true, Facts: intake.Facts{TestCount: 1, CoveredTestCount: covered}}
+		run := validationRun{framework: "mocha", Name: "reporting-only", Role: roleReporting, Instrumented: true, Facts: intake.Facts{TestCount: 1, CoveredTestCount: covered}}
 		summary := run.summary()
 		require.NotNil(t, summary.Coverage)
 		result := completeValidationFixture("mocha")

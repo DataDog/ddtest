@@ -116,9 +116,6 @@ func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T)
 				t.Fatalf("JSON did not preserve complete facts: %+v", diagnostics.Facts)
 			}
 			wantCommand := drive.command + " " + drive.args[0]
-			if tc.mocha && tc.nycInstalled {
-				wantCommand = "node_modules/.bin/nyc -- npx mocha"
-			}
 			if diagnostics.RepositoryRoot != drive.repositoryRoot || diagnostics.Command != wantCommand || diagnostics.Framework != frameworkLabel || diagnostics.DurationUnit != "nanoseconds" || diagnostics.CommandFailed != (tc.commandError != nil) {
 				t.Fatalf("incorrect diagnostic context: %+v", diagnostics)
 			}

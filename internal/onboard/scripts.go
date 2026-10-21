@@ -8,6 +8,7 @@ package onboard
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -297,14 +298,25 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	runner := framework
 
 	if words[0] == runner || words[0] == "./node_modules/.bin/"+runner || words[0] == "node_modules/.bin/"+runner || words[0] == filepath.Join(directory, "node_modules", ".bin", runner) {
+		if framework == "mocha" && mochaWatchMode(directory, words[1:]) {
+			return unresolvedCommand("Mocha watch mode is not supported; select a finite test command")
+		}
 		if framework == "jest" && jestMetadataOptions(words[1:]) {
 			return commandResolution{}
 		}
 		canonicalRoot, _ := filepath.EvalSymlinks(root)
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
-		return commandResolution{Matched: true, SingleJest: true, Evidence: command,
-			Tests: []TestCommand{{mochaESM: framework == "mocha" && mochaESMInputs(directory, words[1:]), Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}}}
+		entry := TestCommand{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}
+		if framework == "mocha" {
+			entry.mochaIstanbul = MochaBabelIstanbulConfigured(directory)
+			entry.mochaRunnerArgs = slices.Clone(words[1:])
+			entry.mochaProbeCommand = shellquote.Join(words...)
+			entry.mochaLookupDirectory = filepath.ToSlash(relative)
+			entry.mochaProbeDirectory = filepath.ToSlash(relative)
+			entry.mochaESM = mochaESMInputs(directory, words[1:])
+		}
+		return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{entry}}
 	}
 
 	if framework == "mocha" {
@@ -505,12 +517,20 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		}
 		result.SingleJest = true
 		result.MochaAuxiliary = false
-		// The retained alias must start in its caller directory/environment. Inner
-		// assignments and cd apply only inside the script, including for probes.
-		if result.Tests[0].Directory != repositoryPath(root, directory) || len(result.Tests[0].Environment) > 0 {
-			result.Tests[0].mochaProbeCommand = command
-		}
+		// The full alias starts at the caller for lifecycle fidelity; probes
+		// retain their resolved runner directory and scoped environment.
 		result.Tests[0].Directory = repositoryPath(root, directory)
+		if len(result.Tests[0].Environment) > 0 {
+			if result.Tests[0].mochaProbeEnvironment == nil {
+				result.Tests[0].mochaProbeEnvironment = map[string]string{}
+			}
+			maps.Copy(result.Tests[0].mochaProbeEnvironment, result.Tests[0].Environment)
+		}
+		for _, hook := range []string{"pre" + name, "post" + name} {
+			if value := manifest.Scripts[hook]; value != "" {
+				result.Tests[0].LifecycleHooks = append(result.Tests[0].LifecycleHooks, repositoryPath(root, directory)+": "+hook+" -> "+value)
+			}
+		}
 		result.Tests[0].Environment = nil
 		result.Tests[0].Resolution = command + " -> " + result.Evidence
 		result.Tests[0].Command = command

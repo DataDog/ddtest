@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,7 +60,7 @@ func resolveMochaCoverage(root, directory string, words, stack []string, remaini
 		return unresolvedCommand("Coverage wrapper needs one statically resolved Mocha invocation: " + result.Reason)
 	}
 	if probe := result.Tests[0].mochaProbeCommand; probe != "" {
-		result.Tests[0].mochaProbeCommand = shellquote.Join(words[:i]...) + " " + probe
+		result.Tests[0].mochaProbeCommand = shellquote.Join(relaxCoverageChecks(words[:i])...) + " " + probe
 	}
 	result.Tests[0].usesNYC = result.Tests[0].usesNYC || filepath.Base(words[0]) == "nyc"
 	result.Tests[0].Command = shellquote.Join(words...)
@@ -138,7 +139,7 @@ func resolveMochaNode(root, directory string, words []string) commandResolution 
 		return commandResolution{MochaAuxiliary: true}
 	}
 	directoryRelative, _ := filepath.Rel(root, directory)
-	return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{mochaESM: mochaESMInputs(directory, words[1:]), Directory: filepath.ToSlash(directoryRelative), Command: command}}}
+	return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{mochaIstanbul: MochaBabelIstanbulConfigured(directory), mochaProbeCommand: command, mochaLookupDirectory: repositoryPath(root, filepath.Dir(path)), mochaProbeDirectory: filepath.ToSlash(directoryRelative), mochaESM: mochaESMInputs(directory, words[1:]), Directory: filepath.ToSlash(directoryRelative), Command: command}}}
 }
 
 // MochaProbeCommand omits companion lint/assertion checks only for synthetic
@@ -150,4 +151,115 @@ func MochaProbeCommand(root, command string) string {
 		return result.Tests[0].mochaProbeCommand
 	}
 	return command
+}
+
+// MochaProbePlan preserves runner cwd and scoped assignments while omitting
+// package lifecycle/companion tools only for synthetic probes.
+func MochaProbePlan(root, command string) TestCommand {
+	remaining := 256
+	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	if resolved.Reason == "" && len(resolved.Tests) == 1 {
+		item := resolved.Tests[0]
+		if item.mochaProbeCommand != "" {
+			item.Command = item.mochaProbeCommand
+			item.Directory = item.mochaProbeDirectory
+			if item.mochaProbeEnvironment != nil {
+				item.Environment = item.mochaProbeEnvironment
+			}
+		}
+		return item
+	}
+	return TestCommand{Command: command, Directory: "."}
+}
+
+func MochaRunnerDirectory(root, command string) string {
+	remaining := 256
+	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	if resolved.Reason == "" && len(resolved.Tests) == 1 && resolved.Tests[0].mochaLookupDirectory != "" {
+		return filepath.Join(root, resolved.Tests[0].mochaLookupDirectory)
+	}
+	return root
+}
+
+// This is the effective yargs option, not an environment variable neither nyc
+// nor c8 reads. Replace both positive and negative spellings before the separator.
+func relaxCoverageChecks(words []string) []string {
+	result := []string{words[0]}
+	separator := false
+	for i := 1; i < len(words); i++ {
+		key, _, _ := strings.Cut(words[i], "=")
+		if key == "--check-coverage" || key == "--no-check-coverage" {
+			if !strings.Contains(words[i], "=") && i+1 < len(words) && slices.Contains([]string{"true", "false"}, words[i+1]) {
+				i++
+			}
+			continue
+		}
+		if words[i] == "--" {
+			separator = true
+			continue
+		}
+		result = append(result, words[i])
+	}
+	result = append(result, "--check-coverage=false")
+	if separator {
+		result = append(result, "--")
+	}
+	return result
+}
+
+func mochaWatchMode(directory string, args []string) bool {
+	var watch *bool
+	for _, arg := range args {
+		if arg == "--watch" || arg == "-w" || arg == "--watch=true" {
+			value := true
+			watch = &value
+		}
+		if arg == "--no-watch" || arg == "--watch=false" {
+			value := false
+			watch = &value
+		}
+	}
+	if watch != nil {
+		return *watch
+	}
+	// Static discovery never evaluates configuration JavaScript. Effective
+	// dynamic options are inspected in preflight by the installed Mocha parser.
+	configs := []string{".mocharc.json", ".mocharc.yaml", ".mocharc.yml", ".mocharc.js", ".mocharc.cjs", ".mocharc.mjs"}
+	if slices.Contains(args, "--no-config") {
+		configs = nil
+	}
+	for i, arg := range args {
+		if arg == "--config" && i+1 < len(args) {
+			configs = append(configs, args[i+1])
+		}
+		if strings.HasPrefix(arg, "--config=") {
+			configs = append(configs, strings.TrimPrefix(arg, "--config="))
+		}
+	}
+	for _, name := range configs {
+		if !filepath.IsLocal(name) {
+			continue
+		}
+		if data, err := os.ReadFile(filepath.Join(directory, name)); err == nil && mochaWatchSetting.Match(data) {
+			return true
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(directory, "package.json")); err == nil && !slices.Contains(args, "--no-package") {
+		var manifest struct{ Mocha json.RawMessage }
+		if json.Unmarshal(data, &manifest) == nil && mochaWatchSetting.Match(manifest.Mocha) {
+			return true
+		}
+	}
+	return false
+}
+
+var mochaWatchSetting = regexp.MustCompile(`(?m)(?:^|[,{\s])"?watch"?\s*:\s*true\b`)
+
+func MochaRunnerArguments(root, command string) []string {
+	remaining := 256
+	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	if resolved.Reason == "" && len(resolved.Tests) == 1 {
+		return resolved.Tests[0].mochaRunnerArgs
+	}
+	return nil
 }

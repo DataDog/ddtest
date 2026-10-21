@@ -13,6 +13,13 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
+	mochaIstanbul         bool
+	LifecycleHooks        []string `json:"lifecycle_hooks,omitempty"`
+	mochaRunnerArgs       []string
+	mochaLookupDirectory  string
+	mochaProbeDirectory   string
+	mochaProbeEnvironment map[string]string
+
 	ScopeCommand      string            `json:"-"` // Original invocation before adding a forwarding wrapper.
 	ProbeLintSkipped  bool              `json:"probe_lint_skipped,omitempty"`
 	ReviewReason      string            `json:"review_reason,omitempty"`
@@ -149,7 +156,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 						resolution.Builds[j].Environment = mergeEnvironment(env, resolution.Builds[j].Environment)
 					}
 					for _, entry := range resolution.Tests {
-						if framework == "mocha" && !entry.usesNYC {
+						if framework == "mocha" && !entry.usesNYC && !entry.mochaIstanbul {
 							parts, err := staticCommands(entry.Command)
 							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {
 								entry.CICoverageCommand = "npx --no-install nyc -- " + entry.Command

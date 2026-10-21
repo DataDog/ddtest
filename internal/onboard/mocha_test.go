@@ -79,8 +79,8 @@ func TestMochaProgrammaticCommandPreservesCompanionChecks(t *testing.T) {
 	require.Empty(t, resolution.Reason)
 	require.False(t, resolution.MochaAuxiliary)
 
-	require.Equal(t, "npm run unit", MochaProbeCommand(root, "npm test"))
-	require.Equal(t, "nyc -- npm run unit", MochaProbeCommand(root, "nyc -- npm test"))
+	require.Equal(t, "nyc --check-coverage=false node test.js", MochaProbeCommand(root, "npm test"))
+	require.Equal(t, "nyc --check-coverage=false -- nyc --check-coverage=false node test.js", MochaProbeCommand(root, "nyc -- npm test"))
 	// Unknown shell fragments must not disappear when keeping a package alias.
 	writeScripts(t, root, map[string]string{"test": "node test.js && opaque-command"})
 	_, err := MochaValidationCommand(root, "npm test")

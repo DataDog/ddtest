@@ -8,6 +8,7 @@ package intake
 import (
 	"encoding/json"
 	"errors"
+	"github.com/DataDog/ddtest/internal/onboard"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,10 +79,13 @@ func Troubleshoot(repositoryRoot, framework string, facts Facts) []Advice {
 }
 
 func troubleshootMochaCoverage(repositoryRoot string) Advice {
+	if onboard.MochaBabelIstanbulConfigured(repositoryRoot) {
+		return Advice{Finding: MissingCoverageFinding, Title: "Check existing Babel Istanbul instrumentation", Text: "Babel config already references the Istanbul plugin. Verify that the tested source passes through Babel and that include/exclude rules retain application files; do not add another NYC wrapper before checking the existing instrumentation. Rerun ddtest testdrive after correcting it.", URL: "https://docs.datadoghq.com/tests/test_impact_analysis/setup/javascript/"}
+	}
 	advice := Advice{
 		Finding: MissingCoverageFinding,
 		Title:   "Check NYC coverage configuration",
-		Text:    "Testdrive uses NYC automatically, but wrapping a command does not prove coverage. Check instrument:false, include/exclude rules and file extensions. NYC's require hook alone does not instrument native ESM; dd-trace's ESM loader enables tracing, not Istanbul coverage. Preserve coverage thresholds and report this limitation if a separate ESM instrumentation step is needed. Rerun ddtest testdrive after correcting instrumentation.",
+		Text:    "Testdrive preserves the selected command. If coverage is intended, wrap that command with the installed NYC; wrapping alone does not prove coverage. Check instrument:false, include/exclude rules and file extensions. NYC's require hook alone does not instrument native ESM; dd-trace's ESM loader enables tracing, not Istanbul coverage. Preserve coverage thresholds and report this limitation if a separate ESM instrumentation step is needed. Rerun ddtest testdrive after correcting instrumentation.",
 		URL:     "https://docs.datadoghq.com/tests/test_impact_analysis/setup/javascript/",
 	}
 	info, err := os.Stat(filepath.Join(repositoryRoot, "node_modules", ".bin", "nyc"))
@@ -89,10 +93,10 @@ func troubleshootMochaCoverage(repositoryRoot string) Advice {
 		return advice
 	}
 	advice.Title = "Install nyc for Mocha coverage"
-	advice.Text = "From the project directory:\nnpm install --save-dev nyc\nddtest testdrive\nTestdrive will use NYC automatically. Keep your testdrive options."
+	advice.Text = "From the project directory:\nnpm install --save-dev nyc\nnpx --no-install nyc -- mocha\nSelect the same NYC-wrapped command in CI and ddtest testdrive. Keep your testdrive options."
 	if declared, known := nycDeclared(repositoryRoot); known && declared {
 		advice.Title = "Install the declared nyc dependency"
-		advice.Text = "NYC executable missing. Install the project's dependencies, then rerun:\nddtest testdrive\nTestdrive will use NYC automatically. Keep your testdrive options."
+		advice.Text = "NYC executable missing. Install the project's dependencies, then rerun:\nnpx --no-install nyc -- mocha\nSelect the same NYC-wrapped command in CI and ddtest testdrive. Keep your testdrive options."
 	}
 	return advice
 }

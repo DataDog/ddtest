@@ -718,3 +718,36 @@ outputs stay outside the original checkout. Keep the JSON/HTML report pair.
 Matching existing test failures are acceptable; missing results, changed
 outcomes and failed feature controls are not success. Real CI and Datadog backend
 processing are not exercised.
+
+Validation preserves the original CI command; installing NYC does not add a
+wrapper automatically. To introduce Istanbul coverage, install `nyc` first and
+change the CI command explicitly (for example `npx --no-install nyc -- npm test`),
+then validate that same command. Existing Babel/Istanbul instrumentation should
+be checked before adding another wrapper. Native ESM is not covered by NYC's
+require hook; feature results remain separate from this coverage limitation.
+Reports show the covered-test ratio, which describes observed coverage rather
+than proof that every application file was instrumented.
+
+Probes replace file/name selection, disable native retries/watch/delay, preserve
+requires/root hooks/UI/reporters, and override nyc/c8 coverage checks with
+`--check-coverage=false`. Full-suite runs preserve the original coverage gates.
+Watch commands are rejected; other hanging commands hit `--timeout`, which
+terminates the process group. Place TMPDIR outside the checkout.
+
+The following conservative discovery exceptions apply to Mocha only. Shared
+Jest/Vitest discovery continues to require review where lifecycle semantics
+cannot be represented safely; it is intentionally not relaxed by this PR.
+
+| Rule | Reason and boundary |
+| --- | --- |
+| `mochify` or a repository script importing Puppeteer | Browser execution is outside Node Mocha validation; never used as proof of a Node test. |
+| Browser shell wrappers containing only `set`, `echo`, `printf`, `mochify` | Inspectable metadata plus one browser runner. Unknown commands and substitutions remain unresolved. |
+| Literal `$(which X)` in browser-only steps | Executable lookup metadata only; no arbitrary command substitution is accepted. |
+| An opaque Node helper named `build` | Retained as an explicit package build requiring review, never inferred to be safe. |
+| npm pre/post hooks and sequential `run-s`/`npm-run-all` | Preserve the actual npm lifecycle command, not a guessed runner. Wildcards/concurrent orchestration remain unresolved. Yarn lifecycle hooks still require review, including Yarn v1 hooks. |
+| `npx --no-install` | An explicit local executable boundary. It does not authorize downloading an unknown tool. |
+
+The preview lists retained lifecycle hooks and warns that any may upload or
+publish, including through indirect scripts. Those hooks run in the disposable
+copy for both comparisons; synthetic probes omit them while retaining the
+runner's scoped environment and working directory.

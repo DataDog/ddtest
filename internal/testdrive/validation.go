@@ -95,10 +95,12 @@ type testCounts struct {
 }
 
 type coverageSummary struct {
-	Status       string `json:"status"`
-	CoveredTests int    `json:"covered_tests"`
-	TotalTests   int    `json:"total_tests"`
-	Level        string `json:"level,omitempty"`
+	Reason       string  `json:"reason,omitempty"`
+	Ratio        float64 `json:"covered_test_ratio"`
+	Status       string  `json:"status"`
+	CoveredTests int     `json:"covered_tests"`
+	TotalTests   int     `json:"total_tests"`
+	Level        string  `json:"level,omitempty"`
 }
 
 type runSummary struct {
@@ -137,7 +139,13 @@ func (r validationRun) summary() runSummary {
 		if r.Facts.CoveredTestCount == 0 {
 			status = "not observed"
 		}
-		summary.Coverage = &coverageSummary{Status: status, CoveredTests: r.Facts.CoveredTestCount, TotalTests: r.Facts.TestCount, Level: r.Facts.CoverageLevel}
+		summary.Coverage = &coverageSummary{Status: status, CoveredTests: r.Facts.CoveredTestCount, TotalTests: r.Facts.TestCount, Level: r.Facts.CoverageLevel, Ratio: float64(r.Facts.CoveredTestCount) / float64(r.Facts.TestCount)}
+		summary.Coverage.Reason = fmt.Sprintf("Coverage reported for %d/%d real tests; synthetic probes are excluded.", r.Facts.CoveredTestCount, r.Facts.TestCount)
+		if status != "observed" && slices.ContainsFunc(r.Tests, func(test jestTest) bool {
+			return filepath.Ext(test.File) == ".mjs" || filepath.Ext(test.File) == ".mts"
+		}) {
+			summary.Coverage.Reason += " Native ESM coverage is not supported by NYC's require hook. Tracing imports do not instrument source coverage; review a separate ESM instrumentation step."
+		}
 	}
 	// A setup failure before execution must not look like a successful command.
 	if r.Command != "" {

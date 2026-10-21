@@ -52,7 +52,7 @@ func TestMochaNpmLifecyclePreservesCommandsAndHiddenConsumers(t *testing.T) {
 	require.Contains(t, output.String(), "CI coverage command: npx --no-install nyc -- npm run build")
 	require.Contains(t, output.String(), "Real source coverage is a separate check")
 	require.Equal(t, "mocha test.js", MochaProbeCommand(root, "npm run test-node"))
-	require.Equal(t, "npm run test-esm", MochaProbeCommand(root, "npm run build"))
+	require.Equal(t, "mocha test.mjs", MochaProbeCommand(root, "npm run build"))
 	for _, command := range []string{"npm run test-node -- --bail", "nyc -- npm run test-node"} {
 		_, err := MochaValidationCommand(root, command)
 		require.NoError(t, err)

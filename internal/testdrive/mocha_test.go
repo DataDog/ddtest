@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMochaTestdriveNYCPreviewAndExecution(t *testing.T) {
+func TestMochaPreviewPreservesSelectedCommand(t *testing.T) {
 	for _, tc := range []struct {
 		name, command string
 		args          []string
@@ -27,8 +27,8 @@ func TestMochaTestdriveNYCPreviewAndExecution(t *testing.T) {
 		jest          bool
 		wrapped       bool
 	}{
-		{name: "local Mocha", command: "node_modules/.bin/mocha", installed: true, executable: true, wrapped: true},
-		{name: "preserves configured command and arguments", command: "npx", args: []string{"mocha", "--config", "config with spaces.cjs", "--parallel"}, installed: true, executable: true, wrapped: true},
+		{name: "local Mocha", command: "node_modules/.bin/mocha", installed: true, executable: true, wrapped: false},
+		{name: "preserves configured command and arguments", command: "npx", args: []string{"mocha", "--config", "config with spaces.cjs", "--parallel"}, installed: true, executable: true, wrapped: false},
 		{name: "NYC missing", command: "npx", args: []string{"mocha"}},
 		{name: "NYC not executable", command: "npx", args: []string{"mocha"}, installed: true},
 		{name: "already wrapped command", command: "node_modules/.bin/nyc", args: []string{"mocha"}, installed: true, executable: true},

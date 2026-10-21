@@ -26,7 +26,14 @@ func TestMochaRetainedAliasKeepsCallerScope(t *testing.T) {
 			require.Equal(t, "npm test", commands[0].Command)
 			require.Equal(t, ".", commands[0].Directory)
 			require.Empty(t, commands[0].Environment)
-			require.Equal(t, "npm test", MochaProbeCommand(root, "npm test"), "probe must preserve inner env/cd through the original alias too")
+			plan := MochaProbePlan(root, "npm test")
+			require.Equal(t, "nyc --check-coverage=false -- mocha test.cjs", plan.Command)
+			if strings.HasPrefix(script, "cd ") {
+				require.Equal(t, "packages/unit", plan.Directory)
+				require.Equal(t, filepath.Join(root, "packages/unit"), MochaRunnerDirectory(root, "npm test"))
+			} else {
+				require.Equal(t, map[string]string{"MODE": "unit"}, plan.Environment)
+			}
 			commands = ValidationCommands(root, "OUTER=yes npm test", "mocha")
 			require.Len(t, commands, 1)
 			require.Equal(t, map[string]string{"OUTER": "yes"}, commands[0].Environment)

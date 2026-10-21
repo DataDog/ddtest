@@ -396,6 +396,11 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 
 	_, _ = fmt.Fprintf(output, "  - command: %s\n", shellquote.Join(append([]string{command}, args...)...))
+	if t.framework.Name() == "mocha" {
+		for _, entry := range onboard.ValidationCommands(t.repositoryRoot, shellquote.Join(append([]string{command}, args...)...), "mocha") {
+			onboard.WriteLifecycleHooks(output, entry)
+		}
+	}
 	_, _ = fmt.Fprintln(output)
 	if t.language == "ruby" && t.projectTracer == "" {
 		_, _ = fmt.Fprintln(output, "Bundler updates Gemfile and Gemfile.lock.")
@@ -456,7 +461,9 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 
 	var result validationResult
-	if t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
+	if t.discoveryError != nil {
+		result, runErr = t.run(ctx, output)
+	} else if t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
 		child := *t
 		child.workflowRoot = t.repositoryRoot
 		child.preflight = child.checkVitestPreflight

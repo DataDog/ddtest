@@ -32,11 +32,34 @@ func (t *Testdrive) checkMochaPreflight(ctx context.Context, output io.Writer, r
 	env := testEnvironment("http://127.0.0.1:1", "mocha-preflight")
 	env["NODE_OPTIONS"] = stripDatadogNodeOptions(t.nodeOptions())
 	env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
-	data, err := t.executor.CombinedOutput(ctx, "node", []string{"-p", "require('mocha/package.json').version"}, env)
+	directory := onboard.MochaRunnerDirectory(t.repositoryRoot, check.Command)
+	args, _ := json.Marshal(onboard.MochaRunnerArguments(t.repositoryRoot, check.Command))
+	inspect := `const path = require('node:path')
+const fs = require('node:fs')
+const manifest = require.resolve('mocha/package.json')
+const options = path.join(path.dirname(manifest), 'lib/cli/options')
+const config = require(fs.existsSync(options + '.js') ? options + '.js' : options + '.cjs')
+  .loadOptions(JSON.parse(process.argv[1]) || [])
+console.log(JSON.stringify({version: require(manifest).version, watch: !!(config && config.watch)}))`
+	executor, ok := t.executor.(directoryExecutor)
+	if !ok {
+		return fmt.Errorf("mocha preflight requires a directory-aware executor")
+	}
+	data, err := executor.CombinedOutputInDirectory(ctx, directory, "node", []string{"-e", inspect, string(args)}, env)
 	if err != nil {
 		return fmt.Errorf("inspect Mocha: %w: %s", err, commandDiagnostic(data))
 	}
-	check.Version = strings.TrimSpace(string(data))
+	var metadata struct {
+		Version string
+		Watch   bool
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return fmt.Errorf("inspect Mocha options: %w", err)
+	}
+	check.Version = metadata.Version
+	if metadata.Watch {
+		return fmt.Errorf("mocha watch mode is not supported; select a finite test command")
+	}
 	installer, ok := t.platform.(*platform.JavaScript)
 	if !ok {
 		return fmt.Errorf("mocha requires the JavaScript tracer selector")
@@ -65,7 +88,7 @@ func checkMochaSupport(check jestPreflight, selection platform.JSSelection) verd
 		return verdict{Status: "inconclusive", Reason: "Could not resolve the installed Mocha and selected tracer versions."}
 	}
 	// Instrumentation boundaries, not a validation-version allowlist.
-	if known && tracerKnown && ((tracerMajor >= 6 && major < 8) || major < 5 || (major == 5 && minor < 2)) {
+	if (tracerMajor >= 6 && major < 8) || major < 5 || (major == 5 && minor < 2) {
 		return verdict{Status: "incompatible", Reason: "dd-trace 6 requires Mocha >=8; dd-trace 5 requires Mocha >=5.2. Preserve the test matrix and select a compatible tracer."}
 	}
 	status, reason := onboard.CompareNodeRequirement(check.Node, selection.Node)
@@ -117,37 +140,48 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 	env["NODE_OPTIONS"] += " --require=" + strconv.Quote(observer)
 	env["DDTEST_MOCHA_RESULTS"] = results
 	env["DDTEST_MOCHA_PROBE"], env["DDTEST_PROBE_MODE"] = probePath, probeMode
-	if probePath != "" {
-		// Partial probes cannot meet full-suite coverage thresholds. Baseline and
-		// reporting-only executions retain every original threshold.
-		env["NYC_CHECK_COVERAGE"], env["C8_CHECK_COVERAGE"] = "false", "false"
-		run.ProbeCoverageThresholdsDisabled = true
-	}
 	command, args := t.executionCommand()
+	directoryRoot := t.repositoryRoot
 	if probePath != "" {
 		original := shellquote.Join(append([]string{command}, args...)...)
-		probeCommand := onboard.MochaProbeCommand(t.repositoryRoot, original)
-		if probeCommand != original {
-			words, err := shellquote.Split(probeCommand)
-			if err != nil || len(words) == 0 {
-				return run, fmt.Errorf("invalid Mocha probe command: %s", probeCommand)
-			}
-			command, args = words[0], words[1:]
-			run.ProbeLintSkipped = true
-			run.Diagnostic = "Synthetic probe uses the resolved Mocha entry point; companion lint and auxiliary checks ran only in the full-suite comparison."
+		plan := onboard.MochaProbePlan(t.repositoryRoot, original)
+		words, err := shellquote.Split(plan.Command)
+		if err != nil || len(words) == 0 {
+			return run, fmt.Errorf("invalid Mocha probe command: %s", plan.Command)
+		}
+		command, args = words[0], words[1:]
+		directoryRoot = filepath.Join(t.repositoryRoot, plan.Directory)
+		for key, value := range plan.Environment {
+			env[key] = value
+		}
+		run.ProbeCoverageThresholdsDisabled = strings.Contains(plan.Command, "--check-coverage=false")
+		run.ProbeLintSkipped = plan.Command != original
+		if run.ProbeLintSkipped {
+			run.Diagnostic = "Synthetic probe uses the resolved Mocha entry point; companion checks and lifecycle hooks ran only in the full-suite comparison."
 		}
 	}
 	if filepath.Base(command) == command {
-		local := filepath.Join(t.repositoryRoot, "node_modules", ".bin", command)
+		local := filepath.Join(directoryRoot, "node_modules", ".bin", command)
 		if info, err := os.Stat(local); err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
 			command = local
 		}
 	}
 	// Keep wrapper executables available exactly as in an npm script.
-	env["PATH"] = filepath.Join(t.repositoryRoot, "node_modules", ".bin") + string(os.PathListSeparator) + os.Getenv("PATH")
+	env["PATH"] = filepath.Join(directoryRoot, "node_modules", ".bin") + string(os.PathListSeparator) + os.Getenv("PATH")
 	run.Command = shellquote.Join(append([]string{command}, args...)...)
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
-	data, commandErr := t.executor.CombinedOutput(ctx, command, args, env)
+	var data []byte
+	var commandErr error
+	if directoryRoot != t.repositoryRoot {
+		executor, ok := t.executor.(directoryExecutor)
+		if !ok {
+			return run, fmt.Errorf("mocha probes require a directory-aware executor")
+		}
+		data, commandErr = executor.CombinedOutputInDirectory(ctx, directoryRoot, command, args, env)
+		run.Command = "cd " + shellquote.Join(directoryRoot) + " && " + run.Command
+	} else {
+		data, commandErr = t.executor.CombinedOutput(ctx, command, args, env)
+	}
 	run.commandOutput, run.commandError, run.ExitCode = string(data), commandErr, commandExitCode(commandErr)
 	if commandErr != nil && probePath == "" {
 		writeCommandFailure(output, "Mocha "+name, data)
@@ -170,6 +204,9 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 	}
 	if run.ExitCode != 0 || run.ResultError != "" || len(run.SuiteErrors) > 0 {
 		run.Diagnostic = commandDiagnostic(data)
+	}
+	if errors.Is(commandErr, context.DeadlineExceeded) {
+		run.ResultError = "Mocha command exceeded its per-command timeout; review delayed/setup commands or adjust --timeout before retrying."
 	}
 	return run, nil
 }
@@ -204,11 +241,7 @@ func readMochaResults(directory string, run *validationRun) {
 }
 
 func (t *Testdrive) runMochaFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
-	// Mocha TIA selects suites. Keep the shared full test name while placing
-	// the test in an ordinary suite, including under the TDD interface.
-	source := "const suite = typeof describe === 'function' ? describe : globalThis.suite;\n" +
-		"suite('ddtest', () => {\nconst test = typeof it === 'function' ? it : globalThis.test;\n" +
-		strings.Replace(probeSource, "test('ddtest validation probe'", "test('validation probe'", 1) + "\n});\n"
+	source := mochaProbeSource
 	probe, err := createProbe(t.repositoryRoot, baseline, source)
 	if err != nil {
 		unavailableFeatures(result, err.Error())
@@ -223,3 +256,18 @@ func (t *Testdrive) runMochaFeatures(ctx context.Context, output io.Writer, sess
 		return t.runMocha(ctx, output, session, preload, runSpec{Name: name, Role: role, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
 	}, result)
 }
+
+// Keep this independent of Jest APIs and verify its title with real Mocha.
+const mochaProbeSource = `const ddtestSuite = typeof describe === 'function' ? describe : globalThis.suite;
+const ddtestTest = typeof it === 'function' ? it : globalThis.test;
+ddtestSuite('ddtest', () => {
+  let attempts = 0;
+  ddtestTest('validation probe', () => {
+    attempts++;
+    if (process.env.DDTEST_PROBE_MODE === 'fail' ||
+        (process.env.DDTEST_PROBE_MODE === 'fail-once' && attempts === 1)) {
+      throw new Error('ddtest intentional failure');
+    }
+  });
+});
+`

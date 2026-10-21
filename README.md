@@ -316,8 +316,4 @@ their own `--command`. See [Vitest validation](docs/running.md#vitest-testdrive-
 
 ### Mocha testdrive validation
 
-Mocha supports paired outcome/telemetry comparison and six controlled feature
-checks. Use `ddtest testdrive --framework mocha --all --check-only --yes` before
-`ddtest testdrive --framework mocha --all --yes`. Preserve the original command
-and Istanbul/NYC coverage; missing real-source coverage stays incomplete even
-when probes pass. See [Mocha validation](docs/running.md#mocha-testdrive-validation).
+See [Mocha validation](docs/running.md#mocha-testdrive-validation) for commands, coverage requirements and limitations.

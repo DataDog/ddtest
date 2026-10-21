@@ -5,7 +5,17 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { inspect } = require('node:util')
-const root = path.dirname(require.resolve('mocha/package.json', { paths: [process.cwd()] }))
+// Only the first process reaching an actual runner owns native results.
+// Its children may run deliberate crashing Mocha fixtures; exclude those too.
+if (process.env.DDTEST_MOCHA_OWNER && process.env.DDTEST_MOCHA_OWNER !== String(process.pid)) return
+let root
+try {
+  const paths = [process.argv[1] && path.dirname(path.resolve(process.argv[1])), process.cwd()].filter(Boolean)
+  root = path.dirname(require.resolve('mocha/package.json', { paths }))
+} catch (error) {
+  if (error.code !== 'MODULE_NOT_FOUND') throw error
+  return
+}
 function internal (file) {
   const base = path.join(root, 'lib', file)
   return require(fs.existsSync(base + '.js') ? base + '.js' : base + '.cjs')
@@ -20,6 +30,7 @@ function observeRunner (prototype) {
   prototype.run = function (...args) {
     // Worker events are also forwarded to the parent Runner. Do not count twice.
     if (mochaWorker || process.env.MOCHA_WORKER_ID !== undefined || observed.has(this)) return originalRun.apply(this, args)
+    process.env.DDTEST_MOCHA_OWNER = String(process.pid)
     observed.add(this)
     const file = path.join(process.env.DDTEST_MOCHA_RESULTS, `${process.pid}-${sequence++}.json`)
     const report = { complete: false, tests: [], errors: [] }
@@ -63,11 +74,19 @@ if (fs.existsSync(parallel + '.js') || fs.existsSync(parallel + '.cjs')) {
 
 if (process.env.DDTEST_MOCHA_PROBE) {
   const Mocha = internal('mocha')
+  const selected = new WeakSet()
   const selectProbe = mocha => {
+    // Apply selection once. The tracer may subsequently remove the file for
+    // TIA; a later loadFiles call must not put a skipped probe back.
+    if (selected.has(mocha)) return
+    selected.add(mocha)
     if (!['bdd', 'tdd'].includes(mocha.options.ui || 'bdd')) throw new Error('ddtest Mocha probes currently require the bdd or tdd UI')
     mocha.files = [...new Set([].concat(mocha.options.file || []).map(file => path.resolve(file)).concat(process.env.DDTEST_MOCHA_PROBE))]
     mocha.options.grep = /^ddtest validation probe$/
     mocha.options.invert = false
+    mocha.options.watch = false
+    mocha.options.delay = false
+    mocha.suite.delayed = false
     mocha.suite.retries(0)
   }
   // Programmatic users can load files explicitly or let run() load them.
@@ -94,6 +113,8 @@ if (process.env.DDTEST_MOCHA_PROBE) {
     result.grep = '^ddtest validation probe$'
     result.invert = false
     result.retries = 0
+    result.watch = false
+    result.delay = false
     return result
   }
 }
