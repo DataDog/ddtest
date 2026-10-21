@@ -194,10 +194,11 @@ planning metadata environment variables.
 > API and may change or be removed without notice. Do not set, modify, or depend
 > on them in application code or CI configuration.
 
-The marker produces `test.parallelization.enabled:true`. The file's `ciTags`
-object supplies the planning identity:
+The marker produces `test.parallelization.enabled:true`. DDTest maps the planning
+CI identity to final tracer tags in the file's `tags` object. Libraries apply these
+string-valued `test.parallelization.plan.*` tags directly:
 
-| Artifact CI tag | Tracer tag |
+| Planning CI tag | Artifact / tracer tag |
 | --- | --- |
 | `ci.provider.name` | `test.parallelization.plan.provider.name` |
 | `ci.job.id` | `test.parallelization.plan.job.id` |

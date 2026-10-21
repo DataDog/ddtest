@@ -12,9 +12,15 @@ import (
 )
 
 func writePlanMetadata(ciTags map[string]string) error {
+	tags := make(map[string]string)
+	for ciTag, tag := range constants.TestParallelizationPlanTags {
+		if value := ciTags[ciTag]; value != "" {
+			tags[tag] = value
+		}
+	}
 	data, err := json.Marshal(struct {
-		CITags map[string]string `json:"ciTags"`
-	}{CITags: ciTags})
+		Tags map[string]string `json:"tags"`
+	}{Tags: tags})
 	if err != nil {
 		return fmt.Errorf("failed to encode plan metadata: %w", err)
 	}

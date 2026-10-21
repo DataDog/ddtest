@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 
@@ -108,7 +107,7 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 		}
 	}
 	for tag := range runner.planMetadata.CITags {
-		if !slices.Contains(constants.TestParallelizationPlanTags, tag) {
+		if _, allowed := constants.TestParallelizationPlanTags[tag]; !allowed {
 			t.Fatalf("unexpected planning CI tag %s", tag)
 		}
 	}
@@ -118,13 +117,24 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	var metadata struct {
-		CITags map[string]string `json:"ciTags"`
+		Tags map[string]string `json:"tags"`
 	}
 	if err := json.Unmarshal(metadataData, &metadata); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(metadata.CITags, runner.planMetadata.CITags) {
-		t.Fatalf("library metadata = %v, want %v", metadata.CITags, runner.planMetadata.CITags)
+	wantTags := map[string]string{
+		"test.parallelization.plan.provider.name":   "gitlab",
+		"test.parallelization.plan.job.id":          "plan-job-123",
+		"test.parallelization.plan.job.name":        "plan",
+		"test.parallelization.plan.job.url":         "https://gitlab.com/example/project/-/jobs/123",
+		"test.parallelization.plan.pipeline.id":     "pipeline-456",
+		"test.parallelization.plan.pipeline.name":   "example/project",
+		"test.parallelization.plan.pipeline.number": "456",
+		"test.parallelization.plan.pipeline.url":    "https://gitlab.com/example/project/-/pipelines/456",
+		"test.parallelization.plan.stage.name":      "planning",
+	}
+	if !reflect.DeepEqual(metadata.Tags, wantTags) {
+		t.Fatalf("library metadata = %v, want %v", metadata.Tags, wantTags)
 	}
 	if strings.Contains(string(metadataData), "must-not-be-stored") {
 		t.Fatal("library metadata contains an API key")

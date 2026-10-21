@@ -312,7 +312,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	tp.runInfo = runmetadata.New(ciTags)
 	tp.planMetadata = NewPlanMetadata(tags, detectedPlatform.Name(), testFramework.Name(), testSkippingLevel)
 	tp.planMetadata.CITags = make(map[string]string)
-	for _, key := range constants.TestParallelizationPlanTags {
+	for key := range constants.TestParallelizationPlanTags {
 		if value := ciTags[key]; value != "" {
 			tp.planMetadata.CITags[key] = value
 		}
