@@ -53,21 +53,31 @@ func TestCheckOnlyKeepsPairedCommandsAsHistoricalEvidence(t *testing.T) {
 	}
 }
 func TestUnreadableHistoricalReportDoesNotBlockCurrentResults(t *testing.T) {
-	root := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0755))
-	requireWriteFile(t, validationPath(root), "not valid JSON")
-	require.Error(t, finishValidation(&bytes.Buffer{}, root, validationResult{Framework: "jest", CheckOnly: true}))
-	data, err := os.ReadFile(validationPath(root))
-	require.NoError(t, err)
-	require.True(t, json.Valid(data))
+	for _, oversized := range []bool{false, true} {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0755))
+		requireWriteFile(t, validationPath(root), "not valid JSON")
+		if oversized {
+			require.NoError(t, os.Truncate(validationPath(root), (8<<20)+1))
+		}
+		var output bytes.Buffer
+		require.Error(t, finishValidation(&output, root, validationResult{Framework: "jest", CheckOnly: true}))
+		data, err := os.ReadFile(validationPath(root))
+		require.NoError(t, err)
+		require.True(t, json.Valid(data))
+		require.Contains(t, output.String(), "Writing current results")
+		require.NotContains(t, output.String(), "left unchanged")
+	}
 }
 
 func TestFailedFullRunNeverReusesEarlierPass(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, finishValidation(&bytes.Buffer{}, root, pairedReport("earlier pass", "passed")))
+	requireWriteFile(t, htmlReportPath(root), "earlier successful HTML")
 	result := validationResult{Framework: "jest", Error: "intake failed before baseline"}
 	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
 	got := readValidationReport(t, root)
+	require.NoFileExists(t, htmlReportPath(root))
 	require.Nil(t, got.Retained)
 	require.Nil(t, got.LastExecution)
 	require.Equal(t, "INCOMPLETE", got.Summary.LocalValidation)

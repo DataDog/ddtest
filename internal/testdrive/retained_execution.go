@@ -101,18 +101,18 @@ func readPreviousValidation(root string) (*validationResult, error) {
 	}
 	defer func() { _ = file.Close() }()
 	// Reports contain summaries, not raw events. Do not read an arbitrary-size
-	// existing file into memory, or overwrite evidence we could not read.
+	// existing file into memory. Invalid history must not block current results.
 	const limit = 8 << 20
 	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("preserve earlier execution report: %w", err)
 	}
 	if len(data) > limit {
-		return nil, fmt.Errorf("preserve earlier execution report: existing report exceeds %d bytes; left unchanged", limit)
+		return nil, fmt.Errorf("preserve earlier execution report: existing report exceeds %d bytes", limit)
 	}
 	var previous validationResult
 	if err := json.Unmarshal(data, &previous); err != nil {
-		return nil, fmt.Errorf("preserve earlier execution report: existing report is unreadable; left unchanged: %w", err)
+		return nil, fmt.Errorf("preserve earlier execution report: existing report is unreadable: %w", err)
 	}
 	return &previous, nil
 }

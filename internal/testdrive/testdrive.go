@@ -386,7 +386,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}
 
 	if supportsValidationFramework(t.framework.Name()) {
-		check := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
+		check := checkConfigurationCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
 		result.CIRuntime = &check
 		if t.preflight != nil {
 			if err := t.preflight(ctx, output, &result); err != nil {
