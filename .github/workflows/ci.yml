@@ -562,8 +562,6 @@ jobs:
   testdrive-cypress-workflow:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -573,8 +571,11 @@ jobs:
         with:
           node-version: '24'
       - name: Install Cypress testdrive fixture dependencies
+        env:
+          CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
         run: npm install --prefix "$RUNNER_TEMP/cypress-testdrive" cypress@15.1.0 dd-trace@6.20.1 --no-audit --no-fund
       - name: Validate original CLI, action API and matching failures with TIA deferred
         env:
           DDTEST_CYPRESS_NODE_MODULES: ${{ runner.temp }}/cypress-testdrive/node_modules
+          CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
         run: xvfb-run -a go test -v ./internal/testdrive -run '^TestPublicCypressTestdrive$' -count=1 -timeout=15m
