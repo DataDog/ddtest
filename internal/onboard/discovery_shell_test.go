@@ -31,8 +31,8 @@ func TestMatrixDiagnosticsRetainCausesAndScope(t *testing.T) {
 		{commandLocation{Workflow: "ci.yml", Job: "test", Matrix: map[string]any{"node": 22}, Step: 2, Command: "opaque"}, "custom setup needs review"},
 		{commandLocation{Workflow: "ci.yml", Job: "test", Matrix: map[string]any{"node": 22}, Step: 3, Command: "other"}, "different cause"},
 	})
-	require.Len(t, result, 2)
-	require.Contains(t, result[0], "custom setup needs review")
-	require.Contains(t, result[0], "affects 3 matrix entries")
-	require.Contains(t, result[1], "different cause")
+	require.Equal(t, []string{
+		"ci.yml / test / step 2 (opaque): custom setup needs review [affects 3 matrix entries; e.g. node: 18; node: 20]",
+		"ci.yml / test / step 3 (other): different cause [affects 1 matrix entries; e.g. node: 22]",
+	}, result)
 }

@@ -47,21 +47,26 @@ func TestVariantPreparationPreservesMatrixAndConditions(t *testing.T) {
 		variants = append(variants, command.Prerequisites[1].Command)
 	}
 	require.ElementsMatch(t, []string{"source", "react:18.0.0", "react:19.0.0", `sed -i~ s/src/dist/ jest.config.mts`, `sed -i~ s/src/dist\\/esm/ jest.config.mts`}, variants)
-	for i := 0; i < 2; i++ {
-		require.Len(t, scope.Commands[i].Prerequisites, 2)
-		require.Equal(t, "rollup -c", scope.Commands[i].Prerequisites[0].Command)
-		require.Equal(t, "patch", scope.Commands[i].Prerequisites[1].Kind)
-		require.Equal(t, "development", scope.Commands[i].Environment["NODE_ENV"])
+	for _, command := range scope.Commands {
+		require.Equal(t, "jest run", command.Command)
+		switch {
+		case command.Environment["REACT_VER"] != "":
+			version := command.Environment["REACT_VER"]
+			require.Equal(t, []BuildCommand{{Directory: ".", Command: "pnpm add -D react@" + version + " react-dom@" + version, Kind: "dependencies", Environment: map[string]string{"REACT_VER": version}}}, command.Prerequisites)
+		case command.Environment["NODE_ENV"] == "development":
+			patch := `sed -i~ s/src/dist/ jest.config.mts`
+			if command.locations[0].Matrix["build"] == "esm" {
+				patch = `sed -i~ s/src/dist\\/esm/ jest.config.mts`
+			}
+			require.Equal(t, []BuildCommand{
+				{Directory: ".", Command: "rollup -c"},
+				{Directory: ".", Command: patch, Kind: "patch"},
+			}, command.Prerequisites)
+		default:
+			require.Empty(t, command.Prerequisites)
+			require.Empty(t, command.Environment)
+		}
 	}
-	require.NotEqual(t, scope.Commands[0].Prerequisites[1].Command, scope.Commands[1].Prerequisites[1].Command)
-	for i, version := range []string{"18.0.0", "19.0.0"} {
-		entry := scope.Commands[i+2]
-		require.Len(t, entry.Prerequisites, 1)
-		require.Equal(t, "pnpm add -D react@"+version+" react-dom@"+version, entry.Prerequisites[0].Command)
-		require.Equal(t, version, entry.Environment["REACT_VER"])
-	}
-	require.Empty(t, scope.Commands[4].Prerequisites)
-	require.Empty(t, scope.Commands[4].Environment)
 }
 
 func TestVariantExpansionDoesNotExecuteShellOrUseAmbientVariables(t *testing.T) {
