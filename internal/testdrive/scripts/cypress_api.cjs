@@ -16,9 +16,11 @@ const failures = []
 
 function start (words) {
   const command = spawn(words[0], words.slice(1), {
-    stdio: 'inherit', detached: process.platform !== 'win32',
+    stdio: ['inherit', 'pipe', 'pipe'], detached: process.platform !== 'win32',
     env: { ...process.env, PATH: path.join(process.cwd(), 'node_modules/.bin') + path.delimiter + process.env.PATH }
   })
+  command.stdout?.pipe(process.stdout, { end: false })
+  command.stderr?.pipe(process.stderr, { end: false })
   command.on('error', error => failures.push(error))
   command.on('exit', code => failures.push(new Error('Startup process exited: ' + words.join(' ') + ' (' + code + ')')))
   children.push(command)
@@ -38,16 +40,39 @@ async function waitFor (address) {
   throw new Error('Cypress startup readiness timed out: ' + address)
 }
 
+function waitForExit (child) {
+  return new Promise(resolve => {
+    const onExit = () => { clearTimeout(timer); resolve(true) }
+    const timer = setTimeout(() => { child.removeListener('exit', onExit); resolve(false) }, 1000)
+    child.once('exit', onExit)
+  })
+}
+
 async function stop () {
+  const errors = []
   for (const child of children) {
-    if (!child.pid || child.exitCode !== null || child.signalCode !== null) continue
+    if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
+      child.stdout?.destroy(); child.stderr?.destroy(); child.unref()
+      continue
+    }
+    const signal = name => process.platform === 'win32' ? child.kill(name) : process.kill(-child.pid, name)
     try {
-      if (process.platform === 'win32') child.kill('SIGTERM')
-      else process.kill(-child.pid, 'SIGTERM')
+      let exited = waitForExit(child)
+      signal('SIGTERM')
+      if (!await exited) {
+        exited = waitForExit(child)
+        signal('SIGKILL')
+        if (!await exited) throw new Error('Cypress startup did not exit after SIGKILL')
+      }
     } catch (error) {
-      if (error.code !== 'ESRCH') throw error
+      if (error.code !== 'ESRCH') errors.push(error)
+    } finally {
+      // A launcher may exit while descendants retain its output descriptors.
+      // Close our private pipes so API completion can reach live-owner cleanup.
+      child.stdout?.destroy(); child.stderr?.destroy(); child.unref()
     }
   }
+  if (errors.length) throw new AggregateError(errors, 'Cypress startup cleanup failed')
   // Live owner connections clean detached descendants after the API returns.
 }
 

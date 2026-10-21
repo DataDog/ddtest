@@ -215,6 +215,14 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 			for _, row := range rows {
 				rowResolutions := slices.Clone(resolutions)
 				rowJob := job
+				if framework == "cypress" {
+					if label, ok := job.RunsOn.(string); ok {
+						resolved, err := runtimeValue(label, row)
+						if err == nil {
+							rowJob.RunsOn = resolved
+						}
+					}
+				}
 				rowJob.Steps = slices.Clone(job.Steps)
 				rowCandidate := false
 				for i, step := range job.Steps {
@@ -231,7 +239,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 						}
 					}
 					rowJob.Steps[i] = resolved
-					rowResolutions[i] = resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+					rowResolutions[i] = resolveTestStep(root, workflow, rowJob, resolved, "javascript", framework)
 					if rowResolutions[i].Review {
 						rowResolutions[i] = commandResolution{}
 					} else if resolveErr != nil && (rowResolutions[i].Matched || rowResolutions[i].Reason != "") {
@@ -250,7 +258,8 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 						uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 						if uses == "actions/setup-node" {
 							version, e := cypressNodeVersion(root, step, row)
-							rowJob.Steps[i].With = maps.Clone(step.With)
+							rowJob.Steps[i].With = make(map[string]string, len(step.With)+1)
+							maps.Copy(rowJob.Steps[i].With, step.With)
 							rowJob.Steps[i].With["node-version"] = version
 							if e != nil {
 								rowJob.Steps[i].ResolutionError = e.Error()

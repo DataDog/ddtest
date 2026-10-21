@@ -36,7 +36,7 @@ func TestPublicCypressTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "action API"} {
+	for _, mode := range []string{"passing", "existing failure", "action API", "action custom CLI"} {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestPublicCypressTestdrive(t *testing.T) {
         env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}
 `)
 			var address string
-			if mode == "action API" {
+			if mode == "action API" || mode == "action custom CLI" {
 				listener, err := net.Listen("tcp", "127.0.0.1:0")
 				require.NoError(t, err)
 				address = listener.Addr().String()
@@ -79,12 +79,27 @@ func TestPublicCypressTestdrive(t *testing.T) {
       - uses: cypress-io/github-action@c541a95ea92d9239347a2355f2e895cd4b3f8060
         with:
           browser: electron
+          config: viewportWidth=800
+          env: feature=true,number=7
           start: node server.cjs
           wait-on: http://%s
           wait-on-timeout: '15'
         env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}
 `, address))
 			}
+			if mode == "action API" {
+				write("cypress/e2e/one.cy.js", `it('action inputs',()=>{expect(Cypress.config('viewportWidth')).to.equal(800);expect(Cypress.env('feature')).to.equal(true);expect(Cypress.env('number')).to.equal(7);cy.wrap(1).should('eq',1)})`)
+			}
+			if mode == "action custom CLI" {
+				write("build.cjs", `require('node:fs').writeFileSync('generated.json',JSON.stringify({ready:true}))`)
+				write("cypress.config.cjs", `if(!require('./generated.json').ready)throw new Error('build missing');module.exports=require('cypress').defineConfig({video:false,e2e:{supportFile:false,setupNodeEvents(on){on('after:run',r=>console.log('customer after:run',r.totalTests))}}})`)
+				file := filepath.Join(root, ".github/workflows/ci.yml")
+				data, err := os.ReadFile(file)
+				require.NoError(t, err)
+				text := strings.Replace(string(data), "          browser: electron", "          command: npm test\n          build: node build.cjs", 1)
+				require.NoError(t, os.WriteFile(file, []byte(text), 0600))
+			}
+
 			output, err = command(root, "git", "init", "-q")
 			require.NoError(t, err, string(output))
 			if mode == "passing" {
@@ -114,9 +129,13 @@ func TestPublicCypressTestdrive(t *testing.T) {
 					require.Equal(t, "passed", feature.Status, feature)
 				}
 			}
-			if mode == "action API" {
+			if mode == "action API" || mode == "action custom CLI" {
 				require.Len(t, report.Configurations, 1)
-				require.Contains(t, report.Configurations[0].Command, "Cypress.run")
+				if mode == "action API" {
+					require.Contains(t, report.Configurations[0].Command, "Cypress.run")
+				} else {
+					require.Equal(t, "npm test", report.Configurations[0].Command)
+				}
 				connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
 				if err == nil {
 					_ = connection.Close()

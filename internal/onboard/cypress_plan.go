@@ -23,11 +23,17 @@ type CypressCommand struct {
 	Platform    string         `json:"platform,omitempty"`
 }
 
-func cypressActionPlan(_ string, workflow ciWorkflow, job runtimeJob, step runtimeStep) commandResolution {
+func cypressActionPlan(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) commandResolution {
 	options := map[string]any{"record": false, "parallel": false}
 	plan := &CypressCommand{Action: step.Uses, Options: options, WaitTimeout: 60}
-	if runner, ok := job.RunsOn.(string); ok && strings.HasPrefix(runner, "windows-") {
-		plan.Platform = "windows"
+	if job.RunsOn != nil {
+		runner, ok := job.RunsOn.(string)
+		if !ok || !strings.HasPrefix(runner, "ubuntu-") && !strings.HasPrefix(runner, "macos-") && !strings.HasPrefix(runner, "windows-") {
+			return unresolvedCommand("Cypress action runner OS requires a resolved hosted label")
+		}
+		if strings.HasPrefix(runner, "windows-") {
+			plan.Platform = "windows"
+		}
 	}
 	for key, value := range step.With {
 		if len(value) > 16384 || strings.ContainsRune(value, 0) {
@@ -41,6 +47,7 @@ func cypressActionPlan(_ string, workflow ciWorkflow, job runtimeJob, step runti
 		}
 		switch key {
 		case "browser", "config", "env", "expose", "project":
+			// Match the action: Cypress parses these serialized Module API inputs.
 			options[key] = value
 		case "config-file":
 			options["configFile"] = value
@@ -56,10 +63,13 @@ func cypressActionPlan(_ string, workflow ciWorkflow, job runtimeJob, step runti
 			if !filepath.IsLocal(value) {
 				return unresolvedCommand("Cypress working-directory must stay in the repository")
 			}
+		case "install-command":
+			return unresolvedCommand("Cypress custom install-command requires separate setup validation: " + value)
+		case "command": // Validated as a preserved literal CLI invocation below.
 		case "command-prefix":
 			return unresolvedCommand("Cypress command-prefix needs its original CLI wrapper validated separately")
 		case "build", "start", "start-windows", "wait-on", "wait-on-timeout", "runTests",
-			"install", "install-command", "cache-key", "package-manager-cache", "publish-summary", "summary-title",
+			"install", "cache-key", "package-manager-cache", "publish-summary", "summary-title",
 			"record", "parallel", "group", "tag", "ci-build-id", "auto-cancel-after-failures":
 		default:
 			return unresolvedCommand("Cypress action input requires review: " + key)
@@ -91,7 +101,7 @@ func cypressActionPlan(_ string, workflow ciWorkflow, job runtimeJob, step runti
 		}
 		plan.WaitTimeout = seconds
 	}
-	directory := stepDirectory(workflow, job, step)
+	directory := "." // Actions do not inherit defaults.run.working-directory.
 	if value := step.With["working-directory"]; value != "" {
 		directory = value
 	}
@@ -100,6 +110,27 @@ func cypressActionPlan(_ string, workflow ciWorkflow, job runtimeJob, step runti
 	}
 	data, _ := json.Marshal(options)
 	entry := TestCommand{Directory: directory, Command: "Cypress.run(" + string(data) + ")", Cypress: plan}
+	if custom := step.With["command"]; custom != "" {
+		words, err := staticCommands(custom)
+		if err != nil || len(words) != 1 || len(words[0]) == 0 {
+			return unresolvedCommand("Cypress custom command requires one literal invocation")
+		}
+		child := step
+		child.Uses = ""
+		child.Run = custom
+		child.WorkingDirectory = directory
+		resolved := resolveTestStep(root, workflow, job, child, "javascript", "cypress")
+		if resolved.Reason != "" || !resolved.Matched || resolved.OtherFramework || len(resolved.Tests) != 1 {
+			return unresolvedCommand("Cypress custom command needs its original setup reviewed: " + resolved.Reason)
+		}
+		entry = resolved.Tests[0]
+		entry.Directory = directory
+		entry.Command = custom
+		entry.Cypress = plan
+		plan.Action = ""
+		plan.Options = nil // The real action ignores Module API inputs with command.
+		plan.CLI = words[0]
+	}
 	if build := step.With["build"]; build != "" {
 		commands, err := staticCommands(build)
 		if err != nil || len(commands) == 0 {

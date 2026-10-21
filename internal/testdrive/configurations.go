@@ -148,6 +148,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
 		if entry.Cypress != nil && entry.Cypress.Platform == "windows" && runtime.GOOS != "windows" {
+			result.Compatibility = verdict{Status: "inconclusive", Reason: "At least one discovered OS variant was not executed; see configurations."}
 			item.Error = "Windows Cypress configuration was not executed on this " + runtime.GOOS + " host. Use a matching runner; this variant remains unvalidated."
 			result.Configurations = append(result.Configurations, item)
 			continue

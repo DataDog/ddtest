@@ -35,11 +35,12 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 		}
 	}
 	result.Preflight = check
-	data, err := t.executor.CombinedOutput(ctx, "node", []string{"-p", "JSON.stringify({version:require('cypress/package.json').version,requirements:[require('cypress/package.json').engines?.node,require('./package.json').engines?.node].filter(Boolean)})"}, map[string]string{"NODE_OPTIONS": stripDatadogNodeOptions(t.nodeOptions())})
+	data, err := t.executor.CombinedOutput(ctx, "node", []string{"-p", "JSON.stringify({cli:require('node:path').join(require('node:path').dirname(require.resolve('cypress/package.json')),'bin','cypress'),version:require('cypress/package.json').version,requirements:[require('cypress/package.json').engines?.node,require('./package.json').engines?.node].filter(Boolean)})"}, map[string]string{"NODE_OPTIONS": stripDatadogNodeOptions(t.nodeOptions())})
 	if err != nil {
 		return fmt.Errorf("inspect Cypress: %w: %s", err, commandDiagnostic(data))
 	}
 	var metadata struct {
+		CLI          string
 		Version      string
 		Requirements []string
 	}
@@ -49,7 +50,7 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 	check.Version = metadata.Version
 	if t.cypress != nil {
 		if browser, ok := t.cypress.Options["browser"].(string); ok && browser != "" && browser != "electron" && !strings.ContainsAny(browser, "/\\") {
-			data, err := t.executor.CombinedOutput(ctx, "node", []string{filepath.Join(t.checkoutRoot(), "node_modules", "cypress", "bin", "cypress"), "info"}, map[string]string{"NODE_OPTIONS": stripDatadogNodeOptions(t.nodeOptions()), "NO_COLOR": "1"})
+			data, err := t.executor.CombinedOutput(ctx, "node", []string{metadata.CLI, "info"}, map[string]string{"NODE_OPTIONS": stripDatadogNodeOptions(t.nodeOptions()), "NO_COLOR": "1"})
 			available, known := cypressBrowserAvailable(string(data), browser)
 			if err != nil || !known || !available {
 				check.Verdict = verdict{Status: "inconclusive", Reason: "Selected Cypress browser " + browser + " is unavailable or its installed inventory could not be verified. This configuration was not executed; install the declared browser or use a matching runner, preserving the CI browser."}

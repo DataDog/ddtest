@@ -110,6 +110,15 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				continue
 			}
 			for _, row := range rows {
+				job := job // Resolve this row without mutating the next row's runner.
+				if framework == "cypress" {
+					if label, ok := job.RunsOn.(string); ok {
+						resolved, err := runtimeValue(label, row)
+						if err == nil {
+							job.RunsOn = resolved
+						}
+					}
+				}
 				active, err := possibleJobCondition(job.If, row)
 				if err != nil {
 					scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": "+err.Error())

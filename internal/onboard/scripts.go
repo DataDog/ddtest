@@ -559,6 +559,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	if mocha && lifecycle == "" && result.Reason == "" && !result.Matched && result.MochaAuxiliary && name == "build" {
 		return commandResolution{Builds: []BuildCommand{{Directory: repositoryPath(root, directory), Command: command, Kind: "package-build"}}}
 	}
+	if len(frameworks) > 0 && frameworks[0] == "cypress" && len(result.Tests) > 1 {
+		return unresolvedCommand("Multiple Cypress invocations in one package alias require ordered execution review; preserve the original alias: " + command)
+	}
 	if mocha && len(result.Tests) > 1 {
 		return unresolvedCommand("Multiple Mocha invocations in one package alias require ordered execution review; preserve the original alias: " + command)
 	}

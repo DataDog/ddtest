@@ -112,9 +112,6 @@ func resolveCypressAction(root string, workflow ciWorkflow, job runtimeJob, step
 	if step.With["runTests"] == "false" {
 		return commandResolution{}
 	}
-	if command := step.With["command"]; command != "" {
-		step.Uses, step.Run = "", command
-		return resolveTestStep(root, workflow, job, step, "javascript", "cypress")
-	}
+
 	return cypressActionPlan(root, workflow, job, step)
 }
