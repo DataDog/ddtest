@@ -121,10 +121,11 @@ func selectFramework(platform, hint string, candidates []framework.Framework) (f
 // TracerOptions selects the test runtime and the version and session directory
 // for fallback installation when the project tracer check fails. Empty Version means latest.
 type TracerOptions struct {
-	Directory string
-	Version   string
-	Command   string
-	Args      []string
+	Environment map[string]string
+	Directory   string
+	Version     string
+	Command     string
+	Args        []string
 }
 
 // TracerInstallation describes the tracer selected for a local run.

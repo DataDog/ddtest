@@ -149,7 +149,50 @@ func TestPnPTracerMetadataUsesProjectLoaderWithoutInitializingTracer(t *testing.
 			require.NoFileExists(t, "TRACER_WAS_INITIALIZED")
 		})
 	}
+	t.Setenv("NODE_OPTIONS", "--require "+fmt.Sprintf("%q", externalInit))
+	options := TracerOptions{Version: "latest", Environment: map[string]string{"NODE_OPTIONS": "--require " + fmt.Sprintf("%q", filepath.Join(root, ".pnp.cjs")), "DD_TRACE_PACKAGE": ""}}
+	detected, err := NewJavaScript().DetectTracer(t.Context(), options)
+	require.NoError(t, err)
+	require.Equal(t, init, detected)
+	selected, err = NewJavaScript().ResolveTestdriveTracer(t.Context(), options)
+	require.NoError(t, err)
+	require.Equal(t, "5.132.0", selected.Version)
+	options.Directory = t.TempDir()
+	installation, err := NewJavaScript().InstallTestdriveTracer(t.Context(), options)
+	require.NoError(t, err)
+	require.True(t, installation.Project)
+	require.Equal(t, init, installation.Path)
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".pnp.cjs"), []byte(`throw new Error('broken project loader')`), 0600))
 	_, err = NewJavaScript().ResolveTestdriveTracer(t.Context(), TracerOptions{Version: "latest"})
 	require.Error(t, err)
+}
+
+func TestConfigurationTracerEnvironmentOverridesCallerForEveryStage(t *testing.T) {
+	t.Setenv("NODE_OPTIONS", "-r /caller/dd-trace/ci/init.js")
+	t.Setenv("DD_TRACE_PACKAGE", "/caller/dd-trace/ci/init.js")
+	root := t.TempDir()
+	t.Chdir(root)
+	tracer := filepath.Join(root, "node_modules/dd-trace")
+	require.NoError(t, os.MkdirAll(filepath.Join(tracer, "ci"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(tracer, "package.json"), []byte(`{"version":"5.132.0","engines":{"node":">=18"}}`), 0600))
+	path := filepath.Join(tracer, "ci/init.js")
+	executor := &fakeCommandExecutor{responses: []commandResponse{{output: []byte(path)}, {output: []byte(path)}, {output: []byte(path)}}}
+	installer := &JavaScript{executor: executor}
+	options := TracerOptions{Directory: t.TempDir(), Command: filepath.Join(root, "explicit", "node"), Environment: map[string]string{"NODE_OPTIONS": "", "DD_TRACE_PACKAGE": ""}}
+	preload, err := installer.DetectTracer(t.Context(), options)
+	require.NoError(t, err)
+	require.Equal(t, path, preload)
+	selection, err := installer.ResolveTestdriveTracer(t.Context(), options)
+	require.NoError(t, err)
+	require.Equal(t, "5.132.0", selection.Version)
+	installation, err := installer.InstallTestdriveTracer(t.Context(), options)
+	require.NoError(t, err)
+	require.True(t, installation.Project)
+	require.Len(t, executor.commands, 3, "none of the stages installs a fallback")
+	for i, c := range executor.commands {
+		require.Equal(t, options.Command, c.name)
+		require.Contains(t, c.args, "dd-trace/ci/init")
+		require.Empty(t, executor.envs[i]["NODE_OPTIONS"])
+		require.Equal(t, "false", executor.envs[i]["DD_CIVISIBILITY_ENABLED"])
+	}
 }

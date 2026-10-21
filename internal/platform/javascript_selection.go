@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,22 +43,39 @@ func (j *JavaScript) ResolveTestdriveTracer(ctx context.Context, options TracerO
 		return selected, err
 	}
 	if loader != "" {
-		preload := nodeOptionsRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule)
+		preload := nodeOptionsRequire(tracerOptionValue(options, nodeOptionsEnvVar), ddTraceCIInitModule)
 		if preload == "" {
-			preload = os.Getenv("DD_TRACE_PACKAGE")
+			preload = tracerOptionValue(options, "DD_TRACE_PACKAGE")
 		}
 		if preload == "" {
 			preload = ddTraceCIInitModule
 		}
 		const metadata = `const fs=require('fs'),path=require('path');let init;
-try { init=require.resolve(process.argv[1]); } catch(error) { if(error.code==='MODULE_NOT_FOUND'){process.stdout.write('null');process.exit(0)} throw error; }
-process.stdout.write(fs.readFileSync(path.join(path.dirname(path.dirname(init)),'package.json'),'utf8'));`
-		data, _, err := j.executor.Output(ctx, "node", []string{"--require", loader, "-e", metadata, "--", preload}, map[string]string{"NODE_OPTIONS": "", "DD_TRACE_ENABLED": "false", "DD_CIVISIBILITY_ENABLED": "false"})
+try { init=require.resolve(process.argv[1]); } catch(error) { if(error.code==='MODULE_NOT_FOUND'){fs.writeFileSync(process.argv[2],'null');process.exit(0)} throw error; }
+fs.writeFileSync(process.argv[2],fs.readFileSync(path.join(path.dirname(path.dirname(init)),'package.json'),'utf8'));`
+		result, err := os.CreateTemp("", "ddtest-tracer-metadata-*")
+		if err != nil {
+			return selected, err
+		}
+		defer func() { _ = os.Remove(result.Name()) }()
+		if err := result.Close(); err != nil {
+			return selected, err
+		}
+		probeEnv := maps.Clone(tracerOptionEnvironment(options))
+		if probeEnv == nil {
+			probeEnv = map[string]string{}
+		}
+		probeEnv["DD_TRACE_ENABLED"], probeEnv["DD_CIVISIBILITY_ENABLED"] = "false", "false"
+		_, _, err = j.executor.Output(ctx, tracerOptionNode(options), []string{"--require", loader, "-e", metadata, "--", preload, result.Name()}, probeEnv)
 		if err != nil {
 			return selected, fmt.Errorf("read installed PnP tracer metadata: %w", err)
 		}
+		data, err := os.ReadFile(result.Name())
+		if err != nil {
+			return selected, err
+		}
 		if strings.TrimSpace(string(data)) == "null" {
-			return j.ResolveRegistryTracer(ctx, selected.Requested)
+			return j.resolveRegistryTracer(ctx, selected.Requested, options.Environment)
 		}
 		selected.Source = "project"
 		return decodeJSSelection(selected, data)
@@ -73,7 +91,7 @@ process.stdout.write(fs.readFileSync(path.join(path.dirname(path.dirname(init)),
 	} else if strings.HasPrefix(selected.Requested, "git:") {
 		return selected, nil // Inspect source-build metadata after installation.
 	} else {
-		return j.ResolveRegistryTracer(ctx, selected.Requested)
+		return j.resolveRegistryTracer(ctx, selected.Requested, options.Environment)
 	}
 	if err != nil {
 		return selected, fmt.Errorf("read project dd-trace/package.json: %w", sanitizeProjectError(err))
@@ -83,9 +101,12 @@ process.stdout.write(fs.readFileSync(path.join(path.dirname(path.dirname(init)),
 
 // ResolveRegistryTracer reads an advisory candidate without changing or probing
 // the installed project tracer. Releases are resolved from npm, never pinned here.
-func (j *JavaScript) ResolveRegistryTracer(ctx context.Context, selector string) (selected JSSelection, resolveErr error) {
+func (j *JavaScript) ResolveRegistryTracer(ctx context.Context, selector string) (JSSelection, error) {
+	return j.resolveRegistryTracer(ctx, selector, nil)
+}
+func (j *JavaScript) resolveRegistryTracer(ctx context.Context, selector string, environment map[string]string) (selected JSSelection, resolveErr error) {
 	selected = JSSelection{Requested: selector, Source: "fallback"}
-	data, err := j.registryMetadata(ctx, []string{"dd-trace@" + selector, "version", "engines"})
+	data, err := j.registryMetadata(ctx, []string{"dd-trace@" + selector, "version", "engines"}, environment)
 	if err != nil {
 		return selected, err
 	}
@@ -94,7 +115,7 @@ func (j *JavaScript) ResolveRegistryTracer(ctx context.Context, selector string)
 
 // RegistryTracerTags uses the same customer registry/proxy/auth as version reads.
 func (j *JavaScript) RegistryTracerTags(ctx context.Context) (map[string]string, error) {
-	data, err := j.registryMetadata(ctx, []string{"dd-trace", "dist-tags"})
+	data, err := j.registryMetadata(ctx, []string{"dd-trace", "dist-tags"}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +126,7 @@ func (j *JavaScript) RegistryTracerTags(ctx context.Context) (map[string]string,
 	return tags, nil
 }
 
-func (j *JavaScript) registryMetadata(ctx context.Context, fields []string) (data []byte, resolveErr error) {
+func (j *JavaScript) registryMetadata(ctx context.Context, fields []string, environment map[string]string) (data []byte, resolveErr error) {
 	cache, err := os.MkdirTemp("", "ddtest-npm-metadata-")
 	if err != nil {
 		return nil, fmt.Errorf("create temporary npm metadata cache; check TMPDIR permissions and free space: %w", err)
@@ -119,7 +140,12 @@ func (j *JavaScript) registryMetadata(ctx context.Context, fields []string) (dat
 	defer cancel()
 	args := append([]string{"view"}, fields...)
 	args = append(args, "--json", "--fetch-retries=0", "--fetch-timeout=10000", "--cache="+cache)
-	data, stderr, err := j.executor.Output(ctx, "npm", args, map[string]string{"NODE_OPTIONS": ""})
+	env := maps.Clone(environment)
+	if env == nil {
+		env = map[string]string{}
+	}
+	env["NODE_OPTIONS"] = ""
+	data, stderr, err := j.executor.Output(ctx, "npm", args, env)
 	if err != nil {
 		return nil, registryMetadataError(ctx, stderr, err)
 	}
