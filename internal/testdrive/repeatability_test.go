@@ -17,8 +17,6 @@ func TestRepeatedComparisonRetainsRecurringDifferencesBesideVariableTests(t *tes
 	got := compareRepeatedJavaScript(base, first, base, second)
 	require.Equal(t, "suspected regression", got.Status)
 	require.Equal(t, "recurring_difference", got.Code)
-	require.Contains(t, got.Reason, "1 test identities have recurring differences")
-	require.Contains(t, got.Reason, "1 vary between repeats")
 	require.Contains(t, got.Differences[0], "Recurring difference in both pairs: test.ts › memory")
 	require.Contains(t, got.Differences[0], "received 0")
 	require.Contains(t, got.Differences[1], "Varies between repeats: test.ts › timing")

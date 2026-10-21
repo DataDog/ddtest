@@ -23,6 +23,8 @@ import (
 const probeName = "ddtest validation probe"
 const probeSource = `// @ts-nocheck
 (() => {
+if (globalThis.process.env.DD_CIVISIBILITY_FLAKY_RETRY_ENABLED !== 'true' &&
+    typeof ddtestJest.retryTimes === 'function') ddtestJest.retryTimes(0);
 let ddtestAttempts = 0;
 test('ddtest validation probe', () => {
   ddtestAttempts++;
@@ -70,7 +72,7 @@ func createJestProjectProbe(root string, baseline validationRun, project jestPro
 		break
 	}
 	source := probeSource
-	if project.InjectGlobals != nil && !*project.InjectGlobals {
+	{
 		if len(baseline.Tests) == 0 {
 			return "", errors.New("no executed test is available to locate a probe")
 		}
@@ -92,15 +94,23 @@ func createJestProjectProbe(root string, baseline validationRun, project jestPro
 				if !os.IsNotExist(err) {
 					return "", err
 				}
-				if filepath.Dir(directory) == directory {
+				if directory == canonical || filepath.Dir(directory) == directory {
 					break
 				}
 			}
 		}
-		prefix := "const {test} = require('@jest/globals');\n"
+		prefix := "const ddtestJest = jest;\n"
+		disabled := project.InjectGlobals != nil && !*project.InjectGlobals
 		if esm {
-			prefix = "import {test} from '@jest/globals';\n"
+			prefix = "import {jest as ddtestJest} from '@jest/globals';\n"
 		}
+		if disabled {
+			prefix = "const {test, jest: ddtestJest} = require('@jest/globals');\n"
+			if esm {
+				prefix = "import {test, jest as ddtestJest} from '@jest/globals';\n"
+			}
+		}
+
 		source = "// @ts-nocheck\n" + prefix + strings.TrimPrefix(source, "// @ts-nocheck\n")
 	}
 	return createProbe(root, baseline, source)
@@ -412,12 +422,6 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 
 func probeControlDiagnostic(runs ...validationRun) string {
 	for _, run := range runs {
-		if run.Diagnostic != "" {
-			return reportText(run.Diagnostic)
-		}
-		if run.ResultError != "" {
-			return reportText(run.ResultError)
-		}
 		if len(run.SuiteErrors) > 0 {
 			return reportText(run.SuiteErrors[0])
 		}
@@ -425,6 +429,12 @@ func probeControlDiagnostic(runs ...validationRun) string {
 			if test.Failure != "" && !strings.Contains(test.Failure, "ddtest intentional failure") {
 				return reportText(test.Failure)
 			}
+		}
+		if run.ResultError != "" {
+			return reportText(run.ResultError)
+		}
+		if run.Diagnostic != "" {
+			return reportText(run.Diagnostic)
 		}
 	}
 	return "See recorded probe commands, exit codes and bounded diagnostics."

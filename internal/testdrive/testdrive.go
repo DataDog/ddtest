@@ -250,7 +250,11 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintln(output, "  - discover a temporary probe with the original Jest configuration; check retries, EFD, skipping, quarantine, disabled tests and attempt-to-fix per selected project")
 		_, _ = fmt.Fprintln(output, "  - keep .testoptimization/testdrive.json and .testoptimization/report.html; remove owned probes, temporary tracer and run files")
 	}
-	_, _ = fmt.Fprintf(output, "  - create an output folder: %s\n", directory)
+	if supportsValidationFramework(t.framework.Name()) {
+		_, _ = fmt.Fprintf(output, "  - use private temporary scratch storage: %s (removed after the run)\n", directory)
+	} else {
+		_, _ = fmt.Fprintf(output, "  - create an output folder: %s\n", directory)
+	}
 	if t.environmentFailure != nil {
 		_, _ = fmt.Fprintf(output, "  - save findings and troubleshooting; tests will not run: %s\n", t.environmentFailure.Title)
 	} else if t.projectTracer != "" {

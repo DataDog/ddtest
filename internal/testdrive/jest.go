@@ -238,7 +238,7 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 // including coverage failures which do not appear in its JSON test results.
 func commandDiagnostic(output []byte) string {
 	text := []rune(failureSignature(string(output)))
-	const limit = 1024
+	const limit = diagnosticLimit
 	if len(text) > limit {
 		const prefix = "[truncated] …"
 		return prefix + string(text[len(text)-(limit-len([]rune(prefix))):])
@@ -345,16 +345,23 @@ func verifyJestTelemetry(run validationRun) verdict {
 			file = filepath.Join(run.root, file)
 		}
 		file = filepath.Clean(file)
-		for _, attempt := range test.Attempts {
-			if attempt.Retry && attempt.RetryReason != "external" && attempt.RetryReason != "" {
-				return verdict{Status: "inconclusive", Code: "unexpected_retry", Reason: "Unexpected tracer-controlled retry telemetry in the reporting-only run."}
-			}
-		}
-		if len(test.Attempts) > 0 {
-			attempt := test.Attempts[len(test.Attempts)-1]
+		observe := func(attempt intake.TestRun) {
 			if attempt.Status == "pass" || attempt.Status == "fail" {
 				observed[identity{file, test.Name, attempt.Status}]++
 			}
+		}
+		var final *intake.TestRun
+		for i, attempt := range test.Attempts {
+			if attempt.Retry && attempt.RetryReason != "external" && attempt.RetryReason != "" {
+				return verdict{Status: "inconclusive", Code: "unexpected_retry", Reason: "Unexpected tracer-controlled retry telemetry in the reporting-only run."}
+			}
+			if !attempt.Retry && final != nil {
+				observe(*final)
+			}
+			final = &test.Attempts[i]
+		}
+		if final != nil {
+			observe(*final)
 		}
 	}
 	var differences []string

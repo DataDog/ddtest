@@ -22,14 +22,18 @@ func TestPublicJestTestdrive(t *testing.T) {
 	}
 	modules, err := filepath.Abs(modules)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	binary := filepath.Join(t.TempDir(), "ddtest")
 	build := exec.CommandContext(ctx, "go", "build", "-o", binary, ".")
 	build.Dir = "../.."
 	output, err := build.CombinedOutput()
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "script selection", "CJS disabled globals", "ESM disabled globals"} {
+	modes := []string{"passing", "existing failure", "script selection", "multiple selected projects", "sharded threshold script", "native retries", "temporary tracer", "missing Jest", "script startup override", "controlled mismatch", "CJS disabled globals", "ESM disabled globals"}
+	if _, err := os.Stat(filepath.Join(modules, "ts-jest")); err == nil {
+		modes = append(modes, "TypeScript", "TypeScript isolated modules", "TypeScript disabled globals")
+	}
+	for _, mode := range modes {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -37,7 +41,19 @@ func TestPublicJestTestdrive(t *testing.T) {
 			init.Dir = root
 			output, err = init.CombinedOutput()
 			require.NoError(t, err, string(output))
-			require.NoError(t, os.Symlink(modules, filepath.Join(root, "node_modules")))
+			if mode == "temporary tracer" {
+				require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules"), 0700))
+				entries, err := os.ReadDir(modules)
+				require.NoError(t, err)
+				for _, entry := range entries {
+					if entry.Name() == "dd-trace" {
+						continue
+					}
+					require.NoError(t, os.Symlink(filepath.Join(modules, entry.Name()), filepath.Join(root, "node_modules", entry.Name())))
+				}
+			} else if mode != "missing Jest" {
+				require.NoError(t, os.Symlink(modules, filepath.Join(root, "node_modules")))
+			}
 			write := func(name, value string) {
 				require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(value), 0600))
 			}
@@ -62,7 +78,7 @@ func TestPublicJestTestdrive(t *testing.T) {
 				require.NoError(t, os.RemoveAll(filepath.Join(root, "a")))
 				require.NoError(t, os.RemoveAll(filepath.Join(root, "b")))
 				write("package.json", `{"scripts":{"test":"jest --runInBand"},"devDependencies":{"jest":"30.5.1"}}`)
-				write("jest.config.js", `module.exports={injectGlobals:false,testEnvironment:'node',testRunner:'jest-circus/runner',watchman:false}`)
+				write("jest.config.js", `module.exports={injectGlobals:false,testMatch:['**/*.test.cjs'],testEnvironment:'node',testRunner:'jest-circus/runner',watchman:false}`)
 				write("one.test.cjs", `const {test,expect}=require('@jest/globals');test('adds',()=>expect(1+1).toBe(2))`)
 			}
 			if mode == "ESM disabled globals" {
@@ -72,14 +88,113 @@ func TestPublicJestTestdrive(t *testing.T) {
 				require.NoError(t, os.Remove(filepath.Join(root, "jest.config.js")))
 				require.NoError(t, os.RemoveAll(filepath.Join(root, "one.test.cjs")))
 				write("package.json", `{"type":"module","scripts":{"test":"node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --config jest.config.cjs"},"devDependencies":{"jest":"30.5.1"}}`)
-				write("jest.config.cjs", `module.exports={injectGlobals:false,testEnvironment:'node',testRunner:'jest-circus/runner',watchman:false}`)
+				write("jest.config.cjs", `module.exports={injectGlobals:false,testMatch:['**/*.test.mjs'],testEnvironment:'node',testRunner:'jest-circus/runner',watchman:false}`)
 				write("one.test.mjs", `import {test,expect} from '@jest/globals';test('adds',()=>expect(1+1).toBe(2))`)
 			}
-			cmd := exec.CommandContext(ctx, binary, "testdrive", "--framework", "jest", "--command", "npm test", "--yes")
+
+			if mode == "multiple selected projects" {
+				write("package.json", `{"scripts":{"test":"jest --runInBand --selectProjects A B"},"devDependencies":{"jest":"*"}}`)
+				write("jest.config.js", `module.exports={projects:[{displayName:'A',testMatch:['<rootDir>/*.test.js'],testEnvironment:'node'},{displayName:'B',testMatch:['<rootDir>/*.test.js'],testEnvironment:'node'}]}`)
+			}
+			if mode == "sharded threshold script" {
+				write("two.test.js", `test('also adds',()=>expect(require('./add')(2,2)).toBe(4));`)
+				write("package.json", `{"scripts":{"test":"jest --runInBand --shard=2/2 --coverage --coverageThreshold=\"{\\\"global\\\":{\\\"lines\\\":100}}\""},"devDependencies":{"jest":"*"}}`)
+			}
+			if mode == "native retries" {
+				write("retry-setup.js", `jest.retryTimes(2);`)
+				write("jest.config.js", `module.exports={testEnvironment:'node',setupFilesAfterEnv:['<rootDir>/retry-setup.js']}`)
+				write("one.test.js", `let attempts=0;test('adds',()=>{if(++attempts===1)throw new Error('native retry');expect(require('./add')(1,1)).toBe(2)});`)
+			}
+			if strings.HasPrefix(mode, "TypeScript") {
+				require.NoError(t, os.Remove(filepath.Join(root, "one.test.js")))
+				isolated := "true"
+				if mode == "TypeScript" {
+					isolated = "false"
+				}
+				write("tsconfig.json", `{"compilerOptions":{"strict":true,"types":["jest"],"isolatedModules":`+isolated+`,"target":"ES2020","module":"commonjs"}}`)
+				write("jest.config.js", `module.exports={preset:'ts-jest',testEnvironment:'node'}`)
+				write("add.ts", `export const add=(a:number,b:number)=>a+b;`)
+				write("one.test.ts", `import {add} from './add';test('adds',()=>expect(add(1,1)).toBe(2));`)
+				if mode == "TypeScript disabled globals" {
+					write("jest.config.js", `module.exports={preset:'ts-jest',injectGlobals:false,testEnvironment:'node'}`)
+					write("one.test.ts", `import {test,expect} from '@jest/globals';import {add} from './add';test('adds',()=>expect(add(1,1)).toBe(2));`)
+				}
+			}
+			if mode == "controlled mismatch" {
+				write("one.test.js", `test('changes only with instrumentation',()=>expect(process.env.DD_CIVISIBILITY_ENABLED).toBe('false'));`)
+			}
+			if mode == "script startup override" {
+				write("package.json", `{"scripts":{"test":"NODE_OPTIONS=--experimental-vm-modules jest --runInBand"},"devDependencies":{"jest":"*"}}`)
+			}
+			versionData, err := os.ReadFile(filepath.Join(modules, "dd-trace", "package.json"))
+			require.NoError(t, err)
+			var tracer struct{ Version string }
+			require.NoError(t, json.Unmarshal(versionData, &tracer))
+			cmd := exec.CommandContext(ctx, binary, "testdrive", "--framework", "jest", "--command", "npm test", "--tracer-version", tracer.Version, "--yes")
 			cmd.Dir = root
 			cmd.Env = append(os.Environ(), "PWD="+root)
 			output, err := cmd.CombinedOutput()
-			disabledGlobals := mode == "CJS disabled globals" || mode == "ESM disabled globals"
+			if mode == "missing Jest" || mode == "script startup override" {
+				require.Error(t, err, string(output))
+				data, readErr := os.ReadFile(filepath.Join(root, ".testoptimization", "testdrive.json"))
+				require.NoError(t, readErr)
+				if mode == "missing Jest" {
+					require.Contains(t, string(data), "jest_not_installed")
+					require.NoDirExists(t, filepath.Join(root, "node_modules"))
+				} else {
+					require.Contains(t, string(data), "NODE_OPTIONS")
+				}
+				return
+			}
+			if mode == "controlled mismatch" {
+				require.Error(t, err, string(output))
+				reportPath := filepath.Join(root, ".testoptimization/testdrive.json")
+				data, readErr := os.ReadFile(reportPath)
+				require.NoError(t, readErr)
+				var report struct {
+					Compatibility   struct{ Status string }
+					Summary         struct{ Status string }
+					ReportingCounts struct {
+						Executions int `json:"test_executions"`
+					} `json:"reporting_counts"`
+					Runs []struct{ Role string }
+				}
+				require.NoError(t, json.Unmarshal(data, &report))
+				require.Equal(t, "suspected regression", report.Compatibility.Status)
+				require.Equal(t, "FAILED", report.Summary.Status)
+				require.Equal(t, 1, report.ReportingCounts.Executions)
+				repeats := 0
+				for _, run := range report.Runs {
+					if run.Role == "repeat" {
+						repeats++
+					}
+				}
+				require.Equal(t, 2, repeats)
+				htmlPath := filepath.Join(root, ".testoptimization/report.html")
+				before, readErr := os.Stat(htmlPath)
+				require.NoError(t, readErr)
+				check := exec.CommandContext(ctx, binary, "testdrive", "--framework", "jest", "--command", "npm test", "--check-only", "--yes")
+				check.Dir = root
+				check.Env = append(os.Environ(), "PWD="+root)
+				checkOutput, checkErr := check.CombinedOutput()
+				require.NoError(t, checkErr, string(checkOutput))
+				after, readErr := os.Stat(htmlPath)
+				require.NoError(t, readErr)
+				require.Equal(t, before.ModTime(), after.ModTime())
+				data, readErr = os.ReadFile(reportPath)
+				require.NoError(t, readErr)
+				var historical struct {
+					Last struct {
+						Status  string
+						Current bool
+					} `json:"last_execution"`
+				}
+				require.NoError(t, json.Unmarshal(data, &historical))
+				require.Equal(t, "failed", historical.Last.Status)
+				require.False(t, historical.Last.Current)
+				return
+			}
+			disabledGlobals := strings.Contains(mode, "disabled globals")
 			if !disabledGlobals {
 				require.NoError(t, err, string(output))
 			}
@@ -101,9 +216,11 @@ func TestPublicJestTestdrive(t *testing.T) {
 					Excluded bool
 				} `json:"project_checks"`
 				Runs []struct {
-					Name, Command  string
-					ExitCode       *int `json:"exit_code"`
-					TestEventCount int  `json:"test_event_count"`
+					Name, Command      string
+					ExitCode           *int `json:"exit_code"`
+					TestEventCount     int  `json:"test_event_count"`
+					Role               string
+					ThresholdsDisabled bool `json:"probe_coverage_thresholds_disabled"`
 				} `json:"runs"`
 			}
 			require.NoError(t, json.Unmarshal(data, &report))
@@ -122,7 +239,7 @@ func TestPublicJestTestdrive(t *testing.T) {
 						controls[filepath.Base(run.Name)] = *run.ExitCode
 					}
 				}
-				require.Equal(t, map[string]int{"probe-pass-control": 0, "probe-fail-control": 1}, controls)
+				require.Equal(t, map[string]int{"probe-pass-control": 0, "probe-fail-control": 1}, controls, string(output))
 			}
 			require.Equal(t, "compatible", report.Compatibility.Status)
 			require.Equal(t, "passed", report.Cleanup.Status)

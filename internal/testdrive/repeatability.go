@@ -13,6 +13,7 @@ import (
 func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrumentedAgain validationRun) verdict {
 	result := compareJest(baseline, instrumented)
 	if slices.Equal(outcomeKeys(baseline), outcomeKeys(baselineAgain)) && slices.Equal(outcomeKeys(instrumented), outcomeKeys(instrumentedAgain)) {
+		result.Reason += " Only two pairs were observed; repeatable flakiness can still produce this observation."
 		return result
 	}
 	result.Status, result.Code = "inconclusive", "varying_outcomes"

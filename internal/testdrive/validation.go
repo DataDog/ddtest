@@ -186,10 +186,11 @@ func marshalValidation(result validationResult) ([]byte, error) {
 }
 
 const maxReportDifferences = 10
+const diagnosticLimit = 1024
 
 // Bound diagnostics too: install errors can contain entire package-manager logs.
 func reportText(value string) string {
-	const limit = 1024
+	const limit = diagnosticLimit
 	text := []rune(value)
 	if len(text) > limit {
 		return string(text[:limit]) + "… [truncated]"

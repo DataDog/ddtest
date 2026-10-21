@@ -84,11 +84,20 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 		options = explicit
 	}
 	env["NODE_OPTIONS"] = stripDatadogNodeOptions(options)
-	directory, capture, err := prepareJestRuntimeCapture(env)
+	parent := ""
+	if t.session != nil {
+		if info, err := os.Stat(t.session.Directory()); err == nil && info.IsDir() {
+			parent = t.session.Directory()
+		}
+	}
+	directory, capture, err := prepareJestRuntimeCaptureIn(parent, env)
 	if err != nil {
 		return err
 	}
 	defer func() { preflightErr = errors.Join(preflightErr, os.RemoveAll(directory)) }()
+	if err := markSessionStorage(directory, t.repositoryRoot); err != nil {
+		return err
+	}
 	env["DD_CIVISIBILITY_ENABLED"] = "false"
 	env["DD_TRACE_ENABLED"] = "false"
 	data, err := t.executor.CombinedOutput(ctx, command, args, env)

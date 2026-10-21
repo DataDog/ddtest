@@ -413,6 +413,18 @@ jobs:
 
   jest-testdrive-workflow:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node: '24'
+            jest: '30.5.1'
+            tracer: '6.15.0'
+            typescript: ''
+          - node: '20'
+            jest: '29.7.0'
+            tracer: '5.132.0'
+            typescript: 'ts-jest@29 typescript@5 @types/jest@29'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -420,13 +432,13 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: ${{ matrix.node }}
       - name: Install real Jest and tracer
-        run: npm install --prefix "${RUNNER_TEMP}/jest-testdrive" jest@30.5.1 dd-trace@6.15.0
+        run: npm install --prefix "${RUNNER_TEMP}/jest-testdrive" jest@${{ matrix.jest }} dd-trace@${{ matrix.tracer }} ${{ matrix.typescript }}
       - name: Validate paired outcomes, all feature probes and cleanup
         env:
           DDTEST_JEST_NODE_MODULES: ${{ runner.temp }}/jest-testdrive/node_modules
-        run: go test -v ./internal/testdrive -run '^TestPublicJestTestdrive$' -count=1 -timeout=10m
+        run: go test -v ./internal/testdrive -run '^TestPublicJestTestdrive$' -count=1 -timeout=16m
 
   windows-probe-diagnostics:
     runs-on: windows-latest
@@ -436,7 +448,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Test Windows probe filesystem diagnostics
-        run: go test ./internal/testdrive -run '^TestProbePublicationExplainsWindowsFilesystemErrors$' -count=1
+        run: go test ./internal/testdrive -run '^(TestProbePublicationExplainsWindowsFilesystemErrors|TestReportsCanReplaceExistingDestinationTwice)$' -count=1
 
 
   testdrive-language-workflow:

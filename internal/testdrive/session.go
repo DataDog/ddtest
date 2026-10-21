@@ -56,10 +56,7 @@ func (s *Session) create() error {
 	if err := os.Mkdir(s.directory, 0700); err != nil {
 		return fmt.Errorf("create temporary testdrive session: %w", err)
 	}
-	marker, err := json.Marshal(sessionOwner{Root: s.root, User: os.Getuid()})
-	if err == nil {
-		err = os.WriteFile(filepath.Join(s.directory, ".ddtest-owner.json"), marker, 0600)
-	}
+	err := markSessionStorage(s.directory, s.root)
 	if err != nil {
 		_ = os.RemoveAll(s.directory)
 		return err
@@ -86,6 +83,14 @@ func (s *Session) ID() string {
 // Directory returns the directory owned by the session.
 func (s *Session) Directory() string {
 	return s.directory
+}
+
+func markSessionStorage(directory, root string) error {
+	data, err := json.Marshal(sessionOwner{Root: canonicalWorkflowRoot(root), User: os.Getuid()})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(directory, ".ddtest-owner.json"), data, 0600)
 }
 
 type sessionOwner struct {

@@ -451,3 +451,10 @@ func TestReportingCountsIgnoreDisplayNamesAndRepeatRuns(t *testing.T) {
 	require.NotNil(t, counts)
 	require.Equal(t, 1, counts.TestExecutions)
 }
+
+func TestReportingTelemetryKeepsSeparateExecutionsWithTheSameIdentity(t *testing.T) {
+	run := testRun("passed", 0)
+	run.Tests = append(run.Tests, run.Tests[0])
+	run.Facts.Tests[0].Attempts = append(run.Facts.Tests[0].Attempts, run.Facts.Tests[0].Attempts[0])
+	require.Empty(t, verifyJestTelemetry(run).Status)
+}

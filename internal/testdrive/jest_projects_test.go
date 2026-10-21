@@ -111,12 +111,12 @@ func TestJestProbeImportsTheAPIWhenGlobalsAreDisabled(t *testing.T) {
 		extension, packageType, prefix string
 		esmExtensions                  []string
 	}{
-		{".cjs", "module", "const {test}", nil},
-		{".mjs", "commonjs", "import {test}", nil},
-		{".js", "module", "import {test}", nil},
-		{".js", "commonjs", "const {test}", nil},
-		{".ts", "module", "const {test}", nil},
-		{".ts", "module", "import {test}", []string{".ts"}},
+		{".cjs", "module", "const {test, jest: ddtestJest}", nil},
+		{".mjs", "commonjs", "import {test, jest as ddtestJest}", nil},
+		{".js", "module", "import {test, jest as ddtestJest}", nil},
+		{".js", "commonjs", "const {test, jest: ddtestJest}", nil},
+		{".ts", "module", "const {test, jest: ddtestJest}", nil},
+		{".ts", "module", "import {test, jest as ddtestJest}", []string{".ts"}},
 	} {
 		t.Run(tc.extension+tc.packageType+tc.prefix, func(t *testing.T) {
 			root := t.TempDir()

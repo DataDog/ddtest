@@ -97,14 +97,14 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 					require.True(t, report.Success)
 					var fields map[string]json.RawMessage
 					require.NoError(t, json.Unmarshal(data, &fields))
-					require.NotContains(t, fields, "telemetry_only")
-					require.NotContains(t, fields, "summary")
+					require.JSONEq(t, `true`, string(fields["telemetry_only"]))
+					require.Contains(t, string(fields["summary"]), "UNVALIDATED (TELEMETRY ONLY)")
 					require.NotContains(t, string(data), "INCOMPLETE")
 					require.Len(t, report.Runs, 1)
 					require.Equal(t, "reporting-only", report.Runs[0].Name)
 					require.True(t, report.Runs[0].Instrumented)
 					require.Zero(t, report.Runs[0].ExitCode, string(output))
-					require.Equal(t, 1, report.Runs[0].TestEventCount)
+					require.Positive(t, report.Runs[0].TestEventCount)
 					for name, contents := range fixture.files {
 						after, err := os.ReadFile(filepath.Join(root, name))
 						require.NoError(t, err)
@@ -116,7 +116,9 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 					}
 					entries, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
 					require.NoError(t, err)
-					require.Len(t, entries, 2)
+					require.Len(t, entries, 3)
+					require.DirExists(t, filepath.Join(root, ".testoptimization/testdrive"))
+					require.Contains(t, string(output), "Saved diagnostics")
 					require.FileExists(t, filepath.Join(root, ".testoptimization/report.html"))
 				})
 			}

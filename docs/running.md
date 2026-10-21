@@ -585,3 +585,7 @@ Other frameworks do not support check-only in this step. These flags have no
 environment-variable binding.
 
 For Jest, full testdrive compares native results without and with instrumentation, then checks advanced features with temporary tests under the original configuration. Matching existing failures do not alone fail compatibility. It writes compact JSON and an HTML report; local checks do not execute CI or prove backend processing.
+
+Jest compatibility uses two execution pairs when the first pair differs. A recurring difference remains a suspected regression even if another test varies. Two pairs cannot rule out coincidental or repeatable flakiness; investigate the recorded differences before attributing their cause. Reporting counts include the primary instrumented suite once; repeated comparisons and synthetic probes have separate roles. Probes isolate customer selection, coverage thresholds and native retry settings while retaining the original configuration.
+
+Frameworks without a controlled adapter retain their ordinary feature-enabled telemetry check and captured diagnostics under `.testoptimization/testdrive/`. Their stable HTML/JSON reports identify the result as telemetry-only; a passing exit does not certify behavioral compatibility or advanced features.

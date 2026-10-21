@@ -65,7 +65,13 @@ func projectArgs(command string, args []string, name string) ([]string, bool) {
 }
 
 func (t *Testdrive) discoverJestTests(ctx context.Context, probe string) ([]string, string, error) {
-	directory, err := os.MkdirTemp("", "ddtest-jest-discovery-")
+	parent := ""
+	if t.session != nil {
+		if info, err := os.Stat(t.session.Directory()); err == nil && info.IsDir() {
+			parent = t.session.Directory()
+		}
+	}
+	directory, err := os.MkdirTemp(parent, "ddtest-jest-discovery-")
 	if err != nil {
 		return nil, "", err
 	}
