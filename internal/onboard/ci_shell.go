@@ -126,7 +126,11 @@ func resolveCIShell(root string, workflow ciWorkflow, job runtimeJob, step runti
 				}
 				result.Matched = true
 				result.Tests = append(result.Tests, part.Tests...)
-				result.Builds = append(result.Builds, part.Builds...)
+				// Only one branch executes in CI. Keep each branch's builds
+				// on its own tests, never as combined preparation for later steps.
+				if len(part.Builds) > 0 {
+					result.Setup = append(result.Setup, "Conditional build preparation requires separate validation: "+child.Run)
+				}
 				result.Setup = append(result.Setup, part.Setup...)
 				result.ReviewReason = joinDiagnostic(result.ReviewReason, part.ReviewReason)
 			}
