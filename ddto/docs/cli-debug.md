@@ -364,6 +364,12 @@ end ddto before the program starts:
 … TestOptimization.build v0.0.0-dev DEBUG: +63µs pass-through exec path="/usr/local/go/bin/go"
 ```
 
+For `ddto gotestsum` and `--go-shim`, `go_shim first_on_path=<dir>` names the
+directory of ddto's `go` that the command gets first on `PATH`, and for a go
+command, `go_shim go=<path>` the toolchain's go that it runs. Run as that `go`,
+or under the command, ddto logs `go_shim left=<dir>` when it leaves the
+directory off `PATH` again.
+
 Each `exec path` line is a candidate, and a `failed` line follows each
 candidate that did not start. The last `exec path` line without one is the
 program that runs. `shell=/bin/sh reason="exec format error"` marks a file that

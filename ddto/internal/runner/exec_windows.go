@@ -120,9 +120,14 @@ func ExecCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR:", err)
 		return commandStatus(err)
 	}
+	// args follow ddto's own arguments, such as --go-shim, unless ddto
+	// changed them.
 	var cmdline string
-	if slices.Equal(args, os.Args[1:]) {
-		cmdline = commandLineTail(commandLine())
+	if skip := len(os.Args) - len(args); skip >= 1 && slices.Equal(args, os.Args[skip:]) {
+		cmdline = commandLine()
+		for range skip {
+			cmdline = commandLineTail(cmdline)
+		}
 	}
 	debug.printf("pass-through caller_command_line=%t", cmdline != "")
 	code, err := runInJob(path, args, cmdline, true, debug)

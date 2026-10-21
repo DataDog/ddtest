@@ -20,6 +20,11 @@ func main() {
 	if len(os.Args) >= 3 && os.Args[1] == "test-exec" {
 		os.Exit(runner.ExecWithCallerEnvironment(os.Args[2], os.Args[3:]))
 	}
+	// go run's -exec program with the go shim, which go run puts after
+	// $GOROOT/bin on the program's PATH.
+	if len(os.Args) >= 3 && os.Args[1] == runner.GoShimExecMode {
+		os.Exit(runner.ExecWithGoShim(os.Args[2:]))
+	}
 	// The Git worker that ddto test starts once per invocation.
 	if len(os.Args) >= 3 && len(os.Args) <= 5 && os.Args[1] == "ci-git-worker" {
 		os.Exit(runner.RunGitWorker(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
@@ -39,6 +44,9 @@ func main() {
 	// The go that ddto puts first on PATH for gotestsum is ddto: it runs as
 	// ddto go.
 	args, fromGoShim := runner.GoShimArgs(os.Args)
+	// --go-shim, and gotestsum in any form, run the command with the go shim
+	// first on its PATH, so the go test that it runs reports.
+	args, goShim := runner.GoShimCommand(args, fromGoShim)
 	// ddto go test is ddto test, as go test is.
 	form, isTest := runner.TestCommand(args)
 	if isTest || runner.IsGoCommand(args) {
@@ -49,12 +57,16 @@ func main() {
 	}
 	switch {
 	case isTest:
-	case len(args) == 1 && (args[0] == "--version" || args[0] == "-version"):
+	case goShim && len(args) == 0:
+		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR: --go-shim needs a command")
+		os.Exit(2)
+	case !goShim && len(args) == 1 && (args[0] == "--version" || args[0] == "-version"):
 		fmt.Println("ddto " + version.Tag)
 		os.Exit(0)
-	case len(args) == 0 || args[0] == "-h" || args[0] == "-help" || args[0] == "--help":
+	case !goShim && (len(args) == 0 || args[0] == "-h" || args[0] == "-help" || args[0] == "--help"):
 		fmt.Fprintln(os.Stderr, "usage: ddto [go | orchestrion go | go tool orchestrion go] test [--runtime=mini|sdk] [--git-upload-timeout=1m] [--keep-ci-state[=file.zip]] [--panic-hook] [--session-per-binary] [--experimental-file-coverage] [go test flags] [packages] (default: mini)")
-		fmt.Fprintln(os.Stderr, "       ddto gotestsum [gotestsum flags] [-- go test flags]: reports the tests of gotestsum's go test")
+		fmt.Fprintln(os.Stderr, "       ddto gotestsum [gotestsum flags] [-- go test flags]: reports the tests of gotestsum's go test, also with go tool gotestsum or go run gotest.tools/gotestsum")
+		fmt.Fprintln(os.Stderr, "       ddto --go-shim command [arguments]: reports the go test that command, or a command it starts, runs")
 		fmt.Fprintln(os.Stderr, "       ddto command [arguments]: runs any other command unchanged, such as ddto go build ./...")
 		fmt.Fprintln(os.Stderr, "       ddto --version: prints the version")
 		if len(args) == 0 {
@@ -62,12 +74,8 @@ func main() {
 		}
 		os.Exit(0)
 	default:
-		// gotestsum runs go test itself, through the go shim that ddto puts
-		// first on its PATH.
-		if runner.IsGotestsum(args) {
-			if err := runner.UseGoShim(); err != nil {
-				fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" WARN:", err, "- running gotestsum without CI Visibility")
-			}
+		if goShim {
+			os.Exit(runner.RunWithGoShim(args))
 		}
 		// Any other command runs unchanged, before ddto sets anything but
 		// DDTO_NESTED_GO for go: ddto in front of a go command, or any other,

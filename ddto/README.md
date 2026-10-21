@@ -82,7 +82,10 @@ DD_SERVICE=my-tests DD_ENV=ci ddto test ./...
 streams, environment and exit status: `ddto go build ./...` runs `go build
 ./...`. As with `env`, a command that is not found exits with 127, and one
 that cannot run with 126. A CI script can put `ddto` in front of its go
-commands; only `go test` reports to CI Visibility. The one addition is for
+commands; only `go test` reports to CI Visibility. gotestsum, and any command
+after `--go-shim`, report the `go test` that they run; see
+[gotestsum](#gotestsum) and [Other test wrappers](#other-test-wrappers). The
+one addition is for
 go: its environment gets `DDTO_NESTED_GO`, which counts the ddto commands that
 run go around it. A `go` on `PATH` that starts ddto again, such as a script
 that runs `ddto go`, would otherwise make ddto start itself without end; ddto
@@ -192,6 +195,51 @@ that the crash names. [Details](internal/thirdparty/dd-trace-go/ADAPTATIONS.md#d
 
 `--runtime=sdk` requires the exact SDK version pinned in
 [`internal/version`](internal/version/version.go).
+
+## gotestsum
+
+Put `ddto` in front of the gotestsum command that you already run:
+
+```sh
+ddto gotestsum --format testname --junitfile junit.xml -- -race ./...
+ddto go tool gotestsum -- ./...                      # a tool of the module
+ddto go run gotest.tools/gotestsum@v1.13.0 -- ./...
+```
+
+gotestsum keeps its arguments, output and exit status, with `--packages`,
+`--rerun-fails`, `--watch`, `--junitfile` and `--raw-command`, and the
+`go test` that it runs reports to CI Visibility. ddto puts a `go` of its own,
+in its user cache, first on gotestsum's `PATH`. When gotestsum runs
+`go test -json …`, that `go` runs `ddto go test -json …`, and every ddto
+leaves it off `PATH`, so the tests see gotestsum's `PATH`. `go run` and
+`go tool` put `$GOROOT/bin` first on their program's `PATH`, so ddto runs
+gotestsum through its own `-exec` program or directly.
+
+Each `go test` that gotestsum runs reports its own session, such as each
+`--rerun-fails` run. ddto's options, such as `--runtime`, do not apply there,
+so a test flag named `--runtime` stays the test's. If ddto cannot set up its
+`go`, it warns and runs gotestsum without CI Visibility.
+
+## Other test wrappers
+
+`--go-shim` does the same for any command that runs `go test`, or starts one
+that does:
+
+```sh
+ddto --go-shim make test
+ddto --go-shim task test
+ddto --go-shim ./scripts/test.sh
+ddto --go-shim go run ./tools/testrunner
+```
+
+Each `go test` that the command runs reports its own session, and other go
+commands run unchanged. Only a `go` found on `PATH` reports: a command that
+runs `$GOROOT/bin/go` by its path or sets its own `PATH` runs `go test`
+without CI Visibility, as do commands that `go generate` starts, which find
+`$GOROOT/bin` first. A `go run` or `go tool` that the command starts keeps
+ddto's `go` for its program, unless `go run` has its own `-exec` or builds for
+another platform; then ddto warns and runs it without its `go`.
+`ddto --go-shim go test …` is `ddto go test …`.
 
 ## What is supported
 
