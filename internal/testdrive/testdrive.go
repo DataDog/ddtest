@@ -201,6 +201,17 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			return nil, err
 		}
 	}
+	originalCommand := shellquote.Join(append([]string{command}, args...)...)
+	var commandAssignments map[string]string
+	if language == "javascript" && !all {
+		parsed, arguments, assignments, parseErr := onboard.ParseValidationCommand(originalCommand)
+		if parseErr != nil {
+			discoveryError = parseErr
+		} else {
+			command, args, commandAssignments = parsed, arguments, assignments
+			preflightEnvironment = mergeConfigurationEnvironment(preflightEnvironment, assignments)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var environment environmentInfo
@@ -219,11 +230,13 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	scopeCommand := selectedPlan.ScopeCommand
 	if scopeCommand == "" {
-		scopeCommand = shellquote.Join(append([]string{command}, args...)...)
+		scopeCommand = originalCommand
 	}
 	var configurationEnvironment map[string]string
 	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
-		configurationEnvironment = matchingConfigurationEnvironment(repositoryRoot, runner.Name(), scopeCommand)
+		configurationEnvironment = mergeConfigurationEnvironment(matchingConfigurationEnvironment(repositoryRoot, runner.Name(), scopeCommand), preflightEnvironment)
+		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, selectedPlan.Environment)
+		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, commandAssignments)
 	}
 	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args, Environment: configurationEnvironment}
 	if language == "python" && environment.Executable != "" {
