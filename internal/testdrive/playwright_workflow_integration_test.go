@@ -58,7 +58,11 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 				write("package.json", `{"scripts":{"test":"playwright test --project desktop mobile --repeat-each=2 --shard=1/2"},"devDependencies":{"@playwright/test":"1.55.1","dd-trace":"6.20.1"}}`)
 			}
 			reporterLog := filepath.Join(t.TempDir(), "customer-reporter.jsonl")
-			write("customer,reporter.cjs", `module.exports=class {onTestEnd(){require('node:fs').appendFileSync(`+fmt.Sprintf("%q", reporterLog)+`,String(process.env.DD_TRACE_ENABLED)+'|'+(process.env.PLAYWRIGHT_JUNIT_OUTPUT_NAME||'')+'\n')}}`)
+			nodeCheck := ""
+			if mode == "existing failure" {
+				nodeCheck = `if(!(process.env.NODE_OPTIONS||'').includes('--conditions=ddtest-selected'))throw Error('selected Node condition lost');`
+			}
+			write("customer,reporter.cjs", `module.exports=class {onTestEnd(){`+nodeCheck+`require('node:fs').appendFileSync(`+fmt.Sprintf("%q", reporterLog)+`,String(process.env.DD_TRACE_ENABLED)+'|'+(process.env.PLAYWRIGHT_JUNIT_OUTPUT_NAME||'')+'\n')}}`)
 			write("server.cjs", `require('node:http').createServer((req,res)=>res.end('<h1>hello</h1>')).listen(`+strings.Split(address, ":")[1]+`,'127.0.0.1')`)
 			write("playwright.config.cjs", `module.exports={testDir:'test',reporter:[['./customer,reporter.cjs']],workers:1,retries:1,repeatEach:2,projects:[{name:'desktop',use:{browserName:'chromium'}},{name:'mobile',use:{browserName:'chromium'}}],webServer:{command:'node server.cjs',url:`+fmt.Sprintf("%q", "http://"+address)+`,reuseExistingServer:false,timeout:10000},use:{baseURL:`+fmt.Sprintf("%q", "http://"+address)+`}}`)
 			body := `await page.goto('/');await expect(page.locator('h1')).toHaveText('hello');`
@@ -94,6 +98,12 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
       - run: npm test
         env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}'}
 `)
+			if mode == "existing failure" {
+				workflowPath := filepath.Join(root, ".github", "workflows", "ci.yml")
+				workflow, readErr := os.ReadFile(workflowPath)
+				require.NoError(t, readErr)
+				requireWriteFile(t, workflowPath, strings.Replace(string(workflow), "NODE_OPTIONS: '-r ", "NODE_OPTIONS: '--conditions=ddtest-selected -r ", 1))
+			}
 			output, err = command(root, "git", "init", "-q")
 			require.NoError(t, err, string(output))
 			if mode == "passing" {
