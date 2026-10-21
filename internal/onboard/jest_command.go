@@ -40,29 +40,43 @@ func JestValidationCommand(root string) (string, error) {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
-			if strings.TrimSpace(job.If) == "false" {
-				continue
+			rows, err := runtimeMatrix(job.Strategy.Matrix)
+			if err != nil {
+				return "", err
 			}
-			for _, step := range job.Steps {
-				if strings.TrimSpace(step.If) == "false" {
-					continue
-				}
-				resolution := resolveTestStep(root, workflow, job, step, "javascript", "jest")
-				if resolution.Reason != "" && !resolution.Review {
-					unresolved = fmt.Sprintf("CI command %q requires review: %s", step.Run, resolution.Reason)
-				}
-				if !resolution.Matched {
-					continue
-				}
-				words, err := shellquote.Split(step.Run)
-				if err != nil || resolution.Reason != "" || len(words) == 0 || filepath.Clean(stepDirectory(workflow, job, step)) != "." {
-					return "", fmt.Errorf("cannot automatically forward Jest options through CI command %q; use --command with its working directory and required setup", step.Run)
-				}
-				selected, err := ForwardJestCommand(root, step.Run)
+			for _, row := range rows {
+				active, err := possibleJobCondition(job.If, row)
 				if err != nil {
 					return "", err
 				}
-				candidates[selected] = true
+				if !active {
+					continue
+				}
+				for _, step := range job.Steps {
+					active, err := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
+					if err != nil {
+						return "", err
+					}
+					if !active {
+						continue
+					}
+					resolution := resolveTestStep(root, workflow, job, step, "javascript", "jest")
+					if resolution.Reason != "" && !resolution.Review {
+						unresolved = fmt.Sprintf("CI command %q requires review: %s", step.Run, resolution.Reason)
+					}
+					if !resolution.Matched {
+						continue
+					}
+					words, err := shellquote.Split(step.Run)
+					if err != nil || resolution.Reason != "" || len(words) == 0 || filepath.Clean(stepDirectory(workflow, job, step)) != "." {
+						return "", fmt.Errorf("cannot automatically forward Jest options through CI command %q; use --command with its working directory and required setup", step.Run)
+					}
+					selected, err := ForwardJestCommand(root, step.Run)
+					if err != nil {
+						return "", err
+					}
+					candidates[selected] = true
+				}
 			}
 		}
 	}
