@@ -109,3 +109,18 @@ func TestConfigurationCopyClosesEachFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 256)
 }
+
+func TestConfigurationCopyRejectsDestinationInsideRepository(t *testing.T) {
+	source := t.TempDir()
+	scratch := filepath.Join(source, "tmp", "ddtest-configuration")
+	require.NoError(t, os.MkdirAll(scratch, 0700))
+	t.Setenv("TMPDIR", filepath.Join(source, "tmp"))
+	requireWriteFile(t, filepath.Join(source, "source.js"), "original")
+	for _, target := range []string{source, scratch, filepath.Join(scratch, "checkout")} {
+		require.ErrorContains(t, copyConfiguration(t.Context(), source, target), "set TMPDIR outside the repository")
+	}
+	require.NoDirExists(t, filepath.Join(scratch, "checkout"))
+	alias := filepath.Join(t.TempDir(), "linked")
+	require.NoError(t, os.Symlink(source, alias))
+	require.ErrorContains(t, copyConfiguration(t.Context(), source, filepath.Join(alias, "tmp")), "inside the repository")
+}

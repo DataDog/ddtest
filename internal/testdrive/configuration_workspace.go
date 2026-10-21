@@ -227,6 +227,13 @@ func copyConfiguration(ctx context.Context, source, target string) error {
 		return err
 	}
 	source = canonical
+	destination := canonicalWorkflowRoot(target)
+	if _, err := os.Stat(target); os.IsNotExist(err) {
+		destination = filepath.Join(canonicalWorkflowRoot(filepath.Dir(target)), filepath.Base(target))
+	}
+	if relative, err := filepath.Rel(source, destination); err == nil && (relative == "." || filepath.IsLocal(relative)) {
+		return fmt.Errorf("configuration copy destination is inside the repository; set TMPDIR outside the repository before retrying")
+	}
 	return walkConfiguration(ctx, source, func(path, relative string, entry fs.DirEntry) error {
 		destination := filepath.Join(target, relative)
 		info, err := entry.Info()
