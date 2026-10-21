@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -15,8 +16,8 @@ func TestTestRunner_Run_PropagatesPlanningJobToEveryWorker(t *testing.T) {
 	for _, mode := range []string{"sequential", "parallel", "ci-node"} {
 		t.Run(mode, func(t *testing.T) {
 			withRunnerTestSettings(t)
-			t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "DD_TEST_PARALLELIZATION_ENABLED=false;DD_TEST_PARALLELIZATION_PLAN_JOB_ID=worker-override")
-			t.Setenv("DD_TEST_PARALLELIZATION_PLAN_JOB_ID", "inherited-plan")
+			t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "_DD_TEST_PARALLELIZATION_ENABLED=false;_DD_TEST_PARALLELIZATION_PLAN_JOB_ID=worker-override")
+			t.Setenv("_DD_TEST_PARALLELIZATION_PLAN_JOB_ID", "inherited-plan")
 			viper.Reset()
 			settings.Init()
 			chdirTemp(t)
@@ -56,8 +57,16 @@ func TestTestRunner_Run_PropagatesPlanningJobToEveryWorker(t *testing.T) {
 				t.Fatalf("RunTests calls = %d, want %d", len(calls), wantCalls)
 			}
 			for _, call := range calls {
-				if got := call.EnvMap[constants.TestParallelizationEnabledEnvVar]; got != "true" {
+				if got := call.EnvMap["_DD_TEST_PARALLELIZATION_ENABLED"]; got != "true" {
 					t.Fatalf("parallelization enabled = %q, want true", got)
+				}
+				if got := call.EnvMap["_DD_TEST_PARALLELIZATION_PLAN_JOB_ID"]; got != "plan-123" {
+					t.Fatalf("planning job ID = %q, want plan-123", got)
+				}
+				for envVar := range call.EnvMap {
+					if strings.HasPrefix(envVar, "DD_TEST_PARALLELIZATION_") {
+						t.Errorf("worker received public correlation variable %s", envVar)
+					}
 				}
 				for tag, envVar := range constants.TestParallelizationPlanEnvVars {
 					if got := call.EnvMap[envVar]; got != planTags[tag] {
