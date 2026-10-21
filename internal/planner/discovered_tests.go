@@ -28,10 +28,21 @@ func (tp *TestPlanner) resetDiscoveryResults() {
 // a same-basename collection error (pytest import file mismatch) is the
 // common silent cause.
 func (tp *TestPlanner) warnFastFilesMissingFromFullDiscovery(fastDiscoveredTestFiles []string) {
+	// Fast discovery lists every file matching the framework pattern, while
+	// full-discovery processing filters by the positional selection. Compare
+	// the same scope, or out-of-selection files (for example integration
+	// tests while planning only tests/unit) would be reported as missing and
+	// drown out genuine collection errors.
+	selection, err := utils.NewPathMatcher(settings.GetTestsSelectionPattern())
+	if err != nil {
+		// recordFullDiscoveryResults already fails the plan on an invalid
+		// selection pattern before this warning runs.
+		return
+	}
 	missing := make([]string, 0)
 	for _, file := range fastDiscoveredTestFiles {
 		normalized := utils.NormalizePath(file)
-		if normalized == "" {
+		if normalized == "" || (!selection.Empty() && !selection.MatchNormalizedPath(normalized)) {
 			continue
 		}
 		if _, ok := tp.testFiles[normalized]; !ok {
