@@ -24,7 +24,7 @@ type TestCommand struct {
 	ScopeCommand      string            `json:"-"` // Original invocation before adding a forwarding wrapper.
 	ProbeLintSkipped  bool              `json:"probe_lint_skipped,omitempty"`
 	ReviewReason      string            `json:"review_reason,omitempty"`
-	ExitOnFailure bool `json:"exit_on_failure,omitempty"`
+	ExitOnFailure     bool              `json:"exit_on_failure,omitempty"`
 	Resolution        string            `json:"resolution,omitempty"`
 	Directory         string            `json:"directory"`
 	Command           string            `json:"command"`

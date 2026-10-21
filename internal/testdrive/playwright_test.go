@@ -178,7 +178,7 @@ func TestPlaywrightRepeatComparisonSeparatesBrowserProjects(t *testing.T) {
 		}}
 	}
 	got := compareRepeatedJavaScript(run("passed", "crash one"), run("failed", "crash two"), run("passed", "crash three"), run("failed", "crash four"))
-	require.Equal(t, "inconclusive", got.Status)
+	require.Equal(t, "suspected regression", got.Status)
 	require.Contains(t, got.Reason, "1 test identities have recurring differences")
 	require.Contains(t, got.Reason, "1 vary between repeats")
 	require.Contains(t, got.Differences[0], `project="iPhone"`)

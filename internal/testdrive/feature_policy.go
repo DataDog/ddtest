@@ -20,14 +20,14 @@ type frameworkPolicy struct {
 }
 
 var frameworkFeaturePolicies = map[string]frameworkPolicy{
-    "playwright": {Paired:true,CheckOnly:true,ProbeRecovery:true,Preflight:true,Configurations:true,Features:[]featurePolicy{
-        {Name:"auto-retries",Status:"required"},
-        {Name:"early-flake-detection",Status:"required"},
-        {Name:"skipping",Status:"not supported",Reason:playwrightSkippingReason},
-        {Name:"quarantine",Status:"required"},
-        {Name:"disabled",Status:"required"},
-        {Name:"attempt-to-fix",Status:"required"},
-    }},
+	"playwright": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
+		{Name: "auto-retries", Status: "required"},
+		{Name: "early-flake-detection", Status: "required"},
+		{Name: "skipping", Status: "not supported", Reason: playwrightSkippingReason},
+		{Name: "quarantine", Status: "required"},
+		{Name: "disabled", Status: "required"},
+		{Name: "attempt-to-fix", Status: "required"},
+	}},
 	"jest": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"jest.config.js", "jest.config.cjs", "jest.config.mjs", "jest.config.ts", "jest.config.cts", "jest.config.mts", "jest.config.json"}, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"},
 		{Name: "early-flake-detection", Status: "required"},
@@ -122,7 +122,7 @@ func ValidationFrameworkNames() string {
 }
 
 func skippingPolicy(framework string) featurePolicy {
-	for _, policy := range frameworkFeaturePolicies[framework] {
+	for _, policy := range featurePolicies(framework) {
 		if policy.Name == "skipping" {
 			return policy
 		}

@@ -23,7 +23,7 @@ import (
 )
 
 type jestTest struct {
-	Playwright *playwrightIdentity `json:"playwright,omitempty"`
+	Playwright    *playwrightIdentity `json:"playwright,omitempty"`
 	telemetryName *string
 	File          string `json:"file"`
 	Name          string `json:"name"`

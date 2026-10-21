@@ -255,7 +255,9 @@ func checkPlaywrightSupport(check jestPreflight, selection platform.JSSelection)
 	return verdict{Status: "compatible", Reason: "Runtime requirements match; paired execution and supported feature controls are still required."}
 }
 
-func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
+func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
+	run.Role = spec.Role
 	run.Name, run.Instrumented, run.ProbeMode, run.root, run.framework = name, instrumented, probeMode, t.checkoutRoot(), "playwright"
 	run.ExecutionContext = "Both comparison modes use ddtest native-result observers and process supervision, with private process groups for non-IPC child launches. Baseline disables dd-trace; it is not an unmodified shell invocation."
 	run.ExecutionPath = "playwright-cli"
@@ -497,7 +499,7 @@ func (t *Testdrive) runPlaywrightFeatures(ctx context.Context, output io.Writer,
 			child := *t
 			child.playwrightProject = project
 			run := func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
-				value, err := child.runPlaywright(ctx, output, session, preload, fmt.Sprintf("project-%d/%s", i+1, name), true, scenario, probe, mode)
+				value, err := child.runPlaywright(ctx, output, session, preload, runSpec{Name: fmt.Sprintf("project-%d/%s", i+1, name), Role: roleProbeFeature, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
 				value.Name = name
 				return value, err
 			}
