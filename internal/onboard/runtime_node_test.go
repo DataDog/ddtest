@@ -62,7 +62,12 @@ func TestCILTSResolutionPreservesAliasAndExactPatch(t *testing.T) {
 			})
 			require.Equal(t, tc.status, result.Status)
 			require.Equal(t, 1, calls)
-			require.Len(t, result.Jobs, 4)
+			var checked []string
+			for _, finding := range result.Jobs {
+				checked = append(checked, finding.Job+"/"+finding.Node+"/"+finding.Status)
+			}
+			expected := "tests/lts/*/" + tc.status
+			require.ElementsMatch(t, []string{expected, expected, expected, expected}, checked)
 			for _, job := range result.Jobs {
 				require.Equal(t, "lts/*", job.Node)
 				require.Equal(t, "24.3.0", job.NodeResolution.Version)

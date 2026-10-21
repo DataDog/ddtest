@@ -68,3 +68,21 @@ func TestNpmFrameworkOptionsUseBothForwardingBoundaries(t *testing.T) {
 		}
 	}
 }
+
+func TestNpmSelectedFilesKeepGeneratedRunnerOptions(t *testing.T) {
+	for _, args := range [][]string{{"test"}, {"run", "test"}, {"test", "--"}, {"test", "--", "--", "old.test.js"}} {
+		got := WithFrameworkOptions("npm", args, "jest", "--runTestsByPath")
+		got = withFrameworkFiles("npm", got, "jest", []string{"selected[shard].test.js"})
+		prefix := []string{"test", "--", "--runTestsByPath"}
+		if args[0] == "run" {
+			prefix = []string{"run", "test", "--", "--runTestsByPath"}
+		}
+		if len(args) > 2 && args[2] == "--" {
+			prefix = append(prefix, "--")
+		}
+		want := append(prefix, "selected[shard].test.js")
+		if !slices.Equal(got, want) {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	}
+}

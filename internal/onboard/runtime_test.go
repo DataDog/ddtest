@@ -9,9 +9,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -57,18 +59,26 @@ func TestCIRuntimesCheckEveryNodeAndPreserveExcludedTests(t *testing.T) {
 				return tracerRequirement{Version: "6.16.0", Node: ">=22"}, nil
 			})
 			require.Equal(t, tc.status, result.Status, result)
-			require.Len(t, result.Jobs, 4)
+			byNode := map[string]RuntimeFinding{}
+			for _, finding := range result.Jobs {
+				require.Equal(t, "tests", finding.Job)
+				require.Equal(t, 3, finding.Step)
+				byNode[finding.Node] = finding
+			}
+			require.ElementsMatch(t, []string{"20.20.1", "22.22.1", "24.14.0", "25.8.1"}, slices.Collect(maps.Keys(byNode)))
+			for _, node := range []string{"22.22.1", "24.14.0", "25.8.1"} {
+				require.Equal(t, StatusCompatible, byNode[node].Status)
+			}
 			require.Equal(t, 1, calls)
-			require.Equal(t, "20.20.1", result.Jobs[0].Node)
 			switch tc.status {
 			case "incompatible":
-				require.Equal(t, "incompatible", result.Jobs[0].Status)
-				require.Equal(t, "dd-trace@6.16.0", result.Jobs[0].Tracer)
-				require.Equal(t, ">=22", result.Jobs[0].Requirement)
+				require.Equal(t, "incompatible", byNode["20.20.1"].Status)
+				require.Equal(t, "dd-trace@6.16.0", byNode["20.20.1"].Tracer)
+				require.Equal(t, ">=22", byNode["20.20.1"].Requirement)
 			case "compatible":
-				require.Equal(t, "excluded", result.Jobs[0].Status)
+				require.Equal(t, "excluded", byNode["20.20.1"].Status)
 			case "inconclusive":
-				require.Equal(t, "unverified_exclusion", result.Jobs[0].Code)
+				require.Equal(t, CodeUnverifiedExclusion, byNode["20.20.1"].Code)
 			}
 			data, err := os.ReadFile(filepath.Join(root, ".github/workflows/test.yml"))
 			require.NoError(t, err)
@@ -148,9 +158,11 @@ func TestCIRuntimesUseSelectedTracerAndEveryJob(t *testing.T) {
 		return tracerRequirement{Version: "7.0.0", Node: ">=24"}, nil
 	})
 	require.Equal(t, "incompatible", result.Status)
-	require.Len(t, result.Jobs, 2)
-	require.Equal(t, "incompatible", result.Jobs[0].Status)
-	require.Equal(t, "compatible", result.Jobs[1].Status)
+	statuses := map[string]string{}
+	for _, finding := range result.Jobs {
+		statuses[finding.Job] = finding.Status
+	}
+	require.Equal(t, map[string]string{"old": StatusCompatible, "new": StatusIncompatible}, statuses)
 }
 
 func TestNodeRequirements(t *testing.T) {

@@ -136,5 +136,5 @@ func TestEmptyMatrixDoesNotMasqueradeAsNoCI(t *testing.T) {
 `
 	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, nil)
 	require.Equal(t, "inconclusive", result.Status)
-	require.Contains(t, result.Jobs[0].Reason, "no entries")
+	require.Equal(t, CodeInvalidMatrix, result.Jobs[0].Code)
 }

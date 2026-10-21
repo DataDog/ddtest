@@ -63,6 +63,15 @@ process.on('exit', () => {
 	if err := jest.RunTests(ctx, []string{"tests/selected.test.js"}, map[string]string{"DDTEST_JEST_WORKER": "selected", "NODE_OPTIONS": os.Getenv("NODE_OPTIONS")}); err != nil {
 		t.Fatalf("selected-file run failed: %v", err)
 	}
+	// Dots distinguish literal file selection from Jest's path patterns.
+	writeFixture(t, root, "package.json", `{"name":"npm-jest-selection","private":true,"scripts":{"test":"jest --runInBand"}}`)
+	writeFixture(t, root, "tests/literal.case.test.js", `test('runs the assigned literal path',()=>expect(globalThis.ddtestJestSetup).toBe(true))`)
+	writeFixture(t, root, "tests/literalXcase.test.js", `test('must not match a path pattern',()=>{throw new Error('another workers file ran')})`)
+	resetSettingsAfterTest(t)
+	configureFramework("npm test", "")
+	jest = framework.NewJest(platform.NewJavaScript())
+	require.NoError(t, jest.RunTests(ctx, []string{"tests/literal.case.test.js"}, map[string]string{"NODE_OPTIONS": os.Getenv("NODE_OPTIONS")}))
+
 }
 
 // A real tracer must emit events, not merely exit successfully. In particular,

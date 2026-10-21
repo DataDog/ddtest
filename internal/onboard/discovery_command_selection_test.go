@@ -195,5 +195,5 @@ func TestUnavailableCurrentMetadataStaysInconclusive(t *testing.T) {
 	require.Equal(t, "inconclusive", result.Status)
 	require.Len(t, result.Jobs, 1)
 	require.Nil(t, result.Jobs[0].NodeResolution)
-	require.Contains(t, result.Jobs[0].Reason, "metadata unavailable")
+	require.Equal(t, CodeNodeResolution, result.Jobs[0].Code)
 }
