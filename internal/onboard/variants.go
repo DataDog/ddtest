@@ -5,6 +5,7 @@ import (
 	"maps"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/kballard/go-shellquote"
@@ -44,7 +45,8 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
 	}
-	for key, value := range env {
+	for _, key := range slices.Sorted(maps.Keys(env)) {
+		value := env[key]
 
 		if key == "PATH" || key == "NODE_PATH" {
 			return step, nil, fmt.Errorf("CI environment overrides executable/module selection: %s", key)
@@ -65,7 +67,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		resolved, err := runtimeValue(value, row)
 
 		if err != nil {
-			return step, nil, err
+			return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
 		}
 		env[key] = resolved
 	}
@@ -148,7 +150,7 @@ func localPreparation(root, directory string, words []string) (BuildCommand, boo
 	if len(words) == 0 {
 		return BuildCommand{}, false
 	}
-	kind := ""
+	var kind PreparationKind
 	if len(words) >= 4 && words[0] == "pnpm" && words[1] == "add" && (words[2] == "-D" || words[2] == "--save-dev") {
 		for _, dependency := range words[3:] {
 			name, version, ok := strings.Cut(dependency, "@")

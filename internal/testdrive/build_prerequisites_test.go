@@ -45,7 +45,9 @@ func TestBuildPrerequisiteExecutionAndCheckOnly(t *testing.T) {
 			executor := &buildExecutor{t: t}
 			root := t.TempDir()
 			t.Chdir(root)
-			drive := Testdrive{repositoryRoot: root, executor: executor, checkOnly: checkOnly}
+			installFakeBuildTool(t, root, "tsc")
+			installFakeBuildTool(t, root, "tsup")
+			drive := Testdrive{repositoryRoot: root, executor: executor, checkOnly: checkOnly, allowReviewedBuilds: true}
 			item := configurationResult{TestCommand: onboard.TestCommand{Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "tsc"}, {Directory: ".", Command: "tsup"}}}}
 			require.NoError(t, drive.runBuildPrerequisites(t.Context(), &bytes.Buffer{}, &item))
 			if checkOnly {
@@ -67,19 +69,20 @@ func TestFailedBuildStopsConfigurationBeforeTestsAndRetainsEvidence(t *testing.T
 	drive := preparedTestdrive(t)
 	root := drive.repositoryRoot
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
-	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"tsup && jest"}}`)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"tsc && jest"}}`)
 	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    steps:\n      - run: npm test\n")
 	executor := &buildExecutor{t: t, fail: true}
 	drive.executor = executor
+	installFakeBuildTool(t, root, "tsc")
 	err := drive.runAllConfigurations(t.Context(), &bytes.Buffer{})
-	require.ErrorContains(t, err, "build prerequisite tsup")
-	require.Equal(t, []string{"tsup"}, executor.commands, "no preflight, tracer installation or tests after setup fails")
+	require.ErrorContains(t, err, "build prerequisite tsc")
+	require.Equal(t, []string{"tsc"}, executor.commands, "no preflight, tracer installation or tests after setup fails")
 	data, err := os.ReadFile(validationPath(root))
 	require.NoError(t, err)
 	var result validationResult
 	require.NoError(t, json.Unmarshal(data, &result))
 	require.False(t, result.Success)
-	require.Equal(t, drive.tracerLabel, result.Tracer, "failed preparation must preserve the requested tracer label")
+	require.Equal(t, "not selected", result.Tracer, "failed preparation must not claim a tracer was selected")
 	require.Equal(t, "INCOMPLETE", result.Summary.Status)
 	require.Equal(t, "blocked", result.Configurations[0].Status)
 	require.Equal(t, "not exercised", result.Configurations[0].Compatibility.Status)
@@ -110,7 +113,7 @@ func TestBareTestCommandCannotCertifyRequiredBuild(t *testing.T) {
 	root := t.TempDir()
 	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest", Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "tsup"}}}}}
 	result := validationResult{Framework: "jest", Preflight: &jestPreflight{Command: "jest"}, Compatibility: verdict{Status: "compatible"}, Features: []featureResult{{Name: "retries", Status: "passed"}}}
-	setSingleConfigurationScope(root, &result, scope, result.Preflight.Command)
+	setSingleConfigurationScope(root, &result, scope, result.Preflight.Command, nil)
 	require.Equal(t, "not exercised", result.Configurations[0].Status)
 	prepareValidationResult(root, &result)
 	require.False(t, result.Success)
@@ -129,6 +132,7 @@ func TestPackageBuildUsesItsLocalCompilerAndEnvironment(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(compiler), 0755))
 	requireWriteFile(t, compiler, "")
 	executor := &buildExecutor{t: t}
+	installFakeBuildTool(t, root, "tsc")
 	drive := Testdrive{repositoryRoot: root, executor: executor}
 	item := configurationResult{TestCommand: onboard.TestCommand{Environment: map[string]string{"NODE_OPTIONS": "--max-old-space-size=1024"}, Prerequisites: []onboard.BuildCommand{{Directory: "app", Command: "tsc", Environment: map[string]string{"NODE_OPTIONS": "--max-old-space-size=2048"}}}}}
 	require.NoError(t, drive.runBuildPrerequisites(t.Context(), &bytes.Buffer{}, &item))
@@ -147,6 +151,7 @@ func TestBuildRebasesCheckoutAndPreservesEmptyNodeOptions(t *testing.T) {
 	t.Setenv("GITHUB_WORKSPACE", "/customer/checkout")
 	t.Setenv("NODE_OPTIONS", "--conditions=development")
 	executor := &buildExecutor{t: t}
+	installFakeBuildTool(t, root, "tsc")
 	drive := Testdrive{repositoryRoot: root, executor: executor}
 	item := configurationResult{TestCommand: onboard.TestCommand{Environment: map[string]string{"NODE_OPTIONS": ""}, Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "tsc"}}}}
 	require.NoError(t, drive.runBuildPrerequisites(t.Context(), &bytes.Buffer{}, &item))
@@ -160,13 +165,17 @@ func TestPatchTargetsUseBuildWorkingDirectory(t *testing.T) {
 	t.Chdir(root)
 	packageDir := filepath.Join(root, "packages", "app")
 	require.NoError(t, os.MkdirAll(packageDir, 0700))
-	requireWriteFile(t, filepath.Join(packageDir, "jest.config.js"), "package config")
-	requireWriteFile(t, filepath.Join(root, "jest.config.js"), "root config")
+	requireWriteFile(t, filepath.Join(packageDir, "jest.config.js"), "src src\nsrc")
+	requireWriteFile(t, filepath.Join(root, "jest.config.js"), "src root")
 	executor := &buildExecutor{t: t}
 	drive := Testdrive{repositoryRoot: root, executor: executor}
 	item := configurationResult{TestCommand: onboard.TestCommand{Prerequisites: []onboard.BuildCommand{{Directory: "packages/app", Command: "sed -i~ s/src/dist/ jest.config.js", Kind: "patch"}}}}
 	require.NoError(t, drive.runBuildPrerequisites(t.Context(), &bytes.Buffer{}, &item))
-	canonical, err := filepath.EvalSymlinks(packageDir)
+	data, err := os.ReadFile(filepath.Join(packageDir, "jest.config.js"))
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(canonical, "jest.config.js"), executor.arguments[0][len(executor.arguments[0])-1])
+	require.Equal(t, "dist src\ndist", string(data))
+	data, err = os.ReadFile(filepath.Join(root, "jest.config.js"))
+	require.NoError(t, err)
+	require.Equal(t, "src root", string(data))
+	require.Empty(t, executor.commands, "literal patches run in Go on every platform")
 }

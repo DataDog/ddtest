@@ -95,7 +95,7 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 		return err
 	}
 	defer func() { preflightErr = errors.Join(preflightErr, os.RemoveAll(directory)) }()
-	if err := markSessionStorage(directory, t.repositoryRoot); err != nil {
+	if err := markSessionStorage(directory, t.ownershipRoot()); err != nil {
 		return err
 	}
 	env["DD_CIVISIBILITY_ENABLED"] = "false"
@@ -127,13 +127,15 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 		return err
 	}
 	check.Node, check.Executable, check.Arguments = runtime.Node, runtime.Executable, runtime.Arguments
+	t.nodeVersion = func() string { return runtime.Node }
+	t.environmentInfo.Version, t.environmentInfo.Executable = runtime.Node, runtime.Executable
 	check.Version = config.Version
 	check.Projects = config.Configs
 	installer, ok := t.platform.(*platform.JavaScript)
 	if !ok {
 		return fmt.Errorf("jest preflight requires the JavaScript tracer selector")
 	}
-	selection, err := installer.ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args})
+	selection, err := installer.ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
 	result.Selection = &selection
 	if err != nil {
 		var metadata *platform.MetadataError
@@ -278,14 +280,14 @@ func checkConfigurationCIRuntimes(ctx context.Context, packageRoot, frameworkNam
 	return check
 }
 
-func verifyInstalledSelection(ctx context.Context, preload string, result *validationResult) error {
+func (t *Testdrive) verifyInstalledSelection(ctx context.Context, preload string, result *validationResult) error {
 	if result.Selection == nil {
 		return fmt.Errorf("tracer selection metadata is missing")
 	}
 	var selected platform.JSSelection
 	var err error
 	if result.Selection.Source == "project" {
-		selected, err = platform.NewJavaScript().ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: result.Selection.Requested})
+		selected, err = platform.NewJavaScript().ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: result.Selection.Requested, Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
 	} else {
 		data, readErr := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(preload)), "package.json"))
 		err = readErr

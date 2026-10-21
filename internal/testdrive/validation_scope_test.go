@@ -42,7 +42,7 @@ func completeValidationFixture(name string) validationResult {
 	return result
 }
 
-func TestFocusedValidationAcrossFrameworksKeepsUnvalidatedRepositoryScope(t *testing.T) {
+func TestFocusedJestValidationKeepsUnvalidatedRepositoryScope(t *testing.T) {
 	for _, name := range []string{"jest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -50,7 +50,7 @@ func TestFocusedValidationAcrossFrameworksKeepsUnvalidatedRepositoryScope(t *tes
 			var output bytes.Buffer
 			require.NoError(t, finishValidation(&output, root, result))
 			report := readValidationReport(t, root)
-			require.False(t, report.Success)
+			require.True(t, report.Success)
 			require.Equal(t, "INCOMPLETE", report.Summary.Status)
 			require.Equal(t, "PASSED", report.Summary.SelectedValidation.Status)
 			require.Equal(t, "PASSED", report.Summary.ExecutedValidation.Status)

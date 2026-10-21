@@ -18,38 +18,43 @@ import (
 
 type configurationResult struct {
 	onboard.TestCommand
-	PairedExecution    bool           `json:"paired_execution"`
-	ExecutionAttempted bool           `json:"execution_attempted"`
-	Status             string         `json:"status"`
-	Compatibility      verdict        `json:"compatibility"`
-	Preflight          *jestPreflight `json:"preflight,omitempty"`
-	Error              string         `json:"error,omitempty"`
-	Preparation        []buildResult  `json:"preparation,omitempty"`
+	PairedExecution        bool           `json:"paired_execution"`
+	ExecutionAttempted     bool           `json:"execution_attempted"`
+	EnvironmentDifferences []string       `json:"environment_differences,omitempty"`
+	Status                 string         `json:"status"`
+	Compatibility          verdict        `json:"compatibility"`
+	Preflight              *jestPreflight `json:"preflight,omitempty"`
+	Error                  string         `json:"error,omitempty"`
+	Preparation            []buildResult  `json:"preparation,omitempty"`
 }
 
-func setSingleConfigurationScope(root string, result *validationResult, scope onboard.ValidationScope, executionCommand string) {
+func setSingleConfigurationScope(root string, result *validationResult, scope onboard.ValidationScope, executionCommand string, executionEnvironment map[string]string) {
 	result.Scope = &scope
 	selected := onboard.ValidationCommands(root, executionCommand, result.Framework)
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Run testdrive --all after required setup to validate every discovered configuration."}}
 		for _, command := range selected {
-			// A tracer-only CI declaration normalizes to an explicit empty
-			// NODE_OPTIONS. Compare the actual local Node options as well,
-			// without treating inherited nonempty flags as that empty value.
-			actual := maps.Clone(command.Environment)
-			if required, ok := entry.Environment["NODE_OPTIONS"]; ok {
-				value, explicit := actual["NODE_OPTIONS"]
-				if !explicit {
-					value = os.Getenv("NODE_OPTIONS")
-				}
-				if stripDatadogNodeOptions(value) == required {
-					if actual == nil {
-						actual = map[string]string{}
+			if sameConfiguration(command, entry) && len(entry.UnvalidatedSetup) == 0 {
+				for key, required := range entry.Environment {
+					actual, explicit := executionEnvironment[key]
+					if !explicit {
+						actual, explicit = command.Environment[key]
 					}
-					actual["NODE_OPTIONS"] = required
+					if !explicit {
+						actual = os.Getenv(key)
+					}
+					if key == "NODE_OPTIONS" {
+						actual = stripDatadogNodeOptions(actual)
+					}
+					if actual != required {
+						item.EnvironmentDifferences = append(item.EnvironmentDifferences, key)
+					}
 				}
-			}
-			if command.Command == entry.Command && command.Directory == entry.Directory && slices.EqualFunc(command.Prerequisites, entry.Prerequisites, onboard.EqualPreparation) && len(entry.UnvalidatedSetup) == 0 && maps.Equal(actual, entry.Environment) {
+				if len(item.EnvironmentDifferences) > 0 {
+					slices.Sort(item.EnvironmentDifferences)
+					item.Compatibility.Reason = "CI environment differs for: " + strings.Join(item.EnvironmentDifferences, ", ") + "; run --all to validate those values."
+					continue
+				}
 				item.Compatibility = result.Compatibility
 				item.Preflight = result.Preflight
 				item.Error = result.Error
@@ -62,18 +67,52 @@ func setSingleConfigurationScope(root string, result *validationResult, scope on
 	}
 }
 
+// The same current-evidence predicate is used by a child, a focused command,
+// and final publication. Scope completeness is applied separately.
+func validationPassed(result validationResult) bool {
+	return result.Error == "" && result.Compatibility.Status == "compatible" && hasValidationPair(result) && featureChecksPassed(result.Framework, result.Features) && result.ChecksPassed && result.Cleanup != nil && result.Cleanup.Status == "passed" && result.HTMLReportCurrent
+}
 func configurationStatus(result validationResult) string {
 	if result.CheckOnly {
 		return "not exercised"
 	}
-	if result.Error != "" || result.Compatibility.Status != "compatible" || !hasValidationPair(result) || !featureChecksPassed(result.Framework, result.Features) {
+	if !validationPassed(result) {
 		return "incomplete"
 	}
 	return "passed"
 }
+func sameConfiguration(a, b onboard.TestCommand) bool {
+	return a.Command == b.Command && a.Directory == b.Directory && slices.EqualFunc(a.Prerequisites, b.Prerequisites, onboard.EqualPreparation)
+}
+
+// Never guess between two CI variants with different environments.
+func matchingConfigurationEnvironment(root, framework, command string) map[string]string {
+	scope, err := onboard.DiscoverValidationScope(root, framework)
+	if err != nil {
+		return nil
+	}
+	var matched bool
+	var result map[string]string
+	for _, selected := range onboard.ValidationCommands(root, command, framework) {
+		for _, entry := range scope.Commands {
+			if !sameConfiguration(selected, entry) || len(entry.UnvalidatedSetup) > 0 {
+				continue
+			}
+			if matched && !maps.Equal(result, entry.Environment) {
+				return nil
+			}
+			result = maps.Clone(entry.Environment)
+			matched = true
+		}
+	}
+	return result
+}
 
 func applyScopeVerdict(result *validationResult) {
 	if result.Scope == nil {
+		return
+	}
+	if result.FocusedCommand {
 		return
 	}
 	if len(result.Scope.Unresolved) > 0 {
@@ -100,7 +139,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		result := validationResult{Session: planSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Scope: &scope, Error: err.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Discovery failed; no test commands were executed."}}
 		return errors.Join(err, finishValidation(output, t.repositoryRoot, result))
 	}
-	result := validationResult{Session: planSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Scope: &scope,
+	result := validationResult{Session: planSession().ID(), Framework: t.framework.Name(), Tracer: "not selected", CheckOnly: t.checkOnly, Scope: &scope,
 		Compatibility: verdict{Status: "compatible", Reason: "Every discovered configuration passed its own paired comparison; configurations were not compared against each other."}, Cleanup: &verdict{Status: "passed", Reason: "Temporary sessions removed for all configurations."}}
 	var models []reportModel
 	var runErrors []error
@@ -121,6 +160,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		}
 		if parseErr != nil {
 			item.Error = reportText(parseErr.Error())
+			item.Status = "blocked"
 			result.Compatibility = verdict{Status: "inconclusive", Reason: "At least one discovered configuration did not execute; see configurations."}
 			runErrors = append(runErrors, fmt.Errorf("%s: %w", entry.Command, parseErr))
 			result.Configurations = append(result.Configurations, item)
@@ -130,16 +170,20 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 
 		label := fmt.Sprintf("configuration %d: %s", len(result.Configurations)+1, entry.Command)
 		for _, key := range slices.Sorted(maps.Keys(entry.Environment)) {
-			label += " (" + key + "=" + entry.Environment[key] + ")"
+			if entry.Environment[key] == "" {
+				label += " (" + key + " cleared)"
+			} else {
+				label += " (" + key + "=" + entry.Environment[key] + ")"
+			}
 		}
 		child := *t
 		child.workflowRoot = t.repositoryRoot
 		child.allConfigurations = false
 		child.session = planSession()
-		if result.Selection != nil && result.Selection.Version != "" {
+		if result.Selection != nil && result.Selection.Source == "fallback" && result.Selection.Version != "" {
 			child.tracerVersion = result.Selection.Version
 		}
-		child.command = t.configurationExecutable(words[0])
+		child.command = words[0]
 		child.args = words[1:]
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
@@ -147,18 +191,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		before := len(models)
 		execution, childErr := child.runPreparedConfiguration(ctx, output, &item)
 		prepareValidationResult(t.repositoryRoot, &execution)
-		item.Status = configurationStatus(execution)
-		item.PairedExecution = hasValidationPair(execution)
-		item.ExecutionAttempted = hasValidationExecution(execution)
-		if childErr != nil && execution.Preflight == nil {
-			item.Status = "blocked"
-		}
-		item.Compatibility = execution.Compatibility
-		item.Preflight = execution.Preflight
-		item.Error = execution.Error
-		if childErr != nil && item.Error == "" {
-			item.Error = reportText(childErr.Error())
-		}
+		completeConfigurationItem(&item, execution, childErr)
 		result.Configurations = append(result.Configurations, item)
 		if childErr != nil {
 			runErrors = append(runErrors, fmt.Errorf("%s: %w", entry.Command, childErr))
@@ -194,10 +227,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			feature.Project = strings.TrimSuffix(label+" / "+feature.Project, " / ")
 			result.Features = append(result.Features, feature)
 		}
-		if len(models) > before+1 {
-			models[before] = models[len(models)-1]
-			models = models[:before+1]
-		}
+
 		for i := before; i < len(models); i++ {
 			labelConfigurationModel(&models[i], label)
 		}
@@ -208,6 +238,12 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 	if len(models) > 0 {
 		if err := writeConfigurationHTML(t.repositoryRoot, models); err != nil {
 			runErrors = append(runErrors, err)
+			for i := range result.Configurations {
+				if result.Configurations[i].Status == "passed" {
+					result.Configurations[i].Status = "incomplete"
+					result.Configurations[i].Error = reportText(err.Error())
+				}
+			}
 		} else {
 			result.HTMLReportCurrent = true
 		}
@@ -223,7 +259,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 // without requiring the caller to add node_modules/.bin to PATH.
 func (t *Testdrive) configurationExecutable(command string) string {
 	if strings.ContainsAny(command, `/\`) ||
-		slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx"}, command) {
+		slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx", "bun", "corepack"}, command) {
 		return command
 	}
 	for directory := t.repositoryRoot; ; directory = filepath.Dir(directory) {
@@ -239,6 +275,10 @@ func (t *Testdrive) configurationExecutable(command string) string {
 }
 
 func labelConfigurationModel(model *reportModel, command string) {
+	model.Configuration = command
+	if model.EvidenceName != "" {
+		command += " / " + model.EvidenceName
+	}
 	for i := range model.Tests {
 		model.Tests[i].Label = command + " › " + model.Tests[i].Label
 	}
@@ -251,11 +291,13 @@ func labelConfigurationModel(model *reportModel, command string) {
 }
 
 func writeConfigurationHTML(root string, models []reportModel) error {
-	model := reportModel{Aggregated: true, NoTestEvents: true, Summary: fmt.Sprintf("%d configurations reported. See validation JSON for completeness, compatibility and feature verdicts.", len(models)), Artifacts: []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}}
+	model := reportModel{Aggregated: true, NoTestEvents: true, Summary: fmt.Sprintf("%d instrumented reporting snapshots retained, including repeated pairs. Aggregate execution counts include each primary reporting run once. See validation JSON for configuration completeness, compatibility and features.", len(models)), Artifacts: []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}}
 	var counts []*executionCounts
 	var commands, outputs, failures []string
 	for index, part := range models {
-		counts = append(counts, part.ExecutionCounts)
+		if part.EvidenceRole == "" || part.EvidenceRole == roleReporting {
+			counts = append(counts, part.ExecutionCounts)
+		}
 		if index == 0 {
 			model.Runtime = reportRuntime{Framework: part.Runtime.Framework, Tracer: part.Runtime.Tracer}
 			model.CoverageLevel = part.CoverageLevel
@@ -263,7 +305,7 @@ func writeConfigurationHTML(root string, models []reportModel) error {
 			model.CoverageLevel = ""
 		}
 		model.NoTestEvents = model.NoTestEvents && part.NoTestEvents
-		label := fmt.Sprintf("Configuration %d: %s", index+1, part.Runtime.Command)
+		label := fmt.Sprintf("Reporting snapshot %d: %s / %s / %s", index+1, part.Configuration, part.EvidenceName, part.Runtime.Command)
 		commands = append(commands, label)
 		outputs = append(outputs, label+"\n"+part.Runtime.Output)
 		if part.Runtime.Error != "" {
@@ -285,7 +327,7 @@ func writeConfigurationHTML(root string, models []reportModel) error {
 	model.Runtime.Output = strings.Join(outputs, "\n\n")
 	model.Runtime.Error = strings.Join(failures, "\n")
 	model.ExecutionCounts = combineExecutionCounts(counts)
-	model.Facts = []reportFact{{Label: "Configurations reported", Value: fmt.Sprint(len(models))}, {Label: "Reported test executions", Value: fmt.Sprint(len(model.Tests)), Tooltip: sourceIdentityScope}}
+	model.Facts = []reportFact{{Label: "Reporting snapshots retained", Value: fmt.Sprint(len(models))}, {Label: "Reported test executions", Value: fmt.Sprint(len(model.Tests)), Tooltip: sourceIdentityScope}}
 	if model.ExecutionCounts != nil {
 		model.Facts[1].Value = fmt.Sprint(model.ExecutionCounts.TestExecutions)
 		identityFact := reportFact{Label: "Source-test identities", Value: "Unavailable", Tooltip: model.ExecutionCounts.Reason}
@@ -310,4 +352,20 @@ func offsetSuiteTests(suites []reportSuite, offset int) []reportSuite {
 		}
 	}
 	return suites
+}
+
+func completeConfigurationItem(item *configurationResult, execution validationResult, childErr error) {
+	item.PairedExecution = hasValidationPair(execution)
+	item.ExecutionAttempted = hasValidationExecution(execution)
+	item.Compatibility = execution.Compatibility
+	item.Preflight = execution.Preflight
+	item.Error = execution.Error
+	if childErr != nil && item.Error == "" {
+		item.Error = reportText(childErr.Error())
+	}
+	execution.Error = item.Error
+	item.Status = configurationStatus(execution)
+	if childErr != nil && execution.Preflight == nil {
+		item.Status = "blocked"
+	}
 }

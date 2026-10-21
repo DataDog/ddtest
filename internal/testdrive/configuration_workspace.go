@@ -8,9 +8,13 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 )
 
@@ -19,16 +23,8 @@ type configurationExecutor struct {
 	environment map[string]string
 }
 
-type separateOutputExecutor interface {
-	Output(context.Context, string, []string, map[string]string) ([]byte, []byte, error)
-}
-
 func (e configurationExecutor) CombinedOutputInDirectory(ctx context.Context, directory, name string, args []string, env map[string]string) ([]byte, error) {
-	merged := maps.Clone(e.environment)
-	if merged == nil {
-		merged = map[string]string{}
-	}
-	maps.Copy(merged, env)
+	merged := mergeConfigurationEnvironment(e.environment, env)
 	executor, ok := e.commandExecutor.(directoryExecutor)
 	if !ok {
 		return nil, fmt.Errorf("command executor cannot set setup working directory")
@@ -37,56 +33,53 @@ func (e configurationExecutor) CombinedOutputInDirectory(ctx context.Context, di
 }
 
 func (e configurationExecutor) CombinedOutput(ctx context.Context, name string, args []string, env map[string]string) ([]byte, error) {
-	merged := map[string]string{}
-	maps.Copy(merged, e.environment)
-	maps.Copy(merged, env)
+	merged := mergeConfigurationEnvironment(e.environment, env)
 	return e.commandExecutor.CombinedOutput(ctx, name, args, merged)
-}
-
-func (e configurationExecutor) Output(ctx context.Context, name string, args []string, env map[string]string) ([]byte, []byte, error) {
-	merged := map[string]string{}
-	maps.Copy(merged, e.environment)
-	maps.Copy(merged, env)
-	executor, ok := e.commandExecutor.(separateOutputExecutor)
-	if !ok {
-		return nil, nil, fmt.Errorf("command executor cannot capture stdout and stderr separately")
-	}
-	return executor.Output(ctx, name, args, merged)
 }
 
 // Commands still use the existing process executor. The temporary copy gives
 // every variant independent manifests, dependencies, test files and build output.
 func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writer, item *configurationResult) (result validationResult, runErr error) {
-	t.configurationEnvironment = item.Environment
+	runner := *t
+	t = &runner
+	t.configurationEnvironment = maps.Clone(item.Environment)
 	if item.Directory == "" {
 		item.Directory = "."
 	}
-	if item.Directory == "." && (len(item.Prerequisites) == 0 || t.checkOnly) {
-		if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
+	original, workspace := t.repositoryRoot, t.repositoryRoot
+	checkout := t.checkoutRoot()
+	if !t.checkOnly && len(item.Prerequisites) > 0 {
+		parent, err := os.MkdirTemp("", "ddtest-configuration-")
+		if err != nil {
 			return result, err
 		}
-		t.executor = configurationExecutor{t.executor, item.Environment}
-		t.refreshConfigurationTracer(ctx)
-		return t.run(ctx, output)
-	}
-	original := t.repositoryRoot
-	workspace, err := os.MkdirTemp("", "ddtest-configuration-")
-	if err != nil {
-		return result, err
-	}
-	defer func() {
-		err := os.RemoveAll(workspace)
-		if err != nil {
-			result.Cleanup = &verdict{Status: "failed", Reason: "Could not remove configuration workspace: " + workspace}
+		defer func() {
+			err := os.RemoveAll(parent)
+			if err != nil {
+				result.Cleanup = &verdict{Status: "failed", Reason: "Could not remove configuration workspace: " + parent}
+			}
+			runErr = errors.Join(runErr, err)
+		}()
+		if err := markSessionStorage(parent, t.ownershipRoot()); err != nil {
+			return result, err
 		}
-		runErr = errors.Join(runErr, err)
-	}()
-	workspace, err = filepath.EvalSymlinks(workspace)
-	if err != nil {
-		return result, err
-	}
-	if err := copyConfiguration(ctx, original, workspace); err != nil {
-		return result, err
+		parent, err = filepath.EvalSymlinks(parent)
+		if err != nil {
+			return result, err
+		}
+		workspace = filepath.Join(parent, "checkout")
+		size, err := configurationCopyEstimate(ctx, original)
+		if err != nil {
+			return result, err
+		}
+		if err := checkConfigurationSpace(parent, size); err != nil {
+			return result, err
+		}
+		_, _ = fmt.Fprintf(output, "Isolating configuration: up to %d bytes; copy-on-write when available.\n", size)
+		if err := copyConfiguration(ctx, original, workspace); err != nil {
+			return result, err
+		}
+		checkout = workspace
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -96,32 +89,38 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		return result, err
 	}
 	defer func() { runErr = errors.Join(runErr, os.Chdir(cwd)) }()
-	if filepath.IsAbs(t.command) {
-		relative, err := filepath.Rel(original, t.command)
-		if err == nil && filepath.IsLocal(relative) {
+	if filepath.IsAbs(t.command) && workspace != original {
+		if relative, err := filepath.Rel(original, t.command); err == nil && filepath.IsLocal(relative) {
 			t.command = filepath.Join(workspace, relative)
 		}
 	}
-	t.repositoryRoot = workspace
-	t.configurationRoot = workspace
+	t.repositoryRoot, t.configurationRoot = workspace, checkout
+	t.configurationEnvironment = isolatedCIEnvironment(item.Environment, checkout)
+	t.executor = configurationExecutor{t.executor, t.configurationEnvironment}
 	if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration preparation failed; tests were not started."}
 		return result, err
 	}
-	if item.Directory != "." {
-		directory, err := localSetupDirectory(workspace, item.Directory)
-		if err != nil {
-			return result, err
-		}
-		if err := os.Chdir(directory); err != nil {
-			return result, err
-		}
-		t.repositoryRoot = directory
-		t.command = t.configurationExecutable(filepath.Base(t.command))
+	directory, err := localSetupDirectory(workspace, item.Directory)
+	if err != nil {
+		return result, err
 	}
-	t.executor = configurationExecutor{t.executor, isolatedCIEnvironment(item.Environment, workspace)}
+	if err := os.Chdir(directory); err != nil {
+		return result, err
+	}
+	t.repositoryRoot = directory
+	// Resolve bare framework tools from this package, but never replace an explicit runtime.
+	t.command = t.configurationExecutable(t.command)
+	if t.framework != nil {
+		if err := validateConfigurationFiles(t.checkoutRoot(), t.repositoryRoot, t.args, frameworkFeaturePolicies[t.framework.Name()].ConfigurationFiles); err != nil {
+			return result, err
+		}
+	}
 	t.refreshConfigurationTracer(ctx)
-	return t.run(ctx, output)
+	if t.preflight != nil {
+		t.preflight = t.checkJestPreflight
+	}
+	return t.runPreparedChecksOrTests(ctx, output)
 }
 
 // Tracers resolve repository-relative source and skip paths against the CI
@@ -144,12 +143,10 @@ func isolatedCIEnvironment(overrides map[string]string, workspace string) map[st
 	return result
 }
 
-func copyConfiguration(ctx context.Context, source, target string) error {
-	canonical, err := filepath.EvalSymlinks(source)
-	if err != nil {
-		return err
-	}
-	source = canonical
+// Walk without following links. Ignored output/cache trees are excluded;
+// installed dependencies and Git metadata are retained for builds and identities.
+func walkConfiguration(ctx context.Context, source string, visit func(string, string, fs.DirEntry) error) error {
+	ignored := configurationIgnoredPaths(ctx, source)
 	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -161,9 +158,67 @@ func copyConfiguration(ctx context.Context, source, target string) error {
 		if err != nil {
 			return err
 		}
-		if relative == ".testoptimization" {
-			return filepath.SkipDir
+		if relative == ".testoptimization" || ignored[relative] {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
+		return visit(path, relative, entry)
+	})
+}
+func configurationIgnoredPaths(ctx context.Context, source string) map[string]bool {
+	ignored := map[string]bool{}
+	// Git may be absent in a disposable fixture; then preserve all source inputs.
+	command := exec.CommandContext(ctx, "git", "-C", source, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z")
+	data, err := command.Output()
+	if err != nil {
+		return ignored
+	}
+	for _, path := range strings.Split(string(data), "\x00") {
+		path = filepath.FromSlash(strings.TrimSuffix(path, "/"))
+		if path == "" || !filepath.IsLocal(path) {
+			continue
+		}
+		parts := strings.Split(path, string(filepath.Separator))
+		if slices.Contains(parts, "node_modules") || slices.Contains(parts, ".git") || slices.Contains(parts, ".yarn") || strings.HasPrefix(filepath.Base(path), ".pnp.") || strings.HasPrefix(filepath.Base(path), ".env") {
+			continue
+		}
+		ignored[path] = true
+	}
+	return ignored
+}
+func configurationCopyEstimate(ctx context.Context, source string) (int64, error) {
+	var size int64
+	err := walkConfiguration(ctx, source, func(_, _ string, entry fs.DirEntry) error {
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size, err
+}
+func checkConfigurationSpace(directory string, needed int64) error {
+	free, err := configurationFreeSpace(directory)
+	if err != nil {
+		return fmt.Errorf("check configuration disk space: %w", err)
+	}
+	if needed < 0 || uint64(needed) > free {
+		return fmt.Errorf("insufficient disk space for configuration copy: need up to %d bytes, available %d bytes", needed, free)
+	}
+	return nil
+}
+func copyConfiguration(ctx context.Context, source, target string) error {
+	canonical, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return err
+	}
+	source = canonical
+	return walkConfiguration(ctx, source, func(path, relative string, entry fs.DirEntry) error {
 		destination := filepath.Join(target, relative)
 		info, err := entry.Info()
 		if err != nil {
@@ -177,35 +232,49 @@ func copyConfiguration(ctx context.Context, source, target string) error {
 			if err != nil {
 				return err
 			}
-			resolved, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				return fmt.Errorf("cannot isolate symlink %s: %w", relative, err)
+			absolute := link
+			if !filepath.IsAbs(absolute) {
+				absolute = filepath.Join(filepath.Dir(path), link)
 			}
-			local, err := filepath.Rel(source, resolved)
-			if err != nil || !filepath.IsLocal(local) {
-				return fmt.Errorf("configuration symlink escapes repository: %s", relative)
-			}
-			if filepath.IsAbs(link) {
-				link = filepath.Join(target, local)
+			local, relErr := filepath.Rel(source, absolute)
+			if relErr == nil && filepath.IsLocal(local) {
+				if filepath.IsAbs(link) {
+					link = filepath.Join(target, local)
+				}
+			} else {
+				link = absolute
 			}
 			return os.Symlink(link, destination)
 		}
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("cannot isolate special file %s", relative)
 		}
-		// Git objects can be read-only; the copy must never share writable inodes.
-		in, err := os.Open(path)
+		return copyConfigurationFile(path, destination, info)
+	})
+}
+func copyConfigurationFile(source, target string, info fs.FileInfo) error {
+	cloned, err := cloneConfigurationFile(source, target)
+	if err != nil {
+		return err
+	}
+	if !cloned {
+		in, err := os.Open(source)
 		if err != nil {
 			return err
 		}
-		defer func() { _ = in.Close() }()
-		out, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm()|0600)
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm()|0600)
 		if err != nil {
-			return err
+			return errors.Join(err, in.Close())
 		}
 		_, copyErr := io.Copy(out, in)
-		return errors.Join(copyErr, out.Close())
-	})
+		if err := errors.Join(copyErr, in.Close(), out.Close()); err != nil {
+			return err
+		}
+	}
+	if err := os.Chmod(target, info.Mode().Perm()|0600); err != nil {
+		return err
+	}
+	return os.Chtimes(target, info.ModTime(), info.ModTime())
 }
 
 // A package command executes in its package directory while telemetry source
@@ -214,8 +283,13 @@ func (t *Testdrive) checkoutRoot() string {
 	if t.configurationRoot != "" {
 		return t.configurationRoot
 	}
-	if t.gitRoot != "" {
-		return t.gitRoot
+	for root := t.repositoryRoot; ; root = filepath.Dir(root) {
+		if _, err := os.Lstat(filepath.Join(root, ".git")); err == nil {
+			return root
+		}
+		if root == filepath.Dir(root) {
+			break
+		}
 	}
 	return t.repositoryRoot
 }
@@ -224,6 +298,37 @@ func (t *Testdrive) refreshConfigurationTracer(ctx context.Context) {
 	if installer, ok := t.platform.(*platform.JavaScript); ok {
 		// Missing project dependencies select the normal temporary fallback.
 		// Never retain a path resolved in another package or outside this copy.
-		t.projectTracer, _ = installer.DetectTracer(ctx, platform.TracerOptions{Command: t.command, Args: t.args})
+		t.projectTracer, _ = installer.DetectTracer(ctx, platform.TracerOptions{Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
 	}
+}
+
+func (t *Testdrive) runPreparedChecksOrTests(ctx context.Context, output io.Writer) (result validationResult, runErr error) {
+	if !t.checkOnly {
+		return t.run(ctx, output)
+	}
+	result = validationResult{CheckOnly: true, Framework: t.framework.Name(), Tracer: t.tracerLabel, Compatibility: verdict{Status: onboard.StatusNotExercised, Reason: "Configuration checks only."}}
+	root := t.repositoryRoot
+	if t.workflowRoot != "" {
+		root = t.workflowRoot
+	}
+	check := checkConfigurationCIRuntimes(ctx, root, t.framework.Name())
+	if t.workflowRoot != "" {
+		check = onboard.CheckCIRuntimes(ctx, root, t.framework.Name())
+	}
+	result.CIRuntime = &check
+	if t.preflight != nil {
+		runErr = t.preflight(ctx, output, &result)
+	}
+	if runErr != nil {
+		result.Error = runErr.Error()
+	}
+	return result, runErr
+}
+
+func mergeConfigurationEnvironment(layers ...map[string]string) map[string]string {
+	result := map[string]string{}
+	for _, layer := range layers {
+		maps.Copy(result, layer)
+	}
+	return result
 }

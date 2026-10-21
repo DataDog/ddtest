@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type directoryExecutor interface {
@@ -44,4 +45,41 @@ func localSetupDirectory(root, relative string) (string, error) {
 		return "", fmt.Errorf("setup working directory is not a directory")
 	}
 	return directory, nil
+}
+
+// Preserve unrelated external and dangling links in a snapshot, but never load a
+// declared configuration through a link that escapes its checkout.
+func validateConfigurationFiles(root, directory string, args, names []string) error {
+	paths := []string{}
+	for _, name := range names {
+		if _, err := os.Lstat(filepath.Join(directory, name)); err == nil {
+			paths = append(paths, name)
+		}
+	}
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "--config=") {
+			paths = append(paths, strings.TrimPrefix(arg, "--config="))
+		}
+		if arg == "--config" && i+1 < len(args) {
+			paths = append(paths, args[i+1])
+		}
+	}
+	for _, path := range paths {
+		if strings.HasPrefix(strings.TrimSpace(path), "{") {
+			continue
+		}
+		full := path
+		if !filepath.IsAbs(full) {
+			full = filepath.Join(directory, full)
+		}
+		resolved, err := filepath.EvalSymlinks(full)
+		if err != nil {
+			return fmt.Errorf("configuration file unavailable; review %s: %w", path, err)
+		}
+		relative, err := filepath.Rel(canonicalWorkflowRoot(root), resolved)
+		if err != nil || !filepath.IsLocal(relative) {
+			return fmt.Errorf("configuration file resolves outside checkout; review %s", path)
+		}
+	}
+	return nil
 }

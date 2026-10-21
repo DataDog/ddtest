@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConfigurationCopyIsIndependentAndRejectsEscapingLinks(t *testing.T) {
+func TestConfigurationCopyIsIndependentAndPreservesLinks(t *testing.T) {
 	source, target := t.TempDir(), t.TempDir()
 	requireWriteFile(t, filepath.Join(source, "package.json"), "original")
 	require.NoError(t, os.MkdirAll(filepath.Join(source, "node_modules/pkg"), 0755))
@@ -31,7 +31,11 @@ func TestConfigurationCopyIsIndependentAndRejectsEscapingLinks(t *testing.T) {
 	}
 	require.NoFileExists(t, filepath.Join(target, ".testoptimization/testdrive.json"))
 	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(source, "outside")))
-	require.ErrorContains(t, copyConfiguration(t.Context(), source, t.TempDir()), "escapes repository")
+	outsideCopy := t.TempDir()
+	require.NoError(t, copyConfiguration(t.Context(), source, outsideCopy))
+	link, err := os.Readlink(filepath.Join(outsideCopy, "outside"))
+	require.NoError(t, err)
+	require.NotEmpty(t, link)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.ErrorIs(t, copyConfiguration(ctx, source, t.TempDir()), context.Canceled)

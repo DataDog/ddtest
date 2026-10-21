@@ -30,13 +30,15 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 	if run.commandError != nil {
 		runtime.Error = run.commandError.Error()
 	}
-	model := buildReport(t.repositoryRoot, run.Facts, run.ExitCode != 0, runtime)
+	model := buildReport(t.checkoutRoot(), run.Facts, run.ExitCode != 0, runtime)
 	model.ExecutionCounts = nativeExecutionCounts(run)
+	model.EvidenceRole, model.EvidenceName = run.Role, run.Name
 	if supportsValidationFramework(t.framework.Name()) {
 		writeRunFindings(output, run.Facts, false, model.Cards...)
 	}
 	if t.reportModels != nil {
 		*t.reportModels = append(*t.reportModels, model)
+		result.HTMLReportCurrent = true // The parent publishes all retained models, and propagates publication failure.
 		return nil
 	}
 	model.Artifacts = []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}

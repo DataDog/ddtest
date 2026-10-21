@@ -45,6 +45,8 @@ type localIntake interface {
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
 	configurationEnvironment map[string]string
+	allowReviewedBuilds      bool
+	commandTimeout           time.Duration
 	allConfigurations        bool
 	reportModels             *[]reportModel
 	workflowRoot             string
@@ -81,9 +83,11 @@ type Testdrive struct {
 
 // Prepare detects the repository and probes the selected test environment and tracer.
 type PrepareOptions struct {
-	TracerVersion string
-	CheckOnly     bool
-	All           bool
+	AllowReviewedBuilds bool
+	Timeout             time.Duration
+	TracerVersion       string
+	CheckOnly           bool
+	All                 bool
 }
 
 func checkTemporaryStorage() error {
@@ -95,6 +99,13 @@ func checkTemporaryStorage() error {
 }
 
 func Prepare(configuration PrepareOptions) (*Testdrive, error) {
+	timeout := configuration.Timeout
+	if timeout < 0 {
+		return nil, fmt.Errorf("--timeout must be positive")
+	}
+	if timeout == 0 {
+		timeout = 10 * time.Minute
+	}
 	version := configuration.TracerVersion
 	if version == "" {
 		version = "latest"
@@ -128,7 +139,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if all && strings.TrimSpace(settings.GetCommand()) != "" {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
-	if all && runner.Name() != "jest" {
+	if all && !frameworkFeaturePolicies[runner.Name()].Configurations {
 		return nil, fmt.Errorf("--all currently validates Jest only")
 	}
 
@@ -144,7 +155,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			return nil, fmt.Errorf("resolve Jest repository root: %w", err)
 		}
 	}
-	if runner.Name() == "jest" && !all {
+	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
 		var selected string
 		if configurationOnly {
 			var entry onboard.TestCommand
@@ -204,7 +215,11 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	case "ruby":
 		environment = rubyEnvironmentInfo(ctx)
 	}
-	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args}
+	var configurationEnvironment map[string]string
+	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
+		configurationEnvironment = matchingConfigurationEnvironment(repositoryRoot, runner.Name(), shellquote.Join(append([]string{command}, args...)...))
+	}
+	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args, Environment: configurationEnvironment}
 	if language == "python" && environment.Executable != "" {
 		options.Command, options.Args = environment.Executable, nil
 	}
@@ -232,6 +247,15 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
 	drive.allConfigurations = all
+	drive.allowReviewedBuilds = configuration.AllowReviewedBuilds
+	drive.commandTimeout = timeout
+	if supportsValidationFramework(runner.Name()) {
+		drive.executor = &ext.DefaultCommandExecutor{Timeout: timeout}
+	}
+	drive.configurationEnvironment = configurationEnvironment
+	if len(configurationEnvironment) > 0 {
+		drive.executor = configurationExecutor{drive.executor, configurationEnvironment}
+	}
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		drive.preflight = drive.checkJestPreflight
 	}
@@ -257,13 +281,26 @@ func (t *Testdrive) Preview(output io.Writer) {
 		return
 	}
 	if t.allConfigurations {
-		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, "jest")
+		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		if err != nil {
 			_, _ = fmt.Fprintln(output, err)
 		} else {
 			onboard.WriteValidationScope(output, scope)
 		}
-		_, _ = fmt.Fprintln(output, "Every discovered configuration shares the final JSON/HTML reports. Known build prerequisites run in isolated copies; unresolved CI setup stays unvalidated.")
+		_, _ = fmt.Fprintln(output, "Every discovered configuration shares the final JSON/HTML reports. Preparation runs customer code. Package lifecycle scripts and dependency changes can use the network; review-tagged preparation requires --allow-reviewed-builds. Unresolved CI setup stays unvalidated.")
+		if !t.checkOnly {
+			needsCopy := slices.ContainsFunc(scope.Commands, func(c onboard.TestCommand) bool { return len(c.Prerequisites) > 0 })
+			if needsCopy {
+				if size, err := configurationCopyEstimate(context.Background(), t.repositoryRoot); err == nil {
+					_, _ = fmt.Fprintf(output, "Estimated copy per prepared configuration: up to %d bytes; ignored outputs excluded, dependencies and Git metadata retained. Copy-on-write when available.\n", size)
+				} else {
+					_, _ = fmt.Fprintf(output, "Copy estimate unavailable: %s\n", err)
+				}
+			}
+		}
+		_, _ = fmt.Fprintf(output, "Each test or preparation subprocess has a %s timeout (--timeout).\n", t.commandTimeout)
+		return
+
 	}
 
 	if t.checkOnly {
@@ -337,7 +374,13 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 }
 
-func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
+func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
+	defer func() {
+		if runErr != nil && supportsValidationFramework(t.framework.Name()) {
+			runErr = validationFailure{runErr}
+		}
+	}()
+
 	lock, err := acquireWorkflowLock(t.repositoryRoot)
 	if err != nil {
 		return err
@@ -360,13 +403,14 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 
 	result, runErr := t.run(ctx, output)
 	result.Framework = t.framework.Name()
-	result.FocusedCommand = t.framework.Name() == "jest" && strings.TrimSpace(settings.GetCommand()) != ""
-	if t.framework.Name() == "jest" {
-		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, "jest")
+	result.FocusedCommand = frameworkFeaturePolicies[t.framework.Name()].Configurations && strings.TrimSpace(settings.GetCommand()) != ""
+	if frameworkFeaturePolicies[t.framework.Name()].Configurations {
+		prepareValidationResult(t.repositoryRoot, &result)
+		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		if err != nil {
 			runErr = errors.Join(runErr, err)
 		} else {
-			setSingleConfigurationScope(t.repositoryRoot, &result, scope, shellquote.Join(append([]string{t.command}, t.args...)...))
+			setSingleConfigurationScope(t.repositoryRoot, &result, scope, shellquote.Join(append([]string{t.command}, t.args...)...), t.configurationEnvironment)
 		}
 	}
 	if runErr != nil {
@@ -395,7 +439,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		session.directory = filepath.Join(t.repositoryRoot, ".testoptimization", "testdrive", session.ID())
 		session.persistent = true
 	}
-	session.root = canonicalWorkflowRoot(t.repositoryRoot)
+	session.root = canonicalWorkflowRoot(t.ownershipRoot())
 	if err := session.create(); err != nil {
 		return result, err
 	}
@@ -446,6 +490,9 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			ciRoot = t.workflowRoot
 		}
 		check := checkConfigurationCIRuntimes(ctx, ciRoot, t.framework.Name())
+		if t.workflowRoot != "" {
+			check = onboard.CheckCIRuntimes(ctx, ciRoot, t.framework.Name())
+		}
 		result.CIRuntime = &check
 		if t.preflight != nil {
 			if err := t.preflight(ctx, output, &result); err != nil {
@@ -490,7 +537,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 				return result, err
 			}
 		}
-		options := platform.TracerOptions{Directory: directory, Version: version, Command: t.command, Args: t.args}
+		options := platform.TracerOptions{Directory: directory, Version: version, Command: t.command, Args: t.args, Environment: t.configurationEnvironment}
 		if t.language == "python" && t.environmentInfo.Executable != "" {
 			options.Command, options.Args = t.environmentInfo.Executable, nil
 		}
@@ -510,7 +557,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}
 	if supportsValidationFramework(t.framework.Name()) {
 		if result.Selection != nil {
-			if err := verifyInstalledSelection(ctx, installation.Path, &result); err != nil {
+			if err := t.verifyInstalledSelection(ctx, installation.Path, &result); err != nil {
 				return result, err
 			}
 			result.Preflight.Verdict = checkJestSupport(*result.Preflight, *result.Selection)
@@ -906,4 +953,16 @@ func (t *Testdrive) nodeOptions() string {
 		return value
 	}
 	return os.Getenv("NODE_OPTIONS")
+}
+
+// Validation has a stable CLI exit code; tool-specific codes remain in JSON.
+type validationFailure struct{ error }
+
+func (e validationFailure) Unwrap() error { return e.error }
+func (e validationFailure) ExitCode() int { return 1 }
+func (t *Testdrive) ownershipRoot() string {
+	if t.workflowRoot != "" {
+		return t.workflowRoot
+	}
+	return t.repositoryRoot
 }

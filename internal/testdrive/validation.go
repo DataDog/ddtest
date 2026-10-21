@@ -327,9 +327,6 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	if result.CheckOnly && result.ChecksPassed {
 		return nil
 	}
-	if result.Summary.SelectedValidation != nil && result.Summary.SelectedValidation.Status == "PASSED" {
-		return nil
-	}
 	if !result.Success {
 		return fmt.Errorf("validation is incomplete or found an unexpected difference; see %s", path)
 	}
@@ -425,7 +422,7 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	if result.Scope != nil {
 		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved) == 0
 		for _, command := range result.Scope.Commands {
-			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0 && len(command.Prerequisites) == 0
+			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0 && (!result.CheckOnly || len(command.Prerequisites) == 0 || len(result.Configurations) > 0)
 		}
 	}
 	if result.CISelection != nil {
@@ -466,6 +463,9 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 		result.LocalSuccess = false
 	}
 
+	if !result.CheckOnly && supportsValidationFramework(result.Framework) {
+		result.Success = validationPassed(*result)
+	}
 	applyScopeVerdict(result)
 
 }

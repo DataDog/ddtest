@@ -1,6 +1,9 @@
 package onboard
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -99,4 +102,23 @@ func TestDiscoveryPreservesExplicitEmptyNodeOptions(t *testing.T) {
 		require.Contains(t, scope.Commands[0].Prerequisites[0].Environment, "NODE_OPTIONS")
 		require.Empty(t, scope.Commands[0].Prerequisites[0].Environment["NODE_OPTIONS"])
 	}
+}
+
+func TestNonTestSecretEnvironmentDoesNotBlockUnrelatedConfiguration(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"test":"jest"}}`), 0600))
+	path := filepath.Join(root, ".github/workflows/ci.yml")
+	require.NoError(t, os.WriteFile(path, []byte("jobs:\n  test:\n    steps:\n      - run: npm ci\n        env: {NPM_TOKEN: '${{ secrets.NPM_TOKEN }}'}\n      - run: npm test\n"), 0600))
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Empty(t, scope.Commands[0].UnvalidatedSetup)
+	require.Empty(t, scope.Unresolved)
+	require.NotEmpty(t, scope.Review)
+	require.NoError(t, os.WriteFile(path, []byte("jobs:\n  test:\n    env: {TOKEN: '${{ secrets.ACCESS_TOKEN }}'}\n    steps:\n      - run: npm ci\n      - run: npm test\n"), 0600))
+	scope, err = DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Contains(t, strings.Join(scope.Commands[0].UnvalidatedSetup, "\n"), "CI environment variable TOKEN")
 }

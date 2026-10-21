@@ -450,6 +450,9 @@ func probeControlDiagnostic(runs ...validationRun) string {
 		if run.ResultError != "" {
 			return reportText(run.ResultError)
 		}
+		if telemetry := verifyJestTelemetry(run); telemetry.Status != "" {
+			return reportText(telemetry.Reason + " " + strings.Join(telemetry.Differences, "; "))
+		}
 		if run.Diagnostic != "" {
 			return reportText(run.Diagnostic)
 		}

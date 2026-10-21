@@ -2,6 +2,7 @@ package testdrive
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -79,6 +80,11 @@ func summarizeValidation(result validationResult) validationSummary {
 				summary.BlockingChecks = append(summary.BlockingChecks, "configuration "+configuration.Command+": "+configuration.Status)
 			}
 		}
+	}
+	// Success is scoped to an explicitly selected command; the overall summary
+	// continues to expose every unvalidated repository configuration.
+	if result.Scope != nil && (len(result.Scope.Unresolved) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return c.Status != "passed" })) && summary.Status != "FAILED" {
+		summary.Status = "INCOMPLETE"
 	}
 	summary.ConfigurationCoverage, summary.ExecutedValidation = summarizeConfigurationCoverage(result)
 	if result.FocusedCommand {

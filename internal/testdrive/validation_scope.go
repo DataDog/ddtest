@@ -54,7 +54,7 @@ func selectedValidation(result validationResult) verdict {
 		check.Status = "NOT EXERCISED"
 		return check
 	}
-	if !hasValidationPair(result) || configurationStatus(result) != "passed" || !result.ChecksPassed || result.Cleanup == nil || result.Cleanup.Status != "passed" || !result.HTMLReportCurrent {
+	if !validationPassed(result) {
 		return check
 	}
 	if result.LastExecution != nil && !result.LastExecution.Current {
@@ -110,7 +110,7 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 		if executed.Passed == executed.Configurations {
 			executed.Status = "PASSED"
 		}
-		executed.Reason = fmt.Sprintf("%d/%d executed configurations passed their paired comparison and supported feature checks. CI configuration and unvalidated configurations have separate verdicts.", executed.Passed, executed.Configurations)
+		executed.Reason = fmt.Sprintf("%d/%d executed configurations passed paired comparison, supported features, static checks, cleanup and report publication. Unvalidated configurations and actual CI execution remain separate.", executed.Passed, executed.Configurations)
 	}
 	return coverage, executed
 }

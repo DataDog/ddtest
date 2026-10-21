@@ -21,7 +21,7 @@ func TestSelectedCommandDoesNotCertifyOtherConfigurations(t *testing.T) {
 	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest"}, {Directory: ".", Command: "jest --config production.ts"}}}
 	result := completeValidationFixture("jest")
 	result.Preflight.Command = "npx jest"
-	setSingleConfigurationScope(root, &result, scope, result.Preflight.Command)
+	setSingleConfigurationScope(root, &result, scope, result.Preflight.Command, nil)
 	require.Equal(t, "passed", result.Configurations[0].Status)
 	require.Equal(t, "not exercised", result.Configurations[1].Status)
 	prepareValidationResult(root, &result)
@@ -115,7 +115,7 @@ func TestSourceRunDoesNotValidateCIPreparedConfiguration(t *testing.T) {
 		{Directory: ".", Command: "jest"},
 		{Directory: ".", Command: "jest", UnvalidatedSetup: []string{"React dependency replacement"}},
 	}}
-	setSingleConfigurationScope(root, &result, scope, result.Preflight.Command)
+	setSingleConfigurationScope(root, &result, scope, result.Preflight.Command, nil)
 	require.Equal(t, "passed", result.Configurations[0].Status)
 	require.Equal(t, "not exercised", result.Configurations[1].Status)
 	result.Success, result.LocalSuccess = true, true
@@ -139,7 +139,7 @@ func TestAllDoesNotExecuteAConfigurationWithoutItsCISetup(t *testing.T) {
 	var result validationResult
 	require.NoError(t, json.Unmarshal(data, &result))
 	require.Equal(t, "INCOMPLETE", result.Summary.Status)
-	require.Equal(t, "not exercised", result.Configurations[0].Status)
+	require.Equal(t, "blocked", result.Configurations[0].Status)
 	require.Empty(t, result.Runs)
 	require.NotEmpty(t, result.Configurations[0].UnvalidatedSetup)
 }
@@ -160,7 +160,7 @@ func TestConfigurationScopeUsesExecutionRatherThanInspection(t *testing.T) {
 	result := completeValidationFixture("jest")
 	result.Preflight.Command = "jest --showConfig"
 	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest"}}}
-	setSingleConfigurationScope(root, &result, scope, "jest")
+	setSingleConfigurationScope(root, &result, scope, "jest", nil)
 	require.Equal(t, "passed", result.Configurations[0].Status)
 	require.True(t, result.Configurations[0].PairedExecution)
 }
