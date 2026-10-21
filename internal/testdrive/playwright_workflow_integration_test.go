@@ -207,12 +207,17 @@ func TestPlaywrightDiscoveryOwnsImportSideEffects(t *testing.T) {
 	portFile := filepath.Join(root, "port")
 	child := fmt.Sprintf(`const s=require('node:net').createServer();s.listen(0,'127.0.0.1',()=>require('node:fs').writeFileSync(%q,String(s.address().port)));`, portFile)
 	requireWriteFile(t, filepath.Join(root, "playwright.config.cjs"), fmt.Sprintf(`require('node:child_process').spawn(process.execPath,['-e',%q],{detached:true,stdio:'ignore'}).unref();const fs=require('node:fs'),deadline=Date.now()+5000;while(!fs.existsSync(%q)&&Date.now()<deadline)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);module.exports={testDir:'.'};`, child, portFile))
-	requireWriteFile(t, filepath.Join(root, "one.spec.cjs"), `const {test}=require('@playwright/test');test('discovered',()=>{});`)
+	requireWriteFile(t, filepath.Join(root, "cache-path.cjs"), `require("node:fs").writeFileSync(`+fmt.Sprintf("%q", filepath.Join(root, "cache-path"))+`,require("node:os").tmpdir());`)
+	requireWriteFile(t, filepath.Join(root, "one.spec.cjs"), `require('./cache-path.cjs');const {test}=require('@playwright/test');test('discovered',()=>{});`)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scratch,with-comma"), 0700))
 	drive := &Testdrive{command: filepath.Join(root, "node_modules", ".bin", "playwright"), args: []string{"test"}, executor: &ext.DefaultCommandExecutor{Timeout: 10 * time.Second}, repositoryRoot: root}
 	discovered, err := drive.inspectPlaywright(t.Context(), filepath.Join(root, "scratch,with-comma"), "", "")
 	require.NoError(t, err)
 	require.Len(t, discovered.Tests, 1)
+	cachePath, err := os.ReadFile(filepath.Join(root, "cache-path"))
+	require.NoError(t, err)
+	require.Contains(t, string(cachePath), "scratch,with-comma")
+	require.NoDirExists(t, string(cachePath))
 	data, err := os.ReadFile(portFile)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {

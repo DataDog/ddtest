@@ -185,6 +185,10 @@ func (t *Testdrive) inspectPlaywright(ctx context.Context, directory, probe, pro
 	env := testEnvironment("http://127.0.0.1:1", "playwright-preflight")
 	env["NODE_OPTIONS"] = stripDatadogNodeOptions(t.nodeOptions())
 	env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
+	var run validationRun
+	if err := run.ownTemporaryDirectory(directory, env); err != nil {
+		return result, err
+	}
 	env["DDTEST_PLAYWRIGHT_REPORT"] = resultPath
 	env["PW_TEST_REPORTER"] = reporter
 	owner, err := t.ownPlaywrightProcesses(directory, env)
@@ -209,7 +213,6 @@ func (t *Testdrive) inspectPlaywright(ctx context.Context, directory, probe, pro
 			return playwrightResults{}, err
 		}
 	}
-	var run validationRun
 	result, err = readPlaywrightResults(resultPath, &run)
 	if len(result.Errors) > 0 {
 		err = fmt.Errorf("playwright discovery: %s", strings.Join(result.Errors, "; "))
@@ -225,6 +228,9 @@ func (t *Testdrive) checkPlaywrightPreflight(ctx context.Context, output io.Writ
 		return err
 	}
 	defer func() { _ = os.RemoveAll(directory) }()
+	if err := markSessionStorage(directory, t.ownershipRoot()); err != nil {
+		return err
+	}
 	discovered, err := t.inspectPlaywright(ctx, directory, "", "")
 	if err != nil {
 		return err
