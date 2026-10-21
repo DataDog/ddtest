@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/discovery"
@@ -72,7 +73,7 @@ func TestPositionalSelectionNarrowsFrameworkDiscovery(t *testing.T) {
 					planner := newTestPlannerWithDefaults()
 					if mode == "full" {
 						// Also covers restored caches: they use the same processing path.
-						err = planner.recordFullDiscoveryResults(tests, resolved, newSkippableMatcher(api.NewSkippables(), nil))
+						err = planner.recordFullDiscoveryResults(tests, resolved, newSkippableMatcher(api.NewSkippables(), nil), nil)
 					} else {
 						err = planner.recordFastDiscoveryFallbackFiles(files)
 					}
@@ -89,5 +90,49 @@ func TestPositionalSelectionNarrowsFrameworkDiscovery(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestWarnFastFilesMissingFromFullDiscoveryRespectsSelection(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, file := range []string{
+		"tests/unit/test_user.py",
+		"tests/unit/test_missing.py",
+		"tests/integration/test_billing.py",
+	} {
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	previous := settings.Get().TestsSelectionPattern
+	t.Cleanup(func() {
+		settings.Get().TestsSelectionPattern = previous
+	})
+	selection, err := utils.ParseTestSelection([]string{"tests/unit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Get().TestsSelectionPattern = selection
+
+	planner := newTestPlannerWithDefaults()
+	planner.testFiles["tests/unit/test_user.py"] = struct{}{}
+
+	logs := captureLogs(t)
+	// Fast discovery lists every file matching the framework pattern; full
+	// discovery only keeps files inside the positional selection.
+	planner.warnFastFilesMissingFromFullDiscovery([]string{
+		"tests/unit/test_user.py",
+		"tests/integration/test_billing.py",
+		"tests/unit/test_missing.py",
+	})
+	logOutput := logs.String()
+	if strings.Contains(logOutput, "tests/integration/test_billing.py") {
+		t.Fatalf("out-of-selection file must not be reported as missing, got logs: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "tests/unit/test_missing.py") {
+		t.Fatalf("in-selection file with no collected tests must be reported, got logs: %s", logOutput)
 	}
 }

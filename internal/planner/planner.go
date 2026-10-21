@@ -237,6 +237,7 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 		settings.GetMaxParallelism(),
 		settings.GetParallelRunnerOverhead(),
 		settings.GetTargetTime(),
+		tp.basenameAffinityEnabled(),
 	)
 	parallelRunnerSplit := parallelRunnerSelection.selected
 	parallelRunners := parallelRunnerSplit.parallelRunners
@@ -476,11 +477,12 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// is more precise than fast file discovery.
 	if fullDiscoverySucceeded {
 		recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFull, true, fullDiscoveryDuration, len(discoveredTests))
-		if err := tp.recordFullDiscoveryResults(discoveredTests, resolvedTestFiles, skipMatcher); err != nil {
+		if err := tp.recordFullDiscoveryResults(discoveredTests, resolvedTestFiles, skipMatcher, testFramework); err != nil {
 			return errcode.WithCode(errcode.PlanFullDiscoveryResultsProcessingFailed, err)
 		}
 		selectedDiscoveryMode = discoveryModeFull
 		selectedDiscoveryDuration = fullDiscoveryDuration
+		tp.warnFastFilesMissingFromFullDiscovery(discoveredTestFiles)
 		// if we have data on which tests exist in the local repository, we will aggregate them
 		// into a collection of testSuiteAggregate structs.
 		// This collection is used to calculate the skippable percentage and the weighted test files.
@@ -513,10 +515,12 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	}
 
 	tp.keepUnskippableMarkerSuitesRunnable(testFramework)
-	tp.recordITRSkippedTelemetry(isSuiteLevelSkipping)
 	tp.suitesBySourceFile = indexSuitesBySourceFile(tp.suiteAggregates)
 	tp.skippablePercentage = calculateSavedTimePercentage(tp.suiteAggregates)
 	tp.testFileWeights = tp.calculateFileWeights()
+	// Must run after weights are calculated: only files dropped from the
+	// runnable set were actually skipped by the plan.
+	tp.recordITRSkippedTelemetry(isSuiteLevelSkipping)
 
 	tp.recordDiscoveryReport(selectedDiscoveryMode, cacheResult, selectedDiscoveryDuration)
 	tp.tiaSkippingEnabled = tiaSkippingEnabled

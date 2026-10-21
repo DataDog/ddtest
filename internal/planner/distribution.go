@@ -31,9 +31,91 @@ func (tp *TestPlanner) DistributeTestFiles(testFiles []string, parallelRunners i
 }
 
 // DistributeWeightedTestFiles distributes test files across parallel runners using weighted list scheduling.
+// For Python projects, files sharing a basename are kept on distinct runners when possible:
+// pytest's default import mode derives module names from basenames, so two
+// same-basename files collected in one worker fail with an import file mismatch.
 func (tp *TestPlanner) DistributeWeightedTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
 	builder := newTestSplitBuilder(parallelRunners)
-	return builder.distributeFiles(testFiles)
+	return builder.distributeFiles(testFiles, tp.basenameAffinityEnabled())
+}
+
+// basenameAffinityEnabled reports whether files sharing a basename must be
+// kept on distinct runners (see DistributeWeightedTestFiles). Platform names
+// are plain strings (see platform.Python.Name).
+func (tp *TestPlanner) basenameAffinityEnabled() bool {
+	return tp.planMetadata.Platform == "python"
+}
+
+// hasDuplicateBasenames reports whether any two files share a basename.
+func hasDuplicateBasenames(testFiles map[string]int) bool {
+	basenames := make(map[string]int, len(testFiles))
+	for path := range testFiles {
+		basenames[filepath.Base(path)]++
+	}
+	for _, count := range basenames {
+		if count > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// basenameCollisionGroups groups files that share a basename with at least
+// one other file. Groups are ordered by total weight (desc) and each group's
+// members by weight (desc) for deterministic, reasonably balanced placement.
+func basenameCollisionGroups(testFiles map[string]int) [][]weightedTestFile {
+	byBasename := make(map[string][]weightedTestFile, len(testFiles))
+	for path, weight := range testFiles {
+		byBasename[filepath.Base(path)] = append(byBasename[filepath.Base(path)], weightedTestFile{path: path, weight: weight})
+	}
+	groups := make([][]weightedTestFile, 0)
+	for _, files := range byBasename {
+		if len(files) > 1 {
+			sortWeightedFilesDesc(files)
+			groups = append(groups, files)
+		}
+	}
+	slices.SortFunc(groups, func(a, b []weightedTestFile) int {
+		weightA, weightB := 0, 0
+		for _, f := range a {
+			weightA += f.weight
+		}
+		for _, f := range b {
+			weightB += f.weight
+		}
+		if weightA != weightB {
+			if weightA > weightB {
+				return -1
+			}
+			return 1
+		}
+		if a[0].path < b[0].path {
+			return -1
+		}
+		if a[0].path > b[0].path {
+			return 1
+		}
+		return 0
+	})
+	return groups
+}
+
+func sortWeightedFilesDesc(files []weightedTestFile) {
+	slices.SortFunc(files, func(a, b weightedTestFile) int {
+		if a.weight != b.weight {
+			if a.weight > b.weight {
+				return -1
+			}
+			return 1
+		}
+		if a.path < b.path {
+			return -1
+		}
+		if a.path > b.path {
+			return 1
+		}
+		return 0
+	})
 }
 
 func testFileWeightsForFiles(cacheWeights map[string]int, testFiles []string) map[string]int {
@@ -52,6 +134,19 @@ func testFileWeightsForFiles(cacheWeights map[string]int, testFiles []string) ma
 // For multiple runners: distributes files using weighted list scheduling and writes to separate runner files
 // For single runner: copies test-files.txt content to runner-0
 func (tp *TestPlanner) CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOutputPath string) error {
+	if tp.planMetadata.Platform == "python" && parallelRunners <= 1 && hasDuplicateBasenames(testFiles) {
+		// Single-runner distribution copies files without separating them, so
+		// pytest same-basename import collisions cannot be avoided here.
+		for _, group := range basenameCollisionGroups(testFiles) {
+			files := make([]string, 0, len(group))
+			for _, file := range group {
+				files = append(files, file.path)
+			}
+			slog.Warn("Same-basename test files share a single runner; pytest import collisions cannot be avoided",
+				"basename", filepath.Base(files[0]), "files", files,
+				"hint", "use more parallel runners, add __init__.py packages, or rename files")
+		}
+	}
 	if parallelRunners > 1 {
 		// Distribute test files across parallel runners using weighted list scheduling.
 		distribution := tp.DistributeWeightedTestFiles(testFiles, parallelRunners)
@@ -122,11 +217,56 @@ func (s splitScore) totalRuntimeDuration() time.Duration {
 	return time.Duration(s.totalRuntime) * time.Millisecond
 }
 
-func scoreSortedWeightedRunnerSplit(files []weightedTestFile, parallelRunners int) splitScore {
-	builder := newTestSplitBuilder(parallelRunners)
-	for _, file := range files {
-		builder.addFile(file.weight)
+// preparedSplitFiles precomputes the file ordering and same-basename
+// collision groups that split placement needs. Preparing once lets runner
+// selection score every candidate without re-sorting or regrouping the files.
+type preparedSplitFiles struct {
+	sortedFiles      []weightedTestFile
+	collisionGroups  [][]int // sortedFiles indexes sharing a basename, in placement order
+	inCollisionGroup []bool  // whether each sortedFiles entry belongs to a collision group
+}
+
+// prepareSplitFiles orders files for weighted scheduling and, when basename
+// affinity applies, resolves same-basename collision groups to sortedFiles
+// indexes.
+func prepareSplitFiles(testFiles map[string]int, basenameAffinity bool) preparedSplitFiles {
+	prepared := preparedSplitFiles{sortedFiles: sortedWeightedTestFiles(testFiles)}
+	// Allocated unconditionally: the placement loops index it even when
+	// no collision groups exist.
+	prepared.inCollisionGroup = make([]bool, len(prepared.sortedFiles))
+	if !basenameAffinity || !hasDuplicateBasenames(testFiles) {
+		return prepared
 	}
+	indexByPath := make(map[string]int, len(prepared.sortedFiles))
+	for i, file := range prepared.sortedFiles {
+		indexByPath[file.path] = i
+	}
+	prepared.inCollisionGroup = make([]bool, len(prepared.sortedFiles))
+	for _, group := range basenameCollisionGroups(testFiles) {
+		indexes := make([]int, len(group))
+		for i, file := range group {
+			indexes[i] = indexByPath[file.path]
+			prepared.inCollisionGroup[indexes[i]] = true
+		}
+		prepared.collisionGroups = append(prepared.collisionGroups, indexes)
+	}
+	return prepared
+}
+
+// scoreRunnerSplit scores a candidate runner count by simulating the exact
+// placement used to create test splits, including Python basename affinity
+// when enabled. Scoring must match split creation, or the selected runner
+// count could report a target-meeting plan whose generated splits miss the
+// target.
+func scoreRunnerSplit(testFiles map[string]int, parallelRunners int, basenameAffinity bool) splitScore {
+	return scorePreparedRunnerSplit(prepareSplitFiles(testFiles, basenameAffinity), parallelRunners)
+}
+
+// scorePreparedRunnerSplit scores a candidate against already prepared files
+// without building runner file lists, so wide parallelism ranges stay cheap.
+func scorePreparedRunnerSplit(prepared preparedSplitFiles, parallelRunners int) splitScore {
+	builder := newTestSplitBuilder(parallelRunners)
+	builder.placePreparedFiles(prepared, nil)
 	return builder.score()
 }
 
@@ -153,22 +293,113 @@ func (b *testSplitBuilder) addFile(weight int) int {
 	return lightestRunner.index
 }
 
-func (b *testSplitBuilder) distributeFiles(testFiles map[string]int) [][]string {
-	return b.distributeSortedFiles(sortedWeightedTestFiles(testFiles))
+func (b *testSplitBuilder) distributeFiles(testFiles map[string]int, basenameAffinity bool) [][]string {
+	result, unavoidableCollisions := b.placeFiles(testFiles, basenameAffinity)
+	for basename, files := range unavoidableCollisions {
+		slog.Warn("Same-basename test files exceed the runner count; pytest import collisions cannot be avoided",
+			"basename", basename, "files", files, "parallelRunners", b.parallelRunners)
+	}
+	return result
 }
 
-func (b *testSplitBuilder) distributeSortedFiles(files []weightedTestFile) [][]string {
+// placeFiles distributes files across runners without logging, so candidate
+// scoring can reuse the exact split-creation placement.
+func (b *testSplitBuilder) placeFiles(testFiles map[string]int, basenameAffinity bool) ([][]string, map[string][]string) {
+	return b.placePrepared(prepareSplitFiles(testFiles, basenameAffinity))
+}
+
+func (b *testSplitBuilder) placePrepared(prepared preparedSplitFiles) ([][]string, map[string][]string) {
+	assignments := make([]int, len(prepared.sortedFiles))
+	collisions := b.placePreparedFiles(prepared, assignments)
+	// Rebuild the runner lists in placement order: same-basename groups
+	// first, then the remaining files by descending weight.
 	result := make([][]string, b.parallelRunners)
 	for i := range result {
 		result[i] = []string{}
 	}
-
-	for _, file := range files {
-		runnerIndex := b.addFile(file.weight)
-		result[runnerIndex] = append(result[runnerIndex], file.path)
+	for _, group := range prepared.collisionGroups {
+		for _, fileIndex := range group {
+			runnerIndex := assignments[fileIndex]
+			result[runnerIndex] = append(result[runnerIndex], prepared.sortedFiles[fileIndex].path)
+		}
 	}
+	for i, file := range prepared.sortedFiles {
+		if prepared.inCollisionGroup[i] {
+			continue
+		}
+		result[assignments[i]] = append(result[assignments[i]], file.path)
+	}
+	return result, collisions
+}
 
-	return result
+// placePreparedFiles applies the split-creation placement to the builder's
+// runner loads. When assignments is non-nil, the chosen runner index is
+// recorded for every sortedFiles entry; load-only scoring passes nil so no
+// output lists are constructed. It returns same-basename groups that could
+// not be placed on distinct runners.
+func (b *testSplitBuilder) placePreparedFiles(prepared preparedSplitFiles, assignments []int) map[string][]string {
+	var collisions map[string][]string
+	for _, group := range prepared.collisionGroups {
+		usedRunners := make(map[int]bool, len(group))
+		for _, fileIndex := range group {
+			weight := prepared.sortedFiles[fileIndex].weight
+			runnerIndex, ok := b.lightestUnusedRunner(usedRunners)
+			if !ok {
+				// More same-basename files than runners: the collision cannot
+				// be avoided; place the rest for balance and report it.
+				if collisions == nil {
+					collisions = make(map[string][]string)
+				}
+				basename := filepath.Base(prepared.sortedFiles[fileIndex].path)
+				collisions[basename] = append(collisions[basename], prepared.sortedFiles[fileIndex].path)
+				runnerIndex = b.addFile(weight)
+			} else {
+				b.addLoadToRunner(runnerIndex, weight)
+			}
+			usedRunners[runnerIndex] = true
+			if assignments != nil {
+				assignments[fileIndex] = runnerIndex
+			}
+		}
+	}
+	for i, file := range prepared.sortedFiles {
+		if prepared.inCollisionGroup[i] {
+			continue
+		}
+		runnerIndex := b.addFile(file.weight)
+		if assignments != nil {
+			assignments[i] = runnerIndex
+		}
+	}
+	return collisions
+}
+
+// lightestUnusedRunner returns the least-loaded runner whose index is not in
+// used, preferring lower runner indexes on ties.
+func (b *testSplitBuilder) lightestUnusedRunner(used map[int]bool) (int, bool) {
+	best := -1
+	bestLoad := 0
+	for _, load := range b.loads {
+		if used[load.index] {
+			continue
+		}
+		if best == -1 || load.load < bestLoad || (load.load == bestLoad && load.index < best) {
+			best = load.index
+			bestLoad = load.load
+		}
+	}
+	return best, best != -1
+}
+
+// addLoadToRunner adds weight to a runner by index, keeping the heap valid.
+func (b *testSplitBuilder) addLoadToRunner(index int, weight int) {
+	for i := range b.loads {
+		if b.loads[i].index == index {
+			b.loads[i].load += weight
+			heap.Fix(&b.loads, i)
+			return
+		}
+	}
 }
 
 func (b testSplitBuilder) score() splitScore {

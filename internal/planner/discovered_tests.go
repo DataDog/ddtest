@@ -3,6 +3,7 @@ package planner
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
@@ -21,10 +22,48 @@ func (tp *TestPlanner) resetDiscoveryResults() {
 	tp.reportStats = newPlanningReportStats()
 }
 
+// warnFastFilesMissingFromFullDiscovery logs files that fast (pattern)
+// discovery found but full test discovery returned no tests for. Those files
+// are not scheduled and will not run. An empty test file is expected here;
+// a same-basename collection error (pytest import file mismatch) is the
+// common silent cause.
+func (tp *TestPlanner) warnFastFilesMissingFromFullDiscovery(fastDiscoveredTestFiles []string) {
+	// Fast discovery lists every file matching the framework pattern, while
+	// full-discovery processing filters by the positional selection. Compare
+	// the same scope, or out-of-selection files (for example integration
+	// tests while planning only tests/unit) would be reported as missing and
+	// drown out genuine collection errors.
+	selection, err := utils.NewPathMatcher(settings.GetTestsSelectionPattern())
+	if err != nil {
+		// recordFullDiscoveryResults already fails the plan on an invalid
+		// selection pattern before this warning runs.
+		return
+	}
+	missing := make([]string, 0)
+	for _, file := range fastDiscoveredTestFiles {
+		normalized := utils.NormalizePath(file)
+		if normalized == "" || (!selection.Empty() && !selection.MatchNormalizedPath(normalized)) {
+			continue
+		}
+		if _, ok := tp.testFiles[normalized]; !ok {
+			missing = append(missing, normalized)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	slices.Sort(missing)
+	slog.Warn("Full test discovery returned no tests for some discovered files; they will not run. "+
+		"This is expected for files without tests, but can also hide a collection error "+
+		"(for example a pytest import file mismatch between same-basename files)",
+		"files", missing, "count", len(missing))
+}
+
 func (tp *TestPlanner) recordFullDiscoveryResults(
 	discoveredTests []testoptimization.Test,
 	resolvedTestFiles discovery.TestFileSet,
 	skippableMatcher skippableMatcher,
+	testFramework framework.Framework,
 ) error {
 	testFileMatcher, err := discovery.NewTestFileSetMatcher(resolvedTestFiles, settings.GetTestsExcludePattern())
 	if err != nil {
@@ -73,13 +112,25 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 		}
 
 		match := skippableMatcher.Match(test)
+		// Suite-level matches in full discovery would rely on the collected
+		// tests' own source files. Keep the same gate as fast suite-mode
+		// planning: a suite is only omitted when backend suite metadata maps it
+		// to a source file, so forcing full discovery cannot change which
+		// files are skipped.
+		if match.kind == skippableMatchTIASuite {
+			if sourceFile, ok := tp.sourceFileForSuite(match.suiteKey, testFramework); !ok || sourceFile != normalizedSourceFile {
+				slog.Debug("Skippable suite has no matching source-file mapping; keeping suite runnable",
+					"module", match.suiteKey.Module, "suite", match.suiteKey.Suite)
+				match = skippableMatch{}
+			}
+		}
 		if !match.Skipped() {
 			slog.Debug("Test is not skipped", "test", test.DatadogTestId(), "sourceFile", test.SuiteSourceFile)
 			recordRunnableTest(tp.suiteAggregates, test, normalizedSourceFile)
 		} else {
 			slog.Debug("Test will be skipped", "test", test.DatadogTestId(), "sourceFile", test.SuiteSourceFile)
 			recordSkippedTest(tp.suiteAggregates, test, normalizedSourceFile)
-			tp.recordAppliedSkippable(match)
+			tp.recordAppliedSkippable(match, normalizedSourceFile)
 			skippableTestsCount++
 		}
 	}
@@ -154,10 +205,11 @@ func (s skippableMatcher) TIASkippablesCount() int {
 	return len(s.tiaSkippableTests) + len(s.tiaSkippableSuites)
 }
 
-func (tp *TestPlanner) recordAppliedSkippable(match skippableMatch) {
+func (tp *TestPlanner) recordAppliedSkippable(match skippableMatch, sourceFile string) {
 	switch match.kind {
 	case skippableMatchTIATest:
 		tp.reportStats.tiaSkippableTestsApplied++
+		tp.reportStats.tiaSkippedTestsByFile[sourceFile]++
 	case skippableMatchTIASuite:
 		// Full discovery sees suite-level skippables once per test, so keep a set
 		// and report the number of suites rather than the number of skipped tests.
@@ -167,16 +219,51 @@ func (tp *TestPlanner) recordAppliedSkippable(match skippableMatch) {
 	}
 }
 
+// recordITRSkippedTelemetry reports the number of tests/suites the plan
+// actually omits. It must run after file weights are calculated: matched
+// skippables in files the plan retains (e.g. marker-guarded, or partially
+// skippable files left to the tracer) are not skipped by ddtest, and the
+// tracer accounts for what it skips at runtime.
 func (tp *TestPlanner) recordITRSkippedTelemetry(suiteLevel bool) {
 	eventType := telemetry.EventTypeTest
-	count := tp.reportStats.tiaSkippableTestsApplied
+	count := tp.droppedTIATestsCount()
 	if suiteLevel {
 		eventType = telemetry.EventTypeSuite
-		count = len(tp.reportStats.uniqueTIASkippableSuitesApplied)
+		count = tp.droppedTIASuitesCount()
 	}
 	if count > 0 {
 		telemetry.ITRSkipped(tp.telemetryClient, eventType, count)
 	}
+}
+
+// droppedTIATestsCount returns the number of TIA-skippable tests in files
+// the plan drops entirely. Tests in retained files are skipped (and counted)
+// by the tracer at runtime instead.
+func (tp *TestPlanner) droppedTIATestsCount() int {
+	count := 0
+	for sourceFile, skipped := range tp.reportStats.tiaSkippedTestsByFile {
+		if _, runnable := tp.testFileWeights[sourceFile]; !runnable {
+			count += skipped
+		}
+	}
+	return count
+}
+
+// droppedTIASuitesCount returns the number of applied skippable suites whose
+// source file the plan drops. Marker-guarded suites stay runnable and are
+// not counted.
+func (tp *TestPlanner) droppedTIASuitesCount() int {
+	count := 0
+	for key := range tp.reportStats.uniqueTIASkippableSuitesApplied {
+		aggregate, ok := tp.suiteAggregates[key]
+		if !ok || aggregate.SourceFile == "" {
+			continue
+		}
+		if _, runnable := tp.testFileWeights[aggregate.SourceFile]; !runnable {
+			count++
+		}
+	}
+	return count
 }
 
 func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []string) error {
@@ -287,6 +374,9 @@ func (tp *TestPlanner) sourceFileForSuite(key testSuiteKey, testFramework framew
 		}
 	}
 
+	if testFramework == nil {
+		return "", false
+	}
 	sourceFile, ok := testFramework.SourceFileForSuite(key.Suite)
 	if !ok {
 		return "", false

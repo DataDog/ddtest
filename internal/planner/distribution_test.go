@@ -415,15 +415,15 @@ func TestSortedWeightedTestFiles(t *testing.T) {
 	}
 }
 
-func TestScoreSortedWeightedRunnerSplit(t *testing.T) {
-	files := []weightedTestFile{
-		{path: "slow.rb", weight: 10},
-		{path: "medium.rb", weight: 6},
-		{path: "fast.rb", weight: 4},
-		{path: "tiny.rb", weight: 2},
+func TestScoreRunnerSplit(t *testing.T) {
+	testFiles := map[string]int{
+		"slow.rb":   10,
+		"medium.rb": 6,
+		"fast.rb":   4,
+		"tiny.rb":   2,
 	}
 
-	result := scoreSortedWeightedRunnerSplit(files, 2)
+	result := scoreRunnerSplit(testFiles, 2, false)
 	expected := splitScore{
 		parallelRunners: 2,
 		wallTime:        12,
@@ -432,16 +432,16 @@ func TestScoreSortedWeightedRunnerSplit(t *testing.T) {
 	}
 
 	if result != expected {
-		t.Fatalf("scoreSortedWeightedRunnerSplit() = %+v, expected %+v", result, expected)
+		t.Fatalf("scoreRunnerSplit() = %+v, expected %+v", result, expected)
 	}
 }
 
-func TestScoreSortedWeightedRunnerSplit_UnavoidableEmptyRunners(t *testing.T) {
-	files := []weightedTestFile{
-		{path: "slow.rb", weight: 10},
+func TestScoreRunnerSplit_UnavoidableEmptyRunners(t *testing.T) {
+	testFiles := map[string]int{
+		"slow.rb": 10,
 	}
 
-	result := scoreSortedWeightedRunnerSplit(files, 3)
+	result := scoreRunnerSplit(testFiles, 3, false)
 	expected := splitScore{
 		parallelRunners: 3,
 		wallTime:        10,
@@ -450,7 +450,7 @@ func TestScoreSortedWeightedRunnerSplit_UnavoidableEmptyRunners(t *testing.T) {
 	}
 
 	if result != expected {
-		t.Fatalf("scoreSortedWeightedRunnerSplit() = %+v, expected %+v", result, expected)
+		t.Fatalf("scoreRunnerSplit() = %+v, expected %+v", result, expected)
 	}
 }
 
@@ -462,7 +462,7 @@ func TestTestSplitBuilderDistributeFiles(t *testing.T) {
 	}
 
 	builder := newTestSplitBuilder(2)
-	result := builder.distributeFiles(testFiles)
+	result := builder.distributeFiles(testFiles, false)
 	expected := [][]string{
 		{"slow.rb"},
 		{"medium.rb", "fast.rb"},
@@ -471,21 +471,93 @@ func TestTestSplitBuilderDistributeFiles(t *testing.T) {
 	assertDistribution(t, result, expected)
 }
 
-func TestTestSplitBuilderDistributeSortedFiles(t *testing.T) {
-	files := []weightedTestFile{
-		{path: "slow.rb", weight: 3},
-		{path: "medium.rb", weight: 2},
-		{path: "fast.rb", weight: 1},
+func TestPrepareSplitFiles(t *testing.T) {
+	testFiles := map[string]int{
+		"tests_a/test_same.py": 10,
+		"tests_b/test_same.py": 1,
+		"tests/test_other.py":  11,
 	}
 
+	prepared := prepareSplitFiles(testFiles, true)
+	wantOrder := []string{"tests/test_other.py", "tests_a/test_same.py", "tests_b/test_same.py"}
+	gotOrder := make([]string, len(prepared.sortedFiles))
+	for i, file := range prepared.sortedFiles {
+		gotOrder[i] = file.path
+	}
+	if !slices.Equal(gotOrder, wantOrder) {
+		t.Fatalf("sortedFiles = %v, want %v", gotOrder, wantOrder)
+	}
+	wantGroups := [][]int{{1, 2}}
+	if !slices.EqualFunc(prepared.collisionGroups, wantGroups, func(a, b []int) bool { return slices.Equal(a, b) }) {
+		t.Fatalf("collisionGroups = %v, want %v", prepared.collisionGroups, wantGroups)
+	}
+	if wantInGroup := []bool{false, true, true}; !slices.Equal(prepared.inCollisionGroup, wantInGroup) {
+		t.Fatalf("inCollisionGroup = %v, want %v", prepared.inCollisionGroup, wantInGroup)
+	}
+
+	// Without basename affinity the collision bookkeeping stays empty.
+	plain := prepareSplitFiles(testFiles, false)
+	if len(plain.collisionGroups) != 0 || !slices.Equal(plain.inCollisionGroup, []bool{false, false, false}) {
+		t.Fatalf("affinity-disabled prepare = %+v, want no collision bookkeeping", plain)
+	}
+}
+
+func TestTestSplitBuilderPlacePreparedFiles(t *testing.T) {
+	testFiles := map[string]int{
+		"fast.rb":   1,
+		"medium.rb": 2,
+		"slow.rb":   3,
+	}
+	prepared := prepareSplitFiles(testFiles, false)
+
 	builder := newTestSplitBuilder(2)
-	result := builder.distributeSortedFiles(files)
+	result, collisions := builder.placePrepared(prepared)
 	expected := [][]string{
 		{"slow.rb"},
 		{"medium.rb", "fast.rb"},
 	}
-
 	assertDistribution(t, result, expected)
+	if len(collisions) != 0 {
+		t.Fatalf("unexpected collisions: %v", collisions)
+	}
+}
+
+func TestTestSplitBuilderPlacePreparedFilesLoadsOnlyMatchesRecorded(t *testing.T) {
+	// Load-only scoring must produce the same runner loads as the recorded
+	// placement that builds the split file lists.
+	testFiles := map[string]int{
+		"tests_a/test_same.py": 10,
+		"tests_b/test_same.py": 1,
+		"tests/test_other.py":  11,
+	}
+	prepared := prepareSplitFiles(testFiles, true)
+
+	loadsOnly := newTestSplitBuilder(2)
+	loadsOnly.placePreparedFiles(prepared, nil)
+
+	recorded := newTestSplitBuilder(2)
+	assignments := make([]int, len(prepared.sortedFiles))
+	collisions := recorded.placePreparedFiles(prepared, assignments)
+
+	if loadsOnly.score() != recorded.score() {
+		t.Fatalf("loads-only score %+v != recorded score %+v", loadsOnly.score(), recorded.score())
+	}
+	if len(collisions) != 0 {
+		t.Fatalf("unexpected collisions: %v", collisions)
+	}
+	for _, runnerIndex := range assignments {
+		if runnerIndex < 0 || runnerIndex >= 2 {
+			t.Fatalf("assignment %d out of range", runnerIndex)
+		}
+	}
+
+	// The recorded placement must reproduce the split distribution.
+	builder := newTestSplitBuilder(2)
+	result, collisions := builder.placePrepared(prepared)
+	assertDistribution(t, result, [][]string{{"tests_a/test_same.py"}, {"tests_b/test_same.py", "tests/test_other.py"}})
+	if len(collisions) != 0 {
+		t.Fatalf("unexpected collisions: %v", collisions)
+	}
 }
 
 func TestCreateTestSplits(t *testing.T) {
@@ -645,5 +717,115 @@ func assertDistribution(t *testing.T, result, expected [][]string) {
 		if !slices.Equal(result[i], expected[i]) {
 			t.Errorf("runner %d = %v, expected %v", i, result[i], expected[i])
 		}
+	}
+}
+
+func TestTestSplitBuilderDistributeFilesBasenameAffinity(t *testing.T) {
+	testFiles := map[string]int{
+		"tests/unit/test_same.py":        10,
+		"tests/integration/test_same.py": 1,
+		"tests/test_other.py":            11,
+	}
+
+	b := newTestSplitBuilder(2)
+	result := b.distributeFiles(testFiles, true)
+	if len(result) != 2 {
+		t.Fatalf("distribution has %d runners, want 2", len(result))
+	}
+	for _, runner := range result {
+		basenames := map[string]bool{}
+		for _, file := range runner {
+			basename := filepath.Base(file)
+			if basenames[basename] {
+				t.Fatalf("runner %v contains duplicate basename %s", runner, basename)
+			}
+			basenames[basename] = true
+		}
+	}
+	// All files must be distributed exactly once.
+	distributed := map[string]int{}
+	for _, runner := range result {
+		for _, file := range runner {
+			distributed[file]++
+		}
+	}
+	for file, count := range distributed {
+		if count != 1 {
+			t.Fatalf("file %s distributed %d times", file, count)
+		}
+	}
+	for file := range testFiles {
+		if distributed[file] != 1 {
+			t.Fatalf("file %s missing from distribution", file)
+		}
+	}
+}
+
+func TestTestSplitBuilderDistributeFilesBasenameAffinityDisabledForOtherPlatforms(t *testing.T) {
+	// Ruby tolerates same-basename spec files; affinity must not rearrange
+	// the default weighted distribution.
+	testFiles := map[string]int{
+		"spec/unit/order_spec.rb":   3,
+		"spec/system/order_spec.rb": 2,
+	}
+	b2 := newTestSplitBuilder(2)
+	result := b2.distributeFiles(testFiles, false)
+	assertDistribution(t, result, [][]string{{"spec/unit/order_spec.rb"}, {"spec/system/order_spec.rb"}})
+}
+
+func TestTestPlannerDistributeWeightedTestFilesBasenameAffinityPythonOnly(t *testing.T) {
+	// With an 11-weight file placed first, ordinary weighted scheduling puts
+	// the 10- and 1-weight files together.
+	// Python must separate them; other platforms retain weighted scheduling.
+	testFiles := map[string]int{
+		"tests_a/test_same.py": 10,
+		"tests_b/test_same.py": 1,
+		"tests/test_other.py":  11,
+	}
+	for _, platform := range []string{"python", "ruby", "javascript"} {
+		t.Run(platform, func(t *testing.T) {
+			planner := newTestPlannerWithDefaults()
+			planner.planMetadata.Platform = platform
+			result := planner.DistributeWeightedTestFiles(testFiles, 2)
+			expected := [][]string{{"tests/test_other.py"}, {"tests_a/test_same.py", "tests_b/test_same.py"}}
+			if platform == "python" {
+				expected = [][]string{{"tests_a/test_same.py"}, {"tests_b/test_same.py", "tests/test_other.py"}}
+			}
+			assertDistribution(t, result, expected)
+		})
+	}
+}
+
+func TestPythonDistributionPreservesFilesWithInsufficientRunners(t *testing.T) {
+	files := map[string]int{
+		"a/test_same.py":      10,
+		"b/test_same.py":      10,
+		"c/test_same.py":      10,
+		"d/test_same.py":      10,
+		"tests/test_other.py": 1,
+	}
+	for _, runners := range []int{-1, 0, 1, 2, 3} {
+		t.Run(fmt.Sprintf("runners=%d", runners), func(t *testing.T) {
+			planner := newTestPlannerWithDefaults()
+			planner.planMetadata.Platform = "python"
+			result := planner.DistributeWeightedTestFiles(files, runners)
+			if len(result) != max(1, runners) {
+				t.Fatalf("got %d runners", len(result))
+			}
+			seen := make(map[string]int)
+			for _, runner := range result {
+				for _, file := range runner {
+					seen[file]++
+				}
+			}
+			if len(seen) != len(files) {
+				t.Fatalf("distributed files = %v, want %v", seen, files)
+			}
+			for file := range files {
+				if seen[file] != 1 {
+					t.Fatalf("%s distributed %d times", file, seen[file])
+				}
+			}
+		})
 	}
 }

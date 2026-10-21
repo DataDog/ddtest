@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -97,6 +98,29 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 	return discovery.DiscoverTests(ctx, p.executor, command, args, envMap)
 }
 
+// excludedTestDirs are directory names that never contain the project's own
+// test files but do contain .py files matching test patterns: project
+// virtualenvs (Python convention keeps them inside the repository root,
+// and installed packages ship test_* modules), bytecode caches, tox
+// environments, and JavaScript node_modules in mixed repos.
+var excludedTestDirs = []string{
+	".venv", "venv", ".tox", "__pycache__", "node_modules", "site-packages", ".git",
+}
+
+// isUnderExcludedDir reports whether any path segment is a well-known
+// non-test directory. Discovery returns slash-separated paths on every
+// platform, so normalize before splitting: on Windows filepath.Separator is
+// a backslash and an unnormalized path would stay a single segment, letting
+// dependency tests bypass the exclusion.
+func isUnderExcludedDir(file string) bool {
+	for _, segment := range strings.Split(utils.NormalizePath(file), "/") {
+		if slices.Contains(excludedTestDirs, segment) {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *PyTest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
 	if testFiles.Empty() {
 		return []string{}, nil
@@ -111,9 +135,14 @@ func (p *PyTest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 	}
 	// Broad patterns can match bytecode and other artifacts. Clone before
 	// filtering explicit selections, which belong to the caller.
-	return slices.DeleteFunc(slices.Clone(files), func(file string) bool {
-		return filepath.Ext(file) != ".py"
-	}), nil
+	filtered := slices.DeleteFunc(slices.Clone(files), func(file string) bool {
+		return filepath.Ext(file) != ".py" || isUnderExcludedDir(file)
+	})
+	if excluded := len(files) - len(filtered); excluded > 0 {
+		slog.Info("Excluded discovered files under non-test directories (virtualenvs, caches, dependencies)",
+			"excludedCount", excluded)
+	}
+	return filtered, nil
 }
 
 func (p *PyTest) SupportsFullTestDiscovery() bool {
