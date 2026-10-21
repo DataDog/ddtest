@@ -206,28 +206,11 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		return commandResolution{}
 	}
 	command := shellCommand(words)
-	assignments := map[string]string{}
+	words, assignments, err := commandEnvironment(words)
+	if err != nil {
+		return unresolvedCommand(err.Error())
+	}
 	defer func() { applyCommandEnvironment(&result, assignments) }()
-	if len(words) > 0 && (words[0] == "cross-env" || words[0] == "cross-env-shell") {
-		words = words[1:]
-		for _, word := range words {
-			if strings.ContainsAny(word, "$`") {
-				return unresolvedCommand("Dynamic cross-env expansion requires review: " + command)
-			}
-		}
-	}
-	for len(words) > 0 && shellAssignment(words[0]) {
-		key, _, _ := strings.Cut(words[0], "=")
-		if key == "NODE_OPTIONS" || key == "PATH" || strings.HasPrefix(key, "DD_") {
-			return unresolvedCommand("Command overrides instrumentation or executable selection: " + command)
-		}
-		key, value, _ := strings.Cut(words[0], "=")
-		assignments[key] = value
-		words = words[1:]
-	}
-	if len(words) == 0 {
-		return unresolvedCommand("Standalone environment assignment requires review: " + command)
-	}
 	if literalFileOperation(words) {
 		return commandResolution{}
 	}

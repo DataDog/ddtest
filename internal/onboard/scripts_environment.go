@@ -2,6 +2,7 @@ package onboard
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,42 @@ var assignmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 func shellAssignment(word string) bool {
 	key, _, found := strings.Cut(word, "=")
 	return found && assignmentName.MatchString(key)
+}
+
+// Normalize literal prefixes before classifying the executable. cross-env-shell
+// reparses its arguments in a shell, so only shell-inert words are accepted;
+// quoted operators must never become hidden commands after unwrapping.
+func commandEnvironment(words []string) ([]string, map[string]string, error) {
+	command := shellCommand(words)
+	shell := len(words) > 0 && words[0] == "cross-env-shell"
+	if len(words) > 0 && (words[0] == "cross-env" || shell) {
+		words = words[1:]
+		for _, word := range words {
+			if strings.ContainsAny(word, "$`") {
+				return nil, nil, fmt.Errorf("dynamic cross-env expansion requires review: %s", command)
+			}
+		}
+	}
+	assignments := map[string]string{}
+	for len(words) > 0 && shellAssignment(words[0]) {
+		key, value, _ := strings.Cut(words[0], "=")
+		if key == "NODE_OPTIONS" || key == "PATH" || strings.HasPrefix(key, "DD_") {
+			return nil, nil, fmt.Errorf("command overrides instrumentation or executable selection: %s", command)
+		}
+		assignments[key] = value
+		words = words[1:]
+	}
+	if shell {
+		for _, word := range words {
+			if strings.ContainsAny(word, " \t\n\r;&|<>()\\\"'`$*?[]{}~") {
+				return nil, nil, fmt.Errorf("cross-env-shell inner shell syntax requires review: %s", command)
+			}
+		}
+	}
+	if len(words) == 0 {
+		return nil, nil, fmt.Errorf("standalone environment assignment requires review: %s", command)
+	}
+	return words, assignments, nil
 }
 
 // Quote an assignment's value without turning its name into an executable.

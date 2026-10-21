@@ -182,6 +182,10 @@ func mutatesCIFiles(command string) bool {
 		return false
 	} // Already retained as unresolved setup.
 	for _, words := range commands {
+		words, _, err = commandEnvironment(words)
+		if err != nil {
+			continue
+		}
 		if len(words) > 0 && slices.Contains([]string{"sed", "cp", "mv", "rm", "patch", "rimraf", "rsync"}, words[0]) {
 			return true
 		}
