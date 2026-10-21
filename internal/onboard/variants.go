@@ -70,8 +70,15 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	}
 	var expansionErr error
 	syntax.Walk(file, func(node syntax.Node) bool {
-		if word, ok := node.(*syntax.Word); ok && unquotedGlob(word) {
-			expansionErr = fmt.Errorf("unquoted shell pathname expansion requires review")
+		if word, ok := node.(*syntax.Word); ok {
+			if unquotedGlob(word) {
+				expansionErr = fmt.Errorf("unquoted shell pathname expansion requires review")
+			}
+			if len(word.Parts) > 0 {
+				if literal, ok := word.Parts[0].(*syntax.Lit); ok && strings.HasPrefix(literal.Value, "~") {
+					expansionErr = fmt.Errorf("shell tilde expansion requires review")
+				}
+			}
 		}
 		if parameter, ok := node.(*syntax.ParamExp); ok {
 			value, exists := env[parameter.Param.Value]
@@ -112,12 +119,17 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		commands = append(commands, shellquote.Join(words...))
 		return true
 	}
+	var statements []string
 	for _, stmt := range file.Stmts {
+		commands = nil
 		if !visit(stmt) {
 			return step, env, fmt.Errorf("CI shell control flow requires review")
 		}
+		statements = append(statements, strings.Join(commands, " && "))
 	}
-	step.Run = strings.Join(commands, " && ")
+	// Independent statements must stay independent. Replacing ; or a newline
+	// with && changes whether later tests run after a failed preparation.
+	step.Run = strings.Join(statements, "\n")
 	return step, env, nil
 }
 

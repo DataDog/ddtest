@@ -24,8 +24,7 @@ func TestVariantPreparationPreservesMatrixAndConditions(t *testing.T) {
       matrix: {react: [18.0.0, 19.0.0]}
     steps:
       - run: |
-          pnpm add -D react@$REACT_VER react-dom@$REACT_VER
-          pnpm test
+          pnpm add -D react@$REACT_VER react-dom@$REACT_VER && pnpm test
         env: {REACT_VER: '${{ matrix.react }}'}
   source:
     steps:
