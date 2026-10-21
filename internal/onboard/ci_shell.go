@@ -147,6 +147,9 @@ func resolveCIShell(root string, workflow ciWorkflow, job runtimeJob, step runti
 		}
 		var setup []string
 		syntax.Walk(file, func(node syntax.Node) bool {
+			if call, ok := node.(*syntax.CallExpr); ok && mutatesCIFiles(shellText(call)) {
+				setup = append(setup, "CI file or dependency changes require separate validation: "+shellText(call))
+			}
 			if redirect, ok := node.(*syntax.Redirect); ok && redirect.Op == syntax.AppOut {
 				target := strings.Trim(shellText(redirect.Word), `"`)
 				if target == "$GITHUB_PATH" || target == "${GITHUB_PATH}" {

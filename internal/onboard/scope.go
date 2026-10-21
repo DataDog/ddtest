@@ -5,6 +5,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 // TestCommand identifies an explicit framework invocation, not the surrounding
@@ -189,7 +190,35 @@ func mutatesCIFiles(command string) bool {
 		if len(words) > 0 && slices.Contains([]string{"sed", "cp", "mv", "rm", "patch", "rimraf", "rsync"}, words[0]) {
 			return true
 		}
-		if len(words) > 1 && slices.Contains([]string{"pnpm", "yarn", "bun"}, words[0]) && words[1] == "add" {
+		if changesDependencies(words) {
+			return true
+		}
+	}
+	return false
+}
+
+// Ordinary lockfile installs prepare declared dependencies. Explicit package
+// additions/removals change what the later test command resolves and must stay
+// visible as setup, even when an installer itself is a recognized CI step.
+func changesDependencies(words []string) bool {
+	if len(words) < 2 || !slices.Contains([]string{"npm", "pnpm", "yarn", "bun"}, words[0]) {
+		return false
+	}
+	args := words[1:]
+	for len(args) > 0 && (args[0] == "-g" || args[0] == "--global") {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return false
+	}
+	if slices.Contains([]string{"rm", "remove", "uninstall", "add"}, args[0]) {
+		return true
+	}
+	if args[0] != "install" && args[0] != "i" {
+		return false
+	}
+	for _, arg := range args[1:] {
+		if !strings.HasPrefix(arg, "-") {
 			return true
 		}
 	}
