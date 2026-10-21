@@ -84,7 +84,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				var commands []TestCommand
 				for i, step := range job.Steps {
 
-					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
+					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 					if conditionErr == nil && !active {
 						continue
 					}

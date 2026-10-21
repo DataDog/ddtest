@@ -24,9 +24,20 @@ func stepNumber(step runtimeStep, index int) int {
 	return index + 1
 }
 
+// environments contains workflow/job context only. Composite conditions must
+// not be evaluated against a flattened child's overriding environment.
 func stepCondition(step runtimeStep, row map[string]any, environments ...map[string]string) (bool, error) {
-	for _, condition := range append(slices.Clone(step.Parents), step.If) {
-		active, err := runtimeCondition(condition, row, environments...)
+	var base map[string]string
+	if len(environments) > 0 {
+		base = environments[0]
+	}
+	conditions := append(slices.Clone(step.Parents), runtimeConditionScope{Expression: step.If, Env: step.Env, Inputs: step.Inputs})
+	for _, condition := range conditions {
+		env := conditionEnvironment(ciWorkflow{Env: base}, runtimeJob{}, runtimeStep{Env: condition.Env}, row)
+		for key, value := range condition.Inputs {
+			env["\x00inputs."+key] = value
+		}
+		active, err := runtimeCondition(condition.Expression, row, env)
 		if err != nil || !active {
 			return active, err
 		}
@@ -88,7 +99,8 @@ func expandCompositeSteps(root, source string, steps []runtimeStep) []runtimeSte
 		for i, child := range action.Runs.Steps {
 			child.Number = step.Number
 			child.Source = fmt.Sprintf("%s / step %d", filepath.ToSlash(relative), i+1)
-			child.Parents = append(slices.Clone(step.Parents), step.If)
+			child.Parents = append(slices.Clone(step.Parents), runtimeConditionScope{Expression: step.If, Env: maps.Clone(step.Env), Inputs: maps.Clone(step.Inputs)})
+			child.Inputs = maps.Clone(inputs)
 			resolveInput := func(value string) string {
 				return inputReference.ReplaceAllStringFunc(value, func(reference string) string {
 					match := inputReference.FindStringSubmatch(reference)
@@ -101,7 +113,10 @@ func expandCompositeSteps(root, source string, steps []runtimeStep) []runtimeSte
 			child.Run = resolveInput(child.Run)
 			child.WorkingDirectory = resolveInput(child.WorkingDirectory)
 			child.Shell = resolveInput(child.Shell)
-			child.If = resolveInput(child.If)
+			// Keep input expressions typed: the string "false" is truthy.
+			if child.WorkingDirectory == "" {
+				child.WorkingDirectory = "."
+			}
 			child.Uses = resolveInput(child.Uses)
 			child.With = maps.Clone(child.With)
 			for key, value := range child.With {

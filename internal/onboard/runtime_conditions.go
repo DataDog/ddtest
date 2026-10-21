@@ -299,7 +299,7 @@ func (p *conditionParser) atom() (any, error) {
 			return value, nil
 		}
 	}
-	if strings.HasPrefix(token, "github.") || strings.HasPrefix(token, "steps.") || strings.HasPrefix(token, "secrets.") {
+	if strings.HasPrefix(token, "inputs.") || strings.HasPrefix(token, "github.") || strings.HasPrefix(token, "steps.") || strings.HasPrefix(token, "secrets.") {
 		if value, exists := p.env["\x00"+token]; exists {
 			return value, nil
 		}

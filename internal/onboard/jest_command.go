@@ -53,7 +53,7 @@ func JestValidationCommand(root string) (string, error) {
 					continue
 				}
 				for _, step := range job.Steps {
-					active, err := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
+					active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 					if err != nil {
 						return "", err
 					}
