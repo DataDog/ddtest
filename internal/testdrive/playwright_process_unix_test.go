@@ -20,7 +20,7 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 	if err != nil {
 		t.Skip("Node is needed for the process lifecycle regression")
 	}
-	for _, mode := range []string{"node", "non-node", "owner-crash"} {
+	for _, mode := range []string{"node", "non-node", "non-detached", "exec-file", "fork-custom-env", "owner-crash"} {
 		t.Run(mode, func(t *testing.T) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			require.NoError(t, err)
@@ -33,13 +33,21 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 			portFile := filepath.Join(dir, "port")
 			child := fmt.Sprintf(`const fs=require('node:fs');const s=require('node:net').createServer();s.listen(0,'127.0.0.1',()=>fs.writeFileSync(%q,String(s.address().port)));`, portFile)
 			parent := fmt.Sprintf(`const child=require('node:child_process').spawn(process.execPath,['-e',%q],{detached:true,stdio:'ignore'});child.unref();`, child)
-			if mode == "non-node" {
+			if mode == "non-node" || mode == "non-detached" || mode == "exec-file" {
 				python, err := exec.LookPath("python3")
 				if err != nil {
 					t.Skip("Python is needed for the non-Node group regression")
 				}
 				script := fmt.Sprintf("import socket,pathlib; s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); pathlib.Path(%q).write_text(str(s.getsockname()[1])); __import__('time').sleep(60)", portFile)
-				parent = fmt.Sprintf(`const child=require('node:child_process').spawn(%q,['-c',%q],{detached:true,stdio:'ignore'});child.unref();`, python, script)
+				parent = fmt.Sprintf(`const child=require('node:child_process').spawn(%q,['-c',%q],{detached:%t,stdio:'ignore'});child.unref();`, python, script, mode == "non-node")
+				if mode == "exec-file" {
+					parent = fmt.Sprintf(`const child=require('node:child_process').execFile(%q,['-c',%q],{stdio:'ignore'});child.stdout.destroy();child.stderr.destroy();child.unref();`, python, script)
+				}
+			}
+			if mode == "fork-custom-env" {
+				childPath := filepath.Join(dir, "fork.cjs")
+				require.NoError(t, os.WriteFile(childPath, []byte(child+`if(process.env.PARENT_ONLY)process.exit(1);process.send('ready');process.disconnect();`), 0600))
+				parent = fmt.Sprintf(`process.env.PARENT_ONLY='must-not-leak';const c=require('node:child_process').fork(%q,[],{detached:true,stdio:'ignore',env:{}});c.on('message',()=>c.unref());`, childPath)
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()

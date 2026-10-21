@@ -39,7 +39,7 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "unsupported detached spawn"} {
+	for _, mode := range []string{"passing", "existing failure", "sharded repeated alias", "unsupported detached spawn"} {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -53,8 +53,11 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 			address := listener.Addr().String()
 			require.NoError(t, listener.Close())
 			write("package.json", `{"scripts":{"test":"playwright test"},"devDependencies":{"@playwright/test":"1.55.1","dd-trace":"6.20.1"}}`)
+			if mode == "sharded repeated alias" {
+				write("package.json", `{"scripts":{"test":"playwright test --project desktop mobile --repeat-each=2 --shard=1/2"},"devDependencies":{"@playwright/test":"1.55.1","dd-trace":"6.20.1"}}`)
+			}
 			write("server.cjs", `require('node:http').createServer((req,res)=>res.end('<h1>hello</h1>')).listen(`+strings.Split(address, ":")[1]+`,'127.0.0.1')`)
-			write("playwright.config.cjs", `module.exports={testDir:'test',workers:1,retries:1,projects:[{name:'desktop',use:{browserName:'chromium'}},{name:'mobile',use:{browserName:'chromium'}}],webServer:{command:'node server.cjs',url:`+fmt.Sprintf("%q", "http://"+address)+`,reuseExistingServer:false,timeout:10000},use:{baseURL:`+fmt.Sprintf("%q", "http://"+address)+`}}`)
+			write("playwright.config.cjs", `module.exports={testDir:'test',workers:1,retries:1,repeatEach:2,projects:[{name:'desktop',use:{browserName:'chromium'}},{name:'mobile',use:{browserName:'chromium'}}],webServer:{command:'node server.cjs',url:`+fmt.Sprintf("%q", "http://"+address)+`,reuseExistingServer:false,timeout:10000},use:{baseURL:`+fmt.Sprintf("%q", "http://"+address)+`}}`)
 			body := `await page.goto('/');await expect(page.locator('h1')).toHaveText('hello');`
 			if mode == "existing failure" {
 				body += `expect(1).toBe(2);`
@@ -94,7 +97,7 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 			if mode == "unsupported detached spawn" {
 				require.Error(t, err, string(output))
 				require.False(t, report.Success)
-				require.Contains(t, report.Error, "unsupported detached spawn")
+				require.Contains(t, report.Error, "unsupported supervised spawn")
 				require.Equal(t, "inconclusive", report.Compatibility.Status)
 				require.Len(t, report.Configurations, 1)
 				require.Equal(t, "not exercised", report.Configurations[0].Compatibility.Status)
@@ -102,7 +105,19 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 				require.NoError(t, err, string(output))
 				require.True(t, report.Success, string(output))
 				require.Equal(t, "compatible", report.Compatibility.Status)
-				require.Len(t, report.Features, 12)
+				expectedProjects := 2
+				if mode == "sharded repeated alias" {
+					expectedProjects = 1
+				}
+				require.Len(t, report.Features, expectedProjects*6)
+				for _, run := range report.Runs {
+					if run.ProbeMode != "" {
+						require.NotEmpty(t, run.NativeCommand)
+						require.NotContains(t, run.NativeCommand, "--shard")
+						require.Contains(t, run.NativeCommand, "--repeat-each=1")
+						require.Equal(t, 1, strings.Count(run.NativeCommand, "--project="))
+					}
+				}
 				for _, feature := range report.Features {
 					if feature.Name == "skipping" {
 						require.Equal(t, "not supported", feature.Status)
@@ -111,7 +126,7 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 					}
 				}
 				require.NotNil(t, report.ReportingCounts)
-				require.Equal(t, 2, report.ReportingCounts.TestExecutions)
+				require.Equal(t, expectedProjects*2, report.ReportingCounts.TestExecutions)
 			}
 			require.NotNil(t, report.Cleanup)
 			require.Equal(t, "passed", report.Cleanup.Status)

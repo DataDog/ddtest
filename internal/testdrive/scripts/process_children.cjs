@@ -1,14 +1,35 @@
 const childProcess = require('node:child_process')
-const spawn = childProcess.spawn
+const spawn = childProcess.ChildProcess.prototype.spawn
 
 if (process.env.DDTEST_PROCESS_OWNER && !process.env.DDTEST_PROCESS_GUARD) {
   require('./process_owner.cjs')(signal => process.kill(process.pid, signal))
-  childProcess.spawn = function (command, args, options) {
-    if (!Array.isArray(args)) { options = args; args = [] }
-    if (!options?.detached) return Reflect.apply(spawn, this, [command, args, options])
+  // All asynchronous launch APIs (including fork and execFile) reach this hook.
+  childProcess.ChildProcess.prototype.spawn = function (options) {
+    const args = options.args || []
+    const env = Object.fromEntries((options.envPairs || []).map(pair => {
+      const index = pair.indexOf('=')
+      return [pair.slice(0, index), pair.slice(index + 1)]
+    }))
+    env.DDTEST_PROCESS_OWNER = process.env.DDTEST_PROCESS_OWNER
+    env.DDTEST_PROCESS_ERRORS = process.env.DDTEST_PROCESS_ERRORS
+    // Preserve the child's own options, adding ownership even when a custom
+    // environment omitted the parent's preloads. Node grandchildren can then
+    // supervise their own detached launches too.
+    if (!(env.NODE_OPTIONS || '').includes(__filename)) {
+      env.NODE_OPTIONS = (env.NODE_OPTIONS || '') + ' --require ' + JSON.stringify(__filename)
+    }
     const stdio = options.stdio ?? 'pipe'
-    if (process.platform === 'win32' || options.argv0 || (Array.isArray(stdio) && (stdio.includes('ipc') || stdio.length > 10))) {
-      require('./process_owner.cjs').recordFailure('unsupported detached spawn configuration', 'unsupported_detached_spawn')
+    if (Array.isArray(stdio) && stdio.includes('ipc')) {
+      if (options.file !== process.execPath) {
+        require('./process_owner.cjs').recordFailure('non-Node IPC child cannot be supervised', 'unsupported_detached_spawn')
+        process.exit(86)
+      }
+      // A fork with a custom environment may omit NODE_OPTIONS. Add only the
+      // supervisor; do not restore the parent's tracer or application preloads.
+      return Reflect.apply(spawn, this, [{ ...options, envPairs: Object.entries(env).map(([key, value]) => key + '=' + value) }])
+    }
+    if (process.platform === 'win32' || (args.length && args[0] !== options.file) || (Array.isArray(stdio) && stdio.length > 10)) {
+      require('./process_owner.cjs').recordFailure('unsupported supervised spawn configuration', 'unsupported_detached_spawn')
       // Do not launch a child that cannot be owned, or let matching supervisor
       // failures in both modes masquerade as an existing customer test failure.
       process.exit(86)
@@ -28,8 +49,9 @@ done
 rm -f "$ready"
 unset DDTEST_PROCESS_GUARD
 exec "$@"`
-    const invocation = options.shell ? [options.shell === true ? '/bin/sh' : options.shell, '-c', [command, ...args].join(' ')] : [command, ...args]
-    const env = { ...(options.env ?? process.env), DDTEST_PROCESS_OWNER: process.env.DDTEST_PROCESS_OWNER, DDTEST_PROCESS_GUARD: '1', DDTEST_PROCESS_ERRORS: process.env.DDTEST_PROCESS_ERRORS }
-    return Reflect.apply(spawn, this, ['/bin/sh', ['-c', launcher, 'ddtest-owned-launcher', process.execPath, require.resolve('./process_guard.cjs'), ...invocation], { ...options, shell: false, env }])
+    env.DDTEST_PROCESS_GUARD = '1'
+    return Reflect.apply(spawn, this, [{ ...options, file: '/bin/sh', detached: true,
+      args: ['/bin/sh', '-c', launcher, 'ddtest-owned-launcher', process.execPath, require.resolve('./process_guard.cjs'), options.file, ...args.slice(1)],
+      envPairs: Object.entries(env).map(([key, value]) => key + '=' + value) }])
   }
 }

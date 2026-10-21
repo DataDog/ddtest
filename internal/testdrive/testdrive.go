@@ -46,6 +46,7 @@ type Testdrive struct {
 	configurationSourceRoot  string
 	scopeCommand             string
 	playwrightGuard          bool
+	playwrightProject        string
 	configurationEnvironment map[string]string
 	allowReviewedBuilds      bool
 	commandTimeout           time.Duration

@@ -61,6 +61,7 @@ type runSpec struct {
 type validationRun struct {
 	ReplacedReporters []string
 	Role              runRole
+	NativeCommand     string
 	ExecutionContext  string `json:"execution_context,omitempty"`
 	temporaryRoot     string
 	commandOutput     string
@@ -109,6 +110,7 @@ type coverageSummary struct {
 type runSummary struct {
 	ReplacedReporters               []string            `json:"replaced_reporters,omitempty"`
 	Role                            runRole             `json:"role"`
+	NativeCommand                   string              `json:"native_command,omitempty"`
 	ExecutionContext                string              `json:"execution_context,omitempty"`
 	Coverage                        *coverageSummary    `json:"coverage,omitempty"`
 	ExecutionPath                   string              `json:"execution_path,omitempty"`
@@ -133,7 +135,7 @@ type runSummary struct {
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+	summary := runSummary{NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)

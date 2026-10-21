@@ -184,3 +184,19 @@ func TestPlaywrightRepeatComparisonSeparatesBrowserProjects(t *testing.T) {
 	require.Contains(t, got.Differences[0], `project="iPhone"`)
 	require.Contains(t, got.Differences[1], `project="Pixel"`)
 }
+
+func TestPlaywrightProbePreloadLeavesStdinHooksAlone(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node is required")
+	}
+	directory := t.TempDir()
+	env := map[string]string{}
+	require.NoError(t, preparePlaywrightProbe(directory, env, "probe.spec.cjs", "desktop"))
+	command := exec.CommandContext(t.Context(), node, "-")
+	command.Stdin = strings.NewReader("console.log('setup completed')")
+	command.Env = append(os.Environ(), "NODE_OPTIONS="+env["NODE_OPTIONS"], "DDTEST_PLAYWRIGHT_PROBE=probe.spec.cjs")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.Equal(t, "setup completed\n", string(output))
+}
