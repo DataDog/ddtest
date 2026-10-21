@@ -545,8 +545,13 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 
 	mocha := len(frameworks) > 0 && frameworks[0] == "mocha"
 	cucumber := len(frameworks) > 0 && frameworks[0] == "cucumber"
+	cucumberScoped := cucumber && strings.HasPrefix(script, cucumberScopedOptions+" ")
 	if cucumber {
 		script = cucumberDiscoveryScript(script)
+		parts, err := staticCommands(script)
+		if err != nil || len(parts) != 1 {
+			return unresolvedCommand("Cucumber aliases must forward formatter options to one invocation; compound scripts require explicit setup review: " + command)
+		}
 	}
 	var result commandResolution
 	if (mocha || cucumber || (len(frameworks) > 0 && frameworks[0] == "cypress")) && strings.HasPrefix(command, "npm ") {
@@ -577,6 +582,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		result = resolveJestSequence(root, directory, script, append(slices.Clone(stack), key), remaining, frameworks...)
 	}
 
+	if cucumberScoped && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
+		result.Tests[0].cucumberScoped = true
+	}
 	if mocha && lifecycle == "" && result.Reason == "" && !result.Matched && result.MochaAuxiliary && name == "build" {
 		return commandResolution{Builds: []BuildCommand{{Directory: repositoryPath(root, directory), Command: command, Kind: "package-build"}}}
 	}

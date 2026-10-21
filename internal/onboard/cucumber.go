@@ -35,6 +35,10 @@ func CucumberValidationCommand(root, command string) (string, error) {
 		}
 		command = scope.Commands[0].Command
 	}
+	parts, err := staticCommands(command)
+	if err != nil || len(parts) != 1 {
+		return "", fmt.Errorf("cucumber command must forward formatter options to one invocation; review compound setup separately")
+	}
 	resolved := ValidationCommands(root, command, "cucumber")
 	if len(resolved) != 1 || len(resolved[0].UnvalidatedSetup) > 0 {
 		return "", fmt.Errorf("cucumber validation needs one resolved invocation with its profile and setup; use --all for CI commands")
@@ -78,24 +82,19 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 	}
 	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
 	var pkg struct {
-		Type    string
-		Scripts map[string]string
+		Type string
 	}
 	if err != nil || json.Unmarshal(data, &pkg) != nil {
 		return "Cannot inspect Cucumber package scripts"
 	}
 	if scoped != "" {
-		found := false
-		for _, script := range pkg.Scripts {
-			if strings.Contains(script, "cucumber-js") {
-				if !strings.Contains(script, cucumberScopedOptions) {
-					return "Cucumber leaf does not consume scoped DD_CUCUMBER_NODE_OPTIONS while preserving existing NODE_OPTIONS"
-				}
-				found = true
-			}
-		}
-		if !found {
+		if len(commands) == 0 {
 			return "Cannot identify a Cucumber leaf consuming DD_CUCUMBER_NODE_OPTIONS"
+		}
+		for _, command := range commands {
+			if !command.cucumberScoped {
+				return "Selected Cucumber leaf does not consume scoped DD_CUCUMBER_NODE_OPTIONS while preserving existing NODE_OPTIONS"
+			}
 		}
 		copy := step
 		copy.Env = map[string]string{}
@@ -113,7 +112,7 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 		options := scoped
 		for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
 			if value, ok := env["NODE_OPTIONS"]; ok {
-				options += " " + value
+				options = scoped + " " + value
 			}
 		}
 		if !strings.Contains(options, "--experimental-loader @istanbuljs/esm-loader-hook") && !strings.Contains(options, "--loader @istanbuljs/esm-loader-hook") {

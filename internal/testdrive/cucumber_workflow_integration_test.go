@@ -24,6 +24,7 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	binary := filepath.Join(t.TempDir(), "ddtest")
+	var hookFile string
 	command := func(root, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = root
@@ -32,11 +33,12 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				cmd.Env = append(cmd.Env, value)
 			}
 		}
+		cmd.Env = append(cmd.Env, "DDTEST_CUCUMBER_HOOK_FILE="+hookFile)
 		return cmd.CombinedOutput()
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "no application coverage", "package directory"} {
+	for _, mode := range []string{"passing", "existing failure", "no application coverage", "package directory", "custom support coverage", "feature application"} {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -45,6 +47,7 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
 				requireWriteFile(t, filepath.Join(root, name), value)
 			}
+			hookFile = filepath.Join(t.TempDir(), "hooks.txt")
 			appDirectory := root
 			appWrite := write
 			if mode == "package directory" {
@@ -59,10 +62,20 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 			if mode == "existing failure" {
 				assertion = "require('node:assert').equal(require('../../src/add.cjs')(1,1),3)"
 			}
-			if mode == "no application coverage" {
+			if mode == "no application coverage" || mode == "custom support coverage" {
 				assertion = "require('node:assert').equal(1+1,2)"
 			}
 			appWrite("features/step_definitions/one.js", `const {Given}=require('@cucumber/cucumber');Given('addition works',()=>{`+assertion+`});`)
+			if mode == "custom support coverage" {
+				appWrite("package.json", `{"scripts":{"test":"nyc -- cucumber-js --require support/steps.js"},"devDependencies":{"@cucumber/cucumber":"12.2.0","nyc":"17.1.0","dd-trace":"6.20.1"}}`)
+				appWrite("support/steps.js", `const {Given}=require('@cucumber/cucumber');Given('addition works',()=>require('node:assert').equal(1+1,2));`)
+			}
+			if mode == "feature application" {
+				appWrite("src/features/payments/service.cjs", "module.exports=(a,b)=>a+b")
+				appWrite("features/step_definitions/one.js", `const {Given}=require('@cucumber/cucumber');Given('addition works',()=>require('node:assert').equal(require('../../src/features/payments/service.cjs')(1,1),2));`)
+			}
+			appWrite("features/support/hooks.js", `const {Before,setWorldConstructor}=require('@cucumber/cucumber');class World{};setWorldConstructor(World);Before(function(){if(!(this instanceof World))throw new Error('World missing');require('node:fs').appendFileSync(process.env.DDTEST_CUCUMBER_HOOK_FILE,'hook\n');});`)
+
 			write(".github/workflows/ci.yml", `jobs:
   test:
     steps:
@@ -97,7 +110,7 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 			}
 			output, err = command(root, binary, args...)
 			report := readValidationReport(t, root)
-			if mode == "no application coverage" {
+			if mode == "no application coverage" || mode == "custom support coverage" {
 				require.Error(t, err, string(output))
 				require.False(t, report.Success)
 				require.True(t, missingRealCoverage(report))
@@ -117,7 +130,12 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 			require.NoDirExists(t, filepath.Join(root, "coverage"))
 			entries, err := os.ReadDir(filepath.Join(appDirectory, "features"))
 			require.NoError(t, err)
-			require.Len(t, entries, 2, "feature and step definitions only; no owned probes")
+			require.Len(t, entries, 3, "feature, support and step definitions only; no owned probes")
+			if mode != "custom support coverage" {
+				hooks, err := os.ReadFile(hookFile)
+				require.NoError(t, err)
+				require.Greater(t, strings.Count(string(hooks), "hook\n"), 2, "feature controls must load the same default hooks as the paired suite")
+			}
 		})
 	}
 }

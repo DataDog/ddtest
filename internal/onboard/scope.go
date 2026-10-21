@@ -42,6 +42,7 @@ type TestCommand struct {
 	mochaESM          bool
 	mochaProbeCommand string
 	usesNYC           bool
+	cucumberScoped bool
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same

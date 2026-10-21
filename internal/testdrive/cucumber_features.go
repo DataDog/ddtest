@@ -64,8 +64,10 @@ func (t *Testdrive) runCucumberFeatures(ctx context.Context, output io.Writer, s
 	}
 	defer func() { runErr = errors.Join(runErr, removeProbe(t.checkoutRoot(), steps)) }()
 
+	child := *t
+	child.cucumberSupport = baseline.cucumberSupport
 	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
-		return t.runCucumber(ctx, output, session, preload, name, true, scenario, probe, mode)
+		return child.runCucumber(ctx, output, session, preload, name, true, scenario, probe, mode)
 	}, result)
 }
 
@@ -106,7 +108,16 @@ func (t *Testdrive) cucumberProbeCommand(probe string) (string, []string, error)
 			args = append(args, word)
 		}
 	}
-	args = append(args, probe, "--import", probe+".steps.cjs", "--retry", "0")
+	if t.cucumberSupport == nil {
+		return "", nil, fmt.Errorf("cucumber effective support metadata is unavailable for feature probes")
+	}
+	for _, path := range t.cucumberSupport.RequirePaths {
+		args = append(args, "--require", path)
+	}
+	for _, path := range t.cucumberSupport.ImportPaths {
+		args = append(args, "--import", path)
+	}
+	args = append(args, probe, "--require", probe+".steps.cjs", "--retry", "0")
 	if t.cucumberNode == "" || t.cucumberExecutable == "" {
 		return "", nil, fmt.Errorf("cucumber preflight did not resolve its installed CLI")
 	}

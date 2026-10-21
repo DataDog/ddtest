@@ -398,6 +398,8 @@ jobs:
             DDTEST_CUCUMBER_NODE_MODULES="${cucumber_dir}/node_modules" \
             DDTEST_CUCUMBER_VERSION="${{ matrix.cucumber }}" \
             go test -v ./internal/compatibility -run '^TestCucumberAdapterIntegration$'
+          DDTEST_CUCUMBER_NODE_MODULES="${cucumber_dir}/node_modules" \
+            go test -v ./internal/testdrive -run '^TestCucumberSupportMetadataIntegration$'
 
   lint:
     runs-on: ubuntu-latest

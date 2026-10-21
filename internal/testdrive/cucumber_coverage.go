@@ -13,9 +13,15 @@ import (
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
-func cucumberSourceCoverage(root string, facts intake.Facts, native []jestTest) *coverageSummary {
+func cucumberSourceCoverage(root string, facts intake.Facts, native []jestTest, excluded ...string) *coverageSummary {
 	if canonical, err := filepath.EvalSymlinks(root); err == nil {
 		root = canonical
+	}
+	supportFiles := map[string]bool{}
+	for _, file := range excluded {
+		if local, ok := cypressCoverageFile(root, file); ok {
+			supportFiles[local] = true
+		}
 	}
 	// Cucumber reports suite coverage. Associate it with the suite's scenarios
 	// without claiming independent per-scenario precision.
@@ -30,7 +36,7 @@ func cucumberSourceCoverage(root string, facts intake.Facts, native []jestTest) 
 		var application []string
 		for _, file := range files {
 			local, valid := cypressCoverageFile(root, file)
-			if valid && (strings.Contains("/"+local, "/test/") || strings.Contains("/"+local, "/tests/") || strings.Contains("/"+local, "/features/") || strings.HasPrefix(filepath.Base(local), "cucumber.")) {
+			if valid && (supportFiles[local] || strings.HasSuffix(local, ".feature") || strings.HasSuffix(local, ".feature.md")) {
 				continue
 			}
 			application = append(application, file)

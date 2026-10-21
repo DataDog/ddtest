@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -65,5 +66,51 @@ func TestCucumberCIRequiresCoverageAndEarlyInitialization(t *testing.T) {
 				require.Contains(t, check.Jobs[0].Reason, "coverage")
 			}
 		})
+	}
+}
+
+func TestCucumberScopedBootstrapUsesOnlySelectedLeaves(t *testing.T) {
+	root := t.TempDir()
+	scripts := map[string]string{"test:ci": cucumberScopedOptions + " nyc -- cucumber-js", "bdd": "npm run test:ci", "cucumber:watch": "cucumber-js --watch"}
+	writeScripts(t, root, scripts)
+	step := runtimeStep{Run: "npm run bdd", Env: map[string]string{"DD_CUCUMBER_NODE_OPTIONS": "-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}"}}
+	resolution := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, step, "javascript", "cucumber")
+	require.Empty(t, resolution.Reason)
+	require.Empty(t, checkCucumberBootstrap(root, ciWorkflow{}, runtimeJob{}, step, nil, resolution.Tests))
+	scripts["test:ci"] = "nyc -- cucumber-js"
+	writeScripts(t, root, scripts)
+	resolution = resolveTestStep(root, ciWorkflow{}, runtimeJob{}, step, "javascript", "cucumber")
+	require.Contains(t, checkCucumberBootstrap(root, ciWorkflow{}, runtimeJob{}, step, nil, resolution.Tests), "Selected Cucumber leaf")
+}
+func TestCucumberESMLoaderUsesEnvironmentPrecedence(t *testing.T) {
+	for _, scope := range []bool{false, true} {
+		root := t.TempDir()
+		script := "nyc -- cucumber-js"
+		if scope {
+			script = cucumberScopedOptions + " " + script
+		}
+		data := `{"type":"module","scripts":{"test":` + strconv.Quote(script) + `}}`
+		require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(data), 0600))
+		preload := "-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}"
+		workflow := ciWorkflow{Env: map[string]string{"NODE_OPTIONS": preload + " --experimental-loader @istanbuljs/esm-loader-hook"}}
+		step := runtimeStep{Run: "npm test", Env: map[string]string{"NODE_OPTIONS": preload}}
+		if scope {
+			step.Env["DD_CUCUMBER_NODE_OPTIONS"] = preload
+		}
+		resolution := resolveTestStep(root, workflow, runtimeJob{}, step, "javascript", "cucumber")
+		require.Contains(t, checkCucumberBootstrap(root, workflow, runtimeJob{}, step, nil, resolution.Tests), "Istanbul")
+		step.Env["NODE_OPTIONS"] += " --experimental-loader @istanbuljs/esm-loader-hook"
+		require.Empty(t, checkCucumberBootstrap(root, workflow, runtimeJob{}, step, nil, resolution.Tests))
+	}
+}
+func TestCucumberCompoundAliasesCannotMisrouteFormatter(t *testing.T) {
+	for _, script := range []string{"nyc -- cucumber-js && echo done", "echo begin && nyc -- cucumber-js", "npm run bdd && echo done"} {
+		root := t.TempDir()
+		writeScripts(t, root, map[string]string{"test": script, "bdd": "nyc -- cucumber-js"})
+		remaining := 256
+		resolution := resolveJestSequence(root, root, "npm test", nil, &remaining, "cucumber")
+		require.Contains(t, resolution.Reason, "formatter options")
+		_, err := CucumberValidationCommand(root, "npm test")
+		require.Error(t, err)
 	}
 }

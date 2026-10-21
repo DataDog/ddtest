@@ -30,21 +30,21 @@ func cucumberMessages() string {
 
 func TestCucumberSourceCoverageRequiresApplicationFiles(t *testing.T) {
 	root := t.TempDir()
-	for _, file := range []string{"cucumber.js", "test/steps.js", "test/suite.feature", "lib/index.js"} {
+	for _, file := range []string{"cucumber.js", "support/steps.js", "test/suite.feature", "src/features/payments/service.js"} {
 		path := filepath.Join(root, file)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 		require.NoError(t, os.WriteFile(path, []byte("source"), 0600))
 	}
-	facts := intake.Facts{TestCount: 2, CoverageLevel: "suite", Tests: []intake.Test{{Module: "api", Suite: "test/suite.feature"}, {Module: "api", Suite: "test/suite.feature"}}, SuiteCoverages: []intake.SuiteCoverage{{Module: "api", Suite: "test/suite.feature", Files: []string{"cucumber.js", "test/steps.js", "test/suite.feature"}}}}
+	facts := intake.Facts{TestCount: 2, CoverageLevel: "suite", Tests: []intake.Test{{Module: "api", Suite: "test/suite.feature"}, {Module: "api", Suite: "test/suite.feature"}}, SuiteCoverages: []intake.SuiteCoverage{{Module: "api", Suite: "test/suite.feature", Files: []string{"cucumber.js", "support/steps.js", "test/suite.feature"}}}}
 	native := []jestTest{{File: filepath.Join(root, "test/suite.feature")}}
-	require.Equal(t, "not observed", cucumberSourceCoverage(root, facts, native).Status)
-	facts.SuiteCoverages[0].Files = append(facts.SuiteCoverages[0].Files, "lib/index.js")
-	coverage := cucumberSourceCoverage(root, facts, native)
+	require.Equal(t, "not observed", cucumberSourceCoverage(root, facts, native, "cucumber.js", "support/steps.js").Status)
+	facts.SuiteCoverages[0].Files = append(facts.SuiteCoverages[0].Files, "src/features/payments/service.js")
+	coverage := cucumberSourceCoverage(root, facts, native, "cucumber.js", "support/steps.js")
 	require.Equal(t, "observed", coverage.Status)
 	require.Equal(t, "suite", coverage.Level)
 	require.Equal(t, 2, coverage.CoveredTests)
 	facts.SuiteCoverages[0].Files = append(facts.SuiteCoverages[0].Files, "/outside/project.js")
-	require.Equal(t, "invalid", cucumberSourceCoverage(root, facts, native).Status)
+	require.Equal(t, "invalid", cucumberSourceCoverage(root, facts, native, "cucumber.js", "support/steps.js").Status)
 }
 
 func TestCucumberNativeMessagesRequireCompletionAndRetainFinalResults(t *testing.T) {

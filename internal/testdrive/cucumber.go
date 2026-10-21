@@ -8,6 +8,7 @@ package testdrive
 import (
 	"bufio"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,11 @@ import (
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/kballard/go-shellquote"
 )
+
+//go:embed scripts/cucumber_support.cjs
+var cucumberSupportObserver string
+
+type cucumberSupport struct{ RequirePaths, ImportPaths, ConfigFiles []string }
 
 const cucumberMetadataScript = `const path = require('node:path');
 const manifest = require.resolve('@cucumber/cucumber/package.json');
@@ -214,11 +220,7 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 	if err := run.ownTemporaryDirectory(session.Directory(), env); err != nil {
 		return run, err
 	}
-	// Cucumber consumes cwd-relative suite identities, unlike Jest's
-	// repository-relative source-file selection. Keep the real source tag.
-	if scenario.Feature == "skipping" {
-		scenario.SuiteSelector = scenario.Suite
-	}
+
 	configureScenarioEnvironment(env, scenario.Feature)
 	env["CUCUMBER_PUBLISH_ENABLED"] = "false"
 	if !instrumented {
@@ -241,6 +243,14 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 		env["NYC_CHECK_COVERAGE"], env["C8_CHECK_COVERAGE"] = "false", "false"
 		run.ProbeCoverageThresholdsDisabled = true
 	}
+	observer := filepath.Join(directory, "cucumber_support.cjs")
+	if err := os.WriteFile(observer, []byte(cucumberSupportObserver), 0600); err != nil {
+		return run, err
+	}
+	env["DDTEST_CUCUMBER_SUPPORT"] = filepath.Join(directory, "support.json")
+	env["NODE_OPTIONS"] += " --require " + strconv.Quote(observer)
+	args = appendCucumberOptions(command, args, "--format", observer)
+	run.ExecutionContext = "Both modes use native Cucumber message and support-metadata formatters; baseline tracing is disabled."
 	results := filepath.Join(directory, "native.ndjson")
 	args = appendCucumberOptions(command, args, "--format", "message:"+results)
 	selected := *t
@@ -263,8 +273,21 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 		return run, err
 	}
 	readCucumberResults(results, t.repositoryRoot, &run)
+	var support cucumberSupport
+	metadata, err := os.ReadFile(env["DDTEST_CUCUMBER_SUPPORT"])
+	if err != nil || json.Unmarshal(metadata, &support) != nil {
+		run.ResultError = "Cucumber effective support metadata is unavailable"
+	} else {
+		run.cucumberSupport = &support
+	}
 	if instrumented && probePath == "" {
-		run.Coverage = cucumberSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests)
+		var excluded []string
+		if run.cucumberSupport != nil {
+			excluded = append(excluded, support.RequirePaths...)
+			excluded = append(excluded, support.ImportPaths...)
+			excluded = append(excluded, support.ConfigFiles...)
+		}
+		run.Coverage = cucumberSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests, excluded...)
 	}
 	if probePath != "" {
 		data, _ := os.ReadFile(env["DDTEST_PROBE_COUNTER"])

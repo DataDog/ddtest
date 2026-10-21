@@ -62,9 +62,11 @@ type runSpec struct {
 type validationRun struct {
 	ReplacedReporters []string
 	Role              runRole
+	cucumberSupport   *cucumberSupport
 	FrameworkNode     string
 	NativeCommand     string
 	ProbeExecutions   *int
+	Coverage          *coverageSummary
 	ExecutionContext  string `json:"execution_context,omitempty"`
 	temporaryRoot     string
 	commandOutput     string
