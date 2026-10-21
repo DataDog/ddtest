@@ -238,8 +238,8 @@ func TestVitestMissingSkippingNegotiationIsNotAPass(t *testing.T) {
 func TestVitestPairedExecutionCanBeRetained(t *testing.T) {
 	exit := 0
 	result := validationResult{Framework: "vitest", Runs: []runSummary{
-		{Name: "baseline", Command: "vitest run", ExitCode: &exit},
-		{Name: "reporting-only", Command: "vitest run", ExitCode: &exit, Instrumented: true},
+		{Role: roleBaseline, Name: "baseline", Command: "vitest run", ExitCode: &exit},
+		{Role: roleReporting, Name: "reporting-only", Command: "vitest run", ExitCode: &exit, Instrumented: true},
 	}}
 	require.True(t, hasPairedExecution(result))
 	result.CheckOnly = true
@@ -340,7 +340,7 @@ func TestVitestSourceBuildDefersOnlyUntilInstalledMetadata(t *testing.T) {
 			tracer := filepath.Join(t.TempDir(), "dd-trace")
 			require.NoError(t, os.MkdirAll(filepath.Join(tracer, "ci"), 0700))
 			requireWriteFile(t, filepath.Join(tracer, "package.json"), `{"version":"6.20.1","engines":{"node":">=22"}}`)
-			require.NoError(t, verifyInstalledSelection(filepath.Join(tracer, "ci/init.js"), &result))
+			require.NoError(t, drive.verifyInstalledSelection(t.Context(), filepath.Join(tracer, "ci/init.js"), &result))
 			require.Equal(t, "compatible", checkVitestSupport(*result.Preflight, *result.Selection).Status)
 		})
 	}
@@ -356,7 +356,7 @@ func TestVitestValidationFlagsPrecedeArgumentTerminator(t *testing.T) {
 	session, err := NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
-	run, err := drive.runVitest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", "baseline", false, intake.Scenario{}, "", "")
+	run, err := drive.runVitest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", runSpec{Name: "baseline", Role: roleBaseline})
 	require.NoError(t, err)
 	require.Empty(t, run.ResultError)
 }

@@ -270,11 +270,7 @@ func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *Se
 		run.ProbeCoverageThresholdsDisabled = true
 		env["DDTEST_PROBE_MODE"] = probeMode
 	}
-	index := framework.FrameworkSeparator(t.command, args, "vitest")
-	if index < 0 {
-		index = len(args)
-	}
-	args = slices.Insert(args, index, validationArgs...)
+	args = framework.WithFrameworkOptions(t.command, args, "vitest", validationArgs...)
 	if t.usesVitestRunner() {
 		args, err = t.vitestRunnerArgs(directory, preload, probePath, instrumented, env)
 		if err != nil {

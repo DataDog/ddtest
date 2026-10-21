@@ -241,7 +241,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 				if !rowCandidate {
 					continue
 				}
-				result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, rowJob, rowResolutions, row, resolveNode, cachedResolve)...)
+				result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, rowJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
 
 			}
 		}
@@ -303,7 +303,7 @@ func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) err
 	return err
 }
 
-func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver) []RuntimeFinding {
+func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
 	finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Status: StatusInconclusive}
 	var findings []RuntimeFinding
 	fail := func(code, reason string) []RuntimeFinding {

@@ -437,7 +437,6 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 
 	var result validationResult
-	var runErr error
 	if t.framework.Name() == "vitest" && t.usesVitestRunner() {
 		child := *t
 		child.workflowRoot = t.repositoryRoot

@@ -46,7 +46,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if item.Directory == "" {
 		item.Directory = "."
 	}
-	if t.framework.Name() == "vitest" && t.usesVitestRunner() {
+	if t.framework != nil && t.framework.Name() == "vitest" && t.usesVitestRunner() {
 		t.vitestRunner = true
 		var err error
 		if t.command == "ddtest" {
