@@ -61,12 +61,23 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	if command == "npx" && !slices.Contains(baseArgs, "--no-install") {
 		baseArgs = append([]string{"--no-install"}, baseArgs...)
 	}
-	if command == "jest" {
+	// Configuration discovery resolves ordinary local bins before preflight.
+	// Loader-only installations have no bin, so retain the resolved Node entry
+	// for execution as well as inspection instead of invoking a missing path.
+	loaderConfiguration := false
+	if t.workflowRoot != "" && command == filepath.Join(t.repositoryRoot, "node_modules", ".bin", "jest") {
+		_, err := os.Stat(command)
+		loaderConfiguration = errors.Is(err, os.ErrNotExist)
+	}
+	if command == "jest" || loaderConfiguration {
 		var err error
 		command, baseArgs, err = t.installedJest(ctx)
 		if err != nil {
 			result.Preflight = &jestPreflight{Verdict: verdict{Status: onboard.StatusInconclusive, Code: onboard.CodeJestNotInstalled, Reason: err.Error()}}
 			return err
+		}
+		if loaderConfiguration {
+			t.command, t.args = command, baseArgs
 		}
 	}
 	args := framework.WithFrameworkOptions(command, baseArgs, "jest", "--showConfig", "--watchman=false")
