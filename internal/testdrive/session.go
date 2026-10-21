@@ -7,7 +7,6 @@ package testdrive
 
 import (
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,7 +19,6 @@ const sessionTimeFormat = "2006-01-02-150405"
 type Session struct {
 	id         string
 	directory  string
-	watchman   *ownedWatchman
 	persistent bool
 }
 
@@ -62,14 +60,10 @@ func (s *Session) Close() error {
 	if s.persistent {
 		return nil
 	}
-	var daemonErr error
-	if s.watchman != nil {
-		daemonErr = s.watchman.close()
-	}
 	if err := os.RemoveAll(s.directory); err != nil {
-		return errors.Join(daemonErr, fmt.Errorf("clean up testdrive session %s: %w", s.directory, err))
+		return fmt.Errorf("clean up testdrive session %s: %w", s.directory, err)
 	}
-	return daemonErr
+	return nil
 }
 
 // ID returns the unique name of the session.

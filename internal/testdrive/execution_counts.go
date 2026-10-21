@@ -7,7 +7,6 @@ package testdrive
 
 import (
 	"path/filepath"
-	"strings"
 )
 
 const sourceIdentityScope = "Native file and full test name, including reported project/browser/repeat identity. Counts cover reporting-only results, including skipped results, once per configuration; retries remain attempts. Matching source identities across commands do not establish equivalent configurations or environments."
@@ -93,7 +92,7 @@ func combineExecutionCounts(parts []*executionCounts) *executionCounts {
 func reportingExecutionCounts(runs []runSummary) *executionCounts {
 	var parts []*executionCounts
 	for _, run := range runs {
-		if run.Instrumented && run.ProbeMode == "" && strings.HasPrefix(run.Name, "reporting-only") {
+		if run.Role == roleReporting {
 			parts = append(parts, run.NativeCounts)
 		}
 	}

@@ -71,24 +71,20 @@ func (t *Testdrive) discoverJestTests(ctx context.Context, probe string) ([]stri
 	}
 	defer func() { _ = os.RemoveAll(directory) }()
 	resultPath := filepath.Join(directory, "paths.json")
-	args := appendJestArgs(t.command, t.args, "--listTests", "--json", "--outputFile", resultPath)
+	args := appendJestArgs(t.command, t.args, "--listTests", "--json", "--outputFile", resultPath, "--watchman=false")
 	if probe != "" {
 		args = withJestProbe(t.command, args, probe)
 	}
 	command := shellquote.Join(append([]string{t.command}, args...)...)
 	env := reportingEnvironment("http://127.0.0.1:1", "project-discovery")
-	if t.session != nil {
-		if err := t.session.watchmanEnvironment(env); err != nil {
-			return nil, command, err
-		}
-	}
+
 	env["NODE_OPTIONS"] = stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS"))
 	env["DD_CIVISIBILITY_ENABLED"] = "false"
 	env["DD_TRACE_ENABLED"] = "false"
 	if probe != "" {
 		env["DDTEST_JEST_PROBE"] = "1"
 	}
-	if err := redirectJestArguments(directory, "", resultPath, probe, env); err != nil {
+	if err := redirectJestArguments(directory, jestArgumentRequest{Output: resultPath, Probe: probe, Project: t.jestProject.DisplayName.Name, ProbeDiscovery: true}, env); err != nil {
 		return nil, command, err
 	}
 	data, err := t.executor.CombinedOutput(ctx, t.command, args, env)

@@ -9,8 +9,8 @@ func hasValidationPair(result validationResult) bool {
 		if run.Command == "" || run.ExitCode == nil {
 			continue
 		}
-		baseline = baseline || run.Name == "baseline" && !run.Instrumented
-		reporting = reporting || run.Name == "reporting-only" && run.Instrumented
+		baseline = baseline || run.Role == roleBaseline && !run.Instrumented
+		reporting = reporting || run.Role == roleReporting && run.Instrumented
 	}
 	return baseline && reporting
 }

@@ -72,6 +72,8 @@ func preflightFixture(t *testing.T, version, runner string) *Testdrive {
 	root := t.TempDir()
 	writeJestManifest(t, root)
 	t.Chdir(root)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules/.bin"), 0700))
+	requireWriteFile(t, filepath.Join(root, "node_modules/.bin/jest"), "")
 	tracerRoot := filepath.Join(root, "node_modules/dd-trace")
 	require.NoError(t, os.MkdirAll(filepath.Join(tracerRoot, "ci"), 0755))
 	requireWriteFile(t, filepath.Join(tracerRoot, "ci/init.js"), "")
@@ -102,8 +104,8 @@ func TestCheckOnlyReportsNoTestExecutionAndProjectPrecedence(t *testing.T) {
 	run.checkOnly = true
 	require.NoError(t, run.Run(t.Context(), &bytes.Buffer{}))
 	e := run.executor.(*preflightExecutor)
-	require.Equal(t, 1, e.calls)
-	require.Equal(t, []string{"--no-install", "jest", "--config", "test/jest.config.js", "--showConfig"}, e.args)
+	require.Equal(t, 2, e.calls)
+	require.Equal(t, []string{"--no-install", "jest", "--config", "test/jest.config.js", "--showConfig", "--watchman=false"}, e.args)
 	data, err := os.ReadFile(validationPath(run.repositoryRoot))
 	require.NoError(t, err)
 	var report validationResult
@@ -121,7 +123,7 @@ func TestCheckOnlyStopsUnsupportedJestBeforeInstallOrTests(t *testing.T) {
 	run.checkOnly = true
 	var output bytes.Buffer
 	require.ErrorContains(t, run.Run(t.Context(), &output), "dd-trace 6 requires Jest >=28")
-	require.Equal(t, 1, run.executor.(*preflightExecutor).calls)
+	require.Equal(t, 2, run.executor.(*preflightExecutor).calls)
 	data, err := os.ReadFile(validationPath(run.repositoryRoot))
 	require.NoError(t, err)
 	var report validationResult

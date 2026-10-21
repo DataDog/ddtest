@@ -14,6 +14,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -141,6 +142,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 				discoveryError = fmt.Errorf("invalid Jest command: %s", selected)
 			} else {
 				command, args = words[0], words[1:]
+				if command == "npx" && !slices.Contains(args, "--no-install") {
+					args = append([]string{"--no-install"}, args...)
+				}
 			}
 
 		}
@@ -375,13 +379,6 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 				return result, err
 			}
 		}
-		if t.checkOnly {
-			result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration checks only; run testdrive without --check-only for paired execution."}
-			result.Features = []featureResult{{Name: "all", Status: "not exercised", Reason: "Configuration checks only."}}
-			return result, nil
-		}
-	} else if t.checkOnly {
-		return result, fmt.Errorf("configuration preflight currently supports Jest only")
 	}
 
 	if t.projectTracer != "" {
@@ -431,7 +428,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}
 	if supportsValidationFramework(t.framework.Name()) {
 		if result.Selection != nil {
-			if err := verifyInstalledSelection(installation.Path, &result); err != nil {
+			if err := verifyInstalledSelection(ctx, installation.Path, &result); err != nil {
 				return result, err
 			}
 			result.Preflight.Verdict = checkJestSupport(*result.Preflight, *result.Selection)
@@ -464,7 +461,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	maps.Copy(env, installation.Env)
 
 	testOutput, testErr := t.executor.CombinedOutput(ctx, command, args, env)
-	execution := validationRun{Name: "reporting-only", Command: shellquote.Join(append([]string{command}, args...)...),
+	execution := validationRun{Role: roleReporting, Name: "reporting-only", Command: shellquote.Join(append([]string{command}, args...)...),
 		Instrumented: true, ExitCode: commandExitCode(testErr), commandOutput: string(testOutput), commandError: testErr}
 	result.Runs = []runSummary{execution.summary()}
 

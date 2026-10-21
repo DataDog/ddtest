@@ -146,7 +146,9 @@ func (s *Server) Facts() (Facts, error) {
 	if err != nil {
 		return findings, err
 	}
-	findings.Events, err = s.events()
+	if s.collectEvents {
+		findings.Events, err = s.events()
+	}
 	return findings, err
 }
 

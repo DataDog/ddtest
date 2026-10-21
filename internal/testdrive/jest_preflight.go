@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -51,6 +52,12 @@ type jestPreflight struct {
 
 func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, result *validationResult) (preflightErr error) {
 	command, baseArgs := t.command, t.args
+	if slices.Contains([]string{"npm", "npx", "pnpm", "yarn", "bun"}, filepath.Base(command)) {
+		if _, _, err := t.installedJest(ctx); err != nil {
+			result.Preflight = &jestPreflight{Verdict: verdict{Status: onboard.StatusInconclusive, Code: onboard.CodeJestNotInstalled, Reason: err.Error()}}
+			return err
+		}
+	}
 	if command == "npx" {
 		baseArgs = append([]string{"--no-install"}, baseArgs...)
 	}
@@ -62,7 +69,7 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 			return err
 		}
 	}
-	args := framework.WithFrameworkOptions(command, baseArgs, "jest", "--showConfig")
+	args := framework.WithFrameworkOptions(command, baseArgs, "jest", "--showConfig", "--watchman=false")
 	check := &jestPreflight{Command: shellquote.Join(append([]string{command}, args...)...), Verdict: verdict{Status: onboard.StatusInconclusive, Reason: "Effective Jest configuration was not resolved."}}
 	result.Preflight = check
 	_, _ = fmt.Fprintf(output, "Inspecting Jest configuration: %s\n", check.Command)
@@ -244,28 +251,41 @@ func checkConfigurationCIRuntimes(ctx context.Context, packageRoot, frameworkNam
 	return check
 }
 
-func verifyInstalledSelection(preload string, result *validationResult) error {
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(preload)), "package.json"))
+func verifyInstalledSelection(ctx context.Context, preload string, result *validationResult) error {
+	if result.Selection == nil {
+		return fmt.Errorf("tracer selection metadata is missing")
+	}
+	var selected platform.JSSelection
+	var err error
+	if result.Selection.Source == "project" {
+		selected, err = platform.NewJavaScript().ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: result.Selection.Requested})
+	} else {
+		data, readErr := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(preload)), "package.json"))
+		err = readErr
+		if err == nil {
+			var manifest struct {
+				Version string `json:"version"`
+				Engines struct {
+					Node string `json:"node"`
+				} `json:"engines"`
+			}
+			err = json.Unmarshal(data, &manifest)
+			selected.Version, selected.Node = manifest.Version, manifest.Engines.Node
+		}
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("read installed tracer metadata: %w", err)
 	}
-	var manifest struct {
-		Version string `json:"version"`
-		Engines struct {
-			Node string `json:"node"`
-		} `json:"engines"`
+	if selected.Version == "" || selected.Node == "" {
+		return fmt.Errorf("installed tracer metadata has no version or Node requirement")
 	}
-	if err = json.Unmarshal(data, &manifest); err != nil {
-		return err
+	if result.Selection.Version != "" && selected.Version != result.Selection.Version {
+		return fmt.Errorf("installed dd-trace %s differs from preflight selection %s", selected.Version, result.Selection.Version)
 	}
-	if result.Selection.Version != "" && manifest.Version != result.Selection.Version {
-		return fmt.Errorf("installed dd-trace %s differs from preflight selection %s", manifest.Version, result.Selection.Version)
-	}
-	result.Selection.Version = manifest.Version
-	result.Selection.Node = manifest.Engines.Node
-	result.Tracer = "dd-trace@" + manifest.Version
+	result.Selection.Version, result.Selection.Node = selected.Version, selected.Node
+	result.Tracer = "dd-trace@" + selected.Version
 	if result.CIRuntime != nil {
-		result.CISelection = compareCISelection(*result.CIRuntime, manifest.Version)
+		result.CISelection = compareCISelection(*result.CIRuntime, selected.Version)
 	}
 	return nil
 }

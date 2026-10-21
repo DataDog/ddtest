@@ -27,8 +27,6 @@ type jestTest struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"`
 	Failure string `json:"failure,omitempty"`
-
-	telemetryName *string
 }
 
 type jestResults struct {
@@ -145,7 +143,9 @@ func probeJestArgs(command string, args []string) []string {
 	return appendJestArgs(command, result, "--coverageThreshold={}")
 }
 
-func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
+func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
+	run.Role = spec.Role
 	if scenario.Feature == "" {
 		scenario.Feature = "reporting-only"
 	}
@@ -174,9 +174,6 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 		}
 	}()
 	env := t.environment(preload, server.URL(), session.ID()+" "+name)
-	if err := session.watchmanEnvironment(env); err != nil {
-		return run, err
-	}
 	if err := run.ownTemporaryDirectory(session.Directory(), env); err != nil {
 		return run, err
 	}
@@ -190,7 +187,7 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 	// string options as arrays, so normalize only our override before parsing.
 	coverageDirectory := filepath.Join(directory, "coverage")
 	resultPath := filepath.Join(directory, "jest-results.json")
-	if err := redirectJestArguments(directory, coverageDirectory, resultPath, probePath, env); err != nil {
+	if err := redirectJestArguments(directory, jestArgumentRequest{Coverage: coverageDirectory, Output: resultPath, Probe: probePath, Project: t.jestProject.DisplayName.Name}, env); err != nil {
 		return run, err
 	}
 	args := appendJestArgs(t.command, t.args, "--json", "--outputFile", resultPath, "--coverageDirectory", coverageDirectory)
@@ -199,7 +196,6 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 		// Keep coverage collection enabled, including for Test Impact Analysis.
 		args = withJestProbe(t.command, args, probePath)
 		args = appendJestArgs(t.command, probeJestArgs(t.command, args), "--testNamePattern", "^"+probeName+"$")
-		run.ProbeCoverageThresholdsDisabled = true
 		env["DDTEST_PROBE_MODE"] = probeMode
 		env["DDTEST_JEST_PROBE"] = "1"
 		run.ProbeLintSkipped = strings.Contains(strings.Join(t.args, " "), "DDTEST_JEST_PROBE")
@@ -228,6 +224,7 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 		return run, err
 	}
 	readJestResults(resultPath, &run)
+	run.ProbeCoverageThresholdsDisabled = probePath != "" && probeThresholdOverrideApplied(directory)
 	if scenario.Feature == "skipping" {
 		run.Skipping = diagnoseSkipping(run, scenario)
 	}
@@ -335,9 +332,6 @@ func verifyJestTelemetry(run validationRun) verdict {
 		status := map[string]string{"passed": "pass", "failed": "fail"}[test.Status]
 		if status != "" {
 			name := test.Name
-			if test.telemetryName != nil {
-				name = *test.telemetryName
-			}
 			expected[identity{test.File, name, status}]++
 		}
 	}
@@ -352,11 +346,14 @@ func verifyJestTelemetry(run validationRun) verdict {
 		}
 		file = filepath.Clean(file)
 		for _, attempt := range test.Attempts {
+			if attempt.Retry && attempt.RetryReason != "external" && attempt.RetryReason != "" {
+				return verdict{Status: "inconclusive", Code: "unexpected_retry", Reason: "Unexpected tracer-controlled retry telemetry in the reporting-only run."}
+			}
+		}
+		if len(test.Attempts) > 0 {
+			attempt := test.Attempts[len(test.Attempts)-1]
 			if attempt.Status == "pass" || attempt.Status == "fail" {
 				observed[identity{file, test.Name, attempt.Status}]++
-			}
-			if attempt.Retry {
-				return verdict{Status: "inconclusive", Reason: "Unexpected retry telemetry in the reporting-only run."}
 			}
 		}
 	}
@@ -380,12 +377,12 @@ func verifyJestTelemetry(run validationRun) verdict {
 
 func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
 	run := t.runJest
-	baseline, err := run(ctx, output, session, preload, "baseline", false, intake.Scenario{}, "", "")
+	baseline, err := run(ctx, output, session, preload, runSpec{Name: "baseline", Role: roleBaseline, Instrumented: false})
 	result.Runs = append(result.Runs, baseline.summary())
 	if err != nil {
 		return err
 	}
-	instrumented, err := run(ctx, output, session, preload, "reporting-only", true, intake.Scenario{}, "", "")
+	instrumented, err := run(ctx, output, session, preload, runSpec{Name: "reporting-only", Role: roleReporting, Instrumented: true})
 	result.Runs = append(result.Runs, instrumented.summary())
 	if err != nil {
 		return err
@@ -395,12 +392,12 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	}
 	result.Compatibility = compareJest(baseline, instrumented)
 	if result.Compatibility.Status == "suspected regression" {
-		baselineAgain, err := run(ctx, output, session, preload, "baseline-repeat", false, intake.Scenario{}, "", "")
+		baselineAgain, err := run(ctx, output, session, preload, runSpec{Name: "baseline-repeat", Role: roleRepeat, Instrumented: false})
 		result.Runs = append(result.Runs, baselineAgain.summary())
 		if err != nil {
 			return err
 		}
-		instrumentedAgain, err := run(ctx, output, session, preload, "reporting-only-repeat", true, intake.Scenario{}, "", "")
+		instrumentedAgain, err := run(ctx, output, session, preload, runSpec{Name: "reporting-only-repeat", Role: roleRepeat, Instrumented: true})
 		result.Runs = append(result.Runs, instrumentedAgain.summary())
 		if err != nil {
 			return err

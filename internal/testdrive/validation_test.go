@@ -64,7 +64,7 @@ func readValidationReport(t *testing.T, root string) validationResult {
 
 func TestReportSizeDoesNotScaleWithTestEvents(t *testing.T) {
 	root := t.TempDir()
-	run := validationRun{Name: "reporting-only", Command: "npm test -- --json", Instrumented: true, ExitCode: 1}
+	run := validationRun{Role: roleReporting, Name: "reporting-only", Command: "npm test -- --json", Instrumented: true, ExitCode: 1}
 	for range 10000 {
 		run.Tests = append(run.Tests, jestTest{Name: "raw-test-name", Status: "failed", Failure: "raw-test-failure"})
 		run.SuiteErrors = append(run.SuiteErrors, "raw-suite-error")

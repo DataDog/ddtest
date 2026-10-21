@@ -39,8 +39,27 @@ type featureResult struct {
 	Reason  string `json:"reason"`
 }
 
+type runRole string
+
+const (
+	roleBaseline     runRole = "baseline"
+	roleReporting    runRole = "reporting-only"
+	roleRepeat       runRole = "repeat"
+	roleProbeControl runRole = "probe-control"
+	roleProbeFeature runRole = "probe-feature"
+)
+
+type runSpec struct {
+	Name                 string
+	Role                 runRole
+	Instrumented         bool
+	Scenario             intake.Scenario
+	ProbePath, ProbeMode string
+}
+
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
+	Role                            runRole
 	temporaryRoot                   string
 	commandOutput                   string
 	commandError                    error
@@ -71,6 +90,7 @@ type testCounts struct {
 }
 
 type runSummary struct {
+	Role                            runRole             `json:"role"`
 	NativeCounts                    *executionCounts    `json:"native_counts,omitempty"`
 	ProbeLintSkipped                bool                `json:"probe_lint_skipped,omitempty"`
 	Project                         string              `json:"project,omitempty"`
@@ -89,9 +109,9 @@ type runSummary struct {
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+	summary := runSummary{Role: r.Role, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
-	if r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") {
+	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)
 	}
 	// A setup failure before execution must not look like a successful command.

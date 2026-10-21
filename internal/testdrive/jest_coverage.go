@@ -20,10 +20,12 @@ import (
 const jestArguments = `
 const fs = require('fs');
 const path = require('path');
-const main = process.argv[1] && fs.realpathSync(process.argv[1]);
+let main = process.argv[1];
+if (main && !/(?:^|\/)(?:jest|jest-cli)\/bin\/jest\.js$/.test(main.replace(/\\/g, '/'))) main = fs.realpathSync(main);
 if (main && /(?:^|\/)(?:jest|jest-cli)\/bin\/jest\.js$/.test(main.replace(/\\/g, '/'))) {
   const request = %s;
   const args = process.argv;
+  const probeSelection = Boolean(request.probe || request.probeDiscovery);
   const requireCLI = require('module').createRequire(main);
   const root = path.dirname(requireCLI.resolve('jest-cli/package.json'));
   const legacy = path.join(root, 'build/cli/args.js');
@@ -35,17 +37,18 @@ if (main && /(?:^|\/)(?:jest|jest-cli)\/bin\/jest\.js$/.test(main.replace(/\\/g,
       definitions.set(alias, {name, ...option});
     }
   }
-  const overrides = {coverageDirectory: request.coverage, outputFile: request.output};
+  const overrides = {coverageDirectory: request.coverage, outputFile: request.output, watchman: "false"};
+  if (request.project) overrides.selectProjects = request.project;
   if (request.probe) Object.assign(overrides, {coverageThreshold: '{}', testNamePattern: '^ddtest validation probe$'});
   const kept = args.slice(0, 2);
   for (let i = 2; i < args.length; i++) {
     const token = args[i];
-    if (token === '--') {if (!request.probe) kept.push(...args.slice(i)); break;}
-    if (!token.startsWith('-')) {if (!request.probe) kept.push(token); continue;}
+    if (token === '--') {if (!probeSelection) kept.push(...args.slice(i)); break;}
+    if (!token.startsWith('-')) {if (!probeSelection) kept.push(token); continue;}
     const [flag] = token.split('=');
     const definition = definitions.get(flag.replace(/^--?/, '').replace(/^no-/, ''));
     if (!definition) {
-      if (request.probe) throw new Error('ddtest cannot safely classify Jest option ' + flag);
+      if (probeSelection) throw new Error('ddtest cannot safely classify Jest option ' + flag);
       kept.push(token); continue;
     }
     const values = [token];
@@ -57,7 +60,8 @@ if (main && /(?:^|\/)(?:jest|jest-cli)\/bin\/jest\.js$/.test(main.replace(/\\/g,
       } else if (i+1 < args.length && /^(true|false)$/.test(args[i+1])) values.push(args[++i]);
     }
     if (overrides[definition.name]) continue;
-    if (request.probe && ['testPathPattern', 'testPathPatterns', 'runTestsByPath', 'findRelatedTests'].includes(definition.name)) continue;
+    if (probeSelection && ['testPathPattern', 'testPathPatterns', 'runTestsByPath', 'findRelatedTests', 'shard', 'testNamePattern'].includes(definition.name)) continue;
+    if (request.project && ['selectProjects','ignoreProjects'].includes(definition.name)) continue;
     kept.push(...values);
   }
   const generated = [];
@@ -66,19 +70,37 @@ if (main && /(?:^|\/)(?:jest|jest-cli)\/bin\/jest\.js$/.test(main.replace(/\\/g,
   const separator = kept.indexOf('--', 2);
   kept.splice(separator < 0 ? kept.length : separator, 0, ...generated);
   args.splice(0, args.length, ...kept);
+  fs.writeFileSync(request.applied, JSON.stringify({coverageThresholdsDisabled: Boolean(request.probe)}));
 }
 `
 
-func redirectJestArguments(directory, coverage, output, probe string, env map[string]string) error {
-	request, err := json.Marshal(map[string]string{"coverage": coverage, "output": output, "probe": probe})
+type jestArgumentRequest struct {
+	Coverage       string `json:"coverage"`
+	Output         string `json:"output"`
+	Probe          string `json:"probe"`
+	Project        string `json:"project"`
+	ProbeDiscovery bool   `json:"probeDiscovery"`
+	Applied        string `json:"applied"`
+}
+
+func redirectJestArguments(directory string, request jestArgumentRequest, env map[string]string) error {
+	request.Applied = filepath.Join(directory, "jest-overrides.json")
+	data, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(directory, "jest-arguments.cjs")
-	if err := os.WriteFile(path, []byte(strings.Replace(jestArguments, "%s", string(request), 1)), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Replace(jestArguments, "%s", string(data), 1)), 0600); err != nil {
 		return err
 	}
-	// Initialize tracing before loading Jest's own option definitions.
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(path)
 	return nil
+}
+
+func probeThresholdOverrideApplied(directory string) bool {
+	var applied struct {
+		Disabled bool `json:"coverageThresholdsDisabled"`
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "jest-overrides.json"))
+	return err == nil && json.Unmarshal(data, &applied) == nil && applied.Disabled
 }

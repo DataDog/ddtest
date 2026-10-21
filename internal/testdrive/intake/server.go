@@ -63,12 +63,13 @@ type storedMultipartPart struct {
 
 // Server is a local HTTP intake.
 type Server struct {
-	server    *http.Server
-	url       string
-	done      chan error
-	closeOnce sync.Once
-	closeErr  error
-	directory string
+	collectEvents bool
+	server        *http.Server
+	url           string
+	done          chan error
+	closeOnce     sync.Once
+	closeErr      error
+	directory     string
 
 	handlersMu sync.Mutex
 	handlers   sync.WaitGroup
@@ -97,9 +98,10 @@ func StartScenario(sessionDirectory string, scenario Scenario) (*Server, error) 
 	}
 
 	server := &Server{
-		url:       "http://" + listener.Addr().String(),
-		done:      make(chan error, 1),
-		directory: intakeDirectory,
+		collectEvents: scenario.Feature != "" && scenario.Feature != "reporting-only",
+		url:           "http://" + listener.Addr().String(),
+		done:          make(chan error, 1),
+		directory:     intakeDirectory,
 	}
 	httpServer := &http.Server{
 		Handler:           server.recordRequests(scenarioHandler(scenario)),

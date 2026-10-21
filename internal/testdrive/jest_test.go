@@ -296,7 +296,7 @@ func TestJestRunClosesIntakeOnWriteFailure(t *testing.T) {
 		return server, nil
 	}
 	run.executor = &fakeTestdriveExecutor{}
-	_, err = run.runJest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", "baseline", false, intake.Scenario{}, "", "")
+	_, err = run.runJest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", runSpec{Name: "baseline", Role: roleBaseline})
 	require.ErrorIs(t, err, os.ErrNotExist)
 	require.True(t, server.closed)
 }
@@ -320,6 +320,7 @@ func TestTelemetryRequiresTheCorrectTestFileAndNoRetries(t *testing.T) {
 	require.Equal(t, "inconclusive", compareJest(baseline, instrumented).Status)
 	instrumented = testRun("passed", 0)
 	instrumented.Facts.Tests[0].Attempts[0].Retry = true
+	instrumented.Facts.Tests[0].Attempts[0].RetryReason = "auto_test_retry"
 	require.Equal(t, "inconclusive", compareJest(baseline, instrumented).Status)
 	baseline.Facts = testRun("passed", 0).Facts
 	require.Equal(t, "inconclusive", compareJest(baseline, testRun("passed", 0)).Status)
@@ -348,7 +349,7 @@ func TestProbeThresholdOverridePreservesFullSuiteAndRecordsAdjustment(t *testing
 	}
 	executor := &jsonExecutor{results: []string{`{"testResults":[]}`, `{"testResults":[]}`}, exits: []error{nil, errors.New("coverage failed")}}
 	run.executor = executor
-	full, err := run.runJest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", "baseline", false, intake.Scenario{}, "", "")
+	full, err := run.runJest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", runSpec{Name: "baseline", Role: roleBaseline})
 	require.NoError(t, err)
 	words, err := shellquote.Split(full.Command)
 	require.NoError(t, err)
@@ -356,14 +357,14 @@ func TestProbeThresholdOverridePreservesFullSuiteAndRecordsAdjustment(t *testing
 	require.NotContains(t, full.Command, "--coverageThreshold={}")
 	require.False(t, full.summary().ProbeCoverageThresholdsDisabled)
 	require.Empty(t, full.summary().Diagnostic)
-	probe, err := run.runJest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", "probe", true, intake.Scenario{}, "probe.test.js", "pass")
+	probe, err := run.runJest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", runSpec{Name: "probe", Role: roleProbeControl, Instrumented: true, ProbePath: "probe.test.js", ProbeMode: "pass"})
 	require.NoError(t, err)
 	words, err = shellquote.Split(probe.Command)
 	require.NoError(t, err)
 	require.Contains(t, words, "--coverageThreshold={}")
 	require.NotContains(t, words, `--coverageThreshold={"global":{"lines":90}}`)
 	require.Contains(t, probe.Command, "--coverage")
-	require.True(t, probe.summary().ProbeCoverageThresholdsDisabled)
+	require.False(t, probe.summary().ProbeCoverageThresholdsDisabled, "the fake executor did not acknowledge the override")
 	require.Equal(t, "detailed test output", probe.summary().Diagnostic)
 }
 
@@ -418,4 +419,27 @@ func TestSuiteFailureAfterAssertionsChangesCompatibility(t *testing.T) {
 	}
 	require.Equal(t, "suspected regression", compareJest(withoutTelemetry(baseline), instrumented).Status)
 	require.Equal(t, "compatible", compareJest(withoutTelemetry(instrumented), instrumented).Status)
+}
+
+func TestReportingTelemetryUsesFinalNativeRetryAttempt(t *testing.T) {
+	run := testRun("passed", 0)
+	run.Facts.Tests[0].Attempts = []intake.TestRun{{Status: "fail"}, {Status: "pass", Retry: true, RetryReason: "external"}}
+	require.Empty(t, verifyJestTelemetry(run).Status)
+	run.Facts.Tests[0].Attempts[1].RetryReason = "early_flake_detection"
+	require.Equal(t, "unexpected_retry", verifyJestTelemetry(run).Code)
+}
+
+func TestReportingCountsIgnoreDisplayNamesAndRepeatRuns(t *testing.T) {
+	run := testRun("passed", 0)
+	run.Role = roleReporting
+	run.Instrumented = true
+	run.Name = "arbitrary label"
+	run.root = "/project"
+	run.framework = "jest"
+	repeat := run
+	repeat.Role = roleRepeat
+	repeat.Name = "reporting-only-repeat"
+	counts := reportingExecutionCounts([]runSummary{run.summary(), repeat.summary()})
+	require.NotNil(t, counts)
+	require.Equal(t, 1, counts.TestExecutions)
 }

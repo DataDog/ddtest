@@ -21,14 +21,17 @@ import (
 )
 
 const probeName = "ddtest validation probe"
-const probeSource = `let ddtestAttempts = 0;
+const probeSource = `// @ts-nocheck
+(() => {
+let ddtestAttempts = 0;
 test('ddtest validation probe', () => {
   ddtestAttempts++;
-  if (process.env.DDTEST_PROBE_MODE === 'fail' ||
-      (process.env.DDTEST_PROBE_MODE === 'fail-once' && ddtestAttempts === 1)) {
+  if (globalThis.process.env.DDTEST_PROBE_MODE === 'fail' ||
+      (globalThis.process.env.DDTEST_PROBE_MODE === 'fail-once' && ddtestAttempts === 1)) {
     throw new Error('ddtest intentional failure');
   }
 });
+})();
 `
 
 var jestFeatures = func() []string {
@@ -106,7 +109,7 @@ func createJestProjectProbe(root string, baseline validationRun, project jestPro
 		if esm {
 			prefix = "import {test} from '@jest/globals';\n"
 		}
-		source = prefix + source
+		source = "// @ts-nocheck\n" + prefix + strings.TrimPrefix(source, "// @ts-nocheck\n")
 	}
 	return createProbe(root, baseline, source)
 }
@@ -163,24 +166,25 @@ func (t *Testdrive) runJestFeatures(ctx context.Context, output io.Writer, sessi
 		firstFeature, firstRun := len(result.Features), len(result.Runs)
 		runner := *t
 		runner.jestProject = project
+		if len(result.Preflight.Projects) > 1 {
+			var selected bool
+			selectionArgs := t.args
+			if result.Preflight.Arguments != nil {
+				selectionArgs = result.Preflight.Arguments
+			}
+			_, selected = projectArgs("jest", selectionArgs, project.DisplayName.Name)
+			if selected {
+				runner.args, selected = projectArgs(t.command, t.args, project.DisplayName.Name)
+			}
+			if !selected {
+				result.ProjectChecks = append(result.ProjectChecks, projectProbeCheck{Project: label, Root: project.Root, Excluded: true})
+				continue
+			}
+		}
 		if len(result.Preflight.Projects) > 1 && (project.DisplayName.Name == "" || names[project.DisplayName.Name] != 1) {
 			unavailableFeatures(result, "Cannot unambiguously select this Jest project: a unique displayName is required for per-project feature validation. The original configuration was preserved.")
 		} else {
-			if len(result.Preflight.Projects) > 1 {
-				var selected bool
-				selectionArgs := t.args
-				if result.Preflight.Arguments != nil {
-					selectionArgs = result.Preflight.Arguments
-				}
-				_, selected = projectArgs("jest", selectionArgs, project.DisplayName.Name)
-				if selected {
-					runner.args, selected = projectArgs(t.command, t.args, project.DisplayName.Name)
-				}
-				if !selected {
-					result.ProjectChecks = append(result.ProjectChecks, projectProbeCheck{Project: label, Root: project.Root, Excluded: true})
-					continue
-				}
-			}
+
 			check := projectProbeCheck{Project: label, Root: project.Root}
 			err := runner.runJestProjectFeatures(ctx, output, session, preload, fmt.Sprintf("project-%d", i+1), &check, result)
 			result.ProjectChecks = append(result.ProjectChecks, check)
@@ -230,8 +234,11 @@ func (t *Testdrive) runJestProjectFeatures(ctx context.Context, output io.Writer
 	}
 	check.Discovered = true
 	run := func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
-		value, err := t.runJest(ctx, output, session, preload, prefix+"/"+name, true, scenario, probePath, mode)
+		value, err := t.runJest(ctx, output, session, preload, runSpec{Name: prefix + "/" + name, Role: roleProbeFeature, Instrumented: true, Scenario: scenario, ProbePath: probePath, ProbeMode: mode})
 		value.Name = name
+		if scenario.Feature == "" || scenario.Feature == "reporting-only" {
+			value.Role = roleProbeControl
+		}
 		if d := value.Skipping; d != nil {
 			repoPath, repoErr := filepath.Rel(t.repositoryRoot, probePath)
 			projectPath, projectErr := filepath.Rel(check.Root, probePath)
@@ -259,7 +266,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 		return err
 	}
 	if !validProbeControl(passControl, "passed") || !validProbeControl(failControl, "failed") {
-		unavailableFeatures(result, "The temporary probe did not produce its expected passing and failing control results under this framework configuration. See the recorded probe commands, exit codes, and bounded failure diagnostics.")
+		unavailableFeatures(result, "The temporary probe did not produce its expected passing and failing control results under this framework configuration. "+probeControlDiagnostic(passControl, failControl))
 		return nil
 	}
 	identity := passControl.Facts.Tests[0]
@@ -409,4 +416,24 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		}
 	}
 	return result
+}
+
+func probeControlDiagnostic(runs ...validationRun) string {
+	for _, run := range runs {
+		if run.Diagnostic != "" {
+			return reportText(run.Diagnostic)
+		}
+		if run.ResultError != "" {
+			return reportText(run.ResultError)
+		}
+		if len(run.SuiteErrors) > 0 {
+			return reportText(run.SuiteErrors[0])
+		}
+		for _, test := range run.Tests {
+			if test.Failure != "" && !strings.Contains(test.Failure, "ddtest intentional failure") {
+				return reportText(test.Failure)
+			}
+		}
+	}
+	return "See recorded probe commands, exit codes and bounded diagnostics."
 }

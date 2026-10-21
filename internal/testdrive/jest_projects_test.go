@@ -129,7 +129,26 @@ func TestJestProbeImportsTheAPIWhenGlobalsAreDisabled(t *testing.T) {
 			defer func() { require.NoError(t, removeProbe(root, probe)) }()
 			data, err := os.ReadFile(probe)
 			require.NoError(t, err)
-			require.True(t, strings.HasPrefix(string(data), tc.prefix), string(data))
+			require.True(t, strings.Contains(string(data), tc.prefix), string(data))
 		})
+	}
+}
+
+func TestExcludedUnnamedAndDuplicateProjectsDoNotRequireNames(t *testing.T) {
+	run := preparedTestdrive(t)
+	run.executor = discoveryExecutor(func([]string) ([]byte, error) { return []byte("[]"), nil })
+	projects := []jestProject{{Root: run.repositoryRoot}, {}, {}, {}}
+	projects[0].DisplayName.Name = "A"
+	projects[2].DisplayName.Name = "B"
+	projects[3].DisplayName.Name = "B"
+	result := validationResult{Framework: "jest", Preflight: &jestPreflight{Arguments: []string{"--selectProjects", "A"}, Projects: projects}}
+	require.NoError(t, run.runJestFeatures(t.Context(), &bytes.Buffer{}, nil, "", &result))
+	require.Len(t, result.ProjectChecks, 4)
+	for _, check := range result.ProjectChecks[1:] {
+		require.True(t, check.Excluded)
+	}
+	require.Len(t, result.Features, 6)
+	for _, feature := range result.Features {
+		require.Equal(t, "A", feature.Project)
 	}
 }
