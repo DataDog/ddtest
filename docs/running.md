@@ -193,6 +193,9 @@ identified by `TEST_OPTIMIZATION_MANIFEST_FILE` (or its
 `DD_TEST_OPTIMIZATION_MANIFEST_FILE` alias), falling back to `.testoptimization/`
 in the current working directory when no manifest location is supplied.
 DDTest does not inject individual planning metadata environment variables.
+Retired `_DD_TEST_PARALLELIZATION_PLAN_*` values supplied through the process or
+worker environment are cleared before execution, so older tracing libraries
+cannot use a stale planning identity.
 
 > **Internal interface:** These runtime parameters and the metadata file are
 > managed by DDTest and are documented for reference only. They are not part of
