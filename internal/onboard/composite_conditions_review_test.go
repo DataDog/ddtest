@@ -134,3 +134,28 @@ func TestCompositeConditionInputsResolveKnownMatrixAndContext(t *testing.T) {
 		require.Equal(t, tc.want, got)
 	}
 }
+
+func TestCompositeMatrixConditionSelectsOnlyMatchingInput(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  tests:
+    strategy:
+      matrix: {suite: [unit, integration]}
+    steps:
+      - uses: ./.github/actions/test
+        with: {suite: '${{ matrix.suite }}'}
+`)
+	writeComposite(t, root, "test", `inputs:
+  suite: {default: unit}
+runs:
+  using: composite
+  steps:
+    - run: jest
+      shell: bash
+      if: inputs.suite == 'unit'
+`)
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Equal(t, []string{"jest"}, commandNames(scope.Commands))
+	require.Equal(t, []commandLocation{{Workflow: ".github/workflows/test.yml", Job: "tests", Step: 1, Matrix: map[string]any{"suite": "unit"}, Command: "jest"}}, scope.Commands[0].locations)
+}
