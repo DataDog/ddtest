@@ -38,6 +38,12 @@ func main() {
 	}
 	// ddto go test is ddto test, as go test is.
 	form, isTest := runner.TestCommand(os.Args[1:])
+	if isTest || runner.IsGoCommand(os.Args[1:]) {
+		if err := runner.NestGoCommand(); err != nil {
+			fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR:", err)
+			os.Exit(2)
+		}
+	}
 	switch {
 	case isTest:
 	case len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-version"):
@@ -52,8 +58,9 @@ func main() {
 		}
 		os.Exit(0)
 	default:
-		// Any other command runs unchanged, before ddto sets anything: ddto
-		// in front of a go command, or any other, is transparent.
+		// Any other command runs unchanged, before ddto sets anything but
+		// DDTO_NESTED_GO for go: ddto in front of a go command, or any other,
+		// is transparent.
 		os.Exit(runner.ExecCommand(os.Args[1:]))
 	}
 	ctx := runner.DebugCommand(context.Background(), form.Name)

@@ -329,3 +329,49 @@ func buildPassthroughProgram(t *testing.T) string {
 	}
 	return program
 }
+
+// goShimProgram is a go that runs ddto go with its arguments, as a script that
+// runs ddto go would, on every platform. It ends the chain itself after 20
+// levels, so a ddto that does not stop fails the test instead of filling the
+// machine with processes.
+const goShimProgram = `package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
+)
+
+func main() {
+	depth, _ := strconv.Atoi(os.Getenv("GO_SHIM_DEPTH"))
+	if depth >= 20 {
+		fmt.Fprintln(os.Stderr, "go shim: ddto did not stop after 20 levels")
+		os.Exit(3)
+	}
+	os.Setenv("GO_SHIM_DEPTH", strconv.Itoa(depth+1))
+	cmd := exec.Command(os.Getenv("GO_SHIM_DDTO"), append([]string{"go"}, os.Args[1:]...)...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	var exit *exec.ExitError
+	if err := cmd.Run(); errors.As(err, &exit) {
+		os.Exit(exit.ExitCode())
+	} else if err != nil {
+		os.Exit(126)
+	}
+}
+`
+
+// A go on PATH that starts ddto, as a script that runs ddto go would, makes
+// every ddto command that runs go start another. ddto stops with an error
+// that names that go instead of starting them without end.
+func TestCLIStopsWhenGoStartsDdto(t *testing.T) {
+	dir, driver := prepareMiniFixture(t)
+	env := prependPATH(testEnv("GO_SHIM_DDTO="+driver), buildProgram(t, goShimProgram, "go"))
+	for _, args := range [][]string{{"go", "version"}, {"test", "--runtime=mini", "-count=1", "."}} {
+		_, stderr, code := command(t, dir, env, driver, args...)
+		if code != 2 || !strings.Contains(stderr, "9 ddto commands run inside each other") || !strings.Contains(stderr, "starts ddto again") {
+			t.Fatalf("ddto %v with a go that starts ddto: exit %d\n%s", args, code, stderr)
+		}
+	}
+}

@@ -161,7 +161,7 @@ func runCIVisibilityTestifyParity(t *testing.T, deferred bool) {
 			if tc.Coverage {
 				assertTestifyCoverageFilenames(t, &want.miniWireCapture, &got.miniWireCapture)
 			}
-			sdkOut, miniOut := sdk.out, mini.out
+			sdkOut, miniOut := withoutRepeatedCoverageLine(sdk.out), mini.out
 			if tc.Coverage {
 				sdkOut, miniOut = withoutCoverageLines(sdkOut), withoutCoverageLines(miniOut)
 			}
@@ -208,6 +208,20 @@ func withoutCoverageLines(text string) string {
 	kept := lines[:0]
 	for _, line := range lines {
 		if !strings.HasPrefix(strings.TrimSpace(line), "coverage: ") {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+// withoutRepeatedCoverageLine drops a coverage line that repeats the line
+// before it. Without -coverprofile, the pinned SDK prints testing's coverage
+// line a second time, which ddto does not; see ADAPTATIONS.md.
+func withoutRepeatedCoverageLine(text string) string {
+	lines := strings.Split(text, "\n")
+	var kept []string
+	for i, line := range lines {
+		if i == 0 || line != lines[i-1] || !strings.HasPrefix(strings.TrimSpace(line), "coverage: ") {
 			kept = append(kept, line)
 		}
 	}

@@ -212,6 +212,7 @@ func InitializeCoverage(m *testing.M, uploadEnabled bool) {
 	backfillInput = nil
 	backfillFinalized = false
 	backfillResult = BackfillResult{}
+	useTemporaryCoverProfile()
 
 	deferModuleInfo()
 
@@ -355,10 +356,15 @@ func runtimeCoverageSnapshotLocked() (*runtimeCoverageSnapshot, error) {
 	}
 
 	if coverProfile := currentCoverProfilePath(); coverProfile != "" {
-		if _, err := os.Stat(coverProfile); err == nil {
-			runtimeSnapshot = &runtimeCoverageSnapshot{path: coverProfile}
+		// ddto's temporary profile starts empty.
+		if info, err := os.Stat(coverProfile); err == nil && (coverProfile != temporaryCoverProfile || info.Size() > 0) {
+			runtimeSnapshot = &runtimeCoverageSnapshot{path: coverProfile, temporary: coverProfile == temporaryCoverProfile}
 			return runtimeSnapshot, nil
 		}
+		// testing writes the profile as M.Run ends when it ran tests. Without
+		// one, as after -test.list, testing printed no coverage line, and a
+		// tear-down here would print one.
+		return nil, errors.New("testing wrote no coverage profile")
 	}
 
 	if err := ensureTemporaryDirLocked(); err != nil {
@@ -370,6 +376,62 @@ func runtimeCoverageSnapshotLocked() (*runtimeCoverageSnapshot, error) {
 	}
 	runtimeSnapshot = &runtimeCoverageSnapshot{path: coverageFile, temporary: true}
 	return runtimeSnapshot, nil
+}
+
+// temporaryCoverProfile is the profile that testing writes for the session's
+// coverage when -coverprofile is not set; see useTemporaryCoverProfile.
+var temporaryCoverProfile string
+
+// useTemporaryCoverProfile has testing write its coverage profile to a
+// temporary file as M.Run ends, when -coverprofile is not set, so the
+// session's coverage reads that profile. Writing one through testing's
+// tear-down after M.Run would print testing's coverage line a second time.
+// The flag keeps its value from the command line, which M.Run may parse
+// later, and Value.Set leaves it unset for flag.Visit. The file is in the
+// temporary directory itself: a signal can close CI Visibility while tests
+// still run, and testing exits with status 2 if it cannot create the file.
+// Process-retry children write no profile of their own.
+func useTemporaryCoverProfile() {
+	temporaryCoverProfile = ""
+	coverProfile := flag.Lookup("test.coverprofile")
+	if testing.CoverMode() == "" || coverProfile == nil || coverProfile.Value.String() != "" || integrations.IsProcessRetryChild() {
+		return
+	}
+	path, err := setTemporaryCoverProfile(coverProfile.Value)
+	if err != nil {
+		log.Debug("civisibility.cov: no temporary coverage profile: %s", err.Error())
+		return
+	}
+	temporaryCoverProfile = path
+	integrations.PushCiVisibilityCloseAction(func() {
+		_ = os.Remove(path)
+	})
+}
+
+// setTemporaryCoverProfile creates an empty profile in the temporary
+// directory, which testing then writes, and sets value to it. testing exits
+// with status 2 if it cannot create the file, so a temporary directory where
+// ddto cannot create one leaves value unchanged.
+func setTemporaryCoverProfile(value flag.Value) (string, error) {
+	// A test may change the directory before testing writes the file.
+	dir, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return "", err
+	}
+	file, err := os.CreateTemp(dir, "dd-civisibility-coverage-*.out")
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := value.Set(path); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
 }
 
 func currentCoverProfilePath() string {

@@ -153,6 +153,39 @@ ordinary/deferred delivery and telemetry off/on. Its Mini process changes the
 global local zone; the SDK reference runs the same application paths without
 that mutation because its background clocks are not safe under it.
 
+## Coverage line printed once
+
+Without `-coverprofile`, the pinned SDK takes the session's coverage percentage
+from a profile that it writes through testing's tear-down once `M.Run` has
+returned. That tear-down also prints `coverage: N% of statements` to
+`os.Stdout`, which testing has already printed when `M.Run` ran tests. So with
+`-v` or `-json` the line appears twice, and once after `-list`, where go test
+prints none. dd-trace-go `main` still does this.
+
+`useTemporaryCoverProfile`, which `InitializeCoverage` calls before `M.Run`,
+sets an unset `test.coverprofile` to a file in the temporary directory instead,
+so testing writes the profile itself, printing its line once, and
+`runtimeCoverageSnapshotLocked` reads that file. A value from the command line,
+which `M.Run` may parse later, still replaces it. `Value.Set` leaves the flag
+unset for `flag.Visit`, though `flag.Lookup` shows the temporary path. The
+file has no directory of its own: a signal can close CI Visibility while tests
+still run, and testing exits with status 2 if it cannot create the file.
+Process-retry and quarantine children, which write no profile of their own,
+keep the tear-down. When a profile is set but testing wrote none, as after
+`-list`, with or without `-coverprofile`, the snapshot fails instead of
+printing a line. An explicitly empty `-test.coverprofile`, which replaces
+ddto's as `M.Run` parses the flags, still takes the tear-down and its second
+line: isolated retry coverage, the LCOV upload and the percentage need that
+profile. The session's percentage now comes from the profile that
+testing writes with go test's `-test.gocoverdir`, the one behind the line it
+prints, so with `-coverpkg` it can count statements of selected packages that
+the old tear-down, in a new directory, left out. Redirecting `os.Stdout`
+around the tear-down instead would race with goroutines that a `TestMain`
+leaves printing. Check: `TestMiniPrintsCoverageLineOnce`, with flags that a
+`TestMain` parses before ddto sets the profile and that `M.Run` parses after,
+which fails without the change. The Testify parity tests drop the pinned SDK's repeated line
+(`withoutRepeatedCoverageLine`).
+
 ## Per-test profile subtraction
 
 `readCoverProfile` and `coveredFilesBetween` in

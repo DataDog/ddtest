@@ -2,10 +2,42 @@ package runner
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 )
+
+// nestedGoVariable counts the ddto commands that run go around a process. A
+// go on PATH that starts ddto, such as a script that runs ddto go, would make
+// every ddto command start another, without end.
+const nestedGoVariable = "DDTO_NESTED_GO"
+
+// maxNestedGo is more ddto commands inside each other's tests than a project
+// runs.
+const maxNestedGo = 8
+
+// NestGoCommand counts this ddto command, which runs go, for the commands it
+// starts, and fails once too many ddto commands enclose it.
+func NestGoCommand() error {
+	depth, _ := strconv.Atoi(os.Getenv(nestedGoVariable))
+	if depth >= maxNestedGo {
+		goPath, err := exec.LookPath("go")
+		if err != nil {
+			goPath = "go"
+		}
+		return fmt.Errorf("%d ddto commands run inside each other: the go command on PATH, %s, starts ddto again; put the Go toolchain's go first on PATH", depth+1, goPath)
+	}
+	return os.Setenv(nestedGoVariable, strconv.Itoa(depth+1))
+}
+
+// IsGoCommand reports whether args run the go command, as in ddto go build.
+func IsGoCommand(args []string) bool {
+	return len(args) > 0 && strings.TrimSuffix(filepath.Base(args[0]), ".exe") == "go"
+}
 
 // commandStatus is the exit status of a command that ddto could not run, as
 // env reports it: 127 if it is not found, 126 if it cannot run.
