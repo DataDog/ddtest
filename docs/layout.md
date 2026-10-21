@@ -15,6 +15,7 @@ troubleshooting, but they are DDTest implementation details.
 ```text
 .testoptimization/
   manifest.txt
+  plan-metadata.json
   runner/
     test-files.txt
     parallel-runners.txt
@@ -53,6 +54,29 @@ Plain text file containing the plan layout version.
 
 DDTest sets `TEST_OPTIMIZATION_MANIFEST_FILE` for worker processes to point at
 this file unless that environment variable is already set.
+
+### `.testoptimization/plan-metadata.json`
+
+Internal metadata captured by `ddtest plan` for tracing libraries. DDTest always
+writes this file, independently of the optional HTTP cache. Its `ciTags` object
+contains only the planning-job CI fields listed in the
+[planning-job correlation reference](running.md#planning-job-correlation).
+All values are strings; when no planning CI fields are available, `ciTags` is `{}`.
+
+```json
+{
+  "ciTags": {
+    "ci.provider.name": "gitlab",
+    "ci.job.id": "101",
+    "ci.job.url": "https://gitlab.example.com/project/-/jobs/101"
+  }
+}
+```
+
+This is an internal DDTest-to-library interface and may change or be removed
+without notice. Applications and CI configuration should not modify or depend on
+its contents. Libraries only read it when `_DD_TEST_PARALLELIZATION_ENABLED` is
+true; missing or corrupt data leaves only the parallelization-enabled tag.
 
 ## Plan Files
 

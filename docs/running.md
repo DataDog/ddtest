@@ -176,42 +176,44 @@ starting each worker.
 
 ### Planning-job correlation
 
-`ddtest plan` records the planning job's CI provider, job ID, name and URL,
-pipeline ID, name, display name, number and URL, and stage name (when available)
-in the plan cache under `planMetadata.ciTags`. Upload and download the complete
-`.testoptimization` plan artifact as usual to carry these values between jobs.
+`ddtest plan` records the planning job's CI identity in
+`.testoptimization/plan-metadata.json`. Upload and download the complete
+`.testoptimization` artifact as usual to carry these values between jobs.
+This file is written in every planning mode, independently of the HTTP cache.
 
-`ddtest run` automatically forwards the planning job's identity to tracing
-libraries that support this integration. No manual environment configuration
-is required. The handoff uses internal environment variables managed by DDTest.
+`ddtest run` sets `_DD_TEST_PARALLELIZATION_ENABLED=true` for every test worker,
+including single-worker runs. Supporting tracing libraries then read
+`plan-metadata.json` alongside the manifest identified by
+`TEST_OPTIMIZATION_MANIFEST_FILE` (or its `DD_TEST_OPTIMIZATION_MANIFEST_FILE`
+alias), falling back to `.testoptimization/` in the current working directory
+when no manifest location is supplied. DDTest does not inject individual
+planning metadata environment variables.
 
-> **Internal interface:** These variables are managed by DDTest and are documented
-> for reference only. They are not part of the public configuration API and may
-> change or be removed without notice. Do not set or depend on them in application
-> code or CI configuration.
+> **Internal interface:** This marker and metadata file are managed by DDTest and
+> are documented for reference only. They are not part of the public configuration
+> API and may change or be removed without notice. Do not set, modify, or depend
+> on them in application code or CI configuration.
 
-| Environment variable | Tracer tag |
+The marker produces `test.parallelization.enabled:true`. The file's `ciTags`
+object supplies the planning identity:
+
+| Artifact CI tag | Tracer tag |
 | --- | --- |
-| `_DD_TEST_PARALLELIZATION_ENABLED` | `test.parallelization.enabled` |
-| `_DD_TEST_PARALLELIZATION_PLAN_PROVIDER_NAME` | `test.parallelization.plan.provider.name` |
-| `_DD_TEST_PARALLELIZATION_PLAN_JOB_ID` | `test.parallelization.plan.job.id` |
-| `_DD_TEST_PARALLELIZATION_PLAN_JOB_NAME` | `test.parallelization.plan.job.name` |
-| `_DD_TEST_PARALLELIZATION_PLAN_JOB_URL` | `test.parallelization.plan.job.url` |
-| `_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_ID` | `test.parallelization.plan.pipeline.id` |
-| `_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_NAME` | `test.parallelization.plan.pipeline.name` |
-| `_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_DISPLAY_NAME` | `test.parallelization.plan.pipeline.display_name` |
-| `_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_NUMBER` | `test.parallelization.plan.pipeline.number` |
-| `_DD_TEST_PARALLELIZATION_PLAN_PIPELINE_URL` | `test.parallelization.plan.pipeline.url` |
-| `_DD_TEST_PARALLELIZATION_PLAN_STAGE_NAME` | `test.parallelization.plan.stage.name` |
+| `ci.provider.name` | `test.parallelization.plan.provider.name` |
+| `ci.job.id` | `test.parallelization.plan.job.id` |
+| `ci.job.name` | `test.parallelization.plan.job.name` |
+| `ci.job.url` | `test.parallelization.plan.job.url` |
+| `ci.pipeline.id` | `test.parallelization.plan.pipeline.id` |
+| `ci.pipeline.name` | `test.parallelization.plan.pipeline.name` |
+| `ci.pipeline.display_name` | `test.parallelization.plan.pipeline.display_name` |
+| `ci.pipeline.number` | `test.parallelization.plan.pipeline.number` |
+| `ci.pipeline.url` | `test.parallelization.plan.pipeline.url` |
+| `ci.stage.name` | `test.parallelization.plan.stage.name` |
 
-Tracing libraries attach `test.parallelization.enabled` and the available
-`test.parallelization.plan.*` tags to test sessions, modules, suites, and tests.
-The enabled tag uses the boolean string `true`, consistent with other Test
-Optimization boolean tags. The execution job retains its normal `ci.*` tags.
-Missing planning fields are omitted from tracer tags.
-Older plan artifacts and local plans without CI metadata still enable the
-parallelization tag without inventing a planning job identity. This also
-applies when `ddtest run` creates its own plan or uses only one worker.
+These tags apply to sessions, modules, suites, and individual tests. The execution
+job retains its normal `ci.*` tags. Missing fields are omitted. If the file is
+missing, unreadable, or corrupt, supporting libraries still set the enabled tag
+and omit the planning identity. Older artifacts without this file are supported.
 
 ## Custom Commands
 

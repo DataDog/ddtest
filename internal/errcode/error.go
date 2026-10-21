@@ -32,6 +32,7 @@ const (
 	PlanFullDiscoveryResultsProcessingFailed   Code = "plan_full_discovery_results_processing_failed"
 	PlanFastDiscoveryResultsProcessingFailed   Code = "plan_fast_discovery_results_processing_failed"
 	PlanManifestWriteFailed                    Code = "plan_manifest_write_failed"
+	PlanMetadataWriteFailed                    Code = "plan_metadata_write_failed"
 	PlanCacheWriteFailed                       Code = "plan_cache_write_failed"
 	PlanTestFilesWriteFailed                   Code = "plan_test_files_write_failed"
 	PlanSkippablePercentageWriteFailed         Code = "plan_skippable_percentage_write_failed"

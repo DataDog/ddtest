@@ -2,9 +2,11 @@ package planner
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -106,9 +108,26 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 		}
 	}
 	for tag := range runner.planMetadata.CITags {
-		if _, allowed := constants.TestParallelizationPlanEnvVars[tag]; !allowed {
+		if !slices.Contains(constants.TestParallelizationPlanTags, tag) {
 			t.Fatalf("unexpected planning CI tag %s", tag)
 		}
+	}
+
+	metadataData, err := os.ReadFile(constants.PlanMetadataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata struct {
+		CITags map[string]string `json:"ciTags"`
+	}
+	if err := json.Unmarshal(metadataData, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(metadata.CITags, runner.planMetadata.CITags) {
+		t.Fatalf("library metadata = %v, want %v", metadata.CITags, runner.planMetadata.CITags)
+	}
+	if strings.Contains(string(metadataData), "must-not-be-stored") {
+		t.Fatal("library metadata contains an API key")
 	}
 
 	// Loading the artifact in another job must retain the planning job identity.

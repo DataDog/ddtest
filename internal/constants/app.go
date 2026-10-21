@@ -11,6 +11,7 @@ const PlanDirectory = ".testoptimization"
 const ManifestVersion = "1"
 
 var ManifestPath = filepath.Join(PlanDirectory, "manifest.txt")
+var PlanMetadataPath = filepath.Join(PlanDirectory, "plan-metadata.json")
 
 const TestOptimizationManifestFileEnvVar = "TEST_OPTIMIZATION_MANIFEST_FILE"
 const DDTestOptimizationManifestFileEnvVar = "DD_TEST_OPTIMIZATION_MANIFEST_FILE"
