@@ -160,9 +160,9 @@ func ordinaryNodeOptions(value string) (string, error) {
 	return environment.JoinNodeOptions(kept), nil
 }
 
-func literalNodeJest(words []string) bool {
+func nodeJestArguments(words []string) ([]string, bool) {
 	if len(words) < 2 || words[0] != "node" {
-		return false
+		return nil, false
 	}
 	for i := 1; i < len(words); i++ {
 		word := words[i]
@@ -172,20 +172,20 @@ func literalNodeJest(words []string) bool {
 				if !equal {
 					i++
 					if i >= len(words) {
-						return false
+						return nil, false
 					}
 				}
 				continue
 			}
 			if !slices.Contains([]string{"--experimental-vm-modules", "--no-warnings", "--enable-source-maps"}, word) {
-				return false
+				return nil, false
 			}
 			continue
 		}
 		path := filepath.ToSlash(filepath.Clean(word))
-		return filepath.IsLocal(word) && (path == "node_modules/jest/bin/jest.js" || path == "node_modules/.bin/jest")
+		return words[i+1:], filepath.IsLocal(word) && (path == "node_modules/jest/bin/jest.js" || path == "node_modules/.bin/jest")
 	}
-	return false
+	return nil, false
 }
 
 // Resolve bounded workflow expressions as data, never shell code. This also

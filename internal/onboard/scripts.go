@@ -269,6 +269,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	runner := framework
 
 	if words[0] == runner || words[0] == "./node_modules/.bin/"+runner || words[0] == "node_modules/.bin/"+runner || words[0] == filepath.Join(directory, "node_modules", ".bin", runner) {
+		if framework == "jest" && jestMetadataOptions(words[1:]) {
+			return commandResolution{}
+		}
 		canonicalRoot, _ := filepath.EvalSymlinks(root)
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
@@ -279,7 +282,10 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	if tool, ok := discoveryTools[words[0]]; ok {
 		return resolveDiscoveryTool(root, directory, words, framework, tool)
 	}
-	if words[0] == "node" && literalNodeJest(words) {
+	if args, ok := nodeJestArguments(words); ok {
+		if jestMetadataOptions(args) {
+			return commandResolution{}
+		}
 		relative := repositoryPath(root, directory)
 		return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{Directory: relative, Command: shellquote.Join(words...)}}}
 	}
@@ -450,4 +456,17 @@ func staticCommands(command string) ([][]string, error) {
 		commands = append(commands, fragment.Words)
 	}
 	return commands, nil
+}
+
+// Help/version exit before running a suite. The runner's -- ends option parsing.
+func jestMetadataOptions(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if slices.Contains([]string{"--help", "-h", "--version", "-v"}, arg) {
+			return true
+		}
+	}
+	return false
 }
