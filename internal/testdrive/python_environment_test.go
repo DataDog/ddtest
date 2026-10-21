@@ -121,7 +121,7 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 			drive.platform = installer
 			executor := &fakeTestdriveExecutor{}
 			drive.executor = executor
-			drive.startIntake = func(string) (localIntake, error) {
+			drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 				require.Equal(t, "ready", outcome, "blocked environments must not start an intake")
 				return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
 			}
@@ -130,6 +130,7 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 			err = drive.Run(t.Context(), &output)
 			if outcome == "ready" {
 				require.NoError(t, err)
+				require.NotContains(t, output.String(), "INCOMPLETE")
 				require.Equal(t, python, installer.options.Command)
 				require.Equal(t, "uv", executor.command)
 				require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest"}, executor.args)
@@ -138,26 +139,20 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 				require.Empty(t, installer.options.Directory)
 				require.Empty(t, executor.command)
 				require.NotContains(t, output.String(), "Installing ddtrace")
-				require.Contains(t, output.String(), "Not run (environment check failed)")
+				require.Contains(t, output.String(), "Environment check:")
 				if outcome == "runner error" {
 					require.Contains(t, output.String(), "error: selected Python is unavailable")
 				}
 			}
-			var diagnostics runDiagnostics
-			data, err := os.ReadFile(filepath.Join(drive.session.Directory(), diagnosticsFilename))
+			data, err := os.ReadFile(htmlReportPath(root))
 			require.NoError(t, err)
-			require.NoError(t, json.Unmarshal(data, &diagnostics))
-			require.Equal(t, "uv project (uv.lock)", diagnostics.Environment.Source)
+			require.Contains(t, string(data), "uv project (uv.lock)")
 			if outcome != "ready" {
-				require.False(t, diagnostics.CommandFailed)
-				require.True(t, diagnostics.RunFailed)
-				require.Len(t, diagnostics.Findings, 1)
-				require.Len(t, diagnostics.Troubleshooting, 1)
-				report, err := os.ReadFile(filepath.Join(drive.session.Directory(), reportFilename))
-				require.NoError(t, err)
-				require.Contains(t, string(report), diagnostics.Findings[0].Title)
-				require.Contains(t, string(report), "Troubleshooting")
+				require.Contains(t, string(data), drive.environmentFailure.Title)
+				require.Contains(t, string(data), "Troubleshooting")
 			}
+			require.NoDirExists(t, drive.session.Directory())
+
 		})
 	}
 }

@@ -13,26 +13,37 @@ Currently supported:
 
 - Ruby with RSpec or Minitest.
 - Python with pytest.
-- JavaScript with Cucumber, Cypress, Jest, Mocha, Playwright, or Vitest.
+- JavaScript with Cucumber, Cypress, Jest, Mocha, Playwright, Vitest, or WebdriverIO.
 
 ## Try Test Optimization locally
 
-With your project's test dependencies and any required browsers/services ready:
+Ask your coding agent:
+
+> Use ddtest to onboard this repository to test-optimization for vitest only.
+
+Or start the same workflow directly:
 
 ```sh
-ddtest onboard    # GitHub Actions setup instructions
-ddtest testdrive  # Preview, confirm, and run tests locally
+ddtest onboard --framework vitest --apply --yes
 ```
 
-No Datadog account or Agent is needed. Testdrive links to an HTML report under
-`.testoptimization/testdrive/`. Use `--yes` after reviewing the preview in
-non-interactive sessions, `--framework` to select a runner, and `--command` for
-package scripts or custom setup.
+Replace `vitest` with `jest`, `mocha`, `playwright`, `cypress`, `cucumber` or `webdriverio`.
+Install the project's dependencies and required browsers first. ddtest configures
+recognized GitHub Actions jobs, runs the suite with and without tracing, and checks
+supported Test Optimization features using a local mock backend. No Datadog API
+key is needed for local validation.
 
-Testdrive reuses a detected project tracer; otherwise it installs the latest
-release (`--tracer-version` selects a fallback release or `git:<ref>`).
-JavaScript/Python installs are isolated. Ruby runs `bundle add datadog-ci`,
-updating the project's Gemfile and lockfile.
+The result names any missing setup or unsupported configuration and gives the next
+command. A local pass does not prove that CI or Datadog backend processing works.
+Keep `.testoptimization/report.html` and `testdrive.json`; temporary validation
+files and processes are cleaned up. To inspect the current result without rerunning:
+
+```sh
+ddtest testdrive --report
+```
+
+See [onboarding and validation](docs/onboarding.md) for supported scope, agent
+results, custom commands, setup facts, recovery and framework limitations.
 
 ## Prerequisites
 
@@ -236,7 +247,7 @@ parallelism details, see [Running DDTest](docs/running.md).
 | --- | --- |
 | `--platform` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
 | `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`. |
-| `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, and Playwright run/discovery. Vitest rejects this option; use `--vitest-config` and configure options in Vitest. |
+| `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, and Playwright run/discovery. Vitest `plan`/`run` reject this option; use `--vitest-config` instead. Vitest `testdrive` accepts it to validate the original test command. |
 | `--vitest-config` | Vitest config file used by both planning and execution; defaults to Vitest config discovery. See [migration instructions](docs/running.md#vitest-integration). |
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
 | `--max-parallelism` | Maximum CI node or worker count DDTest considers when planning. |

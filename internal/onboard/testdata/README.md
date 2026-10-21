@@ -1,0 +1,1 @@
+Cookie-parser regression fixtures come from https://github.com/expressjs/cookie-parser/tree/1f2a3a2037c4efe01605e064e7cc326008be7287 (MIT licensed). They preserve the actual NVM setup, legacy matrix and conditional Mocha/NYC commands encountered during onboarding. Tests inject tracer configuration without modifying the original fixture.

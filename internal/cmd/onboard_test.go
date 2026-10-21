@@ -8,6 +8,7 @@ package cmd
 import (
 	"bytes"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -32,5 +33,29 @@ func TestOnboardCommandRunsDetection(t *testing.T) {
 	}
 	if output.String() != "onboarding instructions\n" {
 		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestOnboardApplyRequiresDeclaredConsent(t *testing.T) {
+	command := newOnboardCommand(func(io.Writer) error { t.Fatal("must not fall back to manual guidance"); return nil })
+	command.SetArgs([]string{"--apply"})
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	if err := command.ExecuteContext(t.Context()); err == nil {
+		t.Fatal("--apply requires --yes before making edits or executing repository code")
+	}
+}
+
+func TestAgentHelpOmitsUnrelatedPlannerFlags(t *testing.T) {
+	command := newOnboardCommand(func(io.Writer) error { return nil })
+	command.SetArgs([]string{"--help"})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	if err := command.ExecuteContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "--facts") || !strings.Contains(text, "--framework") || strings.Contains(text, "--ci-job-overhead") {
+		t.Fatalf("agent help is missing workflow flags or includes unrelated tuning: %s", text)
 	}
 }

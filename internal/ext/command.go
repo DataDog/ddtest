@@ -93,8 +93,15 @@ func prepareCommand(cmd *exec.Cmd) {
 }
 
 func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+	return e.CombinedOutputInDirectory(ctx, "", name, args, envMap)
+}
+
+// CombinedOutputInDirectory preserves process-group cancellation for setup
+// commands without changing the calling process's working directory.
+func (e *DefaultCommandExecutor) CombinedOutputInDirectory(ctx context.Context, directory, name string, args []string, envMap map[string]string) ([]byte, error) {
 	// no-dd-sa:go-security/command-injection
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = directory
 	applyEnvMap(cmd, envMap)
 	prepareCommand(cmd)
 

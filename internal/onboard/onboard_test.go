@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestRunPrintsJestGitHubInstructions(t *testing.T) {
@@ -38,7 +39,7 @@ jobs:
 		"api_key: ${{ secrets.DD_API_KEY }}",
 		"NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}",
 		"ddtest testdrive",
-		"post every `Open report:` link",
+		"share local compatibility",
 		"Ask a human to connect Datadog",
 		"without sharing the key itself",
 	} {
@@ -73,7 +74,6 @@ jobs:
       - uses: datadog/test-visibility-github-action@v3
         with:
           languages: %q
-      - run: pytest
       - run: npm test
 `, tc.languages))
 
@@ -92,7 +92,7 @@ jobs:
 			if !strings.Contains(output.String(), "ddtest testdrive") {
 				t.Fatalf("Run() did not print the next step:\n%s", output.String())
 			}
-			if !strings.Contains(output.String(), "post every `Open report:` link") {
+			if tc.configured && !strings.Contains(output.String(), "share the validation verdict") {
 				t.Fatalf("Run() did not tell the agent to share the report:\n%s", output.String())
 			}
 		})
@@ -216,6 +216,10 @@ func TestRunIdentifiesJavaScriptInvocations(t *testing.T) {
 			if tc.matched {
 				require.NoError(t, err)
 				require.Contains(t, output.String(), "languages: js")
+			} else if tc.command == "npm run cycle" {
+				require.NoError(t, err)
+				require.Contains(t, output.String(), "CI command discovery is inconclusive")
+				require.NotContains(t, output.String(), "already appears in every detected test workflow")
 			} else {
 				require.ErrorContains(t, err, "could not find a GitHub Actions workflow that runs jest")
 			}
@@ -262,7 +266,7 @@ func newJestRepository(t *testing.T, workflow string) string {
 	t.Helper()
 	repositoryRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repositoryRoot, "package.json"), []byte(`{
-  "scripts": {"test": "jest"},
+  "scripts": {"test": "jest", "lint": "eslint ."},
   "devDependencies": {"jest": "30.0.0"}
 }`), 0644); err != nil {
 		t.Fatal(err)
@@ -275,4 +279,48 @@ func newJestRepository(t *testing.T, workflow string) string {
 		t.Fatal(err)
 	}
 	return repositoryRoot
+}
+
+func TestInstructionsUseV3WithoutTracerPinsAndKeepBothReports(t *testing.T) {
+	for language, framework := range map[string]string{"javascript": "jest"} {
+		output := instructions(language, framework)
+		for _, expected := range []string{"datadog/test-visibility-github-action@v3", "Results JSON", "report.html", "testdrive.json", "--tracer-version", "summary.final_response"} {
+			if !strings.Contains(output, expected) {
+				t.Errorf("%s instructions missing %q", language, expected)
+			}
+		}
+		for _, absent := range []string{"-tracer-version:", "__TRACER_SETTING__"} {
+			if strings.Contains(output, absent) {
+				t.Errorf("%s instructions still contain %q", language, absent)
+			}
+		}
+	}
+}
+
+func TestPythonRubyInstructionsKeepSelectedLanguageSetup(t *testing.T) {
+	for _, fixture := range []struct{ language, framework, initialization string }{
+		{"python", "pytest", "PYTEST_ADDOPTS=--ddtrace"},
+		{"ruby", "rspec", "RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument"},
+		{"ruby", "minitest", "RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument"},
+	} {
+		t.Run(fixture.framework, func(t *testing.T) {
+			output := instructions(fixture.language, fixture.framework)
+			for _, required := range []string{fixture.initialization, "ddtest testdrive --framework " + fixture.framework, "-tracer-version: '' # Latest release"} {
+				require.Contains(t, output, required)
+			}
+			for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json", "coverageThreshold", "__FRAMEWORK__", "[[if", "telemetry_only", "UNVALIDATED", "INCOMPLETE", "--agent", "--format", "summary.final_response", "Cleanup after local validation"} {
+				require.NotContains(t, output, invalid)
+			}
+			_, yamlText, found := strings.Cut(output, "```yaml\n")
+			require.True(t, found)
+			yamlText, _, _ = strings.Cut(yamlText, "```")
+			var steps []struct {
+				Uses string
+				With map[string]string
+			}
+			require.NoError(t, yaml.Unmarshal([]byte(yamlText), &steps))
+			require.Len(t, steps, 1)
+			require.Equal(t, fixture.language, steps[0].With["languages"])
+		})
+	}
 }

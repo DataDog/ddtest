@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// frameworkSeparator finds the framework's end-of-options marker, skipping a
+// FrameworkSeparator finds the framework's end-of-options marker, skipping a
 // wrapper's marker before the framework executable (for example npx -- jest).
-func frameworkSeparator(command string, args []string, executable string) int {
+func FrameworkSeparator(command string, args []string, executable string) int {
 	start := 0
 	if frameworkExecutableName(command) != executable {
 		for i, arg := range args {
@@ -28,7 +28,7 @@ func frameworkSeparator(command string, args []string, executable string) int {
 // Framework-generated options must precede its end-of-options marker.
 func withFrameworkOptions(command string, args []string, executable string, options ...string) []string {
 	args = slices.Clone(args)
-	if index := frameworkSeparator(command, args, executable); index >= 0 {
+	if index := FrameworkSeparator(command, args, executable); index >= 0 {
 		return slices.Insert(args, index, options...)
 	}
 	return append(args, options...)
@@ -37,7 +37,7 @@ func withFrameworkOptions(command string, args []string, executable string, opti
 // Everything after a framework's -- is positional, so replace that explicit
 // selection with the selected files. Leave options before it untouched.
 func withFrameworkFiles(command string, args []string, executable string, files []string) []string {
-	if index := frameworkSeparator(command, args, executable); index >= 0 {
+	if index := FrameworkSeparator(command, args, executable); index >= 0 {
 		args = args[:index+1]
 	}
 	return append(slices.Clone(args), files...)

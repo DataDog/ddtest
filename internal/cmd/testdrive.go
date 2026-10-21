@@ -22,7 +22,7 @@ func newTestdriveCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "testdrive",
 		Short: "Try Test Optimization on the local test suite",
-		Long:  "Runs the detected test suite once with Datadog Test Optimization and a local intake. No Datadog API key is required.",
+		Long:  "Validates Jest/Vitest/Playwright/Mocha/Cypress/Cucumber/WebdriverIO compatibility with paired runs and controlled feature scenarios against a local intake. Python/Ruby retain the existing execution checks: exit 0 means the command succeeded and sent test events; agent/JSON workflows are unsupported. No Datadog API key is required.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.NoArgs(cmd, args); err != nil {
 				return err
@@ -31,17 +31,55 @@ func newTestdriveCommand() *cobra.Command {
 			return nil
 		},
 	}
-	var version string
+	var version, facts, format, resume, detail string
+	var checkOnly, all, agent, report bool
+	command.Flags().BoolVar(&all, "all", false, "Run known chained build prerequisites, validate every discovered Jest/Vitest/Playwright/Mocha/Cypress/Cucumber/WebdriverIO CI command, and aggregate one report pair")
+	command.Flags().BoolVar(&checkOnly, "check-only", false, "Check Jest/Vitest/Playwright/Mocha/Cypress/Cucumber/WebdriverIO and static CI configuration without installing a tracer or running tests")
 	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
+	command.Flags().BoolVar(&agent, "agent", false, "Use the shared coordinator and compact agent result protocol")
+	command.Flags().BoolVar(&report, "report", false, "Render the saved result directly, verifying its source/runtime fingerprint; run no tests")
+	command.Flags().StringVar(&format, "format", "agent", "Result rendering: agent or json for host consumption")
+	command.Flags().StringVar(&detail, "detail", "", "With --report, inspect the saved plan or a configuration ID without executing tests")
+	command.Flags().StringVar(&resume, "resume", "", "Resume the same repository/framework/scope; tests always execute fresh")
+	command.Flags().StringVar(&facts, "facts", "", "JSON build/service facts bound to input_fingerprint (requires --all)")
+	command.MarkFlagsMutuallyExclusive("report", "check-only")
+	command.MarkFlagsMutuallyExclusive("report", "all")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		execution, err := testdrive.Prepare(version)
+		if format != "agent" && format != "json" {
+			return fmt.Errorf("--format must be agent or json")
+		}
+		if detail != "" && !report {
+			return fmt.Errorf("--detail requires --report")
+		}
+		if resume != "" && detail == "" && (!agent || report || checkOnly) {
+			return fmt.Errorf("--resume requires --agent and full execution")
+		}
+		if report {
+			cmd.SilenceErrors = true
+			if detail != "" {
+				return testdrive.RenderWorkflowDetail(commandContext(cmd), cmd.OutOrStdout(), resume, detail)
+			}
+			return testdrive.RenderReport(commandContext(cmd), cmd.OutOrStdout(), format)
+		}
+		if facts != "" && !all {
+			return fmt.Errorf("--facts requires --all; facts cannot replace or narrow the discovered scope")
+		}
+		if agent {
+			yes, _ := cmd.Flags().GetBool("yes")
+			if !yes {
+				return fmt.Errorf("--agent requires --yes for declared test execution, loopback listeners and owned temporary storage")
+			}
+		}
+		execution, err := testdrive.Prepare(version, checkOnly, all)
 		if err != nil {
 			return err
 		}
 
 		output := cmd.OutOrStdout()
-		execution.Preview(output)
+		if !agent && !cmd.Flags().Changed("format") {
+			execution.Preview(output)
+		}
 		yes, err := cmd.Flags().GetBool("yes")
 		if err != nil {
 			return err
@@ -57,8 +95,14 @@ func newTestdriveCommand() *cobra.Command {
 			}
 		}
 
-		return execution.Run(commandContext(cmd), output)
+		mode := "verbose"
+		if agent || cmd.Flags().Changed("format") {
+			mode = format
+			cmd.SilenceErrors = true
+		}
+		return execution.Workflow(commandContext(cmd), output, testdrive.WorkflowOptions{Resume: resume, ExplicitVersion: cmd.Flags().Changed("tracer-version"), FactsFile: facts, Format: mode})
 	}
+	agentHelp(command)
 	return command
 }
 

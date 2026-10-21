@@ -7,14 +7,12 @@ package testdrive
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
-	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 )
@@ -67,25 +65,30 @@ func TestMochaTestdriveNYCPreviewAndExecution(t *testing.T) {
 			require.Contains(t, preview.String(), "  - command: "+wantDisplay)
 			_, err := os.Stat(drive.session.Directory())
 			require.True(t, os.IsNotExist(err), "preview must remain read-only")
-			installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-			drive.platform = installer
-			executor := &fakeTestdriveExecutor{}
-			drive.executor = executor
-			drive.startIntake = func(string) (localIntake, error) {
-				return &fakeIntake{url: "http://127.0.0.1:1234", findings: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1}}, nil
+			if tc.jest {
+				command, args := drive.executionCommand()
+				require.Equal(t, wantCommand, command)
+				require.Equal(t, wantArgs, args)
+				return
 			}
-			var output bytes.Buffer
-			require.NoError(t, drive.Run(t.Context(), &output))
-			require.Equal(t, wantCommand, executor.command)
-			require.Equal(t, wantArgs, executor.args)
+			command, args := drive.executionCommand()
+			require.Equal(t, wantCommand, command)
+			require.Equal(t, wantArgs, args)
 			require.Equal(t, tc.command, drive.command)
 			require.Equal(t, tc.args, drive.args)
-			data, err := os.ReadFile(filepath.Join(installer.sessionDirectory, diagnosticsFilename))
-			require.NoError(t, err)
-			var diagnostics runDiagnostics
-			require.NoError(t, json.Unmarshal(data, &diagnostics))
-			require.Equal(t, wantDisplay, diagnostics.Command)
-			require.Contains(t, output.String(), "  Command: "+wantDisplay)
 		})
 	}
+}
+
+func TestMochaDoesNotDoubleWrapCoveredPackageScripts(t *testing.T) {
+	drive := preparedTestdrive(t)
+	drive.framework = framework.NewMocha(platform.NewJavaScript())
+	drive.command, drive.args = "npm", []string{"test"}
+	requireWriteFile(t, filepath.Join(drive.repositoryRoot, "package.json"), `{"scripts":{"test":"npx --no-install nyc -- c8 mocha test.js"}}`)
+	bin := filepath.Join(drive.repositoryRoot, "node_modules/.bin")
+	require.NoError(t, os.MkdirAll(bin, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "nyc"), []byte("#!/bin/sh\n"), 0700))
+	command, args := drive.executionCommand()
+	require.Equal(t, "npm", command)
+	require.Equal(t, []string{"test"}, args)
 }

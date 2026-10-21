@@ -81,7 +81,7 @@ func troubleshootMochaCoverage(repositoryRoot string) Advice {
 	advice := Advice{
 		Finding: MissingCoverageFinding,
 		Title:   "Check NYC coverage configuration",
-		Text:    "Testdrive uses NYC automatically. Check NYC's include/exclude rules and file extensions, then rerun ddtest testdrive with the same options.",
+		Text:    "Testdrive uses NYC automatically, but wrapping a command does not prove coverage. Check instrument:false, include/exclude rules and file extensions. NYC's require hook alone does not instrument native ESM; dd-trace's ESM loader enables tracing, not Istanbul coverage. Preserve coverage thresholds and report this limitation if a separate ESM instrumentation step is needed. Rerun ddtest testdrive after correcting instrumentation.",
 		URL:     "https://docs.datadoghq.com/tests/test_impact_analysis/setup/javascript/",
 	}
 	info, err := os.Stat(filepath.Join(repositoryRoot, "node_modules", ".bin", "nyc"))
