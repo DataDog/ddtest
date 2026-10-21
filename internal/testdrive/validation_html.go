@@ -31,7 +31,7 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 	}
 	model := buildReport(t.repositoryRoot, run.Facts, run.ExitCode != 0, runtime)
 	model.ExecutionCounts = nativeExecutionCounts(run)
-	if t.framework.Name() == "jest" {
+	if supportsValidationFramework(t.framework.Name()) {
 		writeFindings(output, run.Facts, model.Cards...)
 	}
 	model.Artifacts = []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}

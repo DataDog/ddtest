@@ -114,10 +114,10 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	configurationOnly := configuration.CheckOnly
 	var discoveryError error
 	var preflightEnvironment map[string]string
-	if configurationOnly && runner.Name() != "jest" {
+	if configurationOnly && !frameworkFeaturePolicies[runner.Name()].CheckOnly {
 		return nil, fmt.Errorf("configuration preflight currently supports Jest only")
 	}
-	if runner.Name() == "jest" {
+	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
 		if err != nil {
 			return nil, fmt.Errorf("resolve Jest repository root: %w", err)
@@ -151,6 +151,10 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
 	session := planSession()
+	if !supportsValidationFramework(runner.Name()) {
+		session.directory = filepath.Join(repositoryRoot, ".testoptimization", "testdrive", session.ID())
+		session.persistent = true
+	}
 	if runner.Name() == "vitest" {
 		command, args, err = vitestTestdriveCommand(session.Directory())
 		if err != nil {
@@ -194,7 +198,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
-	if runner.Name() == "jest" {
+	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		drive.preflight = drive.checkJestPreflight
 	}
 	if installer, ok := detectedPlatform.(*platform.JavaScript); ok {
@@ -232,7 +236,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintln(output)
 	t.environmentInfo.write(output)
 	_, _ = fmt.Fprintln(output, "\nRun:")
-	if t.framework.Name() == "jest" {
+	if supportsValidationFramework(t.framework.Name()) {
 		_, _ = fmt.Fprintln(output, "  - compare the original suite without instrumentation and with reporting-only instrumentation; repeat differing pairs")
 		_, _ = fmt.Fprintln(output, "  - discover a temporary probe with the original Jest configuration; check retries, EFD, skipping, quarantine, disabled tests and attempt-to-fix per selected project")
 		_, _ = fmt.Fprintln(output, "  - keep .testoptimization/testdrive.json and .testoptimization/report.html; remove owned probes, temporary tracer and run files")
@@ -294,7 +298,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	if t.checkOnly {
 		return t.runConfigurationChecks(ctx, output)
 	}
-	if t.framework.Name() == "jest" {
+	if supportsValidationFramework(t.framework.Name()) {
 		if err := recoverProbes(t.repositoryRoot); err != nil {
 			return err
 		}
@@ -312,16 +316,26 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	if session == nil {
 		session = planSession()
 	}
+	if !supportsValidationFramework(t.framework.Name()) {
+		session.directory = filepath.Join(t.repositoryRoot, ".testoptimization", "testdrive", session.ID())
+		session.persistent = true
+	}
 	if err := session.create(); err != nil {
 		return result, err
 	}
 
 	t.session = session
+	if !supportsValidationFramework(t.framework.Name()) {
+		session.persistent = true
+	}
 	result = validationResult{CheckOnly: t.checkOnly, Session: session.ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel,
 		Compatibility: verdict{Status: "inconclusive", Reason: "Validation did not complete."}}
 	defer func() {
 		cleanupErr := session.Close()
-		result.Cleanup = &verdict{Status: "passed", Reason: "Owned session storage and framework daemons removed."}
+		result.Cleanup = &verdict{Status: "passed", Reason: "Owned session storage removed."}
+		if session.persistent {
+			result.Cleanup = &verdict{Status: "not exercised", Reason: "Legacy diagnostics retained."}
+		}
 		if cleanupErr != nil {
 			result.Cleanup = &verdict{Status: "failed", Reason: reportText(cleanupErr.Error())}
 		}
@@ -335,6 +349,18 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		result.Compatibility = verdict{Status: "not exercised", Reason: t.environmentFailure.Title}
 		_, _ = fmt.Fprintf(output, "\nEnvironment check: %s\n%s\n", t.environmentFailure.Title, t.environmentFailure.Context)
 		execution := validationRun{Command: shellquote.Join(append([]string{t.command}, t.args...)...), commandOutput: t.environmentFailure.Context}
+		if !supportsValidationFramework(t.framework.Name()) {
+			path := filepath.Join(session.Directory(), testOutputFilename)
+			if err := os.WriteFile(path, []byte(t.environmentFailure.Context), 0600); err != nil {
+				return result, err
+			}
+			model := buildReport(t.repositoryRoot, intake.Facts{}, false, reportRuntime{Environment: t.environmentInfo, SetupFailure: t.environmentFailure})
+			findings, err := writeDiagnostics(t.repositoryRoot, session.Directory(), intake.Facts{}, model, false)
+			if err != nil {
+				return result, err
+			}
+			writeDiagnosticPaths(output, t.repositoryRoot, findings, path, "")
+		}
 		if err := t.writeHTMLReport(output, &result, execution); err != nil {
 			return result, err
 		}
@@ -358,7 +384,11 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		return result, fmt.Errorf("configuration preflight currently supports Jest only")
 	}
 
-	_, _ = fmt.Fprintf(output, "\nPreparing %s in %s...\n", t.tracerLabel, session.Directory())
+	if t.projectTracer != "" {
+		_, _ = fmt.Fprintf(output, "\nReusing installed %s...\n", t.installedTracerLabel(t.projectTracer))
+	} else {
+		_, _ = fmt.Fprintf(output, "\nInstalling %s...\n", t.tracerLabel)
+	}
 	version := t.tracerVersion
 	if result.Selection != nil && result.Selection.Version != "" {
 		version = result.Selection.Version
@@ -397,9 +427,9 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}
 	if installation.Project {
 		result.Tracer = t.installedTracerLabel(t.projectTracer)
-		result.TracerSource = "project installation (reused; fallback selector ignored)"
+		result.TracerSource = "project installation · reused"
 	}
-	if t.framework.Name() == "jest" {
+	if supportsValidationFramework(t.framework.Name()) {
 		if result.Selection != nil {
 			if err := verifyInstalledSelection(installation.Path, &result); err != nil {
 				return result, err
@@ -470,6 +500,12 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		_, _ = fmt.Fprintln(output, "No test events received.")
 	}
 	writeFindings(output, findings, model.Cards...)
+	t.environmentInfo.write(output)
+	diagnosticsPath, err := writeDiagnostics(t.repositoryRoot, session.Directory(), findings, model, testErr != nil)
+	if err != nil {
+		return result, err
+	}
+	writeDiagnosticPaths(output, t.repositoryRoot, diagnosticsPath, testOutputPath, filepath.Join(session.Directory(), "intake"))
 	_, _ = fmt.Fprintln(output, "\nRun details:")
 	_, _ = fmt.Fprintf(output, "  Test events: %d\n", findings.TestEventCount)
 	_, _ = fmt.Fprintf(output, "  Tests: %d · Suites: %d\n", findings.TestCount, len(model.Suites))
@@ -657,38 +693,64 @@ func testFindingLabel(finding intake.Test) string {
 }
 
 func testEnvironment(intakeURL, sessionID string) map[string]string {
+
 	return map[string]string{
 		constants.APIKeyEnvironmentVariable:                           "ddtest-testdrive",
 		constants.TestOptimizationEnabledEnvironmentVariable:          "true",
 		constants.TestOptimizationAgentlessEnabledEnvironmentVariable: "true",
 		constants.TestOptimizationAgentlessURLEnvironmentVariable:     intakeURL,
 		constants.TestOptimizationTestSessionNameEnvironmentVariable:  "ddtest testdrive " + sessionID,
-		"DDTEST_JEST_PROBE":                                   "0",
-		"DD_CIVISIBILITY_GIT_UPLOAD_ENABLED":                  "false",
-		"DD_CIVISIBILITY_ITR_ENABLED":                         "true",
-		"DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED": "false",
-		"DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED":       "false",
-		"DD_TEST_EARLY_FLAKE_DETECTION_RETRY_COUNT":           "1",
-		"DD_CIVISIBILITY_FLAKY_RETRY_ENABLED":                 "false",
-		"DD_CIVISIBILITY_FLAKY_RETRY_COUNT":                   "2",
-		"DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED":    "false",
-		"DD_TEST_FAILED_TEST_REPLAY_ENABLED":                  "false",
-		"DD_TEST_MANAGEMENT_ENABLED":                          "false",
-		"DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES":           "1",
-		"DD_INSTRUMENTATION_TELEMETRY_ENABLED":                "false",
-		"DD_TRACE_STARTUP_LOGS":                               "false",
-		"DD_TRACE_ENABLED":                                    "true",
-		"DD_REMOTE_CONFIG_ENABLED":                            "false",
-		"DD_PROFILING_ENABLED":                                "false",
-		"DD_APPSEC_ENABLED":                                   "false",
-		"DD_DYNAMIC_INSTRUMENTATION_ENABLED":                  "false",
-		"DD_TRACE_AGENT_URL":                                  intakeURL,
-		"DD_CIVISIBILITY_CODE_COVERAGE_ENABLED":               "true",
+		"DD_CIVISIBILITY_GIT_UPLOAD_ENABLED":                          "false",
+		"DD_CIVISIBILITY_ITR_ENABLED":                                 "true",
+		"DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED":         "true",
+		"DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED":               "true",
+		"DD_TEST_EARLY_FLAKE_DETECTION_RETRY_COUNT":                   "1",
+		"DD_CIVISIBILITY_FLAKY_RETRY_ENABLED":                         "true",
+		"DD_CIVISIBILITY_FLAKY_RETRY_COUNT":                           "5",
+		"DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED":            "true",
+		"DD_TEST_FAILED_TEST_REPLAY_ENABLED":                          "true",
+		"DD_TEST_MANAGEMENT_ENABLED":                                  "true",
+		"DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES":                   "1",
+		"DD_INSTRUMENTATION_TELEMETRY_ENABLED":                        "false",
+		"DD_TRACE_STARTUP_LOGS":                                       "false",
+	}
+}
+
+func reportingEnvironment(intakeURL, sessionID string) map[string]string {
+	return map[string]string{
+		constants.APIKeyEnvironmentVariable:                           "ddtest-testdrive",
+		constants.TestOptimizationEnabledEnvironmentVariable:          "true",
+		constants.TestOptimizationAgentlessEnabledEnvironmentVariable: "true",
+		constants.TestOptimizationAgentlessURLEnvironmentVariable:     intakeURL,
+		constants.TestOptimizationTestSessionNameEnvironmentVariable:  "ddtest testdrive " + sessionID,
+		"DD_CIVISIBILITY_GIT_UPLOAD_ENABLED":                          "false",
+		"DD_CIVISIBILITY_ITR_ENABLED":                                 "true",
+		"DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED":         "false",
+		"DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED":               "false",
+		"DD_TEST_EARLY_FLAKE_DETECTION_RETRY_COUNT":                   "1",
+		"DD_CIVISIBILITY_FLAKY_RETRY_ENABLED":                         "false",
+		"DD_CIVISIBILITY_FLAKY_RETRY_COUNT":                           "2",
+		"DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED":            "false",
+		"DD_TEST_FAILED_TEST_REPLAY_ENABLED":                          "false",
+		"DD_TEST_MANAGEMENT_ENABLED":                                  "false",
+		"DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES":                   "1",
+		"DD_INSTRUMENTATION_TELEMETRY_ENABLED":                        "false",
+		"DD_TRACE_STARTUP_LOGS":                                       "false",
+		"DD_TRACE_ENABLED":                                            "true",
+		"DD_REMOTE_CONFIG_ENABLED":                                    "false",
+		"DD_PROFILING_ENABLED":                                        "false",
+		"DD_APPSEC_ENABLED":                                           "false",
+		"DD_DYNAMIC_INSTRUMENTATION_ENABLED":                          "false",
+		"DD_TRACE_AGENT_URL":                                          intakeURL,
+		"DD_CIVISIBILITY_CODE_COVERAGE_ENABLED":                       "true",
 	}
 }
 
 func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]string {
 	env := testEnvironment(intakeURL, sessionID)
+	if t.framework != nil && supportsValidationFramework(t.framework.Name()) {
+		env = reportingEnvironment(intakeURL, sessionID)
+	}
 	switch t.language {
 	case "javascript":
 		maps.Copy(env, t.javascriptEnvironment(path))

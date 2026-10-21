@@ -7,7 +7,7 @@ import (
 
 func TestFeaturePolicyRequiresObservedResultsForEveryProject(t *testing.T) {
 	var complete []featureResult
-	for _, policy := range frameworkFeaturePolicies["jest"] {
+	for _, policy := range featurePolicies("jest") {
 		require.Equal(t, "required", policy.Status, "the table must never preset a passing observation")
 		complete = append(complete, featureResult{Project: "unit", Name: policy.Name, Status: "passed"})
 	}

@@ -115,6 +115,7 @@ func (r validationRun) summary() runSummary {
 }
 
 type validationResult struct {
+	TelemetryOnly      bool                     `json:"telemetry_only,omitempty"`
 	SchemaVersion      int                      `json:"schema_version"`
 	ReportingCounts    *executionCounts         `json:"reporting_counts,omitempty"`
 	Scope              *onboard.ValidationScope `json:"scope,omitempty"`
@@ -183,11 +184,14 @@ func validationPath(repositoryRoot string) string {
 }
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
+	result.SchemaVersion = 1
 	if result.Framework != "" && !supportsValidationFramework(result.Framework) {
 		result.Error = reportText(result.Error)
 		result.CompletedAt = time.Now().UTC()
 		result.WorkingDirectory = repositoryRoot
 		result.Success = result.Error == ""
+		result.TelemetryOnly = true
+		result.Summary = validationSummary{Status: "UNVALIDATED (TELEMETRY ONLY)", LocalValidation: "NOT EXERCISED", CIConfiguration: "not exercised"}
 		data, err := marshalValidation(result)
 		if err != nil {
 			return fmt.Errorf("encode testdrive results: %w", err)

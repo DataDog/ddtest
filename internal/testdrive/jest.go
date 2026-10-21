@@ -146,6 +146,9 @@ func probeJestArgs(command string, args []string) []string {
 }
 
 func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
+	if scenario.Feature == "" {
+		scenario.Feature = "reporting-only"
+	}
 	run.Name = name
 	run.framework = "jest"
 	run.Instrumented = instrumented
@@ -251,11 +254,11 @@ func configureScenarioEnvironment(env map[string]string, feature string) {
 	// the reporting-only settings response. No skippable tests are returned there.
 	env["DD_CIVISIBILITY_ITR_ENABLED"] = "true"
 	env["DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED"] = fmt.Sprint(feature == "early-flake-detection")
-	env["DD_TEST_EARLY_FLAKE_DETECTION_RETRY_COUNT"] = "2"
+	env["DD_TEST_EARLY_FLAKE_DETECTION_RETRY_COUNT"] = fmt.Sprint(intake.ScenarioRetryCount)
 	env["DD_CIVISIBILITY_FLAKY_RETRY_ENABLED"] = fmt.Sprint(feature == "auto-retries")
-	env["DD_CIVISIBILITY_FLAKY_RETRY_COUNT"] = "2"
+	env["DD_CIVISIBILITY_FLAKY_RETRY_COUNT"] = fmt.Sprint(intake.ScenarioRetryCount)
 	env["DD_TEST_MANAGEMENT_ENABLED"] = fmt.Sprint(feature == "quarantine" || feature == "disabled" || feature == "attempt-to-fix")
-	env["DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES"] = "2"
+	env["DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES"] = fmt.Sprint(intake.ScenarioRetryCount)
 }
 
 func executedTests(run validationRun) int {

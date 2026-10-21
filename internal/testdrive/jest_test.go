@@ -80,7 +80,7 @@ func TestJestJSONComparisonIgnoresTimingOrderAndStacks(t *testing.T) {
 
 func TestScenarioEnvironmentsDisableUnrelatedBehavior(t *testing.T) {
 	for _, feature := range append([]string{""}, jestFeatures...) {
-		env := testEnvironment("http://127.0.0.1:1234", "session")
+		env := reportingEnvironment("http://127.0.0.1:1234", "session")
 		configureScenarioEnvironment(env, feature)
 		require.Equal(t, "false", env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"])
 		require.Equal(t, "false", env["DD_TEST_FAILED_TEST_REPLAY_ENABLED"])
@@ -278,10 +278,10 @@ func TestJestValidationRepeatsUnstablePairAndWritesJSON(t *testing.T) {
 	require.NotContains(t, output.String(), "detailed test output")
 }
 
-func TestFinishValidationDoesNotUseSuiteExitAsVerdict(t *testing.T) {
+func TestUnknownFrameworkCannotPassFromSuiteExitAlone(t *testing.T) {
 	var output bytes.Buffer
 	result := validationResult{Compatibility: verdict{Status: "compatible"}, Runs: []runSummary{(validationRun{Command: "npm test", ExitCode: 1}).summary()}}
-	require.NoError(t, finishValidation(&output, t.TempDir(), result))
+	require.Error(t, finishValidation(&output, t.TempDir(), result))
 	require.Contains(t, output.String(), "Results JSON:")
 }
 

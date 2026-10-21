@@ -33,7 +33,7 @@ test('ddtest validation probe', () => {
 
 var jestFeatures = func() []string {
 	var names []string
-	for _, policy := range frameworkFeaturePolicies["jest"] {
+	for _, policy := range featurePolicies("jest") {
 		names = append(names, policy.Name)
 	}
 	return names

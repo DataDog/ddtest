@@ -240,7 +240,9 @@ func TestRunKeepsValidationReportWhenAnalysisOrReportFails(t *testing.T) {
 				t.Fatal(result.Error)
 			}
 			if strings.Contains(output.String(), "Full test output:") {
-				t.Fatal("must not link removed scratch files")
+				if _, err := os.Stat(filepath.Join(drive.session.Directory(), testOutputFilename)); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 		})

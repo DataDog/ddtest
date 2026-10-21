@@ -18,11 +18,12 @@ import (
 
 const (
 	settingsResponseID = "test-settings"
+	ScenarioRetryCount = 2
 
 	testdriveCorrelationID = "ddtest-testdrive"
 )
 
-// Scenario configures exactly one local feature experiment. The zero value is reporting-only.
+// Scenario configures exactly one local feature experiment. The zero value preserves ordinary testdrive settings.
 type Scenario struct {
 	Feature string
 	Module  string
@@ -87,15 +88,39 @@ func handleScenarioSettings(w http.ResponseWriter, request *http.Request, scenar
 		KnownTestsEnabled:       scenario.Feature == "early-flake-detection",
 		EarlyFlakeDetection: api.EarlyFlakeDetectionSettings{
 			Enabled:                scenario.Feature == "early-flake-detection",
-			SlowTestRetries:        api.SlowTestRetries{FiveS: 2, TenS: 2, ThirtyS: 2, FiveM: 2},
+			SlowTestRetries:        api.SlowTestRetries{FiveS: ScenarioRetryCount, TenS: ScenarioRetryCount, ThirtyS: ScenarioRetryCount, FiveM: ScenarioRetryCount},
 			FaultySessionThreshold: 100,
 		},
 		TestManagement: api.TestManagementSettings{
 			Enabled:             scenario.Feature == "quarantine" || scenario.Feature == "disabled" || scenario.Feature == "attempt-to-fix",
-			AttemptToFixRetries: 2,
+			AttemptToFixRetries: ScenarioRetryCount,
 		},
 	}
 
+	if scenario.Feature == "" {
+		response.Data.Attributes = api.SettingsResponseData{
+			CodeCoverage:                true,
+			CoverageReportUploadEnabled: true,
+			// Testdrive runs the whole suite and disables git upload. Some tracers
+			// wait for that upload before fetching skippable tests, so advertising
+			// skipping here can prevent Jest from ever starting.
+			TestsSkipping:           false,
+			ItrEnabled:              true,
+			ImpactedTestsEnabled:    true,
+			FlakyTestRetriesEnabled: true,
+			DIEnabled:               true,
+			KnownTestsEnabled:       true,
+			EarlyFlakeDetection: api.EarlyFlakeDetectionSettings{
+				Enabled:                true,
+				SlowTestRetries:        api.SlowTestRetries{FiveS: 1, TenS: 1, ThirtyS: 1, FiveM: 1},
+				FaultySessionThreshold: 100,
+			},
+			TestManagement: api.TestManagementSettings{
+				Enabled:             true,
+				AttemptToFixRetries: 1,
+			},
+		}
+	}
 	w.Header().Set("Content-Type", constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(response)

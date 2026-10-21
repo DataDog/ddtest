@@ -52,7 +52,7 @@ func TestEveryUnselectableProjectIsUnvalidated(t *testing.T) {
 		run := preparedTestdrive(t)
 		project := jestProject{}
 		project.DisplayName.Name = duplicateName
-		result := validationResult{Preflight: &jestPreflight{Projects: []jestProject{project, project}}}
+		result := validationResult{Framework: "jest", Preflight: &jestPreflight{Projects: []jestProject{project, project}}}
 		require.NoError(t, run.runJestFeatures(t.Context(), &bytes.Buffer{}, nil, "", &result))
 		require.Len(t, result.Features, 12)
 		for i, feature := range result.Features {
@@ -72,7 +72,7 @@ func TestUndiscoveredProbeCannotValidateWrongProject(t *testing.T) {
 		}
 		return json.Marshal([]string{source})
 	})
-	result := validationResult{Preflight: &jestPreflight{Projects: []jestProject{{Root: run.repositoryRoot}}}}
+	result := validationResult{Framework: "jest", Preflight: &jestPreflight{Projects: []jestProject{{Root: run.repositoryRoot}}}}
 	require.NoError(t, run.runJestFeatures(t.Context(), &bytes.Buffer{}, nil, "", &result))
 	require.Len(t, result.Features, 6)
 	for _, feature := range result.Features {

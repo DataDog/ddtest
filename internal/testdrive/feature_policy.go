@@ -8,23 +8,27 @@ type featurePolicy struct {
 	Reason string
 }
 
-var frameworkFeaturePolicies = map[string][]featurePolicy{
-	"jest": {
+type frameworkPolicy struct {
+	Paired, CheckOnly, ProbeRecovery, Preflight bool
+	Features                                    []featurePolicy
+}
+
+var frameworkFeaturePolicies = map[string]frameworkPolicy{
+	"jest": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"},
 		{Name: "early-flake-detection", Status: "required"},
 		{Name: "skipping", Status: "required"},
 		{Name: "quarantine", Status: "required"},
 		{Name: "disabled", Status: "required"},
 		{Name: "attempt-to-fix", Status: "required"},
-	},
+	}},
 }
 
 func supportsValidationFramework(name string) bool {
-	_, ok := frameworkFeaturePolicies[name]
-	return ok
+	return frameworkFeaturePolicies[name].Paired
 }
 func featureSatisfied(framework string, feature featureResult) bool {
-	for _, policy := range frameworkFeaturePolicies[framework] {
+	for _, policy := range featurePolicies(framework) {
 		if policy.Name == feature.Name {
 			if policy.Status == "required" {
 				return feature.Status == "passed"
@@ -37,7 +41,7 @@ func featureSatisfied(framework string, feature featureResult) bool {
 
 func featureChecksPassed(framework string, features []featureResult) bool {
 	if !supportsValidationFramework(framework) {
-		return true
+		return false
 	}
 	projects := map[string]map[string]bool{}
 	for _, feature := range features {
@@ -53,7 +57,7 @@ func featureChecksPassed(framework string, features []featureResult) bool {
 		return false
 	}
 	for _, features := range projects {
-		for _, policy := range frameworkFeaturePolicies[framework] {
+		for _, policy := range featurePolicies(framework) {
 			if !features[policy.Name] {
 				return false
 			}
@@ -63,8 +67,14 @@ func featureChecksPassed(framework string, features []featureResult) bool {
 }
 
 func featurePolicies(framework string) []featurePolicy {
-	if framework == "" {
-		framework = "jest"
+	return frameworkFeaturePolicies[framework].Features
+}
+
+func probeRecoveryEnabled() bool {
+	for _, policy := range frameworkFeaturePolicies {
+		if policy.ProbeRecovery {
+			return true
+		}
 	}
-	return frameworkFeaturePolicies[framework]
+	return false
 }

@@ -18,9 +18,10 @@ const sessionTimeFormat = "2006-01-02-150405"
 
 // Session owns the files produced by one testdrive run.
 type Session struct {
-	id        string
-	directory string
-	watchman  *ownedWatchman
+	id         string
+	directory  string
+	watchman   *ownedWatchman
+	persistent bool
 }
 
 // NewSession creates private scratch storage outside the customer repository.
@@ -47,6 +48,9 @@ func planSession() *Session {
 }
 
 func (s *Session) create() error {
+	if s.persistent {
+		return os.MkdirAll(s.directory, 0700)
+	}
 	if err := os.Mkdir(s.directory, 0700); err != nil {
 		return fmt.Errorf("create temporary testdrive session: %w", err)
 	}
@@ -55,6 +59,9 @@ func (s *Session) create() error {
 
 // Close removes only the scratch directory owned by this session.
 func (s *Session) Close() error {
+	if s.persistent {
+		return nil
+	}
 	var daemonErr error
 	if s.watchman != nil {
 		daemonErr = s.watchman.close()

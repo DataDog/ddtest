@@ -67,7 +67,7 @@ func TestRunCleansScratchOnSetupFailureAndCancellation(t *testing.T) {
 	}
 }
 
-func TestUnvalidatedFrameworkCleansScratchAndKeepsBothReports(t *testing.T) {
+func TestUnvalidatedFrameworkPreservesLegacyDiagnosticsAndKeepsBothReports(t *testing.T) {
 	run := preparedTestdrive(t)
 	run.framework = &telemetryOnlyFramework{}
 	installer := &fakeTracer{preloadPath: "/trace/ci/init.js"}
@@ -77,7 +77,8 @@ func TestUnvalidatedFrameworkCleansScratchAndKeepsBothReports(t *testing.T) {
 		return &fakeIntake{url: "http://127.0.0.1:1234", findings: intake.Facts{TestEventCount: 1}}, nil
 	}
 	require.NoError(t, run.Run(t.Context(), &bytes.Buffer{}))
-	require.NoDirExists(t, installer.sessionDirectory)
+	require.DirExists(t, installer.sessionDirectory)
+	require.FileExists(t, filepath.Join(installer.sessionDirectory, testOutputFilename))
 	data, err := os.ReadFile(validationPath(run.repositoryRoot))
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "useful diagnostics")
@@ -91,7 +92,7 @@ func TestUnvalidatedFrameworkCleansScratchAndKeepsBothReports(t *testing.T) {
 	require.FileExists(t, htmlReportPath(run.repositoryRoot))
 	files, err := os.ReadDir(filepath.Dir(validationPath(run.repositoryRoot)))
 	require.NoError(t, err)
-	require.Len(t, files, 2)
+	require.Len(t, files, 3)
 }
 
 func TestCommandFailureOutputSurvivesCleanup(t *testing.T) {
@@ -122,14 +123,15 @@ func TestCommandFailureOutputSurvivesCleanup(t *testing.T) {
 			require.Contains(t, output.String(), "unvalidated command output:")
 			require.Contains(t, output.String(), tc.want)
 			require.Contains(t, output.String(), "Bounded diagnostic: "+validationPath(""))
-			require.NotContains(t, output.String(), "Full test output:")
+			require.Contains(t, output.String(), "Full test output:")
 			require.NotContains(t, output.String(), "see the full test output")
 			if tc.name == "long" {
 				require.Contains(t, output.String(), "initial failure")
 				require.Contains(t, output.String(), "final failure")
 				require.Equal(t, 78, strings.Count(output.String(), "log line"))
 			}
-			require.NoDirExists(t, installer.sessionDirectory)
+			require.DirExists(t, installer.sessionDirectory)
+			require.FileExists(t, filepath.Join(installer.sessionDirectory, testOutputFilename))
 			report := readValidationReport(t, run.repositoryRoot)
 			require.Len(t, report.Runs, 1)
 			require.Equal(t, -1, *report.Runs[0].ExitCode, "generic executor errors have no process exit code")
@@ -149,7 +151,7 @@ func TestCommandFailureOutputSurvivesCleanup(t *testing.T) {
 			}
 			files, err := os.ReadDir(filepath.Dir(validationPath(run.repositoryRoot)))
 			require.NoError(t, err)
-			require.Len(t, files, 2, "retain HTML and JSON, without raw output files")
+			require.Len(t, files, 3, "retain reports and legacy diagnostics")
 		})
 	}
 }
@@ -161,7 +163,7 @@ func TestReportReplacementKeepsOneFileAndPreservesOtherProjectData(t *testing.T)
 	requireWriteFile(t, filepath.Join(directory, "customer-plan.json"), "original plan")
 	for _, name := range []string{"first", "second"} {
 		result := validationResult{Session: name, Compatibility: verdict{Status: "compatible"}}
-		require.NoError(t, finishValidation(&bytes.Buffer{}, root, result))
+		require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
 	}
 	data, err := os.ReadFile(validationPath(root))
 	require.NoError(t, err)
@@ -200,7 +202,7 @@ func TestConcurrentReportWritesLeaveOneCompleteReport(t *testing.T) {
 	group.Wait()
 	close(failures)
 	for err := range failures {
-		require.NoError(t, err)
+		require.Error(t, err)
 	}
 	data, err := os.ReadFile(validationPath(root))
 	require.NoError(t, err)

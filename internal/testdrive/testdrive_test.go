@@ -353,7 +353,7 @@ func TestRunReportsProjectTracer(t *testing.T) {
 	if installer.options.Version != "git:ignored-for-existing-tracer" || installer.options.Command != drive.command {
 		t.Fatal(installer.options)
 	}
-	if !strings.Contains(output.String(), "project installation (reused; fallback selector ignored)") {
+	if !strings.Contains(output.String(), "project installation · reused") {
 		t.Fatal(output.String())
 	}
 	if !strings.Contains(executor.env["NODE_OPTIONS"], installer.preloadPath) {

@@ -46,14 +46,14 @@ func TestSettingsEnablesTestOptimizationCoverage(t *testing.T) {
 	require.True(t, settings.Data.Attributes.CodeCoverage)
 	require.False(t, settings.Data.Attributes.TestsSkipping)
 	require.False(t, settings.Data.Attributes.RequireGit)
-	require.False(t, settings.Data.Attributes.CoverageReportUploadEnabled)
-	require.False(t, settings.Data.Attributes.ImpactedTestsEnabled)
-	require.False(t, settings.Data.Attributes.FlakyTestRetriesEnabled)
-	require.False(t, settings.Data.Attributes.DIEnabled)
-	require.False(t, settings.Data.Attributes.KnownTestsEnabled)
-	require.False(t, settings.Data.Attributes.EarlyFlakeDetection.Enabled)
-	require.Equal(t, 2, settings.Data.Attributes.EarlyFlakeDetection.SlowTestRetries.FiveS)
-	require.False(t, settings.Data.Attributes.TestManagement.Enabled)
+	require.True(t, settings.Data.Attributes.CoverageReportUploadEnabled)
+	require.True(t, settings.Data.Attributes.ImpactedTestsEnabled)
+	require.True(t, settings.Data.Attributes.FlakyTestRetriesEnabled)
+	require.True(t, settings.Data.Attributes.DIEnabled)
+	require.True(t, settings.Data.Attributes.KnownTestsEnabled)
+	require.True(t, settings.Data.Attributes.EarlyFlakeDetection.Enabled)
+	require.Equal(t, 1, settings.Data.Attributes.EarlyFlakeDetection.SlowTestRetries.FiveS)
+	require.True(t, settings.Data.Attributes.TestManagement.Enabled)
 }
 
 func TestAdvancedFeatureEndpointsReturnSafeEmptyDatasets(t *testing.T) {
@@ -104,7 +104,7 @@ func TestGitNegotiation(t *testing.T) {
 }
 
 func TestScenarioResponsesEnableOnlySelectedBehavior(t *testing.T) {
-	for _, feature := range []string{"", "auto-retries", "early-flake-detection", "skipping", "quarantine", "disabled", "attempt-to-fix"} {
+	for _, feature := range []string{"reporting-only", "auto-retries", "early-flake-detection", "skipping", "quarantine", "disabled", "attempt-to-fix"} {
 		t.Run(feature, func(t *testing.T) {
 			handler := scenarioHandler(Scenario{Feature: feature, Module: "custom-module", Suite: "../../src/probe.test.js", SourceFile: "src/probe.test.js", Test: "probe"})
 			response := httptest.NewRecorder()

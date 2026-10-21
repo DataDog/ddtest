@@ -74,7 +74,7 @@ func TestHTMLWriteFailureStillKeepsJSONAndCleansSession(t *testing.T) {
 	customer := filepath.Join(htmlReportPath(run.repositoryRoot), "customer-file")
 	requireWriteFile(t, customer, "keep")
 	require.ErrorContains(t, run.Run(t.Context(), &bytes.Buffer{}), "save testdrive HTML report")
-	require.NoDirExists(t, installer.sessionDirectory)
+	require.DirExists(t, installer.sessionDirectory)
 	require.FileExists(t, customer)
 	data, err := os.ReadFile(validationPath(run.repositoryRoot))
 	require.NoError(t, err)
@@ -85,5 +85,5 @@ func TestHTMLWriteFailureStillKeepsJSONAndCleansSession(t *testing.T) {
 	require.False(t, report.Success)
 	files, err := os.ReadDir(filepath.Dir(validationPath(run.repositoryRoot)))
 	require.NoError(t, err)
-	require.Len(t, files, 2, "no incomplete report scratch file may remain")
+	require.Len(t, files, 3, "legacy diagnostics remain; no incomplete report scratch file may remain")
 }
