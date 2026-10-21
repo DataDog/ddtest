@@ -79,7 +79,7 @@ func TestJestTestdriveIntegration(t *testing.T) {
 	t.Setenv("NODE_OPTIONS", "--require "+strconv.Quote(filepath.Join(root, "noisy.cjs")))
 	resetSettingsAfterTest(t)
 	configureFramework(shellCommand("node", filepath.Join(root, "node_modules", "jest", "bin", "jest.js"), "--runInBand"), "")
-	drive, err := testdrive.Prepare("git:must-not-install")
+	drive, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: "git:must-not-install"})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()

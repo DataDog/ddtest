@@ -38,7 +38,7 @@ func TestCITracerSelectorsUseConfiguredRegistryAndAuthentication(t *testing.T) {
 	for _, key := range []string{"npm_config_registry", "NPM_CONFIG_REGISTRY"} {
 		t.Setenv(key, registry.URL+"/")
 	}
-	for _, tc := range []struct{ selector, version, node string }{{"5", "5.100.0", ">=18"}, {"^5.0.0", "5.100.0", ">=18"}, {"latest", "6.16.0", ">=22"}} {
+	for _, tc := range []struct{ selector, version, node string }{{"5", "5.100.0", ">=18"}, {"^5", "5.100.0", ">=18"}, {"5.x", "5.100.0", ">=18"}, {"5.99.0", "5.99.0", ">=18"}, {"latest", "6.16.0", ">=22"}} {
 		result, err := resolveRequirement(context.Background(), nil, githubAction+"@v3", tc.selector, platform.NewJavaScript().ResolveRegistryTracer)
 		require.NoError(t, err)
 		require.Equal(t, tracerRequirement{Version: tc.version, Node: tc.node, Requested: tc.selector}, result)

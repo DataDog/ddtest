@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestJestPrerequisitesCoverLuxonAndTSyringe(t *testing.T) {
+func TestJestPrerequisitesCoverFrameworkRunnerAndTracerBoundaries(t *testing.T) {
 	for _, tc := range []struct{ jest, runner, tracer, node, engine, status string }{
 		{"24.9.0", "/node_modules/jest-jasmine2/build/index.js", "6.16.0", "24.14.1", ">=22", "incompatible"},
 		{"24.9.0", "/node_modules/jest-circus/runner.js", "6.16.0", "24.14.1", ">=22", "incompatible"},
@@ -75,7 +75,7 @@ func preflightFixture(t *testing.T, version, runner string) *Testdrive {
 	require.NoError(t, os.MkdirAll(filepath.Join(tracerRoot, "ci"), 0755))
 	requireWriteFile(t, filepath.Join(tracerRoot, "ci/init.js"), "")
 	requireWriteFile(t, filepath.Join(tracerRoot, "package.json"), `{"version":"6.16.0","engines":{"node":">=22"}}`)
-	run, err := Prepare("latest-node18")
+	run, err := Prepare(PrepareOptions{TracerVersion: "latest-node18"})
 	require.NoError(t, err)
 	run.command = "npx"
 	run.args = []string{"jest", "--config", "test/jest.config.js"}
@@ -83,8 +83,11 @@ func preflightFixture(t *testing.T, version, runner string) *Testdrive {
 	require.NoError(t, err)
 	run.executor = &preflightExecutor{config: string(data)}
 	run.nodeVersion = func() string { return "24.14.1" }
+	run.resolveJSTags = func(context.Context) (map[string]string, error) {
+		return map[string]string{"latest": "6.17.0", "latest-node18": "5.128.0"}, nil
+	}
 	run.resolveJSTracer = func(_ context.Context, major string) (platform.JSSelection, error) {
-		if major == "5" {
+		if major == "5.128.0" {
 			return platform.JSSelection{Version: "5.128.0", Node: ">=18"}, nil
 		}
 		return platform.JSSelection{Version: "6.17.0", Node: ">=22"}, nil
@@ -99,17 +102,14 @@ func TestCheckOnlyReportsNoTestExecutionAndProjectPrecedence(t *testing.T) {
 	require.NoError(t, run.Run(t.Context(), &bytes.Buffer{}))
 	e := run.executor.(*preflightExecutor)
 	require.Equal(t, 1, e.calls)
-	require.Equal(t, []string{"jest", "--config", "test/jest.config.js", "--showConfig"}, e.args)
+	require.Equal(t, []string{"--no-install", "jest", "--config", "test/jest.config.js", "--showConfig"}, e.args)
 	data, err := os.ReadFile(validationPath(run.repositoryRoot))
 	require.NoError(t, err)
 	var report validationResult
 	require.NoError(t, json.Unmarshal(data, &report))
 	require.True(t, report.ChecksPassed)
-	require.False(t, report.Success)
-	require.False(t, report.LocalSuccess)
 	require.Equal(t, "not exercised", report.Compatibility.Status)
 	require.Equal(t, "not exercised", report.CIExecution.Status)
-	require.Empty(t, report.Runs)
 	require.Equal(t, "latest-node18", report.Selection.Requested)
 	require.Equal(t, "6.16.0", report.Selection.Version)
 	require.Equal(t, "project", report.Selection.Source)
@@ -126,8 +126,6 @@ func TestCheckOnlyStopsUnsupportedJestBeforeInstallOrTests(t *testing.T) {
 	var report validationResult
 	require.NoError(t, json.Unmarshal(data, &report))
 	require.False(t, report.ChecksPassed)
-	require.False(t, report.Success)
-	require.Empty(t, report.Runs)
 	require.Equal(t, "5.128.0", report.Preflight.Recommendation.Selection.Version)
 }
 
@@ -147,7 +145,7 @@ func TestJestCheckOnlyIntegration(t *testing.T) {
 	viper.Reset()
 	settings.Init()
 	t.Cleanup(func() { viper.Reset(); settings.Init() })
-	run, err := Prepare("latest", true)
+	run, err := Prepare(PrepareOptions{TracerVersion: "latest", CheckOnly: true})
 	require.NoError(t, err)
 	run.startIntake = func(string) (localIntake, error) { t.Fatal("check-only started an intake"); return nil, nil }
 	var output bytes.Buffer
@@ -160,8 +158,6 @@ func TestJestCheckOnlyIntegration(t *testing.T) {
 	var report validationResult
 	require.NoError(t, json.Unmarshal(data, &report))
 	require.True(t, report.ChecksPassed)
-	require.False(t, report.Success)
-	require.Empty(t, report.Runs)
 	require.Equal(t, "project", report.Selection.Source)
 	require.Equal(t, "compatible", report.Preflight.Verdict.Status)
 }
@@ -185,7 +181,7 @@ func TestCheckOnlyDiscoveryFailureReplacesEarlierPassingReport(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0755))
 	previous := `{"checks_passed":true,"success":false}`
 	requireWriteFile(t, validationPath(root), previous)
-	run, err := Prepare("latest", true)
+	run, err := Prepare(PrepareOptions{TracerVersion: "latest", CheckOnly: true})
 	require.NoError(t, err)
 	require.Error(t, run.discoveryError)
 	executor := &preflightExecutor{}
@@ -203,9 +199,7 @@ func TestCheckOnlyDiscoveryFailureReplacesEarlierPassingReport(t *testing.T) {
 	var report validationResult
 	require.NoError(t, json.Unmarshal(data, &report))
 	require.False(t, report.ChecksPassed)
-	require.False(t, report.Success)
 	require.True(t, report.CheckOnly)
 	require.Equal(t, "jest", report.Framework)
 	require.NotEmpty(t, report.Error)
-	require.Empty(t, report.Runs)
 }

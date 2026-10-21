@@ -17,20 +17,20 @@ import (
 )
 
 const ltsManifestFixture = `[
- {"version":"22.4.1","stable":true,"lts":"Jod"},
+ {"version":"22.4.1","stable":true,"files":[{"platform":"linux","arch":"x64"}],"lts":"Jod"},
  {"version":"26.0.0","stable":true},
- {"version":"24.3.0","stable":true,"lts":"Krypton"},
- {"version":"22.8.0","stable":true,"lts":"Jod"},
+ {"version":"24.3.0","stable":true,"files":[{"platform":"linux","arch":"x64"}],"lts":"Krypton"},
+ {"version":"22.8.0","stable":true,"files":[{"platform":"linux","arch":"x64"}],"lts":"Jod"},
  {"version":"28.0.0","stable":false,"lts":"Future"}
 ]`
 
-func TestLTSMajorResolution(t *testing.T) {
+func TestSetupNodeResolvesExactLTSRelease(t *testing.T) {
 	for _, tc := range []struct{ alias, version string }{
-		{"lts/*", "24"}, {"lts/-0", "24"}, {"lts/-1", "22"}, {"lts/Jod", "22"},
-		{"lts/krypton", "24"}, {"lts/-2", ""}, {"lts/unknown", ""}, {"lts/-", ""}, {"lts/--1", ""},
+		{"lts/*", "24.3.0"}, {"lts/-0", "24.3.0"}, {"lts/-1", "22.8.0"}, {"lts/Jod", "22.8.0"},
+		{"lts/krypton", "24.3.0"}, {"lts/-2", ""}, {"lts/unknown", ""}, {"lts/-", ""}, {"lts/--1", ""},
 	} {
 		t.Run(tc.alias, func(t *testing.T) {
-			version, err := resolveLTSMajor([]byte(ltsManifestFixture), tc.alias)
+			version, err := resolveManifestNode([]byte(ltsManifestFixture), tc.alias, "linux-x64")
 			if tc.version == "" {
 				require.Error(t, err)
 			} else {
@@ -39,15 +39,15 @@ func TestLTSMajorResolution(t *testing.T) {
 			}
 		})
 	}
-	for _, data := range []string{"invalid json", "[]", `[{"stable":true,"lts":"Bad","version":"24.x"}]`} {
-		_, err := resolveLTSMajor([]byte(data), "lts/*")
+	for _, data := range []string{"invalid json", "[]", `[{"stable":true,"files":[{"platform":"linux","arch":"x64"}],"lts":"Bad","version":"24.x"}]`} {
+		_, err := resolveManifestNode([]byte(data), "lts/*", "linux-x64")
 		require.Error(t, err)
 	}
 }
 
-func TestCILTSResolutionPreservesAliasProvenanceAndUnknownPatch(t *testing.T) {
+func TestCILTSResolutionPreservesAliasAndExactPatch(t *testing.T) {
 	for _, tc := range []struct{ requirement, status string }{
-		{">=22", "compatible"}, {">=26", "incompatible"}, {">=24.2.0", "inconclusive"},
+		{">=22", "compatible"}, {">=26", "incompatible"}, {">=24.2.0", "compatible"},
 	} {
 		t.Run(tc.requirement, func(t *testing.T) {
 			calls := 0
@@ -65,7 +65,7 @@ func TestCILTSResolutionPreservesAliasProvenanceAndUnknownPatch(t *testing.T) {
 			require.Len(t, result.Jobs, 4)
 			for _, job := range result.Jobs {
 				require.Equal(t, "lts/*", job.Node)
-				require.Equal(t, "24", job.NodeResolution.Version)
+				require.Equal(t, "24.3.0", job.NodeResolution.Version)
 				require.Equal(t, nodeVersionsManifest, job.NodeResolution.Source)
 				require.False(t, job.NodeResolution.ResolvedAt.IsZero())
 			}
@@ -87,6 +87,6 @@ func TestUnavailableLTSMetadataStaysInconclusive(t *testing.T) {
 	require.Equal(t, 1, calls)
 	for _, job := range result.Jobs {
 		require.Nil(t, job.NodeResolution)
-		require.Contains(t, job.Reason, "metadata unavailable")
+		require.Equal(t, CodeNodeResolution, job.Code)
 	}
 }

@@ -18,8 +18,8 @@ import (
 func TestTracerRecommendationMatchesFrameworkLocalNodeAndCIMatrix(t *testing.T) {
 	resolve := func(_ context.Context, major string) (platform.JSSelection, error) {
 		return map[string]platform.JSSelection{
-			"5": {Version: "5.128.0", Node: ">=18"},
-			"6": {Version: "6.17.0", Node: ">=22"},
+			"5.128.0": {Version: "5.128.0", Node: ">=18"},
+			"6.17.0":  {Version: "6.17.0", Node: ">=22"},
 		}[major], nil
 	}
 	for _, tc := range []struct {
@@ -27,7 +27,7 @@ func TestTracerRecommendationMatchesFrameworkLocalNodeAndCIMatrix(t *testing.T) 
 		nodes                    []string
 		want                     string
 	}{
-		{"i18next", "28.1.3", "24.14.1", "jest-circus/runner", []string{"14.x", "16.x", "18.x", "20.x", "20.x"}, "5.128.0"},
+		{"older CI nodes", "28.1.3", "24.14.1", "jest-circus/runner", []string{"14.x", "16.x", "18.x", "20.x", "20.x"}, "5.128.0"},
 		{"newest breaks tie", "28.1.3", "24.14.1", "jest-circus/runner", []string{"22.x", "24.x"}, "6.17.0"},
 		{"framework limits selection", "27.5.0", "24.14.1", "jest-circus/runner", []string{"24.x"}, "5.128.0"},
 		{"local Node limits selection", "28.1.3", "20.10.0", "jest-circus/runner", nil, "5.128.0"},
@@ -41,7 +41,7 @@ func TestTracerRecommendationMatchesFrameworkLocalNodeAndCIMatrix(t *testing.T) 
 				ci.Jobs = append(ci.Jobs, onboard.RuntimeFinding{Node: node})
 			}
 			check := jestPreflight{Version: tc.jest, Node: tc.node, Projects: []jestProject{{Runner: tc.runner}}}
-			got, notes := recommendJavaScriptTracer(t.Context(), check, ci, resolve, "jest")
+			got, notes := recommendJavaScriptTracer(t.Context(), check, ci, resolve, recommendationTags, "jest")
 			if tc.want == "" {
 				require.Nil(t, got)
 				require.NotEmpty(t, notes)
@@ -49,7 +49,7 @@ func TestTracerRecommendationMatchesFrameworkLocalNodeAndCIMatrix(t *testing.T) 
 			}
 			require.Empty(t, notes)
 			require.Equal(t, tc.want, got.Selection.Version)
-			if tc.name == "i18next" {
+			if tc.name == "older CI nodes" {
 				require.Equal(t, []string{"18.x", "20.x"}, got.Compatible)
 				require.Equal(t, []string{"14.x", "16.x"}, got.Unsupported)
 			}
@@ -64,8 +64,12 @@ func TestTracerRecommendationMatchesFrameworkLocalNodeAndCIMatrix(t *testing.T) 
 func TestTracerRecommendationReportsMetadataFailure(t *testing.T) {
 	got, notes := recommendJavaScriptTracer(t.Context(), jestPreflight{}, nil, func(context.Context, string) (platform.JSSelection, error) {
 		return platform.JSSelection{}, errors.New("registry unavailable")
-	}, "jest")
+	}, recommendationTags, "jest")
 	require.Nil(t, got)
 	require.Len(t, notes, 3)
 	require.Contains(t, notes[0], "registry unavailable")
+}
+
+func recommendationTags(context.Context) (map[string]string, error) {
+	return map[string]string{"latest": "6.17.0", "latest-node18": "5.128.0"}, nil
 }

@@ -257,7 +257,7 @@ func playwrightDiscoveryArgs(command string, baseArgs []string, reporterPath str
 	prefix, cliArgs := splitPlaywrightCommand(command, baseArgs)
 	args := append(prefix, "test")
 	args = append(args, filterPlaywrightArgs(cliArgs, playwrightDiscoveryOverrides, false)...)
-	args = withFrameworkOptions(command, args, "playwright", "--list", "--reporter="+reporterPath)
+	args = WithFrameworkOptions(command, args, "playwright", "--list", "--reporter="+reporterPath)
 	return args
 }
 

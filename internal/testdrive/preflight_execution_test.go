@@ -27,7 +27,7 @@ func TestCheckOnlyRejectsOtherRunnerBeforeExecution(t *testing.T) {
 	t.Chdir(root)
 	viper.Reset()
 	t.Cleanup(viper.Reset)
-	run, err := Prepare("latest", true)
+	run, err := Prepare(PrepareOptions{TracerVersion: "latest", CheckOnly: true})
 	require.NoError(t, err)
 	executor := &preflightExecutor{config: `{"version":"30.5.1","configs":[{"testRunner":"jest-circus/runner"}]}`}
 	run.executor = executor

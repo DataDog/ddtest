@@ -22,7 +22,7 @@ func symbolicConditionValue(value any) bool {
 	return ok && strings.ContainsRune(text, 0)
 }
 
-func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {
+func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) string {
 	options, err := effectiveBootstrapOptions(workflow, job, step, row, true)
 	if err == nil && !strings.ContainsAny(options, "$`'") {
 		words, err := shellquote.Split(options)

@@ -42,7 +42,7 @@ const nodeDistributionFixture = `[
  {"version":"v28.0.0-rc.1","files":["linux-x64"]}
 ]`
 
-func TestClassValidatorCIRuntimesAndCommand(t *testing.T) {
+func TestCIRuntimeAliasesAndCommandSelection(t *testing.T) {
 	root := newJestRepository(t, classValidatorWorkflow)
 	writeScripts(t, root, map[string]string{"test": "jest", "test:ci": "jest --runInBand --no-cache --coverage --verbose"})
 	calls := map[string]int{}
@@ -61,7 +61,7 @@ func TestClassValidatorCIRuntimesAndCommand(t *testing.T) {
 	require.Len(t, result.Jobs, 2)
 	require.Len(t, result.Review, 2)
 	require.Equal(t, map[string]int{nodeVersionsManifest: 1, nodeDistributionIndex: 1}, calls)
-	require.Equal(t, "24", result.Jobs[0].NodeResolution.Version)
+	require.Equal(t, "24.3.0", result.Jobs[0].NodeResolution.Version)
 	require.Equal(t, "26.4.0", result.Jobs[1].NodeResolution.Version)
 	require.Equal(t, "linux-x64", result.Jobs[1].NodeResolution.Platform)
 	require.Equal(t, nodeDistributionIndex, result.Jobs[1].NodeResolution.Source)

@@ -10,27 +10,40 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Masterminds/semver/v3"
 )
 
 const nodeVersionsManifest = "https://raw.githubusercontent.com/actions/node-versions/main/versions-manifest.json"
 const nodeDistributionIndex = "https://nodejs.org/dist/index.json"
 
-// NodeResolution records a time-dependent alias resolution. setup-node resolves
-// LTS aliases to a major, then may use a cached patch: an exact patch is unknown.
+// A time-stamped metadata resolution, not evidence of an executed CI runner.
+// setup-node may reuse a different cached patch when check-latest is disabled.
 type NodeResolution struct {
 	Version    string    `json:"version"`
 	Source     string    `json:"source"`
 	ResolvedAt time.Time `json:"resolved_at"`
 	Platform   string    `json:"platform,omitempty"`
 }
-
 type nodeResolver func(context.Context, string, string) (NodeResolution, error)
 
-// Fetch once per check, including on failure, so every job uses the same snapshot.
+type nodeRelease struct {
+	Version string `json:"version"`
+	Stable  bool   `json:"stable"`
+	LTS     string `json:"lts"`
+	Files   []struct {
+		Platform string `json:"platform"`
+		Arch     string `json:"arch"`
+	} `json:"files"`
+}
+
+// Cache success and failure so all matrix entries use one metadata snapshot.
 func setupNodeResolver(client *http.Client) nodeResolver {
 	type snapshot struct {
 		data []byte
@@ -38,12 +51,12 @@ func setupNodeResolver(client *http.Client) nodeResolver {
 		at   time.Time
 	}
 	cache := map[string]snapshot{}
-	return func(ctx context.Context, alias, platform string) (NodeResolution, error) {
+	return func(ctx context.Context, selector, platform string) (NodeResolution, error) {
+		if platform == "" {
+			return NodeResolution{}, fmt.Errorf("cannot determine the CI platform/architecture for Node %q", selector)
+		}
 		source := nodeVersionsManifest
-		if latestNodeAlias(alias) {
-			if platform == "" {
-				return NodeResolution{}, fmt.Errorf("cannot determine the hosted runner platform/architecture for %q", alias)
-			}
+		if latestNodeAlias(selector) {
 			source = nodeDistributionIndex
 		}
 		value, ok := cache[source]
@@ -55,23 +68,20 @@ func setupNodeResolver(client *http.Client) nodeResolver {
 		if value.err != nil {
 			return NodeResolution{}, value.err
 		}
-		result := NodeResolution{Source: source, ResolvedAt: value.at}
+		result := NodeResolution{Source: source, ResolvedAt: value.at, Platform: platform}
 		var err error
-		if latestNodeAlias(alias) {
-			result.Platform = platform
+		if latestNodeAlias(selector) {
 			result.Version, err = resolveLatestNode(value.data, platform)
 		} else {
-			result.Version, err = resolveLTSMajor(value.data, alias)
+			result.Version, err = resolveManifestNode(value.data, selector, platform)
 		}
 		return result, err
 	}
 }
-
 func latestNodeAlias(alias string) bool {
 	return slices.Contains([]string{"current", "latest", "node"}, alias)
 }
 
-// setup-node selects the newest distribution available for the runner's OS/arch.
 func resolveLatestNode(data []byte, platform string) (string, error) {
 	var releases []struct {
 		Version string   `json:"version"`
@@ -80,22 +90,129 @@ func resolveLatestNode(data []byte, platform string) (string, error) {
 	if err := json.Unmarshal(data, &releases); err != nil {
 		return "", fmt.Errorf("decode Node distribution index: %w", err)
 	}
-	var best [3]int
-	var selected string
+	var best *semver.Version
 	for _, release := range releases {
-		version, precision, ok := nodeInterval(release.Version)
-		if ok && precision == 3 && slices.Contains(release.Files, platform) && slices.Compare(version[:], best[:]) > 0 {
-			best, selected = version, strings.TrimPrefix(release.Version, "v")
+		v, err := semver.StrictNewVersion(strings.TrimPrefix(release.Version, "v"))
+		if err == nil && v.Prerelease() == "" && slices.Contains(release.Files, platform) && (best == nil || v.GreaterThan(best)) {
+			best = v
 		}
 	}
-	if selected == "" {
+	if best == nil {
 		return "", fmt.Errorf("node distribution index has no release for %q", platform)
 	}
-	return selected, nil
+	return best.String(), nil
 }
 
-// Unknown/self-hosted platforms stay unverified. macOS architecture must be
-// explicit because the default differs between hosted labels and repository types.
+func resolveManifestNode(data []byte, selector, platform string) (string, error) {
+	var releases []nodeRelease
+	if err := json.Unmarshal(data, &releases); err != nil {
+		return "", fmt.Errorf("decode setup-node manifest: %w", err)
+	}
+	if strings.HasPrefix(selector, "lts/") {
+		names := map[uint64]string{}
+		for _, r := range releases {
+			v, e := semver.StrictNewVersion(r.Version)
+			if e == nil && r.Stable && r.LTS != "" {
+				names[v.Major()] = strings.ToLower(r.LTS)
+			}
+		}
+		name := strings.ToLower(strings.TrimPrefix(selector, "lts/"))
+		var majors []uint64
+		for major, codename := range names {
+			if name == "*" || strings.HasPrefix(name, "-") || name == codename {
+				majors = append(majors, major)
+			}
+		}
+		slices.Sort(majors)
+		index := 0
+		if strings.HasPrefix(name, "-") {
+			var err error
+			index, err = strconv.Atoi(strings.TrimPrefix(name, "-"))
+			if err != nil || index < 0 {
+				return "", fmt.Errorf("unknown LTS selector %q", selector)
+			}
+		}
+		if index >= len(majors) {
+			return "", fmt.Errorf("setup-node manifest has no release for %q", selector)
+		}
+		selector = strconv.FormatUint(majors[len(majors)-1-index], 10)
+	}
+	constraint, err := semver.NewConstraint(selector)
+	if err != nil {
+		return "", fmt.Errorf("unsupported Node selector %q: %w", selector, err)
+	}
+	var best *semver.Version
+	for _, r := range releases {
+		v, err := semver.StrictNewVersion(r.Version)
+		if err != nil || !r.Stable || v.Prerelease() != "" || !constraint.Check(v) {
+			continue
+		}
+		available := platform == "" // Empty platform is used only by pure alias unit tests.
+		for _, file := range r.Files {
+			p, a, _ := strings.Cut(platform, "-")
+			a = strings.TrimSuffix(strings.TrimSuffix(a, "-exe"), "-tar")
+			if p == "osx" {
+				p = "darwin"
+			}
+			if p == "win" {
+				p = "win32"
+			}
+			available = available || (file.Platform == p && file.Arch == a)
+		}
+		if available && (best == nil || v.GreaterThan(best)) {
+			best = v
+		}
+	}
+	if best == nil {
+		return "", fmt.Errorf("setup-node manifest has no release for %q on %q", selector, platform)
+	}
+	return best.String(), nil
+}
+
+func setupNodeVersion(root string, step runtimeStep, row map[string]any) (string, error) {
+	value, err := runtimeValue(step.With["node-version"], row)
+	if err != nil || value != "" {
+		return value, err
+	}
+	file, err := runtimeValue(step.With["node-version-file"], row)
+	if err != nil || file == "" {
+		return "", err
+	}
+	if !filepath.IsLocal(file) {
+		return "", fmt.Errorf("node version file must be repository-relative: %s", file)
+	}
+	path, err := filepath.EvalSymlinks(filepath.Join(root, file))
+	if err != nil {
+		return "", fmt.Errorf("cannot read Node version file %s", file)
+	}
+	if !filepath.IsLocal(repositoryPath(root, path)) {
+		return "", fmt.Errorf("node version file escapes repository: %s", file)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) > 1<<20 {
+		return "", fmt.Errorf("cannot read bounded Node version file %s", file)
+	}
+	var manifest struct {
+		Volta struct {
+			Node string `json:"node"`
+		} `json:"volta"`
+		Engines struct {
+			Node string `json:"node"`
+		} `json:"engines"`
+	}
+	if json.Unmarshal(data, &manifest) == nil {
+		if manifest.Volta.Node != "" {
+			return manifest.Volta.Node, nil
+		}
+		if manifest.Engines.Node != "" {
+			return manifest.Engines.Node, nil
+		}
+		return "", fmt.Errorf("node version file %s has no supported Node setting", file)
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(data)), "v"), nil
+}
+
+// Unknown hosted architectures and self-hosted runners remain unverified.
 func nodeDistributionPlatform(runner any, architecture string, row map[string]any) string {
 	label, ok := runner.(string)
 	if !ok {
@@ -136,46 +253,4 @@ func nodeDistributionPlatform(runner any, architecture string, row map[string]an
 		arch = "armv7l"
 	}
 	return prefix + arch + suffix
-}
-
-func resolveLTSMajor(data []byte, alias string) (string, error) {
-	var releases []struct {
-		Version string `json:"version"`
-		Stable  bool   `json:"stable"`
-		LTS     string `json:"lts"`
-	}
-	if err := json.Unmarshal(data, &releases); err != nil {
-		return "", fmt.Errorf("decode setup-node version manifest: %w", err)
-	}
-	// Match setup-node's lts/*, lts/<codename>, and lts/-n selectors.
-	selector := strings.ToLower(strings.TrimPrefix(alias, "lts/"))
-	majors := map[string]int{}
-	for _, release := range releases {
-		version, precision, ok := nodeInterval(release.Version)
-		if !release.Stable || release.LTS == "" || !ok || precision != 3 {
-			continue
-		}
-		name := strings.ToLower(release.LTS)
-		majors[name] = max(majors[name], version[0])
-	}
-	if major, ok := majors[selector]; ok {
-		return strconv.Itoa(major), nil
-	}
-	index := 0
-	if selector != "*" {
-		var err error
-		index, err = strconv.Atoi(strings.TrimPrefix(selector, "-"))
-		if !strings.HasPrefix(selector, "-") || err != nil || index < 0 {
-			return "", fmt.Errorf("unknown setup-node LTS alias %q", alias)
-		}
-	}
-	versions := make([]int, 0, len(majors))
-	for _, version := range majors {
-		versions = append(versions, version)
-	}
-	slices.Sort(versions)
-	if index >= len(versions) {
-		return "", fmt.Errorf("setup-node manifest has no release for %q", alias)
-	}
-	return strconv.Itoa(versions[len(versions)-1-index]), nil
 }

@@ -12,12 +12,15 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/kballard/go-shellquote"
 	"go.yaml.in/yaml/v3"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // RuntimeCheck is separate from local test compatibility: a local run cannot
@@ -31,7 +34,6 @@ type RuntimeCheck struct {
 
 // RuntimeFinding records the metadata used to check one CI runtime.
 type RuntimeFinding struct {
-	Scenario        string          `json:"scenario,omitempty"`
 	Workflow        string          `json:"workflow"`
 	Job             string          `json:"job"`
 	Step            int             `json:"step,omitempty"`
@@ -62,7 +64,6 @@ type runtimeConditionScope struct {
 type runtimeStep struct {
 	Inputs           map[string]string       `yaml:"-"`
 	ID               string                  `yaml:"id"`
-	ActionNode       string                  `yaml:"-"`
 	Number           int                     `yaml:"-"`
 	Source           string                  `yaml:"-"`
 	Parents          []runtimeConditionScope `yaml:"-"`
@@ -77,13 +78,12 @@ type runtimeStep struct {
 }
 
 type runtimeJob struct {
-	Context   map[string]string `yaml:"-"`
-	Container any               `yaml:"container"`
-	RunsOn    any               `yaml:"runs-on"`
-	Defaults  ciDefaults        `yaml:"defaults"`
-	Env       map[string]string `yaml:"env"`
-	If        string            `yaml:"if"`
-	Strategy  struct {
+	Context  map[string]string `yaml:"-"`
+	RunsOn   any               `yaml:"runs-on"`
+	Defaults ciDefaults        `yaml:"defaults"`
+	Env      map[string]string `yaml:"env"`
+	If       string            `yaml:"if"`
+	Strategy struct {
 		Matrix any `yaml:"matrix"`
 	} `yaml:"strategy"`
 	Steps []runtimeStep `yaml:"steps"`
@@ -109,21 +109,23 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 	if len(frameworks) > 0 {
 		framework = frameworks[0]
 	}
-	result := RuntimeCheck{Status: "not applicable", Reason: "No candidate GitHub Actions " + framework + " test commands found; CI runtime compatibility was not checked."}
+	result := RuntimeCheck{Status: StatusNotApplicable, Reason: "No candidate GitHub Actions " + framework + " test commands found; CI runtime compatibility was not checked."}
 	workflows, err := readWorkflows(root)
 	if err != nil {
-		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
+		return RuntimeCheck{Status: StatusInconclusive, Reason: err.Error()}
 	}
-	cache := map[string]tracerRequirement{}
+	type cachedRequirement struct {
+		value tracerRequirement
+		err   error
+	}
+	cache := map[string]cachedRequirement{}
 	cachedResolve := func(ctx context.Context, action, version string) (tracerRequirement, error) {
 		key := action + "\n" + version
 		if value, ok := cache[key]; ok {
-			return value, nil
+			return value.value, value.err
 		}
 		value, err := resolve(ctx, action, version)
-		if err == nil {
-			cache[key] = value
-		}
+		cache[key] = cachedRequirement{value, err}
 		return value, err
 	}
 	for _, workflow := range workflows {
@@ -136,7 +138,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 			for i, step := range job.Steps {
 				resolutions[i] = resolveTestStep(root, workflow, job, step, "javascript", framework)
 				if resolutions[i].Review {
-					result.Review = append(result.Review, RuntimeFinding{Workflow: path, Job: name, Step: stepNumber(step, i), Command: step.Run, Status: "not checked", Reason: resolutions[i].Reason})
+					result.Review = append(result.Review, RuntimeFinding{Workflow: path, Job: name, Step: stepNumber(step, i), Command: step.Run, Status: StatusNotExercised, Code: CodeUnresolvedCommand, Reason: resolutions[i].Reason})
 					resolutions[i] = commandResolution{}
 				}
 				candidate = candidate || resolutions[i].Matched || resolutions[i].Reason != ""
@@ -146,11 +148,11 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 			}
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
-				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: path, Job: name, Status: "inconclusive", Reason: err.Error()})
+				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: path, Job: name, Status: StatusInconclusive, Code: CodeInvalidMatrix, Reason: err.Error()})
 				continue
 			}
 			if len(rows) == 0 {
-				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: path, Job: name, Status: "inconclusive", Reason: "Static matrix has no entries; no instrumented CI runtime could be checked."})
+				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: path, Job: name, Status: StatusInconclusive, Code: CodeInvalidMatrix, Reason: "Static matrix has no entries; no instrumented CI runtime could be checked."})
 				continue
 			}
 			for _, row := range rows {
@@ -160,6 +162,17 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 				rowCandidate := false
 				for i, step := range job.Steps {
 					resolved, _, resolveErr := resolveVariantStep(workflow, job, step, row, framework)
+					if uses, _, _ := strings.Cut(strings.ToLower(resolved.Uses), "@"); uses == "actions/setup-node" {
+						version, versionErr := setupNodeVersion(root, resolved, row)
+						resolved.With = maps.Clone(resolved.With)
+						if resolved.With == nil {
+							resolved.With = map[string]string{}
+						}
+						resolved.With["node-version"] = version
+						if versionErr != nil {
+							resolved.ResolutionError = versionErr.Error()
+						}
+					}
 					rowJob.Steps[i] = resolved
 					rowResolutions[i] = resolveTestStep(root, workflow, job, resolved, "javascript", framework)
 					if rowResolutions[i].Review {
@@ -172,195 +185,215 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 				if !rowCandidate {
 					continue
 				}
-				jobs := []runtimeJob{rowJob}
+				result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, rowJob, rowResolutions, row, resolveNode, cachedResolve)...)
 
-				for _, contextJob := range jobs {
-					result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, root, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
-				}
 			}
 		}
 	}
 	if len(result.Jobs) == 0 {
 		return result
 	}
-	result.Status = "compatible"
+	result.Status = StatusCompatible
 	result.Reason = "Every identified instrumented " + framework + " step satisfies its selected tracer's Node requirement. Other entry points listed for review are outside this check. This does not execute CI or verify the Datadog backend."
 	checked := false
 	for _, job := range result.Jobs {
-		checked = checked || job.Status == "compatible"
-		if job.Status == "incompatible" {
-			result.Status = "incompatible"
+		checked = checked || job.Status == StatusCompatible
+		if job.Status == StatusIncompatible {
+			result.Status = StatusIncompatible
 			break
 		}
-		if job.Status == "inconclusive" {
-			result.Status = "inconclusive"
+		if job.Status == StatusInconclusive {
+			result.Status = StatusInconclusive
 		}
 	}
-	if !checked && result.Status == "compatible" {
-		result.Status = "inconclusive"
+	if !checked && result.Status == StatusCompatible {
+		result.Status = StatusInconclusive
 	}
-	if result.Status != "compatible" {
+	if result.Status != StatusCompatible {
 		result.Reason = "CI runtime validation is incomplete or incompatible. Fix known incompatibilities. Unknown syntax or metadata requires review; preserve the workflow and report that tool limitation without claiming CI was validated."
 	}
 	return result
 }
 
-func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
-	finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Scenario: job.Context["scenario"], Status: "inconclusive"}
+type runtimeState struct {
+	node, source, platform, action, tracer string
+	skippedAction                          bool
+}
+
+func (state *runtimeState) trackNode(job runtimeJob, step runtimeStep, row map[string]any) {
+	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+	if uses == "actions/setup-node" {
+		state.node = step.With["node-version"]
+		state.source = step.Source
+		state.platform = nodeDistributionPlatform(job.RunsOn, step.With["architecture"], row)
+	} else if changesNodeRuntime(step.Run) {
+		state.node = nvmRuntime(step.Run) // Empty means the new selection is unknown.
+		state.source = step.Source
+		state.platform = nodeDistributionPlatform(job.RunsOn, "", row)
+	}
+}
+
+func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) error {
+	languages, err := runtimeValue(step.With["languages"], row)
+	if err != nil {
+		return err
+	}
+	if languages != "all" && !slices.Contains(strings.Fields(languages), "js") {
+		return nil
+	}
+	state.action = step.Uses
+	state.tracer, err = runtimeValue(step.With["js-tracer-version"], row)
+	if _, explicit := step.With["js-tracer-version"]; explicit && state.tracer == "" {
+		state.tracer = "latest"
+	}
+	return err
+}
+
+func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver) []RuntimeFinding {
+	finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Status: StatusInconclusive}
 	var findings []RuntimeFinding
-	fail := func(reason string) []RuntimeFinding {
-		finding.Status = "inconclusive"
-		finding.Reason = reason
+	fail := func(code, reason string) []RuntimeFinding {
+		finding.Status, finding.Code, finding.Reason = StatusInconclusive, code, reason
 		return append(findings, finding)
 	}
 	active, err := possibleJobCondition(job.If, row)
-	if job.Context != nil {
-		active, err = runtimeCondition(job.If, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
-	}
 	if err != nil {
-		return fail(err.Error())
+		return fail(CodeUnresolvedCondition, err.Error())
 	}
 	if !active {
-		finding.Status = "excluded"
-		finding.Reason = "Job is explicitly excluded."
+		finding.Status, finding.Code, finding.Reason = StatusExcluded, CodeExcludedRuntime, "Job is explicitly excluded."
 		return []RuntimeFinding{finding}
 	}
-	var node, nodeSource, nodePlatform, action, version string
-
-	skippedAction := false
+	state := runtimeState{}
 	for i, step := range job.Steps {
 		uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 		resolution := resolutions[i]
 		test := resolution.Matched || resolution.Reason != ""
-		nvmNode := nvmRuntime(step.Run)
-		if uses != "actions/setup-node" && uses != githubAction && nvmNode == "" && !test {
+		if uses != "actions/setup-node" && uses != githubAction && !changesNodeRuntime(step.Run) && !test {
 			continue
 		}
-		finding = RuntimeFinding{Workflow: workflow.Path, Job: name, Scenario: job.Context["scenario"], Step: stepNumber(step, i), Source: step.Source, Command: step.Run, Resolution: resolution.Evidence, Node: node, NodeSource: nodeSource, Status: "inconclusive"}
+		finding = RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Source: step.Source, Command: step.Run, Resolution: resolution.Evidence, Node: state.node, NodeSource: state.source, Status: StatusInconclusive}
 		if uses == githubAction {
 			finding.Action = step.Uses
 		}
 		active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 		if err != nil {
-			return fail(err.Error())
+			return fail(CodeUnresolvedCondition, err.Error())
 		}
 		if !active {
-			if job.Context != nil && step.ID != "" {
-				job.Context["steps."+step.ID+".outcome"] = "skipped"
-			}
 			if uses == githubAction {
-				skippedAction = true
+				state.skippedAction = true
 			}
 			continue
 		}
-		if job.Context != nil && step.ID != "" {
-			job.Context["steps."+step.ID+".outcome"] = "success"
-		}
 		if step.ResolutionError != "" {
-			return fail(step.ResolutionError)
+			return fail(CodeNodeResolution, step.ResolutionError)
 		}
-		if nvmNode != "" {
-			node, nodeSource = nvmNode, step.Source
-			nodePlatform = nodeDistributionPlatform(job.RunsOn, "", row)
-		}
-		switch uses {
-		case "actions/setup-node":
-			node, err = runtimeValue(step.With["node-version"], row)
-			nodePlatform = nodeDistributionPlatform(job.RunsOn, step.With["architecture"], row)
-			nodeSource = step.Source
-			if err != nil {
-				return fail(err.Error())
-			}
-		case githubAction:
-			if strings.HasPrefix(job.Context["scenario"], "fork_pull_request") && (strings.Contains(step.With["api_key"], "secrets.") || strings.Contains(step.With["api-key"], "secrets.")) {
-				finding.Status, finding.Code, finding.Reason = "incompatible", "missing_fork_guard", "Datadog installation still runs on a fork pull request without credentials. Guard installation and its preload together, preserving the existing test step."
-				return append(findings, finding)
-			}
-			languages, err := runtimeValue(step.With["languages"], row)
-			if err != nil {
-				return fail(err.Error())
-			}
-			if languages != "all" && !slices.Contains(strings.Fields(languages), "js") {
-				continue
-			}
-			action = step.Uses
-			version, err = runtimeValue(step.With["js-tracer-version"], row)
-			if err != nil {
-				return fail(err.Error())
-			}
-			if _, explicit := step.With["js-tracer-version"]; explicit && version == "" {
-				// An explicit empty input overrides the action default; its
-				// installer requests npm's latest version instead.
-				version = "latest"
+		state.trackNode(job, step, row)
+		if uses == githubAction {
+			if err := state.trackAction(step, row); err != nil {
+				return fail(CodeTracerMetadata, err.Error())
 			}
 		}
 		if !test {
 			continue
 		}
+		finding.Node, finding.NodeSource = state.node, state.source
 		if resolution.Reason != "" {
-			finding.Reason = "Could not resolve CI test command: " + resolution.Reason
+			finding.Code, finding.Reason = CodeUnresolvedCommand, "Could not resolve CI test command: "+resolution.Reason
 			findings = append(findings, finding)
-			// Unknown siblings do not erase a known test's installation check.
 			if !resolution.Matched {
 				continue
 			}
 		}
-
-		if action == "" {
-			finding.Status = "incompatible"
-			finding.Code = "missing_instrumentation"
-			if skippedAction {
-
-				finding.Status = "excluded"
-				finding.Code = "excluded_runtime"
-				if reason := checkExcludedJestBootstrap(workflow, job, step, row); reason != "" {
-					finding.Status, finding.Code, finding.Reason = "inconclusive", "unverified_exclusion", reason
-					findings = append(findings, finding)
-					continue
-				}
-			}
-			finding.Reason = "No Datadog JavaScript action runs before this test step for this matrix entry. It is not validated as instrumented."
-			if !skippedAction {
-				finding.Reason += fmt.Sprintf(" Add tracer installation and initialization in %s / %s before step %d (%s). This is missing instrumentation, not unsupported syntax.", workflow.Path, name, finding.Step, step.Run)
-			}
-		} else {
-			requirement, err := resolve(ctx, action, version)
-			if err != nil {
-				return fail(err.Error())
-			}
-			finding.Action = action
-			finding.Tracer = "dd-trace@" + requirement.Version
-			finding.TracerRequested = requirement.Requested
-			if finding.TracerRequested == "" {
-				finding.TracerRequested = version
-			}
-			finding.TracerFloating = finding.TracerRequested != "" && strings.TrimPrefix(finding.TracerRequested, "v") != requirement.Version
-			finding.Requirement = requirement.Node
-			resolvedNode := node
-			if (strings.HasPrefix(node, "lts/") || latestNodeAlias(node)) && resolveNode != nil {
-				resolution, err := resolveNode(ctx, node, nodePlatform)
-				if err != nil {
-					finding.Reason = "Cannot resolve setup-node alias: " + err.Error()
-					findings = append(findings, finding)
-					continue
-				}
-				finding.NodeResolution = &resolution
-				resolvedNode = resolution.Version
-			}
-			finding.Status, finding.Reason = CompareNodeRequirement(resolvedNode, requirement.Node)
-			if finding.Status == "compatible" {
-				if reason := checkJestBootstrap(workflow, job, step, row, frameworks...); reason != "" {
-					finding.Status, finding.Reason = "inconclusive", reason
-					finding.Code = "unverified_initialization"
-				}
-			}
-		}
-		findings = append(findings, finding)
+		findings = append(findings, evaluateRuntimeTest(ctx, workflow, job, step, row, resolution, state, finding, resolveNode, resolve))
 	}
 	if len(findings) == 0 {
-		return fail("No active test step could be checked.")
+		return fail(CodeUnresolvedCommand, "No active test step could be checked.")
 	}
 	return findings
+}
+
+func evaluateRuntimeTest(ctx context.Context, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, resolution commandResolution, state runtimeState, finding RuntimeFinding, resolveNode nodeResolver, resolve requirementResolver) RuntimeFinding {
+	finding.Code = ""
+	if state.action == "" {
+		finding.Status, finding.Code = StatusIncompatible, CodeMissingInstrumentation
+		if state.skippedAction {
+			finding.Status, finding.Code = StatusExcluded, CodeExcludedRuntime
+			if reason := checkExcludedJestBootstrap(workflow, job, step, row); reason != "" {
+				finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedExclusion, reason
+				return finding
+			}
+		}
+		finding.Reason = "No Datadog JavaScript action runs before this test step for this matrix entry. It is not validated as instrumented."
+		return finding
+	}
+	requirement, err := resolve(ctx, state.action, state.tracer)
+	if err != nil {
+		finding.Code, finding.Reason = CodeTracerMetadata, err.Error()
+		return finding
+	}
+	finding.Action, finding.Tracer = state.action, "dd-trace@"+requirement.Version
+	finding.TracerRequested = requirement.Requested
+	if finding.TracerRequested == "" {
+		finding.TracerRequested = state.tracer
+	}
+	finding.TracerFloating = finding.TracerRequested != "" && strings.TrimPrefix(finding.TracerRequested, "v") != requirement.Version
+	finding.Requirement = requirement.Node
+	for _, entry := range resolution.Tests {
+		words, _ := shellquote.Split(entry.Command)
+		if len(words) > 0 && words[0] != "node" && (filepath.Base(words[0]) == "node" || filepath.Base(words[0]) == "node.exe") {
+			finding.Node, finding.NodeResolution = "", nil
+			finding.Code, finding.Reason = CodeRuntimeUnknown, "The test command selects an explicit Node executable; its CI version cannot be inferred from setup-node."
+			return finding
+		}
+	}
+	node := state.node
+	if node == "" {
+		finding.Code, finding.Reason = CodeRuntimeUnknown, "The CI Node runtime is unknown after setup; preserve the workflow and resolve it before claiming compatibility."
+		return finding
+	}
+	if resolveNode != nil {
+		resolved, err := resolveNode(ctx, node, state.platform)
+		if err != nil {
+			finding.Node = ""
+			finding.Code, finding.Reason = CodeNodeResolution, err.Error()
+			return finding
+		}
+		finding.NodeResolution = &resolved
+		node = resolved.Version
+	}
+	finding.Status, finding.Reason = CompareNodeRequirement(node, requirement.Node)
+	if finding.Status == StatusInconclusive {
+		finding.Code = CodeRuntimeUnknown
+	}
+	if finding.Status == StatusCompatible {
+		if reason := checkJestBootstrap(workflow, job, step, row); reason != "" {
+			finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedInitialization, reason
+		}
+	}
+	return finding
+}
+
+func changesNodeRuntime(command string) bool {
+	file, ok := parseCIShell(command)
+	if !ok {
+		return false
+	}
+	changed := false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if call, ok := node.(*syntax.CallExpr); ok && len(call.Args) > 0 {
+			name := filepath.Base(call.Args[0].Lit())
+			if name == "n" {
+				changed = true
+			}
+			if (name == "nvm" || name == "fnm") && len(call.Args) > 1 && slices.Contains([]string{"use", "install", "exec", "env"}, call.Args[1].Lit()) {
+				changed = true
+			}
+		}
+		return true
+	})
+	return changed
 }
 
 func resolveRequirement(ctx context.Context, client *http.Client, action, version string, resolveRegistry func(context.Context, string) (platform.JSSelection, error)) (tracerRequirement, error) {

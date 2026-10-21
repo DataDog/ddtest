@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// FrameworkSeparator finds the framework's end-of-options marker, skipping a
+// frameworkSeparator finds the framework's end-of-options marker, skipping a
 // wrapper's marker before the framework executable (for example npx -- jest).
-func FrameworkSeparator(command string, args []string, executable string) int {
+func frameworkSeparator(command string, args []string, executable string) int {
 	start := 0
 	if frameworkExecutableName(command) != executable {
 		for i, arg := range args {
@@ -26,9 +26,16 @@ func FrameworkSeparator(command string, args []string, executable string) int {
 }
 
 // Framework-generated options must precede its end-of-options marker.
-func withFrameworkOptions(command string, args []string, executable string, options ...string) []string {
+func WithFrameworkOptions(command string, args []string, executable string, options ...string) []string {
 	args = slices.Clone(args)
-	if index := FrameworkSeparator(command, args, executable); index >= 0 {
+	if frameworkExecutableName(command) == "npm" && len(args) > 0 && (args[0] == "test" || args[0] == "t" || args[0] == "tst" || args[0] == "run" || args[0] == "run-script") {
+		if index := slices.Index(args, "--"); index >= 0 {
+			tail := WithFrameworkOptions(executable, args[index+1:], executable, options...)
+			return append(args[:index+1], tail...)
+		}
+		return append(append(args, "--"), options...)
+	}
+	if index := frameworkSeparator(command, args, executable); index >= 0 {
 		return slices.Insert(args, index, options...)
 	}
 	return append(args, options...)
@@ -37,7 +44,7 @@ func withFrameworkOptions(command string, args []string, executable string, opti
 // Everything after a framework's -- is positional, so replace that explicit
 // selection with the selected files. Leave options before it untouched.
 func withFrameworkFiles(command string, args []string, executable string, files []string) []string {
-	if index := FrameworkSeparator(command, args, executable); index >= 0 {
+	if index := frameworkSeparator(command, args, executable); index >= 0 {
 		args = args[:index+1]
 	}
 	return append(slices.Clone(args), files...)

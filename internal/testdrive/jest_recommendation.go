@@ -8,8 +8,10 @@ package testdrive
 import (
 	"context"
 	"fmt"
+	"github.com/Masterminds/semver/v3"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,19 +28,46 @@ type tracerRecommendation struct {
 
 // Prefer coverage of known CI runtimes, then the newest verified major. Never
 // install a candidate or change the selected/project tracer based on this advice.
-func recommendJavaScriptTracer(ctx context.Context, check jestPreflight, ci *onboard.RuntimeCheck, resolve func(context.Context, string) (platform.JSSelection, error), framework string) (*tracerRecommendation, []string) {
+func recommendJavaScriptTracer(ctx context.Context, check jestPreflight, ci *onboard.RuntimeCheck, resolve func(context.Context, string) (platform.JSSelection, error), tags func(context.Context) (map[string]string, error), framework string) (*tracerRecommendation, []string) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var best *tracerRecommendation
 	var notes []string
-	for _, major := range []string{"6", "5"} { // Resolve current releases from the supported tracer lines; no release pins.
-		selected, err := resolve(ctx, major)
+	distTags, err := tags(ctx)
+	if err != nil {
+		return nil, []string{"Could not resolve dd-trace dist-tags: " + reportText(err.Error())}
+	}
+	var releases []*semver.Version
+	for tag, value := range distTags {
+		if tag != "latest" {
+			node, ok := strings.CutPrefix(tag, "latest-node")
+			if !ok {
+				continue
+			}
+			if _, err := strconv.Atoi(node); err != nil {
+				continue
+			}
+		}
+		version, err := semver.StrictNewVersion(value)
+		if err == nil && version.Prerelease() == "" {
+			releases = append(releases, version)
+		}
+	}
+	slices.SortFunc(releases, func(a, b *semver.Version) int { return b.Compare(a) })
+	seen := map[string]bool{}
+	for _, version := range releases {
+		selector := version.String()
+		if seen[selector] {
+			continue
+		}
+		seen[selector] = true
+		selected, err := resolve(ctx, selector)
 		if err != nil {
-			notes = append(notes, fmt.Sprintf("Could not resolve dd-trace %s: %s", major, reportText(err.Error())))
+			notes = append(notes, fmt.Sprintf("Could not resolve dd-trace %s: %s", selector, reportText(err.Error())))
 			continue
 		}
 		support := checkJestSupport
-		if verdict := support(check, selected); verdict.Status != "compatible" {
+		if verdict := support(check, selected); verdict.Status != onboard.StatusCompatible {
 			continue
 		}
 		candidate := &tracerRecommendation{Selection: selected}
@@ -51,9 +80,9 @@ func recommendJavaScriptTracer(ctx context.Context, check jestPreflight, ci *onb
 				label := nodeScopeLabel(job.Node)
 				status, _ := onboard.CompareNodeRequirement(node, selected.Node)
 				switch status {
-				case "compatible":
+				case onboard.StatusCompatible:
 					candidate.Compatible = appendUnique(candidate.Compatible, label)
-				case "incompatible":
+				case onboard.StatusIncompatible:
 					candidate.Unsupported = appendUnique(candidate.Unsupported, label)
 				default:
 					candidate.Unresolved = appendUnique(candidate.Unresolved, label)
@@ -106,20 +135,20 @@ func nodeScopeLabel(node string) string {
 // instrumented jobs already pass static validation. Never change dependencies.
 func (t *Testdrive) recommendTracer(ctx context.Context, output io.Writer, result *validationResult) {
 	check, selection := result.Preflight, result.Selection
-	if t.resolveJSTracer == nil || strings.HasPrefix(selection.Requested, "git:") {
+	if t.resolveJSTracer == nil || t.resolveJSTags == nil || strings.HasPrefix(selection.Requested, "git:") {
 		return
 	}
-	needed := check.Verdict.Status != "compatible"
+	needed := check.Verdict.Status != onboard.StatusCompatible
 	if ci := result.CIRuntime; ci != nil {
-		needed = needed || (ci.Status != "compatible" && ci.Status != "not applicable")
+		needed = needed || (ci.Status != onboard.StatusCompatible && ci.Status != onboard.StatusNotApplicable)
 		for _, job := range ci.Jobs {
-			needed = needed || job.Code == "excluded_runtime"
+			needed = needed || job.Code == onboard.CodeExcludedRuntime
 		}
 	}
 	if !needed {
 		return
 	}
-	check.Recommendation, check.RecommendationNotes = recommendJavaScriptTracer(ctx, *check, result.CIRuntime, t.resolveJSTracer, t.framework.Name())
+	check.Recommendation, check.RecommendationNotes = recommendJavaScriptTracer(ctx, *check, result.CIRuntime, t.resolveJSTracer, t.resolveJSTags, t.framework.Name())
 	if rec := check.Recommendation; rec != nil {
 		_, _ = fmt.Fprintf(output, "Recommended candidate: dd-trace@%s (Node %s). CI Node compatible: %s; unsupported: %s; unresolved: %s.\nPrefer a candidate covering the whole existing matrix before excluding runtimes. Use --tracer-version %s and js-tracer-version: %s, then rerun --check-only before full validation. This is advisory; the current selection and project dependency are unchanged.\n", rec.Selection.Version, rec.Selection.Node, scopeList(rec.Compatible), scopeList(rec.Unsupported), scopeList(rec.Unresolved), rec.Selection.Version, rec.Selection.Version)
 	}

@@ -35,17 +35,23 @@ func TestConditionalJestBootstrapPreservesMatrixCoverage(t *testing.T) {
 		result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, func(context.Context, string, string) (tracerRequirement, error) {
 			return tracerRequirement{Version: "5.128.0", Node: ">=18"}, nil
 		})
-		require.Len(t, result.Jobs, 6)
-		for i, finding := range result.Jobs {
-			want := "compatible"
-			switch {
-			case i < 2:
-				want = "excluded"
-			case i < 4 && guard == "matrix.node >= 22":
-				want = "inconclusive"
-			}
-			require.Equal(t, want, finding.Status, finding)
+		statuses := map[string]string{}
+		codes := map[string]string{}
+		for _, finding := range result.Jobs {
+			require.Equal(t, "test", finding.Job)
+			require.Equal(t, 3, finding.Step)
+			statuses[finding.Node] = finding.Status
+			codes[finding.Node] = finding.Code
 		}
+		expected := map[string]string{"14": "excluded", "16": "excluded", "18": "compatible", "20": "compatible", "22": "compatible", "24": "compatible"}
+		if guard == "matrix.node >= 22" {
+			expected["18"], expected["20"] = "inconclusive", "inconclusive"
+			require.Equal(t, CodeUnverifiedInitialization, codes["18"])
+			require.Equal(t, CodeUnverifiedInitialization, codes["20"])
+		}
+		require.Equal(t, expected, statuses)
+		require.Equal(t, CodeExcludedRuntime, codes["14"])
+
 	}
 }
 

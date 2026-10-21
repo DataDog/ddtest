@@ -20,7 +20,7 @@ func TestJestConfigurationUsesNativeNodeEntryPoint(t *testing.T) {
 		require.NoError(t, err)
 		words, err := shellquote.Split(selected.Command)
 		require.NoError(t, err)
-		require.Equal(t, []string{"node", filepath.Join(root, "node_modules", "jest", "bin", "jest.js"), "--runInBand", "--config", "unit.cjs"}, words)
+		require.Equal(t, []string{"jest", "--runInBand", "--config", "unit.cjs"}, words)
 	}
 	writeScripts(t, root, map[string]string{"test": "NODE_ENV=ci jest"})
 	selected, err := JestConfigurationCommand(root, "")

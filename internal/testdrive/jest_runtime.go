@@ -19,7 +19,10 @@ const jestRuntimeCapture = `
 const fs = require('node:fs');
 const main = process.argv[1];
 if (main) {
-  const path = fs.realpathSync(main).replace(/\\/g, '/');
+  let path = main.replace(/\\/g, '/');
+  if (!/(?:^|\/)(?:jest|jest-cli)\/bin\/jest\.js$/.test(path)) {
+    try { path = fs.realpathSync(main).replace(/\\/g, '/'); } catch {}
+  }
   if (/(?:^|\/)(?:jest|jest-cli)\/bin\/jest\.js$/.test(path)) {
     fs.writeFileSync(process.env.DDTEST_JEST_PREFLIGHT, JSON.stringify({
       node: process.version, executable: process.execPath, arguments: process.argv.slice(2)

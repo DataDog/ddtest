@@ -31,27 +31,29 @@ func stepDirectory(workflow ciWorkflow, job runtimeJob, step runtimeStep) string
 // code. Package scripts must forward added Jest flags to exactly one runner.
 // An empty result leaves repositories without a known script on the default.
 func JestValidationCommand(root string) (string, error) {
-	return jestValidationCommand(root, true)
+	entry, err := selectJestCommand(root, true)
+	return entry.Command, err
 }
 
-func jestValidationCommand(root string, forward bool) (string, error) {
+func selectJestCommand(root string, forward bool) (TestCommand, error) {
 	workflows, err := readWorkflows(root)
 	if err != nil {
-		return "", err
+		return TestCommand{}, err
 	}
-	candidates := map[string]bool{}
+	candidates := map[string]TestCommand{}
+	add := func(entry TestCommand) { data, _ := json.Marshal(entry); candidates[string(data)] = entry }
 	var unresolved string
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
-				return "", err
+				return TestCommand{}, err
 			}
 			for _, row := range rows {
 				active, err := possibleJobCondition(job.If, row)
 				if err != nil {
-					return "", err
+					return TestCommand{}, err
 				}
 				if !active {
 					continue
@@ -59,7 +61,7 @@ func jestValidationCommand(root string, forward bool) (string, error) {
 				for _, step := range job.Steps {
 					active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 					if err != nil {
-						return "", err
+						return TestCommand{}, err
 					}
 					if !active {
 						continue
@@ -78,19 +80,35 @@ func jestValidationCommand(root string, forward bool) (string, error) {
 						continue
 					}
 					if resolution.Reason != "" {
-						return "", fmt.Errorf("CI command %q requires review: %s; use --command with its working directory and required setup", step.Run, resolution.Reason)
+						return TestCommand{}, fmt.Errorf("CI command %q requires review: %s; use --command with its working directory and required setup", step.Run, resolution.Reason)
 					}
 					words, err := shellquote.Split(resolved.Run)
 					if err != nil || len(words) == 0 || filepath.Clean(stepDirectory(workflow, job, resolved)) != "." {
-						return "", fmt.Errorf("cannot automatically forward Jest options through CI command %q; use --command with its working directory and required setup", step.Run)
+						return TestCommand{}, fmt.Errorf("cannot automatically forward Jest options through CI command %q; use --command with its working directory and required setup", step.Run)
 					}
 					if !forward {
-						candidates[resolved.Run] = true
+						entry, err := configurationEntry(resolved.Run, resolution)
+						if err != nil {
+							return TestCommand{}, err
+						}
+						entry.Environment = mergeEnvironment(env, entry.Environment)
+						// CI explicitly clearing/preloading NODE_OPTIONS must not inherit local flags.
+						for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+							if _, exists := layer["NODE_OPTIONS"]; exists {
+								if entry.Environment == nil {
+									entry.Environment = map[string]string{}
+								}
+								if _, kept := entry.Environment["NODE_OPTIONS"]; !kept {
+									entry.Environment["NODE_OPTIONS"] = ""
+								}
+							}
+						}
+						add(entry)
 						continue
 					}
 					selected, err := ForwardJestCommand(root, resolved.Run)
 					if err != nil {
-						return "", err
+						return TestCommand{}, err
 					}
 					var assignments []string
 					for _, key := range slices.Sorted(maps.Keys(env)) {
@@ -99,33 +117,33 @@ func jestValidationCommand(root string, forward bool) (string, error) {
 					if len(assignments) > 0 {
 						selected = shellCommand(assignments) + " " + selected
 					}
-					candidates[selected] = true
+					add(TestCommand{Command: selected})
 				}
 			}
 		}
 	}
 	if len(candidates) > 1 {
-		return "", fmt.Errorf("multiple Jest CI commands found: %s; choose one with --command and validate the others separately", strings.Join(slices.Sorted(maps.Keys(candidates)), "; "))
+		return TestCommand{}, fmt.Errorf("multiple Jest CI commands found: %s; choose one with --command and validate the others separately", strings.Join(slices.Sorted(maps.Keys(candidates)), "; "))
 	}
-	for command := range candidates {
-		return command, nil
+	for _, entry := range candidates {
+		return entry, nil
 	}
 	// A known invocation can be validated locally even when other CI entry
 	// points are unknown. CheckCIRuntimes still reports those independently.
 	// Without a known CI command, do not guess past an unresolved wrapper.
 	if unresolved != "" {
-		return "", fmt.Errorf("%s; use --command after reviewing required setup", unresolved)
+		return TestCommand{}, fmt.Errorf("%s; use --command after reviewing required setup", unresolved)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "package.json"))
 	if err != nil {
-		return "", err
+		return TestCommand{}, err
 	}
 	var manifest struct {
 		Scripts        map[string]string `json:"scripts"`
 		PackageManager string            `json:"packageManager"`
 	}
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return "", err
+		return TestCommand{}, err
 	}
 	manager, _, _ := strings.Cut(manifest.PackageManager, "@")
 	if manager == "" {
@@ -138,7 +156,7 @@ func jestValidationCommand(root string, forward bool) (string, error) {
 		}
 	}
 	if !slices.Contains([]string{"npm", "yarn", "pnpm", "bun"}, manager) {
-		return "", fmt.Errorf("unknown package manager %q; select the Jest command with --command", manager)
+		return TestCommand{}, fmt.Errorf("unknown package manager %q; select the Jest command with --command", manager)
 	}
 	for _, name := range []string{"test:ci", "test"} {
 		if manifest.Scripts[name] == "" {
@@ -148,13 +166,14 @@ func jestValidationCommand(root string, forward bool) (string, error) {
 		resolution := resolveJestCommand(root, command, nil)
 		if resolution.Matched && resolution.Reason == "" {
 			if !forward {
-				return command, nil
+				return configurationEntry(command, resolution)
 			}
-			return ForwardJestCommand(root, command)
+			selected, err := ForwardJestCommand(root, command)
+			return TestCommand{Command: selected}, err
 		}
 		if resolution.Matched || resolution.Reason != "" {
-			return "", fmt.Errorf("package script %q requires review before forwarding Jest options; use --command with the actual Jest invocation and setup", name)
+			return TestCommand{}, fmt.Errorf("package script %q requires review before forwarding Jest options; use --command with the actual Jest invocation and setup", name)
 		}
 	}
-	return "", nil
+	return TestCommand{}, nil
 }

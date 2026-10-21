@@ -107,10 +107,4 @@ resolve collisions that runner distribution cannot avoid.
 
 ## Testdrive-only configuration check
 
-`ddtest testdrive --check-only --framework jest --yes` loads Jest configuration
-and checks tracer/local Node/static CI prerequisites without tracer installation
-or test execution. `--tracer-version` remains a fallback selector: an installed
-project tracer takes precedence. These command flags have no environment-variable
-binding. See [onboarding configuration checks](onboarding.md#check-jest-configuration-before-test-execution)
-for result fields and limitations. Other test frameworks are not supported by
-`--check-only` in this step.
+See [testdrive configuration checks](running.md#testdrive-configuration-checks) for command flags, result fields and limitations.

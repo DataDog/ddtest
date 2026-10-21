@@ -66,7 +66,7 @@ func expressValidatorRepository(t *testing.T) string {
 	return root
 }
 
-func TestExpressValidatorCIAndCommandDiscovery(t *testing.T) {
+func TestCIFormatExpressionsAndIndependentEntryPoints(t *testing.T) {
 	root := expressValidatorRepository(t)
 	command, err := JestValidationCommand(root)
 	require.NoError(t, err)
@@ -93,7 +93,7 @@ func TestExpressValidatorCIAndCommandDiscovery(t *testing.T) {
 	var reviewed []string
 	for _, finding := range result.Review {
 		require.Equal(t, "docs", finding.Job)
-		require.Equal(t, "not checked", finding.Status)
+		require.Equal(t, StatusNotExercised, finding.Status)
 		reviewed = append(reviewed, finding.Command)
 	}
 	require.Equal(t, []string{"npm run docs:build"}, reviewed)

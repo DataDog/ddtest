@@ -29,7 +29,13 @@ func TestRegistryMetadataFailureDoesNotGuessVersionAndCleansCache(t *testing.T) 
 			installer := &JavaScript{executor: executor}
 			selection, err := installer.ResolveRegistryTracer(t.Context(), "latest")
 			require.ErrorIs(t, err, cause)
-			require.ErrorContains(t, err, tc.reason)
+			var metadata *MetadataError
+			require.ErrorAs(t, err, &metadata)
+			want := tc.code
+			if tc.code == "E401" {
+				want = "registry_metadata_failed"
+			}
+			require.Equal(t, want, metadata.Code)
 			require.Empty(t, selection.Version)
 			require.Len(t, executor.commands, 1, "no guessed fallback request")
 			cache, ok := strings.CutPrefix(executor.commands[0].args[7], "--cache=")
@@ -81,7 +87,9 @@ func TestRegistryMetadataUsesPrivateCacheAndConfiguredRegistry(t *testing.T) {
 		t.Setenv(key, unavailable.URL)
 	}
 	failed, err := installer.ResolveRegistryTracer(t.Context(), "latest")
-	require.ErrorContains(t, err, "registry network failure")
+	var metadata *MetadataError
+	require.ErrorAs(t, err, &metadata)
+	require.Equal(t, "ECONNREFUSED", metadata.Code)
 	require.Empty(t, failed.Version)
 	for _, key := range []string{"npm_config_registry", "NPM_CONFIG_REGISTRY"} {
 		t.Setenv(key, registry.URL)
@@ -95,4 +103,29 @@ func TestRegistryMetadataUsesPrivateCacheAndConfiguredRegistry(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join(tmp, "ddtest-npm-metadata-*"))
 	require.NoError(t, err)
 	require.Empty(t, files)
+}
+
+func TestPnPTracerMetadataUsesProjectLoaderWithoutInitializingTracer(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("Node required")
+	}
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("TMPDIR", t.TempDir())
+	tracer := filepath.Join(root, "cache", "dd-trace")
+	require.NoError(t, os.MkdirAll(filepath.Join(tracer, "ci"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(tracer, "package.json"), []byte(`{"version":"5.132.0","engines":{"node":">=18"}}`), 0600))
+	init := filepath.Join(tracer, "ci", "init.js")
+	require.NoError(t, os.WriteFile(init, []byte(`require('fs').writeFileSync('TRACER_WAS_INITIALIZED','bad')`), 0600))
+	loader := fmt.Sprintf(`const m=require('module');const original=m._resolveFilename;m._resolveFilename=function(request,...args){if(request==='dd-trace/ci/init')return %q;return original.call(this,request,...args)}`, init)
+	require.NoError(t, os.WriteFile(".pnp.cjs", []byte(loader), 0600))
+	selected, err := NewJavaScript().ResolveTestdriveTracer(t.Context(), TracerOptions{Version: "latest"})
+	require.NoError(t, err)
+	require.Equal(t, "project", selected.Source)
+	require.Equal(t, "5.132.0", selected.Version)
+	require.NoFileExists(t, "TRACER_WAS_INITIALIZED")
+	require.NoDirExists(t, "node_modules")
+	require.NoError(t, os.WriteFile(".pnp.cjs", []byte(`throw new Error('broken project loader')`), 0600))
+	_, err = NewJavaScript().ResolveTestdriveTracer(t.Context(), TracerOptions{Version: "latest"})
+	require.Error(t, err)
 }

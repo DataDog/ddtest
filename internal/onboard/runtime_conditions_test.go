@@ -83,7 +83,7 @@ func TestStaticMatrixIncludesFollowOriginalCombinations(t *testing.T) {
 	require.Len(t, rows, 5)
 }
 
-func TestTSyringeConditionsAndIncludePreserveCoverage(t *testing.T) {
+func TestConditionsAndMatrixIncludePreserveCoverage(t *testing.T) {
 	for _, matrix := range []string{
 		"node-version: [8.x, 10.x, 12.x, 14.x, 16.x, 18.x, 20.x, 22.x]",
 		"include: [{node-version: 8.x}, {node-version: 10.x}, {node-version: 12.x}, {node-version: 14.x}, {node-version: 16.x}, {node-version: 18.x}, {node-version: 20.x}, {node-version: 22.x}]",
@@ -110,14 +110,16 @@ func TestTSyringeConditionsAndIncludePreserveCoverage(t *testing.T) {
 			return tracerRequirement{Version: "5.128.0", Node: ">=18"}, nil
 		})
 		require.Equal(t, "compatible", result.Status)
-		require.Len(t, result.Jobs, 8)
-		for i, job := range result.Jobs {
-			if i < 5 {
-				require.Equal(t, "excluded", job.Status)
-			} else {
-				require.Equal(t, "compatible", job.Status)
+		statuses := map[string]string{}
+		for _, finding := range result.Jobs {
+			require.Equal(t, "test", finding.Job)
+			statuses[finding.Node] = finding.Status
+			if finding.Status == StatusExcluded {
+				require.Equal(t, CodeExcludedRuntime, finding.Code)
 			}
 		}
+		require.Equal(t, map[string]string{"8.x": "excluded", "10.x": "excluded", "12.x": "excluded", "14.x": "excluded", "16.x": "excluded", "18.x": "compatible", "20.x": "compatible", "22.x": "compatible"}, statuses)
+
 	}
 }
 

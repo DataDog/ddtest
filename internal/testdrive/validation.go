@@ -23,6 +23,7 @@ import (
 
 type verdict struct {
 	Status          string   `json:"status"`
+	Code            string   `json:"code,omitempty"`
 	Reason          string   `json:"reason"`
 	DifferenceCount int      `json:"difference_count,omitempty"`
 	Differences     []string `json:"differences,omitempty"`
@@ -75,54 +76,49 @@ func writeValidation(path string, data []byte) error {
 }
 
 func compareCISelection(check onboard.RuntimeCheck, localVersion string) *verdict {
-	if check.Status == "not applicable" {
+	if check.Status == onboard.StatusNotApplicable {
 		return nil
 	}
-	result := &verdict{Status: "compatible", Reason: "Every statically resolved instrumented CI entry selects the same exact tracer version as the local selection. Floating selections are checked only at this run's resolution time."}
+	result := &verdict{Status: onboard.StatusCompatible, Reason: "Every statically resolved instrumented CI entry selects the same exact tracer version as the local selection. Floating selections are checked only at this run's resolution time."}
 	if localVersion == "" {
-		return &verdict{Status: "inconclusive", Reason: "Local tracer version is unresolved."}
+		return &verdict{Status: onboard.StatusInconclusive, Reason: "Local tracer version is unresolved."}
 	}
 	checked := false
 	for _, job := range check.Jobs {
-		if job.Status == "excluded" {
+		if job.Status == onboard.StatusExcluded {
 			continue
 		}
 		if job.Tracer == "" {
-			result.Status = "inconclusive"
+			result.Status = onboard.StatusInconclusive
 			result.Reason = fmt.Sprintf("%s / %s / step %d: %s", job.Workflow, job.Job, job.Step, job.Reason)
-			if job.Code == "missing_instrumentation" {
-				result.Status = "incompatible"
+			if job.Code == onboard.CodeMissingInstrumentation {
+				result.Status = onboard.StatusIncompatible
 				return result
 			}
 			continue
 		}
 		checked = true
 		if strings.TrimPrefix(job.Tracer, "dd-trace@") != localVersion {
-			return &verdict{Status: "incompatible", Reason: fmt.Sprintf("%s / %s selects %s, but local validation selected dd-trace@%s. Align selections or validate this CI version separately.", job.Workflow, job.Job, job.Tracer, localVersion)}
+			return &verdict{Status: onboard.StatusIncompatible, Reason: fmt.Sprintf("%s / %s selects %s, but local validation selected dd-trace@%s. Align selections or validate this CI version separately.", job.Workflow, job.Job, job.Tracer, localVersion)}
 		}
 	}
 	if !checked {
-		result.Status = "inconclusive"
+		result.Status = onboard.StatusInconclusive
 		result.Reason = "No instrumented CI tracer selection could be verified."
 	}
 	return result
 }
 
-// Execution evidence is added by the controlled-validation PR. Check-only never
-// populates run summaries or claims that local compatibility has passed.
-type runSummary struct{}
-
 type validationResult struct {
+	SchemaVersion    int                      `json:"schema_version"`
 	CompletedAt      time.Time                `json:"completed_at"`
 	CheckOnly        bool                     `json:"check_only"`
 	ChecksPassed     bool                     `json:"checks_passed"`
-	LocalSuccess     bool                     `json:"local_success"`
 	Preflight        *jestPreflight           `json:"preflight,omitempty"`
 	Selection        *platform.JSSelection    `json:"tracer_selection,omitempty"`
 	TracerSource     string                   `json:"tracer_source,omitempty"`
 	CISelection      *verdict                 `json:"ci_tracer_selection,omitempty"`
 	CIExecution      verdict                  `json:"ci_execution"`
-	Success          bool                     `json:"success"`
 	WorkingDirectory string                   `json:"working_directory"`
 	Error            string                   `json:"error,omitempty"`
 	Framework        string                   `json:"framework"`
@@ -131,26 +127,27 @@ type validationResult struct {
 	Scope            *onboard.ValidationScope `json:"scope,omitempty"`
 	Compatibility    verdict                  `json:"compatibility"`
 	Features         []featureResult          `json:"features"`
-	Runs             []runSummary             `json:"runs"`
 }
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
-	result.Success, result.LocalSuccess = false, false
+	result.SchemaVersion = 1
+	result.Compatibility = verdict{Status: onboard.StatusNotExercised, Reason: "Configuration checks only; paired execution was not exercised."}
+	result.Features = []featureResult{{Name: "all", Status: onboard.StatusNotExercised, Reason: "Configuration checks only."}}
 	result.CompletedAt = time.Now().UTC()
 	result.WorkingDirectory = repositoryRoot
-	result.CIExecution = verdict{Status: "not exercised", Reason: "Local-only validation; CI execution and Datadog backend processing were not exercised."}
-	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
+	result.CIExecution = verdict{Status: onboard.StatusNotExercised, Reason: "Local-only validation; CI execution and Datadog backend processing were not exercised."}
+	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == onboard.StatusCompatible
 	if result.Scope != nil {
 		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved) == 0
 		for _, command := range result.Scope.Commands {
-			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0
+			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0 && len(command.Prerequisites) == 0
 		}
 	}
 	if result.CISelection != nil {
-		result.ChecksPassed = result.ChecksPassed && result.CISelection.Status == "compatible"
+		result.ChecksPassed = result.ChecksPassed && result.CISelection.Status == onboard.StatusCompatible
 	}
 	if result.CIRuntime != nil {
-		result.ChecksPassed = result.ChecksPassed && (result.CIRuntime.Status == "compatible" || result.CIRuntime.Status == "not applicable")
+		result.ChecksPassed = result.ChecksPassed && (result.CIRuntime.Status == onboard.StatusCompatible || result.CIRuntime.Status == onboard.StatusNotApplicable)
 		check := *result.CIRuntime
 		check.Reason = reportText(check.Reason)
 		check.Jobs = slices.Clone(check.Jobs)

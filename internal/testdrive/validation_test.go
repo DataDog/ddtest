@@ -48,8 +48,6 @@ func TestConfigurationChecksRequireCIAndTracerAgreement(t *testing.T) {
 			var report validationResult
 			require.NoError(t, json.Unmarshal(data, &report))
 			require.Equal(t, tc.passed, report.ChecksPassed)
-			require.False(t, report.Success)
-			require.False(t, report.LocalSuccess)
 		})
 	}
 }

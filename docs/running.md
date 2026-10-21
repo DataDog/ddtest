@@ -561,11 +561,24 @@ ignoring CI job overhead, to get as close as possible to the target.
 
 ## Testdrive configuration checks
 
-Before running a Jest suite, use `ddtest testdrive --framework jest --check-only
---yes` to inspect its effective configuration and local/CI tracer prerequisites.
-This mode loads Jest configuration, reads public dependency/runtime metadata, and
-writes `.testoptimization/testdrive.json`; it does not install dd-trace, execute
-tests, edit workflows or exercise the Datadog backend. Exit 0 certifies only the
-configuration checks, not test compatibility or advanced features. See
-[the check-only guide](onboarding.md#check-jest-configuration-before-test-execution)
-for setup, failure cases and manual QA.
+Before running a Jest suite, use `ddtest testdrive --framework jest --check-only --yes`.
+Jest must already be installed and resolvable through the project, including Yarn
+Plug'n'Play. This mode loads configuration, reads registry/runtime metadata and
+writes `.testoptimization/testdrive.json`. It installs no tracer, runs no tests
+and edits no workflows. Unapplied prerequisites and unresolved CI environments
+make the checks incomplete. Run from the package directory; use `--command` only
+after reviewing required setup.
+
+`--tracer-version` selects a fallback only: an existing project tracer takes
+precedence. npm metadata uses the customer's configured registry, proxy and auth.
+Runtime selectors and version files resolve to a timestamped exact release from
+Node metadata. CI may use a different cached patch when setup-node does not set
+`check-latest`; static checks do not prove which binary ran in CI.
+
+Exit 0 and `checks_passed: true` certify configuration checks only. The versioned
+JSON contains `schema_version: 1`, `compatibility.status: "not exercised"`, feature
+statuses of `"not exercised"`, and `ci_execution.status: "not exercised"`. It omits
+execution-only success and run fields. Full testdrive is still required to check
+behavior and telemetry; neither local mode proves real Datadog backend processing.
+Other frameworks do not support check-only in this step. These flags have no
+environment-variable binding.

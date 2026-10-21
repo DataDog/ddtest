@@ -32,6 +32,24 @@ func (j *JavaScript) ResolveTestdriveTracer(ctx context.Context, options TracerO
 	if selected.Requested == "" {
 		selected.Requested = "latest"
 	}
+	// PnP archives are readable through their Node loader, not Go's filesystem.
+	for _, loader := range []string{".pnp.cjs", ".pnp.js"} {
+		if _, err := os.Stat(loader); err != nil {
+			continue
+		}
+		const metadata = `const fs=require('node:fs'),path=require('node:path');let init;
+try { init=require.resolve('dd-trace/ci/init'); } catch(error) { if(error.code==='MODULE_NOT_FOUND'){process.stdout.write('null');process.exit(0)} throw error; }
+process.stdout.write(fs.readFileSync(path.join(path.dirname(path.dirname(init)),'package.json'),'utf8'));`
+		data, _, err := j.executor.Output(ctx, "node", []string{"--require", "./" + loader, "-e", metadata}, map[string]string{"NODE_OPTIONS": "", "DD_TRACE_ENABLED": "false", "DD_CIVISIBILITY_ENABLED": "false"})
+		if err != nil {
+			return selected, fmt.Errorf("read installed PnP tracer metadata: %w", err)
+		}
+		if strings.TrimSpace(string(data)) == "null" {
+			return j.ResolveRegistryTracer(ctx, selected.Requested)
+		}
+		selected.Source = "project"
+		return decodeJSSelection(selected, data)
+	}
 	path, probeErr := j.DetectTracer(ctx, options)
 	if probeErr != nil {
 		path = "" // The platform falls back when the project check fails.
@@ -47,7 +65,7 @@ func (j *JavaScript) ResolveTestdriveTracer(ctx context.Context, options TracerO
 		return j.ResolveRegistryTracer(ctx, selected.Requested)
 	}
 	if err != nil {
-		return selected, err
+		return selected, fmt.Errorf("read project dd-trace/package.json: %w", sanitizeProjectError(err))
 	}
 	return decodeJSSelection(selected, data)
 }
@@ -56,34 +74,52 @@ func (j *JavaScript) ResolveTestdriveTracer(ctx context.Context, options TracerO
 // the installed project tracer. Releases are resolved from npm, never pinned here.
 func (j *JavaScript) ResolveRegistryTracer(ctx context.Context, selector string) (selected JSSelection, resolveErr error) {
 	selected = JSSelection{Requested: selector, Source: "fallback"}
-	cache, err := os.MkdirTemp("", "ddtest-npm-metadata-")
+	data, err := j.registryMetadata(ctx, []string{"dd-trace@" + selector, "version", "engines"})
 	if err != nil {
-		return selected, fmt.Errorf("create temporary npm metadata cache; check TMPDIR permissions and free space: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(cache); err != nil {
-			resolveErr = errors.Join(resolveErr, fmt.Errorf("remove npm metadata cache %s: %w", cache, err))
-		}
-	}()
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	// CLI options override inherited cache settings without changing the customer's
-	// registry, proxy or credentials. Metadata reads should fail promptly offline.
-	args := []string{"view", "dd-trace@" + selector, "version", "engines", "--json", "--fetch-retries=0", "--fetch-timeout=10000", "--cache=" + cache}
-	data, stderr, err := j.executor.Output(ctx, "npm", args, map[string]string{"NODE_OPTIONS": ""})
-	if err != nil {
-		return selected, registryMetadataError(ctx, stderr, err)
+		return selected, err
 	}
 	return decodeJSSelection(selected, data)
 }
 
+// RegistryTracerTags uses the same customer registry/proxy/auth as version reads.
+func (j *JavaScript) RegistryTracerTags(ctx context.Context) (map[string]string, error) {
+	data, err := j.registryMetadata(ctx, []string{"dd-trace", "dist-tags"})
+	if err != nil {
+		return nil, err
+	}
+	var tags map[string]string
+	if err := json.Unmarshal(data, &tags); err != nil {
+		return nil, fmt.Errorf("decode dd-trace dist-tags: %w", err)
+	}
+	return tags, nil
+}
+
+func (j *JavaScript) registryMetadata(ctx context.Context, fields []string) (data []byte, resolveErr error) {
+	cache, err := os.MkdirTemp("", "ddtest-npm-metadata-")
+	if err != nil {
+		return nil, fmt.Errorf("create temporary npm metadata cache; check TMPDIR permissions and free space: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(cache); err != nil {
+			resolveErr = errors.Join(resolveErr, fmt.Errorf("remove private npm metadata cache: %w", sanitizeProjectError(err)))
+		}
+	}()
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	args := append([]string{"view"}, fields...)
+	args = append(args, "--json", "--fetch-retries=0", "--fetch-timeout=10000", "--cache="+cache)
+	data, stderr, err := j.executor.Output(ctx, "npm", args, map[string]string{"NODE_OPTIONS": ""})
+	if err != nil {
+		return nil, registryMetadataError(ctx, stderr, err)
+	}
+	return data, nil
+}
+
 // MetadataError lets callers distinguish environment failures from unsupported
-// configurations. Only transient transport failures may be retried automatically.
+// configurations using structured diagnostics.
 type MetadataError struct {
-	Code       string
-	Capability string
-	Retryable  bool
-	Err        error
+	Code string
+	Err  error
 }
 
 func (e *MetadataError) Error() string { return e.Err.Error() }
@@ -96,15 +132,15 @@ func registryMetadataError(ctx context.Context, stderr []byte, err error) error 
 	message := string(stderr)
 	for _, code := range []string{"ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "FETCH_ERROR"} {
 		if strings.Contains(message, code) {
-			return &MetadataError{Code: code, Capability: "registry network access", Retryable: code == "ECONNRESET" || code == "ETIMEDOUT", Err: fmt.Errorf("resolve dd-trace metadata: registry network failure (%s); check network/sandbox access and configured registry/proxy, then rerun preflight; compatibility is unverified: %w", code, err)}
+			return &MetadataError{Code: code, Err: fmt.Errorf("resolve dd-trace metadata: registry network failure (%s); check network/sandbox access and configured registry/proxy, then rerun preflight; compatibility is unverified: %w", code, err)}
 		}
 	}
 	for _, code := range []string{"EACCES", "EPERM", "EROFS", "ENOSPC"} {
 		if strings.Contains(message, code) {
-			return &MetadataError{Code: code, Capability: "writable private temporary storage", Err: fmt.Errorf("resolve dd-trace metadata: filesystem failure (%s); check TMPDIR and npm configuration permissions/free space, then rerun preflight; compatibility is unverified: %w", code, err)}
+			return &MetadataError{Code: code, Err: fmt.Errorf("resolve dd-trace metadata: filesystem failure (%s); check TMPDIR and npm configuration permissions/free space, then rerun preflight; compatibility is unverified: %w", code, err)}
 		}
 	}
-	return fmt.Errorf("resolve dd-trace metadata failed; verify the selector, registry and npm authentication, then rerun preflight; no fallback version was guessed: %w", err)
+	return &MetadataError{Code: "registry_metadata_failed", Err: fmt.Errorf("resolve dd-trace metadata failed; verify the selector, registry and npm authentication, then rerun preflight; no fallback version was guessed: %w", err)}
 }
 
 func decodeJSSelection(selected JSSelection, data []byte) (JSSelection, error) {
@@ -130,4 +166,12 @@ func decodeJSSelection(selected JSSelection, data []byte) (JSSelection, error) {
 	selected.Version = manifest.Version
 	selected.Node = manifest.Engines.Node
 	return selected, nil
+}
+
+func sanitizeProjectError(err error) error {
+	var pathError *os.PathError
+	if errors.As(err, &pathError) {
+		return pathError.Err
+	}
+	return err
 }

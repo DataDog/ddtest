@@ -21,6 +21,7 @@ import (
 
 const runtimeWorkflow = `jobs:
   tests:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         node-version: [20.20.1, 22.22.1, 24.14.0, 25.8.1]
@@ -36,7 +37,7 @@ const runtimeWorkflow = `jobs:
         env: {NODE_OPTIONS: "-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}"}
 `
 
-func TestCIRuntimesCatchLuxonRegressionAndRespectExclusion(t *testing.T) {
+func TestCIRuntimesCheckEveryNodeAndPreserveExcludedTests(t *testing.T) {
 	for _, tc := range []struct{ name, guard, status string }{
 		{"unconditional instrumentation", "", "incompatible"},
 		{"installation guard alone", "if: ${{ !startsWith(matrix.node-version, '20.') }}", "inconclusive"},
@@ -81,9 +82,9 @@ func TestCIRuntimesNeverGuessUnknownConfigurations(t *testing.T) {
 	for _, tc := range []struct{ name, old, new, reason string }{
 		{"dynamic matrix", "node-version: [20.20.1, 22.22.1, 24.14.0, 25.8.1]", "${{ fromJSON(needs.build.outputs.matrix) }}", "dynamic CI matrix"},
 		{"dynamic version", "node-version: ${{ matrix.node-version }}", "node-version: ${{ inputs.node }}", "cannot statically resolve"},
-		{"version file", "node-version: ${{ matrix.node-version }}", "node-version-file: .nvmrc", "missing or dynamic"},
-		{"lts alias", "node-version: ${{ matrix.node-version }}", "node-version: lts/*", "missing or dynamic"},
-		{"unknown condition", "with:\n          languages: js", "if: ${{ github.event_name == 'push' }}\n        with:\n          languages: js", "cannot statically resolve CI condition"},
+		{"version file", "node-version: ${{ matrix.node-version }}", "node-version-file: .nvmrc", "runtime_unknown"},
+		{"lts alias", "node-version: ${{ matrix.node-version }}", "node-version: lts/*", "runtime_unknown"},
+		{"unknown condition", "with:\n          languages: js", "if: ${{ github.event_name == 'push' }}\n        with:\n          languages: js", "unresolved_condition"},
 		{"no action", "uses: datadog/test-visibility-github-action@v3", "uses: actions/checkout@v3", "No Datadog JavaScript action"},
 		{"other language", "languages: js", "languages: python", "No Datadog JavaScript action"},
 	} {
@@ -97,14 +98,25 @@ func TestCIRuntimesNeverGuessUnknownConfigurations(t *testing.T) {
 				require.Equal(t, "missing_instrumentation", result.Jobs[0].Code)
 			}
 			require.Equal(t, want, result.Status)
-			require.Contains(t, result.Jobs[0].Reason, tc.reason)
+			switch tc.name {
+			case "no action", "other language":
+				require.Equal(t, CodeMissingInstrumentation, result.Jobs[0].Code)
+			case "dynamic matrix":
+				require.Equal(t, CodeInvalidMatrix, result.Jobs[0].Code)
+			case "dynamic version", "version file":
+				require.Equal(t, CodeNodeResolution, result.Jobs[0].Code)
+			case "unknown condition":
+				require.Equal(t, CodeUnresolvedCondition, result.Jobs[0].Code)
+			default:
+				require.Equal(t, CodeRuntimeUnknown, result.Jobs[0].Code)
+			}
 		})
 	}
 	result := checkCIRuntimes(t.Context(), newJestRepository(t, original), nil, func(context.Context, string, string) (tracerRequirement, error) {
 		return tracerRequirement{}, fmt.Errorf("metadata unavailable")
 	})
 	require.Equal(t, "inconclusive", result.Status)
-	require.Contains(t, result.Jobs[0].Reason, "metadata unavailable")
+	require.Equal(t, CodeTracerMetadata, result.Jobs[0].Code)
 	result = checkCIRuntimes(t.Context(), t.TempDir(), nil, nil)
 	require.Equal(t, "not applicable", result.Status)
 }
@@ -143,46 +155,13 @@ func TestCIRuntimesUseSelectedTracerAndEveryJob(t *testing.T) {
 
 func TestNodeRequirements(t *testing.T) {
 	for _, tc := range []struct{ node, engine, status string }{
-		{"20.20.1", ">=22", "incompatible"}, {"20", ">=22", "incompatible"}, {"20.x", ">=22", "incompatible"},
-		{"22", ">=22", "compatible"}, {"v22.0.0", ">=22", "compatible"}, {"24.1.2", ">=22", "compatible"},
-		{"22", ">=24", "incompatible"}, {"22", ">=22.2.0", "inconclusive"}, {"22.1", ">=22.2.0", "incompatible"},
-		{"22.2", ">=22.2.0", "compatible"}, {"lts/*", ">=22", "inconclusive"}, {"", ">=22", "inconclusive"},
-		{"22", ">=18 <23", "compatible"}, {"22", "", "inconclusive"}, {"22", ">=22 || >=24", "inconclusive"},
-		{"22.x.3", ">=22", "inconclusive"},
+		{"18.4.0", "^18 || ^20 || >=22", "compatible"}, {"20.1.0", "^18 || ^20 || >=22", "compatible"}, {"21.1.0", "^18 || ^20 || >=22", "incompatible"},
+		{"25.8.1", ">=18 <=25", "compatible"}, {"26.0.0", ">=18 <=25", "incompatible"}, {"18.9.0", "18.x", "compatible"}, {"19.0.0", ">18", "compatible"}, {"18.9.0", ">18", "incompatible"},
+		{"22.23.2", ">=18 <26", "compatible"}, {"22.1.0", ">=22.2.0", "incompatible"}, {"lts/*", ">=22", "inconclusive"}, {"", ">=22", "inconclusive"}, {"22.0.0", "invalid", "inconclusive"}, {"22.0.0", "", "inconclusive"},
 	} {
 		t.Run(tc.node+"/"+tc.engine, func(t *testing.T) {
 			status, _ := CompareNodeRequirement(tc.node, tc.engine)
 			require.Equal(t, tc.status, status)
-		})
-	}
-}
-
-func TestBoundedNodeRequirements(t *testing.T) {
-	for _, tc := range []struct{ node, engine, status string }{
-		{"v22.23.2", ">=18 <26", "compatible"},
-		{"18.0.0", ">=18 <26", "compatible"},
-		{"25.99.99", ">=18 <26", "compatible"},
-		{"17.99.99", ">=18 <26", "incompatible"},
-		{"26.0.0", ">=18 <26", "incompatible"},
-		{"27.0.0", ">=18 <26", "incompatible"},
-		{"22.x", " >= 18.0.0 < 26.0.0 ", "compatible"},
-		{"26", ">=18 <26", "incompatible"},
-		{"22", ">=22.2.0 <26", "inconclusive"},
-		{"22", ">=18 <22.2.0", "inconclusive"},
-		{"22.1", ">=18 <22.2.0", "compatible"},
-		{"22.2", ">=18 <22.2.0", "incompatible"},
-		{"22.1", ">=18 <22.1.2", "inconclusive"},
-		{"22.1.1", ">=18 <22.1.2", "compatible"},
-		{"22.1.2", ">=18 <22.1.2", "incompatible"},
-		{"22", ">=26 <18", "inconclusive"},
-		{"22", ">=18 <18", "inconclusive"},
-		{"22", ">=18 <26 || >=28", "inconclusive"},
-		{"22", ">=18 <invalid", "inconclusive"},
-		{"22", ">=18 <1000001", "inconclusive"},
-	} {
-		t.Run(tc.node+"/"+tc.engine, func(t *testing.T) {
-			status, reason := CompareNodeRequirement(tc.node, tc.engine)
-			require.Equal(t, tc.status, status, reason)
 		})
 	}
 }

@@ -11,8 +11,9 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
+
+	"github.com/Masterminds/semver/v3"
 )
 
 // Expand only bounded, scalar matrices. Includes augment original combinations;
@@ -158,64 +159,19 @@ func runtimeValue(value string, row map[string]any) (string, error) {
 }
 
 var numericNode = regexp.MustCompile(`^v?([0-9]+)(?:\.([0-9]+|x|\*))?(?:\.([0-9]+|x|\*))?$`)
-var nodeEngineRange = regexp.MustCompile(`^>=\s*([0-9]+(?:\.[0-9]+){0,2})(?:\s+<\s*([0-9]+(?:\.[0-9]+){0,2}))?$`)
 
-func nodeInterval(value string) ([3]int, int, bool) {
-	var version [3]int
-	match := numericNode.FindStringSubmatch(value)
-	if match == nil {
-		return version, 0, false
-	}
-	precision := 0
-	for i, part := range match[1:] {
-		if part == "" || part == "x" || part == "*" {
-			continue
-		}
-		if precision != i {
-			return version, 0, false
-		}
-		number, err := strconv.Atoi(part)
-		if err != nil || number > 1000000 {
-			return version, 0, false
-		}
-		version[i] = number
-		precision++
-	}
-	return version, precision, true
-}
-
-// CompareNodeRequirement checks a tracer minimum and optional exclusive maximum.
-// Partial Node versions must satisfy the range for every possible resolution.
+// Runtime selectors are resolved to exact releases before this comparison.
 func CompareNodeRequirement(node, requirement string) (string, string) {
-	bounds := nodeEngineRange.FindStringSubmatch(strings.TrimSpace(requirement))
-	if bounds == nil {
-		return "inconclusive", fmt.Sprintf("Unsupported Node engine range %q; no compatibility assumption was made.", requirement)
+	constraint, err := semver.NewConstraint(requirement)
+	if err != nil || strings.TrimSpace(requirement) == "" {
+		return StatusInconclusive, fmt.Sprintf("Cannot parse Node engine requirement %q.", requirement)
 	}
-	minimum, _, ok := nodeInterval(bounds[1])
-	if !ok {
-		return "inconclusive", "Cannot parse tracer Node requirement."
+	version, err := semver.NewVersion(strings.TrimSuffix(strings.TrimSuffix(node, ".x"), ".*"))
+	if err != nil {
+		return StatusInconclusive, fmt.Sprintf("Node version %q is unresolved; compatibility was not verified.", node)
 	}
-	var maximum [3]int
-	bounded := bounds[2] != ""
-	if bounded {
-		maximum, _, ok = nodeInterval(bounds[2])
-		if !ok || slices.Compare(minimum[:], maximum[:]) >= 0 {
-			return "inconclusive", "Cannot parse tracer Node requirement: invalid or empty range."
-		}
+	if constraint.Check(version) {
+		return StatusCompatible, fmt.Sprintf("Node %s satisfies %s.", node, requirement)
 	}
-	lower, precision, ok := nodeInterval(node)
-	if !ok {
-		return "inconclusive", fmt.Sprintf("Node version %q is missing or dynamic; use an explicit setup-node version to check it.", node)
-	}
-	// A major/minor selector covers a half-open interval; an exact release ends
-	// at the next patch. Requirements here contain only stable numeric versions.
-	upper := lower
-	upper[precision-1]++
-	if slices.Compare(lower[:], minimum[:]) >= 0 && (!bounded || slices.Compare(upper[:], maximum[:]) <= 0) {
-		return "compatible", fmt.Sprintf("Node %s satisfies %s.", node, requirement)
-	}
-	if slices.Compare(upper[:], minimum[:]) > 0 && (!bounded || slices.Compare(lower[:], maximum[:]) < 0) {
-		return "inconclusive", fmt.Sprintf("Node %s can resolve inside or outside %s; use an exact version.", node, requirement)
-	}
-	return "incompatible", fmt.Sprintf("Node %s does not satisfy %s. Keep this test coverage, but exclude this runtime from instrumentation or choose a compatible tracer/runtime.", node, requirement)
+	return StatusIncompatible, fmt.Sprintf("Node %s does not satisfy %s. Preserve test coverage and choose a compatible tracer/runtime.", node, requirement)
 }

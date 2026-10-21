@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,8 +17,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/Masterminds/semver/v3"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -44,8 +47,20 @@ type jestPreflight struct {
 }
 
 func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, result *validationResult) (preflightErr error) {
-	args := appendJestArgs(t.command, t.args, "--showConfig")
-	check := &jestPreflight{Command: shellquote.Join(append([]string{t.command}, args...)...), Verdict: verdict{Status: "inconclusive", Reason: "Effective Jest configuration was not resolved."}}
+	command, baseArgs := t.command, t.args
+	if command == "npx" {
+		baseArgs = append([]string{"--no-install"}, baseArgs...)
+	}
+	if command == "jest" {
+		var err error
+		command, baseArgs, err = t.installedJest(ctx)
+		if err != nil {
+			result.Preflight = &jestPreflight{Verdict: verdict{Status: onboard.StatusInconclusive, Code: onboard.CodeJestNotInstalled, Reason: err.Error()}}
+			return err
+		}
+	}
+	args := framework.WithFrameworkOptions(command, baseArgs, "jest", "--showConfig")
+	check := &jestPreflight{Command: shellquote.Join(append([]string{command}, args...)...), Verdict: verdict{Status: onboard.StatusInconclusive, Reason: "Effective Jest configuration was not resolved."}}
 	result.Preflight = check
 	_, _ = fmt.Fprintf(output, "Inspecting Jest configuration: %s\n", check.Command)
 	// Loading Jest configuration may execute project JavaScript. This belongs in
@@ -66,7 +81,7 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	defer func() { preflightErr = errors.Join(preflightErr, os.RemoveAll(directory)) }()
 	env["DD_CIVISIBILITY_ENABLED"] = "false"
 	env["DD_TRACE_ENABLED"] = "false"
-	data, err := t.executor.CombinedOutput(ctx, t.command, args, env)
+	data, err := t.executor.CombinedOutput(ctx, command, args, env)
 	if err != nil {
 		return fmt.Errorf("inspect Jest configuration: %w; verify --command includes the repository's Jest config and required setup", err)
 	}
@@ -77,7 +92,7 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	// npm/yarn may print a script banner before Jest's JSON.
 	decoded := false
 	for i, b := range data {
-		if b == '{' && json.NewDecoder(strings.NewReader(string(data[i:]))).Decode(&config) == nil && config.Version != "" && len(config.Configs) > 0 {
+		if b == '{' && json.NewDecoder(bytes.NewReader(data[i:])).Decode(&config) == nil && config.Version != "" && len(config.Configs) > 0 {
 			decoded = true
 			break
 		}
@@ -99,6 +114,10 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	selection, err := installer.ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args})
 	result.Selection = &selection
 	if err != nil {
+		var metadata *platform.MetadataError
+		if errors.As(err, &metadata) {
+			check.Verdict.Code = metadata.Code
+		}
 		check.Verdict.Reason = "Jest configuration resolved, but tracer selection could not be resolved: " + reportText(err.Error())
 		return err
 	}
@@ -113,10 +132,10 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	}
 	_, _ = fmt.Fprintf(output, "Jest %s; Node %s; tracer %s (%s; requested %s)\nPreflight: %s — %s\n", check.Version, check.Node, result.Tracer, selection.Source, selection.Requested, check.Verdict.Status, check.Verdict.Reason)
 	t.recommendTracer(ctx, output, result)
-	if check.Verdict.Status == "incompatible" {
+	if check.Verdict.Status == onboard.StatusIncompatible {
 		return fmt.Errorf("jest preflight: %s", check.Verdict.Reason)
 	}
-	if check.Verdict.Status != "compatible" && (!strings.HasPrefix(selection.Requested, "git:") || t.checkOnly) {
+	if check.Verdict.Status != onboard.StatusCompatible && (!strings.HasPrefix(selection.Requested, "git:") || t.checkOnly) {
 		return fmt.Errorf("jest preflight is inconclusive: %s", check.Verdict.Reason)
 	}
 	return nil
@@ -125,6 +144,8 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 // Supported major lines mirror dd-trace-js's Jest instrumentation hooks. Keep
 // this small table covered by boundary tests; unknown majors require review.
 // Node engines alone do not describe framework/runner compatibility.
+var jestTracerMinimums = map[int]string{5: "24.8", 6: "28"}
+
 func checkJestSupport(check jestPreflight, selection platform.JSSelection) verdict {
 	var problems []string
 	for _, project := range check.Projects {
@@ -133,28 +154,27 @@ func checkJestSupport(check jestPreflight, selection platform.JSSelection) verdi
 			problems = append(problems, "Jest requires the jest-circus runner for Test Optimization; add the matching jest-circus version and set testRunner to 'jest-circus/runner', or choose a supported Jest upgrade")
 		}
 	}
-	major, minor, ok := releaseParts(check.Version)
+	jestVersion, err := semver.StrictNewVersion(strings.TrimPrefix(check.Version, "v"))
 	tracerMajor, _, known := releaseParts(selection.Version)
-	if known && (tracerMajor == 5 || tracerMajor == 6) && ok {
-		minimum := 24
-		if tracerMajor == 6 {
-			minimum = 28
-		}
-		if major < minimum || (major == 24 && minor < 8) {
-			problems = append(problems, fmt.Sprintf("dd-trace %d requires Jest >=%s; detected %s. Select a supported tracer with --tracer-version or review a Jest upgrade", tracerMajor, map[int]string{5: "24.8", 6: "28"}[tracerMajor], check.Version))
-		}
+	minimum, verified := jestTracerMinimums[tracerMajor]
+	if !known || !verified {
+		return verdict{Status: onboard.StatusInconclusive, Code: onboard.CodeUnverifiedTracerMajor, Reason: fmt.Sprintf("Unverified tracer major for dd-trace@%s; no Jest compatibility rule is available.", selection.Version)}
+	}
+	if err != nil {
+		return verdict{Status: onboard.StatusInconclusive, Code: onboard.CodeUnresolvedJestVersion, Reason: "Could not resolve the installed Jest release."}
+	}
+	constraint, _ := semver.NewConstraint(">=" + minimum)
+	if !constraint.Check(jestVersion) {
+		problems = append(problems, fmt.Sprintf("dd-trace %d requires Jest >=%s; detected %s", tracerMajor, minimum, check.Version))
 	}
 	if len(problems) > 0 {
-		return verdict{Status: "incompatible", Reason: strings.Join(problems, ". ")}
-	}
-	if !ok || !known || (tracerMajor != 5 && tracerMajor != 6) {
-		return verdict{Status: "inconclusive", Reason: "No verified Jest compatibility rule for this tracer/framework version; source builds are checked again after installation."}
+		return verdict{Status: onboard.StatusIncompatible, Code: onboard.CodeUnsupportedJestConfiguration, Reason: strings.Join(problems, ". ")}
 	}
 	status, reason := onboard.CompareNodeRequirement(check.Node, selection.Node)
-	if status != "compatible" {
+	if status != onboard.StatusCompatible {
 		return verdict{Status: status, Reason: reason}
 	}
-	return verdict{Status: "compatible", Reason: "Jest version, Circus runner, and local Node satisfy the known prerequisites. Paired execution and feature checks are still required."}
+	return verdict{Status: onboard.StatusCompatible, Reason: "Jest version, Circus runner, and local Node satisfy the known prerequisites. Paired execution and feature checks are still required."}
 }
 
 func releaseParts(version string) (int, int, bool) {
@@ -170,8 +190,8 @@ func releaseParts(version string) (int, int, bool) {
 
 func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer) (runErr error) {
 	result := validationResult{Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: true,
-		Compatibility: verdict{Status: "not exercised", Reason: "Configuration checks only; run testdrive without --check-only for paired execution."},
-		Features:      []featureResult{{Name: "all", Status: "not exercised", Reason: "Configuration checks only."}}}
+		Compatibility: verdict{Status: onboard.StatusNotExercised, Reason: "Configuration checks only; run testdrive without --check-only for paired execution."},
+		Features:      []featureResult{{Name: "all", Status: onboard.StatusNotExercised, Reason: "Configuration checks only."}}}
 	defer func() { runErr = errors.Join(runErr, finishValidation(output, t.repositoryRoot, result)) }()
 	if t.discoveryError != nil {
 		result.Error = t.discoveryError.Error()

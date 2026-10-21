@@ -62,11 +62,18 @@ type Testdrive struct {
 	environmentInfo      environmentInfo
 	preflight            *reportCard
 	checkOnly            bool
+	resolveJSTags        func(context.Context) (map[string]string, error)
 	resolveJSTracer      func(context.Context, string) (platform.JSSelection, error)
 }
 
 // Prepare detects the repository and probes the selected test environment and tracer.
-func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
+type PrepareOptions struct {
+	TracerVersion string
+	CheckOnly     bool
+}
+
+func Prepare(configuration PrepareOptions) (*Testdrive, error) {
+	version := configuration.TracerVersion
 	if version == "" {
 		version = "latest"
 	}
@@ -87,7 +94,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	}
 	language := detectedPlatform.Name()
 	command, args := runner.Command()
-	configurationOnly := len(checkOnly) > 0 && checkOnly[0]
+	configurationOnly := configuration.CheckOnly
 	var discoveryError error
 	var preflightEnvironment map[string]string
 	if configurationOnly {
@@ -155,6 +162,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }, nodeVersion: currentNodeVersion, environmentInfo: environment, preflight: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
 	if installer, ok := detectedPlatform.(*platform.JavaScript); ok {
 		drive.resolveJSTracer = installer.ResolveRegistryTracer
+		drive.resolveJSTags = installer.RegistryTracerTags
 	}
 	return drive, nil
 }

@@ -171,3 +171,29 @@ func TestCheckOnlyPreviewRequiresConfirmationAndExposesOnlyCurrentFlags(t *testi
 		}
 	}
 }
+
+func TestCheckOnlyNonInteractiveHintPreservesEveryFlag(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	if err := os.WriteFile("package.json", []byte(`{"scripts":{"test":"jest"},"devDependencies":{"jest":"30.2.0"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := newTestdriveCommand()
+	command.Flags().String("framework", "", "selected framework")
+	command.SetIn(strings.NewReader(""))
+	command.SetOut(&bytes.Buffer{})
+	command.SetErr(&bytes.Buffer{})
+	command.SetArgs([]string{"--framework", "jest", "--check-only", "--tracer-version", "5"})
+	err := command.ExecuteContext(t.Context())
+	if err == nil {
+		t.Fatal("expected non-interactive hint")
+	}
+	for _, flag := range []string{"--framework=jest", "--check-only=true", "--tracer-version=5", "--yes"} {
+		if !strings.Contains(err.Error(), flag) {
+			t.Fatalf("missing %s in %s", flag, err)
+		}
+	}
+}

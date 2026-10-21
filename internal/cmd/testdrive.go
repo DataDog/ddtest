@@ -13,7 +13,9 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/testdrive"
+	"github.com/kballard/go-shellquote"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var testdriveCmd = newTestdriveCommand()
@@ -37,7 +39,7 @@ func newTestdriveCommand() *cobra.Command {
 	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		execution, err := testdrive.Prepare(version, checkOnly)
+		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, CheckOnly: checkOnly})
 		if err != nil {
 			return err
 		}
@@ -49,6 +51,16 @@ func newTestdriveCommand() *cobra.Command {
 			return err
 		}
 		if !yes {
+			if !isTerminal(cmd.InOrStdin()) {
+				words := []string{"ddtest", "testdrive"}
+				cmd.Flags().Visit(func(flag *pflag.Flag) {
+					if flag.Name != "yes" {
+						words = append(words, "--"+flag.Name+"="+flag.Value.String())
+					}
+				})
+				words = append(words, "--yes")
+				return fmt.Errorf("standard input is not interactive; review the preview and run `%s`", shellquote.Join(words...))
+			}
 			confirmed, err := confirmTestdrive(cmd.InOrStdin(), output, isTerminal(cmd.InOrStdin()))
 			if err != nil {
 				return err
