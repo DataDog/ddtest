@@ -29,6 +29,9 @@ func ForwardJestCommand(root, command string) (string, error) {
 		return "", err
 	}
 	if resolution.SingleJest && len(words) > 0 && !strings.Contains(words[0], "=") {
+		if words[0] == "npm" && !slices.Contains(words, "--") {
+			return command + " --", nil
+		}
 		if words[0] == "jest" {
 			words[0] = filepath.Join(root, "node_modules", ".bin", "jest")
 			return shellquote.Join(words...), nil

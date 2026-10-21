@@ -78,3 +78,32 @@ func TestProbeSkipsOnlyRecognizedLintAndPreservesFullSuiteFailure(t *testing.T) 
 	writeScripts(t, root, map[string]string{"lint": "node setup.js"})
 	require.False(t, lintOnly(root, "yarn lint", 0), "a script name is not proof of lint-only setup")
 }
+
+func TestNpmForwardsProbeOptionsToJest(t *testing.T) {
+	npm, err := exec.LookPath("npm")
+	if err != nil {
+		t.Skip("npm required to verify its forwarding semantics")
+	}
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"test": "jest"})
+	bin := filepath.Join(root, "node_modules", ".bin")
+	require.NoError(t, os.MkdirAll(bin, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "jest"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > jest-args\n"), 0755))
+	for _, command := range []string{"npm test", "npm t", "npm run test", "npm run-script test", "npm test --"} {
+		t.Run(command, func(t *testing.T) {
+			selected, err := ForwardJestCommand(root, command)
+			require.NoError(t, err)
+			words, err := shellquote.Split(selected)
+			require.NoError(t, err)
+			flags := []string{"--listTests", "--json", "--runTestsByPath", "probe file.js"}
+			cmd := exec.CommandContext(t.Context(), npm, append(words[1:], flags...)...)
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "npm_config_cache="+t.TempDir())
+			output, err := cmd.CombinedOutput()
+			require.NoError(t, err, string(output))
+			actual, err := os.ReadFile(filepath.Join(root, "jest-args"))
+			require.NoError(t, err)
+			require.Equal(t, "--listTests\n--json\n--runTestsByPath\nprobe file.js\n", string(actual))
+		})
+	}
+}
