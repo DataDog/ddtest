@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -256,4 +257,25 @@ func TestRecoverPlaywrightOwnershipStorageIsRepositoryScoped(t *testing.T) {
 	require.NoError(t, recoverProcessOwners(root, io.Discard))
 	require.NoDirExists(t, owner.directory)
 	require.DirExists(t, unrelated)
+}
+
+func TestProcessOwnershipSupportsLongTemporaryPaths(t *testing.T) {
+	root := filepath.Join(t.TempDir(), strings.Repeat("long-temp-", 12))
+	require.NoError(t, os.MkdirAll(root, 0700))
+	t.Setenv("TMPDIR", root)
+	owner, err := newProcessOwner()
+	require.NoError(t, err, "Linux and Darwin socket paths must remain short even with long TMPDIR")
+	defer func() { require.NoError(t, owner.Close()) }()
+	require.LessOrEqual(t, len(owner.listener.Addr().String()), 103)
+}
+
+func TestRecoverOwnershipAlsoChecksConfiguredTemporaryRoot(t *testing.T) {
+	root := t.TempDir()
+	temporary := t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	abandoned, err := os.MkdirTemp(temporary, "ddtest-process-")
+	require.NoError(t, err)
+	require.NoError(t, markSessionStorage(abandoned, root))
+	require.NoError(t, recoverProcessOwners(root, io.Discard))
+	require.NoDirExists(t, abandoned, "storage from the previous socket base must still be recovered")
 }

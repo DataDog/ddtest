@@ -69,9 +69,9 @@ func startProcessOwner(directory string, env map[string]string) (*processOwner, 
 
 func processSocketBase() string {
 	socketBase := os.TempDir()
-	// Darwin Unix socket paths are limited to 104 bytes; customer TMPDIR paths
+	// Unix socket paths are limited to 104/108 bytes. Customer TMPDIR paths
 	// can already exceed that before adding the private directory and socket.
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
 		socketBase = "/tmp"
 	}
 	return socketBase
@@ -169,10 +169,20 @@ func (t *Testdrive) ownPlaywrightProcesses(directory string, env map[string]stri
 
 // The repository lock excludes another live ddtest owner for this repository.
 func recoverProcessOwners(root string, output io.Writer) error {
-	paths, err := filepath.Glob(filepath.Join(processSocketBase(), "ddtest-process-*"))
-	if err != nil {
-		return err
+	bases := []string{processSocketBase()}
+	// Also recover storage written by versions that used the configured TMPDIR.
+	if base := os.TempDir(); base != bases[0] {
+		bases = append(bases, base)
 	}
+	var paths []string
+	for _, base := range bases {
+		matches, err := filepath.Glob(filepath.Join(base, "ddtest-process-*"))
+		if err != nil {
+			return err
+		}
+		paths = append(paths, matches...)
+	}
+
 	for _, path := range paths {
 		info, err := os.Lstat(path)
 		if err != nil || !privateOwnedDirectory(info) {
