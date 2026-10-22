@@ -8,6 +8,8 @@ package onboard
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/kballard/go-shellquote"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,19 +98,19 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 				return "Selected Cucumber leaf does not consume scoped DD_CUCUMBER_NODE_OPTIONS while preserving existing NODE_OPTIONS"
 			}
 		}
-		copy := step
-		copy.Env = map[string]string{}
-		for k, v := range step.Env {
-			copy.Env[k] = v
+		configured := step
+		configured.Env = maps.Clone(step.Env)
+		if configured.Env == nil {
+			configured.Env = map[string]string{}
 		}
-		copy.Env["NODE_OPTIONS"] = scoped
-		if reason := checkJestBootstrap(workflow, job, copy, row, "vitest"); reason != "" {
+		configured.Env["NODE_OPTIONS"] = scoped
+		if reason := checkJestBootstrap(workflow, job, configured, row, "cucumber"); reason != "" {
 			return reason
 		}
-	} else if reason := checkJestBootstrap(workflow, job, step, row, "vitest"); reason != "" {
+	} else if reason := checkJestBootstrap(workflow, job, step, row, "cucumber"); reason != "" {
 		return reason
 	}
-	if pkg.Type == "module" {
+	if pkg.Type == "module" || CucumberESMInputs(root, commands) {
 		options := scoped
 		for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
 			if value, ok := env["NODE_OPTIONS"]; ok {
@@ -121,8 +123,50 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 	}
 	for _, command := range commands {
 		if !command.usesNYC {
+			if command.cucumberCoverageWrapper == "c8" {
+				return "The selected Cucumber command uses c8 V8 coverage, which does not supply the Istanbul suite coverage required for TIA. ddtest preserves c8 and does not add a second NYC wrapper; review application instrumentation separately."
+			}
 			return "Cucumber CI source coverage is not configured. Preserve the command and wrap its Cucumber leaf with nyc; native ESM also requires Istanbul instrumentation such as @istanbuljs/esm-loader-hook. Local coverage does not configure CI."
 		}
 	}
 	return ""
+}
+
+// Conservative input inspection only: executing arbitrary configuration here
+// would be an onboarding side effect. Dynamic config remains subject to execution.
+func CucumberESMInputs(root string, commands []TestCommand) bool {
+	for _, command := range commands {
+		directory := filepath.Join(root, command.Directory)
+		if strings.Contains(command.cucumberProbeCommand, ".mjs") || strings.Contains(command.cucumberProbeCommand, ".mts") {
+			return true
+		}
+		configs := []string{"cucumber.js", "cucumber.cjs", "cucumber.mjs", "cucumber.json", "cucumber.yaml", "cucumber.yml"}
+		words, _ := shellquote.Split(command.cucumberProbeCommand)
+		for i, word := range words {
+			if word == "--config" || word == "-c" {
+				if i+1 < len(words) {
+					configs = []string{words[i+1]}
+					break
+				}
+			}
+			if value, ok := strings.CutPrefix(word, "--config="); ok {
+				configs = []string{value}
+				break
+			}
+		}
+		for _, name := range configs {
+			file := name
+			if !filepath.IsAbs(file) {
+				file = filepath.Join(directory, file)
+			}
+			data, err := os.ReadFile(file)
+			if err == nil {
+				if strings.Contains(string(data), ".mjs") || strings.Contains(string(data), ".mts") {
+					return true
+				}
+				break
+			}
+		}
+	}
+	return false
 }

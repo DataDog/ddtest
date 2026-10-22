@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-const sourceIdentityScope = "Native file and full test name, including reported project/browser/repeat identity. Counts cover reporting-only results, including skipped results, once per configuration; retries remain attempts. Matching source identities across commands do not establish equivalent configurations or environments."
+const sourceIdentityScope = "Native file and full test name, including reported source location and project/browser/repeat identity. Counts cover reporting-only results, including skipped results, once per configuration; retries remain attempts. Matching source identities across commands do not establish equivalent configurations or environments."
 
 // Keep identity keys only while combining results. The compact report retains
 // counts, not a second copy of every native test or telemetry event.
@@ -44,7 +44,7 @@ func nativeExecutionCounts(run validationRun) *executionCounts {
 			counts.Reason = "Source-test identities are unavailable because a native test file is missing or outside the repository."
 			break
 		}
-		identity := sourceTestIdentity{Framework: run.framework, File: filepath.ToSlash(file), Name: normalizeOwnedTemporaryPath(run, test.Name), Project: run.Project}
+		identity := sourceTestIdentity{Framework: run.framework, File: filepath.ToSlash(file), Name: normalizeOwnedTemporaryPath(run, test.Name+cucumberLocation(test)), Project: run.Project}
 		if test.Playwright != nil {
 			identity.Project = test.Playwright.Project
 			identity.Browser = test.Playwright.Browser

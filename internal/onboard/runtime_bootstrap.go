@@ -109,7 +109,7 @@ func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 					requireFound = true
 				}
 			}
-			if requireFound && (len(frameworks) == 0 || frameworks[0] != "vitest" || importFound) {
+			if requireFound && (len(frameworks) == 0 || (frameworks[0] != "vitest" && frameworks[0] != "cucumber") || importFound) {
 				return ""
 			}
 		}

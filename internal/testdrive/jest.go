@@ -23,13 +23,15 @@ import (
 )
 
 type jestTest struct {
-	CypressAttempts []string            `json:"-"`
-	Playwright      *playwrightIdentity `json:"playwright,omitempty"`
-	telemetryName   *string
-	File            string `json:"file"`
-	Name            string `json:"name"`
-	Status          string `json:"status"`
-	Failure         string `json:"failure,omitempty"`
+	CucumberAttempts []string            `json:"-"`
+	CucumberLine     int                 `json:"-"`
+	CypressAttempts  []string            `json:"-"`
+	Playwright       *playwrightIdentity `json:"playwright,omitempty"`
+	telemetryName    *string
+	File             string `json:"file"`
+	Name             string `json:"name"`
+	Status           string `json:"status"`
+	Failure          string `json:"failure,omitempty"`
 }
 
 type jestResults struct {
@@ -279,7 +281,7 @@ func configureScenarioEnvironment(env map[string]string, feature string) {
 func executedTests(run validationRun) int {
 	count := 0
 	for _, test := range run.Tests {
-		if test.Status == "passed" || test.Status == "failed" {
+		if test.Status == "passed" || test.Status == "failed" || (run.framework == "cucumber" && (test.Status == "pending" || test.Status == "undefined")) {
 			count++
 		}
 	}
@@ -291,7 +293,7 @@ func outcomeKeys(run validationRun) []string {
 	keys = append(keys, run.SuiteErrors...)
 	keys = append(keys, run.SuiteFailures...)
 	for _, test := range run.Tests {
-		keys = append(keys, test.File+" › "+test.Name+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test))
+		keys = append(keys, test.File+" › "+test.Name+cucumberLocation(test)+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test))
 	}
 	for i := range keys {
 		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])
@@ -341,6 +343,9 @@ func compareJest(baseline, instrumented validationRun) verdict {
 }
 
 func verifyJestTelemetry(run validationRun) verdict {
+	if run.framework == "cucumber" {
+		return verifyCucumberTelemetry(run)
+	}
 	if run.framework == "playwright" {
 		return verifyPlaywrightTelemetry(run)
 	}

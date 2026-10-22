@@ -59,6 +59,7 @@ func TestCucumberSupportMetadataIntegration(t *testing.T) {
 	var support cucumberSupport
 	require.NoError(t, json.Unmarshal(body, &support))
 	require.Contains(t, append(support.RequirePaths, support.ImportPaths...), filepath.Join(root, "features/support/world.js"))
+	write("features/probe.feature.config.cjs", `module.exports={default:{}}`)
 	write("features/probe.feature", "Feature: Support\n  Scenario: Probe\n    Given probe support works\n")
 	write("features/probe.feature.steps.cjs", `const {Given}=require('@cucumber/cucumber');Given('probe support works',function(){if(this.value!=='world'||!this.hook)throw Error('effective support was lost')})`)
 	drive := &Testdrive{repositoryRoot: root, command: cli, cucumberNode: node, cucumberExecutable: cli, cucumberSupport: &support}

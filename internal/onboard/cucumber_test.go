@@ -20,7 +20,7 @@ func TestCucumberLiteralAliasesPreserveCoverageAndProfiles(t *testing.T) {
 	require.True(t, CucumberUsesNYC(root, "npm test"))
 	probe, err := CucumberProbeCommand(root, "npm test")
 	require.NoError(t, err)
-	require.Equal(t, "cucumber-js features --profile ci", probe)
+	require.Equal(t, "nyc --check-coverage=false -- cucumber-js features --profile ci", probe)
 	_, err = CucumberValidationCommand(root, "npm test")
 	require.NoError(t, err)
 }

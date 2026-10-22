@@ -63,6 +63,13 @@ func resolveMochaCoverage(root, directory string, words, stack []string, remaini
 		result.Tests[0].ProbeCoverageThresholdsDisabled = true
 		result.Tests[0].mochaProbeCommand = shellquote.Join(relaxCoverageChecks(words[:i])...) + " " + probe
 	}
+	if framework == "cucumber" {
+		result.Tests[0].cucumberCoverageWrapper = filepath.Base(words[0])
+	}
+	if framework == "cucumber" && result.Tests[0].cucumberProbeCommand != "" {
+		result.Tests[0].ProbeCoverageThresholdsDisabled = true
+		result.Tests[0].cucumberProbeCommand = shellquote.Join(relaxCoverageChecks(words[:i])...) + " " + result.Tests[0].cucumberProbeCommand
+	}
 	result.Tests[0].usesNYC = result.Tests[0].usesNYC || filepath.Base(words[0]) == "nyc"
 	result.Tests[0].Command = shellquote.Join(words...)
 	return result

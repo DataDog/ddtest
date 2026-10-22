@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -26,16 +27,16 @@ import (
 //go:embed scripts/cucumber_support.cjs
 var cucumberSupportObserver string
 
-type cucumberSupport struct{ RequirePaths, ImportPaths, ConfigFiles []string }
+type cucumberSupport struct{ RequirePaths, ImportPaths, ConfigFiles, RequireModules, Loaders []string }
 
 const cucumberMetadataScript = `const path = require('node:path');
 const manifest = require.resolve('@cucumber/cucumber/package.json');
 const pkg = require(manifest);
-let loader = '';
-try { loader = require.resolve('@istanbuljs/esm-loader-hook'); } catch {}
+const coverage = {};
+for (const name of ['nyc','c8']) { try { const manifest = require.resolve(name+'/package.json');const pkg=require(manifest);const bin=typeof pkg.bin==='string'?pkg.bin:pkg.bin[name];coverage[name]=path.resolve(path.dirname(manifest),bin); } catch {} }
 console.log('DDTEST_CUCUMBER_METADATA=' + JSON.stringify({
  version: pkg.version, node: process.versions.node, nodePath: process.execPath,
- executable: path.resolve(path.dirname(manifest), pkg.bin['cucumber-js']), loader
+ executable: path.resolve(path.dirname(manifest), pkg.bin['cucumber-js']), coverage
 }));`
 
 func (t *Testdrive) checkCucumberPreflight(ctx context.Context, output io.Writer, result *validationResult) error {
@@ -50,19 +51,23 @@ func (t *Testdrive) checkCucumberPreflight(ctx context.Context, output io.Writer
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if metadata, ok := strings.CutPrefix(line, "DDTEST_CUCUMBER_METADATA="); ok {
-			var installed struct{ Version, Node, NodePath, Executable, Loader string }
+			var installed struct {
+				Version, Node, NodePath, Executable string
+				Coverage                            map[string]string
+			}
 			if err := json.Unmarshal([]byte(metadata), &installed); err != nil {
 				return err
 			}
 			check.Version, check.Node = installed.Version, installed.Node
-			t.cucumberNode, t.cucumberExecutable, t.cucumberLoader = installed.NodePath, installed.Executable, installed.Loader
+			t.cucumberCoverage = installed.Coverage
+			t.cucumberNode, t.cucumberExecutable = installed.NodePath, installed.Executable
 		}
 	}
 	installer, ok := t.platform.(*platform.JavaScript)
 	if !ok {
 		return fmt.Errorf("cucumber requires the JavaScript tracer selector")
 	}
-	selection, err := installer.ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args})
+	selection, err := installer.ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
 	result.Selection = &selection
 	if err != nil {
 		check.Verdict.Reason = "Tracer metadata unavailable: " + reportText(err.Error())
@@ -86,8 +91,8 @@ func checkCucumberSupport(check jestPreflight, selection platform.JSSelection) v
 	if !known {
 		return verdict{Status: "inconclusive", Reason: "Could not resolve the installed Cucumber version."}
 	}
-	if major < 7 {
-		return verdict{Status: "incompatible", Reason: "dd-trace instruments @cucumber/cucumber >=7. Preserve the customer's framework and select a supported configuration."}
+	if major < 8 {
+		return verdict{Status: "incompatible", Reason: "Cucumber testdrive requires @cucumber/cucumber >=8 for isolated probe configuration and support metadata. Preserve the customer's framework and select a supported configuration."}
 	}
 	status, reason := onboard.CompareNodeRequirement(check.Node, selection.Node)
 	if status != "compatible" {
@@ -105,7 +110,11 @@ func readCucumberResults(filename, directory string, run *validationRun) {
 		return
 	}
 	defer func() { _ = file.Close() }()
-	type pickle struct{ ID, URI, Name string }
+	type pickle struct {
+		ID, URI, Name string
+		AstNodeIds    []string
+	}
+	locations := map[string]int{}
 	type attempt struct {
 		ID, TestCaseID  string
 		Status, Failure string
@@ -120,9 +129,10 @@ func readCucumberResults(filename, directory string, run *validationRun) {
 	scanner.Buffer(make([]byte, 4096), 16<<20)
 	for scanner.Scan() {
 		var envelope struct {
+			GherkinDocument  any
 			Pickle           *pickle
 			TestCase         *struct{ ID, PickleID string }
-			TestCaseStarted  *struct{ ID, TestCaseID string }
+			TestCaseStarted  *struct{ ID, TestCaseID, WorkerID string }
 			TestStepFinished *struct {
 				TestCaseStartedID string
 				TestStepResult    struct{ Status, Message string }
@@ -133,12 +143,16 @@ func readCucumberResults(filename, directory string, run *validationRun) {
 			}
 			TestRunFinished *struct {
 				Success   bool
+				Message   string
 				Exception *struct{ Message string }
 			}
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &envelope); err != nil {
 			run.ResultError = "Cucumber native messages are invalid"
 			return
+		}
+		if envelope.GherkinDocument != nil {
+			cucumberASTLocations(envelope.GherkinDocument, locations)
 		}
 		if p := envelope.Pickle; p != nil {
 			pickles[p.ID] = *p
@@ -147,16 +161,24 @@ func readCucumberResults(filename, directory string, run *validationRun) {
 			cases[c.ID] = c.PickleID
 		}
 		if a := envelope.TestCaseStarted; a != nil {
+			if a.WorkerID != "" {
+				run.cucumberParallel = true
+			}
 			attempts[a.ID] = &attempt{ID: a.ID, TestCaseID: a.TestCaseID, Status: "passed"}
 		}
 		if step := envelope.TestStepFinished; step != nil {
 			if a := attempts[step.TestCaseStartedID]; a != nil {
 				switch step.TestStepResult.Status {
-				case "FAILED", "AMBIGUOUS", "UNDEFINED", "PENDING":
+				case "FAILED", "AMBIGUOUS":
 					a.Status = "failed"
 					a.Failure += step.TestStepResult.Status + ": " + step.TestStepResult.Message + "\n"
-				case "SKIPPED":
+				case "UNDEFINED", "PENDING":
 					if a.Status != "failed" {
+						a.Status = strings.ToLower(step.TestStepResult.Status)
+						a.Failure += step.TestStepResult.Status + ": " + step.TestStepResult.Message + "\n"
+					}
+				case "SKIPPED":
+					if a.Status == "passed" {
 						a.Status = "skipped"
 					}
 				}
@@ -170,6 +192,9 @@ func readCucumberResults(filename, directory string, run *validationRun) {
 		}
 		if end := envelope.TestRunFinished; end != nil {
 			complete = true
+			if end.Message != "" {
+				run.SuiteErrors = append(run.SuiteErrors, end.Message)
+			}
 			if end.Exception != nil {
 				run.SuiteErrors = append(run.SuiteErrors, end.Exception.Message)
 			}
@@ -179,8 +204,10 @@ func readCucumberResults(filename, directory string, run *validationRun) {
 		run.ResultError = "Cucumber native results are incomplete"
 		return
 	}
+	nativeAttempts := map[string][]string{}
 	for _, id := range finished {
 		a := attempts[id]
+		nativeAttempts[cases[a.TestCaseID]] = append(nativeAttempts[cases[a.TestCaseID]], a.Status)
 		if a.WillBeRetried {
 			continue
 		}
@@ -190,7 +217,13 @@ func readCucumberResults(filename, directory string, run *validationRun) {
 			return
 		}
 		name := p.Name
-		run.Tests = append(run.Tests, jestTest{File: filepath.Clean(filepath.Join(directory, p.URI)), Name: name, Status: a.Status, Failure: failureSignature(a.Failure)})
+		line := 0
+		for _, id := range p.AstNodeIds {
+			if locations[id] > 0 {
+				line = locations[id]
+			}
+		}
+		run.Tests = append(run.Tests, jestTest{CucumberAttempts: nativeAttempts[p.ID], CucumberLine: line, File: filepath.Clean(filepath.Join(directory, p.URI)), Name: name, Status: a.Status, Failure: failureSignature(a.Failure)})
 	}
 }
 
@@ -228,12 +261,6 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 		env["NODE_OPTIONS"] = stripDatadogNodeOptions(t.nodeOptions())
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
-	loader := t.cucumberLoader
-	if info, err := os.Stat(loader); err == nil && info.Mode().IsRegular() && !strings.Contains(env["NODE_OPTIONS"], "esm-loader-hook") {
-		// NYC's require hook cannot instrument native ESM. Use the installed
-		// application loader equally in both modes; never install one silently.
-		env["NODE_OPTIONS"] += " --experimental-loader " + strconv.Quote(loader)
-	}
 	command, args := t.command, append([]string{}, t.args...)
 	if probePath != "" {
 		command, args, err = t.cucumberProbeCommand(probePath)
@@ -241,8 +268,8 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 			return run, err
 		}
 		env["DDTEST_PROBE_MODE"], env["DDTEST_PROBE_COUNTER"] = probeMode, filepath.Join(directory, "probe-bodies")
-		env["NYC_CHECK_COVERAGE"], env["C8_CHECK_COVERAGE"] = "false", "false"
-		run.ProbeCoverageThresholdsDisabled = true
+		env["NODE_OPTIONS"] += " " + t.configurationEnvironment["DD_CUCUMBER_NODE_OPTIONS"]
+		run.ProbeCoverageThresholdsDisabled = strings.Contains(shellquote.Join(append([]string{command}, args...)...), "--check-coverage=false")
 	}
 	observer := filepath.Join(directory, "cucumber_support.cjs")
 	if err := os.WriteFile(observer, []byte(cucumberSupportObserver), 0600); err != nil {
@@ -259,6 +286,11 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 	command, args = selected.executionCommand()
 	env["PATH"] = filepath.Join(t.repositoryRoot, "node_modules/.bin") + string(os.PathListSeparator) + os.Getenv("PATH")
 	run.Command = shellquote.Join(append([]string{command}, args...)...)
+	owner, err := t.ownPlaywrightProcesses(directory, env)
+	if err != nil {
+		return run, err
+	}
+	defer func() { runErr = errors.Join(runErr, owner.Close()) }()
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
 	data, commandErr := t.executor.CombinedOutput(ctx, command, args, env)
 	run.commandOutput, run.commandError, run.ExitCode = string(data), commandErr, commandExitCode(commandErr)
@@ -277,7 +309,7 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 	var support cucumberSupport
 	metadata, err := os.ReadFile(env["DDTEST_CUCUMBER_SUPPORT"])
 	if err != nil || json.Unmarshal(metadata, &support) != nil {
-		run.ResultError = "Cucumber effective support metadata is unavailable"
+		run.ResultError = "Cucumber effective support metadata is unavailable: " + commandDiagnostic(data)
 	} else {
 		run.cucumberSupport = &support
 	}
@@ -289,6 +321,9 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 			excluded = append(excluded, support.ConfigFiles...)
 		}
 		run.Coverage = cucumberSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests, excluded...)
+		if run.cucumberParallel && run.Coverage.Status == "not observed" {
+			run.Coverage.Reason = "No application source-coverage events arrived from Cucumber parallel workers. The selected tracer may not support worker suite coverage; this setup cannot validate parallel TIA. NYC terminal output cannot substitute for missing test-coverage telemetry. Preserve the original parallel command and keep TIA unvalidated."
+		}
 	}
 	if probePath != "" {
 		data, _ := os.ReadFile(env["DDTEST_PROBE_COUNTER"])
@@ -298,8 +333,65 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 	if scenario.Feature == "skipping" {
 		run.Skipping = diagnoseSkipping(run, scenario)
 	}
+	if run.ResultError != "" {
+		writeCommandFailure(output, "Cucumber "+name, data)
+	}
 	if run.ExitCode != 0 || run.ResultError != "" {
 		run.Diagnostic = commandDiagnostic(data)
 	}
 	return run, nil
+}
+
+func cucumberASTLocations(value any, locations map[string]int) {
+	switch node := value.(type) {
+	case map[string]any:
+		if id, ok := node["id"].(string); ok {
+			if location, ok := node["location"].(map[string]any); ok {
+				if line, ok := location["line"].(float64); ok {
+					locations[id] = int(line)
+				}
+			}
+		}
+		for _, child := range node {
+			cucumberASTLocations(child, locations)
+		}
+	case []any:
+		for _, child := range node {
+			cucumberASTLocations(child, locations)
+		}
+	}
+}
+func cucumberLocation(test jestTest) string {
+	if test.CucumberLine > 0 {
+		return fmt.Sprintf(" (line %d)", test.CucumberLine)
+	}
+	return ""
+}
+func verifyCucumberTelemetry(run validationRun) verdict {
+	run.framework = "cucumber-attempts"
+	original := run.Tests
+	run.Tests = nil
+	for _, test := range original {
+		attempts := test.CucumberAttempts
+		if len(attempts) == 0 {
+			attempts = []string{test.Status}
+		}
+		for _, status := range attempts {
+			copy := test
+			copy.Status = status
+			run.Tests = append(run.Tests, copy)
+		}
+	}
+	// Native retries are verified attempt by attempt, retaining tracer retry reasons.
+	run.Facts.Tests = slices.Clone(run.Facts.Tests)
+	for i, test := range run.Facts.Tests {
+		attempts := slices.Clone(test.Attempts)
+		for j, attempt := range attempts {
+			if attempt.Retry && (attempt.RetryReason == "" || attempt.RetryReason == "external") {
+				attempts[j].Retry = false
+			}
+		}
+		run.Facts.Tests[i].Attempts = attempts
+	}
+	return verifyJestTelemetry(run)
 }

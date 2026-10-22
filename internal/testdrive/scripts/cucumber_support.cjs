@@ -34,6 +34,7 @@ module.exports = class SupportMetadata extends Formatter {
     }
     fs.writeFileSync(process.env.DDTEST_CUCUMBER_SUPPORT, JSON.stringify({
       requirePaths: support.requirePaths, importPaths: support.importPaths,
+      requireModules: support.requireModules || [], loaders: support.loaders || [],
       configFiles: configFiles.map(file => path.resolve(file))
     }));
   }

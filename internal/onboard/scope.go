@@ -26,23 +26,24 @@ type TestCommand struct {
 	mochaProbeDirectory             string
 	mochaProbeEnvironment           map[string]string
 
-	ScopeCommand      string            `json:"-"` // Original invocation before adding a forwarding wrapper.
-	ProbeLintSkipped  bool              `json:"probe_lint_skipped,omitempty"`
-	ReviewReason      string            `json:"review_reason,omitempty"`
-	ExitOnFailure     bool              `json:"exit_on_failure,omitempty"`
-	Resolution        string            `json:"resolution,omitempty"`
-	Directory         string            `json:"directory"`
-	Command           string            `json:"command"`
-	Environment       map[string]string `json:"environment,omitempty"`
-	locations         []commandLocation
-	Locations         []string       `json:"locations,omitempty"`
-	Prerequisites     []BuildCommand `json:"prerequisites,omitempty"`
-	UnvalidatedSetup  []string       `json:"unvalidated_setup,omitempty"`
-	CICoverageCommand string         `json:"ci_coverage_command,omitempty"`
-	mochaESM          bool
-	mochaProbeCommand string
-	usesNYC           bool
-	cucumberScoped    bool
+	ScopeCommand            string            `json:"-"` // Original invocation before adding a forwarding wrapper.
+	ProbeLintSkipped        bool              `json:"probe_lint_skipped,omitempty"`
+	ReviewReason            string            `json:"review_reason,omitempty"`
+	ExitOnFailure           bool              `json:"exit_on_failure,omitempty"`
+	Resolution              string            `json:"resolution,omitempty"`
+	Directory               string            `json:"directory"`
+	Command                 string            `json:"command"`
+	Environment             map[string]string `json:"environment,omitempty"`
+	locations               []commandLocation
+	Locations               []string       `json:"locations,omitempty"`
+	Prerequisites           []BuildCommand `json:"prerequisites,omitempty"`
+	UnvalidatedSetup        []string       `json:"unvalidated_setup,omitempty"`
+	CICoverageCommand       string         `json:"ci_coverage_command,omitempty"`
+	mochaESM                bool
+	mochaProbeCommand       string
+	usesNYC                 bool
+	cucumberCoverageWrapper string
+	cucumberScoped          bool
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same

@@ -19,6 +19,9 @@ func cucumberSourceCoverage(root string, facts intake.Facts, native []jestTest, 
 		root = canonical
 	}
 	supportFiles := map[string]bool{}
+	for _, test := range native {
+		excluded = append(excluded, test.File)
+	}
 	for _, file := range excluded {
 		if local, ok := cucumberCoverageFile(root, file); ok {
 			supportFiles[local] = true
@@ -37,7 +40,7 @@ func cucumberSourceCoverage(root string, facts intake.Facts, native []jestTest, 
 		var application []string
 		for _, file := range files {
 			local, valid := cucumberCoverageFile(root, file)
-			if valid && (supportFiles[local] || strings.HasSuffix(local, ".feature") || strings.HasSuffix(local, ".feature.md")) {
+			if valid && (supportFiles[local] || strings.Contains(local, "/.probes/") || strings.HasSuffix(local, ".feature") || strings.HasSuffix(local, ".feature.md")) {
 				continue
 			}
 			application = append(application, file)

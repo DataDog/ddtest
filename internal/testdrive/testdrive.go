@@ -48,10 +48,10 @@ type Testdrive struct {
 	cypressDiscovered        bool // cypressSelected came from CI discovery, not --command.
 	configurationSourceRoot  string
 	scopeCommand             string
+	cucumberCoverage         map[string]string
 	cucumberSupport          *cucumberSupport
 	cucumberNode             string
 	cucumberExecutable       string
-	cucumberLoader           string
 	cypress                  *onboard.CypressCommand
 	cypressCommand           string
 	playwrightGuard          bool

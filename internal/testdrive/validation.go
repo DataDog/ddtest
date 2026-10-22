@@ -60,21 +60,22 @@ type runSpec struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
-	ReplacedReporters []string
-	Role              runRole
-	cucumberSupport   *cucumberSupport
-	FrameworkNode     string
-	NativeCommand     string
-	ProbeExecutions   *int
-	Coverage          *coverageSummary
-	ExecutionContext  string `json:"execution_context,omitempty"`
-	temporaryRoot     string
-	commandOutput     string
-	commandError      error
-	Project           string
-	Skipping          *skippingDiagnostic
-	root              string
-	checkoutRoot      string
+	ReplacedReporters               []string
+	Role                            runRole
+	cucumberParallel                bool
+	cucumberSupport                 *cucumberSupport
+	FrameworkNode                   string
+	NativeCommand                   string
+	ProbeExecutions                 *int
+	Coverage                        *coverageSummary
+	ExecutionContext                string `json:"execution_context,omitempty"`
+	temporaryRoot                   string
+	commandOutput                   string
+	commandError                    error
+	Project                         string
+	Skipping                        *skippingDiagnostic
+	root                            string
+	checkoutRoot                    string
 	// Why a real-suite Mocha run may report no per-test coverage.
 	coverageCause                   string
 	framework                       string

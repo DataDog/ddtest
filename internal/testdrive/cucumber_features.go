@@ -7,6 +7,7 @@ package testdrive
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -32,11 +33,26 @@ func appendCucumberOptions(command string, args []string, options ...string) []s
 			}
 		}
 	}
-	return framework.WithFrameworkOptions(command, args, "cucumber-js", options...)
+	runner := "cucumber-js"
+	for _, arg := range args {
+		if filepath.Base(arg) == "cucumber.js" {
+			runner = "cucumber"
+			break
+		}
+	}
+	return framework.WithFrameworkOptions(command, args, runner, options...)
 }
 
 const cucumberProbeSteps = `const fs = require('node:fs');
-const { Given } = require('@cucumber/cucumber');
+const { Given, supportCodeLibraryBuilder: builder } = require('@cucumber/cucumber');
+// Retain customer World, hooks and parameter types, but customer catch-all steps
+// must not compete with the controlled definition. Finalize is exported by Cucumber.
+const finalize = builder.finalize;
+builder.finalize = function (...args) {
+  const library = finalize.apply(this, args);
+  library.stepDefinitions = library.stepDefinitions.filter(step => require('node:path').resolve(step.uri) === __filename);
+  return library;
+};
 Given('the ddtest controlled scenario executes', function () {
   const counter = process.env.DDTEST_PROBE_COUNTER;
   fs.appendFileSync(counter, 'attempt\n');
@@ -49,27 +65,48 @@ Given('the ddtest controlled scenario executes', function () {
 `
 
 func (t *Testdrive) runCucumberFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
-	probe, err := createProbe(t.checkoutRoot(), baseline, "Feature: ddtest\n  Scenario: "+probeName+"\n    Given the ddtest controlled scenario executes\n")
+	token := rand.Text()
+	probe, err := createProbe(t.checkoutRoot(), baseline, "Feature: ddtest\n  Scenario: "+probeName+"\n    Given the ddtest controlled scenario executes "+token+"\n")
 	if err != nil {
 		unavailableFeatures(result, err.Error())
 		return nil
 	}
 	defer func() { runErr = errors.Join(runErr, removeProbe(t.checkoutRoot(), probe)) }()
 	steps := probe + ".steps.cjs"
-	if err := createOwnedProbe(t.checkoutRoot(), steps, []byte(cucumberProbeSteps)); err != nil {
+	config := probe + ".config.cjs"
+	if err := createOwnedProbe(t.checkoutRoot(), config, []byte("module.exports={default:{}};\n")); err != nil {
+		return err
+	}
+	defer func() { runErr = errors.Join(runErr, removeProbe(t.checkoutRoot(), config)) }()
+	if err := createOwnedProbe(t.checkoutRoot(), steps, []byte(strings.ReplaceAll(cucumberProbeSteps, "the ddtest controlled scenario executes", "the ddtest controlled scenario executes "+token))); err != nil {
 		return err
 	}
 	defer func() { runErr = errors.Join(runErr, removeProbe(t.checkoutRoot(), steps)) }()
 
 	child := *t
 	child.cucumberSupport = baseline.cucumberSupport
-	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
+	if baseline.cucumberParallel {
+		leaf, err := onboard.CucumberProbeCommand(t.repositoryRoot, shellquote.Join(append([]string{t.command}, t.args...)...))
+		if err != nil || !strings.Contains(leaf, "--parallel") {
+			unavailableFeatures(result, "Cucumber parallel mode supplied through configuration cannot yet be replayed for isolated probes. Paired commands keep the original profile; select an explicit --parallel command for worker feature validation.")
+			return nil
+		}
+	}
+	err = runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
 		role := roleProbeFeature
-		if strings.HasPrefix(name, "probe-control") {
+		if scenario.Feature == "" {
 			role = roleProbeControl
 		}
 		return child.runCucumber(ctx, output, session, preload, runSpec{Name: name, Role: role, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
 	}, result)
+	if baseline.cucumberParallel {
+		for i, feature := range result.Features {
+			if feature.Status != "passed" {
+				result.Features[i].Reason = "Cucumber parallel mode could not validate " + feature.Name + " with the selected tracer's worker control transport. " + feature.Reason
+			}
+		}
+	}
+	return err
 }
 
 func (t *Testdrive) cucumberProbeCommand(probe string) (string, []string, error) {
@@ -81,32 +118,28 @@ func (t *Testdrive) cucumberProbeCommand(probe string) (string, []string, error)
 	if err != nil || len(words) == 0 {
 		return "", nil, fmt.Errorf("invalid Cucumber probe command")
 	}
-	var args []string
-	// Positional paths select the disposable feature only. Keep configuration,
-	// profiles, tags, support imports, parallelism and all other options intact.
-	values := []string{"--config", "-c", "--format", "-f", "--format-options", "--import", "-i", "--language", "--loader", "-l", "--name", "--order", "--parallel", "--profile", "-p", "--require", "-r", "--require-module", "--retry-tag-filter", "--snippet-interface", "--snippet-syntax", "--tags", "-t", "--world-parameters"}
-	for i := 1; i < len(words); i++ {
-		word := words[i]
-		if word == "--retry" {
-			if i+1 >= len(words) {
-				return "", nil, fmt.Errorf("missing Cucumber retry value")
+	// Keep only the coverage wrapper. The empty owned config prevents additive
+	// profile paths/tags/filters from reintroducing customer scenarios.
+	runner := slices.IndexFunc(words, func(word string) bool { return filepath.Base(word) == "cucumber-js" })
+	if runner < 0 {
+		return "", nil, fmt.Errorf("cucumber probe runner was not resolved")
+	}
+	config, err := filepath.Rel(t.repositoryRoot, probe+".config.cjs")
+	if err != nil {
+		return "", nil, err
+	}
+	args := []string{"--config", config}
+	for i := runner + 1; i < len(words); i++ {
+		key, value, inline := strings.Cut(words[i], "=")
+		if key == "--parallel" {
+			if !inline {
+				i++
+				if i >= len(words) {
+					return "", nil, fmt.Errorf("missing Cucumber parallel value")
+				}
+				value = words[i]
 			}
-			i++
-			continue
-		}
-		if strings.HasPrefix(word, "--retry=") {
-			continue
-		}
-		if slices.Contains(values, word) {
-			if i+1 >= len(words) {
-				return "", nil, fmt.Errorf("missing Cucumber option value: %s", word)
-			}
-			args = append(args, word, words[i+1])
-			i++
-			continue
-		}
-		if strings.HasPrefix(word, "-") {
-			args = append(args, word)
+			args = append(args, "--parallel", value)
 		}
 	}
 	if t.cucumberSupport == nil {
@@ -118,9 +151,23 @@ func (t *Testdrive) cucumberProbeCommand(probe string) (string, []string, error)
 	for _, path := range t.cucumberSupport.ImportPaths {
 		args = append(args, "--import", path)
 	}
+	for _, module := range t.cucumberSupport.RequireModules {
+		args = append(args, "--require-module", module)
+	}
+	for _, loader := range t.cucumberSupport.Loaders {
+		args = append(args, "--loader", loader)
+	}
 	args = append(args, probe, "--require", probe+".steps.cjs", "--retry", "0")
 	if t.cucumberNode == "" || t.cucumberExecutable == "" {
 		return "", nil, fmt.Errorf("cucumber preflight did not resolve its installed CLI")
 	}
-	return t.cucumberNode, append([]string{t.cucumberExecutable}, args...), nil
+	native := append([]string{t.cucumberExecutable}, args...)
+	if runner > 0 {
+		wrapper := t.cucumberCoverage[filepath.Base(words[0])]
+		if wrapper == "" {
+			return "", nil, fmt.Errorf("cucumber coverage wrapper %s was not resolved in the selected package", words[0])
+		}
+		return t.cucumberNode, append(append([]string{wrapper}, words[1:runner]...), append([]string{t.cucumberNode}, native...)...), nil
+	}
+	return t.cucumberNode, native, nil
 }

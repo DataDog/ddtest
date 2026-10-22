@@ -95,7 +95,8 @@ func TestCucumberFormatterOptionsReachRunnerThroughWrappers(t *testing.T) {
 func TestCucumberSupportUsesTracerRuntimeWithoutMajorAllowlist(t *testing.T) {
 	for _, tc := range []struct{ framework, node, tracerNode, want string }{
 		{"6.0.0", "24.14.1", ">=18", "incompatible"},
-		{"7.0.0", "24.14.1", ">=18", "compatible"},
+		{"7.0.0", "24.14.1", ">=18", "incompatible"},
+		{"8.11.1", "24.14.1", ">=18", "compatible"},
 		{"12.9.0", "20.19.0", ">=22", "incompatible"},
 		{"13.2.1", "24.14.1", ">=22", "compatible"},
 		{"99.0.0", "24.14.1", ">=22", "compatible"},
