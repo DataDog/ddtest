@@ -44,7 +44,9 @@ func TestCucumberSourceCoverageRequiresApplicationFiles(t *testing.T) {
 	require.Equal(t, "suite", coverage.Level)
 	require.Equal(t, 2, coverage.CoveredTests)
 	facts.SuiteCoverages[0].Files = append(facts.SuiteCoverages[0].Files, "/outside/project.js")
-	require.Equal(t, "invalid", cucumberSourceCoverage(root, facts, native, "cucumber.js", "support/steps.js").Status)
+	invalid := cucumberSourceCoverage(root, facts, native, "cucumber.js", "support/steps.js")
+	require.Equal(t, "invalid", invalid.Status)
+	require.Contains(t, invalid.Reason, "/outside/project.js")
 }
 
 func TestCucumberNativeMessagesRequireCompletionAndRetainFinalResults(t *testing.T) {

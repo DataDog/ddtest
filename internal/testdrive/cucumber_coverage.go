@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -47,6 +48,7 @@ func cucumberSourceCoverage(root string, facts intake.Facts, native []jestTest, 
 		}
 		facts.Tests[i].CoveredFiles = application
 	}
+	invalidExample := ""
 	result := &coverageSummary{Status: "not observed", TotalTests: facts.TestCount, Level: facts.CoverageLevel}
 	for _, test := range facts.Tests {
 		covered := false
@@ -54,6 +56,9 @@ func cucumberSourceCoverage(root string, facts intake.Facts, native []jestTest, 
 			local, valid := cucumberCoverageFile(root, file)
 			if !valid {
 				result.Status = "invalid"
+				if invalidExample == "" {
+					invalidExample = reportText(file)
+				}
 				continue
 			}
 			if !strings.HasPrefix(local, "node_modules/") && !strings.Contains(local, "/node_modules/") {
@@ -74,7 +79,7 @@ func cucumberSourceCoverage(root string, facts intake.Facts, native []jestTest, 
 	case "observed":
 		result.Reason = "Istanbul coverage names existing repository application files. Cucumber suite coverage is associated with its scenarios; it is not independent per-scenario coverage."
 	case "invalid":
-		result.Reason = "Cucumber source coverage names missing or outside-repository files; inspect the bounded invalid-file examples."
+		result.Reason = fmt.Sprintf("Cucumber source coverage names missing or outside-repository files, for example %q. Preserve repository-relative Istanbul source paths.", invalidExample)
 	default:
 		result.Reason = "No application source coverage observed. Install and configure NYC for Cucumber; native ESM also needs Istanbul instrumentation such as the project's @istanbuljs/esm-loader-hook. Config, support and feature files alone are insufficient."
 	}

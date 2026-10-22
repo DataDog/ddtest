@@ -788,13 +788,23 @@ matching existing failures are acceptable. The public message formatter supplies
 native scenario results, including hooks and final retry outcomes. Incomplete
 messages cannot certify compatibility.
 
-All six controls are required. Cucumber reports coverage at suite level; the
+Cucumber testdrive requires version 8 or later; the existing plan/run adapter
+still supports version 7. All six controls are required. Cucumber reports coverage at suite level; the
 report associates it with scenarios without claiming per-scenario precision.
 Feature/config/support files alone do not prove application coverage. Native ESM
-requires installed Istanbul instrumentation in addition to NYC. Unknown scripts,
+requires explicitly configured Istanbul instrumentation in addition to NYC.
+Testdrive preserves declared loaders; it does not inject one merely because it
+is installed, or add NYC around an existing c8 command. Unknown scripts,
 dynamic variables, orchestration globs and alias-specific working-directory or
 environment changes remain unvalidated with an explanation.
 
 Feature probes and their step definitions use the same recoverable ownership
 records as other adapters. Only the JSON/HTML report pair remains in the customer
 repository. Local checks do not exercise customer CI or Datadog processing.
+
+Cucumber probes use an owned empty config, dropping customer tags/name/profile/paths
+while retaining resolved support imports, World and unconditional hooks. Their step
+definition is isolated from customer catch-all definitions; tagged hooks remain
+checked by the actual suite. Original parallel commands stay parallel: missing
+worker coverage/control telemetry remains explicitly unvalidated rather than
+being hidden by a serial rerun.
