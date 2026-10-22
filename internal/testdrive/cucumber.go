@@ -20,7 +20,6 @@ import (
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
-	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -195,7 +194,9 @@ func readCucumberResults(filename, directory string, run *validationRun) {
 	}
 }
 
-func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
+func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
+	run.Role = spec.Role
 	run.framework, run.root, run.Name, run.Instrumented, run.ProbeMode = "cucumber", t.checkoutRoot(), name, instrumented, probeMode
 	directory := filepath.Join(session.Directory(), name)
 	if err := os.MkdirAll(directory, 0700); err != nil {

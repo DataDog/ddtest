@@ -274,7 +274,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 				}
 
 				for _, contextJob := range jobs {
-					result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
+					result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, root, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
 				}
 
 			}
@@ -337,7 +337,7 @@ func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) err
 	return err
 }
 
-func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
+func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
 	finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Status: StatusInconclusive}
 	var findings []RuntimeFinding
 	fail := func(code, reason string) []RuntimeFinding {
@@ -513,8 +513,12 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	}
 	if finding.Status == StatusCompatible {
 		reason := ""
-if len(frameworks) > 0 && frameworks[0] == "cucumber" { reason = checkCucumberBootstrap(root, workflow, job, step, row, resolution.Tests) } else { reason = checkTestBootstrap(workflow, job, step, row, resolution.Tests, frameworks...) }
-if reason != "" {
+		if len(frameworks) > 0 && frameworks[0] == "cucumber" {
+			reason = checkCucumberBootstrap(root, workflow, job, step, row, resolution.Tests)
+		} else {
+			reason = checkTestBootstrap(workflow, job, step, row, resolution.Tests, frameworks...)
+		}
+		if reason != "" {
 			finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedInitialization, reason
 		}
 	}

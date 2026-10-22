@@ -33,7 +33,7 @@ func TestCypressAPIRuntimeDoesNotResolveSetupNodeAlias(t *testing.T) {
 		{Uses: "cypress-io/github-action@v6", ActionNode: "20", Env: map[string]string{"NODE_OPTIONS": "-r ${{ env.DD_TRACE_PACKAGE }}"}},
 	}}
 	resolutions := []commandResolution{{}, {}, {Matched: true, Tests: []TestCommand{{Cypress: &CypressCommand{Action: "cypress-io/github-action@v6"}}}}}
-	findings := checkRuntimeJob(t.Context(), ciWorkflow{}, "tests", job, resolutions, nil,
+	findings := checkRuntimeJob(t.Context(), "", ciWorkflow{}, "tests", job, resolutions, nil,
 		func(context.Context, string, string) (NodeResolution, error) {
 			t.Fatal("API runtime must not resolve setup-node's alias")
 			return NodeResolution{}, nil

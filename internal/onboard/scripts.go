@@ -605,8 +605,8 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		result.SingleJest = true
 		result.MochaAuxiliary = false
 		if cucumber && (result.Tests[0].Directory != repositoryPath(root, directory) || len(result.Tests[0].Environment) > 0) {
- return unresolvedCommand("Cucumber alias changes its inner working directory or environment; use an explicit scoped invocation after reviewing that setup: " + command)
-}
+			return unresolvedCommand("Cucumber alias changes its inner working directory or environment; use an explicit scoped invocation after reviewing that setup: " + command)
+		}
 		// The full alias starts at the caller for lifecycle fidelity; probes
 		// retain their resolved runner directory and scoped environment.
 		result.Tests[0].Directory = repositoryPath(root, directory)

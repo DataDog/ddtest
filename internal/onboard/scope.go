@@ -14,7 +14,7 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
- cucumberProbeCommand string
+	cucumberProbeCommand            string
 	CypressPackage                  string          `json:"cypress_package_directory,omitempty"`
 	Cypress                         *CypressCommand `json:"cypress,omitempty"`
 	Platform                        string          `json:"platform,omitempty"` // GOOS of the resolved hosted CI runner, when known.
@@ -42,7 +42,7 @@ type TestCommand struct {
 	mochaESM          bool
 	mochaProbeCommand string
 	usesNYC           bool
-	cucumberScoped bool
+	cucumberScoped    bool
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same

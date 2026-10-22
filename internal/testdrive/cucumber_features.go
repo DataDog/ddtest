@@ -32,10 +32,7 @@ func appendCucumberOptions(command string, args []string, options ...string) []s
 			}
 		}
 	}
-	if i := framework.FrameworkSeparator(command, args, "cucumber-js"); i >= 0 {
-		return slices.Insert(args, i, options...)
-	}
-	return append(args, options...)
+	return framework.WithFrameworkOptions(command, args, "cucumber-js", options...)
 }
 
 const cucumberProbeSteps = `const fs = require('node:fs');
@@ -67,7 +64,11 @@ func (t *Testdrive) runCucumberFeatures(ctx context.Context, output io.Writer, s
 	child := *t
 	child.cucumberSupport = baseline.cucumberSupport
 	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
-		return child.runCucumber(ctx, output, session, preload, name, true, scenario, probe, mode)
+		role := roleProbeFeature
+		if strings.HasPrefix(name, "probe-control") {
+			role = roleProbeControl
+		}
+		return child.runCucumber(ctx, output, session, preload, runSpec{Name: name, Role: role, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
 	}, result)
 }
 
