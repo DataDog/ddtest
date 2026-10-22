@@ -208,3 +208,12 @@ func TestTestdriveHelpUsesRegisteredFrameworkNames(t *testing.T) {
 		t.Fatalf("help must use registered validation frameworks: %s", names)
 	}
 }
+
+func TestTestdrivePreparationFlagsRemainRegistered(t *testing.T) {
+	command := newTestdriveCommand()
+	for _, name := range []string{"all", "check-only", "timeout", "allow-reviewed-builds"} {
+		if command.Flags().Lookup(name) == nil {
+			t.Errorf("missing preparation flag %s", name)
+		}
+	}
+}
