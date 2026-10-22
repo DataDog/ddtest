@@ -167,7 +167,7 @@ func removeProbeWithOutput(root, probe string, output io.Writer) error {
 	}
 	if errors.Is(err, errProbeReplaced) {
 		relative, _ := filepath.Rel(root, probe)
-		_, _ = fmt.Fprintf(output, "Warning: preserved replaced probe %s; discarded its old ownership record.\n", relative)
+		_, _ = fmt.Fprintf(output, "Warning: kept %s because ddtest cannot prove it is its own probe (it was changed or replaced); delete it if it is a leftover probe.\n", relative)
 	}
 	if err == nil {
 		if err := os.Remove(probe); err != nil {
@@ -233,6 +233,11 @@ func createOwnedProbe(root, probe string, contents []byte) error {
 func recoverProbes(root string) error { return recoverProbesWithOutput(root, io.Discard) }
 
 func recoverProbesWithOutput(root string, output io.Writer) error {
+	// Nothing to recover until a probe was written. Repositories that never ran
+	// a probe, such as Python or Ruby ones, may keep .testoptimization symlinked.
+	if _, err := os.Lstat(filepath.Join(canonicalWorkflowRoot(root), ".testoptimization", ".probes")); os.IsNotExist(err) {
+		return nil
+	}
 	directory, err := probeOwnershipDirectory(root)
 	if err != nil {
 		return err
@@ -259,6 +264,10 @@ func recoverProbesWithOutput(root string, output io.Writer) error {
 		}
 		if err := removeProbeWithOutput(root, record.Path, output); err != nil {
 			recoveryErr = errors.Join(recoveryErr, err)
+			continue
+		}
+		// A kept replacement was already reported; it was not recovered.
+		if _, err := os.Lstat(record.Path); err == nil {
 			continue
 		}
 		relative, _ := filepath.Rel(root, record.Path)

@@ -509,10 +509,11 @@ func TestPythonTemporaryEnvironmentCleanup(t *testing.T) {
 				t.Fatalf("Run() error = %v", err)
 			}
 			directory := installer.options.Directory
-			if directory == "" || filepath.Dir(directory) != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(directory), "ddtest-python-") {
-				t.Fatalf("installation directory is not a private temporary directory: %q", directory)
+			owned := filepath.Dir(directory)
+			if directory == "" || filepath.Dir(owned) != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(owned), "ddtest-python-") {
+				t.Fatalf("installation directory is not inside a private temporary directory: %q", directory)
 			}
-			if _, err := os.Stat(directory); !os.IsNotExist(err) {
+			if _, err := os.Stat(owned); !os.IsNotExist(err) {
 				t.Fatalf("temporary environment remains after %s: %v", outcome, err)
 			}
 			if outcome != "install failure" && outcome != "intake failure" {
@@ -540,4 +541,51 @@ func TestPrepareJestUsesCanonicalRepositoryRoot(t *testing.T) {
 	canonical, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
 	require.Equal(t, canonical, drive.repositoryRoot)
+}
+
+func TestValidationFindingsDoNotPointAtDeletedTraffic(t *testing.T) {
+	facts := intake.Facts{TestEventCount: 1, ConfigurationErrors: []string{"skippable_tests"}, EmptyCoverageEntryCount: 2}
+	var output bytes.Buffer
+	writeRunFindings(&output, facts, false)
+	require.NotContains(t, output.String(), "captured traffic")
+	require.Contains(t, output.String(), "Inspect the test output.")
+	model := buildReport(t.TempDir(), facts, false, reportRuntime{Framework: "Jest", TrafficDeleted: true})
+	require.NotContains(t, model.Summary, "captured traffic")
+	for _, card := range model.Cards {
+		require.NotContains(t, card.Context, "captured traffic", card.Title)
+	}
+	output.Reset()
+	writeFindings(&output, facts)
+	require.Contains(t, output.String(), "Inspect the captured traffic", "legacy sessions keep their traffic")
+}
+
+func TestStartupRecoveryAcceptsSymlinkedReportsWithoutProbes(t *testing.T) {
+	root := t.TempDir()
+	reports := t.TempDir()
+	require.NoError(t, os.Symlink(reports, filepath.Join(root, ".testoptimization")))
+	t.Setenv("TMPDIR", t.TempDir())
+	for _, runner := range []framework.Framework{framework.NewPytest(platform.NewPython()), framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest)), framework.NewJest(platform.NewJavaScript())} {
+		drive := &Testdrive{repositoryRoot: root, framework: runner}
+		require.NoError(t, drive.recoverStartup(&bytes.Buffer{}), runner.Name())
+	}
+	require.NoDirExists(t, filepath.Join(reports, ".probes"), "recovery must not create probe storage")
+	// Probe records reached through a symlink are never trusted.
+	require.NoError(t, os.Mkdir(filepath.Join(reports, ".probes"), 0700))
+	drive := &Testdrive{repositoryRoot: root, framework: framework.NewJest(platform.NewJavaScript())}
+	require.ErrorContains(t, drive.recoverStartup(&bytes.Buffer{}), "must stay inside the repository")
+}
+
+func TestStartupRecoveryRemovesMarkedPythonEnvironments(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TMPDIR", t.TempDir())
+	owned, err := os.MkdirTemp("", "ddtest-python-*")
+	require.NoError(t, err)
+	require.NoError(t, markSessionStorage(owned, root))
+	require.NoError(t, os.Mkdir(filepath.Join(owned, "environment"), 0700))
+	unmarked, err := os.MkdirTemp("", "ddtest-python-*")
+	require.NoError(t, err)
+	drive := &Testdrive{repositoryRoot: root, framework: framework.NewPytest(platform.NewPython())}
+	require.NoError(t, drive.recoverStartup(&bytes.Buffer{}))
+	require.NoDirExists(t, owned, "a killed run's marked environment is recovered")
+	require.DirExists(t, unmarked, "folders without the owner marker are never removed")
 }

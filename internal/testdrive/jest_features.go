@@ -251,7 +251,24 @@ func (t *Testdrive) runJestProjectFeatures(ctx context.Context, output io.Writer
 		}
 		return value, err
 	}
-	return runProbeFeatures(run, result)
+	first := len(result.Features)
+	err = runProbeFeatures(run, result)
+	explainInjectedGlobalFailures(result.Features[first:], t.jestProject)
+	return err
+}
+
+// The tracer repeats early-flake-detection and attempt-to-fix probes through
+// Jest's injected global test, which injectGlobals: false removes. Name that
+// cause instead of only reporting the counts.
+func explainInjectedGlobalFailures(features []featureResult, project jestProject) {
+	if project.InjectGlobals == nil || *project.InjectGlobals {
+		return
+	}
+	for i := range features {
+		if features[i].Status == "failed" && (features[i].Name == "early-flake-detection" || features[i].Name == "attempt-to-fix") {
+			features[i].Reason += " Likely cause: this Jest configuration sets injectGlobals: false, and the tracer repeats tests through Jest's injected global test; tests imported from @jest/globals are not repeated."
+		}
+	}
 }
 
 func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, error), result *validationResult) error {

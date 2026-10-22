@@ -274,6 +274,20 @@ func TestPublicJestTestdrive(t *testing.T) {
 				require.Equal(t, 1, *report.Runs[0].ExitCode)
 				require.Equal(t, 1, *report.Runs[1].ExitCode)
 			}
+			if mode == "sharded threshold script" {
+				// Probes relax the customer's coverage threshold; the paired runs keep it.
+				controls := 0
+				for _, run := range report.Runs {
+					switch {
+					case run.Role == "probe-control":
+						controls++
+						require.True(t, run.ThresholdsDisabled, run.Name)
+					case !strings.HasPrefix(run.Role, "probe-"):
+						require.False(t, run.ThresholdsDisabled, run.Name)
+					}
+				}
+				require.Equal(t, 2, controls)
+			}
 			if mode == "script selection" {
 				require.Len(t, report.ProjectChecks, 2)
 				require.Equal(t, "B", report.ProjectChecks[1].Project)

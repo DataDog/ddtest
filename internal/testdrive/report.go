@@ -139,6 +139,8 @@ type reportRuntime struct {
 	Framework, Tracer, Command, Output, Error string
 	Environment                               environmentInfo
 	SetupFailure                              *reportCard
+	// Validation runs delete captured traffic after the run.
+	TrafficDeleted bool
 }
 
 type reportSourceFile struct {
@@ -260,7 +262,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			Severity: "error",
 			Title:    "Tracer error: empty coverage entries",
 			Count:    findings.EmptyCoverageEntryCount,
-			Context:  fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.", findings.EmptyCoverageEntryCount),
+			Context:  fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. %s", findings.EmptyCoverageEntryCount, inspectionHint(!info.TrafficDeleted, "Inspect the captured traffic.")),
 		})
 	}
 	if findings.MissingCoverage {
@@ -322,7 +324,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		model.Summary = fmt.Sprintf("%d %s.", count, plural(count, "finding", "findings"))
 	}
 	if len(findings.ConfigurationErrors) > 0 {
-		model.Summary += " Tracer configuration errors: " + strings.Join(findings.ConfigurationErrors, ", ") + ". Inspect the captured traffic and test output."
+		model.Summary += " Tracer configuration errors: " + strings.Join(findings.ConfigurationErrors, ", ") + ". " + inspectionHint(!info.TrafficDeleted, "Inspect the captured traffic and test output.")
 	}
 	for _, advice := range intake.Troubleshoot(repositoryRoot, info.Framework, findings) {
 		for i := range model.Cards {

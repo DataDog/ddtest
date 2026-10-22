@@ -203,7 +203,9 @@ func TestRecoveryPreservesReplacedProbeAndDoesNotBlockLaterRuns(t *testing.T) {
 	var output bytes.Buffer
 	require.NoError(t, recoverProbesWithOutput(root, &output))
 	require.FileExists(t, probe)
-	require.Contains(t, output.String(), "preserved replaced probe probe.test.js")
+	require.Contains(t, output.String(), "kept probe.test.js because ddtest cannot prove it is its own probe")
+	require.Contains(t, output.String(), "delete it if it is a leftover probe")
+	require.NotContains(t, output.String(), "Recovered probe ownership", "a kept file was not recovered")
 	require.NoError(t, recoverProbes(root))
 }
 

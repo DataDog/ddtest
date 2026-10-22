@@ -25,6 +25,7 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 		Environment: t.environmentInfo, SetupFailure: t.environmentFailure,
 		Framework: displayName(t.framework.Name()), Tracer: result.Tracer + " · " + result.TracerSource,
 		Command: run.Command, Output: run.commandOutput,
+		TrafficDeleted: supportsValidationFramework(t.framework.Name()),
 	}
 	if run.commandError != nil {
 		runtime.Error = run.commandError.Error()
@@ -32,7 +33,7 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 	model := buildReport(t.repositoryRoot, run.Facts, run.ExitCode != 0, runtime)
 	model.ExecutionCounts = nativeExecutionCounts(run)
 	if supportsValidationFramework(t.framework.Name()) {
-		writeFindings(output, run.Facts, model.Cards...)
+		writeRunFindings(output, run.Facts, false, model.Cards...)
 	}
 	model.Artifacts = []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}
 	var content bytes.Buffer

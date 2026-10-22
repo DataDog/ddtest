@@ -153,7 +153,7 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 	run.framework = "jest"
 	run.Instrumented = instrumented
 	run.ProbeMode = probeMode
-	run.root = t.repositoryRoot
+	run.root, run.checkoutRoot = t.repositoryRoot, t.checkoutRoot
 	if err := ctx.Err(); err != nil {
 		return run, err
 	}
@@ -337,12 +337,17 @@ func verifyJestTelemetry(run validationRun) verdict {
 	}
 	observed := make(map[identity]int)
 	for _, test := range run.Facts.Tests {
-		file := test.SourceFile
+		// The tracer reports source files relative to the Git checkout, and
+		// suite names relative to the test process directory.
+		file, base := test.SourceFile, run.checkoutRoot
 		if file == "" {
-			file = test.Suite
+			file, base = test.Suite, run.root
+		}
+		if base == "" {
+			base = run.root
 		}
 		if !filepath.IsAbs(file) {
-			file = filepath.Join(run.root, file)
+			file = filepath.Join(base, file)
 		}
 		file = filepath.Clean(file)
 		observe := func(attempt intake.TestRun) {

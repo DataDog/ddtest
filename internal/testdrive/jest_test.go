@@ -458,3 +458,30 @@ func TestReportingTelemetryKeepsSeparateExecutionsWithTheSameIdentity(t *testing
 	run.Facts.Tests[0].Attempts = append(run.Facts.Tests[0].Attempts, run.Facts.Tests[0].Attempts[0])
 	require.Empty(t, verifyJestTelemetry(run).Status)
 }
+
+func TestReportingTelemetryResolvesSourceFilesFromTheCheckout(t *testing.T) {
+	run := validationRun{root: "/repo/packages/app", checkoutRoot: "/repo",
+		Tests: []jestTest{{File: "/repo/packages/app/one.test.js", Name: "adds", Status: "passed"}},
+		Facts: intake.Facts{TestEventCount: 1, Tests: []intake.Test{{Name: "adds", SourceFile: "packages/app/one.test.js", Attempts: []intake.TestRun{{Status: "pass"}}}}}}
+	require.Empty(t, verifyJestTelemetry(run).Status, "source files are checkout-relative")
+	// Without a source file, the suite name is relative to the test process.
+	run.Facts.Tests[0].SourceFile, run.Facts.Tests[0].Suite = "", "one.test.js"
+	require.Empty(t, verifyJestTelemetry(run).Status)
+	run.checkoutRoot = ""
+	run.Facts.Tests[0].SourceFile = "one.test.js"
+	require.Empty(t, verifyJestTelemetry(run).Status, "outside Git, the repository root is the base")
+}
+
+func TestFeatureFailuresNameDisabledInjectedGlobals(t *testing.T) {
+	disabled := false
+	project := jestProject{InjectGlobals: &disabled}
+	features := []featureResult{{Name: "early-flake-detection", Status: "failed", Reason: "counts."}, {Name: "attempt-to-fix", Status: "failed"}, {Name: "auto-retries", Status: "failed"}, {Name: "early-flake-detection", Status: "passed"}}
+	explainInjectedGlobalFailures(features, project)
+	require.Contains(t, features[0].Reason, "injectGlobals: false")
+	require.Contains(t, features[1].Reason, "injectGlobals: false")
+	require.NotContains(t, features[2].Reason, "injectGlobals", "auto-retries does not depend on the global test")
+	require.Empty(t, features[3].Reason)
+	untouched := []featureResult{{Name: "attempt-to-fix", Status: "failed"}}
+	explainInjectedGlobalFailures(untouched, jestProject{})
+	require.Empty(t, untouched[0].Reason)
+}

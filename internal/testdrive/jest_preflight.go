@@ -58,7 +58,7 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 			return err
 		}
 	}
-	if command == "npx" {
+	if command == "npx" && !slices.Contains(baseArgs, "--no-install") {
 		baseArgs = append([]string{"--no-install"}, baseArgs...)
 	}
 	if command == "jest" {
@@ -168,9 +168,24 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 // Node engines alone do not describe framework/runner compatibility.
 var jestTracerMinimums = map[int]string{5: "24.8", 6: "28"}
 
+// Projects excluded by --selectProjects or --ignoreProjects never run, so their
+// runner does not matter. Feature validation applies the same selection.
+func selectedJestProjects(check jestPreflight) []jestProject {
+	if len(check.Projects) < 2 || check.Arguments == nil {
+		return check.Projects
+	}
+	var selected []jestProject
+	for _, project := range check.Projects {
+		if _, ok := projectArgs("jest", check.Arguments, project.DisplayName.Name); ok {
+			selected = append(selected, project)
+		}
+	}
+	return selected
+}
+
 func checkJestSupport(check jestPreflight, selection platform.JSSelection) verdict {
 	var problems []string
-	for _, project := range check.Projects {
+	for _, project := range selectedJestProjects(check) {
 		runner := filepath.ToSlash(project.Runner)
 		if !strings.Contains(runner, "/jest-circus/") && runner != "jest-circus/runner" {
 			problems = append(problems, "Jest requires the jest-circus runner for Test Optimization; add the matching jest-circus version and set testRunner to 'jest-circus/runner', or choose a supported Jest upgrade")

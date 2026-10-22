@@ -70,3 +70,29 @@ func TestRepeatedComparisonWithOnlyVariableDifferencesStaysInconclusive(t *testi
 	require.Equal(t, "inconclusive", got.Status)
 	require.Equal(t, "varying_outcomes", got.Code)
 }
+
+func TestRepeatedComparisonKeepsRecurringProcessFailuresBesideFlakyTests(t *testing.T) {
+	flaky := func(status string, exit int, suite ...string) validationRun {
+		return validationRun{root: "/repo", ExitCode: exit, SuiteFailures: suite, Tests: []jestTest{{File: "/repo/a.test.js", Name: "stable", Status: "passed"}, {File: "/repo/b.test.js", Name: "timing", Status: status}}}
+	}
+	// The unrelated test changes identically on both sides between repeats,
+	// while only the instrumented runs exit non-zero, or fail in teardown.
+	for name, runs := range map[string][4]validationRun{
+		"exit code":     {flaky("passed", 0), flaky("passed", 1), flaky("failed", 0), flaky("failed", 1)},
+		"suite failure": {flaky("passed", 0), flaky("passed", 0, "teardown leaked a handle"), flaky("failed", 0), flaky("failed", 0, "teardown leaked a handle")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := compareRepeatedJavaScript(runs[0], runs[1], runs[2], runs[3])
+			require.Equal(t, "suspected regression", got.Status)
+			require.Equal(t, "recurring_difference", got.Code)
+			differences := strings.Join(got.Differences, "\n")
+			require.Contains(t, differences, "Recurring process difference in both pairs")
+			require.Contains(t, differences, "Varies between repeats: b.test.js › timing")
+			require.True(t, strings.HasPrefix(got.Reason, "The same differences recur in both pairs"), got.Reason)
+			require.NotContains(t, got.Reason, "prevents attributing")
+		})
+	}
+	got := compareRepeatedJavaScript(flaky("passed", 0), flaky("passed", 1), flaky("passed", 0), flaky("passed", 0))
+	require.Equal(t, "inconclusive", got.Status, "a process difference that does not recur stays inconclusive")
+	require.True(t, strings.HasPrefix(got.Reason, "Outcomes changed between repeated runs"), got.Reason)
+}

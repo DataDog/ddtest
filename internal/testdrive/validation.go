@@ -66,6 +66,7 @@ type validationRun struct {
 	Project                         string
 	Skipping                        *skippingDiagnostic
 	root                            string
+	checkoutRoot                    string
 	framework                       string
 	Name                            string
 	Command                         string

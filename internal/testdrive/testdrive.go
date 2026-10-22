@@ -23,6 +23,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -50,25 +51,27 @@ type Testdrive struct {
 	discoveryError       error
 	preflight            func(context.Context, io.Writer, *validationResult) error
 	repositoryRoot       string
-	framework            framework.Framework
-	language             string
-	command              string
-	args                 []string
-	tracerLabel          string
-	platform             platform.Platform
-	tracerVersion        string
-	projectTracer        string
-	session              *Session
-	installCommand       string
-	installArgs          []string
-	executor             commandExecutor
-	startIntake          func(string, intake.Scenario) (localIntake, error)
-	nodeVersion          func() string
-	environmentInfo      environmentInfo
-	environmentFailure   *reportCard
-	checkOnly            bool
-	resolveJSTags        func(context.Context) (map[string]string, error)
-	resolveJSTracer      func(context.Context, string) (platform.JSSelection, error)
+	// Git checkout root; tracer source files are relative to it.
+	checkoutRoot       string
+	framework          framework.Framework
+	language           string
+	command            string
+	args               []string
+	tracerLabel        string
+	platform           platform.Platform
+	tracerVersion      string
+	projectTracer      string
+	session            *Session
+	installCommand     string
+	installArgs        []string
+	executor           commandExecutor
+	startIntake        func(string, intake.Scenario) (localIntake, error)
+	nodeVersion        func() string
+	environmentInfo    environmentInfo
+	environmentFailure *reportCard
+	checkOnly          bool
+	resolveJSTags      func(context.Context) (map[string]string, error)
+	resolveJSTracer    func(context.Context, string) (platform.JSSelection, error)
 }
 
 // Prepare detects the repository and probes the selected test environment and tracer.
@@ -154,9 +157,8 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 
 		}
 	}
-	if discoveryError != nil && !configurationOnly {
-		return nil, discoveryError
-	}
+	// A failed discovery still runs startup recovery and replaces the earlier
+	// report after confirmation, so a stale PASSED result never stays current.
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
 	session := planSession()
@@ -180,7 +182,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		command, args, source = pythonTestdriveCommand(repositoryRoot, command, args, strings.TrimSpace(settings.GetCommand()) != "")
 		environment, preflight = pythonEnvironmentInfo(ctx, command, args, source)
 	case "javascript":
-		if !configurationOnly {
+		if !configurationOnly && discoveryError == nil {
 			environment = nodeEnvironmentInfo(ctx, command)
 		}
 	case "ruby":
@@ -191,7 +193,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		options.Command, options.Args = environment.Executable, nil
 	}
 	var projectTracer string
-	if preflight == nil && !configurationOnly {
+	if preflight == nil && !configurationOnly && discoveryError == nil {
 		projectTracer, _ = detectedPlatform.DetectTracer(ctx, options)
 	}
 	var installCommand string
@@ -203,7 +205,13 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 
-	drive := &Testdrive{probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
+	checkoutRoot := repositoryRoot
+	if checkout := git.GetSourceRoot(); checkout != "" {
+		if canonical, err := filepath.EvalSymlinks(checkout); err == nil {
+			checkoutRoot = canonical
+		}
+	}
+	drive := &Testdrive{checkoutRoot: checkoutRoot, probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
@@ -227,11 +235,11 @@ func displayName(name string) string {
 
 // Preview describes the filesystem and process changes that Run will make.
 func (t *Testdrive) Preview(output io.Writer) {
+	if t.discoveryError != nil {
+		_, _ = fmt.Fprintf(output, "Command discovery failed: %s\nWith --yes, save a failed report without running tests.\n", t.discoveryError)
+		return
+	}
 	if t.checkOnly {
-		if t.discoveryError != nil {
-			_, _ = fmt.Fprintf(output, "Command discovery failed: %s\nWith --yes, save failed configuration findings without running tests.\n", t.discoveryError)
-			return
-		}
 		_, _ = fmt.Fprintln(output, "Check configuration only: load Jest configuration with --showConfig, resolve tracer metadata and review static CI runtimes. No tracer installation or tests; write .testoptimization/testdrive.json. Jest configuration may execute project JavaScript. CI execution and Datadog backend processing remain untested.")
 		return
 	}
@@ -308,16 +316,16 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 		return err
 	}
 	defer func() { _ = lock.Close() }()
-	if err := recoverSessions(t.repositoryRoot, output); err != nil {
+	if err := t.recoverStartup(output); err != nil {
 		return t.finishStartupFailure(output, err)
-	}
-	if probeRecoveryEnabled() {
-		if err := recoverProbesWithOutput(t.repositoryRoot, output); err != nil {
-			return t.finishStartupFailure(output, err)
-		}
 	}
 	if t.checkOnly {
 		return t.runConfigurationChecks(ctx, output)
+	}
+	if t.discoveryError != nil {
+		result := validationResult{Framework: t.framework.Name(), Tracer: t.tracerLabel, Error: t.discoveryError.Error(),
+			Compatibility: verdict{Status: "not exercised", Reason: "Command discovery failed; no tests were run."}}
+		return errors.Join(t.discoveryError, finishValidation(output, t.repositoryRoot, result))
 	}
 
 	result, runErr := t.run(ctx, output)
@@ -326,6 +334,17 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 		result.Error = runErr.Error()
 	}
 	return errors.Join(runErr, finishValidation(output, t.repositoryRoot, result))
+}
+
+// Startup recovery runs under the repository lock, before any new work.
+func (t *Testdrive) recoverStartup(output io.Writer) error {
+	if err := recoverSessions(t.repositoryRoot, output); err != nil {
+		return err
+	}
+	if !probeRecoveryEnabled() {
+		return nil
+	}
+	return recoverProbesWithOutput(t.repositoryRoot, output)
 }
 
 func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validationResult, runErr error) {
@@ -343,9 +362,6 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}
 
 	t.session = session
-	if !supportsValidationFramework(t.framework.Name()) {
-		session.persistent = true
-	}
 	result = validationResult{CheckOnly: t.checkOnly, Session: session.ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel,
 		Compatibility: verdict{Status: "inconclusive", Reason: "Validation did not complete."}}
 	defer func() {
@@ -412,15 +428,24 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		var err error
 		directory := session.Directory()
 		if t.language == "python" {
-			directory, err = os.MkdirTemp("", "ddtest-python-*")
+			// The owner marker lets startup recovery remove this folder after a
+			// hard kill; the environment itself stays in an empty subfolder.
+			owned, err := os.MkdirTemp("", "ddtest-python-*")
 			if err != nil {
 				return result, err
 			}
 			defer func() {
-				if err := os.RemoveAll(directory); err != nil {
+				if err := os.RemoveAll(owned); err != nil {
 					runErr = errors.Join(runErr, err)
 				}
 			}()
+			if err := markSessionStorage(owned, t.repositoryRoot); err != nil {
+				return result, err
+			}
+			directory = filepath.Join(owned, "environment")
+			if err := os.Mkdir(directory, 0700); err != nil {
+				return result, err
+			}
 		}
 		options := platform.TracerOptions{Directory: directory, Version: version, Command: t.command, Args: t.args}
 		if t.language == "python" && t.environmentInfo.Executable != "" {
@@ -565,8 +590,21 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 }
 
 func writeFindings(output io.Writer, findings intake.Facts, cards ...reportCard) {
+	writeRunFindings(output, findings, true, cards...)
+}
+
+// Validation sessions delete captured traffic with their storage; only legacy
+// telemetry-only sessions keep it under .testoptimization for inspection.
+func inspectionHint(trafficRetained bool, retained string) string {
+	if trafficRetained {
+		return retained
+	}
+	return "Inspect the test output."
+}
+
+func writeRunFindings(output io.Writer, findings intake.Facts, trafficRetained bool, cards ...reportCard) {
 	if len(findings.ConfigurationErrors) > 0 {
-		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. Inspect the captured traffic and test output.\n", strings.Join(findings.ConfigurationErrors, ", "))
+		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. %s\n", strings.Join(findings.ConfigurationErrors, ", "), inspectionHint(trafficRetained, "Inspect the captured traffic and test output."))
 	}
 	count := len(findings.ConfigurationErrors)
 	for _, finding := range cards {
@@ -592,7 +630,7 @@ func writeFindings(output io.Writer, findings intake.Facts, cards ...reportCard)
 	}
 	if findings.EmptyCoverageEntryCount > 0 {
 		count += findings.EmptyCoverageEntryCount
-		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.\n", findings.EmptyCoverageEntryCount)
+		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. %s\n", findings.EmptyCoverageEntryCount, inspectionHint(trafficRetained, "Inspect the captured traffic."))
 		writeTroubleshooting(output, cards, "error")
 	}
 	for _, size := range []int{

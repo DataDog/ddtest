@@ -64,6 +64,12 @@ func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrument
 			variable = append(variable, "Varies between repeats: "+label+"; baseline: "+outcomeDescription(a)+" -> "+outcomeDescription(c)+"; instrumented: "+outcomeDescription(b)+" -> "+outcomeDescription(d))
 		}
 	}
+	// An exit code or suite-level failure can recur while unrelated tests vary.
+	// A recurring test difference already explains a recurring exit code.
+	process := [4][]string{processKeys(baseline), processKeys(instrumented), processKeys(baselineAgain), processKeys(instrumentedAgain)}
+	if !slices.Equal(process[0], process[1]) && slices.Equal(process[0], process[2]) && slices.Equal(process[1], process[3]) && len(recurring) == 0 {
+		recurring = append(recurring, "Recurring process difference in both pairs; baseline: "+processDescription(process[0])+"; instrumented: "+processDescription(process[1]))
+	}
 	// Keep exit codes and suite-level differences when no test identity explains
 	// the varying run, rather than pretending a process failure is a test failure.
 	if len(recurring)+len(variable) > 0 {
@@ -71,10 +77,24 @@ func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrument
 	}
 	if len(recurring) > 0 {
 		result.Status, result.Code = "suspected regression", "recurring_difference"
+		result.Reason = "The same differences recur in both pairs while other outcomes varied between repeats."
 	}
-	result.Reason += " Only two pairs were observed; coincidental flakiness cannot be ruled out."
-	result.Reason += fmt.Sprintf(" %d test identities have recurring differences in both pairs; %d vary between repeats. Recurring differences still require investigation; this does not establish their cause.", len(recurring), len(variable))
+	result.Reason += fmt.Sprintf(" %d differences recur in both pairs; %d vary between repeats. Only two pairs were observed, so coincidental flakiness cannot be ruled out, and this does not establish a cause.", len(recurring), len(variable))
 	return result
+}
+
+func processKeys(run validationRun) []string {
+	keys := append([]string{fmt.Sprintf("exit=%d", run.ExitCode)}, run.SuiteErrors...)
+	keys = append(keys, run.SuiteFailures...)
+	for i := range keys {
+		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func processDescription(keys []string) string {
+	return reportText(strings.Join(keys, ", "))
 }
 
 func outcomeDescription(values []string) string {
