@@ -114,6 +114,11 @@ func selectJestCommand(root string, forward bool) (TestCommand, error) {
 					}
 					var assignments []string
 					for _, key := range slices.Sorted(maps.Keys(env)) {
+						// An empty NODE_OPTIONS means CI only preloaded the tracer,
+						// which testdrive supplies itself.
+						if key == "NODE_OPTIONS" && env[key] == "" {
+							continue
+						}
 						assignments = append(assignments, key+"="+env[key])
 					}
 					if len(assignments) > 0 {

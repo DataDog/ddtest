@@ -23,7 +23,6 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
-	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -60,27 +59,25 @@ type Testdrive struct {
 	discoveryError           error
 	preflight                func(context.Context, io.Writer, *validationResult) error
 	repositoryRoot           string
-	// Git checkout root; tracer source files are relative to it.
-	gitRoot            string
-	framework          framework.Framework
-	language           string
-	command            string
-	args               []string
-	tracerLabel        string
-	platform           platform.Platform
-	tracerVersion      string
-	projectTracer      string
-	session            *Session
-	installCommand     string
-	installArgs        []string
-	executor           commandExecutor
-	startIntake        func(string, intake.Scenario) (localIntake, error)
-	nodeVersion        func() string
-	environmentInfo    environmentInfo
-	environmentFailure *reportCard
-	checkOnly          bool
-	resolveJSTags      func(context.Context) (map[string]string, error)
-	resolveJSTracer    func(context.Context, string) (platform.JSSelection, error)
+	framework                framework.Framework
+	language                 string
+	command                  string
+	args                     []string
+	tracerLabel              string
+	platform                 platform.Platform
+	tracerVersion            string
+	projectTracer            string
+	session                  *Session
+	installCommand           string
+	installArgs              []string
+	executor                 commandExecutor
+	startIntake              func(string, intake.Scenario) (localIntake, error)
+	nodeVersion              func() string
+	environmentInfo          environmentInfo
+	environmentFailure       *reportCard
+	checkOnly                bool
+	resolveJSTags            func(context.Context) (map[string]string, error)
+	resolveJSTracer          func(context.Context, string) (platform.JSSelection, error)
 }
 
 // Prepare detects the repository and probes the selected test environment and tracer.
@@ -255,13 +252,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 
-	checkoutRoot := repositoryRoot
-	if checkout := git.GetSourceRoot(); checkout != "" {
-		if canonical, err := filepath.EvalSymlinks(checkout); err == nil {
-			checkoutRoot = canonical
-		}
-	}
-	drive := &Testdrive{gitRoot: checkoutRoot, probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
+	drive := &Testdrive{probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
