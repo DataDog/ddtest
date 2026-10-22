@@ -49,7 +49,7 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "no application coverage", "package directory", "custom support coverage", "feature application", "thresholds", "native retries", "profile retries", "CLI selectors", "profile selectors", "catch-all", "parallel", "outlines", "pending", "pending non-strict", "undefined", "undefined non-strict", "ambiguous", "ESM", "CJS ESM import", "scoped options", "c8", "timeout", "recovery"} {
+	for _, mode := range []string{"passing", "lifecycle", "nested alias", "existing failure", "no application coverage", "package directory", "custom support coverage", "feature application", "thresholds", "native retries", "profile retries", "CLI selectors", "profile selectors", "catch-all", "parallel", "outlines", "pending", "pending non-strict", "undefined", "undefined non-strict", "ambiguous", "ESM", "CJS ESM import", "scoped options", "c8", "timeout", "recovery"} {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -147,6 +147,12 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				appWrite("features/steps.mjs", `import {Given} from '@cucumber/cucumber';import add from '../src/add.mjs';Given('addition works',()=>{if(add(1,1)!==2)throw Error('bad add')})`)
 			}
 			pkg := map[string]any{"scripts": map[string]string{"test": script}, "devDependencies": map[string]string{"@cucumber/cucumber": installed.Version, "nyc": "17.1.0", "dd-trace": "6.20.1"}}
+			if mode == "lifecycle" {
+				pkg["scripts"] = map[string]string{"pretest": script, "test": "echo done"}
+			}
+			if mode == "nested alias" {
+				pkg["scripts"] = map[string]string{"test": "npm run scenarios", "scenarios": script}
+			}
 			if mode == "ESM" {
 				pkg["type"] = "module"
 			}

@@ -277,10 +277,13 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 	}
 	env["DDTEST_CUCUMBER_SUPPORT"] = filepath.Join(directory, "support.json")
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(observer)
-	args = appendCucumberOptions(command, args, "--format", observer)
-	run.ExecutionContext = "Both modes use native Cucumber message and support-metadata formatters; baseline tracing is disabled."
+	run.ExecutionContext = "Both modes preload native Cucumber message and support-metadata formatters into the actual CLI, preserving package aliases and lifecycle commands; baseline tracing is disabled."
 	results := filepath.Join(directory, "native.ndjson")
-	args = appendCucumberOptions(command, args, "--format", "message:"+results)
+	formatters, err := json.Marshal([]string{"--format", observer, "--format", "message:" + results})
+	if err != nil {
+		return run, err
+	}
+	env["DDTEST_CUCUMBER_FORMATTERS"] = string(formatters)
 	selected := *t
 	selected.command, selected.args = command, args
 	command, args = selected.executionCommand()

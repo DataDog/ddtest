@@ -3,6 +3,24 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 const localRequire = createRequire(path.join(process.cwd(), 'package.json'));
 const { Cli, Formatter } = localRequire('@cucumber/cucumber');
+// npm forwards arguments to the main script, never its lifecycle hooks. Add
+// formatters only when this process is the package's actual CLI entry point.
+// Wrapper, npm, and parallel-worker processes retain their original argv.
+if (process.env.DDTEST_CUCUMBER_FORMATTERS && process.argv[1]) {
+  const manifest = localRequire.resolve('@cucumber/cucumber/package.json');
+  const definition = localRequire(manifest);
+  const binary = typeof definition.bin === 'string' ? definition.bin : definition.bin['cucumber-js'];
+  let entry;
+  try { entry = fs.realpathSync(process.argv[1]); } catch { /* node -e may expose a non-file argument here */ }
+  if (entry === fs.realpathSync(path.resolve(path.dirname(manifest), binary))) {
+    const args = JSON.parse(process.env.DDTEST_CUCUMBER_FORMATTERS);
+    if (!Array.isArray(args) || args.some(arg => typeof arg !== 'string')) {
+      throw new Error('Invalid native Cucumber formatter options');
+    }
+    process.argv.push(...args);
+  }
+}
+
 let legacySupport;
 // Cucumber 7 exposes resolved support paths through its CLI. Later releases
 // expose the same coordinates on the formatter's support-code library.
