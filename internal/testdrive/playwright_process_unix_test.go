@@ -23,7 +23,7 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 	if err != nil {
 		t.Skip("Node is needed for the process lifecycle regression")
 	}
-	for _, mode := range []string{"node", "non-node", "non-detached", "exec-file", "exec", "fork-custom-env", "owner-crash"} {
+	for _, mode := range []string{"node", "non-node", "non-detached", "exec-file", "exec", "fork-custom-env", "ipc-wrapper", "owner-crash"} {
 		t.Run(mode, func(t *testing.T) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			require.NoError(t, err)
@@ -54,6 +54,15 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 				childPath := filepath.Join(dir, "fork.cjs")
 				require.NoError(t, os.WriteFile(childPath, []byte(child+`if(process.env.PARENT_ONLY)process.exit(1);process.send('ready');process.disconnect();`), 0600))
 				parent = fmt.Sprintf(`process.env.PARENT_ONLY='must-not-leak';const c=require('node:child_process').fork(%q,[],{detached:true,stdio:'ignore',env:{}});c.on('message',()=>c.unref());`, childPath)
+			}
+			if mode == "ipc-wrapper" {
+				childPath := filepath.Join(dir, "worker.cjs")
+				require.NoError(t, os.WriteFile(childPath, []byte(child+`process.send('ready');process.disconnect();`), 0600))
+				// Like xvfb-run: a non-Node launcher retains the IPC descriptor
+				// while a Node descendant sends messages and remains alive.
+				// Close the parent channel after the handshake: Linux shells may
+				// keep their descriptor open while waiting for that descendant.
+				parent = fmt.Sprintf(`const c=require('node:child_process').spawn('/bin/sh',['-c','"$@"','wrapper',process.execPath,%q],{stdio:['ignore','ignore','ignore','ipc'],env:{}});c.on('message',()=>{c.disconnect();c.unref()});`, childPath)
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()

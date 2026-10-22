@@ -52,13 +52,8 @@ if (process.env.DDTEST_PROCESS_OWNER && !process.env.DDTEST_PROCESS_GUARD) {
       env.NODE_OPTIONS = (env.NODE_OPTIONS || '') + ' --require ' + JSON.stringify(__filename)
     }
     const stdio = options.stdio ?? 'pipe'
-    if (Array.isArray(stdio) && stdio.includes('ipc')) {
-      if (options.file !== process.execPath) {
-        require('./process_owner.cjs').recordFailure('non-Node IPC child cannot be supervised', 'unsupported_detached_spawn')
-        process.exit(unsupportedExit)
-      }
-      // A fork with a custom environment may omit NODE_OPTIONS. Add only the
-      // supervisor; do not restore the parent's tracer or application preloads.
+    if (Array.isArray(stdio) && stdio.includes('ipc') && options.file === process.execPath) {
+      // Native Node forks inherit their own ownership preload and IPC channel.
       return Reflect.apply(spawn, this, [{ ...options, envPairs: Object.entries(env).map(([key, value]) => key + '=' + value) }])
     }
     if (process.platform === 'win32' || (args.length && args[0] !== options.file)) {
@@ -72,7 +67,8 @@ if (process.env.DDTEST_PROCESS_OWNER && !process.env.DDTEST_PROCESS_GUARD) {
     const closeExtra = Array.isArray(stdio) ? stdio.slice(3).map((_, i) => `${i + 3}<&-`).join(' ') : ''
     const launcher = `keeper_node=$1; keeper_script=$2; shift 2
 ready=$(mktemp "\${DDTEST_PROCESS_OWNER%/*}/ready.XXXXXXXX") || exit 1
-NODE_OPTIONS= DD_TRACE_ENABLED=false DD_CIVISIBILITY_ENABLED=false "$keeper_node" "$keeper_script" "$$" "$ready" </dev/null >/dev/null 2>&1 ${closeExtra} &
+(unset NODE_CHANNEL_FD NODE_CHANNEL_SERIALIZATION_MODE
+NODE_OPTIONS= DD_TRACE_ENABLED=false DD_CIVISIBILITY_ENABLED=false exec "$keeper_node" "$keeper_script" "$$" "$ready") </dev/null >/dev/null 2>&1 ${closeExtra} &
 keeper=$!; attempts=0
 while [ ! -s "$ready" ]; do
   kill -0 "$keeper" 2>/dev/null || exit 1
