@@ -23,3 +23,18 @@ func TestFeaturePolicyRequiresObservedResultsForEveryProject(t *testing.T) {
 	}
 	require.False(t, supportsValidationFramework("vitest"), "adapters register only when their validation code lands")
 }
+
+func TestValidationFrameworkNamesFollowRegisteredPolicies(t *testing.T) {
+	previous, exists := frameworkFeaturePolicies["example"]
+	t.Cleanup(func() {
+		if exists {
+			frameworkFeaturePolicies["example"] = previous
+		} else {
+			delete(frameworkFeaturePolicies, "example")
+		}
+	})
+	frameworkFeaturePolicies["example"] = frameworkPolicy{Paired: true}
+	require.Contains(t, ValidationFrameworkNames(), "example")
+	require.Contains(t, ValidationFrameworkNames(), "Jest")
+	require.NotContains(t, ValidationFrameworkNames(), "Python")
+}

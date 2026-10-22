@@ -1,5 +1,10 @@
 package testdrive
 
+import (
+	"slices"
+	"strings"
+)
+
 // A policy describes what must be exercised, never an assumed passing result.
 // Browser adapters add their not-supported/deferred exceptions with their PRs.
 type featurePolicy struct {
@@ -77,4 +82,16 @@ func probeRecoveryEnabled() bool {
 		}
 	}
 	return false
+}
+
+// ValidationFrameworkNames keeps CLI guidance aligned with registered adapters.
+func ValidationFrameworkNames() string {
+	var names []string
+	for name, policy := range frameworkFeaturePolicies {
+		if policy.Paired {
+			names = append(names, displayName(name))
+		}
+	}
+	slices.Sort(names)
+	return strings.Join(names, ", ")
 }
