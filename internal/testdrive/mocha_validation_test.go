@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -259,4 +260,12 @@ func TestMochaCoverageGateRequiresRealSuiteEvidence(t *testing.T) {
 	}
 	probe := validationRun{framework: "mocha", Name: "skipping", ProbeMode: "fail", Instrumented: true, Facts: intake.Facts{TestCount: 1}}
 	require.Nil(t, probe.summary().Coverage, "synthetic probes are not real-source coverage evidence")
+}
+
+func TestCoverageBlockerUsesTheSelectedFramework(t *testing.T) {
+	for _, name := range []string{"jest", "vitest", "mocha"} {
+		result := validationResult{Framework: name, Runs: []runSummary{{Coverage: &coverageSummary{Status: "not observed"}}}}
+		summary := summarizeValidation(result)
+		require.Contains(t, strings.Join(summary.BlockingChecks, "\n"), displayName(name)+" real-suite coverage")
+	}
 }
