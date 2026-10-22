@@ -130,6 +130,8 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 			return fmt.Errorf("inspect consumer package tracer: %w", err)
 		}
 		t.projectTracer = preload
+		// Keep later verification on the same package-local preload as preflight.
+		t.configurationEnvironment = options.Environment
 	}
 	selection, err := installer.ResolveTestdriveTracer(ctx, options)
 	result.Selection = &selection

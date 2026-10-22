@@ -255,7 +255,7 @@ func TestCypressNativeRetryTelemetryDoesNotDependOnArrivalOrder(t *testing.T) {
 func TestCypressBackgroundPortCheckUsesDeclaredBaseURL(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { require.NoError(t, listener.Close()) }()
 	plan := &onboard.CypressCommand{Start: [][]string{{"node", "server.cjs"}}}
 	require.ErrorContains(t, checkCypressStartupPorts(plan, map[string]string{"CYPRESS_BASE_URL": "http://" + listener.Addr().String()}), "already occupied")
 	connection, err := net.Dial("tcp", listener.Addr().String())

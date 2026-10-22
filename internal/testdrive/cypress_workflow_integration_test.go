@@ -169,6 +169,9 @@ func TestPublicCypressTestdrive(t *testing.T) {
 				require.Empty(t, check.Runs)
 			}
 			args := []string{"testdrive", "--framework", "cypress", "--all", "--yes"}
+			if mode == "passing" {
+				args = []string{"testdrive", "--framework", "cypress", "--yes"}
+			}
 			if mode == "existing failure" {
 				args = []string{"testdrive", "--framework", "cypress", "--command", "npm test", "--yes"}
 			}

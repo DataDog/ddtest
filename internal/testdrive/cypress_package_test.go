@@ -70,5 +70,6 @@ func TestCypressRootAliasInspectsItsConsumerPackage(t *testing.T) {
 	require.Equal(t, expected, drive.projectTracer)
 	require.Equal(t, "6.20.1", result.Selection.Version)
 	require.Equal(t, "project", result.Selection.Source)
+	require.NoError(t, drive.verifyInstalledSelection(t.Context(), drive.projectTracer, &result))
 	require.Equal(t, "15.1.0", result.Preflight.Version)
 }
