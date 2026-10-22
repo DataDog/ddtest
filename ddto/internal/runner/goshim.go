@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
@@ -33,6 +34,13 @@ var (
 	goShimLeft string
 	// goShimGo is the go that a go command with the go shim runs.
 	goShimGo string
+	// goShimAsGo is set when this process runs as the go shim.
+	goShimAsGo bool
+	// goShimReason says why this process puts the go shim first on PATH.
+	goShimReason string
+	// goShimGoMode says how ddto runs a go command with the go shim; see
+	// goShimGoCommand.
+	goShimGoMode string
 )
 
 // GoShimArgs returns ddto's arguments from its command line, and whether ddto
@@ -45,22 +53,40 @@ func GoShimArgs(args []string) ([]string, bool) {
 		goShimLeft = left
 	}
 	if isProgram(args[0], "go") {
+		goShimAsGo = true
 		return append([]string{"go"}, args[1:]...), true
 	}
 	return args[1:], false
 }
 
-// logGoShim logs the go shim that this process left off PATH, and the one that
-// it puts first for the command it runs.
+// logGoShim logs how many ddto go commands enclose this one, whether this
+// process runs as the go shim, the go shim that it left off PATH, and why and
+// how it puts one first for the command it runs.
 func (d *cliDebug) logGoShim() {
+	// Without a debug log, nothing is formatted.
+	if d == nil {
+		return
+	}
+	if nestedGoDepth > 1 {
+		d.printf("nested_go depth=%d", nestedGoDepth)
+	}
+	if goShimAsGo {
+		d.printf("go_shim as_go=true")
+	}
 	if goShimLeft != "" {
 		d.printf("go_shim left=%q", goShimLeft)
+	}
+	if goShimReason != "" {
+		d.printf("go_shim reason=%s", goShimReason)
 	}
 	if goShimFirst != "" {
 		d.printf("go_shim first_on_path=%q", goShimFirst)
 	}
 	if goShimGo != "" {
 		d.printf("go_shim go=%q", goShimGo)
+	}
+	if goShimGoMode != "" {
+		d.printf("go_shim go_command=%s", goShimGoMode)
 	}
 }
 
@@ -69,21 +95,22 @@ func (d *cliDebug) logGoShim() {
 const goShimFlag = "--go-shim"
 
 // GoShimCommand returns the command that ddto runs, without --go-shim, and
-// whether it runs with the go shim: after --go-shim, for gotestsum in any
-// form, and, for ddto run as the go shim, for go run and go tool, which can
-// start another program that runs go test.
-func GoShimCommand(args []string, fromGoShim bool) ([]string, bool) {
+// why it runs with the go shim, or "" if it does not: after --go-shim, for
+// gotestsum in any form, and, for ddto run as the go shim, for go run and go
+// tool, which can start another program that runs go test.
+func GoShimCommand(args []string, fromGoShim bool) ([]string, string) {
 	if len(args) > 0 && args[0] == goShimFlag {
-		return args[1:], true
+		return args[1:], "flag"
 	}
 	if runsGotestsum(args) {
-		return args, true
+		return args, "gotestsum"
 	}
 	if fromGoShim && len(args) > 0 && isProgram(args[0], "go") {
-		_, sub, _ := goSubcommand(args[1:])
-		return args, sub == "run" || sub == "tool"
+		if _, sub, _ := goSubcommand(args[1:]); sub == "run" || sub == "tool" {
+			return args, "launcher"
+		}
 	}
-	return args, false
+	return args, ""
 }
 
 // runsGotestsum reports whether args run gotestsum: itself, as a tool of the
@@ -165,10 +192,11 @@ func isProgram(path, name string) bool {
 	return base == name
 }
 
-// RunWithGoShim runs command with the go shim first on its PATH and returns
-// its exit status. If ddto cannot set the shim up, it warns and runs the
-// command without it.
-func RunWithGoShim(command []string) int {
+// RunWithGoShim runs command with the go shim first on its PATH, for the
+// reason that GoShimCommand returned, and returns its exit status. If ddto
+// cannot set the shim up, it warns and runs the command without it.
+func RunWithGoShim(command []string, reason string) int {
+	goShimReason = reason
 	run, tool, err := goShimSetup(command)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" WARN:", err, "- running", command[0], "without CI Visibility")
@@ -245,6 +273,8 @@ type moduleTool struct {
 // run runs the tool as go tool does: with the caller's environment, signals
 // forwarded, and go tool's report of a tool that did not exit cleanly.
 func (t *moduleTool) run() int {
+	debug := passThroughDebug()
+	debug.logModuleTool(t)
 	_, _ = os.Stderr.Write(t.diagnostics)
 	cmd := exec.Command(t.path, t.args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -257,30 +287,75 @@ func (t *moduleTool) run() int {
 			return name == "GOROOT" || runtime.GOOS == "windows" && strings.EqualFold(name, "GOROOT")
 		})
 	}
+	started := time.Now()
+	var forwarded []string
 	err := cmd.Start()
 	if err == nil {
 		signals := make(chan os.Signal, 100)
 		signal.Notify(signals, goToolSignals...)
+		// The loop does not log: a blocked debug write would hold back the
+		// next signal. The debug log lists the signals once the tool ends.
+		done := make(chan struct{})
 		go func() {
+			defer close(done)
 			for sig := range signals {
 				_ = cmd.Process.Signal(sig)
+				if debug != nil {
+					forwarded = append(forwarded, sig.String())
+				}
 			}
 		}()
 		err = cmd.Wait()
 		signal.Stop(signals)
 		close(signals)
+		<-done
 	}
-	if err == nil {
-		return 0
+	code := 0
+	if err != nil {
+		exit, ok := err.(*exec.ExitError)
+		if !ok || !exit.Exited() {
+			fmt.Fprintf(os.Stderr, "go tool %s: %s\n", t.name, err)
+		}
+		code = 1
+		if ok && exit.ExitCode() != -1 {
+			code = exit.ExitCode()
+		}
 	}
-	exit, ok := err.(*exec.ExitError)
-	if !ok || !exit.Exited() {
-		fmt.Fprintf(os.Stderr, "go tool %s: %s\n", t.name, err)
+	debug.logModuleToolEnd(err, code, started, forwarded)
+	return code
+}
+
+// logModuleTool logs the go shim and the module tool that ddto runs. Like
+// logModuleToolEnd, it returns before formatting anything without a debug
+// log, so a disabled log costs one comparison.
+func (d *cliDebug) logModuleTool(t *moduleTool) {
+	if d == nil {
+		return
 	}
-	if ok && exit.ExitCode() != -1 {
-		return exit.ExitCode()
+	d.logGoShim()
+	goroot := "kept"
+	switch {
+	case t.switchGOROOT != "":
+		goroot = "set"
+	case t.unsetGOROOT:
+		goroot = "removed"
 	}
-	return 1
+	d.printf("go_shim module_tool=%q path=%q args=%d goroot=%s", t.name, t.path, len(t.args), goroot)
+}
+
+// logModuleToolEnd logs the signals that ddto forwarded to the module tool,
+// why it did not start or exit cleanly, and ddto's exit status.
+func (d *cliDebug) logModuleToolEnd(err error, code int, started time.Time, forwarded []string) {
+	if d == nil {
+		return
+	}
+	if len(forwarded) != 0 {
+		d.printf("go_shim module_tool forwarded signals=%q", forwarded)
+	}
+	if exit, ok := err.(*exec.ExitError); err != nil && (!ok || !exit.Exited()) {
+		d.printf("go_shim module_tool ended error=%q", err.Error())
+	}
+	d.printf("go_shim module_tool exited code=%d duration=%s", code, time.Since(started).Round(time.Microsecond))
 }
 
 // goShimGoCommand returns the go command to run with the go shim, or the
@@ -292,6 +367,7 @@ func (t *moduleTool) run() int {
 func goShimGoCommand(self, toolchain string, command []string) ([]string, *moduleTool, error) {
 	chdir, sub, rest := goSubcommand(command[1:])
 	native := append([]string{toolchain}, command[1:]...)
+	goShimGoMode = "native"
 	switch sub {
 	case "run":
 		env, err := readGoShimEnv(toolchain, chdir)
@@ -309,6 +385,7 @@ func goShimGoCommand(self, toolchain string, command []string) ([]string, *modul
 		runChdir, rest := leadingChdir(rest)
 		run := append(append([]string{toolchain}, chdir...), "run")
 		run = append(append(run, runChdir...), "-exec="+program)
+		goShimGoMode = "run_exec"
 		return append(run, rest...), nil, nil
 	case "tool":
 		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
@@ -319,8 +396,13 @@ func goShimGoCommand(self, toolchain string, command []string) ([]string, *modul
 		probe.Stderr = &diagnostics
 		out, err := probe.Output()
 		path := strings.TrimSpace(string(out))
-		if err != nil || isToolchainTool(path) {
+		if err != nil {
 			// go reports a tool that it cannot build itself.
+			goShimGoMode = "tool_not_built"
+			return native, nil, nil
+		}
+		if isToolchainTool(path) {
+			goShimGoMode = "toolchain_tool"
 			return native, nil, nil
 		}
 		if len(chdir) != 0 {
@@ -344,6 +426,7 @@ func goShimGoCommand(self, toolchain string, command []string) ([]string, *modul
 				tool.unsetGOROOT = true
 			}
 		}
+		goShimGoMode = "module_tool"
 		return nil, tool, nil
 	}
 	return native, nil, nil
@@ -413,6 +496,7 @@ func isToolchainTool(path string) bool {
 // ExecWithGoShim runs args, the program that go run built and its arguments,
 // with the go shim first on its PATH again.
 func ExecWithGoShim(args []string) int {
+	goShimReason = "go_run_program"
 	self, err := os.Executable()
 	if err == nil {
 		var dir string

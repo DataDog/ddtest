@@ -46,7 +46,8 @@ func main() {
 	args, fromGoShim := runner.GoShimArgs(os.Args)
 	// --go-shim, and gotestsum in any form, run the command with the go shim
 	// first on its PATH, so the go test that it runs reports.
-	args, goShim := runner.GoShimCommand(args, fromGoShim)
+	args, goShimReason := runner.GoShimCommand(args, fromGoShim)
+	goShim := goShimReason != ""
 	// ddto go test is ddto test, as go test is.
 	form, isTest := runner.TestCommand(args)
 	if isTest || runner.IsGoCommand(args) {
@@ -75,7 +76,7 @@ func main() {
 		os.Exit(0)
 	default:
 		if goShim {
-			os.Exit(runner.RunWithGoShim(args))
+			os.Exit(runner.RunWithGoShim(args, goShimReason))
 		}
 		// Any other command runs unchanged, before ddto sets anything but
 		// DDTO_NESTED_GO for go: ddto in front of a go command, or any other,

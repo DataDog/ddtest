@@ -20,10 +20,15 @@ const nestedGoVariable = "DDTO_NESTED_GO"
 // runs.
 const maxNestedGo = 8
 
+// nestedGoDepth is this ddto command's count of ddto commands that run go,
+// itself included, once NestGoCommand has counted it.
+var nestedGoDepth int
+
 // NestGoCommand counts this ddto command, which runs go, for the commands it
 // starts, and fails once too many ddto commands enclose it.
 func NestGoCommand() error {
 	depth, _ := strconv.Atoi(os.Getenv(nestedGoVariable))
+	nestedGoDepth = depth + 1
 	if depth >= maxNestedGo {
 		goPath, err := exec.LookPath("go")
 		if err != nil {

@@ -2278,6 +2278,26 @@ and a per-binary session that ran a test, as in
 the PR, so the tests that compare Mini with it expect its session-only events
 as the PR reports them (`withPortedEmptySession`).
 
+## Debug lines for reporting decisions
+
+ddto adds the debug lines that
+[`docs/cli-debug.md`](../../../docs/cli-debug.md#decisions-in-a-test-process)
+lists where a test process decides what it reports: each test's dynamic
+automatic retry count and its fallbacks from EFD (`gotesting/final_status.go`),
+whether an empty session is reported as skipped
+(`gotesting/testing_session_close.go`, `manual_api_ddtestsession.go`), where
+the session's coverage comes from (`gotesting/coverage/test_coverage.go`), where
+CODEOWNERS was searched (`utils/codeowners_discovery.go`), and why `git
+pack-objects` moved to the objects directory (`utils/git.go`). Every line with
+arguments is guarded by `log.DebugEnabled()`, including the once-per-process
+and rare-path ones, so a disabled line costs one atomic load and allocates
+nothing; an unguarded `log.Debug` call measured about 15 ns and one
+allocation. Work that only a line needs, such as the directories that
+CODEOWNERS discovery searched, happens inside the guard. No line that
+error stacks show moves: `gotesting/instrumentation.go` changes one line in
+place, to call `flakyRetryCountAfterSuppressedEFD`, and the deferred process
+retry group passes its test's identity to the EFD transition for the test name.
+
 ## Panicking loggers
 
 dd-trace-go PR #5582 (`b3ab4cb87`) is newer than the recorded base. Only its

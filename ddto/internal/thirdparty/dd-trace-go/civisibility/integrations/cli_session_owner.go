@@ -157,7 +157,9 @@ func FinishCLISession(end CLISessionEnd) (CLISessionSummary, error) {
 		session.SetTag(key, value)
 	}
 	empty := len(crashes) == 0 && cliSessionEmpty(processes)
-	log.Debug("civisibility: sending ddto's test session id=%d exit_code=%d duration=%s tags=%d coverage=%v crashed_processes=%d empty=%t", end.Session.ID, end.ExitCode, end.Finish.Sub(end.Start), len(merged), merged[constants.CodeCoveragePercentageOfTotalLines], len(crashes), empty)
+	if log.DebugEnabled() {
+		log.Debug("civisibility: sending ddto's test session id=%d exit_code=%d duration=%s tags=%d coverage=%v crashed_processes=%d empty=%t", end.Session.ID, end.ExitCode, end.Finish.Sub(end.Start), len(merged), merged[constants.CodeCoveragePercentageOfTotalLines], len(crashes), empty)
+	}
 	for _, p := range crashes {
 		if p.closed == nil {
 			summary.Recreated += recreateCLIProcess(session, p, end.Finish)

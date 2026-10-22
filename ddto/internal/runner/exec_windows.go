@@ -112,7 +112,7 @@ func pathExtensions() []string {
 // quoting otherwise than Go writes it. The command may start processes
 // outside its job, as it could without ddto.
 func ExecCommand(args []string) int {
-	debug := debugFromContext(withCLIDebug(context.Background(), os.Stderr))
+	debug := passThroughDebug()
 	debug.printf("pass-through command=%q args=%d", args[0], len(args)-1)
 	debug.logGoShim()
 	path, err := exec.LookPath(args[0])
@@ -136,6 +136,12 @@ func ExecCommand(args []string) int {
 		return 126
 	}
 	return code
+}
+
+// passThroughDebug returns the CLI's debug log for a passed-through command,
+// or nil.
+func passThroughDebug() *cliDebug {
+	return debugFromContext(withCLIDebug(context.Background(), os.Stderr))
 }
 
 // commandLine is this process's command line.

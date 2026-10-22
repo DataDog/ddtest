@@ -223,7 +223,7 @@ For example, these illustrative runtime lines show a completed delivery:
 ```text
 2026/10/07 10:00:00 TestOptimization.run  v0.0.0-dev DEBUG: test-cycle: request finished host=localhost:8126 path=/evp_proxy/v2/api/v2/citestcycle attempt=1 duration=15ms status_code=202 network_error=false retry=false body_bytes=2048 gzip=false
 2026/10/07 10:00:00 TestOptimization.run  v0.0.0-dev DEBUG: test-cycle: send finished duration=16ms mode=agent payload_bytes=2048 attempts=1 status=ok
-2026/10/07 10:00:00 TestOptimization.run  v0.0.0-dev DEBUG: civisibility: session close finished duration=17ms exit_code=0 already_closed=false
+2026/10/07 10:00:00 TestOptimization.run  v0.0.0-dev DEBUG: civisibility: session close finished duration=17ms exit_code=0 already_closed=false skip_if_empty=true empty=false
 ```
 
 Session close, flush, send and request timings overlap. Complete shutdown contains
@@ -278,7 +278,7 @@ with `-v` or when the package fails.
 | `civisibility: joined ddto's test session id=<id> record=<file> crash_output=<file>` and `civisibility: reporting in ddto's test session id=<id>` | The process reports in the session of ddto's command, and where its record and crash output are; `WARN: civisibility: ... reports its own session` says why it could not. |
 | `civisibility: test session record lines=<n> failed=<n> first_error=<error>` | Once CI Visibility closes: how many module and suite starts and ends, and session closes, the process recorded for ddto, which recreates the containers left open if the process crashes, and whether a write failed. |
 | `civisibility: failed the test name=<name> suite=<suite> for the crash (<timeout/panic>) final_status=<status>` | A test that the crash interrupted, reported as failed. |
-| `civisibility: recorded the close of this process in ddto's test session exit_code=<n> tags=<n>` | The process closed CI Visibility and left its session tags for ddto. |
+| `civisibility: recorded the close of this process in ddto's test session exit_code=<n> tags=<n> skip_if_empty=<bool> empty=<bool>` | The process closed CI Visibility and left its session tags for ddto. `empty=true` means it ran no test and passed; see [Decisions in a test process](#decisions-in-a-test-process). |
 
 A process that ends without any of these lines was ended by something that
 runs no Go code first: a fatal runtime error, an unrecovered panic in another
@@ -289,6 +289,35 @@ then logs, with `DD_TRACE_DEBUG=true`,
 `civisibility: test process process-<id> ended without closing CI Visibility (<reason>); recreated <n> events`
 and, when the crash output names the test,
 `civisibility: recreated the crashed test name=<name> suite=<suite> module=<module>`.
+
+## Decisions in a test process
+
+With `DD_TRACE_DEBUG=true`, a test process also logs the choices that change
+what it reports. Without it, each of these lines costs one check of the log
+level and allocates nothing:
+
+| Line | Meaning |
+| --- | --- |
+| `civisibility: dynamic automatic test retries enabled [retryCounts: [<5 counts>]]` | `DD_CIVISIBILITY_DYNAMIC_ATR_ENABLED` is set: a failing test gets the retries of its first execution's duration bucket, up to 5 s, 10 s, 30 s, 5 min and slower. A `WARN` before it says that `DD_CIVISIBILITY_DYNAMIC_ATR_BUCKETS` was invalid and ignored |
+| `civisibility: dynamic automatic test retries test="<name>" first_duration=<d> bucket=<0-4> retry_count=<n>` | The retries that a test gets, if its first execution fails, from that execution's duration |
+| `civisibility: EFD has no retries for test="<name>" first_duration=<d>, using automatic test retries` | A test that Early Flake Detection would retry took 5 min or more, which it does not retry, so a failure gets automatic test retries instead |
+| `civisibility: EFD retries suppressed for failing test="<name>", using automatic test retries` | Early Flake Detection stopped retrying in a faulty session, so a test that still fails gets automatic test retries |
+| `civisibility: session close finished … skip_if_empty=<bool> empty=<bool>` | `empty=true`: the session ran no test and passed, so it is reported as skipped with `test.session.empty_reason=zero_tests`. A test process in ddto's test session says the same on its `recorded the close` line, and ddto reports its session as skipped only when every test process was empty, with `empty=true` on its `sending ddto's test session` line. In a test process, `skip_if_empty=false` after a successful run means it could not tell whether it ran nothing, and an earlier `a session that runs nothing` line says why |
+| `civisibility: a session that runs nothing will not be reported as skipped: wrapped_tests=… wrapped_fuzz=… wrapped_examples=… wrapped_benchmarks=…` | Some workloads, such as benchmarks that `TestMain` selects, run without the module that would show they ran, so an empty session stays passed |
+| `civisibility.cov: testing will write its coverage profile to <file>` | Without `-coverprofile`, testing writes its profile to a temporary file for the session's coverage, so it prints its coverage line once. `no temporary coverage profile: <error>` says why it could not, and `session coverage will read the -coverprofile profile` that the command set one |
+| `civisibility.cov: session coverage from the profile that testing wrote: <file>` or `… from testing's tear-down: <file>` | Where the session's coverage percentage, its ITR backfill and the LCOV upload come from. `error getting coverage file: testing wrote no coverage profile` means no coverage was reported, as after `-list` |
+| `civisibility: CODEOWNERS loaded file="<file>" dialect=<n> diagnostics=<n>` | The ownership rules for `test.codeowners`; `diagnostics` counts the invalid entries |
+| `civisibility: no CODEOWNERS file in the CI workspace "<dir>", tests have no owners` or `… in "<dir>" or "<dir>", where the CI workspace "<dir>" is not a directory, …` | Where CODEOWNERS was searched: the CI workspace, or, when it is not a directory where the test runs, the current and test binary's directories |
+| `civisibility: CODEOWNERS discovery failed, it will be retried: <error>` | A directory or file could not be read; the next lookup, for another test or suite, tries again |
+
+ddto's Git worker, whose log `--keep-ci-state` keeps in `worker.log`, logs how
+it packs the commits that the backend asks for:
+
+| Line | Meaning |
+| --- | --- |
+| `civisibility: sending pack file with missing commits. files: [<files>]` | The pack files to upload, which the worker removes afterwards |
+| `civisibility: <dir> is on another filesystem than the git objects, pack files go to <objects dir>` | git would fail to move its packs across filesystems, so the worker writes them next to the repository's objects |
+| `civisibility: git pack-objects failed in <dir>: <error>` | git could not pack the commits in that directory, and the worker tries the next; `WARN: civisibility: error creating pack files …` means every one failed, and the commits were not uploaded |
 
 ## Requests ahead
 
@@ -364,11 +393,21 @@ end ddto before the program starts:
 … TestOptimization.build v0.0.0-dev DEBUG: +63µs pass-through exec path="/usr/local/go/bin/go"
 ```
 
-For `ddto gotestsum` and `--go-shim`, `go_shim first_on_path=<dir>` names the
-directory of ddto's `go` that the command gets first on `PATH`, and for a go
-command, `go_shim go=<path>` the toolchain's go that it runs. Run as that `go`,
-or under the command, ddto logs `go_shim left=<dir>` when it leaves the
-directory off `PATH` again.
+For `ddto gotestsum` and `--go-shim`, ddto puts its own `go` first on the
+command's `PATH`, and logs why and how:
+
+| Line | Meaning |
+| --- | --- |
+| `go_shim reason=flag\|gotestsum\|launcher\|go_run_program` | Why the command gets ddto's `go`: `--go-shim`; gotestsum, run directly, with `go tool` or with `go run`; a `go run` or `go tool` that arrived through ddto's `go`, as from a script under `--go-shim`; or the program of a `go run`, which ddto starts again as `go run`'s `-exec` program |
+| `go_shim first_on_path=<dir>` | The directory of ddto's `go` that the command gets first on `PATH`. Without it after a `reason` line, a `WARN` says why ddto ran the command without its `go` |
+| `go_shim go=<path>` | For a go command, the toolchain's go that it runs |
+| `go_shim go_command=run_exec\|module_tool\|toolchain_tool\|tool_not_built\|native` | How that go command runs: `go run` with ddto as its `-exec` program; a tool of the module, which ddto runs itself as `go tool` would; a tool of the toolchain, or one that `go tool -n` could not build, which `go tool` runs and reports; or unchanged |
+| `go_shim module_tool="<tool>" path=<path> args=<n> goroot=kept\|set\|removed` | The module tool that ddto runs, its binary and its argument count, and whether ddto kept `GOROOT` or, after a toolchain switch, set or removed it as `go` does |
+| `go_shim module_tool forwarded signals=["<name>" …]` | The signals that ddto received while the tool ran and forwarded to it, as `go tool` does, logged once the tool ends |
+| `go_shim module_tool exited code=<n> duration=<d>` | ddto's exit status: the tool's, or 1 when the tool did not start or exit cleanly, as `go tool` does. A `go_shim module_tool ended error="<error>"` line before it says why (`signal: killed`, for example) |
+| `go_shim as_go=true` | This ddto runs as that `go`, so its go test reports with the command's arguments and no ddto options |
+| `go_shim left=<dir>` | Run as that `go`, or under the command, ddto left the directory off `PATH` again, so the tests and the go commands it runs see the caller's `PATH` |
+| `nested_go depth=<n>` | This ddto go command runs inside `<n>-1` other ddto go commands, as gotestsum's `go test` runs inside `ddto go tool gotestsum`. ddto stops at 9 with an error that names the go on `PATH` |
 
 Each `exec path` line is a candidate, and a `failed` line follows each
 candidate that did not start. The last `exec path` line without one is the

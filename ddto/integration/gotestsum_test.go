@@ -106,6 +106,18 @@ func TestEnvironment(t *testing.T) {
 			t.Fatalf("ddto %s: tests %v, sessions %v; want tests %v and one session\n%s", tc.name, got.tests, got.sessions, want, stderr)
 		}
 	}
+	// With DD_TRACE_DEBUG, ddto's log says why and how it ran the module tool,
+	// and how the tool ended.
+	debugEnv := append(append([]string(nil), env...), "DD_TRACE_DEBUG=true")
+	if _, stderr, code := command(t, dir, debugEnv, driver, append([]string{"go", "tool", "gotestsum"}, gotestsumArgs...)...); code != 0 {
+		t.Fatalf("ddto go tool gotestsum with DD_TRACE_DEBUG: exit %d\n%s", code, stderr)
+	} else {
+		for _, line := range []string{"go_shim reason=gotestsum", "go_shim go_command=module_tool", `go_shim module_tool="gotestsum"`, "go_shim module_tool exited code=0"} {
+			if !strings.Contains(stderr, line) {
+				t.Fatalf("no debug line %q:\n%s", line, stderr)
+			}
+		}
+	}
 	if data, err := os.ReadFile(junit); err != nil || !strings.Contains(string(data), `name="TestFlakyOnce"`) {
 		t.Fatalf("gotestsum's JUnit file: %v\n%s", err, data)
 	}

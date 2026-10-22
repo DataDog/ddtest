@@ -188,10 +188,11 @@ func (t *tslvTestSession) WorkingDirectory() string { return t.workingDirectory 
 func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption) {
 	alreadyClosed := false
 	recordedTags := -1
+	skipIfEmpty, empty := false, false
 	// After unlocking: a client can replace the logger.
 	defer func() {
-		if recordedTags >= 0 {
-			log.Debug("civisibility: recorded the close of this process in ddto's test session exit_code=%d tags=%d", exitCode, recordedTags)
+		if recordedTags >= 0 && log.DebugEnabled() {
+			log.Debug("civisibility: recorded the close of this process in ddto's test session exit_code=%d tags=%d skip_if_empty=%t empty=%t", exitCode, recordedTags, skipIfEmpty, empty && exitCode == 0)
 		}
 	}()
 	if log.DebugEnabled() {
@@ -200,7 +201,7 @@ func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption)
 		// Includes the session lock, module closure and tracer.Flush. Emit after
 		// unlocking; a delivery failure is reported by the tracer, not exit_code.
 		defer func() {
-			log.Debug("civisibility: session close finished duration=%s exit_code=%d already_closed=%t", time.Since(started), exitCode, alreadyClosed)
+			log.Debug("civisibility: session close finished duration=%s exit_code=%d already_closed=%t skip_if_empty=%t empty=%t", time.Since(started), exitCode, alreadyClosed, skipIfEmpty, empty && exitCode == 0)
 		}()
 	}
 	t.mutex.Lock()
@@ -219,7 +220,8 @@ func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption)
 		defaults.finishTime = time.Now()
 	}
 
-	empty := defaults.skipIfEmpty && len(t.modules) == 0
+	skipIfEmpty = defaults.skipIfEmpty
+	empty = skipIfEmpty && len(t.modules) == 0
 	for _, m := range t.modules {
 		m.Close()
 	}

@@ -381,7 +381,9 @@ func dynamicFlakyRetryCounts(slowTestRetries [4]int) *[5]int64 {
 		}
 	}
 	citelemetry.DynamicATRRetriesEnabled(custom)
-	log.Debug("civisibility: dynamic automatic test retries enabled [retryCounts: %d]", counts)
+	if log.DebugEnabled() {
+		log.Debug("civisibility: dynamic automatic test retries enabled [retryCounts: %d]", counts)
+	}
 	return &counts
 }
 

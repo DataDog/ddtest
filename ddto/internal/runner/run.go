@@ -1113,7 +1113,9 @@ func runGoAfterError(ctx context.Context, cwd string, args []string, cause error
 		return 2
 	}
 	reason, _, _ := strings.Cut(cause.Error(), "\n")
-	debugFromContext(ctx).printf("instrumentation bypass go_rejected=%q", reason)
+	if debug := debugFromContext(ctx); debug != nil {
+		debug.printf("instrumentation bypass go_rejected=%q", reason)
+	}
 	code := runGo(ctx, cwd, append([]string{"test"}, args...), nil, signals, stdin, stdout, stderr)
 	if code == 0 {
 		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN:", reason, "- go test ran without CI Visibility")

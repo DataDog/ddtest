@@ -1199,6 +1199,7 @@ func (g *deferredProcessRetryGroup) admitEarlyFlakeDetectionContinuationWithTran
 		return false, true
 	}
 	transitionMeta := &testExecutionMetadata{
+		identity:                  &g.identity,
 		isFlakyTestRetriesEnabled: g.metadata.isFlakyTestRetriesEnabled,
 		efdFellBackToFlakyRetries: g.metadata.efdFellBackToFlakyRetries,
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -28,19 +29,21 @@ func TestMiniDynamicFlakyRetries(t *testing.T) {
 		name                string
 		env                 []string
 		executions, retries int
+		// logsRetryCount says whether the debug log explains the retry count.
+		logsRetryCount bool
 	}{
 		{name: "flat count zero", executions: 1},
 		// The first execution is under 5s, so the first bucket's 2 retries apply.
-		{name: "dynamic buckets", env: []string{"DD_CIVISIBILITY_DYNAMIC_ATR_ENABLED=true", "DD_CIVISIBILITY_DYNAMIC_ATR_BUCKETS=2,1,1,1,1"}, executions: 3, retries: 2},
+		{name: "dynamic buckets", env: []string{"DD_CIVISIBILITY_DYNAMIC_ATR_ENABLED=true", "DD_CIVISIBILITY_DYNAMIC_ATR_BUCKETS=2,1,1,1,1"}, executions: 3, retries: 2, logsRetryCount: true},
 		// Each retry runs in a new process, where the test fails again.
-		{name: "dynamic buckets in process mode", env: []string{"DD_CIVISIBILITY_DYNAMIC_ATR_ENABLED=true", "DD_CIVISIBILITY_DYNAMIC_ATR_BUCKETS=2,1,1,1,1", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process"}, executions: 3, retries: 2},
+		{name: "dynamic buckets in process mode", env: []string{"DD_CIVISIBILITY_DYNAMIC_ATR_ENABLED=true", "DD_CIVISIBILITY_DYNAMIC_ATR_BUCKETS=2,1,1,1,1", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process"}, executions: 3, retries: 2, logsRetryCount: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			receiver := &capture{retry: true}
 			server := newServer(http.HandlerFunc(receiver.handler))
 			defer server.Close()
 			executionDir := t.TempDir()
-			env := testEnv(append([]string{"DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL=" + server.URL, "DD_TRACE_AGENT_URL=" + server.URL, "DD_API_KEY=poc-not-a-real-key", "TMPDIR=" + executionDir, "TMP=" + executionDir, "TEMP=" + executionDir, "XDG_CACHE_HOME=" + executionDir, fmt.Sprintf("DD_GIT_COMMIT_SHA=%x", sha1.Sum([]byte(dir+"|"+tc.name))), "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=0"}, tc.env...)...)
+			env := testEnv(append([]string{"DD_TRACE_DEBUG=true", "DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL=" + server.URL, "DD_TRACE_AGENT_URL=" + server.URL, "DD_API_KEY=poc-not-a-real-key", "TMPDIR=" + executionDir, "TMP=" + executionDir, "TEMP=" + executionDir, "XDG_CACHE_HOME=" + executionDir, fmt.Sprintf("DD_GIT_COMMIT_SHA=%x", sha1.Sum([]byte(dir+"|"+tc.name))), "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=0"}, tc.env...)...)
 			out, stderr, code := command(t, dir, env, bin, "-test.v", "-test.run=^TestFlaky$")
 			if code != 1 {
 				t.Fatalf("exit %d, want 1: the test must still fail\n%s\n%s", code, out, stderr)
@@ -67,6 +70,9 @@ func TestMiniDynamicFlakyRetries(t *testing.T) {
 			}
 			if executions != tc.executions || retries != tc.retries {
 				t.Fatalf("executions %d, retries %d; want %d and %d\n%s", executions, retries, tc.executions, tc.retries, stderr)
+			}
+			if retryCountLine := regexp.MustCompile(`dynamic automatic test retries test="TestFlaky" first_duration=\S+ bucket=0 retry_count=2\b`); tc.logsRetryCount && !retryCountLine.MatchString(out+stderr) {
+				t.Fatalf("no debug line %s\n%s\n%s", retryCountLine, out, stderr)
 			}
 		})
 	}

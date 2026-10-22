@@ -120,34 +120,36 @@ func TestGoShimCommand(t *testing.T) {
 	for _, tc := range []struct {
 		args, want []string
 		fromShim   bool
-		shim       bool
+		// reason is why the command runs with the shim, as the go_shim
+		// reason= debug line says, or "" without it.
+		reason string
 	}{
-		{args: []string{"--go-shim", "make", "test"}, want: []string{"make", "test"}, shim: true},
-		{args: []string{"--go-shim"}, want: []string{}, shim: true},
-		{args: []string{"gotestsum", "--", "./..."}, shim: true},
-		{args: []string{"go", "tool", "gotestsum", "--format", "testname"}, shim: true},
-		{args: []string{"go", "tool", "gotest.tools/gotestsum"}, shim: true},
-		{args: []string{"go", "-C", "project", "tool", "gotestsum"}, shim: true},
-		{args: []string{"go", "run", "gotest.tools/gotestsum@v1.13.0", "--", "./..."}, shim: true},
-		{args: []string{"go", "run", "-mod=mod", "gotest.tools/gotestsum"}, shim: true},
-		{args: []string{"go", "run", "-tags", "smoke", "gotest.tools/gotestsum@v1.13.0"}, shim: true},
-		{args: []string{"go", "run", "-C", "tools", "gotest.tools/gotestsum"}, shim: true},
+		{args: []string{"--go-shim", "make", "test"}, want: []string{"make", "test"}, reason: "flag"},
+		{args: []string{"--go-shim"}, want: []string{}, reason: "flag"},
+		{args: []string{"gotestsum", "--", "./..."}, reason: "gotestsum"},
+		{args: []string{"go", "tool", "gotestsum", "--format", "testname"}, reason: "gotestsum"},
+		{args: []string{"go", "tool", "gotest.tools/gotestsum"}, reason: "gotestsum"},
+		{args: []string{"go", "-C", "project", "tool", "gotestsum"}, reason: "gotestsum"},
+		{args: []string{"go", "run", "gotest.tools/gotestsum@v1.13.0", "--", "./..."}, reason: "gotestsum"},
+		{args: []string{"go", "run", "-mod=mod", "gotest.tools/gotestsum"}, reason: "gotestsum"},
+		{args: []string{"go", "run", "-tags", "smoke", "gotest.tools/gotestsum@v1.13.0"}, reason: "gotestsum"},
+		{args: []string{"go", "run", "-C", "tools", "gotest.tools/gotestsum"}, reason: "gotestsum"},
 		{args: []string{"go", "run", "./cmd/gotestsum"}},
 		{args: []string{"go", "tool", "cover"}},
 		{args: []string{"go", "build", "gotest.tools/gotestsum"}},
 		{args: []string{"make", "test"}},
 		{args: []string{"make", "--go-shim"}},
 		// Run as the go shim, a launcher keeps the shim for its program.
-		{args: []string{"go", "run", "./tools/testrunner"}, fromShim: true, shim: true},
-		{args: []string{"go", "tool", "mytool"}, fromShim: true, shim: true},
+		{args: []string{"go", "run", "./tools/testrunner"}, fromShim: true, reason: "launcher"},
+		{args: []string{"go", "tool", "mytool"}, fromShim: true, reason: "launcher"},
 		{args: []string{"go", "build", "./..."}, fromShim: true},
 	} {
 		want := tc.want
 		if want == nil {
 			want = tc.args
 		}
-		if got, shim := GoShimCommand(tc.args, tc.fromShim); !slices.Equal(got, want) || shim != tc.shim {
-			t.Errorf("GoShimCommand(%q, %t) = %q, %t; want %q, %t", tc.args, tc.fromShim, got, shim, want, tc.shim)
+		if got, reason := GoShimCommand(tc.args, tc.fromShim); !slices.Equal(got, want) || reason != tc.reason {
+			t.Errorf("GoShimCommand(%q, %t) = %q, %q; want %q, %q", tc.args, tc.fromShim, got, reason, want, tc.reason)
 		}
 	}
 }
@@ -181,6 +183,7 @@ func TestGoShimGoCommand(t *testing.T) {
 	readGoShimEnv = func(string, []string) (goShimEnv, error) { return env, nil }
 	self := filepath.Join(t.TempDir(), "dd to")
 	exec := "-exec='" + self + "' 'go-shim-exec'"
+	defer func() { goShimGoMode = "" }()
 	for _, tc := range []struct {
 		command, want []string
 	}{
@@ -193,8 +196,13 @@ func TestGoShimGoCommand(t *testing.T) {
 		{[]string{"go", "run", "./cmd", "-exec"}, []string{"/go/bin/go", "run", exec, "./cmd", "-exec"}},
 		{[]string{"go", "generate", "./..."}, []string{"/go/bin/go", "generate", "./..."}},
 	} {
-		if got, tool, err := goShimGoCommand(self, "/go/bin/go", tc.command); err != nil || tool != nil || !slices.Equal(got, tc.want) {
-			t.Errorf("%q: %q, %v; want %q", tc.command, got, err, tc.want)
+		// The go_shim go_command= debug line's.
+		mode := "run_exec"
+		if !slices.Contains(tc.command, "run") {
+			mode = "native"
+		}
+		if got, tool, err := goShimGoCommand(self, "/go/bin/go", tc.command); err != nil || tool != nil || !slices.Equal(got, tc.want) || goShimGoMode != mode {
+			t.Errorf("%q: %q, %v, mode %q; want %q, mode %q", tc.command, got, err, goShimGoMode, tc.want, mode)
 		}
 	}
 	for name, command := range map[string][]string{
@@ -223,8 +231,8 @@ func TestGoShimGoCommand(t *testing.T) {
 		t.Error("go tool -n printed more than one program")
 	}
 	t.Setenv(fakeToolExitEnv, "1")
-	if native, tool, err := goShimGoCommand(self, os.Args[0], []string{"go", "tool", "nope"}); err != nil || tool != nil || !slices.Equal(native, []string{os.Args[0], "tool", "nope"}) {
-		t.Errorf("an unknown tool: %q, %v", native, err)
+	if native, tool, err := goShimGoCommand(self, os.Args[0], []string{"go", "tool", "nope"}); err != nil || tool != nil || !slices.Equal(native, []string{os.Args[0], "tool", "nope"}) || goShimGoMode != "tool_not_built" {
+		t.Errorf("an unknown tool: %q, %v, mode %q", native, err, goShimGoMode)
 	}
 }
 

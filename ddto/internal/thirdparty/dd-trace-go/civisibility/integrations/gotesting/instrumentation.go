@@ -1256,7 +1256,7 @@ func transitionSuppressedEFDToFlakyRetries(execMeta *testExecutionMetadata, init
 		return 0, false
 	}
 	execMeta.efdFellBackToFlakyRetries = true
-	retryCount := flakyRetryCountForDuration(initialDuration) - 1
+	retryCount := flakyRetryCountAfterSuppressedEFD(execMeta, initialDuration)
 	return retryCount, retryCount >= 0
 }
 
