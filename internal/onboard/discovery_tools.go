@@ -58,7 +58,7 @@ func resolveDiscoveryTool(root, directory string, words []string, framework stri
 	case failingTool:
 		return unresolvedCommand("Failing shell command may prevent subsequent test execution: " + command)
 	case metadataTool:
-		if words[0] == "printf" && len(words) > 1 && strings.HasPrefix(words[1], "-v") {
+		if words[0] == "printf" && printfAssigns(words[1:]) {
 			return unresolvedCommand("Shell variable assignment requires review: " + command)
 		}
 		return commandResolution{}
@@ -75,4 +75,32 @@ func resolveDiscoveryTool(root, directory string, words []string, framework stri
 		return result
 	}
 	return commandResolution{ReviewReason: "Tool configuration is outside " + framework + " validation; review separately: " + strings.Join(words, " ")}
+}
+
+// Bash's printf writes shell variables through -v and through %n conversions
+// (for example printf '%n' PATH). An escaped %% is ordinary output.
+func printfAssigns(args []string) bool {
+	if len(args) > 0 && strings.HasPrefix(args[0], "-v") {
+		return true
+	}
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return false
+	}
+	format := args[0]
+	for i := 0; i < len(format); i++ {
+		if format[i] != '%' {
+			continue
+		}
+		i++
+		for i < len(format) && strings.ContainsRune("-+ #0123456789.*", rune(format[i])) {
+			i++
+		}
+		if i < len(format) && format[i] == 'n' {
+			return true
+		}
+	}
+	return false
 }

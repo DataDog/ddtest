@@ -63,6 +63,36 @@ func conditionEnvironment(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 	return values
 }
 
+var workflowExpression = regexp.MustCompile(`\$\{\{.*?\}\}`)
+
+// Without an explicit shell, GitHub runs Windows steps with PowerShell. Only a
+// statically known Windows label changes the default; Bash is used elsewhere.
+func runnerDefaultShell(job runtimeJob, row map[string]any) string {
+	var labels []string
+	var collect func(any)
+	collect = func(value any) {
+		switch value := value.(type) {
+		case string:
+			labels = append(labels, value)
+		case []any:
+			for _, item := range value {
+				collect(item)
+			}
+		case map[string]any:
+			collect(value["labels"])
+			collect(value["group"])
+		}
+	}
+	collect(job.RunsOn)
+	for _, label := range labels {
+		resolved, err := interpolateMatrix(label, row)
+		if err == nil && strings.Contains(strings.ToLower(resolved), "windows") {
+			return "pwsh"
+		}
+	}
+	return ""
+}
+
 func supportedCIShell(shell string) bool {
 	if shell == "" || shell == "bash" || shell == "sh" {
 		return true

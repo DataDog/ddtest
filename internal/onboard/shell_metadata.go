@@ -69,7 +69,7 @@ type metadataInvocation struct {
 	Chain int
 }
 
-// printf -v mutates shell state, even when its option is quoted. Share this
+// printf -v and %n mutate shell state, even when quoted. Share this
 // classification with the CI setup path instead of treating every printf as IO.
 func outputOnlyCall(call *syntax.CallExpr) bool {
 	if len(call.Args) == 0 {
@@ -81,8 +81,22 @@ func outputOnlyCall(call *syntax.CallExpr) bool {
 	if call.Args[0].Lit() != "printf" || len(call.Args) < 2 {
 		return false
 	}
-	option, err := literalShellWord(call.Args[1])
-	return err == nil && !strings.HasPrefix(option, "-v")
+	// Only the option and format decide whether printf writes a variable.
+	var args []string
+	for _, word := range call.Args[1:min(len(call.Args), 3)] {
+		literal, err := literalShellWord(word)
+		if err != nil {
+			break
+		}
+		args = append(args, literal)
+		if literal != "--" {
+			break
+		}
+	}
+	if len(args) == 0 || args[len(args)-1] == "--" {
+		return false
+	}
+	return !printfAssigns(args)
 }
 
 func metadataInvocations(command string) ([]metadataInvocation, bool) {

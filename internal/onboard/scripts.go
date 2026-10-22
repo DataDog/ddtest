@@ -65,6 +65,9 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			shell = defaults.Shell
 		}
 	}
+	if shell == "" {
+		shell = runnerDefaultShell(job, nil)
+	}
 	if !supportedCIShell(shell) {
 		return unresolvedCommand("Unsupported CI shell: " + shell)
 	}
@@ -458,13 +461,15 @@ func staticCommands(command string) ([][]string, error) {
 	return commands, nil
 }
 
-// Help/version exit before running a suite. The runner's -- ends option parsing.
+// Help, version and configuration output exit before running a suite,
+// including their explicit =true forms. The runner's -- ends option parsing.
 func jestMetadataOptions(args []string) bool {
 	for _, arg := range args {
 		if arg == "--" {
 			return false
 		}
-		if slices.Contains([]string{"--help", "-h", "--version", "-v"}, arg) {
+		option, value, explicit := strings.Cut(arg, "=")
+		if slices.Contains([]string{"--help", "-h", "--version", "-v", "--showConfig", "--show-config"}, option) && (!explicit || value == "true") {
 			return true
 		}
 	}

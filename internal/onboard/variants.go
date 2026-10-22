@@ -25,6 +25,20 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	if err != nil {
 		return step, nil, err
 	}
+	// GitHub evaluates expressions before the shell runs, even inside single
+	// quotes. Anything left after matrix substitution cannot be reproduced.
+	if expression := workflowExpression.FindString(step.Run); expression != "" {
+		return step, nil, fmt.Errorf("unresolved CI workflow expression requires review: %s", expression)
+	}
+	if directory := stepDirectory(workflow, job, step); strings.Contains(directory, "${{") {
+		step.WorkingDirectory, err = interpolateMatrix(directory, row)
+		if err != nil {
+			return step, nil, err
+		}
+	}
+	if step.Shell == "" && job.Defaults.Run.Shell == "" && workflow.Defaults.Run.Shell == "" {
+		step.Shell = runnerDefaultShell(job, row)
+	}
 
 	env := map[string]string{}
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {

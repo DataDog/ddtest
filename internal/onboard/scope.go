@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/kballard/go-shellquote"
 )
 
 // TestCommand identifies an explicit framework invocation, not the surrounding
@@ -187,6 +189,13 @@ func mutatesCIFiles(command string) bool {
 		if err != nil {
 			continue
 		}
+		// xargs runs its command once per input; classify that command.
+		if len(words) > 0 && words[0] == "xargs" {
+			if command := xargsCommand(words[1:]); len(command) > 0 && mutatesCIFiles(shellquote.Join(command...)) {
+				return true
+			}
+			continue
+		}
 		if len(words) > 0 && slices.Contains([]string{"sed", "cp", "mv", "rm", "patch", "rimraf", "rsync"}, words[0]) {
 			return true
 		}
@@ -195,6 +204,21 @@ func mutatesCIFiles(command string) bool {
 		}
 	}
 	return false
+}
+
+// Skip xargs's own options, including those that take a separate value.
+func xargsCommand(args []string) []string {
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		option := args[0]
+		args = args[1:]
+		if option == "--" {
+			break
+		}
+		if slices.Contains([]string{"-n", "-L", "-P", "-s", "-d", "-E", "-I", "-a"}, option) && len(args) > 0 {
+			args = args[1:]
+		}
+	}
+	return args
 }
 
 // Ordinary lockfile installs prepare declared dependencies. Explicit package

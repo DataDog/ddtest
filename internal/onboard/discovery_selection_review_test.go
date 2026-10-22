@@ -31,7 +31,8 @@ func TestJestSelectionEvaluatesConditions(t *testing.T) {
 `, condition))
 			selected, err := JestValidationCommand(root)
 			require.NoError(t, err)
-			require.Equal(t, shellquote.Join(filepath.Join(root, "node_modules/.bin/jest"), "--config", "active.js"), selected)
+			// The job environment is part of the command CI runs.
+			require.Equal(t, "ENABLED=no "+shellquote.Join(filepath.Join(root, "node_modules/.bin/jest"), "--config", "active.js"), selected)
 		})
 	}
 }

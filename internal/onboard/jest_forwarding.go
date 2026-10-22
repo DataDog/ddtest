@@ -42,7 +42,7 @@ func ForwardJestCommand(root, command string) (string, error) {
 			return "", fmt.Errorf("positional Jest selection requires an explicit command")
 		}
 	}
-	if resolution.SingleJest && len(words) > 0 && !strings.Contains(words[0], "=") {
+	if resolution.SingleJest && len(words) > 0 && !strings.Contains(words[0], "=") && appendsToRunner(root, words, 0) {
 		if words[0] == "npm" && !slices.Contains(words, "--") {
 			return command + " --", nil
 		}
@@ -53,7 +53,7 @@ func ForwardJestCommand(root, command string) (string, error) {
 		return command, nil
 	}
 	count := 0
-	body, err := forwardJestScript(root, command, 0, &count)
+	body, err := forwardJestScript(root, root, command, 0, &count)
 	if err != nil || count != 1 {
 		return "", fmt.Errorf("cannot forward probe options through %q: %v (Jest invocations: %d); use --command with the actual Jest executable, original options and required setup", command, err, count)
 	}
@@ -61,7 +61,50 @@ func ForwardJestCommand(root, command string) (string, error) {
 	return shellquote.Join("sh", "-c", body, "ddtest-jest"), nil
 }
 
-func forwardJestScript(root, command string, depth int, count *int) (string, error) {
+// Package managers append forwarded options to the raw script text. A comment
+// or separator there turns probe options into prose or a separate command.
+func appendsToRunner(directory string, words []string, depth int) bool {
+	if depth >= 16 || len(words) == 0 {
+		return false
+	}
+	if !slices.Contains([]string{"npm", "yarn", "pnpm", "bun"}, words[0]) {
+		return true
+	}
+	args := words[1:]
+	if len(args) > 0 && (args[0] == "run" || args[0] == "run-script") {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return false
+	}
+	name := args[0]
+	if words[0] == "npm" && name == "t" {
+		name = "test"
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
+	if err != nil {
+		return false
+	}
+	var manifest struct{ Scripts map[string]string }
+	if json.Unmarshal(data, &manifest) != nil {
+		return false
+	}
+	script, ok := manifest.Scripts[name]
+	if !ok || strings.ContainsAny(script, "#;\n&|<>()`$") {
+		return false
+	}
+	commands, err := staticCommands(script)
+	if err != nil || len(commands) != 1 {
+		return false
+	}
+	words, _, err = commandEnvironment(commands[0])
+	return err == nil && appendsToRunner(directory, words, depth+1)
+}
+
+// Track cd like the shell does, and run each expanded package script in its own
+// subshell: the package manager's child process confines directory changes and
+// adds that package's local binaries to PATH.
+func forwardJestScript(root, directory, command string, depth int, count *int) (string, error) {
 	if depth >= 16 || strings.ContainsAny(command, ";\n") {
 		return "", fmt.Errorf("only bounded literal && sequences can be forwarded")
 	}
@@ -84,8 +127,20 @@ func forwardJestScript(root, command string, depth int, count *int) (string, err
 		if len(words) == 0 {
 			return "", fmt.Errorf("standalone environment assignment requires review")
 		}
+		if words[0] == "cd" {
+			if len(prefix) > 0 || len(words) != 2 {
+				return "", fmt.Errorf("cd requires one static repository directory")
+			}
+			directory, err = repositoryDirectory(root, directory, words[1])
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, shellCommand(words))
+			continue
+		}
 		part := shellCommand(words)
-		resolution := resolveJestCommand(root, part, nil)
+		remaining := 256
+		resolution := resolveJestSequence(root, directory, part, nil, &remaining)
 		if resolution.Matched {
 			switch words[0] {
 			case "jest", "./node_modules/.bin/jest", "node_modules/.bin/jest":
@@ -106,7 +161,7 @@ func forwardJestScript(root, command string, depth int, count *int) (string, err
 				if words[0] == "npm" && name == "t" {
 					name = "test"
 				}
-				data, err := os.ReadFile(filepath.Join(root, "package.json"))
+				data, err := os.ReadFile(filepath.Join(directory, "package.json"))
 				if err != nil {
 					return "", err
 				}
@@ -125,15 +180,19 @@ func forwardJestScript(root, command string, depth int, count *int) (string, err
 				if len(args) > 0 {
 					script += " " + shellquote.Join(args...)
 				}
-				part, err = forwardJestScript(root, script, depth+1, count)
+				part, err = forwardJestScript(root, directory, script, depth+1, count)
 				if err != nil {
 					return "", err
 				}
+				if directory != root {
+					part = "PATH=" + shellquote.Join(filepath.Join(directory, "node_modules", ".bin")) + `:"$PATH"; export PATH; ` + part
+				}
+				part = "( " + part + " )"
 			default:
 				return "", fmt.Errorf("wrapper %q requires review", words[0])
 			}
 		}
-		if !resolution.Matched && lintOnly(root, shellquote.Join(words...), 0) {
+		if !resolution.Matched && lintOnly(directory, shellquote.Join(words...), 0) {
 			part = `if [ "${DDTEST_JEST_PROBE:-0}" = 1 ]; then :; else ` + part + `; fi`
 		}
 		if len(prefix) > 0 {
@@ -146,7 +205,7 @@ func forwardJestScript(root, command string, depth int, count *int) (string, err
 
 // Lint is part of the real suite command, but must not reject a temporary
 // synthetic test's formatting before Jest can discover it. Opaque setup stays.
-func lintOnly(root, command string, depth int) bool {
+func lintOnly(directory, command string, depth int) bool {
 	if depth >= 16 {
 		return false
 	}
@@ -174,12 +233,12 @@ func lintOnly(root, command string, depth int) bool {
 		if len(args) != 1 {
 			return false
 		}
-		data, err := os.ReadFile(filepath.Join(root, "package.json"))
+		data, err := os.ReadFile(filepath.Join(directory, "package.json"))
 		if err != nil {
 			return false
 		}
 		var manifest struct{ Scripts map[string]string }
-		if json.Unmarshal(data, &manifest) != nil || manifest.Scripts["pre"+args[0]] != "" || manifest.Scripts["post"+args[0]] != "" || !lintOnly(root, manifest.Scripts[args[0]], depth+1) {
+		if json.Unmarshal(data, &manifest) != nil || manifest.Scripts["pre"+args[0]] != "" || manifest.Scripts["post"+args[0]] != "" || !lintOnly(directory, manifest.Scripts[args[0]], depth+1) {
 			return false
 		}
 	}

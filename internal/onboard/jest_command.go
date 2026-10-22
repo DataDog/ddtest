@@ -60,20 +60,36 @@ func JestValidationCommand(root string) (string, error) {
 					if !active {
 						continue
 					}
-					resolution := resolveTestStep(root, workflow, job, step, "javascript", "jest")
+					// Select the command CI runs for this row, including its
+					// environment, so consumers differing only there stay distinct.
+					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, "jest")
+					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", "jest")
+					if envErr != nil && !resolution.Review {
+						resolution.Reason = joinDiagnostic(resolution.Reason, envErr.Error())
+					}
 					if resolution.Reason != "" && !resolution.Review {
 						unresolved = fmt.Sprintf("CI command %q requires review: %s", step.Run, resolution.Reason)
 					}
 					if !resolution.Matched {
 						continue
 					}
-					words, err := shellquote.Split(step.Run)
-					if err != nil || resolution.Reason != "" || len(words) == 0 || filepath.Clean(stepDirectory(workflow, job, step)) != "." {
+					if resolution.Reason != "" {
+						return "", fmt.Errorf("CI command %q requires review: %s; use --command with its working directory and required setup", step.Run, resolution.Reason)
+					}
+					words, err := shellquote.Split(resolved.Run)
+					if err != nil || len(words) == 0 || filepath.Clean(stepDirectory(workflow, job, resolved)) != "." {
 						return "", fmt.Errorf("cannot automatically forward Jest options through CI command %q; use --command with its working directory and required setup", step.Run)
 					}
-					selected, err := ForwardJestCommand(root, step.Run)
+					selected, err := ForwardJestCommand(root, resolved.Run)
 					if err != nil {
 						return "", err
+					}
+					var assignments []string
+					for _, key := range slices.Sorted(maps.Keys(env)) {
+						assignments = append(assignments, key+"="+env[key])
+					}
+					if len(assignments) > 0 {
+						selected = shellCommand(assignments) + " " + selected
 					}
 					candidates[selected] = true
 				}
