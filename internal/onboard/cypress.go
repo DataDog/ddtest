@@ -49,7 +49,12 @@ func CypressValidationCommand(root, command string) (string, error) {
 // CypressExecutionCommand chooses one declared invocation; it never invents one.
 func CypressExecutionCommand(root, command string) (TestCommand, error) {
 	if command != "" {
-		entries := ValidationCommands(root, command, "cypress")
+		remaining := 256
+		resolution := resolveJestSequence(root, root, command, nil, &remaining, "cypress")
+		if resolution.Reason != "" {
+			return TestCommand{}, fmt.Errorf("cypress command requires review: %s", resolution.Reason)
+		}
+		entries := resolution.Tests
 		if len(entries) != 1 {
 			return TestCommand{}, fmt.Errorf("cypress command requires one supported headless invocation")
 		}
@@ -149,7 +154,7 @@ func resolveCypressAction(root string, workflow ciWorkflow, job runtimeJob, step
 
 // Match cypress-io/github-action's getInputBool, including its fallback.
 func cypressInputBool(value string, fallback bool) bool {
-	switch value {
+	switch strings.TrimSpace(value) {
 	case "true", "1":
 		return true
 	case "false", "0":

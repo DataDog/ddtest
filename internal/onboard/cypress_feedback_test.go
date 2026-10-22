@@ -12,7 +12,7 @@ import (
 )
 
 func TestCypressDisabledActionDoesNotInventTestsOrDiscardSetup(t *testing.T) {
-	for _, value := range []string{"false", "0"} {
+	for _, value := range []string{"false", "0", " 0 "} {
 		step := runtimeStep{Uses: "cypress-io/github-action@v7", With: map[string]string{"runTests": value}}
 		result := resolveCypressAction(t.TempDir(), ciWorkflow{}, runtimeJob{}, step)
 		require.False(t, result.Matched)
@@ -45,6 +45,8 @@ func TestCypressComponentCommandsAreExplicitlyUnsupported(t *testing.T) {
 	for _, command := range []string{"cypress run --component", "node node_modules/cypress/bin/cypress run --component"} {
 		result := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command}, "javascript", "cypress")
 		require.Contains(t, result.Reason, "component testing is not supported")
+		_, err := CypressExecutionCommand(root, command)
+		require.ErrorContains(t, err, "component testing is not supported")
 	}
 	step := runtimeStep{Uses: "cypress-io/github-action@v7", With: map[string]string{"component": "1"}}
 	result := resolveCypressAction(root, ciWorkflow{}, runtimeJob{}, step)

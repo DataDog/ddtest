@@ -157,6 +157,10 @@ func TestPublicCypressTestdrive(t *testing.T) {
 				write(".github/workflows/ci.yml", strings.Replace(string(workflow), "config: viewportWidth=800", "config: retries=2,viewportWidth=800", 1))
 			}
 			if mode == "passing" {
+				output, err = command(root, binary, "testdrive", "--framework", "cypress", "--command", "npx --no-install cypress run --component", "--yes")
+				require.Error(t, err)
+				require.Contains(t, string(output), "component testing is not supported")
+				require.Empty(t, readValidationReport(t, root).Runs, "unsupported selection must start no Cypress runs")
 				output, err = command(root, binary, "onboard", "--framework", "cypress")
 				require.NoError(t, err, string(output))
 				require.Contains(t, string(output), "deferred")

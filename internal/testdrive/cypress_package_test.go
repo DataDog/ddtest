@@ -47,6 +47,8 @@ func TestCypressBrowserInventoryUsesSelectedPackage(t *testing.T) {
 }
 
 func TestCypressRootAliasInspectsItsConsumerPackage(t *testing.T) {
+	t.Setenv("DD_TRACE_PACKAGE", "")
+	t.Setenv("NODE_OPTIONS", "")
 	root := t.TempDir()
 	directory := filepath.Join(root, "frontend")
 	module := filepath.Join(directory, "node_modules/cypress")
@@ -70,6 +72,16 @@ func TestCypressRootAliasInspectsItsConsumerPackage(t *testing.T) {
 	require.Equal(t, expected, drive.projectTracer)
 	require.Equal(t, "6.20.1", result.Selection.Version)
 	require.Equal(t, "project", result.Selection.Source)
+	// A different root installation must not replace the consumer's tracer.
+	other := filepath.Join(root, "node_modules/dd-trace")
+	require.NoError(t, os.MkdirAll(filepath.Join(other, "ci"), 0700))
+	requireWriteFile(t, filepath.Join(other, "ci/init.js"), `module.exports={}`)
+	requireWriteFile(t, filepath.Join(other, "package.json"), `{"version":"6.21.0","engines":{"node":">=22"}}`)
+	drive.projectTracer = filepath.Join(other, "ci/init.js")
+	drive.configurationEnvironment = map[string]string{}
+	require.NoError(t, drive.checkCypressPreflight(t.Context(), io.Discard, &result))
+	require.Equal(t, "6.20.1", result.Selection.Version)
+	require.Equal(t, expected, drive.projectTracer)
 	require.NoError(t, drive.verifyInstalledSelection(t.Context(), drive.projectTracer, &result))
 	require.Equal(t, "15.1.0", result.Preflight.Version)
 }

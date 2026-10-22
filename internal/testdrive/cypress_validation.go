@@ -123,7 +123,7 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 		return fmt.Errorf("cypress requires JavaScript tracer selection")
 	}
 	options := platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args, Environment: t.configurationEnvironment}
-	if t.projectTracer == "" && metadata.Preload != "" {
+	if metadata.Preload != "" && options.Environment["DD_TRACE_PACKAGE"] == "" && os.Getenv("DD_TRACE_PACKAGE") == "" {
 		options.Environment = mergeConfigurationEnvironment(t.configurationEnvironment, map[string]string{"DD_TRACE_PACKAGE": metadata.Preload})
 		preload, err := installer.DetectTracer(ctx, options)
 		if err != nil {
