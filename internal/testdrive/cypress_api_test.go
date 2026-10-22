@@ -28,7 +28,7 @@ func TestCypressAPIPreservesOptionsHooksAndCleansStartup(t *testing.T) {
 				"api.cjs":            cypressAPI,
 				"observer.cjs":       cypressObserver,
 				"children.cjs":       processChildren,
-				"server.cjs":         `const fs=require('fs');fs.writeFileSync('started',String(process.pid));process.on('SIGTERM',()=>{fs.writeFileSync('stopped','yes');if(process.env.DDTEST_API_LATE_START_FAILURE!=='ignore-term')process.exit(0)});setInterval(()=>{if(process.env.DDTEST_API_LATE_START_FAILURE==='true'&&fs.existsSync('api-started'))process.exit(2)},10)`,
+				"server.cjs":         `const fs=require('fs');fs.writeFileSync('started',String(process.pid));process.on('SIGTERM',()=>{fs.writeFileSync('stopped','yes');if(process.env.DDTEST_API_LATE_START_FAILURE!=='ignore-term')process.exit(0)});if(process.env.DDTEST_API_LATE_START_FAILURE==='exit-zero')process.exit(0);if(process.env.DDTEST_API_LATE_START_FAILURE==='ignore-term'){process.removeAllListeners('SIGTERM');process.on('SIGTERM',()=>{})};setInterval(()=>{if(process.env.DDTEST_API_LATE_START_FAILURE==='true'&&fs.existsSync('api-started'))process.exit(2)},10)`,
 				"cypress.config.cjs": `module.exports={e2e:{setupNodeEvents(on){on('after:run',()=>require('fs').writeFileSync('user-hook','called'))}}}`,
 				"node_modules/cypress/index.js": `exports.run=async options=>{
 					const fs=require('fs'),assert=require('assert')
@@ -71,7 +71,9 @@ func TestCypressAPIPreservesOptionsHooksAndCleansStartup(t *testing.T) {
 				require.Contains(t, string(failure), "Startup process exited")
 			} else {
 				require.NoError(t, err, string(output))
-				require.FileExists(t, filepath.Join(root, "stopped"))
+				if lateFailure == "false" {
+					require.FileExists(t, filepath.Join(root, "stopped"))
+				}
 			}
 			require.FileExists(t, filepath.Join(root, "user-hook"))
 			var run validationRun

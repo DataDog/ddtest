@@ -6,6 +6,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 function createObservedConfig (project, requested, directory, probe, component) {
+  if (component) throw new Error('Cypress component testing is not supported by ddtest')
   if (requested === 'false') throw new Error('Cypress validation requires the original configuration')
   const original = requested ? path.resolve(project, requested) :
     ['cypress.config.ts', 'cypress.config.js', 'cypress.config.mjs', 'cypress.config.cjs']
@@ -26,14 +27,14 @@ function createObservedConfig (project, requested, directory, probe, component) 
   const extension = path.extname(original) === '.ts' ? '.ts' : esm ? '.mjs' : '.cjs'
   const wrapper = path.join(path.dirname(original), 'ddtest-observed-' + require('node:crypto').randomUUID() + extension)
   const imported = esm || extension === '.ts'
-    ? 'import original from ' + JSON.stringify(pathToFileURL(original).href) + ';\nimport fs from "node:fs";\n'
+    ? 'import original from ' + JSON.stringify(extension === '.ts' ? './' + path.basename(original) : pathToFileURL(original).href) + ';\nimport fs from "node:fs";\n'
     : 'const original = require(' + JSON.stringify(original) + ');\nconst fs = require("node:fs");\n'
   function attachObserver (original, options) {
     const type = options.component ? 'component' : 'e2e'
     const config = { ...original, [type]: { ...original[type] } }
     // Disable native retries before setup, so instrumentation can subsequently
     // apply the retry budget returned by the local feature settings.
-    if (options.probe) config.retries = 0
+    if (options.probe) { config.retries = 0; config[type].retries = 0 }
     const setup = config[type].setupNodeEvents
     config[type].setupNodeEvents = async function (on, effective) {
       const handlers = []
@@ -51,6 +52,7 @@ function createObservedConfig (project, requested, directory, probe, component) 
         } finally {
           fs.writeFileSync(options.directory + '/results.json', JSON.stringify({
             ...results, complete: true, configNode: process.versions.node,
+            componentConfigured: !!original.component,
             probeExecutions: options.probe ? probeExecutions : undefined
           }))
         }
@@ -64,7 +66,21 @@ function createObservedConfig (project, requested, directory, probe, component) 
   fs.writeFileSync(wrapper, imported + body + (esm || extension === '.ts' ? '\nexport default config;\n' : '\nmodule.exports = config;\n'))
   return wrapper
 }
+// Preserve Cypress's serialized syntax instead of maintaining a second parser.
+// JSON options can be edited directly; key=value options use last-value wins.
+function probeConfig (config) {
+  let parsed = config
+  if (typeof config === 'string') {
+    try { parsed = JSON.parse(config) } catch { return config + ',retries=0' }
+  }
+  parsed = { ...parsed, retries: 0 }
+  for (const type of ['e2e', 'component']) {
+    if (parsed[type]) parsed[type] = { ...parsed[type], retries: 0 }
+  }
+  return typeof config === 'string' ? JSON.stringify(parsed) : parsed
+}
 module.exports = createObservedConfig
+module.exports.probeConfig = probeConfig
 
 const cli = process.argv[1] || ''
 if (/[/\\](?:cypress[/\\]bin[/\\]cypress|\.bin[/\\]cypress)(?:\.js)?$/.test(cli) &&
@@ -88,7 +104,7 @@ if (/[/\\](?:cypress[/\\]bin[/\\]cypress|\.bin[/\\]cypress)(?:\.js)?$/.test(cli)
   const project = path.resolve(process.cwd(), take(['--project', '-P']) || '.')
   const requested = take(['--config-file', '-C'])
   // Never contact Cypress Cloud from a local mock trial.
-  take(['--group', '--ci-build-id', '--key', '--tag'])
+  take(['--group', '--ci-build-id', '--key', '-k', '--tag', '-t', '--auto-cancel-after-failures'])
   for (let i = args.length - 1; i >= 0; i--) {
     if (args[i] === '--record' || args[i] === '--parallel') {
       if (args[i + 1] === 'true' || args[i + 1] === 'false') args.splice(i + 1, 1)
@@ -102,6 +118,8 @@ if (/[/\\](?:cypress[/\\]bin[/\\]cypress|\.bin[/\\]cypress)(?:\.js)?$/.test(cli)
   }
   if (probe) {
     take(['--spec', '-s'])
+    const config = take(['--config', '-c'])
+    if (config) appendOptions('--config', probeConfig(config))
     appendOptions('--spec', probe)
   }
   const wrapper = createObservedConfig(project, requested, directory, probe, args.includes('--component'))

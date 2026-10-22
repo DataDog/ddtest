@@ -32,6 +32,13 @@ type configurationResult struct {
 func setSingleConfigurationScope(root string, result *validationResult, scope onboard.ValidationScope, executionCommand string, executionEnvironment map[string]string) {
 	result.Scope = &scope
 	selected := onboard.ValidationCommands(root, executionCommand, result.Framework)
+	if result.Framework == "cypress" && strings.HasPrefix(executionCommand, "Cypress.run(") {
+		for _, entry := range scope.Commands {
+			if entry.Command == executionCommand {
+				selected = append(selected, entry)
+			}
+		}
+	}
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Run testdrive --all after required setup to validate every discovered configuration."}}
 		for _, command := range selected {
@@ -147,9 +154,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 	var runErrors []error
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
-		if entry.Cypress != nil && entry.Cypress.Platform == "windows" && runtime.GOOS != "windows" {
+		if entry.Cypress != nil && entry.Cypress.Platform != "" && entry.Cypress.Platform != runtime.GOOS {
 			result.Compatibility = verdict{Status: "inconclusive", Reason: "At least one discovered OS variant was not executed; see configurations."}
-			item.Error = "Windows Cypress configuration was not executed on this " + runtime.GOOS + " host. Use a matching runner; this variant remains unvalidated."
+			item.Error = entry.Cypress.Platform + " Cypress configuration was not executed on this " + runtime.GOOS + " host. Use a matching runner; this variant remains unvalidated."
 			result.Configurations = append(result.Configurations, item)
 			continue
 		}
@@ -181,6 +188,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		_, _ = fmt.Fprintf(output, "\nConfiguration %d/%d: %s\n", len(result.Configurations)+1, len(scope.Commands), entry.Command)
 
 		label := fmt.Sprintf("configuration %d: %s", len(result.Configurations)+1, entry.Command)
+		if t.framework.Name() == "cypress" {
+			label = onboard.RedactCypressCommand(label)
+		}
 		for _, key := range slices.Sorted(maps.Keys(entry.Environment)) {
 			if entry.Environment[key] == "" {
 				label += " (" + key + " cleared)"
@@ -189,7 +199,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			}
 		}
 		child := *t
-		child.cypress, child.cypressCommand = entry.Cypress, entry.Command
+		child.cypress, child.cypressCommand, child.cypressPackage = entry.Cypress, entry.Command, entry.CypressPackage
 		child.workflowRoot = t.repositoryRoot
 		child.allConfigurations = false
 		child.session = planSession()

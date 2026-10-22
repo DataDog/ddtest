@@ -33,16 +33,17 @@ const (
 )
 
 type reportCard struct {
-	Kind      string
-	Scope     findingScope
-	Severity  string
-	Title     string
-	Count     int
-	Context   string
-	Advices   []intake.Advice
-	Tests     []reportTest
-	Suites    []reportSuite
-	Coverages []reportCoverage
+	PolicyStatus string
+	Kind         string
+	Scope        findingScope
+	Severity     string
+	Title        string
+	Count        int
+	Context      string
+	Advices      []intake.Advice
+	Tests        []reportTest
+	Suites       []reportSuite
+	Coverages    []reportCoverage
 }
 
 type reportTest struct {
@@ -228,8 +229,6 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	coverageTooltip := ""
 	if findings.BrowserCoverageUnavailable {
 		coverageTooltip = intake.BrowserCoverageContext
-	} else if strings.EqualFold(info.Framework, "cypress") && covered < total {
-		coverageTooltip = "Cypress collects Test Impact Analysis coverage from instrumented code in the browser. API-only tests that do not load that code may have no coverage."
 	}
 	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "not supported" && covered == 0 {
 		coverageValue, coverageTone = "Not supported ("+info.Framework+")", "info"
@@ -279,7 +278,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		model.Cards = append(model.Cards, reportCard{Kind: strings.ToLower(info.Framework) + "-coverage-unavailable", Severity: "info", Title: info.Framework + " coverage and skipping are not supported", Count: 1, Context: policy.Reason})
 	}
 	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "deferred" {
-		model.Cards = append(model.Cards, reportCard{Kind: strings.ToLower(info.Framework) + "-tia-deferred", Severity: "info", Title: info.Framework + " Test Impact Analysis validation is deferred", Count: 1, Context: policy.Reason})
+		model.Cards = append(model.Cards, reportCard{PolicyStatus: policy.Status, Kind: strings.ToLower(info.Framework) + "-tia-deferred", Severity: "info", Title: info.Framework + " Test Impact Analysis validation is deferred", Count: 1, Context: policy.Reason})
 	}
 	if findings.MissingCoverage && skippingPolicy(strings.ToLower(info.Framework)).Status == "required" {
 		model.Cards = append(model.Cards, reportCard{

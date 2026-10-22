@@ -23,12 +23,13 @@ import (
 )
 
 type jestTest struct {
-	Playwright    *playwrightIdentity `json:"playwright,omitempty"`
-	telemetryName *string
-	File          string `json:"file"`
-	Name          string `json:"name"`
-	Status        string `json:"status"`
-	Failure       string `json:"failure,omitempty"`
+	CypressAttempts []string            `json:"-"`
+	Playwright      *playwrightIdentity `json:"playwright,omitempty"`
+	telemetryName   *string
+	File            string `json:"file"`
+	Name            string `json:"name"`
+	Status          string `json:"status"`
+	Failure         string `json:"failure,omitempty"`
 }
 
 type jestResults struct {
@@ -342,6 +343,9 @@ func compareJest(baseline, instrumented validationRun) verdict {
 func verifyJestTelemetry(run validationRun) verdict {
 	if run.framework == "playwright" {
 		return verifyPlaywrightTelemetry(run)
+	}
+	if run.framework == "cypress" {
+		return verifyCypressTelemetry(run)
 	}
 	if run.Facts.TestEventCount == 0 {
 		return verdict{Status: "inconclusive", Reason: "The instrumented run sent no test events; matching test outcomes do not prove instrumentation worked."}

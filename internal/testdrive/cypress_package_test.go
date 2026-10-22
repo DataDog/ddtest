@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,4 +44,31 @@ func TestCypressBrowserInventoryUsesSelectedPackage(t *testing.T) {
 	require.Equal(t, "15.1.0", result.Preflight.Version)
 	require.FileExists(t, filepath.Join(directory, "inventory-called"))
 	require.NoDirExists(t, filepath.Join(root, "node_modules"))
+}
+
+func TestCypressRootAliasInspectsItsConsumerPackage(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "frontend")
+	module := filepath.Join(directory, "node_modules/cypress")
+	require.NoError(t, os.MkdirAll(filepath.Join(module, "bin"), 0700))
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"npm --prefix frontend test"}}`)
+	requireWriteFile(t, filepath.Join(directory, "package.json"), `{"scripts":{"test":"cypress run"}}`)
+	requireWriteFile(t, filepath.Join(module, "package.json"), `{"version":"15.1.0","engines":{"node":">=20"}}`)
+	requireWriteFile(t, filepath.Join(module, "bin/cypress"), `console.log('Detected 1 browser installed:\n1. Chrome\n - Name: chrome\n - Channel: stable\n')`)
+	tracer := filepath.Join(directory, "node_modules/dd-trace")
+	require.NoError(t, os.MkdirAll(filepath.Join(tracer, "ci"), 0700))
+	requireWriteFile(t, filepath.Join(tracer, "ci/init.js"), `module.exports={}`)
+	requireWriteFile(t, filepath.Join(tracer, "package.json"), `{"version":"6.20.1","engines":{"node":">=22"}}`)
+	entry, err := onboard.CypressExecutionCommand(root, "npm test")
+	require.NoError(t, err)
+	t.Chdir(root)
+	drive := Testdrive{platform: platform.NewJavaScript(), repositoryRoot: root, cypressPackage: entry.CypressPackage, executor: cypressPackageExecutor{root}, nodeVersion: func() string { return "24.14.1" }, cypress: &onboard.CypressCommand{Options: map[string]any{"browser": "chrome"}}}
+	var result validationResult
+	require.NoError(t, drive.checkCypressPreflight(t.Context(), io.Discard, &result))
+	expected, err := filepath.EvalSymlinks(filepath.Join(tracer, "ci/init.js"))
+	require.NoError(t, err)
+	require.Equal(t, expected, drive.projectTracer)
+	require.Equal(t, "6.20.1", result.Selection.Version)
+	require.Equal(t, "project", result.Selection.Source)
+	require.Equal(t, "15.1.0", result.Preflight.Version)
 }

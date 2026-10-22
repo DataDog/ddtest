@@ -103,14 +103,12 @@ type testCounts struct {
 }
 
 type coverageSummary struct {
-	InvalidFiles []string `json:"invalid_files,omitempty"`
-	InvalidCount int      `json:"invalid_file_count,omitempty"`
-	Reason       string   `json:"reason,omitempty"`
-	Ratio        float64  `json:"covered_test_ratio"`
-	Status       string   `json:"status"`
-	CoveredTests int      `json:"covered_tests"`
-	TotalTests   int      `json:"total_tests"`
-	Level        string   `json:"level,omitempty"`
+	Reason       string  `json:"reason,omitempty"`
+	Ratio        float64 `json:"covered_test_ratio"`
+	Status       string  `json:"status"`
+	CoveredTests int     `json:"covered_tests"`
+	TotalTests   int     `json:"total_tests"`
+	Level        string  `json:"level,omitempty"`
 }
 
 type runSummary struct {

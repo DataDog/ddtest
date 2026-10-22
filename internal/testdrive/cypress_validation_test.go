@@ -3,11 +3,13 @@ package testdrive
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
@@ -119,43 +121,6 @@ func TestCypressObserverPreservesConfigAndAfterRunHandlers(t *testing.T) {
 	}
 }
 
-func TestCypressCoverageRequiresRepositoryApplicationFiles(t *testing.T) {
-	root := t.TempDir()
-	for _, name := range []string{"app/source.js", "test.cy.js"} {
-		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
-		requireWriteFile(t, filepath.Join(root, name), "// source")
-	}
-	native := []jestTest{{File: filepath.Join(root, "test.cy.js")}}
-	facts := intake.Facts{TestCount: 2, CoveredTestCount: 1, CoverageLevel: "test", Tests: []intake.Test{{SourceFile: "test.cy.js", CoveredFiles: []string{"test.cy.js"}}}}
-	coverage := cypressSourceCoverage(root, facts, native)
-	require.Equal(t, "not observed", coverage.Status, "SDK-added spec coverage is not application coverage")
-	facts.Tests[0].CoveredFiles = []string{"test.cy.js", "../kitchensink-coverage-example/app/source.js"}
-	coverage = cypressSourceCoverage(root, facts, native)
-	require.Equal(t, "invalid", coverage.Status)
-	require.Zero(t, coverage.CoveredTests)
-	require.Equal(t, 1, coverage.InvalidCount)
-	require.Contains(t, coverage.Reason, "original repository source filename")
-	for _, file := range []string{"app/source.js", filepath.Join(root, "app/source.js")} {
-		facts.Tests[0].CoveredFiles = []string{"test.cy.js", file}
-		coverage = cypressSourceCoverage(root, facts, native)
-		require.Equal(t, "observed", coverage.Status)
-		require.Equal(t, 1, coverage.CoveredTests)
-	}
-	outside := filepath.Join(t.TempDir(), "external.js")
-	requireWriteFile(t, outside, "// outside")
-	require.NoError(t, os.Symlink(outside, filepath.Join(root, "linked.js")))
-	facts.Tests[0].CoveredFiles = []string{"linked.js"}
-	require.Equal(t, "invalid", cypressSourceCoverage(root, facts, native).Status)
-	facts.Tests[0].CoveredFiles = []string{"missing1", "missing2", "missing3", "missing4", "missing5", "missing6"}
-	coverage = cypressSourceCoverage(root, facts, native)
-	require.Equal(t, 6, coverage.InvalidCount)
-	require.Len(t, coverage.InvalidFiles, 5, "diagnostics must stay bounded")
-	result := validationResult{Framework: "cypress", Runs: []runSummary{{Coverage: coverage}}}
-	require.False(t, missingRealCoverage(result), "Cypress TIA is deferred; coverage does not block the other controls")
-	result.Framework = "mocha"
-	require.True(t, missingRealCoverage(result), "other frameworks must retain coverage requirements")
-}
-
 func TestCypressReportsExecutableStartFailureWithoutOutput(t *testing.T) {
 	drive := &Testdrive{repositoryRoot: t.TempDir(), language: "javascript", command: "COVERAGE=true", args: []string{"npm", "run", "test:ci"},
 		executor: &fakeTestdriveExecutor{err: &exec.Error{Name: "COVERAGE=true", Err: exec.ErrNotFound}}, nodeVersion: func() string { return "v22.23.1" },
@@ -178,7 +143,8 @@ func TestCypressDefaultExecutesTheUniqueCIConfiguration(t *testing.T) {
 	t.Chdir(root)
 	drive, err := Prepare(PrepareOptions{TracerVersion: "6.21.0"})
 	require.NoError(t, err)
-	require.True(t, drive.allConfigurations, "automatic CI selection must use the configuration executor, including its environment")
+	require.False(t, drive.allConfigurations, "default validates the selected invocation; --all is explicit")
+	require.Equal(t, "true", drive.configurationEnvironment["COVERAGE"])
 	require.Equal(t, "npm", drive.command)
 	require.Equal(t, []string{"run", "test:ci"}, drive.args)
 }
@@ -234,4 +200,65 @@ func TestCypressReportDisclosesDeferredTIAWithoutCoverageWarning(t *testing.T) {
 	for _, card := range model.Cards {
 		require.NotEqual(t, intake.MissingCoverageFinding, card.Kind)
 	}
+}
+
+func TestCypressPublishedReportRedactsKeysWithoutDroppingConfigurationEvidence(t *testing.T) {
+	result := validationResult{Framework: "cypress", Runs: []runSummary{{Command: "cypress run --key fake-secret", NativeCommand: "cypress run -kfake-secret"}}, Configurations: []configurationResult{{TestCommand: onboard.TestCommand{Command: "cypress run --key fake-secret", Cypress: &onboard.CypressCommand{CLI: []string{"cypress", "run", "--key", "fake-secret"}}}, Status: "passed", PairedExecution: true}}}
+	data, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "fake-secret")
+	var decoded validationResult
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.Len(t, decoded.Configurations, 1)
+	require.True(t, decoded.Configurations[0].PairedExecution)
+	require.Equal(t, "passed", decoded.Configurations[0].Status)
+	require.Equal(t, "[REDACTED]", decoded.Configurations[0].Cypress.CLI[3])
+}
+
+func TestCypressProbeOptionsOverrideOnlyNativeRetries(t *testing.T) {
+	root := t.TempDir()
+	observer := filepath.Join(root, "observer.cjs")
+	requireWriteFile(t, observer, cypressObserver)
+	script := `const assert=require('node:assert/strict'),{probeConfig}=require(process.argv[1]);
+ const original={retries:2,viewportWidth:800,e2e:{retries:{runMode:2},baseUrl:'http://localhost'}};
+ const overridden=probeConfig(original);assert.equal(original.retries,2);assert.equal(original.e2e.retries.runMode,2);
+ assert.deepEqual(overridden,{retries:0,viewportWidth:800,e2e:{retries:0,baseUrl:'http://localhost'}});
+ assert.equal(probeConfig('viewportWidth=800,retries=2'),'viewportWidth=800,retries=2,retries=0');
+ assert.deepEqual(JSON.parse(probeConfig(JSON.stringify(original))),overridden);`
+	output, err := exec.CommandContext(t.Context(), "node", "-e", script, observer).CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+func TestCypressTypeScriptWrapperUsesSiblingSpecifier(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "cypress.config.ts"), "export default {e2e:{}}")
+	requireWriteFile(t, filepath.Join(root, "observer.cjs"), cypressObserver)
+	output, err := exec.CommandContext(t.Context(), "node", "-e", `const fs=require('node:fs');const wrapper=require(process.argv[1])(process.argv[2],null,process.argv[2],false,false);console.log(fs.readFileSync(wrapper,'utf8'))`, filepath.Join(root, "observer.cjs"), root).CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.Contains(t, string(output), `import original from "./cypress.config.ts"`)
+	require.NotContains(t, string(output), "file://")
+}
+
+func TestCypressNativeRetryTelemetryDoesNotDependOnArrivalOrder(t *testing.T) {
+	run := testRun("passed", 0)
+	run.framework = "cypress"
+	run.Tests[0].CypressAttempts = []string{"failed", "passed"}
+	run.Facts.Tests[0].Attempts = []intake.TestRun{{Status: "pass", Retry: true, RetryReason: "external"}, {Status: "fail"}}
+	require.Empty(t, verifyJestTelemetry(run).Status)
+	require.True(t, run.Facts.Tests[0].Attempts[0].Retry, "comparison must not rewrite original evidence")
+	run.Facts.Tests[0].Attempts[0].RetryReason = "early_flake_detection"
+	require.Equal(t, "unexpected_retry", verifyJestTelemetry(run).Code)
+	run.Facts.Tests[0].Attempts = run.Facts.Tests[0].Attempts[1:]
+	require.Equal(t, "inconclusive", verifyJestTelemetry(run).Status, "every native attempt must have matching telemetry")
+}
+
+func TestCypressBackgroundPortCheckUsesDeclaredBaseURL(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+	plan := &onboard.CypressCommand{Start: [][]string{{"node", "server.cjs"}}}
+	require.ErrorContains(t, checkCypressStartupPorts(plan, map[string]string{"CYPRESS_BASE_URL": "http://" + listener.Addr().String()}), "already occupied")
+	connection, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(t, err)
+	require.NoError(t, connection.Close())
 }

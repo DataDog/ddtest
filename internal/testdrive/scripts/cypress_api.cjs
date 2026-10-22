@@ -22,7 +22,9 @@ function start (words) {
   command.stdout?.pipe(process.stdout, { end: false })
   command.stderr?.pipe(process.stderr, { end: false })
   command.on('error', error => failures.push(error))
-  command.on('exit', code => failures.push(new Error('Startup process exited: ' + words.join(' ') + ' (' + code + ')')))
+  command.on('exit', (code, signal) => {
+    if (code !== 0) failures.push(new Error('Startup process exited: ' + words.join(' ') + ' (' + (signal || code) + ')'))
+  })
   children.push(command)
 }
 
@@ -94,7 +96,10 @@ async function run () {
     const observe = require(path.join(directory, 'observer.cjs'))
     options.configFile = observe(project, options.configFile, directory, process.env.DDTEST_CYPRESS_PROBE, options.component)
     options.project = project
-    if (process.env.DDTEST_CYPRESS_PROBE) options.spec = process.env.DDTEST_CYPRESS_PROBE
+    if (process.env.DDTEST_CYPRESS_PROBE) {
+      options.spec = process.env.DDTEST_CYPRESS_PROBE
+      if (options.config) options.config = observe.probeConfig(options.config)
+    }
     fs.writeFileSync(path.join(directory, 'invocation.json'), JSON.stringify({
       command: process.execPath, args: [process.argv[1], process.argv[2]], api: options
     }))

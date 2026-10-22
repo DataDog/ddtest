@@ -43,6 +43,8 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	cypressPackage           string
+	cypressSelected          onboard.TestCommand
 	configurationSourceRoot  string
 	scopeCommand             string
 	cypress                  *onboard.CypressCommand
@@ -214,18 +216,21 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 	if runner.Name() == "cypress" && !all {
-		selected, resolveErr := onboard.CypressValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
-		if resolveErr != nil {
-			discoveryError = resolveErr
-		} else if selected != "" {
-			words, splitErr := shellquote.Split(selected)
+		selectedPlan, err = onboard.CypressExecutionCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		if err != nil {
+			discoveryError = err
+		} else if selectedPlan.Cypress != nil {
+			command, args = "node", nil
+		} else {
+			words, splitErr := shellquote.Split(selectedPlan.Command)
 			if splitErr != nil || len(words) == 0 {
-				discoveryError = fmt.Errorf("invalid Cypress command: %s", selected)
+				discoveryError = fmt.Errorf("invalid Cypress command: %s", selectedPlan.Command)
 			} else {
 				command, args = words[0], words[1:]
 			}
 		}
 	}
+
 	if runner.Name() == "mocha" && !all {
 		selected, resolveErr := onboard.MochaValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
 		if resolveErr != nil {
@@ -259,8 +264,11 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 	originalCommand := shellquote.Join(append([]string{command}, args...)...)
+	if selectedPlan.Cypress != nil {
+		originalCommand = selectedPlan.Command
+	}
 	var commandAssignments map[string]string
-	if language == "javascript" && !all {
+	if language == "javascript" && !all && selectedPlan.Cypress == nil {
 		parsed, arguments, assignments, parseErr := onboard.ParseValidationCommand(originalCommand)
 		if parseErr != nil {
 			discoveryError = parseErr
@@ -326,11 +334,11 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		drive.command = drive.configurationExecutable(drive.command)
 	}
 	drive.allConfigurations = all
-	if runner.Name() == "cypress" && !all && strings.TrimSpace(settings.GetCommand()) == "" {
-		if scope, err := onboard.DiscoverValidationScope(repositoryRoot, "cypress"); err == nil && len(scope.Commands) > 0 {
-			drive.allConfigurations = true
-		}
+	if runner.Name() == "cypress" {
+		drive.cypressSelected = selectedPlan
+		drive.cypress, drive.cypressCommand, drive.cypressPackage = selectedPlan.Cypress, selectedPlan.Command, selectedPlan.CypressPackage
 	}
+
 	drive.scopeCommand = scopeCommand
 	drive.allowReviewedBuilds = configuration.AllowReviewedBuilds
 	drive.commandTimeout = timeout
@@ -480,6 +488,9 @@ func (t *Testdrive) Preview(output io.Writer) {
 }
 
 func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
+	if t.framework.Name() == "cypress" {
+		ctx = onboard.WithCypressMetadataCache(ctx)
+	}
 	defer func() {
 		if runErr != nil && supportsValidationFramework(t.framework.Name()) {
 			runErr = validationFailure{runErr}
@@ -525,7 +536,12 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		// The run executes in a disposable copy; publish its report here instead.
 		var models []reportModel
 		child.reportModels = &models
-		result, runErr = child.runPreparedConfiguration(ctx, output, &configurationResult{TestCommand: onboard.TestCommand{Environment: child.configurationEnvironment}})
+		entry := onboard.TestCommand{Environment: child.configurationEnvironment}
+		if child.framework.Name() == "cypress" {
+			entry = child.cypressSelected
+			entry.Environment = child.configurationEnvironment
+		}
+		result, runErr = child.runPreparedConfiguration(ctx, output, &configurationResult{TestCommand: entry})
 		runErr = errors.Join(runErr, t.publishCopiedRunReport(output, &result, models))
 	} else {
 		result, runErr = t.run(ctx, output)
@@ -728,7 +744,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 				result.Preflight.Verdict = checkVitestSupport(*result.Preflight, *result.Selection)
 			} else if t.framework.Name() == "cypress" {
 				result.Preflight.Verdict = checkCypressSupport(*result.Preflight, *result.Selection)
-			} else if t.framework.Name() == "cypress" || t.framework.Name() == "playwright" {
+			} else if t.framework.Name() == "playwright" {
 				result.Preflight.Verdict = checkPlaywrightSupport(*result.Preflight, *result.Selection)
 			} else if t.framework.Name() == "mocha" {
 				result.Preflight.Verdict = checkMochaSupport(*result.Preflight, *result.Selection)
@@ -868,7 +884,7 @@ func writeRunFindings(output io.Writer, findings intake.Facts, trafficRetained b
 	count := len(findings.ConfigurationErrors)
 	coverageDeferred := false
 	for _, finding := range cards {
-		if finding.Kind == "cypress-tia-deferred" {
+		if finding.PolicyStatus == "deferred" {
 			coverageDeferred = true
 			_, _ = fmt.Fprintln(output, "Info: "+finding.Context)
 		}

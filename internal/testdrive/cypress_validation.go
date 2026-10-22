@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,13 +20,29 @@ import (
 	"github.com/kballard/go-shellquote"
 )
 
-const cypressTIADeferredReason = "Cypress Test Impact Analysis (skipping and application coverage) is deferred and was not validated. Application Istanbul instrumentation is not required by this testdrive; preserve any existing coverage setup."
+const cypressTIADeferredReason = "Cypress Test Impact Analysis (skipping and application coverage) is deferred and was not validated. ddtest does not check application coverage yet; preserve any existing coverage setup."
 
 //go:embed scripts/cypress_observer.cjs
 var cypressObserver string
 
 //go:embed scripts/cypress_api.cjs
 var cypressAPI string
+
+const cypressPackageMetadata = `
+const path = require('node:path')
+const local = require('node:module').createRequire(path.join(process.argv[1], 'package.json'))
+let preload = ''
+try { preload = local.resolve('dd-trace/ci/init') } catch (error) {
+  if (error.code !== 'MODULE_NOT_FOUND') throw error
+}
+const cypress = local('cypress/package.json')
+console.log(JSON.stringify({
+  preload,
+  cli: path.join(path.dirname(local.resolve('cypress/package.json')), 'bin', 'cypress'),
+  version: cypress.version,
+  requirements: [cypress.engines?.node, local('./package.json').engines?.node].filter(Boolean)
+}))
+`
 
 func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer, result *validationResult) error {
 	check := &jestPreflight{Node: t.nodeVersion(), Command: shellquote.Join(append([]string{t.command}, t.args...)...), ExecutionPath: "cypress-cli", Verdict: verdict{Status: "inconclusive", Reason: "Cypress metadata was not resolved."}}
@@ -35,11 +53,35 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 		}
 	}
 	result.Preflight = check
-	data, err := t.executor.CombinedOutput(ctx, "node", []string{"-p", "JSON.stringify({cli:require('node:path').join(require('node:path').dirname(require.resolve('cypress/package.json')),'bin','cypress'),version:require('cypress/package.json').version,requirements:[require('cypress/package.json').engines?.node,require('./package.json').engines?.node].filter(Boolean)})"}, map[string]string{"NODE_OPTIONS": stripDatadogNodeOptions(t.nodeOptions())})
+	if t.cypress != nil && t.cypress.Platform != "" && t.cypress.Platform != runtime.GOOS {
+		return fmt.Errorf("cypress %s configuration cannot be validated on %s", t.cypress.Platform, runtime.GOOS)
+	}
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("cypress process supervision is not supported on Windows; this configuration remains unvalidated")
+	}
+	for _, argument := range t.args {
+		if argument == "--component" {
+			return fmt.Errorf("cypress component testing is not supported")
+		}
+	}
+	lookup := t.repositoryRoot
+	if t.cypressPackage != "" {
+		lookup = filepath.Join(t.checkoutRoot(), t.cypressPackage)
+	}
+	relative, err := filepath.Rel(t.checkoutRoot(), lookup)
+	if err != nil {
+		return err
+	}
+	if _, err := localSetupDirectory(t.checkoutRoot(), relative); err != nil {
+		return err
+	}
+
+	data, err := t.executor.CombinedOutput(ctx, "node", []string{"-e", cypressPackageMetadata, lookup}, map[string]string{"NODE_OPTIONS": stripDatadogNodeOptions(t.nodeOptions())})
 	if err != nil {
 		return fmt.Errorf("inspect Cypress: %w: %s", err, commandDiagnostic(data))
 	}
 	var metadata struct {
+		Preload      string
 		CLI          string
 		Version      string
 		Requirements []string
@@ -80,7 +122,16 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 	if !ok {
 		return fmt.Errorf("cypress requires JavaScript tracer selection")
 	}
-	selection, err := installer.ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args})
+	options := platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args, Environment: t.configurationEnvironment}
+	if t.projectTracer == "" && metadata.Preload != "" {
+		options.Environment = mergeConfigurationEnvironment(t.configurationEnvironment, map[string]string{"DD_TRACE_PACKAGE": metadata.Preload})
+		preload, err := installer.DetectTracer(ctx, options)
+		if err != nil {
+			return fmt.Errorf("inspect consumer package tracer: %w", err)
+		}
+		t.projectTracer = preload
+	}
+	selection, err := installer.ResolveTestdriveTracer(ctx, options)
 	result.Selection = &selection
 	if err != nil {
 		return err
@@ -164,6 +215,11 @@ func checkCypressSupport(check jestPreflight, selection platform.JSSelection) ve
 }
 
 func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+	defer func() {
+		run.Command = onboard.RedactCypressCommand(run.Command)
+		run.NativeCommand = onboard.RedactCypressCommand(run.NativeCommand)
+		run.commandOutput = onboard.RedactCypressCommand(run.commandOutput)
+	}()
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	run.Name, run.Instrumented, run.ProbeMode = name, instrumented, probeMode
@@ -202,7 +258,7 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 	}
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(observer) + " --require " + strconv.Quote(children)
 	env["DDTEST_CYPRESS_DIRECTORY"], env["DDTEST_CYPRESS_PROBE"], env["DDTEST_PROBE_MODE"] = directory, probePath, probeMode
-	owner, err := startProcessOwner(directory, env)
+	owner, err := t.ownPlaywrightProcesses(directory, env)
 	if err != nil {
 		return run, err
 	}
@@ -246,9 +302,7 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 		return run, err
 	}
 	readCypressResults(filepath.Join(directory, "results.json"), &run)
-	if instrumented && probePath == "" && run.Facts.TestCount > 0 {
-		run.Coverage = cypressSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests)
-	}
+
 	var invocation struct {
 		Command string
 		Args    []string
@@ -276,12 +330,13 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 
 func readCypressResults(path string, run *validationRun) {
 	var result struct {
-		Status          string
-		Complete        bool
-		ConfigNode      string
-		ProbeExecutions *int
-		Message         string
-		Runs            []struct {
+		Status              string
+		Complete            bool
+		ConfigNode          string
+		ComponentConfigured bool
+		ProbeExecutions     *int
+		Message             string
+		Runs                []struct {
 			Spec  struct{ Absolute string }
 			Error string
 			Tests []struct {
@@ -301,6 +356,9 @@ func readCypressResults(path string, run *validationRun) {
 		return
 	}
 	run.FrameworkNode = result.ConfigNode
+	if result.ComponentConfigured {
+		run.Diagnostic += " Cypress component testing is not supported by ddtest; only the selected e2e command was exercised."
+	}
 	run.ProbeExecutions = result.ProbeExecutions
 	for _, spec := range result.Runs {
 		if spec.Error != "" {
@@ -310,6 +368,9 @@ func readCypressResults(path string, run *validationRun) {
 			item := jestTest{File: spec.Spec.Absolute, Name: strings.Join(test.Title, " "), Status: test.State, Failure: failureSignature(test.DisplayError)}
 			if item.Status == "pending" {
 				item.Status = "skipped"
+			}
+			for _, attempt := range test.Attempts {
+				item.CypressAttempts = append(item.CypressAttempts, attempt.State)
 			}
 			if len(test.Attempts) > 0 {
 				last := test.Attempts[len(test.Attempts)-1]
@@ -330,7 +391,11 @@ func (t *Testdrive) runCypressFeatures(ctx context.Context, output io.Writer, se
 	}
 	defer func() { runErr = errors.Join(runErr, removeProbe(t.checkoutRoot(), probe)) }()
 	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
-		return t.runCypress(ctx, output, session, preload, runSpec{Name: name, Role: roleProbeFeature, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
+		role := roleProbeFeature
+		if scenario.Feature == "" {
+			role = roleProbeControl
+		}
+		return t.runCypress(ctx, output, session, preload, runSpec{Name: name, Role: role, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
 	}, result)
 }
 
@@ -343,3 +408,35 @@ describe('ddtest', () => { (mode ? it : it.skip)('validation probe', () => {
  });
 }); });
 `
+
+// Cypress reports ordered native attempts, but its tracer events can arrive in
+// the opposite order. Compare the complete attempt multiset rather than guessing
+// the final attempt from arrival order. The original run evidence is unchanged.
+func verifyCypressTelemetry(run validationRun) verdict {
+	view := run
+	view.framework = ""
+	view.Tests = nil
+	for _, test := range run.Tests {
+		if len(test.CypressAttempts) == 0 {
+			view.Tests = append(view.Tests, test)
+			continue
+		}
+		for _, status := range test.CypressAttempts {
+			attempt := test
+			attempt.Status = status
+			view.Tests = append(view.Tests, attempt)
+		}
+	}
+	view.Facts.Tests = slices.Clone(run.Facts.Tests)
+	for i, test := range run.Facts.Tests {
+		view.Facts.Tests[i].Attempts = slices.Clone(test.Attempts)
+		for j, attempt := range test.Attempts {
+			// Native retries count as individual attempts in this comparison view.
+			// Keep tracer-controlled retries marked, so the shared verifier rejects them.
+			if attempt.RetryReason == "external" || attempt.RetryReason == "" {
+				view.Facts.Tests[i].Attempts[j].Retry = false
+			}
+		}
+	}
+	return verifyJestTelemetry(view)
+}

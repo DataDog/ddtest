@@ -44,7 +44,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	t = &runner
 	t.configurationEnvironment = onboard.WithGitHubActionsDefaults(item.Environment)
 	if !t.checkOnly {
-		if err := checkCypressStartupPorts(t.cypress); err != nil {
+		if err := checkCypressStartupPorts(t.cypress, t.configurationEnvironment); err != nil {
 			return result, err
 		}
 	}
@@ -143,6 +143,8 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 			t.preflight = t.checkVitestPreflight
 		} else if t.framework.Name() == "playwright" {
 			t.preflight = t.checkPlaywrightPreflight
+		} else if t.framework.Name() == "cypress" {
+			t.preflight = t.checkCypressPreflight
 		} else if t.framework.Name() == "mocha" {
 			t.preflight = t.checkMochaPreflight
 		} else {

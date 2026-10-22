@@ -15,13 +15,13 @@ type featurePolicy struct {
 
 type frameworkPolicy struct {
 	Paired, CheckOnly, ProbeRecovery, Preflight, Configurations bool
-	SourceCoverage                                              bool
+	SourceCoverage, ProbeBodyCounts                             bool
 	ConfigurationFiles                                          []string
 	Features                                                    []featurePolicy
 }
 
 var frameworkFeaturePolicies = map[string]frameworkPolicy{
-	"cypress": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
+	"cypress": {ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "deferred", Reason: cypressTIADeferredReason}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
 	}},
 	"playwright": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
