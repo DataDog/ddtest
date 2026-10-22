@@ -23,20 +23,31 @@ type CypressCommand struct {
 	Platform    string         `json:"platform,omitempty"`
 }
 
+// Limits bound literal CI inputs without executing a shell or unbounded setup.
+const cypressInputLimit = 16384
+const cypressDefaultWaitTimeout = 60
+
+var cypressResolvedInputs = []string{"browser", "config", "env", "expose", "project", "config-file", "spec", "headed", "quiet", "component", "working-directory", "command-prefix", "command", "build", "start", "start-windows", "wait-on", "wait-on-timeout", "runTests"}
+
 func cypressActionPlan(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) commandResolution {
 	options := map[string]any{"record": false, "parallel": false}
-	plan := &CypressCommand{Action: step.Uses, Options: options, WaitTimeout: 60}
+	plan := &CypressCommand{Action: step.Uses, Options: options, WaitTimeout: cypressDefaultWaitTimeout}
 	if job.RunsOn != nil {
 		runner, ok := job.RunsOn.(string)
 		if !ok || !strings.HasPrefix(runner, "ubuntu-") && !strings.HasPrefix(runner, "macos-") && !strings.HasPrefix(runner, "windows-") {
 			return unresolvedCommand("Cypress action runner OS requires a resolved hosted label")
 		}
-		if strings.HasPrefix(runner, "windows-") {
+		switch {
+		case strings.HasPrefix(runner, "windows-"):
 			plan.Platform = "windows"
+		case strings.HasPrefix(runner, "macos-"):
+			plan.Platform = "darwin"
+		case strings.HasPrefix(runner, "ubuntu-"):
+			plan.Platform = "linux"
 		}
 	}
 	for key, value := range step.With {
-		if len(value) > 16384 || strings.ContainsRune(value, 0) {
+		if len(value) > cypressInputLimit || strings.ContainsRune(value, 0) {
 			return unresolvedCommand("Cypress action input exceeds validation limits: " + key)
 		}
 		if slices.Contains([]string{"project", "config-file", "working-directory"}, key) && value != "" && !filepath.IsLocal(value) {
@@ -54,11 +65,10 @@ func cypressActionPlan(root string, workflow ciWorkflow, job runtimeJob, step ru
 		case "spec":
 			options[key] = strings.FieldsFunc(value, func(c rune) bool { return c == ',' || c == '\n' })
 		case "headed", "quiet", "component":
-			b, err := strconv.ParseBool(value)
-			if err != nil {
-				return unresolvedCommand("Cypress boolean input requires review: " + key)
+			options[key] = cypressInputBool(value, false)
+			if key == "component" && options[key] == true && step.With["command"] == "" {
+				return unresolvedCommand("Cypress component testing is not supported")
 			}
-			options[key] = b
 		case "working-directory":
 			if !filepath.IsLocal(value) {
 				return unresolvedCommand("Cypress working-directory must stay in the repository")
@@ -109,7 +119,7 @@ func cypressActionPlan(root string, workflow ciWorkflow, job runtimeJob, step ru
 		directory = "."
 	}
 	data, _ := json.Marshal(options)
-	entry := TestCommand{Directory: directory, Command: "Cypress.run(" + string(data) + ")", Cypress: plan}
+	entry := TestCommand{CypressPackage: directory, Directory: directory, Command: "Cypress.run(" + string(data) + ")", Cypress: plan}
 	if custom := step.With["command"]; custom != "" {
 		words, err := staticCommands(custom)
 		if err != nil || len(words) != 1 || len(words[0]) == 0 {
@@ -129,7 +139,12 @@ func cypressActionPlan(root string, workflow ciWorkflow, job runtimeJob, step ru
 		entry.Cypress = plan
 		plan.Action = ""
 		plan.Options = nil // The real action ignores Module API inputs with command.
-		plan.CLI = words[0]
+		executable, arguments, assignments, err := ParseValidationCommand(custom)
+		if err != nil {
+			return unresolvedCommand(err.Error())
+		}
+		entry.Environment = mergeEnvironment(entry.Environment, assignments)
+		plan.CLI = append([]string{executable}, arguments...)
 	}
 	if build := step.With["build"]; build != "" {
 		commands, err := staticCommands(build)
@@ -174,7 +189,12 @@ func cypressBackgroundPlan(root string, workflow ciWorkflow, job runtimeJob, ste
 	}
 	entry := resolved.Tests[0]
 	entry.Command = strings.TrimSpace(step.Run)
-	entry.Cypress = &CypressCommand{CLI: commands[0], Start: servers, WaitTimeout: 60}
+	executable, arguments, assignments, err := ParseValidationCommand(shellText(test.Cmd))
+	if err != nil {
+		return unresolvedCommand(err.Error()), true
+	}
+	entry.Environment = mergeEnvironment(entry.Environment, assignments)
+	entry.Cypress = &CypressCommand{CLI: append([]string{executable}, arguments...), Start: servers, WaitTimeout: cypressDefaultWaitTimeout}
 	resolved.Tests, resolved.Evidence = []TestCommand{entry}, fmt.Sprintf("Managed startup %s -> %s", shellquote.Join(servers[0]...), shellquote.Join(commands[0]...))
 	return resolved, true
 }

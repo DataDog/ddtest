@@ -45,7 +45,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	if len(frameworks) > 0 && frameworks[0] == "cypress" && strings.HasPrefix(strings.ToLower(step.Uses), "cypress-io/github-action@") {
 		step.With = maps.Clone(step.With)
 		for key, value := range step.With {
-			if !slices.Contains([]string{"browser", "config", "env", "expose", "project", "config-file", "spec", "headed", "quiet", "component", "working-directory", "command-prefix", "command", "build", "start", "start-windows", "wait-on", "wait-on-timeout", "runTests"}, key) {
+			if !slices.Contains(cypressResolvedInputs, key) {
 				continue
 			}
 			resolved, e := runtimeValue(value, row)
@@ -86,6 +86,9 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		}
 		if key == "NODE_OPTIONS" {
 			ordinary, err := resolveNodeOptions(value, row, conditionEnvironment(workflow, job, step, row))
+			if err != nil && len(frameworks) > 0 && frameworks[0] == "cypress" {
+				ordinary, err = cypressLocalNodeOptions(value, workflow, job, step, row)
+			}
 			if err != nil {
 				return step, nil, err
 			}

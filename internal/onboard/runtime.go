@@ -161,7 +161,7 @@ func installedTracerRequirement(root, version string) (tracerRequirement, bool) 
 }
 
 func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) RuntimeCheck {
-	actionNodes := map[string]string{}
+	ctx = WithCypressMetadataCache(ctx)
 	framework := "jest"
 	if len(frameworks) > 0 {
 		framework = frameworks[0]
@@ -256,33 +256,17 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 				if framework == "cypress" {
 					for i, step := range rowJob.Steps {
 						uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
-						if uses == "actions/setup-node" {
-							version, e := cypressNodeVersion(root, step, row)
-							rowJob.Steps[i].With = make(map[string]string, len(step.With)+1)
-							maps.Copy(rowJob.Steps[i].With, step.With)
-							rowJob.Steps[i].With["node-version"] = version
-							if e != nil {
-								rowJob.Steps[i].ResolutionError = e.Error()
-							}
-						}
-						if framework == "cypress" && uses == "cypress-io/github-action" && step.With["command"] == "" && step.With["runTests"] != "false" {
-							node := actionNodes[step.Uses]
-							if node == "" {
-								node, err = CypressActionNode(ctx, step.Uses)
-								if err == nil {
-									actionNodes[step.Uses] = node
-								}
-							}
+
+						if uses == "cypress-io/github-action" && step.With["command"] == "" && cypressInputBool(step.With["runTests"], true) {
+							node, metadataErr := CypressActionNode(ctx, step.Uses)
 							rowJob.Steps[i].ActionNode = node
-							if node == "" {
-								rowResolutions[i].Reason = "Cannot resolve Cypress action Node runtime"
+							if metadataErr != nil {
+								rowResolutions[i].Reason = "Cannot resolve Cypress action Node runtime: " + metadataErr.Error()
 							}
 						}
 					}
 					var contextErr error
-					if framework == "cypress" {
-						jobs, contextErr = cypressContextJobs(root, workflow, rowJob)
-					}
+					jobs, contextErr = cypressContextJobs(root, workflow, rowJob)
 					if contextErr != nil {
 						result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: contextErr.Error()})
 						continue

@@ -3,15 +3,20 @@ package onboard
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/kballard/go-shellquote"
 )
 
 func resolveCypressNode(root, directory string, words []string) commandResolution {
+	if slices.Contains(words, "--component") {
+		return unresolvedCommand("Cypress component testing is not supported")
+	}
 	i := 1
 	for i < len(words) && strings.HasPrefix(words[i], "-") {
 		flag, _, joined := strings.Cut(words[i], "=")
@@ -32,36 +37,57 @@ func resolveCypressNode(root, directory string, words []string) commandResolutio
 	}
 	relative, _ := filepath.Rel(root, directory)
 	command := shellquote.Join(words...)
-	return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: command}}}
+	return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{CypressPackage: filepath.ToSlash(relative), Directory: filepath.ToSlash(relative), Command: command}}}
 }
 
 // CypressValidationCommand keeps server orchestration in the original alias.
 func CypressValidationCommand(root, command string) (string, error) {
-	resolve := func(command string) commandResolution {
-		remaining := 256
-		return resolveJestSequence(root, root, command, nil, &remaining, "cypress")
-	}
+	entry, err := CypressExecutionCommand(root, command)
+	return entry.Command, err
+}
+
+// CypressExecutionCommand chooses one declared invocation; it never invents one.
+func CypressExecutionCommand(root, command string) (TestCommand, error) {
 	if command != "" {
-		resolved := resolve(command)
-		if resolved.Reason != "" || len(resolved.Tests) != 1 {
-			return command, fmt.Errorf("cypress command requires review: %s", resolved.Reason)
+		entries := ValidationCommands(root, command, "cypress")
+		if len(entries) != 1 {
+			return TestCommand{}, fmt.Errorf("cypress command requires one supported headless invocation")
 		}
-		return command, nil
+		entry := entries[0]
+		entry.Command = command
+		return entry, nil
 	}
-	if scope, err := DiscoverValidationScope(root, "cypress"); err == nil && len(scope.Commands) == 1 && scope.Commands[0].Directory == "." {
-		// Prefer the actual CI alias, including its application coverage/startup
-		// setup, over a generic local:run or test alias. Unknown CI setup remains
-		// visible in the validation scope and is not certified by this selection.
-		return scope.Commands[0].Command, nil
+	scope, err := DiscoverValidationScope(root, "cypress")
+	if err != nil {
+		return TestCommand{}, err
 	}
-	for _, name := range []string{"local:run", "test:ci", "test:e2e", "e2e", "test", "cypress:run"} {
+	if len(scope.Commands) == 1 {
+		return scope.Commands[0], nil
+	}
+	if len(scope.Commands) > 1 {
+		return TestCommand{}, fmt.Errorf("multiple Cypress CI commands found; select --command or use --all")
+	}
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	var pkg struct{ Scripts map[string]string }
+	if err != nil || json.Unmarshal(data, &pkg) != nil {
+		return TestCommand{}, fmt.Errorf("no Cypress command found")
+	}
+	var candidates []TestCommand
+	for _, name := range slices.Sorted(maps.Keys(pkg.Scripts)) {
 		candidate := shellquote.Join("npm", "run", name)
-		result := resolve(candidate)
-		if result.Reason == "" && len(result.Tests) == 1 {
-			return candidate, nil
+		entries := ValidationCommands(root, candidate, "cypress")
+		if len(entries) == 1 {
+			entries[0].Command = candidate
+			candidates = append(candidates, entries[0])
 		}
 	}
-	return "npx --no-install cypress run", nil
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	if len(candidates) > 1 {
+		return TestCommand{}, fmt.Errorf("multiple Cypress package scripts found; select --command")
+	}
+	return TestCommand{}, fmt.Errorf("no Cypress command found")
 }
 
 func resolveCypressOrchestration(root, directory string, words, stack []string, remaining *int) commandResolution {
@@ -109,9 +135,39 @@ func resolveCypressOrchestration(root, directory string, words, stack []string, 
 
 // Preserve the action's API execution path instead of substituting a CLI run.
 func resolveCypressAction(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) commandResolution {
-	if step.With["runTests"] == "false" {
+	if !cypressInputBool(step.With["runTests"], true) {
+		for _, key := range []string{"build", "start", "start-windows", "wait-on", "install-command"} {
+			if step.With[key] != "" {
+				return unresolvedCommand("Cypress setup-only action requires preparation and readiness validation before later test steps")
+			}
+		}
 		return commandResolution{}
 	}
 
 	return cypressActionPlan(root, workflow, job, step)
+}
+
+// Match cypress-io/github-action's getInputBool, including its fallback.
+func cypressInputBool(value string, fallback bool) bool {
+	switch value {
+	case "true", "1":
+		return true
+	case "false", "0":
+		return false
+	default:
+		return fallback
+	}
+}
+
+// A standalone literal shell exit reports CI status; it cannot run tests.
+func cypressStatusGate(command string) bool {
+	executable, args, env, err := ParseValidationCommand(command)
+	if err != nil || executable != "exit" || len(env) > 0 || len(args) > 1 {
+		return false
+	}
+	if len(args) == 0 {
+		return true
+	}
+	status, err := strconv.Atoi(args[0])
+	return err == nil && status >= 0 && status <= 255
 }

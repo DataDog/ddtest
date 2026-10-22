@@ -72,7 +72,9 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		}
 		_, _ = fmt.Fprintf(output, "Run `%s` to check the setup locally.\n", command)
 		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
-		return nil
+		if name != "cypress" {
+			return nil
+		}
 	}
 
 	_, _ = fmt.Fprintln(output)

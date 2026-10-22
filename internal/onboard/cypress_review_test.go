@@ -103,7 +103,7 @@ func TestCypressActionMatrixKeepsWindowsStartupSeparate(t *testing.T) {
 		require.Len(t, entry.Locations, 1)
 		platforms[entry.Cypress.Platform] = entry.Cypress.Start[0]
 	}
-	require.Equal(t, []string{"node", "unix.cjs"}, platforms[""])
+	require.Equal(t, []string{"node", "unix.cjs"}, platforms["linux"])
 	require.Equal(t, []string{"node", "windows.cjs"}, platforms["windows"])
 }
 

@@ -59,22 +59,22 @@ func TestCypressNodeVersionFileAndPrecedence(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".node-version"), []byte("24\n"), 0600))
 	step := runtimeStep{With: map[string]string{"node-version-file": ".node-version"}}
-	version, err := cypressNodeVersion(root, step, nil)
+	version, err := setupNodeVersion(root, step, nil)
 	require.NoError(t, err)
 	require.Equal(t, "24", version)
 	step.With["node-version"] = "22"
-	version, err = cypressNodeVersion(root, step, nil)
+	version, err = setupNodeVersion(root, step, nil)
 	require.NoError(t, err)
 	require.Equal(t, "22", version)
 	delete(step.With, "node-version")
 	step.With["node-version-file"] = "../outside"
-	_, err = cypressNodeVersion(root, step, nil)
+	_, err = setupNodeVersion(root, step, nil)
 	require.Error(t, err)
 	outside := filepath.Join(t.TempDir(), "node")
 	require.NoError(t, os.WriteFile(outside, []byte("24"), 0600))
 	require.NoError(t, os.Symlink(outside, filepath.Join(root, "escape")))
 	step.With["node-version-file"] = "escape"
-	_, err = cypressNodeVersion(root, step, nil)
+	_, err = setupNodeVersion(root, step, nil)
 	require.ErrorContains(t, err, "escapes")
 	require.Equal(t, "24.21.0", cypressContainerNode("cypress/browsers:24.21.0"))
 	require.Empty(t, cypressContainerNode("some/image:24.21.0"))

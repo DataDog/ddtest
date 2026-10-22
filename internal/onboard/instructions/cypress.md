@@ -38,10 +38,10 @@ the CI setup, then validate with the customer's actual headless command.
    onboarding when other CLI or API configurations were discovered.
    Record/parallel workflows do not require a Cloud key locally: testdrive disables
    Cloud recording/grouping while replaying their test commands and API options.
-   Testdrive selects a supported package alias with startup where available.
+   Testdrive uses one unambiguous declared invocation; it never invents a fallback command.
    Use --command '<original alias>' for another explicit configuration.
-   Without --command, discovered Cypress CI configurations are selected with their
-   declared environment and setup. --command is a local override; use --all
+   Without --command, one unambiguous CI invocation (or a unique package script) is selected with its
+   declared environment and setup. Multiple invocations require --command or --all. --command is a local override; use --all
    for CI configurations rather than repeatedly overriding one alias.
    Run --all to exercise every discovered local CLI configuration with its
    declared CI environment. The Cypress action is replayed through Cypress.run with its actual options;
@@ -57,7 +57,7 @@ the CI setup, then validate with the customer's actual headless command.
    the customer checkout. The local observer disables Cypress Cloud recording
    and parallel grouping, keeps the reporter and browser options, and records
    native after:run results. No real Datadog or Cypress Cloud key is needed.
-   Unsupported commands/configurations remain incomplete; preserve their scope.
+   Cypress component testing and Windows process supervision are not supported by this validation. Unsupported commands/configurations remain incomplete; preserve their scope.
 6. Review both native runs, the telemetry comparison and the five required controlled
    feature results (automatic retries, early flake detection, quarantine, disabled
    tests and attempt-to-fix), with TIA explicitly deferred. Use the report's compatibility.status; matching counts alone

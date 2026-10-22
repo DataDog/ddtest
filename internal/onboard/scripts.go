@@ -51,7 +51,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 
 		return commandResolution{Review: true, Reason: "Cypress GitHub Action is outside " + framework + " validation"}
 	}
-	if language == "javascript" && framework == "cypress" && strings.TrimSpace(step.Run) == "exit 1" {
+	if language == "javascript" && framework == "cypress" && cypressStatusGate(step.Run) {
 		return commandResolution{Review: true, Reason: "CI status gate is outside Cypress test execution"}
 	}
 	if step.ResolutionError != "" {
@@ -344,6 +344,12 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
 		entry := TestCommand{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}
+		if framework == "cypress" {
+			if slices.Contains(words, "--component") {
+				return unresolvedCommand("Cypress component testing is not supported")
+			}
+			entry.CypressPackage = filepath.ToSlash(relative)
+		}
 		if framework == "mocha" {
 			entry.mochaIstanbul = MochaBabelIstanbulConfigured(directory)
 			entry.mochaRunnerArgs = slices.Clone(words[1:])

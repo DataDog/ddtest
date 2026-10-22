@@ -10,7 +10,9 @@ import (
 func TestCypressDiscoveryPreservesServerAliases(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"start": "node scripts/start.js", "cy:run": "cypress run", "e2e": "cypress run --browser chrome", "local:run": "start-test 8080 cy:run", "test:ci": "run-p --race start e2e"})
-	command, err := CypressValidationCommand(root, "")
+	_, err := CypressValidationCommand(root, "")
+	require.ErrorContains(t, err, "multiple Cypress package scripts")
+	command, err := CypressValidationCommand(root, "npm run local:run")
 	require.NoError(t, err)
 	require.Equal(t, "npm run local:run", command)
 	for _, command := range []string{"npm run local:run", "npm run test:ci", "npx --no-install cypress run --browser chrome", "node -C development node_modules/cypress/bin/cypress run", "node --conditions=development --require ./setup.cjs node_modules/.bin/cypress run"} {
