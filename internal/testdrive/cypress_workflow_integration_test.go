@@ -42,7 +42,7 @@ func TestPublicCypressTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "action API", "action custom CLI", "native retries", "type retries", "CLI retries", "action retries", "TypeScript", "ESM", "subpackage", "recovery"} {
+	for _, mode := range []string{"recovery", "passing", "existing failure", "action API", "action custom CLI", "native retries", "type retries", "CLI retries", "action retries", "TypeScript", "ESM", "subpackage"} {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -187,8 +187,24 @@ func TestPublicCypressTestdrive(t *testing.T) {
 				killed.Stdout = log
 				killed.Stderr = log
 				require.NoError(t, killed.Start())
-				t.Cleanup(func() { _ = killed.Process.Kill() })
+				finished := make(chan error, 1)
+				go func() { finished <- killed.Wait() }()
+				t.Cleanup(func() {
+					_ = killed.Process.Kill()
+					_ = log.Close()
+					if t.Failed() {
+						data, _ := os.ReadFile(logPath)
+						t.Logf("hard-kill trial output:\n%s", data)
+					}
+				})
+				reached := false
+				var earlyExit error
 				require.Eventually(t, func() bool {
+					select {
+					case earlyExit = <-finished:
+						return true
+					default:
+					}
 					data, _ := os.ReadFile(logPath)
 					if !strings.Contains(string(data), "Running quarantine") {
 						return false
@@ -196,10 +212,12 @@ func TestPublicCypressTestdrive(t *testing.T) {
 					audit, _ := os.ReadFile(os.Getenv("DDTEST_CYPRESS_PID_LOG"))
 					// Baseline, reporting, two controls, ATR and EFD precede quarantine.
 					// Wait for its actual config process, not just the ddtest log message.
-					return len(strings.Split(strings.TrimSpace(string(audit)), "\n")) >= 7
+					reached = len(strings.Split(strings.TrimSpace(string(audit)), "\n")) >= 7
+					return reached
 				}, 5*time.Minute, 100*time.Millisecond)
+				require.True(t, reached, "ddtest exited before reaching an active quarantine process: %v", earlyExit)
 				require.NoError(t, killed.Process.Kill())
-				require.Error(t, killed.Wait())
+				require.Error(t, <-finished)
 				require.NoError(t, log.Close())
 				data, err := os.ReadFile(os.Getenv("DDTEST_CYPRESS_PID_LOG"))
 				require.NoError(t, err)
