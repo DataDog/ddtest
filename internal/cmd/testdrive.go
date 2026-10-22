@@ -40,7 +40,7 @@ func newTestdriveCommand() *cobra.Command {
 	var allowReviewedBuilds bool
 	var timeout time.Duration
 	command.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "Maximum duration per test or preparation command")
-	command.Flags().BoolVar(&all,"all",false,"Validate every discovered "+testdrive.ValidationFrameworkNames()+" CI configuration, preserving environment and known build prerequisites")
+	command.Flags().BoolVar(&all, "all", false, "Validate every discovered "+testdrive.ValidationFrameworkNames()+" CI configuration, preserving environment and known build prerequisites")
 	command.Flags().BoolVar(&checkOnly, "check-only", false, "Check "+testdrive.ValidationFrameworkNames()+" configuration, tracer selection and static CI runtimes without installing a tracer or running tests")
 	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
