@@ -61,7 +61,7 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 			output, err := cmd.CombinedOutput()
 			require.NoError(t, err, string(output))
 			var port []byte
-			require.Eventually(t, func() bool { port, err = os.ReadFile(portFile); return err == nil }, 5*time.Second, 20*time.Millisecond)
+			require.Eventually(t, func() bool { port, err = os.ReadFile(portFile); return err == nil && len(port) > 0 }, 5*time.Second, 20*time.Millisecond)
 			conn, err := net.DialTimeout("tcp", "127.0.0.1:"+string(port), time.Second)
 			require.NoError(t, err)
 			_ = conn.Close()
