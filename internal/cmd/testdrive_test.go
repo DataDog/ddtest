@@ -33,7 +33,7 @@ func TestIsTerminalRejectsDevNull(t *testing.T) {
 
 func TestConfirmTestdriveInteractive(t *testing.T) {
 	var output bytes.Buffer
-	confirmed, err := confirmTestdrive(strings.NewReader("yes\n"), &output, true)
+	confirmed, err := confirmTestdrive(strings.NewReader("yes\n"), &output, true, "ddtest testdrive --yes")
 	if err != nil {
 		t.Fatalf("confirmTestdrive() unexpected error: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestConfirmTestdriveInteractive(t *testing.T) {
 }
 
 func TestConfirmTestdriveDefaultsToNo(t *testing.T) {
-	confirmed, err := confirmTestdrive(strings.NewReader("\n"), &bytes.Buffer{}, true)
+	confirmed, err := confirmTestdrive(strings.NewReader("\n"), &bytes.Buffer{}, true, "ddtest testdrive --yes")
 	if err != nil {
 		t.Fatalf("confirmTestdrive() unexpected error: %v", err)
 	}
@@ -56,11 +56,11 @@ func TestConfirmTestdriveDefaultsToNo(t *testing.T) {
 }
 
 func TestConfirmTestdriveNonInteractiveRequiresYes(t *testing.T) {
-	confirmed, err := confirmTestdrive(strings.NewReader("yes\n"), &bytes.Buffer{}, false)
+	confirmed, err := confirmTestdrive(strings.NewReader("yes\n"), &bytes.Buffer{}, false, "ddtest testdrive --check-only --yes")
 	if confirmed {
 		t.Fatal("confirmTestdrive() accepted piped input")
 	}
-	if err == nil || !strings.Contains(err.Error(), "ddtest testdrive --yes") {
+	if err == nil || !strings.Contains(err.Error(), "ddtest testdrive --check-only --yes") {
 		t.Fatalf("confirmTestdrive() error = %v", err)
 	}
 }
@@ -186,14 +186,13 @@ func TestCheckOnlyNonInteractiveHintPreservesEveryFlag(t *testing.T) {
 	command.SetIn(strings.NewReader(""))
 	command.SetOut(&bytes.Buffer{})
 	command.SetErr(&bytes.Buffer{})
-	command.SetArgs([]string{"--framework", "jest", "--check-only", "--tracer-version", "5"})
+	command.SetArgs([]string{"--framework", "jest", "--check-only", "--tracer-version", "git:main branch"})
 	err := command.ExecuteContext(t.Context())
 	if err == nil {
 		t.Fatal("expected non-interactive hint")
 	}
-	for _, flag := range []string{"--framework=jest", "--check-only=true", "--tracer-version=5", "--yes"} {
-		if !strings.Contains(err.Error(), flag) {
-			t.Fatalf("missing %s in %s", flag, err)
-		}
+	want := "`ddtest testdrive --check-only --framework jest --tracer-version 'git:main branch' --yes`"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("hint = %v, want %s", err, want)
 	}
 }

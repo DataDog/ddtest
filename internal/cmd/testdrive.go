@@ -51,17 +51,7 @@ func newTestdriveCommand() *cobra.Command {
 			return err
 		}
 		if !yes {
-			if !isTerminal(cmd.InOrStdin()) {
-				words := []string{"ddtest", "testdrive"}
-				cmd.Flags().Visit(func(flag *pflag.Flag) {
-					if flag.Name != "yes" {
-						words = append(words, "--"+flag.Name+"="+flag.Value.String())
-					}
-				})
-				words = append(words, "--yes")
-				return fmt.Errorf("standard input is not interactive; review the preview and run `%s`", shellquote.Join(words...))
-			}
-			confirmed, err := confirmTestdrive(cmd.InOrStdin(), output, isTerminal(cmd.InOrStdin()))
+			confirmed, err := confirmTestdrive(cmd.InOrStdin(), output, isTerminal(cmd.InOrStdin()), rerunWithYes(cmd))
 			if err != nil {
 				return err
 			}
@@ -76,9 +66,26 @@ func newTestdriveCommand() *cobra.Command {
 	return command
 }
 
-func confirmTestdrive(input io.Reader, output io.Writer, interactive bool) (bool, error) {
+// The rerun hint repeats every flag the user set, so --check-only is never lost.
+func rerunWithYes(cmd *cobra.Command) string {
+	words := []string{"ddtest", cmd.Name()}
+	cmd.Flags().Visit(func(flag *pflag.Flag) {
+		switch {
+		case flag.Name == "yes":
+		case flag.Value.Type() == "bool" && flag.Value.String() == "true":
+			words = append(words, "--"+flag.Name)
+		case flag.Value.Type() == "bool":
+			words = append(words, "--"+flag.Name+"="+flag.Value.String())
+		default:
+			words = append(words, "--"+flag.Name, flag.Value.String())
+		}
+	})
+	return shellquote.Join(append(words, "--yes")...)
+}
+
+func confirmTestdrive(input io.Reader, output io.Writer, interactive bool, rerun string) (bool, error) {
 	if !interactive {
-		return false, fmt.Errorf("standard input is not interactive; review the preview and run `ddtest testdrive --yes`")
+		return false, fmt.Errorf("standard input is not interactive; review the preview and run `%s`", rerun)
 	}
 
 	_, _ = fmt.Fprint(output, "\nContinue? [y/N] (coding agents can rerun with --yes): ")

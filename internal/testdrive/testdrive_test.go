@@ -181,6 +181,21 @@ func TestPrepareRejectsJavaScriptWithoutSupportedRunner(t *testing.T) {
 	}
 }
 
+func TestPrepareRejectsUnusableTemporaryFolder(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	writeJestManifest(t, repositoryRoot)
+	missing := filepath.Join(t.TempDir(), "missing")
+	t.Setenv("TMPDIR", missing)
+
+	t.Chdir(repositoryRoot)
+	for _, checkOnly := range []bool{false, true} {
+		_, err := Prepare(PrepareOptions{TracerVersion: "latest", CheckOnly: checkOnly})
+		if err == nil || !strings.Contains(err.Error(), "temporary folder "+missing+" does not exist or is not writable") {
+			t.Fatalf("Prepare(check-only=%v) error = %v, want temporary folder diagnostic", checkOnly, err)
+		}
+	}
+}
+
 func TestPrepareReportsMalformedManifest(t *testing.T) {
 	repositoryRoot := t.TempDir()
 	requireWriteFile(t, filepath.Join(repositoryRoot, "package.json"), "{")

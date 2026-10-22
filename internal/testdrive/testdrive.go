@@ -72,6 +72,14 @@ type PrepareOptions struct {
 	CheckOnly     bool
 }
 
+func checkTemporaryStorage() error {
+	directory, err := os.MkdirTemp("", "ddtest-storage-check-")
+	if err != nil {
+		return fmt.Errorf("temporary folder %s does not exist or is not writable; set TMPDIR to a writable folder: %w", os.TempDir(), err)
+	}
+	return os.Remove(directory)
+}
+
 func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	version := configuration.TracerVersion
 	if version == "" {
@@ -93,6 +101,13 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		return nil, err
 	}
 	language := detectedPlatform.Name()
+	// Jest checks keep npm metadata, preflight probes and reports there; an
+	// unusable folder would otherwise surface later as registry failures.
+	if language == "javascript" {
+		if err := checkTemporaryStorage(); err != nil {
+			return nil, err
+		}
+	}
 	command, args := runner.Command()
 	configurationOnly := configuration.CheckOnly
 	var discoveryError error
