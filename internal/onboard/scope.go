@@ -141,7 +141,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 					}
 					location := commandLocation{Workflow: workflow.Path, Job: name, Matrix: maps.Clone(row), Step: stepNumber(step, i), Command: step.Run}
 					if (framework == "playwright" || framework == "cypress") && strings.Split(step.Uses, "@")[0] == "actions/upload-artifact" && step.Run == "" && step.ResolutionError == "" {
-						review = append(review, scopeDiagnostic{location, "artifact upload is outside local " + framework + " execution"})
+						review = append(review, scopeDiagnostic{location, "artifact upload is outside local " + map[string]string{"playwright": "Playwright", "cypress": "Cypress"}[framework] + " execution"})
 						continue
 					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
