@@ -584,7 +584,11 @@ jobs:
 
   testdrive-cucumber-workflow:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        cucumber: ["8.11.1", "10.9.0", "13.3.0"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -594,8 +598,11 @@ jobs:
         with:
           node-version: '24'
       - name: Install Cucumber testdrive fixture dependencies
-        run: npm install --prefix "$RUNNER_TEMP/cucumber-testdrive" @cucumber/cucumber@12.2.0 nyc@17.1.0 dd-trace@6.20.1 --no-audit --no-fund
+        run: npm install --prefix "$RUNNER_TEMP/cucumber-testdrive" "@cucumber/cucumber@${{ matrix.cucumber }}" nyc@17.1.0 c8@12.0.0 dd-trace@6.20.1 @istanbuljs/esm-loader-hook@0.3.0 --save-exact --no-audit --no-fund
       - name: Validate native scenarios, matching failures and source coverage
         env:
           DDTEST_CUCUMBER_NODE_MODULES: ${{ runner.temp }}/cucumber-testdrive/node_modules
-        run: go test -v ./internal/testdrive -run '^TestPublicCucumberTestdrive$' -count=1 -timeout=10m
+        run: |
+          test_filter='^TestPublicCucumberTestdrive$'
+          if [ '${{ matrix.cucumber }}' = '8.11.1' ]; then test_filter='^TestPublicCucumberTestdrive/passing$'; fi
+          go test -v ./internal/testdrive -run "$test_filter" -failfast -count=1 -timeout=22m

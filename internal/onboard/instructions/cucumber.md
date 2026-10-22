@@ -11,8 +11,9 @@ feature paths, profiles, support imports and test commands.
    from npm latest. Do not drop Node versions or upgrade Cucumber just to pass.
    Cucumber Test Impact Analysis needs Istanbul coverage of application source.
    If NYC is missing, add it as a development dependency. For native ESM, also
-   add `@istanbuljs/esm-loader-hook`. Testdrive uses these installed tools in both
-   comparison modes, without changing dependencies itself. Preserve an existing
+   add `@istanbuljs/esm-loader-hook`. Configure the Istanbul loader in the existing ESM command or scoped Node
+   options. Testdrive preserves that setup in both modes; it does not inject a
+   loader merely because it is installed, or add NYC around an existing c8 script. Preserve an existing
    NYC invocation and its configuration. Config/test-file coverage alone cannot
    complete validation.
 2. Add `datadog/test-visibility-github-action@v3`, with `languages: js`, the exact
@@ -25,7 +26,7 @@ feature paths, profiles, support imports and test commands.
    NODE_OPTIONS. Scope initialization to the existing Cucumber leaf script:
 
    ```json
-   "test:integration:base": "NODE_OPTIONS=\"${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}\" nyc cucumber-js test/integration"
+   "test:bdd": "NODE_OPTIONS=\"${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}\" nyc cucumber-js features"
    ```
 
    Preserve the original script's arguments, paths and other environment values.
@@ -54,6 +55,13 @@ feature paths, profiles, support imports and test commands.
    native scenarios without and with reporting-only instrumentation, checks event
    agreement and runs six controlled features. Matching pre-existing test failures
    are acceptable. An inconclusive comparison or feature is still INCOMPLETE.
+   Isolated probes use an empty generated config, reuse the resolved support
+   imports, World and unconditional hooks, and exclude customer step definitions
+   so catch-all steps cannot intercept controls. Tagged hooks remain checked by
+   the actual paired suite, rather than inheriting customer tag filters in probes.
+   Cucumber testdrive requires version 8 or later; preserve older frameworks and
+   report that validation limit. Parallel worker coverage/features that the
+   selected tracer does not report remain explicitly unvalidated.
    Use `--command` only for a focused diagnostic, preserving the profile and setup.
 5. Keep `.testoptimization/report.html` and `.testoptimization/testdrive.json`.
    ddtest removes its temporary copy, build outputs, tracer, native messages and
