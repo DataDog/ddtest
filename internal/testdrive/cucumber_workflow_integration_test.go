@@ -25,6 +25,10 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 	}
 	modules, err := filepath.Abs(modules)
 	require.NoError(t, err)
+	manifest, err := os.ReadFile(filepath.Join(modules, "@cucumber/cucumber/package.json"))
+	require.NoError(t, err)
+	var installed struct{ Version string }
+	require.NoError(t, json.Unmarshal(manifest, &installed))
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	binary := filepath.Join(t.TempDir(), "ddtest")
@@ -62,7 +66,6 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				appDirectory = filepath.Join(root, "packages/api")
 				appWrite = func(name, value string) { write(filepath.Join("packages/api", name), value) }
 			}
-			appWrite("package.json", `{"scripts":{"test":"nyc -- cucumber-js"},"devDependencies":{"@cucumber/cucumber":"12.2.0","nyc":"17.1.0","dd-trace":"6.20.1"}}`)
 			appWrite("src/add.cjs", "module.exports=(a,b)=>a+b;\n")
 			appWrite("features/one.feature", "Feature: Arithmetic\n  Scenario: Add\n    Given addition works\n")
 			assertion := "require('node:assert').equal(require('../../src/add.cjs')(1,1),2)"
@@ -74,7 +77,6 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 			}
 			appWrite("features/step_definitions/one.js", `const {Given}=require('@cucumber/cucumber');Given('addition works',()=>{`+assertion+`});`)
 			if mode == "custom support coverage" {
-				appWrite("package.json", `{"scripts":{"test":"nyc -- cucumber-js --require support/steps.js"},"devDependencies":{"@cucumber/cucumber":"12.2.0","nyc":"17.1.0","dd-trace":"6.20.1"}}`)
 				appWrite("support/steps.js", `const {Given}=require('@cucumber/cucumber');Given('addition works',()=>require('node:assert').equal(1+1,2));`)
 			}
 			if mode == "feature application" {
@@ -144,7 +146,7 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				appWrite("src/add.mjs", "export default (a,b)=>a+b")
 				appWrite("features/steps.mjs", `import {Given} from '@cucumber/cucumber';import add from '../src/add.mjs';Given('addition works',()=>{if(add(1,1)!==2)throw Error('bad add')})`)
 			}
-			pkg := map[string]any{"scripts": map[string]string{"test": script}, "devDependencies": map[string]string{"@cucumber/cucumber": "12.2.0", "nyc": "17.1.0", "dd-trace": "6.20.1"}}
+			pkg := map[string]any{"scripts": map[string]string{"test": script}, "devDependencies": map[string]string{"@cucumber/cucumber": installed.Version, "nyc": "17.1.0", "dd-trace": "6.20.1"}}
 			if mode == "ESM" {
 				pkg["type"] = "module"
 			}
@@ -259,7 +261,11 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 			}
 			output, err = command(root, binary, args...)
 			report := readValidationReport(t, root)
-			if !report.Success && mode != "timeout" && mode != "no application coverage" && mode != "custom support coverage" && mode != "parallel" {
+			if mode == "passing" {
+				require.NotNil(t, report.Preflight)
+				require.Equal(t, installed.Version, report.Preflight.Version)
+			}
+			if !report.Success && mode != "timeout" && mode != "no application coverage" && mode != "custom support coverage" && mode != "parallel" && mode != "c8" {
 				details, _ := json.MarshalIndent(report, "", "  ")
 				t.Logf("Report: %s", details)
 				html, _ := os.ReadFile(htmlReportPath(root))
@@ -273,6 +279,10 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				require.NotEmpty(t, report.Runs)
 				require.NotZero(t, *report.Runs[0].ExitCode)
 				require.Equal(t, "inconclusive", report.Compatibility.Status)
+				require.NotNil(t, report.Cleanup)
+				require.Equal(t, "passed", report.Cleanup.Status)
+				require.NoDirExists(t, filepath.Join(root, ".nyc_output"))
+				require.NoDirExists(t, filepath.Join(root, ".testoptimization/.probes"))
 				return
 			}
 			switch mode {

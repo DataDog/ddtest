@@ -59,6 +59,18 @@ func TestCucumberSupportMetadataIntegration(t *testing.T) {
 	var support cucumberSupport
 	require.NoError(t, json.Unmarshal(body, &support))
 	require.Contains(t, append(support.RequirePaths, support.ImportPaths...), filepath.Join(root, "features/support/world.js"))
+	// The plan/run adapter and its effective support discovery still support 7.
+	// Isolated testdrive probes use --config, introduced in Cucumber 8.
+	manifest, err := os.ReadFile(filepath.Join(modules, "@cucumber/cucumber/package.json"))
+	require.NoError(t, err)
+	var pkg struct{ Version string }
+	require.NoError(t, json.Unmarshal(manifest, &pkg))
+	major, _, known := releaseParts(pkg.Version)
+	require.True(t, known)
+	if major < 8 {
+		t.Log("Legacy support metadata verified; isolated testdrive probes require Cucumber 8 or later")
+		return
+	}
 	write("features/probe.feature.config.cjs", `module.exports={default:{}}`)
 	write("features/probe.feature", "Feature: Support\n  Scenario: Probe\n    Given probe support works\n")
 	write("features/probe.feature.steps.cjs", `const {Given}=require('@cucumber/cucumber');Given('probe support works',function(){if(this.value!=='world'||!this.hook)throw Error('effective support was lost')})`)
