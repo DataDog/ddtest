@@ -52,9 +52,13 @@ func (t *Testdrive) inspectVitestRunnerBinary(ctx context.Context) runnerBinary 
 		defer cancel()
 		data, err := t.executor.CombinedOutput(ctx, t.command, []string{"--version"}, map[string]string{"NODE_OPTIONS": stripDatadogNodeOptions(t.nodeOptions())})
 		if err == nil {
+			// ddtest --version prints only the version; older builds printed
+			// "ddtest version <version>".
 			line := strings.TrimSpace(string(data))
 			if _, version, ok := strings.Cut(line, " version "); ok && !strings.ContainsAny(version, "\r\n") {
 				info.Version = version
+			} else if line != "" && !strings.ContainsAny(line, " \t\r\n") {
+				info.Version = line
 			}
 		}
 	}

@@ -358,3 +358,11 @@ func TestVitestValidationFlagsPrecedeArgumentTerminator(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, run.ResultError)
 }
+
+func TestVitestArgumentsAcceptWindowsNodeExecutable(t *testing.T) {
+	for _, node := range []string{"node", "node.exe", filepath.Join("bin", "node.exe")} {
+		args, err := vitestArguments(node, []string{"node_modules/vitest/vitest.mjs", "run", "--coverage"})
+		require.NoError(t, err, node)
+		require.Equal(t, []string{"run", "--coverage"}, args)
+	}
+}

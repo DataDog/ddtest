@@ -7,7 +7,14 @@ const { createVitest, parseCLI } = await import(pathToFileURL(require.resolve('v
 const { version } = require('vitest/package.json')
 const major = Number(version.split('.')[0])
 const originalArguments = JSON.parse(process.argv[1])
-const normalized = validationArguments(originalArguments, parseCLI, process.argv[3])
+let normalized
+try {
+  normalized = validationArguments(originalArguments, parseCLI, process.argv[3])
+} catch (error) {
+  // Report an unsupported mode by its message, not as a stack trace.
+  console.log('__DDTEST_VITEST_REJECTED__' + JSON.stringify(error.message))
+  process.exit(2)
+}
 const { filter, options } = parseCLI(['vitest', ...normalized.arguments])
 process.env.TEST = 'true'
 process.env.VITEST = 'true'

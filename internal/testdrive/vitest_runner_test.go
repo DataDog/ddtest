@@ -87,7 +87,7 @@ func TestVitestRunnerCannotRemoveCustomerPlan(t *testing.T) {
 	path := filepath.Join(root, constants.ParallelRunnersOutputPath)
 	requireWriteFile(t, path, "existing customer plan")
 	drive := &Testdrive{repositoryRoot: root, command: "ddtest", args: []string{"run"}}
-	_, err := drive.vitestRunnerArgs(t.TempDir(), "/trace/ci/init.js", "", false, map[string]string{})
+	_, err := drive.vitestRunnerArgs(t.TempDir(), fakeTracerPreload(t), "", false, map[string]string{})
 	require.ErrorContains(t, err, "disposable")
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -124,9 +124,49 @@ func TestVitestRunnerResetPreservesProbeOwnership(t *testing.T) {
 		requireWriteFile(t, filepath.Join(root, directory, "old.json"), "stale scenario")
 	}
 	drive := &Testdrive{repositoryRoot: root, isolated: true, command: "ddtest", args: []string{"run"}}
-	_, err := drive.vitestRunnerArgs(t.TempDir(), "/trace/ci/init.js", "", true, map[string]string{})
+	_, err := drive.vitestRunnerArgs(t.TempDir(), fakeTracerPreload(t), "", true, map[string]string{})
 	require.NoError(t, err)
 	require.FileExists(t, ownership)
 	require.NoDirExists(t, filepath.Join(root, constants.RunnerDirectory))
 	require.NoDirExists(t, filepath.Join(root, constants.HTTPCacheDir))
+}
+
+// A minimal installed dd-trace package: the preload and the ESM register hook.
+func fakeTracerPreload(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "node_modules", "dd-trace")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "ci"), 0700))
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"dd-trace"}`)
+	requireWriteFile(t, filepath.Join(root, "register.js"), "")
+	preload := filepath.Join(root, "ci", "init.js")
+	requireWriteFile(t, preload, "")
+	return preload
+}
+
+func TestVitestRunnerProbesOverrideInheritedSelectionAndStayContained(t *testing.T) {
+	root := t.TempDir()
+	drive := &Testdrive{repositoryRoot: root, isolated: true, command: "ddtest", args: []string{"run", "--tests-location", "tests/one.test.js"}}
+	preload := fakeTracerPreload(t)
+	env := map[string]string{}
+	args, err := drive.vitestRunnerArgs(t.TempDir(), preload, filepath.Join(root, "ddtest.test.js"), true, env)
+	require.NoError(t, err)
+	require.NotContains(t, args, "--tests-location")
+	require.Contains(t, args, "--tests-location=", "an empty flag overrides DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION")
+	require.Contains(t, args, "--tests-exclude-pattern=")
+	require.Equal(t, filepath.Join(filepath.Dir(filepath.Dir(preload)), "register.js"), env["DD_TRACE_ESM_IMPORT"])
+
+	// A copied .testoptimization symlink must never lead cleanup outside the copy.
+	outside := t.TempDir()
+	runner := filepath.Join(outside, filepath.Base(constants.RunnerDirectory))
+	require.NoError(t, os.MkdirAll(runner, 0700))
+	requireWriteFile(t, filepath.Join(runner, "customer.json"), "customer runner data")
+	linked := t.TempDir()
+	require.NoError(t, os.Symlink(outside, filepath.Join(linked, filepath.Dir(constants.RunnerDirectory))))
+	drive.repositoryRoot = linked
+	_, err = drive.vitestRunnerArgs(t.TempDir(), preload, "", true, map[string]string{})
+	require.ErrorContains(t, err, "escapes the configuration workspace")
+	require.FileExists(t, filepath.Join(runner, "customer.json"))
+
+	_, err = drive.vitestRunnerArgs(t.TempDir(), "/missing/ci/init.js", "", true, map[string]string{})
+	require.Error(t, err)
 }

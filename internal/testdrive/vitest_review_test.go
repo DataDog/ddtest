@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -193,10 +194,42 @@ func TestVitestCIMatrixUsesCompatibleTracerFloors(t *testing.T) {
 		require.Equal(t, "compatible", checkVitestSupport(check, platform.JSSelection{Version: row.Tracer, Node: ">=18"}).Status, row.Vitest+" / "+row.Tracer)
 	}
 	require.Equal(t, map[int]bool{3: true, 4: true, 5: true}, seen)
+
+	// The CLI compatibility job installs one pinned tracer for every Vitest row.
+	var compatibility struct {
+		Jobs map[string]struct {
+			Strategy struct {
+				Matrix struct{ Vitest []string }
+			}
+			Steps []struct{ Run string }
+		}
+	}
+	require.NoError(t, yaml.Unmarshal(data, &compatibility))
+	job := compatibility.Jobs["vitest-compatibility"]
+	require.NotEmpty(t, job.Strategy.Matrix.Vitest)
+	var tracer string
+	for _, step := range job.Steps {
+		if match := regexp.MustCompile(`"dd-trace@([0-9.]+)"`).FindStringSubmatch(step.Run); match != nil {
+			tracer = match[1]
+		}
+	}
+	require.NotEmpty(t, tracer, "vitest-compatibility must pin dd-trace")
+	for _, version := range job.Strategy.Matrix.Vitest {
+		check := jestPreflight{Version: version, Node: "22.0.0", ExecutionPath: vitestCLIPath, VitestProjects: []vitestProject{{Pool: "forks"}}}
+		require.Equal(t, "compatible", checkVitestSupport(check, platform.JSSelection{Version: tracer, Node: ">=18"}).Status, version+" / "+tracer)
+	}
 }
 
 func TestVitestMultiProjectRejectionKeepsConfigurationEvidenceIntegration(t *testing.T) {
 	root := vitestIntegrationRoot(t)
+	// test.projects arrived in Vitest 3.2; older releases ignore it.
+	data, err := os.ReadFile(filepath.Join(root, "node_modules", "vitest", "package.json"))
+	require.NoError(t, err)
+	var installed struct{ Version string }
+	require.NoError(t, json.Unmarshal(data, &installed))
+	if major, minor, ok := releaseParts(installed.Version); !ok || major < 3 || major == 3 && minor < 2 {
+		t.Skipf("Vitest %s has no test.projects", installed.Version)
+	}
 	requireWriteFile(t, filepath.Join(root, "vitest.config.mjs"), `export default {test:{projects:[{test:{name:'a',include:['*.test.js'],pool:'forks'}},{test:{name:'b',include:['*.test.js'],pool:'forks'}}]}}`)
 	requireWriteFile(t, filepath.Join(root, "one.test.js"), `throw new Error('unsupported projects must not execute')`)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
@@ -210,7 +243,7 @@ func TestVitestMultiProjectRejectionKeepsConfigurationEvidenceIntegration(t *tes
 	require.NoError(t, err)
 	var output bytes.Buffer
 	require.Error(t, drive.Run(t.Context(), &output))
-	data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
+	data, err = os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
 	require.NoError(t, err)
 	var report validationResult
 	require.NoError(t, json.Unmarshal(data, &report))
@@ -281,4 +314,25 @@ func TestFocusedRunnerPreservesSelectedEnvironmentDuringInspection(t *testing.T)
 	require.Error(t, drive.Run(t.Context(), &bytes.Buffer{}))
 	require.Contains(t, executor.env["NODE_OPTIONS"], "--conditions=ddtest-focused")
 	require.Equal(t, "selected", executor.env["SCOPED_SETUP"])
+}
+
+type versionOutputExecutor string
+
+func (e versionOutputExecutor) CombinedOutput(context.Context, string, []string, map[string]string) ([]byte, error) {
+	return []byte(e), nil
+}
+
+func TestVitestRunnerReadsTheVersionDdtestPrints(t *testing.T) {
+	drive := preparedTestdrive(t)
+	drive.command = filepath.Join(t.TempDir(), "ddtest")
+	require.NoError(t, os.MkdirAll(filepath.Join(drive.repositoryRoot, ".github/workflows"), 0700))
+	requireWriteFile(t, filepath.Join(drive.repositoryRoot, ".github/workflows/test.yml"), "env: {DDTEST_VERSION: 'v0.0.0-20261021202218-9f1abb9a90c0'}\njobs: {}\n")
+	for _, output := range []string{"v0.0.0-20261021202218-9f1abb9a90c0\n", "ddtest version v0.0.0-20261021202218-9f1abb9a90c0\n"} {
+		drive.executor = versionOutputExecutor(output)
+		info := drive.inspectVitestRunnerBinary(t.Context())
+		require.Equal(t, "v0.0.0-20261021202218-9f1abb9a90c0", info.Version, output)
+		require.Empty(t, info.Warnings, "a matching CI pin needs no warning")
+	}
+	drive.executor = versionOutputExecutor("unexpected banner text\n")
+	require.Equal(t, "unverified", drive.inspectVitestRunnerBinary(t.Context()).Version)
 }

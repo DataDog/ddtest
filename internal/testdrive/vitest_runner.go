@@ -45,8 +45,25 @@ func (t *Testdrive) vitestRunnerArgs(directory, preload, probe string, instrumen
 	}
 	// Never reuse a previous scenario's backend cache or plan. This directory
 	// belongs to the disposable copy, not the customer's repository.
+	// A copied .testoptimization symlink could point outside the copy; never
+	// follow it to delete the customer's own runner storage.
 	for _, directory := range []string{constants.RunnerDirectory, constants.HTTPCacheDir} {
-		if err := os.RemoveAll(filepath.Join(t.repositoryRoot, directory)); err != nil {
+		path := filepath.Join(t.repositoryRoot, directory)
+		parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		root, err := filepath.EvalSymlinks(t.repositoryRoot)
+		if err != nil {
+			return nil, err
+		}
+		if relative, err := filepath.Rel(root, parent); err != nil || !filepath.IsLocal(relative) && relative != "." {
+			return nil, fmt.Errorf("runner cleanup path escapes the configuration workspace: %s", path)
+		}
+		if err := os.RemoveAll(path); err != nil {
 			return nil, err
 		}
 	}
@@ -56,6 +73,9 @@ func (t *Testdrive) vitestRunnerArgs(directory, preload, probe string, instrumen
 			key, _, _ := strings.Cut(arg, "=")
 			return key == "--tests-location" || key == "--tests-exclude-pattern"
 		})
+		// Explicit empty flags override selection inherited from the CI
+		// environment, which would otherwise exclude the probe.
+		options = append(options, "--tests-location=", "--tests-exclude-pattern=")
 	}
 	args := append([]string{"run"}, options...)
 	files := parsed.Files
@@ -70,7 +90,11 @@ func (t *Testdrive) vitestRunnerArgs(directory, preload, probe string, instrumen
 	}
 	env["DDTEST_VITEST_VALIDATION"] = string(encoded)
 	env["DD_TRACE_PACKAGE"] = preload
-	env["DD_TRACE_ESM_IMPORT"] = filepath.Join(filepath.Dir(filepath.Dir(preload)), "register.js")
+	register, err := tracerPackageFile(preload, "register.js")
+	if err != nil {
+		return nil, err
+	}
+	env["DD_TRACE_ESM_IMPORT"] = register
 	if !instrumented {
 		// RunEnv normally inserts the tracer. Its explicit worker override lets
 		// the baseline run the same adapter without loading dd-trace at all.
@@ -216,4 +240,27 @@ func collectVitestWorkerResults(directory, root string, run *validationRun) erro
 func isFullySkippedPercentage(value string) bool {
 	percentage, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 	return err == nil && percentage == 100
+}
+
+// Resolve a file from the dd-trace package that contains the preload, rather
+// than assuming the preload's depth inside the package.
+func tracerPackageFile(preload, name string) (string, error) {
+	for directory := filepath.Dir(preload); ; directory = filepath.Dir(directory) {
+		data, err := os.ReadFile(filepath.Join(directory, "package.json"))
+		if err == nil {
+			var manifest struct {
+				Name string `json:"name"`
+			}
+			if json.Unmarshal(data, &manifest) == nil && manifest.Name == "dd-trace" {
+				path := filepath.Join(directory, name)
+				if _, err := os.Stat(path); err != nil {
+					return "", fmt.Errorf("dd-trace package at %s has no %s: %w", directory, name, err)
+				}
+				return path, nil
+			}
+		}
+		if filepath.Dir(directory) == directory {
+			return "", fmt.Errorf("cannot find the dd-trace package containing %s", preload)
+		}
+	}
 }

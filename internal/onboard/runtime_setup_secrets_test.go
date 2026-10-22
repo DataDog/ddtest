@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/stretchr/testify/require"
 )
 
@@ -86,4 +87,17 @@ func TestWorkflowExpressionIsReportedInsteadOfAShellParseError(t *testing.T) {
 	require.Contains(t, scope.Unresolved[0], "unresolved CI workflow expression requires review: ${{ github.workspace }}")
 	require.NotContains(t, scope.Unresolved[0], "cannot parse shell sequence")
 	require.Equal(t, 1, strings.Count(scope.Unresolved[0], "unresolved CI workflow expression"))
+}
+
+func TestConfiguredOnboardingSuggestsAllForSeveralConfigurations(t *testing.T) {
+	for workflow, want := range map[string]string{
+		"jobs:\n  tests:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: js}\n      - run: npx jest --config a.js\n      - run: npx jest --config b.js\n": "`ddtest testdrive --framework jest --all`",
+		"jobs:\n  tests:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: js}\n      - run: npx jest\n":                                                    "`ddtest testdrive --framework jest`",
+	} {
+		root := newJestRepository(t, workflow)
+		t.Chdir(root)
+		var output strings.Builder
+		require.NoError(t, onboardGitHub(&output, &environment.GitHub{}, root, "javascript", "jest"))
+		require.Contains(t, output.String(), "Run "+want+" to check the setup locally.")
+	}
 }

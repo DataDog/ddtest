@@ -173,3 +173,16 @@ func TestIncompleteAllScopeRemainsAnErrorWhenExecutedConfigurationsPass(t *testi
 	require.Contains(t, report, "Executed Jest validations: PASSED")
 	require.Contains(t, report, "Validation verdict: INCOMPLETE")
 }
+
+func TestCheckOnlyCoverageCountsDiscoveredCommands(t *testing.T) {
+	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "vitest run a"}, {Directory: ".", Command: "vitest run b"}}}
+	coverage, _ := summarizeConfigurationCoverage(validationResult{Framework: "vitest", CheckOnly: true, Scope: &scope})
+	require.Equal(t, 2, coverage.Discovered, "check-only reports the same discovered count as a full run")
+	require.Equal(t, 2, coverage.NotExercised)
+	require.Zero(t, coverage.Validated)
+}
+
+func TestNoHTMLBlockerBeforeAnyTestRan(t *testing.T) {
+	summary := summarizeValidation(validationResult{Framework: "vitest", Error: "Vitest watch mode is not supported by testdrive"})
+	require.NotContains(t, summary.BlockingChecks, "no current HTML findings report")
+}

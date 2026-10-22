@@ -280,7 +280,7 @@ jobs:
           DDTEST_DD_TRACE_NODE_MODULES="${vitest_dir}/node_modules" \
             go test -v ./internal/compatibility -run '^TestVitest(Adapter|Tracing)Integration$'
           DDTEST_VITEST_NODE_MODULES="${vitest_dir}/node_modules" \
-            go test -v ./internal/testdrive -run '^TestVitest(Configuration|ValidationArguments)Integration$'
+            go test -v ./internal/testdrive -run '^TestVitest(Configuration|ValidationArguments|MultiProjectRejectionKeepsConfigurationEvidence)Integration$'
 
   mocha-compatibility:
     runs-on: ubuntu-latest

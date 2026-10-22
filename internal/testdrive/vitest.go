@@ -52,7 +52,8 @@ func vitestArguments(command string, args []string) ([]string, error) {
 		// verified against the real runner's plan and worker results.
 		return options, nil
 	}
-	base := filepath.Base(command)
+	// Command selection accepts Windows executables such as node.exe.
+	base := strings.TrimSuffix(strings.TrimSuffix(filepath.Base(command), ".exe"), ".cmd")
 	switch base {
 	case "vitest", "vitest.mjs":
 		return slices.Clone(args), nil
@@ -114,6 +115,12 @@ func (t *Testdrive) inspectVitest(ctx context.Context, directory string, probe .
 		node = t.command
 	}
 	data, err := t.executor.CombinedOutput(ctx, node, []string{"--input-type=module", "--eval", framework.VitestValidationScript + "\n" + vitestConfigScript, string(encoded), filepath.Join(directory, "vite-cache"), selectedProbe}, env)
+	if _, rejected, found := strings.Cut(string(data), "__DDTEST_VITEST_REJECTED__"); found {
+		var reason string
+		if json.NewDecoder(strings.NewReader(rejected)).Decode(&reason) == nil && reason != "" {
+			return "", nil, nil, errors.New(reason)
+		}
+	}
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("inspect Vitest configuration: %w: %s", err, commandDiagnostic(data))
 	}
