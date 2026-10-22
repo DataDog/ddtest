@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 )
@@ -84,14 +83,15 @@ func (c *ProcessTestCoverage) resume() bool {
 	}
 	processCoverageMu.Lock()
 	defer processCoverageMu.Unlock()
-	temporaryDir, err := os.MkdirTemp("", "dd-process-coverage-*")
+	// An absolute directory, as for per-test profiles: a test can chdir.
+	temporaryDir, err := mkdirCoverageTemp("dd-process-coverage-*")
 	if err != nil {
 		log.Debug("civisibility.cov: error creating process coverage directory: %s", err.Error())
 		telemetry.CodeCoverageErrors()
 		return false
 	}
 	collector := &testCoverage{
-		testFile:             utils.GetRelativePathFromCITagsSourceRoot(c.testFile),
+		testFile:             coverageSourceFile(c.testFile),
 		preCoverageFilename:  filepath.Join(temporaryDir, "pre.out"),
 		postCoverageFilename: filepath.Join(temporaryDir, "post.out"),
 	}
@@ -317,6 +317,15 @@ func FinalizeProcessCoverageProfiles() (bool, error) {
 	}
 	if processAggregateCoverage == nil {
 		return false, nil
+	}
+	// testing wrote the profile to a device or a pipe, such as /dev/null:
+	// there is no file to merge into, as with go test's own output.
+	if path := currentCoverProfilePath(); path != "" {
+		if info, err := os.Stat(path); err == nil && !info.Mode().IsRegular() {
+			log.Debug("civisibility.cov: isolated coverage not merged into %s, which is not a regular file", path)
+			processAggregateCoverage = nil
+			return false, nil
+		}
 	}
 	parentSnapshot, err := RuntimeCoverageSnapshot()
 	if err != nil {

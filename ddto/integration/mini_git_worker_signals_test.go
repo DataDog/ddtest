@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -107,5 +109,73 @@ func TestMiniGitWorkerStopsOnInterrupt(t *testing.T) {
 				t.Fatalf("telemetry closings %v, logs %v", s.closings, s.logs)
 			}
 		})
+	}
+}
+
+// A signal while ddto waits for the worker's upload after go test, which
+// passed, ends ddto with that signal, as it would have ended go test.
+func TestMiniSignalDuringWorkerWaitEndsDDTO(t *testing.T) {
+	dir, driver, _ := gitStateFixture(t)
+	agent := &telemetryAgent{}
+	var started atomic.Bool
+	server := newServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/packfile") {
+			_, _ = io.Copy(io.Discard, r.Body)
+			started.Store(true)
+			<-r.Context().Done()
+			return
+		}
+		if r.URL.Path == "/upload-started" {
+			if !started.Load() {
+				w.WriteHeader(http.StatusNotFound)
+			}
+			return
+		}
+		agent.handler(w, r)
+	}))
+	defer server.Close()
+	writeBuildFixture(t, dir, map[string]string{"upload_wait_test.go": uploadWaitTest})
+	temp := t.TempDir()
+	cmd := exec.Command(driver, "test", "--runtime=mini", "--git-upload-timeout=5m", "-count=1", "-run=^(TestPass|TestWaitForUpload)$", ".")
+	cmd.Dir = dir
+	cmd.Env = append(testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL,
+		"DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", "DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=true", "DD_GIT_REPOSITORY_URL=", "DD_GIT_COMMIT_SHA=",
+		"DD_TRACE_DEBUG=true", "TMPDIR="+temp, "POC_UPLOAD_STARTED_URL="+server.URL+"/upload-started"), "PWD="+dir)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	sent, read := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(read)
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			log.WriteString(scanner.Text() + "\n")
+			if strings.Contains(scanner.Text(), "DEBUG: ") && strings.Contains(scanner.Text(), " test session sent=") {
+				close(sent)
+			}
+		}
+		_, _ = io.Copy(io.Discard, stderr)
+	}()
+	select {
+	case <-sent:
+	case <-time.After(2 * time.Minute):
+		_ = cmd.Process.Kill()
+		t.Fatal("ddto never sent its session")
+	}
+	// ddto now waits for the worker, whose upload waits for the server.
+	time.Sleep(500 * time.Millisecond)
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	<-read
+	err = cmd.Wait()
+	status, _ := cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !status.Signaled() || status.Signal() != syscall.SIGTERM {
+		t.Fatalf("ddto: %v, want SIGTERM\n%s", err, log.String())
 	}
 }

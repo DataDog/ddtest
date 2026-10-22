@@ -232,7 +232,7 @@ func InitializeCoverage(m *testing.M, uploadEnabled bool) {
 	})
 
 	// create a temporary directory to store coverage files
-	temporaryDir, err = os.MkdirTemp("", "coverage")
+	temporaryDir, err = mkdirCoverageTemp("coverage")
 	if err != nil {
 		log.Debug("civisibility.cov: error creating temporary directory: %s", err.Error())
 	} else {
@@ -244,11 +244,17 @@ func InitializeCoverage(m *testing.M, uploadEnabled bool) {
 
 }
 
+// testPackageDirectory is the directory that the test process started in, the
+// package's under go test, read as the package initializes: before TestMain,
+// which can change directory before M.Run.
+var testPackageDirectory, _ = os.Getwd()
+
 // deferModuleInfo captures the directory, environment and go command that
 // resolving the module used at initialization, so a later TestMain chdir or
-// environment change does not alter the result.
+// environment change does not alter the result. The directory is the one that
+// the process started in.
 func deferModuleInfo() {
-	dir, _ := os.Getwd()
+	dir := testPackageDirectory
 	goPath, err := exec.LookPath("go")
 	if err != nil {
 		goPath = "go"
@@ -356,8 +362,10 @@ func runtimeCoverageSnapshotLocked() (*runtimeCoverageSnapshot, error) {
 	}
 
 	if coverProfile := currentCoverProfilePath(); coverProfile != "" {
-		// ddto's temporary profile starts empty.
-		if info, err := os.Stat(coverProfile); err == nil && (coverProfile != temporaryCoverProfile || info.Size() > 0) {
+		// ddto's temporary profile starts empty, and with -test.list testing
+		// writes none: a file there is an earlier run's. Reading anything
+		// but a regular file, such as /dev/stdout, can wait forever.
+		if info, err := os.Stat(coverProfile); err == nil && info.Mode().IsRegular() && !listingTests() && (coverProfile != temporaryCoverProfile || info.Size() > 0) {
 			runtimeSnapshot = &runtimeCoverageSnapshot{path: coverProfile, temporary: coverProfile == temporaryCoverProfile}
 			if log.DebugEnabled() {
 				log.Debug("civisibility.cov: session coverage from the profile that testing wrote: %s", coverProfile)
@@ -451,6 +459,17 @@ func setTemporaryCoverProfile(value flag.Value) (string, error) {
 	return path, nil
 }
 
+// ListingTests reports whether -test.list makes testing list names instead of
+// running tests: the session then has no coverage.
+func ListingTests() bool { return listingTests() }
+
+// listingTests reports whether -test.list makes testing list names instead of
+// running tests.
+func listingTests() bool {
+	list := flag.Lookup("test.list")
+	return list != nil && list.Value.String() != ""
+}
+
 func currentCoverProfilePath() string {
 	if coverProfileFlag := flag.Lookup("test.coverprofile"); coverProfileFlag != nil {
 		return coverProfileFlag.Value.String()
@@ -458,11 +477,25 @@ func currentCoverProfilePath() string {
 	return ""
 }
 
+// errNoCoverageDirectory is a text-profile capture without the temporary
+// directory that initialization failed to create.
+var errNoCoverageDirectory = errors.New("no temporary coverage directory")
+
+// mkdirCoverageTemp creates a directory of coverage captures by an absolute
+// path: a relative TMPDIR would follow a test's os.Chdir.
+func mkdirCoverageTemp(pattern string) (string, error) {
+	parent, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(parent, pattern)
+}
+
 func ensureTemporaryDirLocked() error {
 	if temporaryDir != "" {
 		return nil
 	}
-	dir, err := os.MkdirTemp("", "coverage")
+	dir, err := mkdirCoverageTemp("coverage")
 	if err != nil {
 		return err
 	}
@@ -637,14 +670,25 @@ func ResetForTesting() {
 
 // NewTestCoverage creates a new test coverage.
 func NewTestCoverage(sessionID, moduleID, suiteID, testID uint64, testFile string) TestCoverage {
-	testFile = utils.GetRelativePathFromCITagsSourceRoot(testFile)
 	return &testCoverage{
 		sessionID: sessionID,
 		moduleID:  moduleID,
 		suiteID:   suiteID,
 		testID:    testID,
-		testFile:  testFile,
+		testFile:  coverageSourceFile(testFile),
 	}
+}
+
+// coverageSourceFile returns the path in the repository of a source file,
+// which the runtime names by its import path with -trimpath.
+func coverageSourceFile(path string) string {
+	if filepath.IsAbs(path) {
+		return utils.GetRelativePathFromCITagsSourceRoot(path)
+	}
+	if file, ok := moduleRepositoryFile(path); ok {
+		return file
+	}
+	return utils.ResolveSourceFilePathFromCITags(path).RelativePath
 }
 
 // CollectCoverageBeforeTestExecution collects coverage before test execution.
@@ -672,6 +716,10 @@ func (t *testCoverage) collectCoverageBeforeTestExecution() error {
 		return err
 	}
 	if t.preCoverageFilename == "" {
+		if temporaryDir == "" {
+			// A relative name would write the profile into the test's directory.
+			return errNoCoverageDirectory
+		}
 		t.preCoverageFilename = filepath.Join(temporaryDir, fmt.Sprintf("%d-%d-%d-pre.out", t.moduleID, t.suiteID, t.testID))
 	}
 	_, err = tearDown(t.preCoverageFilename, "")
@@ -739,6 +787,11 @@ func (t *testCoverage) collectCoverageAfterTestExecution() error {
 		return err
 	}
 	if t.postCoverageFilename == "" {
+		if temporaryDir == "" {
+			log.Debug("civisibility.cov: error getting coverage file: %s", errNoCoverageDirectory.Error())
+			telemetry.CodeCoverageErrors()
+			return errNoCoverageDirectory
+		}
 		t.postCoverageFilename = filepath.Join(temporaryDir, fmt.Sprintf("%d-%d-%d-post.out", t.moduleID, t.suiteID, t.testID))
 	}
 	_, err := tearDown(t.postCoverageFilename, "")
@@ -1158,7 +1211,17 @@ func (c *coveredLines) files(testFile string) []coveredFile {
 // by converting a module path to a module directory.
 func getRelativePathFromCITagsSourceRootForCoverage(filePath string) string {
 	resolveModuleInfo()
-	return utils.GetRelativePathFromCITagsSourceRoot(strings.ReplaceAll(filePath, modulePath, moduleDir))
+	return utils.GetRelativePathFromCITagsSourceRoot(moduleFilePath(filePath))
+}
+
+// moduleFilePath names a file of the module path in the module directory. The
+// SDK replaced every occurrence of the module path: module app's app/app.go
+// became <dir>/<dir>.go.
+func moduleFilePath(filePath string) string {
+	if rest, ok := strings.CutPrefix(filePath, modulePath+"/"); ok && modulePath != "" {
+		return moduleDir + "/" + rest
+	}
+	return filePath
 }
 
 // getCoverageStatementsInfo parses the coverage profile data and returns the total statements and covered statements

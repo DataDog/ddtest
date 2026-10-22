@@ -141,7 +141,9 @@ func TestConcurrentSignalExitWaitsForPreCloseOwner(t *testing.T) {
 	require.Equal(t, civisibility.StateExited, civisibility.GetState())
 }
 
-func TestCIVisibilitySignalHandlerDoesNotExitAfterNormalShutdownStarts(t *testing.T) {
+// A signal that arrives once the normal shutdown started ends the process
+// after that shutdown, as it would end the process under go test.
+func TestCIVisibilitySignalHandlerExitsAfterNormalShutdownStarts(t *testing.T) {
 	replaceSignalNotifyForTesting(t, signal.Notify)
 	resetCIVisibilityBootstrapStateForTesting()
 	disableAdditionalFeaturesForBootstrapTest()
@@ -160,9 +162,12 @@ func TestCIVisibilitySignalHandlerDoesNotExitAfterNormalShutdownStarts(t *testin
 	assertNoSignalHandlerExitCode(t, exitCodes)
 	stopCIVisibilitySignalHandler()
 	require.Nil(t, currentCIVisibilitySignalHandlerForTesting())
+	require.Equal(t, os.Signal(syscall.SIGTERM), waitForSignalHandlerExitCode(t, exitCodes))
 }
 
-func TestCIVisibilitySignalHandlerDoesNotExitWhenNormalShutdownStartsDuringSignalShutdown(t *testing.T) {
+// A normal shutdown that starts during a signal's shutdown completes, and the
+// process then ends with the signal.
+func TestCIVisibilitySignalHandlerExitsWhenNormalShutdownStartsDuringSignalShutdown(t *testing.T) {
 	replaceSignalNotifyForTesting(t, signal.Notify)
 	resetCIVisibilityBootstrapStateForTesting()
 	disableAdditionalFeaturesForBootstrapTest()
@@ -195,6 +200,7 @@ func TestCIVisibilitySignalHandlerDoesNotExitWhenNormalShutdownStartsDuringSigna
 	stopCIVisibilitySignalHandler()
 	require.Nil(t, currentCIVisibilitySignalHandlerForTesting())
 	require.Equal(t, civisibility.StateExited, civisibility.GetState())
+	require.Equal(t, os.Signal(syscall.SIGTERM), waitForSignalHandlerExitCode(t, exitCodes))
 }
 
 // Without ddto's os/signal overlay, CI Visibility cannot tell a signal that
@@ -307,4 +313,27 @@ func assertNoSignalHandlerExitCode(t *testing.T, exitCodes <-chan os.Signal) {
 		t.Fatalf("unexpected CI Visibility signal handler exit: %v", code)
 	default:
 	}
+}
+
+// A signal still queued when the handler stops, which its goroutine did not
+// take before the stop, ends the process after the shutdown too.
+func TestCIVisibilitySignalHandlerExitsWithAQueuedSignal(t *testing.T) {
+	replaceSignalNotifyForTesting(t, signal.Notify)
+	exitCodes := replaceSignalExitForTesting(t)
+	handler := &ciVisibilitySignalHandler{
+		signals:  make(chan os.Signal, 1),
+		observed: make(chan int, 1),
+		stop:     make(chan struct{}),
+		done:     make(chan struct{}),
+	}
+	// The goroutine took the stop first and exited.
+	close(handler.done)
+	handler.signals <- syscall.SIGTERM
+	ciVisibilitySignalHandlerMu.Lock()
+	activeCIVisibilitySignalHandler = handler
+	ciVisibilitySignalHandlerMu.Unlock()
+
+	stopCIVisibilitySignalHandler()
+	require.Nil(t, currentCIVisibilitySignalHandlerForTesting())
+	require.Equal(t, os.Signal(syscall.SIGTERM), waitForSignalHandlerExitCode(t, exitCodes))
 }

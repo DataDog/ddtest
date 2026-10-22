@@ -50,7 +50,7 @@ policy combinations and counts are exported by every workflow run.
 | --- | --- | --- |
 | Session, module, suite and test lifecycle | Native `testing`, `TestMain`, two source suites, multiple package binaries; unique IDs, resolved hierarchy and event multiplicity | Verified |
 | Pass, failure and skip | All six failure entrypoints, Helper stacks, three skip entrypoints/reasons, source locations and exit status | Verified |
-| Subtests and cleanup | Nested children, Context cancellation, cleanup order; disabled/quarantined children and subtest feature gate | Verified |
+| Subtests and cleanup | Nested children, Context cancellation, cleanup order; disabled/quarantined children and subtest feature gate | Verified. Without ATR, EFD or test management, a test's event closes when its function returns, as in the pinned SDK: a failure in its `t.Cleanup` callbacks, or in a parallel subtest, fails `go test` but leaves the test's own event passed |
 | Parallel execution | Parallel children with count/shuffle; ATR in both execution modes; exact parallel coverage attribution under race | Verified |
 | Automatic test retries (ATR) | Recovery/exhaustion, zero budget, environment on/off override, process and in-process execution; parallel tests and coverage | Verified; dynamic retry counts (dd-trace-go #5695, newer than the pinned SDK) are checked on Mini alone in `TestMiniDynamicFlakyRetries` |
 | Early flake detection (EFD) | New/known tests, retry cap, faulty-session abort; ATR combination, impacted known tests and parallel retry execution | Verified for these decisions; long slow-test duration thresholds have unit evidence only |

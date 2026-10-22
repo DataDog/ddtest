@@ -23,7 +23,7 @@ class ShardTests(unittest.TestCase):
 
     def test_matrix_and_platform_inventory(self):
         differential = ci_shards.matrix(self.groups, "differential")["include"]
-        self.assertEqual(14, len(differential))
+        self.assertEqual(16, len(differential))
         self.assertEqual(2, len(ci_shards.matrix(self.groups, "mini")["include"]))
         self.assertEqual([dict(suite="mini", os="ubuntu-latest", go="tip", mode="normal",
                                shards="units,native,fuzz", job="units-native-fuzz", owner=True)],
@@ -36,7 +36,7 @@ class ShardTests(unittest.TestCase):
             owners = [item["owner"] for item in differential
                       if (item["suite"], item["os"], item["go"], item["mode"]) == config]
             self.assertEqual([True] + [False] * (len(owners) - 1), owners)
-        for platform, count in (("ubuntu-latest", 176), ("macos-latest", 174), ("windows-latest", 173)):
+        for platform, count in (("ubuntu-latest", 188), ("macos-latest", 186), ("windows-latest", 184)):
             tests = [name for shard in ci_shards.SHARDS["differential"][1:]
                      for name in ci_shards.selected_tests(self.groups, "differential", "1.27.x", shard, platform)]
             self.assertEqual(count, len(tests))
@@ -45,7 +45,7 @@ class ShardTests(unittest.TestCase):
             for changed in (tests[:-1], tests + ["TestNewUnassignedCase"]):
                 with self.assertRaisesRegex(ValueError, "test inventory changed"):
                     ci_shards.validate_inventory(self.groups, changed, platform)
-        for version, count in (("1.25.x", 51), ("tip", 55)):
+        for version, count in (("1.25.x", 61), ("tip", 66)):
             tests = [name for shard in ci_shards.SHARDS["mini"][1:]
                      for name in ci_shards.selected_tests(self.groups, "mini", version, shard, "ubuntu-latest")]
             self.assertEqual(count, len(tests))
@@ -158,13 +158,13 @@ class ShardTests(unittest.TestCase):
             ci_shards.collect_manifests(source, self.groups, "revision", "tree", without_tip)
         for path in source.glob("mini-ubuntu-latest-tip-normal/*/manifest.json"):
             path.unlink()
-        self.assertEqual(51, len(ci_shards.collect_manifests(source, self.groups, "revision", "tree", without_tip)))
+        self.assertEqual(56, len(ci_shards.collect_manifests(source, self.groups, "revision", "tree", without_tip)))
         with self.assertRaisesRegex(ValueError, "missing shards"):
             ci_shards.collect_manifests(source, self.groups, "revision", "tree")
 
     def test_collect_rejects_missing_duplicate_failed_and_different_inputs(self):
         source = self.manifests()
-        self.assertEqual(54, len(ci_shards.collect_manifests(source, self.groups, "revision", "tree")))
+        self.assertEqual(59, len(ci_shards.collect_manifests(source, self.groups, "revision", "tree")))
         path = next(source.glob("*/*/manifest.json"))
         original = json.loads(path.read_text())
         for key, value in (("revision", "other"), ("tree", "other"), ("status", "failed"),

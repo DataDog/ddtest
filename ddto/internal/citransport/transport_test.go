@@ -282,3 +282,33 @@ func TestIdleConnectionLimitForConcurrentSenders(t *testing.T) {
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Requests over TLS share one connection per host, so a dial that another
+// request's connection made unneeded cannot finish after delivery returns;
+// plain HTTP, as to a local Agent, keeps concurrent connections.
+func TestTLSDeliveryUsesOneConnectionPerHost(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "")
+	t.Setenv("HTTP_PROXY", "")
+	for endpoint, want := range map[string]int{
+		"https://intake.invalid/api/v2/citestcycle": 1,
+		"http://127.0.0.1:8126/evp_proxy/v2":        0,
+	} {
+		transport, err := New(Config{Endpoint: endpoint, APIKey: "key", Agentless: strings.HasPrefix(endpoint, "https")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		standard, ok := transport.client.Transport.(*http.Transport)
+		if !ok || standard.MaxConnsPerHost != want {
+			t.Fatalf("%s: %T with %d connections per host; want %d", endpoint, transport.client.Transport, standard.MaxConnsPerHost, want)
+		}
+	}
+	proxied := http.DefaultTransport.(*http.Transport).Clone()
+	proxied.Proxy = func(*http.Request) (*url.URL, error) { return url.Parse("https://proxy.invalid") }
+	transport, err := New(Config{Endpoint: "http://127.0.0.1:8126/evp_proxy/v2", HTTPClient: &http.Client{Transport: proxied}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if standard := transport.client.Transport.(*http.Transport); standard.MaxConnsPerHost != 1 || proxied.MaxConnsPerHost != 0 {
+		t.Fatalf("through an https proxy: %d connections per host, caller's %d", standard.MaxConnsPerHost, proxied.MaxConnsPerHost)
+	}
+}

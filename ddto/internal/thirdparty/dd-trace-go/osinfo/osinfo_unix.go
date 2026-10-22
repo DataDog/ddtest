@@ -62,6 +62,8 @@ func detect() {
 // the SDK's best-effort discovery. Malformed lines do not supply a field value.
 func readOSRelease(r io.Reader) error {
 	scanner := bufio.NewScanner(r)
+	// osVersion starts as "unknown", or the kernel's release on FreeBSD.
+	versionSet := false
 	for scanner.Scan() {
 		key, value, ok := strings.Cut(scanner.Text(), "=")
 		if !ok {
@@ -71,9 +73,9 @@ func readOSRelease(r io.Reader) error {
 		case "NAME":
 			osName = strings.Trim(value, "\"")
 		case "VERSION":
-			osVersion = strings.Trim(value, "\"")
+			osVersion, versionSet = strings.Trim(value, "\""), true
 		case "VERSION_ID":
-			if osVersion == "" { // Fallback to VERSION_ID if VERSION is not set
+			if !versionSet { // Fallback to VERSION_ID if VERSION is not set, as on Alpine
 				osVersion = strings.Trim(value, "\"")
 			}
 		}

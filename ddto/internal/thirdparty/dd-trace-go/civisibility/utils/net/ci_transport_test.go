@@ -114,3 +114,32 @@ func TestCITransportRoutesTLSConnections(t *testing.T) {
 		}
 	}
 }
+
+// The client does not follow a redirect, which would send the API key header
+// to the redirect's host.
+func TestCIClientDoesNotFollowRedirects(t *testing.T) {
+	var reached atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Add(1)
+	}))
+	defer other.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/steal", http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+	client := createNewHTTPClient()
+	defer client.CloseIdleConnections()
+	request, err := http.NewRequest(http.MethodPost, redirect.URL+"/api/v2/libraries/tests/services/setting", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("dd-api-key", "secret")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusTemporaryRedirect || reached.Load() != 0 {
+		t.Fatalf("status %d, redirect host reached %d times", response.StatusCode, reached.Load())
+	}
+}

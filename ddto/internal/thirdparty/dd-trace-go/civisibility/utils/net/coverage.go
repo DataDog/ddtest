@@ -66,7 +66,7 @@ func (c *client) SendCoveragePayloadWithFormat(ciTestCovPayload io.Reader, forma
 		}
 	}
 
-	log.Debug("civisibility.coverage: payload transport mode is http [format:%s url:%s]", format, c.getURLPath(coverageURLPath))
+	log.Debug("civisibility.coverage: payload transport mode is http [format:%s url:%s]", format, logURL(c.getURLPath(coverageURLPath)))
 
 	// Create a dummy event to send with the coverage payload.
 	dummyEvent := FormFile{

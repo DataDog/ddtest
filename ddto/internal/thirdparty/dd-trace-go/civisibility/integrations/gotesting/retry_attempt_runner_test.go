@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
@@ -1127,4 +1128,19 @@ func TestProcessRetryParityRaceBaselineReconciliationIsMonotonic(t *testing.T) {
 	reconcileRetryAttemptRaceBaselines(attempt, target-1)
 	require.Equal(t, target, originalBaseline.Load())
 	require.Equal(t, target, parentBaseline.Load())
+}
+
+// An attempt that panics reports the time that its body ran, which dynamic
+// automatic test retries read to choose a retry budget.
+func TestRetryAttemptPanicKeepsItsDuration(t *testing.T) {
+	attempt, result, reason := runFreshRetryAttempt(t, func(*testing.T) {
+		time.Sleep(20 * time.Millisecond)
+		panic("boom")
+	})
+	require.Empty(t, reason)
+	require.NotNil(t, attempt)
+	defer attempt.cancelContexts()
+	require.Equal(t, retryAttemptCompletionPanic, result.completionPhase)
+	require.GreaterOrEqual(t, result.duration, 20*time.Millisecond)
+	require.False(t, t.Failed(), "attempt failure must not mutate the original test")
 }

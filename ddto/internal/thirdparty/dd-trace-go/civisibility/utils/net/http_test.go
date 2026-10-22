@@ -9,12 +9,15 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	stdnet "net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -23,6 +26,7 @@ import (
 
 	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 )
 
 const DefaultMultipartMemorySize = 10 << 20 // 10MB
@@ -1499,4 +1503,67 @@ func readMultipartBodyParts(t *testing.T, contentType string, body []byte) map[s
 		require.NoError(t, part.Close())
 	}
 	return parts
+}
+
+// Debug lines show a configured URL without its user information or query.
+func TestLogURL(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://citestcycle-intake.datadoghq.com/api/v2/citestcycle": "https://citestcycle-intake.datadoghq.com/api/v2/citestcycle",
+		"https://user:secret@proxy.example.com/api?token=secret#x":    "https://proxy.example.com/api",
+		"http://[::1]:8126/evp_proxy/v4/api/v2/libraries":             "http://[::1]:8126/evp_proxy/v4/api/v2/libraries",
+		"://bad": "(invalid URL)",
+	} {
+		if got := logURL(raw); got != want {
+			t.Errorf("logURL(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// An HTTP error's URL keeps no user information or query in debug lines.
+func TestLogError(t *testing.T) {
+	err := &url.Error{Op: "Post", URL: "http://token@127.0.0.1:1/api?key=secret", Err: errors.New("connection refused")}
+	if got := logError(fmt.Errorf("send: %w", err)); strings.Contains(got, "token") || strings.Contains(got, "secret") || !strings.Contains(got, "127.0.0.1:1/api") {
+		t.Fatalf("logError = %q", got)
+	}
+	if got := logError(errors.New("plain")); got != "plain" {
+		t.Fatalf("logError = %q", got)
+	}
+}
+
+// A URL that the request cannot be built from, as an agentless URL can be,
+// leaves the client without its user information or query.
+func TestRequestErrorHidesURLCredentials(t *testing.T) {
+	for _, config := range []RequestConfig{
+		{Method: "GET"},
+		{Method: "POST", Body: []byte("{}"), Format: FormatJSON},
+		{Method: "POST", Files: []FormFile{{FieldName: "f", Content: []byte("x"), ContentType: ContentTypeOctetStream}}},
+	} {
+		config.URL = "https://user:password@proxy.example/%zz?token=sensitive"
+		_, err := NewRequestHandler().SendRequest(config)
+		if err == nil || strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "sensitive") {
+			t.Fatalf("%s with files=%d: %v", config.Method, len(config.Files), err)
+		}
+	}
+}
+
+// Debug lines show a request body's size, not its contents: a logs payload
+// holds the tests' output.
+func TestRequestDebugLinesHideTheBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	recorder := new(log.RecordLogger)
+	defer log.UseLogger(recorder)()
+	level := log.GetLevel()
+	log.SetLevel(log.LevelDebug)
+	defer log.SetLevel(level)
+	_, err := NewRequestHandler().SendRequest(RequestConfig{Method: "POST", URL: server.URL, Body: []map[string]string{{"message": "PRIVATE_MARKER"}}, Format: FormatJSON})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := strings.Join(recorder.Logs(), "\n")
+	if !strings.Contains(logs, "new request with body") || strings.Contains(logs, "PRIVATE_MARKER") {
+		t.Fatalf("debug lines:\n%s", logs)
+	}
 }

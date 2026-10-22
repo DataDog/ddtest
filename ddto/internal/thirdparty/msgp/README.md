@@ -26,6 +26,11 @@ negative `int`, and wraps a size or element count beyond `uintptr`.
 `ErrLimitExceeded`. Keep these checks when recopying; `msgp/length32_test.go`
 tests them.
 
+`CopyToJSON` writes a NaN or infinite float as `null`: upstream writes `NaN`,
+`+Inf` or `-Inf`, which is not JSON, so one such benchmark metric made a whole
+Bazel payload file invalid. Keep the check in `rwFloat32` and `rwFloat64` when
+recopying; `msgp/json_nonfinite_test.go` tests it.
+
 This copy uses native Go 1.25 APIs. Follow the
 [source-language rules](../../../docs/maintenance.md#verification-before-publication)
 when updating this copy, then record its local hashes.

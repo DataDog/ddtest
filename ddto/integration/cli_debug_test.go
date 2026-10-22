@@ -98,7 +98,9 @@ func TestCLIDebugFailuresAndNativeBypass(t *testing.T) {
 	}{
 		{"test-failure", []string{"test", "-count=1", "-run=^TestFailures$/^Fail$", ".", "-args", "-mode=fail"}, 1, "go test exit_code=1"},
 		{"package-failure", []string{"test", "./missing-package"}, 1, "go test exit_code=1"},
-		{"overlay-failure", []string{"test", "-overlay=" + invalidOverlay, "."}, 2, "read user overlay finished duration="},
+		// go test reports an overlay that it cannot parse, with its own status.
+		{"overlay-failure", []string{"test", "-overlay=" + invalidOverlay, "."}, 1, "read user overlay finished duration="},
+		{"missing-overlay", []string{"test", "-overlay=" + filepath.Join(t.TempDir(), "missing.json"), "."}, 1, "instrumentation bypass go_rejected="},
 		{"help", []string{"test", "-help"}, 2, "instrumentation bypass help=true"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

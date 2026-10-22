@@ -146,7 +146,7 @@ func buildToolWrapper(ctx context.Context, env *goEnvironment, parent, key, root
 		// none of the caller's flags, workspace or toolchain selection.
 		cmd := goCommand(ctx, src, "build", "-buildvcs=false", "-ldflags=-s -w", "-o", executable, ".")
 		cmd.Env = append(cmd.Environ(), "GOOS="+env.GOHOSTOS, "GOARCH="+env.GOHOSTARCH,
-			"GOFLAGS=", "GOWORK=off", "GO111MODULE=on", "GOTOOLCHAIN=local")
+			goFlagsEnv(""), "GOWORK=off", "GO111MODULE=on", "GOTOOLCHAIN=local")
 		cmd.Env = append(cmd.Env, toolWrapperBuildEnv...)
 		cmd.WaitDelay = toolWrapperWaitDelay
 		if output, err := cmd.CombinedOutput(); err != nil {

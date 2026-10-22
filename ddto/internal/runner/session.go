@@ -62,6 +62,9 @@ func startTestSession(cli CLIOptions, opts options, plan Plan, dir string, start
 	if mode := bazel.CurrentMode(); mode.ManifestEnabled || mode.PayloadFilesEnabled {
 		return nil, "Bazel's offline mode"
 	}
+	if !sameCheckout(dir, plan.tests.Packages) {
+		return nil, "a test package outside the Git checkout of go test's directory"
+	}
 	identity, err := propagation.New()
 	if err != nil {
 		return nil, err.Error()
@@ -69,6 +72,11 @@ func startTestSession(cli CLIOptions, opts options, plan Plan, dir string, start
 	sessionDir, err := os.MkdirTemp("", "ddto-session-")
 	if err != nil {
 		return nil, err.Error()
+	}
+	// Test processes start in their packages' directories: a relative TMPDIR
+	// would name another directory there.
+	if absolute, err := filepath.Abs(sessionDir); err == nil {
+		sessionDir = absolute
 	}
 	s := &testSession{
 		dir:     sessionDir,
@@ -84,12 +92,25 @@ func startTestSession(cli CLIOptions, opts options, plan Plan, dir string, start
 	return s, ""
 }
 
+// sameCheckout reports whether each test package lies in the Git checkout of
+// dir, or, as dir does, outside any: the session takes its Git metadata and
+// service from dir, and each test process from its package.
+func sameCheckout(dir string, packages []utils.CLITestPackage) bool {
+	folder := utils.CheckoutGitFolder(dir)
+	for _, p := range packages {
+		if folder == "" && utils.CheckoutGitFolder(p.Dir) != "" || folder != "" && !utils.SameCheckout(p.Dir, folder) {
+			return false
+		}
+	}
+	return true
+}
+
 // handoff returns the environment entry for go test.
 func (s *testSession) handoff() string { return goenv.TestSessionHandoff + "=" + s.dir }
 
 // finish sends the session once go test has exited with exitCode, and
 // removes its directory, or keeps it with --keep-ci-state.
-func (s *testSession) finish(ctx context.Context, exitCode int, goVersion string, coverage *float64, gitState string) {
+func (s *testSession) finish(ctx context.Context, exitCode int, goVersion, goarch string, coverage *float64, gitState string) {
 	if s == nil {
 		return
 	}
@@ -97,7 +118,7 @@ func (s *testSession) finish(ctx context.Context, exitCode int, goVersion string
 	finished := time.Now()
 	phase := debug.start("test session")
 	summary, err := integrations.FinishCLISession(integrations.CLISessionEnd{
-		Dir: s.dir, Session: s.session, Start: s.start, Finish: finished, ExitCode: exitCode, GoVersion: goVersion, Coverage: coverage, GitState: gitState,
+		Dir: s.dir, Session: s.session, Start: s.start, Finish: finished, ExitCode: exitCode, GoVersion: goVersion, GOARCH: goarch, Coverage: coverage, GitState: gitState,
 	})
 	phase.finish(err)
 	debug.printf("test session sent=%t processes=%d closed=%d crashed=%d recreated=%d exit_code=%d", summary.Sent, summary.Processes, summary.Closed, summary.Crashed, summary.Recreated, exitCode)
@@ -116,6 +137,11 @@ func (s *testSession) finish(ctx context.Context, exitCode int, goVersion string
 // it: blocks that several test processes report count once, covered if one
 // covered them.
 func profileCoverage(path string) (float64, bool) {
+	// Opening anything but a regular file, such as a FIFO or /dev/stdout, to
+	// read it can wait forever.
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return 0, false
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return 0, false

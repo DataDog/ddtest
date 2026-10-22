@@ -14,6 +14,7 @@ import (
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	civisibilityutils "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
 )
 
 func TestWriteLCOVReportFromProfile(t *testing.T) {
@@ -197,6 +198,58 @@ end_of_record
 	}
 }
 
+// A nested module's files keep the module's directory in the repository,
+// which its module path does not show.
+func TestWriteLCOVReportFromProfileUsesNestedModuleDirectory(t *testing.T) {
+	ResetForTesting()
+	civisibilityutils.ResetCITags()
+	t.Cleanup(func() {
+		ResetForTesting()
+		civisibilityutils.ResetCITags()
+	})
+
+	workspace := t.TempDir()
+	civisibilityutils.AddCITagsMap(map[string]string{constants.CIWorkspacePath: workspace})
+	modulePath = "github.com/acme/project/services/api"
+	moduleDir = filepath.Join(workspace, "services", "api")
+	profilePath := writeLCOVTestProfile(t, `mode: count
+github.com/acme/project/services/api/handler.go:1.1,2.1 1 1
+`)
+
+	var report bytes.Buffer
+	if err := WriteLCOVReportFromProfile(profilePath, &report); err != nil {
+		t.Fatalf("WriteLCOVReportFromProfile() error = %v", err)
+	}
+	if want := "SF:services/api/handler.go\nDA:1,1\nLH:1\nLF:1\nend_of_record\n"; report.String() != want {
+		t.Fatalf("unexpected LCOV report\nwant:\n%s\ngot:\n%s", want, report.String())
+	}
+}
+
+// A directory of the module whose name has a dot, as api.v2, keeps its files:
+// only paths that the module does not resolve are filtered that way.
+func TestWriteLCOVReportFromProfileKeepsDottedModuleDirectories(t *testing.T) {
+	ResetForTesting()
+	civisibilityutils.ResetCITags()
+	t.Cleanup(func() {
+		ResetForTesting()
+		civisibilityutils.ResetCITags()
+	})
+
+	modulePath = "github.com/acme/project"
+	moduleDir = t.TempDir()
+	profilePath := writeLCOVTestProfile(t, `mode: count
+github.com/acme/project/api.v2/routes.go:3.1,4.1 1 1
+`)
+
+	var report bytes.Buffer
+	if err := WriteLCOVReportFromProfile(profilePath, &report); err != nil {
+		t.Fatalf("WriteLCOVReportFromProfile() error = %v", err)
+	}
+	if want := "SF:api.v2/routes.go\nDA:3,1\nLH:1\nLF:1\nend_of_record\n"; report.String() != want {
+		t.Fatalf("unexpected LCOV report\nwant:\n%s\ngot:\n%s", want, report.String())
+	}
+}
+
 func TestWriteLCOVReportFromProfileIncludesProfileWithoutExecutableStatements(t *testing.T) {
 	profilePath := writeLCOVTestProfile(t, `mode: count
 ignored.go:1.1,3.1 0 1
@@ -237,4 +290,67 @@ func writeLCOVTestProfile(t *testing.T, content string) string {
 		t.Fatalf("write coverage profile: %v", err)
 	}
 	return profilePath
+}
+
+// A nested module's file takes the backend coverage of its own path in the
+// repository, not of a file at the root with the same module-relative path.
+func TestBackfillPrefersNestedModuleRepositoryPath(t *testing.T) {
+	ResetForTesting()
+	civisibilityutils.ResetCITags()
+	t.Cleanup(func() {
+		ResetForTesting()
+		civisibilityutils.ResetCITags()
+	})
+
+	workspace := t.TempDir()
+	civisibilityutils.AddCITagsMap(map[string]string{constants.CIWorkspacePath: workspace})
+	modulePath = "example.com/api"
+	moduleDir = filepath.Join(workspace, "services", "api")
+	root, nested := filebitmap.FromActiveRange(3, 3), filebitmap.FromActiveRange(9, 9)
+	name, bitmap, ok := backfillBitmapForProfileFile("example.com/api/handler.go", map[string]*filebitmap.FileBitmap{
+		"handler.go":              root,
+		"services/api/handler.go": nested,
+	})
+	if !ok || name != "services/api/handler.go" || bitmap != nested {
+		t.Fatalf("backend coverage of %q, %t; want services/api/handler.go", name, ok)
+	}
+	// Without the nested file's entry, the root file's does not stand in.
+	if name, _, ok := backfillBitmapForProfileFile("example.com/api/handler.go", map[string]*filebitmap.FileBitmap{"handler.go": root}); ok {
+		t.Fatalf("backend coverage of %q for services/api/handler.go", name)
+	}
+}
+
+// With -trimpath, the test's own file is named by its import path; its
+// coverage row takes its path in the repository.
+func TestTestCoverageNamesTrimmedTestFileInRepository(t *testing.T) {
+	ResetForTesting()
+	civisibilityutils.ResetCITags()
+	t.Cleanup(func() {
+		ResetForTesting()
+		civisibilityutils.ResetCITags()
+	})
+	workspace := t.TempDir()
+	civisibilityutils.AddCITagsMap(map[string]string{
+		constants.CIWorkspacePath:  workspace,
+		constants.GitRepositoryURL: "https://github.com/acme/project.git",
+	})
+	for path, want := range map[string]string{
+		"github.com/acme/project/pkg/example_test.go":  "pkg/example_test.go",
+		filepath.Join(workspace, "pkg", "abs_test.go"): "pkg/abs_test.go",
+	} {
+		if got := NewTestCoverage(1, 2, 3, 4, path).(*testCoverage).testFile; got != want {
+			t.Errorf("%s: test file %q; want %q", path, got, want)
+		}
+	}
+	// A nested module's directory need not match its path.
+	modulePath, moduleDir = "github.com/acme/project/api", filepath.Join(workspace, "services", "api")
+	if got := NewTestCoverage(1, 2, 3, 4, "github.com/acme/project/api/example_test.go").(*testCoverage).testFile; got != "services/api/example_test.go" {
+		t.Errorf("relocated module's test file %q", got)
+	}
+	modulePath, moduleDir = "", ""
+	// Experimental file coverage names the test's file once, also trimmed.
+	files := fileCoverageFiles("pkg/example_test.go", []string{"github.com/acme/project/pkg/example_test.go", "github.com/acme/project/pkg/lib.go"})
+	if len(files) != 2 || files[0].name != "pkg/example_test.go" || files[1].name != "pkg/lib.go" {
+		t.Errorf("file coverage rows %+v", files)
+	}
 }

@@ -32,6 +32,23 @@ func TestOSReleaseHandlesMalformedLinesAndReadErrors(t *testing.T) {
 	}
 }
 
+// Alpine's os-release has VERSION_ID and no VERSION.
+func TestOSReleaseVersionIDFallback(t *testing.T) {
+	name, version := osName, osVersion
+	t.Cleanup(func() { osName, osVersion = name, version })
+	for input, want := range map[string]string{
+		"NAME=\"Alpine Linux\"\nVERSION_ID=3.19.1\n": "3.19.1",
+		"VERSION_ID=25\nVERSION=\"25 Stable\"\n":     "25 Stable",
+		"VERSION=\"25 Stable\"\nVERSION_ID=25\n":     "25 Stable",
+		"NAME=\"Arch Linux\"\nBUILD_ID=rolling\n":    "unknown",
+	} {
+		osVersion = "unknown"
+		if err := readOSRelease(strings.NewReader(input)); err != nil || osVersion != want {
+			t.Errorf("%q: version %q, %v; want %q", input, osVersion, err, want)
+		}
+	}
+}
+
 func TestKernelMetadata(t *testing.T) {
 	info, err := unix.ReadKernelInfo()
 	if err != nil {

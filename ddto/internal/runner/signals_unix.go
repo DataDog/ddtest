@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 // forwardedSignals reach go test even when only ddto received them.
@@ -36,6 +37,9 @@ func Exit(code int) {
 		number := syscall.Signal(code - 128)
 		signal.Reset(number)
 		_ = syscall.Kill(syscall.Getpid(), number)
+		// Another thread can take the signal: let it end ddto before the
+		// status, which remains for a signal that ddto inherited as ignored.
+		time.Sleep(time.Second)
 	}
 	os.Exit(code)
 }

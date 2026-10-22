@@ -104,13 +104,13 @@ func TestLoopLanguage(t *testing.T) {
 
 func TestMiniPreservesOlderConsumerDependencies(t *testing.T) {
 	driver := sharedDriver(t, "..")
-	for _, tc := range []struct{ path, version, source string }{
+	for _, tc := range []struct{ path, version, source, pkg string }{
 		{"github.com/stretchr/testify", "v1.6.1", `import "github.com/stretchr/testify/assert"
-func TestDependency(t *testing.T) { assert.Equal(t,1,1);check(t,"github.com/stretchr/testify","v1.6.1",assert.Equal) }`},
+func TestDependency(t *testing.T) { assert.Equal(t,1,1);check(t,"github.com/stretchr/testify","v1.6.1",assert.Equal) }`, "github.com/stretchr/testify/assert"},
 		{"github.com/davecgh/go-spew", "v1.1.0", `import "github.com/davecgh/go-spew/spew"
-func TestDependency(t *testing.T) { _=spew.Sdump(1);check(t,"github.com/davecgh/go-spew","v1.1.0",spew.Sdump) }`},
+func TestDependency(t *testing.T) { _=spew.Sdump(1);check(t,"github.com/davecgh/go-spew","v1.1.0",spew.Sdump) }`, "github.com/davecgh/go-spew/spew"},
 		{"gopkg.in/yaml.v3", "v3.0.0-20200313102051-9f266ea9e77c", `import "gopkg.in/yaml.v3"
-func TestDependency(t *testing.T) { var value any;if err:=yaml.Unmarshal([]byte("a: 1"),&value);err!=nil{t.Fatal(err)};check(t,"gopkg.in/yaml.v3","v3.0.0-20200313102051-9f266ea9e77c",yaml.Unmarshal) }`},
+func TestDependency(t *testing.T) { var value any;if err:=yaml.Unmarshal([]byte("a: 1"),&value);err!=nil{t.Fatal(err)};check(t,"gopkg.in/yaml.v3","v3.0.0-20200313102051-9f266ea9e77c",yaml.Unmarshal) }`, "gopkg.in/yaml.v3"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			dir := t.TempDir()
@@ -146,6 +146,29 @@ func check(t *testing.T,path,version string,symbol any) {
 				sum, _ := os.ReadFile(filepath.Join(dir, "go.sum"))
 				if string(mod) != string(beforeMod) || string(sum) != string(beforeSum) {
 					t.Fatal("client module files changed")
+				}
+			}
+			// A downloaded dependency's tests run as without ddto: go rejects
+			// overlay entries beneath GOMODCACHE.
+			_, _, nativeCode := command(t, dir, env, "go", "test", "-count=1", "-run=^$", tc.pkg)
+			if out, stderr, code := command(t, dir, env, driver, "test", "-count=1", "-run=^$", tc.pkg); code != nativeCode || strings.Contains(stderr, "must not be replaced") {
+				t.Fatalf("%s: exit %d, native %d\n%s%s", tc.pkg, code, nativeCode, out, stderr)
+			}
+			// The workspace that keeps the module's language must not accept a
+			// checksum that only the module cache has.
+			var kept []string
+			for _, line := range strings.Split(string(beforeSum), "\n") {
+				if !strings.HasPrefix(line, tc.path+" "+tc.version+" ") {
+					kept = append(kept, line)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(dir, "go.sum"), []byte(strings.Join(kept, "\n")), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, prefix := range []string{"go", driver} {
+				out, stderr, code := command(t, dir, env, prefix, "test", "-count=1", ".")
+				if code != 1 || !strings.Contains(out+stderr, "missing go.sum entry") {
+					t.Fatalf("%s exit=%d\n%s%s", prefix, code, out, stderr)
 				}
 			}
 		})

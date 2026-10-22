@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -571,6 +572,96 @@ func main() {
 		out, stderr, code := command(t, client, env, driver, args...)
 		if want, got := lines(native), lines(out); nativeCode != 0 || code != 0 || len(want) != 6 || !slices.Equal(got, want) {
 			t.Fatalf("%v: native exit=%d %q\n%s%s\nddto exit=%d %q\n%s%s", root, nativeCode, want, native, nativeErr, code, got, out, stderr)
+		}
+	}
+}
+
+// Settings that go env -w saved apply when the environment leaves them
+// empty: an overlay or build tags in GOFLAGS, also for a client that runs in
+// ddto's temporary workspace, and GOWORK=off under an unrelated go.work.
+func TestMiniUsesSavedGoSettings(t *testing.T) {
+	driver := sharedDriver(t, "..")
+	root := t.TempDir()
+	overlay, tags, work, modfile := filepath.Join(root, "overlay"), filepath.Join(root, "tags"), filepath.Join(root, "work", "client"), filepath.Join(root, "modfile")
+	for _, dir := range []string{overlay, tags, work, filepath.Join(root, "work", "other"), modfile} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeBuildFixture(t, overlay, map[string]string{
+		"go.mod":        "module example.com/savedoverlay\ngo 1.25\n",
+		"value.go":      "package savedoverlay\nconst Value = 1\n",
+		"value_test.go": "package savedoverlay\nimport \"testing\"\nfunc TestOverlay(t *testing.T){if Value != 2 {t.Fatalf(\"Value=%d\", Value)}}\n",
+	})
+	replacement, overlayFile := filepath.Join(root, "replacement.go"), filepath.Join(root, "overlay.json")
+	if err := os.WriteFile(replacement, []byte("package savedoverlay\nconst Value = 2\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(map[string]map[string]string{"Replace": {filepath.Join(overlay, "value.go"): replacement}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overlayFile, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	writeBuildFixture(t, tags, map[string]string{
+		"go.mod":        "module example.com/savedtags\ngo 1.21\n",
+		"smoke.go":      "//go:build smoke\n\npackage savedtags\nconst Smoke = true\n",
+		"smoke_test.go": "package savedtags\nimport \"testing\"\nfunc TestSmoke(t *testing.T){if !Smoke {t.Fatal(\"no tags\")}}\n",
+	})
+	writeBuildFixture(t, filepath.Join(root, "work"), map[string]string{"go.work": "go 1.25\nuse ./other\n"})
+	writeBuildFixture(t, filepath.Join(root, "work", "other"), map[string]string{"go.mod": "module example.com/other\ngo 1.25\n"})
+	writeBuildFixture(t, work, map[string]string{
+		"go.mod":       "module example.com/savedwork\ngo 1.25\n",
+		"work_test.go": "package savedwork\nimport \"testing\"\nfunc TestWork(t *testing.T){}\n",
+	})
+	// ddto's temporary workspace rejects -modfile, which its own go commands
+	// must not take from the saved GOFLAGS.
+	writeBuildFixture(t, modfile, map[string]string{
+		"go.mod":          "module example.com/savedmodfile\ngo 1.21\n",
+		"alt.mod":         "module example.com/savedmodfile\ngo 1.21\n",
+		"modfile_test.go": "package savedmodfile\nimport \"testing\"\nfunc TestModfile(t *testing.T){}\n",
+	})
+	for _, tc := range []struct {
+		name, dir, saved string
+	}{
+		{"overlay", overlay, "GOFLAGS=-buildvcs=false -overlay=" + overlayFile},
+		{"modfile in a temporary workspace", modfile, "GOFLAGS=-buildvcs=false -modfile=" + filepath.Join(modfile, "alt.mod")},
+		{"tags in a temporary workspace", tags, "GOFLAGS=-buildvcs=false -tags=smoke"},
+		{"GOWORK=off", work, "GOFLAGS=-buildvcs=false\nGOWORK=off"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			goenvFile := filepath.Join(t.TempDir(), "env")
+			if err := os.WriteFile(goenvFile, []byte(tc.saved+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			env := append(testEnv("GOPROXY=off", "DD_CIVISIBILITY_ENABLED=false"), "GOFLAGS=", "GOENV="+goenvFile)
+			for _, name := range []string{"go", driver} {
+				if out, stderr, code := command(t, tc.dir, env, name, "test", "-count=1", "."); code != 0 {
+					t.Fatalf("%s test: exit %d\n%s%s", name, code, out, stderr)
+				}
+			}
+		})
+	}
+}
+
+// A temporary directory inside the module, whose name Go's ./... patterns
+// keep, does not put the Go files of ddto's plan in the module's packages.
+func TestMiniTemporaryDirectoryInsideModule(t *testing.T) {
+	driver := sharedDriver(t, "..")
+	dir := t.TempDir()
+	writeBuildFixture(t, dir, map[string]string{
+		"go.mod":      "module example.com/tmpinside\ngo 1.21\n",
+		"tmp_test.go": "package tmpinside\nimport \"testing\"\nfunc TestInside(t *testing.T){}\n",
+	})
+	temp := filepath.Join(dir, "tmp")
+	if err := os.Mkdir(temp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env := append(testEnv("GOPROXY=off", "DD_CIVISIBILITY_ENABLED=false"), "TMPDIR="+temp, "TMP="+temp, "TEMP="+temp)
+	for _, name := range []string{"go", driver} {
+		if out, stderr, code := command(t, dir, env, name, "test", "-count=1", "./..."); code != 0 {
+			t.Fatalf("%s test ./...: exit %d\n%s%s", name, code, out, stderr)
 		}
 	}
 }

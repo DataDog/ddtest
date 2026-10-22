@@ -106,6 +106,10 @@ func startGitWorker(cli CLIOptions, opts options, dir string, debug *cliDebug, s
 	if err != nil {
 		return nil
 	}
+	// The worker and test processes start in other directories.
+	if absolute, err := filepath.Abs(state); err == nil {
+		state = absolute
+	}
 	// The worker's telemetry application reports this process's runtime ID
 	// and root session: the invocation is one application. The root session
 	// reaches only the worker; ddto passes its caller's environment to go
@@ -492,8 +496,10 @@ func (w *gitWorker) relaySignals(signals <-chan os.Signal) <-chan os.Signal {
 	relayed := make(chan os.Signal, cap(signals))
 	go func() {
 		for s := range signals {
-			w.stop("signal")
+			// Relayed first: once the stop ends finish's wait, RunRuntime
+			// looks for the signal.
 			relayed <- s
+			w.stop("signal")
 		}
 	}()
 	return relayed

@@ -25,7 +25,8 @@ func UnixDataSocketURL(path string) *url.URL {
 func UDSClient(socketPath string, timeout time.Duration) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
+			// No proxy: every request dials the local socket, where an HTTPS
+			// or SOCKS proxy's handshake would fail.
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				return DefaultDialer(timeout).DialContext(ctx, "unix", (&net.UnixAddr{
 					Name: socketPath,

@@ -30,8 +30,9 @@ type CLISessionEnd struct {
 	// Start and Finish bound the command; ExitCode is go test's.
 	Start, Finish time.Time
 	ExitCode      int
-	// GoVersion is the test processes' runtime version.
-	GoVersion string
+	// GoVersion is the test processes' runtime version, and GOARCH their
+	// architecture, which ddto's own can differ from, as under Rosetta.
+	GoVersion, GOARCH string
 	// Coverage is the command's total statement coverage, in percent, from
 	// its coverage profile, or nil.
 	Coverage *float64
@@ -145,7 +146,7 @@ func FinishCLISession(end CLISessionEnd) (CLISessionSummary, error) {
 		}
 	}
 	log.Debug("civisibility: test session CI tags directory=%s git_worker_record=%t git_timeout=%s", end.Session.WorkingDirectory, reused, cliSessionGitTimeout)
-	initializeCLISessionOwner(end.GoVersion)
+	initializeCLISessionOwner(end.GoVersion, end.GOARCH)
 	session := CreateTestSession(
 		withTestSessionID(end.Session.ID),
 		WithTestSessionWorkingDirectory(utils.GetRelativePathFromCITagsSourceRoot(end.Session.WorkingDirectory)),
@@ -217,9 +218,9 @@ const cliSessionFramework = "golang.org/pkg/testing"
 
 // initializeCLISessionOwner initializes CI Visibility in ddto's process only
 // as far as its session needs: the CI tags, with the test processes' runtime
-// version, and the tracer, with the test processes' service rules. Later
-// initializations do nothing.
-func initializeCLISessionOwner(goVersion string) {
+// version and architecture, and the tracer, with the test processes' service
+// rules. Later initializations do nothing.
+func initializeCLISessionOwner(goVersion, goarch string) {
 	ciVisibilityInitializationOnce.Do(func() {
 		civisibility.SetState(civisibility.StateInitializing)
 		defer civisibility.SetState(civisibility.StateInitialized)
@@ -230,6 +231,9 @@ func initializeCLISessionOwner(goVersion string) {
 		ciTags := utils.GetCITagsReadOnly()
 		if goVersion != "" {
 			utils.AddCITagsMap(map[string]string{constants.RuntimeVersion: goVersion})
+		}
+		if goarch != "" {
+			utils.AddCITagsMap(map[string]string{constants.OSArchitecture: goarch})
 		}
 		_, opts := ciVisibilityService(ciTags)
 		tracer.Start(opts...)
@@ -439,6 +443,10 @@ func recreateCLIProcess(session *tslvTestSession, p *cliProcess, fallback time.T
 				continue
 			}
 			test := s.suite.CreateTest(testName, WithTestStartTime(finish))
+			if strings.HasPrefix(testName, "Benchmark") {
+				// go test runs a Benchmark function as a benchmark.
+				test.SetBenchmarkData("duration", nil)
+			}
 			test.SetError(WithErrorInfo(errType, message, stack))
 			test.SetTag(constants.TestFinalStatus, constants.TestStatusFail)
 			test.Close(ResultStatusFail, WithTestFinishTime(finish))

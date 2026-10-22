@@ -23,7 +23,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "501687458fd2fa0caecb789e1499018c9ed69bd634e45b02021311ab033434f4",
+      "sha256": "59612bf8229bdebd0a67127937426b98ef8c147c279f94342b1b36eb946fa202",
       "role": "local"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "msgp/json.go",
-      "sha256": "d4ca5e29caeab3a6e388b1275a203b6a5ecb65c1cd6c88f99f8f8ba8f47ae360",
+      "sha256": "682c1bc0759a14c7b2a161f67cc3c2256b1875eb2f8425246710448ed2e60f07",
       "role": "adapted",
       "source_path": "msgp/json.go",
       "source_sha256": "d4ca5e29caeab3a6e388b1275a203b6a5ecb65c1cd6c88f99f8f8ba8f47ae360"
@@ -240,6 +240,11 @@
       "role": "adapted",
       "source_path": "msgp/json_bytes_test.go",
       "source_sha256": "8bcf4824959092e6f178b1bd7f774605cfd9cd05555fa77ac23675ee1c2fdb3b"
+    },
+    {
+      "path": "msgp/json_nonfinite_test.go",
+      "sha256": "d6bbac645be881b75d7e255b460d578d7dfb4344a0a4ec903d6102bc0a39de5b",
+      "role": "local"
     },
     {
       "path": "msgp/json_test.go",

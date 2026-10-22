@@ -6,6 +6,7 @@
 package utils
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -874,4 +875,233 @@ func useLocalGitFixture(t *testing.T) {
 		}
 	}
 	resetGitCommandCachesForTesting(t)
+}
+
+// Git's debug lines show its arguments and output without the credentials
+// that a remote URL can hold, as in a CI clone with a job token.
+func TestGitDebugLinesHideRemoteCredentials(t *testing.T) {
+	useLocalGitFixture(t)
+	if !isGitFound() {
+		t.Skip("Git not available")
+	}
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init", "-q", dir}, {"-C", dir, "remote", "add", "origin", "https://gitlab-ci-token:sentinel-secret@example.com/group/repo.git"}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	t.Chdir(dir)
+	logs := new(log.RecordLogger)
+	defer log.UseLogger(logs)()
+	defer log.SetLevel(log.GetLevel())
+	log.SetLevel(log.LevelDebug)
+	if out, err := execGitString(telemetry.NotSpecifiedCommandsType, "ls-remote", "--get-url", "https://user:sentinel-secret@example.com/other.git"); err != nil || !strings.Contains(out, "sentinel-secret") {
+		t.Fatalf("git ls-remote --get-url: %q, %v", out, err)
+	}
+	all := strings.Join(logs.Logs(), "\n")
+	if strings.Contains(all, "sentinel-secret") || !strings.Contains(all, "example.com/other.git") {
+		t.Fatalf("debug lines:\n%s", all)
+	}
+}
+
+// The diff that impacted-test detection parses has the a/ and b/ prefixes and
+// unquoted paths, whatever the repository's diff and quoting settings.
+func TestGetGitDiffNormalizesHeaders(t *testing.T) {
+	useLocalGitFixture(t)
+	if !isGitFound() {
+		t.Skip("Git not available")
+	}
+	git := func(args ...string) string {
+		out, err := exec.Command("git", append([]string{"-c", "user.name=CI Fixture", "-c", "user.email=ci-fixture@example.invalid", "-c", "commit.gpgsign=false"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	base := git("rev-parse", "HEAD")
+	if err := os.MkdirAll("ñ", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{filepath.Join("ñ", "README.md"), "plain.go"} {
+		if err := os.WriteFile(name, []byte("line\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", ".")
+	git("commit", "-q", "-m", "files")
+	head := git("rev-parse", "HEAD")
+	for _, setting := range [][]string{{"diff.noprefix", "true"}, {"diff.mnemonicPrefix", "true"}, {"color.diff", "always"}, {"diff.relative", "true"}} {
+		git("config", setting[0], setting[1])
+	}
+	// With diff.relative, a diff run from a subdirectory would list only its
+	// files.
+	t.Chdir("ñ")
+	out, err := GetGitDiff(base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, header := range []string{"diff --git a/ñ/README.md b/ñ/README.md", "diff --git a/plain.go b/plain.go"} {
+		if !strings.Contains(out, header) {
+			t.Errorf("no %q in\n%s", header, out)
+		}
+	}
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("colored diff:\n%q", out)
+	}
+}
+
+// Git before 2.28, as Ubuntu 20.04's 2.25, has neither diff.relative nor
+// --no-relative, which it rejects: the diff must still be read there.
+func TestGetGitDiffBeforeGit228(t *testing.T) {
+	useLocalGitFixture(t)
+	if !isGitFound() {
+		t.Skip("Git not available")
+	}
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) string {
+		out, err := exec.Command(realGit, append([]string{"-c", "user.name=CI Fixture", "-c", "user.email=ci-fixture@example.invalid", "-c", "commit.gpgsign=false"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	base := git("rev-parse", "HEAD")
+	if err := os.WriteFile("plain.go", []byte("line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-q", "-m", "file")
+	head := git("rev-parse", "HEAD")
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitExecutable = testBinary
+	gitExecutableArgs = []string{"-test.run=^TestGitBefore228HelperProcess$", "--"}
+	t.Setenv("DD_TEST_GIT_BEFORE_228", realGit)
+	out, err := GetGitDiff(base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "diff --git a/plain.go b/plain.go") {
+		t.Errorf("no plain.go header in\n%s", out)
+	}
+}
+
+// TestGitBefore228HelperProcess is git for TestGetGitDiffBeforeGit228: the
+// real git, but one that rejects --no-relative, as Git before 2.28 does.
+func TestGitBefore228HelperProcess(t *testing.T) {
+	realGit := os.Getenv("DD_TEST_GIT_BEFORE_228")
+	if realGit == "" {
+		return
+	}
+	args := os.Args
+	for len(args) > 0 && args[0] != "--" {
+		args = args[1:]
+	}
+	if len(args) > 0 {
+		args = args[1:]
+	}
+	for _, arg := range args {
+		if arg == "--no-relative" {
+			_, _ = os.Stderr.WriteString("error: unknown option `no-relative'\n")
+			os.Exit(129)
+		}
+	}
+	cmd := exec.Command(realGit, args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			os.Exit(exit.ExitCode())
+		}
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+// A commit message may hold the separator of the commit fields.
+func TestCommitMessageWithFieldSeparator(t *testing.T) {
+	useLocalGitFixture(t)
+	if !isGitFound() {
+		t.Skip("Git not available")
+	}
+	message := `Update ["a","b"]`
+	if out, err := exec.Command("git", "-c", "user.name=CI Fixture", "-c", "user.email=ci-fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", message).CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v %s", err, out)
+	}
+	data, err := getLocalGitData()
+	if err != nil || data.CommitMessage != message {
+		t.Fatalf("local commit message %q, %v", data.CommitMessage, err)
+	}
+	commit, err := readCommitData(data.CommitSha, false)
+	if err != nil || commit.CommitMessage != message {
+		t.Fatalf("commit data message %q, %v", commit.CommitMessage, err)
+	}
+}
+
+// With log.showSignature, Git adds a signature's verification to log and show
+// output: the commit fields and SHAs stay clean.
+// Git's warnings on stderr, as for a deprecated setting, stay out of the
+// data that it prints on stdout.
+func TestGitReadsIgnoreWarnings(t *testing.T) {
+	useLocalGitFixture(t)
+	if !isGitFound() {
+		t.Skip("Git not available")
+	}
+	if out, err := exec.Command("git", "config", "core.fsyncObjectFiles", "true").CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	var stderr bytes.Buffer
+	check := exec.Command("git", "rev-parse", "HEAD")
+	check.Stderr = &stderr
+	if err := check.Run(); err != nil || stderr.Len() == 0 {
+		t.Skip("this Git does not warn about core.fsyncObjectFiles")
+	}
+	data, err := getLocalGitData()
+	if err != nil || len(data.CommitSha) != 40 || strings.ContainsAny(data.CommitSha, " :\n") || data.CommitMessage != "fixture" {
+		t.Fatalf("local commit %q %q, %v", data.CommitSha, data.CommitMessage, err)
+	}
+	for _, sha := range GetLastLocalGitCommitShas() {
+		if len(sha) != 40 || strings.ContainsAny(sha, " :") {
+			t.Fatalf("commit SHA %q", sha)
+		}
+	}
+}
+
+func TestGitReadsIgnoreShowSignature(t *testing.T) {
+	useLocalGitFixture(t)
+	if !isGitFound() {
+		t.Skip("Git not available")
+	}
+	keygen, err := exec.LookPath("ssh-keygen")
+	if err != nil {
+		t.Skip("ssh-keygen not available")
+	}
+	key := filepath.Join(t.TempDir(), "key")
+	if out, err := exec.Command(keygen, "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
+		t.Skip("ssh-keygen:", err, string(out))
+	}
+	message := "signed commit"
+	if out, err := exec.Command("git", "-c", "user.name=CI Fixture", "-c", "user.email=ci-fixture@example.invalid", "-c", "gpg.format=ssh", "-c", "user.signingkey="+key, "commit", "-q", "-S", "--allow-empty", "-m", message).CombinedOutput(); err != nil {
+		t.Skip("signed commit:", err, string(out))
+	}
+	if out, err := exec.Command("git", "config", "log.showSignature", "true").CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	data, err := getLocalGitData()
+	if err != nil || data.CommitMessage != message || len(data.CommitSha) != 40 {
+		t.Fatalf("local commit %q %q, %v", data.CommitSha, data.CommitMessage, err)
+	}
+	commit, err := readCommitData(data.CommitSha, false)
+	if err != nil || commit.CommitMessage != message || commit.CommitSha != data.CommitSha {
+		t.Fatalf("commit data %q %q, %v", commit.CommitSha, commit.CommitMessage, err)
+	}
+	for _, sha := range GetLastLocalGitCommitShas() {
+		if len(sha) != 40 || strings.ContainsAny(sha, " :") {
+			t.Fatalf("commit SHA %q", sha)
+		}
+	}
 }

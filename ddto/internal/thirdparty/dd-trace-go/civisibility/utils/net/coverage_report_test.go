@@ -119,6 +119,36 @@ func TestCoverageReportApiRequest(t *testing.T) {
 	})
 }
 
+// The upload's debug line names the intake without the URL's credentials.
+func TestCoverageReportLogsNoCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	origEnv := saveEnv()
+	path := os.Getenv("PATH")
+	defer restoreEnv(origEnv)
+	setCiVisibilityEnv(path, strings.Replace(server.URL, "://", "://ci-user:secret@", 1))
+
+	recordLogger := new(log.RecordLogger)
+	oldLevel := log.GetLevel()
+	defer log.UseLogger(recordLogger)()
+	log.SetLevel(log.LevelDebug)
+	defer log.SetLevel(oldLevel)
+
+	client := NewClientForCoverageReportUpload()
+	require.NotNil(t, client)
+	require.NoError(t, client.SendCoverageReport(strings.NewReader("SF:example.go\nend_of_record\n"), FormatLCOV))
+	logged := false
+	for _, line := range recordLogger.Logs() {
+		require.NotContains(t, line, "secret")
+		logged = logged || strings.Contains(line, "coverage_report: payload transport mode is http")
+	}
+	require.True(t, logged)
+}
+
 func TestParseCoverageReportFlags(t *testing.T) {
 	tests := []struct {
 		name string

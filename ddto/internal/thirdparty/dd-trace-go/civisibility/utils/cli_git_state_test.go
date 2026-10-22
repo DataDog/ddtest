@@ -68,14 +68,23 @@ func TestCLIGitWorkerFetchesHeadOnlyAfterUse(t *testing.T) {
 	t.Cleanup(ResetHandedCLIGitStateForTesting)
 	t.Cleanup(ResetCITags)
 	ResetHandedCLIGitStateForTesting()
-	UseCLIGitState(t.TempDir(), CollectCLIGitRecord())
+	record := CollectCLIGitRecord()
+	UseCLIGitState(t.TempDir(), record)
 	ResetCITags()
-	if tags := GetCITags(); tags[constants.GitHeadCommit] != first || present() {
+	if tags := GetCITags(); tags[constants.GitHeadCommit] != first || tags[constants.GitHeadMessage] != "" || present() {
 		t.Fatalf("the worker's CI tags fetched the head commit: %v", tags[constants.GitHeadCommit])
 	}
 	FetchCLIHeadCommit()
 	if !present() {
 		t.Fatal("the worker did not fetch the head commit once the state was used")
+	}
+	// The session that ddto sends after go test uses the same record, and
+	// reads the fetched head commit.
+	ResetHandedCLIGitStateForTesting()
+	UseCLIGitState(t.TempDir(), record)
+	ResetCITags()
+	if tags := GetCITags(); tags[constants.GitHeadMessage] != "first" {
+		t.Fatalf("the session's CI tags lack the fetched head commit: %q", tags[constants.GitHeadMessage])
 	}
 }
 

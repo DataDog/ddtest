@@ -8,6 +8,7 @@ package coverage
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -291,4 +292,49 @@ func TestSubmitProcessTestCoverageUsesParentEventIdentifiers(t *testing.T) {
 	require.Equal(t, uint64(11), got[0].SessionID)
 	require.Equal(t, uint64(22), got[0].SuiteID)
 	require.Equal(t, uint64(33), got[0].SpanID)
+}
+
+// A process collector's directory is absolute, also with a relative TMPDIR,
+// so a test's os.Chdir does not move its profiles or its removal.
+func TestProcessTestCoverageTemporaryDirectoryIsAbsolute(t *testing.T) {
+	oldMode, oldTearDown := mode, tearDown
+	t.Cleanup(func() { mode, tearDown = oldMode, oldTearDown })
+	mode = "count"
+	tearDown = func(path, _ string) (string, error) {
+		return path, os.WriteFile(path, []byte("mode: count\npkg/source.go:1.1,1.2 1 0\n"), 0o600)
+	}
+	t.Chdir(t.TempDir())
+	if err := os.Mkdir("tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(name, "tmp")
+	}
+	collector := BeginProcessTestCoverage("pkg/test_file.go")
+	require.NotNil(t, collector)
+	defer collector.Finish()
+	if !filepath.IsAbs(collector.temporaryDir) || !filepath.IsAbs(collector.coverage.preCoverageFilename) {
+		t.Fatalf("collector directory %q, profile %q", collector.temporaryDir, collector.coverage.preCoverageFilename)
+	}
+}
+
+// With -test.coverprofile on a device or a pipe, such as /dev/null, isolated
+// coverage has no file to merge into: the run does not fail for it.
+func TestFinalizeProcessCoverageProfilesSkipsAProfileThatIsNotAFile(t *testing.T) {
+	ResetForTesting()
+	t.Cleanup(ResetForTesting)
+	dir := t.TempDir()
+	childPath := filepath.Join(dir, "child.out")
+	require.NoError(t, os.WriteFile(childPath, []byte("mode: count\npkg/file.go:1.1,1.2 1 3\n"), 0o600))
+	mode = "count"
+	tearDown = func(_, _ string) (string, error) { return "", nil }
+	require.NoError(t, MergeProcessCoverageProfile(childPath))
+	f := flag.Lookup("test.coverprofile")
+	old := f.Value.String()
+	require.NoError(t, f.Value.Set(t.TempDir()))
+	t.Cleanup(func() { _ = f.Value.Set(old) })
+
+	merged, err := FinalizeProcessCoverageProfiles()
+	require.NoError(t, err)
+	require.False(t, merged)
 }

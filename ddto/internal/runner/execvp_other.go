@@ -5,12 +5,18 @@ package runner
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"syscall"
 )
 
 // The BSD libcs' execvp (gen/exec.c in FreeBSD and Apple's Libc) searches
-// defaultPath, _PATH_DEFPATH, without PATH.
-const defaultPath = "/usr/bin:/bin"
+// defaultPath, _PATH_DEFPATH, without PATH: Apple's is /usr/bin:/bin.
+var defaultPath = func() string {
+	if runtime.GOOS == "freebsd" {
+		return "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+	}
+	return "/usr/bin:/bin"
+}()
 
 // searchName is nil: the BSD libcs search PATH for any name.
 func searchName(string) error {

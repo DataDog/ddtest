@@ -57,6 +57,9 @@ func TransformGoleakEntry(name string, src []byte) ([]byte, bool, error) {
 			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting.(*M).executeInternalFuzzTarget.func2",
 			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting.(*M).instrumentInternalFuzzTargets.(*M).executeInternalFuzzTarget.func1",
 			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting.(*M).instrumentInternalFuzzTargets.(*M).executeInternalFuzzTarget.func2",
+			// With Auto Test Retries or Early Flake Detection, the test's own
+			// goroutine waits while its attempt runs in another.
+			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting.runFreshRetryAttemptInGroupWithCallbacks",
 			// Native testing also has a pipe reader while an example executes.
 			"testing.runExample.func1",
 			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting.runManagedExample",

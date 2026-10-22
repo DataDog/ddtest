@@ -106,6 +106,15 @@ func New(c Config) (*Transport, error) {
 		if c.MaxIdleConnsPerHost > limit {
 			clone.MaxIdleConnsPerHost = c.MaxIdleConnsPerHost
 		}
+		if usesTLS(clone, u) {
+			// Concurrent requests otherwise each dial their own connection, and
+			// a dial that another request's connection made unneeded finishes
+			// in the transport's goroutine, after delivery returns, reading
+			// time.Local while a test can change it. HTTP/2 multiplexes the
+			// requests over the one connection, as the SDK client does.
+			clone.MaxConnsPerHost = 1
+			strictHTTP2Streams(clone)
+		}
 		copyClient.Transport = clone
 	} else {
 		copyClient.Transport = transport
@@ -131,6 +140,22 @@ func New(c Config) (*Transport, error) {
 		}
 	}
 	return t, nil
+}
+
+// usesTLS reports whether t reaches u over TLS: an https endpoint, or any
+// endpoint through an https proxy.
+func usesTLS(t *http.Transport, u *url.URL) bool {
+	if u == nil {
+		return false
+	}
+	if u.Scheme == "https" {
+		return true
+	}
+	if t.Proxy == nil {
+		return false
+	}
+	proxy, err := t.Proxy(&http.Request{URL: u})
+	return err == nil && proxy != nil && proxy.Scheme == "https"
 }
 
 // defaultTransport returns a transport configured as Go's

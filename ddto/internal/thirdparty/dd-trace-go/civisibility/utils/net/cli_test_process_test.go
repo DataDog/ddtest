@@ -35,9 +35,20 @@ func TestCLIReadCacheScopeIdentity(t *testing.T) {
 	require.Equal(t, time.Hour, worker.TTL)
 	require.Equal(t, worker, process)
 	assert.NotEqual(t, worker.Hash, cliReadCacheScopeIdentity(local, "/other", "", "").Hash)
-	require.Equal(t, local, cliReadCacheScopeIdentity(local, "", "", ""))
+	// The other scopes keep their kind and lifetime, and also separate API
+	// keys and Agents: a CI job's scope outlives one invocation.
 	strong := newReadCacheScopeIdentity(map[string]string{constants.CIProviderName: "github", constants.CIJobID: "job"})
-	require.Equal(t, strong, cliReadCacheScopeIdentity(strong, "/state", "", ""))
+	for _, tc := range []struct {
+		identity readCacheScopeIdentity
+		dir      string
+	}{{local, ""}, {strong, "/state"}} {
+		scoped := cliReadCacheScopeIdentity(tc.identity, tc.dir, "key-a", "")
+		require.Equal(t, tc.identity.Kind, scoped.Kind)
+		require.Equal(t, tc.identity.TTL, scoped.TTL)
+		require.Equal(t, scoped, cliReadCacheScopeIdentity(tc.identity, tc.dir, "key-a", ""))
+		assert.NotEqual(t, scoped.Hash, cliReadCacheScopeIdentity(tc.identity, tc.dir, "key-b", "").Hash)
+		assert.NotEqual(t, scoped.Hash, cliReadCacheScopeIdentity(tc.identity, tc.dir, "key-a", "/run/agent.sock").Hash)
+	}
 }
 
 // The worker's copies of its client request as the test processes do,

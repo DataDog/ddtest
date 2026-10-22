@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"runtime"
 	"testing"
+	"unsafe"
 )
 
 // A subtest outside a Testify suite takes its parent's module, when the parent
@@ -76,4 +77,23 @@ func TestQuarantinedSubtestIdentity(t *testing.T) {
 	t.Run("TestNoMethod", func(t *testing.T) {
 		check(t, withRoot("root/module"), parent, "testify/module", "suite.go/Suite", callback)
 	})
+}
+
+// testing's common.Fail hook passes the failing test's *testing.common: in a
+// quarantined child process, its failure is still the test's own unmasked
+// failure, which a managed descendant's restore keeps.
+func TestProcessRetryChildFailureThroughCommon(t *testing.T) {
+	field := reflect.TypeFor[testing.T]().Field(0)
+	if field.Name != "common" || field.Offset != 0 {
+		t.Fatalf("testing.T starts with %s at %d", field.Name, field.Offset)
+	}
+	common := reflect.NewAt(field.Type, unsafe.Pointer(t)).Interface().(testing.TB)
+	state := &quarantinedRaceChildState{cfg: &processRetrySubtreeConfig{SelectedRoot: t.Name()}}
+	execMeta := createTestMetadata(t, nil)
+	defer deleteTestMetadata(t)
+	execMeta.quarantinedRaceChild = state
+	markProcessRetryChildFailed(common)
+	if !state.hasUnmaskedFailure(t.Name()) {
+		t.Fatal("a failure through *testing.common is not recorded as unmasked")
+	}
 }

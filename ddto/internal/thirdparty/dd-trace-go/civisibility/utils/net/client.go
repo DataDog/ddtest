@@ -217,7 +217,7 @@ func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client
 	defaultHeaders["parent_id"] = id
 
 	log.Debug("ciVisibilityHttpClient: new client created [id: %s, agentless: %t, url: %s, env: %s, serviceName: %s, subdomain: %s]",
-		id, agentlessEnabled, baseURL, environment, serviceName, subdomain)
+		id, agentlessEnabled, logURL(baseURL), environment, serviceName, subdomain)
 
 	var startTelemetry func(owner *cliTelemetryOwner)
 	if !telemetry.Disabled() {

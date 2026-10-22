@@ -177,6 +177,12 @@ func (e *fuzzTestEvent) nativeResult(nativeFinished bool) (failed, skipped bool,
 func (e *fuzzTestEvent) finish(nativeFinished bool) {
 	failed, skipped, duration, timed := e.nativeResult(nativeFinished)
 	failed = failed || e.failed
+	if !nativeFinished && !failed && e.finishTime.IsZero() {
+		// A forced exit, as os.Exit in the target, ended a root that still
+		// ran: as a running test's, its event is left out instead of passed.
+		log.Debug("civisibility: fuzz target %s still ran at the forced exit; its event is left out", e.test.Name())
+		return
+	}
 	// A managed pass/failure is changed to native skip by design. That skip
 	// must not replace the raw event status captured before masking.
 	skipped = e.skipped || skipped && !e.metadata.isQuarantined && !e.metadata.isDisabled

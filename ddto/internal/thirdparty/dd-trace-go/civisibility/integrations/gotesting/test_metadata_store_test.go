@@ -116,3 +116,18 @@ func BenchmarkTestMetadataLifecycleParallel(b *testing.B) {
 		}
 	})
 }
+
+// valueTB is a testing.TB that is no pointer: it embeds one.
+type valueTB struct{ testing.TB }
+
+// A testing.TB that is no pointer, as a struct that wraps a test, has no
+// metadata: the lookup does not panic, and Context returns the native one.
+func TestTestMetadataOfAValueTB(t *testing.T) {
+	if getTestMetadata(valueTB{t}) != nil {
+		t.Fatal("a value testing.TB has metadata")
+	}
+	deleteTestMetadata(valueTB{t})
+	if ctx := Context(valueTB{t}); ctx == nil {
+		t.Fatal("no context")
+	}
+}

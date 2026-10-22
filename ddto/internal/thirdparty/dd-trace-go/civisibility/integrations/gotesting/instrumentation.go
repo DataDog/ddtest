@@ -337,7 +337,7 @@ func createTestMetadata(tb testing.TB, originalTest *testing.T) *testExecutionMe
 
 // getTestMetadata retrieves the CI visibility test metadata associated with a given *testing.T, *testing.B, *testing.common
 func getTestMetadata(tb testing.TB) *testExecutionMetadata {
-	return getTestMetadataFromPointer(reflect.ValueOf(tb).UnsafePointer())
+	return getTestMetadataFromPointer(testPointer(tb))
 }
 
 // getTestMetadataFromPointer retrieves the CI visibility test metadata associated with a given *testing.T, *testing.B, *testing.common using a pointer
@@ -354,7 +354,7 @@ func getTestMetadataFromPointer(ptr unsafe.Pointer) *testExecutionMetadata {
 func deleteTestMetadata(tb testing.TB) {
 	// Deleting an absent entry is a no-op, as deleting from the map was.
 	// The creator of an entry owns its removal.
-	ciVisibilityTestMetadata.Delete(reflect.ValueOf(tb).UnsafePointer())
+	ciVisibilityTestMetadata.Delete(testPointer(tb))
 }
 
 // checkIfCIVisibilityExitIsRequiredByPanic checks the additional features settings to decide if we allow individual tests to panic or not
@@ -953,9 +953,9 @@ func applyAdditionalFeaturesToTestFunc(
 				// if the test is a flaky test retries test, we need to set the test status
 				if ptrMeta.isFlakyTestRetriesEnabled && !attemptToFixActive {
 					log.Debug("applyAdditionalFeaturesToTestFunc: Setting test status for Flaky Test Retries")
-					tCommonPrivates.SetFailed(lastPtrToLocalT.Failed())
+					tCommonPrivates.SetFailed(lastPtrToLocalT.Failed() || !outcomes.anyPassed() && outcomes.anyFailed()) // a last retry that skips passed nothing
 					tCommonPrivates.SetSkipped(lastPtrToLocalT.Skipped())
-					if lastPtrToLocalT.Failed() {
+					if t.Failed() {
 						tParentCommonPrivates := getTestParentPrivateFields(t)
 						if tParentCommonPrivates == nil {
 							panic("getting test parent private fields failed")
@@ -1531,3 +1531,13 @@ func testingTestStateWaitParallel(s *testingTestState)
 
 //go:linkname testingTestStateRelease testing.(*testState).release
 func testingTestStateRelease(s *testingTestState)
+
+// testPointer returns tb's pointer, the key of its metadata, or nil for a
+// testing.TB that is no pointer, as a struct that embeds one: such a value
+// has no metadata, where reflect's UnsafePointer panicked.
+func testPointer(tb testing.TB) unsafe.Pointer {
+	if v := reflect.ValueOf(tb); v.Kind() == reflect.Pointer {
+		return v.UnsafePointer()
+	}
+	return nil
+}

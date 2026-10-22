@@ -105,7 +105,9 @@ func provideRuntime(ctx context.Context, dir string, opts options, selected Runt
 	if source == "" {
 		source = environment.GOMOD
 		if source == "" || source == os.DevNull {
-			return "", errors.New("run ddto inside a Go module")
+			// go test runs outside a module, as for go test errors, and
+			// reports what it cannot run there.
+			return "", &nativeGoError{"no_module", errors.New("ddto provides its runtime only inside a Go module")}
 		}
 	} else if !filepath.IsAbs(source) {
 		source = filepath.Join(dir, source)
@@ -117,7 +119,9 @@ func provideRuntime(ctx context.Context, dir string, opts options, selected Runt
 	// a workspace manifest is ignored outside workspace mode, as with go test.
 	data, _ := readModuleFile(source, replacements)
 	if goSelectsVendor(opts.mod, moduleDirective(data, "go"), filepath.Join(filepath.Dir(environment.GOMOD), "vendor"), false, replacements) {
-		return "", errors.New("the module vendors its dependencies: require the runtime with a tools file and run go mod vendor")
+		// As for a vendor directory without modules.txt, which go reads as
+		// empty: go test runs natively.
+		return "", &nativeGoError{"vendor_without_runtime", errors.New("the module vendors its dependencies: require the runtime with a tools file and run go mod vendor")}
 	}
 	modfile := filepath.Join(temp, "go.mod")
 	if err := copyModuleFile(source, modfile, replacements); err != nil {
@@ -291,7 +295,7 @@ func goTool(ctx context.Context, dir string, progress io.Writer, args ...string)
 	}
 	defer func() { phase.finish(err) }()
 	cmd := goCommand(ctx, dir, args...)
-	cmd.Env = append(cmd.Environ(), "GOFLAGS=")
+	cmd.Env = append(cmd.Environ(), goFlagsEnv(""))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if progress != nil {

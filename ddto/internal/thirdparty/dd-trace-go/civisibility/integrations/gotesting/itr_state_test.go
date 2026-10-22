@@ -6,6 +6,7 @@
 package gotesting
 
 import (
+	"flag"
 	"os"
 	"testing"
 
@@ -166,5 +167,19 @@ func exerciseTestInfo(testName string) *testingTInfo {
 			testName:   testName,
 			identity:   newTestIdentity("module", "suite_test.go", testName),
 		},
+	}
+}
+
+// With -test.list, testing runs no test: the session publishes no coverage,
+// which would be package initialization's alone.
+func TestNoSessionCoverageWhenListing(t *testing.T) {
+	list := flag.Lookup("test.list")
+	old := list.Value.String()
+	if err := list.Value.Set("."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = list.Value.Set(old) })
+	if _, _, publish := finalizeITRCoverageBackfill(); publish {
+		t.Fatal("session coverage published with -test.list")
 	}
 }

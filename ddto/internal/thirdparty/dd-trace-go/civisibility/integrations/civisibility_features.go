@@ -251,7 +251,7 @@ func ensureSettingsInitialization(serviceName string) {
 		// check if we need to wait for the upload to finish and repeat the settings request or we can just continue
 		if uploadEnabled && ciSettings.RequireGit {
 			log.Debug("civisibility: waiting for the git upload to finish and repeating the settings request")
-			if !waitUpload(1 * time.Minute) {
+			if !waitUpload(requireGitUploadWait(cliUploadState, cliUploadWait)) {
 				log.Error("civisibility: error getting CI visibility settings due to timeout")
 				return
 			}
@@ -357,6 +357,16 @@ func applyFlakyRetryEnabledEnvironmentOverride(ciSettings *net.SettingsResponseD
 	}
 	log.Warn("civisibility: automatic test retries were %s by the %s environment variable", state, constants.CIVisibilityFlakyRetryEnabledEnvironmentVariable)
 	ciSettings.FlakyTestRetriesEnabled = enabled
+}
+
+// requireGitUploadWait is how long settings that require Git wait for the
+// repository upload: a minute, as the SDK waits, or ddto's
+// --git-upload-timeout when its Git worker uploads and the timeout is longer.
+func requireGitUploadWait(cliUploadState string, cliUploadWait time.Duration) time.Duration {
+	if cliUploadState != "" {
+		return max(time.Minute, cliUploadWait)
+	}
+	return time.Minute
 }
 
 // dynamicFlakyRetryCounts returns the duration-based retry counts, or nil when dynamic automatic test retries are

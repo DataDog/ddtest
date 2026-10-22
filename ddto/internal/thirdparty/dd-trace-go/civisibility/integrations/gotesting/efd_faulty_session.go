@@ -392,6 +392,10 @@ func (s *efdFaultySessionFilesystemStore) observe() (earlyFlakeDetectionAdmissio
 		return earlyFlakeDetectionAdmissionUnavailable, false
 	}
 	switch string(contents) {
+	case "":
+		// publishTerminal creates the file, then writes it: this one is not
+		// published yet.
+		return earlyFlakeDetectionAdmissionAllowed, false
 	case "faulty":
 		return earlyFlakeDetectionAdmissionFaulty, true
 	case "unavailable":

@@ -9,7 +9,25 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+// orchestrionBuild runs a build that Orchestrion weaves, which also compiles
+// dd-trace-go's integrations: on a Windows runner a cold one can take more
+// than runCommand's three minutes. Those builds change with Orchestrion's and
+// dd-trace-go's versions, not with ddto, so CI can keep them in a Go cache of
+// their own, DDTO_TEST_ORCHESTRION_GOCACHE.
+func orchestrionBuild(t *testing.T, dir string, env []string, name string, args ...string) (string, string, int) {
+	t.Helper()
+	if cache := os.Getenv("DDTO_TEST_ORCHESTRION_GOCACHE"); cache != "" {
+		env = append(env[:len(env):len(env)], "GOCACHE="+cache)
+	}
+	out, stderr, code, _, err := runCommandWithin(10*time.Minute, dir, env, name, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out, stderr, code
+}
 
 const composedAPMSource = `package fixture_test
 import (
@@ -74,7 +92,7 @@ func TestMiniOrchestrionComposition(t *testing.T) {
 		t.Run(variant.name, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), executableName("fixture.test"))
 			args := append(append([]string(nil), variant.args...), "-c", "-o", bin, ".")
-			output, stderr, code := command(t, dir, append(env, "GOFLAGS="+variant.flags, orchestrionPinChecked+"="+fmt.Sprint(variant.name != "pin-check")), driver, args...)
+			output, stderr, code := orchestrionBuild(t, dir, append(env, "GOFLAGS="+variant.flags, orchestrionPinChecked+"="+fmt.Sprint(variant.name != "pin-check")), driver, args...)
 			if code != 0 {
 				t.Fatalf("Mini + Orchestrion build: %d\n%s\n%s", code, output, stderr)
 			}
@@ -158,7 +176,7 @@ func TestComposedRealLeak(t *testing.T) {
 					args = append(args, "-toolexec="+quoteToolArgument(t, reference)+" toolexec")
 				}
 				args = append(args, ".")
-				out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, args...)
+				out, stderr, code := orchestrionBuild(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, args...)
 				if code != 0 {
 					t.Fatalf("compile %d: %d %s %s", i, code, out, stderr)
 				}
@@ -224,7 +242,7 @@ func TestPass(t *testing.T) {}
 				}
 			}
 			bin := filepath.Join(t.TempDir(), executableName("fixture.test"))
-			out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "test", "-toolexec="+quoteToolArgument(t, reference)+" toolexec", "-mod=mod", "-c", "-o", bin, ".")
+			out, stderr, code := orchestrionBuild(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "test", "-toolexec="+quoteToolArgument(t, reference)+" toolexec", "-mod=mod", "-c", "-o", bin, ".")
 			if code != 0 {
 				t.Fatal(out, stderr)
 			}
@@ -408,7 +426,7 @@ func TestMiniOrchestrionClientPinnedTool(t *testing.T) {
 	}
 	unchangedFixtureFiles(t, dir, "go.mod", "go.sum", "sample_test.go", "orchestrion.tool.go", "composed_test.go")
 	bin := filepath.Join(t.TempDir(), executableName("fixture.test"))
-	out, stderr, code = command(t, filepath.Dir(dir), testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "go", "tool", "orchestrion", "go", "test", "-C", dir, "-c", "-o", bin, ".")
+	out, stderr, code = orchestrionBuild(t, filepath.Dir(dir), testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "go", "tool", "orchestrion", "go", "test", "-C", dir, "-c", "-o", bin, ".")
 	if code != 0 {
 		t.Fatal(out, stderr)
 	}

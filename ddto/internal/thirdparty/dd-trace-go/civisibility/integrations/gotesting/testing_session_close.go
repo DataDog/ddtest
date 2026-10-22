@@ -7,6 +7,7 @@ package gotesting
 
 import (
 	"flag"
+	"strings"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
@@ -45,4 +46,15 @@ func (c *testingMInstrumentationClaim) instrumentedAllWorkloads() bool {
 	benchSet := false
 	flag.Visit(func(f *flag.Flag) { benchSet = benchSet || f.Name == "test.bench" })
 	return !benchSet
+}
+
+// subBenchmarkPatterns reports whether -bench or -skip select sub-benchmarks
+// by name: a "/" separates the levels that testing matches.
+func subBenchmarkPatterns() bool {
+	for _, name := range []string{"test.bench", "test.skip"} {
+		if f := flag.Lookup(name); f != nil && strings.Contains(f.Value.String(), "/") {
+			return true
+		}
+	}
+	return false
 }

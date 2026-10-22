@@ -6,6 +6,7 @@
 package utils
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -187,11 +188,13 @@ func execGit(commandType telemetry.CommandType, args ...string) (val []byte, err
 	}
 	if log.DebugEnabled() {
 		defer func() {
+			// A remote URL, in the arguments or the output, can hold a token.
 			durationInMs := time.Since(startTime).Milliseconds()
+			command, output := filterSensitiveInfo(strings.Join(args, " ")), filterSensitiveInfo(string(val))
 			if err != nil {
-				log.Debug("civisibility.git.command [%s][%s][%dms]: git %s\n%s", commandType, err.Error(), durationInMs, strings.Join(args, " "), string(val))
+				log.Debug("civisibility.git.command [%s][%s][%dms]: git %s\n%s", commandType, err.Error(), durationInMs, command, output)
 			} else {
-				log.Debug("civisibility.git.command [%s][%dms]: git %s\n%s", commandType, durationInMs, strings.Join(args, " "), string(val))
+				log.Debug("civisibility.git.command [%s][%dms]: git %s\n%s", commandType, durationInMs, command, output)
 			}
 		}()
 	}
@@ -211,7 +214,21 @@ func execGit(commandType telemetry.CommandType, args ...string) (val []byte, err
 	}
 
 	cmdArgs := append(append([]string(nil), gitExecutableArgs...), args...)
-	return newGitCommand(cmdArgs).CombinedOutput()
+	return gitOutput(newGitCommand(cmdArgs))
+}
+
+// gitOutput runs cmd and returns git's standard output. Git warns on stderr,
+// as for a deprecated setting, also when it succeeds; with the SDK's
+// CombinedOutput the warning became part of a SHA or a path. After an error
+// the output still includes stderr, which error reports show.
+func gitOutput(cmd *exec.Cmd) ([]byte, error) {
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return append(out, stderr.Bytes()...), err
+	}
+	return out, nil
 }
 
 // execGitString executes a Git command with the given arguments and returns the output as a string.
@@ -276,7 +293,7 @@ func execGitStringWithInput(commandType telemetry.CommandType, input string, arg
 	cmdArgs := append(append([]string(nil), gitExecutableArgs...), args...)
 	cmd := newGitCommand(cmdArgs)
 	cmd.Stdin = strings.NewReader(input)
-	out, err := cmd.CombinedOutput()
+	out, err := gitOutput(cmd)
 	strOut := strings.TrimSpace(strings.Trim(string(out), "\n"))
 	return strOut, err
 }
@@ -346,13 +363,14 @@ func getLocalGitData() (localGitData, error) {
 
 	// Get commit details from the latest commit using git log (git log -1 --pretty='%H","%aI","%an","%ae","%cI","%cn","%ce","%B')
 	log.Debug("civisibility.git: getting the latest commit details")
-	out, err = execGitString(telemetry.GetGitCommitInfoCommandType, "log", "-1", "--pretty=%H\",\"%at\",\"%an\",\"%ae\",\"%ct\",\"%cn\",\"%ce\",\"%B")
+	out, err = execGitString(telemetry.GetGitCommitInfoCommandType, "log", "--no-show-signature", "-1", "--pretty=%H\",\"%at\",\"%an\",\"%ae\",\"%ct\",\"%cn\",\"%ce\",\"%B")
 	if err != nil {
 		return gitData, err
 	}
 
 	// Split the output into individual components
-	outArray := strings.Split(out, "\",\"")
+	// The message, last, may hold the separator itself.
+	outArray := strings.SplitN(out, "\",\"", 8)
 	if len(outArray) < 8 {
 		return gitData, errors.New("git log failed")
 	}
@@ -445,13 +463,14 @@ func readCommitData(commitSha string, allowFetch bool) (localCommitData, error) 
 
 	// Get commit details from the latest commit using git log (git show <commitSha> -s --format='%H","%aI","%an","%ae","%cI","%cn","%ce","%B')
 	log.Debug("civisibility.git: getting the latest commit details")
-	out, err := execGitString(telemetry.GetGitCommitInfoCommandType, "show", commitSha, "-s", "--format=%H\",\"%at\",\"%an\",\"%ae\",\"%ct\",\"%cn\",\"%ce\",\"%B")
+	out, err := execGitString(telemetry.GetGitCommitInfoCommandType, "show", "--no-show-signature", commitSha, "-s", "--format=%H\",\"%at\",\"%an\",\"%ae\",\"%ct\",\"%cn\",\"%ce\",\"%B")
 	if err != nil {
 		return commitData, err
 	}
 
 	// Split the output into individual components
-	outArray := strings.Split(out, "\",\"")
+	// The message, last, may hold the separator itself.
+	outArray := strings.SplitN(out, "\",\"", 8)
 	if len(outArray) < 8 {
 		return commitData, errors.New("git log failed")
 	}
@@ -486,7 +505,7 @@ func commitObjectExists(commitSha string) bool {
 func GetLastLocalGitCommitShas() []string {
 	// git log --format=%H -n 1000 --since=\"1 month ago\"
 	log.Debug("civisibility.git: getting the commit SHAs of the last 1000 commits in the local Git repository")
-	out, err := execGitString(telemetry.GetLocalCommitsCommandsType, "log", "--format=%H", "-n", "1000", "--since=\"1 month ago\"")
+	out, err := execGitString(telemetry.GetLocalCommitsCommandsType, "log", "--no-show-signature", "--format=%H", "-n", "1000", "--since=\"1 month ago\"")
 	if err != nil || out == "" {
 		return []string{}
 	}
@@ -639,7 +658,10 @@ func GetGitDiff(baseCommit, headCommit string) (string, error) {
 	}
 
 	log.Debug("civisibility.git: getting the diff between %s and %s", baseCommit, headCommit)
-	out, err := execGitString(telemetry.DiffCommandType, "diff", "-U0", "--word-diff=porcelain", baseCommit, headCommit)
+	// The parser reads "diff --git a/<path> b/<path>" headers: fix the prefixes
+	// and leave paths unquoted, colors, external diff drivers, textconv and
+	// diff.relative out, whatever the settings; Git before 2.28 lacks --no-relative.
+	out, err := execGitString(telemetry.DiffCommandType, "-c", "core.quotePath=false", "-c", "diff.relative=false", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/", "-U0", "--word-diff=porcelain", baseCommit, headCommit)
 	if err != nil {
 		return "", fmt.Errorf("civisibility.git: error getting the diff from %s to %s: %s | %s", baseCommit, headCommit, err, out)
 	}
@@ -690,7 +712,7 @@ func isAShallowCloneRepository() (bool, error) {
 // hasTheGitLogHaveMoreThanOneCommits checks if the local Git repository has more than one commit.
 func hasTheGitLogHaveMoreThanOneCommits() (bool, error) {
 	// git log --format=oneline -n 2
-	out, err := execGitString(telemetry.CheckShallowCommandsType, "log", "--format=oneline", "-n", "2")
+	out, err := execGitString(telemetry.CheckShallowCommandsType, "log", "--no-show-signature", "--format=oneline", "-n", "2")
 	if err != nil || out == "" {
 		return false, err
 	}
@@ -946,7 +968,14 @@ func GetBaseBranchSha(defaultBranch string) (string, error) {
 		// Step 2b - we have git.pull_request.base_branch
 		log.Debug("civisibility.git: using git.pull_request.base_branch from CI: %s", gitPrBaseBranch)
 		checkAndFetchBranch(gitPrBaseBranch, remoteName)
-		candidateBranches = []string{gitPrBaseBranch}
+		// The fetch updates the remote-tracking ref: a pull request's checkout
+		// usually has no local branch of that name. Without telemetry, so git
+		// metrics stay those of the SDK.
+		candidate := gitPrBaseBranch
+		if _, err := execGitString(telemetry.NotSpecifiedCommandsType, "show-ref", "--verify", "--quiet", "refs/remotes/"+remoteName+"/"+gitPrBaseBranch); err == nil {
+			candidate = remoteName + "/" + gitPrBaseBranch
+		}
+		candidateBranches = []string{candidate}
 	} else {
 		// Step 2a - we don't have git.pull_request.base_branch
 		// Fetch all possible base branches from remote

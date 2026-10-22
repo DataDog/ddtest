@@ -6,10 +6,14 @@
 package utils
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 )
 
 // upstreamTestCommand is the pinned SDK's filter, kept to show the difference.
@@ -50,5 +54,33 @@ func TestTestCommandRemovesOnlyVolatileFlags(t *testing.T) {
 				t.Fatalf("upstream filter = %q, want %q", got, tc.upstream)
 			}
 		})
+	}
+}
+
+// The test command keeps the test's arguments for its tag, while debug lines,
+// which CI logs show, leave out the command and the session name made from it.
+func TestDebugLinesLeaveOutTheTestCommand(t *testing.T) {
+	ResetCITags()
+	t.Cleanup(ResetCITags)
+	originalProviders, originalGit := getProviderTagsFunc, getLocalGitDataFunc
+	t.Cleanup(func() { getProviderTagsFunc, getLocalGitDataFunc = originalProviders, originalGit })
+	getProviderTagsFunc = func() map[string]string { return map[string]string{constants.CIJobName: "job"} }
+	getLocalGitDataFunc = func() (localGitData, error) { return localGitData{}, nil }
+	originalArgs := os.Args
+	t.Cleanup(func() { os.Args = originalArgs })
+	os.Args = []string{"pkg.test", "-test.run=^TestA$", "-api-token=PRIVATE_MARKER"}
+	recorder := new(log.RecordLogger)
+	defer log.UseLogger(recorder)()
+	level := log.GetLevel()
+	log.SetLevel(log.LevelDebug)
+	defer log.SetLevel(level)
+
+	tags := createCITagsMap()
+	if !strings.Contains(tags[constants.TestCommand], "PRIVATE_MARKER") {
+		t.Fatalf("test command %q", tags[constants.TestCommand])
+	}
+	logs := strings.Join(recorder.Logs(), "\n")
+	if strings.Contains(logs, "PRIVATE_MARKER") || !strings.Contains(logs, "test session name from the CI job name and the test command") {
+		t.Fatalf("debug lines:\n%s", logs)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"math"
 	"strconv"
 	"unicode/utf8"
 )
@@ -244,6 +245,9 @@ func rwFloat32(dst jsWriter, src *Reader) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
+		return dst.Write(null) // JSON has no NaN or infinity.
+	}
 	src.scratch = strconv.AppendFloat(src.scratch[:0], float64(f), 'f', -1, 32)
 	return dst.Write(src.scratch)
 }
@@ -252,6 +256,9 @@ func rwFloat64(dst jsWriter, src *Reader) (int, error) {
 	f, err := src.ReadFloat64()
 	if err != nil {
 		return 0, err
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return dst.Write(null) // JSON has no NaN or infinity.
 	}
 	src.scratch = strconv.AppendFloat(src.scratch[:0], f, 'f', -1, 64)
 	return dst.Write(src.scratch)

@@ -71,6 +71,18 @@ func TestMiniFixtureRuntimeImportLineEndings(t *testing.T) {
 		}
 	}
 }
+
+// compileMini compiles the fixture with Mini alone, for checks that need no
+// SDK, which Go 1.25 cannot build.
+func compileMini(t *testing.T, dir, driver string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), executableName("fixture.test"))
+	if out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "test", "--runtime=mini", "-c", "-o", bin, "."); code != 0 {
+		t.Fatalf("compile mini: %s\n%s", out, stderr)
+	}
+	return bin
+}
+
 func compileMiniPair(t *testing.T, dir, driver string, flags ...string) []string {
 	t.Helper()
 	return compileMiniPairWithTempDir(t, dir, driver, t.TempDir, flags...)
@@ -333,6 +345,17 @@ func TestMiniTestingCompatibility(t *testing.T) {
 		assertMiniEquivalent(t, want, got)
 		if got.code != 0 || len(got.events) == 0 {
 			t.Fatal("benchmark not instrumented")
+		}
+		// Patterns for sub-benchmark names select them as without ddto. The
+		// pinned SDK renames the level that they match, so it ran no child
+		// for the first and panicked for the second.
+		for _, selection := range [][]string{{"-test.bench=^BenchmarkWork$/^child$"}, {"-test.bench=BenchmarkWork", "-test.skip=^BenchmarkWork$/^child$"}} {
+			args := append([]string{"-test.run=^$", "-test.benchtime=1x"}, selection...)
+			native := execute(t, dir, bins[1], args, false, false)
+			got := execute(t, dir, bins[1], args, true, false)
+			if got.code != native.code || strings.Contains(got.stderr, "panic") || strings.Contains(native.out, "BenchmarkWork/child") != strings.Contains(got.out, "BenchmarkWork/child") {
+				t.Fatalf("%v: exit %d (native %d)\n%s\n%s", selection, got.code, native.code, got.out, got.stderr)
+			}
 		}
 	})
 	t.Run("process-retry", func(t *testing.T) {

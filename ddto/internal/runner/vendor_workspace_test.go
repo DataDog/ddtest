@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -532,6 +533,33 @@ func TestModuleWorkspaceInputWithoutGoDirectiveKeepsGo116Defaults(t *testing.T) 
 	}
 }
 
+// The module's toolchain line, which go.work overrides, reaches the
+// workspace, so go keeps selecting that toolchain.
+func TestModuleWorkspaceInputKeepsTheToolchain(t *testing.T) {
+	t.Setenv("GOTOOLCHAIN", "local")
+	for module, want := range map[string]string{
+		"module example.com/tc\ngo 1.21\ntoolchain go1.99.0\n": "toolchain go1.99.0\n",
+		"module example.com/tc\ngo 1.21\ntoolchain go1.22.1\n": "",
+		"module example.com/tc\ngo 1.21\n":                     "",
+	} {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(module), 0600); err != nil {
+			t.Fatal(err)
+		}
+		input, err := moduleWorkspaceInput(t.Context(), root, root, t.TempDir(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(string(data), "toolchain "); got != (want != "") || want != "" && !strings.Contains(string(data), want) {
+			t.Errorf("%q: workspace %q", module, data)
+		}
+	}
+}
+
 func TestUseModuleWorkspaceFlagsRemovesEveryModfileSpelling(t *testing.T) {
 	t.Setenv("GOFLAGS", "-modfile=env.mod -tags=fixture")
 	opts := options{buildFlags: []string{"-modfile", "alt.mod", "--modfile=other.mod", "-race"}}
@@ -727,4 +755,65 @@ func TestVendorManifestAliasesTargetsWithWhitespace(t *testing.T) {
 	if len(got) != 5 {
 		t.Fatalf("go.work replacements: %q", got)
 	}
+}
+
+// A user cache inside the module, as with XDG_CACHE_HOME=$PWD/cache, would
+// put the vendor workspace's Go files under the module's ./... patterns.
+func TestVendorCacheRefusedInsideModule(t *testing.T) {
+	module := t.TempDir()
+	env := &goEnvironment{GOMOD: filepath.Join(module, "go.mod")}
+	withUserCache(t, func() (string, error) { return filepath.Join(module, "cache"), nil })
+	if !vendorCacheRefused(env, module, nil) {
+		t.Fatal("cache inside the module accepted")
+	}
+	withUserCache(t, func() (string, error) { return t.TempDir(), nil })
+	if vendorCacheRefused(env, module, nil) {
+		t.Fatal("cache outside the module refused")
+	}
+	// The refusal keeps the workspace out of the cache.
+	source, work := vendorFixture(t)
+	vendor := moduleVendor(source)
+	vendor.noCache = true
+	if _, _, err := stableVendorWorkspace(t.Context(), work, vendor, nil, nil); err == nil {
+		t.Fatal("stable workspace despite the refusal")
+	}
+}
+
+// Where a hard link fails, as across filesystems, the copy keeps the
+// original's permissions: a vendored package may run a script beside it.
+func TestShareVendorFileCopyKeepsPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no executable bits")
+	}
+	original := filepath.Join(t.TempDir(), "helper.sh")
+	if err := os.WriteFile(original, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(original, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, parent := range []string{"/dev/shm", "/var/tmp"} {
+		dir, err := os.MkdirTemp(parent, "ddto-vendor-copy-")
+		if err != nil {
+			continue
+		}
+		defer os.RemoveAll(dir)
+		if os.Link(original, filepath.Join(dir, "probe")) == nil {
+			continue // Same filesystem: no copy.
+		}
+		info, err := os.Stat(original)
+		if err != nil {
+			t.Fatal(err)
+		}
+		copied := filepath.Join(dir, "helper.sh")
+		if err := shareVendorFile(original, copied, info); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.Stat(copied)
+		if err != nil || got.Mode().Perm() != 0o755 {
+			t.Fatalf("copy: %v, %v", got.Mode(), err)
+		}
+		return
+	}
+	t.Skip("no directory on another filesystem")
 }

@@ -42,6 +42,17 @@ func newLogsPayload() *logsPayload {
 
 // push pushes a new item into the stream.
 func (p *logsPayload) push(logEntryData *logEntry) error {
+	startTime := time.Now()
+	val, err := json.Marshal(logEntryData)
+	if err != nil {
+		return err
+	}
+	return p.pushEncoded(val, time.Since(startTime))
+}
+
+// pushEncoded pushes an item that json.Marshal encoded in serialization, so
+// a writer can check its size first.
+func (p *logsPayload) pushEncoded(val []byte, serialization time.Duration) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -49,17 +60,7 @@ func (p *logsPayload) push(logEntryData *logEntry) error {
 		// If the reader is already set, we cannot push new items.
 		return io.ErrClosedPipe
 	}
-
-	startTime := time.Now()
-	defer func() {
-		p.serializationTime += time.Since(startTime)
-	}()
-
-	var val []byte
-	var err error
-	if val, err = json.Marshal(logEntryData); err != nil {
-		return err
-	}
+	p.serializationTime += serialization
 
 	p.count = p.count + 1 // increment the count after acquiring the lock to ensure consistency
 	if p.count > 1 {

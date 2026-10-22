@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -87,7 +88,13 @@ func moduleWorkspaceInput(ctx context.Context, dir, root, temp string, replaceme
 	if compareGoVersion(workspaceGo, "1.25.0") < 0 {
 		workspaceGo = "1.25.0"
 	}
-	data := []byte("go " + workspaceGo + "\nuse " + strconv.Quote(root) + "\n")
+	data := []byte("go " + workspaceGo + "\n")
+	// go reads the toolchain line of go.work, not go.mod's: the module's, as
+	// toolchain go1.27.0 for a go 1.21 module, still selects that toolchain.
+	if toolchain := moduleDirective([]byte(out), "toolchain"); strings.HasPrefix(toolchain, "go") && compareGoVersion(strings.TrimPrefix(toolchain, "go"), workspaceGo) > 0 {
+		data = append(data, "toolchain "+toolchain+"\n"...)
+	}
+	data = append(data, "use "+strconv.Quote(root)+"\n"...)
 	hasDefault := false
 	for _, setting := range settingsDebug {
 		hasDefault = hasDefault || setting.Key == "default"
@@ -102,7 +109,7 @@ func moduleWorkspaceInput(ctx context.Context, dir, root, temp string, replaceme
 	return source, nil
 }
 
-func provideMiniVendorWorkspace(ctx context.Context, dir, root, temp, moduleCache string, replacements map[string]string) (string, *os.File, error) {
+func provideMiniVendorWorkspace(ctx context.Context, dir, root, temp, moduleCache string, noCache bool, replacements map[string]string) (string, *os.File, error) {
 	source, err := moduleWorkspaceInput(ctx, dir, root, temp, replacements)
 	if err != nil {
 		return "", nil, err
@@ -111,13 +118,16 @@ func provideMiniVendorWorkspace(ctx context.Context, dir, root, temp, moduleCach
 	if err != nil {
 		return "", nil, err
 	}
-	return vendorWorkspace(ctx, work, vendorManifest{dir: filepath.Join(root, "vendor"), base: root, module: true}, replacements)
+	return vendorWorkspace(ctx, work, vendorManifest{dir: filepath.Join(root, "vendor"), base: root, module: true, noCache: noCache}, replacements)
 }
 
 // vendorManifest is a vendor directory that Go selects natively, and how its
 // modules.txt must change for a temporary workspace elsewhere.
 type vendorManifest struct {
 	dir string // The caller's vendor directory.
+	// noCache keeps the workspace in the run's directory, as when ddto's user
+	// cache lies within the module; see vendorCacheRefused.
+	noCache bool
 	// base is the directory that the manifest's relative replacements were
 	// written against: the module root, or the caller's go.work directory.
 	base string
@@ -317,6 +327,56 @@ func goSelectsVendor(mod, goVersion, dir string, workspace bool, replacements ma
 	return manifestIsForWorkspace(manifest) == workspace
 }
 
+// declaresModules reports whether data, a go.mod, requires or replaces a
+// module as go's parser reads it, in any spelling, or whether go cannot read
+// it, which go test reports too.
+func declaresModules(ctx context.Context, dir, temp string, data []byte) bool {
+	modfile := filepath.Join(temp, "vendor-check.mod")
+	if err := os.WriteFile(modfile, data, 0600); err != nil {
+		return true
+	}
+	out, err := goTool(ctx, dir, nil, "mod", "edit", "-json", "-modfile="+modfile)
+	var parsed struct{ Require, Replace []json.RawMessage }
+	if err != nil || json.Unmarshal([]byte(out), &parsed) != nil {
+		return true
+	}
+	return len(parsed.Require)+len(parsed.Replace) != 0
+}
+
+// importsUnlistedVendorPackages reports whether go can import a package from
+// vendor, a directory without modules.txt, for a module whose go directive is
+// goVersion: before 1.23, or without a directive, go imports a vendored
+// package that modules.txt does not list (cmd/go's
+// ExplicitModulesTxtImportVersion), and vendor holds one when it holds a Go
+// file. A linked directory, which go reads packages through, and an entry
+// that cannot be read count too.
+func importsUnlistedVendorPackages(goVersion, vendor string) bool {
+	if goVersion != "" && compareGoVersion(goVersion, "1.23") >= 0 {
+		return false
+	}
+	root, err := filepath.EvalSymlinks(vendor)
+	if err != nil {
+		return true
+	}
+	found := false
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			found = true
+		case !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go"):
+			found = true
+		case entry.Type()&fs.ModeSymlink != 0:
+			info, err := os.Stat(path)
+			found = err != nil || info.IsDir()
+		}
+		if found {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
 // manifestIsForWorkspace reads the first line's annotations as cmd/go does.
 func manifestIsForWorkspace(manifest []byte) bool {
 	line, _, _ := strings.Cut(string(manifest), "\n")
@@ -458,6 +518,9 @@ func vendorWorkspace(ctx context.Context, work string, vendor vendorManifest, re
 // race reuses the identical winner. Unexpected contents are never modified.
 func stableVendorWorkspace(ctx context.Context, work string, vendor vendorManifest, original []byte, tree []vendorEntry) (string, *os.File, error) {
 	source := vendor.dir
+	if vendor.noCache {
+		return "", nil, errors.New("no vendor workspace cache")
+	}
 	cache, err := userCacheDir()
 	if err != nil {
 		return "", nil, err
@@ -629,9 +692,10 @@ func linkVendor(source, target string, manifest []byte, tree []vendorEntry) erro
 
 // shareVendorFile hard-links path to the caller's file, which edits in place
 // keep current. Where that fails, as across filesystems, path is a copy with
-// the original's time, which validation compares.
+// the original's permissions and time, which validation compares: a vendored
+// package may run a script beside its sources.
 func shareVendorFile(original, path string, file fs.FileInfo) error {
-	if os.Link(original, path) == nil {
+	if linksVendorFile(file.Mode()) && os.Link(original, path) == nil {
 		return nil
 	}
 	input, err := os.Open(original)
@@ -639,7 +703,7 @@ func shareVendorFile(original, path string, file fs.FileInfo) error {
 		return err
 	}
 	defer input.Close()
-	output, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	output, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, file.Mode().Perm())
 	if err != nil {
 		return err
 	}
@@ -648,6 +712,14 @@ func shareVendorFile(original, path string, file fs.FileInfo) error {
 		return err
 	}
 	return os.Chtimes(path, time.Time{}, file.ModTime())
+}
+
+// linksVendorFile reports whether a vendored file with mode may be a hard
+// link. On Windows, removing a read-only hard link clears the read-only
+// attribute of the caller's file, which the link shares, so such a file is
+// copied there, as GOROOT mirrors are.
+func linksVendorFile(mode fs.FileMode) bool {
+	return runtime.GOOS != "windows" || mode.Perm()&0o200 != 0
 }
 
 // validVendorWorkspace reports whether root holds exactly what linkVendor and
@@ -694,7 +766,7 @@ func (e vendorEntry) storedAt(path string, entry fs.DirEntry, original string) b
 		return false
 	}
 	info, err := entry.Info()
-	return err == nil && (os.SameFile(info, e.file) || info.Size() == e.file.Size() && info.ModTime().Equal(e.file.ModTime()))
+	return err == nil && (os.SameFile(info, e.file) || info.Size() == e.file.Size() && info.ModTime().Equal(e.file.ModTime()) && info.Mode().Perm() == e.file.Mode().Perm())
 }
 
 // pruneVendorWorkspaces removes workspaces unused for the retention period,
@@ -826,7 +898,7 @@ func snapshotVendor(source, target string, manifest []byte, replacements map[str
 				return err
 			}
 		}
-		if err := os.Link(backing, logical); err == nil {
+		if info, err := os.Stat(backing); err == nil && linksVendorFile(info.Mode()) && os.Link(backing, logical) == nil {
 			return nil
 		}
 		input, err := os.Open(backing)
@@ -834,7 +906,11 @@ func snapshotVendor(source, target string, manifest []byte, replacements map[str
 			return err
 		}
 		defer input.Close()
-		output, err := os.OpenFile(logical, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		mode := fs.FileMode(0600)
+		if info, err := input.Stat(); err == nil {
+			mode = info.Mode().Perm()
+		}
+		output, err := os.OpenFile(logical, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err != nil {
 			return err
 		}
@@ -845,4 +921,15 @@ func snapshotVendor(source, target string, manifest []byte, replacements map[str
 		}
 		return closeErr
 	})
+}
+
+// vendorCacheRefused reports whether ddto's cache of vendor workspaces would
+// lie within the module, the toolchain or GOMODCACHE, which must stay
+// unchanged, as with XDG_CACHE_HOME inside the checkout.
+func vendorCacheRefused(env *goEnvironment, dir string, debug *cliDebug) bool {
+	_, err := ddtoCacheDir(env, dir, "vendor-workspaces")
+	if err != nil && debug != nil {
+		debug.printf("vendor workspace cache refused error=%q", err.Error())
+	}
+	return err != nil
 }

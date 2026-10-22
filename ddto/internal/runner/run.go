@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -167,7 +169,7 @@ func Prepare(ctx context.Context, dir string, args []string) (Plan, error) {
 // A missing runtime is provided through a temporary modfile. Preparation is
 // silent; RunRuntime streams provisioning diagnostics to its stderr writer.
 func PrepareRuntime(ctx context.Context, dir string, args []string, runtime Runtime) (Plan, error) {
-	opts, err := parseOptions(args, os.Getenv("GOFLAGS"))
+	opts, err := parseOptions(args, callerGoFlags())
 	if err != nil {
 		return Plan{}, err
 	}
@@ -178,15 +180,30 @@ func PrepareRuntime(ctx context.Context, dir string, args []string, runtime Runt
 	return prepare(ctx, dir, opts, runtime, nil)
 }
 
-// workingDirectory applies go test's -C, relative to the caller's directory.
+// overlayPath resolves a path of -overlay against dir as cmd/go's fsys.abs
+// does: on Windows, a path rooted without a volume, as \src\a.go, takes dir's
+// volume instead of joining dir.
+func overlayPath(dir, path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	if volume := filepath.VolumeName(dir); volume != "" && (path[0] == '\\' || path[0] == '/') {
+		return filepath.Join(volume, path)
+	}
+	return filepath.Join(dir, path)
+}
+
+// workingDirectory applies go test's -C, relative to the caller's directory;
+// on Windows, a directory rooted without a volume, as \repo, is on the
+// caller's volume, as os.Chdir takes it.
 func workingDirectory(dir string, opts options) string {
-	if opts.chdir == "" || filepath.IsAbs(opts.chdir) {
-		if opts.chdir != "" {
-			return filepath.Clean(opts.chdir)
-		}
+	if opts.chdir == "" {
 		return dir
 	}
-	return filepath.Join(dir, opts.chdir)
+	if filepath.IsAbs(opts.chdir) {
+		return filepath.Clean(opts.chdir)
+	}
+	return overlayPath(dir, opts.chdir)
 }
 
 // explicitFiles mirrors go test's file mode: an argument ending in .go selects
@@ -221,29 +238,32 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	}
 	replacements := map[string]string{}
 	if opts.overlay != "" {
-		path := opts.overlay
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(dir, path)
-		}
+		path := overlayPath(dir, opts.overlay)
+		// go reads the same file: for one it cannot read or parse, go test
+		// reports the error itself, with its own exit status.
 		phase := debug.start("read user overlay")
 		data, e := os.ReadFile(path)
 		if e != nil {
 			phase.finish(e)
-			return plan, e
+			return plan, &goRejectedError{e}
 		}
 		var overlay Overlay
 		if e = json.Unmarshal(data, &overlay); e != nil {
 			phase.finish(e)
-			return plan, e
+			return plan, &goRejectedError{e}
 		}
 		for from, to := range overlay.Replace {
-			if !filepath.IsAbs(from) {
-				from = filepath.Join(dir, from)
+			if to != "" {
+				to = overlayPath(dir, to)
 			}
-			if to != "" && !filepath.IsAbs(to) {
-				to = filepath.Join(dir, to)
+			key := filepath.Clean(overlayPath(dir, from))
+			if _, duplicate := replacements[key]; duplicate {
+				// go rejects two spellings of one path; go test reports it.
+				err := &goRejectedError{fmt.Errorf("duplicate paths %s in overlay map", key)}
+				phase.finish(err)
+				return plan, err
 			}
-			replacements[filepath.Clean(from)] = to
+			replacements[key] = to
 		}
 		phase.finish(nil)
 		debug.printf("user overlay entries=%d", len(replacements))
@@ -253,9 +273,16 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		userOverlay[path] = true
 	}
 	vendorProvided := false
-	temp, e := os.MkdirTemp("", "dd-ci-testing-poc-")
+	// The plan holds Go files. With a temporary directory inside the module, a
+	// leading _ keeps them out of the module's ./... patterns.
+	temp, e := os.MkdirTemp("", "_dd-ci-testing-poc-")
 	if e != nil {
 		return plan, e
+	}
+	// A relative TMPDIR gives a relative directory, which a go.work there and
+	// go's other working directories could not name.
+	if absolute, err := filepath.Abs(temp); err == nil {
+		temp = absolute
 	}
 	plan.Dir = temp
 	plan.mini = runtime == Mini
@@ -273,6 +300,10 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	}
 	if !supportsGoToolchain(opts.environment.GOVERSION) {
 		return plan, fmt.Errorf("ddto requires Go 1.25 or newer; selected toolchain is %q", opts.environment.GOVERSION)
+	}
+	if to, ok := replacements[filepath.Clean(opts.environment.GOMOD)]; ok && to == "" && opts.environment.GOMOD != "" {
+		// go finds another module root through the overlay, or none.
+		return plan, &nativeGoError{"overlay_deletes_go_mod", errors.New("the overlay deletes the module's go.mod")}
 	}
 	if needsGOROOTMirror(opts.environment) {
 		// Go rejects overlays beneath GOMODCACHE, where GOTOOLCHAIN keeps
@@ -292,10 +323,12 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	plan.tests.GOARCH, plan.tests.RunsEveryTest = opts.environment.GOARCH, opts.runsEveryTest
 	debug.printf("toolchain=%q", opts.environment.GOVERSION)
 	if runtime == Mini {
-		if work := workspaceFile(dir); work != "" {
+		if work := workspaceFile(opts.environment); work != "" {
 			plan.Workfile, e = provideMiniWorkspace(ctx, dir, work, temp, opts.environment.GOMODCACHE, replacements)
 			if e != nil {
-				return plan, e
+				// go test can still build the workspace, as from its vendor
+				// directory offline, where ddto could not resolve the runtime.
+				return plan, &nativeGoError{"workspace_runtime_unavailable", e}
 			}
 
 			// Use the vendor directory only where Go would: a go mod vendor tree
@@ -307,7 +340,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 				if err != nil {
 					return plan, err
 				}
-				selected := vendorManifest{dir: vendor, base: filepath.Dir(work), workReplaced: replaced}
+				selected := vendorManifest{dir: vendor, base: filepath.Dir(work), workReplaced: replaced, noCache: vendorCacheRefused(opts.environment, dir, debug)}
 				if plan.Workfile, plan.workspaceLock, e = vendorWorkspace(ctx, plan.Workfile, selected, replacements); e != nil {
 					return plan, e
 				}
@@ -325,7 +358,16 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			data, _ := readModuleFile(source, replacements)
 			_, manifestErr := os.Stat(filepath.Join(vendor, "modules.txt"))
 			_, runtimeErr := os.Stat(filepath.Join(vendor, filepath.FromSlash(miniModule), "testopt"))
-			if manifestErr == nil && os.IsNotExist(runtimeErr) && goSelectsVendor(opts.mod, moduleDirective(data, "go"), vendor, false, replacements) {
+			goVersion := moduleDirective(data, "go")
+			selectsVendor := goSelectsVendor(opts.mod, goVersion, vendor, false, replacements)
+			if manifestErr != nil && selectsVendor && (declaresModules(ctx, dir, temp, data) || importsUnlistedVendorPackages(goVersion, vendor)) {
+				// Go reads the missing modules.txt as empty: it rejects a
+				// module's requirements and replacements as inconsistent
+				// vendoring, and an older module can import vendored packages
+				// without it. ddto's workspace would do neither.
+				return plan, &nativeGoError{"vendor_without_runtime", errors.New("the module vendors its dependencies: require the runtime with a tools file and run go mod vendor")}
+			}
+			if manifestErr == nil && os.IsNotExist(runtimeErr) && selectsVendor {
 				if opts.modfile != "" {
 					if e = overlaySelectedModfile(source, root, temp, data, &plan, replacements); e != nil {
 						return plan, e
@@ -335,7 +377,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 				if e = useModuleWorkspaceFlags(&opts, &plan); e != nil {
 					return plan, e
 				}
-				plan.Workfile, plan.workspaceLock, e = provideMiniVendorWorkspace(ctx, dir, root, temp, opts.environment.GOMODCACHE, replacements)
+				plan.Workfile, plan.workspaceLock, e = provideMiniVendorWorkspace(ctx, dir, root, temp, opts.environment.GOMODCACHE, vendorCacheRefused(opts.environment, dir, debug), replacements)
 				if e != nil {
 					return plan, e
 				}
@@ -347,6 +389,11 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			if e = provideOlderModuleWorkspace(ctx, dir, &opts, &plan, replacements); e != nil {
 				return plan, e
 			}
+		}
+		// Mini is a main module of the workspace that ddto provides, so go's
+		// work pattern would select its packages too.
+		if plan.Workfile != "" && (slices.Contains(opts.packages, "work") || slices.Contains(opts.coverPatterns, "work") || opts.workFlagPattern) {
+			return plan, &nativeGoError{"package_pattern=work", errors.New("the work package pattern would include ddto's runtime module")}
 		}
 	}
 	if plan.Workfile != "" && len(replacements) != 0 {
@@ -373,7 +420,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		if opts.workfile != "" {
 			cmd.Env = append(cmd.Environ(), "GOWORK="+opts.workfile)
 			if plan.moduleWorkspace {
-				cmd.Env = append(cmd.Env, "GOFLAGS="+plan.workspaceGoFlags)
+				cmd.Env = append(cmd.Env, goFlagsEnv(plan.workspaceGoFlags))
 			}
 		}
 		packages, err = readPackages(ctx, cmd, "resolve packages")
@@ -509,6 +556,14 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if e != nil {
 		return plan, e
 	}
+	if plan.moduleWorkspace && !vendorProvided && opts.mod != "mod" {
+		// Both queries have loaded each package that go test builds. Workspace
+		// mode records checksums missing from the module's go.sum in go.work.sum,
+		// where module mode rejects the build: go test reports it.
+		if info, e := os.Stat(plan.Workfile + ".sum"); e == nil && info.Size() != 0 {
+			return plan, &goRejectedError{errors.New("go.sum lacks checksums that the build needs")}
+		}
+	}
 	// Orchestrion may introduce SDK imports during compilation. Other builds
 	// need the gate only when the already resolved client graph contains it.
 	plan.sdkCI = plan.mini && (plan.orchestrion || sdkCI)
@@ -570,11 +625,25 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	runtimeImports := graph.imported(selectedRuntime)
 	internalImports := 0
 	for _, p := range packages {
-		if p.ImportPath == "testing" || p.ImportPath == runtimePackage || len(p.TestGoFiles)+len(p.XTestGoFiles) == 0 {
+		// ddto lists testing itself; only the caller's patterns select its tests.
+		selectedTesting := p.ImportPath == "testing" && slices.ContainsFunc(opts.packages, func(pattern string) bool {
+			// A directory path, as $GOROOT/src/testing, names it too, and go
+			// cleans an import path, as testing/, first.
+			return matchPackagePattern(pattern, dir, &p) || path.Clean(pattern) == "testing" ||
+				filepath.IsAbs(pattern) && filepath.Clean(pattern) == p.Dir
+		})
+		if !selectedTesting && (p.ImportPath == "testing" || p.ImportPath == runtimePackage || len(p.TestGoFiles)+len(p.XTestGoFiles) == 0) {
 			continue
 		}
 		if p.Module == nil {
-			return plan, fmt.Errorf("stdlib tests are outside this POC: %s", p.ImportPath)
+			// Such as with go test fmt, std or all, whose expansion includes the
+			// runtime's own standard dependencies with a ddto workspace.
+			return plan, &nativeGoError{"stdlib_tests", fmt.Errorf("ddto does not instrument standard library tests: %s", p.ImportPath)}
+		}
+		if cache := opts.environment.GOMODCACHE; cache != "" && filePathHasPrefix(p.Dir, cache) {
+			// A downloaded dependency's tests: go rejects any overlay entry
+			// beneath GOMODCACHE.
+			return plan, &nativeGoError{"module_cache_tests", fmt.Errorf("ddto does not instrument the tests of a package in the module cache: %s", p.ImportPath)}
 		}
 		testPackage := p.Name + "_test"
 		if len(p.XTestGoFiles) == 0 && !runtimeImports[p.ImportPath] {
@@ -647,7 +716,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	// it instrumented, as noraceOverlay does for the packages in the graph.
 	if plan.mini && opts.race && !testsUseMini {
 		racePhase := debug.start("race annotations")
-		files := noraceOverlay(listed, replacements, temp)
+		files := noraceOverlay(listed, replacements, temp, opts.environment.GOMODCACHE)
 		racePhase.finish(nil)
 		debug.printf("race annotations files=%d", files)
 	}
@@ -875,7 +944,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	opts, err := parseOptions(args, os.Getenv("GOFLAGS"))
+	opts, err := parseOptions(args, callerGoFlags())
 	if err != nil {
 		return runGoAfterError(ctx, cwd, args, err, signals, stdin, stdout, stderr)
 	}
@@ -901,7 +970,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	}
 	gitHubJobID := handGitHubJobID(runtime, debug)
 	gitWorker := startGitWorker(cli, opts, dir, debug, stderr)
-	defer gitWorker.finish()
+	defer func() { gitWorker.finish() }()
 	if gitWorker == nil && cli.KeepCIState {
 		fmt.Fprintln(stderr, version.BuildLogPrefix+" INFO: --keep-ci-state: this command starts no Git worker, so it has no CI state")
 	}
@@ -1005,7 +1074,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 		// The temporary workspace belongs to the build, including chained tools.
 		env = append(env, "GOWORK="+plan.Workfile)
 		if plan.moduleWorkspace {
-			env = append(env, "GOFLAGS="+plan.workspaceGoFlags)
+			env = append(env, goFlagsEnv(plan.workspaceGoFlags))
 		}
 	}
 	// A launcher would see the handed value before the test binary removes
@@ -1028,7 +1097,8 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 			plan.goVersion = testRuntimeVersion(ctx, dir, plan.goVersion, plan.goExperiment)
 		}
 	}
-	exitCode = runGo(ctx, dir, forwarded, env, gitWorker.relaySignals(signals), stdin, stdout, stderr)
+	relayed := gitWorker.relaySignals(signals)
+	exitCode = runGo(ctx, dir, forwarded, env, relayed, stdin, stdout, stderr)
 	var coverage *float64
 	if session != nil {
 		if path := coverProfilePath(opts, dir); path != "" {
@@ -1042,8 +1112,25 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	if gitWorker != nil {
 		gitState = gitWorker.state
 	}
-	session.finish(ctx, exitCode, plan.goVersion, coverage, gitState)
-	return exitCode
+	session.finish(ctx, exitCode, plan.goVersion, plan.tests.GOARCH, coverage, gitState)
+	// The worker can still wait for its upload, which a signal stops: that
+	// signal ends ddto too.
+	gitWorker.finish()
+	gitWorker = nil
+	return statusAfterSignal(relayed, exitCode, debug)
+}
+
+// statusAfterSignal returns the status of a signal that arrived after go test
+// ended, as while ddto sent the session, instead of code: the signal would
+// have ended go test, and runner.Exit sends it again.
+func statusAfterSignal(signals <-chan os.Signal, code int, debug *cliDebug) int {
+	select {
+	case s := <-signals:
+		debug.printf("signal %q arrived after go test ended", s.String())
+		return interruptedStatus(s)
+	default:
+		return code
+	}
 }
 
 // nativeGoError is a preparation failure after which ddto runs go test
@@ -1343,7 +1430,13 @@ func runGo(ctx context.Context, dir string, args, envOverrides []string, signals
 			return 2
 		case s := <-signals:
 			debug.printf("forwarding signal to go test")
-			_ = cmd.Process.Signal(s)
+			if errors.Is(cmd.Process.Signal(s), os.ErrProcessDone) {
+				// go test had exited, as runGo waited for its output: the
+				// signal ends ddto, as one after runGo returns does.
+				<-done
+				debug.printf("signal %q arrived after go test ended", s.String())
+				return interruptedStatus(s)
+			}
 		case <-canceled:
 			debug.printf("go test context canceled; interrupting")
 			canceled = nil

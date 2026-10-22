@@ -369,3 +369,63 @@ func TestGithubActionsJobIDFromDiagnostics(t *testing.T) {
 		}
 	})
 }
+
+// GitLab's CI_COMMIT_AUTHOR may be missing or have an empty email, and a
+// Jenkins branch may hold regular expression syntax: neither stops the CI tags.
+func TestProviderTagsFromUnusualValues(t *testing.T) {
+	pushEventPath := filepath.Join(t.TempDir(), "event.json")
+	if err := os.WriteFile(pushEventPath, []byte(`{"ref":"refs/heads/main","after":"abc"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		env       map[string]string
+		key, want string
+		absent    string
+	}{
+		{"gitlab without author", map[string]string{"GITLAB_CI": "true"}, constants.CIProviderName, "gitlab", constants.GitCommitAuthorName},
+		{"gitlab empty email", map[string]string{"GITLAB_CI": "true", "CI_COMMIT_AUTHOR": "Audit <>"}, constants.GitCommitAuthorName, "Audit", constants.GitCommitAuthorEmail},
+		{"gitlab author", map[string]string{"GITLAB_CI": "true", "CI_COMMIT_AUTHOR": "Jane Doe <jane@example.com>"}, constants.GitCommitAuthorEmail, "jane@example.com", ""},
+		{"jenkins branch with a parenthesis", map[string]string{"JENKINS_URL": "http://jenkins", "GIT_BRANCH": "origin/feature/(cleanup", "JOB_NAME": "job/feature/(cleanup"}, constants.CIPipelineName, "job", ""},
+		// A pull request's branch may hold tags/ in its name.
+		{"github branch with tags/", map[string]string{"GITHUB_SHA": "abc", "GITHUB_HEAD_REF": "feature/tags/filter", "GITHUB_REF": "refs/pull/1/merge"}, constants.GitBranch, "feature/tags/filter", constants.GitTag},
+		{"github push to a branch with tags/", map[string]string{"GITHUB_SHA": "abc", "GITHUB_HEAD_REF": "", "GITHUB_REF": "refs/heads/feature/tags/filter"}, constants.GitBranch, "feature/tags/filter", constants.GitTag},
+		{"github tag", map[string]string{"GITHUB_SHA": "abc", "GITHUB_HEAD_REF": "", "GITHUB_REF": "refs/tags/v1.2.3"}, constants.GitTag, "v1.2.3", constants.GitBranch},
+		{"azure branch with tags/", map[string]string{"TF_BUILD": "True", "BUILD_SOURCEBRANCH": "refs/heads/feature/tags/filter"}, constants.GitBranch, "feature/tags/filter", ""},
+		{"azure tag", map[string]string{"TF_BUILD": "True", "BUILD_SOURCEBRANCH": "refs/tags/v1.2.3"}, constants.GitTag, "v1.2.3", ""},
+		{"jenkins branch with tags/", map[string]string{"JENKINS_URL": "http://jenkins", "GIT_BRANCH": "origin/feature/tags/filter"}, constants.GitBranch, "feature/tags/filter", constants.GitTag},
+		{"codefresh branch with tags/", map[string]string{"CF_BUILD_ID": "1", "CF_BRANCH": "feature/tags/filter"}, constants.GitBranch, "feature/tags/filter", constants.GitTag},
+		// Outside a pull request: a push event's JSON, and Buildkite's false.
+		{"github push event", map[string]string{"GITHUB_SHA": "abc", "GITHUB_HEAD_REF": "", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_PATH": pushEventPath}, constants.GitBranch, "main", constants.PrNumber},
+		{"buildkite without a pull request", map[string]string{"BUILDKITE": "true", "BUILDKITE_BRANCH": "main", "BUILDKITE_PULL_REQUEST": "false"}, constants.GitBranch, "main", constants.PrNumber},
+		{"buildkite pull request", map[string]string{"BUILDKITE": "true", "BUILDKITE_BRANCH": "main", "BUILDKITE_PULL_REQUEST": "12"}, constants.PrNumber, "12", ""},
+		{"travis without a pull request", map[string]string{"TRAVIS": "true", "TRAVIS_BRANCH": "main", "TRAVIS_PULL_REQUEST": "false"}, constants.GitBranch, "main", constants.PrNumber},
+		{"travis pull request", map[string]string{"TRAVIS": "true", "TRAVIS_PULL_REQUEST_BRANCH": "feature", "TRAVIS_PULL_REQUEST": "7"}, constants.PrNumber, "7", ""},
+		// A CodeBuild-hosted runner of another CI sets CODEBUILD_INITIATOR.
+		{"github on codebuild", map[string]string{"GITHUB_SHA": "abc", "CODEBUILD_INITIATOR": "GitHub-Hookshot/123"}, constants.CIProviderName, "github", ""},
+		{"jenkins branch with a dot", map[string]string{"JENKINS_URL": "http://jenkins", "GIT_BRANCH": "origin/release-1.2", "JOB_NAME": "job/release-1x2"}, constants.CIPipelineName, "job/release-1x2", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for key := range providers {
+				t.Setenv(key, "")
+				os.Unsetenv(key)
+			}
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			// The providers map has no order: every lookup must agree.
+			tags := getProviderTags()
+			for range 20 {
+				if again := getProviderTags(); again[tc.key] != tags[tc.key] {
+					t.Fatalf("%s = %q, then %q", tc.key, tags[tc.key], again[tc.key])
+				}
+			}
+			if got := tags[tc.key]; got != tc.want {
+				t.Errorf("%s = %q, want %q (tags %v)", tc.key, got, tc.want, tags)
+			}
+			if _, ok := tags[tc.absent]; tc.absent != "" && ok {
+				t.Errorf("%s = %q, want none", tc.absent, tags[tc.absent])
+			}
+		})
+	}
+}

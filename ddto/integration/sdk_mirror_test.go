@@ -478,3 +478,53 @@ func runSDKMirror(t *testing.T, dir, bin, name string, deferred, agentless bool,
 	}
 	return receiver.events, apm
 }
+
+// Binding Mini's context to a benchmark happens outside its measurement: an
+// empty benchmark reports no allocations with the SDK mirror active, as
+// without ddto. With -benchtime=1x, the first run is the measured one.
+func TestMiniSDKMirrorBenchmarkMeasuresNoBinding(t *testing.T) {
+	dir, driver := prepareMiniFixture(t)
+	source := sdkMirrorContextSource + `
+func BenchmarkSDKMirrorEmpty(b *testing.B) {
+	for range b.N {
+	}
+}
+
+func BenchmarkSDKMirrorEmptyParent(b *testing.B) {
+	b.Run("child", func(b *testing.B) {
+		for range b.N {
+		}
+	})
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "sdk_context_test.go"), []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if out, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", "-require=go.uber.org/goleak@v1.3.0"); code != 0 {
+		t.Fatal(out, stderr)
+	}
+	bin := filepath.Join(t.TempDir(), executableName("context.test"))
+	if out, stderr, code := command(t, dir, testEnv(), driver, "test", "-mod=mod", "-c", "-o", bin, "."); code != 0 {
+		t.Fatal(out, stderr)
+	}
+	receiver := &capture{}
+	server := newServer(http.HandlerFunc(receiver.handler))
+	defer server.Close()
+	env := testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=fixture")
+	out, stderr, code := command(t, dir, env, bin, "-test.run=^$", "-test.bench=^BenchmarkSDKMirrorEmpty", "-test.benchtime=1x", "-test.benchmem")
+	if code != 0 {
+		t.Fatal(out, stderr)
+	}
+	lines := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "BenchmarkSDKMirrorEmpty") {
+			lines++
+			if !strings.Contains(line, " 0 B/op") || !strings.Contains(line, " 0 allocs/op") {
+				t.Errorf("measured Mini's binding: %s", line)
+			}
+		}
+	}
+	if lines != 2 {
+		t.Fatalf("benchmark lines: %d\n%s", lines, out)
+	}
+}

@@ -181,12 +181,12 @@ func instrumentTestingTFuncWithSourceOptions(
 		return f
 	}
 	defer release()
-	if isProcessRetryChild() {
+	if isProcessRetryChild() && f != nil {
 		return instrumentProcessRetryChildSubtest(f)
 	}
 
-	// Check if CI Visibility was disabled using the kill switch before instrumenting
-	if !isCiVisibilityEnabled() || !testing.Testing() {
+	// Without CI Visibility, or for a nil callback, which testing may skip, f stays
+	if !isCiVisibilityEnabled() || !testing.Testing() || f == nil {
 		return f
 	}
 
@@ -501,17 +501,12 @@ func instrumentCloseAndSkip(tb testing.TB, skipReason string) {
 
 	// Get the CI Visibility span and check if we can mark it as skipped and close it
 	ciTestItem := getTestMetadata(tb)
-	if ciTestItem != nil && ciTestItem.test != nil && ciTestItem.skipped.CompareAndSwap(0, 1) {
+	if ciTestItem != nil && ciTestItem.test != nil && !tb.Failed() && ciTestItem.skipped.CompareAndSwap(0, 1) {
 		log.Debug("instrumentCloseAndSkip: skipping test [name: %q, reason: %q]", ciTestItem.test.Name(), skipReason)
-		// Retry wrappers and deferred fuzz events observe cleanup before closing.
-		if ciTestItem.hasAdditionalFeatureWrapper || ciTestItem.fuzzEvents != nil {
-			ciTestItem.skipReason = skipReason
-			return
-		}
-		// For single-execution tests (no wrapper), this is the final execution.
-		// Set test.final_status before closing.
-		ciTestItem.test.SetTag(constants.TestFinalStatus, constants.TestStatusSkip)
-		ciTestItem.test.Close(integrations.ResultStatusSkip, integrations.WithTestSkipReason(skipReason))
+		// The finalization of a test or benchmark, a retry wrapper or the
+		// deferred fuzz events close it, after the calls that it deferred,
+		// which can still fail it.
+		ciTestItem.skipReason = skipReason
 	}
 }
 
@@ -535,23 +530,14 @@ func instrumentSkipNow(tb testing.TB) {
 
 	// Get the CI Visibility span and check if we can mark it as skipped and close it
 	ciTestItem := getTestMetadata(tb)
-	if ciTestItem != nil && ciTestItem.test != nil && ciTestItem.skipped.CompareAndSwap(0, 1) {
+	if ciTestItem != nil && ciTestItem.test != nil && !tb.Failed() && ciTestItem.skipped.CompareAndSwap(0, 1) {
 		if formatted := ciTestItem.processRetrySkipReason.Load(); formatted != nil {
 			ciTestItem.skipReason = *formatted
 		}
 		log.Debug("instrumentSkipNow: skipping test [name: %q, reason: %q]", ciTestItem.test.Name(), ciTestItem.skipReason)
-		// Retry wrappers and deferred fuzz events observe cleanup before closing.
-		if ciTestItem.hasAdditionalFeatureWrapper || ciTestItem.fuzzEvents != nil {
-			return
-		}
-		// For single-execution tests (no wrapper), this is the final execution.
-		// Set test.final_status before closing.
-		ciTestItem.test.SetTag(constants.TestFinalStatus, constants.TestStatusSkip)
-		if ciTestItem.skipReason != "" {
-			ciTestItem.test.Close(integrations.ResultStatusSkip, integrations.WithTestSkipReason(ciTestItem.skipReason))
-		} else {
-			ciTestItem.test.Close(integrations.ResultStatusSkip)
-		}
+		// The finalization of a test or benchmark, a retry wrapper or the
+		// deferred fuzz events close it, after the calls that it deferred,
+		// which can still fail it.
 	}
 }
 
@@ -570,6 +556,11 @@ func instrumentTestingBFunc(pb *testing.B, name string, f func(*testing.B)) (str
 
 	// Check if CI Visibility was disabled using the kill switch before instrumenting
 	if !isCiVisibilityEnabled() {
+		return name, f
+	}
+	// testing selects the renamed measuring level below, not name: a -bench or
+	// -skip pattern for sub-benchmark names would drop or keep the wrong one.
+	if subBenchmarkPatterns() {
 		return name, f
 	}
 
@@ -611,17 +602,40 @@ func instrumentTestingBFunc(pb *testing.B, name string, f func(*testing.B)) (str
 		startTime := time.Now()
 		module := session.GetOrCreateModule(moduleName, integrations.WithTestModuleStartTime(startTime))
 		suite := module.GetOrCreateSuite(suiteName, integrations.WithTestSuiteStartTime(startTime))
-		test := suite.CreateTest(fmt.Sprintf("%s/%s", pb.Name(), name), integrations.WithTestStartTime(startTime))
-		test.SetTestFunc(originalFunc)
+		// The event takes the name that testing gives the sub-benchmark, as
+		// case#01 for a repeated name or input_size=1 for "input size=1",
+		// which only the sub-benchmark's own B has.
+		var test integrations.Test
+		createTest := func(testName string) {
+			test = suite.CreateTest(testName, integrations.WithTestStartTime(startTime))
+			test.SetTestFunc(originalFunc)
+		}
 
 		// Restore the original name without the sub-benchmark auto name.
 		if bpf.name != nil {
 			*bpf.name = subBenchmarkAutoNameRegex.ReplaceAllString(*bpf.name, "")
 		}
 
+		// Define a function to handle panic during benchmark finalization.
+		// Defined before the benchmark runs: its first run, and each later
+		// one, recover a panic with it before panicking again.
+		panicFunc := func(r any) {
+			if test != nil {
+				// Without results, the event is still a benchmark's.
+				test.SetBenchmarkData("duration", nil)
+				test.SetError(integrations.WithErrorInfo("panic", fmt.Sprint(r), utils.GetStacktrace(1)))
+				test.Close(integrations.ResultStatusFail)
+			}
+			suite.SetTag(ext.Error, true)
+			module.SetTag(ext.Error, true)
+			checkModuleAndSuite(module, suite)
+			integrations.ExitCiVisibility()
+		}
+		recoverFunc := &panicFunc
+
 		// Run original benchmark.
 		var iPfOfB *benchmarkPrivateFields
-		var recoverFunc *func(r any)
+		var benchmarkMeta *testExecutionMetadata // for the skip reason that the skip hooks record
 		instrumentedFunc := func(b *testing.B) {
 			// Stop the timer to do the initialization and replacements.
 			b.StopTimer()
@@ -641,12 +655,13 @@ func instrumentTestingBFunc(pb *testing.B, name string, f func(*testing.B)) (str
 			if iPfOfB == nil {
 				panic("error getting private fields of the benchmark")
 			}
+			createTest(b.Name())
 
 			// Replace this function with the original one (executed only once - the first iteration[b.run1]).
 			if iPfOfB.benchFunc == nil {
 				panic("error getting the benchmark function")
 			}
-			*iPfOfB.benchFunc = f
+			*iPfOfB.benchFunc = recoveringBenchmarkFunc(f, panicFunc)
 
 			// Get the metadata regarding the execution (in case is already created from the additional features)
 			execMeta := getTestMetadata(b)
@@ -658,13 +673,14 @@ func instrumentTestingBFunc(pb *testing.B, name string, f func(*testing.B)) (str
 
 			// Set the CI visibility test.
 			execMeta.test = test
+			benchmarkMeta = execMeta
 
-			// Enable the timer again.
+			// Bind the context outside the measurement.
+			bindNativeTestContext(b, test)
+
+			// Enable the timer again and execute the original func.
 			b.ResetTimer()
 			b.StartTimer()
-
-			// Execute original func
-			bindNativeTestContext(b, test)
 			f(b)
 		}
 
@@ -672,6 +688,14 @@ func instrumentTestingBFunc(pb *testing.B, name string, f func(*testing.B)) (str
 		b.Run(name, instrumentedFunc)
 
 		endTime := time.Now()
+		if iPfOfB == nil {
+			// testing did not run the sub-benchmark, as for a duplicate name
+			// that a pattern no longer selects.
+			createTest(fmt.Sprintf("%s/%s", pb.Name(), name))
+			test.Close(integrations.ResultStatusSkip, integrations.WithTestFinishTime(endTime))
+			checkModuleAndSuite(module, suite)
+			return
+		}
 		results := iPfOfB.result
 
 		// Set benchmark data for CI visibility.
@@ -700,17 +724,6 @@ func instrumentTestingBFunc(pb *testing.B, name string, f func(*testing.B)) (str
 			test.SetBenchmarkData("extra", mapConverted)
 		}
 
-		// Define a function to handle panic during benchmark finalization.
-		panicFunc := func(r any) {
-			test.SetError(integrations.WithErrorInfo("panic", fmt.Sprint(r), utils.GetStacktrace(1)))
-			suite.SetTag(ext.Error, true)
-			module.SetTag(ext.Error, true)
-			test.Close(integrations.ResultStatusFail)
-			checkModuleAndSuite(module, suite)
-			integrations.ExitCiVisibility()
-		}
-		recoverFunc = &panicFunc
-
 		// Normal finalization: determine the benchmark result based on its state.
 		if iPfOfB.B.Failed() {
 			test.SetTag(ext.Error, true)
@@ -718,14 +731,15 @@ func instrumentTestingBFunc(pb *testing.B, name string, f func(*testing.B)) (str
 			module.SetTag(ext.Error, true)
 			test.Close(integrations.ResultStatusFail, integrations.WithTestFinishTime(endTime))
 		} else if iPfOfB.B.Skipped() {
-			test.Close(integrations.ResultStatusSkip, integrations.WithTestFinishTime(endTime))
+			closeSkippedBenchmark(test, benchmarkMeta, endTime)
 		} else {
 			test.Close(integrations.ResultStatusPass, integrations.WithTestFinishTime(endTime))
 		}
 
 		checkModuleAndSuite(module, suite)
 	}
-	setCiVisibilityBenchmarkFunc(originalFunc)
+	// Only the wrapper is marked: the same callback may run again as another
+	// sub-benchmark, as in a table or with -count, and needs its own event.
 	setCiVisibilityBenchmarkFunc(runtime.FuncForPC(reflect.Indirect(reflect.ValueOf(instrumentedFunc)).Pointer()))
 	return subBenchmarkAutoName, instrumentedFunc
 }
@@ -878,4 +892,15 @@ func subtestModuleName(callbackModuleName string, parentExecMeta *testExecutionM
 		return callbackModuleName
 	}
 	return parentExecMeta.identity.ModuleName
+}
+
+// closeSkippedBenchmark closes a skipped benchmark after its deferred calls,
+// with the reason that the skip hooks recorded in meta.
+func closeSkippedBenchmark(test integrations.Test, meta *testExecutionMetadata, endTime time.Time) {
+	test.SetTag(constants.TestFinalStatus, constants.TestStatusSkip)
+	if meta != nil && meta.skipReason != "" {
+		test.Close(integrations.ResultStatusSkip, integrations.WithTestFinishTime(endTime), integrations.WithTestSkipReason(meta.skipReason))
+		return
+	}
+	test.Close(integrations.ResultStatusSkip, integrations.WithTestFinishTime(endTime))
 }

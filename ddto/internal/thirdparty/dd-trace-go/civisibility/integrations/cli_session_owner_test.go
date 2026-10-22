@@ -1,6 +1,7 @@
 package integrations
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -136,11 +137,14 @@ func TestFinishCLISessionRecreatesOnlyOpenContainers(t *testing.T) {
 	t.Cleanup(restoreCIVisibilityBootstrapForTesting)
 	var mu sync.Mutex
 	var events []map[string]any
+	architecture := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/citestcycle") {
 			body, _ := io.ReadAll(r.Body)
 			mu.Lock()
 			events = append(events, decodeTestCycle(t, body)...)
+			// The payload's metadata carries the architecture.
+			architecture = architecture || bytes.Contains(body, []byte("testarch"))
 			mu.Unlock()
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -177,7 +181,8 @@ func TestFinishCLISessionRecreatesOnlyOpenContainers(t *testing.T) {
 		utils.CLISessionRecordLine{Kind: "module", ID: 13, Name: "example.com/a", Service: "svc", Start: start},
 		utils.CLISessionRecordLine{Kind: "suite", ID: 23, Module: 13, Name: "race_test.go", Service: "svc", Start: start},
 	)
-	summary, err := FinishCLISession(CLISessionEnd{Dir: dir, Session: utils.CLISession{ID: 99, Command: "ddto test ./...", WorkingDirectory: dir}, Start: start, Finish: time.Now(), ExitCode: 2, GoVersion: runtime.Version()})
+	// The test binaries' architecture, which ddto's own can differ from.
+	summary, err := FinishCLISession(CLISessionEnd{Dir: dir, Session: utils.CLISession{ID: 99, Command: "ddto test ./...", WorkingDirectory: dir}, Start: start, Finish: time.Now(), ExitCode: 2, GoVersion: runtime.Version(), GOARCH: "testarch"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,6 +191,9 @@ func TestFinishCLISessionRecreatesOnlyOpenContainers(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
+	if !architecture {
+		t.Error("the session lacks the test binaries' architecture")
+	}
 	var got []string
 	for _, event := range events {
 		content := event["content"].(map[string]any)
@@ -195,6 +203,7 @@ func TestFinishCLISessionRecreatesOnlyOpenContainers(t *testing.T) {
 		switch event["type"] {
 		case "test_session_end":
 			got = append(got, fmt.Sprintf("session %v %v %v %v %v", id("test_session_id"), meta["test.status"], meta["error.message"], metrics[constants.ITRTestsSkippingCount], meta[constants.TestManagementEnabled]))
+
 		case "test_module_end":
 			got = append(got, fmt.Sprintf("module %v %v %v %v", id("test_session_id"), id("test_module_id"), meta["test.module"], meta["test.status"]))
 		case "test_suite_end":

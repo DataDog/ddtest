@@ -56,25 +56,28 @@ class InstallTests(unittest.TestCase):
         digest = checksum or hashlib.sha256(data.encode()).hexdigest()
         (self.assets / "SHA256SUMS").write_text(f"{digest}  {self.asset}\n{'0' * 64}  ddto-other-arch\n")
 
-    def install(self, *args, path=None, github_path=None, **extra):
+    def install(self, *args, path=None, github_path=None, cwd=None, **extra):
         env = {key: value for key, value in os.environ.items() if not key.startswith(("DDTO_", "GITHUB_"))}
-        env.update(DDTO_DOWNLOAD_URL=self.url, DDTO_INSTALL_DIR=str(self.dir), PATH=path or os.environ["PATH"], **extra)
+        env.update(DDTO_DOWNLOAD_URL=self.url, DDTO_INSTALL_DIR=str(self.dir), PATH=path or os.environ["PATH"])
+        env.update(extra)
         if github_path:
             env["GITHUB_PATH"] = str(github_path)
-        return subprocess.run(self.command(*args), env=env, capture_output=True, text=True, timeout=120)
+        return subprocess.run(self.command(*args), env=env, capture_output=True, text=True, timeout=120, cwd=cwd)
 
     def command(self, *args):
         return ["bash", str(SCRIPTS / "install.sh"), *args]
 
-    def fake_go(self):
+    def fake_go(self, built=FAKE_DDTO):
         """Returns a PATH whose go records its arguments and installs a fake ddto in GOBIN."""
         tools = self.root / "tools"
         tools.mkdir()
         go = tools / "go"
-        (tools / "ddto").write_text(FAKE_DDTO)
+        (tools / "ddto").write_text(built)
         # go env GOHOSTOS and GOHOSTARCH answer for the host; install records
         # its arguments and the platform it builds for.
+        # Like go install, it refuses a relative GOBIN.
         go.write_text(f'#!/bin/sh\nif [ "$1" = env ]; then case $2 in GOHOSTOS) echo {OS};; GOHOSTARCH) echo {ARCH};; esac; exit 0; fi\n'
+                      'case "$GOBIN" in /*|?:*) ;; *) echo "GOBIN must be an absolute path" >&2; exit 1;; esac\n'
                       f'echo "$@" > "{self.root}/go-args"\necho "$GOOS/$GOARCH" > "{self.root}/go-platform"\n'
                       f'cp "{tools}/ddto" "$GOBIN/ddto"\nchmod +x "$GOBIN/ddto"\n')
         go.chmod(0o755)
@@ -88,6 +91,15 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(installed.read_text(), FAKE_DDTO)
         self.assertTrue(os.access(installed, os.X_OK))
         self.assertIn("(release latest)", result.stderr)
+
+    def test_installs_with_a_backslash_in_the_temporary_directory(self):
+        # sha256sum and shasum prefix the digest of such a file with a backslash.
+        temporary = self.root / "tmp\\dir"
+        temporary.mkdir()
+        self.release()
+        result = self.install(TMPDIR=str(temporary))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.dir / "ddto").read_text(), FAKE_DDTO)
 
     def test_rejects_a_checksum_mismatch_without_falling_back(self):
         self.release(checksum="f" * 64)
@@ -137,11 +149,93 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((self.dir / "ddto").read_text(), FAKE_DDTO)
         self.assertEqual(self.paths, ["/SHA256SUMS", "/" + self.asset])
 
+    def test_keeps_the_installed_version_when_the_copy_fails(self):
+        self.release()
+        self.preinstall(fake_ddto("v1.0.0"))
+        # A cp that fails partway, as on a full disk.
+        tools = self.root / "tools"
+        tools.mkdir()
+        (tools / "cp").write_text('#!/bin/sh\nprintf partial > "$2"\nexit 1\n')
+        (tools / "cp").chmod(0o755)
+        result = self.install(path=f"{tools}{os.pathsep}{os.environ['PATH']}")
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.dir / "ddto").read_text(), fake_ddto("v1.0.0"))
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["ddto"])
+
+    def test_keeps_the_installed_version_when_chmod_fails(self):
+        self.release()
+        self.preinstall(fake_ddto("v1.0.0"))
+        tools = self.root / "tools"
+        tools.mkdir()
+        (tools / "chmod").write_text("#!/bin/sh\nexit 1\n")
+        (tools / "chmod").chmod(0o755)
+        result = self.install(path=f"{tools}{os.pathsep}{os.environ['PATH']}")
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.dir / "ddto").read_text(), fake_ddto("v1.0.0"))
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["ddto"])
+
+    def test_removes_its_copy_when_terminated(self):
+        self.release()
+        self.preinstall(fake_ddto("v1.0.0"))
+        # The runner cancels the job while the copy beside the target runs.
+        tools = self.root / "tools"
+        tools.mkdir()
+        (tools / "cp").write_text('#!/bin/sh\nprintf partial > "$2"\nkill -TERM "$PPID"\n')
+        (tools / "cp").chmod(0o755)
+        result = self.install(path=f"{tools}{os.pathsep}{os.environ['PATH']}")
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.dir / "ddto").read_text(), fake_ddto("v1.0.0"))
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["ddto"])
+
+    def test_builds_with_a_relative_temporary_directory(self):
+        result = self.install("--version", "v1.2.3", path=self.fake_go(), cwd=self.root, TMPDIR=".")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.dir / "ddto").read_text(), FAKE_DDTO)
+
+    def test_keeps_the_installed_version_when_the_build_does_not_run(self):
+        # As a GOAMD64 that the host's CPU lacks would build.
+        self.preinstall(fake_ddto("v1.0.0"))
+        result = self.install("--version", "v1.2.3", path=self.fake_go("#!/bin/sh\nexit 1\n"))
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn("does not run on this host", result.stderr)
+        self.assertEqual((self.dir / "ddto").read_text(), fake_ddto("v1.0.0"))
+
+    def test_hides_the_download_url_credentials(self):
+        url = self.url.replace("http://", "http://reader:secret@") + "/missing?token=sensitive"
+        result = self.install(path=self.fake_go(), DDTO_DOWNLOAD_URL=url)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"no SHA256SUMS at {self.url}/missing", result.stderr)
+        self.assertNotIn("secret", result.stderr)
+        self.assertNotIn("sensitive", result.stderr)
+
+    def test_keeps_the_installed_version_when_the_built_copy_fails(self):
+        # Without a release executable, go install builds elsewhere and the
+        # copy beside the target fails, as on a full disk there.
+        self.preinstall(fake_ddto("v1.0.0"))
+        path = self.fake_go()
+        tools = self.root / "tools"
+        (tools / "cp").write_text('#!/bin/sh\ncase "$2" in *.tmp.*) printf partial > "$2"; exit 1;; esac\nexec /bin/cp "$@"\n')
+        (tools / "cp").chmod(0o755)
+        result = self.install(path=path)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / "go-args").exists())
+        self.assertEqual((self.dir / "ddto").read_text(), fake_ddto("v1.0.0"))
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["ddto"])
+
     def test_adds_the_directory_to_github_path(self):
         self.release()
         github_path = self.root / "github_path"
         github_path.write_text("")
         result = self.install(github_path=github_path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(github_path.read_text().split(), [str(self.dir.resolve())])
+
+    def test_adds_the_directory_to_github_path_when_this_step_has_it(self):
+        # A step that exported the directory itself: the next steps need GITHUB_PATH.
+        self.release()
+        github_path = self.root / "github_path"
+        github_path.write_text("")
+        result = self.install(github_path=github_path, path=f"{self.dir}{os.pathsep}{os.environ['PATH']}")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(github_path.read_text().split(), [str(self.dir.resolve())])
 
@@ -156,6 +250,15 @@ class PowerShellInstallTests(InstallTests):
         names = {"--version": "-Version", "--dir": "-Dir"}
         return ["pwsh", "-NoProfile", "-NonInteractive", "-File", str(SCRIPTS / "install.ps1"),
                 *(names.get(arg, arg) for arg in args)]
+
+    def test_keeps_the_installed_version_when_the_copy_fails(self):
+        self.skipTest("Copy-Item does not run cp; install.ps1 moves its copy over the target the same way")
+
+    def test_keeps_the_installed_version_when_the_built_copy_fails(self):
+        self.skipTest("Copy-Item does not run cp; install.ps1 publishes go install's build the same way")
+
+    def test_removes_its_copy_when_terminated(self):
+        self.skipTest("Copy-Item does not run cp; install.ps1 removes its copy in a finally block")
 
 
 if __name__ == "__main__":

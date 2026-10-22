@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	goversion "go/version"
 	"io"
 	"os"
 	"os/exec"
@@ -125,6 +126,7 @@ func runsGotestsum(args []string) bool {
 	_, sub, rest := goSubcommand(args[1:])
 	switch sub {
 	case "tool":
+		_, rest = goToolArgs(rest)
 		return len(rest) > 0 && (rest[0] == "gotestsum" || rest[0] == "gotest.tools/gotestsum")
 	case "run":
 		if i := runPackage(rest); i < len(rest) {
@@ -160,6 +162,27 @@ func leadingChdir(args []string) (chdir, rest []string) {
 		return args[:2], args[2:]
 	}
 	return nil, args
+}
+
+// goToolArgs splits go tool's own flags, which precede the tool, off its
+// arguments: -n and the -C, -modfile, -overlay and -modcacherw build flags
+// (cmd/go/internal/tool). Another flag starts rest, and go reports it.
+func goToolArgs(args []string) (flags, rest []string) {
+	for i := 0; i < len(args); i++ {
+		if !strings.HasPrefix(args[i], "-") {
+			return args[:i], args[i:]
+		}
+		switch name, _, hasValue := strings.Cut(strings.TrimLeft(args[i], "-"), "="); name {
+		case "n", "modcacherw":
+		case "C", "modfile", "overlay":
+			if !hasValue {
+				i++
+			}
+		default:
+			return args[:i], args[i:]
+		}
+	}
+	return args, nil
 }
 
 // runPackage returns the index of go run's package in its arguments: the
@@ -255,6 +278,15 @@ const GoShimExecMode = "go-shim-exec"
 // (cmd/go/internal/tool/signal.go).
 var goToolSignals = []os.Signal{syscall.SIGHUP, os.Interrupt, syscall.SIGQUIT, syscall.SIGTERM}
 
+// goToolBefore127 reports whether go tool of goVersion predates Go 1.27: it
+// forwards every signal to a tool instead of goToolSignals, and exits with 0
+// after a signal ended the tool (go.dev/issue/79540).
+func goToolBefore127(goVersion string) bool {
+	// Development distributions report "devel go1.N-<revision> ...".
+	fields := strings.Fields(strings.TrimPrefix(goVersion, "devel "))
+	return len(fields) != 0 && goversion.IsValid(fields[0]) && goversion.Compare(fields[0], "go1.27") < 0
+}
+
 // moduleTool is a module's tool that go tool would run: ddto runs it as go
 // tool does, with the go shim first on its PATH.
 type moduleTool struct {
@@ -262,6 +294,8 @@ type moduleTool struct {
 	args       []string
 	// gorootBin, the selected toolchain's bin, goes after the shim.
 	gorootBin string
+	// before127: that toolchain's go tool predates Go 1.27 (goToolBefore127).
+	before127 bool
 	// switchGOROOT is GOROOT for the tool after a toolchain switch, as
 	// go's execGoToolchain sets it; unsetGOROOT removes it instead.
 	switchGOROOT string
@@ -292,7 +326,11 @@ func (t *moduleTool) run() int {
 	err := cmd.Start()
 	if err == nil {
 		signals := make(chan os.Signal, 100)
-		signal.Notify(signals, goToolSignals...)
+		if t.before127 {
+			signal.Notify(signals)
+		} else {
+			signal.Notify(signals, goToolSignals...)
+		}
 		// The loop does not log: a blocked debug write would hold back the
 		// next signal. The debug log lists the signals once the tool ends.
 		done := make(chan struct{})
@@ -317,8 +355,12 @@ func (t *moduleTool) run() int {
 			fmt.Fprintf(os.Stderr, "go tool %s: %s\n", t.name, err)
 		}
 		code = 1
-		if ok && exit.ExitCode() != -1 {
+		switch {
+		case ok && exit.ExitCode() != -1:
 			code = exit.ExitCode()
+		case ok && t.before127:
+			// A signal ended the tool, and the exit status stayed 0.
+			code = 0
 		}
 	}
 	debug.logModuleToolEnd(err, code, started, forwarded)
@@ -388,11 +430,22 @@ func goShimGoCommand(self, toolchain string, command []string) ([]string, *modul
 		goShimGoMode = "run_exec"
 		return append(run, rest...), nil, nil
 	case "tool":
+		flags, rest := goToolArgs(rest)
 		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
 			return nil, nil, errors.New("go tool takes flags before the tool")
 		}
+		env, err := readGoShimEnv(toolchain, chdir)
+		if err != nil {
+			return nil, nil, err
+		}
+		if printsOnly(env.GOFLAGS, flags) {
+			// With -n, go tool prints the tool's command instead of running it.
+			return native, nil, nil
+		}
+		// go tool's flags select how go resolves and builds the tool, so the
+		// probe keeps them; -C stays first.
 		var diagnostics bytes.Buffer
-		probe := exec.Command(toolchain, append(append(append([]string(nil), chdir...), "tool", "-n"), rest[0])...)
+		probe := exec.Command(toolchain, append(append(append(append([]string(nil), chdir...), "tool"), flags...), "-n", rest[0])...)
 		probe.Stderr = &diagnostics
 		out, err := probe.Output()
 		path := strings.TrimSpace(string(out))
@@ -405,18 +458,14 @@ func goShimGoCommand(self, toolchain string, command []string) ([]string, *modul
 			goShimGoMode = "toolchain_tool"
 			return native, nil, nil
 		}
-		if len(chdir) != 0 {
+		if toolChdir, _ := leadingChdir(flags); len(chdir)+len(toolChdir) != 0 {
 			return nil, nil, errors.New("go -C runs a module tool in another directory")
 		}
 		// With a cross-compilation executor, go tool -n prints it first.
 		if info, err := os.Stat(path); err != nil || info.IsDir() {
 			return nil, nil, fmt.Errorf("go tool -n %s printed %q, not one program", rest[0], path)
 		}
-		env, err := readGoShimEnv(toolchain, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		tool := &moduleTool{name: rest[0], path: path, args: rest[1:], gorootBin: filepath.Join(env.GOROOT, "bin"), diagnostics: diagnostics.Bytes()}
+		tool := &moduleTool{name: rest[0], path: path, args: rest[1:], gorootBin: filepath.Join(env.GOROOT, "bin"), before127: goToolBefore127(env.GOVERSION), diagnostics: diagnostics.Bytes()}
 		if switchedToolchain(toolchain, env.GOROOT) {
 			// execGoToolchain sets GOROOT for a downloaded toolchain and
 			// removes it for one found on PATH.
@@ -453,13 +502,13 @@ func switchedToolchain(toolchain, selected string) bool {
 // goShimEnv is what go computes for a go run or go tool command with the go
 // shim, with the settings that go env -w stores.
 type goShimEnv struct {
-	GOROOT, GOFLAGS, GOOS, GOARCH, GOHOSTOS, GOHOSTARCH string
+	GOROOT, GOFLAGS, GOOS, GOARCH, GOHOSTOS, GOHOSTARCH, GOVERSION string
 }
 
 // readGoShimEnv reads goShimEnv from go env; tests replace it.
 var readGoShimEnv = func(toolchain string, chdir []string) (goShimEnv, error) {
 	var env goShimEnv
-	out, err := exec.Command(toolchain, append(append([]string(nil), chdir...), "env", "-json", "GOROOT", "GOFLAGS", "GOOS", "GOARCH", "GOHOSTOS", "GOHOSTARCH")...).Output()
+	out, err := exec.Command(toolchain, append(append([]string(nil), chdir...), "env", "-json", "GOROOT", "GOFLAGS", "GOOS", "GOARCH", "GOHOSTOS", "GOHOSTARCH", "GOVERSION")...).Output()
 	if err != nil {
 		return env, fmt.Errorf("go env: %w", err)
 	}
@@ -483,6 +532,25 @@ func goRunExecutor(env goShimEnv, args []string) error {
 		return errors.New("go run cross-compiles, so its program would start through another executor")
 	}
 	return nil
+}
+
+// printsOnly reports whether go tool's -n is set, by GOFLAGS and then by the
+// command line's go tool flags. As in go, the last value wins.
+func printsOnly(goflags string, flags []string) bool {
+	all, err := splitFlags(goflags)
+	if err != nil {
+		all = nil
+	}
+	prints := false
+	for _, flag := range append(all, flags...) {
+		if name, value, hasValue := strings.Cut(strings.TrimLeft(flag, "-"), "="); strings.HasPrefix(flag, "-") && name == "n" {
+			prints = true
+			if hasValue {
+				prints, _ = strconv.ParseBool(value)
+			}
+		}
+	}
+	return prints
 }
 
 // isToolchainTool reports whether path is in the toolchain's pkg/tool
@@ -538,7 +606,11 @@ func pathWith(entries []string) (string, error) {
 		}
 		first = append(first, entry)
 	}
-	return strings.Join(append(first, os.Getenv("PATH")), string(os.PathListSeparator)), nil
+	// An empty entry would add the current directory.
+	if path := os.Getenv("PATH"); path != "" {
+		first = append(first, path)
+	}
+	return strings.Join(first, string(os.PathListSeparator)), nil
 }
 
 // goShimRoot is the directory of every go shim, in ddto's user cache.

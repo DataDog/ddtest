@@ -102,6 +102,8 @@ type options struct {
 	coverage             bool
 	coverPatterns        []string
 	race                 bool
+	// workFlagPattern records a per-package build flag for the work pattern.
+	workFlagPattern bool
 	// panicHook is ddto's --panic-hook, which go test does not see.
 	panicHook bool
 	// fileCoverage and fileCoverageContext are ddto's
@@ -167,7 +169,13 @@ func parseOptions(args []string, goflags string) (options, error) {
 		}
 		o.noteTestFlag(canonical, " in GOFLAGS")
 	}
-	o.chdir, args = chdirFlag(args)
+	var chdirSet bool
+	o.chdir, chdirSet, args = chdirFlag(args)
+	if chdirSet && o.chdir == "" {
+		// go changes to it and fails, where ddto would test the current
+		// directory: go test reports it.
+		return o, errors.New("-C with an empty directory")
+	}
 	var packages []string
 	inPackages, afterFlagWithoutValue := false, false
 	for len(args) > 0 {
@@ -309,20 +317,21 @@ func (o *options) noteTestArgument(arg string) {
 }
 
 // chdirFlag handles -C exactly where cmd/go accepts it: first after "test".
-func chdirFlag(args []string) (string, []string) {
+// It reports whether the flag was given, also with an empty directory.
+func chdirFlag(args []string) (string, bool, []string) {
 	if len(args) == 0 {
-		return "", args
+		return "", false, args
 	}
 	switch a := args[0]; {
 	case a == "-C" || a == "--C":
 		if len(args) > 1 {
-			return args[1], args[2:]
+			return args[1], true, args[2:]
 		}
 	case strings.HasPrefix(a, "-C=") || strings.HasPrefix(a, "--C="):
 		_, dir, _ := strings.Cut(a, "=")
-		return dir, args[1:]
+		return dir, true, args[1:]
 	}
-	return "", args
+	return "", false, args
 }
 
 func (o *options) apply(name, value string) error {
@@ -347,6 +356,12 @@ func (o *options) apply(name, value string) error {
 		// go test reports an invalid value itself.
 		if enabled, err := strconv.ParseBool(value); err == nil {
 			o.race = enabled
+		}
+	case "asmflags", "gccgoflags", "gcflags", "ldflags":
+		// Like cmd/go, a value that starts with a flag has no pattern.
+		value = strings.TrimSpace(value)
+		if pattern, _, ok := strings.Cut(value, "="); ok && !strings.HasPrefix(value, "-") && strings.TrimSpace(pattern) == "work" {
+			o.workFlagPattern = true
 		}
 	case "o":
 		o.output = value

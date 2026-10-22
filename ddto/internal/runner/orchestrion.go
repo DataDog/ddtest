@@ -183,7 +183,7 @@ func resolveOrchestrionExecutable(ctx context.Context, dir string, opts options,
 		phase.finish(err)
 		return "", err
 	}
-	cmd.Env = append(cmd.Environ(), "GOFLAGS="+quoted)
+	cmd.Env = append(cmd.Environ(), goFlagsEnv(quoted))
 	cmd.Stdout, cmd.Stderr = &output, progress
 	err = cmd.Run()
 	phase.finish(err)

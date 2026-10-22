@@ -153,6 +153,22 @@ jobs:
           key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-differential-${{ matrix.mode }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-differential-${{ matrix.mode }}-
+      # Orchestrion's woven builds change with Orchestrion's and dd-trace-go's
+      # versions, not with ddto. On Windows, where a cold one takes minutes, the
+      # job of the Orchestrion groups keeps them in a Go cache of its own.
+      - name: Locate the Orchestrion build cache
+        if: runner.os == 'Windows' && contains(format(',{0},', matrix.shards), ',orchestrion,')
+        shell: bash
+        run: echo "DDTO_TEST_ORCHESTRION_GOCACHE=$RUNNER_TEMP/orchestrion-gocache" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: orchestrion-cache
+        if: runner.os == 'Windows' && contains(format(',{0},', matrix.shards), ',orchestrion,')
+        with:
+          path: ${{ runner.temp }}/orchestrion-gocache
+          # The job's groups decide which woven builds the cache holds.
+          key: orchestrion-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.job }}-${{ hashFiles('testdata/orchestrion/go.mod', 'testdata/orchestrion/go.sum', 'testdata/fixture/go.sum', 'integration/orchestrion_composition_test.go') }}
+          restore-keys: |
+            orchestrion-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.job }}-
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/orchestrion-reference
@@ -181,7 +197,7 @@ jobs:
       # toolchain in a module cache. It gets its own module cache, outside the
       # cached one.
       - name: Download a toolchain to switch to
-        if: runner.os == 'Linux' && contains(format(',{0},', matrix.shards), ',cli,')
+        if: runner.os == 'Linux' && contains(format(',{0},', matrix.shards), ',provision,')
         shell: bash
         env:
           GOMODCACHE: ${{ runner.temp }}/switch-modcache
@@ -213,7 +229,7 @@ jobs:
       - name: Report Go cache sizes
         if: always()
         shell: bash
-        run: du -sh "${{ steps.paths.outputs.build }}" "${{ steps.paths.outputs.modules }}" || true
+        run: du -sh "${{ steps.paths.outputs.build }}" "${{ steps.paths.outputs.modules }}" ${DDTO_TEST_ORCHESTRION_GOCACHE:+"$DDTO_TEST_ORCHESTRION_GOCACHE"} || true
       # One cache per configuration fits the repository's 10 GB cache budget. Pull
       # requests save only when nothing was restored; main and nightly runs keep it.
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -225,6 +241,13 @@ jobs:
             ${{ steps.paths.outputs.build }}
             ${{ steps.paths.outputs.modules }}
           key: ${{ steps.cache.outputs.cache-primary-key }}
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: >-
+          success() && steps.orchestrion-cache.outcome == 'success' && steps.orchestrion-cache.outputs.cache-hit != 'true' &&
+          (github.event_name != 'pull_request' || steps.orchestrion-cache.outputs.cache-matched-key == '')
+        with:
+          path: ${{ runner.temp }}/orchestrion-gocache
+          key: ${{ steps.orchestrion-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

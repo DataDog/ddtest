@@ -186,6 +186,31 @@ leaves printing. Check: `TestMiniPrintsCoverageLineOnce`, with flags that a
 which fails without the change. The Testify parity tests drop the pinned SDK's repeated line
 (`withoutRepeatedCoverageLine`).
 
+With `-test.list`, testing runs no test and writes no profile, so a file at
+`-test.coverprofile` is an earlier run's: the session reports no coverage then,
+instead of that file's percentage and LCOV, nor `testing.Coverage()`'s, which
+counts only package initialization (`finalizeITRCoverageBackfill` returns no
+publication). Checks: `TestRuntimeCoverageSnapshotIgnoresProfileWhenListing`,
+`TestNoSessionCoverageWhenListing`.
+
+A `-test.coverprofile` that is not a regular file, such as `/dev/stdout` after
+`-args`, is not read back either: reading a pipe that the process holds open
+waited forever, after testing had written the profile. The session then takes
+`testing.Coverage()`'s percentage. Check:
+`TestRuntimeCoverageSnapshotIgnoresIrregularProfile`.
+Isolated process coverage is not merged into such a profile either: the merge
+read it empty and failed the run with exit status 1, for passing tests.
+Check: `TestFinalizeProcessCoverageProfilesSkipsAProfileThatIsNotAFile`.
+
+The directories of per-test and process-retry coverage captures are created by
+an absolute path (`mkdirCoverageTemp`): with a relative `TMPDIR`, a test's
+`os.Chdir` moved the captures and left the directory behind. Checks:
+`TestCoverageTempDirectoryIsAbsolute`,
+`TestProcessTestCoverageTemporaryDirectoryIsAbsolute`. When initialization could
+not create the per-test directory, text-profile captures wrote relative files
+into the test's directory; they now report the error and write nothing. Check:
+`TestTextProfileCaptureWithoutTemporaryDirectory`.
+
 ## Per-test profile subtraction
 
 `readCoverProfile` and `coveredFilesBetween` in
@@ -702,6 +727,13 @@ oracle on a second clone of the same remote must leave the same refs and base
 SHA) and `TestCheckAndFetchBranchFetchesPullRequestBase` run real git against
 a `file://` remote. `TestGitRecorderHelperProcess` records the commands.
 
+With `git.pull_request.base_branch`, the SDK passes the bare branch name to
+`git merge-base`, which finds only a local branch: a pull request's checkout,
+as GitHub Actions makes it, has the base only as `origin/<base>`, so the base
+SHA was not found and impacted-test detection found no modified files. Here
+the candidate is `<remote>/<base>` when that remote-tracking ref exists,
+checked without telemetry. Check: `TestGetBaseBranchShaUsesRemotePullRequestBase`.
+
 ## Pull-request head commit
 
 Upstream `fetchCommitData` in [`civisibility/utils/git.go`](civisibility/utils/git.go)
@@ -757,6 +789,10 @@ nothing during initialization; `TestMacOSProductVersionSources` covers the
 sysctl, compatibility, error and empty cases; `TestMacOSProductVersionMatchesSWVers`
 compares the sysctl with `sw_vers` on the host.
 
+`readOSRelease` uses `VERSION_ID` when `/etc/os-release` has no `VERSION`, as
+on Alpine. The SDK's fallback checked for an empty version, but the version
+starts as `unknown`, so it never applied. Check: `TestOSReleaseVersionIDFallback`.
+
 ## CI log hostname
 
 Upstream `logs.Initialize` in
@@ -777,6 +813,425 @@ might have cached. Telemetry still uses `hostname.Get()` only when
 
 Checks: `TestInitializeUsesOSHostnameWithoutProbes` initializes logs in a fresh
 process, requires the OS hostname and finds no hostname-discovery goroutine.
+
+## CI provider tags
+
+`getProviderTags` in [`civisibility/utils/ci_providers.go`](civisibility/utils/ci_providers.go)
+differs from the pinned SDK in three places, each of which could stop or
+change the CI tags:
+
+- The SDK ranges over the `providers` map and keeps the last provider whose
+  variable is set, so with two variables each process could pick another one.
+  CodeBuild's extractor returns no tags outside a CodePipeline build, which
+  would erase another provider's tags on a CodeBuild-hosted runner. Here the
+  providers are tried in name order, and the first whose tags name a provider
+  wins.
+- GitLab's `CI_COMMIT_AUTHOR` is split at `<` instead of indexing the fields of
+  `strings.FieldsFunc`, which panicked when the variable was missing or the
+  email empty (`Name <>`).
+- Jenkins's branch is quoted with `regexp.QuoteMeta` before it is removed from
+  the job name: a branch such as `feature/(cleanup` panicked in
+  `regexp.MustCompile`, and `.` matched any character.
+
+- GitHub Actions' `GITHUB_HEAD_REF` names a pull request's branch: a name
+  that holds `tags/`, such as `feature/tags/filter`, was reported as a tag and
+  lost its branch. Only `GITHUB_REF` names a tag here, with its `refs/tags/`
+  prefix, so a push to such a branch keeps it too.
+  Azure Pipelines, Jenkins and Codefresh had the same check: their ref names
+  a tag only as `tags/<name>` once a `refs/heads/`, `refs/` or `origin/` prefix
+  is removed, as the shared fixtures' `refs/heads/tags/0.1.0` and
+  `origin/tags/0.1.0` still do.
+
+- Outside a pull request, `pr.number` was `0` on GitHub Actions, whose push
+  event JSON has no number, and `false` on Buildkite and Travis CI, which set
+  `BUILDKITE_PULL_REQUEST=false` and `TRAVIS_PULL_REQUEST=false`. None is
+  reported now.
+
+Check: `TestProviderTagsFromUnusualValues`, which fails without each change.
+
+## Credentials in requests and debug lines
+
+The CI HTTP client in [`civisibility/utils/net/http.go`](civisibility/utils/net/http.go)
+refuses redirects, as `internal/citransport` does for events: Go keeps a
+custom header such as `dd-api-key` when it follows a redirect to another host.
+Debug lines show URLs through `logURL`, without user information or query,
+also the coverage report upload's in `coverage_report.go` (check:
+`TestCoverageReportLogsNoCredentials`), and Git's debug lines in [`civisibility/utils/git.go`](civisibility/utils/git.go)
+pass its arguments and output through `filterSensitiveInfo`: a CI clone's
+remote URL can hold a job token, which `git ls-remote --get-url` prints.
+The debug line of a request with a body shows its size, not its contents,
+which the SDK printed up to 4 KB of: a logs payload holds the tests' output.
+Check: `TestRequestDebugLinesHideTheBody`.
+The test command's and the session name's debug lines in
+[`civisibility/utils/environmentTags.go`](civisibility/utils/environmentTags.go)
+say where the values come from, not the values, which hold the test's
+arguments and so any token passed as one. Check:
+`TestDebugLinesLeaveOutTheTestCommand`.
+A request's error, an `*url.Error` that keeps the URL's user and query, goes
+through `logError`, and `AgentURLFromEnv`'s warnings in
+[`agent.go`](agent.go) leave out the URL of `DD_TRACE_AGENT_URL`. A URL that
+a request cannot be built from, such as a malformed agentless URL, returns
+its error through `redactURLError`, since callers log it, and telemetry's
+writer in [`telemetry/internal/writer.go`](telemetry/internal/writer.go) keeps
+a failed request's error the same way.
+Checks: `TestCIClientDoesNotFollowRedirects`, `TestLogURL`, `TestLogError`,
+`TestRequestErrorHidesURLCredentials`,
+`TestWriterRequestErrorHidesURLCredentials` and
+`TestGitDebugLinesHideRemoteCredentials`.
+The URLs of `DD_TEST_OPTIMIZATION_ENV_DATA_FILE`'s file, which
+`applyEnvironmentalDataIfRequired` (`utils/file_environmental_data.go`) adds
+after `normalizeTags`, lose their credentials too (`filterSensitiveInfo`).
+Check: `TestApplyEnvironmentalDataHidesURLCredentials`.
+`UDSClient` ([`uds.go`](uds.go)) takes no proxy: it dials the Agent's socket
+for every request, where an HTTPS or SOCKS proxy from the environment made the
+client negotiate with the Agent. Check: `TestUDSClientUsesNoProxy`, in the
+local `uds_local_test.go`.
+
+## LCOV paths of nested modules
+
+`lcovModuleSourceFilePath` in
+[`gotesting/coverage/lcov_report.go`](civisibility/integrations/gotesting/coverage/lcov_report.go)
+joins a module-relative path to the module's directory in the repository.
+The SDK derives that directory from the module path's major version suffix
+alone, so the files of a nested module, such as `services/api` with module
+`github.com/acme/project/services/api`, were reported as `handler.go`. Here the
+module directory relative to the CI workspace comes first, when the module
+lies inside it. Check: `TestWriteLCOVReportFromProfileUsesNestedModuleDirectory`.
+A path that the module resolves skips the filter for unresolved import paths,
+which dropped a directory whose name has a dot, such as `api.v2`. Check:
+`TestWriteLCOVReportFromProfileKeepsDottedModuleDirectories`.
+
+ITR's coverage backfill (`coveragePathCandidates` in
+[`gotesting/coverage/profile_backfill.go`](civisibility/integrations/gotesting/coverage/profile_backfill.go))
+looks a profile file up in the backend's coverage by several paths and takes
+the first one found. The path after the module path came before the module
+directory's path in the repository, so a nested module's `handler.go` took the
+coverage of a `handler.go` at the repository root when both existed, or when
+only the root one had coverage. A file of the module now has the one path that
+the module's directory in the CI workspace gives (`moduleRepositoryFile`); the
+other paths remain for other files and without that directory. Check:
+`TestBackfillPrefersNestedModuleRepositoryPath`.
+
+## Benchmark context outside the measurement
+
+The benchmark wrappers in `gotesting/testing.go` and
+`gotesting/instrumentation_orchestrion.go` bound Mini's context to the
+benchmark after `b.StartTimer()`: with the SDK mirror active, its allocations
+counted in the first, and with `-benchtime=1x` only, run (4 allocations and
+168 B for an empty benchmark). The binding now happens before the timer
+restarts. Check: `TestMiniSDKMirrorBenchmarkMeasuresNoBinding`.
+
+## Exit status of a TestMain without os.Exit
+
+Go's generated main returns `m.exitCode` after a `TestMain` that does not call
+`os.Exit`. Process retries run after `M.Run`, so the code that they produce
+must reach that field too. ddto's `M.Run` hook (`internal/instrument`) stores
+it there; the manual `(*M).Run` in `gotesting/testing.go`, behind
+`testopt.RunM`, returned it without storing it, so `testopt.RunM(m)` alone
+exited 0 for a test that still failed after its retries.
+`setTestingMExitCode` stores it through a checked reflection lookup; the
+`defer` replaces a comment line to keep stack lines. Checks:
+`TestMiniTestMainWithoutExitKeepsRetryStatus` and
+`TestMiniManualRunMWithoutExitKeepsRetryStatus`.
+
+## Output of failed retry attempts
+
+A fresh retry attempt in `gotesting/retry_attempt_runner.go` reports to a
+synthetic parent, as a subtest reports to its test, and that parent is never
+reported. With `-v`, each attempt streams its lines as it runs. Without it,
+testing prints only a failed test's buffered output, so a test that still
+failed after its automatic retries printed its `--- FAIL` line without its
+messages. `reportRetryAttemptToOriginal` moves a failed attempt's output to
+the original test, which testing reports, once per failed attempt. The call
+is edited in place to keep its stack lines. An attempt that panics skips that
+end: `snapshotPanickedRetryAttemptResult`, which replaces its snapshot call in
+place, moves its output the same way and also counts the time that its body
+ran, which dynamic automatic test retries read to choose a budget and which
+stayed zero. Checks: `TestMiniRetriedPanicKeepsItsOutputAndDuration` and
+`TestRetryAttemptPanicKeepsItsDuration`. Process retries run after testing
+has reported the package, and the README describes their summary. Check:
+`TestMiniRetriedFailureKeepsItsOutput`.
+
+## Automatic retries that end in a skip
+
+With automatic test retries, testing gets the last attempt's result: for a
+test that failed and whose retry then skipped, that was a skip, and the
+process exited 0, while its event's final status was `fail`. No attempt
+passed, so the test now fails, in `gotesting/instrumentation.go`, edited in
+place to keep its stack lines, and for process retries in `packageFailed`
+(`gotesting/retry_process_deferred.go`). Check:
+`TestMiniRetryThatSkipsAfterFailureFails`.
+
+## Races in retry child processes
+
+With process retries, a race that a retry child detected stops the retries,
+but under Early Flake Detection an earlier execution that passed made the
+group pass: this process's race detector never saw the child's race, so go
+test exited 0. `applyCompletedAttempt` now records it as the group's terminal
+failure, which fails the package and the final status, unless the test is
+quarantined or disabled. A child reports any race that its detector found
+(`buildResult` in `gotesting/retry_process.go`): testing reports a race in a
+subtest for the subtest only, and the child runs one test. Checks:
+`TestRaceOnRetry` and `TestRaceInSubtestOnRetry` in
+`TestMiniRaceInstrumentsClientOnly`.
+
+## Skips after a failure
+
+`instrumentCloseAndSkip` and `instrumentSkipNow` in
+`gotesting/instrumentation_orchestrion.go` closed a test as skipped when it
+called `t.Skip` or `t.SkipNow`, also after `t.Error`: testing reports such a
+test as failed. A test that has already failed is left to its normal
+finalization, which closes it as failed. A test that skips is left to it too,
+with its reason: a call that the test deferred can still fail it, as a leak
+check can, and testing then reports it as failed. A benchmark is too: its
+wrappers, in `gotesting/testing.go` and `gotesting/instrumentation_orchestrion.go`,
+close a skipped one with its final status and reason in
+`closeSkippedBenchmark`, after its deferred calls. Check:
+`TestMiniSkipAfterFailureReportsFailure`, with tests, benchmarks and a
+sub-benchmark.
+
+## Failures in quarantined child processes
+
+In a quarantined child process, `markProcessRetryChildFailed` in
+`gotesting/retry_process.go` records a test's own failure as unmasked, so a
+managed descendant's restore of its ancestors keeps it. testing's
+`common.Fail` hook passes the failing test's `*testing.common`, which the
+function ignored, accepting only a `*testing.T`: a quarantined parent that
+called `t.Error` before a quarantined subtest was reported as passed once
+that subtest finished. The failure is now recorded for any receiver; only a
+`*testing.T` still gets the parent-first propagation, which `Fail` does
+itself for the hook. Check: `TestProcessRetryChildFailureThroughCommon`.
+
+## Package flags in retry children
+
+A process-retry child gets its own values of testing's flags, such as the run
+pattern and the count. The table of those flags in `gotesting/retry_process.go`
+also held their names without the `test.` prefix, which the test binary does
+not define: a package's own flag named `-run` or `-timeout`, which `-args`
+passes, was taken for testing's and left out of the child, or became its run
+pattern. Only `test.`-prefixed names are testing's here. Check:
+`TestProcessRetryKeepsPackageFlagsWithoutTestPrefix`.
+
+## Artifact options of retry children
+
+`processRetryArtifactPolicyFromArgs` in `gotesting/retry_process.go` reads the
+`-test.artifacts` and `-test.outputdir` options that a process-retry child gets
+back. It stopped at the separate value of another flag, such as
+`-args -test.parallel 1 -test.artifacts`, so the child ran without artifacts
+and Go removed the files that its tests wrote. A registered flag's separate
+value is skipped here, as `processRetryTimeoutFromArgs` does. Check:
+`TestProcessRetryArtifactPolicyAfterSeparateValues`.
+
+## Early Flake Detection terminal state being published
+
+`publishTerminal` in `gotesting/efd_faulty_session.go` creates the session's
+terminal-state file, then writes `faulty` or `unavailable` into it. Another
+process that read the empty file in between took it as an unknown state:
+Early Flake Detection became unavailable for its new tests for the rest of its
+run, and its session could lose `test.early_flake.abort_reason=faulty`. An empty file
+now reads as not yet published; the claim then takes the lock and counts, as
+without the file. Check: `TestEFDFaultySessionTerminalBeingPublished`, in the
+local `gotesting/efd_faulty_session_terminal_test.go`.
+
+## Sub-benchmarks sharing a callback
+
+`instrumentTestingBFunc` marked the original callback of a sub-benchmark as
+instrumented, as well as its wrapper: in a table such as
+`b.Run("a", work); b.Run("b", work)`, only the first sub-benchmark had an
+event. Only the wrapper is marked here; the inner `b.Run` that the measuring
+level makes still finds it. The event was also named from the name passed to
+`b.Run`, before testing makes it unique and rewrites it: a repeated `b` and
+`"input size=1"` gave `b` twice and a name with a space, where testing prints
+`b#01` and `input_size=1`. The event is now created in the sub-benchmark, with
+its own `b.Name()`. Check: `TestMiniSubBenchmarksSharingACallback`.
+
+## Benchmark panics
+
+The benchmark wrappers (`executeInternalBenchmark` in `gotesting/testing.go`
+and `instrumentTestingBFunc` in `gotesting/instrumentation_orchestrion.go`)
+set the panic handler only after `b.Run` returned, and replaced the wrapper
+with the original function for the later runs: a panic in any run closed no
+event and lost the process's buffered ones. The handler is now defined before
+the benchmark runs, and the later runs use `recoveringBenchmarkFunc`
+(`gotesting/testingB.go`), which handles a panic and panics again. The
+handler marks the event as a benchmark's first, which `SetBenchmarkData` did
+only after the run. Check: the `benchmark` cases of `TestMiniCrashKeepsEvents`.
+
+## Benchmarks that TestMain selects
+
+`instrumentTestingMWithOptions` (`gotesting/testing.go`) instruments the
+benchmarks only when `-bench` is in `os.Args`: a `TestMain` that selects them
+with `flag.Set("test.bench", …)` ran them without events. `benchmarkArgs`
+(`gotesting/testingB.go`) adds `test.bench` when the flag has a value. Check:
+the `benchmain` package of `TestMiniSubBenchmarksSharingACallback`.
+
+## Module paths in coverage file names
+
+`getRelativePathFromCITagsSourceRootForCoverage`
+(`gotesting/coverage/test_coverage.go`) replaced every occurrence of the module
+path with the module directory: module `app`'s `app/app.go` became
+`<dir>/<dir>.go`. `moduleFilePath` replaces only the leading module path.
+Check: `TestModuleFilePath`.
+
+## Testing values without metadata
+
+`getTestMetadata` and `deleteTestMetadata` (`gotesting/instrumentation.go`)
+called `reflect.Value.UnsafePointer` on any `testing.TB`, which panics for one
+that is no pointer, as a struct that embeds a test, passed to
+`testopt.Context`. `testPointer` gives such a value no metadata, so the
+native context comes back. Check: `TestTestMetadataOfAValueTB`.
+
+## Coverage rows of trimmed test files
+
+With `-trimpath`, the runtime names a test's source file by its import path,
+such as `github.com/acme/project/pkg/example_test.go`. Per-test coverage
+(`NewTestCoverage` in `gotesting/coverage/test_coverage.go`), process-retry
+coverage and experimental file coverage made it relative to the CI workspace
+only, which kept that name for the test's own row. `coverageSourceFile`
+resolves it through the module's directory, as `moduleRepositoryFile` does for
+backfill: `github.com/acme/project/api` in `services/api` gives
+`services/api/example_test.go`. Other files resolve as test events' source
+files are, to `pkg/example_test.go`.
+Check: `TestTestCoverageNamesTrimmedTestFileInRepository`.
+
+## Known-test pages
+
+`GetKnownTests` in `utils/net/known_tests_api.go` requests the next page while
+the response says `has_next`, with the response's cursor. A cursor that was
+empty, or one already sent, as in a cycle `A`, `B`, `A`, requested the same
+pages forever and kept appending their tests. Such a response now ends the request with an error, as
+other invalid responses do. Check: `TestKnownTestsApiRequestRejectsAStuckCursor`.
+
+## Logs intake limits
+
+`integrations/logs/logs_writer.go` sent a payload once it passed 25 MB, from a
+50 MB limit whose comment says 5 MB, and without counting entries. The logs
+intake rejects a request over 5 MB uncompressed or with more than 1000
+entries, so a test process that logged that much lost the whole batch after
+its retries. The limit is 5 MB here, a payload is sent from 2.5 MB, and at
+1000 entries. Check: `TestLogsWriterRespectsIntakeLimits`. The writer checked
+the size only after adding an entry, so a line of a few megabytes, larger
+still once JSON escapes it, could take a payload past 5 MB. `add` now encodes
+the entry first, through `logsPayload.pushEncoded`, and starts the next
+payload when the entry would not fit. Check:
+`TestLogsWriterSendsLargeEntryInTheNextRequest`. An entry over 5 MB by itself,
+which the intake would reject even alone, is not sent; a debug line says so.
+Check: `TestLogsWriterDropsAnEntryOverTheLimit`.
+
+## Logs without a client
+
+`newLogsWriter` in `integrations/logs/logs_writer.go` built a writer around
+`net.NewClientForLogs()`, which is nil in agentless mode without an API key:
+with `DD_CIVISIBILITY_LOGS_ENABLED`, the first payload's send dereferenced nil
+and a passing test process ended with a panic. Without a client there is no
+writer, so logs are not sent, as no other event is. Check:
+`TestLogsWriterWithoutClient`.
+
+## Module directory and profile rewrites
+
+`deferModuleInfo` in `gotesting/coverage/test_coverage.go` records where to
+resolve the module of the tested package when coverage initializes, in
+`M.Run`. A `TestMain` that changes directory first, as to the repository root,
+made it resolve another module, and the coverage files' paths with it. The
+directory is now the one that the process started in, read as the package
+initializes (`testPackageDirectory`). Check:
+`TestModuleInfoUsesTheStartingDirectory`.
+
+`orderedCoverProfile.writeAtomic` in `gotesting/coverage/profile_backfill.go`,
+which ITR backfill and retry merges use to rewrite the coverage profile,
+renamed a temporary file over it: a profile path that is a symbolic link, which
+testing writes through, became a regular file, and the profile's mode became
+the temporary file's 0600. It now writes beside the link's target and keeps the
+profile's mode. Check: `TestProfileRewriteKeepsLinkAndMode`.
+
+## Nil subtest callbacks
+
+`instrumentTestingTFuncWithSourceOptions` in
+`gotesting/instrumentation_orchestrion.go`, which the `T.Run` hook calls before
+testing decides whether to run the subtest, read the callback's function
+first: `t.Run("excluded", nil)` panicked, where testing skips the subtest that
+`-skip` excludes without calling it. A nil callback is returned unchanged, on
+the kill-switch line, which keeps the file's stack lines. Check:
+`TestMiniSkipAfterFailureReportsFailure`.
+
+## Partial lines of t.Output
+
+`collectAndWriteLogs` in `gotesting/testing.go` ends a partial line that a test
+wrote to `t.Output()`, so that the logs integration reads it. It did so also
+with logs disabled, before the test's cleanups, which can continue the line:
+`hello ` from the test and `world` from a cleanup printed two lines instead of
+go test's one. The line is ended only when logs are collected. Check:
+`TestMiniKeepsPartialOutputLines`.
+
+## Long log lines
+
+`collectAndWriteLogs` in `gotesting/testing.go` reads a test's output with
+`bufio.Scanner`, whose default limit is 64 KiB per line: with
+`DD_CIVISIBILITY_LOGS_ENABLED`, a longer line ended the scan, and it and every
+later line of that test were not sent. Each scanner's buffer can now hold the
+whole output. Check: `TestCollectLogsKeepsLongLines`.
+
+## Sub-benchmark patterns
+
+The SDK's `B.Run` hook (`instrumentTestingBFunc` in
+`gotesting/instrumentation_orchestrion.go`) renames each sub-benchmark to a
+measuring level, `[DD:TestVisibility]`, which runs the real one inside it.
+testing matches `-bench` and `-skip` against that level's name: with
+`-bench='^BenchmarkWork$/^child$'` the child never ran, and with
+`-skip='^BenchmarkWork$/^child$'` the measuring level ran without its child
+and the hook dereferenced the missing result. Here a `-bench` or `-skip` value
+with `/`, which selects sub-benchmarks by name (`subBenchmarkPatterns`, in
+`testing_session_close.go` so that no import moves the file's lines), leaves
+sub-benchmarks uninstrumented, as without CI Visibility, and a sub-benchmark
+that testing did not run closes as skipped. The added lines come after every
+line that error stacks show. Check: the `benchmarks` case of
+`TestMiniTestingCompatibility`.
+
+## Commit messages
+
+`getLocalGitData` and `readCommitData` in
+[`civisibility/utils/git.go`](civisibility/utils/git.go) split `git log`'s
+fields at `","` into at most eight parts: the message comes last and may hold
+that separator, which `strings.Split` cut it at, as for `Update ["a","b"]`.
+Check: `TestCommitMessageWithFieldSeparator`.
+
+## Impacted-test diff
+
+`GetGitDiff` in [`civisibility/utils/git.go`](civisibility/utils/git.go)
+runs `git -c core.quotePath=false -c diff.relative=false diff --no-color
+--no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ …`: the parser in
+[`utils/impactedtests`](civisibility/utils/impactedtests/impacted_tests.go)
+reads `diff --git a/<path> b/<path>` headers, and the SDK's plain `git diff`
+let `diff.noprefix`, `diff.mnemonicPrefix`, `color.diff=always` or the
+default quoting of non-ASCII paths hide modified files, and `diff.relative`
+leave out the files outside the directory that ddto runs in. `diff.relative`
+is turned off through `-c`, not `--no-relative`, which Git before 2.28, as
+Ubuntu 20.04's 2.25, rejects: that diff failed, and no test was modified. A
+header that the pattern still cannot read, as for a path with a quote, ends
+the previous file instead of giving it the next file's hunks. Checks:
+`TestGetGitDiffNormalizesHeaders`, `TestGetGitDiffBeforeGit228`,
+`TestParseGitDiffOutputUnreadableHeader`.
+
+The commit reads, `git log` and `git show` with a format, pass
+`--no-show-signature`: with `log.showSignature`, Git prints a signed commit's
+verification with them, which the SDK took as the commit's SHA, fields or the
+list of commits that it searches the backend for. Check:
+`TestGitReadsIgnoreShowSignature`.
+
+Git's data comes from its standard output only (`gitOutput`): the SDK's
+`CombinedOutput` also took Git's warnings, which Git prints on stderr when it
+succeeds, as for the deprecated `core.fsyncObjectFiles`, into the SHA and the
+paths. After an error, the output still includes stderr for the reports.
+Check: `TestGitReadsIgnoreWarnings`.
+
+## Settings that require Git
+
+When the settings require Git, the SDK waits a minute for the repository
+upload before requesting them again. With ddto's Git worker, which uploads
+for the whole invocation, the wait is `--git-upload-timeout` when that is
+longer (`requireGitUploadWait` in `integrations/civisibility_features.go`):
+with `--git-upload-timeout=2m`, an upload of 90 seconds left the tests without
+the settings that it enables. Check: `TestRequireGitUploadWait`.
 
 ## Git safe.directory for linked checkouts
 
@@ -906,7 +1361,9 @@ initializes.
   processes fetch it as before. The worker's own CI tags skip that fetch
   (`environmentTags.go`), and `FetchCLIHeadCommit` fetches the commit once a
   test process uses the state, before the upload and the impacted-tests diff,
-  which needs it.
+  which needs it. Both the worker's tags and those of the session that ddto
+  sends after `go test`, which uses the same record, read the head commit
+  without fetching it: the session gets the commit that the worker fetched.
 - `createCITagsMap` (`environmentTags.go`) takes `getLocalGitData`'s and,
   for the same head commit, `fetchCommitData`'s results from the record; the
   CI provider's tags keep their precedence.
@@ -923,7 +1380,10 @@ initializes.
 - `NewImpactedTestAnalyzer` (`impactedtests`) builds the analyzer from
   `impacted.json` when the worker computed it for the process's current
   commit and pull-request base; otherwise it computes as before
-  (`computeAnalyzer`).
+  (`computeAnalyzer`). It waits for that file as long as ddto's
+  `--git-upload-timeout` lets the worker fetch the base commit, and at least 30
+  seconds (`impactedStateWait`): a shorter wait computed without that commit
+  and found no modified files. Check: `TestImpactedStateWaitFollowsTheUploadTimeout`.
 
 The worker writes the record before ddto starts go test. It searches the
 backend's commits, a read-only request, and requests what test processes
@@ -1102,8 +1562,11 @@ will, and the read cache hands the responses to them.
   and its Agent's Unix socket, instead of their parent process. They keep a
   response that one credential or Agent received from another client; the
   cache never stores the key, and the base URL names a socket only lossily,
-  `/` and `_` alike (`UnixDataSocketURL`). CI scopes,
-  which both already share, stay. The entries must outlast a build
+  `/` and `_` alike (`UnixDataSocketURL`). CI scopes, which both already
+  share, keep their kind and lifetime but also mix in the same two digests:
+  they outlive one invocation, and another `ddto` run in the same job with
+  another API key, as for another organization, must not reuse its responses.
+  So does a local scope outside ddto. The entries must outlast a build
   of minutes, so the scope's TTL is an hour, and they live in the scope's own
   directory, `cli/<hash>` of the state directory alone, in the shared one
   (`readCacheSubdirectory`,
@@ -1480,6 +1943,15 @@ sends the signal to its own process again. With no channel left, the runtime
 ends the process as under go test
 ([`civisibility_signal_exit_unix.go`](civisibility/integrations/civisibility_signal_exit_unix.go)).
 Windows cannot send a console event to one process, so it keeps exit status 1.
+A signal that arrives once the normal shutdown has started, as during the final
+flush, or while a normal shutdown starts during the signal's own, is kept:
+the handler records it, and `stopCIVisibilitySignalHandler` sends it again when
+that shutdown ends, so the process does not end with the test binary's status
+instead. A signal still queued for the handler when it stops, which its
+goroutine did not take before the stop, counts too. Checks:
+`TestCIVisibilitySignalHandlerExitsAfterNormalShutdownStarts`,
+`TestCIVisibilitySignalHandlerExitsWhenNormalShutdownStartsDuringSignalShutdown`
+and `TestCIVisibilitySignalHandlerExitsWithAQueuedSignal`.
 Mini registers no signal that the process ignores, such as SIGINT in a
 background job, because registering it would install a handler. A test that
 ignores a signal removes Mini's channel for it, as for any channel. When the
@@ -1670,7 +2142,9 @@ the session from ddto's process. It initializes only the CI tags, in go test's
 directory, which `-C` can move from ddto's, from the Git worker's record of the
 checkout when there is one, and otherwise with git commands that have ten
 seconds in all, so a fetch that hangs does not keep ddto from exiting, with the
-test processes' runtime version, and the tracer, with the bootstrap's service rules
+test processes' runtime version and architecture (`CLISessionEnd.GOARCH`, which
+ddto's own can differ from, as under Rosetta), and the tracer, with the
+bootstrap's service rules
 (`ciVisibilityService`): no settings, Git upload, signal handler, logs or
 telemetry. The
 session starts with ddto, ends when go test exits, and has go test's exit code
@@ -1688,8 +2162,8 @@ so the events that the process sent earlier keep their containers, and the
 test that the crash output's crashed goroutine names: the
 first frame of a top-level test function or a function literal in one, or else
 the test function that created the goroutine, in a suite left open
-(`crashedTest`). Methods of testify suites, `TestMain`, helpers and dynamic
-subtest names name no test. The session's error names the crash: a panic's
+(`crashedTest`); a `Benchmark` function's event is a benchmark's. Methods of
+testify suites, `TestMain`, helpers and dynamic subtest names name no test. The session's error names the crash: a panic's
 first line, or, for a fatal error, whose message the runtime prints before it
 copies its output to the crash output, its first frame outside the runtime,
 unless `--panic-hook` copied the message too. A
@@ -1700,7 +2174,10 @@ result came from Go's cache.
 ddto does not own the session with the SDK runtime, `--session-per-binary`,
 `-c` or `-n`, a launcher, which could run the test binaries where ddto's
 directory is not, CODEOWNERS services, which give each package its own
-service, a disabled CI Visibility, Bazel's offline modes, or a runtime whose
+service, a disabled CI Visibility, Bazel's offline modes, a tested package in
+another Git checkout than go test's directory (`sameCheckout`; the session
+takes its Git metadata and service from that directory, each test process from
+its package; `utils.CheckoutGitFolder`), or a runtime whose
 `civisibility/utils` lacks `HandedCLISession`, as the released ones. A test
 binary run without ddto reports its own session. Tests that finished before a
 fatal error, the race detector's halt or a kill are lost, since only that
@@ -2317,6 +2794,11 @@ differential fixtures now use the SDK base. `testingF.go`, `testingExample.go` a
 `fuzz_events.go` retain the native lifecycle and original test assertions.
 `instrumentation.go`, `instrumentation_orchestrion.go` and `testing.go` merge
 that delta while preserving this port's coverage-aware shutdown.
+
+At a forced exit, as `os.Exit` in a fuzz target, a root that still ran, with
+no failure, is left out (`fuzzTestEvent.finish`), as a running test is,
+instead of being passed. Check: the `fuzz target exit` case of
+`TestMiniCrashKeepsEvents`.
 
 The SDK installs a CI-only flush handler before publishing its tracer. Mini
 owns its queue and flush contract, so that APM worker implementation is not

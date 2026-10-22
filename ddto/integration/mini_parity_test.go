@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
@@ -75,6 +77,11 @@ func ciWireEvents(events []map[string]any) []string {
 					if k == "error.stack" {
 						v = canonicalMiniStack(v.(string))
 					}
+					// Mini reports VERSION_ID where the pinned SDK reports
+					// unknown: see osVersionIDFallback.
+					if field == "meta" && k == "os.version" && v != nil && v == osVersionIDFallback() {
+						v = "unknown"
+					}
 					attrs[k] = v
 				}
 			}
@@ -94,6 +101,27 @@ func ciWireEvents(events []map[string]any) []string {
 	sort.Strings(out)
 	return out
 }
+
+// osVersionIDFallback returns the host's os-release VERSION_ID when it has no
+// VERSION, as on Alpine, or "". Mini reports it as os.version; the pinned SDK
+// reports "unknown" (ADAPTATIONS.md, OS metadata).
+var osVersionIDFallback = sync.OnceValue(func() string {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	versionID := ""
+	for line := range strings.SplitSeq(string(data), "\n") {
+		key, value, _ := strings.Cut(line, "=")
+		switch key {
+		case "VERSION":
+			return ""
+		case "VERSION_ID":
+			versionID = strings.Trim(value, "\"")
+		}
+	}
+	return versionID
+})
 
 // Duplicate APM representations can be omitted only when they agree with CI.
 func validateCIFieldDuplicates(t *testing.T, events []map[string]any) {
@@ -211,6 +239,31 @@ func withPortedEmptySession(events []map[string]any) []map[string]any {
 		meta["test.status"], meta["test.skip_reason"], meta["test.session.empty_reason"] = "skip", "No tests were executed", "zero_tests"
 		content = maps.Clone(content)
 		content["meta"] = meta
+		out[i] = maps.Clone(event)
+		out[i]["content"] = content
+	}
+	return out
+}
+
+// withPortedListCoverage drops the session coverage that the pinned SDK
+// reports with -test.list, where testing ran no test: ddto reports none
+// (ADAPTATIONS.md, Coverage line printed once).
+func withPortedListCoverage(args []string, events []map[string]any) []map[string]any {
+	if !slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, "-test.list") }) {
+		return events
+	}
+	out := make([]map[string]any, len(events))
+	for i, event := range events {
+		out[i] = event
+		content, _ := event["content"].(map[string]any)
+		metrics, _ := content["metrics"].(map[string]any)
+		if event["type"] != "test_session_end" || metrics == nil {
+			continue
+		}
+		metrics = maps.Clone(metrics)
+		delete(metrics, "test.code_coverage.lines_pct")
+		content = maps.Clone(content)
+		content["metrics"] = metrics
 		out[i] = maps.Clone(event)
 		out[i]["content"] = content
 	}

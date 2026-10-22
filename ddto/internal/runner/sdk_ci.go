@@ -123,7 +123,9 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 		}
 		found = true
 		// The module cache is read-only; preserve source identity in a temp file.
-		file, err := os.CreateTemp("", "ddto-ci-env-*.go")
+		// A leading _ keeps go's package discovery from reading it, with a
+		// temporary directory inside a module.
+		file, err := os.CreateTemp("", "_ddto-ci-env-*.go")
 		if err != nil {
 			cleanup()
 			return nil, nil, err
@@ -147,7 +149,7 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 			cleanup()
 			return nil, nil, fmt.Errorf("%w: SDK span mirror missing hooks (found %d)", instrument.ErrUnsupportedAPI, mirrorFound)
 		}
-		file, err := os.CreateTemp("", "ddto-sdk-mirror-*.go")
+		file, err := os.CreateTemp("", "_ddto-sdk-mirror-*.go")
 		if err != nil {
 			cleanup()
 			return nil, nil, err

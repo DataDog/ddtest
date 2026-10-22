@@ -187,7 +187,9 @@ More options follow the same rule:
 
 `ddto` reports one test session per command: every package's tests report in
 it, and it lasts the command and has `go test`'s exit status. A test binary run
-without `ddto` reports its own session. When a test process crashes, the
+without `ddto` reports its own session, and so does each test binary when a
+tested package lies in another Git checkout than `go test`'s directory, whose
+Git metadata and service the session takes. When a test process crashes, the
 session says how; testing's `-timeout` sends the tests' events first, and so
 does an unrecovered panic with `--panic-hook`. For other crashes, `ddto`
 reports, failed, the module and suites that the process left open and the test
@@ -203,6 +205,7 @@ Put `ddto` in front of the gotestsum command that you already run:
 ```sh
 ddto gotestsum --format testname --junitfile junit.xml -- -race ./...
 ddto go tool gotestsum -- ./...                      # a tool of the module
+ddto go tool -modfile=tools.mod gotestsum -- ./...   # or of a tools modfile
 ddto go run gotest.tools/gotestsum@v1.13.0 -- ./...
 ```
 
@@ -306,8 +309,8 @@ Coverage still requires Go coverage flags.
 | `DD_CIVISIBILITY_DYNAMIC_ATR_BUCKETS` | Backend EFD counts | Five comma-separated retry counts from 1 to 20, one per duration bucket, for example `3,2,1,1,1`. Without it, the first four counts follow the backend's EFD slow test retries; the defaults are 10, 5, 3, 2 and 1. |
 | `DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED` | Backend setting | Override early flake detection; the backend must still enable known-test data. |
 | `DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_MAX_RETRIES` | `-1` | Nonnegative values cap EFD retries without increasing backend counts; negative values retain those counts. |
-| `DD_CIVISIBILITY_RETRY_EXECUTION_MODE` | `in_process` | `in_process` reuses the binary's process; `process` launches isolated retry children. |
-| `DD_CIVISIBILITY_RETRY_PROCESS_TIMEOUT` | No additional limit | Positive Go duration, such as `30s`, that bounds a retry child. Native test deadlines still apply. |
+| `DD_CIVISIBILITY_RETRY_EXECUTION_MODE` | `in_process` | `in_process` reuses the binary's process; `process` launches isolated retry children. Those run after testing has reported the package, so without `-v` a test that still fails after them shows only the retry summary, not its output; its CI events keep the error. |
+| `DD_CIVISIBILITY_RETRY_PROCESS_TIMEOUT` | `10m` | Positive Go duration, such as `30s`, that bounds a retry child. A shorter `-timeout` and the test binary's remaining deadline shorten it. |
 | `DD_CIVISIBILITY_RETRY_PROCESS_MAX_CONCURRENCY` | `1` | Positive maximum number of concurrent process-retry children. |
 | `DD_TEST_MANAGEMENT_ENABLED` | `true` | Allow backend test-management policies; `false` disables them. |
 | `DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES` | Backend setting (`-1`) | Override attempt-to-fix retry count; `-1` keeps the backend value. |

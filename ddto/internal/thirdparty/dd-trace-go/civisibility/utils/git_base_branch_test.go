@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
 )
 
@@ -263,5 +264,26 @@ func TestCheckAndFetchBranchFetchesPullRequestBase(t *testing.T) {
 	}
 	if got, want := commandsNamed(recorded, "fetch"), []string{"fetch --depth 1 origin release/1.0"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("fetch commands = %q, want %q", got, want)
+	}
+}
+
+// A pull request's checkout has the base branch only as a remote-tracking
+// ref, as origin/main, without a local main: the base SHA comes from it.
+func TestGetBaseBranchShaUsesRemotePullRequestBase(t *testing.T) {
+	remoteURL := newBaseBranchRemote(t)
+	local := t.TempDir()
+	runFixtureGit(t, local, "init")
+	runFixtureGit(t, local, "remote", "add", "origin", remoteURL)
+	runFixtureGit(t, local, "fetch", "origin", "main", "dev")
+	runFixtureGit(t, local, "checkout", "-q", "-b", "feature/source", "origin/dev")
+	runFixtureGit(t, local, "commit", "--allow-empty", "-m", "source work")
+	t.Chdir(local)
+	resetGitCommandCachesForTesting(t)
+	ResetCITags()
+	t.Cleanup(ResetCITags)
+	AddCITags(constants.GitPrBaseBranch, "main")
+	want := runFixtureGit(t, local, "merge-base", "origin/main", "HEAD")
+	if got, err := GetBaseBranchSha("main"); err != nil || got != want {
+		t.Fatalf("GetBaseBranchSha = %q, %v; want %q", got, err, want)
 	}
 }

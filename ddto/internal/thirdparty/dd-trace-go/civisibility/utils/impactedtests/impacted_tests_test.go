@@ -581,3 +581,17 @@ func countLogsContaining(logs []string, fragment string) int {
 func hasLogContaining(logs []string, fragment string) bool {
 	return countLogsContaining(logs, fragment) > 0
 }
+
+// A header that the pattern cannot read, as for a path that Git still quotes,
+// ends the previous file: its hunks do not become that file's lines.
+func TestParseGitDiffOutputUnreadableHeader(t *testing.T) {
+	files := parseGitDiffOutput("diff --git a/file1.txt b/file1.txt\n@@ -1,2 +3,4 @@\n" +
+		"diff --git \"a/quote\\\"d.txt\" \"b/quote\\\"d.txt\"\n@@ -1 +9,2 @@\n" +
+		"diff --git a/file2.txt b/file2.txt\n@@ -1 +2 @@\n")
+	if len(files) != 2 || files[0].file != "file1.txt" || files[1].file != "file2.txt" {
+		t.Fatalf("files %v", files)
+	}
+	if got := filebitmap.NewFileBitmapFromBytes(files[0].bitmap).String(); got != "00111100" {
+		t.Errorf("file1.txt lines %s, want 00111100", got)
+	}
+}

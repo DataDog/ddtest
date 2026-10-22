@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
 var timeZero time.Time
@@ -98,6 +100,12 @@ func TestStartTestSessionRefusals(t *testing.T) {
 		t.Error("CI Visibility disabled: owned the session")
 	}
 	t.Setenv("DD_CIVISIBILITY_ENABLED", "true")
+	// A relative TMPDIR still gives the session an absolute directory, which
+	// test processes in other directories read.
+	t.Chdir(t.TempDir())
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(name, ".")
+	}
 	session, refusal := startTestSession(mini, options{}, Plan{}, t.TempDir(), timeZero, os.Stderr)
 	if session == nil {
 		t.Fatalf("not owned: %s", refusal)
@@ -108,6 +116,53 @@ func TestStartTestSessionRefusals(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(session.dir, "session.json")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The session takes its Git metadata from go test's directory: a test package
+// in another checkout, or in one while that directory is in none, gives each
+// test process its own session.
+func TestSameCheckout(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"repo/pkg", "repo/nested/pkg", "plain/pkg"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"repo", "repo/nested"} {
+		if err := os.Mkdir(filepath.Join(root, dir, ".git"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	packages := func(dirs ...string) []utils.CLITestPackage {
+		var list []utils.CLITestPackage
+		for _, dir := range dirs {
+			list = append(list, utils.CLITestPackage{Dir: filepath.Join(root, dir)})
+		}
+		return list
+	}
+	for _, tc := range []struct {
+		dir      string
+		packages []utils.CLITestPackage
+		want     bool
+	}{
+		{"repo", packages("repo", "repo/pkg"), true},
+		{"repo", packages("repo/pkg", "repo/nested/pkg"), false},
+		{"repo", packages("repo/pkg", "plain/pkg"), false},
+		{".", packages("repo/pkg"), false},
+		{".", packages("plain/pkg"), true},
+		{"plain", nil, true},
+	} {
+		if got := sameCheckout(filepath.Join(root, tc.dir), tc.packages); got != tc.want {
+			t.Errorf("%s with %v: %t, want %t", tc.dir, tc.packages, got, tc.want)
+		}
+	}
+	t.Setenv("DD_CIVISIBILITY_ENABLED", "true")
+	t.Setenv("DD_SERVICE", "svc")
+	plan := Plan{}
+	plan.tests.Packages = packages("repo/pkg")
+	if session, refusal := startTestSession(CLIOptions{Runtime: Mini}, options{}, plan, root, timeZero, os.Stderr); session != nil || !strings.Contains(refusal, "Git checkout") {
+		t.Fatalf("owned the session of another checkout's tests: %q", refusal)
 	}
 }
 

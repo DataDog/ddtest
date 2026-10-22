@@ -246,8 +246,10 @@ fail CI. It also checks that each selected test produces a terminal result.
 Only the two existing Windows symlink cases may skip if symlinks are unavailable.
 Go's package skips for directories without test files remain valid.
 
-The differential suite has nine groups: local unit/runtime packages, CLI, native
-`go test` transparency, CI parity, Testify parity, fuzz/examples, Orchestrion
+The differential suite has ten groups: local unit/runtime packages, CLI,
+runtime provisioning (modules, workspaces, vendor directories, toolchain
+mirrors, releases and the Testify and goleak integrations), native `go test`
+transparency, CI parity, Testify parity, fuzz/examples, Orchestrion
 composition/cache, SDK span copies and SDK span copies under Orchestrion. Go 1.25
 and tip run three groups: local packages, native integration, and native
 fuzz/examples. The `jobs` entry of `ci_shards.json` packs the groups of each
@@ -283,7 +285,12 @@ so one cache per configuration is what fits the repository's 10 GB limit. The
 first job of each layout saves it when its key is new: the Go version and every
 `go.sum` are part of the key. Pull requests save only when nothing was
 restored, so `main` and nightly runs own the caches. The frozen Orchestrion
-binary is cached per platform and Go version.
+binary is cached per platform and Go version. On Windows, the job of the two
+Orchestrion groups also keeps the builds that Orchestrion weaves in a Go cache of
+their own (`DDTO_TEST_ORCHESTRION_GOCACHE`), keyed by the job's groups, with the
+same saving rules: they depend on Orchestrion's and dd-trace-go's versions, not
+on ddto, but the job that saves the shared cache does not build them, and a cold
+one takes minutes there.
 
 Module downloads outside tests retry with a five-minute deadline per attempt,
 because a proxy fetch can stall for several minutes. Before the tests, the

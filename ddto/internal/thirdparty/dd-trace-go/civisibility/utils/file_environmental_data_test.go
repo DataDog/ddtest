@@ -270,6 +270,37 @@ func TestApplyEnvironmentalDataIfRequired_NoEnvFile(t *testing.T) {
 	}
 }
 
+// The file's URLs lose their credentials, as the CI providers' do.
+func TestApplyEnvironmentalDataHidesURLCredentials(t *testing.T) {
+	t.Setenv(constants.CIVisibilityEnvironmentDataFilePath, "")
+	origArg := os.Args[0]
+	defer func() { os.Args[0] = origArg }()
+	tempDir := t.TempDir()
+	os.Args[0] = filepath.Join(tempDir, "testbinary")
+	data, err := json.Marshal(&fileEnvironmentalData{
+		RepositoryURL: "https://gitlab-ci-token:FAKE_TOKEN@gitlab.example/acme/repo.git",
+		CIPipelineURL: "https://user:FAKE_TOKEN@ci.example/pipelines/1",
+		CIJobURL:      "https://user:FAKE_TOKEN@ci.example/jobs/2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "testbinary.env.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tags := map[string]string{}
+	applyEnvironmentalDataIfRequired(tags)
+	for key, want := range map[string]string{
+		constants.GitRepositoryURL: "https://gitlab.example/acme/repo.git",
+		constants.CIPipelineURL:    "https://ci.example/pipelines/1",
+		constants.CIJobURL:         "https://ci.example/jobs/2",
+	} {
+		if tags[key] != want {
+			t.Errorf("%s = %q, want %q", key, tags[key], want)
+		}
+	}
+}
+
 // TestApplyEnvironmentalDataIfRequired_WithEnvFile creates an env file and checks
 // that applyEnvironmentalDataIfRequired populates only the missing values.
 func TestApplyEnvironmentalDataIfRequired_WithEnvFile(t *testing.T) {

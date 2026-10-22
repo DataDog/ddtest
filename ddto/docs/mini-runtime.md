@@ -78,9 +78,13 @@ selects. A client keeps its own language version: one declaring Go 1.21 keeps
 that version's loop-variable semantics and timer defaults, and a module without
 a `go` directive keeps Go 1.16 semantics and GODEBUG defaults, as under native
 Go. For a client language older than Go 1.25, Mini becomes a separate main
-module in a temporary workspace. The client's module files stay unchanged,
+module in a temporary workspace, which keeps the client's `toolchain` line. The client's module files stay unchanged,
 apart from the updates that its own `-mod=mod` imports would require under
-native Go.
+native Go. A checksum missing from `go.sum` still fails, as under native
+`go test`. An untidy `go.mod` that lists a lower version than a dependency
+requires does not: native `go test` reports `updates to go.mod needed`, which
+`go mod tidy` fixes, while the workspace selects the required version.
+Detecting it would take a second package load in module mode on every run.
 
 The temporary `go.work`, and the `GOFLAGS` adapted for it, apply only to the
 `go test` command that `ddto` starts, including the build tools it runs or
@@ -244,6 +248,9 @@ When the workspace does not select Mini, a `use` module's own replacement of
 Mini is read with `go mod edit -json`. Only module files that mention Mini's
 path, or contain a backslash that could escape it, need that command; those
 commands run concurrently, and their results apply in workspace order.
+Go's `work` package pattern selects the packages of every main module, Mini's
+included, so with a workspace that `ddto` provides, `work` as a package or
+`-coverpkg` pattern makes `ddto` warn and run native `go test`.
 
 `ddto` uses a vendor directory only where Go would: with `-mod=vendor`, or by
 default when the `go` directive is at least 1.14 and `modules.txt` was written
@@ -276,8 +283,10 @@ directories keep vendored packages visible to wildcard patterns such as
 `example.com/helper/...`; Go ignores linked directories there. Links inside the
 client's vendor tree stay links. Like Go, `ddto` follows a `vendor` directory
 that is itself a link. Where hard links fail, as when the user cache is on
-another filesystem, files are copied with their times. Linking updates the
-client file's change time, so Git may check its contents once. Alternate
+another filesystem, files are copied with their times. On Windows, read-only
+files are copied too: removing a read-only hard link there clears the
+attribute of the file that it shares. Linking updates the client file's
+change time, so Git may check its contents once. Alternate
 modfiles keep working in any spelling, including `GOFLAGS`.
 
 The workspace lives in the user cache, under `ddto/vendor-workspaces`, at a
@@ -401,6 +410,11 @@ Cleanup-only coverage and duplicate Testify method identity also have direct
 Mini regression tests. The [comparison contract](ci-parity.md#comparison-contract)
 records these deliberate differences and its normalization rules.
 
+Each tested package gets a generated `zz_dd_ci_visibility_test.go` through the
+overlay, which imports the runtime. Embed patterns resolve through the overlay
+too, so a pattern that matches that file, such as `//go:embed *` in a tested
+package, embeds it as well.
+
 Per-test coverage, in count or atomic mode, reads the coverage counters in
 memory through a hook that `ddto` adds to `testing`. Each test's covered lines
 are the same as with the two text profiles per test that the SDK writes and
@@ -418,6 +432,11 @@ Text profiles stay in some cases:
   as `-coverpkg=testing`;
 - Mini finds blocks whose text-profile result is ambiguous.
 
+With text profiles, as in the SDK, each capture prints its own `coverage:`
+line to the test binary's output, and `go test`'s package summary shows the
+first one, taken before the first test, instead of the final percentage. The
+`-coverprofile` that `go test` writes is unchanged.
+
 The [adaptation record](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#per-test-coverage-counters-in-memory)
 lists every case.
 
@@ -428,6 +447,11 @@ after ddto's hooks appear shifted, in per-test coverage and in the
 because the compiler applies the directives. The coverage of `testing`'s own
 code is also attributed by timing: `T.Run` continues in the parent goroutine
 while the attempt it started takes its first snapshot.
+
+Likewise, a `-coverpkg` pattern that selects Mini's packages, such as `all`,
+which follows the runtime import that each tested package gets, covers them
+too: the `-coverprofile` and its percentage count their statements, which
+native `go test` would not build.
 
 With `-race`, `ddto` overlays Mini's sources with copies that mark each
 function declaration `//go:norace`, so the race detector does not instrument
@@ -444,7 +468,9 @@ Mini's packages, directly or through a helper package, as tests that use
 `testopt` do, Mini keeps full instrumentation, so memory that the client passes
 to Mini's API, such as a pointer tag value, stays checked as under
 `go test -race`. Mini's own tests also keep it, with `go test -race` or when the
-named packages belong to Mini. Compiling Mini with `-race=false` would remove
+named packages belong to Mini. So does Mini in `GOMODCACHE`, where `go install`
+leaves the sources of the `ddto` it builds: Go rejects any overlay entry there.
+Compiling Mini with `-race=false` would remove
 more, but the compiler would then make Mini's atomics invisible to the
 detector, which would report races that do not exist.
 
@@ -590,6 +616,12 @@ Context mode has the gaps that .NET's `ExecutionContext` also has:
 - Tests retried in a child process report no per-test coverage.
 - Code that blocks before the test and resumes during it marks its file
   again at its next site, which follows every call and channel operation.
+  When that operation is the function's last, as in `return <-ch`, the next
+  site is in the caller's file, and the function's own file is left out, as
+  with Go's counters, which count a block when it starts.
+- A test that only reads a package-level variable runs no site of the
+  variable's file, which reports to it only when it has no function. Go's
+  counters leave such a file out too.
   The runtime can still suspend code briefly between two sites, to preempt
   it or to assist the garbage collector, as it can inside any statement: a
   suspension that spans a test's start can leave out the rest of that code.

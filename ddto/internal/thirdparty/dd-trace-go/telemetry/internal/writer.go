@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"sync"
@@ -247,6 +248,23 @@ func (w *writer) encodePayloadForBazelFile() (body []byte, err error) {
 }
 
 // newRequest creates a new http.Request with the given payload and the necessary headers.
+// redactURLError returns the *url.Error that http.Client.Do returns without
+// the user information or query of its URL, which the agent URL can carry:
+// the error reaches debug lines.
+func redactURLError(err error) error {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return err
+	}
+	copied := *urlErr
+	copied.URL = "(invalid URL)"
+	if u, parseErr := url.Parse(urlErr.URL); parseErr == nil {
+		u.User, u.RawQuery, u.Fragment = nil, "", ""
+		copied.URL = u.String()
+	}
+	return &copied
+}
+
 func (w *writer) newRequest(endpoint *http.Request, requestType transport.RequestType) *http.Request {
 	request := endpoint.Clone(context.Background())
 	request.Header.Set("DD-Telemetry-Request-Type", string(requestType))
@@ -342,7 +360,7 @@ func (w *writer) Flush(payload transport.Payload) ([]EndpointRequestResult, erro
 		response, err := w.httpClient.Do(request)
 		if err != nil {
 			logRequestCompletion(requestType, now, 0, true)
-			results = append(results, EndpointRequestResult{Error: err, RequestAttempted: true})
+			results = append(results, EndpointRequestResult{Error: redactURLError(err), RequestAttempted: true})
 			continue
 		}
 

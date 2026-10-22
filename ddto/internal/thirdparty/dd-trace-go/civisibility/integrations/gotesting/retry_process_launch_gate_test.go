@@ -8,8 +8,10 @@ package gotesting
 import (
 	"context"
 	"errors"
+	"flag"
 	"os"
 	"os/exec"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -198,4 +200,38 @@ func (c *processRetryBlockingDoneContext) Done() <-chan struct{} {
 	c.once.Do(func() { close(c.entered) })
 	<-c.release
 	return nil
+}
+
+// A registered flag's separate value, as -args can pass it, does not end the
+// artifact options that a retry child gets back.
+func TestProcessRetryArtifactPolicyAfterSeparateValues(t *testing.T) {
+	for _, tc := range []struct {
+		args      []string
+		outputDir string
+		enabled   bool
+	}{
+		{[]string{"-test.artifacts", "-test.outputdir=/tmp/results"}, "/tmp/results", true},
+		{[]string{"-test.parallel", "1", "-test.artifacts", "-test.outputdir=/tmp/results"}, "/tmp/results", true},
+		{[]string{"-test.v", "-test.artifacts=false", "-test.outputdir", "/tmp/results"}, "/tmp/results", false},
+		// An unknown flag's value is ambiguous, as for the retry's own arguments.
+		{[]string{"-custom", "1", "-test.artifacts"}, "", false},
+	} {
+		outputDir, enabled := processRetryArtifactPolicyFromArgs(tc.args)
+		if outputDir != tc.outputDir || enabled != tc.enabled {
+			t.Errorf("%q: %q, %t; want %q, %t", tc.args, outputDir, enabled, tc.outputDir, tc.enabled)
+		}
+	}
+}
+
+// A package's own flag with the name of a testing flag but without the test.
+// prefix, as -args can pass it, stays the package's in a retry child.
+func TestProcessRetryKeepsPackageFlagsWithoutTestPrefix(t *testing.T) {
+	if flag.Lookup("skip") == nil {
+		flag.String("skip", "", "a package's own flag, for this test")
+	}
+	args := []string{"-test.run=^TestA$", "-skip=payload", "-skip", "other"}
+	preserved, _, run, skip, ok, reason := processRetryFilterArgs(args, true)
+	if !ok || run != "^TestA$" || skip != "" || !slices.Equal(preserved, args[1:]) {
+		t.Fatalf("preserved %q, run %q, skip %q, ok %t (%s)", preserved, run, skip, ok, reason)
+	}
 }

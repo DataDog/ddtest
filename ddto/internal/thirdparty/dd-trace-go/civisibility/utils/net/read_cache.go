@@ -278,9 +278,17 @@ func newReadCacheScopeIdentity(ciTags map[string]string) readCacheScopeIdentity 
 // The scope also holds a digest of the process's credential and its Agent's
 // socket, whose path the base URL does not keep whole: a test process whose
 // API key or Agent differs from the worker's, as one that TestMain changed,
-// makes its own requests. The upstream scopes leave both out.
+// makes its own requests. The upstream scopes leave both out; here the
+// others hold them too, as a CI job's scope, which another invocation with
+// another API key, as for another organization, would share.
 func cliReadCacheScopeIdentity(identity readCacheScopeIdentity, dir, credential, socket string) readCacheScopeIdentity {
 	if identity.Kind != readCacheScopeLocal || dir == "" {
+		identity.Source = append(identity.Source, "credential", "socket")
+		identity.Hash = readCacheHashValue([]readCacheIdentityValue{
+			{Name: "scope", Value: identity.Hash},
+			{Name: "credential", Value: readCacheHashString(credential)},
+			{Name: "socket", Value: socket},
+		})
 		return identity
 	}
 	values := []readCacheIdentityValue{

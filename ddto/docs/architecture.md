@@ -108,6 +108,7 @@ Existing overlays are merged before transformation, and every user `-overlay`
 spelling is replaced by the merged plan. Generated-path collisions, missing or
 ambiguous hooks and already instrumented sources fail during preparation. The
 [flag parser](../internal/runner/options.go) follows `go test`'s algorithm: GOFLAGS
+(or, when the environment leaves it empty, the value that `go env -w` saved)
 first, `-C` only as the first flag, `--flag` spellings, and unknown flags or
 everything after `-args`/`--` for the test binary. `TestFlagTableMatchesToolchain`
 compares its flag table with the toolchain's help. When the plan needs the

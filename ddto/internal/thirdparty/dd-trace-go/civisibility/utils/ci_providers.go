@@ -8,8 +8,10 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,12 +103,19 @@ func getEnvVarsJSON(envVars ...string) ([]byte, error) {
 
 // getProviderTags extracts CI information from environment variables.
 func getProviderTags() map[string]string {
+	// One provider, the same in every process: the first, in name order, whose
+	// variable is set and whose tags name it. CodeBuild's variable outside a
+	// CodePipeline build, as on a CodeBuild-hosted runner of another CI,
+	// names none.
 	tags := map[string]string{}
-	for key, provider := range providers {
+	for _, key := range slices.Sorted(maps.Keys(providers)) {
 		if _, ok := env.Lookup(key); !ok {
 			continue
 		}
-		tags = provider()
+		if found := providers[key](); found[constants.CIProviderName] != "" {
+			tags = found
+			break
+		}
 	}
 
 	// replace with user specific tags
@@ -209,6 +218,16 @@ func normalizeRef(name string) string {
 	return name
 }
 
+// isTagRef reports whether a provider's ref names a tag: tags/<name> once its
+// refs/heads/, refs/ or origin/ prefix is removed. A branch can hold tags/
+// later in its name, as feature/tags/filter.
+func isTagRef(name string) bool {
+	for _, prefix := range []string{"refs/heads/", "refs/", "origin/"} {
+		name = strings.TrimPrefix(name, prefix)
+	}
+	return strings.HasPrefix(name, "tags/")
+}
+
 // firstEnv returns the value of the first non-empty environment variable from the provided list.
 func firstEnv(keys ...string) string {
 	for _, key := range keys {
@@ -262,7 +281,7 @@ func extractAzurePipelines() map[string]string {
 	branchOrTag := firstEnv("SYSTEM_PULLREQUEST_SOURCEBRANCH", "BUILD_SOURCEBRANCH", "BUILD_SOURCEBRANCHNAME")
 	branch := ""
 	tag := ""
-	if strings.Contains(branchOrTag, "tags/") {
+	if isTagRef(branchOrTag) {
 		tag = branchOrTag
 	} else {
 		branch = branchOrTag
@@ -413,7 +432,10 @@ func extractBuildkite() map[string]string {
 	}
 
 	tags[constants.GitPrBaseBranch] = env.Get("BUILDKITE_PULL_REQUEST_BASE_BRANCH")
-	tags[constants.PrNumber] = env.Get("BUILDKITE_PULL_REQUEST")
+	// Buildkite sets false outside a pull request.
+	if number := env.Get("BUILDKITE_PULL_REQUEST"); number != "false" {
+		tags[constants.PrNumber] = number
+	}
 
 	return tags
 }
@@ -450,7 +472,9 @@ func extractGithubActions() map[string]string {
 	branchOrTag := firstEnv("GITHUB_HEAD_REF", "GITHUB_REF")
 	tag := ""
 	branch := ""
-	if strings.Contains(branchOrTag, "tags/") {
+	// GITHUB_HEAD_REF names a pull request's branch, whatever its name holds;
+	// only GITHUB_REF names a tag, as refs/tags/<name>.
+	if env.Get("GITHUB_HEAD_REF") == "" && strings.HasPrefix(branchOrTag, "refs/tags/") {
 		tag = branchOrTag
 	} else {
 		branch = branchOrTag
@@ -531,7 +555,10 @@ func extractGithubActions() map[string]string {
 				tags[constants.GitHeadCommit] = eventJSON.PullRequest.Head.Sha
 				tags[constants.GitPrBaseHeadCommit] = eventJSON.PullRequest.Base.Sha
 				tags[constants.GitPrBaseBranch] = eventJSON.PullRequest.Base.Ref
-				tags[constants.PrNumber] = strconv.Itoa(eventJSON.Number)
+				// A push event's JSON has no number: there is no pull request.
+				if eventJSON.Number > 0 {
+					tags[constants.PrNumber] = strconv.Itoa(eventJSON.Number)
+				}
 			}
 		}
 	}
@@ -567,12 +594,10 @@ func extractGitlab() map[string]string {
 	tags[constants.CINodeName] = env.Get("CI_RUNNER_ID")
 	tags[constants.CINodeLabels] = env.Get("CI_RUNNER_TAGS")
 
-	author := env.Get("CI_COMMIT_AUTHOR")
-	authorArray := strings.FieldsFunc(author, func(s rune) bool {
-		return s == '<' || s == '>'
-	})
-	tags[constants.GitCommitAuthorName] = strings.TrimSpace(authorArray[0])
-	tags[constants.GitCommitAuthorEmail] = strings.TrimSpace(authorArray[1])
+	// "Name <email>", which may be missing or have an empty email.
+	authorName, authorEmail, _ := strings.Cut(env.Get("CI_COMMIT_AUTHOR"), "<")
+	tags[constants.GitCommitAuthorName] = strings.TrimSpace(authorName)
+	tags[constants.GitCommitAuthorEmail] = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(authorEmail), ">"))
 	tags[constants.GitCommitAuthorDate] = env.Get("CI_COMMIT_TIMESTAMP")
 
 	jsonString, err := getEnvVarsJSON("CI_PROJECT_URL", "CI_PIPELINE_ID", "CI_JOB_ID")
@@ -600,12 +625,13 @@ func extractJenkins() map[string]string {
 	empty := []byte("")
 	name, hasName := env.Lookup("JOB_NAME")
 
-	if strings.Contains(branchOrTag, "tags/") {
+	if isTagRef(branchOrTag) {
 		tags[constants.GitTag] = branchOrTag
 	} else {
 		tags[constants.GitBranch] = branchOrTag
 		// remove branch for job name
-		removeBranch := regexp.MustCompile("/" + normalizeRef(branchOrTag))
+		// A branch name is literal text: it can hold "(" or ".".
+		removeBranch := regexp.MustCompile("/" + regexp.QuoteMeta(normalizeRef(branchOrTag)))
 		name = string(removeBranch.ReplaceAll([]byte(name), empty))
 	}
 
@@ -667,7 +693,7 @@ func extractCodefresh() map[string]string {
 	}
 
 	cfBranch := env.Get("CF_BRANCH")
-	isTag := strings.Contains(cfBranch, "tags/")
+	isTag := isTagRef(cfBranch)
 	var refKey string
 	if isTag {
 		refKey = constants.GitTag
@@ -705,7 +731,10 @@ func extractTravis() map[string]string {
 
 	tags[constants.GitPrBaseBranch] = env.Get("TRAVIS_BRANCH")
 	tags[constants.GitHeadCommit] = env.Get("TRAVIS_PULL_REQUEST_SHA")
-	tags[constants.PrNumber] = env.Get("TRAVIS_PULL_REQUEST")
+	// Travis sets false outside a pull request.
+	if number := env.Get("TRAVIS_PULL_REQUEST"); number != "false" {
+		tags[constants.PrNumber] = number
+	}
 
 	return tags
 }

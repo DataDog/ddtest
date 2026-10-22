@@ -2,14 +2,13 @@ package runner
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
 // packageCompilerCacheFlag changes only this package's cache key, preserving
 // the last matching user gcflags. Its wrapper removes the marker before compile.
 func packageCompilerCacheFlag(dir string, opts options, pkg *goPackage, marker string) (string, error) {
-	flags, err := splitFlags(os.Getenv("GOFLAGS"))
+	flags, err := splitFlags(callerGoFlags())
 	if err != nil {
 		return "", err
 	}

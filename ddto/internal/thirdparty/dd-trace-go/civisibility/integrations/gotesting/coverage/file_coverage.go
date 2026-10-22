@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 )
 
@@ -129,7 +128,7 @@ func scanFileCoverage(epoch uint64) []string {
 func fileCoverageFiles(testFile string, names []string) []coveredFile {
 	relative := make([]string, 0, len(names))
 	for _, name := range names {
-		if name = utils.GetRelativePathFromCITagsSourceRoot(name); name != testFile {
+		if name = coverageSourceFile(name); name != testFile {
 			relative = append(relative, name)
 		}
 	}

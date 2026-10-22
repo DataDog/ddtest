@@ -135,6 +135,10 @@ func TestSDKCIGateCompilerInputs(t *testing.T) {
 	if !reflect.DeepEqual(args, []string{"compile", "-o", "output.a", sdkCompilerCacheMarker(sdkCIEnvironmentPackage), original}) || !reflect.DeepEqual(got[:3], args[:3]) || got[3] == original {
 		t.Fatal(args, got)
 	}
+	// Go ignores _ files, also in a temporary directory inside a module.
+	if !strings.HasPrefix(filepath.Base(got[3]), "_") {
+		t.Fatalf("temporary source %s would be part of the package in its directory", got[3])
+	}
 	rewritten, err := os.ReadFile(got[3])
 	if err != nil {
 		t.Fatal(err)

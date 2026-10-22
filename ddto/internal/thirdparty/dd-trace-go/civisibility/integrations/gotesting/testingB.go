@@ -7,6 +7,7 @@ package gotesting
 
 import (
 	"context"
+	"flag"
 	"regexp"
 	"runtime"
 	"sync"
@@ -242,6 +243,29 @@ func hasCiVisibilityBenchmarkFunc(fn *runtime.Func) bool {
 	}
 
 	return false
+}
+
+// benchmarkArgs returns args, the process's, with test.bench added when
+// TestMain set that flag through flag.Set, which leaves them unchanged.
+func benchmarkArgs(args []string) []string {
+	if f := flag.Lookup("test.bench"); f != nil && f.Value.String() != "" {
+		return append(args[:len(args):len(args)], "test.bench")
+	}
+	return args
+}
+
+// recoveringBenchmarkFunc runs f, the function of a benchmark's later runs,
+// and handles its panic with handlePanic before panicking again.
+func recoveringBenchmarkFunc(f func(*testing.B), handlePanic func(any)) func(*testing.B) {
+	return func(b *testing.B) {
+		defer func() {
+			if r := recover(); r != nil {
+				handlePanic(r)
+				panic(r)
+			}
+		}()
+		f(b)
+	}
 }
 
 // setCiVisibilityBenchmarkFunc tracks a *runtime.Func as instrumented benchmark.

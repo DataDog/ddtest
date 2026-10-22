@@ -77,3 +77,28 @@ func TestWriterFlushWaitsForResponseCompletion(t *testing.T) {
 		})
 	}
 }
+
+// A failed request's error keeps the agent URL's user information and query
+// out of the results, which reach debug lines.
+func TestWriterRequestErrorHidesURLCredentials(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	address := server.Listener.Addr().String()
+	server.Close()
+	endpoint, err := http.NewRequest(http.MethodPost, "http://user:password@"+address+"/telemetry?token=sensitive", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, err := NewWriter(WriterConfig{Endpoints: []*http.Request{endpoint}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := writer.Flush(transport.AppClosing{})
+	if err == nil || len(results) != 1 || results[0].Error == nil {
+		t.Fatalf("a closed endpoint: %+v, %v", results, err)
+	}
+	for _, text := range []string{err.Error(), results[0].Error.Error()} {
+		if strings.Contains(text, "user") || strings.Contains(text, "password") || strings.Contains(text, "sensitive") || !strings.Contains(text, address+"/telemetry") {
+			t.Fatalf("error text %q", text)
+		}
+	}
+}

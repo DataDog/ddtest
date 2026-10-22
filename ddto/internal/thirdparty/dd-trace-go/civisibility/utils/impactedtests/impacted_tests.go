@@ -256,15 +256,26 @@ func parseGitDiffOutput(output string) []fileWithBitmap {
 	lines := splitLines(output)
 	for _, line := range lines {
 
+		// A header that the pattern cannot read, as a quoted path, still ends
+		// the current file, whose lines must not take the next file's hunks.
+		if strings.HasPrefix(line, "diff --git ") && !diffHeaderRegex.MatchString(line) {
+			if currentFile != nil {
+				currentFile.bitmap = toFileBitmap(modifiedLines)
+				fileChanges = append(fileChanges, *currentFile)
+			}
+			currentFile, modifiedLines = nil, modifiedLines[:0]
+			continue
+		}
+
 		// Check for the start of a new file diff
 		if headerMatch := diffHeaderRegex.FindStringSubmatch(line); headerMatch != nil {
 			// If there's a file in process, finalize it before iniciar uno nuevo
 			if currentFile != nil {
 				currentFile.bitmap = toFileBitmap(modifiedLines)
 				fileChanges = append(fileChanges, *currentFile)
-				// Clear the modified lines for the new file
-				modifiedLines = modifiedLines[:0]
 			}
+			// Clear the modified lines for the new file
+			modifiedLines = modifiedLines[:0]
 
 			// Extract file path from the named group "file"
 			filePath := ""
@@ -279,7 +290,7 @@ func parseGitDiffOutput(output string) []fileWithBitmap {
 		}
 
 		// Check for the line change marker (e.g., @@ -1,2 +3,4 @@)
-		if lineChangeMatch := lineChangeRegex.FindStringSubmatch(line); lineChangeMatch != nil {
+		if lineChangeMatch := lineChangeRegex.FindStringSubmatch(line); currentFile != nil && lineChangeMatch != nil {
 			startLineStr := ""
 			countStr := ""
 			for i, name := range lineChangeRegex.SubexpNames() {

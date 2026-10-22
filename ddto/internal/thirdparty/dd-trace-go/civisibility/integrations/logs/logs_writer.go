@@ -6,7 +6,9 @@
 package logs
 
 import (
+	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/net"
@@ -16,8 +18,13 @@ import (
 // Constants defining the payload size limits for agentless mode.
 const (
 	// agentlessPayloadMaxLimit is the maximum payload size allowed, indicating the
-	// maximum size of the package that the intake can receive.
-	agentlessPayloadMaxLimit = 50 * 1024 * 1024 // 5 MB
+	// maximum size of the package that the intake can receive: the logs
+	// intake rejects a request over 5 MB uncompressed.
+	agentlessPayloadMaxLimit = 5 * 1024 * 1024 // 5 MB
+
+	// agentlessPayloadMaxEntries is the most log entries that the intake
+	// accepts in one request.
+	agentlessPayloadMaxEntries = 1000
 
 	// agentlessPayloadSizeLimit specifies the maximum allowed size of the payload before
 	// it triggers a flush to the transport.
@@ -42,8 +49,15 @@ type logsWriter struct {
 // newLogsWriter creates a new instance of logsWriter.
 func newLogsWriter() *logsWriter {
 	log.Debug("logsWriter: creating logs writer instance")
+	// Without a client, as in agentless mode without an API key, which the
+	// client reports, there is no writer: sending would dereference nil.
+	client := net.NewClientForLogs()
+	if client == nil {
+		log.Debug("logsWriter: no logs client, logs are not sent")
+		return nil
+	}
 	writer := &logsWriter{
-		client:   net.NewClientForLogs(),
+		client:   client,
 		payload:  newLogsPayload(),
 		climit:   make(chan struct{}, concurrentConnectionLimit),
 		deferred: cidelivery.Enabled(),
@@ -54,23 +68,47 @@ func newLogsWriter() *logsWriter {
 }
 
 func (w *logsWriter) add(entry *logEntry) bool {
-	var payloadToFlush *logsPayload
+	var full, payloadToFlush *logsPayload
+
+	startTime := time.Now()
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		log.Error("logsWriter: Error encoding JSON: %s", err.Error())
+		return false
+	}
+	serialization := time.Since(startTime)
+	if 2+len(encoded) > agentlessPayloadMaxLimit {
+		// Even alone, as [entry], the intake would reject it.
+		log.Debug("logsWriter: a log entry of %d bytes exceeds the intake's limit of %d bytes; it is not sent", len(encoded), agentlessPayloadMaxLimit)
+		return false
+	}
 
 	w.mu.Lock()
 	if w.stopped {
 		w.mu.Unlock()
 		return false
 	}
-	if err := w.payload.push(entry); err != nil {
+	// An entry that would take the payload past the intake's limit starts the
+	// next one: a rejected request loses every entry in it.
+	if w.payload.size()+1+len(encoded) > agentlessPayloadMaxLimit {
+		full = w.rotateAndReserveLocked()
+	}
+	if err := w.payload.pushEncoded(encoded, serialization); err != nil {
 		log.Error("logsWriter: Error encoding JSON: %s", err.Error())
 		w.mu.Unlock()
+		if full != nil {
+			w.startUpload(full)
+		}
 		return false
 	}
-	if w.payload.size() > agentlessPayloadSizeLimit {
+	if w.payload.size() > agentlessPayloadSizeLimit || w.payload.itemCount() >= agentlessPayloadMaxEntries {
 		payloadToFlush = w.rotateAndReserveLocked()
 	}
 	w.mu.Unlock()
 
+	if full != nil {
+		w.startUpload(full)
+	}
 	if payloadToFlush != nil {
 		w.startUpload(payloadToFlush)
 	}

@@ -401,7 +401,7 @@ func instrumentTestingMWithOptions(m *testing.M, wrapperOpts additionalFeatureWr
 	ddm.instrumentInternalExamples(getInternalExampleArray(m), claim)
 
 	// Instrument the internal benchmarks for CI visibility.
-	for _, v := range os.Args {
+	for _, v := range benchmarkArgs(os.Args) {
 		// check if benchmarking is enabled to instrument
 		if strings.Contains(v, "-bench") || strings.Contains(v, "test.bench") {
 			ddm.instrumentInternalBenchmarks(getInternalBenchmarkArray(m), claim)
@@ -577,11 +577,11 @@ func (ddm *M) Run() (exitCode int) {
 		// native invocation two competing owners.
 		return m.Run()
 	}
+	defer func() { setTestingMExitCode(m, exitCode) }() // for a TestMain without os.Exit
 	if isProcessRetryChild() {
 		return runProcessRetryChild(m)
 	}
 
-	// Instrument testing.M
 	proceed, exitFn := instrumentTestingMWithOptions(m, processRetryDeferredWrapperOptions())
 	if !proceed {
 		return exitFn(processRetryFailureExitCode)
@@ -1056,9 +1056,24 @@ func (ddm *M) executeInternalBenchmark(benchmarkInfo *testingBInfo) func(*testin
 			test.SetTag(constants.TestIsNew, "true")
 		}
 
+		// Define a function to handle panic during benchmark finalization.
+		// Defined before the benchmark runs: its first run, and each later
+		// one, recover a panic with it before panicking again.
+		panicFunc := func(r any) {
+			// Without results, the event is still a benchmark's.
+			test.SetBenchmarkData("duration", nil)
+			test.SetError(integrations.WithErrorInfo("panic", fmt.Sprint(r), utils.GetStacktrace(1)))
+			suite.SetTag(ext.Error, true)
+			module.SetTag(ext.Error, true)
+			test.Close(integrations.ResultStatusFail)
+			checkModuleAndSuite(module, suite)
+			integrations.ExitCiVisibility()
+		}
+		recoverFunc := &panicFunc
+
 		// Run the original benchmark function.
 		var iPfOfB *benchmarkPrivateFields
-		var recoverFunc *func(r any)
+		var benchmarkMeta *testExecutionMetadata // for the skip reason that the skip hooks record
 		instrumentedFunc := func(b *testing.B) {
 			// Stop the timer to perform initialization and replacements.
 			b.StopTimer()
@@ -1087,7 +1102,7 @@ func (ddm *M) executeInternalBenchmark(benchmarkInfo *testingBInfo) func(*testin
 			if iPfOfB.benchFunc == nil {
 				panic("failed to get the original benchmark function")
 			}
-			*iPfOfB.benchFunc = benchmarkInfo.originalFunc
+			*iPfOfB.benchFunc = recoveringBenchmarkFunc(benchmarkInfo.originalFunc, panicFunc)
 
 			// Get the metadata regarding the execution (in case is already created from the additional features)
 			execMeta := getTestMetadata(b)
@@ -1099,11 +1114,13 @@ func (ddm *M) executeInternalBenchmark(benchmarkInfo *testingBInfo) func(*testin
 
 			// Sets the CI Visibility test
 			execMeta.test = test
+			benchmarkMeta = execMeta
 
-			// Restart the timer and execute the original benchmark function.
+			// Bind the context, outside the measurement, then restart the timer
+			// and execute the original benchmark function.
+			bindNativeTestContext(b, test)
 			b.ResetTimer()
 			b.StartTimer()
-			bindNativeTestContext(b, test)
 			benchmarkInfo.originalFunc(b)
 		}
 
@@ -1139,17 +1156,6 @@ func (ddm *M) executeInternalBenchmark(benchmarkInfo *testingBInfo) func(*testin
 			test.SetBenchmarkData("extra", mapConverted)
 		}
 
-		// Define a function to handle panic during benchmark finalization.
-		panicFunc := func(r any) {
-			test.SetError(integrations.WithErrorInfo("panic", fmt.Sprint(r), utils.GetStacktrace(1)))
-			suite.SetTag(ext.Error, true)
-			module.SetTag(ext.Error, true)
-			test.Close(integrations.ResultStatusFail)
-			checkModuleAndSuite(module, suite)
-			integrations.ExitCiVisibility()
-		}
-		recoverFunc = &panicFunc
-
 		// Normal finalization: determine the benchmark result based on its state.
 		if iPfOfB.B.Failed() {
 			test.SetTag(ext.Error, true)
@@ -1157,7 +1163,7 @@ func (ddm *M) executeInternalBenchmark(benchmarkInfo *testingBInfo) func(*testin
 			module.SetTag(ext.Error, true)
 			test.Close(integrations.ResultStatusFail, integrations.WithTestFinishTime(endTime))
 		} else if iPfOfB.B.Skipped() {
-			test.Close(integrations.ResultStatusSkip, integrations.WithTestFinishTime(endTime))
+			closeSkippedBenchmark(test, benchmarkMeta, endTime)
 		} else {
 			test.Close(integrations.ResultStatusPass, integrations.WithTestFinishTime(endTime))
 		}
@@ -1417,20 +1423,22 @@ func instrumentChattyPrinter(t *testing.T) {
 
 // collectAndWriteLogs collects logs from the chatty printer and the test output, and writes them to the test.
 func collectAndWriteLogs(t *testing.T, test integrations.Test, attemptOutput []byte) {
-	// Ensure any buffered partial line (Go 1.25+) is flushed before extracting the test output.
-	// This is a no-op on Go versions that don't have the output writer partial buffer.
-	flushOutputWriterPartial(t)
-
 	if !logs.IsEnabled() {
 		// If the logs integration is not enabled, we don't need to collect or write logs.
 		return
 	}
+
+	// Ensure any buffered partial line (Go 1.25+) is flushed before extracting the test output.
+	// This is a no-op on Go versions that don't have the output writer partial buffer.
+	// Only for logs: the flush ends a line that the test's cleanups can continue.
+	flushOutputWriterPartial(t)
 
 	if chatty != nil && chatty.w != nil && *chatty.w != nil {
 		if writer, ok := (*chatty.w).(*customWriter); ok {
 			chattyOutput := writer.TakeOutput(test.Name())
 			if len(attemptOutput) == 0 && len(chattyOutput) > 0 {
 				sc := bufio.NewScanner(bytes.NewReader(chattyOutput))
+				sc.Buffer(nil, len(chattyOutput)+1) // A longer line would end the scan.
 				for sc.Scan() {
 					test.Log(sc.Text(), "")
 				}
@@ -1448,6 +1456,7 @@ func collectAndWriteLogs(t *testing.T, test integrations.Test, attemptOutput []b
 	}
 	if len(attemptOutput) > 0 {
 		sc := bufio.NewScanner(bytes.NewReader(attemptOutput))
+		sc.Buffer(nil, len(attemptOutput)+1) // A longer line would end the scan.
 		for sc.Scan() {
 			test.Log(sc.Text(), "")
 		}
@@ -1466,4 +1475,14 @@ func collectAndWriteLogs(t *testing.T, test integrations.Test, attemptOutput []b
 func directTestFunc(testInfo *testingTInfo, instrumented, test func(*testing.T)) func(*testing.T) {
 	testInfo.directTestFunc = reflect.ValueOf(test).Pointer() == reflect.ValueOf(instrumented).Pointer()
 	return test
+}
+
+// setTestingMExitCode stores code in testing.M's exitCode, which M.Run sets
+// and Go's generated main returns after a TestMain that does not call
+// os.Exit, as testopt.RunM(m) alone: it then holds the result after retries.
+func setTestingMExitCode(m *testing.M, code int) {
+	field := reflect.ValueOf(m).Elem().FieldByName("exitCode")
+	if field.IsValid() && field.Kind() == reflect.Int && field.CanAddr() {
+		*(*int)(unsafe.Pointer(field.UnsafeAddr())) = code
+	}
 }

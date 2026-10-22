@@ -6,6 +6,7 @@
 package internal
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -35,15 +36,20 @@ var DefaultTraceAgentUDSPath = "/var/run/datadog/apm.socket"
 //   - Finally, localhost:8126
 func AgentURLFromEnv() *url.URL {
 	if agentURL := env.Get("DD_TRACE_AGENT_URL"); agentURL != "" {
+		// The URL may hold credentials: the warnings leave it out.
 		u, err := url.Parse(agentURL)
 		if err != nil {
+			var parseErr *url.Error
+			if errors.As(err, &parseErr) {
+				err = parseErr.Err
+			}
 			log.Warn("Failed to parse DD_TRACE_AGENT_URL: %s", err.Error())
 		} else {
 			switch u.Scheme {
 			case "unix", "http", "https":
 				return u
 			default:
-				log.Warn("Unsupported protocol %q in Agent URL %q. Must be one of: http, https, unix.", u.Scheme, agentURL)
+				log.Warn("Unsupported protocol %q in DD_TRACE_AGENT_URL. Must be one of: http, https, unix.", u.Scheme)
 			}
 		}
 	}

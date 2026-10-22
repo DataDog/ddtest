@@ -46,9 +46,37 @@ The log records:
   cannot reproduce how `go test` finds or starts it, `instrumentation bypass
   exec_program=unresolved`, `exec_program=unquotable` or `exec_helper=relative`
   follows the warning, and native `go test` runs.
+- The `work` package pattern, also in `-coverpkg` or a per-package flag such
+  as `-gcflags=work=…`, with a workspace that ddto provides: Mini is one of its
+  main modules, so `instrumentation bypass package_pattern=work` follows the
+  warning, and native `go test` runs.
+- Standard library tests, as `go test fmt`, `std` or `all` select them:
+  `instrumentation bypass stdlib_tests` follows the warning, and native
+  `go test` runs.
+- The tests of a package in the module cache, as `go test` of a downloaded
+  dependency's package selects them: go rejects overlay entries there, so
+  `instrumentation bypass module_cache_tests` follows the warning, and native
+  `go test` runs.
+- Outside a Go module, where ddto cannot provide its runtime:
+  `instrumentation bypass no_module` follows the warning, and native `go test`
+  runs, which reports what it cannot run there.
+- A workspace whose runtime ddto cannot resolve or provide, as offline with a
+  vendored one: `instrumentation bypass workspace_runtime_unavailable` follows
+  the warning, and native `go test` runs, which can still build it.
+- An `-overlay` that deletes the module's `go.mod`, after which go finds
+  another module root or none: `instrumentation bypass overlay_deletes_go_mod`
+  follows the warning, and native `go test` runs.
+- A module whose vendor directory go selects but that does not vendor the
+  runtime, including a vendor directory without `modules.txt` when `go.mod`
+  requires or replaces modules, which go rejects then, or when it holds Go
+  files, which a module before Go 1.23 can import:
+  `instrumentation bypass vendor_without_runtime` follows the warning, which
+  says how to vendor it, and native `go test` runs.
 - When go rejects the command or its environment while ddto prepares it, as
-  with `-p=0`, an unknown flag in `GOFLAGS`, or a missing `-C` directory or
-  `-modfile`, `instrumentation bypass go_rejected="<reason>"`, and native
+  with `-p=0`, an unknown flag in `GOFLAGS`, a missing `-C` directory or
+  `-modfile`, an `-overlay` file that go cannot read or parse, or a `go.sum`
+  without a checksum that the build needs,
+  `instrumentation bypass go_rejected="<reason>"`, and native
   `go test` runs and reports the error with its own exit status. ddto adds a
   warning only if that `go test` passes, which means the failure was ddto's.
 - With coverage, whether testing gets the in-memory per-test coverage hook:

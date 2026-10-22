@@ -285,7 +285,7 @@ func finalizeFreshRetryAttempt(attempt *retryAttemptRoot, resultCh chan<- retryA
 		}
 		result.cleanupObservation = retryAttemptCleanupObservation(attempt.cleanupObservation.Load())
 		result.parallelLeaseHeld = attempt.parallelLeaseTransfer.Load() && *fieldPtr[bool](base, layout.common.isParallel)
-		snapshotRetryAttemptResult(attempt, base, layout, &result)
+		snapshotPanickedRetryAttemptResult(attempt, base, layout, &result)
 		attempt.freezeGenerationFailure()
 		publishRetryAttemptResult(attempt, resultCh, result)
 		published = true
@@ -336,7 +336,7 @@ func finalizeFreshRetryAttempt(attempt *retryAttemptRoot, resultCh chan<- retryA
 	if attempt.group.observeOutput {
 		result.output = freezeRetryAttemptOutput(attempt, base, layout)
 	}
-	reportRetryAttempt(base, layout)
+	reportRetryAttempt(attempt, base, layout)
 	result.reportExecuted = true
 	*fieldPtr[bool](base, layout.common.done) = true
 	if !fieldPtr[atomic.Bool](base, layout.common.hasSub).Load() {
@@ -616,7 +616,7 @@ func flushRetryAttemptPartial(base unsafe.Pointer, layout *testingInternalsLayou
 	_, _ = (*testing.T)(base).Output().Write([]byte("\n"))
 }
 
-func reportRetryAttempt(base unsafe.Pointer, layout *testingInternalsLayout) {
+func reportRetryAttempt(attempt *retryAttemptRoot, base unsafe.Pointer, layout *testingInternalsLayout) {
 	parent := pointerWord(base, layout.common.parent)
 	if parent == nil || (layout.common.isSynctest.available && *fieldPtr[bool](base, layout.common.isSynctest)) {
 		return
@@ -632,7 +632,14 @@ func reportRetryAttempt(base unsafe.Pointer, layout *testingInternalsLayout) {
 	} else if skipped {
 		status = "SKIP"
 	}
-	if !failed && pointerWord(base, layout.common.chatty) == nil {
+	chatty := pointerWord(base, layout.common.chatty) != nil
+	if !failed && !chatty {
+		return
+	}
+	if !chatty && attempt != nil && attempt.original != nil {
+		// Without -v, testing prints a failed test's output with its result,
+		// which the original test reports; the attempt's parent never is.
+		reportRetryAttemptToOriginal(attempt.original, base, layout)
 		return
 	}
 
@@ -653,6 +660,30 @@ func reportRetryAttempt(base unsafe.Pointer, layout *testingInternalsLayout) {
 	}
 
 	_, _ = fmt.Fprintf(*fieldPtr[io.Writer](parent, layout.common.w), format, args...)
+}
+
+// reportRetryAttemptToOriginal moves a failed attempt's output, which its own
+// writer indented as the original test's would be, to the original test.
+func reportRetryAttemptToOriginal(original *testing.T, base unsafe.Pointer, layout *testingInternalsLayout) {
+	originalBase := commonBaseForTest(original, layout)
+	if originalBase == nil {
+		return
+	}
+	mu := fieldPtr[sync.RWMutex](base, layout.common.mu)
+	mu.Lock()
+	output := fieldPtr[[]byte](base, layout.common.output)
+	moved := append([]byte(nil), *output...)
+	*output = (*output)[:0]
+	mu.Unlock()
+	if len(moved) == 0 {
+		return
+	}
+	originalMu := fieldPtr[sync.RWMutex](originalBase, layout.common.mu)
+	originalMu.Lock()
+	originalOutput := fieldPtr[[]byte](originalBase, layout.common.output)
+	*originalOutput = append(*originalOutput, moved...)
+	originalMu.Unlock()
+	runtime.KeepAlive(original)
 }
 
 func freezeRetryAttemptOutput(attempt *retryAttemptRoot, base unsafe.Pointer, layout *testingInternalsLayout) []byte {
@@ -700,6 +731,35 @@ func snapshotRetryAttemptResult(attempt *retryAttemptRoot, base unsafe.Pointer, 
 	if result.failureCheckpointPhase == retryAttemptNotFailed && result.failed {
 		result.failureCheckpointPhase = retryAttemptFailurePostCheckpoint
 	}
+}
+
+// snapshotPanickedRetryAttemptResult snapshots an attempt that ended in a
+// panic, which skips the normal end: its active time counts, as testing counts
+// a panicking test's, and, without -v, its output goes to the original test,
+// which testing reports with the panic.
+func snapshotPanickedRetryAttemptResult(attempt *retryAttemptRoot, base unsafe.Pointer, layout *testingInternalsLayout, result *retryAttemptResult) {
+	addRetryAttemptElapsed(base, layout)
+	var output []byte
+	if pointerWord(base, layout.common.chatty) == nil && attempt != nil && attempt.original != nil {
+		mu := fieldPtr[sync.RWMutex](base, layout.common.mu)
+		mu.RLock()
+		output = append([]byte(nil), *fieldPtr[[]byte](base, layout.common.output)...)
+		mu.RUnlock()
+	}
+	snapshotRetryAttemptResult(attempt, base, layout, result)
+	if len(output) == 0 {
+		return
+	}
+	originalBase := commonBaseForTest(attempt.original, layout)
+	if originalBase == nil {
+		return
+	}
+	originalMu := fieldPtr[sync.RWMutex](originalBase, layout.common.mu)
+	originalMu.Lock()
+	originalOutput := fieldPtr[[]byte](originalBase, layout.common.output)
+	*originalOutput = append(*originalOutput, output...)
+	originalMu.Unlock()
+	runtime.KeepAlive(attempt.original)
 }
 
 func (r *retryAttemptRoot) testSignal() <-chan bool {

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 )
@@ -125,7 +126,9 @@ func lcovEffectiveEndLine(block *coverageBlock) int {
 // lcovSourceFilePath returns the repository-relative source path to emit in the
 // LCOV report, falling back through CI tags and the original profile path.
 func lcovSourceFilePath(profileFile string) string {
-	if fileName := lcovModuleSourceFilePath(profileFile); isLCOVRepositoryRelativePath(fileName) {
+	// A path resolved within the module is the repository's, even when its
+	// first directory has a dot, as api.v2.
+	if fileName := lcovModuleSourceFilePath(profileFile); isLCOVResolvedPath(fileName) {
 		return fileName
 	}
 	if resolved := cleanLCOVSourcePath(utils.ResolveSourceFilePathFromCITags(profileFile).RelativePath); isLCOVRepositoryRelativePath(resolved) {
@@ -141,7 +144,7 @@ func lcovSourceFilePath(profileFile string) string {
 // into repository-relative source paths when they belong to the current module.
 func lcovModuleSourceFilePath(profileFile string) string {
 	resolveModuleInfo()
-	moduleRepoPrefix := moduleRepositoryRelativePrefix(modulePath)
+	moduleRepoPrefix := lcovModuleRepositoryPrefix()
 	normalizedProfileFile := cleanLCOVSourcePath(profileFile)
 	normalizedModulePath := strings.TrimSuffix(cleanLCOVSourcePath(modulePath), "/")
 	if normalizedProfileFile != "" && normalizedModulePath != "" {
@@ -160,6 +163,41 @@ func lcovModuleSourceFilePath(profileFile string) string {
 	return cleanLCOVSourcePath(path.Join(moduleRepoPrefix, filepath.ToSlash(relPath)))
 }
 
+// lcovModuleRepositoryPrefix returns the module directory's path in the
+// repository: relative to the CI workspace when the module lies inside it, as
+// a nested module such as services/api does, or else what the module path's
+// major version suffix implies.
+func lcovModuleRepositoryPrefix() string {
+	if workspace := utils.GetCITagsReadOnly()[constants.CIWorkspacePath]; workspace != "" && moduleDir != "" {
+		if rel, err := filepath.Rel(workspace, moduleDir); err == nil && !filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return cleanLCOVSourcePath(filepath.ToSlash(rel))
+		}
+	}
+	return moduleRepositoryRelativePrefix(modulePath)
+}
+
+// moduleRepositoryFile returns the path in the repository of file, a source
+// path that starts with the current module's path, from the module's
+// directory in the CI workspace. A nested module's directory need not match
+// its path: github.com/acme/project/api can live in services/api. Without that
+// directory, or for another module's file, ok is false.
+func moduleRepositoryFile(file string) (string, bool) {
+	resolveModuleInfo()
+	workspace := utils.GetCITagsReadOnly()[constants.CIWorkspacePath]
+	if workspace == "" || moduleDir == "" || modulePath == "" {
+		return "", false
+	}
+	rel, err := filepath.Rel(workspace, moduleDir)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	suffix, ok := strings.CutPrefix(filepath.ToSlash(file), strings.TrimSuffix(modulePath, "/")+"/")
+	if !ok {
+		return "", false
+	}
+	return cleanLCOVSourcePath(path.Join(filepath.ToSlash(rel), suffix)), true
+}
+
 // cleanLCOVSourcePath normalizes path separators and removes empty or current
 // directory path values before they are written to the LCOV report.
 func cleanLCOVSourcePath(fileName string) string {
@@ -174,13 +212,18 @@ func cleanLCOVSourcePath(fileName string) string {
 	return strings.TrimPrefix(fileName, "./")
 }
 
-// isLCOVRepositoryRelativePath rejects absolute, parent-directory, and likely
-// module-cache paths so uploaded reports only reference repository files.
-func isLCOVRepositoryRelativePath(fileName string) bool {
+// isLCOVResolvedPath rejects absolute and parent-directory paths.
+func isLCOVResolvedPath(fileName string) bool {
 	if fileName == "" || path.IsAbs(fileName) || strings.Contains(fileName, ":") {
 		return false
 	}
-	if fileName == ".." || strings.HasPrefix(fileName, "../") {
+	return fileName != ".." && !strings.HasPrefix(fileName, "../")
+}
+
+// isLCOVRepositoryRelativePath rejects absolute, parent-directory, and likely
+// module-cache paths so uploaded reports only reference repository files.
+func isLCOVRepositoryRelativePath(fileName string) bool {
+	if !isLCOVResolvedPath(fileName) {
 		return false
 	}
 	firstSegment, _, hasSlash := strings.Cut(fileName, "/")

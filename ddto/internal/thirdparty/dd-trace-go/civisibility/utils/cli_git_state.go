@@ -303,6 +303,13 @@ func ResetHandedCLIGitStateForTesting() {
 	cliTests = nil
 }
 
+// CheckoutGitFolder returns the .git entry of the checkout that holds dir, as
+// a test process finds its own, or "" outside any.
+func CheckoutGitFolder(dir string) string {
+	folder, _ := getParentGitFolder(dir)
+	return folder
+}
+
 // SameCheckout reports whether dir lies in the checkout whose .git entry is
 // gitFolder, found as a test process finds its own.
 func SameCheckout(dir, gitFolder string) bool {

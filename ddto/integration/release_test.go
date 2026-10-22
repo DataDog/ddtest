@@ -179,6 +179,10 @@ func TestInstallScriptsInstallTheReleaseExecutable(t *testing.T) {
 			if out, stderr, code := command(t, root, testEnv(), installed, "--version"); code != 0 || out != "ddto "+releaseTag+"\n" {
 				t.Fatalf("installed --version: %d %q %s", code, out, stderr)
 			}
+			// The executable is copied beside its name and renamed over it.
+			if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
+				t.Fatalf("install directory holds %v, %v; want only ddto", entries, err)
+			}
 			// A script can write another spelling of the directory, such as
 			// Windows' long form of an 8.3 temporary path.
 			want, err := os.Stat(dir)

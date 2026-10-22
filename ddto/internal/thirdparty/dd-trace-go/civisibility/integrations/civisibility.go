@@ -51,6 +51,9 @@ type ciVisibilitySignalHandler struct {
 	done     chan struct{}  // closes when the handler goroutine exits
 	stopOnce sync.Once      // guarantees stop is signaled at most once
 	stopping atomic.Bool    // suppresses os.Exit when normal shutdown already started
+	// pending is a signal that arrived during the normal shutdown, which
+	// stopCIVisibilitySignalHandler sends again once that shutdown ends.
+	pending atomic.Pointer[os.Signal]
 }
 
 var (
@@ -218,13 +221,15 @@ func (handler *ciVisibilitySignalHandler) run() {
 			}
 		case sig := <-handler.signals:
 			if handler.stopping.Load() {
-				log.Debug("civisibility: signal %q arrived while CI Visibility was closing; the shutdown continues", sig)
+				log.Debug("civisibility: signal %q arrived while CI Visibility was closing; the process ends with it after the shutdown", sig)
+				handler.pending.Store(&sig)
 				return
 			}
 			log.Debug("civisibility: received signal %q, which no channel of the test handles and which ends the process: closing CI Visibility", sig)
 			exitCiVisibility(false)
 			if handler.stopping.Load() {
-				log.Debug("civisibility: a normal shutdown started during the shutdown for signal %q; leaving the process to it", sig)
+				log.Debug("civisibility: a normal shutdown started during the shutdown for signal %q; the process ends with the signal after it", sig)
+				handler.pending.Store(&sig)
 				return
 			}
 			// Without CI Visibility's channel, a signal that no other channel
@@ -324,6 +329,19 @@ func stopCIVisibilitySignalHandler() {
 		activeCIVisibilitySignalHandler = nil
 	}
 	ciVisibilitySignalHandlerMu.Unlock()
+	// A signal that would have ended the process during the shutdown ends it
+	// now, as under go test, instead of the test binary's exit status. One
+	// still queued when the handler stopped counts too.
+	if handler.pending.Load() == nil {
+		select {
+		case sig := <-handler.signals:
+			handler.pending.Store(&sig)
+		default:
+		}
+	}
+	if sig := handler.pending.Swap(nil); sig != nil {
+		ciVisibilitySignalExitFunc(*sig)
+	}
 }
 
 // initializeCiVisibilityLogs starts CI Visibility log shipping only when logs are enabled and Bazel offline/file modes do not suppress it.

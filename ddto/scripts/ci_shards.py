@@ -29,7 +29,7 @@ CONFIGURATIONS = (
     ("mini", "ubuntu-latest", "tip", "normal"),
 )
 SHARDS = {
-    "differential": ("units", "cli", "transparency", "parity", "testify", "fuzz", "orchestrion", "sdk", "sdk-orchestrion"),
+    "differential": ("units", "cli", "provision", "transparency", "parity", "testify", "fuzz", "orchestrion", "sdk", "sdk-orchestrion"),
     "mini": ("units", "native", "fuzz"),
 }
 TEST_NAME = re.compile(r"^(?:Test|Fuzz|Example)\w*$")

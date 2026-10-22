@@ -1151,6 +1151,11 @@ func (g *deferredProcessRetryGroup) applyCompletedAttempt(completed deferredProc
 		raceDetected:   attempt.Result.RaceDetected,
 		rootParallel:   attempt.Result.RootParallel,
 	}
+	if attempt.Result.RaceDetected && !g.terminalFailure {
+		// The race happened in the child, where this process's detector
+		// never saw it: an execution that passed must not pass the group.
+		g.terminalFailure, g.terminalFailureReason = true, "race detected in a retry"
+	}
 	if attempt.Result.Panic && !g.panicPresent {
 		g.panicPresent = true
 		g.panicMessage = attempt.Result.ErrorMessage
@@ -1270,7 +1275,8 @@ func (g *deferredProcessRetryGroup) packageFailed() bool {
 	if usesEfdRetrySemanticsSnapshot(&g.metadata) {
 		return !g.outcomes.anyPassed() && g.outcomes.anyFailed()
 	}
-	return g.latest.failed
+	// A last retry that skips passed nothing either.
+	return g.latest.failed || !g.outcomes.anyPassed() && g.outcomes.anyFailed()
 }
 
 func usesEfdRetrySemanticsSnapshot(snapshot *processRetryMetadataSnapshot) bool {

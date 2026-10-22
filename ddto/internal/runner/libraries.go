@@ -92,7 +92,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	if opts.workfile != "" {
 		cmd.Env = append(cmd.Environ(), "GOWORK="+opts.workfile)
 		if opts.workspaceGoFlags != nil {
-			cmd.Env = append(cmd.Env, "GOFLAGS="+*opts.workspaceGoFlags)
+			cmd.Env = append(cmd.Env, goFlagsEnv(*opts.workspaceGoFlags))
 		}
 	}
 	dependencies, err := readPackages(ctx, cmd, "resolve optional test-library dependencies")

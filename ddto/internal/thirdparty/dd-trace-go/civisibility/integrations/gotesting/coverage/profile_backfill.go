@@ -282,6 +282,12 @@ func backfillBitmapForProfileFile(profileFile string, backendCoverage map[string
 
 func coveragePathCandidates(profileFile string) []string {
 	resolveModuleInfo()
+	// A file of the module has one path in the repository: when the module's
+	// directory gives it, a missing backend entry must not match another
+	// file, such as handler.go at the root for services/api/handler.go.
+	if file, ok := moduleRepositoryFile(profileFile); ok {
+		return []string{file}
+	}
 	candidates := make([]string, 0, 4)
 	addCandidate := func(value string) {
 		value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
@@ -301,20 +307,23 @@ func coveragePathCandidates(profileFile string) []string {
 	addCandidate(profileFile)
 	resolved := utils.ResolveSourceFilePathFromCITags(profileFile)
 	addCandidate(resolved.RelativePath)
-	if modulePath != "" {
-		if suffix, ok := strings.CutPrefix(strings.ReplaceAll(profileFile, "\\", "/"), strings.TrimSuffix(modulePath, "/")+"/"); ok {
-			addCandidate(suffix)
-			if moduleRepoPrefix := moduleRepositoryRelativePrefix(modulePath); moduleRepoPrefix != "" {
-				addCandidate(moduleRepoPrefix + "/" + suffix)
-			}
-		}
-	}
+	// The module's directory gives a nested module's files their path in the
+	// repository; the path after the module path alone can name another file,
+	// such as handler.go at the repository root for services/api/handler.go.
 	if modulePath != "" && moduleDir != "" {
 		if suffix, ok := strings.CutPrefix(strings.ReplaceAll(profileFile, "\\", "/"), strings.TrimSuffix(modulePath, "/")); ok {
 			moduleFile := filepath.Join(moduleDir, filepath.FromSlash(strings.TrimPrefix(suffix, "/")))
 			addCandidate(moduleFile)
 			resolvedModuleFile := utils.ResolveSourceFilePathFromCITags(moduleFile)
 			addCandidate(resolvedModuleFile.RelativePath)
+		}
+	}
+	if modulePath != "" {
+		if suffix, ok := strings.CutPrefix(strings.ReplaceAll(profileFile, "\\", "/"), strings.TrimSuffix(modulePath, "/")+"/"); ok {
+			addCandidate(suffix)
+			if moduleRepoPrefix := moduleRepositoryRelativePrefix(modulePath); moduleRepoPrefix != "" {
+				addCandidate(moduleRepoPrefix + "/" + suffix)
+			}
 		}
 	}
 	if moduleDir != "" {
@@ -344,9 +353,21 @@ func moduleRepositoryRelativePrefix(module string) string {
 }
 
 func (p *orderedCoverProfile) writeAtomic(filename string) error {
+	// testing writes the profile through a symbolic link, with its own mode:
+	// the replacement keeps both.
+	if resolved, err := filepath.EvalSymlinks(filename); err == nil {
+		filename = resolved
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(filename), filepath.Base(filename)+".tmp.")
 	if err != nil {
 		return err
+	}
+	if info, err := os.Stat(filename); err == nil {
+		if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+			return err
+		}
 	}
 	tmpName := tmp.Name()
 	removeTmp := true

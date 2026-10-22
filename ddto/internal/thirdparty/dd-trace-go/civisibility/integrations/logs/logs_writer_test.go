@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -197,6 +198,7 @@ type logSendRecorder struct {
 	mu             sync.Mutex
 	release        <-chan struct{}
 	messagesByText map[string]int
+	sizes          [][2]int
 }
 
 func newLogSendRecorder(release <-chan struct{}) *logSendRecorder {
@@ -220,10 +222,18 @@ func (r *logSendRecorder) send(payload io.Reader) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.sizes = append(r.sizes, [2]int{len(entries), len(raw)})
 	for _, entry := range entries {
 		r.messagesByText[entry.Message]++
 	}
 	return nil
+}
+
+// requests returns the number of entries and the size of each request.
+func (r *logSendRecorder) requests() [][2]int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][2]int(nil), r.sizes...)
 }
 
 func (r *logSendRecorder) messages() map[string]int {
@@ -289,4 +299,89 @@ func (m *MockClient) GetTestManagementTests() (*net.TestManagementTestsResponseD
 
 func (m *MockClient) SendLogs(logsPayload io.Reader) error {
 	return m.SendLogsFunc(logsPayload)
+}
+
+// Agentless mode without an API key has no client: there is no writer, whose
+// sends would dereference nil and fail a passing test process.
+func TestLogsWriterWithoutClient(t *testing.T) {
+	t.Setenv("DD_CIVISIBILITY_AGENTLESS_ENABLED", "true")
+	t.Setenv("DD_API_KEY", "")
+	if writer := newLogsWriter(); writer != nil {
+		t.Fatalf("writer without a client: %+v", writer)
+	}
+}
+
+// Each request stays within the intake's limits, 1000 entries and 5 MB
+// uncompressed, and every entry is sent.
+func TestLogsWriterRespectsIntakeLimits(t *testing.T) {
+	writer := newLogsWriter()
+	recorder := newLogSendRecorder(nil)
+	writer.client = &MockClient{SendLogsFunc: recorder.send}
+	large := strings.Repeat("x", 8192)
+	expected := map[string]int{}
+	for i := range 2500 {
+		message := fmt.Sprintf("small-%d", i)
+		if i%3 == 0 {
+			message += large
+		}
+		if writer.add(&logEntry{Message: message}) {
+			expected[message]++
+		}
+	}
+	writer.stop()
+	for _, request := range recorder.requests() {
+		if request[0] > 1000 || request[1] > 5*1024*1024 {
+			t.Errorf("request with %d entries and %d bytes", request[0], request[1])
+		}
+	}
+	assert.Equal(t, expected, recorder.messages())
+}
+
+// An entry that would take the payload past the intake's limit, as an escaped
+// line of a few megabytes can, goes to the next request instead.
+func TestLogsWriterSendsLargeEntryInTheNextRequest(t *testing.T) {
+	writer := newLogsWriter()
+	recorder := newLogSendRecorder(nil)
+	writer.client = &MockClient{SendLogsFunc: recorder.send}
+	// json.Marshal writes each & as &, six bytes.
+	messages := []string{strings.Repeat("a", 2*1024*1024), strings.Repeat("&", 600*1024)}
+	for _, message := range messages {
+		if !writer.add(&logEntry{Message: message}) {
+			t.Fatal("entry not added")
+		}
+	}
+	writer.stop()
+	requests := recorder.requests()
+	if len(requests) != 2 {
+		t.Fatalf("%d requests; want one per entry", len(requests))
+	}
+	for _, request := range requests {
+		if request[0] != 1 || request[1] > 5*1024*1024 {
+			t.Errorf("request with %d entries and %d bytes", request[0], request[1])
+		}
+	}
+	assert.Equal(t, map[string]int{messages[0]: 1, messages[1]: 1}, recorder.messages())
+}
+
+// An entry that the intake would reject even alone is not sent, nor does it
+// end the payload of the entries around it.
+func TestLogsWriterDropsAnEntryOverTheLimit(t *testing.T) {
+	writer := newLogsWriter()
+	recorder := newLogSendRecorder(nil)
+	writer.client = &MockClient{SendLogsFunc: recorder.send}
+	if !writer.add(&logEntry{Message: "before"}) {
+		t.Fatal("entry not added")
+	}
+	// json.Marshal writes each & as \u0026, six bytes.
+	if writer.add(&logEntry{Message: strings.Repeat("&", 1024*1024)}) {
+		t.Fatal("an entry over the intake's limit was added")
+	}
+	if !writer.add(&logEntry{Message: "after"}) {
+		t.Fatal("entry not added")
+	}
+	writer.stop()
+	if requests := recorder.requests(); len(requests) != 1 || requests[0][0] != 2 {
+		t.Fatalf("requests %v; want one with both small entries", requests)
+	}
+	assert.Equal(t, map[string]int{"before": 1, "after": 1}, recorder.messages())
 }

@@ -127,6 +127,7 @@ func applyEnvironmentalDataIfRequired(tags map[string]string) {
 		return
 	}
 
+	// The URLs, as the other sources' (normalizeTags), lose their credentials.
 	logger.Debug("civisibility: applying environmental data")
 
 	if envData.WorkspacePath != "" && tags[constants.CIWorkspacePath] == "" {
@@ -134,7 +135,7 @@ func applyEnvironmentalDataIfRequired(tags map[string]string) {
 	}
 
 	if envData.RepositoryURL != "" && tags[constants.GitRepositoryURL] == "" {
-		tags[constants.GitRepositoryURL] = envData.RepositoryURL
+		tags[constants.GitRepositoryURL] = filterSensitiveInfo(envData.RepositoryURL)
 	}
 
 	if envData.CommitSHA != "" && tags[constants.GitCommitSHA] == "" {
@@ -186,7 +187,7 @@ func applyEnvironmentalDataIfRequired(tags map[string]string) {
 	}
 
 	if envData.CIPipelineURL != "" && tags[constants.CIPipelineURL] == "" {
-		tags[constants.CIPipelineURL] = envData.CIPipelineURL
+		tags[constants.CIPipelineURL] = filterSensitiveInfo(envData.CIPipelineURL)
 	}
 
 	if envData.CIPipelineName != "" && tags[constants.CIPipelineName] == "" {
@@ -210,7 +211,7 @@ func applyEnvironmentalDataIfRequired(tags map[string]string) {
 	}
 
 	if envData.CIJobURL != "" && tags[constants.CIJobURL] == "" {
-		tags[constants.CIJobURL] = envData.CIJobURL
+		tags[constants.CIJobURL] = filterSensitiveInfo(envData.CIJobURL)
 	}
 
 	if envData.CINodeName != "" && tags[constants.CINodeName] == "" {

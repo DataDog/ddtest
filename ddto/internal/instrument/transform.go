@@ -112,15 +112,19 @@ func transform(files map[string][]byte, fuzz, timeout bool) (TestingSources, err
 				} else {
 					edits = append(edits, edit{fs.Position(fn.Type.Results.Pos()).Offset, fs.Position(fn.Type.Results.End()).Offset, "(" + resultName + " int)"})
 				}
-				prefix = fmt.Sprintf(`__dd_ci_proceed, __dd_ci_exit := __dd_civisibility_instrumentTestingMWithControl(%s)
-if !__dd_ci_proceed { return __dd_ci_exit(1) }
+				// A TestMain that returns without os.Exit exits with
+				// m.exitCode, which Go's generated main reads: it gets the
+				// same status as M.Run's result.
+				prefix = fmt.Sprintf(`__dd_ci_proceed, __dd_ci_exit := __dd_civisibility_instrumentTestingMWithControl(%[1]s)
+if !__dd_ci_proceed { %[1]s.exitCode = __dd_ci_exit(1); return %[1]s.exitCode }
 defer func() {
  if __dd_ci_panic := recover(); __dd_ci_panic != nil {
   _ = __dd_ci_exit(__dd_civisibility_instrumentTestingMAbnormalExitCode())
   panic(__dd_ci_panic)
  }
- %s = __dd_ci_exit(%s)
-}()`, recv, resultName, resultName)
+ %[2]s = __dd_ci_exit(%[2]s)
+ %[1]s.exitCode = %[2]s
+}()`, recv, resultName)
 			case "T.Run":
 				f, err := arg(1)
 				if err != nil {

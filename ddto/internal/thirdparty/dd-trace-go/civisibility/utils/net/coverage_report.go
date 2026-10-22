@@ -68,7 +68,7 @@ func (c *client) SendCoverageReport(report io.Reader, format string) error {
 	log.Debug(
 		"civisibility.coverage_report: payload transport mode is http [format:%s url:%s report_bytes:%d compressed_report_bytes:%d]",
 		format,
-		c.getURLPath(coverageReportURLPath),
+		logURL(c.getURLPath(coverageReportURLPath)),
 		len(reportBytes),
 		len(compressedReport),
 	)

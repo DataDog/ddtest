@@ -18,10 +18,12 @@ import (
 //
 // TransformSignal edits process, the only place that delivers signals to
 // channels, to ask __dd_civisibility_signalWantedElsewhere about Mini's
-// channel. The answer uses handlers' state under the lock that process
-// already holds, so a channel that the test stops right after its delivery
-// still counts. Channels that Stop is removing still receive the signal, as
-// in process, and count too.
+// channel, in handlers.m and in handlers.stopping while Stop removes it. The
+// answer uses handlers' state under the lock that process already holds, so a
+// channel that the test stops right after its delivery still counts. Channels
+// that Stop is removing still receive the signal, as in process, and count
+// too. Mini's channel is known before Notify registers it and until Stop has
+// removed it.
 //
 // Reset removes a signal from every channel, Mini's included, and returns it
 // to its default action. TransformSignal gives Reset's cancel the action
@@ -50,9 +52,11 @@ var __dd_civisibility_signalNotify func(chan<- os.Signal, chan<- int, ...os.Sign
 var __dd_civisibility_signalStop func(chan<- os.Signal)
 
 // Mini's channel, the signals it holds and those that the process ignores
-// for good, all guarded by handlers' lock.
+// for good, all guarded by handlers' lock. While Stop removes Mini's channel,
+// it is __dd_civisibility_stopping instead, which Reset does not hold again.
 var (
 	__dd_civisibility_signals  chan<- os.Signal
+	__dd_civisibility_stopping chan<- os.Signal
 	__dd_civisibility_observed chan<- int // signals that reached other channels, for Mini's debug log
 	__dd_civisibility_wanted   [numSig]bool
 	__dd_civisibility_ignored  [numSig]bool
@@ -77,16 +81,20 @@ func init() {
 				wanted[n] = true
 			}
 		}
+		if len(keep) != 0 {
+			// Known before Notify registers c, so that a signal that arrives
+			// meanwhile reaches c only when no other channel wants it.
+			__dd_civisibility_signals, __dd_civisibility_observed, __dd_civisibility_wanted = c, observed, wanted
+		}
 		handlers.Unlock()
 		if len(keep) == 0 {
 			return nil
 		}
 		// Notify creates handlers.m and starts the signal loop, which
-		// __dd_civisibility_hold relies on once c is Mini's.
+		// __dd_civisibility_hold relies on.
 		Notify(c, keep...)
 		handlers.Lock()
-		__dd_civisibility_signals, __dd_civisibility_observed, __dd_civisibility_wanted = c, observed, wanted
-		// A Reset after Notify removed c without knowing it was Mini's.
+		// A Reset before Notify, without handlers.m, could not hold them.
 		for n := range wanted {
 			if wanted[n] {
 				__dd_civisibility_hold(n)
@@ -98,10 +106,16 @@ func init() {
 	__dd_civisibility_signalStop = func(c chan<- os.Signal) {
 		handlers.Lock()
 		if __dd_civisibility_signals == c {
-			__dd_civisibility_signals, __dd_civisibility_observed, __dd_civisibility_wanted = nil, nil, [numSig]bool{}
+			__dd_civisibility_signals, __dd_civisibility_stopping, __dd_civisibility_wanted = nil, c, [numSig]bool{}
 		}
 		handlers.Unlock()
+		// Stop can still deliver to c, from handlers.stopping.
 		Stop(c)
+		handlers.Lock()
+		if __dd_civisibility_stopping == c {
+			__dd_civisibility_stopping, __dd_civisibility_observed = nil, nil
+		}
+		handlers.Unlock()
 	}
 }
 
@@ -110,7 +124,7 @@ func init() {
 // Mini learns, without blocking, of a signal that arrived while other
 // channels were registered for it, whether or not their buffers took it.
 func __dd_civisibility_signalWantedElsewhere(c chan<- os.Signal, n int) bool {
-	if c != __dd_civisibility_signals {
+	if c != __dd_civisibility_signals && c != __dd_civisibility_stopping {
 		return false
 	}
 	elsewhere := false
@@ -134,7 +148,7 @@ func __dd_civisibility_signalWantedElsewhere(c chan<- os.Signal, n int) bool {
 // whether it did. The caller holds handlers' lock.
 func __dd_civisibility_hold(n int) bool {
 	c := __dd_civisibility_signals
-	if c == nil || n < 0 || n >= numSig || !__dd_civisibility_wanted[n] || __dd_civisibility_ignored[n] {
+	if c == nil || handlers.m == nil || n < 0 || n >= numSig || !__dd_civisibility_wanted[n] || __dd_civisibility_ignored[n] {
 		return false
 	}
 	h := handlers.m[c]
@@ -215,7 +229,7 @@ func TransformSignal(files map[string][]byte) (map[string][]byte, error) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	deliveries, cancels := 0, map[string]int{}
+	deliveries, cancels := map[string]int{}, map[string]int{}
 	output := map[string][]byte{}
 	for _, name := range names {
 		src := files[name]
@@ -241,7 +255,7 @@ func TransformSignal(files map[string][]byte) (map[string][]byte, error) {
 				for _, d := range processDeliveries(fn.Body) {
 					edits = append(edits, edit{fs.Position(d.call.Pos()).Offset, fs.Position(d.call.End()).Offset,
 						fmt.Sprintf("%s && !__dd_civisibility_signalWantedElsewhere(%s, %s)", text(d.call), d.channel, text(d.signal))})
-					deliveries++
+					deliveries[d.list]++
 				}
 			case "Reset", "Ignore":
 				native, hook := "disableSignal", "__dd_civisibility_resetSignal"
@@ -270,24 +284,28 @@ func TransformSignal(files map[string][]byte) (map[string][]byte, error) {
 		output[name] = buf.Bytes()
 	}
 	switch {
-	case deliveries != 1:
-		return nil, fmt.Errorf("os/signal's process delivers to handlers.m in %d places that TransformSignal recognizes, want 1", deliveries)
+	case deliveries["m"] != 1 || deliveries["stopping"] != 1:
+		return nil, fmt.Errorf("os/signal's process delivers to handlers.m in %d places and to handlers.stopping in %d that TransformSignal recognizes, want 1 each", deliveries["m"], deliveries["stopping"])
 	case cancels["Reset"] != 1 || cancels["Ignore"] != 1:
 		return nil, fmt.Errorf("os/signal declares %d Reset and %d Ignore functions that TransformSignal recognizes, want 1 each", cancels["Reset"], cancels["Ignore"])
 	}
 	return output, nil
 }
 
-// signalDelivery is process's check that a channel of handlers.m wants the
-// signal: the condition of "for c, h := range handlers.m { if h.want(n) {".
+// signalDelivery is process's check that a channel of handlers.m, or of
+// handlers.stopping, wants the signal: the condition of
+// "for c, h := range handlers.m { if h.want(n) {", or of
+// "for _, d := range handlers.stopping { if d.h.want(n) {".
 type signalDelivery struct {
 	call    *ast.CallExpr
 	channel string
 	signal  ast.Expr
+	// list is m or stopping.
+	list string
 }
 
 // processDeliveries returns the conditions that guard a delivery to a channel
-// of handlers.m in process's body.
+// of handlers.m or handlers.stopping in process's body.
 func processDeliveries(body *ast.BlockStmt) []signalDelivery {
 	var found []signalDelivery
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -296,17 +314,13 @@ func processDeliveries(body *ast.BlockStmt) []signalDelivery {
 			return true
 		}
 		over, ok := loop.X.(*ast.SelectorExpr)
-		if !ok || over.Sel.Name != "m" {
+		if !ok || over.Sel.Name != "m" && over.Sel.Name != "stopping" {
 			return true
 		}
 		if owner, ok := over.X.(*ast.Ident); !ok || owner.Name != "handlers" {
 			return true
 		}
-		channel, ok := loop.Key.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		handler, ok := loop.Value.(*ast.Ident)
+		value, ok := loop.Value.(*ast.Ident)
 		if !ok || len(loop.Body.List) == 0 {
 			return true
 		}
@@ -322,10 +336,28 @@ func processDeliveries(body *ast.BlockStmt) []signalDelivery {
 		if !ok || want.Sel.Name != "want" {
 			return true
 		}
-		if id, ok := want.X.(*ast.Ident); !ok || id.Name != handler.Name {
-			return true
+		var channel string
+		switch over.Sel.Name {
+		case "m":
+			key, ok := loop.Key.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if id, ok := want.X.(*ast.Ident); !ok || id.Name != value.Name {
+				return true
+			}
+			channel = key.Name
+		default:
+			field, ok := want.X.(*ast.SelectorExpr)
+			if !ok || field.Sel.Name != "h" {
+				return true
+			}
+			if id, ok := field.X.(*ast.Ident); !ok || id.Name != value.Name {
+				return true
+			}
+			channel = value.Name + ".c"
 		}
-		found = append(found, signalDelivery{call: call, channel: channel.Name, signal: call.Args[0]})
+		found = append(found, signalDelivery{call: call, channel: channel, signal: call.Args[0], list: over.Sel.Name})
 		return true
 	})
 	return found

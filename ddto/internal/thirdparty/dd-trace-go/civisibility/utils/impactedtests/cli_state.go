@@ -34,6 +34,13 @@ type CLIFile struct {
 // requests after the repository upload has ended.
 var cliStateWait = 30 * time.Second
 
+// impactedStateWait is how long a test process waits for the worker's
+// impacted tests: the worker computes them after fetching the base commit,
+// which ddto's --git-upload-timeout bounds, so no shorter than that.
+func impactedStateWait(record *utils.CLIGitRecord) time.Duration {
+	return max(cliStateWait, record.UploadWait())
+}
+
 // ComputeCLIState computes what NewImpactedTestAnalyzer computes with Git.
 func ComputeCLIState() CLIState {
 	analyzer, err := computeAnalyzer()
@@ -55,7 +62,7 @@ func handedAnalyzer() (*ImpactedTestAnalyzer, bool) {
 		return nil, false
 	}
 	var state CLIState
-	if err := utils.WaitCLIGitStateFile(dir, utils.CLIGitImpactedFile, &state, cliStateWait); err != nil {
+	if err := utils.WaitCLIGitStateFile(dir, utils.CLIGitImpactedFile, &state, impactedStateWait(record)); err != nil {
 		logger.Debug("civisibility.ImpactedTests: CLI state unavailable: %s", err.Error())
 		telemetry.Log(telemetry.NewRecord(telemetry.LogError, "civisibility: CLI impacted tests state unavailable"))
 		return nil, false

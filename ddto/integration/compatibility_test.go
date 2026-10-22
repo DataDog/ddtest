@@ -149,7 +149,12 @@ func commandWithTiming(t *testing.T, dir string, env []string, name string, args
 // runCommand reports start failures and timeouts as errors instead of through
 // testing.T, so independent builds can run in other goroutines.
 func runCommand(dir string, env []string, name string, args ...string) (string, string, int, time.Duration, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	return runCommandWithin(3*time.Minute, dir, env, name, args...)
+}
+
+// runCommandWithin is runCommand with another bound for the command.
+func runCommandWithin(timeout time.Duration, dir string, env []string, name string, args ...string) (string, string, int, time.Duration, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir

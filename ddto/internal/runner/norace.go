@@ -278,8 +278,9 @@ func (l *noraceLexer) signature() (body, ok bool) {
 // its tests still check it, and when client code imports Mini: memory that the
 // client passes to Mini's API, such as a pointer tag value, must stay checked
 // as under go test. A file that cannot be read or copied keeps its
-// instrumentation.
-func noraceOverlay(listed []goPackage, replacements map[string]string, temp string) int {
+// instrumentation, and so does Mini in moduleCache, GOMODCACHE, beneath which
+// Go rejects any overlay entry: the sources of a CLI that go install built.
+func noraceOverlay(listed []goPackage, replacements map[string]string, temp, moduleCache string) int {
 	for _, p := range listed {
 		if p.Module != nil && p.Module.Path == miniModule {
 			if !p.DepOnly && p.ImportPath != miniPackage {
@@ -299,6 +300,9 @@ func noraceOverlay(listed []goPackage, replacements map[string]string, temp stri
 	var sources []source
 	for i, p := range listed {
 		if p.Module == nil || p.Module.Path != miniModule || p.Error != nil {
+			continue
+		}
+		if moduleCache != "" && filePathHasPrefix(filepath.Clean(p.Dir), filepath.Clean(moduleCache)) {
 			continue
 		}
 		dir := filepath.Join(temp, "norace", strconv.Itoa(i))

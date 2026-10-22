@@ -8,6 +8,7 @@ package integrations
 import (
 	"io"
 	"testing"
+	"time"
 
 	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
@@ -449,4 +450,23 @@ func (m *mockCIVisibilityClient) GetTestManagementTests() (*civisibilitynet.Test
 
 func (m *mockCIVisibilityClient) SendLogs(_ io.Reader) error {
 	return nil
+}
+
+// Settings that require Git wait for ddto's upload as long as
+// --git-upload-timeout allows, and at least the SDK's minute.
+func TestRequireGitUploadWait(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		wait  time.Duration
+		want  time.Duration
+	}{
+		{"", 0, time.Minute},
+		{"", 5 * time.Minute, time.Minute},
+		{"/state", 2 * time.Minute, 2 * time.Minute},
+		{"/state", 10 * time.Second, time.Minute},
+	} {
+		if got := requireGitUploadWait(tc.state, tc.wait); got != tc.want {
+			t.Errorf("requireGitUploadWait(%q, %s) = %s, want %s", tc.state, tc.wait, got, tc.want)
+		}
+	}
 }

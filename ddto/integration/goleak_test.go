@@ -164,14 +164,25 @@ func TestParallelB(t *testing.T) {t.Parallel()}
 				{"ExampleGoleakClean", "", 0, true},
 				{"ExampleGoleakUserLeak", "", 0, true},
 				{"FuzzGoleakClean", "", 0, true},
+				// With Auto Test Retries or Early Flake Detection, each test
+				// runs in an attempt of its own while its caller waits.
+				{"Retry:Test(Clean|IgnoreCurrent|CallerOptions|ExternalHelper|InvalidOptions|AfterDelivery|ParallelA|ParallelB)", "", 0, false},
+				{"Retry:TestUserLeak", "TestUserLeak.func", 1, false},
+				{"EFD:Test(Clean|IgnoreCurrent|ExternalHelper|ParallelA|ParallelB)", "", 0, false},
 			} {
 				receiver := &parityReceiver{policy: policySettings{Coverage: true}, side: map[string][][]byte{}, requests: map[string]int{}}
 				if tc.managed {
 					receiver.policy.Quarantined = true
 					receiver.policy.ManagementTarget = tc.run
 				}
+				var feature []string
+				if run, ok := strings.CutPrefix(tc.run, "Retry:"); ok {
+					tc.run, receiver.policy.Retry, feature = run, true, []string{"DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true"}
+				} else if run, ok := strings.CutPrefix(tc.run, "EFD:"); ok {
+					tc.run, receiver.policy.EFD, feature = run, true, []string{"DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED=true"}
+				}
 				server := newServer(http.HandlerFunc(receiver.handler))
-				env := envForGoleak("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", "DD_CIVISIBILITY_CODE_COVERAGE_ENABLED=true", "DD_CIVISIBILITY_DEFERRED_DELIVERY="+deferred)
+				env := append(envForGoleak("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", "DD_CIVISIBILITY_CODE_COVERAGE_ENABLED=true", "DD_CIVISIBILITY_DEFERRED_DELIVERY="+deferred), feature...)
 				out, stderr, code := command(t, dir, env, bin, "-test.v", "-test.run=^"+tc.run+"$", "-test.timeout=20s")
 				server.Close()
 				if code != tc.want || tc.marker != "" && !strings.Contains(out+stderr, tc.marker) {

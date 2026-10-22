@@ -16,26 +16,13 @@ import (
 	"time"
 )
 
-// workspaceFile follows Go's workspace discovery without changing process-wide
-// environment. Each child command receives the task's temporary GOWORK value.
-func workspaceFile(dir string) string {
-	if work := os.Getenv("GOWORK"); work != "" && work != "auto" {
-		if work == "off" {
-			return ""
-		}
-		return work
+// workspaceFile returns the go.work file that go uses, as go env reports it:
+// GOWORK, also as go env -w saved it, or the file that go found, or "".
+func workspaceFile(environment *goEnvironment) string {
+	if environment == nil || environment.GOWORK == "off" {
+		return ""
 	}
-	for {
-		path := filepath.Join(dir, "go.work")
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return ""
-		}
-		dir = parent
-	}
+	return environment.GOWORK
 }
 
 type goDebugSetting struct{ Key, Value string }
@@ -158,7 +145,7 @@ func overlaySelectedModfile(source, root, temp string, data []byte, plan *Plan, 
 // useModuleWorkspaceFlags adapts the caller's module-mode flags, from both the
 // command line and GOFLAGS, for a temporary workspace.
 func useModuleWorkspaceFlags(opts *options, plan *Plan) error {
-	flags, err := splitFlags(os.Getenv("GOFLAGS"))
+	flags, err := splitFlags(callerGoFlags())
 	if err != nil {
 		return err
 	}
@@ -456,7 +443,7 @@ func selectedWorkspaceMini(ctx context.Context, dir, work, temp string, replacem
 	args = append(args, miniModule)
 	cmd := goCommand(ctx, dir, args...)
 	cmd.WaitDelay = 5 * time.Second
-	cmd.Env = append(cmd.Environ(), "GOWORK="+work, "GOFLAGS=")
+	cmd.Env = append(cmd.Environ(), "GOWORK="+work, goFlagsEnv(""))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -510,7 +497,7 @@ func workspaceReplacementRoot(ctx context.Context, dir, base, path, version stri
 	defer os.RemoveAll(scratch)
 	cmd := goCommand(ctx, scratch, "mod", "download", "-json", path+"@"+version)
 	cmd.WaitDelay = 5 * time.Second
-	cmd.Env = append(cmd.Environ(), "GOWORK=off", "GOFLAGS=")
+	cmd.Env = append(cmd.Environ(), "GOWORK=off", goFlagsEnv(""))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	phase := debugFromContext(ctx).start("go mod download")

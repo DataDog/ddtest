@@ -434,23 +434,19 @@ const (
 	processRetryFlagValue
 )
 
+// processRetryStripFlags are testing's flags that a retry child gets its own
+// values of. The test binary defines them with the test. prefix only, as go
+// test passes them: a name without it, as -args can pass -run, is the
+// package's own flag, which children keep.
 var processRetryStripFlags = map[string]processRetryFlagArity{
 	"-test.run":              processRetryFlagValue,
-	"-run":                   processRetryFlagValue,
 	"-test.count":            processRetryFlagValue,
-	"-count":                 processRetryFlagValue,
 	"-test.bench":            processRetryFlagValue,
-	"-bench":                 processRetryFlagValue,
 	"-test.list":             processRetryFlagValue,
-	"-list":                  processRetryFlagValue,
 	"-test.fuzz":             processRetryFlagValue,
-	"-fuzz":                  processRetryFlagValue,
 	"-test.skip":             processRetryFlagValue,
-	"-skip":                  processRetryFlagValue,
 	"-test.cpu":              processRetryFlagValue,
-	"-cpu":                   processRetryFlagValue,
 	"-test.timeout":          processRetryFlagValue,
-	"-timeout":               processRetryFlagValue,
 	"-test.testlogfile":      processRetryFlagValue,
 	"-test.gocoverdir":       processRetryFlagValue,
 	"-test.coverprofile":     processRetryFlagValue,
@@ -2675,9 +2671,22 @@ func processRetryArtifactPolicyFromArgs(originalArgs []string) (outputDir string
 			break
 		}
 		name, value, hasValue := processRetrySplitFlag(arg)
-		if arity, known := processRetryStripFlags[name]; known && arity == processRetryFlagValue && !hasValue && i+1 < len(originalArgs) {
+		arity, stripped := processRetryStripFlags[name]
+		if stripped && arity == processRetryFlagValue && !hasValue && i+1 < len(originalArgs) {
 			i++
 			value = originalArgs[i]
+		}
+		if !stripped && !hasValue {
+			// Another flag's separate value, as processRetryTimeoutFromArgs
+			// skips it.
+			registered := flag.CommandLine.Lookup(strings.TrimPrefix(name, "-"))
+			if registered == nil {
+				break
+			}
+			if boolFlag, isBool := registered.Value.(processRetryBoolFlag); !isBool || !boolFlag.IsBoolFlag() {
+				i++
+			}
+			continue
 		}
 		switch name {
 		case "-test.outputdir":
@@ -2716,7 +2725,7 @@ func processRetryTimeoutFromArgs(originalArgs []string) (time.Duration, bool) {
 				i++
 			}
 		}
-		if name != "-test.timeout" && name != "-timeout" {
+		if name != "-test.timeout" {
 			if stripped {
 				continue
 			}
@@ -2758,7 +2767,7 @@ func processRetryFilterArgs(originalArgs []string, buildArgs bool) (preserved []
 			boundary = append(boundary, originalArgs[i:]...)
 			return preserved, boundary, runSelector, skipSelector, true, ""
 		}
-		if name == "-test.shuffle" || name == "-shuffle" {
+		if name == "-test.shuffle" {
 			token := name + "=off"
 			if !hasValue {
 				if i+1 < len(originalArgs) {
@@ -2778,9 +2787,9 @@ func processRetryFilterArgs(originalArgs []string, buildArgs bool) (preserved []
 				}
 			}
 			switch name {
-			case "-test.run", "-run":
+			case "-test.run":
 				runSelector = value
-			case "-test.skip", "-skip":
+			case "-test.skip":
 				skipSelector = value
 			}
 			continue
@@ -3422,7 +3431,10 @@ func (o *processRetryChildObservation) buildResult(status processRetryStatus) pr
 		panicData = o.result.cleanupPanicData
 		panicStack = o.result.cleanupPanicStack
 	}
-	failed := o.result.failed || o.result.raceDetected || panicData != nil
+	// testing reports a race in a subtest for the subtest only; the child runs
+	// one test, so any race that its detector found is that test's.
+	raceDetected := o.result.raceDetected || o.subtree == nil && retryAttemptRaceErrors() > 0
+	failed := o.result.failed || raceDetected || panicData != nil
 	rootParallel := false
 	if o.group != nil {
 		o.group.mu.Lock()
@@ -3444,7 +3456,7 @@ func (o *processRetryChildObservation) buildResult(status processRetryStatus) pr
 		Failed:            failed,
 		Skipped:           o.result.skipped,
 		Panic:             panicData != nil,
-		RaceDetected:      o.result.raceDetected,
+		RaceDetected:      raceDetected,
 		RootParallel:      rootParallel,
 	}
 	if result.Failed {
@@ -3521,20 +3533,22 @@ func recordProcessRetryChildErrorInfo(tb testing.TB, errType, errMessage string,
 }
 
 // markProcessRetryChildFailed mirrors testing.common.Fail's parent-first failure
-// propagation without calling a woven testing method again.
+// propagation without calling a woven testing method again. testing's
+// common.Fail hook passes the failing test's *testing.common, which shares its
+// T's metadata and name; Fail itself then propagates the failure.
 func markProcessRetryChildFailed(tb testing.TB) {
-	t, ok := tb.(*testing.T)
-	if !ok {
-		return
-	}
-	current := getTestMetadata(t)
+	current := getTestMetadata(tb)
 	if execMeta := processRetryChildOwnerMetadata(current); execMeta != nil && execMeta.quarantinedRaceChild != nil &&
 		!processRetryChildFailureIsPropagated() && (current == nil || !current.processRetryManagedDescendant) {
 		moduleName, suiteName := "", ""
 		if current != nil && current.identity != nil {
 			moduleName, suiteName = current.identity.ModuleName, current.identity.SuiteName
 		}
-		execMeta.quarantinedRaceChild.markUnmaskedFailure(moduleName, suiteName, t.Name())
+		execMeta.quarantinedRaceChild.markUnmaskedFailure(moduleName, suiteName, tb.Name())
+	}
+	t, ok := tb.(*testing.T)
+	if !ok {
+		return
 	}
 	fields := getTestPrivateFields(t)
 	ancestry := make([]*commonPrivateFields, 0, 4)

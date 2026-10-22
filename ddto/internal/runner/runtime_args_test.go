@@ -78,6 +78,12 @@ func TestParseCLIArgsUploadTimeoutAndCIState(t *testing.T) {
 		{"file coverage", []string{"--experimental-file-coverage", "-count=1", "./..."}, []string{"-count=1", "./..."}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute, FileCoverage: true}},
 		{"context file coverage", []string{"-count=1", "--experimental-file-coverage=context", "./..."}, []string{"-count=1", "./..."}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute, FileCoverage: true, FileCoverageContext: true}},
 		{"test flag named like file coverage", []string{"-run", "--experimental-file-coverage", "."}, []string{"-run", "--experimental-file-coverage", "."}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute}},
+		// A positional argument after the packages and a flag starts the
+		// test binary's arguments, which go test passes on.
+		{"test binary arguments", []string{".", "-v", "operand", "--runtime=container"}, []string{".", "-v", "operand", "--runtime=container"}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute}},
+		{"several packages", []string{"./a", "./b", "--runtime=sdk", "-v"}, []string{"./a", "./b", "-v"}, CLIOptions{Runtime: SDK, GitUploadTimeout: time.Minute}},
+		{"flag value after the packages", []string{".", "-run", "TestX", "--panic-hook"}, []string{".", "-run", "TestX"}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute, PanicHook: true}},
+		{"ddto options among the packages", []string{"./a", "--runtime=mini", "./b", "--panic-hook"}, []string{"./a", "./b"}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute, PanicHook: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			options, got, err := ParseCLIArgs(tc.args)

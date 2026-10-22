@@ -239,6 +239,12 @@ func (s *itrState) actualSkipCount() int {
 }
 
 func finalizeITRCoverageBackfill() (float64, bool, bool) {
+	if coverage.ListingTests() {
+		// testing ran no test: the coverage of package initialization is not
+		// the session's.
+		log.Debug("civisibility.cov: no session coverage with -test.list")
+		return 0, false, false
+	}
 	state := currentITRState()
 	if !state.coverageActive || !state.coverageBackfillReady || state.response == nil {
 		log.Debug("civisibility.itr: coverage backfill finalization skipped [coverage_active:%t backfill_ready:%t response_available:%t reason:%s actual_skips:%d]",

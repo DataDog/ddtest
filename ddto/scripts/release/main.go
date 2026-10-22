@@ -92,11 +92,19 @@ func release(out string, platforms []string, tag string) error {
 	if err != nil {
 		return err
 	}
+	if err := absoluteTemporaryDirectories(); err != nil {
+		return err
+	}
 	temp, err := os.MkdirTemp("", "ddto-release-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(temp)
+	// A relative TMPDIR would name another directory for go commands that run
+	// elsewhere, as the wrapper's build does.
+	if temp, err = filepath.Abs(temp); err != nil {
+		return err
+	}
 	overlay := map[string]string{}
 	overrides := map[string][]byte{}
 	prefix := version.BuildLogPrefix
@@ -142,17 +150,42 @@ func release(out string, platforms []string, tag string) error {
 	return nil
 }
 
+// absoluteTemporaryDirectories makes a relative TMPDIR, TMP or TEMP absolute,
+// for this process and the go commands that it starts in other directories.
+func absoluteTemporaryDirectories() error {
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		if dir := os.Getenv(name); dir != "" && !filepath.IsAbs(dir) {
+			absolute, err := filepath.Abs(dir)
+			if err != nil {
+				return err
+			}
+			if err := os.Setenv(name, absolute); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // semver accepts vMAJOR.MINOR.PATCH with an optional prerelease, as Go module
-// versions do; build metadata is not a valid module version.
-var semver = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
+// versions do; build metadata is not a valid module version. A numeric
+// prerelease identifier has no leading zero, as SemVer requires and Go checks.
+var semver = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$`)
 
 var numberDeclaration = regexp.MustCompile(`(?m)^const Number = "[^"]*"`)
 
+// pseudoVersion is golang.org/x/mod/module's pseudo-version pattern.
+var pseudoVersion = regexp.MustCompile(`^v[0-9]+\.(0\.0-|\d+\.\d+-([^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
+
 // publishable rejects a tag that go install could not resolve: the module path
-// has no /vN suffix, so only v0 and v1 tags belong to it.
+// has no /vN suffix, so only v0 and v1 tags belong to it, and go reads a
+// pseudo-version's commit from its name instead of the tag.
 func publishable(tag string) error {
 	if !semver.MatchString(tag) {
 		return fmt.Errorf("version %q is not vMAJOR.MINOR.PATCH[-PRERELEASE]", tag)
+	}
+	if pseudoVersion.MatchString(tag) {
+		return fmt.Errorf("version %q is a Go pseudo-version, which names another commit", tag)
 	}
 	if !strings.HasPrefix(tag, "v0.") && !strings.HasPrefix(tag, "v1.") {
 		return fmt.Errorf("version %q needs the module path to end in /%s", tag, strings.SplitN(tag, ".", 2)[0])

@@ -2,8 +2,10 @@ package runner
 
 import (
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -53,7 +55,8 @@ func TestSpecialFlags(t *testing.T) {
 			t.Fatalf("%v: %q, %v", args, opts.chdir, err)
 		}
 	}
-	for _, args := range [][]string{{"-v", "-C", "sub"}, {"-tags"}, {"-cover=maybe"}} {
+	// An empty -C, as from an unset variable, is go's error: chdir "".
+	for _, args := range [][]string{{"-v", "-C", "sub"}, {"-tags"}, {"-cover=maybe"}, {"-C", "", "."}, {"-C=", "."}, {"--C=", "."}} {
 		if _, err := parseOptions(args, ""); err == nil {
 			t.Fatalf("%v accepted", args)
 		}
@@ -310,5 +313,30 @@ func TestLinksCachedResults(t *testing.T) {
 		if opts.linksCachedResults() != tc.want {
 			t.Errorf("go test %v with GOFLAGS=%q: linksCachedResults = %t, want %t", tc.args, tc.goflags, opts.linksCachedResults(), tc.want)
 		}
+	}
+}
+
+// -overlay paths resolve as cmd/go's fsys.abs resolves them, Windows paths
+// rooted without a volume included.
+func TestOverlayPathResolvesAsGo(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "client")
+	if got := overlayPath(dir, "value.go"); got != filepath.Join(dir, "value.go") {
+		t.Errorf("relative path: %s", got)
+	}
+	absolute := filepath.Join(t.TempDir(), "value.go")
+	if got := overlayPath(dir, absolute); got != absolute {
+		t.Errorf("absolute path: %s", got)
+	}
+	if runtime.GOOS == "windows" {
+		if got, want := overlayPath(dir, `\client\value.go`), filepath.VolumeName(dir)+`\client\value.go`; got != want {
+			t.Errorf("volume-relative path: %s; want %s", got, want)
+		}
+		// -C resolves the same way.
+		if got, want := workingDirectory(dir, options{chdir: `\repo`}), filepath.VolumeName(dir)+`\repo`; got != want {
+			t.Errorf("volume-relative -C: %s; want %s", got, want)
+		}
+	}
+	if got := workingDirectory(dir, options{chdir: "sub"}); got != filepath.Join(dir, "sub") {
+		t.Errorf("relative -C: %s", got)
 	}
 }

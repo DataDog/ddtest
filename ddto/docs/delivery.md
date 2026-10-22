@@ -77,7 +77,11 @@ batch instead of one per test.
 A checkpoint, deferred `Flush` or `Close` sends up to eight test-cycle payloads
 at once and finishes every request before it returns, so the next test starts
 with no CI delivery in flight. Payloads sent together can arrive in any order;
-each keeps its events in order.
+each keeps its events in order. Over TLS, to the Agentless intake or through an
+https proxy, they share one HTTP/2 connection per host, as the SDK client's
+requests do: a connection that each dialed would leave the dials that another
+request made unneeded finishing after the checkpoint, where TLS reads
+`time.Local`. Plain HTTP, as to a local Agent, keeps concurrent connections.
 
 Coverage counter snapshots bracket the initial attempt, including its user
 cleanups and descendants. The final snapshot runs in an early-registered
@@ -134,7 +138,9 @@ The minimum supported version is v1.3.0, the first with `IgnoreAnyFunction`;
 v2 needs a separate review. Preparation checks the selected version and entry
 signature before a warm cache can skip compilation. An unsupported version or
 entry produces a warning and the build continues without the integration; its
-leak checks can then report CI workers.
+leak checks can then report CI workers. The entry also ignores the test's own
+goroutine while an Auto Test Retries or Early Flake Detection attempt runs in
+another; a goroutine that the test starts is still reported.
 
 For a replacement with a different module path, the minimum-version check uses
 `go.uber.org/goleak`'s effective original version from `go list`, because a
