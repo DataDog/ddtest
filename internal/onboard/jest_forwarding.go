@@ -63,8 +63,11 @@ func ForwardJestExecution(root, command string) (TestCommand, error) {
 	count := 0
 	skippedLint := false
 	body, err := forwardJestScript(root, root, command, 0, &count, &skippedLint)
-	if err != nil || count != 1 {
-		return TestCommand{}, fmt.Errorf("cannot forward probe options through %q: %v (Jest invocations: %d); use --command with the actual Jest executable, original options and required setup", command, err, count)
+	if err == nil && count != 1 {
+		err = fmt.Errorf("found %d Jest invocations; exactly one is required", count)
+	}
+	if err != nil {
+		return TestCommand{}, fmt.Errorf("cannot forward probe options through %q: %v; use --command with the actual Jest executable, original options and required setup", command, err)
 	}
 	body = "PATH=" + shellquote.Join(filepath.Join(root, "node_modules", ".bin")) + ":\"$PATH\"; export PATH; " + body
 	return plan(shellquote.Join("sh", "-c", body, "ddtest-jest"), skippedLint), nil
