@@ -598,7 +598,8 @@ Use `ddtest testdrive --framework jest --all --yes` to validate every discovered
 ### Configuration execution and preparation
 
 A full controlled Jest testdrive exits 0 exactly when its JSON `success` is true;
-failed or incomplete validation exits 1. Build-tool exit codes remain in each
+failed or incomplete validation exits 1. Usage errors, such as invalid flags or
+`--all` with `--command`, also exit 1. Build-tool exit codes remain in each
 preparation result. Check-only exits 0 for `checks_passed: true`, without claiming
 execution success. A focused `--command` pass certifies that command; the repository
 summary can remain INCOMPLETE for other configurations. Default execution and
@@ -614,8 +615,10 @@ Preparation runs customer code. Bundlers marked for review, package build lifecy
 scripts and dependency changes require `--allow-reviewed-builds`; they may use the
 network. Missing tools are reported as `tool_not_installed`. Literal substitutions
 are applied by Go rather than system sed; regex/backreference patches require
-review. `--timeout` defaults to ten minutes per test/preparation command and kills
-its ordinary process group on expiry. Other frameworks retain their existing
+review. `--timeout` defaults to ten minutes per subprocess and kills its ordinary
+process group on expiry. The limit also applies to each full-suite run, baseline
+and reporting-only alike, so raise it for suites that take longer; the error names
+the command that hit the limit. Other frameworks retain their existing
 execution contract until their controlled adapter is added.
 
 Only preparation requires a copy. The preview estimates the logical bytes and

@@ -58,6 +58,10 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if language != "javascript" || framework != "jest" {
 		return commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, framework)}
 	}
+	// GitHub expands these before the shell runs; they are not shell syntax.
+	if expression := workflowExpression.FindString(step.Run); expression != "" {
+		return unresolvedCommand("unresolved CI workflow expression requires review: " + expression)
+	}
 	directory := stepDirectory(workflow, job, step)
 	shell := workflow.Defaults.Run.Shell
 	for _, defaults := range []runDefaults{job.Defaults.Run, {WorkingDirectory: step.WorkingDirectory, Shell: step.Shell}} {
@@ -245,6 +249,11 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		npmExec := words[0] == "npm"
 		if words[0] == "npx" || words[0] == "pnpx" {
 			words = words[1:]
+			// testdrive itself adds --no-install, so the executed command
+			// must still match the discovered CI configuration.
+			for len(words) > 0 && slices.Contains([]string{"--no-install", "--no", "--yes", "-y"}, words[0]) {
+				words = words[1:]
+			}
 		} else {
 			words = words[2:]
 		}

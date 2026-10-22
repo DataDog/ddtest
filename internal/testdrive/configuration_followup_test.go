@@ -133,3 +133,24 @@ func TestConfigurationGuardIncludesJestShortAliases(t *testing.T) {
 		require.ErrorContains(t, validateConfigurationFiles(root, root, args, nil), "outside checkout")
 	}
 }
+
+func TestNpxCIStepIsExercisedByDefaultAndCommandRuns(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"jest":"30.5.1"}}`)
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/ci.yml"), "jobs:\n  test:\n    steps:\n      - run: npx jest u.test.js\n")
+	scope, err := onboard.DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	// Default and --command runs execute the same step with testdrive's --no-install.
+	for _, executed := range []string{"npx --no-install jest u.test.js", "npx jest u.test.js"} {
+		result := completeValidationFixture("jest")
+		setSingleConfigurationScope(root, &result, scope, executed, nil)
+		require.Len(t, result.Configurations, 1)
+		require.Equal(t, "passed", result.Configurations[0].Status, executed)
+	}
+}
+
+func TestTracerDescriptionOmitsAMissingSource(t *testing.T) {
+	require.Equal(t, "not selected", tracerDescription(validationResult{Tracer: "not selected"}))
+	require.Equal(t, "dd-trace@5.132.0 · project", tracerDescription(validationResult{Tracer: "dd-trace@5.132.0", TracerSource: "project"}))
+}

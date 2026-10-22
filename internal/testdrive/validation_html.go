@@ -23,7 +23,7 @@ func htmlReportPath(root string) string {
 func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, run validationRun) error {
 	runtime := reportRuntime{
 		Environment: t.environmentInfo, SetupFailure: t.environmentFailure,
-		Framework: displayName(t.framework.Name()), Tracer: result.Tracer + " · " + result.TracerSource,
+		Framework: displayName(t.framework.Name()), Tracer: tracerDescription(*result),
 		Command: run.Command, Output: run.commandOutput,
 		TrafficDeleted: supportsValidationFramework(t.framework.Name()),
 	}

@@ -628,7 +628,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	if err != nil {
 		return result, err
 	}
-	runtime := reportRuntime{Environment: t.environmentInfo, SetupFailure: t.environmentFailure, Framework: displayName(t.framework.Name()), Tracer: result.Tracer + " · " + result.TracerSource, Command: execution.Command, Output: string(testOutput)}
+	runtime := reportRuntime{Environment: t.environmentInfo, SetupFailure: t.environmentFailure, Framework: displayName(t.framework.Name()), Tracer: tracerDescription(result), Command: execution.Command, Output: string(testOutput)}
 	if testErr != nil {
 		runtime.Error = testErr.Error()
 	}
@@ -679,7 +679,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		status = "No test results received"
 	}
 	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), status)
-	_, _ = fmt.Fprintf(output, "  Datadog library: %s · %s\n", result.Tracer, result.TracerSource)
+	_, _ = fmt.Fprintf(output, "  Datadog library: %s\n", tracerDescription(result))
 	_, _ = fmt.Fprintf(output, "  Command: %s\n", execution.Command)
 	result.Compatibility = verdict{Status: "inconclusive", Reason: "This framework has no compatibility adapter yet; telemetry alone does not validate behavior."}
 	result.Features = []featureResult{{Name: "all", Status: "unvalidated", Reason: "Controlled feature scenarios are not implemented for " + displayName(t.framework.Name()) + "."}}

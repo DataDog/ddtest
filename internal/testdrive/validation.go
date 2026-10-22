@@ -326,7 +326,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		}
 		_, _ = fmt.Fprintln(output, "Keep the earlier commands and feature results in retained_execution.result when reporting onboarding progress.")
 	}
-	_, _ = fmt.Fprintf(output, "Datadog library: %s · %s\nResults JSON: %s\n", result.Tracer, result.TracerSource, validationPath(""))
+	_, _ = fmt.Fprintf(output, "Datadog library: %s\nResults JSON: %s\n", tracerDescription(result), validationPath(""))
 	_, _ = fmt.Fprintln(output, "Keep this JSON report and the HTML findings report after cleanup, including when validation fails.")
 	if result.CheckOnly && result.ChecksPassed {
 		return nil
@@ -472,4 +472,12 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	}
 	applyScopeVerdict(result)
 
+}
+
+// Runs that stop before a tracer is selected have no source to show.
+func tracerDescription(result validationResult) string {
+	if result.TracerSource == "" {
+		return result.Tracer
+	}
+	return result.Tracer + " · " + result.TracerSource
 }

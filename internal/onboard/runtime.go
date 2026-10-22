@@ -7,17 +7,21 @@ package onboard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/Masterminds/semver/v3"
 	"github.com/kballard/go-shellquote"
 	"go.yaml.in/yaml/v3"
 	"mvdan.cc/sh/v3/syntax"
@@ -100,8 +104,58 @@ func CheckCIRuntimes(ctx context.Context, root string, frameworks ...string) Run
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	return checkCIRuntimes(ctx, root, setupNodeResolver(client), func(ctx context.Context, action, version string) (tracerRequirement, error) {
-		return resolveRequirement(ctx, client, action, version, platform.NewJavaScript().ResolveRegistryTracer)
+		value, err := cachedCIRequirement(action+"\n"+version, func() (tracerRequirement, error) {
+			return resolveRequirement(ctx, client, action, version, platform.NewJavaScript().ResolveRegistryTracer)
+		})
+		if err != nil {
+			if local, ok := installedTracerRequirement(root, version); ok {
+				return local, nil
+			}
+		}
+		return value, err
 	}, frameworks...)
+}
+
+type ciRequirementResult struct {
+	value tracerRequirement
+	err   error
+}
+
+// --all checks every configuration in its own copy. Remember lookups for the
+// whole invocation, failures included, so a registry outage costs one bounded
+// wait per CI selector rather than one per configuration.
+var ciRequirements sync.Map
+
+func cachedCIRequirement(key string, resolve func() (tracerRequirement, error)) (tracerRequirement, error) {
+	if cached, ok := ciRequirements.Load(key); ok {
+		result := cached.(ciRequirementResult)
+		return result.value, result.err
+	}
+	value, err := resolve()
+	ciRequirements.Store(key, ciRequirementResult{value, err})
+	return value, err
+}
+
+// An exact CI pin that matches the installed tracer needs no registry lookup:
+// the installed package declares the same Node requirement.
+func installedTracerRequirement(root, version string) (tracerRequirement, bool) {
+	if _, err := semver.StrictNewVersion(version); err != nil {
+		return tracerRequirement{}, false
+	}
+	data, err := os.ReadFile(filepath.Join(root, "node_modules", "dd-trace", "package.json"))
+	if err != nil {
+		return tracerRequirement{}, false
+	}
+	var manifest struct {
+		Version string `json:"version"`
+		Engines struct {
+			Node string `json:"node"`
+		} `json:"engines"`
+	}
+	if json.Unmarshal(data, &manifest) != nil || manifest.Version != version || manifest.Engines.Node == "" {
+		return tracerRequirement{}, false
+	}
+	return tracerRequirement{Version: version, Node: manifest.Engines.Node, Requested: version}, true
 }
 
 func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) RuntimeCheck {
@@ -177,7 +231,9 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 					rowResolutions[i] = resolveTestStep(root, workflow, job, resolved, "javascript", framework)
 					if rowResolutions[i].Review {
 						rowResolutions[i] = commandResolution{}
-					} else if resolveErr != nil {
+					} else if resolveErr != nil && (rowResolutions[i].Matched || rowResolutions[i].Reason != "") {
+						// Setup steps such as npm ci are not test commands, even
+						// when their environment holds a secret.
 						rowResolutions[i].Reason = resolveErr.Error()
 					}
 					rowCandidate = rowCandidate || rowResolutions[i].Matched || rowResolutions[i].Reason != ""
