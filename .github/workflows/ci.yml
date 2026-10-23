@@ -101,7 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
-      DDTO_VERSION: 44c7fd8ac54f75f4ea77db9fea97270a234b9d12
+      DDTO_VERSION: v0.3.0-rc.1
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
