@@ -270,6 +270,13 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 	}
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(observer) + " --require " + strconv.Quote(children)
 	env["DDTEST_CYPRESS_DIRECTORY"], env["DDTEST_CYPRESS_PROBE"], env["DDTEST_PROBE_MODE"] = directory, probePath, probeMode
+	// The observer moves paths into the original checkout into this copy and
+	// refuses configuration outside it, so its wrappers stay disposable.
+	env["DDTEST_CYPRESS_CHECKOUT"] = t.checkoutRoot()
+	if t.isolated {
+		env["DDTEST_CYPRESS_SOURCE_ROOT"] = t.configurationSourceRoot
+	}
+	defer func() { runErr = errors.Join(runErr, removeCypressWrappers(directory)) }()
 	owner, err := t.ownPlaywrightProcesses(directory, env)
 	if err != nil {
 		return run, err
@@ -460,4 +467,26 @@ func verifyCypressTelemetry(run validationRun) verdict {
 		}
 	}
 	return verifyJestTelemetry(view)
+}
+
+// removeCypressWrappers deletes the configuration wrappers the observer
+// generated for one run, wherever they were written.
+func removeCypressWrappers(directory string) error {
+	data, err := os.ReadFile(filepath.Join(directory, "wrappers"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var failed error
+	for _, wrapper := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if wrapper == "" || !strings.HasPrefix(filepath.Base(wrapper), "ddtest-observed-") {
+			continue
+		}
+		if err := os.Remove(wrapper); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failed = errors.Join(failed, err)
+		}
+	}
+	return failed
 }

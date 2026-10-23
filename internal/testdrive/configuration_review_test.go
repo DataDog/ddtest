@@ -205,8 +205,8 @@ func TestSnapshotPreservesUnrelatedLinksButBlocksEscapingConfiguration(t *testin
 	outside := t.TempDir()
 	requireWriteFile(t, filepath.Join(outside, "config.js"), "preserve")
 	require.NoError(t, os.Symlink(outside, filepath.Join(root, "external")))
-	require.NoError(t, validateConfigurationFiles(root, root, nil, []string{"jest.config.js"}))
-	require.ErrorContains(t, validateConfigurationFiles(root, root, []string{"--config", "external/config.js"}, nil), "outside checkout")
+	require.NoError(t, validateConfigurationFiles(root, root, nil, []string{"jest.config.js"}, nil))
+	require.ErrorContains(t, validateConfigurationFiles(root, root, []string{"--config", "external/config.js"}, nil, nil), "outside checkout")
 	require.NoError(t, os.Symlink(filepath.Join(outside, "config.js"), filepath.Join(root, "jest.config.js")))
-	require.ErrorContains(t, validateConfigurationFiles(root, root, nil, []string{"jest.config.js"}), "outside checkout")
+	require.ErrorContains(t, validateConfigurationFiles(root, root, nil, []string{"jest.config.js"}, nil), "outside checkout")
 }

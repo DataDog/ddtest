@@ -177,8 +177,25 @@ func TestConfigurationGuardIncludesJestShortAliases(t *testing.T) {
 	requireWriteFile(t, outside, "module.exports={}")
 	require.NoError(t, os.Symlink(outside, filepath.Join(root, "linked.js")))
 	for _, args := range [][]string{{"--config", "linked.js"}, {"--config=linked.js"}, {"-c", "linked.js"}, {"-c=linked.js"}, {"-clinked.js"}} {
-		require.ErrorContains(t, validateConfigurationFiles(root, root, args, nil), "outside checkout")
+		require.ErrorContains(t, validateConfigurationFiles(root, root, args, nil, nil), "outside checkout")
 	}
+}
+
+func TestCypressInlineConfigIsNotAConfigurationFile(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "cypress.config.js")
+	requireWriteFile(t, outside, "module.exports={}")
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "linked.config.js")))
+	cypress := frameworkFeaturePolicies["cypress"].configurationOptions()
+	for _, args := range [][]string{{"run", "--config", "retries=2"}, {"run", "--config=retries=2,video=false"}, {"run", "-c", "retries=2"}, {"run", "-cretries=2"}} {
+		require.NoError(t, validateConfigurationFiles(root, root, args, nil, cypress), args)
+	}
+	for _, args := range [][]string{{"run", "--config-file", "linked.config.js"}, {"run", "--config-file=linked.config.js"}, {"run", "-C", "linked.config.js"}, {"run", "-Clinked.config.js"}} {
+		require.ErrorContains(t, validateConfigurationFiles(root, root, args, nil, cypress), "outside checkout", args)
+	}
+	jest := frameworkFeaturePolicies["jest"].configurationOptions()
+	require.ErrorContains(t, validateConfigurationFiles(root, root, []string{"--config", "linked.config.js"}, nil, jest), "outside checkout")
+	require.NoError(t, validateConfigurationFiles(root, root, []string{"--config-file", "linked.config.js"}, nil, jest), "--config-file is not a Jest option")
 }
 
 func TestNpxCIStepIsExercisedByDefaultAndCommandRuns(t *testing.T) {

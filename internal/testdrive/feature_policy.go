@@ -17,13 +17,26 @@ type frameworkPolicy struct {
 	Paired, CheckOnly, ProbeRecovery, Preflight, Configurations bool
 	SourceCoverage, ProbeBodyCounts                             bool
 	ConfigurationFiles                                          []string
-	Features                                                    []featurePolicy
+	// Options whose value names a configuration file; nil means --config/-c.
+	ConfigurationOptions []string
+	Features             []featurePolicy
+}
+
+// configurationOptions returns the options whose value is a configuration
+// file path, as opposed to inline settings.
+func (p frameworkPolicy) configurationOptions() []string {
+	if len(p.ConfigurationOptions) > 0 {
+		return p.ConfigurationOptions
+	}
+	return []string{"--config", "-c"}
 }
 
 var frameworkFeaturePolicies = map[string]frameworkPolicy{
-	"cypress": {ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
-		{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "deferred", Reason: cypressTIADeferredReason}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
-	}},
+	"cypress": {ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true,
+		// Cypress --config/-c take inline settings such as retries=2.
+		ConfigurationOptions: []string{"--config-file", "-C"}, Features: []featurePolicy{
+			{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "deferred", Reason: cypressTIADeferredReason}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
+		}},
 	"playwright": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"},
 		{Name: "early-flake-detection", Status: "required"},

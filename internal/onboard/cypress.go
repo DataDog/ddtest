@@ -120,13 +120,13 @@ func resolveCypressOrchestration(root, directory string, words, stack []string, 
 	if err != nil || json.Unmarshal(data, &pkg) != nil {
 		return unresolvedCommand("Cannot read Cypress orchestration package.json")
 	}
-	var startup, test string
+	var startup, readiness, test string
 	switch words[0] {
 	case "start-test", "start-server-and-test":
 		if len(words) == 3 {
-			startup, test = "start", words[2]
+			startup, readiness, test = "start", words[1], words[2]
 		} else if len(words) == 4 {
-			startup, test = words[1], words[3]
+			startup, readiness, test = words[1], words[2], words[3]
 		} else {
 			return unresolvedCommand("Cypress server orchestration needs a literal start command, URL/port and test script")
 		}
@@ -154,6 +154,41 @@ func resolveCypressOrchestration(root, directory string, words, stack []string, 
 	}
 	result.SingleJest = false
 	result.Evidence = shellquote.Join(words...) + " -> " + result.Evidence
+	if len(stack) == 0 {
+		// A CI step runs the orchestration itself; replay its server startup and
+		// readiness for every run, as the action's start/wait-on inputs are.
+		// Inside a package alias the full alias already runs it.
+		return cypressOrchestrationPlan(root, directory, words, startup, readiness, result)
+	}
+	return result
+}
+
+// start-server-and-test's own default readiness timeout (WAIT_ON_TIMEOUT).
+const cypressOrchestrationWaitTimeout = 300
+
+func cypressOrchestrationPlan(root, directory string, words []string, startup, readiness string, result commandResolution) commandResolution {
+	var waitOn []string
+	if readiness != "" {
+		address := readiness
+		if port, err := strconv.Atoi(strings.TrimPrefix(address, ":")); err == nil && port > 0 && port < 65536 {
+			address = "http://127.0.0.1:" + strconv.Itoa(port)
+		}
+		if !strings.HasPrefix(address, "http://") && !strings.HasPrefix(address, "https://") || strings.Contains(address, "|") {
+			return unresolvedCommand("Cypress server orchestration readiness requires one HTTP(S) URL or port: " + readiness)
+		}
+		waitOn = []string{address}
+	}
+	entry := result.Tests[0]
+	executable, arguments, assignments, err := ParseValidationCommand(entry.Command)
+	if err != nil {
+		return unresolvedCommand(err.Error())
+	}
+	entry.Environment = mergeEnvironment(entry.Environment, assignments)
+	entry.Directory = repositoryPath(root, directory)
+	entry.Command = shellquote.Join(words...)
+	entry.Cypress = &CypressCommand{CLI: append([]string{executable}, arguments...), Start: [][]string{{"npm", "run", startup}}, WaitOn: waitOn, WaitTimeout: cypressOrchestrationWaitTimeout}
+	result.Tests = []TestCommand{entry}
+	result.Evidence = "Managed startup npm run " + startup + " -> " + result.Evidence
 	return result
 }
 

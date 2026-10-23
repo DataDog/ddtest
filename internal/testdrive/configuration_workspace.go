@@ -133,7 +133,8 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	// Resolve bare framework tools from this package, but never replace an explicit runtime.
 	t.command = t.configurationExecutable(t.command)
 	if t.framework != nil {
-		if err := validateConfigurationFiles(t.checkoutRoot(), t.repositoryRoot, t.args, frameworkFeaturePolicies[t.framework.Name()].ConfigurationFiles); err != nil {
+		policy := frameworkFeaturePolicies[t.framework.Name()]
+		if err := validateConfigurationFiles(t.checkoutRoot(), t.repositoryRoot, t.args, policy.ConfigurationFiles, policy.configurationOptions()); err != nil {
 			return result, err
 		}
 	}

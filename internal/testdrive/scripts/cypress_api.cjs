@@ -92,8 +92,11 @@ async function run () {
       return
     }
     const options = { ...plan.options, record: false, parallel: false }
-    const project = path.resolve(options.project || '.')
     const observe = require(path.join(directory, 'observer.cjs'))
+    const project = observe.checkoutPath(path.resolve(options.project || '.'), 'project')
+    if (typeof options.configFile === 'string' && options.configFile !== 'false') {
+      options.configFile = observe.checkoutPath(path.resolve(project, options.configFile), 'configuration file')
+    }
     options.configFile = observe(project, options.configFile, directory, process.env.DDTEST_CYPRESS_PROBE, options.component)
     options.project = project
     if (process.env.DDTEST_CYPRESS_PROBE) {

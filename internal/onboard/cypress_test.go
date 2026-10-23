@@ -149,3 +149,44 @@ func TestCypressLocalPlanKeepsApplicationFlagsButSeparatesCIInstallation(t *test
 	_, err = runtimeCondition("env.DD_API_KEY != ''", nil)
 	require.Error(t, err)
 }
+
+func TestCypressDirectServerOrchestrationReplaysItsStartup(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  e2e:\n    steps:\n      - run: npx start-server-and-test start http://localhost:3000 e2e\n")
+	writeScripts(t, root, map[string]string{"start": "node server.js", "e2e": "cypress run --browser electron", "race": "run-p --race start e2e", "local": "start-test 3000 e2e"})
+	for _, tc := range []struct {
+		run    string
+		waitOn []string
+	}{
+		{"npx start-server-and-test start http://localhost:3000 e2e", []string{"http://localhost:3000"}},
+		{"start-test 3000 e2e", []string{"http://127.0.0.1:3000"}},
+		{"npx start-server-and-test start :8080 e2e", []string{"http://127.0.0.1:8080"}},
+		{"run-p --race start e2e", nil},
+	} {
+		result := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: tc.run}, "javascript", "cypress")
+		require.Empty(t, result.Reason, tc.run)
+		require.Len(t, result.Tests, 1, tc.run)
+		plan := result.Tests[0].Cypress
+		require.NotNil(t, plan, "the step's own server startup must run, not only its Cypress command: %s", tc.run)
+		require.Equal(t, [][]string{{"npm", "run", "start"}}, plan.Start, tc.run)
+		require.Equal(t, tc.waitOn, plan.WaitOn, tc.run)
+		require.Equal(t, "cypress", plan.CLI[0], tc.run)
+		require.Equal(t, []string{"run", "--browser", "electron"}, plan.CLI[1:], tc.run)
+	}
+	entry, err := CypressExecutionCommand(root, "")
+	require.NoError(t, err)
+	require.NotNil(t, entry.Cypress, "default selection keeps the CI step's startup")
+	require.Equal(t, []string{"http://localhost:3000"}, entry.Cypress.WaitOn)
+
+	alias := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "npm run local"}, "javascript", "cypress")
+	require.Len(t, alias.Tests, 1)
+	require.Equal(t, "npm run local", alias.Tests[0].Command, "a package alias still runs the customer's own orchestration")
+	require.Nil(t, alias.Tests[0].Cypress)
+
+	for run, reason := range map[string]string{
+		"npx start-server-and-test start tcp:3000 e2e":                                   "readiness requires one HTTP(S) URL or port",
+		"npx start-server-and-test 'node server.js' http://localhost:3000 'cypress run'": "literal package scripts",
+	} {
+		result := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: run}, "javascript", "cypress")
+		require.Contains(t, result.Reason, reason, run)
+	}
+}

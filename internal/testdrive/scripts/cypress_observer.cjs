@@ -5,6 +5,35 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
+// Runs execute in a disposable copy of the checkout. A path into the original
+// checkout is moved into the copy, and nothing outside the checkout is wrapped,
+// so a generated wrapper never lands beside customer files.
+function checkoutPath (file, label) {
+  const checkout = process.env.DDTEST_CYPRESS_CHECKOUT
+  if (!checkout) return file
+  const real = candidate => {
+    try { return fs.realpathSync(candidate) } catch {}
+    try { return path.join(fs.realpathSync(path.dirname(candidate)), path.basename(candidate)) } catch { return candidate }
+  }
+  const within = (root, candidate) => {
+    const relative = path.relative(root, candidate)
+    return relative === '' || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative))
+  }
+  const source = process.env.DDTEST_CYPRESS_SOURCE_ROOT
+  if (source) {
+    for (const root of new Set([source, real(source)])) {
+      if (root !== checkout && within(root, file)) {
+        file = path.join(checkout, path.relative(root, file))
+        break
+      }
+    }
+  }
+  // Compare real paths: symlinks must not escape, and /var may be /private/var.
+  if (!within(real(checkout), real(file))) {
+    throw new Error('Cypress ' + label + ' resolves outside checkout; review ' + file)
+  }
+  return file
+}
 function createObservedConfig (project, requested, directory, probe, component) {
   if (component) throw new Error('Cypress component testing is not supported by ddtest')
   if (requested === 'false') throw new Error('Cypress validation requires the original configuration')
@@ -12,6 +41,7 @@ function createObservedConfig (project, requested, directory, probe, component) 
     ['cypress.config.ts', 'cypress.config.js', 'cypress.config.mjs', 'cypress.config.cjs']
       .map(file => path.join(project, file)).find(file => fs.existsSync(file))
   if (!original || !fs.existsSync(original)) throw new Error('Cypress configuration was not found')
+  checkoutPath(original, 'configuration file')
 
   let esm = path.extname(original) === '.mjs'
   if (path.extname(original) === '.js') {
@@ -66,6 +96,8 @@ function createObservedConfig (project, requested, directory, probe, component) 
   }
   const options = JSON.stringify({ directory, probe: !!probe, component, probeMode: process.env.DDTEST_PROBE_MODE })
   const body = 'const config = (' + attachObserver.toString() + ')(original, ' + options + ');\n'
+  // Record the wrapper before writing it, so ddtest removes it after the run.
+  fs.appendFileSync(path.join(directory, 'wrappers'), wrapper + '\n')
   fs.writeFileSync(wrapper, imported + body + (esm || extension === '.ts' ? '\nexport default config;\n' : '\nmodule.exports = config;\n'))
   return wrapper
 }
@@ -89,6 +121,7 @@ function clearRetryVariables (env) {
   }
 }
 module.exports = createObservedConfig
+module.exports.checkoutPath = checkoutPath
 module.exports.probeConfig = probeConfig
 module.exports.clearRetryVariables = clearRetryVariables
 
@@ -111,8 +144,9 @@ if (/[/\\](?:cypress[/\\]bin[/\\]cypress|\.bin[/\\]cypress)(?:\.js)?$/.test(cli)
     }
     return value
   }
-  const project = path.resolve(process.cwd(), take(['--project', '-P']) || '.')
-  const requested = take(['--config-file', '-C'])
+  const project = checkoutPath(path.resolve(process.cwd(), take(['--project', '-P']) || '.'), 'project')
+  let requested = take(['--config-file', '-C'])
+  if (requested && requested !== 'false') requested = checkoutPath(path.resolve(project, requested), 'configuration file')
   // Never contact Cypress Cloud from a local mock trial.
   take(['--group', '--ci-build-id', '--key', '-k', '--tag', '-t', '--auto-cancel-after-failures'])
   for (let i = args.length - 1; i >= 0; i--) {
