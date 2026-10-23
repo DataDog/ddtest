@@ -23,17 +23,23 @@ func htmlReportPath(root string) string {
 func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, run validationRun) error {
 	runtime := reportRuntime{
 		Environment: t.environmentInfo, SetupFailure: t.environmentFailure,
-		Framework: displayName(t.framework.Name()), Tracer: result.Tracer + " · " + result.TracerSource,
+		Framework: displayName(t.framework.Name()), Tracer: tracerDescription(*result),
 		Command: run.Command, Output: run.commandOutput,
 		TrafficDeleted: supportsValidationFramework(t.framework.Name()),
 	}
 	if run.commandError != nil {
 		runtime.Error = run.commandError.Error()
 	}
-	model := buildReport(t.repositoryRoot, run.Facts, run.ExitCode != 0, runtime)
+	model := buildReport(t.checkoutRoot(), run.Facts, run.ExitCode != 0, runtime)
 	model.ExecutionCounts = nativeExecutionCounts(run)
+	model.EvidenceRole, model.EvidenceName = run.Role, run.Name
 	if supportsValidationFramework(t.framework.Name()) {
 		writeRunFindings(output, run.Facts, false, model.Cards...)
+	}
+	if t.reportModels != nil {
+		*t.reportModels = append(*t.reportModels, model)
+		result.HTMLReportCurrent = true // The parent publishes all retained models, and propagates publication failure.
+		return nil
 	}
 	model.Artifacts = []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}
 	var content bytes.Buffer
@@ -45,13 +51,20 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 		return fmt.Errorf("save testdrive HTML report: %w", err)
 	}
 	result.HTMLReportCurrent = true
-	url, err := fileURL(path)
+	if err := writeHTMLReportLink(output, t.repositoryRoot); err != nil {
+		return err
+	}
+	if supportsValidationFramework(t.framework.Name()) {
+		_, _ = fmt.Fprintf(output, "This HTML shows instrumented suite findings. Compatibility, feature checks and the onboarding verdict are in %s.\n", validationPath(""))
+	}
+	return nil
+}
+
+func writeHTMLReportLink(output io.Writer, root string) error {
+	url, err := fileURL(htmlReportPath(root))
 	if err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(url, htmlReportPath("")))
-	if supportsValidationFramework(t.framework.Name()) {
-		_, _ = fmt.Fprintf(output, "This HTML shows instrumented suite findings. Compatibility, feature checks and the onboarding verdict are in %s.\n", validationPath(""))
-	}
 	return nil
 }

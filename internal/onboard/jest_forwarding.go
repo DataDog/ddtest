@@ -25,9 +25,10 @@ func ForwardJestCommand(root, command string) (string, error) {
 }
 
 func ForwardJestExecution(root, command string) (TestCommand, error) {
+	sourceCommand := command
 	resolution := resolveJestCommand(root, command, nil)
 	plan := func(command string, lint bool) TestCommand {
-		return TestCommand{Command: command, ProbeLintSkipped: lint, ReviewReason: resolution.Reason}
+		return TestCommand{Command: command, ScopeCommand: sourceCommand, ProbeLintSkipped: lint, ReviewReason: resolution.Reason}
 	}
 	if !resolution.Matched || resolution.Reason != "" {
 		return plan(command, false), nil // Explicit custom commands remain the caller's choice.

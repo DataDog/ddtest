@@ -11,11 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"html"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
@@ -237,4 +239,14 @@ func TestProbeRemovedWhenScenarioSetupFails(t *testing.T) {
 	data, err := os.ReadFile(source)
 	require.NoError(t, err)
 	require.Equal(t, "original test", string(data))
+}
+
+func TestTracerInstallationReceivesTheCommandTimeout(t *testing.T) {
+	run := preparedTestdrive(t)
+	run.commandTimeout = 42 * time.Second
+	installer := &fakeTracer{err: errors.New("registry unavailable")}
+	run.platform = installer
+	run.executor = &fakeTestdriveExecutor{}
+	require.Error(t, run.Run(t.Context(), io.Discard))
+	require.Equal(t, 42*time.Second, installer.options.Timeout)
 }

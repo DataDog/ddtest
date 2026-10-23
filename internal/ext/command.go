@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -36,6 +38,7 @@ func (n osSignalNotifier) Stop(c chan<- os.Signal) {
 }
 
 type DefaultCommandExecutor struct {
+	Timeout                time.Duration
 	signalNotifier         signalNotifier
 	terminationGracePeriod time.Duration
 }
@@ -92,16 +95,33 @@ func prepareCommand(cmd *exec.Cmd) {
 	cmd.WaitDelay = commandWaitDelay
 }
 
-func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, env map[string]string) ([]byte, error) {
+	return e.CombinedOutputInDirectory(ctx, "", name, args, env)
+}
+
+// CombinedOutputInDirectory preserves process-group cancellation for setup
+// commands without changing the calling process's working directory.
+func (e *DefaultCommandExecutor) CombinedOutputInDirectory(ctx context.Context, directory, name string, args []string, envMap map[string]string) ([]byte, error) {
+	parent := ctx
+	ctx, cancel := e.commandContext(ctx)
+	defer cancel()
 	// no-dd-sa:go-security/command-injection
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = directory
 	applyEnvMap(cmd, envMap)
 	prepareCommand(cmd)
 
-	return cmd.CombinedOutput()
+	data, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		err = e.contextError(parent, ctx, name)
+	}
+	return data, err
 }
 
 func (e *DefaultCommandExecutor) Output(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, []byte, error) {
+	parent := ctx
+	ctx, cancel := e.commandContext(ctx)
+	defer cancel()
 	// no-dd-sa:go-security/command-injection
 	cmd := exec.CommandContext(ctx, name, args...)
 	applyEnvMap(cmd, envMap)
@@ -112,10 +132,16 @@ func (e *DefaultCommandExecutor) Output(ctx context.Context, name string, args [
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		err = e.contextError(parent, ctx, name)
+	}
 	return stdout.Bytes(), stderr.Bytes(), err
 }
 
 func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []string, envMap map[string]string) error {
+	parent := ctx
+	ctx, cancel := e.commandContext(ctx)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -209,9 +235,27 @@ func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []st
 				forceTermination()
 			}
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return e.contextError(parent, ctx, name)
 			}
 			return err
 		}
 	}
+}
+
+// Name the command and the limit when testdrive's own per-command bound
+// stopped it; a caller's cancellation or deadline is returned unchanged.
+func (e *DefaultCommandExecutor) contextError(parent, ctx context.Context, name string) error {
+	if e.Timeout > 0 && parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%s exceeded the %s per-command limit; raise --timeout or fix the hanging command: %w", filepath.Base(name), e.Timeout, context.DeadlineExceeded)
+	}
+	return ctx.Err()
+}
+
+// A zero timeout preserves ordinary plan/run behavior. Testdrive sets a per-run
+// bound shared by test, preparation and service commands; parent deadlines win.
+func (e *DefaultCommandExecutor) commandContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if e.Timeout > 0 {
+		return context.WithTimeout(ctx, e.Timeout)
+	}
+	return ctx, func() {}
 }

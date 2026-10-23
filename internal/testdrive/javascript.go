@@ -11,8 +11,12 @@ import (
 )
 
 func javascriptEnvironment(ciInitPath string) map[string]string {
+	return javascriptEnvironmentWithOptions(ciInitPath, os.Getenv("NODE_OPTIONS"))
+}
+
+func javascriptEnvironmentWithOptions(ciInitPath, currentOptions string) map[string]string {
 	nodeOptions := "-r " + strconv.Quote(ciInitPath)
-	if current := stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS")); current != "" {
+	if current := stripDatadogNodeOptions(currentOptions); current != "" {
 		// Even an absolute tracer path can depend on the project's loader to
 		// resolve its dependencies.
 		nodeOptions = current + " " + nodeOptions
@@ -96,7 +100,7 @@ func supportsNodeRegister(version string) bool {
 }
 
 func (t *Testdrive) javascriptEnvironment(path string) map[string]string {
-	env := javascriptEnvironment(path)
+	env := javascriptEnvironmentWithOptions(path, t.nodeOptions())
 	// ESM instrumentation is needed by Vitest and by ESM test/config files.
 	version := ""
 	if t.nodeVersion != nil {

@@ -13,6 +13,7 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
+	ScopeCommand     string            `json:"-"` // Original invocation before adding a forwarding wrapper.
 	ProbeLintSkipped bool              `json:"probe_lint_skipped,omitempty"`
 	ReviewReason     string            `json:"review_reason,omitempty"`
 	Resolution       string            `json:"resolution,omitempty"`
@@ -27,9 +28,17 @@ type TestCommand struct {
 
 // BuildCommand is a statically resolved build preceding a test in the same
 // command chain. Discovery records preparation without executing it.
+type PreparationKind string
+
+const (
+	PreparationPatch        PreparationKind = "patch"
+	PreparationPackageBuild PreparationKind = "package-build"
+	PreparationDependencies PreparationKind = "dependencies"
+)
+
 type BuildCommand struct {
 	Environment map[string]string `json:"environment,omitempty"`
-	Kind        string            `json:"kind,omitempty"`
+	Kind        PreparationKind   `json:"kind,omitempty"`
 	Directory   string            `json:"directory"`
 	Command     string            `json:"command"`
 }
@@ -108,6 +117,10 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 					if conditionErr != nil && !resolution.Review {
 						pendingSetup = append(pendingSetup, conditionErr.Error())
 						resolution.Reason = joinDiagnostic(resolution.Reason, conditionErr.Error())
+					}
+					if envErr != nil && !resolution.Matched && len(resolution.Builds) == 0 && resolution.Reason == "" {
+						review = append(review, scopeDiagnostic{location, "Non-test setup environment requires separate review: " + envErr.Error()})
+						envErr = nil
 					}
 					if envErr != nil && !resolution.Review {
 						pendingSetup = append(pendingSetup, envErr.Error())

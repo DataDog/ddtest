@@ -123,6 +123,10 @@ type reportArtifact struct {
 }
 
 type reportModel struct {
+	EvidenceRole    runRole
+	EvidenceName    string
+	Configuration   string
+	Aggregated      bool
 	ExecutionCounts *executionCounts
 	NoTestEvents    bool
 	CoverageLevel   string

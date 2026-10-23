@@ -2,14 +2,18 @@ package testdrive
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
 type validationSummary struct {
-	Status          string   `json:"status"`
-	LocalValidation string   `json:"local_validation"`
-	CIConfiguration string   `json:"ci_configuration"`
-	BlockingChecks  []string `json:"blocking_checks"`
+	ConfigurationCoverage *configurationCoverage `json:"configuration_coverage,omitempty"`
+	ExecutedValidation    *executedValidation    `json:"executed_validation,omitempty"`
+	SelectedValidation    *verdict               `json:"selected_validation,omitempty"`
+	Status                string                 `json:"status"`
+	LocalValidation       string                 `json:"local_validation"`
+	CIConfiguration       string                 `json:"ci_configuration"`
+	BlockingChecks        []string               `json:"blocking_checks"`
 }
 
 func summarizeValidation(result validationResult) validationSummary {
@@ -38,6 +42,9 @@ func summarizeValidation(result validationResult) validationSummary {
 	if result.CheckOnly {
 		summary.BlockingChecks = append(summary.BlockingChecks, "configuration checks only; paired execution and features were not rerun")
 	} else {
+		if supportsValidationFramework(result.Framework) && !hasValidationPair(result) {
+			summary.BlockingChecks = append(summary.BlockingChecks, "current baseline and reporting-only execution evidence is missing")
+		}
 		if result.Compatibility.Status != "" && result.Compatibility.Status != "compatible" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility: "+result.Compatibility.Status)
 		}
@@ -63,6 +70,26 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	if result.CIRuntime != nil && result.CIRuntime.Status != "compatible" && result.CIRuntime.Status != "not applicable" {
 		summary.BlockingChecks = append(summary.BlockingChecks, "CI runtime: "+result.CIRuntime.Status)
+	}
+	if result.Scope != nil {
+		for _, reason := range result.Scope.Unresolved {
+			summary.BlockingChecks = append(summary.BlockingChecks, "unresolved CI scope: "+reason)
+		}
+		for _, configuration := range result.Configurations {
+			if configuration.Status != "passed" {
+				summary.BlockingChecks = append(summary.BlockingChecks, "configuration "+configuration.Command+": "+configuration.Status)
+			}
+		}
+	}
+	// Success is scoped to an explicitly selected command; the overall summary
+	// continues to expose every unvalidated repository configuration.
+	if result.Scope != nil && (len(result.Scope.Unresolved) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return c.Status != "passed" })) && summary.Status != "FAILED" {
+		summary.Status = "INCOMPLETE"
+	}
+	summary.ConfigurationCoverage, summary.ExecutedValidation = summarizeConfigurationCoverage(result)
+	if result.FocusedCommand {
+		check := selectedValidation(result)
+		summary.SelectedValidation = &check
 	}
 	return summary
 }

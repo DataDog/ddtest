@@ -242,7 +242,7 @@ func (t *Testdrive) runJestProjectFeatures(ctx context.Context, output io.Writer
 			value.Role = roleProbeControl
 		}
 		if d := value.Skipping; d != nil {
-			repoPath, repoErr := filepath.Rel(t.repositoryRoot, probePath)
+			repoPath, repoErr := filepath.Rel(t.checkoutRoot(), probePath)
 			projectPath, projectErr := filepath.Rel(check.Root, probePath)
 			if repoErr == nil && projectErr == nil {
 				d.RepositoryPath, d.ProjectPath = filepath.ToSlash(repoPath), filepath.ToSlash(projectPath)
@@ -449,6 +449,9 @@ func probeControlDiagnostic(runs ...validationRun) string {
 		}
 		if run.ResultError != "" {
 			return reportText(run.ResultError)
+		}
+		if telemetry := verifyJestTelemetry(run); telemetry.Status != "" {
+			return reportText(telemetry.Reason + " " + strings.Join(telemetry.Differences, "; "))
 		}
 		if run.Diagnostic != "" {
 			return reportText(run.Diagnostic)

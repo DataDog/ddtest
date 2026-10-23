@@ -92,6 +92,7 @@ type testCounts struct {
 
 type runSummary struct {
 	Role                            runRole             `json:"role"`
+	Configuration                   string              `json:"configuration,omitempty"`
 	NativeCounts                    *executionCounts    `json:"native_counts,omitempty"`
 	ProbeLintSkipped                bool                `json:"probe_lint_skipped,omitempty"`
 	Project                         string              `json:"project,omitempty"`
@@ -138,6 +139,8 @@ func (r validationRun) summary() runSummary {
 type validationResult struct {
 	TelemetryOnly      bool                     `json:"telemetry_only,omitempty"`
 	SchemaVersion      int                      `json:"schema_version"`
+	FocusedCommand     bool                     `json:"focused_command,omitempty"`
+	Configurations     []configurationResult    `json:"configurations,omitempty"`
 	ReportingCounts    *executionCounts         `json:"reporting_counts,omitempty"`
 	Scope              *onboard.ValidationScope `json:"scope,omitempty"`
 	Cleanup            *verdict                 `json:"cleanup,omitempty"`
@@ -296,6 +299,19 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		_, _ = fmt.Fprintf(output, "Feature %s: %s — %s\n", label, feature.Status, feature.Reason)
 	}
 	_, _ = fmt.Fprintf(output, "\nValidation verdict: %s\nLocal validation: %s\n", result.Summary.Status, result.Summary.LocalValidation)
+	if execution := result.Summary.ExecutedValidation; execution != nil {
+		_, _ = fmt.Fprintf(output, "Executed %s validations: %s — %s\n", displayName(result.Framework), execution.Status, execution.Reason)
+	}
+	if coverage := result.Summary.ConfigurationCoverage; coverage != nil {
+		if coverage.Discovered > 0 {
+			_, _ = fmt.Fprintf(output, "Configuration coverage: %d/%d validated; %d executed, %d paired, %d blocked, %d not exercised, %d incomplete.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete)
+		} else {
+			_, _ = fmt.Fprintln(output, "Configuration coverage: no matching CI configurations discovered; current command evidence is reported separately.")
+		}
+	}
+	if selected := result.Summary.SelectedValidation; selected != nil {
+		_, _ = fmt.Fprintf(output, "Selected %s testdrive: %s — %s\n", displayName(result.Framework), selected.Status, selected.Reason)
+	}
 	if len(result.Summary.BlockingChecks) > 0 {
 		_, _ = fmt.Fprintf(output, "Blocking checks: %s\n", strings.Join(result.Summary.BlockingChecks, "; "))
 	}
@@ -310,7 +326,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		}
 		_, _ = fmt.Fprintln(output, "Keep the earlier commands and feature results in retained_execution.result when reporting onboarding progress.")
 	}
-	_, _ = fmt.Fprintf(output, "Datadog library: %s · %s\nResults JSON: %s\n", result.Tracer, result.TracerSource, validationPath(""))
+	_, _ = fmt.Fprintf(output, "Datadog library: %s\nResults JSON: %s\n", tracerDescription(result), validationPath(""))
 	_, _ = fmt.Fprintln(output, "Keep this JSON report and the HTML findings report after cleanup, including when validation fails.")
 	if result.CheckOnly && result.ChecksPassed {
 		return nil
@@ -410,7 +426,7 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	if result.Scope != nil {
 		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved) == 0
 		for _, command := range result.Scope.Commands {
-			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0 && len(command.Prerequisites) == 0
+			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0 && (!result.CheckOnly || len(command.Prerequisites) == 0 || len(result.Configurations) > 0)
 		}
 	}
 	if result.CISelection != nil {
@@ -451,4 +467,17 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 		result.LocalSuccess = false
 	}
 
+	if !result.CheckOnly && supportsValidationFramework(result.Framework) {
+		result.Success = validationPassed(*result)
+	}
+	applyScopeVerdict(result)
+
+}
+
+// Runs that stop before a tracer is selected have no source to show.
+func tracerDescription(result validationResult) string {
+	if result.TracerSource == "" {
+		return result.Tracer
+	}
+	return result.Tracer + " · " + result.TracerSource
 }

@@ -14,12 +14,13 @@ type featurePolicy struct {
 }
 
 type frameworkPolicy struct {
-	Paired, CheckOnly, ProbeRecovery, Preflight bool
-	Features                                    []featurePolicy
+	Paired, CheckOnly, ProbeRecovery, Preflight, Configurations bool
+	ConfigurationFiles                                          []string
+	Features                                                    []featurePolicy
 }
 
 var frameworkFeaturePolicies = map[string]frameworkPolicy{
-	"jest": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Features: []featurePolicy{
+	"jest": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"jest.config.js", "jest.config.cjs", "jest.config.mjs", "jest.config.ts", "jest.config.cts", "jest.config.mts", "jest.config.json"}, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"},
 		{Name: "early-flake-detection", Status: "required"},
 		{Name: "skipping", Status: "required"},

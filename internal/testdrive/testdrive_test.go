@@ -536,11 +536,13 @@ func TestPrepareJestUsesCanonicalRepositoryRoot(t *testing.T) {
 	}
 	t.Chdir(alias)
 	t.Setenv("PWD", alias)
-	drive, err := Prepare(PrepareOptions{TracerVersion: "latest"})
-	require.NoError(t, err)
 	canonical, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
-	require.Equal(t, canonical, drive.repositoryRoot)
+	for _, all := range []bool{false, true} {
+		drive, err := Prepare(PrepareOptions{TracerVersion: "latest", All: all})
+		require.NoError(t, err)
+		require.Equal(t, canonical, drive.repositoryRoot)
+	}
 }
 
 func TestValidationFindingsDoNotPointAtDeletedTraffic(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 )
 
 func pairedReport(session, featureStatus string) validationResult {
-	result := validationResult{HTMLReportCurrent: true, Cleanup: &verdict{Status: "passed"}, Session: session, Framework: "jest", Tracer: "dd-trace@6.17.0",
+	result := validationResult{Preflight: &jestPreflight{Verdict: verdict{Status: "compatible"}}, HTMLReportCurrent: true, Cleanup: &verdict{Status: "passed"}, Session: session, Framework: "jest", Tracer: "dd-trace@6.17.0",
 		Compatibility: verdict{Status: "compatible"},
 		ProjectChecks: []projectProbeCheck{{Project: "Web", Discovered: true, Probe: "src/probe.test.js"}},
 		Features:      []featureResult{{Project: "Web", Name: "skipping", Status: featureStatus}},

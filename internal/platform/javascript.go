@@ -276,18 +276,18 @@ func isDirectJavaScriptCommand(script string, names ...string) bool {
 
 // DetectTracer validates the preload used by workers: an explicit NODE_OPTIONS
 // require, then DD_TRACE_PACKAGE, then the project-installed tracer.
-func (j *JavaScript) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
+func (j *JavaScript) DetectTracer(ctx context.Context, options TracerOptions) (string, error) {
 	// Preserve other project loaders, including Yarn PnP, while ensuring that
 	// the resolution probe itself never starts Test Optimization.
-	probeEnv := javascriptProbeEnv()
-	preload := nodeOptionsRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule)
+	probeEnv := tracerOptionEnvironment(options)
+	preload := nodeOptionsRequire(tracerOptionValue(options, nodeOptionsEnvVar), ddTraceCIInitModule)
 	if preload == "" {
-		preload = os.Getenv("DD_TRACE_PACKAGE")
+		preload = tracerOptionValue(options, "DD_TRACE_PACKAGE")
 	}
 	if preload == "" {
 		preload = ddTraceCIInitModule
 	}
-	path, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, preload}, probeEnv)
+	path, err := tracerProbe(ctx, j.executor, tracerOptionNode(options), []string{"-e", resolveJavaScriptModule, preload}, probeEnv)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve %s: %w", preload, err)
 	}
@@ -306,17 +306,22 @@ func (j *JavaScript) InstallTestdriveTracer(ctx context.Context, options TracerO
 	if err != nil {
 		return TracerInstallation{}, err
 	}
-	cleanEnvironment := map[string]string{"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}
+	executor := boundedExecutor(j.executor, options.Timeout)
+	cleanEnvironment := tracerOptionEnvironment(options)
+	if cleanEnvironment == nil {
+		cleanEnvironment = map[string]string{}
+	}
+	cleanEnvironment["NODE_OPTIONS"], cleanEnvironment["NPM_CONFIG_GLOBAL"], cleanEnvironment["npm_config_global"] = "", "false", "false"
 	path, err := j.DetectTracer(ctx, options)
 	if err == nil && path != "" {
 		return TracerInstallation{Path: path, Project: true}, nil
 	}
-	if output, err := j.executor.CombinedOutput(ctx, command, installArgs, cleanEnvironment); err != nil {
+	if output, err := executor.CombinedOutput(ctx, command, installArgs, cleanEnvironment); err != nil {
 		return TracerInstallation{}, runtimeTagProbeError("install "+installArgs[len(installArgs)-1], output, err)
 	}
 
 	ciInitModule := filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init")
-	ciInitPath, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
+	ciInitPath, err := tracerProbe(ctx, executor, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
 	if err != nil {
 		return TracerInstallation{}, fmt.Errorf("resolve dd-trace/ci/init: %w", err)
 	}
@@ -527,4 +532,32 @@ func nodeOptionsWithoutRequire(value, module string) string {
 
 func nodeOptionsWithoutImport(value, module string) string {
 	return withoutNodeOption(value, "--import", module)
+}
+
+// Configuration overrides, including explicit empty values, select the same
+// tracer for detection, preflight and installation as for the worker process.
+func tracerOptionValue(options TracerOptions, key string) string {
+	if value, exists := options.Environment[key]; exists {
+		return value
+	}
+	return os.Getenv(key)
+}
+func tracerOptionEnvironment(options TracerOptions) map[string]string {
+	if options.Environment == nil {
+		return javascriptProbeEnv()
+	}
+	result := map[string]string{}
+	for key, value := range options.Environment {
+		result[key] = value
+	}
+	current := tracerOptionValue(options, nodeOptionsEnvVar)
+	result[nodeOptionsEnvVar] = nodeOptionsWithoutImport(nodeOptionsWithoutRequire(current, ddTraceCIInitModule), ddTraceRegisterModule)
+	result["DD_TRACE_ENABLED"], result["DD_CIVISIBILITY_ENABLED"] = "false", "false"
+	return result
+}
+func tracerOptionNode(options TracerOptions) string {
+	if name := filepath.Base(options.Command); name == "node" || name == "node.exe" {
+		return options.Command
+	}
+	return "node"
 }

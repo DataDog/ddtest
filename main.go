@@ -37,6 +37,10 @@ func run(execute func() error) int {
 
 	if err := execute(); err != nil {
 		// Cobra has already printed the error.
+		var coded interface{ ExitCode() int }
+		if errors.As(err, &coded) && coded.ExitCode() > 0 {
+			return coded.ExitCode()
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {

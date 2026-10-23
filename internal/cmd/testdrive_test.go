@@ -163,10 +163,13 @@ func TestCheckOnlyPreviewRequiresConfirmationAndExposesOnlyCurrentFlags(t *testi
 	if _, err := os.Stat(".testoptimization"); !os.IsNotExist(err) {
 		t.Fatalf("preview wrote artifacts: %v", err)
 	}
+	if command.Flags().Lookup("all") == nil {
+		t.Fatal("missing --all")
+	}
 	if command.Flags().Lookup("check-only") == nil {
 		t.Fatal("missing --check-only")
 	}
-	for _, name := range []string{"all", "agent", "format", "report", "detail", "resume", "facts"} {
+	for _, name := range []string{"agent", "format", "report", "detail", "resume", "facts"} {
 		if command.Flags().Lookup(name) != nil {
 			t.Fatalf("premature flag: --%s", name)
 		}
@@ -203,5 +206,14 @@ func TestTestdriveHelpUsesRegisteredFrameworkNames(t *testing.T) {
 	names := testdrive.ValidationFrameworkNames()
 	if !strings.Contains(command.Long, names) || !strings.Contains(command.Flags().Lookup("check-only").Usage, names) {
 		t.Fatalf("help must use registered validation frameworks: %s", names)
+	}
+}
+
+func TestTestdrivePreparationFlagsRemainRegistered(t *testing.T) {
+	command := newTestdriveCommand()
+	for _, name := range []string{"all", "check-only", "timeout", "allow-reviewed-builds"} {
+		if command.Flags().Lookup(name) == nil {
+			t.Errorf("missing preparation flag %s", name)
+		}
 	}
 }

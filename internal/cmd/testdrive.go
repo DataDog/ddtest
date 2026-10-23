@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive"
 	"github.com/kballard/go-shellquote"
@@ -35,11 +36,17 @@ func newTestdriveCommand() *cobra.Command {
 	}
 	var version string
 	var checkOnly bool
+	var all bool
+	var allowReviewedBuilds bool
+	var timeout time.Duration
+	command.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "Maximum duration of each subprocess, including each full test-suite run")
+	command.Flags().BoolVar(&allowReviewedBuilds, "allow-reviewed-builds", false, "Allow reviewed bundlers, package build lifecycle scripts and dependency changes in isolated copies (may use the network)")
+	command.Flags().BoolVar(&all, "all", false, "Validate every discovered "+testdrive.ValidationFrameworkNames()+" CI configuration, preserving environment and known build prerequisites")
 	command.Flags().BoolVar(&checkOnly, "check-only", false, "Check "+testdrive.ValidationFrameworkNames()+" configuration, tracer selection and static CI runtimes without installing a tracer or running tests")
 	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, CheckOnly: checkOnly})
+		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, CheckOnly: checkOnly, All: all, Timeout: timeout, AllowReviewedBuilds: allowReviewedBuilds})
 		if err != nil {
 			return err
 		}

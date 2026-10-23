@@ -108,7 +108,7 @@ func joinDiagnostic(a, b string) string {
 	if a == "" {
 		return b
 	}
-	if b == "" {
+	if b == "" || strings.Contains(a, b) {
 		return a
 	}
 	return a + "; " + b

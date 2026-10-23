@@ -93,7 +93,7 @@ func selectJestCommand(root string, forward bool) (TestCommand, error) {
 						if err != nil {
 							return TestCommand{}, err
 						}
-						entry.Environment = mergeEnvironment(map[string]string{"CI": "true", "GITHUB_ACTIONS": "true"}, mergeEnvironment(env, entry.Environment))
+						entry.Environment = WithGitHubActionsDefaults(mergeEnvironment(env, entry.Environment))
 						// CI explicitly clearing/preloading NODE_OPTIONS must not inherit local flags.
 						for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 							if _, exists := layer["NODE_OPTIONS"]; exists {
@@ -114,6 +114,11 @@ func selectJestCommand(root string, forward bool) (TestCommand, error) {
 					}
 					var assignments []string
 					for _, key := range slices.Sorted(maps.Keys(env)) {
+						// An empty NODE_OPTIONS means CI only preloaded the tracer,
+						// which testdrive supplies itself.
+						if key == "NODE_OPTIONS" && env[key] == "" {
+							continue
+						}
 						assignments = append(assignments, key+"="+env[key])
 					}
 					if len(assignments) > 0 {

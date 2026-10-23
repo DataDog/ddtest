@@ -153,7 +153,8 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 	run.framework = "jest"
 	run.Instrumented = instrumented
 	run.ProbeMode = probeMode
-	run.root, run.checkoutRoot = t.repositoryRoot, t.checkoutRoot
+	run.root = t.checkoutRoot()
+	run.checkoutRoot = run.root
 	if err := ctx.Err(); err != nil {
 		return run, err
 	}
@@ -179,7 +180,7 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 	}
 	configureScenarioEnvironment(env, scenario.Feature)
 	if !instrumented {
-		env["NODE_OPTIONS"] = stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS"))
+		env["NODE_OPTIONS"] = stripDatadogNodeOptions(t.nodeOptions())
 		env["DD_CIVISIBILITY_ENABLED"] = "false"
 		env["DD_TRACE_ENABLED"] = "false"
 	}
