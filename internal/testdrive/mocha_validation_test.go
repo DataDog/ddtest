@@ -320,20 +320,27 @@ func TestMochaNestedGuardDisablesTracingOnlyForNestedCLIs(t *testing.T) {
 	directory := t.TempDir()
 	guard := filepath.Join(directory, "guard.cjs")
 	requireWriteFile(t, guard, mochaNestedGuard)
-	print := "console.log(process.env.DD_TRACE_ENABLED + ' ' + process.env.DD_CIVISIBILITY_ENABLED)\n"
-	for _, name := range []string{"mocha.js", "worker.js"} {
-		requireWriteFile(t, filepath.Join(directory, name), print)
+	print := "console.log([process.env.DD_TRACE_ENABLED, process.env.DD_CIVISIBILITY_ENABLED, process.env.DD_TRACE_DISABLED_PLUGINS || '-', process.env.DD_TRACE_DISABLED_INSTRUMENTATIONS || '-'].join(' '))\n"
+	worker := filepath.Join(directory, "node_modules", "mocha", "lib", "nodejs", "worker.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(worker), 0700))
+	for _, file := range []string{filepath.Join(directory, "mocha.js"), filepath.Join(directory, "runner.cjs"), worker} {
+		requireWriteFile(t, file, print)
 	}
-	run := func(entry, owner string) string {
-		cmd := exec.CommandContext(t.Context(), node, "--require", guard, filepath.Join(directory, entry))
-		cmd.Env = append(os.Environ(), "DD_TRACE_ENABLED=true", "DD_CIVISIBILITY_ENABLED=true", "DDTEST_MOCHA_OWNER="+owner)
+	run := func(entry, owner string, env ...string) string {
+		cmd := exec.CommandContext(t.Context(), node, "--require", guard, entry)
+		cmd.Env = append(append(os.Environ(), "DD_TRACE_ENABLED=true", "DD_CIVISIBILITY_ENABLED=true", "DDTEST_MOCHA_OWNER="+owner), env...)
 		output, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(output))
 		return strings.TrimSpace(string(output))
 	}
-	require.Equal(t, "false false", run("mocha.js", "1"), "a Mocha CLI under another owner is nested")
-	require.Equal(t, "true true", run("mocha.js", ""), "the first Mocha CLI keeps tracing")
-	require.Equal(t, "true true", run("worker.js", "1"), "parallel workers keep tracing")
+	// This test process stands in for the owner that forks parallel workers.
+	parent := strconv.Itoa(os.Getpid())
+	require.Equal(t, "false false - -", run(filepath.Join(directory, "mocha.js"), "1"), "a Mocha CLI under another owner is nested")
+	require.Equal(t, "true true - -", run(filepath.Join(directory, "mocha.js"), ""), "the first Mocha CLI keeps tracing")
+	require.Equal(t, "true true - -", run(worker, parent), "the owner's parallel workers keep tracing")
+	require.Equal(t, "true true mocha mocha", run(worker, "1"), "a nested runner's workers don't report the suite")
+	require.Equal(t, "true true mocha mocha", run(filepath.Join(directory, "runner.cjs"), "1"), "a programmatic runner keeps tracing everything except Mocha")
+	require.Equal(t, "true true express,mocha mocha", run(filepath.Join(directory, "runner.cjs"), "1", "DD_TRACE_DISABLED_PLUGINS=express"), "customer exclusions are kept")
 }
 
 func TestMochaMissingCoverageNamesItsCause(t *testing.T) {
@@ -366,4 +373,57 @@ func TestMochaDelayWithoutRunIsNamed(t *testing.T) {
 	require.Contains(t, run.ResultError, "delay mode waits for a global run() call")
 	verdict := compareJest(run, testRun("passed", 0))
 	require.Contains(t, verdict.Reason, "delay mode waits for a global run() call")
+}
+
+func writeFakeTracer(t *testing.T, modules, version string) string {
+	t.Helper()
+	tracer := filepath.Join(modules, "dd-trace")
+	require.NoError(t, os.MkdirAll(filepath.Join(tracer, "ci"), 0700))
+	requireWriteFile(t, filepath.Join(tracer, "package.json"), `{"name":"dd-trace","version":"`+version+`","engines":{"node":">=18"}}`)
+	requireWriteFile(t, filepath.Join(tracer, "ci", "init.js"), "")
+	return filepath.Join(tracer, "ci", "init.js")
+}
+
+func TestMochaPreflightSelectsTheTracerOfTheCIEnvironment(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("Node required")
+	}
+	drive := preparedTestdrive(t)
+	drive.framework = framework.NewMocha(platform.NewJavaScript())
+	drive.platform = platform.NewJavaScript()
+	writeMochaManifest(t, drive.repositoryRoot, `{"scripts":{"test":"mocha one.cjs"},"devDependencies":{"mocha":"11.7.6"}}`)
+	writeFakeTracer(t, filepath.Join(drive.repositoryRoot, "node_modules"), "5.132.0")
+	// The developer's shell preloads another tracer; the CI step clears NODE_OPTIONS.
+	t.Setenv("NODE_OPTIONS", "--require "+writeFakeTracer(t, filepath.Join(t.TempDir(), "node_modules"), "6.21.0"))
+	drive.configurationEnvironment = map[string]string{"NODE_OPTIONS": ""}
+	drive.command, drive.args = "npm", []string{"test"}
+	drive.executor = &mochaEnvironmentExecutor{}
+	result := validationResult{Framework: "mocha", CIRuntime: &onboard.RuntimeCheck{}}
+	_ = drive.checkMochaPreflight(t.Context(), io.Discard, &result)
+	require.NotNil(t, result.Selection)
+	require.Equal(t, "project", result.Selection.Source)
+	require.Equal(t, "5.132.0", result.Selection.Version)
+}
+
+func TestMochaPreflightDefersGitTracersToInstallation(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("Node required")
+	}
+	for _, checkOnly := range []bool{false, true} {
+		drive := preparedTestdrive(t)
+		drive.framework = framework.NewMocha(platform.NewJavaScript())
+		drive.platform = platform.NewJavaScript()
+		writeMochaManifest(t, drive.repositoryRoot, `{"scripts":{"test":"mocha one.cjs"},"devDependencies":{"mocha":"11.7.6"}}`)
+		drive.command, drive.args = "npm", []string{"test"}
+		drive.executor = &mochaEnvironmentExecutor{}
+		drive.tracerVersion, drive.checkOnly = "git:https://github.com/DataDog/dd-trace-js.git#master", checkOnly
+		result := validationResult{Framework: "mocha", CIRuntime: &onboard.RuntimeCheck{}}
+		err := drive.checkMochaPreflight(t.Context(), io.Discard, &result)
+		require.Empty(t, result.Selection.Version, "a git: fallback has no version before installation")
+		if checkOnly {
+			require.ErrorContains(t, err, "mocha preflight", "check-only cannot install, so it stays inconclusive")
+		} else {
+			require.NoError(t, err, "full runs check the installed build after installation")
+		}
+	}
 }

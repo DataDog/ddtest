@@ -33,7 +33,7 @@ func TestPublicMochaTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "coverage disabled", "scoped alias", "CLI retries", "suite retries", "all thresholds", "TDD", "subpackage", "nested fixture"} {
+	for _, mode := range []string{"passing", "existing failure", "coverage disabled", "scoped alias", "CLI retries", "suite retries", "all thresholds", "TDD", "subpackage", "nested fixture", "nested programmatic"} {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -84,6 +84,13 @@ func TestPublicMochaTestdrive(t *testing.T) {
 				write("fixture/inner.cjs", `describe('inner',()=>it('inner fail',()=>{throw new Error('inner fail')}))`)
 				nested := `const {spawnSync}=require('node:child_process');const nested=()=>spawnSync(process.execPath,[require.resolve('mocha/bin/mocha.js'),'inner.cjs'],{cwd:require('node:path').join(__dirname,'../fixture')});`
 				write("test/one.test.cjs", nested+`nested();const assert=require('node:assert/strict');describe('math',()=>it('adds',()=>{assert.equal(nested().status,1);assert.equal(require('../lib/add.cjs')(1,1),2)}))`)
+			}
+			if mode == "nested programmatic" {
+				// A script running Mocha programmatically from a test is nested
+				// too: its results and its telemetry stay out of the comparison.
+				write("fixture/inner.cjs", `describe('inner',()=>it('inner fail',()=>{throw new Error('inner fail')}))`)
+				write("fixture/runner.cjs", `const Mocha=require('mocha');const mocha=new Mocha();mocha.addFile(require('node:path').join(__dirname,'inner.cjs'));mocha.run(failures=>process.exit(failures?1:0))`)
+				write("test/one.test.cjs", `const {spawnSync}=require('node:child_process');const assert=require('node:assert/strict');describe('math',()=>it('adds',()=>{assert.equal(spawnSync(process.execPath,[require('node:path').join(__dirname,'../fixture/runner.cjs')]).status,1);assert.equal(require('../lib/add.cjs')(1,1),2)}))`)
 			}
 			programmatic := "      - run: npm run programmatic\n        env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}\n"
 			if mode == "subpackage" {

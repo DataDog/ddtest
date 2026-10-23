@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -70,7 +71,7 @@ console.log(JSON.stringify({version: require(manifest).version, watch: !!(config
 	if !ok {
 		return fmt.Errorf("mocha requires the JavaScript tracer selector")
 	}
-	selection, err := installer.ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args})
+	selection, err := installer.ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
 	result.Selection = &selection
 	if err != nil {
 		check.Verdict.Reason = "Tracer metadata unavailable: " + reportText(err.Error())
@@ -81,7 +82,8 @@ console.log(JSON.stringify({version: require(manifest).version, watch: !!(config
 	check.Verdict = checkMochaSupport(*check, selection)
 	_, _ = fmt.Fprintf(output, "Mocha %s; Node %s; tracer %s (%s). Preflight: %s — %s\n", check.Version, check.Node, result.Tracer, selection.Source, check.Verdict.Status, check.Verdict.Reason)
 	t.recommendTracer(ctx, output, result)
-	if check.Verdict.Status != "compatible" {
+	// A git: fallback has no version until installation; Run checks it again then.
+	if check.Verdict.Status != "compatible" && (selection.Version != "" || !strings.HasPrefix(selection.Requested, "git:") || t.checkOnly) {
 		return fmt.Errorf("mocha preflight: %s", check.Verdict.Reason)
 	}
 	return nil
