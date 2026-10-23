@@ -76,7 +76,10 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 			return result, err
 		}
 		workspace = filepath.Join(parent, "checkout")
-		size, err := configurationCopyEstimate(ctx, original)
+		// Without preparation to replay, nothing rebuilds ignored outputs such as
+		// a locally compiled dist/, so the copy keeps the prepared state as is.
+		keepIgnored := len(item.Prerequisites) == 0
+		size, err := configurationCopyEstimate(ctx, original, keepIgnored)
 		if err != nil {
 			return result, err
 		}
@@ -84,7 +87,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 			return result, err
 		}
 		_, _ = fmt.Fprintf(output, "Isolating configuration: up to %d bytes; copy-on-write when available.\n", size)
-		if err := copyConfiguration(ctx, original, workspace); err != nil {
+		if err := copyConfiguration(ctx, original, workspace, keepIgnored); err != nil {
 			return result, err
 		}
 		checkout = workspace
@@ -165,10 +168,14 @@ func isolatedCIEnvironment(overrides map[string]string, original, workspace stri
 	return result
 }
 
-// Walk without following links. Ignored output/cache trees are excluded;
-// installed dependencies and Git metadata are retained for builds and identities.
-func walkConfiguration(ctx context.Context, source string, visit func(string, string, fs.DirEntry) error) error {
-	ignored := configurationIgnoredPaths(ctx, source)
+// Walk without following links. Ignored output/cache trees are excluded unless
+// keepIgnored is set; installed dependencies and Git metadata are retained for
+// builds and identities.
+func walkConfiguration(ctx context.Context, source string, keepIgnored bool, visit func(string, string, fs.DirEntry) error) error {
+	ignored := map[string]bool{}
+	if !keepIgnored {
+		ignored = configurationIgnoredPaths(ctx, source)
+	}
 	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -210,9 +217,9 @@ func configurationIgnoredPaths(ctx context.Context, source string) map[string]bo
 	}
 	return ignored
 }
-func configurationCopyEstimate(ctx context.Context, source string) (int64, error) {
+func configurationCopyEstimate(ctx context.Context, source string, keepIgnored bool) (int64, error) {
 	var size int64
-	err := walkConfiguration(ctx, source, func(_, _ string, entry fs.DirEntry) error {
+	err := walkConfiguration(ctx, source, keepIgnored, func(_, _ string, entry fs.DirEntry) error {
 		info, err := entry.Info()
 		if err != nil {
 			return err
@@ -234,7 +241,7 @@ func checkConfigurationSpace(directory string, needed int64) error {
 	}
 	return nil
 }
-func copyConfiguration(ctx context.Context, source, target string) error {
+func copyConfiguration(ctx context.Context, source, target string, keepIgnored bool) error {
 	canonical, err := filepath.EvalSymlinks(source)
 	if err != nil {
 		return err
@@ -247,7 +254,7 @@ func copyConfiguration(ctx context.Context, source, target string) error {
 	if relative, err := filepath.Rel(source, destination); err == nil && (relative == "." || filepath.IsLocal(relative)) {
 		return fmt.Errorf("configuration copy destination is inside the repository; set TMPDIR outside the repository before retrying")
 	}
-	return walkConfiguration(ctx, source, func(path, relative string, entry fs.DirEntry) error {
+	return walkConfiguration(ctx, source, keepIgnored, func(path, relative string, entry fs.DirEntry) error {
 		destination := filepath.Join(target, relative)
 		info, err := entry.Info()
 		if err != nil {

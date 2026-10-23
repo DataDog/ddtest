@@ -31,7 +31,7 @@ func TestProbeRecoveryAfterKilledProcess(t *testing.T) {
 		configuration, err := os.MkdirTemp("", "ddtest-configuration-")
 		require.NoError(t, err)
 		require.NoError(t, markSessionStorage(configuration, root))
-		require.NoError(t, copyConfiguration(t.Context(), root, filepath.Join(configuration, "checkout")))
+		require.NoError(t, copyConfiguration(t.Context(), root, filepath.Join(configuration, "checkout"), false))
 		requireWriteFile(t, filepath.Join(root, "abandoned-configuration"), configuration)
 		probe, err := createProbe(root, validationRun{Tests: []jestTest{{File: filepath.Join(root, "real.test.js"), Status: "passed"}}}, "owned test")
 		require.NoError(t, err)

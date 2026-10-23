@@ -21,7 +21,7 @@ func TestConfigurationCopyIsIndependentAndPreservesLinks(t *testing.T) {
 	require.NoError(t, os.Symlink("pkg", filepath.Join(source, "node_modules/link")))
 	require.NoError(t, os.Mkdir(filepath.Join(source, ".testoptimization"), 0755))
 	requireWriteFile(t, filepath.Join(source, ".testoptimization/testdrive.json"), "old evidence")
-	require.NoError(t, copyConfiguration(t.Context(), source, target))
+	require.NoError(t, copyConfiguration(t.Context(), source, target, false))
 	requireWriteFile(t, filepath.Join(target, "package.json"), "changed")
 	requireWriteFile(t, filepath.Join(target, "node_modules/link/index.js"), "changed dependency")
 	for path, expected := range map[string]string{"package.json": "original", "node_modules/pkg/index.js": "original dependency"} {
@@ -32,13 +32,13 @@ func TestConfigurationCopyIsIndependentAndPreservesLinks(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(target, ".testoptimization/testdrive.json"))
 	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(source, "outside")))
 	outsideCopy := t.TempDir()
-	require.NoError(t, copyConfiguration(t.Context(), source, outsideCopy))
+	require.NoError(t, copyConfiguration(t.Context(), source, outsideCopy, false))
 	link, err := os.Readlink(filepath.Join(outsideCopy, "outside"))
 	require.NoError(t, err)
 	require.NotEmpty(t, link)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	require.ErrorIs(t, copyConfiguration(ctx, source, t.TempDir()), context.Canceled)
+	require.ErrorIs(t, copyConfiguration(ctx, source, t.TempDir(), false), context.Canceled)
 }
 
 func TestIsolatedCIEnvironmentUsesCopiedCheckout(t *testing.T) {
@@ -104,7 +104,7 @@ func TestConfigurationCopyClosesEachFile(t *testing.T) {
 	for i := range 256 {
 		requireWriteFile(t, filepath.Join(source, fmt.Sprintf("file-%d", i)), "contents")
 	}
-	require.NoError(t, copyConfiguration(t.Context(), source, target))
+	require.NoError(t, copyConfiguration(t.Context(), source, target, false))
 	entries, err := os.ReadDir(target)
 	require.NoError(t, err)
 	require.Len(t, entries, 256)
@@ -117,10 +117,10 @@ func TestConfigurationCopyRejectsDestinationInsideRepository(t *testing.T) {
 	t.Setenv("TMPDIR", filepath.Join(source, "tmp"))
 	requireWriteFile(t, filepath.Join(source, "source.js"), "original")
 	for _, target := range []string{source, scratch, filepath.Join(scratch, "checkout")} {
-		require.ErrorContains(t, copyConfiguration(t.Context(), source, target), "set TMPDIR outside the repository")
+		require.ErrorContains(t, copyConfiguration(t.Context(), source, target, false), "set TMPDIR outside the repository")
 	}
 	require.NoDirExists(t, filepath.Join(scratch, "checkout"))
 	alias := filepath.Join(t.TempDir(), "linked")
 	require.NoError(t, os.Symlink(source, alias))
-	require.ErrorContains(t, copyConfiguration(t.Context(), source, filepath.Join(alias, "tmp")), "inside the repository")
+	require.ErrorContains(t, copyConfiguration(t.Context(), source, filepath.Join(alias, "tmp"), false), "inside the repository")
 }

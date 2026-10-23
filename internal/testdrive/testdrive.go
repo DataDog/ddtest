@@ -55,36 +55,38 @@ type Testdrive struct {
 	vitestArguments          []string
 	vitestReporters          []string
 	vitestProbeArguments     []string
-	vitestNode               string
-	vitestExecutable         string
-	vitestRunner             bool
-	isolated                 bool
-	jestProject              jestProject
-	probeLintSkipped         bool
-	commandReviewReason      string
-	preflightEnvironment     map[string]string
-	discoveryError           error
-	preflight                func(context.Context, io.Writer, *validationResult) error
-	repositoryRoot           string
-	framework                framework.Framework
-	language                 string
-	command                  string
-	args                     []string
-	tracerLabel              string
-	platform                 platform.Platform
-	tracerVersion            string
-	projectTracer            string
-	session                  *Session
-	installCommand           string
-	installArgs              []string
-	executor                 commandExecutor
-	startIntake              func(string, intake.Scenario) (localIntake, error)
-	nodeVersion              func() string
-	environmentInfo          environmentInfo
-	environmentFailure       *reportCard
-	checkOnly                bool
-	resolveJSTags            func(context.Context) (map[string]string, error)
-	resolveJSTracer          func(context.Context, string) (platform.JSSelection, error)
+	// Inspection may legitimately resolve no options (a bare vitest).
+	vitestInspected, vitestProbeInspected bool
+	vitestNode                            string
+	vitestExecutable                      string
+	vitestRunner                          bool
+	isolated                              bool
+	jestProject                           jestProject
+	probeLintSkipped                      bool
+	commandReviewReason                   string
+	preflightEnvironment                  map[string]string
+	discoveryError                        error
+	preflight                             func(context.Context, io.Writer, *validationResult) error
+	repositoryRoot                        string
+	framework                             framework.Framework
+	language                              string
+	command                               string
+	args                                  []string
+	tracerLabel                           string
+	platform                              platform.Platform
+	tracerVersion                         string
+	projectTracer                         string
+	session                               *Session
+	installCommand                        string
+	installArgs                           []string
+	executor                              commandExecutor
+	startIntake                           func(string, intake.Scenario) (localIntake, error)
+	nodeVersion                           func() string
+	environmentInfo                       environmentInfo
+	environmentFailure                    *reportCard
+	checkOnly                             bool
+	resolveJSTags                         func(context.Context) (map[string]string, error)
+	resolveJSTracer                       func(context.Context, string) (platform.JSSelection, error)
 }
 
 // Prepare detects the repository and probes the selected test environment and tracer.
@@ -327,7 +329,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 		if !t.checkOnly {
 			needsCopy := slices.ContainsFunc(scope.Commands, func(c onboard.TestCommand) bool { return len(c.Prerequisites) > 0 })
 			if needsCopy {
-				if size, err := configurationCopyEstimate(context.Background(), t.repositoryRoot); err == nil {
+				if size, err := configurationCopyEstimate(context.Background(), t.repositoryRoot, false); err == nil {
 					_, _ = fmt.Fprintf(output, "Estimated copy per prepared configuration: up to %d bytes; ignored outputs excluded, dependencies and Git metadata retained. Copy-on-write when available.\n", size)
 				} else {
 					_, _ = fmt.Fprintf(output, "Copy estimate unavailable: %s\n", err)
@@ -442,7 +444,11 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		child := *t
 		child.workflowRoot = t.repositoryRoot
 		child.preflight = child.checkVitestPreflight
+		// The run executes in a disposable copy; publish its report here instead.
+		var models []reportModel
+		child.reportModels = &models
 		result, runErr = child.runPreparedConfiguration(ctx, output, &configurationResult{TestCommand: onboard.TestCommand{Environment: child.configurationEnvironment}})
+		runErr = errors.Join(runErr, t.publishCopiedRunReport(output, &result, models))
 	} else {
 		result, runErr = t.run(ctx, output)
 	}
@@ -465,6 +471,19 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		result.Error = runErr.Error()
 	}
 	return errors.Join(runErr, finishValidation(output, t.repositoryRoot, result))
+}
+
+// publishCopiedRunReport writes the last retained report, as a run in place
+// would leave it, under the original repository.
+func (t *Testdrive) publishCopiedRunReport(output io.Writer, result *validationResult, models []reportModel) error {
+	if len(models) == 0 {
+		return nil
+	}
+	if err := writeHTMLReportFile(t.repositoryRoot, models[len(models)-1]); err != nil {
+		result.HTMLReportCurrent = false
+		return err
+	}
+	return announceHTMLReport(output, t.repositoryRoot, t.framework.Name())
 }
 
 // Startup recovery runs under the repository lock, before any new work.

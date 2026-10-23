@@ -150,9 +150,9 @@ func (t *Testdrive) inspectVitest(ctx context.Context, directory string, probe .
 	if !t.usesVitestRunner() {
 		resolved := append(slices.Clone(t.args[:len(t.args)-len(args)]), config.Arguments...)
 		if selectedProbe != "" {
-			t.vitestProbeArguments = resolved
+			t.vitestProbeArguments, t.vitestProbeInspected = resolved, true
 		} else {
-			t.vitestArguments = resolved
+			t.vitestArguments, t.vitestInspected = resolved, true
 		}
 	}
 	t.vitestReporters = nil
@@ -297,11 +297,11 @@ func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *Se
 	}
 	resultPath := filepath.Join(directory, "vitest-results.json")
 	// Vitest's JSON reporter can omit unhandled errors even when they cause exit 1.
-	args := slices.Clone(t.vitestArguments)
+	args, inspected := slices.Clone(t.vitestArguments), t.vitestInspected
 	if probePath != "" {
-		args = slices.Clone(t.vitestProbeArguments)
+		args, inspected = slices.Clone(t.vitestProbeArguments), t.vitestProbeInspected
 	}
-	if !t.usesVitestRunner() && len(args) == 0 {
+	if !t.usesVitestRunner() && !inspected {
 		return run, fmt.Errorf("vitest arguments have not been inspected")
 	}
 	run.ReplacedReporters = slices.Clone(t.vitestReporters)

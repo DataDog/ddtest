@@ -88,6 +88,7 @@ func TestVitestRetainsUnhandledErrorsDespitePassingJSONAndCoverageOutput(t *test
 	drive.command, drive.args = "pnpm", []string{"vitest", "--coverage"}
 	drive.vitestArguments = append([]string{}, drive.args...)
 	drive.vitestProbeArguments = append(append([]string{}, drive.args...), "probe.test.ts")
+	drive.vitestInspected, drive.vitestProbeInspected = true, true
 	drive.executor = vitestErrorExecutor{t}
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
@@ -347,6 +348,7 @@ func TestVitestValidationFlagsPrecedeArgumentTerminator(t *testing.T) {
 	drive.command, drive.args = "npx", []string{"vitest", "run", "--", "src"}
 	drive.vitestArguments = append([]string{}, drive.args...)
 	drive.vitestProbeArguments = append(append([]string{}, drive.args...), "probe.test.ts")
+	drive.vitestInspected, drive.vitestProbeInspected = true, true
 	drive.executor = vitestErrorExecutor{t}
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
@@ -357,6 +359,67 @@ func TestVitestValidationFlagsPrecedeArgumentTerminator(t *testing.T) {
 	run, err := drive.runVitest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", runSpec{Name: "baseline", Role: roleBaseline})
 	require.NoError(t, err)
 	require.Empty(t, run.ResultError)
+}
+
+// bareVitestExecutor answers inspection with no resolved options, as a bare
+// vitest does, and records the comparison command.
+type bareVitestExecutor struct {
+	t    *testing.T
+	runs *[][]string
+}
+
+func (e bareVitestExecutor) CombinedOutput(_ context.Context, command string, args []string, _ map[string]string) ([]byte, error) {
+	if command == "node" && len(args) > 0 && args[0] == "--input-type=module" {
+		return []byte(`__DDTEST_VITEST_CONFIG__{"Version":"5.0.5","Arguments":[],"Projects":[{"name":"","root":"."}]}`), nil
+	}
+	*e.runs = append(*e.runs, append([]string{command}, args...))
+	for _, arg := range args {
+		if path, ok := strings.CutPrefix(arg, "--outputFile="); ok {
+			requireWriteFile(e.t, path, `{"success":true,"testResults":[]}`)
+		}
+	}
+	return nil, nil
+}
+
+func TestBareVitestReachesExecutionInRunMode(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		args    []string
+	}{{"vitest", nil}, {"node_modules/.bin/vitest", nil}, {"npx", []string{"vitest"}}} {
+		t.Run(tc.command, func(t *testing.T) {
+			drive := preparedTestdrive(t)
+			drive.command, drive.args = tc.command, tc.args
+			var runs [][]string
+			drive.executor = bareVitestExecutor{t, &runs}
+			drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
+				return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
+			}
+			session, err := NewSession()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, session.Close()) })
+			_, _, _, err = drive.inspectVitest(t.Context(), t.TempDir())
+			require.NoError(t, err)
+			_, err = drive.runVitest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", runSpec{Name: "baseline", Role: roleBaseline})
+			require.NoError(t, err)
+			require.Len(t, runs, 1)
+			require.Equal(t, tc.command, runs[0][0])
+			require.Contains(t, runs[0], "--run", "a bare vitest runs once, never in watch mode")
+		})
+	}
+}
+
+func TestUninspectedVitestArgumentsAreRejected(t *testing.T) {
+	drive := preparedTestdrive(t)
+	drive.command, drive.args = "vitest", []string{"run"}
+	drive.vitestArguments = drive.args
+	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
+		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
+	}
+	session, err := NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
+	_, err = drive.runVitest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", runSpec{Name: "baseline", Role: roleBaseline})
+	require.ErrorContains(t, err, "vitest arguments have not been inspected")
 }
 
 func TestVitestArgumentsAcceptWindowsNodeExecutable(t *testing.T) {

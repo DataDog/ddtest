@@ -626,10 +626,12 @@ and reporting-only alike, so raise it for suites that take longer; the error nam
 the command that hit the limit. Other frameworks retain their existing
 execution contract until their controlled adapter is added.
 
-Only preparation requires a copy. The preview estimates the logical bytes and
-execution checks free space before using clonefile/reflink, with an independent
-byte-copy fallback. Copies preserve timestamps, dependencies and links, retain Git
-metadata for source identities, and omit unrelated Git-ignored output/cache trees.
+Only preparation and `ddtest run` validation require a copy. The preview estimates
+the logical bytes and execution checks free space before using clonefile/reflink,
+with an independent byte-copy fallback. Copies preserve timestamps, dependencies and
+links, and retain Git metadata for source identities. A copy with preparation steps
+omits unrelated Git-ignored output/cache trees, which those steps rebuild; a copy
+without them keeps Git-ignored inputs such as a locally compiled `dist/`.
 PnP runtime/dependency and local environment inputs remain available. Declared
 config files and patch targets cannot resolve outside the checkout. Windows
 symlink creation can require Developer Mode or additional privilege.

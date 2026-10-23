@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/buildinfo"
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -286,7 +287,7 @@ func TestVitestUnhandledRegressionTriggersRepeatedPair(t *testing.T) {
 	drive.framework = framework.NewVitest(platform.NewJavaScript())
 	drive.command = "vitest"
 	drive.args = []string{"run"}
-	drive.vitestArguments = drive.args
+	drive.vitestArguments, drive.vitestInspected = drive.args, true
 	executor := &vitestRegressionExecutor{t: t, file: filepath.Join(drive.repositoryRoot, "missing.test.js")}
 	drive.executor = executor
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
@@ -335,4 +336,26 @@ func TestVitestRunnerReadsTheVersionDdtestPrints(t *testing.T) {
 	}
 	drive.executor = versionOutputExecutor("unexpected banner text\n")
 	require.Equal(t, "unverified", drive.inspectVitestRunnerBinary(t.Context()).Version)
+}
+
+func TestFocusedCopiedRunPublishesItsReportInTheOriginalRepository(t *testing.T) {
+	root := t.TempDir()
+	drive := &Testdrive{repositoryRoot: root, framework: framework.NewVitest(platform.NewJavaScript())}
+	// The copied run retains one model per reporting run; in place, the last one wins.
+	models := []reportModel{{Runtime: reportRuntime{Output: "first reporting run"}}, {Runtime: reportRuntime{Output: "repeated reporting run"}}}
+	result := validationResult{HTMLReportCurrent: true}
+	var output bytes.Buffer
+	require.NoError(t, drive.publishCopiedRunReport(&output, &result, models))
+	page, err := os.ReadFile(htmlReportPath(root))
+	require.NoError(t, err)
+	require.Contains(t, string(page), "repeated reporting run")
+	require.NotContains(t, string(page), "first reporting run")
+	require.True(t, result.HTMLReportCurrent)
+	require.Contains(t, output.String(), "Open report:")
+
+	blocked := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(blocked, constants.PlanDirectory), nil, 0600))
+	drive.repositoryRoot = blocked
+	require.Error(t, drive.publishCopiedRunReport(&bytes.Buffer{}, &result, models))
+	require.False(t, result.HTMLReportCurrent, "a report that could not be published is not current")
 }

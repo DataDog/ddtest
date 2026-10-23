@@ -152,9 +152,10 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 				Summary struct {
 					ExecutedValidation struct{ Status string } `json:"executed_validation"`
 				}
-				Cleanup       struct{ Status string }
-				Compatibility struct{ Status string }
-				Runs          []struct {
+				Cleanup           struct{ Status string }
+				Compatibility     struct{ Status string }
+				HTMLReportCurrent bool `json:"html_report_current"`
+				Runs              []struct {
 					Name              string
 					ExecutionPath     string   `json:"execution_path"`
 					ReplacedReporters []string `json:"replaced_reporters"`
@@ -170,6 +171,9 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 			require.Equal(t, "compatible", report.Compatibility.Status, string(output))
 			require.Empty(t, report.Error)
 			require.Equal(t, "passed", report.Cleanup.Status)
+			// Runner modes execute in a disposable copy; the report must outlive it.
+			require.True(t, report.HTMLReportCurrent)
+			require.FileExists(t, filepath.Join(root, ".testoptimization/report.html"))
 			require.Equal(t, "PASSED", report.Summary.ExecutedValidation.Status, string(data))
 			require.GreaterOrEqual(t, len(report.Runs), 2)
 			paths := map[string]bool{}
