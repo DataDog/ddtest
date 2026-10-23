@@ -376,9 +376,6 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		drive.preflight = drive.frameworkPreflight()
 	}
-	if runner.Name() == "cucumber" {
-		drive.preflight = drive.checkCucumberPreflight
-	}
 	if installer, ok := detectedPlatform.(*platform.JavaScript); ok {
 		drive.resolveJSTracer = installer.ResolveRegistryTracer
 		drive.resolveJSTags = installer.RegistryTracerTags

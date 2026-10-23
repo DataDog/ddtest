@@ -60,22 +60,22 @@ type runSpec struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
-	ReplacedReporters               []string
-	Role                            runRole
-	cucumberParallel                bool
-	cucumberSupport                 *cucumberSupport
-	FrameworkNode                   string
-	NativeCommand                   string
-	ProbeExecutions                 *int
-	Coverage                        *coverageSummary
-	ExecutionContext                string `json:"execution_context,omitempty"`
-	temporaryRoot                   string
-	commandOutput                   string
-	commandError                    error
-	Project                         string
-	Skipping                        *skippingDiagnostic
-	root                            string
-	checkoutRoot                    string
+	ReplacedReporters []string
+	Role              runRole
+	cucumberParallel  bool
+	cucumberSupport   *cucumberSupport
+	FrameworkNode     string
+	NativeCommand     string
+	ProbeExecutions   *int
+	Coverage          *coverageSummary
+	ExecutionContext  string `json:"execution_context,omitempty"`
+	temporaryRoot     string
+	commandOutput     string
+	commandError      error
+	Project           string
+	Skipping          *skippingDiagnostic
+	root              string
+	checkoutRoot      string
 	// Why a real-suite Mocha run may report no per-test coverage.
 	coverageCause                   string
 	framework                       string
@@ -146,7 +146,7 @@ type runSummary struct {
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+	summary := runSummary{Coverage: r.Coverage, FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), NotExercised: r.NotExercised, SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)

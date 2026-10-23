@@ -25,6 +25,7 @@ func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 		"mocha":      framework.NewMocha(javascript),
 		"playwright": framework.NewPlaywright(javascript),
 		"cypress":    framework.NewCypress(javascript),
+		"cucumber":   framework.NewCucumber(javascript),
 	}
 	for name, policy := range frameworkFeaturePolicies {
 		if !policy.Preflight {
