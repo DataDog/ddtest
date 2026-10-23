@@ -293,7 +293,7 @@ func outcomeKeys(run validationRun) []string {
 	keys = append(keys, run.SuiteErrors...)
 	keys = append(keys, run.SuiteFailures...)
 	for _, test := range run.Tests {
-		keys = append(keys, test.File+" › "+test.Name+cucumberLocation(test)+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test))
+		keys = append(keys, test.File+" › "+test.Name+cucumberLocation(test)+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test))
 	}
 	for i := range keys {
 		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])
@@ -385,6 +385,7 @@ func verifyJestTelemetry(run validationRun) verdict {
 		}
 	}
 	observed := make(map[identity]int)
+	var differences []string
 	for _, test := range run.Facts.Tests {
 		// The tracer reports source files relative to the Git checkout, and
 		// suite names relative to the test process directory.
@@ -404,21 +405,38 @@ func verifyJestTelemetry(run validationRun) verdict {
 				observed[identity{file, test.Name, attempt.Status}]++
 			}
 		}
+		// A span sent twice is one execution; counting it again could hide a
+		// missing test that shares its name, such as another outline example.
+		spans := map[uint64]int{}
+		attempts := make([]intake.TestRun, 0, len(test.Attempts))
+		for _, attempt := range test.Attempts {
+			if attempt.SpanID != 0 {
+				spans[attempt.SpanID]++
+				if spans[attempt.SpanID] > 1 {
+					continue
+				}
+			}
+			attempts = append(attempts, attempt)
+		}
+		for _, count := range spans {
+			if count > 1 {
+				differences = append(differences, fmt.Sprintf("Duplicate telemetry: file %q, test %q, one span reported %d times", file, test.Name, count))
+			}
+		}
 		var final *intake.TestRun
-		for i, attempt := range test.Attempts {
+		for i, attempt := range attempts {
 			if attempt.Retry && attempt.RetryReason != "external" && attempt.RetryReason != "" {
 				return verdict{Status: "inconclusive", Code: "unexpected_retry", Reason: "Unexpected tracer-controlled retry telemetry in the reporting-only run."}
 			}
 			if !attempt.Retry && final != nil {
 				observe(*final)
 			}
-			final = &test.Attempts[i]
+			final = &attempts[i]
 		}
 		if final != nil {
 			observe(*final)
 		}
 	}
-	var differences []string
 	for key, count := range expected {
 		if count > observed[key] {
 			differences = append(differences, fmt.Sprintf("Missing telemetry: file %q, test %q, status %q (count %d)", key.file, key.name, key.status, count-observed[key]))

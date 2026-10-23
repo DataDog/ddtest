@@ -177,3 +177,19 @@ func TestUnsupportedCucumberSkipsTheTracerRecommendation(t *testing.T) {
 		})
 	}
 }
+
+func TestCucumberPairedComparisonIncludesNativeRetryHistory(t *testing.T) {
+	retried := testRun("passed", 0)
+	retried.framework = "cucumber"
+	retried.Tests[0].CucumberAttempts = []string{"failed", "passed"}
+	retried.Facts.Tests[0].Attempts = []intake.TestRun{{Status: "fail"}, {Status: "pass", Retry: true, RetryReason: "external"}}
+	immediate := testRun("passed", 0)
+	immediate.framework = "cucumber"
+	immediate.Tests[0].CucumberAttempts = []string{"passed"}
+	require.Equal(t, "compatible", compareJest(withoutTelemetry(retried), retried).Status)
+	require.Equal(t, "suspected regression", compareJest(withoutTelemetry(retried), immediate).Status)
+	// The same change in both pairs recurs; a history that changes between
+	// repeats is reported as varying instead.
+	require.Equal(t, "suspected regression", compareRepeatedJavaScript(withoutTelemetry(retried), immediate, withoutTelemetry(retried), immediate).Status)
+	require.Equal(t, "varying_outcomes", compareRepeatedJavaScript(withoutTelemetry(retried), immediate, withoutTelemetry(immediate), immediate).Code)
+}

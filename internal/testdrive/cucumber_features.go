@@ -165,6 +165,8 @@ func (t *Testdrive) startCucumberProbeLifecycle(ctx context.Context, output io.W
 	if err != nil {
 		return nil, err
 	}
+	// Helpers a hook starts, such as a detached server, stop with the owner.
+	superviseNodeProcesses(env, directory)
 	run := func(scripts []onboard.LifecycleScript) error {
 		for _, script := range scripts {
 			_, _ = fmt.Fprintf(output, "Running %s lifecycle script for feature probes...\n", script.Name)

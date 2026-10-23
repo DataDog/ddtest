@@ -34,7 +34,7 @@ func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrument
 		for _, test := range run.Tests {
 			key := identity{test.File, test.Name, playwrightLabel(test)}
 			identities[key] = true
-			outcomes[i][key] = append(outcomes[i][key], test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test))
+			outcomes[i][key] = append(outcomes[i][key], test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test))
 		}
 		for _, values := range outcomes[i] {
 			slices.Sort(values)

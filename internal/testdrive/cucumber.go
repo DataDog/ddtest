@@ -15,7 +15,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -240,6 +239,47 @@ func readCucumberResults(filename, directory string, run *validationRun) {
 		}
 		run.Tests = append(run.Tests, jestTest{CucumberAttempts: nativeAttempts[p.ID], CucumberLine: line, File: filepath.Clean(filepath.Join(directory, p.URI)), Name: name, Status: a.Status, Failure: failureSignature(a.Failure)})
 	}
+	if run.Instrumented {
+		if reason := cucumberSharedExampleNames(directory, run.Tests); reason != "" {
+			run.NotExercised = append(run.NotExercised, reason)
+		}
+	}
+}
+
+// cucumberSharedExampleNames explains the limit of telemetry verification for
+// outline examples that share a name: dd-trace reports no example identity, so
+// their events are matched by name and count, not one by one.
+func cucumberSharedExampleNames(root string, tests []jestTest) string {
+	lines := map[[2]string]map[int]bool{}
+	for _, test := range tests {
+		if test.CucumberLine == 0 {
+			continue
+		}
+		key := [2]string{test.File, test.Name}
+		if lines[key] == nil {
+			lines[key] = map[int]bool{}
+		}
+		lines[key][test.CucumberLine] = true
+	}
+	var shared []string
+	for key, examples := range lines {
+		if len(examples) < 2 {
+			continue
+		}
+		file := key[0]
+		if relative, err := filepath.Rel(root, file); err == nil && filepath.IsLocal(relative) {
+			file = filepath.ToSlash(relative)
+		}
+		shared = append(shared, fmt.Sprintf("%s: %q, %d examples", file, key[1], len(examples)))
+	}
+	if len(shared) == 0 {
+		return ""
+	}
+	slices.Sort(shared)
+	if len(shared) > 3 {
+		shared = append(shared[:3], fmt.Sprintf("%d more", len(shared)-3))
+	}
+	return "Cucumber outline examples that share a name (" + strings.Join(shared, "; ") + ") are matched to telemetry by name and count: dd-trace reports no per-example identity, so a swap between those examples can't be detected. Give each example a distinct name with a <placeholder> in the outline title to verify them one by one."
 }
 
 func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
@@ -309,11 +349,8 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 		return run, err
 	}
 	defer func() { runErr = errors.Join(runErr, owner.Close()) }()
-	// Every Node process of the run, including nyc and cucumber-js, then stops
-	// when ddtest dies. Windows supervision is unsupported, so it is left out.
-	if runtime.GOOS != "windows" {
-		env["NODE_OPTIONS"] += " --require " + strconv.Quote(filepath.Join(directory, "children.cjs"))
-	}
+	// Every Node process of the run, including nyc and cucumber-js.
+	superviseNodeProcesses(env, directory)
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
 	data, commandErr := t.executor.CombinedOutput(ctx, command, args, env)
 	run.commandOutput, run.commandError, run.ExitCode = string(data), commandErr, commandExitCode(commandErr)
@@ -393,6 +430,16 @@ func cucumberLocation(test jestTest) string {
 	}
 	return ""
 }
+
+// A native retry history is part of the outcome: a scenario that needed a
+// retry without instrumentation but passed at once with it behaved differently.
+func cucumberOutcome(test jestTest) string {
+	if len(test.CucumberAttempts) == 0 {
+		return ""
+	}
+	return "\nattempts=" + strings.Join(test.CucumberAttempts, ",")
+}
+
 func verifyCucumberTelemetry(run validationRun) verdict {
 	run.framework = "cucumber-attempts"
 	original := run.Tests
