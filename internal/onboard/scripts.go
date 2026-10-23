@@ -323,6 +323,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		if framework == "playwright" && (len(words) < 2 || words[1] != "test") {
 			return commandResolution{ReviewReason: "Playwright setup/tool command is outside test execution: " + command}
 		}
+		if framework == "playwright" && playwrightInteractiveMode(words[2:]) {
+			return unresolvedCommand("Playwright UI and debug modes are interactive and are not supported; select a finite test command")
+		}
 		canonicalRoot, _ := filepath.EvalSymlinks(root)
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
@@ -625,6 +628,20 @@ func jestMetadataOptions(args []string) bool {
 		}
 		option, value, explicit := strings.Cut(arg, "=")
 		if slices.Contains([]string{"--help", "-h", "--version", "-v", "--showConfig", "--show-config"}, option) && (!explicit || value == "true") {
+			return true
+		}
+	}
+	return false
+}
+
+// --ui waits for the user and --debug opens the Inspector without a timeout.
+func playwrightInteractiveMode(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		option, _, _ := strings.Cut(arg, "=")
+		if slices.Contains([]string{"--ui", "--ui-host", "--ui-port", "--debug"}, option) {
 			return true
 		}
 	}

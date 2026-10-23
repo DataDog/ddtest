@@ -170,17 +170,20 @@ func TestSupervisedSpawnPreservesNativeArgumentsAndErrors(t *testing.T) {
 	requireWriteFile(t, shellInit, "echo customer-shell-init\n")
 	denied := filepath.Join(directory, "not-executable")
 	require.NoError(t, os.WriteFile(denied, []byte("#!/bin/sh\nexit 0\n"), 0600))
+	// Its interpreter is missing: native spawn reports ENOENT.
+	orphan := filepath.Join(directory, "missing-interpreter")
+	require.NoError(t, os.WriteFile(orphan, []byte("#!/ddtest-missing-interpreter-731\nexit 0\n"), 0700))
 	script := `const cp=require('node:child_process');
- const cwd=process.argv[1],denied=process.argv[2];
+ const cwd=process.argv[1],denied=process.argv[2],orphan=process.argv[3];
  async function run(make){return new Promise(resolve=>{let output='';let c;
  try{c=make()}catch(e){resolve({throw:e.code});return}
  c.stdout?.on('data',b=>output+=b);c.on('error',e=>resolve({error:e.code}));
  c.on('close',code=>resolve({code,output:output.trim()}))})}
  (async()=>{const options={cwd,stdio:['ignore','pipe','pipe']};const result=[];
- for(const make of [()=>cp.spawn('/bin/pwd'),()=>cp.spawn('/bin/pwd',[]),()=>cp.spawn('/bin/pwd',options),()=>cp.spawn('/bin/pwd',[],options),()=>cp.spawn('/bin/pwd',undefined,options),()=>cp.spawn('/bin/pwd',null,options),()=>cp.spawn('/bin/pwd',42,options),()=>cp.spawn('/bin/bash',['-c','printf target']),()=>cp.spawn('ddtest-missing-executable-731'),()=>cp.spawn(denied),()=>cp.spawn('/bin/pwd',[],{cwd:cwd+'/missing'})])result.push(await run(make));
+ for(const make of [()=>cp.spawn('/bin/pwd'),()=>cp.spawn('/bin/pwd',[]),()=>cp.spawn('/bin/pwd',options),()=>cp.spawn('/bin/pwd',[],options),()=>cp.spawn('/bin/pwd',undefined,options),()=>cp.spawn('/bin/pwd',null,options),()=>cp.spawn('/bin/pwd',42,options),()=>cp.spawn('/bin/bash',['-c','printf target']),()=>cp.spawn('ddtest-missing-executable-731'),()=>cp.spawn(denied),()=>cp.spawn('/bin/pwd',[],{cwd:cwd+'/missing'}),()=>cp.spawn(orphan),()=>cp.spawn(process.execPath,['-e','process.stdout.write("restricted")'],{env:{PATH:'/ddtest-no-tools'},stdio:['ignore','pipe','pipe']})])result.push(await run(make));
  console.log(JSON.stringify(result));})().catch(e=>{console.error(e);process.exitCode=1})`
 	invoke := func(supervised bool) []byte {
-		command := exec.CommandContext(t.Context(), node, "-e", script, directory, denied)
+		command := exec.CommandContext(t.Context(), node, "-e", script, directory, denied, orphan)
 		command.Env = append(os.Environ(), "BASH_ENV="+shellInit)
 		if supervised {
 			command.Env = append(command.Env, "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
@@ -287,4 +290,30 @@ func TestRecoverOwnershipAlsoChecksConfiguredTemporaryRoot(t *testing.T) {
 	require.NoError(t, markSessionStorage(abandoned, root))
 	require.NoError(t, recoverProcessOwners(root, io.Discard))
 	require.NoDirExists(t, abandoned, "storage from the previous socket base must still be recovered")
+}
+
+func TestProcessStartedAfterOwnerClosedStopsWithoutFailingTheRun(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node is required")
+	}
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	scripts := t.TempDir()
+	for name, contents := range map[string]string{"children.cjs": processChildren, "process_owner.cjs": processOwnerScript, "process_guard.cjs": processGuardScript} {
+		require.NoError(t, os.WriteFile(filepath.Join(scripts, name), []byte(contents), 0600))
+	}
+	// The owner is closing: its socket is gone, but its directory and error log
+	// remain until the error log is read.
+	requireWriteFile(t, filepath.Join(filepath.Dir(env["DDTEST_PROCESS_OWNER"]), processOwnerClosedMarker), "")
+	require.NoError(t, os.Remove(env["DDTEST_PROCESS_OWNER"]))
+	command := exec.CommandContext(t.Context(), node, "-e", `setTimeout(() => console.log('late process kept running'), 2000)`)
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(scripts, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	output, _ := command.CombinedOutput()
+	require.NotContains(t, string(output), "late process kept running")
+	data, err := os.ReadFile(env["DDTEST_PROCESS_ERRORS"])
+	require.True(t, err != nil || len(data) == 0, "no connection failure is recorded: %s", data)
+	_ = owner.Close()
 }

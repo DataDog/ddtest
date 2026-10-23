@@ -79,7 +79,7 @@ func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrument
 		result.Status, result.Code = "suspected regression", "recurring_difference"
 		result.Reason = "The same differences recur in both pairs while other outcomes varied between repeats."
 	}
-	result.Reason += fmt.Sprintf(" %d differences recur in both pairs; %d vary between repeats. Only two pairs were observed, so coincidental flakiness cannot be ruled out, and this does not establish a cause.", len(recurring), len(variable))
+	result.Reason += fmt.Sprintf(" %d %s in both pairs; %d %s between repeats. Only two pairs were observed, so coincidental flakiness cannot be ruled out, and this does not establish a cause.", len(recurring), plural(len(recurring), "difference recurs", "differences recur"), len(variable), plural(len(variable), "varies", "vary"))
 	return result
 }
 

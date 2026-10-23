@@ -59,9 +59,7 @@ func PlaywrightValidationCommand(root, command string) (string, error) {
 			if scope.Commands[0].ExitOnFailure {
 				return "", fmt.Errorf("playwright CI uses a failure guard; use --all to preserve its exit behavior")
 			}
-			if len(scope.Commands[0].Environment) > 0 {
-				return "", fmt.Errorf("playwright CI environment requires --all or an explicit --command")
-			}
+			// The CI environment is applied to the run, as for Jest and Vitest.
 			words, err := shellquote.Split(scope.Commands[0].Command)
 			if err != nil {
 				return "", err

@@ -240,7 +240,7 @@ func (t *Testdrive) checkPlaywrightPreflight(ctx context.Context, output io.Writ
 	if !ok {
 		return fmt.Errorf("playwright requires JavaScript tracer selection")
 	}
-	selection, err := installer.ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args})
+	selection, err := installer.ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
 	result.Selection = &selection
 	if err != nil {
 		return err
@@ -252,10 +252,28 @@ func (t *Testdrive) checkPlaywrightPreflight(ctx context.Context, output io.Writ
 	}
 	_, _ = fmt.Fprintf(output, "Playwright %s; Node %s; tracer %s (%s). Preflight: %s — %s\n", check.Version, check.Node, result.Tracer, selection.Source, check.Verdict.Status, check.Verdict.Reason)
 	t.recommendTracer(ctx, output, result)
-	if check.Verdict.Status != "compatible" {
+	if playwrightPreflightBlocks(check.Verdict.Status, selection.Requested, t.checkOnly) {
 		return fmt.Errorf("playwright preflight: %s", check.Verdict.Reason)
 	}
 	return nil
+}
+
+// A git: tracer has no metadata until it is built, so an inconclusive check
+// waits for the post-installation one. Known incompatibilities still stop here.
+func playwrightPreflightBlocks(status, requested string, checkOnly bool) bool {
+	return status != "compatible" && (status == "incompatible" || !strings.HasPrefix(requested, "git:") || checkOnly)
+}
+
+// The selected CI configuration's PW_TEST_REPORTER is the one a run replaces.
+func replacedPlaywrightReporter(configuration map[string]string) []string {
+	previous := os.Getenv("PW_TEST_REPORTER")
+	if value, ok := configuration["PW_TEST_REPORTER"]; ok {
+		previous = value
+	}
+	if previous == "" {
+		return nil
+	}
+	return []string{"PW_TEST_REPORTER=" + previous}
 }
 
 func checkPlaywrightSupport(check jestPreflight, selection platform.JSSelection) verdict {
@@ -312,9 +330,7 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 		return run, err
 	}
 	env["DDTEST_PLAYWRIGHT_REPORT"] = filepath.Join(directory, "results.json")
-	if previous := os.Getenv("PW_TEST_REPORTER"); previous != "" {
-		run.ReplacedReporters = []string{"PW_TEST_REPORTER=" + previous}
-	}
+	run.ReplacedReporters = replacedPlaywrightReporter(t.configurationEnvironment)
 	env["PW_TEST_REPORTER"] = reporter
 	defer func() {
 		runErr = errors.Join(runErr, owner.Close())

@@ -15,10 +15,38 @@ function executableExists (options, env) {
     const candidates = options.file.includes('/') ? [path.resolve(cwd, options.file)]
       : (env.PATH ?? '/usr/bin:/bin').split(':').map(entry => path.resolve(cwd, entry, options.file))
     return candidates.some(file => {
-      try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile() }
+      try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile() && interpreterExists(file) }
       catch { return false }
     })
   } catch { return false }
+}
+
+// A script whose #! interpreter is missing fails with ENOENT natively; the
+// supervised exec would instead exit 127 without an error event.
+function interpreterExists (file) {
+  const header = Buffer.alloc(256)
+  const fd = fs.openSync(file, 'r')
+  let length
+  try { length = fs.readSync(fd, header, 0, header.length, 0) } finally { fs.closeSync(fd) }
+  const line = header.subarray(0, length).toString('latin1').split('\n', 1)[0]
+  if (!line.startsWith('#!')) return true
+  const interpreter = line.slice(2).trim().split(/\s+/, 1)[0]
+  if (!interpreter || !interpreter.startsWith('/')) return true
+  try { fs.accessSync(interpreter, fs.constants.X_OK); return true } catch { return false }
+}
+
+// The helper shell finds its own tools in system locations first, never in the
+// child's PATH, which may be restricted or point at customer replacements.
+const toolPaths = new Map()
+function tool (name) {
+  if (!toolPaths.has(name)) {
+    const directories = ['/usr/bin', '/bin', ...(process.env.PATH || '').split(':').filter(Boolean)]
+    const found = directories.map(directory => path.join(directory, name)).find(file => {
+      try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile() } catch { return false }
+    })
+    toolPaths.set(name, found || name)
+  }
+  return toolPaths.get(name)
 }
 
 if (process.env.DDTEST_PROCESS_OWNER && !process.env.DDTEST_PROCESS_GUARD) {
@@ -65,24 +93,25 @@ if (process.env.DDTEST_PROCESS_OWNER && !process.env.DDTEST_PROCESS_GUARD) {
     // Close browser protocol pipes only in the keeper, before Node starts.
     // The original executable inherits the untouched descriptors via exec.
     const closeExtra = Array.isArray(stdio) ? stdio.slice(3).map((_, i) => `${i + 3}<&-`).join(' ') : ''
-    const launcher = `keeper_node=$1; keeper_script=$2; shift 2
-ready=$(mktemp "\${DDTEST_PROCESS_OWNER%/*}/ready.XXXXXXXX") || exit 1
+    const launcher = `keeper_node=$1; keeper_script=$2; mktemp_tool=$3; sleep_tool=$4; rm_tool=$5; shift 5
+ready=$("$mktemp_tool" "\${DDTEST_PROCESS_OWNER%/*}/ready.XXXXXXXX") || exit 1
 (unset NODE_CHANNEL_FD NODE_CHANNEL_SERIALIZATION_MODE
 NODE_OPTIONS= DD_TRACE_ENABLED=false DD_CIVISIBILITY_ENABLED=false exec "$keeper_node" "$keeper_script" "$$" "$ready") </dev/null >/dev/null 2>&1 ${closeExtra} &
 keeper=$!; attempts=0
 while [ ! -s "$ready" ]; do
   kill -0 "$keeper" 2>/dev/null || exit 1
+  [ -S "$DDTEST_PROCESS_OWNER" ] || exit 1
   attempts=$((attempts + 1)); [ "$attempts" -lt ${readinessAttempts} ] || exit 1
-  sleep ${readinessInterval}
+  "$sleep_tool" ${readinessInterval}
 done
-rm -f "$ready"
+"$rm_tool" -f "$ready"
 unset DDTEST_PROCESS_GUARD
 exec "$@"`
     env.DDTEST_PROCESS_GUARD = '1'
     // Bash closes descriptors above 9; -p ignores ambient BASH_ENV/functions
     // in this helper shell while leaving the target's environment untouched.
     return Reflect.apply(spawn, this, [{ ...options, file: '/bin/bash', detached: true,
-      args: ['/bin/bash', '-p', '-c', launcher, 'ddtest-owned-launcher', process.execPath, require.resolve('./process_guard.cjs'), options.file, ...args.slice(1)],
+      args: ['/bin/bash', '-p', '-c', launcher, 'ddtest-owned-launcher', process.execPath, require.resolve('./process_guard.cjs'), tool('mktemp'), tool('sleep'), tool('rm'), options.file, ...args.slice(1)],
       envPairs: Object.entries(env).map(([key, value]) => key + '=' + value) }])
   }
 }

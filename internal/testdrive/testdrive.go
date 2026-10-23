@@ -48,15 +48,17 @@ type Testdrive struct {
 	playwrightGuard          bool
 	playwrightProject        string
 	configurationEnvironment map[string]string
-	allowReviewedBuilds      bool
-	commandTimeout           time.Duration
-	allConfigurations        bool
-	reportModels             *[]reportModel
-	workflowRoot             string
-	configurationRoot        string
-	vitestArguments          []string
-	vitestReporters          []string
-	vitestProbeArguments     []string
+	// Leading VAR=value assignments parsed from --command.
+	commandAssignments   map[string]string
+	allowReviewedBuilds  bool
+	commandTimeout       time.Duration
+	allConfigurations    bool
+	reportModels         *[]reportModel
+	workflowRoot         string
+	configurationRoot    string
+	vitestArguments      []string
+	vitestReporters      []string
+	vitestProbeArguments []string
 	// Inspection may legitimately resolve no options (a bare vitest).
 	vitestInspected, vitestProbeInspected bool
 	vitestNode                            string
@@ -301,7 +303,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 
-	drive := &Testdrive{probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
+	drive := &Testdrive{commandAssignments: commandAssignments, probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
@@ -504,6 +506,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 	result.Framework = t.framework.Name()
 	result.FocusedCommand = frameworkFeaturePolicies[t.framework.Name()].Configurations && strings.TrimSpace(settings.GetCommand()) != ""
+	result.CommandEnvironment = reportedEnvironment(t.commandAssignments)
 	if frameworkFeaturePolicies[t.framework.Name()].Configurations {
 		prepareValidationResult(t.repositoryRoot, &result)
 		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())

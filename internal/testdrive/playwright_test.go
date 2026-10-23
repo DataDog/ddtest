@@ -182,8 +182,8 @@ func TestPlaywrightRepeatComparisonSeparatesBrowserProjects(t *testing.T) {
 	}
 	got := compareRepeatedJavaScript(run("passed", "crash one"), run("failed", "crash two"), run("passed", "crash three"), run("failed", "crash four"))
 	require.Equal(t, "suspected regression", got.Status)
-	require.Contains(t, got.Reason, "1 test identities have recurring differences")
-	require.Contains(t, got.Reason, "1 vary between repeats")
+	require.Contains(t, got.Reason, "1 difference recurs in both pairs")
+	require.Contains(t, got.Reason, "1 varies between repeats")
 	require.Contains(t, got.Differences[0], `project="iPhone"`)
 	require.Contains(t, got.Differences[1], `project="Pixel"`)
 }
@@ -202,4 +202,30 @@ func TestPlaywrightProbePreloadLeavesStdinHooksAlone(t *testing.T) {
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
 	require.Equal(t, "setup completed\n", string(output))
+}
+
+func TestPlaywrightRecordsTheConfiguredReporterItReplaces(t *testing.T) {
+	t.Setenv("PW_TEST_REPORTER", "")
+	require.Nil(t, replacedPlaywrightReporter(nil))
+	require.Equal(t, []string{"PW_TEST_REPORTER=./ci-reporter.js"}, replacedPlaywrightReporter(map[string]string{"PW_TEST_REPORTER": "./ci-reporter.js"}))
+	t.Setenv("PW_TEST_REPORTER", "./local.js")
+	require.Equal(t, []string{"PW_TEST_REPORTER=./local.js"}, replacedPlaywrightReporter(nil))
+}
+
+func TestPlaywrightPreflightDefersGitTracersToInstallation(t *testing.T) {
+	require.False(t, playwrightPreflightBlocks("compatible", "latest", false))
+	require.True(t, playwrightPreflightBlocks("inconclusive", "latest", false))
+	require.False(t, playwrightPreflightBlocks("inconclusive", "git:main", false), "the installed source build is checked later")
+	require.True(t, playwrightPreflightBlocks("inconclusive", "git:main", true), "check-only never installs")
+	require.True(t, playwrightPreflightBlocks("incompatible", "git:main", false))
+}
+
+func TestFocusedCommandEnvironmentIsReportedWithSecretsMasked(t *testing.T) {
+	require.Nil(t, reportedEnvironment(nil))
+	reported := reportedEnvironment(map[string]string{"PLAYWRIGHT_JUNIT_OUTPUT_NAME": "results.xml", "CYPRESS_RECORD_KEY": "abc", "NPM_TOKEN": "def"})
+	require.Equal(t, map[string]string{"PLAYWRIGHT_JUNIT_OUTPUT_NAME": "results.xml", "CYPRESS_RECORD_KEY": "[REDACTED]", "NPM_TOKEN": "[REDACTED]"}, reported)
+	data, err := marshalValidation(validationResult{CommandEnvironment: reported})
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"PLAYWRIGHT_JUNIT_OUTPUT_NAME": "results.xml"`)
+	require.NotContains(t, string(data), "abc")
 }

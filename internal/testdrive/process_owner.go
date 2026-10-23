@@ -24,6 +24,9 @@ var processOwnerScript string
 //go:embed scripts/process_guard.cjs
 var processGuardScript string
 
+// Written by Close; process_owner.cjs reads it under the same name.
+const processOwnerClosedMarker = "closed"
+
 // Wait longer than the child SIGTERM grace so sockets can drain after SIGKILL.
 const processOwnerCloseTimeout = 5 * time.Second
 
@@ -108,6 +111,9 @@ func newProcessOwner() (*processOwner, error) {
 }
 
 func (o *processOwner) Close() error {
+	// Mark the run finished before the socket disappears, so a process that
+	// starts now stops instead of recording a connection failure.
+	_ = os.WriteFile(filepath.Join(o.directory, processOwnerClosedMarker), nil, 0600)
 	_ = o.listener.Close()
 	<-o.accepted // No connection can be added after the cleanup snapshot.
 	o.clients.Range(func(key, _ any) bool {
@@ -204,7 +210,7 @@ func recoverProcessOwners(root string, output io.Writer) error {
 		if err := os.RemoveAll(path); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintln(output, "Recovered abandoned Playwright process ownership storage:", filepath.Base(path))
+		_, _ = fmt.Fprintln(output, "Recovered abandoned process ownership storage:", filepath.Base(path))
 	}
 	return nil
 }
