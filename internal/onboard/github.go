@@ -15,6 +15,9 @@ import (
 	"github.com/DataDog/ddtest/internal/environment"
 )
 
+//go:embed instructions/cucumber.md
+var cucumberInstructions string
+
 //go:embed instructions/mocha.md
 var mochaInstructions string
 
@@ -36,7 +39,7 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		return err
 	}
 	var scope *ValidationScope
-	if language == "javascript" && (name == "mocha" || name == "playwright" || name == "cypress") {
+	if language == "javascript" && (name == "mocha" || name == "playwright" || name == "cypress" || name == "cucumber") {
 		discovered, err := DiscoverValidationScope(repositoryRoot, name)
 		if err != nil {
 			return err
@@ -72,7 +75,7 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		}
 		_, _ = fmt.Fprintf(output, "Run `%s` to check the setup locally.\n", command)
 		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
-		if name != "cypress" {
+		if name != "cypress" && name != "cucumber" {
 			return nil
 		}
 	}
@@ -88,6 +91,9 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 }
 
 func instructions(language, name string) string {
+	if language == "javascript" && name == "cucumber" {
+		return strings.ReplaceAll(cucumberInstructions, "ddtest testdrive", "ddtest testdrive --framework cucumber")
+	}
 	if language == "javascript" && name == "cypress" {
 		return strings.ReplaceAll(cypressInstructions, "ddtest testdrive", "ddtest testdrive --framework cypress")
 	}

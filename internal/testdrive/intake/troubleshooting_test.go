@@ -37,66 +37,82 @@ func TestMissingCoverageFindingRequiresTestEventsAndNoCoveragePayload(t *testing
 	require.False(t, facts.MissingCoverage) // Empty coverage has its own finding.
 }
 
-func TestTroubleshootFrameworkWithoutNYC(t *testing.T) {
-	for _, tc := range []struct {
-		framework, manifest string
-	}{
-		{"Cucumber", `{"devDependencies":{"@cucumber/cucumber":"13.2.1"}}`},
-		{"Mocha", `{"devDependencies":{"mocha":"11.7.6"}}`},
-	} {
-		t.Run(tc.framework, func(t *testing.T) {
-			root := t.TempDir()
-			manifest := filepath.Join(root, "package.json")
-			require.NoError(t, os.WriteFile(manifest, []byte(tc.manifest), 0644))
-			facts := Facts{MissingCoverage: true}
+func TestTroubleshootMochaWithoutNYC(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "package.json")
+	require.NoError(t, os.WriteFile(manifest, []byte(`{"devDependencies":{"mocha":"11.7.6"}}`), 0644))
+	facts := Facts{MissingCoverage: true}
 
-			advice := Troubleshoot(root, tc.framework, facts)
-			require.Len(t, advice, 1)
-			require.Equal(t, MissingCoverageFinding, advice[0].Finding)
-			wantTitle := tc.framework + " needs nyc for coverage"
-			if tc.framework == "Mocha" {
-				wantTitle = "Install nyc for Mocha coverage"
-				require.NotContains(t, advice[0].Text, "./node_modules/.bin/nyc ddtest")
-				require.Contains(t, advice[0].Text, "Select the same NYC-wrapped command")
-			}
-			require.Equal(t, wantTitle, advice[0].Title)
-			require.Contains(t, advice[0].Text, "npm install --save-dev nyc")
-			require.Contains(t, advice[0].Text, "ddtest testdrive")
-			require.NotContains(t, advice[0].Text, "--command")
-			require.Empty(t, Troubleshoot(root, tc.framework, Facts{}))
-			for _, framework := range []string{"Jest", "Vitest"} {
-				require.Empty(t, Troubleshoot(root, framework, facts))
-			}
-
-			require.NoError(t, os.WriteFile(manifest, []byte(`{"devDependencies":{"nyc":"17.0.0"}}`), 0644))
-			advice = Troubleshoot(root, tc.framework, facts)
-			require.Len(t, advice, 1)
-			require.Equal(t, "Install the declared nyc dependency", advice[0].Title)
-			require.Contains(t, advice[0].Text, "Install the project's dependencies")
-
-			require.NoError(t, os.WriteFile(manifest, []byte(tc.manifest), 0644))
-			require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules", ".bin"), 0755))
-			require.NoError(t, os.WriteFile(filepath.Join(root, "node_modules", ".bin", "nyc"), nil, 0755))
-			advice = Troubleshoot(root, tc.framework, facts)
-			require.Len(t, advice, 1)
-			wantTitle = "Run testdrive through nyc for coverage"
-			if tc.framework == "Mocha" {
-				wantTitle = "Check NYC coverage configuration"
-				require.NotContains(t, advice[0].Text, "./node_modules/.bin/nyc ddtest")
-			}
-			require.Equal(t, wantTitle, advice[0].Title)
-			require.Contains(t, advice[0].Text, "ddtest testdrive")
-			require.Contains(t, advice[0].Text, "include/exclude")
-			require.NotContains(t, advice[0].Text, "npm install")
-			require.Empty(t, Troubleshoot(root, tc.framework, Facts{}))
-		})
+	advice := Troubleshoot(root, "Mocha", facts, CoverageSetup{})
+	require.Len(t, advice, 1)
+	require.Equal(t, MissingCoverageFinding, advice[0].Finding)
+	require.Equal(t, "Install nyc for Mocha coverage", advice[0].Title)
+	require.NotContains(t, advice[0].Text, "./node_modules/.bin/nyc ddtest")
+	require.Contains(t, advice[0].Text, "Select the same NYC-wrapped command")
+	require.Contains(t, advice[0].Text, "npm install --save-dev nyc")
+	require.NotContains(t, advice[0].Text, "--command")
+	require.Empty(t, Troubleshoot(root, "Mocha", Facts{}, CoverageSetup{}))
+	for _, framework := range []string{"Jest", "Vitest"} {
+		require.Empty(t, Troubleshoot(root, framework, facts, CoverageSetup{}))
 	}
+
+	require.NoError(t, os.WriteFile(manifest, []byte(`{"devDependencies":{"nyc":"17.0.0"}}`), 0644))
+	advice = Troubleshoot(root, "Mocha", facts, CoverageSetup{})
+	require.Len(t, advice, 1)
+	require.Equal(t, "Install the declared nyc dependency", advice[0].Title)
+	require.Contains(t, advice[0].Text, "Install the project's dependencies")
+
+	require.NoError(t, os.WriteFile(manifest, []byte(`{"devDependencies":{"mocha":"11.7.6"}}`), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules", ".bin"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "node_modules", ".bin", "nyc"), nil, 0755))
+	advice = Troubleshoot(root, "Mocha", facts, CoverageSetup{})
+	require.Len(t, advice, 1)
+	require.Equal(t, "Check NYC coverage configuration", advice[0].Title)
+	require.NotContains(t, advice[0].Text, "./node_modules/.bin/nyc ddtest")
+	require.Contains(t, advice[0].Text, "include/exclude")
+	require.NotContains(t, advice[0].Text, "npm install")
+}
+
+// Cucumber keeps coverage tooling on the Cucumber command, so advice follows
+// the command's own setup and never suggests wrapping testdrive in nyc.
+func TestTroubleshootCucumberCoverageFollowsTheCommandSetup(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "package.json")
+	require.NoError(t, os.WriteFile(manifest, []byte(`{"devDependencies":{"@cucumber/cucumber":"13.3.0"}}`), 0644))
+	facts := Facts{MissingCoverage: true}
+	for _, tc := range []struct {
+		setup        CoverageSetup
+		title, text  string
+		withoutTexts []string
+	}{
+		{CoverageSetup{Parallel: true, Wrapper: "nyc"}, "Cucumber parallel workers send no coverage", "sends no suite coverage from Cucumber parallel workers", []string{"may not", "npm install"}},
+		{CoverageSetup{Wrapper: "c8"}, "Use nyc instead of c8 for Cucumber coverage", "Do not wrap c8 or testdrive in nyc", []string{"npm install"}},
+		{CoverageSetup{Wrapper: "nyc"}, "Check the command's nyc configuration", "already runs under nyc", []string{"npm install"}},
+		{CoverageSetup{}, "Run the Cucumber command under nyc", "npm install --save-dev nyc", nil},
+	} {
+		advice := Troubleshoot(root, "Cucumber", facts, tc.setup)
+		require.Len(t, advice, 1)
+		require.Equal(t, MissingCoverageFinding, advice[0].Finding)
+		require.Equal(t, tc.title, advice[0].Title)
+		require.Contains(t, advice[0].Text, tc.text)
+		require.NotContains(t, advice[0].Text, "nyc ddtest testdrive")
+		for _, text := range tc.withoutTexts {
+			require.NotContains(t, advice[0].Text, text)
+		}
+	}
+	require.Empty(t, Troubleshoot(root, "Cucumber", Facts{}, CoverageSetup{Wrapper: "c8"}))
+
+	require.NoError(t, os.WriteFile(manifest, []byte(`{"devDependencies":{"nyc":"17.1.0"}}`), 0644))
+	require.Contains(t, Troubleshoot(root, "Cucumber", facts, CoverageSetup{})[0].Text, "Install the project's dependencies")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules", ".bin"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "node_modules", ".bin", "nyc"), nil, 0755))
+	require.NotContains(t, Troubleshoot(root, "Cucumber", facts, CoverageSetup{})[0].Text, "Install")
 }
 
 func TestMochaExistingBabelIstanbulAdvice(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "babel.config.cjs"), []byte(`module.exports={plugins:['istanbul']}`), 0600))
-	advice := Troubleshoot(root, "Mocha", Facts{MissingCoverage: true})
+	advice := Troubleshoot(root, "Mocha", Facts{MissingCoverage: true}, CoverageSetup{})
 	require.Len(t, advice, 1)
 	require.Equal(t, "Check existing Babel Istanbul instrumentation", advice[0].Title)
 	require.NotContains(t, advice[0].Text, "npm install")

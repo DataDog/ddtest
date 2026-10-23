@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -171,6 +172,15 @@ func (t *Testdrive) ownPlaywrightProcesses(directory string, env map[string]stri
 		return nil, errors.Join(err, owner.Close())
 	}
 	return owner, nil
+}
+
+// superviseNodeProcesses preloads the owner's supervisor into every Node
+// process of a command, so they and their descendants stop when ddtest dies.
+// Windows supervision is unsupported, so it is left out there.
+func superviseNodeProcesses(env map[string]string, directory string) {
+	if runtime.GOOS != "windows" {
+		env["NODE_OPTIONS"] += " --require " + strconv.Quote(filepath.Join(directory, "children.cjs"))
+	}
 }
 
 // The repository lock excludes another live ddtest owner for this repository.

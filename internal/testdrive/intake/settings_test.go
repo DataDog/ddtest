@@ -180,3 +180,13 @@ func TestKnownTestsIncludeTheEmittedModule(t *testing.T) {
 	require.JSONEq(t, `{}`, string(data.Data.Attributes.Tests["named project"]))
 	require.JSONEq(t, `{}`, string(data.Data.Attributes.Tests["jest"]))
 }
+
+func TestSkippingExplicitSuiteSelectorKeepsRepositorySourceIdentity(t *testing.T) {
+	scenario := Scenario{Feature: "skipping", Suite: "features/probe.feature", SourceFile: "packages/api/features/probe.feature", SuiteSelector: "features/probe.feature"}
+	response := httptest.NewRecorder()
+	scenarioHandler(scenario).ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(`{"data":{"attributes":{"test_level":"suite"}}}`)))
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), `"suite":"features/probe.feature"`)
+	require.NotContains(t, response.Body.String(), "packages/api")
+	require.Equal(t, "packages/api/features/probe.feature", scenario.SourceFile)
+}

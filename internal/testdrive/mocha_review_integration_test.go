@@ -90,7 +90,7 @@ func TestMochaDelayedCommandUsesSharedTimeout(t *testing.T) {
 	run, err := drive.runMocha(t.Context(), io.Discard, session, "", runSpec{Name: "delayed", Role: roleBaseline})
 	require.NoError(t, err)
 	require.ErrorIs(t, run.commandError, context.DeadlineExceeded)
-	require.Contains(t, run.ResultError, "per-command timeout")
+	require.Equal(t, "delayed exceeded --timeout 500ms; raise --timeout or fix the hanging step", markTimeout(run).ResultError)
 	require.NotZero(t, run.ExitCode)
 	require.Less(t, time.Since(start), 5*time.Second)
 }

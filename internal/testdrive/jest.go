@@ -23,13 +23,15 @@ import (
 )
 
 type jestTest struct {
-	CypressAttempts []string            `json:"-"`
-	Playwright      *playwrightIdentity `json:"playwright,omitempty"`
-	telemetryName   *string
-	File            string `json:"file"`
-	Name            string `json:"name"`
-	Status          string `json:"status"`
-	Failure         string `json:"failure,omitempty"`
+	CucumberAttempts []string            `json:"-"`
+	CucumberLine     int                 `json:"-"`
+	CypressAttempts  []string            `json:"-"`
+	Playwright       *playwrightIdentity `json:"playwright,omitempty"`
+	telemetryName    *string
+	File             string `json:"file"`
+	Name             string `json:"name"`
+	Status           string `json:"status"`
+	Failure          string `json:"failure,omitempty"`
 }
 
 type jestResults struct {
@@ -279,7 +281,7 @@ func configureScenarioEnvironment(env map[string]string, feature string) {
 func executedTests(run validationRun) int {
 	count := 0
 	for _, test := range run.Tests {
-		if test.Status == "passed" || test.Status == "failed" {
+		if test.Status == "passed" || test.Status == "failed" || (run.framework == "cucumber" && (test.Status == "pending" || test.Status == "undefined")) {
 			count++
 		}
 	}
@@ -291,7 +293,7 @@ func outcomeKeys(run validationRun) []string {
 	keys = append(keys, run.SuiteErrors...)
 	keys = append(keys, run.SuiteFailures...)
 	for _, test := range run.Tests {
-		keys = append(keys, test.File+" › "+test.Name+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test))
+		keys = append(keys, test.File+" › "+test.Name+cucumberLocation(test)+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test))
 	}
 	for i := range keys {
 		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])
@@ -300,7 +302,21 @@ func outcomeKeys(run validationRun) []string {
 	return keys
 }
 
+// pairTimeout explains a paired comparison that testdrive's --timeout cut short.
+func pairTimeout(baseline, instrumented validationRun) string {
+	if baseline.Timeout != "" {
+		return baseline.Timeout + "."
+	}
+	if instrumented.Timeout != "" {
+		return instrumented.Timeout + ", while the uninstrumented run finished."
+	}
+	return ""
+}
+
 func compareJest(baseline, instrumented validationRun) verdict {
+	if reason := pairTimeout(baseline, instrumented); reason != "" {
+		return verdict{Status: "inconclusive", Code: "command_timeout", Reason: reason}
+	}
 	if baseline.ResultError != "" {
 		return verdict{Status: "inconclusive", Reason: "The uninstrumented run did not produce usable results: " + reportText(baseline.ResultError) + "."}
 	}
@@ -341,6 +357,9 @@ func compareJest(baseline, instrumented validationRun) verdict {
 }
 
 func verifyJestTelemetry(run validationRun) verdict {
+	if run.framework == "cucumber" {
+		return verifyCucumberTelemetry(run)
+	}
 	if run.framework == "playwright" {
 		return verifyPlaywrightTelemetry(run)
 	}
@@ -366,6 +385,7 @@ func verifyJestTelemetry(run validationRun) verdict {
 		}
 	}
 	observed := make(map[identity]int)
+	var differences []string
 	for _, test := range run.Facts.Tests {
 		// The tracer reports source files relative to the Git checkout, and
 		// suite names relative to the test process directory.
@@ -385,21 +405,38 @@ func verifyJestTelemetry(run validationRun) verdict {
 				observed[identity{file, test.Name, attempt.Status}]++
 			}
 		}
+		// A span sent twice is one execution; counting it again could hide a
+		// missing test that shares its name, such as another outline example.
+		spans := map[uint64]int{}
+		attempts := make([]intake.TestRun, 0, len(test.Attempts))
+		for _, attempt := range test.Attempts {
+			if attempt.SpanID != 0 {
+				spans[attempt.SpanID]++
+				if spans[attempt.SpanID] > 1 {
+					continue
+				}
+			}
+			attempts = append(attempts, attempt)
+		}
+		for _, count := range spans {
+			if count > 1 {
+				differences = append(differences, fmt.Sprintf("Duplicate telemetry: file %q, test %q, one span reported %d times", file, test.Name, count))
+			}
+		}
 		var final *intake.TestRun
-		for i, attempt := range test.Attempts {
+		for i, attempt := range attempts {
 			if attempt.Retry && attempt.RetryReason != "external" && attempt.RetryReason != "" {
 				return verdict{Status: "inconclusive", Code: "unexpected_retry", Reason: "Unexpected tracer-controlled retry telemetry in the reporting-only run."}
 			}
 			if !attempt.Retry && final != nil {
 				observe(*final)
 			}
-			final = &test.Attempts[i]
+			final = &attempts[i]
 		}
 		if final != nil {
 			observe(*final)
 		}
 	}
-	var differences []string
 	for key, count := range expected {
 		if count > observed[key] {
 			differences = append(differences, fmt.Sprintf("Missing telemetry: file %q, test %q, status %q (count %d)", key.file, key.name, key.status, count-observed[key]))
@@ -419,6 +456,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 
 func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
 	run := t.runJest
+	if t.framework.Name() == "cucumber" {
+		run = t.runCucumber
+	}
 	if t.framework.Name() == "cypress" {
 		run = t.runCypress
 	}
@@ -430,6 +470,11 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	}
 	if t.framework.Name() == "vitest" {
 		run = t.runVitest
+	}
+	runFramework := run
+	run = func(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (validationRun, error) {
+		value, err := runFramework(ctx, output, session, preload, spec)
+		return markTimeout(value), err
 	}
 	baseline, err := run(ctx, output, session, preload, runSpec{Name: "baseline", Role: roleBaseline, Instrumented: false})
 	result.Runs = append(result.Runs, baseline.summary())
@@ -460,6 +505,14 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 			return err
 		}
 		result.Compatibility = compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrumentedAgain)
+	}
+	// Probes would only repeat the hang; name the timeout once instead.
+	if reason := pairTimeout(baseline, instrumented); reason != "" {
+		unavailableFeatures(result, reason)
+		return nil
+	}
+	if t.framework.Name() == "cucumber" {
+		return t.runCucumberFeatures(ctx, output, session, preload, baseline, result)
 	}
 	if t.framework.Name() == "vitest" {
 		return t.runVitestFeatures(ctx, output, session, preload, baseline, result)

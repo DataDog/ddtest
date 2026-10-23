@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 
@@ -62,9 +63,12 @@ type runSpec struct {
 type validationRun struct {
 	ReplacedReporters []string
 	Role              runRole
+	cucumberParallel  bool
+	cucumberSupport   *cucumberSupport
 	FrameworkNode     string
 	NativeCommand     string
 	ProbeExecutions   *int
+	Coverage          *coverageSummary
 	ExecutionContext  string `json:"execution_context,omitempty"`
 	temporaryRoot     string
 	commandOutput     string
@@ -88,10 +92,12 @@ type validationRun struct {
 	Diagnostic                      string
 	ExitCode                        int
 	ResultError                     string
-	Tests                           []jestTest
-	SuiteErrors                     []string
-	SuiteFailures                   []string
-	Facts                           intake.Facts
+	// Set when testdrive's --timeout stopped the command; replaces ResultError.
+	Timeout       string
+	Tests         []jestTest
+	SuiteErrors   []string
+	SuiteFailures []string
+	Facts         intake.Facts
 	// Parts of the customer's suite that this run could not exercise.
 	NotExercised []string
 }
@@ -137,14 +143,15 @@ type runSummary struct {
 	NotExercised                    []string            `json:"not_exercised,omitempty"`
 	ExitCode                        *int                `json:"exit_code"`
 	ResultError                     string              `json:"result_error,omitempty"`
+	Timeout                         string              `json:"timeout,omitempty"`
 	TestCounts                      testCounts          `json:"test_counts"`
 	SuiteErrorCount                 int                 `json:"suite_error_count"`
 	TestEventCount                  int                 `json:"test_event_count"`
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
-		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), NotExercised: r.NotExercised, SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
+	summary := runSummary{Coverage: r.Coverage, FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), Timeout: r.Timeout, ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), NotExercised: r.NotExercised, SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)
 	}
@@ -393,6 +400,28 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		return fmt.Errorf("validation is incomplete or found an unexpected difference; see %s", path)
 	}
 	return nil
+}
+
+// markTimeout names testdrive's own --timeout when it stopped the run, in
+// place of the partial results or internal context error it leaves behind.
+func markTimeout(run validationRun) validationRun {
+	var timeout *ext.CommandTimeoutError
+	if errors.As(run.commandError, &timeout) {
+		run.Timeout = fmt.Sprintf("%s exceeded --timeout %s; raise --timeout or fix the hanging step", run.Name, timeout.Timeout)
+		run.ResultError = run.Timeout
+	}
+	return run
+}
+
+// timedOutRuns lists the timeout of every run that testdrive's --timeout stopped.
+func timedOutRuns(result validationResult) []string {
+	var timeouts []string
+	for _, run := range result.Runs {
+		if run.Timeout != "" {
+			timeouts = append(timeouts, run.Timeout)
+		}
+	}
+	return timeouts
 }
 
 func commandExitCode(err error) int {

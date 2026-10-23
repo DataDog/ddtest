@@ -116,7 +116,7 @@ func joinDiagnostic(a, b string) string {
 
 // Tracer preloads are checked independently. Keep ordinary literal runtime
 // options; unknown expansions or custom module hooks require review.
-func ordinaryNodeOptions(value string) (string, error) {
+func ordinaryNodeOptions(value string, modules ...string) (string, error) {
 	for _, reference := range []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT"} {
 		pattern := regexp.MustCompile(`\$\{\{\s*env\.` + reference + `\s*\}\}`)
 		module := "dd-trace/ci/init"
@@ -145,6 +145,10 @@ func ordinaryNodeOptions(value string) (string, error) {
 				module = words[i]
 			}
 			if (key == "-r" || key == "--require") && module == "dd-trace/ci/init" || key == "--import" && module == "dd-trace/register.js" {
+				continue
+			}
+			if (key == "--loader" || key == "--experimental-loader") && slices.Contains(modules, module) {
+				kept = append(kept, key, module)
 				continue
 			}
 			return "", errors.New("custom NODE_OPTIONS module requires review")
@@ -190,7 +194,7 @@ func nodeJestArguments(words []string) ([]string, bool) {
 
 // Resolve bounded workflow expressions as data, never shell code. This also
 // handles conditional tracer-only settings without discarding ordinary flags.
-func resolveNodeOptions(value string, row map[string]any, env map[string]string) (string, error) {
+func resolveNodeOptions(value string, row map[string]any, env map[string]string, modules ...string) (string, error) {
 	if len(value) > 4096 {
 		return "", errors.New("NODE_OPTIONS exceeds discovery limit")
 	}
@@ -222,7 +226,7 @@ func resolveNodeOptions(value string, row map[string]any, env map[string]string)
 		}
 		value = parser.rest
 	}
-	return ordinaryNodeOptions(result.String())
+	return ordinaryNodeOptions(result.String(), modules...)
 }
 
 // ParseValidationCommand uses the same literal-command and environment rules as

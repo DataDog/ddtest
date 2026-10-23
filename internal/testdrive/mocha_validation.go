@@ -226,9 +226,6 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 	if run.ExitCode != 0 || run.ResultError != "" || len(run.SuiteErrors) > 0 {
 		run.Diagnostic = commandDiagnostic(data)
 	}
-	if errors.Is(commandErr, context.DeadlineExceeded) {
-		run.ResultError = "Mocha command exceeded its per-command timeout; review delayed/setup commands or adjust --timeout before retrying."
-	}
 	return run, nil
 }
 

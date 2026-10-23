@@ -22,6 +22,9 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			entry := name
 			files := map[string]string{"package.json": `{"scripts":{"test":"` + name + `"}}`}
 			switch name {
+			case "cucumber":
+				entry = "cucumber-js"
+				files = map[string]string{"package.json": `{"scripts":{"test":"cucumber-js"}}`}
 			case "pytest":
 				files = map[string]string{"pyproject.toml": "[tool.pytest.ini_options]\n"}
 				language = "python"
@@ -41,7 +44,7 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			require.NoError(t, Run(&output))
 			require.Contains(t, output.String(), "languages: "+language)
 			switch name {
-			case "mocha":
+			case "mocha", "cucumber":
 				require.Contains(t, output.String(), "`js-tracer-version`")
 			case "vitest", "playwright", "cypress":
 				require.Contains(t, output.String(), "js-tracer-version: <resolved-release>")
@@ -54,6 +57,8 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 				require.NotContains(t, output.String(), "NODE_OPTIONS")
 			}
 			switch name {
+			case "cucumber":
+				require.Contains(t, output.String(), "`js-tracer-version`")
 			case "vitest", "playwright", "cypress":
 				require.Contains(t, output.String(), "DD_TRACE_ESM_IMPORT")
 			}

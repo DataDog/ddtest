@@ -773,3 +773,50 @@ Install the repository dependencies and the required Cypress browser first. Run 
 Five controlled checks validate retries, early flake detection, quarantine, disabled tests and attempt-to-fix. **Cypress TIA skipping and application coverage validation are deferred**. They are neither passed nor unsupported by the tracer, and missing application coverage does not block those five controls. Preserve existing coverage instrumentation. Real Datadog/Cypress Cloud processing and actual CI execution are not exercised locally.
 
 Execution uses disposable copies and removes owned browser/server processes and artifacts. Keep the report pair in `.testoptimization/`; JSON records commands, observed counts and bounded diagnostics, while HTML retains full test output. Unknown environment-printing utilities remain setup review items rather than receiving repository-specific exemptions.
+
+### Cucumber validation
+
+`ddtest onboard --framework cucumber` prints the Cucumber setup, including early
+tracer initialization, NYC source coverage and scoped instrumentation for mixed
+framework repositories. It does not edit files.
+
+Run `ddtest testdrive --framework cucumber --all --check-only --yes` to inspect
+CI commands and runtime requirements, then omit `--check-only` to validate them
+in disposable copies. A focused command can use `--command 'npm test'`. The
+original command runs without dd-trace and with reporting-only instrumentation;
+matching existing failures are acceptable. The public message formatter supplies
+native scenario results, including hooks and final retry outcomes. Incomplete
+messages cannot certify compatibility.
+
+Cucumber testdrive requires version 8 or later; the existing plan/run adapter
+still supports version 7. All six controls are required. Cucumber reports coverage at suite level; the
+report associates it with scenarios without claiming per-scenario precision.
+Feature/config/support files alone do not prove application coverage. Native ESM
+requires explicitly configured Istanbul instrumentation in addition to NYC.
+Testdrive preserves declared loaders; it does not inject one merely because it
+is installed, or add NYC around an existing c8 command. Unknown scripts,
+dynamic variables, orchestration globs and alias-specific working-directory or
+environment changes remain unvalidated with an explanation.
+
+Feature probes and their step definitions use the same recoverable ownership
+records as other adapters. On macOS and Linux, every Node process of a run,
+including NYC and `cucumber-js`, uses the same process supervisor as Playwright and Cypress, so
+owned processes stop when validation ends or when ddtest itself is killed. The
+next run recovers any leftover session, configuration copy and ownership
+storage. Only the JSON/HTML report pair remains in the customer repository.
+Local checks do not exercise customer CI or Datadog processing.
+
+A run that exceeds `--timeout` is reported as `<run> exceeded --timeout <limit>;
+raise --timeout or fix the hanging step`, in that run's `timeout`, the
+compatibility reason and the blocking checks, for every framework. The missing
+results, coverage and feature probes it caused are not reported again.
+
+Cucumber probes use an owned empty config, dropping customer tags/name/profile/paths
+while retaining resolved support imports, World and unconditional hooks. Their step
+definition is isolated from customer catch-all definitions; tagged hooks remain
+checked by the actual suite. Original parallel commands stay parallel: missing
+worker coverage/control telemetry remains explicitly unvalidated rather than
+being hidden by a serial rerun. The selected dd-trace sends no suite coverage
+from Cucumber parallel workers, so the report says so and does not advise adding
+NYC. When coverage is missing, the advice follows the command's own setup: NYC
+already on the command, c8, or no coverage tool.

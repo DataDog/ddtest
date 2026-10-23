@@ -274,7 +274,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 				}
 
 				for _, contextJob := range jobs {
-					result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
+					result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, root, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
 				}
 
 			}
@@ -337,7 +337,7 @@ func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) err
 	return err
 }
 
-func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
+func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
 	finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Status: StatusInconclusive}
 	var findings []RuntimeFinding
 	fail := func(code, reason string) []RuntimeFinding {
@@ -428,7 +428,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 				continue
 			}
 		}
-		findings = append(findings, evaluateRuntimeTest(ctx, workflow, job, step, row, resolution, state, finding, resolveNode, resolve, frameworks...))
+		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, step, row, resolution, state, finding, resolveNode, resolve, frameworks...))
 	}
 	if len(findings) == 0 {
 		return fail(CodeUnresolvedCommand, "No active test step could be checked.")
@@ -436,7 +436,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 	return findings
 }
 
-func evaluateRuntimeTest(ctx context.Context, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, resolution commandResolution, state runtimeState, finding RuntimeFinding, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) RuntimeFinding {
+func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, resolution commandResolution, state runtimeState, finding RuntimeFinding, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) RuntimeFinding {
 	finding.Code = ""
 	if len(resolution.Tests) > 0 && resolution.Tests[0].Cypress != nil && resolution.Tests[0].Cypress.Action != "" {
 		finding.Node, finding.NodeSource = step.ActionNode, step.Uses+" / runs.using"
@@ -512,7 +512,13 @@ func evaluateRuntimeTest(ctx context.Context, workflow ciWorkflow, job runtimeJo
 		finding.Code = CodeRuntimeUnknown
 	}
 	if finding.Status == StatusCompatible {
-		if reason := checkTestBootstrap(workflow, job, step, row, resolution.Tests, frameworks...); reason != "" {
+		reason := ""
+		if len(frameworks) > 0 && frameworks[0] == "cucumber" {
+			reason = checkCucumberBootstrap(root, workflow, job, step, row, resolution.Tests)
+		} else {
+			reason = checkTestBootstrap(workflow, job, step, row, resolution.Tests, frameworks...)
+		}
+		if reason != "" {
 			finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedInitialization, reason
 		}
 	}

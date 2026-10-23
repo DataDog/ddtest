@@ -54,14 +54,17 @@ func summarizeValidation(result validationResult) validationSummary {
 		if supportsValidationFramework(result.Framework) && !hasValidationPair(result) {
 			summary.BlockingChecks = append(summary.BlockingChecks, "current baseline and reporting-only execution evidence is missing")
 		}
-		if missingRealCoverage(result) {
+		// A hang explains the missing results, coverage and probes; say it once.
+		timeouts := timedOutRuns(result)
+		summary.BlockingChecks = append(summary.BlockingChecks, timeouts...)
+		if len(timeouts) == 0 && missingRealCoverage(result) {
 			summary.BlockingChecks = append(summary.BlockingChecks, displayName(result.Framework)+" real-suite coverage was not observed: "+missingRealCoverageReason(result)+" Synthetic skipping probes do not validate coverage of customer source; preserve coverage thresholds.")
 		}
 		if result.Compatibility.Status != "" && result.Compatibility.Status != "compatible" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility: "+result.Compatibility.Status)
 		}
 		for _, feature := range result.Features {
-			if !featureSatisfied(result.Framework, feature) {
+			if !featureSatisfied(result.Framework, feature) && !slices.ContainsFunc(timeouts, func(timeout string) bool { return strings.HasPrefix(feature.Reason, timeout) }) {
 				summary.BlockingChecks = append(summary.BlockingChecks, fmt.Sprintf("%s/%s: %s", feature.Project, feature.Name, feature.Status))
 			}
 		}

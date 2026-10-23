@@ -32,6 +32,9 @@ type Scenario struct {
 	// SourceFile is the repository-relative path used by Jest suite skipping.
 	// Suite remains the reported identity used by test management.
 	SourceFile string
+	// SuiteSelector is an adapter's explicit suite identity when its tracer
+	// consumes test.suite rather than a repository-relative source file.
+	SuiteSelector string
 }
 
 func newHandler() http.Handler { return scenarioHandler(Scenario{}) }
@@ -163,11 +166,15 @@ func handleSkippableTests(w http.ResponseWriter, r *http.Request, scenario Scena
 		return
 	}
 	data := []any{}
+	suite := scenario.SourceFile
+	if scenario.SuiteSelector != "" {
+		suite = scenario.SuiteSelector
+	}
 	if scenario.Feature == "skipping" && scenario.SourceFile != "" {
 		if level == "test" && scenario.Suite != "" && scenario.Test != "" {
 			data = append(data, map[string]any{"type": "test", "attributes": map[string]any{"suite": scenario.Suite, "name": scenario.Test}})
 		} else if level != "test" {
-			data = append(data, map[string]any{"type": "suite", "attributes": map[string]any{"suite": scenario.SourceFile}})
+			data = append(data, map[string]any{"type": "suite", "attributes": map[string]any{"suite": suite}})
 		}
 	}
 	writeJSON(w, map[string]any{

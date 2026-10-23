@@ -84,8 +84,13 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		if key == "PATH" || key == "NODE_PATH" {
 			return step, nil, fmt.Errorf("CI environment overrides executable/module selection: %s", key)
 		}
-		if key == "NODE_OPTIONS" {
-			ordinary, err := resolveNodeOptions(value, row, conditionEnvironment(workflow, job, step, row))
+		cucumber := len(frameworks) > 0 && frameworks[0] == "cucumber"
+		if key == "NODE_OPTIONS" || (cucumber && key == "DD_CUCUMBER_NODE_OPTIONS") {
+			var modules []string
+			if cucumber {
+				modules = []string{"@istanbuljs/esm-loader-hook"}
+			}
+			ordinary, err := resolveNodeOptions(value, row, conditionEnvironment(workflow, job, step, row), modules...)
 			if err != nil && len(frameworks) > 0 && frameworks[0] == "cypress" {
 				ordinary, err = cypressLocalNodeOptions(value, workflow, job, step, row)
 			}

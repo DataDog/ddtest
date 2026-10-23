@@ -32,6 +32,10 @@ func diagnoseSkipping(run validationRun, scenario intake.Scenario) *skippingDiag
 		Expected: "Mock returns the control's test.source.file; ITR skips that file, no test body executes, and exit code is 0. Suite naming differences are retained separately. Real Datadog credentials are not required."}
 	if d.SkippableRequests > 0 {
 		d.ReturnedSuite = reportText(scenario.SourceFile)
+		if scenario.SuiteSelector != "" {
+			d.ReturnedSuite = reportText(scenario.SuiteSelector)
+			d.Expected = "Mock returns the control's framework suite identity; ITR skips it, no test body executes, and exit code is 0. Source-file evidence is retained separately. Real Datadog credentials are not required."
+		}
 	}
 	for _, event := range run.Facts.Events {
 		tags := event.Tags

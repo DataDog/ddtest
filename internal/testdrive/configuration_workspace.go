@@ -61,7 +61,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	original, workspace := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
-	if !t.checkOnly && (len(item.Prerequisites) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress") {
+	if !t.checkOnly && (len(item.Prerequisites) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber") {
 		parent, err := os.MkdirTemp("", "ddtest-configuration-")
 		if err != nil {
 			return result, err

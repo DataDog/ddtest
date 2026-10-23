@@ -14,6 +14,9 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
+	cucumberProbeCommand            string
+	cucumberProbeBefore             []LifecycleScript
+	cucumberProbeAfter              []LifecycleScript
 	CypressPackage                  string          `json:"cypress_package_directory,omitempty"`
 	Cypress                         *CypressCommand `json:"cypress,omitempty"`
 	Platform                        string          `json:"platform,omitempty"` // GOOS of the resolved hosted CI runner, when known.
@@ -25,22 +28,24 @@ type TestCommand struct {
 	mochaProbeDirectory             string
 	mochaProbeEnvironment           map[string]string
 
-	ScopeCommand      string            `json:"-"` // Original invocation before adding a forwarding wrapper.
-	ProbeLintSkipped  bool              `json:"probe_lint_skipped,omitempty"`
-	ReviewReason      string            `json:"review_reason,omitempty"`
-	ExitOnFailure     bool              `json:"exit_on_failure,omitempty"`
-	Resolution        string            `json:"resolution,omitempty"`
-	Directory         string            `json:"directory"`
-	Command           string            `json:"command"`
-	Environment       map[string]string `json:"environment,omitempty"`
-	locations         []commandLocation
-	Locations         []string       `json:"locations,omitempty"`
-	Prerequisites     []BuildCommand `json:"prerequisites,omitempty"`
-	UnvalidatedSetup  []string       `json:"unvalidated_setup,omitempty"`
-	CICoverageCommand string         `json:"ci_coverage_command,omitempty"`
-	mochaESM          bool
-	mochaProbeCommand string
-	usesNYC           bool
+	ScopeCommand            string            `json:"-"` // Original invocation before adding a forwarding wrapper.
+	ProbeLintSkipped        bool              `json:"probe_lint_skipped,omitempty"`
+	ReviewReason            string            `json:"review_reason,omitempty"`
+	ExitOnFailure           bool              `json:"exit_on_failure,omitempty"`
+	Resolution              string            `json:"resolution,omitempty"`
+	Directory               string            `json:"directory"`
+	Command                 string            `json:"command"`
+	Environment             map[string]string `json:"environment,omitempty"`
+	locations               []commandLocation
+	Locations               []string       `json:"locations,omitempty"`
+	Prerequisites           []BuildCommand `json:"prerequisites,omitempty"`
+	UnvalidatedSetup        []string       `json:"unvalidated_setup,omitempty"`
+	CICoverageCommand       string         `json:"ci_coverage_command,omitempty"`
+	mochaESM                bool
+	mochaProbeCommand       string
+	usesNYC                 bool
+	cucumberCoverageWrapper string
+	cucumberScoped          bool
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same
@@ -83,7 +88,7 @@ func yarnImplicitInstall(words []string) bool {
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" {
+	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
@@ -94,7 +99,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
-			if framework == "cypress" {
+			if framework == "cypress" || framework == "cucumber" {
 				candidate := false
 				for _, step := range job.Steps {
 					resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)

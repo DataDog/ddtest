@@ -48,6 +48,10 @@ type Testdrive struct {
 	cypressDiscovered        bool // cypressSelected came from CI discovery, not --command.
 	configurationSourceRoot  string
 	scopeCommand             string
+	cucumberCoverage         map[string]string
+	cucumberSupport          *cucumberSupport
+	cucumberNode             string
+	cucumberExecutable       string
 	cypress                  *onboard.CypressCommand
 	cypressCommand           string
 	playwrightGuard          bool
@@ -237,7 +241,19 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			}
 		}
 	}
-
+	if runner.Name() == "cucumber" && !all {
+		selected, resolveErr := onboard.CucumberValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		if resolveErr != nil {
+			discoveryError = resolveErr
+		} else if selected != "" {
+			words, splitErr := shellquote.Split(selected)
+			if splitErr != nil || len(words) == 0 {
+				discoveryError = fmt.Errorf("invalid Cucumber command: %s", selected)
+			} else {
+				command, args = words[0], words[1:]
+			}
+		}
+	}
 	if runner.Name() == "mocha" && !all {
 		selected, resolveErr := onboard.MochaValidationCommandInScope(repositoryRoot, strings.TrimSpace(settings.GetCommand()), scope, scopeErr)
 		if resolveErr != nil {
@@ -522,7 +538,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	var result validationResult
 	if t.discoveryError != nil {
 		result, runErr = t.run(ctx, output)
-	} else if t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
+	} else if t.framework.Name() == "cucumber" || t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
 		child := *t
 		child.workflowRoot = t.repositoryRoot
 		child.preflight = child.frameworkPreflight()
@@ -751,6 +767,8 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 				result.Preflight.Verdict = checkCypressSupport(*result.Preflight, *result.Selection)
 			} else if t.framework.Name() == "playwright" {
 				result.Preflight.Verdict = checkPlaywrightSupport(*result.Preflight, *result.Selection)
+			} else if t.framework.Name() == "cucumber" {
+				result.Preflight.Verdict = checkCucumberSupport(*result.Preflight, *result.Selection)
 			} else if t.framework.Name() == "mocha" {
 				result.Preflight.Verdict = checkMochaSupport(*result.Preflight, *result.Selection)
 			} else {
@@ -905,7 +923,13 @@ func writeRunFindings(output io.Writer, findings intake.Facts, trafficRetained b
 	}
 	if findings.MissingCoverage && !coverageDeferred {
 		count++
-		_, _ = fmt.Fprintln(output, intake.MissingCoverageContext)
+		context := intake.MissingCoverageContext
+		for _, card := range cards {
+			if card.Kind == intake.MissingCoverageFinding {
+				context = card.Context
+			}
+		}
+		_, _ = fmt.Fprintln(output, context)
 		writeTroubleshooting(output, cards, intake.MissingCoverageFinding)
 	}
 	if findings.BrowserCoverageUnavailable {

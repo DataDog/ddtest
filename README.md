@@ -317,3 +317,7 @@ their own `--command`. See [Vitest validation](docs/running.md#vitest-testdrive-
 ### Mocha testdrive validation
 
 See [Mocha validation](docs/running.md#mocha-testdrive-validation) for commands, coverage requirements and limitations.
+
+Cucumber testdrive also compares native scenario outcomes and exercises all six
+controls, requiring real application source coverage through the project's NYC
+setup. See [Cucumber validation](docs/running.md#cucumber-validation).

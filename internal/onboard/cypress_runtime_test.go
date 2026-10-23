@@ -37,7 +37,7 @@ func TestCypressScenariosFollowDeclaredEvents(t *testing.T) {
 func TestCypressForkCannotInstallWithUnavailableCredentials(t *testing.T) {
 	job := runtimeJob{Context: map[string]string{"scenario": "fork_pull_request / key absent"}}
 	job.Steps = []runtimeStep{{Uses: "datadog/test-visibility-github-action@v3", With: map[string]string{"languages": "js", "api_key": "${{ secrets.DD_API_KEY }}"}}}
-	findings := checkRuntimeJob(t.Context(), ciWorkflow{}, "tests", job, []commandResolution{{}}, nil, nil, nil, "cypress")
+	findings := checkRuntimeJob(t.Context(), "", ciWorkflow{}, "tests", job, []commandResolution{{}}, nil, nil, nil, "cypress")
 	require.Len(t, findings, 1)
 	require.Equal(t, "incompatible", findings[0].Status)
 	require.Equal(t, "missing_fork_guard", findings[0].Code)
@@ -49,7 +49,7 @@ func TestCypressActionRuntimeIsKnownBeforeTracerInstallation(t *testing.T) {
 		{Uses: "cypress-io/github-action@v6", ActionNode: "20"},
 	}}
 	resolutions := []commandResolution{{}, {Matched: true, Tests: []TestCommand{{Cypress: &CypressCommand{Action: "cypress-io/github-action@v6"}}}}}
-	findings := checkRuntimeJob(t.Context(), ciWorkflow{}, "test", job, resolutions, nil, nil, nil, "cypress")
+	findings := checkRuntimeJob(t.Context(), "", ciWorkflow{}, "test", job, resolutions, nil, nil, nil, "cypress")
 	require.Len(t, findings, 1)
 	require.Equal(t, "missing_instrumentation", findings[0].Code)
 	require.Equal(t, "20", findings[0].Node, "use the action runtime when choosing a tracer before CI setup")
@@ -103,7 +103,7 @@ func TestCypressCIPathsCheckConditionalInstallationAndActionRuntime(t *testing.T
 				resolve := func(context.Context, string, string) (tracerRequirement, error) {
 					return tracerRequirement{Version: "6.21.0", Node: ">=22"}, nil
 				}
-				findings := checkRuntimeJob(t.Context(), workflow, "test", job, resolutions, nil, nil, resolve, "cypress")
+				findings := checkRuntimeJob(t.Context(), "", workflow, "test", job, resolutions, nil, nil, resolve, "cypress")
 				require.Len(t, findings, 1)
 				if key != "" {
 					require.Equal(t, "compatible", findings[0].Status)

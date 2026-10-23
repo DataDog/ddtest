@@ -145,6 +145,9 @@ type reportRuntime struct {
 	Environment                               environmentInfo
 	SetupFailure                              *reportCard
 	NotExercised                              []string
+	// Why the suite reported no coverage, and the coverage setup it ran with.
+	CoverageReason string
+	CoverageSetup  intake.CoverageSetup
 	// Validation runs delete captured traffic after the run.
 	TrafficDeleted bool
 }
@@ -287,7 +290,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	if findings.MissingCoverage && skippingPolicy(strings.ToLower(info.Framework)).Status == "required" {
 		model.Cards = append(model.Cards, reportCard{
 			Kind: intake.MissingCoverageFinding, Scope: coverageFindingScope, Severity: "warning", Title: "Coverage not reported", Count: 1,
-			Context: intake.MissingCoverageContext,
+			Context: strings.TrimSpace(intake.MissingCoverageContext + " " + info.CoverageReason),
 		})
 	}
 	if findings.BrowserCoverageUnavailable {
@@ -345,7 +348,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	if len(findings.ConfigurationErrors) > 0 {
 		model.Summary += " Tracer configuration errors: " + strings.Join(findings.ConfigurationErrors, ", ") + ". " + inspectionHint(!info.TrafficDeleted, "Inspect the captured traffic and test output.")
 	}
-	for _, advice := range intake.Troubleshoot(repositoryRoot, info.Framework, findings) {
+	for _, advice := range intake.Troubleshoot(repositoryRoot, info.Framework, findings, info.CoverageSetup) {
 		for i := range model.Cards {
 			if model.Cards[i].Kind == advice.Finding {
 				model.Cards[i].Advices = append(model.Cards[i].Advices, advice)
