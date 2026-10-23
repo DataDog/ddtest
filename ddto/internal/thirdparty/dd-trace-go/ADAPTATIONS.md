@@ -2696,8 +2696,10 @@ creates subtests from another package.
 
 ## Dynamic automatic test retries
 
-dd-trace-go PR #5695 (`c5b8fe272`, open when ported) is newer than the recorded
-base and is ported; `feature_ports` records its revision of each file. With
+dd-trace-go PR #5695 (`925cf8ed7`, open when ported) is newer than the recorded
+base and is ported; `feature_ports` records its revision of each file. The port
+began at `c5b8fe272`; `925cf8ed7` adds the bucket bounds that EFD and dynamic
+retries share. With
 `DD_CIVISIBILITY_DYNAMIC_ATR_ENABLED`, a test's automatic retry count comes
 from its first execution's duration, with inclusive bucket bounds: up to 5s,
 10s, 30s, 5m, and slower. `DD_CIVISIBILITY_DYNAMIC_ATR_BUCKETS` sets the five
@@ -2722,6 +2724,14 @@ retry count. The PR's `efd_faulty_session_test.go`, `retry_process_test.go` and
 `DD_CIVISIBILITY_FLAKY_RETRY_COUNT=0`, also with
 `DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process`. It fails
 without the port.
+
+The shared bounds (`bucketBoundFiveS` and the others) sit before
+`dynamicRetryDurationBucket`, among the appended helpers, instead of before
+`efdRetryCountForDuration`, so that function and the lines above keep their
+positions; a comment takes the place of its `secs` variable.
+`gotesting/test_execution_finalizer.go` changes its slow-abort line in place.
+The bounds keep EFD's behavior: `TestEFDRetryCountBucketBounds`, local, passes
+with and without them and fails when a bound or its exclusivity changes.
 
 ## Empty test sessions
 

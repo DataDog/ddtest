@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "cca3d6ee313064b0e713bf94d8843f8cc4eb32d60cac48f7c2d3a034966f668f",
+      "sha256": "9abbc573307dba261d2412c266c45982ba3fc281287f6856ab88d68a346282a1",
       "role": "local"
     },
     {
@@ -456,7 +456,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/dynamic_flaky_retries_test.go",
-      "sha256": "e19c7df6c38566814ba5724ce2595d33e2533ab61b901921c77f1f3b66c5e32b",
+      "sha256": "7eed5af1d413ca22dd521db99393cb0ff88bb4e06fd4181ecae1b2bf1f71b4e8",
       "role": "local"
     },
     {
@@ -478,7 +478,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/final_status.go",
-      "sha256": "0eec34b5d892f930c659d79993b332690d793d35ca9a3eb501d05bf1217c3ccc",
+      "sha256": "00a0a2dd5b39e20bd59f4cf11045d45210744eaa1801a58e2a79b1a0b794ac91",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/final_status.go",
       "source_sha256": "91cf9dc057df01462ab9b6b03591a4d2e4c41a58b562513eef0eebcec4e43264"
@@ -767,7 +767,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/test_execution_finalizer.go",
-      "sha256": "9d781cf9c92085d55cb2bc6b4d891d53e5eab74bc547c9a672f0c280f789b755",
+      "sha256": "1b57b3678eac3eacf5ce6d09a444c1ad9f8f435489dfca878f285c5eb9915f67",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/test_execution_finalizer.go",
       "source_sha256": "76a569dea1c97bee062050d21e9c3a8c1984420a6069ff9987e779cf3a7c8dc7"
@@ -2562,7 +2562,7 @@
     {
       "name": "dynamic-flaky-retries",
       "pr": "https://github.com/DataDog/dd-trace-go/pull/5695",
-      "commit": "c5b8fe272bdad46ec327bd3a4f2759a5911570ac",
+      "commit": "925cf8ed70b503bad1497c71df5efe7ab26a8b2e",
       "base_commit": "20164d601252adbb086c7420c240442729bf351d",
       "scope": "Ported while the PR is open, at its head commit. The env registry entries do not apply: the port reads the environment directly. Tests from files the port does not include are in local dynamic_flaky_retries_test.go and integration TestMiniDynamicFlakyRetries.",
       "files": [
@@ -2589,7 +2589,7 @@
         {
           "path": "civisibility/integrations/gotesting/final_status.go",
           "source_path": "internal/civisibility/integrations/gotesting/final_status.go",
-          "source_sha256": "ef706e29c6209cf9b2d1b2bcd6f43d1855042eb264ffff3cb078e10f93163f68"
+          "source_sha256": "28cb5640dd2f77fe5518c7480d80dd7e7409bdc6a33169ed8e8f96c169810f3a"
         },
         {
           "path": "civisibility/integrations/gotesting/instrumentation.go",
@@ -2610,6 +2610,11 @@
           "path": "civisibility/utils/telemetry/telemetry_count.go",
           "source_path": "internal/civisibility/utils/telemetry/telemetry_count.go",
           "source_sha256": "a12311ff1a21aeb4349916d6114393899df196219b61e1b9546733ea10ec073b"
+        },
+        {
+          "path": "civisibility/integrations/gotesting/test_execution_finalizer.go",
+          "source_path": "internal/civisibility/integrations/gotesting/test_execution_finalizer.go",
+          "source_sha256": "100a91a941c6bb33353b68e97f2818f08ee03ab01a02a2d510cbc996247511b6"
         }
       ]
     },

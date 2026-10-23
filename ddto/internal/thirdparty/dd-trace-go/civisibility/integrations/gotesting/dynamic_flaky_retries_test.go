@@ -11,6 +11,7 @@ import (
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	civisibilitynet "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/net"
 )
 
 // Ported from dd-trace-go #5695's retry_process_test.go and
@@ -85,4 +86,27 @@ func TestDynamicFlakyRetrySuppressedEFDUsesFirstExecutionDuration(t *testing.T) 
 func TestDynamicFlakyRetryCountBeforeFirstExecution(t *testing.T) {
 	require.Equal(t, int64(0), flakyRetryCountBeforeFirstExecution(&integrations.FlakyRetriesSetting{}))
 	require.Equal(t, int64(4), flakyRetryCountBeforeFirstExecution(&integrations.FlakyRetriesSetting{DynamicRetryCounts: &[5]int64{2, 4, 1, 1, 1}}))
+}
+
+// EFD's duration buckets have exclusive upper bounds, where dynamic automatic
+// test retries have inclusive ones: a test of exactly 5s is in the 10s bucket,
+// and one of 5m or more gets no EFD retries.
+func TestEFDRetryCountBucketBounds(t *testing.T) {
+	settings := &civisibilitynet.SettingsResponseData{}
+	retries := &settings.EarlyFlakeDetection.SlowTestRetries
+	retries.FiveS, retries.TenS, retries.ThirtyS, retries.FiveM = 4, 3, 2, 1
+	for _, tc := range []struct {
+		duration time.Duration
+		want     int64
+		ok       bool
+	}{
+		{5*time.Second - 1, 4, true}, {5 * time.Second, 3, true},
+		{10*time.Second - 1, 3, true}, {10 * time.Second, 2, true},
+		{30*time.Second - 1, 2, true}, {30 * time.Second, 1, true},
+		{5*time.Minute - 1, 1, true}, {5 * time.Minute, 0, false},
+	} {
+		got, ok := efdRetryCountForDuration(settings, tc.duration)
+		require.Equal(t, tc.want, got, "retries for %s", tc.duration)
+		require.Equal(t, tc.ok, ok, "a bucket for %s", tc.duration)
+	}
 }
