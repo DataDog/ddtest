@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "4fc1467f172ab340bc0c2f4212b24fbe07e6d44981bf1975d95a5db9fc093795",
+      "sha256": "cca3d6ee313064b0e713bf94d8843f8cc4eb32d60cac48f7c2d3a034966f668f",
       "role": "local"
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "path": "TESTS.json",
-      "sha256": "4a48156b8a12aa20f94f98c8d86497518d293a9c2eaa369a1ba7292500daa0f2",
+      "sha256": "e8ac672dcb82bf3babb2cbb0e5895ec8d0c22e313a2f266578615d74ba4d48c9",
       "role": "local"
     },
     {
@@ -1626,14 +1626,14 @@
     },
     {
       "path": "civisibility/utils/net/settings_api.go",
-      "sha256": "6772e95b9f36679e214450e40875c64f1e98ee19e1f9233491b67adcff62d228",
+      "sha256": "990638a4127a01945376fb2e80008a6b6ccffe338f804e8a93267e45a1e73f1b",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/net/settings_api.go",
       "source_sha256": "debc40c863dd7eae8e4ab894cdb88aa17f56244bdb2b6f09ab6c5a5ed5ac5a04"
     },
     {
       "path": "civisibility/utils/net/settings_api_test.go",
-      "sha256": "2f751536898a1ba2ea8b390d1f5df966fe61ec1ea31fbc1b1c9af7e91e783a4a",
+      "sha256": "5c1d982a95742aa06ee2e0957b1429ddb204deb974ac712c42980abf202a3566",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/net/settings_api_test.go",
       "source_sha256": "58dfcb6b753e6f7105a66a6ec574b3ca964cadacd9d1248d528087954adf5261"
@@ -2658,6 +2658,25 @@
           "path": "log/log.go",
           "source_path": "internal/log/log.go",
           "source_sha256": "0fbc5649155020af8c3e7343ad829e929234b3418d41bed7722d03b5a7027e36"
+        }
+      ]
+    },
+    {
+      "name": "settings-test-level",
+      "pr": "https://github.com/DataDog/dd-trace-go/pull/5709",
+      "commit": "4f8d28427ab7204ab0b4d530c2e0aed140cd591b",
+      "base_commit": "dfe39a4c2fde0d56427c3f85c3009385ea26465f",
+      "scope": "Ported while the PR is open, at its head commit.",
+      "files": [
+        {
+          "path": "civisibility/utils/net/settings_api.go",
+          "source_path": "internal/civisibility/utils/net/settings_api.go",
+          "source_sha256": "f6eb08d4ad12871b9664b3c40adf06cd3975d381ddf791495baa7e103fa0f8e1"
+        },
+        {
+          "path": "civisibility/utils/net/settings_api_test.go",
+          "source_path": "internal/civisibility/utils/net/settings_api_test.go",
+          "source_sha256": "6f8200e931a9c80eee52e58d861689e7ca20ec354ff7fa0521f58e271f7059c9"
         }
       ]
     }

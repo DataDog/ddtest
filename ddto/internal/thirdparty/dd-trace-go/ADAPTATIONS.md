@@ -2786,6 +2786,20 @@ outside tests. The revision's `ParseLevel`, used for `OTEL_LOG_LEVEL`, and its
 Feature Flags provider are APM and are not ported. Check:
 `TestPanickingLoggerReleasesLock`, from the PR, which fails without the port.
 
+## Test level in the settings request
+
+dd-trace-go PR #5709 (`4f8d28427`, open when ported) is ported; `feature_ports`
+records its revision of both files. The settings request in
+`utils/net/settings_api.go` sends `test_level: "test"`, as the skippable tests
+request already does: Go skips tests, not suites. The backend reduces per-test
+coverage on branches that ITR excludes only for a settings request with a test
+level, so Go collected full per-test coverage there. The request body is also
+the key of the short-lived read cache, which ddto's Git worker and its test
+processes share for up to an hour: entries that a ddto without the port stored
+miss once and are stored again. Check: `TestSettingsApiRequest`, from the PR,
+which fails without the port. The pinned SDK that parity compares with
+predates the PR; parity compares events, not request bodies.
+
 ## Fuzz and executable Examples
 
 SDK PR #5442 is integrated in the recorded `main` base. `feature_ports` keeps

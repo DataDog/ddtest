@@ -233,9 +233,9 @@
       "source": "internal/civisibility/utils/net/settings_api_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/settings_api_test.go",
       "source_sha256": "58dfcb6b753e6f7105a66a6ec574b3ca964cadacd9d1248d528087954adf5261",
-      "adapted_sha256": "2f751536898a1ba2ea8b390d1f5df966fe61ec1ea31fbc1b1c9af7e91e783a4a",
+      "adapted_sha256": "5c1d982a95742aa06ee2e0957b1429ddb204deb974ac712c42980abf202a3566",
       "kind": "full",
-      "adaptation": "Internal import relocation only; standard-library assertion helpers"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers; adds dd-trace-go #5709's test_level assertion"
     },
     {
       "source": "internal/civisibility/utils/net/skippable_test.go",
