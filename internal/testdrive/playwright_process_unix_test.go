@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,15 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 			conn, err := net.DialTimeout("tcp", "127.0.0.1:"+string(port), time.Second)
 			require.NoError(t, err)
 			_ = conn.Close()
+			if mode == "ipc-wrapper" {
+				// The wrapped child owns the IPC channel; a keeper that inherited
+				// it could hold the descriptor or receive the child's messages.
+				for _, environment := range keeperEnvironments(t, dir) {
+					require.Contains(t, environment, "DDTEST_PROCESS_OWNER=")
+					require.NotContains(t, environment, "NODE_CHANNEL_FD=")
+					require.NotContains(t, environment, "NODE_CHANNEL_SERIALIZATION_MODE=")
+				}
+			}
 			if mode == "owner-crash" {
 				// Equivalent to the kernel closing ddtest's sockets after SIGKILL.
 				owner.clients.Range(func(key, _ any) bool { _ = key.(net.Conn).Close(); return true })
@@ -93,6 +103,27 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 			_ = conn.Close()
 		})
 	}
+}
+
+// keeperEnvironments returns the environment of each live keeper started
+// from the process_guard.cjs in directory.
+func keeperEnvironments(t *testing.T, directory string) []string {
+	t.Helper()
+	output, err := exec.Command("pgrep", "-f", filepath.Join(directory, "process_guard.cjs")).Output()
+	require.NoError(t, err, "no live keeper")
+	var environments []string
+	for _, pid := range strings.Fields(string(output)) {
+		if runtime.GOOS == "linux" {
+			environment, err := os.ReadFile(filepath.Join("/proc", pid, "environ"))
+			require.NoError(t, err)
+			environments = append(environments, strings.ReplaceAll(string(environment), "\x00", "\n"))
+			continue
+		}
+		environment, err := exec.Command("ps", "-E", "-ww", "-o", "command=", "-p", pid).Output()
+		require.NoError(t, err)
+		environments = append(environments, string(environment))
+	}
+	return environments
 }
 
 func TestDetachedGuardPreservesExtraPipesAndExitStatus(t *testing.T) {
