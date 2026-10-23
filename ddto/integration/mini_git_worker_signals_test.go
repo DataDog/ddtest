@@ -159,6 +159,9 @@ func TestMiniSignalDuringWorkerWaitEndsDDTO(t *testing.T) {
 				close(sent)
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			log.WriteString("reading stderr: " + err.Error() + "\n")
+		}
 		_, _ = io.Copy(io.Discard, stderr)
 	}()
 	select {
