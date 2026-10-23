@@ -45,8 +45,14 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 
 	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 	if language == "javascript" && uses == "cypress-io/github-action" {
+		if framework == "cypress" {
+			return resolveCypressAction(root, workflow, job, step)
+		}
 
 		return commandResolution{Review: true, Reason: "Cypress GitHub Action is outside " + framework + " validation"}
+	}
+	if language == "javascript" && framework == "cypress" && cypressStatusGate(step.Run) {
+		return commandResolution{Review: true, Reason: "CI status gate is outside Cypress test execution"}
 	}
 	if step.ResolutionError != "" {
 		return unresolvedCommand(step.ResolutionError)
@@ -57,12 +63,17 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		}
 		return commandResolution{}
 	}
-	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright") {
+	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress") {
 		return commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, framework)}
 	}
 	// GitHub expands these before the shell runs; they are not shell syntax.
 	if expression := workflowExpression.FindString(step.Run); expression != "" {
 		return unresolvedCommand("unresolved CI workflow expression requires review: " + expression)
+	}
+	if framework == "cypress" {
+		if plan, ok := cypressBackgroundPlan(root, workflow, job, step); ok {
+			return plan
+		}
 	}
 	directory := stepDirectory(workflow, job, step)
 	shell := workflow.Defaults.Run.Shell
@@ -288,7 +299,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			words = words[2:]
 		}
 
-		if framework == "mocha" && len(words) > 0 && slices.Contains([]string{"--no-install", "--no"}, words[0]) {
+		if (framework == "mocha" || framework == "cypress") && len(words) > 0 && slices.Contains([]string{"--no-install", "--no"}, words[0]) {
 			words = words[1:]
 		}
 		if npmExec {
@@ -320,6 +331,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		if framework == "jest" && jestMetadataOptions(words[1:]) {
 			return commandResolution{}
 		}
+		if framework == "cypress" && (len(words) < 2 || words[1] != "run") {
+			return commandResolution{ReviewReason: "Cypress setup/interactive command is outside headless validation: " + command}
+		}
 		if framework == "playwright" && (len(words) < 2 || words[1] != "test") {
 			return commandResolution{ReviewReason: "Playwright setup/tool command is outside test execution: " + command}
 		}
@@ -330,6 +344,12 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
 		entry := TestCommand{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}
+		if framework == "cypress" {
+			if slices.Contains(words, "--component") {
+				return unresolvedCommand("Cypress component testing is not supported")
+			}
+			entry.CypressPackage = filepath.ToSlash(relative)
+		}
 		if framework == "mocha" {
 			entry.mochaIstanbul = MochaBabelIstanbulConfigured(directory)
 			entry.mochaRunnerArgs = slices.Clone(words[1:])
@@ -339,6 +359,10 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			entry.mochaESM = mochaESMInputs(directory, words[1:])
 		}
 		return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{entry}}
+	}
+
+	if framework == "cypress" && words[0] == "node" {
+		return resolveCypressNode(root, directory, words)
 	}
 
 	if framework == "mocha" {
@@ -386,6 +410,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		}
 		return unresolvedCommand("Unsupported git command requires review: " + command)
 	case "start-test", "start-server-and-test", "run-p":
+		if framework == "cypress" {
+			return resolveCypressOrchestration(root, directory, words, stack, remaining)
+		}
 
 		return unresolvedCommand("Unsupported script orchestration: " + command)
 	case "npm-run-all", "npm-run-all2", "run-s":
@@ -507,7 +534,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 
 	mocha := len(frameworks) > 0 && frameworks[0] == "mocha"
 	var result commandResolution
-	if mocha && strings.HasPrefix(command, "npm ") {
+	if (mocha || (len(frameworks) > 0 && frameworks[0] == "cypress")) && strings.HasPrefix(command, "npm ") {
 		// npm starts each lifecycle script in a fresh shell at the package root.
 		// Resolve them independently so an inner cd/export cannot affect the next hook.
 		singleInvocation := true
@@ -538,10 +565,13 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	if mocha && lifecycle == "" && result.Reason == "" && !result.Matched && result.MochaAuxiliary && name == "build" {
 		return commandResolution{Builds: []BuildCommand{{Directory: repositoryPath(root, directory), Command: command, Kind: "package-build"}}}
 	}
+	if len(frameworks) > 0 && frameworks[0] == "cypress" && len(result.Tests) > 1 {
+		return unresolvedCommand("Multiple Cypress invocations in one package alias require ordered execution review; preserve the original alias: " + command)
+	}
 	if mocha && len(result.Tests) > 1 {
 		return unresolvedCommand("Multiple Mocha invocations in one package alias require ordered execution review; preserve the original alias: " + command)
 	}
-	if mocha && lifecycle == "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
+	if (mocha || (len(frameworks) > 0 && frameworks[0] == "cypress")) && lifecycle == "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
 		if !result.SingleJest && result.Tests[0].mochaProbeCommand == "" {
 			result.Tests[0].mochaProbeCommand = result.Tests[0].Command
 		}

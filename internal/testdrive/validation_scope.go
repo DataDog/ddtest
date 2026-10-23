@@ -62,6 +62,11 @@ func selectedValidation(result validationResult) verdict {
 	}
 	check.Status = "PASSED"
 	check.Reason = "The selected command's paired comparison, all supported features, static CI checks and cleanup passed. Other configurations and actual CI execution remain unvalidated."
+	for _, policy := range featurePolicies(result.Framework) {
+		if policy.Status != "required" {
+			check.Reason += " Policy exception: " + policy.Name + " (" + policy.Status + ")."
+		}
+	}
 	return check
 }
 

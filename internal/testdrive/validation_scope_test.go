@@ -30,7 +30,7 @@ func focusedValidationFixture(name string) validationResult {
 		if policy.Status != "required" {
 			status = policy.Status
 		}
-		result.Features = append(result.Features, featureResult{Name: policy.Name, Status: status})
+		result.Features = append(result.Features, featureResult{Name: policy.Name, Status: status, Reason: policy.Reason})
 	}
 
 	return result

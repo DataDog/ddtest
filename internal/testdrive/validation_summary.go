@@ -14,6 +14,8 @@ type validationSummary struct {
 	LocalValidation       string                 `json:"local_validation"`
 	CIConfiguration       string                 `json:"ci_configuration"`
 	BlockingChecks        []string               `json:"blocking_checks"`
+	// Disclosed limits of the local evidence; they do not block success.
+	NotExercised []string `json:"not_exercised,omitempty"`
 }
 
 func summarizeValidation(result validationResult) validationSummary {
@@ -38,6 +40,13 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	if result.Error != "" {
 		summary.BlockingChecks = append(summary.BlockingChecks, result.Error)
+	}
+	for _, run := range result.Runs {
+		for _, reason := range run.NotExercised {
+			if !slices.Contains(summary.NotExercised, reason) {
+				summary.NotExercised = append(summary.NotExercised, reason)
+			}
+		}
 	}
 	if result.CheckOnly {
 		summary.BlockingChecks = append(summary.BlockingChecks, "configuration checks only; paired execution and features were not rerun")

@@ -18,6 +18,9 @@ import (
 //go:embed instructions/mocha.md
 var mochaInstructions string
 
+//go:embed instructions/cypress.md
+var cypressInstructions string
+
 //go:embed instructions/playwright.md
 var playwrightInstructions string
 
@@ -33,7 +36,7 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		return err
 	}
 	var scope *ValidationScope
-	if language == "javascript" && (name == "mocha" || name == "playwright") {
+	if language == "javascript" && (name == "mocha" || name == "playwright" || name == "cypress") {
 		discovered, err := DiscoverValidationScope(repositoryRoot, name)
 		if err != nil {
 			return err
@@ -69,11 +72,15 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		}
 		_, _ = fmt.Fprintf(output, "Run `%s` to check the setup locally.\n", command)
 		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
-		return nil
+		if name != "cypress" {
+			return nil
+		}
 	}
 
 	_, _ = fmt.Fprintln(output)
-	if scope != nil {
+	if scope != nil && name == "cypress" {
+		WriteValidationScope(output, RedactCypressScope(*scope))
+	} else if scope != nil {
 		WriteValidationScope(output, *scope)
 	}
 	_, _ = fmt.Fprintln(output, strings.TrimSpace(instructions(language, name)))
@@ -81,6 +88,9 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 }
 
 func instructions(language, name string) string {
+	if language == "javascript" && name == "cypress" {
+		return strings.ReplaceAll(cypressInstructions, "ddtest testdrive", "ddtest testdrive --framework cypress")
+	}
 	if language == "javascript" && name == "playwright" {
 		return strings.ReplaceAll(playwrightInstructions, "ddtest testdrive", "ddtest testdrive --framework playwright")
 	}

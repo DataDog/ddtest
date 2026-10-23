@@ -43,7 +43,7 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			switch name {
 			case "mocha":
 				require.Contains(t, output.String(), "`js-tracer-version`")
-			case "vitest", "playwright":
+			case "vitest", "playwright", "cypress":
 				require.Contains(t, output.String(), "js-tracer-version: <resolved-release>")
 			default:
 				require.Contains(t, output.String(), language+"-tracer-version: '' # Latest release")
@@ -54,7 +54,7 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 				require.NotContains(t, output.String(), "NODE_OPTIONS")
 			}
 			switch name {
-			case "vitest", "playwright":
+			case "vitest", "playwright", "cypress":
 				require.Contains(t, output.String(), "DD_TRACE_ESM_IMPORT")
 			}
 			if name == "cypress" {

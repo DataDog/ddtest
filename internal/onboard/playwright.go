@@ -50,10 +50,19 @@ func playwrightFailureGuard(command string) (string, bool) {
 // PlaywrightValidationCommand preserves a simple package alias and its options.
 // Only a single root invocation with safe argument forwarding is accepted.
 func PlaywrightValidationCommand(root, command string) (string, error) {
+	var scope ValidationScope
+	var err error
 	if strings.TrimSpace(command) == "" {
-		scope, err := DiscoverValidationScope(root, "playwright")
-		if err != nil {
-			return "", err
+		scope, err = DiscoverValidationScope(root, "playwright")
+	}
+	return PlaywrightValidationCommandInScope(root, command, scope, err)
+}
+
+// PlaywrightValidationCommandInScope selects from an already discovered scope.
+func PlaywrightValidationCommandInScope(root, command string, scope ValidationScope, scopeErr error) (string, error) {
+	if strings.TrimSpace(command) == "" {
+		if scopeErr != nil {
+			return "", scopeErr
 		}
 		if len(scope.Commands) == 1 && filepath.Clean(scope.Commands[0].Directory) == "." && len(scope.Commands[0].Prerequisites) == 0 && len(scope.Commands[0].UnvalidatedSetup) == 0 {
 			if scope.Commands[0].ExitOnFailure {

@@ -558,3 +558,24 @@ jobs:
         env:
           DDTEST_PLAYWRIGHT_NODE_MODULES: ${{ runner.temp }}/playwright-testdrive/node_modules
         run: go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects)$' -count=1 -timeout=18m
+
+  testdrive-cypress-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install Cypress testdrive fixture dependencies
+        env:
+          CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
+        run: npm install --prefix "$RUNNER_TEMP/cypress-testdrive" cypress@15.1.0 dd-trace@6.20.1 typescript@5.9.3 --save-exact --no-audit --no-fund
+      - name: Validate original CLI, action API and matching failures with TIA deferred
+        env:
+          DDTEST_CYPRESS_NODE_MODULES: ${{ runner.temp }}/cypress-testdrive/node_modules
+          CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
+        run: xvfb-run -a go test -v ./internal/testdrive -run '^(TestPublicCypressTestdrive|TestCypressTypeScriptWrapperTranspilesToCommonJS)$' -failfast -count=1 -timeout=30m

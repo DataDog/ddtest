@@ -80,3 +80,30 @@ func TestSessionRecoveryDeletesOnlyMarkedStorageForLockedRepository(t *testing.T
 	require.FileExists(t, filepath.Join(unmarked, "customer data"))
 	require.Contains(t, output.String(), "Recovered abandoned testdrive session")
 }
+
+func TestPartlyRemovedConfigurationCopyKeepsItsOwnerForLaterRecovery(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	root := t.TempDir()
+	t.Setenv("TMPDIR", t.TempDir())
+	parent, err := os.MkdirTemp("", "ddtest-configuration-")
+	require.NoError(t, err)
+	require.NoError(t, markSessionStorage(parent, root))
+	locked := filepath.Join(parent, "checkout", "locked")
+	require.NoError(t, os.MkdirAll(locked, 0700))
+	requireWriteFile(t, filepath.Join(locked, "file"), "x")
+	require.NoError(t, os.Chmod(locked, 0500))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0700) })
+
+	require.Error(t, removeMarkedStorage(parent))
+	require.FileExists(t, filepath.Join(parent, sessionOwnerMarker), "a partial removal must stay reclaimable")
+	require.Error(t, recoverSessions(root, &bytes.Buffer{}), "recovery must not report an unremovable copy as cleaned")
+	require.FileExists(t, filepath.Join(parent, sessionOwnerMarker))
+
+	require.NoError(t, os.Chmod(locked, 0700))
+	var output bytes.Buffer
+	require.NoError(t, recoverSessions(root, &output))
+	require.NoDirExists(t, parent)
+	require.Contains(t, output.String(), "Recovered abandoned testdrive session: "+filepath.Base(parent))
+}

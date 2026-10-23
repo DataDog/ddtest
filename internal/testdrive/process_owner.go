@@ -194,7 +194,7 @@ func recoverProcessOwners(root string, output io.Writer) error {
 		if err != nil || !privateOwnedDirectory(info) {
 			continue
 		}
-		marker := filepath.Join(path, ".ddtest-owner.json")
+		marker := filepath.Join(path, sessionOwnerMarker)
 		info, err = os.Lstat(marker)
 		if err != nil || !info.Mode().IsRegular() || info.Size() > processErrorLimit || !ownedByCurrentUser(info) {
 			continue
@@ -207,7 +207,7 @@ func recoverProcessOwners(root string, output io.Writer) error {
 		if json.Unmarshal(data, &owner) != nil || owner.Root != canonicalWorkflowRoot(root) || owner.User != os.Getuid() {
 			continue
 		}
-		if err := os.RemoveAll(path); err != nil {
+		if err := removeMarkedStorage(path); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintln(output, "Recovered abandoned process ownership storage:", filepath.Base(path))

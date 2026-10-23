@@ -69,10 +69,19 @@ func resolveMochaCoverage(root, directory string, words, stack []string, remaini
 }
 
 func MochaValidationCommand(root, command string) (string, error) {
+	var scope ValidationScope
+	var err error
 	if strings.TrimSpace(command) == "" {
-		scope, err := DiscoverValidationScope(root, "mocha")
-		if err != nil {
-			return "", err
+		scope, err = DiscoverValidationScope(root, "mocha")
+	}
+	return MochaValidationCommandInScope(root, command, scope, err)
+}
+
+// MochaValidationCommandInScope selects from an already discovered scope.
+func MochaValidationCommandInScope(root, command string, scope ValidationScope, scopeErr error) (string, error) {
+	if strings.TrimSpace(command) == "" {
+		if scopeErr != nil {
+			return "", scopeErr
 		}
 		if len(scope.Commands) > 1 {
 			return "", fmt.Errorf("multiple Mocha CI commands discovered; use --all to validate each configuration")

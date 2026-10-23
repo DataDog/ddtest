@@ -43,6 +43,11 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	runner := *t
 	t = &runner
 	t.configurationEnvironment = onboard.WithGitHubActionsDefaults(item.Environment)
+	if !t.checkOnly {
+		if err := checkCypressStartupPorts(t.cypress, t.configurationEnvironment); err != nil {
+			return result, err
+		}
+	}
 	if item.Directory == "" {
 		item.Directory = "."
 	}
@@ -56,13 +61,13 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	original, workspace := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
-	if !t.checkOnly && (len(item.Prerequisites) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright") {
+	if !t.checkOnly && (len(item.Prerequisites) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress") {
 		parent, err := os.MkdirTemp("", "ddtest-configuration-")
 		if err != nil {
 			return result, err
 		}
 		defer func() {
-			err := os.RemoveAll(parent)
+			err := removeMarkedStorage(parent)
 			if err != nil {
 				result.Cleanup = &verdict{Status: "failed", Reason: "Could not remove configuration workspace: " + parent}
 			}
@@ -128,21 +133,14 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	// Resolve bare framework tools from this package, but never replace an explicit runtime.
 	t.command = t.configurationExecutable(t.command)
 	if t.framework != nil {
-		if err := validateConfigurationFiles(t.checkoutRoot(), t.repositoryRoot, t.args, frameworkFeaturePolicies[t.framework.Name()].ConfigurationFiles); err != nil {
+		policy := frameworkFeaturePolicies[t.framework.Name()]
+		if err := validateConfigurationFiles(t.checkoutRoot(), t.repositoryRoot, t.args, policy.ConfigurationFiles, policy.configurationOptions()); err != nil {
 			return result, err
 		}
 	}
 	t.refreshConfigurationTracer(ctx)
 	if t.preflight != nil {
-		if t.framework.Name() == "vitest" {
-			t.preflight = t.checkVitestPreflight
-		} else if t.framework.Name() == "playwright" {
-			t.preflight = t.checkPlaywrightPreflight
-		} else if t.framework.Name() == "mocha" {
-			t.preflight = t.checkMochaPreflight
-		} else {
-			t.preflight = t.checkJestPreflight
-		}
+		t.preflight = t.frameworkPreflight()
 	}
 	return t.runPreparedChecksOrTests(ctx, output)
 }

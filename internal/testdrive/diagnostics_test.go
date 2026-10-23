@@ -42,7 +42,7 @@ func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T)
 	}{
 		{name: "missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true},
 		{name: "Mocha missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true},
-		{name: "Cypress missing coverage", wantAdvice: true, facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, cypress: true},
+		{name: "Cypress missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, cypress: true},
 		{name: "Cypress with coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1, CoverageLevel: "test", Tests: []intake.Test{passed}}, cypress: true},
 		{name: "Mocha with installed nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true, nycInstalled: true},
 		{name: "Cucumber with declared nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, nycDeclared: true},
@@ -149,6 +149,11 @@ func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T)
 				}
 				if !strings.Contains(output.String(), "Info: "+intake.BrowserCoverageTitle) {
 					t.Fatal("console must identify the informational finding")
+				}
+			}
+			if tc.cypress {
+				if !strings.Contains(output.String(), cypressTIADeferredReason) || strings.Contains(output.String(), intake.MissingCoverageContext) {
+					t.Fatalf("Cypress deferred TIA must replace missing-coverage advice: %s", output.String())
 				}
 			}
 			if tc.wantAdvice {
