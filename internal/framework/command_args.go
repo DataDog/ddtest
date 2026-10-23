@@ -26,8 +26,15 @@ func frameworkSeparator(command string, args []string, executable string) int {
 }
 
 // Framework-generated options must precede its end-of-options marker.
-func withFrameworkOptions(command string, args []string, executable string, options ...string) []string {
+func WithFrameworkOptions(command string, args []string, executable string, options ...string) []string {
 	args = slices.Clone(args)
+	if npmScriptCommand(command, args) {
+		if index := slices.Index(args, "--"); index >= 0 {
+			tail := WithFrameworkOptions(executable, args[index+1:], executable, options...)
+			return append(args[:index+1], tail...)
+		}
+		return append(append(args, "--"), options...)
+	}
 	if index := frameworkSeparator(command, args, executable); index >= 0 {
 		return slices.Insert(args, index, options...)
 	}
@@ -37,6 +44,14 @@ func withFrameworkOptions(command string, args []string, executable string, opti
 // Everything after a framework's -- is positional, so replace that explicit
 // selection with the selected files. Leave options before it untouched.
 func withFrameworkFiles(command string, args []string, executable string, files []string) []string {
+	args = slices.Clone(args)
+	if npmScriptCommand(command, args) {
+		if index := slices.Index(args, "--"); index >= 0 {
+			tail := withFrameworkFiles(executable, args[index+1:], executable, files)
+			return append(args[:index+1], tail...)
+		}
+		return append(append(args, "--"), files...)
+	}
 	if index := frameworkSeparator(command, args, executable); index >= 0 {
 		args = args[:index+1]
 	}
@@ -49,4 +64,8 @@ func frameworkExecutableName(value string) string {
 		name = strings.TrimSuffix(name, suffix)
 	}
 	return name
+}
+
+func npmScriptCommand(command string, args []string) bool {
+	return frameworkExecutableName(command) == "npm" && len(args) > 0 && slices.Contains([]string{"test", "t", "tst", "run", "run-script"}, args[0])
 }

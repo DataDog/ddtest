@@ -104,3 +104,7 @@ This also applies to a single runner. Splitting does not resolve collisions
 during full test collection, which runs before distribution. Add `__init__.py`
 packages, rename the files, or configure pytest's `--import-mode=importlib` to
 resolve collisions that runner distribution cannot avoid.
+
+## Testdrive-only configuration check
+
+See [testdrive configuration checks](running.md#testdrive-configuration-checks) for command flags, result fields and limitations.

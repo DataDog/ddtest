@@ -33,7 +33,7 @@ func TestIsTerminalRejectsDevNull(t *testing.T) {
 
 func TestConfirmTestdriveInteractive(t *testing.T) {
 	var output bytes.Buffer
-	confirmed, err := confirmTestdrive(strings.NewReader("yes\n"), &output, true)
+	confirmed, err := confirmTestdrive(strings.NewReader("yes\n"), &output, true, "ddtest testdrive --yes")
 	if err != nil {
 		t.Fatalf("confirmTestdrive() unexpected error: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestConfirmTestdriveInteractive(t *testing.T) {
 }
 
 func TestConfirmTestdriveDefaultsToNo(t *testing.T) {
-	confirmed, err := confirmTestdrive(strings.NewReader("\n"), &bytes.Buffer{}, true)
+	confirmed, err := confirmTestdrive(strings.NewReader("\n"), &bytes.Buffer{}, true, "ddtest testdrive --yes")
 	if err != nil {
 		t.Fatalf("confirmTestdrive() unexpected error: %v", err)
 	}
@@ -56,11 +56,11 @@ func TestConfirmTestdriveDefaultsToNo(t *testing.T) {
 }
 
 func TestConfirmTestdriveNonInteractiveRequiresYes(t *testing.T) {
-	confirmed, err := confirmTestdrive(strings.NewReader("yes\n"), &bytes.Buffer{}, false)
+	confirmed, err := confirmTestdrive(strings.NewReader("yes\n"), &bytes.Buffer{}, false, "ddtest testdrive --check-only --yes")
 	if confirmed {
 		t.Fatal("confirmTestdrive() accepted piped input")
 	}
-	if err == nil || !strings.Contains(err.Error(), "ddtest testdrive --yes") {
+	if err == nil || !strings.Contains(err.Error(), "ddtest testdrive --check-only --yes") {
 		t.Fatalf("confirmTestdrive() error = %v", err)
 	}
 }
@@ -131,5 +131,68 @@ func TestTestdriveCommandPreview(t *testing.T) {
 				t.Fatalf("preview wrote artifacts: %v", err)
 			}
 		})
+	}
+}
+
+func TestCheckOnlyPreviewRequiresConfirmationAndExposesOnlyCurrentFlags(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	if err := os.WriteFile("package.json", []byte(`{"scripts":{"test":"jest"},"devDependencies":{"jest":"30.2.0"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("jest.config.js", []byte(`throw new Error('preview must not load configuration')`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := newTestdriveCommand()
+	var output bytes.Buffer
+	command.SetIn(strings.NewReader("yes\n"))
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{"--check-only"})
+	err := command.ExecuteContext(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("expected confirmation error, got %v", err)
+	}
+	if !strings.Contains(output.String(), "--showConfig") {
+		t.Fatal(output.String())
+	}
+	if _, err := os.Stat(".testoptimization"); !os.IsNotExist(err) {
+		t.Fatalf("preview wrote artifacts: %v", err)
+	}
+	if command.Flags().Lookup("check-only") == nil {
+		t.Fatal("missing --check-only")
+	}
+	for _, name := range []string{"all", "agent", "format", "report", "detail", "resume", "facts"} {
+		if command.Flags().Lookup(name) != nil {
+			t.Fatalf("premature flag: --%s", name)
+		}
+	}
+}
+
+func TestCheckOnlyNonInteractiveHintPreservesEveryFlag(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	if err := os.WriteFile("package.json", []byte(`{"scripts":{"test":"jest"},"devDependencies":{"jest":"30.2.0"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := newTestdriveCommand()
+	command.Flags().String("framework", "", "selected framework")
+	command.SetIn(strings.NewReader(""))
+	command.SetOut(&bytes.Buffer{})
+	command.SetErr(&bytes.Buffer{})
+	command.SetArgs([]string{"--framework", "jest", "--check-only", "--tracer-version", "git:main branch"})
+	err := command.ExecuteContext(t.Context())
+	if err == nil {
+		t.Fatal("expected non-interactive hint")
+	}
+	want := "`ddtest testdrive --check-only --framework jest --tracer-version 'git:main branch' --yes`"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("hint = %v, want %s", err, want)
 	}
 }

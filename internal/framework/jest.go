@@ -94,7 +94,7 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 
 	command, baseArgs := j.Command()
 	args := slices.Clone(baseArgs)
-	args = withFrameworkOptions(command, args, "jest", "--listTests", "--json")
+	args = WithFrameworkOptions(command, args, "jest", "--listTests", "--json")
 
 	slog.Info("Discovering Jest test files with command", "command", command, "args", args)
 	output, err := j.executor.CombinedOutput(ctx, command, args, envMap)
@@ -120,7 +120,7 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, baseArgs := j.Command()
 	args := slices.Clone(baseArgs)
-	args = withFrameworkOptions(command, args, "jest", "--runTestsByPath")
+	args = WithFrameworkOptions(command, args, "jest", "--runTestsByPath")
 	args = withFrameworkFiles(command, args, "jest", testFiles)
 
 	slog.Info("Running tests with command", "command", command, "args", args)

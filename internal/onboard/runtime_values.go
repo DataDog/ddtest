@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/Masterminds/semver/v3"
 )
 
 // Expand only bounded, scalar matrices. Includes augment original combinations;
@@ -157,3 +159,19 @@ func runtimeValue(value string, row map[string]any) (string, error) {
 }
 
 var numericNode = regexp.MustCompile(`^v?([0-9]+)(?:\.([0-9]+|x|\*))?(?:\.([0-9]+|x|\*))?$`)
+
+// Runtime selectors are resolved to exact releases before this comparison.
+func CompareNodeRequirement(node, requirement string) (string, string) {
+	constraint, err := semver.NewConstraint(requirement)
+	if err != nil || strings.TrimSpace(requirement) == "" {
+		return StatusInconclusive, fmt.Sprintf("Cannot parse Node engine requirement %q.", requirement)
+	}
+	version, err := semver.NewVersion(strings.TrimSuffix(strings.TrimSuffix(node, ".x"), ".*"))
+	if err != nil {
+		return StatusInconclusive, fmt.Sprintf("Node version %q is unresolved; compatibility was not verified.", node)
+	}
+	if constraint.Check(version) {
+		return StatusCompatible, fmt.Sprintf("Node %s satisfies %s.", node, requirement)
+	}
+	return StatusIncompatible, fmt.Sprintf("Node %s does not satisfy %s. Preserve test coverage and choose a compatible tracer/runtime.", node, requirement)
+}

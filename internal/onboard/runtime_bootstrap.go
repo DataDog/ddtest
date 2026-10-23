@@ -1,14 +1,76 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2026 Datadog, Inc.
+
 package onboard
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/kballard/go-shellquote"
 )
+
+// NUL cannot occur in an environment value. Reject it in source expressions and
+// matrix values so only a known action reference can produce these symbols.
+const actionPreload = "\x00DD_ACTION_PRELOAD\x00"
 
 func symbolicConditionValue(value any) bool {
 	text, ok := value.(string)
 	return ok && strings.ContainsRune(text, 0)
+}
+
+func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) string {
+	options, err := effectiveBootstrapOptions(workflow, job, step, row, true)
+	if err == nil && !strings.ContainsAny(options, "$`'") {
+		words, err := shellquote.Split(options)
+		if err == nil {
+			requireFound := false
+			for i, word := range words {
+				if word == "--require="+actionPreload || ((word == "-r" || word == "--require") && i+1 < len(words) && words[i+1] == actionPreload) {
+					requireFound = true
+				}
+			}
+			if requireFound {
+				return ""
+			}
+		}
+	}
+	return "Cannot verify the action's JavaScript preload in this test step's effective NODE_OPTIONS. Preserve custom initialization and report it for review."
+}
+
+func bootstrapOptions(value string, row map[string]any, env map[string]string) (string, error) {
+	if len(value) > 4096 || strings.ContainsRune(value, 0) {
+		return "", fmt.Errorf("unsupported NODE_OPTIONS length or NUL byte")
+	}
+	var result strings.Builder
+	for {
+		literal, expression, found := strings.Cut(value, "${{")
+		result.WriteString(literal)
+		if !found {
+			break
+		}
+		p := conditionParser{rest: expression, row: row, env: env}
+		resolved, err := p.expression(0)
+		if err != nil || !p.take("}}") {
+			return "", fmt.Errorf("unsupported NODE_OPTIONS expression")
+		}
+		text, ok := resolved.(string)
+		if !ok {
+			return "", fmt.Errorf("NODE_OPTIONS expression must resolve to a string")
+		}
+		result.WriteString(text)
+		if result.Len() > 4096 {
+			return "", fmt.Errorf("resolved NODE_OPTIONS exceeds 4096 characters")
+		}
+		value = p.rest
+	}
+	if result.Len() > 4096 {
+		return "", fmt.Errorf("resolved NODE_OPTIONS exceeds 4096 characters")
+	}
+	return result.String(), nil
 }
 
 // GitHub format() replaces numbered placeholders and escapes doubled braces.
@@ -64,4 +126,55 @@ func (p *conditionParser) format() (any, error) {
 		}
 	}
 	return result.String(), nil
+}
+
+// Resolve expressions with action outputs present only on instrumented entries.
+func effectiveBootstrapOptions(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, actionRan bool) (string, error) {
+	known := map[string]string{"NODE_OPTIONS": "", "DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": "\x00DD_ACTION_IMPORT\x00"}
+	if !actionRan {
+		known["DD_TRACE_PACKAGE"], known["DD_TRACE_ESM_IMPORT"] = "", ""
+	}
+	var options string
+	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		if value, ok := env["NODE_OPTIONS"]; ok {
+			options = value
+		}
+		for key, value := range env {
+			if key == "NODE_OPTIONS" {
+				if !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
+					known[key] = value
+				}
+				continue
+			}
+			delete(known, key)
+			if key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" && !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
+				known[key] = value
+			}
+		}
+	}
+	for key, value := range conditionEnvironment(workflow, job, step, row) {
+		if key != "NODE_OPTIONS" && key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" {
+			known[key] = value
+		}
+	}
+	return bootstrapOptions(options, row, known)
+}
+
+func checkExcludedJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) string {
+	options, err := effectiveBootstrapOptions(workflow, job, step, row, false)
+	reason := "Cannot verify initialization is disabled when the Datadog action is skipped; guard installation and its NODE_OPTIONS preload together."
+	if err != nil || strings.ContainsAny(options, "$`'") {
+		return reason
+	}
+	words, err := shellquote.Split(options)
+	if err != nil {
+		return reason
+	}
+	for _, word := range words {
+		key, _, _ := strings.Cut(word, "=")
+		if key == "--require" || key == "--import" || key == "--loader" || key == "--experimental-loader" || strings.HasPrefix(word, "-r") {
+			return reason
+		}
+	}
+	return ""
 }

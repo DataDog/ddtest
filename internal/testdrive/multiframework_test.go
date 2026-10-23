@@ -43,7 +43,7 @@ printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$las
 `
 					require.NoError(t, os.WriteFile("ruby", []byte(script), 0755))
 				}
-				drive, err := Prepare("latest")
+				drive, err := Prepare(PrepareOptions{TracerVersion: "latest"})
 				require.NoError(t, err)
 				require.Equal(t, "Ruby from PATH", drive.environmentInfo.Source)
 				require.Equal(t, "Ruby", drive.environmentInfo.Runtime)
@@ -95,7 +95,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 				requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"`+name+`"}}`)
 			}
 			t.Chdir(root)
-			run, err := Prepare("latest")
+			run, err := Prepare(PrepareOptions{TracerVersion: "latest"})
 			require.NoError(t, err)
 			var preview bytes.Buffer
 			run.Preview(&preview)
@@ -193,14 +193,14 @@ func TestPrepareRequiresSelectionForMultipleFrameworks(t *testing.T) {
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"vitest run","e2e":"playwright test"}}`)
 	t.Chdir(root)
-	_, err := Prepare("latest")
+	_, err := Prepare(PrepareOptions{TracerVersion: "latest"})
 	require.ErrorContains(t, err, "--framework")
 	settings.Get().Framework = "vitest"
-	run, err := Prepare("latest")
+	run, err := Prepare(PrepareOptions{TracerVersion: "latest"})
 	require.NoError(t, err)
 	require.Equal(t, "vitest", run.framework.Name())
 	settings.Get().Framework = "unsupported"
-	_, err = Prepare("latest")
+	_, err = Prepare(PrepareOptions{TracerVersion: "latest"})
 	require.ErrorContains(t, err, "unsupported framework")
 }
 
@@ -229,7 +229,7 @@ func TestCypressTestdrivePreservesCommand(t *testing.T) {
 			root := t.TempDir()
 			requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"cypress run"}}`)
 			t.Chdir(root)
-			run, err := Prepare("latest")
+			run, err := Prepare(PrepareOptions{TracerVersion: "latest"})
 			require.NoError(t, err)
 			run.command, run.args = command[0], command[1:]
 			// The selected tracer can live outside the project's module tree.

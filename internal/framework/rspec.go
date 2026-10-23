@@ -56,11 +56,11 @@ func (r *RSpec) DiscoverTests(ctx context.Context, testFiles discovery.TestFileS
 
 	executable, baseArgs := r.Command()
 	args := append([]string{}, baseArgs...)
-	args = withFrameworkOptions(executable, args, "rspec", "--dry-run")
+	args = WithFrameworkOptions(executable, args, "rspec", "--dry-run")
 	if testFiles.UseExplicitFiles() {
 		args = withFrameworkFiles(executable, args, "rspec", testFiles.ExplicitFiles)
 	} else {
-		args = withFrameworkOptions(executable, args, "rspec", "--pattern", testFiles.Pattern)
+		args = WithFrameworkOptions(executable, args, "rspec", "--pattern", testFiles.Pattern)
 	}
 
 	return discovery.DiscoverTests(ctx, r.executor, executable, args, envMap)
@@ -85,7 +85,7 @@ func (r *RSpec) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestF
 
 func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, baseArgs := r.Command()
-	args := withFrameworkOptions(command, baseArgs, "rspec", "--format", "progress")
+	args := WithFrameworkOptions(command, baseArgs, "rspec", "--format", "progress")
 	slog.Info("Running tests with command", "command", command, "args", args)
 	args = withFrameworkFiles(command, args, "rspec", testFiles)
 

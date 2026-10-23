@@ -142,7 +142,7 @@ func (c *Cucumber) DiscoverTestFiles(ctx context.Context, selectedFiles discover
 	defer func() { _ = os.Remove(messagePath) }()
 
 	args := slices.Clone(baseArgs)
-	args = withFrameworkOptions(command, args, "cucumber-js",
+	args = WithFrameworkOptions(command, args, "cucumber-js",
 		"--dry-run",
 		"--parallel", "0",
 		"--format", "message:"+filepath.Base(messagePath),

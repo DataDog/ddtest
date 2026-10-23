@@ -161,7 +161,7 @@ func ordinaryNodeOptions(value string) (string, error) {
 }
 
 func nodeJestArguments(words []string) ([]string, bool) {
-	if len(words) < 2 || words[0] != "node" {
+	if len(words) < 2 || (filepath.Base(words[0]) != "node" && filepath.Base(words[0]) != "node.exe") {
 		return nil, false
 	}
 	for i := 1; i < len(words); i++ {

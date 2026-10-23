@@ -224,7 +224,7 @@ func cypressRunArgs(command string, baseArgs, testFiles []string) []string {
 	args := append(prefix, "run")
 	args = append(args, removeCypressOption(cliArgs, "--spec", "-s")...)
 	if len(testFiles) > 0 {
-		args = withFrameworkOptions(command, args, "cypress", "--spec", strings.Join(testFiles, ","))
+		args = WithFrameworkOptions(command, args, "cypress", "--spec", strings.Join(testFiles, ","))
 	}
 	return args
 }

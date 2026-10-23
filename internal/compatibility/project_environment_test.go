@@ -109,7 +109,7 @@ if (process.argv.includes('--listTests')) {
 		require.NoError(t, os.Remove(filepath.Join(root, "worker-ran")))
 	})
 	t.Run("testdrive", func(t *testing.T) {
-		drive, err := testdrive.Prepare("git:must-not-install")
+		drive, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: "git:must-not-install"})
 		require.NoError(t, err)
 		var output bytes.Buffer
 		err = drive.Run(ctx, &output)

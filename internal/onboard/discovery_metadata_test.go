@@ -6,15 +6,17 @@
 package onboard
 
 import (
+	"context"
 	"os"
 	"path/filepath"
-
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 // Fixture adapted from express-validator CI; discovery never executes its commands.
+
 const expressValidatorWorkflow = `jobs:
   test:
     runs-on: ubuntu-latest
@@ -62,6 +64,55 @@ func expressValidatorRepository(t *testing.T) string {
     - uses: actions/cache@v3
 `), 0644))
 	return root
+}
+
+func TestCIFormatExpressionsAndIndependentEntryPoints(t *testing.T) {
+	root := expressValidatorRepository(t)
+	command, err := JestValidationCommand(root)
+	require.NoError(t, err)
+	require.Equal(t, "npm test --", command)
+	result := checkCIRuntimes(t.Context(), root, nil, func(_ context.Context, action, version string) (tracerRequirement, error) {
+		require.Equal(t, githubAction+"@v3", action)
+		require.Equal(t, "6.17.0", version)
+		return tracerRequirement{Version: version, Node: ">=22"}, nil
+	})
+	require.Equal(t, "inconclusive", result.Status, result)
+	nodes := map[string]string{}
+	var unresolved []string
+	for _, finding := range result.Jobs {
+		if finding.Job == "test" {
+			require.Equal(t, "npm test", finding.Command)
+			nodes[finding.Node] = finding.Status
+		} else {
+			require.Equal(t, "inconclusive", finding.Status)
+			unresolved = append(unresolved, finding.Command)
+		}
+	}
+	require.Equal(t, map[string]string{"14": "excluded", "16": "excluded", "18": "excluded", "20": "excluded", "22": "compatible", "24": "compatible"}, nodes)
+	require.ElementsMatch(t, []string{"npm run docs:regenerate-api", "git diff --quiet --exit-code || echo \"Regenerate docs with `npm run docs:regenerate-api`\""}, unresolved)
+	var reviewed []string
+	for _, finding := range result.Review {
+		require.Equal(t, "docs", finding.Job)
+		require.Equal(t, StatusNotExercised, finding.Status)
+		reviewed = append(reviewed, finding.Command)
+	}
+	require.Equal(t, []string{"npm run docs:build"}, reviewed)
+	discovery, err := findWorkflows(root, "javascript", "jest")
+	require.NoError(t, err)
+	require.NotEmpty(t, discovery.Unresolved)
+	require.NotEmpty(t, discovery.Review)
+
+}
+
+func TestUnknownCIEntryDoesNotBlockKnownLocalInvocation(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  tests:\n    steps:\n      - run: node unknown.js\n      - run: npm test\n")
+	writeScripts(t, root, map[string]string{"test": "jest"})
+	command, err := JestValidationCommand(root)
+	require.NoError(t, err)
+	require.Equal(t, "npm test --", command)
+	result := checkCIRuntimes(t.Context(), root, nil, nil)
+	require.Equal(t, "incompatible", result.Status) // Known Jest step also lacks instrumentation.
+	require.Contains(t, result.Jobs[0].Reason, "unknown.js")
 }
 
 func TestNpmPrefixFollowsDirectoryAndLifecycle(t *testing.T) {
@@ -141,4 +192,22 @@ func TestMetadataNeverHidesExecutedTestsOrUnknownCommands(t *testing.T) {
 	result = resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "npm run docs:regenerate-api"}, "javascript", "jest")
 	require.Contains(t, result.Reason, "lifecycle")
 	require.False(t, result.Review)
+}
+
+func TestConditionErrorIdentifiesCurrentAction(t *testing.T) {
+	root := expressValidatorRepository(t)
+	path := filepath.Join(root, ".github/workflows/test.yml")
+	workflow := strings.Replace(expressValidatorWorkflow, "if: matrix.node >= 22", "if: github.event_name == 'push'", 1)
+	require.NoError(t, os.WriteFile(path, []byte(workflow), 0644))
+	result := checkCIRuntimes(t.Context(), root, nil, nil)
+	require.Equal(t, "inconclusive", result.Status)
+	for _, finding := range result.Jobs {
+		if finding.Job != "test" {
+			continue
+		}
+		require.Equal(t, 5, finding.Step)
+		require.Equal(t, githubAction+"@v3", finding.Action)
+		require.Empty(t, finding.Command)
+		require.Contains(t, finding.Reason, "github.event_name")
+	}
 }

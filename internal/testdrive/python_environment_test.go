@@ -114,7 +114,7 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 				}
 				require.NoError(t, os.WriteFile("uv", []byte(script), 0755))
 			}
-			drive, err := Prepare("latest")
+			drive, err := Prepare(PrepareOptions{TracerVersion: "latest"})
 			require.NoError(t, err)
 			require.NoDirExists(t, drive.session.Directory())
 			installer := &fakeTracer{}

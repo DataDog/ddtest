@@ -28,7 +28,7 @@ func TestPrepareVitestEntrypointAndCommandPolicy(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"4"}}`)
-	drive, err := Prepare("latest")
+	drive, err := Prepare(PrepareOptions{TracerVersion: "latest"})
 	require.NoError(t, err)
 	require.Equal(t, "node", drive.command)
 	require.Equal(t, []string{filepath.Join(drive.session.Directory(), "vitest.mjs"), "--config", "config with spaces/vitest.ts"}, drive.args)
@@ -39,7 +39,7 @@ func TestPrepareVitestEntrypointAndCommandPolicy(t *testing.T) {
 	_, err = os.Stat(drive.session.Directory())
 	require.True(t, os.IsNotExist(err), "prepare/preview must not create the entrypoint")
 	settings.Get().Command = "pnpm exec vitest run"
-	_, err = Prepare("latest")
+	_, err = Prepare(PrepareOptions{TracerVersion: "latest"})
 	require.ErrorContains(t, err, "does not support --command")
 	require.ErrorContains(t, err, "--vitest-config")
 }

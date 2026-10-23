@@ -6,9 +6,10 @@
 package onboard
 
 import (
+	"context"
 	"os"
 	"path/filepath"
-
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,61 @@ func writeComposite(t *testing.T, root, name, data string) {
 	path := filepath.Join(root, ".github/actions", name, "action.yml")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0755))
 	require.NoError(t, os.WriteFile(path, []byte(data), 0644))
+}
+
+func TestLocalCompositeRuntimeAndReactHookFormCommands(t *testing.T) {
+	workflow := strings.Replace(algorithmsWorkflow, "actions/setup-node@v4\n        with: {node-version: '22.x'}", "./.github/actions/install", 1)
+	workflow += "      - run: pnpm build:esm\n      - run: pnpm api-extractor:ci\n      - run: pnpm bundlewatch\n      - run: pnpm e2e\n      - run: npx playwright install --with-deps chromium\n"
+	root := newJestRepository(t, workflow)
+	writeComposite(t, root, "install", compositeSetup)
+	writeScripts(t, root, map[string]string{"coverage": "jest", "lint": "eslint .", "build:esm": "rollup -c scripts/rollup.js", "api-extractor:ci": "node scripts/apiExtractor.js", "bundlewatch": "pnpm build:esm && bundlewatch", "e2e": "playwright test"})
+	result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "6.17.0", Node: ">=22"}, nil
+	})
+	require.Equal(t, "inconclusive", result.Status, result)
+	statuses := map[string]string{}
+	for _, finding := range result.Jobs {
+		statuses[finding.Command] = finding.Status
+	}
+	require.Equal(t, map[string]string{"npm run coverage": "compatible", "pnpm api-extractor:ci": "inconclusive", "pnpm bundlewatch": "inconclusive"}, statuses)
+	require.Equal(t, 5, result.Jobs[0].Step)
+	require.Equal(t, "22", result.Jobs[0].Node)
+	require.Equal(t, ".github/actions/install/action.yml / step 1", result.Jobs[0].NodeSource)
+	var reviewed []string
+	for _, finding := range result.Review {
+		reviewed = append(reviewed, finding.Command)
+	}
+	require.ElementsMatch(t, []string{"npm run lint", "pnpm build:esm", "pnpm e2e", "npx playwright install --with-deps chromium"}, reviewed)
+	discovery, err := findWorkflows(root, "javascript", "jest")
+	require.NoError(t, err)
+	require.NotEmpty(t, discovery.Unresolved, "opaque wrappers must not certify CI")
+	require.Empty(t, discovery.Configured)
+
+}
+
+func TestCompositeInputsConditionsOrderAndUnknowns(t *testing.T) {
+	base := strings.Replace(algorithmsWorkflow, "actions/setup-node@v4\n        with: {node-version: '22.x'}", "./.github/actions/install", 1)
+	for _, tc := range []struct{ name, workflow, action, status string }{
+		{"default input", base, compositeSetup, "compatible"},
+		{"old input", strings.Replace(base, "uses: ./.github/actions/install", "uses: ./.github/actions/install\n        with: {node: '20'}", 1), compositeSetup, "incompatible"},
+		{"dynamic input", strings.Replace(base, "uses: ./.github/actions/install", "uses: ./.github/actions/install\n        with: {node: '${{ inputs.runtime }}'}", 1), compositeSetup, "inconclusive"},
+		{"excluded parent", strings.Replace(base, "uses: ./.github/actions/install", "uses: ./.github/actions/install\n        if: false", 1), compositeSetup, "inconclusive"},
+		{"unknown parent condition", strings.Replace(base, "uses: ./.github/actions/install", "uses: ./.github/actions/install\n        if: github.event_name == 'push'", 1), compositeSetup, "inconclusive"},
+		{"excluded child", base, strings.Replace(compositeSetup, "uses: actions/setup-node@v6", "uses: actions/setup-node@v6\n      if: false", 1), "inconclusive"},
+		{"later setup wins", strings.Replace(base, "      - run: npm i", "      - uses: actions/setup-node@v6\n        with: {node-version: '20'}\n      - run: npm i", 1), compositeSetup, "incompatible"},
+		{"cycle", base, "runs:\n  using: composite\n  steps:\n    - uses: ./.github/actions/install\n", "inconclusive"},
+		{"local JS action", base, "runs: {using: node24, main: index.js}", "inconclusive"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := newJestRepository(t, tc.workflow)
+			writeScripts(t, root, map[string]string{"coverage": "jest", "lint": "eslint ."})
+			writeComposite(t, root, "install", tc.action)
+			result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+				return tracerRequirement{Version: "6.17.0", Node: ">=22"}, nil
+			})
+			require.Equal(t, tc.status, result.Status, result)
+		})
+	}
 }
 
 func TestCompositeNestingAndPathBoundary(t *testing.T) {
