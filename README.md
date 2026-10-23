@@ -24,7 +24,7 @@ ddtest onboard    # GitHub Actions setup instructions
 ddtest testdrive  # Preview, confirm, and run tests locally
 ```
 
-For Jest, testdrive compares the original test suite without and with instrumentation, then validates six advanced features using temporary probes. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
+For Jest and Vitest, testdrive compares the original test suite without and with instrumentation, then validates six advanced features using temporary probes. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
 
 No Datadog account or Agent is needed. Testdrive links to an HTML report under
 `.testoptimization/report.html` with a compact `.testoptimization/testdrive.json`. Use `--yes` after reviewing the preview in
@@ -242,7 +242,7 @@ parallelism details, see [Running DDTest](docs/running.md).
 | --- | --- |
 | `--platform` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
 | `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`. |
-| `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, and Playwright run/discovery. Vitest rejects this option; use `--vitest-config` and configure options in Vitest. |
+| `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, and Playwright run/discovery. Vitest `plan`/`run` reject this option; testdrive accepts an explicit Vitest CLI or supported `ddtest run` command. |
 | `--vitest-config` | Vitest config file used by both planning and execution; defaults to Vitest config discovery. See [migration instructions](docs/running.md#vitest-integration). |
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
 | `--max-parallelism` | Maximum CI node or worker count DDTest considers when planning. |
@@ -305,3 +305,11 @@ The list of available precompiled artifacts is on [release page](https://github.
 - [Best practices](docs/best_practices.md)
 - [Running locally with CI skippable tests and runtime tags](docs/local-ci-skippable-tests.md)
 - [DDTest 1.0 upgrade guide](docs/upgrade-1.0.md)
+
+Vitest testdrive supports baseline/reporting comparison and controlled retries,
+early flake detection, skipping, quarantine, disabled tests and attempt-to-fix.
+Use `ddtest testdrive --framework vitest --all --check-only --yes` before
+`ddtest testdrive --framework vitest --all --yes`. For focused diagnostics,
+replace `--all` with `--command "npx vitest run --config ci.ts"` or a supported
+`ddtest run` invocation. `plan`/`run` retain their Node API behavior and reject
+their own `--command`. See [Vitest validation](docs/running.md#vitest-testdrive-validation).

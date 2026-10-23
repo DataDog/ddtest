@@ -61,7 +61,8 @@ func summarizeValidation(result validationResult) validationSummary {
 		} else if result.Cleanup.Status != "passed" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "owned cleanup did not pass")
 		}
-		if !result.HTMLReportCurrent {
+		// A run that stopped before any test command has no report to publish.
+		if !result.HTMLReportCurrent && hasValidationExecution(result) {
 			summary.BlockingChecks = append(summary.BlockingChecks, "no current HTML findings report")
 		}
 	}

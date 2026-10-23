@@ -23,10 +23,11 @@ import (
 )
 
 type jestTest struct {
-	File    string `json:"file"`
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	Failure string `json:"failure,omitempty"`
+	telemetryName *string
+	File          string `json:"file"`
+	Name          string `json:"name"`
+	Status        string `json:"status"`
+	Failure       string `json:"failure,omitempty"`
 }
 
 type jestResults struct {
@@ -86,6 +87,20 @@ func readRunnerResults(path, label string, run *validationRun) {
 			parsed := jestTest{File: filepath.Clean(suite.Name), Name: test.FullName, Status: test.Status,
 				Failure: failureSignature(strings.Join(test.FailureMessages, "\n"))}
 
+			if label == "Vitest" && test.Title != nil && test.AncestorTitles != nil {
+				// Vitest's JSON fullName omits an empty test title; dd-trace
+				// includes it and skips empty ancestor titles. Preserve the
+				// runner's identity for outcome comparison and derive only the
+				// expected telemetry name, without trimming meaningful spaces.
+				var names []string
+				for _, ancestor := range test.AncestorTitles {
+					if ancestor != "" {
+						names = append(names, ancestor)
+					}
+				}
+				name := strings.Join(append(names, *test.Title), " ")
+				parsed.telemetryName = &name
+			}
 			run.Tests = append(run.Tests, parsed)
 		}
 	}
@@ -333,6 +348,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 		status := map[string]string{"passed": "pass", "failed": "fail"}[test.Status]
 		if status != "" {
 			name := test.Name
+			if test.telemetryName != nil {
+				name = *test.telemetryName
+			}
 			expected[identity{test.File, name, status}]++
 		}
 	}
@@ -390,6 +408,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 
 func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
 	run := t.runJest
+	if t.framework.Name() == "vitest" {
+		run = t.runVitest
+	}
 	baseline, err := run(ctx, output, session, preload, runSpec{Name: "baseline", Role: roleBaseline, Instrumented: false})
 	result.Runs = append(result.Runs, baseline.summary())
 	if err != nil {
@@ -419,6 +440,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 			return err
 		}
 		result.Compatibility = compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrumentedAgain)
+	}
+	if t.framework.Name() == "vitest" {
+		return t.runVitestFeatures(ctx, output, session, preload, baseline, result)
 	}
 	if err := t.runJestFeatures(ctx, output, session, preload, result); err != nil {
 		return err

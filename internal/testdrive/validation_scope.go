@@ -70,6 +70,12 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 		return nil, nil
 	}
 	coverage := &configurationCoverage{Discovered: len(result.Configurations)}
+	// Check-only lists discovered commands without per-configuration results;
+	// count them the same way a full run does.
+	if len(result.Configurations) == 0 && result.Scope != nil {
+		coverage.Discovered = len(result.Scope.Commands)
+		coverage.NotExercised = len(result.Scope.Commands)
+	}
 	executed := &executedValidation{Status: "NOT EXERCISED", Reason: "No current paired execution was completed. Earlier results do not validate this invocation."}
 	for _, configuration := range result.Configurations {
 		if configuration.PairedExecution {

@@ -41,20 +41,31 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 		result.HTMLReportCurrent = true // The parent publishes all retained models, and propagates publication failure.
 		return nil
 	}
+	if err := writeHTMLReportFile(t.repositoryRoot, model); err != nil {
+		return err
+	}
+	result.HTMLReportCurrent = true
+	return announceHTMLReport(output, t.repositoryRoot, t.framework.Name())
+}
+
+// writeHTMLReportFile publishes one run's report under root.
+func writeHTMLReportFile(root string, model reportModel) error {
 	model.Artifacts = []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}
 	var content bytes.Buffer
 	if err := testdriveReport.Execute(&content, model); err != nil {
 		return fmt.Errorf("render testdrive HTML report: %w", err)
 	}
-	path := htmlReportPath(t.repositoryRoot)
-	if err := writeValidation(path, content.Bytes()); err != nil {
+	if err := writeValidation(htmlReportPath(root), content.Bytes()); err != nil {
 		return fmt.Errorf("save testdrive HTML report: %w", err)
 	}
-	result.HTMLReportCurrent = true
-	if err := writeHTMLReportLink(output, t.repositoryRoot); err != nil {
+	return nil
+}
+
+func announceHTMLReport(output io.Writer, root, framework string) error {
+	if err := writeHTMLReportLink(output, root); err != nil {
 		return err
 	}
-	if supportsValidationFramework(t.framework.Name()) {
+	if supportsValidationFramework(framework) {
 		_, _ = fmt.Fprintf(output, "This HTML shows instrumented suite findings. Compatibility, feature checks and the onboarding verdict are in %s.\n", validationPath(""))
 	}
 	return nil

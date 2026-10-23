@@ -189,6 +189,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
 		child.preflight = child.checkJestPreflight
+		if child.framework.Name() == "vitest" {
+			child.preflight = child.checkVitestPreflight
+		}
 		before := len(models)
 		execution, childErr := child.runPreparedConfiguration(ctx, output, &item)
 		prepareValidationResult(t.repositoryRoot, &execution)
@@ -260,7 +263,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 // without requiring the caller to add node_modules/.bin to PATH.
 func (t *Testdrive) configurationExecutable(command string) string {
 	if strings.ContainsAny(command, `/\`) ||
-		slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx", "bun", "corepack"}, command) {
+		slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx", "bun", "corepack", "ddtest"}, command) {
 		return command
 	}
 	for directory := t.repositoryRoot; ; directory = filepath.Dir(directory) {

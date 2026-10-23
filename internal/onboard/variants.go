@@ -47,6 +47,17 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	}
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
+		if len(frameworks) > 0 && frameworks[0] == "vitest" && strings.HasPrefix(key, "DD_TEST_OPTIMIZATION_RUNNER_") {
+			if _, ok := VitestRunnerEnvironmentFlag(key); !ok {
+				return step, nil, fmt.Errorf("CI ddtest runner setting requires explicit command-based validation; not forwarded or silently dropped: %s", key)
+			}
+			resolved, err := runtimeValue(value, row)
+			if err != nil {
+				return step, nil, err
+			}
+			env[key] = resolved
+			continue
+		}
 
 		if key == "PATH" || key == "NODE_PATH" {
 			return step, nil, fmt.Errorf("CI environment overrides executable/module selection: %s", key)

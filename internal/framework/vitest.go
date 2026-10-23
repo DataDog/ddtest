@@ -18,6 +18,11 @@ import (
 	"github.com/DataDog/ddtest/internal/utils"
 )
 
+// VitestValidationScript is shared by testdrive inspection and its Node API adapter.
+//
+//go:embed scripts/vitest_validation.mjs
+var VitestValidationScript string
+
 //go:embed scripts/vitest.mjs
 var vitestScript string
 
@@ -180,10 +185,11 @@ func prepareVitestAdapter(request vitestRequest) (string, error) {
 		return "", fmt.Errorf("failed to create Vitest adapter directory: %w", err)
 	}
 	for name, contents := range map[string]string{
-		"vitest.mjs":        vitestScript,
-		"vitest_modern.mjs": vitestModernScript,
-		"vitest_legacy.mjs": vitestLegacyScript,
-		"request.json":      string(encoded),
+		"vitest.mjs":            vitestScript,
+		"vitest_validation.mjs": VitestValidationScript,
+		"vitest_modern.mjs":     vitestModernScript,
+		"vitest_legacy.mjs":     vitestLegacyScript,
+		"request.json":          string(encoded),
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0600); err != nil {
 			_ = os.RemoveAll(dir)

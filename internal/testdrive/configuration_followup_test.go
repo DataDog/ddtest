@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/ext"
@@ -199,4 +200,49 @@ func TestNpxCIStepIsExercisedByDefaultAndCommandRuns(t *testing.T) {
 func TestTracerDescriptionOmitsAMissingSource(t *testing.T) {
 	require.Equal(t, "not selected", tracerDescription(validationResult{Tracer: "not selected"}))
 	require.Equal(t, "dd-trace@5.132.0 · project", tracerDescription(validationResult{Tracer: "dd-trace@5.132.0", TracerSource: "project"}))
+}
+
+func TestUnpreparedConfigurationCopyKeepsIgnoredInputs(t *testing.T) {
+	source := t.TempDir()
+	require.NoError(t, exec.Command("git", "init", "-q", source).Run())
+	requireWriteFile(t, filepath.Join(source, ".gitignore"), "dist/\n.testoptimization/\n")
+	require.NoError(t, os.MkdirAll(filepath.Join(source, "dist"), 0700))
+	require.NoError(t, os.MkdirAll(filepath.Join(source, ".testoptimization"), 0700))
+	requireWriteFile(t, filepath.Join(source, "dist", "lib.js"), "module.exports=1")
+	requireWriteFile(t, filepath.Join(source, ".testoptimization", "testdrive.json"), "{}")
+	requireWriteFile(t, filepath.Join(source, "lib.test.js"), "require('./dist/lib.js')")
+
+	kept := filepath.Join(t.TempDir(), "kept")
+	require.NoError(t, copyConfiguration(t.Context(), source, kept, true))
+	require.FileExists(t, filepath.Join(kept, "dist", "lib.js"), "a locally compiled input imported by tests")
+	require.NoDirExists(t, filepath.Join(kept, ".testoptimization"))
+
+	rebuilt := filepath.Join(t.TempDir(), "rebuilt")
+	require.NoError(t, copyConfiguration(t.Context(), source, rebuilt, false))
+	require.NoDirExists(t, filepath.Join(rebuilt, "dist"), "preparation rebuilds ignored outputs")
+}
+
+func TestFocusedVitestRunnerCopyKeepsPreparedInputs(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, exec.Command("git", "init", "-q", root).Run())
+	requireWriteFile(t, filepath.Join(root, ".gitignore"), "dist/\n")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "dist"), 0700))
+	const ignoredSize = 1 << 16
+	requireWriteFile(t, filepath.Join(root, "dist", "lib.js"), strings.Repeat("x", ignoredSize))
+	requireWriteFile(t, filepath.Join(root, "lib.test.js"), "import '../dist/lib.js'")
+	installFakeBuildTool(t, root, "tsc")
+	t.Chdir(root)
+	isolated := func(item configurationResult) int {
+		drive := Testdrive{repositoryRoot: root, executor: &fakeTestdriveExecutor{}, framework: framework.NewVitest(platform.NewJavaScript()),
+			command: "ddtest", args: []string{"run", "--framework", "vitest"}, discoveryError: errors.New("stop after isolation"), nodeVersion: func() string { return "v24.0.0" },
+			preflight: func(context.Context, io.Writer, *validationResult) error { return nil }}
+		var output bytes.Buffer
+		_, _ = drive.runPreparedConfiguration(t.Context(), &output, &item)
+		var size int
+		_, err := fmt.Sscanf(output.String()[strings.Index(output.String(), "Isolating configuration:"):], "Isolating configuration: up to %d bytes", &size)
+		require.NoError(t, err, output.String())
+		return size
+	}
+	require.GreaterOrEqual(t, isolated(configurationResult{TestCommand: onboard.TestCommand{Directory: "."}}), ignoredSize, "no preparation recreates dist/")
+	require.Less(t, isolated(configurationResult{TestCommand: onboard.TestCommand{Directory: ".", Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "tsc"}}}}), ignoredSize)
 }

@@ -25,7 +25,7 @@ func TestPublicJestForwardedConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root))
+	require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root, false))
 	write := func(name, value string) {
 		path := filepath.Join(root, name)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))

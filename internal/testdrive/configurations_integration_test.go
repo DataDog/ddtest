@@ -44,7 +44,7 @@ func TestPublicJestConfigurations(t *testing.T) {
 	require.NoError(t, err, string(data))
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root))
+	require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root, false))
 	tracerVersion := integrationTracerVersion(t, modules)
 	data, err = command(root, "git", "init", "-q")
 	require.NoError(t, err, string(data))

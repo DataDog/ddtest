@@ -255,7 +255,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        vitest: ["1.6.1", "2.1.9", "3.2.7", "4.1.11", "5.0.0"]
+        vitest: ["1.6.1", "2.1.9", "3.2.7", "4.1.11", "5.0.5"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -275,10 +275,12 @@ jobs:
           vitest_dir="${RUNNER_TEMP}/vitest-${{ matrix.vitest }}"
           # npm 10.9.8 crashes while resolving Vitest's peer dependencies.
           # Keep peer resolution enabled: Vitest 5 requires Vite as a peer.
-          npx --yes npm@11.11.1 install --prefix "${vitest_dir}" "vitest@${{ matrix.vitest }}" "@vitest/coverage-v8@${{ matrix.vitest }}" "dd-trace@5.125.0"
+          npx --yes npm@11.11.1 install --prefix "${vitest_dir}" "vitest@${{ matrix.vitest }}" "@vitest/coverage-v8@${{ matrix.vitest }}" "dd-trace@5.132.0"
           DDTEST_VITEST_NODE_MODULES="${vitest_dir}/node_modules" \
           DDTEST_DD_TRACE_NODE_MODULES="${vitest_dir}/node_modules" \
             go test -v ./internal/compatibility -run '^TestVitest(Adapter|Tracing)Integration$'
+          DDTEST_VITEST_NODE_MODULES="${vitest_dir}/node_modules" \
+            go test -v ./internal/testdrive -run '^TestVitest(Configuration|ValidationArguments|MultiProjectRejectionKeepsConfigurationEvidence)Integration$'
 
   mocha-compatibility:
     runs-on: ubuntu-latest
@@ -484,3 +486,31 @@ jobs:
           path: ${{ runner.temp }}/ddtest-workflow-reports
           if-no-files-found: ignore
           retention-days: 7
+
+  testdrive-vitest-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - vitest: '3.2.7'
+            tracer: '5.132.0'
+          - vitest: '4.1.11'
+            tracer: '6.21.0'
+          - vitest: '5.0.5'
+            tracer: '6.21.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Validate Vitest CLI and Node API paths against local intake
+        env:
+          DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
+          DDTEST_VITEST_VERSION: ${{ matrix.vitest }}
+          DDTEST_VITEST_TRACER_VERSION: ${{ matrix.tracer }}
+        run: go test -v ./internal/testdrive -run '^TestPublicVitestRunnerTestdrive$' -count=1 -timeout=15m

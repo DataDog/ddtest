@@ -55,7 +55,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		}
 		return commandResolution{}
 	}
-	if language != "javascript" || framework != "jest" {
+	if language != "javascript" || (framework != "jest" && framework != "vitest") {
 		return commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, framework)}
 	}
 	// GitHub expands these before the shell runs; they are not shell syntax.
@@ -294,12 +294,18 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	if tool, ok := discoveryTools[words[0]]; ok {
 		return resolveDiscoveryTool(root, directory, words, framework, tool)
 	}
-	if args, ok := nodeJestArguments(words); ok {
+	if args, ok := nodeJestArguments(words); framework == "jest" && ok {
 		if jestMetadataOptions(args) {
 			return commandResolution{}
 		}
 		relative := repositoryPath(root, directory)
 		return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{Directory: relative, Command: shellquote.Join(words...)}}}
+	}
+	if framework == "vitest" && IsDDTestCommand(words[0]) {
+		if _, err := ParseVitestRunnerCommand(words[1:]); err != nil {
+			return unresolvedCommand(err.Error())
+		}
+		return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{Directory: repositoryPath(root, directory), Command: shellquote.Join(words...)}}}
 	}
 	if slices.Equal(words, []string{"corepack", "enable"}) {
 		return commandResolution{}
@@ -400,6 +406,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	script, ok := manifest.Scripts[name]
 
 	if !ok {
+		if len(frameworks) > 0 && frameworks[0] == "vitest" && name == "vitest" && (strings.HasPrefix(command, "pnpm vitest") || strings.HasPrefix(command, "yarn vitest")) {
+			return resolveJestWords(root, directory, append([]string{"vitest"}, args...), stack, remaining, frameworks...)
+		}
 		if strings.HasPrefix(command, "yarn ") && name == "jest" {
 			if manifest.Dependencies["jest"] != "" || manifest.DevDependencies["jest"] != "" {
 				return resolveJestWords(root, directory, append([]string{"jest"}, args...), stack, remaining, frameworks...)

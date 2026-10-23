@@ -28,6 +28,14 @@ var frameworkFeaturePolicies = map[string]frameworkPolicy{
 		{Name: "disabled", Status: "required"},
 		{Name: "attempt-to-fix", Status: "required"},
 	}},
+	"vitest": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"vitest.config.js", "vitest.config.ts", "vitest.config.mjs", "vitest.config.mts", "vitest.config.cjs", "vitest.config.cts", "vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.mts", "vite.config.cjs", "vite.config.cts"}, Features: []featurePolicy{
+		{Name: "auto-retries", Status: "required"},
+		{Name: "early-flake-detection", Status: "required"},
+		{Name: "skipping", Status: "required"},
+		{Name: "quarantine", Status: "required"},
+		{Name: "disabled", Status: "required"},
+		{Name: "attempt-to-fix", Status: "required"},
+	}},
 }
 
 func supportsValidationFramework(name string) bool {
