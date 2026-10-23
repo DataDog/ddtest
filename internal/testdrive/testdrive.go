@@ -231,7 +231,13 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	var configurationEnvironment map[string]string
 	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
-		configurationEnvironment = mergeConfigurationEnvironment(matchingConfigurationEnvironment(repositoryRoot, runner.Name(), scopeCommand), preflightEnvironment)
+		// A command matching a discovered CI configuration replays its environment,
+		// including the variables GitHub sets on every step.
+		matched := matchingConfigurationEnvironment(repositoryRoot, runner.Name(), scopeCommand)
+		if matched != nil {
+			matched = onboard.WithGitHubActionsDefaults(matched)
+		}
+		configurationEnvironment = mergeConfigurationEnvironment(matched, preflightEnvironment)
 		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, selectedPlan.Environment)
 		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, commandAssignments)
 	}
@@ -555,6 +561,10 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		options := platform.TracerOptions{Directory: directory, Version: version, Command: t.command, Args: t.args, Environment: t.configurationEnvironment}
 		if t.language == "python" && t.environmentInfo.Executable != "" {
 			options.Command, options.Args = t.environmentInfo.Executable, nil
+		}
+		if supportsValidationFramework(t.framework.Name()) {
+			// The same --timeout bound as every other validation subprocess.
+			options.Timeout = t.commandTimeout
 		}
 		installation, err = t.platform.InstallTestdriveTracer(ctx, options)
 		if err != nil {

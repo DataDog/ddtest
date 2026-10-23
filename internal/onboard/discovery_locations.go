@@ -83,6 +83,13 @@ func groupMatrixDiagnostics(diagnostics []scopeDiagnostic) []string {
 	return result
 }
 
+// WithGitHubActionsDefaults adds the variables every GitHub Actions step sees,
+// so a local replay of a CI configuration doesn't fall back to local settings
+// when the configuration branches on them. Explicit values take precedence.
+func WithGitHubActionsDefaults(env map[string]string) map[string]string {
+	return mergeEnvironment(map[string]string{"CI": "true", "GITHUB_ACTIONS": "true"}, env)
+}
+
 func mergeEnvironment(outer, inner map[string]string) map[string]string {
 	if len(outer)+len(inner) == 0 {
 		return nil

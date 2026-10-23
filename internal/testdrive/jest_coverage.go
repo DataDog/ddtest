@@ -21,7 +21,11 @@ const jestArguments = `
 const fs = require('fs');
 const path = require('path');
 let main = process.argv[1];
-if (main && !/(?:^|\/)(?:jest|jest-cli)\/bin\/jest\.js$/.test(main.replace(/\\/g, '/'))) main = fs.realpathSync(main);
+// With -e/-p, argv[1] is an argument, not a script; a missing script must keep
+// Node's own error. Neither is Jest, so leave both untouched.
+if (main && !/(?:^|\/)(?:jest|jest-cli)\/bin\/jest\.js$/.test(main.replace(/\\/g, '/'))) {
+  try { main = fs.realpathSync(main); } catch { main = undefined; }
+}
 if (main && /(?:^|\/)(?:jest|jest-cli)\/bin\/jest\.js$/.test(main.replace(/\\/g, '/'))) {
   const request = %s;
   const args = process.argv;

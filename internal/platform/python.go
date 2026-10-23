@@ -234,17 +234,18 @@ func (p *Python) InstallTestdriveTracer(ctx context.Context, options TracerOptio
 
 	// Match CI auto-instrumentation: install into a separate venv and expose its
 	// site-packages through PYTHONPATH. Testdrive owns and removes the directory.
+	executor := boundedExecutor(p.executor, options.Timeout)
 	interpreter, prefix := pythonInterpreter(options.Command, options.Args)
 	venvArgs := append(prefix, "-m", "venv", filepath.Join(options.Directory, "python"))
-	if output, err := p.executor.CombinedOutput(ctx, interpreter, venvArgs, nil); err != nil {
+	if output, err := executor.CombinedOutput(ctx, interpreter, venvArgs, nil); err != nil {
 		return TracerInstallation{}, runtimeTagProbeError("create Python tracer environment", output, err)
 	}
-	if output, err := p.executor.CombinedOutput(ctx, command, args, map[string]string{"DD_FAST_BUILD": "1"}); err != nil {
+	if output, err := executor.CombinedOutput(ctx, command, args, map[string]string{"DD_FAST_BUILD": "1"}); err != nil {
 		return TracerInstallation{}, runtimeTagProbeError("install ddtrace", output, err)
 	}
 	// Ask the new interpreter for its platform-specific package location. Isolated
 	// mode keeps project startup hooks and PYTHONPATH out of this setup probe.
-	stdout, stderr, err := p.executor.Output(ctx, command, []string{"-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"}, nil)
+	stdout, stderr, err := executor.Output(ctx, command, []string{"-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"}, nil)
 	if err != nil {
 		return TracerInstallation{}, runtimeTagProbeError("locate Python tracer packages", append(stdout, stderr...), err)
 	}

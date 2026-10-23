@@ -61,3 +61,28 @@ func TestJestArgumentsReplaceExpandedSelectionsAndOutputs(t *testing.T) {
 		})
 	}
 }
+
+func TestJestArgumentsLeaveNonScriptNodeEntryPointsNative(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node required to execute the argument preload")
+	}
+	env := map[string]string{}
+	require.NoError(t, redirectJestArguments(t.TempDir(), jestArgumentRequest{Coverage: "coverage", Output: "temporary.json"}, env))
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command(node, args...)
+		cmd.Dir = t.TempDir()
+		cmd.Env = append(os.Environ(), "NODE_OPTIONS="+env["NODE_OPTIONS"])
+		data, err := cmd.CombinedOutput()
+		return string(data), err
+	}
+	// A test child such as node -e '…' child-argument has an argument, not a
+	// script, in argv[1]; the inherited preload must not fail it.
+	output, err := run("-e", "console.log(process.argv[1])", "child-argument")
+	require.NoError(t, err, output)
+	require.Equal(t, "child-argument\n", output)
+	output, err = run("missing.js")
+	require.Error(t, err)
+	require.Contains(t, output, "Cannot find module")
+	require.NotContains(t, output, "realpathSync")
+}

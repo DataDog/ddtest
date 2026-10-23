@@ -2,7 +2,10 @@ package testdrive
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +13,9 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
@@ -54,6 +59,45 @@ func TestPreparationDoesNotInheritLaterTestEnvironment(t *testing.T) {
 	}
 }
 
+func TestConfigurationsReplayGitHubActionsDefaults(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	installFakeBuildTool(t, root, "tsc")
+	for _, key := range []string{"CI", "GITHUB_ACTIONS"} {
+		t.Setenv(key, "")
+		require.NoError(t, os.Unsetenv(key))
+	}
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"defaults", nil, "true"},
+		{"explicit override", map[string]string{"CI": "false"}, "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The test step: --all inspects the configuration with its CI environment.
+			executor := &fakeTestdriveExecutor{err: errors.New("stop after inspection")}
+			drive := Testdrive{repositoryRoot: root, executor: executor, checkOnly: true, framework: framework.NewJest(platform.NewJavaScript()), command: filepath.Join(root, "jest-cli"),
+				preflight: func(context.Context, io.Writer, *validationResult) error { return nil }}
+			item := configurationResult{TestCommand: onboard.TestCommand{Directory: ".", Command: "jest", Environment: tc.env}}
+			_, err := drive.runPreparedConfiguration(t.Context(), &bytes.Buffer{}, &item)
+			require.Error(t, err)
+			require.Equal(t, tc.want, executor.env["CI"])
+			require.Equal(t, "true", executor.env["GITHUB_ACTIONS"])
+			require.Equal(t, tc.env, item.Environment, "the reported configuration keeps only explicit values")
+
+			// Its preparation step.
+			builds := &buildExecutor{t: t}
+			preparation := Testdrive{repositoryRoot: root, executor: builds}
+			item = configurationResult{TestCommand: onboard.TestCommand{Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "tsc", Environment: tc.env}}}}
+			require.NoError(t, preparation.runBuildPrerequisites(t.Context(), &bytes.Buffer{}, &item))
+			require.Equal(t, tc.want, builds.environments[0]["CI"])
+			require.Equal(t, "true", builds.environments[0]["GITHUB_ACTIONS"])
+		})
+	}
+}
+
 func TestLiteralPatchKeepsEscapedAmpersands(t *testing.T) {
 	for _, tc := range []struct{ script, want string }{
 		{`s/old/\&/`, "&"}, {`s/old/&/`, "old"}, {`s/old/\&&/`, "&old"}, {`s/old/\&x/g`, "&x"},
@@ -86,6 +130,8 @@ func TestForwardedScriptKeepsScopeAndCIEnvironment(t *testing.T) {
 	require.Equal(t, "sh", drive.command)
 	require.Equal(t, "npm test", drive.scopeCommand)
 	require.Equal(t, "UTC", drive.configurationEnvironment["TZ"])
+	require.Equal(t, "true", drive.configurationEnvironment["CI"], "a discovered CI configuration runs with GitHub's defaults")
+	require.Equal(t, "true", drive.configurationEnvironment["GITHUB_ACTIONS"])
 	scope, err := onboard.DiscoverValidationScope(root, "jest")
 	require.NoError(t, err)
 	result := completeValidationFixture("jest")

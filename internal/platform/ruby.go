@@ -156,7 +156,7 @@ func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions
 	if project, err := r.DetectTracer(ctx, options); err == nil && project != "" {
 		return TracerInstallation{Project: true}, nil
 	}
-	if output, err := r.executor.CombinedOutput(ctx, command, args, map[string]string{"RUBYOPT": ""}); err != nil {
+	if output, err := boundedExecutor(r.executor, options.Timeout).CombinedOutput(ctx, command, args, map[string]string{"RUBYOPT": ""}); err != nil {
 		return TracerInstallation{}, runtimeTagProbeError("bundle add datadog-ci", output, err)
 	}
 	return TracerInstallation{}, nil

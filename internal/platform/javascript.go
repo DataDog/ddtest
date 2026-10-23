@@ -306,6 +306,7 @@ func (j *JavaScript) InstallTestdriveTracer(ctx context.Context, options TracerO
 	if err != nil {
 		return TracerInstallation{}, err
 	}
+	executor := boundedExecutor(j.executor, options.Timeout)
 	cleanEnvironment := tracerOptionEnvironment(options)
 	if cleanEnvironment == nil {
 		cleanEnvironment = map[string]string{}
@@ -315,12 +316,12 @@ func (j *JavaScript) InstallTestdriveTracer(ctx context.Context, options TracerO
 	if err == nil && path != "" {
 		return TracerInstallation{Path: path, Project: true}, nil
 	}
-	if output, err := j.executor.CombinedOutput(ctx, command, installArgs, cleanEnvironment); err != nil {
+	if output, err := executor.CombinedOutput(ctx, command, installArgs, cleanEnvironment); err != nil {
 		return TracerInstallation{}, runtimeTagProbeError("install "+installArgs[len(installArgs)-1], output, err)
 	}
 
 	ciInitModule := filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init")
-	ciInitPath, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
+	ciInitPath, err := tracerProbe(ctx, executor, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
 	if err != nil {
 		return TracerInstallation{}, fmt.Errorf("resolve dd-trace/ci/init: %w", err)
 	}

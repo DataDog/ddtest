@@ -42,7 +42,7 @@ func (e configurationExecutor) CombinedOutput(ctx context.Context, name string, 
 func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writer, item *configurationResult) (result validationResult, runErr error) {
 	runner := *t
 	t = &runner
-	t.configurationEnvironment = maps.Clone(item.Environment)
+	t.configurationEnvironment = onboard.WithGitHubActionsDefaults(item.Environment)
 	if item.Directory == "" {
 		item.Directory = "."
 	}
@@ -103,7 +103,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration preparation failed; tests were not started."}
 		return result, err
 	}
-	t.configurationEnvironment = isolatedCIEnvironment(item.Environment, original, checkout)
+	t.configurationEnvironment = isolatedCIEnvironment(onboard.WithGitHubActionsDefaults(item.Environment), original, checkout)
 	t.executor = configurationExecutor{executor, t.configurationEnvironment}
 	directory, err := localSetupDirectory(workspace, item.Directory)
 	if err != nil {

@@ -93,7 +93,7 @@ func selectJestCommand(root string, forward bool) (TestCommand, error) {
 						if err != nil {
 							return TestCommand{}, err
 						}
-						entry.Environment = mergeEnvironment(map[string]string{"CI": "true", "GITHUB_ACTIONS": "true"}, mergeEnvironment(env, entry.Environment))
+						entry.Environment = WithGitHubActionsDefaults(mergeEnvironment(env, entry.Environment))
 						// CI explicitly clearing/preloading NODE_OPTIONS must not inherit local flags.
 						for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 							if _, exists := layer["NODE_OPTIONS"]; exists {
