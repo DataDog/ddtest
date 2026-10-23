@@ -109,7 +109,7 @@ failure. Check that this trade-off is acceptable before implementing it.
 
 ## 28. Final retries after a failed session close
 
-[#38](https://github.com/DataDog/ddto/pull/38) made the final
+[#38](https://github.com/tonyredondo/dd-ci-testing-poc/pull/38) made the final
 drain parallel. What remains: when delivery fails, the session-close flush and
 the final delivery at exit each spend a retry cycle on the same payload, 0.30 s
 each on 2026-10-15 with a refused connection (item 59). Once the session-close
@@ -120,7 +120,7 @@ instead of two. The user has not approved this change yet.
 ## 10. A round trip at each test process's exit
 
 Under `ddto test`, ddto's Git worker owns one telemetry application per
-invocation ([#33](https://github.com/DataDog/ddto/pull/33)).
+invocation ([#33](https://github.com/tonyredondo/dd-ci-testing-poc/pull/33)).
 Test processes that use its state send no `app-started`, and at exit they send
 their test cycle and then one telemetry `message-batch`, one after the other.
 
@@ -152,7 +152,7 @@ Git, and combining compatible messages at exit would address them.
 ## 57. Events through the CLI
 
 Every test binary links Mini's HTTP and TLS delivery. Phase 4 of the
-optimization plan ([#44](https://github.com/DataDog/ddto/pull/44))
+optimization plan ([#44](https://github.com/tonyredondo/dd-ci-testing-poc/pull/44))
 built a module with one empty test from an empty build cache: Mini added
 16.3 CPU-s, and its HTTPS transport, the `crypto`, `net` and `net/http`
 packages with cgo, accounted for 10.2 of them. On 2026-10-11, a one-test binary
@@ -284,8 +284,8 @@ of 50–150 ms each less on the startup critical path, an estimate.
 Under `ddto test`, the read cache serves the startup requests that the worker
 made ahead. Deferred-mode binaries still dial again when the settings require
 Git, when the worker waits for a test process, and without the worker's state.
-[#49](https://github.com/DataDog/ddto/pull/49) and
-[#51](https://github.com/DataDog/ddto/pull/51) already close
+[#49](https://github.com/tonyredondo/dd-ci-testing-poc/pull/49) and
+[#51](https://github.com/tonyredondo/dd-ci-testing-poc/pull/51) already close
 start-up connections before the first test and use one HTTPS connection per
 host; keep both. The user has not approved this change yet.
 

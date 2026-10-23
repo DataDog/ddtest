@@ -117,13 +117,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           branch="dev-version/$VERSION"
-          # A rerun reuses the branch as it is, with any commits added to it.
-          if ! git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+          base="$(git rev-parse HEAD)"
+          # A rerun reuses the branch as it is, with any commits added to it,
+          # and adds the bump to a branch that still points at the base.
+          head="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
+          if [[ -z "$head" ]]; then
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$branch" -f sha="$base" > /dev/null
+            head="$base"
+          fi
+          if [[ "$head" == "$base" ]]; then
             go run ./scripts/release -version "$VERSION-dev" -stamp
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -q -am "Start ${VERSION#v}-dev after $VERSION"
-            git push -q origin "HEAD:refs/heads/$branch"
+            # main accepts only signed commits, and GitHub signs the commits
+            # that its API creates for the workflow.
+            file=internal/version/version.go
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$file" -f branch="$branch" \
+              -f message="Start ${VERSION#v}-dev after $VERSION" \
+              -f sha="$(git rev-parse "HEAD:$file")" -f content="$(base64 -w0 "$file")" > /dev/null
           fi
           if ! gh pr view "$branch" --json number > /dev/null 2>&1; then
             gh pr create --base main --head "$branch" \

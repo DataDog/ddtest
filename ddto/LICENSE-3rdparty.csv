@@ -2,7 +2,7 @@ Component,Origin,License,Copyright
 github.com/DataDog/dd-trace-dotnet,https://github.com/DataDog/dd-trace-dotnet,Apache-2.0,"Datadog, Inc."
 github.com/DataDog/dd-trace-go/v2,https://github.com/DataDog/dd-trace-go,Apache-2.0,"Datadog, Inc."
 github.com/philhofer/fwd,https://github.com/philhofer/fwd,MIT,"2014-2015, Philip Hofer"
-github.com/tinylib/msgp/msgp,https://github.com/tinylib/msgp,MIT,"Philip Hofer"
+github.com/tinylib/msgp/msgp,https://github.com/tinylib/msgp,MIT AND BSD-3-Clause,"Philip Hofer; The Go Authors"
 golang.org/x/sys/unix,https://github.com/golang/sys,BSD-3-Clause,"The Go Authors"
 golang.org/x/sys/windows,https://github.com/golang/sys,BSD-3-Clause,"The Go Authors"
 golang.org/x/sys/windows/registry,https://github.com/golang/sys,BSD-3-Clause,"The Go Authors"

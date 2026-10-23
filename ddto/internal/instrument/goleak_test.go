@@ -33,7 +33,7 @@ func TestGoleakEntryKeepsFindAndOptions(t *testing.T) {
 			t.Fatal("unsupported API", signature)
 		}
 	}
-	if strings.Contains(GoleakEntryHook(), `"github.com/tonyredondo`) {
+	if strings.Contains(GoleakEntryHook(), `"github.com/DataDog/ddto`) {
 		t.Fatal("runtime import added to library graph")
 	}
 }
