@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"strings"
 
-	infra "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go"
+	infra "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go"
 )
 
 // Each retry has its own reader over the same sealed payload. GetBody participates

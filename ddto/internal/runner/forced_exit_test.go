@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/DataDog/ddto/internal/instrument"
 )
 
 // prepareSignalHook edits the toolchain's os/signal through the overlay and

@@ -15,10 +15,10 @@ import (
 	"strings"
 	"testing"
 
-	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	assert "github.com/DataDog/ddto/internal/testassert"
+	"github.com/DataDog/ddto/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/bazel"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // TestTestManagementTestsApiRequest tests the successful scenario for GetTestManagementTests.

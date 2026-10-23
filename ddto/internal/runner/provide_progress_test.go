@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	pocversion "github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	pocversion "github.com/DataDog/ddto/internal/version"
 )
 
 // Observe real Go output before its module download is allowed to finish.
@@ -43,7 +43,7 @@ func TestRuntimeDownloadProgress(t *testing.T) {
 			blocked, release := make(chan struct{}), make(chan struct{})
 			var once sync.Once
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				prefix := "/" + miniModule + "/@v/"
+				prefix := "/" + escapeModuleCachePath(miniModule) + "/@v/"
 				switch r.URL.Path {
 				case prefix + version + ".info":
 					fmt.Fprintf(w, `{"Version":%q,"Time":"2026-10-06T00:00:00Z"}`, version)

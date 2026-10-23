@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
-	internalenv "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/env"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	internalenv "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 type processRetryChildTransportState struct {

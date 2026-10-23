@@ -42,8 +42,8 @@ func TestMiniManualRunMWithoutExitKeepsRetryStatus(t *testing.T) {
 	}
 	dir := t.TempDir()
 	writeBuildFixture(t, dir, map[string]string{
-		"go.mod":       fmt.Sprintf("module example.com/manualexit\ngo 1.25.0\nrequire github.com/tonyredondo/dd-ci-testing-poc v0.0.0\nreplace github.com/tonyredondo/dd-ci-testing-poc => %q\n", filepath.ToSlash(root)),
-		"main_test.go": "package manualexit\n\nimport (\n\t\"testing\"\n\n\t\"github.com/tonyredondo/dd-ci-testing-poc/testopt\"\n)\n\nfunc TestMain(m *testing.M) { testopt.RunM(m) }\n\nfunc TestAlwaysFails(t *testing.T) { t.Error(\"fails\") }\n",
+		"go.mod":       fmt.Sprintf("module example.com/manualexit\ngo 1.25.0\nrequire github.com/DataDog/ddto v0.0.0\nreplace github.com/DataDog/ddto => %q\n", filepath.ToSlash(root)),
+		"main_test.go": "package manualexit\n\nimport (\n\t\"testing\"\n\n\t\"github.com/DataDog/ddto/testopt\"\n)\n\nfunc TestMain(m *testing.M) { testopt.RunM(m) }\n\nfunc TestAlwaysFails(t *testing.T) { t.Error(\"fails\") }\n",
 	})
 	bin := filepath.Join(t.TempDir(), executableName("fixture.test"))
 	if out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false", "GOWORK=off"), "go", "test", "-mod=mod", "-c", "-o", bin, "."); code != 0 {

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddto/internal/citransport"
+	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
 )
 
 // deliveries records the events that reach a test-cycle endpoint by span ID.

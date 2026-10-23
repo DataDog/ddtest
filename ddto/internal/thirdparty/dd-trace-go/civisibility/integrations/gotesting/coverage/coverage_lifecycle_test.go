@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
+	"github.com/DataDog/ddto/internal/cidelivery"
 )
 
 // Run the global-zone mutation in a separate process so it cannot race with

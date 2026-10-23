@@ -1,3 +1,3 @@
-module github.com/tonyredondo/dd-ci-testing-poc
+module github.com/DataDog/ddto
 
 go 1.25.0

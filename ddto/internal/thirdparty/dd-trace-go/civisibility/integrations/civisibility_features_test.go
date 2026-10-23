@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
-	civisibilitynet "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/net"
-	coretelemetry "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/telemetrytest"
+	assert "github.com/DataDog/ddto/internal/testassert"
+	"github.com/DataDog/ddto/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	civisibilitynet "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
+	coretelemetry "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/telemetrytest"
 )
 
 func TestAdditionalFeaturesInitializationPublishesLockFreeFastPath(t *testing.T) {

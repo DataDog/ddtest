@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility"
+	"github.com/DataDog/ddto/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility"
 )
 
 func TestExitCiVisibilityStopsSignalHandler(t *testing.T) {

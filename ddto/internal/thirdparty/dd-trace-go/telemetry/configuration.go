@@ -14,8 +14,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/env"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
 )
 
 // configuration is a data source that tracks SDK configuration key-value pairs

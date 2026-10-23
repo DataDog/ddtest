@@ -14,8 +14,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // ProcessTestCoverageFile is a serializable per-test coverage delta produced

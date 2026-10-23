@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/net"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddto/internal/cidelivery"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // Constants defining the payload size limits for agentless mode.

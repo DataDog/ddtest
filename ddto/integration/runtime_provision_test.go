@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 // go mod tidy removes the runtime requirement: nothing in the module imports it,
@@ -28,8 +28,8 @@ func TestMiniRuntimeWithoutRequirementLeavesModuleUntouched(t *testing.T) {
 		return append(mod, sum...)
 	}
 	for _, edit := range []string{
-		"-droprequire=github.com/tonyredondo/dd-ci-testing-poc", // As after go mod tidy.
-		"-dropreplace=github.com/tonyredondo/dd-ci-testing-poc", // The checkout that built ddto provides it.
+		"-droprequire=github.com/DataDog/ddto", // As after go mod tidy.
+		"-dropreplace=github.com/DataDog/ddto", // The checkout that built ddto provides it.
 	} {
 		if out, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", edit); code != 0 {
 			t.Fatal(out, stderr)

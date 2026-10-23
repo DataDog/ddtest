@@ -25,7 +25,7 @@ const (
 	// LinkingFile is the SDK's CLIGitLinkingFile in that state.
 	LinkingFile = "linking"
 	// MiniModule is the module of ddto and its Mini runtime.
-	MiniModule = "github.com/tonyredondo/dd-ci-testing-poc"
+	MiniModule = "github.com/DataDog/ddto"
 	// TestifySuiteImport and GoleakImport are the packages that ddto rewrites.
 	TestifySuiteImport = "github.com/stretchr/testify/suite"
 	GoleakImport       = "go.uber.org/goleak"

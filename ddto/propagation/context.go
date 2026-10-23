@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/propctx"
+	"github.com/DataDog/ddto/internal/propctx"
 )
 
 // Context is an immutable value identifying the active span. TraceID contains

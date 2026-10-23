@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
+	"github.com/DataDog/ddto/internal/cidelivery"
 )
 
 func TestStoppedTickerCannotRestart(t *testing.T) {

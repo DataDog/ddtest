@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/ddtrace/ext"
+	"github.com/DataDog/ddto/internal/citransport"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/ddtrace/ext"
 )
 
 type formattedError struct{}

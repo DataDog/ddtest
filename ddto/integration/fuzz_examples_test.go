@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/minitracer"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 const fuzzExampleSDKVersion = version.SDKVersion
@@ -99,9 +99,9 @@ func buildFuzzExampleFixture(t *testing.T, backend, mode string, covered bool) f
 	dependency := "github.com/DataDog/dd-trace-go/v2 " + fuzzExampleSDKVersion
 	extra := ""
 	if backend == "mini" {
-		prefix = "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/"
-		dependency = "github.com/tonyredondo/dd-ci-testing-poc v0.0.0"
-		extra = "\nreplace github.com/tonyredondo/dd-ci-testing-poc => " + fmt.Sprintf("%q", filepath.ToSlash(root)) + "\n"
+		prefix = "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/"
+		dependency = "github.com/DataDog/ddto v0.0.0"
+		extra = "\nreplace github.com/DataDog/ddto => " + fmt.Sprintf("%q", filepath.ToSlash(root)) + "\n"
 
 	}
 	err = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
@@ -119,7 +119,7 @@ func buildFuzzExampleFixture(t *testing.T, backend, mode string, covered bool) f
 		if backend == "mini" {
 			text = strings.ReplaceAll(text, "github.com/DataDog/dd-trace-go/v2/internal/", prefix)
 			text = strings.ReplaceAll(text, "github.com/DataDog/dd-trace-go/v2/ddtrace/", prefix+"ddtrace/")
-			text = strings.ReplaceAll(text, "github.com/tinylib/msgp/msgp", "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp")
+			text = strings.ReplaceAll(text, "github.com/tinylib/msgp/msgp", "github.com/DataDog/ddto/internal/thirdparty/msgp/msgp")
 		}
 		if covered && filepath.Base(path) == "app_test.go" {
 			// Keep the SDK workload/assertions; add one production helper so -cover
@@ -362,7 +362,7 @@ func normalizeFuzzExampleEvents(events []map[string]any, fixture fuzzExampleFixt
 		{filepath.ToSlash(fixture.dir) + "/", "fixture/"},
 		{strings.ReplaceAll(fixture.dir, "\\", "\\\\") + "\\\\", "fixture/"},
 		{"github.com/DataDog/dd-trace-go/v2/internal/", "ci-runtime/"},
-		{"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/", "ci-runtime/"},
+		{"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/", "ci-runtime/"},
 	}
 	text := string(raw)
 	for _, r := range replacements {

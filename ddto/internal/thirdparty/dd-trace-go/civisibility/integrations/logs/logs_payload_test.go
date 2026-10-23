@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"testing"
 
-	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
+	assert "github.com/DataDog/ddto/internal/testassert"
 )
 
 func newLogEntry(i int) *logEntry {

@@ -326,8 +326,8 @@ import (
     "net/http"
     "testing"
 
-    "github.com/tonyredondo/dd-ci-testing-poc/propagation"
-    "github.com/tonyredondo/dd-ci-testing-poc/testopt"
+    "github.com/DataDog/ddto/propagation"
+    "github.com/DataDog/ddto/testopt"
 )
 
 func TestRequest(t *testing.T) {

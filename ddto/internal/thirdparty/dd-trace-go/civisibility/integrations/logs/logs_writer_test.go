@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/net"
+	assert "github.com/DataDog/ddto/internal/testassert"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
 )
 
 func TestNewLogsWriter(t *testing.T) {

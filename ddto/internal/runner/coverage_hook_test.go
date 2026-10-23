@@ -24,15 +24,15 @@ func TestCoverPatternReachesCollector(t *testing.T) {
 		{"all", false, true}, {"std", false, true}, {"cmd", false, true},
 		{"work", false, false}, {"work", true, true}, {"tool", false, true}, {"tool", true, true},
 		{"internal/...", false, true}, {".../coverage/...", false, true}, {"...", false, true}, {"testing", false, true},
-		{"github.com/...", false, true}, {"github.com/tonyredondo/...", false, true}, {"github.com/tonyredondo/dd-ci-testing-poc", false, true},
-		{"github.com/tonyredondo/dd-ci-testing-poc/internal/...", false, true}, {"github.com/tonyredondo/dd-ci-testing-poc...", false, true},
+		{"github.com/...", false, true}, {"github.com/DataDog/...", false, true}, {"github.com/DataDog/ddto", false, true},
+		{"github.com/DataDog/ddto/internal/...", false, true}, {"github.com/DataDog/ddto...", false, true},
 		{"example.com/app/...", false, false}, {"example.com/app", false, false}, {"github.com/other/...", false, false},
-		{"github.com/tonyredondo/dd-ci-testing-pocket/...", false, false}, {"github.com/tonyredondo/dd-ci-testing-p...", false, true},
+		{"github.com/DataDog/ddtoket/...", false, false}, {"github.com/DataDog/ddt...", false, true},
 		{"./...", false, false}, {".", false, false}, {"../...", false, true}, {"../mini/...", false, true}, {"../other/...", false, false},
 		{"../../...", false, true}, {filepath.Join(goroot, "src") + "/...", false, true}, {filepath.Join(root, "work") + "/...", false, true},
 		{filepath.Join(root, "elsewhere") + "/...", false, false},
 		{"..", false, true}, {"../mi...", false, true}, {"../mini/sub/...", false, true}, {"net...", false, true},
-		{"github.com/tonyredondo", false, false},
+		{"github.com/DataDog", false, false},
 	} {
 		if got := coverPatternReachesCollector(tc.pattern, client, mini, tc.miniMain, []string{goroot}); got != tc.reaches {
 			t.Errorf("%q (Mini main %t) = %t, want %t", tc.pattern, tc.miniMain, got, tc.reaches)

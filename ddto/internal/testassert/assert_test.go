@@ -6,8 +6,8 @@ import (
 	"math"
 	"testing"
 
-	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
+	assert "github.com/DataDog/ddto/internal/testassert"
+	"github.com/DataDog/ddto/internal/testassert/require"
 )
 
 type reporter struct{ failures int }

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
+	"github.com/DataDog/ddto/internal/goenv"
 )
 
 // ddto's state gives a test process the module of its package, so that the

@@ -16,11 +16,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/githubjob"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/env"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddto/internal/goenv"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/githubjob"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // GitHub Actions job ID resolution. The diagnostics scan lives in githubjob,

@@ -15,7 +15,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
+	"github.com/DataDog/ddto/internal/goenv"
 )
 
 var (

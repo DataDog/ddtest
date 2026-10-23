@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/propctx"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/ddtrace/ext"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/stacktrace"
-	"github.com/tonyredondo/dd-ci-testing-poc/propagation"
+	"github.com/DataDog/ddto/internal/propctx"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/ddtrace/ext"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/stacktrace"
+	"github.com/DataDog/ddto/propagation"
 )
 
 // Span is mutable until Finish seals its event in place for read-only

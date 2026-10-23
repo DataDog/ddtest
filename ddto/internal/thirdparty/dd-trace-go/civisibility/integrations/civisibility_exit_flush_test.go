@@ -14,8 +14,8 @@ import (
 	"sync"
 	"testing"
 
-	tracer "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility"
+	tracer "github.com/DataDog/ddto/internal/minitracer"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility"
 )
 
 // Exit delivers events finished after session close through the tracer's

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs ddto from its GitHub releases:
 #
-#   curl -fsSL https://github.com/tonyredondo/dd-ci-testing-poc/releases/latest/download/install.sh | bash
+#   curl -fsSL https://github.com/DataDog/ddto/releases/latest/download/install.sh | bash
 #   curl -fsSL .../install.sh | bash -s -- --version v1.2.3 --dir /usr/local/bin
 #
 # It downloads the release executable for this host and checks it against the
@@ -17,7 +17,7 @@
 #   DDTO_DOWNLOAD_URL             base URL of a mirror of the release's files
 set -euo pipefail
 
-repo=tonyredondo/dd-ci-testing-poc
+repo=DataDog/ddto
 version=${DDTO_VERSION:-latest}
 dir=${DDTO_INSTALL_DIR:-$HOME/.local/bin}
 while [ $# -gt 0 ]; do

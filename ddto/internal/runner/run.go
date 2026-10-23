@@ -16,17 +16,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/bundle"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/bundle"
+	"github.com/DataDog/ddto/internal/goenv"
+	"github.com/DataDog/ddto/internal/instrument"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddto/internal/toolwrap"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 const SDKVersion = version.SDKVersion
 const sdkPackage = "github.com/DataDog/dd-trace-go/v2/civisibility"
-const miniPackage = "github.com/tonyredondo/dd-ci-testing-poc/testopt"
+const miniPackage = "github.com/DataDog/ddto/testopt"
 
 type goPackage struct {
 	commandLine                        bool // Selected by the original package query, not dependency discovery.
@@ -275,7 +275,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	vendorProvided := false
 	// The plan holds Go files. With a temporary directory inside the module, a
 	// leading _ keeps them out of the module's ./... patterns.
-	temp, e := os.MkdirTemp("", "_dd-ci-testing-poc-")
+	temp, e := os.MkdirTemp("", "_ddto-")
 	if e != nil {
 		return plan, e
 	}

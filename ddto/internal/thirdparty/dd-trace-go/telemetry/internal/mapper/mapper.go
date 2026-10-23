@@ -6,7 +6,7 @@
 package mapper
 
 import (
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
 )
 
 // Mapper is an interface for transforming payloads to comply with different types of lifecycle events in the application.

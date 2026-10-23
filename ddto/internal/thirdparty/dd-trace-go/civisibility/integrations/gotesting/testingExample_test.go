@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/testassert/require"
 )
 
 func TestExampleOutputMismatchMatchesTestingSemantics(t *testing.T) {

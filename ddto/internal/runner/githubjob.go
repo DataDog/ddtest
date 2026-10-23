@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/githubjob"
+	"github.com/DataDog/ddto/internal/goenv"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/githubjob"
 )
 
 // gitHubDiagnosticsDirs are the runner directories that hold Worker logs.

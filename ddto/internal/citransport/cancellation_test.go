@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
+	"github.com/DataDog/ddto/internal/cidelivery"
 )
 
 func TestSendCancellationWhileLeakCheckPausesTransport(t *testing.T) {

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	"github.com/DataDog/ddto/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
 )
 
 type processRetryRecordingEvent struct {

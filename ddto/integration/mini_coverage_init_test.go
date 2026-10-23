@@ -25,7 +25,7 @@ func TestSerial(t *testing.T) {}
 	server := newServer(http.HandlerFunc(receiver.handler))
 	defer server.Close()
 	env := testEnv("DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=poc-not-a-real-key")
-	for _, pattern := range []string{"all", "github.com/tonyredondo/dd-ci-testing-poc/..."} {
+	for _, pattern := range []string{"all", "github.com/DataDog/ddto/..."} {
 		out, stderr, code := command(t, dir, env, driver, "test", "--runtime=mini", "-count=1", "-v", "-coverpkg="+pattern, ".")
 		if code != 0 || !strings.Contains(out, "--- PASS: TestSerial") || strings.Contains(out+stderr, "internal error in coverage") {
 			t.Fatalf("-coverpkg=%s: exit %d\n%s\n%s", pattern, code, out, stderr)

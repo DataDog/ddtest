@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/testassert/require"
 )
 
 // waiterTest holds a lock for request as the process ownerPID, as another

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
+	"github.com/DataDog/ddto/internal/instrument"
+	"github.com/DataDog/ddto/internal/toolwrap"
 )
 
 const (

@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
-	infra "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/envconfig"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/env"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
-	"github.com/tonyredondo/dd-ci-testing-poc/propagation"
+	"github.com/DataDog/ddto/internal/goenv"
+	infra "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/bazel"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/envconfig"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddto/propagation"
 )
 
 // testSession is the test session that ddto owns for its go test command:

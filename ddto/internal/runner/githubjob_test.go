@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/impactedtests"
+	"github.com/DataDog/ddto/internal/goenv"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/impactedtests"
 )
 
 func TestHandGitHubJobID(t *testing.T) {

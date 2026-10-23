@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/internal"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
 )
 
 type startupEnvelope struct {

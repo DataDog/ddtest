@@ -1,6 +1,6 @@
 package gotesting
 
-import "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+import "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
 
 // isAbnormalTestingMExit reports whether M.Run's finalizer runs because a
 // panic leaves M.Run, and records that in the debug log: the panic then ends

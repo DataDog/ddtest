@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/testassert/require"
 )
 
 // testing counts each parallel attempt as a started parallel test, while the

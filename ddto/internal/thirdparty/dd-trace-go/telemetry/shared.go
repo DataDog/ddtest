@@ -2,7 +2,7 @@
 
 package telemetry
 
-import "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/internal"
+import "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal"
 
 // SharedApp is a telemetry application that several processes report as
 // one. ddto's Git worker owns the application of an invocation and hands it

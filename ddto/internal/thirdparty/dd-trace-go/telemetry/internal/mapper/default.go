@@ -3,7 +3,7 @@
 
 package mapper
 
-import "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+import "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
 
 // NewDefaultMapper batches CI telemetry; it emits no SDK heartbeats.
 func NewDefaultMapper() Mapper { return &messageBatchReducer{} }

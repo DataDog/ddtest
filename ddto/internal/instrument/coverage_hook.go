@@ -32,7 +32,7 @@ import (
 //go:linkname __dd_civisibility_coverageCounterList internal/coverage/cfile.getCovCounterList
 func __dd_civisibility_coverageCounterList() []rtcov.CovCounterBlob
 
-//go:linkname __dd_civisibility_registerTestingCoverage github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage.registerTestingCoverage
+//go:linkname __dd_civisibility_registerTestingCoverage github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage.registerTestingCoverage
 func __dd_civisibility_registerTestingCoverage(func() ([]string, []uint32, string), func([]uint32) ([]uint32, int), func([]uint32) []byte)
 
 func init() {

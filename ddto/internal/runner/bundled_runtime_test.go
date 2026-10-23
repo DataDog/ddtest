@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
+	"github.com/DataDog/ddto/internal/toolwrap"
 )
 
 // testRuntimeFiles is a minimal Mini module.
@@ -131,7 +131,7 @@ func TestCLIMiniRootOrder(t *testing.T) {
 	_, checkoutFile, _, _ := goruntime.Caller(0)
 	checkout := filepath.Dir(filepath.Dir(filepath.Dir(checkoutFile)))
 	moduleCache := t.TempDir()
-	cached := filepath.Join(moduleCache, miniModule+"@v1.2.3")
+	cached := filepath.Join(moduleCache, escapeModuleCachePath(miniModule)+"@v1.2.3")
 	if err := os.MkdirAll(filepath.Join(cached, "testopt"), 0700); err != nil {
 		t.Fatal(err)
 	}

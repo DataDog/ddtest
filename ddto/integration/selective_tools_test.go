@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/runner"
+	"github.com/DataDog/ddto/internal/runner"
 )
 
 func TestDynamicToolSelection(t *testing.T) {

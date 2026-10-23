@@ -82,7 +82,7 @@ require (
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
-	github.com/tonyredondo/dd-ci-testing-poc v0.0.0
+	github.com/DataDog/ddto v0.0.0
 	github.com/trailofbits/go-mutexasserts v0.0.0-20250514102930-c1f3d2e37561 // indirect
 	github.com/urfave/cli/v2 v2.27.7 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
@@ -119,4 +119,4 @@ require (
 
 
 
-replace github.com/tonyredondo/dd-ci-testing-poc => @POC_ROOT@
+replace github.com/DataDog/ddto => @POC_ROOT@

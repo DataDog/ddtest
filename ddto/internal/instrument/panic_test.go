@@ -149,7 +149,7 @@ func TestPanicHookMatchesMiniRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hook["var __dd_civisibility_unhandledPanic func(any)"] || !hook["linkname __dd_civisibility_unhandledPanic github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations.unhandledPanic"] {
+	if !hook["var __dd_civisibility_unhandledPanic func(any)"] || !hook["linkname __dd_civisibility_unhandledPanic github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.unhandledPanic"] {
 		t.Error("PanicHook does not link Mini's integrations.unhandledPanic")
 	}
 }

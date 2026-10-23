@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
 )
 
 // errorfLike calls the hook as testing.common.Errorf does, one frame below

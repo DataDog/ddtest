@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
+	"github.com/DataDog/ddto/internal/toolwrap"
 )
 
 const orchestrionBypassEnv = toolwrap.OrchestrionBypassEnv

@@ -10,11 +10,11 @@ import (
 	"sync"
 	"sync/atomic"
 
-	globalinternal "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/stacktrace"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/internal"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+	globalinternal "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/stacktrace"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
 )
 
 // telemetryQueuedLogStackSkip skips Log's own frame — landing on Log's

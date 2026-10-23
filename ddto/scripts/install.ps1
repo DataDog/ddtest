@@ -1,6 +1,6 @@
 # Installs ddto from its GitHub releases, as install.sh does for Unix shells:
 #
-#   irm https://github.com/tonyredondo/dd-ci-testing-poc/releases/latest/download/install.ps1 | iex
+#   irm https://github.com/DataDog/ddto/releases/latest/download/install.ps1 | iex
 #   & ([scriptblock]::Create((irm .../install.ps1))) -Version v1.2.3 -Dir C:\tools
 #
 # It downloads the release executable for this host and checks it against the
@@ -26,7 +26,7 @@ param(
     $ErrorActionPreference = 'Stop'
     # The progress bar slows Invoke-WebRequest down considerably.
     $ProgressPreference = 'SilentlyContinue'
-    $repo = 'tonyredondo/dd-ci-testing-poc'
+    $repo = 'DataDog/ddto'
 
     function Say([string]$Message) { [Console]::Error.WriteLine("ddto install: $Message") }
 

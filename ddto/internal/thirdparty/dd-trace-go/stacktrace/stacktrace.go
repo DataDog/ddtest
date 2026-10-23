@@ -16,7 +16,7 @@ var (
 	// internalPackagesPrefixes is the list of prefixes for internal packages that should be hidden in the stack trace
 	internalSymbolPrefixes = []string{
 		"github.com/DataDog/dd-trace-go/v2",
-		"github.com/tonyredondo/dd-ci-testing-poc",
+		"github.com/DataDog/ddto",
 		"gopkg.in/DataDog/dd-trace-go.v1",
 		"github.com/DataDog/go-libddwaf",
 		"github.com/DataDog/datadog-agent",
@@ -138,12 +138,12 @@ func (q *queue[T]) Remove() T {
 //
 // Examples:
 //
-//	github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/stacktrace.(*Event).NewException
-//	  -> package: github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/stacktrace
+//	github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/stacktrace.(*Event).NewException
+//	  -> package: github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/stacktrace
 //	  -> receiver: *Event
 //	  -> function: NewException
-//	github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/stacktrace.TestFunc.func1
-//	  -> package: github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/stacktrace
+//	github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/stacktrace.TestFunc.func1
+//	  -> package: github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/stacktrace
 //	  -> receiver: ""
 //	  -> function: TestFunc.func1
 func parseSymbol(name string) symbol {
@@ -499,9 +499,9 @@ func (it *framesIterator) skipFrame(frame runtime.Frame) bool {
 	// Always skip internal stacktrace implementation methods (but not test functions)
 	funcName := frame.Function
 	if strings.HasPrefix(funcName,
-		"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/stacktrace.(*framesIterator).") ||
+		"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/stacktrace.(*framesIterator).") ||
 		strings.Contains(funcName,
-			"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/stacktrace.iterator") {
+			"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/stacktrace.iterator") {
 		return true
 	}
 

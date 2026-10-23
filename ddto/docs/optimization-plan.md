@@ -1,7 +1,7 @@
 # Optimization plan
 
 This plan was written on 2026-10-13 from the benchmark refresh at `137a912`
-([#39](https://github.com/tonyredondo/dd-ci-testing-poc/pull/39)). It covered
+([#39](https://github.com/DataDog/ddto/pull/39)). It covered
 six workstreams, the GOROOT mirror and the five costs that
 [the comparison](benchmarks.md) showed for Mini against Native, plus a final
 benchmark refresh. Each phase was its own branch and pull request, and items
@@ -19,13 +19,13 @@ phase measured its own before deciding.
 
 | Phase | Work | Evidence | Expected gain | Result |
 | --- | --- | --- | --- | --- |
-| 1 | GOROOT mirror for toolchains in `GOMODCACHE` | `ddto test` aborts after a `GOTOOLCHAIN` switch | A failure becomes a working run | [#41](https://github.com/tonyredondo/dd-ci-testing-poc/pull/41): switched toolchains work, as fast as an unswitched one after the first run |
-| 2 | Per-test coverage in memory (item 8) | Gin `-coverpkg=./... -covermode=atomic`: 0.25 → 6.5 s, 0.39 → 13.6 CPU-s | About 6 s of Gin's 6.5 s | [#42](https://github.com/tonyredondo/dd-ci-testing-poc/pull/42): that Gin cell from 6.30–6.61 to 0.55–0.57 s |
-| 3 | ddto's startup as the compiler wrapper | 1.4 → 2.4 ms per start since #32–#34; +2.1% cold, +3.4% relink in Testify | 2–3% of wrapped builds | [#43](https://github.com/tonyredondo/dd-ci-testing-poc/pull/43): 1.20 ms per start; Testify 1.9–4.1% faster |
-| 4 | Mini's package graph in builds | Cold +2.5–3.0 s (+14–44%); Gin forced link +0.9 s | Part of those seconds | [#44](https://github.com/tonyredondo/dd-ci-testing-poc/pull/44): closed with findings |
-| 5 | Preparation per invocation | Cached builds +50–110 ms; preparation about 50 ms | Up to about 50 ms per invocation | [#45](https://github.com/tonyredondo/dd-ci-testing-poc/pull/45): closed with findings; item 56 stays parked |
-| 6 | Test binary startup and memory | Testify binary 2.7 → 9.5 ms; Gin runtime memory 36.6 → 50.9 MiB | Depends on the profile | [#46](https://github.com/tonyredondo/dd-ci-testing-poc/pull/46): closed with findings |
-| 7 | Benchmark refresh and backlog | None | Published, comparable data | [#47](https://github.com/tonyredondo/dd-ci-testing-poc/pull/47): Mini refreshed on 2026-10-14 |
+| 1 | GOROOT mirror for toolchains in `GOMODCACHE` | `ddto test` aborts after a `GOTOOLCHAIN` switch | A failure becomes a working run | [#41](https://github.com/DataDog/ddto/pull/41): switched toolchains work, as fast as an unswitched one after the first run |
+| 2 | Per-test coverage in memory (item 8) | Gin `-coverpkg=./... -covermode=atomic`: 0.25 → 6.5 s, 0.39 → 13.6 CPU-s | About 6 s of Gin's 6.5 s | [#42](https://github.com/DataDog/ddto/pull/42): that Gin cell from 6.30–6.61 to 0.55–0.57 s |
+| 3 | ddto's startup as the compiler wrapper | 1.4 → 2.4 ms per start since #32–#34; +2.1% cold, +3.4% relink in Testify | 2–3% of wrapped builds | [#43](https://github.com/DataDog/ddto/pull/43): 1.20 ms per start; Testify 1.9–4.1% faster |
+| 4 | Mini's package graph in builds | Cold +2.5–3.0 s (+14–44%); Gin forced link +0.9 s | Part of those seconds | [#44](https://github.com/DataDog/ddto/pull/44): closed with findings |
+| 5 | Preparation per invocation | Cached builds +50–110 ms; preparation about 50 ms | Up to about 50 ms per invocation | [#45](https://github.com/DataDog/ddto/pull/45): closed with findings; item 56 stays parked |
+| 6 | Test binary startup and memory | Testify binary 2.7 → 9.5 ms; Gin runtime memory 36.6 → 50.9 MiB | Depends on the profile | [#46](https://github.com/DataDog/ddto/pull/46): closed with findings |
+| 7 | Benchmark refresh and backlog | None | Published, comparable data | [#47](https://github.com/DataDog/ddto/pull/47): Mini refreshed on 2026-10-14 |
 
 Phase 1 went first because it fixed a failure. Phase 2 promised the largest
 gain, and phase 3 reversed a small regression. Phases 4–6 started with an

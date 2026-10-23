@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 // The runtime archive holds the module files and the non-test sources of the
@@ -31,7 +31,7 @@ func TestRuntimeArchiveContents(t *testing.T) {
 		t.Fatalf("archive not reproducible: %v", err)
 	}
 	files := archiveFiles(t, first)
-	for _, want := range []string{"go.mod", "LICENSE", "testopt/testopt.go", "internal/toolwrap/toolwrap.go", "internal/bundle/bundle.go"} {
+	for _, want := range []string{"go.mod", "LICENSE", "LICENSE.Apache", "LICENSE.BSD3", "LICENSE-3rdparty.csv", "NOTICE", "testopt/testopt.go", "internal/toolwrap/toolwrap.go", "internal/bundle/bundle.go"} {
 		if !files[want] {
 			t.Errorf("archive lacks %s", want)
 		}

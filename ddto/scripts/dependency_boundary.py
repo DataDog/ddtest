@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 
-MODULE = "github.com/tonyredondo/dd-ci-testing-poc"
+MODULE = "github.com/DataDog/ddto"
 
 
 def packages_from_json(text):

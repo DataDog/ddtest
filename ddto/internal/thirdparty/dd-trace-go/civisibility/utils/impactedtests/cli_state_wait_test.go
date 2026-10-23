@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
 // A test process waits for the worker's impacted tests as long as ddto's

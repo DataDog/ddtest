@@ -1,4 +1,4 @@
-module github.com/tonyredondo/dd-ci-testing-poc/testdata/orchestrion
+module github.com/DataDog/ddto/testdata/orchestrion
 
 go 1.26.0
 

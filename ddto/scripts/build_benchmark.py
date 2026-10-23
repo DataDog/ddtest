@@ -46,7 +46,7 @@ FIELDS = ("series", "project", "cpus", "variant", "scenario", "iteration",
           "peak_bytes", "binary_bytes", "returncode", "process_tree_drained",
           "post_exit_wait_s", "cold_output_removed", "command")
 SDK_MODULE = "github.com/DataDog/dd-trace-go/v2"
-POC_MODULE = "github.com/tonyredondo/dd-ci-testing-poc"
+POC_MODULE = "github.com/DataDog/ddto"
 
 
 def read_json(path):

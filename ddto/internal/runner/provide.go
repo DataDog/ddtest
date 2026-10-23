@@ -14,8 +14,8 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
-	pocversion "github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/toolwrap"
+	pocversion "github.com/DataDog/ddto/internal/version"
 )
 
 const miniModule = toolwrap.MiniModule
@@ -251,12 +251,27 @@ func miniSourceRoot(sourceFile, moduleCache, version string) string {
 		}
 	}
 	if moduleCache != "" && publishedVersion(version) {
-		root := filepath.Join(moduleCache, miniModule+"@"+version)
+		root := filepath.Join(moduleCache, escapeModuleCachePath(miniModule)+"@"+escapeModuleCachePath(version))
 		if validMiniSource(root) {
 			return root
 		}
 	}
 	return ""
+}
+
+// escapeModuleCachePath escapes a module path or version as GOMODCACHE names
+// it: each upper-case letter becomes "!" and its lower-case form, so
+// github.com/DataDog/ddto is cached as github.com/!data!dog/ddto.
+func escapeModuleCachePath(value string) string {
+	var escaped strings.Builder
+	for _, r := range value {
+		if 'A' <= r && r <= 'Z' {
+			escaped.WriteByte('!')
+			r += 'a' - 'A'
+		}
+		escaped.WriteRune(r)
+	}
+	return escaped.String()
 }
 
 func validMiniSource(root string) bool {

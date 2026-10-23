@@ -328,8 +328,9 @@ changing the checkout.
 [`scripts/release`](../scripts/release/main.go) builds `ddto-<os>-<arch>` for
 Linux, macOS and Windows on `amd64` and `arm64`. Each executable carries the
 two files of [`internal/bundle`](../internal/bundle/bundle.go): a zip of the
-runtime's sources, which are `go.mod`, `LICENSE`, `NOTICE` and the non-test
-sources and license texts of `internal`, `propagation` and `testopt`, and the
+runtime's sources, which are `go.mod`, the license files (`LICENSE`,
+`LICENSE.Apache`, `LICENSE.BSD3`, `LICENSE-3rdparty.csv`), `NOTICE` and the
+non-test sources and license texts of `internal`, `propagation` and `testopt`, and the
 tool wrapper built for its platform from the sources that ddto would build, so
 its key matches.
 `-overlay` supplies both with the `ddto_release` build tag, and the checkout is
@@ -363,7 +364,7 @@ go mod verify
 go list -deps -f '{{if and (not .Standard) .Module}}{{.Module.Path}}{{end}}' ./testopt ./cmd/ddto | sort -u
 ```
 
-The final command should list only `github.com/tonyredondo/dd-ci-testing-poc`.
+The final command should list only `github.com/DataDog/ddto`.
 The distributed module has no `require` directives. This includes test-only
 dependencies: a consumer's `go mod tidy` also examines dependency tests. Ported
 SDK assertions use [`internal/testassert`](../internal/testassert/assert.go) and

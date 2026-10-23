@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/hostname/cachedfetch"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/hostname/httputils"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/hostname/validate"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/hostname/cachedfetch"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/hostname/httputils"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/hostname/validate"
 )
 
 // declare these as vars not const to ease testing

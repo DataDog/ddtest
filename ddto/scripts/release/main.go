@@ -27,12 +27,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/bundle"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/bundle"
+	"github.com/DataDog/ddto/internal/toolwrap"
+	"github.com/DataDog/ddto/internal/version"
 )
 
-const module = "github.com/tonyredondo/dd-ci-testing-poc"
+const module = "github.com/DataDog/ddto"
 
 // targets are the platforms of GitHub's hosted runners and of most developers.
 var targets = []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64", "windows/arm64"}
@@ -42,7 +42,7 @@ var targets = []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm
 var runtimeDirs = []string{"internal", "propagation", "testopt"}
 
 // runtimeFiles are the module files that Go needs to compile those packages.
-var runtimeFiles = []string{"go.mod", "LICENSE", "NOTICE"}
+var runtimeFiles = []string{"go.mod", "LICENSE", "LICENSE.Apache", "LICENSE.BSD3", "LICENSE-3rdparty.csv", "NOTICE"}
 
 // versionFile declares Number, from which the version's other constants derive.
 const versionFile = "internal/version/version.go"

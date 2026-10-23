@@ -112,7 +112,7 @@ func TestRaceInSubtestOnRetry(t *testing.T) {
 		symbol, position string
 		instrumented     bool
 	}{
-		{`^github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer.\(\*Span\).SetTag$`, "span.go:" + strconv.Itoa(line), false},
+		{`^github.com/DataDog/ddto/internal/minitracer.\(\*Span\).SetTag$`, "span.go:" + strconv.Itoa(line), false},
 		{`^example.com/dd-ci-testing-fixture_test.TestClientDataRace$`, "race_test.go:5", true},
 	} {
 		disassembly, stderr, code := command(t, dir, testEnv(), "go", "tool", "objdump", "-s", c.symbol, bin)
@@ -138,7 +138,7 @@ func TestMiniRaceKeepsMiniInstrumentedForAPIClients(t *testing.T) {
 import (
 	"context"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/testopt"
+	"github.com/DataDog/ddto/testopt"
 )
 
 // Tag hands value to a Mini span, which reads it.
@@ -175,7 +175,7 @@ func TestRaceThroughMiniAPI(t *testing.T) {
 `
 	direct := strings.Replace(strings.Replace(test, `"example.com/dd-ci-testing-fixture/racehelper"`, `"context"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/testopt"`, 1), `	if err := racehelper.Tag(&shared); err != nil {
+	"github.com/DataDog/ddto/testopt"`, 1), `	if err := racehelper.Tag(&shared); err != nil {
 		t.Fatal(err)
 	}
 `, `	client, err := testopt.New(testopt.Config{Transport: testopt.TransportConfig{Endpoint: "http://127.0.0.1:9"}})

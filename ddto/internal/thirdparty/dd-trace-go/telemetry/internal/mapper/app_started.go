@@ -6,8 +6,8 @@
 package mapper
 
 import (
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/globalconfig"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/globalconfig"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
 )
 
 type appStartedReducer struct {

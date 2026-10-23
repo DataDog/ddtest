@@ -14,10 +14,10 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/xsys/windows"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/goenv"
+	"github.com/DataDog/ddto/internal/thirdparty/xsys/windows"
+	"github.com/DataDog/ddto/internal/toolwrap"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 // ExecWithCallerEnvironment restores the caller's Go settings, then runs the

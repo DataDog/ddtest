@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/DataDog/ddto/internal/instrument"
 )
 
 // The CLI's own runtime sources pass every runtime check that ddto runs, on
@@ -140,7 +140,7 @@ func TestMarkOwnRuntime(t *testing.T) {
 // checkout, which can hold local edits or another revision, is not.
 func TestMarkOwnRuntimeFindsOnlyImmutableSources(t *testing.T) {
 	cache := t.TempDir()
-	cached := filepath.Join(cache, miniModule+"@v1.2.3")
+	cached := filepath.Join(cache, escapeModuleCachePath(miniModule)+"@v1.2.3")
 	if err := os.MkdirAll(filepath.Join(cached, "testopt"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestCLIMiniRootNotesOnlyImmutableSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	moduleCache := t.TempDir()
-	cached := filepath.Join(moduleCache, miniModule+"@v1.2.3")
+	cached := filepath.Join(moduleCache, escapeModuleCachePath(miniModule)+"@v1.2.3")
 	if err := os.MkdirAll(filepath.Join(cached, "testopt"), 0700); err != nil {
 		t.Fatal(err)
 	}

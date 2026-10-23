@@ -15,7 +15,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/testassert/require"
 )
 
 func TestProcessRetryParitySynctestUsesOneNativeExecution(t *testing.T) {

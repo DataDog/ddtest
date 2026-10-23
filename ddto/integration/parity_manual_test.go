@@ -82,11 +82,11 @@ func main() {
 		apiImport := "github.com/DataDog/dd-trace-go/v2/internal/civisibility/integrations"
 		tracerImport := "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
 		if backend == "mini" {
-			modulePath = "github.com/tonyredondo/dd-ci-testing-poc/manualprobe"
-			apiImport = "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
-			tracerImport = "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
+			modulePath = "github.com/DataDog/ddto/manualprobe"
+			apiImport = "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
+			tracerImport = "github.com/DataDog/ddto/internal/minitracer"
 		}
-		module := "module " + modulePath + "\n\ngo 1.26.0\nrequire (\n github.com/tonyredondo/dd-ci-testing-poc v0.0.0\n github.com/DataDog/dd-trace-go/v2 " + sdkVersion + "\n)\nreplace github.com/tonyredondo/dd-ci-testing-poc => " + strconv.Quote(filepath.ToSlash(root)) + "\n"
+		module := "module " + modulePath + "\n\ngo 1.26.0\nrequire (\n github.com/DataDog/ddto v0.0.0\n github.com/DataDog/dd-trace-go/v2 " + sdkVersion + "\n)\nreplace github.com/DataDog/ddto => " + strconv.Quote(filepath.ToSlash(root)) + "\n"
 		if err = os.WriteFile(filepath.Join(probe, "go.mod"), []byte(module), 0600); err != nil {
 			t.Fatal(err)
 		}

@@ -21,7 +21,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/testassert/require"
 )
 
 func requireRetryAttemptParallelConflict(t *testing.T, panicData any) {

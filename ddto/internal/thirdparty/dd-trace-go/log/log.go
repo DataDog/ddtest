@@ -16,12 +16,12 @@
 //
 // This package does not report to telemetry itself. SDK code that wants an
 // error or panic surfaced in Error Tracking should call
-// [github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/log.ReportError] or
-// [github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/log.ReportPanic]
+// [github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/log.ReportError] or
+// [github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/log.ReportPanic]
 // explicitly at that call site. A call site that wants both a local log line
 // and a report, without duplicating the message, should use
-// [github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/log.LogAndReportError]
-// or [github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/log.LogAndReportPanic]
+// [github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/log.LogAndReportError]
+// or [github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/log.LogAndReportPanic]
 // instead.
 package log
 
@@ -35,7 +35,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 // Level specifies the logging level that the log package prints at.

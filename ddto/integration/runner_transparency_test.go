@@ -143,7 +143,7 @@ func TestMiniModModeLeavesModuleFiles(t *testing.T) {
 	}
 	// go mod tidy keeps a replace without its requirement. With -mod=mod, a
 	// query that resolves the runtime would add that requirement to go.mod.
-	module := fmt.Sprintf("module example.com/modmode\n\ngo 1.25.0\n\nreplace github.com/tonyredondo/dd-ci-testing-poc => %q\n", filepath.ToSlash(root))
+	module := fmt.Sprintf("module example.com/modmode\n\ngo 1.25.0\n\nreplace github.com/DataDog/ddto => %q\n", filepath.ToSlash(root))
 	for _, mode := range []struct {
 		name       string
 		flags, env []string

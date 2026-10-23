@@ -16,16 +16,16 @@ Shell examples use POSIX syntax. On Windows, use Git Bash or set environment
 variables with PowerShell; locally built executables can use a `.exe` suffix.
 
 Tests need an installed Go 1.25 or newer toolchain. Install `ddto` from the
-[latest release](https://github.com/tonyredondo/dd-ci-testing-poc/releases/latest):
+[latest release](https://github.com/DataDog/ddto/releases/latest):
 
 ```sh
-curl -fsSL https://github.com/tonyredondo/dd-ci-testing-poc/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/DataDog/ddto/releases/latest/download/install.sh | bash
 ```
 
 In PowerShell, on Windows or elsewhere:
 
 ```powershell
-irm https://github.com/tonyredondo/dd-ci-testing-poc/releases/latest/download/install.ps1 | iex
+irm https://github.com/DataDog/ddto/releases/latest/download/install.ps1 | iex
 ```
 
 The scripts download the executable for your platform into `~/.local/bin`
@@ -49,15 +49,15 @@ the test binaries.
 To build `ddto` from source instead:
 
 ```sh
-go install github.com/tonyredondo/dd-ci-testing-poc/cmd/ddto@main
+go install github.com/DataDog/ddto/cmd/ddto@main
 ```
 
 Go places `ddto` in `GOBIN`, or `$(go env GOPATH)/bin` when `GOBIN` is unset.
 Add that directory to `PATH`. To build from a local checkout:
 
 ```sh
-git clone https://github.com/tonyredondo/dd-ci-testing-poc.git
-cd dd-ci-testing-poc
+git clone https://github.com/DataDog/ddto.git
+cd ddto
 go build -o bin/ddto ./cmd/ddto
 ```
 

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/net"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
 )
 
 // sdkMatchKnownTest is the SDK's isKnownTest lookup at the pinned base.

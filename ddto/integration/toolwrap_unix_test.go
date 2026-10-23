@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
+	"github.com/DataDog/ddto/internal/toolwrap"
 )
 
 // A signal while ddto waits to rebuild its wrapper executable, which another

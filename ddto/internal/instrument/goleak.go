@@ -42,7 +42,7 @@ func TransformGoleakEntry(name string, src []byte) ([]byte, bool, error) {
 		if !ok || typ.Name != "Option" || !resultOK || result.Name != "error" {
 			return nil, false, fmt.Errorf("%s: %w: unsupported goleak.Find types", name, ErrUnsupportedAPI)
 		}
-		prefix := "github.com/tonyredondo/dd-ci-testing-poc/internal/"
+		prefix := "github.com/DataDog/ddto/internal/"
 		filters := []string{
 			prefix + "thirdparty/dd-trace-go/civisibility/integrations.(*ciVisibilitySignalHandler).run",
 			prefix + "thirdparty/dd-trace-go/telemetry/internal.(*Ticker).run",
@@ -91,5 +91,5 @@ func TransformGoleakEntry(name string, src []byte) ([]byte, bool, error) {
 
 // No runtime import is inserted into goleak's module dependency graph.
 func GoleakEntryHook() string {
-	return "package goleak\nimport _ \"unsafe\"\n//go:linkname " + GoleakHookName + " github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery.PrepareLeakCheck\nfunc " + GoleakHookName + "() func()\n"
+	return "package goleak\nimport _ \"unsafe\"\n//go:linkname " + GoleakHookName + " github.com/DataDog/ddto/internal/cidelivery.PrepareLeakCheck\nfunc " + GoleakHookName + "() func()\n"
 }

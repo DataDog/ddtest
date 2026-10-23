@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/iotest"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/xsys/unix"
+	"github.com/DataDog/ddto/internal/thirdparty/xsys/unix"
 )
 
 func TestOSReleaseHandlesMalformedLinesAndReadErrors(t *testing.T) {

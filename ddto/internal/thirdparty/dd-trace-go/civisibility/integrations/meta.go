@@ -5,7 +5,7 @@
 
 package integrations
 
-import tracer "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
+import tracer "github.com/DataDog/ddto/internal/minitracer"
 
 // ciVisibilityMetaValueMaxChars is the maximum number of characters allowed in
 // CI Visibility event meta values.

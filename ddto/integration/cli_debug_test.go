@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 func cliDebugLines(stderr string) string {
@@ -143,7 +143,7 @@ func TestCLIDebugEarlyLocalProvisioning(t *testing.T) {
 
 func TestCLIDebugLocalProvisioning(t *testing.T) {
 	dir, driver := prepareMiniFixture(t)
-	_, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", "-droprequire=github.com/tonyredondo/dd-ci-testing-poc")
+	_, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", "-droprequire=github.com/DataDog/ddto")
 	if code != 0 {
 		t.Fatal(stderr)
 	}

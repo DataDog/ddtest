@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/runner"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/globalconfig"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/runner"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/globalconfig"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 func main() {

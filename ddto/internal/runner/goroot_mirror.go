@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
+	"github.com/DataDog/ddto/internal/goenv"
 )
 
 // A toolchain that GOTOOLCHAIN runs from the module cache keeps GOROOT beneath

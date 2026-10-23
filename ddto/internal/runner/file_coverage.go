@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
+	"github.com/DataDog/ddto/internal/instrument"
+	"github.com/DataDog/ddto/internal/toolwrap"
 )
 
 // --experimental-file-coverage: the packages of the repository compile with

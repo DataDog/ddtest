@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 // A test-only helper can initialize SDK CI before testing.M.Run reaches Mini.

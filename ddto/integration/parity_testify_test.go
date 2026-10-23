@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/runner"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/runner"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 func prepareTestifyFixture(t *testing.T, reference bool) (string, string) {
@@ -253,7 +253,7 @@ func canonicalTestifyDiagnostic(text string) string {
 			}
 		}
 		line = strings.ReplaceAll(line, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "ci-runtime/civisibility/")
-		line = strings.ReplaceAll(line, "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/", "ci-runtime/civisibility/")
+		line = strings.ReplaceAll(line, "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/", "ci-runtime/civisibility/")
 		if stack {
 			line = testifyGoroutineID.ReplaceAllString(line, "goroutine ID")
 			line = testifyProgramCounter.ReplaceAllString(line, "")

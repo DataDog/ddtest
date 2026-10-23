@@ -21,7 +21,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/locking"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/locking"
 )
 
 type retryAttemptGroup struct {

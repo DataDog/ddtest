@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/fwd"
+	"github.com/DataDog/ddto/internal/thirdparty/fwd"
 )
 
 // where we keep old *Readers

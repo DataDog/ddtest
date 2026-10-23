@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	assert "github.com/DataDog/ddto/internal/testassert"
+	"github.com/DataDog/ddto/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
 // sourcePathFixtureFunc is a real runtime function used to exercise SetTestFunc path resolution.
@@ -42,7 +42,7 @@ func configureSourcePathTestState(t *testing.T, workspacePath string) {
 	initializeSourceMetadataTestRuntime()
 	utils.AddCITagsMap(map[string]string{
 		constants.CIWorkspacePath:  workspacePath,
-		constants.GitRepositoryURL: "https://github.com/tonyredondo/dd-ci-testing-poc.git",
+		constants.GitRepositoryURL: "https://github.com/DataDog/ddto.git",
 	})
 	t.Cleanup(resetCIVisibilityStateForTesting)
 }
@@ -110,7 +110,7 @@ func TestResolveTestSourcePathCanParseTrimpathModulePath(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(sourceFilePath), 0o700))
 	require.NoError(t, os.WriteFile(sourceFilePath, []byte("package integrations\n\nfunc sourcePathTemporaryFixture() {\n}\n"), 0o600))
 
-	sourcePath := resolveTestSourcePath("github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go")
+	sourcePath := resolveTestSourcePath("github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go")
 	metadata := loadSourceFileMetadata(sourcePath.FilesystemPath)
 
 	assert.Equal(t, "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go", sourcePath.RelativePath)
@@ -138,14 +138,14 @@ func TestSetTestFuncUnderTrimpathUsesRepositoryRelativeTagsAndParsesSource(t *te
 	require.NotNil(t, fn)
 	runtimePath, _ := fn.FileLine(fn.Entry())
 	require.False(t, filepath.IsAbs(runtimePath), "go test -trimpath should not report an absolute runtime source path")
-	require.True(t, strings.HasPrefix(runtimePath, "github.com/tonyredondo/dd-ci-testing-poc/"), "unexpected trimpath runtime source path: %s", runtimePath)
+	require.True(t, strings.HasPrefix(runtimePath, "github.com/DataDog/ddto/"), "unexpected trimpath runtime source path: %s", runtimePath)
 
 	test.SetTestFunc(fn)
 
 	testSourceFile, ok := test.GetTag(constants.TestSourceFile)
 	require.True(t, ok)
 	assert.Equal(t, "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go", testSourceFile)
-	assert.NotContains(t, testSourceFile, "github.com/tonyredondo/dd-ci-testing-poc")
+	assert.NotContains(t, testSourceFile, "github.com/DataDog/ddto")
 	assert.NotContains(t, testSourceFile, "v2/internal")
 	assertSourceRangeTags(t, test)
 }

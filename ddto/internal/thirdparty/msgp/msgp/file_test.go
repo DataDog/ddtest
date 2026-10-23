@@ -10,7 +10,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
 )
 
 type rawBytes []byte

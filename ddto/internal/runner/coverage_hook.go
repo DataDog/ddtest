@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/DataDog/ddto/internal/instrument"
 )
 
 // miniCoveragePackage holds Mini's per-test coverage, which receives

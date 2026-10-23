@@ -1,3 +1,8 @@
+Datadog ddto
+Copyright 2026-Present Datadog, Inc.
+
+This product includes software developed at Datadog (<https://www.datadoghq.com/>).
+
 This project includes CI Visibility code derived from DataDog/dd-trace-go,
 Copyright Datadog, Inc., under the Apache License 2.0.
 The current extraction base, exact source paths and hashes are recorded in
@@ -12,4 +17,4 @@ internal/thirdparty/xsys/LICENSE. Each origin has a README and exact commit.
 The CODEOWNERS algorithm was adapted from DataDog/dd-trace-dotnet at
 843640c32bae5fe6dcdf790906f6431fe15f6973, Copyright 2017 Datadog, Inc.
 It is maintained as Go CI Visibility code under the Apache License 2.0
-included in LICENSE and internal/thirdparty/dd-trace-go/LICENSE.
+included in LICENSE.Apache and internal/thirdparty/dd-trace-go/LICENSE.

@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
+	"github.com/DataDog/ddto/internal/instrument"
+	"github.com/DataDog/ddto/internal/toolwrap"
 )
 
 const minimumTestifyVersion = "v1.4.0"
@@ -86,7 +86,7 @@ func prepareTestifyEntry(suite *goPackage, replacements map[string]string, runti
 	hook := "github.com/DataDog/dd-trace-go/v2/internal/civisibility/integrations/gotesting.instrumentTestifySuiteRun"
 	if runtime == Mini {
 		hook += "Scoped"
-		hook = strings.Replace(hook, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/", 1)
+		hook = strings.Replace(hook, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/", 1)
 	}
 	tool := &LibraryEntry{ScopedTestify: runtime == Mini, Sources: map[string]string{}, HookFile: filepath.Join(temp, "testify-hook.go")}
 	hookSource := instrument.TestifyEntryHook(hook, runtime == Mini)

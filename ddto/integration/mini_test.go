@@ -26,7 +26,7 @@ func prepareMiniFixtureWithTempDir(t *testing.T, tempDir func() string) (string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"mod", "edit", "-require=github.com/tonyredondo/dd-ci-testing-poc@v0.0.0"}, {"mod", "edit", "-replace=github.com/tonyredondo/dd-ci-testing-poc=" + root}} {
+	for _, args := range [][]string{{"mod", "edit", "-require=github.com/DataDog/ddto@v0.0.0"}, {"mod", "edit", "-replace=github.com/DataDog/ddto=" + root}} {
 		out, stderr, code := command(t, dir, testEnv(), "go", args...)
 		if code != 0 {
 			t.Fatalf("mini module: %s %s", out, stderr)
@@ -36,7 +36,7 @@ func prepareMiniFixtureWithTempDir(t *testing.T, tempDir func() string) (string,
 	// exercise Mini on its own, without upgrading the toolchain through that SDK.
 	toolchain := strings.Fields(strings.TrimPrefix(runtime.Version(), "devel "))[0]
 	if version.Compare(toolchain, "go1.26") < 0 {
-		mod := "module example.com/dd-ci-testing-fixture\ngo 1.25.0\nrequire github.com/tonyredondo/dd-ci-testing-poc v0.0.0\nreplace github.com/tonyredondo/dd-ci-testing-poc => " + strconv.Quote(filepath.ToSlash(root)) + "\n"
+		mod := "module example.com/dd-ci-testing-fixture\ngo 1.25.0\nrequire github.com/DataDog/ddto v0.0.0\nreplace github.com/DataDog/ddto => " + strconv.Quote(filepath.ToSlash(root)) + "\n"
 		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(mod), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -143,14 +143,14 @@ func canonicalMiniEvents(events []string) []string {
 func canonicalMiniStack(stack string) string {
 	lines := strings.Split(stack, "\n")
 	for i, line := range lines {
-		for _, prefix := range []string{"github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/"} {
+		for _, prefix := range []string{"github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/"} {
 			if strings.HasPrefix(line, prefix) {
 				lines[i] = "ci-runtime/" + strings.TrimPrefix(line, prefix)
 				if i+1 < len(lines) {
 					for _, sourceRoot := range []string{"/internal/civisibility/", "/internal/thirdparty/dd-trace-go/civisibility/"} {
 						if offset := strings.Index(lines[i+1], sourceRoot); offset >= 0 {
 							lines[i+1] = "\tinternal/civisibility/" + lines[i+1][offset+len(sourceRoot):]
-							if strings.Contains(prefix, "dd-ci-testing-poc/") {
+							if strings.HasPrefix(prefix, "github.com/DataDog/ddto/") {
 								function := strings.TrimPrefix(lines[i], "ci-runtime/")
 								location := strings.TrimPrefix(lines[i+1], "\tinternal/civisibility/")
 								lines[i+1] = "\tinternal/civisibility/" + canonicalMiniCallSite(function, location)
@@ -244,7 +244,7 @@ func canonicalMiniAssertionLocation(location string) string {
 
 func TestCanonicalMiniStackMapsOnlyAdaptedCallSite(t *testing.T) {
 	sdk := "github.com/DataDog/dd-trace-go/v2/internal/civisibility/integrations/gotesting.(*M).executeInternalTest.func1\n\t/sdk/internal/civisibility/integrations/gotesting/testing.go:864\nexample.com/app.TestFailure\n\t/work/app_test.go:17"
-	mini := "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.(*M).executeInternalTest.func1\n\t/poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/testing.go:882\nexample.com/app.TestFailure\n\t/work/app_test.go:17"
+	mini := "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.(*M).executeInternalTest.func1\n\t/poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/testing.go:882\nexample.com/app.TestFailure\n\t/work/app_test.go:17"
 	want := canonicalMiniStack(sdk)
 	if canonicalMiniStack(mini) != want {
 		t.Fatal("adapted call site was not mapped to the pinned SDK")
@@ -259,7 +259,7 @@ func TestCanonicalMiniStackMapsOnlyAdaptedCallSite(t *testing.T) {
 // Canonicalization must be limited to the relocated library namespace/root.
 func TestCanonicalMiniStackRetainsApplicationFrames(t *testing.T) {
 	sdk := "github.com/DataDog/dd-trace-go/v2/internal/civisibility/utils.CaptureError()\n\t/cache/sdk/internal/civisibility/utils/error.go:42\nexample.com/app.TestFailure()\n\t/work/app_test.go:17"
-	mini := "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils.CaptureError()\n\t/work/poc/internal/thirdparty/dd-trace-go/civisibility/utils/error.go:42\nexample.com/app.TestFailure()\n\t/work/app_test.go:17"
+	mini := "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils.CaptureError()\n\t/work/poc/internal/thirdparty/dd-trace-go/civisibility/utils/error.go:42\nexample.com/app.TestFailure()\n\t/work/app_test.go:17"
 	want := canonicalMiniStack(sdk)
 	if got := canonicalMiniStack(mini); got != want {
 		t.Fatalf("relocation mismatch:\n%s\n%s", want, got)
@@ -415,7 +415,7 @@ func TestMiniPropagationExtractedBySDK(t *testing.T) {
 import (
  "context"
  "fmt"
- "github.com/tonyredondo/dd-ci-testing-poc/propagation"
+ "github.com/DataDog/ddto/propagation"
  "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
 )
 func main(){
@@ -460,7 +460,7 @@ func TestCanonicalMiniCallSitesRetainOtherLocations(t *testing.T) {
 			t.Fatal("changed line hidden")
 		}
 		sdk := "goroutine 1 [running]:\ngithub.com/DataDog/dd-trace-go/v2/internal/civisibility/" + function + "()\n\t/sdk/internal/civisibility/" + want + "\n"
-		mini := "goroutine 1 [running]:\ngithub.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/" + function + "()\n\t/poc/internal/thirdparty/dd-trace-go/civisibility/" + location + "\n"
+		mini := "goroutine 1 [running]:\ngithub.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/" + function + "()\n\t/poc/internal/thirdparty/dd-trace-go/civisibility/" + location + "\n"
 		if canonicalTestifyDiagnostic(sdk) != canonicalTestifyDiagnostic(mini) {
 			t.Fatal("Testify diagnostic lost exact call-site mapping")
 		}
@@ -477,7 +477,7 @@ func TestTestifyMovedCallSitesInFormattedDiagnostics(t *testing.T) {
 	miniPrefix := "/poc/internal/thirdparty/dd-trace-go/civisibility/"
 	file := "integrations/gotesting/instrumentation_orchestrion.go:"
 	sdk := "test panicked: fixture\n    goroutine 12 [running]:\n    github.com/DataDog/dd-trace-go/v2/internal/civisibility/integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1(0x123)\n    \t" + sdkPrefix + file + "430 +0x123\n"
-	mini := strings.ReplaceAll(sdk, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/")
+	mini := strings.ReplaceAll(sdk, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/")
 	mini = strings.ReplaceAll(strings.ReplaceAll(mini, sdkPrefix, miniPrefix), file+"430", file+"433")
 	if canonicalTestifyDiagnostic(sdk) != canonicalTestifyDiagnostic(mini) {
 		t.Error("indented stack mapping lost")

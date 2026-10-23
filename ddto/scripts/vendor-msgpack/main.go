@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/scripts/internal/messagepack"
+	"github.com/DataDog/ddto/scripts/internal/messagepack"
 )
 
 type entry struct{ Source, Destination, SHA256, AdaptedSHA256 string }

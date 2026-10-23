@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/toolwrap"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 const (

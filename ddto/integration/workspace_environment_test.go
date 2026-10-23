@@ -162,7 +162,7 @@ import ("fmt";"os";"os/exec";"path/filepath";"strings")
 func main() {
  tool := os.Args[1]
  if strings.TrimSuffix(filepath.Base(tool), ".exe") == "compile" && strings.HasPrefix(os.Getenv("TOOLEXEC_IMPORTPATH"), "example.com/toolclient") {
-  out, err := exec.Command("go", "list", "github.com/tonyredondo/dd-ci-testing-poc/testopt").CombinedOutput()
+  out, err := exec.Command("go", "list", "github.com/DataDog/ddto/testopt").CombinedOutput()
   if err != nil { fmt.Fprintf(os.Stderr, "wrapper go list failed: %v\n%s", err, out); os.Exit(1) }
   if err := os.WriteFile(os.Getenv("TOOL_MARKER"), out, 0600); err != nil { panic(err) }
  }

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/testassert/require"
 )
 
 func TestProcessRetryParityFreshRunnerStablePublicState(t *testing.T) {

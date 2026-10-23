@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 // Keep the declaration at line 5 and the closing brace at line 10. A compiler

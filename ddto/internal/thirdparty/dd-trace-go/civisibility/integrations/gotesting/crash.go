@@ -3,7 +3,7 @@ package gotesting
 import (
 	_ "unsafe" // go:linkname
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
 )
 
 // instrumentTestTimeout runs in testing's -timeout alarm just before it

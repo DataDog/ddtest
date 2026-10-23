@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
-	civisibilityutils "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/bazel"
+	civisibilityutils "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
 // saveEnv captures the current process environment so tests can restore it after mutating globals.

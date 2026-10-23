@@ -29,7 +29,7 @@ const PanicHook = `package runtime
 
 import "unsafe"
 
-//go:linkname __dd_civisibility_unhandledPanic github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations.unhandledPanic
+//go:linkname __dd_civisibility_unhandledPanic github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.unhandledPanic
 var __dd_civisibility_unhandledPanic func(any)
 
 const __dd_civisibility_fatalPrefix = "fatal error: "

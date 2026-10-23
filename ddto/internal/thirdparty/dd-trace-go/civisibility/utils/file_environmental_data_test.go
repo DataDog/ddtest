@@ -12,7 +12,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
 // --------------------- Tests for getEnvironmentalData -------------------------

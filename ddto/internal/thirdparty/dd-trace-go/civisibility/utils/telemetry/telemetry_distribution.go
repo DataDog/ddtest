@@ -5,7 +5,7 @@
 
 package telemetry
 
-import "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry"
+import "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry"
 
 // EndpointPayloadBytes records the size in bytes of the serialized payload by CI Visibility.
 func EndpointPayloadBytes(endpointType EndpointType, value float64) {

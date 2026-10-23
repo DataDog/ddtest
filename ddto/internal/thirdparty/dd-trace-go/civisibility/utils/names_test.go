@@ -10,13 +10,13 @@ import (
 	"strings"
 	"testing"
 
-	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
+	assert "github.com/DataDog/ddto/internal/testassert"
 )
 
 func TestGetModuleAndSuiteName(t *testing.T) {
 	pc, _, _, _ := runtime.Caller(0) // Get the program counter of this function
 	module, suite := GetModuleAndSuiteName(pc)
-	expectedModule := "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	expectedModule := "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 	expectedSuite := "names_test.go"
 
 	assert.True(t, strings.HasPrefix(module, expectedModule))

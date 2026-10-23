@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/bundle"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
+	"github.com/DataDog/ddto/internal/bundle"
+	"github.com/DataDog/ddto/internal/toolwrap"
+	"github.com/DataDog/ddto/internal/version"
 )
 
 // go runs ddto's -toolexec once per tool invocation of a build: hundreds of

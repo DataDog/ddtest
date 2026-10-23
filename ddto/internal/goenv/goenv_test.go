@@ -162,8 +162,8 @@ func TestRestoresBeforeEarlierDependencies(t *testing.T) {
 	for path, data := range map[string]string{
 		filepath.Join(dep, "go.mod"):  "module a.example/dep\ngo 1.21\n",
 		filepath.Join(dep, "dep.go"):  "package dep\nimport \"os\"\nvar Seen = os.Getenv(\"GOWORK\")\n",
-		filepath.Join(app, "go.mod"):  "module example.com/app\ngo 1.25.0\nrequire (\n a.example/dep v0.0.0\n github.com/tonyredondo/dd-ci-testing-poc v0.0.0\n)\nreplace a.example/dep => ../dep\nreplace github.com/tonyredondo/dd-ci-testing-poc => " + strconv.Quote(filepath.ToSlash(root)) + "\n",
-		filepath.Join(app, "main.go"): "package main\nimport (\n \"fmt\"\n \"a.example/dep\"\n _ \"github.com/tonyredondo/dd-ci-testing-poc/testopt\"\n)\nfunc main() { fmt.Printf(\"%q\", dep.Seen) }\n",
+		filepath.Join(app, "go.mod"):  "module example.com/app\ngo 1.25.0\nrequire (\n a.example/dep v0.0.0\n github.com/DataDog/ddto v0.0.0\n)\nreplace a.example/dep => ../dep\nreplace github.com/DataDog/ddto => " + strconv.Quote(filepath.ToSlash(root)) + "\n",
+		filepath.Join(app, "main.go"): "package main\nimport (\n \"fmt\"\n \"a.example/dep\"\n _ \"github.com/DataDog/ddto/testopt\"\n)\nfunc main() { fmt.Printf(\"%q\", dep.Seen) }\n",
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			t.Fatal(err)

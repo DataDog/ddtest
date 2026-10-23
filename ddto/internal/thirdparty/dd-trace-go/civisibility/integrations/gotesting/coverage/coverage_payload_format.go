@@ -7,7 +7,7 @@
 
 package coverage
 
-import "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
+import "github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
 
 type (
 	// ciTestCoveragePayloads represents a list of test code coverage payloads.

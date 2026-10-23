@@ -13,7 +13,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
 )
 
 // readProductVersionSysctl and runSWVers are replaced by tests.

@@ -16,7 +16,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
+	"github.com/DataDog/ddto/internal/minitracer"
 )
 
 // Capabilities and ITR correlation are inherited session attributes. SDK
@@ -517,7 +517,7 @@ func TestMiniCIConfigurationWireParity(t *testing.T) {
 	}{
 		{"explicit", []string{"DD_VERSION=app-1.2.3", "DD_TAGS=team:ci,custom:preserved"}, false},
 		{"automatic-command", nil, true},
-		{"automatic-job", []string{"GITHUB_ACTIONS=true", "GITHUB_JOB=unit-tests", "GITHUB_REPOSITORY=tonyredondo/dd-ci-testing-poc", "GITHUB_RUN_ID=123"}, true},
+		{"automatic-job", []string{"GITHUB_ACTIONS=true", "GITHUB_JOB=unit-tests", "GITHUB_REPOSITORY=DataDog/ddto", "GITHUB_RUN_ID=123"}, true},
 		{"explicit-empty", []string{"DD_TEST_SESSION_NAME="}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

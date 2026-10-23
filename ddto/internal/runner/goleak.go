@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/DataDog/ddto/internal/instrument"
 )
 
 // prepareGoleak returns a warning instead of an entry when the selected goleak

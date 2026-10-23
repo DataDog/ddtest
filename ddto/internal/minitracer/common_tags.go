@@ -4,7 +4,7 @@ import (
 	"maps"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
 )
 
 // CommonTags owns an immutable CI tag snapshot. Spans keep their own overrides;

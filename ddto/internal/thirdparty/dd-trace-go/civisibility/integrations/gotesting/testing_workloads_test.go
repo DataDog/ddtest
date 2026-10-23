@@ -11,8 +11,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddto/internal/testassert/require"
+	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
 func TestRestoreTestingMWorkloadsRestoresFuzzTargetsAndExamples(t *testing.T) {

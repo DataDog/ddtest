@@ -3,7 +3,7 @@
 package msgp_test
 
 import (
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
 )
 
 // DecodeMsg implements msgp.Decodable

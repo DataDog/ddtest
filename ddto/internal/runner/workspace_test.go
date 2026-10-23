@@ -80,7 +80,7 @@ func TestWorkspaceProvisionKeepsSelectedRuntime(t *testing.T) {
 			if replacement != "none" {
 				path, version = "example.com/mini-fork", "v0.2.0"
 			}
-			versionDir := filepath.Join(proxy, filepath.FromSlash(path), "@v")
+			versionDir := filepath.Join(proxy, filepath.FromSlash(escapeModuleCachePath(path)), "@v")
 			if err := os.MkdirAll(versionDir, 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +141,7 @@ func TestWorkspaceProvisionKeepsSelectedRuntime(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			selected := filepath.ToSlash(filepath.Join(cache, path+"@"+version))
+			selected := filepath.ToSlash(filepath.Join(cache, escapeModuleCachePath(path)+"@"+version))
 			if !strings.Contains(filepath.ToSlash(string(contents)), selected) {
 				t.Fatalf("did not retain selected module %s: %s", selected, contents)
 			}

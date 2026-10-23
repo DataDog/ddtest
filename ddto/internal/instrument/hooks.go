@@ -43,7 +43,7 @@ func init() { __dd_civisibility_instrumentTestingBuiltWithOrchestrion() }
 // tracking". Mini declares the same variable in every released version.
 const (
 	OrchestrionMarkCall = "func init() { __dd_civisibility_instrumentTestingBuiltWithOrchestrion() }\n"
-	MiniOrchestrionMark = `//go:linkname __dd_civisibility_testingBuiltWithOrchestrion github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.testingBuiltWithOrchestrion
+	MiniOrchestrionMark = `//go:linkname __dd_civisibility_testingBuiltWithOrchestrion github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.testingBuiltWithOrchestrion
 var __dd_civisibility_testingBuiltWithOrchestrion atomic.Bool
 func init() { __dd_civisibility_testingBuiltWithOrchestrion.Store(true) }
 `
@@ -55,7 +55,7 @@ func init() { __dd_civisibility_testingBuiltWithOrchestrion.Store(true) }
 // testing.AllocsPerRun panics in every later test of the binary. The linker
 // rejects any other access to the counter. Like MiniOrchestrionMark, it sets
 // Mini's variable instead of calling Mini while testing initializes.
-const ParallelStopHook = `//go:linkname __dd_civisibility_testingParallelStop github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.testingParallelStop
+const ParallelStopHook = `//go:linkname __dd_civisibility_testingParallelStop github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.testingParallelStop
 var __dd_civisibility_testingParallelStop func()
 func init() { __dd_civisibility_testingParallelStop = func() { parallelStop.Add(1) } }
 `
