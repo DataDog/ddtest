@@ -297,9 +297,9 @@
       "source": "internal/civisibility/integrations/gotesting/retry_attempt_runner_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_attempt_runner_test.go",
       "source_sha256": "494775aca647c6f9690947401b765b17491750e26309e15b09e452d17d1c7889",
-      "adapted_sha256": "b5ea7da5907d2abd884ce76721d5338378e21211ed3aedcf9ba2cc8a6987ffcc",
+      "adapted_sha256": "dfb4c8d3b403a3739a088bb8fe73f46d085ba0644252bf290956d8418028762d",
       "kind": "full",
-      "adaptation": "Internal import relocation only; standard-library assertion helpers; adds TestRetryAttemptPanicKeepsItsDuration"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers; adds TestRetryAttemptPanicKeepsItsDuration, measured on testing's clock"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/retry_attempt_test.go",

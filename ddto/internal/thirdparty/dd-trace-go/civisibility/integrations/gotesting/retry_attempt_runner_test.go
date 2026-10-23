@@ -1131,16 +1131,22 @@ func TestProcessRetryParityRaceBaselineReconciliationIsMonotonic(t *testing.T) {
 }
 
 // An attempt that panics reports the time that its body ran, which dynamic
-// automatic test retries read to choose a retry budget.
+// automatic test retries read to choose a retry budget. The body measures
+// itself on testing's clock: on Windows, testing's QueryPerformanceCounter can
+// count less than the 20 ms that the runtime's coarser clock slept.
 func TestRetryAttemptPanicKeepsItsDuration(t *testing.T) {
+	var bodyRan time.Duration
 	attempt, result, reason := runFreshRetryAttempt(t, func(*testing.T) {
+		elapsed := startNativeClock()
 		time.Sleep(20 * time.Millisecond)
+		bodyRan = elapsed()
 		panic("boom")
 	})
 	require.Empty(t, reason)
 	require.NotNil(t, attempt)
 	defer attempt.cancelContexts()
 	require.Equal(t, retryAttemptCompletionPanic, result.completionPhase)
-	require.GreaterOrEqual(t, result.duration, 20*time.Millisecond)
+	require.Positive(t, bodyRan)
+	require.GreaterOrEqual(t, result.duration, bodyRan)
 	require.False(t, t.Failed(), "attempt failure must not mutate the original test")
 }
