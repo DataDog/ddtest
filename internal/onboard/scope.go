@@ -15,6 +15,8 @@ import (
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
 	cucumberProbeCommand            string
+	cucumberProbeBefore             []LifecycleScript
+	cucumberProbeAfter              []LifecycleScript
 	CypressPackage                  string          `json:"cypress_package_directory,omitempty"`
 	Cypress                         *CypressCommand `json:"cypress,omitempty"`
 	Platform                        string          `json:"platform,omitempty"` // GOOS of the resolved hosted CI runner, when known.

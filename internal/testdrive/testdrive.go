@@ -923,7 +923,13 @@ func writeRunFindings(output io.Writer, findings intake.Facts, trafficRetained b
 	}
 	if findings.MissingCoverage && !coverageDeferred {
 		count++
-		_, _ = fmt.Fprintln(output, intake.MissingCoverageContext)
+		context := intake.MissingCoverageContext
+		for _, card := range cards {
+			if card.Kind == intake.MissingCoverageFinding {
+				context = card.Context
+			}
+		}
+		_, _ = fmt.Fprintln(output, context)
 		writeTroubleshooting(output, cards, intake.MissingCoverageFinding)
 	}
 	if findings.BrowserCoverageUnavailable {

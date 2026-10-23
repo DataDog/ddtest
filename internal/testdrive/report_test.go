@@ -69,7 +69,7 @@ func TestReportShowsCucumberCoverageTroubleshootingWithFinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Coverage not reported", "Cucumber needs nyc for coverage", "npm install --save-dev nyc"} {
+	for _, expected := range []string{"Coverage not reported", "Run the Cucumber command under nyc", "npm install --save-dev nyc"} {
 		if !strings.Contains(string(data), expected) {
 			t.Fatalf("report does not show %q", expected)
 		}
@@ -80,7 +80,7 @@ func TestReportShowsCucumberCoverageTroubleshootingWithFinding(t *testing.T) {
 		t.Fatal("missing finding card")
 	}
 	card, _, found = strings.Cut(card, "</article>")
-	if !found || !strings.Contains(card, `class="finding-advice"`) || !strings.Contains(card, "Cucumber needs nyc for coverage") {
+	if !found || !strings.Contains(card, `class="finding-advice"`) || !strings.Contains(card, "Run the Cucumber command under nyc") {
 		t.Fatal("troubleshooting must be visible inside the finding card")
 	}
 	if strings.Contains(card, `class="card-count"`) {

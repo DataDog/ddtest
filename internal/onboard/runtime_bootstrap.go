@@ -75,12 +75,13 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		}
 		return ""
 	}
-	if reason := checkJestBootstrap(workflow, job, step, row, frameworks...); reason != "" {
+	esm := len(frameworks) > 0 && (frameworks[0] == "vitest" || frameworks[0] == "cucumber")
+	if reason := checkJestBootstrap(workflow, job, step, row, esm); reason != "" {
 		return reason
 	}
 	if len(frameworks) > 0 && frameworks[0] == "mocha" {
 		for _, command := range commands {
-			if command.mochaESM && checkJestBootstrap(workflow, job, step, row, "vitest") != "" {
+			if command.mochaESM && checkJestBootstrap(workflow, job, step, row, true) != "" {
 				return "Mocha ESM inputs require the action's --import ${{ env.DD_TRACE_ESM_IMPORT }} alongside its require preload"
 			}
 			if !command.usesNYC && !command.mochaIstanbul {
@@ -95,7 +96,9 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	return ""
 }
 
-func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {
+// checkJestBootstrap verifies the action's require preload in the step's
+// effective NODE_OPTIONS; requireImport also requires its ESM --import.
+func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, requireImport bool) string {
 	options, err := effectiveBootstrapOptions(workflow, job, step, row, true)
 	if err == nil && !strings.ContainsAny(options, "$`'") {
 		words, err := shellquote.Split(options)
@@ -109,7 +112,7 @@ func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 					requireFound = true
 				}
 			}
-			if requireFound && (len(frameworks) == 0 || (frameworks[0] != "vitest" && frameworks[0] != "cucumber") || importFound) {
+			if requireFound && (!requireImport || importFound) {
 				return ""
 			}
 		}

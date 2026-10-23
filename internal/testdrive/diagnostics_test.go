@@ -164,7 +164,7 @@ func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T)
 				if tc.nycInstalled && (advice.Title != "Check NYC coverage configuration" || !strings.Contains(advice.Text, "include/exclude") || strings.Contains(advice.Text, "./node_modules/.bin/nyc ddtest")) {
 					t.Fatalf("installed NYC still needs actionable coverage guidance: %+v", advice)
 				}
-				if tc.nycDeclared && advice.Title != "Install the declared nyc dependency" {
+				if tc.nycDeclared && (advice.Title != "Run the Cucumber command under nyc" || !strings.Contains(advice.Text, "Install the project's dependencies")) {
 					t.Fatalf("declared NYC executable is missing: %+v", advice)
 				}
 				for _, text := range []string{advice.Title, advice.Text, advice.URL} {

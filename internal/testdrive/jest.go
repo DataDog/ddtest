@@ -302,7 +302,21 @@ func outcomeKeys(run validationRun) []string {
 	return keys
 }
 
+// pairTimeout explains a paired comparison that testdrive's --timeout cut short.
+func pairTimeout(baseline, instrumented validationRun) string {
+	if baseline.Timeout != "" {
+		return baseline.Timeout + "."
+	}
+	if instrumented.Timeout != "" {
+		return instrumented.Timeout + ", while the uninstrumented run finished."
+	}
+	return ""
+}
+
 func compareJest(baseline, instrumented validationRun) verdict {
+	if reason := pairTimeout(baseline, instrumented); reason != "" {
+		return verdict{Status: "inconclusive", Code: "command_timeout", Reason: reason}
+	}
 	if baseline.ResultError != "" {
 		return verdict{Status: "inconclusive", Reason: "The uninstrumented run did not produce usable results: " + reportText(baseline.ResultError) + "."}
 	}
@@ -439,6 +453,11 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	if t.framework.Name() == "vitest" {
 		run = t.runVitest
 	}
+	runFramework := run
+	run = func(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (validationRun, error) {
+		value, err := runFramework(ctx, output, session, preload, spec)
+		return markTimeout(value), err
+	}
 	baseline, err := run(ctx, output, session, preload, runSpec{Name: "baseline", Role: roleBaseline, Instrumented: false})
 	result.Runs = append(result.Runs, baseline.summary())
 	if err != nil {
@@ -468,6 +487,11 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 			return err
 		}
 		result.Compatibility = compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrumentedAgain)
+	}
+	// Probes would only repeat the hang; name the timeout once instead.
+	if reason := pairTimeout(baseline, instrumented); reason != "" {
+		unavailableFeatures(result, reason)
+		return nil
 	}
 	if t.framework.Name() == "cucumber" {
 		return t.runCucumberFeatures(ctx, output, session, preload, baseline, result)

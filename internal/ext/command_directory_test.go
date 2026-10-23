@@ -66,6 +66,10 @@ func TestCombinedOutputInDirectoryAndConfiguredTimeout(t *testing.T) {
 		if !strings.Contains(err.Error(), "exceeded the 200ms per-command limit; raise --timeout") {
 			t.Fatalf("timeout must name the limit and the flag: %v", err)
 		}
+		var timeout *CommandTimeoutError
+		if !errors.As(err, &timeout) || timeout.Timeout != 200*time.Millisecond {
+			t.Fatalf("timeout must be a CommandTimeoutError with its limit: %v", err)
+		}
 		if time.Since(started) > 2*time.Second {
 			t.Fatal("deadline did not bound command")
 		}

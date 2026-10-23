@@ -12,6 +12,9 @@ import (
 // repeats. Two pairs cannot rule out coincidental flakiness or establish a cause.
 func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrumentedAgain validationRun) verdict {
 	result := compareJest(baseline, instrumented)
+	if reason := pairTimeout(baselineAgain, instrumentedAgain); reason != "" {
+		return verdict{Status: "inconclusive", Code: "command_timeout", Reason: reason}
+	}
 	if slices.Equal(outcomeKeys(baseline), outcomeKeys(baselineAgain)) && slices.Equal(outcomeKeys(instrumented), outcomeKeys(instrumentedAgain)) {
 		result.Reason += " Only two pairs were observed; repeatable flakiness can still produce this observation."
 		return result

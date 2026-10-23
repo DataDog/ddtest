@@ -30,6 +30,12 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 	if run.commandError != nil {
 		runtime.Error = run.commandError.Error()
 	}
+	if run.Coverage != nil && run.Coverage.Status != "observed" {
+		runtime.CoverageReason = run.Coverage.Reason
+	}
+	if t.framework.Name() == "cucumber" {
+		runtime.CoverageSetup = t.cucumberCoverageSetup(run)
+	}
 	model := buildReport(t.checkoutRoot(), run.Facts, run.ExitCode != 0, runtime)
 	model.ExecutionCounts = nativeExecutionCounts(run)
 	model.EvidenceRole, model.EvidenceName = run.Role, run.Name

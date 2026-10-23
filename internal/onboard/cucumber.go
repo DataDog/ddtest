@@ -8,11 +8,15 @@ package onboard
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/kballard/go-shellquote"
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/kballard/go-shellquote"
 )
 
 // Recognize only the documented scoped preload during discovery. Execution
@@ -32,7 +36,8 @@ func CucumberValidationCommand(root, command string) (string, error) {
 		if len(scope.Commands) == 0 {
 			return "", nil
 		}
-		if len(scope.Commands) != 1 || filepath.Clean(scope.Commands[0].Directory) != "." || len(scope.Commands[0].Prerequisites) > 0 || len(scope.Commands[0].Environment) > 0 {
+		// A CI environment alone is applied to the run, as for Jest and Playwright.
+		if len(scope.Commands) != 1 || filepath.Clean(scope.Commands[0].Directory) != "." || len(scope.Commands[0].Prerequisites) > 0 {
 			return "", fmt.Errorf("cucumber CI commands or build prerequisites require --all")
 		}
 		command = scope.Commands[0].Command
@@ -48,8 +53,9 @@ func CucumberValidationCommand(root, command string) (string, error) {
 	return command, nil
 }
 
-// CucumberProbeCommand preserves the selected leaf's CLI configuration and
-// support imports while avoiding unrelated npm test consumers.
+// CucumberProbeCommand returns the selected Cucumber leaf, resolved through
+// its npm aliases. Probes use it only to locate the coverage wrapper, the
+// runner and --parallel; an owned config replaces its other Cucumber options.
 func CucumberProbeCommand(root, command string) (string, error) {
 	remaining := 256
 	result := resolveJestSequence(root, root, command, nil, &remaining, "cucumber")
@@ -59,9 +65,34 @@ func CucumberProbeCommand(root, command string) (string, error) {
 	return result.Tests[0].cucumberProbeCommand, nil
 }
 
+// LifecycleScript is a package lifecycle hook that npm runs around an alias.
+type LifecycleScript struct{ Directory, Name string }
+
+// CucumberProbeLifecycle returns the npm pre and post scripts that run before
+// and after the selected Cucumber leaf, in npm's order. The scripts holding
+// the leaf itself, and the aliases' main scripts, are not included.
+func CucumberProbeLifecycle(root, command string) (before, after []LifecycleScript, err error) {
+	remaining := 256
+	result := resolveJestSequence(root, root, command, nil, &remaining, "cucumber")
+	if result.Reason != "" || len(result.Tests) != 1 {
+		return nil, nil, fmt.Errorf("cucumber probe lifecycle could not be resolved: %s", result.Reason)
+	}
+	return result.Tests[0].cucumberProbeBefore, result.Tests[0].cucumberProbeAfter, nil
+}
+
 func CucumberUsesNYC(root, command string) bool {
 	commands := ValidationCommands(root, command, "cucumber")
 	return len(commands) == 1 && commands[0].usesNYC
+}
+
+// CucumberCoverageWrapper names the coverage tool wrapping the resolved
+// Cucumber leaf, such as nyc or c8, or returns "" when there is none.
+func CucumberCoverageWrapper(root, command string) string {
+	commands := ValidationCommands(root, command, "cucumber")
+	if len(commands) != 1 {
+		return ""
+	}
+	return commands[0].cucumberCoverageWrapper
 }
 
 func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, commands []TestCommand) string {
@@ -75,7 +106,7 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 			scoped = value
 		}
 	}
-	if resolution.OtherFramework && (scoped == "" || checkJestBootstrap(workflow, job, step, row) == "") {
+	if resolution.OtherFramework && (scoped == "" || checkJestBootstrap(workflow, job, step, row, false) == "") {
 		return "Cucumber-only scope is not preserved: this command also runs another framework. Keep the original command and pass DD_CUCUMBER_NODE_OPTIONS only to the Cucumber leaf."
 	}
 	directory := filepath.Join(root, stepDirectory(workflow, job, step))
@@ -104,10 +135,10 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 			configured.Env = map[string]string{}
 		}
 		configured.Env["NODE_OPTIONS"] = scoped
-		if reason := checkJestBootstrap(workflow, job, configured, row, "cucumber"); reason != "" {
+		if reason := checkJestBootstrap(workflow, job, configured, row, true); reason != "" {
 			return reason
 		}
-	} else if reason := checkJestBootstrap(workflow, job, step, row, "cucumber"); reason != "" {
+	} else if reason := checkJestBootstrap(workflow, job, step, row, true); reason != "" {
 		return reason
 	}
 	if pkg.Type == "module" || CucumberESMInputs(root, commands) {
@@ -117,7 +148,7 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 				options = scoped + " " + value
 			}
 		}
-		if !strings.Contains(options, "--experimental-loader @istanbuljs/esm-loader-hook") && !strings.Contains(options, "--loader @istanbuljs/esm-loader-hook") {
+		if !nodeOptionsLoad(options, "@istanbuljs/esm-loader-hook") {
 			return "Cannot verify Istanbul instrumentation for native ESM Cucumber CI code. Include --experimental-loader @istanbuljs/esm-loader-hook in the scoped Cucumber Node options, or review custom/pre-instrumented source coverage separately."
 		}
 	}
@@ -132,16 +163,54 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 	return ""
 }
 
+// nodeOptionsLoad reports whether NODE_OPTIONS registers module as a loader,
+// in either the "--loader module" or the "--loader=module" form.
+func nodeOptionsLoad(options, module string) bool {
+	words, err := environment.SplitNodeOptions(options)
+	if err != nil {
+		return false
+	}
+	for i, word := range words {
+		key, value, equals := strings.Cut(word, "=")
+		if key != "--loader" && key != "--experimental-loader" {
+			continue
+		}
+		if !equals && i+1 < len(words) {
+			value = words[i+1]
+		}
+		if value == module {
+			return true
+		}
+	}
+	return false
+}
+
+// Native ESM sources, also inside a config's quoted path or glob lists.
+var cucumberESMPath = regexp.MustCompile(`\.m[jt]s(?:$|["'\s,\])}])`)
+
+// cucumberESMPathArgument reports whether a command word, or the value of a
+// --option=value word, names an .mjs or .mts path.
+func cucumberESMPathArgument(word string) bool {
+	if strings.HasPrefix(word, "-") {
+		_, value, ok := strings.Cut(word, "=")
+		if !ok {
+			return false
+		}
+		word = value
+	}
+	return slices.Contains([]string{".mjs", ".mts"}, filepath.Ext(word))
+}
+
 // Conservative input inspection only: executing arbitrary configuration here
 // would be an onboarding side effect. Dynamic config remains subject to execution.
 func CucumberESMInputs(root string, commands []TestCommand) bool {
 	for _, command := range commands {
 		directory := filepath.Join(root, command.Directory)
-		if strings.Contains(command.cucumberProbeCommand, ".mjs") || strings.Contains(command.cucumberProbeCommand, ".mts") {
-			return true
-		}
 		configs := []string{"cucumber.js", "cucumber.cjs", "cucumber.mjs", "cucumber.json", "cucumber.yaml", "cucumber.yml"}
 		words, _ := shellquote.Split(command.cucumberProbeCommand)
+		if slices.ContainsFunc(words, cucumberESMPathArgument) {
+			return true
+		}
 		for i, word := range words {
 			if word == "--config" || word == "-c" {
 				if i+1 < len(words) {
@@ -161,7 +230,7 @@ func CucumberESMInputs(root string, commands []TestCommand) bool {
 			}
 			data, err := os.ReadFile(file)
 			if err == nil {
-				if strings.Contains(string(data), ".mjs") || strings.Contains(string(data), ".mts") {
+				if cucumberESMPathArgument(file) || cucumberESMPath.Match(data) {
 					return true
 				}
 				break

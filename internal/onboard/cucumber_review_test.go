@@ -38,3 +38,15 @@ func TestCucumberESMDetectionReadsTheSelectedConfigOnly(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "cucumber.cjs"), []byte(`module.exports={default:{import:['unused.mjs']}}`), 0600))
 	require.False(t, CucumberESMInputs(root, ValidationCommands(root, "npm test", "cucumber")))
 }
+
+func TestCucumberESMDetectionMatchesPathExtensions(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"test": "nyc cucumber-js --import=features/steps.mjs"})
+	require.True(t, CucumberESMInputs(root, ValidationCommands(root, "npm test", "cucumber")))
+	writeScripts(t, root, map[string]string{"test": "nyc cucumber-js --name 'loads build.mjs.map'"})
+	require.False(t, CucumberESMInputs(root, ValidationCommands(root, "npm test", "cucumber")))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "cucumber.cjs"), []byte(`// docs at example.mjsx\nmodule.exports={default:{require:['steps.cjs']}}`), 0600))
+	require.False(t, CucumberESMInputs(root, ValidationCommands(root, "npm test", "cucumber")))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "cucumber.cjs"), []byte(`module.exports={default:{import:["features/**/*.mjs"]}}`), 0600))
+	require.True(t, CucumberESMInputs(root, ValidationCommands(root, "npm test", "cucumber")))
+}

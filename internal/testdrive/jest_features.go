@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -275,14 +276,20 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 	// Verify the probe in the actual project configuration before claiming anything
 	// about feature behavior. Never fall back to a clean, unrelated Jest config.
 	passControl, err := run("probe-pass-control", intake.Scenario{}, "pass")
+	passControl = markTimeout(passControl)
 	result.Runs = append(result.Runs, passControl.summary())
 	if err != nil {
 		return err
 	}
 	failControl, err := run("probe-fail-control", intake.Scenario{}, "fail")
+	failControl = markTimeout(failControl)
 	result.Runs = append(result.Runs, failControl.summary())
 	if err != nil {
 		return err
+	}
+	if reason := cmp.Or(passControl.Timeout, failControl.Timeout); reason != "" {
+		unavailableFeatures(result, reason+".")
+		return nil
 	}
 	if !validProbeControl(passControl, "passed") || !validProbeControl(failControl, "failed") {
 		unavailableFeatures(result, "The temporary probe did not produce its expected passing and failing control results under this framework configuration. "+probeControlDiagnostic(passControl, failControl))
@@ -308,6 +315,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 		}
 		scenario := intake.Scenario{Feature: feature, Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile}
 		value, err := run(feature, scenario, mode)
+		value = markTimeout(value)
 		result.Runs = append(result.Runs, value.summary())
 		if err != nil {
 			return err
@@ -338,6 +346,10 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	if feature == "skipping" && identity.SourceFile == "" {
 		result.Status = "inconclusive"
 		result.Reason = "The control did not report test.source.file; a repository-relative file is required to request suite skipping."
+		return result
+	}
+	if run.Timeout != "" {
+		result.Status, result.Reason = "inconclusive", run.Timeout+"."
 		return result
 	}
 	if run.ResultError != "" || len(run.SuiteErrors) > 0 || len(run.Facts.ConfigurationErrors) > 0 {

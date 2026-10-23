@@ -49,7 +49,7 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "lifecycle", "nested alias", "existing failure", "no application coverage", "package directory", "custom support coverage", "feature application", "thresholds", "native retries", "profile retries", "CLI selectors", "profile selectors", "catch-all", "parallel", "outlines", "pending", "pending non-strict", "undefined", "undefined non-strict", "ambiguous", "ESM", "CJS ESM import", "scoped options", "c8", "timeout", "recovery"} {
+	for _, mode := range []string{"passing", "lifecycle", "nested alias", "existing failure", "no application coverage", "package directory", "custom support coverage", "support library", "support helper", "feature application", "thresholds", "native retries", "profile retries", "CLI selectors", "profile selectors", "catch-all", "parallel", "outlines", "pending", "pending non-strict", "undefined", "undefined non-strict", "ambiguous", "ESM", "CJS ESM import", "scoped options", "c8", "timeout", "recovery", "child process", "profile run options", "CLI run options", "probe lifecycle"} {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -79,6 +79,15 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 			if mode == "custom support coverage" {
 				appWrite("support/steps.js", `const {Given}=require('@cucumber/cucumber');Given('addition works',()=>require('node:assert').equal(1+1,2));`)
 			}
+			if mode == "support library" {
+				// The default support glob loads features/**/*.js, this library included.
+				appWrite("features/support/lib/app.js", "module.exports=(a,b)=>a+b")
+				appWrite("features/step_definitions/one.js", `const {Given}=require('@cucumber/cucumber');Given('addition works',()=>require('node:assert').equal(require('../support/lib/app.js')(1,1),2));`)
+			}
+			if mode == "support helper" {
+				appWrite("support/steps.cjs", `const {Given}=require('@cucumber/cucumber');Given('addition works',()=>require('./assertions.cjs')());`)
+				appWrite("support/assertions.cjs", "module.exports=()=>require('node:assert').equal(1+1,2)")
+			}
 			if mode == "feature application" {
 				appWrite("src/features/payments/service.cjs", "module.exports=(a,b)=>a+b")
 				appWrite("features/step_definitions/one.js", `const {Given}=require('@cucumber/cucumber');Given('addition works',()=>require('node:assert').equal(require('../../src/features/payments/service.cjs')(1,1),2));`)
@@ -88,6 +97,9 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 			script := "nyc -- cucumber-js"
 			if mode == "custom support coverage" {
 				script += " --require support/steps.js"
+			}
+			if mode == "support helper" {
+				script += " --require support/steps.cjs"
 			}
 			switch mode {
 			case "recovery":
@@ -121,9 +133,6 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				appWrite("support/steps.cjs", `const {Given,Before,setWorldConstructor}=require('@cucumber/cucumber');setWorldConstructor(class{constructor(){this.value=42}});Before(function(){if(this.value!==42)throw Error('World lost');this.hook=true;require('node:fs').appendFileSync(process.env.DDTEST_CUCUMBER_HOOK_FILE,'hook\n')});Given(/^(.*)$/,function(text){if(!this.hook)throw Error('hook lost');require('../src/add.cjs')(1,1)})`)
 			case "parallel":
 				script += " --parallel 2"
-			case "feature source":
-				appWrite("src/features/add.cjs", "module.exports=(a,b)=>a+b")
-				appWrite("features/step_definitions/one.js", `const {Given}=require('@cucumber/cucumber');Given('addition works',()=>require('node:assert').equal(require('../../src/features/add.cjs')(1,1),2))`)
 			case "outlines":
 				appWrite("features/one.feature", "Feature: Arithmetic\n Scenario Outline: Add\n  Given addition works\n Examples:\n  | input |\n  | 1 |\n  | 2 |\n")
 			case "pending", "pending non-strict", "undefined", "undefined non-strict", "ambiguous":
@@ -140,6 +149,23 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 					extra = `Given('special status',()=>{});Given(/^special status$/,()=>{});`
 				}
 				appWrite("features/step_definitions/one.js", `const {Given}=require('@cucumber/cucumber');Given('addition works',()=>require('../../src/add.cjs')(1,1));`+extra)
+			case "child process":
+				// A hook's helper process in another folder cannot resolve Cucumber.
+				appWrite("features/support/child.js", `const {BeforeAll}=require('@cucumber/cucumber');BeforeAll(()=>{require('node:child_process').execFileSync(process.execPath,['-e','process.exit(0)'],{cwd:require('node:os').tmpdir()})})`)
+			case "profile run options", "CLI run options":
+				// Without forceExit the interval keeps Cucumber alive; the World
+				// requires its parameter. Probes need both, like the suite.
+				baseURL := map[string]string{"profile run options": "http://profile.test", "CLI run options": "http://cli.test"}[mode]
+				appWrite("features/support/hooks.js", `const {Before,BeforeAll,setWorldConstructor}=require('@cucumber/cucumber');class World{constructor({parameters}){if(parameters.baseUrl!==`+strconv.Quote(baseURL)+`)throw new Error('baseUrl world parameter missing')}};setWorldConstructor(World);BeforeAll(()=>{setInterval(()=>{},1000)});Before(function(){if(!(this instanceof World))throw new Error('World missing');require('node:fs').appendFileSync(process.env.DDTEST_CUCUMBER_HOOK_FILE,'hook\n');});`)
+				if mode == "profile run options" {
+					appWrite("cucumber.cjs", `module.exports={default:{forceExit:true,worldParameters:{baseUrl:'http://profile.test'}}}`)
+				} else {
+					script += ` --world-parameters '{"baseUrl":"http://cli.test"}' --exit`
+				}
+			case "probe lifecycle":
+				// The suite's own posttest removes it; keep it out of coverage.
+				appWrite(".nycrc", `{"exclude":["features/support/generated.js","fixtures/**"]}`)
+				appWrite("fixtures/generated.js", `const {Before}=require('@cucumber/cucumber');Before(function(){require('node:fs').appendFileSync(process.env.DDTEST_CUCUMBER_HOOK_FILE,'generated\n')})`)
 			case "ESM", "CJS ESM import":
 				script += " --import features/steps.mjs --import features/support/hooks.mjs"
 				appWrite("features/support/hooks.mjs", `import {Before,setWorldConstructor} from "@cucumber/cucumber";class World{};setWorldConstructor(World);Before(function(){if(!(this instanceof World))throw Error("World lost");process.getBuiltinModule('fs').appendFileSync(process.env.DDTEST_CUCUMBER_HOOK_FILE,'hook\n')})`)
@@ -149,6 +175,10 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 			pkg := map[string]any{"scripts": map[string]string{"test": script}, "devDependencies": map[string]string{"@cucumber/cucumber": installed.Version, "nyc": "17.1.0", "dd-trace": "6.20.1"}}
 			if mode == "lifecycle" {
 				pkg["scripts"] = map[string]string{"pretest": script, "test": "echo done"}
+			}
+			if mode == "probe lifecycle" {
+				// npm creates support code before the runner and removes it after.
+				pkg["scripts"] = map[string]string{"pretest": "cp fixtures/generated.js features/support/generated.js", "test": script, "posttest": "rm features/support/generated.js"}
 			}
 			if mode == "nested alias" {
 				pkg["scripts"] = map[string]string{"test": "npm run scenarios", "scenarios": script}
@@ -213,6 +243,9 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 			if mode == "timeout" {
 				args = append(args, "--timeout", "2s")
 			}
+			if mode == "profile run options" || mode == "CLI run options" {
+				args = append(args, "--timeout", "3m")
+			}
 			if mode == "recovery" {
 				logPath := filepath.Join(t.TempDir(), "killed.log")
 				log, err := os.Create(logPath)
@@ -271,7 +304,7 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				require.NotNil(t, report.Preflight)
 				require.Equal(t, installed.Version, report.Preflight.Version)
 			}
-			if !report.Success && mode != "timeout" && mode != "no application coverage" && mode != "custom support coverage" && mode != "parallel" && mode != "c8" {
+			if !report.Success && mode != "timeout" && mode != "no application coverage" && mode != "custom support coverage" && mode != "support library" && mode != "support helper" && mode != "parallel" && mode != "c8" && mode != "probe lifecycle" {
 				details, _ := json.MarshalIndent(report, "", "  ")
 				t.Logf("Report: %s", details)
 				html, _ := os.ReadFile(htmlReportPath(root))
@@ -285,6 +318,13 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				require.NotEmpty(t, report.Runs)
 				require.NotZero(t, *report.Runs[0].ExitCode)
 				require.Equal(t, "inconclusive", report.Compatibility.Status)
+				require.Len(t, report.Configurations, 1)
+				require.Equal(t, "baseline exceeded --timeout 2s; raise --timeout or fix the hanging step.", report.Configurations[0].Compatibility.Reason)
+				require.Equal(t, "baseline exceeded --timeout 2s; raise --timeout or fix the hanging step", report.Runs[0].Timeout)
+				blockers := strings.Join(summarizeValidation(report).BlockingChecks, "\n")
+				require.Contains(t, blockers, "baseline exceeded --timeout 2s")
+				require.NotContains(t, blockers, "real-suite coverage was not observed")
+				require.NotContains(t, blockers, "/quarantine")
 				require.NotNil(t, report.Cleanup)
 				require.Equal(t, "passed", report.Cleanup.Status)
 				require.NoDirExists(t, filepath.Join(root, ".nyc_output"))
@@ -296,7 +336,7 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				require.Error(t, err, string(output))
 				require.False(t, report.Success)
 				require.True(t, missingRealCoverage(report))
-				require.Contains(t, report.Runs[1].Coverage.Reason, "parallel")
+				require.Contains(t, report.Runs[1].Coverage.Reason, "the selected dd-trace sends no suite coverage from parallel workers")
 			case "c8":
 				require.Error(t, err, string(output))
 				require.False(t, report.Success)
@@ -304,20 +344,45 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				for _, run := range report.Runs {
 					require.NotContains(t, run.Command, "nyc/bin/")
 				}
-			case "no application coverage", "custom support coverage":
+			case "probe lifecycle":
+				// Discovery leaves file-changing hooks for review; probes still run.
+				require.Error(t, err, string(output))
+				require.False(t, report.Success)
+				for _, check := range report.Summary.BlockingChecks {
+					require.Contains(t, check, "CI file or dependency changes require separate validation")
+				}
+			case "no application coverage", "custom support coverage", "support library", "support helper":
 				require.Error(t, err, string(output))
 				require.False(t, report.Success)
 				require.True(t, missingRealCoverage(report))
+				if file := map[string]string{"support library": "features/support/lib/app.js", "support helper": "support/assertions.cjs"}[mode]; file != "" {
+					reason := missingRealCoverageReason(report)
+					require.Contains(t, reason, "Coverage was observed only in Cucumber support code", string(output))
+					require.Contains(t, reason, file)
+				}
 			default:
 				require.NoError(t, err, string(output))
 				require.True(t, report.Success, string(output))
 			}
 			require.Equal(t, "compatible", report.Compatibility.Status, string(output))
 			require.Len(t, report.Features, 6)
+			// Parallel outcomes depend on the worker transport of each Cucumber
+			// major; ones that could not be checked are inconclusive, not failed.
+			parallelOutcomes := map[string]map[string]string{
+				"10": {"auto-retries": "passed", "early-flake-detection": "inconclusive", "skipping": "passed", "quarantine": "inconclusive", "disabled": "inconclusive", "attempt-to-fix": "inconclusive"},
+				"13": {"auto-retries": "passed", "early-flake-detection": "passed", "skipping": "passed", "quarantine": "passed", "disabled": "passed", "attempt-to-fix": "passed"},
+			}[strings.Split(installed.Version, ".")[0]]
 			for _, feature := range report.Features {
-				if mode == "parallel" && feature.Status != "passed" {
+				switch {
+				case mode == "parallel" && parallelOutcomes != nil:
+					require.Equal(t, parallelOutcomes[feature.Name], feature.Status, feature)
+					if feature.Status != "passed" {
+						require.Contains(t, feature.Reason, "parallel mode")
+					}
+				case mode == "parallel" && feature.Status != "passed":
+					require.Equal(t, "inconclusive", feature.Status, feature)
 					require.Contains(t, feature.Reason, "parallel mode")
-				} else {
+				default:
 					require.Equal(t, "passed", feature.Status, feature)
 				}
 			}
@@ -342,7 +407,13 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				require.NotContains(t, entry.Name(), ".steps.cjs")
 				require.NotContains(t, entry.Name(), ".config.cjs")
 			}
-			if mode != "custom support coverage" {
+			if mode == "probe lifecycle" {
+				require.NoFileExists(t, filepath.Join(appDirectory, "features/support/generated.js"), "posttest runs after the probes")
+				hooks, err := os.ReadFile(hookFile)
+				require.NoError(t, err)
+				require.Greater(t, strings.Count(string(hooks), "generated\n"), 2, "feature controls must load support code that pretest creates")
+			}
+			if mode != "custom support coverage" && mode != "support helper" {
 				hooks, err := os.ReadFile(hookFile)
 				require.NoError(t, err)
 				require.Greater(t, strings.Count(string(hooks), "hook\n"), 2, "feature controls must load the same default hooks as the paired suite")

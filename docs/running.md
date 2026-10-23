@@ -799,12 +799,24 @@ dynamic variables, orchestration globs and alias-specific working-directory or
 environment changes remain unvalidated with an explanation.
 
 Feature probes and their step definitions use the same recoverable ownership
-records as other adapters. Only the JSON/HTML report pair remains in the customer
-repository. Local checks do not exercise customer CI or Datadog processing.
+records as other adapters. On macOS and Linux, every Node process of a run,
+including NYC and `cucumber-js`, uses the same process supervisor as Playwright and Cypress, so
+owned processes stop when validation ends or when ddtest itself is killed. The
+next run recovers any leftover session, configuration copy and ownership
+storage. Only the JSON/HTML report pair remains in the customer repository.
+Local checks do not exercise customer CI or Datadog processing.
+
+A run that exceeds `--timeout` is reported as `<run> exceeded --timeout <limit>;
+raise --timeout or fix the hanging step`, in that run's `timeout`, the
+compatibility reason and the blocking checks, for every framework. The missing
+results, coverage and feature probes it caused are not reported again.
 
 Cucumber probes use an owned empty config, dropping customer tags/name/profile/paths
 while retaining resolved support imports, World and unconditional hooks. Their step
 definition is isolated from customer catch-all definitions; tagged hooks remain
 checked by the actual suite. Original parallel commands stay parallel: missing
 worker coverage/control telemetry remains explicitly unvalidated rather than
-being hidden by a serial rerun.
+being hidden by a serial rerun. The selected dd-trace sends no suite coverage
+from Cucumber parallel workers, so the report says so and does not advise adding
+NYC. When coverage is missing, the advice follows the command's own setup: NYC
+already on the command, c8, or no coverage tool.

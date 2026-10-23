@@ -87,7 +87,7 @@ func TestBootstrapExpressionsAndScope(t *testing.T) {
 	} {
 		t.Run(tc.options, func(t *testing.T) {
 			step := runtimeStep{Env: map[string]string{"NODE_OPTIONS": tc.options}}
-			reason := checkJestBootstrap(ciWorkflow{}, runtimeJob{}, step, map[string]any{"node": 22, "spoof": actionPreload})
+			reason := checkJestBootstrap(ciWorkflow{}, runtimeJob{}, step, map[string]any{"node": 22, "spoof": actionPreload}, false)
 			require.Equal(t, tc.valid, reason == "", reason)
 		})
 	}
@@ -103,7 +103,7 @@ func TestBootstrapExpressionsAndScope(t *testing.T) {
 		default:
 			step.Env["DD_TRACE_PACKAGE"] = "custom.js"
 		}
-		require.NotEmpty(t, checkJestBootstrap(workflow, job, step, map[string]any{"node": 22}), scope)
+		require.NotEmpty(t, checkJestBootstrap(workflow, job, step, map[string]any{"node": 22}, false), scope)
 	}
 }
 

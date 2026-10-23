@@ -65,6 +65,9 @@ func conditionEnvironment(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 
 var workflowExpression = regexp.MustCompile(`\$\{\{.*?\}\}`)
 
+// A shell parameter reference such as $FEATURES or ${FEATURES}.
+var shellVariable = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
+
 // Without an explicit shell, GitHub runs Windows steps with PowerShell. Only a
 // statically known Windows label changes the default; Bash is used elsewhere.
 func runnerDefaultShell(job runtimeJob, row map[string]any) string {

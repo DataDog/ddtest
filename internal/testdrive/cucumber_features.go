@@ -8,9 +8,11 @@ package testdrive
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -74,7 +76,11 @@ func (t *Testdrive) runCucumberFeatures(ctx context.Context, output io.Writer, s
 	defer func() { runErr = errors.Join(runErr, removeProbe(t.checkoutRoot(), probe)) }()
 	steps := probe + ".steps.cjs"
 	config := probe + ".config.cjs"
-	if err := createOwnedProbe(t.checkoutRoot(), config, []byte("module.exports={default:{}};\n")); err != nil {
+	body, err := cucumberProbeConfig(baseline.cucumberSupport)
+	if err != nil {
+		return err
+	}
+	if err := createOwnedProbe(t.checkoutRoot(), config, body); err != nil {
 		return err
 	}
 	defer func() { runErr = errors.Join(runErr, removeProbe(t.checkoutRoot(), config)) }()
@@ -92,6 +98,18 @@ func (t *Testdrive) runCucumberFeatures(ctx context.Context, output io.Writer, s
 			return nil
 		}
 	}
+	if support := baseline.cucumberSupport; support != nil && support.RunOptionsError != "" {
+		_, _ = fmt.Fprintf(output, "Cucumber profile options for feature probes could not be read: %s\n", reportText(support.RunOptionsError))
+	}
+	before, after, err := onboard.CucumberProbeLifecycle(t.repositoryRoot, shellquote.Join(append([]string{t.command}, t.args...)...))
+	if err == nil && len(before)+len(after) > 0 {
+		finish, err := t.startCucumberProbeLifecycle(ctx, output, session, before)
+		if err != nil {
+			unavailableFeatures(result, err.Error())
+			return nil
+		}
+		defer func() { runErr = errors.Join(runErr, finish(after)) }()
+	}
 	err = runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
 		role := roleProbeFeature
 		if scenario.Feature == "" {
@@ -102,11 +120,73 @@ func (t *Testdrive) runCucumberFeatures(ctx context.Context, output io.Writer, s
 	if baseline.cucumberParallel {
 		for i, feature := range result.Features {
 			if feature.Status != "passed" {
+				// The worker transport, not the feature, is what could not be checked.
+				if feature.Status == "failed" {
+					result.Features[i].Status = "inconclusive"
+				}
 				result.Features[i].Reason = "Cucumber parallel mode could not validate " + feature.Name + " with the selected tracer's worker control transport. " + feature.Reason
 			}
 		}
 	}
 	return err
+}
+
+// The owned probe configuration drops the customer's selection and retries
+// but keeps the profile options that World and hooks need to start and exit.
+func cucumberProbeConfig(support *cucumberSupport) ([]byte, error) {
+	options := map[string]any{}
+	if support != nil {
+		for _, key := range []string{"forceExit", "worldParameters"} {
+			if value, ok := support.RunOptions[key]; ok {
+				options[key] = value
+			}
+		}
+	}
+	data, err := json.Marshal(options)
+	if err != nil {
+		return nil, err
+	}
+	return []byte("module.exports={default:" + string(data) + "};\n"), nil
+}
+
+// npm runs an alias's pre and post scripts around its runner, but probes call
+// the runner directly. Replay those scripts once around all probes, without
+// the tracer. Processes they start stay owned until the post scripts finish.
+func (t *Testdrive) startCucumberProbeLifecycle(ctx context.Context, output io.Writer, session *Session, before []onboard.LifecycleScript) (func([]onboard.LifecycleScript) error, error) {
+	directory := filepath.Join(session.Directory(), "probe-lifecycle")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return nil, err
+	}
+	env := testEnvironment("http://127.0.0.1:1", session.ID()+" probe-lifecycle")
+	env["NODE_OPTIONS"] = stripDatadogNodeOptions(t.nodeOptions())
+	env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
+	env["PATH"] = filepath.Join(t.repositoryRoot, "node_modules/.bin") + string(os.PathListSeparator) + os.Getenv("PATH")
+	owner, err := t.ownPlaywrightProcesses(directory, env)
+	if err != nil {
+		return nil, err
+	}
+	run := func(scripts []onboard.LifecycleScript) error {
+		for _, script := range scripts {
+			_, _ = fmt.Fprintf(output, "Running %s lifecycle script for feature probes...\n", script.Name)
+			// --ignore-scripts runs exactly this script, not its own pre/post scripts.
+			data, err := setupOutput(ctx, t.executor, t.repositoryRoot, script.Directory, "npm", []string{"run", script.Name, "--ignore-scripts"}, env)
+			if err != nil {
+				return fmt.Errorf("cucumber lifecycle script %s failed for feature probes: %w: %s", script.Name, err, commandDiagnostic(data))
+			}
+		}
+		return nil
+	}
+	if err := run(before); err != nil {
+		return nil, errors.Join(err, owner.Close())
+	}
+	return func(after []onboard.LifecycleScript) error {
+		// Feature results are already recorded; a failing post script is the
+		// customer's own cleanup, as after the paired runs, and is reported.
+		if err := run(after); err != nil {
+			_, _ = fmt.Fprintf(output, "%s\n", reportText(err.Error()))
+		}
+		return owner.Close()
+	}, nil
 }
 
 func (t *Testdrive) cucumberProbeCommand(probe string) (string, []string, error) {
@@ -130,16 +210,21 @@ func (t *Testdrive) cucumberProbeCommand(probe string) (string, []string, error)
 	}
 	args := []string{"--config", config}
 	for i := runner + 1; i < len(words); i++ {
+		// Keep worker count and the options World and hooks need to run;
+		// selection, retries and profiles stay out of the owned probe.
 		key, value, inline := strings.Cut(words[i], "=")
-		if key == "--parallel" {
+		switch key {
+		case "--parallel", "--world-parameters":
 			if !inline {
 				i++
 				if i >= len(words) {
-					return "", nil, fmt.Errorf("missing Cucumber parallel value")
+					return "", nil, fmt.Errorf("missing Cucumber %s value", key)
 				}
 				value = words[i]
 			}
-			args = append(args, "--parallel", value)
+			args = append(args, key, value)
+		case "--exit", "--force-exit":
+			args = append(args, words[i])
 		}
 	}
 	if t.cucumberSupport == nil {

@@ -15,19 +15,27 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/kballard/go-shellquote"
 )
 
 //go:embed scripts/cucumber_support.cjs
 var cucumberSupportObserver string
 
-type cucumberSupport struct{ RequirePaths, ImportPaths, ConfigFiles, RequireModules, Loaders []string }
+type cucumberSupport struct {
+	RequirePaths, ImportPaths, ConfigFiles, RequireModules, Loaders []string
+	// Profile options that World and hooks need, such as forceExit and
+	// worldParameters. Probes keep them; selection and retries stay out.
+	RunOptions      map[string]any `json:"runOptions"`
+	RunOptionsError string         `json:"runOptionsError"`
+}
 
 const cucumberMetadataScript = `const path = require('node:path');
 const manifest = require.resolve('@cucumber/cucumber/package.json');
@@ -79,19 +87,26 @@ func (t *Testdrive) checkCucumberPreflight(ctx context.Context, output io.Writer
 	}
 	check.Verdict = checkCucumberSupport(*check, selection)
 	_, _ = fmt.Fprintf(output, "Cucumber %s; Node %s; tracer %s (%s). Preflight: %s — %s\n", check.Version, check.Node, result.Tracer, selection.Source, check.Verdict.Status, check.Verdict.Reason)
-	t.recommendTracer(ctx, output, result)
+	// No tracer choice fixes an unsupported Cucumber release; don't suggest one.
+	if major, _, known := releaseParts(check.Version); !known || major >= cucumberMinimumMajor {
+		t.recommendTracer(ctx, output, result)
+	}
 	if check.Verdict.Status != "compatible" {
 		return fmt.Errorf("cucumber preflight: %s", check.Verdict.Reason)
 	}
 	return nil
 }
 
+// The oldest Cucumber release exposing isolated probe configuration and
+// support metadata.
+const cucumberMinimumMajor = 8
+
 func checkCucumberSupport(check jestPreflight, selection platform.JSSelection) verdict {
 	major, _, known := releaseParts(check.Version)
 	if !known {
 		return verdict{Status: "inconclusive", Reason: "Could not resolve the installed Cucumber version."}
 	}
-	if major < 8 {
+	if major < cucumberMinimumMajor {
 		return verdict{Status: "incompatible", Reason: "Cucumber testdrive requires @cucumber/cucumber >=8 for isolated probe configuration and support metadata. Preserve the customer's framework and select a supported configuration."}
 	}
 	status, reason := onboard.CompareNodeRequirement(check.Node, selection.Node)
@@ -294,6 +309,11 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 		return run, err
 	}
 	defer func() { runErr = errors.Join(runErr, owner.Close()) }()
+	// Every Node process of the run, including nyc and cucumber-js, then stops
+	// when ddtest dies. Windows supervision is unsupported, so it is left out.
+	if runtime.GOOS != "windows" {
+		env["NODE_OPTIONS"] += " --require " + strconv.Quote(filepath.Join(directory, "children.cjs"))
+	}
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
 	data, commandErr := t.executor.CombinedOutput(ctx, command, args, env)
 	run.commandOutput, run.commandError, run.ExitCode = string(data), commandErr, commandExitCode(commandErr)
@@ -317,15 +337,9 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 		run.cucumberSupport = &support
 	}
 	if instrumented && probePath == "" {
-		var excluded []string
-		if run.cucumberSupport != nil {
-			excluded = append(excluded, support.RequirePaths...)
-			excluded = append(excluded, support.ImportPaths...)
-			excluded = append(excluded, support.ConfigFiles...)
-		}
-		run.Coverage = cucumberSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests, excluded...)
+		run.Coverage = cucumberSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests, run.cucumberSupport)
 		if run.cucumberParallel && run.Coverage.Status == "not observed" {
-			run.Coverage.Reason = "No application source-coverage events arrived from Cucumber parallel workers. The selected tracer may not support worker suite coverage; this setup cannot validate parallel TIA. NYC terminal output cannot substitute for missing test-coverage telemetry. Preserve the original parallel command and keep TIA unvalidated."
+			run.Coverage.Reason = "No application source-coverage events arrived from Cucumber parallel workers: the selected dd-trace sends no suite coverage from parallel workers, so this setup cannot validate parallel TIA. NYC terminal output cannot substitute for missing test-coverage telemetry. Preserve the original parallel command and keep TIA unvalidated."
 		}
 	}
 	if probePath != "" {
@@ -343,6 +357,15 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 		run.Diagnostic = commandDiagnostic(data)
 	}
 	return run, nil
+}
+
+// cucumberCoverageSetup describes the coverage tool already wrapping the
+// selected Cucumber leaf, and whether the run used parallel workers.
+func (t *Testdrive) cucumberCoverageSetup(run validationRun) intake.CoverageSetup {
+	return intake.CoverageSetup{
+		Wrapper:  onboard.CucumberCoverageWrapper(t.repositoryRoot, shellquote.Join(append([]string{t.command}, t.args...)...)),
+		Parallel: run.cucumberParallel,
+	}
 }
 
 func cucumberASTLocations(value any, locations map[string]int) {
@@ -380,9 +403,9 @@ func verifyCucumberTelemetry(run validationRun) verdict {
 			attempts = []string{test.Status}
 		}
 		for _, status := range attempts {
-			copy := test
-			copy.Status = status
-			run.Tests = append(run.Tests, copy)
+			attempt := test
+			attempt.Status = status
+			run.Tests = append(run.Tests, attempt)
 		}
 	}
 	// Native retries are verified attempt by attempt, retaining tracer retry reasons.

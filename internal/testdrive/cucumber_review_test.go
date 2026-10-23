@@ -94,3 +94,21 @@ func TestCucumberExecutionDoesNotAddACoverageWrapper(t *testing.T) {
 	require.Equal(t, "c8", command)
 	require.Equal(t, drive.args, args)
 }
+
+func TestCucumberProbeKeepsTheOptionsWorldAndHooksNeed(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"cucumber-js --world-parameters '{\"baseUrl\":\"http://cli.test\"}' --exit --tags @smoke --profile ci --world-parameters='{\"browser\":\"chrome\"}'"}}`)
+	d := &Testdrive{repositoryRoot: root, command: "npm", args: []string{"test"}, cucumberNode: "/node", cucumberExecutable: "/cucumber.js", cucumberSupport: &cucumberSupport{}}
+	command, args, err := d.cucumberProbeCommand(filepath.Join(root, "probe.feature"))
+	require.NoError(t, err)
+	require.Equal(t, "/node", command)
+	require.Equal(t, []string{"/cucumber.js", "--config", "probe.feature.config.cjs", "--world-parameters", `{"baseUrl":"http://cli.test"}`, "--exit", "--world-parameters", `{"browser":"chrome"}`, filepath.Join(root, "probe.feature"), "--require", filepath.Join(root, "probe.feature.steps.cjs"), "--retry", "0"}, args)
+
+	// Profile options come from the resolved configuration; selection does not.
+	config, err := cucumberProbeConfig(&cucumberSupport{RunOptions: map[string]any{"forceExit": true, "worldParameters": map[string]any{"baseUrl": "http://profile.test"}, "tags": "@smoke"}})
+	require.NoError(t, err)
+	require.Equal(t, `module.exports={default:{"forceExit":true,"worldParameters":{"baseUrl":"http://profile.test"}}};`+"\n", string(config))
+	config, err = cucumberProbeConfig(nil)
+	require.NoError(t, err)
+	require.Equal(t, "module.exports={default:{}};\n", string(config))
+}

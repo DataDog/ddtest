@@ -57,3 +57,36 @@ func TestCucumberFormatterOptionsReachOnlyActualCLI(t *testing.T) {
 	require.Equal(t, []string{"features"}, args)
 
 }
+
+// NODE_OPTIONS reaches every Node process of the run, such as a server a hook
+// starts in another folder. Only the Cucumber CLI may load Cucumber.
+func TestCucumberSupportPreloadLeavesOtherNodeProcessesUnchanged(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	observer := filepath.Join(t.TempDir(), "observer.cjs")
+	requireWriteFile(t, observer, cucumberSupportObserver)
+	project := t.TempDir()
+	pkg := filepath.Join(project, "node_modules/@cucumber/cucumber")
+	require.NoError(t, os.MkdirAll(filepath.Join(pkg, "bin"), 0700))
+	requireWriteFile(t, filepath.Join(project, "package.json"), `{}`)
+	requireWriteFile(t, filepath.Join(pkg, "package.json"), `{"main":"index.js","bin":{"cucumber-js":"bin/cucumber.js"}}`)
+	requireWriteFile(t, filepath.Join(pkg, "index.js"), `throw new Error('Cucumber loaded outside its CLI')`)
+	requireWriteFile(t, filepath.Join(project, "server.js"), `console.log('server ran')`)
+	for name, tc := range map[string]struct {
+		directory string
+		args      []string
+	}{
+		"without Cucumber": {t.TempDir(), []string{"-e", "console.log('server ran')"}},
+		"another script":   {project, []string{filepath.Join(project, "server.js")}},
+		"node -e":          {project, []string{"-e", "console.log('server ran')"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			command := exec.Command(node, append([]string{"--require", observer}, tc.args...)...)
+			command.Dir = tc.directory
+			command.Env = append(os.Environ(), "DDTEST_CUCUMBER_FORMATTERS=[]", "DDTEST_CUCUMBER_SUPPORT="+filepath.Join(t.TempDir(), "support.json"))
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, string(output))
+			require.Equal(t, "server ran\n", string(output))
+		})
+	}
+}

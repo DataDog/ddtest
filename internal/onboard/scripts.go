@@ -549,6 +549,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	if cucumber {
 		script = cucumberDiscoveryScript(script)
 		parts, err := staticCommands(script)
+		if variable := shellVariable.FindStringSubmatch(script); err != nil && variable != nil {
+			return unresolvedCommand("Cucumber alias uses unresolved environment variable $" + variable[1] + "; select the command with its value expanded: " + command)
+		}
 		if err != nil || len(parts) != 1 {
 			return unresolvedCommand("Cucumber aliases must forward formatter options to one invocation; compound scripts require explicit setup review: " + command)
 		}
@@ -558,13 +561,17 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		// npm starts each lifecycle script in a fresh shell at the package root.
 		// Resolve them independently so an inner cd/export cannot affect the next hook.
 		singleInvocation := true
-		for _, part := range []string{manifest.Scripts["pre"+name], script, manifest.Scripts["post"+name]} {
+		leaf := -1
+		for i, part := range []string{manifest.Scripts["pre"+name], script, manifest.Scripts["post"+name]} {
 			if part == "" {
 				continue
 			}
 			resolved := resolveJestSequence(root, directory, part, append(slices.Clone(stack), key), remaining, frameworks...)
 			if resolved.Matched {
 				singleInvocation = singleInvocation && resolved.SingleJest
+			}
+			if len(resolved.Tests) > 0 {
+				leaf = i
 			}
 			result.Tests = append(result.Tests, resolved.Tests...)
 			result.Builds = append(result.Builds, resolved.Builds...)
@@ -578,6 +585,17 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		}
 		lifecycle = ""
 		result.SingleJest = singleInvocation && len(result.Tests) == 1 && manifest.Scripts["pre"+name] == "" && manifest.Scripts["post"+name] == ""
+		if cucumber && len(result.Tests) == 1 {
+			// Probes call the runner directly. Record the hooks npm runs around
+			// the Cucumber leaf, outermost first, so probes can replay them.
+			test := &result.Tests[0]
+			if leaf > 0 && manifest.Scripts["pre"+name] != "" {
+				test.cucumberProbeBefore = append([]LifecycleScript{{Directory: repositoryPath(root, directory), Name: "pre" + name}}, test.cucumberProbeBefore...)
+			}
+			if leaf < 2 && manifest.Scripts["post"+name] != "" {
+				test.cucumberProbeAfter = append(test.cucumberProbeAfter, LifecycleScript{Directory: repositoryPath(root, directory), Name: "post" + name})
+			}
+		}
 	} else {
 		result = resolveJestSequence(root, directory, script, append(slices.Clone(stack), key), remaining, frameworks...)
 	}
