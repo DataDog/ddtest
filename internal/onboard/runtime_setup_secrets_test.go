@@ -101,3 +101,58 @@ func TestConfiguredOnboardingSuggestsAllForSeveralConfigurations(t *testing.T) {
 		require.Contains(t, output.String(), "Run "+want+" to check the setup locally.")
 	}
 }
+
+func TestMochaProbeKeepsTheInnerScriptAssignment(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"test": "MODE=outer LEVEL=top npm run unit", "unit": "MODE=inner mocha"})
+	plan := MochaProbePlan(root, "npm test")
+	require.Equal(t, "inner", plan.Environment["MODE"], "the nested script's own assignment wins, as in the shell")
+	require.Equal(t, "top", plan.Environment["LEVEL"], "outer assignments still apply")
+}
+
+func TestMochaConfigSelectionFollowsMocha(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".mocharc.json"), []byte(`{"watch": true}`), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "ci.json"), []byte(`{"spec": "test"}`), 0644))
+	require.True(t, mochaWatchMode(root, nil), "the default config enables watch")
+	require.False(t, mochaWatchMode(root, []string{"--config", "ci.json"}), "an explicit config replaces the default")
+	require.False(t, mochaWatchMode(root, []string{"--no-config"}))
+
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "packages", "unit"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"type":"commonjs"}`), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "packages", "unit", "package.json"), []byte(`{"type":"module"}`), 0644))
+	require.True(t, mochaESMInputs(root, []string{"--no-config", "packages/unit/test.js"}), "a nested module package makes its .js tests ESM")
+	require.True(t, mochaESMInputs(root, []string{"--no-config", "packages/unit/**/*.js"}))
+	require.False(t, mochaESMInputs(root, []string{"--no-config", "test/one.js"}), "the root package is CommonJS")
+}
+
+func TestMochaCoverageSetupNamesWrapperParallelAndESM(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"parallel": "nyc -- mocha --parallel --jobs 2", "c8": "c8 mocha", "plain": "mocha", "nyc": "nyc mocha"})
+	for script, want := range map[string]struct {
+		wrapper  string
+		parallel bool
+	}{"parallel": {"nyc", true}, "c8": {"c8", false}, "plain": {"", false}, "nyc": {"nyc", false}} {
+		wrapper, parallel, _ := MochaCoverageSetup(root, "npm run "+script)
+		require.Equal(t, want.wrapper, wrapper, script)
+		require.Equal(t, want.parallel, parallel, script)
+	}
+	module := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(module, "package.json"), []byte(`{"type":"module","scripts":{"test":"nyc mocha"}}`), 0644))
+	_, _, esm := MochaCoverageSetup(module, "npm test")
+	require.True(t, esm, "a module package makes .js tests ESM")
+}
+
+func TestMochaDefaultCommandAcceptsASimpleCIStep(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {TZ: UTC}\n")
+	writeScripts(t, root, map[string]string{"test": "mocha"})
+	command, err := MochaValidationCommand(root, "")
+	require.NoError(t, err, "a CI environment alone does not need --all")
+	require.Equal(t, "npm test", command)
+
+	root = newJestRepository(t, "jobs:\n  test:\n    steps:\n      - run: npm test\n        working-directory: packages/unit\n")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "packages", "unit"), 0755))
+	writeScripts(t, filepath.Join(root, "packages", "unit"), map[string]string{"test": "mocha"})
+	_, err = MochaValidationCommand(root, "")
+	require.ErrorContains(t, err, "runs in packages/unit; use --all")
+}

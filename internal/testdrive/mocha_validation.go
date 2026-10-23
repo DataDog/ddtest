@@ -25,10 +25,17 @@ import (
 //go:embed scripts/mocha_observer.cjs
 var mochaObserver string
 
+//go:embed scripts/mocha_nested_guard.cjs
+var mochaNestedGuard string
+
 func (t *Testdrive) checkMochaPreflight(ctx context.Context, output io.Writer, result *validationResult) error {
 	check := &jestPreflight{Node: t.nodeVersion(), Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "Mocha package was not resolved."}}
 	result.Preflight = check
 	env := testEnvironment("http://127.0.0.1:1", "mocha-preflight")
+	// Load .mocharc with the script's own assignments, such as MODE=unit.
+	for key, value := range onboard.MochaProbePlan(t.repositoryRoot, check.Command).Environment {
+		env[key] = value
+	}
 	env["NODE_OPTIONS"] = stripDatadogNodeOptions(t.nodeOptions())
 	env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	directory := onboard.MochaRunnerDirectory(t.repositoryRoot, check.Command)
@@ -114,6 +121,10 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 	if err := os.WriteFile(observer, []byte(mochaObserver), 0600); err != nil {
 		return run, err
 	}
+	guard := filepath.Join(directory, "mocha-nested-guard.cjs")
+	if err := os.WriteFile(guard, []byte(mochaNestedGuard), 0600); err != nil {
+		return run, err
+	}
 	server, err := t.startIntake(directory, scenario)
 	if err != nil {
 		return run, err
@@ -136,11 +147,15 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 		env["NODE_OPTIONS"] = stripDatadogNodeOptions(t.nodeOptions())
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
-	env["NODE_OPTIONS"] += " --require=" + strconv.Quote(observer)
+	// The guard must run before the tracer preload; the observer after it.
+	env["NODE_OPTIONS"] = "--require=" + strconv.Quote(guard) + " " + env["NODE_OPTIONS"] + " --require=" + strconv.Quote(observer)
 	env["DDTEST_MOCHA_RESULTS"] = results
 	env["DDTEST_MOCHA_PROBE"], env["DDTEST_PROBE_MODE"] = probePath, probeMode
 	command, args := t.executionCommand()
 	directoryRoot := t.repositoryRoot
+	if probePath == "" && instrumented {
+		run.coverageCause = mochaCoverageCause(onboard.MochaCoverageSetup(t.repositoryRoot, shellquote.Join(append([]string{command}, args...)...)))
+	}
 	if probePath != "" {
 		original := shellquote.Join(append([]string{command}, args...)...)
 		plan := onboard.MochaProbePlan(t.repositoryRoot, original)
@@ -166,7 +181,12 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 		}
 	}
 	// Keep wrapper executables available exactly as in an npm script.
-	env["PATH"] = filepath.Join(directoryRoot, "node_modules", ".bin") + string(os.PathListSeparator) + os.Getenv("PATH")
+	// A literal CI PATH stays in effect, as it does in the selected configuration.
+	path := os.Getenv("PATH")
+	if value, ok := t.configurationEnvironment["PATH"]; ok {
+		path = value
+	}
+	env["PATH"] = filepath.Join(directoryRoot, "node_modules", ".bin") + string(os.PathListSeparator) + path
 	run.Command = shellquote.Join(append([]string{command}, args...)...)
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
 	var data []byte
@@ -219,10 +239,15 @@ func readMochaResults(directory string, run *validationRun) {
 	for _, path := range paths {
 		var result struct {
 			Complete bool
+			Delayed  bool
 			Tests    []jestTest
 			Errors   []string
 		}
 		data, err := os.ReadFile(path)
+		if err == nil && json.Unmarshal(data, &result) == nil && !result.Complete && result.Delayed {
+			run.ResultError = "Mocha delay mode waits for a global run() call, which the suite never made; call run() once the tests are defined, or remove delay"
+			return
+		}
 		if err != nil || json.Unmarshal(data, &result) != nil || !result.Complete || result.Tests == nil {
 			run.ResultError = "Mocha native runner results are missing, invalid or incomplete"
 			return
@@ -252,6 +277,12 @@ func (t *Testdrive) runMochaFeatures(ctx context.Context, output io.Writer, sess
 		if scenario.Feature == "" {
 			role = roleProbeControl
 		}
+		// dd-trace's Mocha plugin matches skippable suites by the suite path,
+		// relative to Mocha's working directory, not the checkout-relative
+		// source file. They differ when Mocha runs in a subpackage.
+		if scenario.Feature == "skipping" && scenario.Suite != "" {
+			scenario.SourceFile = scenario.Suite
+		}
 		return t.runMocha(ctx, output, session, preload, runSpec{Name: name, Role: role, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
 	}, result)
 }
@@ -270,3 +301,21 @@ ddtestSuite('ddtest', () => {
   });
 });
 `
+
+const mochaESMCoverageCause = "Native ESM coverage is not supported by NYC's require hook. Tracing imports do not instrument source coverage; review a separate ESM instrumentation step."
+
+// Name the likely cause of missing per-test coverage for this command, so the
+// report does not suggest installing or adding an nyc that is already there.
+func mochaCoverageCause(wrapper string, parallel, esm bool) string {
+	switch {
+	case parallel:
+		return "Mocha parallel mode reports no per-test coverage: dd-trace sends none from parallel workers. Check coverage with a command that does not use --parallel."
+	case wrapper == "c8":
+		return "c8 collects V8 coverage, which dd-trace does not report per test. Use nyc for Mocha per-test coverage."
+	case esm:
+		return mochaESMCoverageCause
+	case wrapper == "":
+		return "The command does not run under nyc, so no Istanbul coverage was collected. Wrap the Mocha command with npx --no-install nyc --."
+	}
+	return "nyc ran, but no test reported coverage. Check nyc's include/exclude rules, file extensions and instrument setting."
+}

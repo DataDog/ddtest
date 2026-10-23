@@ -269,3 +269,101 @@ func TestCoverageBlockerUsesTheSelectedFramework(t *testing.T) {
 		require.Contains(t, strings.Join(summary.BlockingChecks, "\n"), displayName(name)+" real-suite coverage")
 	}
 }
+
+type mochaEnvironmentExecutor struct{ envs []map[string]string }
+
+func (e *mochaEnvironmentExecutor) CombinedOutput(ctx context.Context, name string, args []string, env map[string]string) ([]byte, error) {
+	return e.CombinedOutputInDirectory(ctx, "", name, args, env)
+}
+
+func (e *mochaEnvironmentExecutor) CombinedOutputInDirectory(_ context.Context, _ string, _ string, _ []string, env map[string]string) ([]byte, error) {
+	e.envs = append(e.envs, env)
+	if results := env["DDTEST_MOCHA_RESULTS"]; results != "" {
+		return nil, os.WriteFile(filepath.Join(results, "native.json"), []byte(`{"complete":true,"tests":[]}`), 0600)
+	}
+	return []byte(`{"version":"11.7.6","watch":false}`), nil
+}
+
+func TestMochaRunsKeepCIPathAndScriptAssignments(t *testing.T) {
+	drive := preparedTestdrive(t)
+	drive.framework = framework.NewMocha(platform.NewJavaScript())
+	writeMochaManifest(t, drive.repositoryRoot, `{"scripts":{"test":"MODE=unit mocha one.cjs"},"devDependencies":{"mocha":"11.7.6"}}`)
+	drive.command, drive.args = "npm", []string{"test"}
+	drive.configurationEnvironment = map[string]string{"PATH": "/ci/tools:/usr/bin"}
+	executor := &mochaEnvironmentExecutor{}
+	drive.executor = executor
+	drive.startIntake = func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{}, nil }
+
+	_ = drive.checkMochaPreflight(t.Context(), io.Discard, &validationResult{CIRuntime: &onboard.RuntimeCheck{}})
+	require.NotEmpty(t, executor.envs)
+	require.Equal(t, "unit", executor.envs[0]["MODE"], "preflight loads .mocharc with the script's assignments")
+
+	session, err := NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
+	_, err = drive.runMocha(t.Context(), io.Discard, session, "/trace/ci/init.js", runSpec{Name: "reporting-only", Role: roleReporting, Instrumented: true})
+	require.NoError(t, err)
+	path := executor.envs[len(executor.envs)-1]["PATH"]
+	require.True(t, strings.HasSuffix(path, string(os.PathListSeparator)+"/ci/tools:/usr/bin"), path)
+}
+
+func writeMochaManifest(t *testing.T, root, manifest string) {
+	t.Helper()
+	requireWriteFile(t, filepath.Join(root, "package.json"), manifest)
+}
+
+func TestMochaNestedGuardDisablesTracingOnlyForNestedCLIs(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node required")
+	}
+	directory := t.TempDir()
+	guard := filepath.Join(directory, "guard.cjs")
+	requireWriteFile(t, guard, mochaNestedGuard)
+	print := "console.log(process.env.DD_TRACE_ENABLED + ' ' + process.env.DD_CIVISIBILITY_ENABLED)\n"
+	for _, name := range []string{"mocha.js", "worker.js"} {
+		requireWriteFile(t, filepath.Join(directory, name), print)
+	}
+	run := func(entry, owner string) string {
+		cmd := exec.CommandContext(t.Context(), node, "--require", guard, filepath.Join(directory, entry))
+		cmd.Env = append(os.Environ(), "DD_TRACE_ENABLED=true", "DD_CIVISIBILITY_ENABLED=true", "DDTEST_MOCHA_OWNER="+owner)
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(output))
+		return strings.TrimSpace(string(output))
+	}
+	require.Equal(t, "false false", run("mocha.js", "1"), "a Mocha CLI under another owner is nested")
+	require.Equal(t, "true true", run("mocha.js", ""), "the first Mocha CLI keeps tracing")
+	require.Equal(t, "true true", run("worker.js", "1"), "parallel workers keep tracing")
+}
+
+func TestMochaMissingCoverageNamesItsCause(t *testing.T) {
+	for _, tc := range []struct {
+		wrapper       string
+		parallel, esm bool
+		want          string
+	}{
+		{"nyc", true, false, "parallel mode"},
+		{"c8", false, false, "c8 collects V8 coverage"},
+		{"nyc", false, true, "Native ESM coverage"},
+		{"", false, false, "does not run under nyc"},
+		{"nyc", false, false, "nyc ran, but no test reported coverage"},
+	} {
+		require.Contains(t, mochaCoverageCause(tc.wrapper, tc.parallel, tc.esm), tc.want)
+	}
+	run := validationRun{framework: "mocha", Name: "reporting-only", Role: roleReporting, Instrumented: true, coverageCause: mochaCoverageCause("nyc", true, false), Facts: intake.Facts{TestCount: 2}}
+	result := validationResult{Framework: "mocha", Runs: []runSummary{run.summary()}}
+	require.Contains(t, run.summary().Coverage.Reason, "parallel mode")
+	summary := summarizeValidation(result)
+	require.Contains(t, strings.Join(summary.BlockingChecks, "\n"), "Mocha real-suite coverage was not observed: Coverage reported for 0/2 real tests; synthetic probes are excluded. Mocha parallel mode")
+	require.NotContains(t, strings.Join(summary.BlockingChecks, "\n"), "review NYC/ESM instrumentation")
+}
+
+func TestMochaDelayWithoutRunIsNamed(t *testing.T) {
+	directory := t.TempDir()
+	requireWriteFile(t, filepath.Join(directory, "1-0.json"), `{"complete":false,"delayed":true,"tests":[],"errors":[]}`)
+	var run validationRun
+	readMochaResults(directory, &run)
+	require.Contains(t, run.ResultError, "delay mode waits for a global run() call")
+	verdict := compareJest(run, testRun("passed", 0))
+	require.Contains(t, verdict.Reason, "delay mode waits for a global run() call")
+}

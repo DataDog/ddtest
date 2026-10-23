@@ -207,7 +207,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 
 // ValidationCommands also resolves a selected local alias, for scope accounting.
 func ValidationCommands(root, command, framework string) []TestCommand {
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	return resolveJestSequence(root, root, command, nil, &remaining, framework).Tests
 }
 

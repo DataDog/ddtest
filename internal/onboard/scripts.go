@@ -100,7 +100,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			return result
 		}
 	}
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	result := resolveJestSequence(root, resolvedDirectory, step.Run, nil, &remaining, framework)
 
 	if _, err := staticCommands(step.Run); err != nil {
@@ -121,10 +121,14 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	return result
 }
 
+// Bound package script and composite expansion so a cyclic or very large
+// alias graph cannot hang discovery.
+const packageScriptExpansionLimit = 256
+
 // Resolve only ordinary static commands and package script aliases. Never run
 // a shell, load JavaScript, or rewrite the CI entry point during discovery.
 func resolveJestCommand(directory, command string, stack []string) commandResolution {
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	return resolveJestSequence(directory, directory, command, stack, &remaining)
 }
 
@@ -154,7 +158,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 		}
 		*remaining--
 		if *remaining < 0 {
-			return unresolvedCommand("Package script expansion exceeds 256 commands")
+			return unresolvedCommand(fmt.Sprintf("Package script expansion exceeds %d commands", packageScriptExpansionLimit))
 		}
 		if len(words) > 0 && words[0] == "cd" {
 			if len(words) != 2 {
@@ -521,10 +525,11 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		// retain their resolved runner directory and scoped environment.
 		result.Tests[0].Directory = repositoryPath(root, directory)
 		if len(result.Tests[0].Environment) > 0 {
-			if result.Tests[0].mochaProbeEnvironment == nil {
-				result.Tests[0].mochaProbeEnvironment = map[string]string{}
-			}
-			maps.Copy(result.Tests[0].mochaProbeEnvironment, result.Tests[0].Environment)
+			// Outer assignments apply, but an inner script's own assignment
+			// (MODE=inner under MODE=outer npm run unit) wins, as in the shell.
+			merged := maps.Clone(result.Tests[0].Environment)
+			maps.Copy(merged, result.Tests[0].mochaProbeEnvironment)
+			result.Tests[0].mochaProbeEnvironment = merged
 		}
 		for _, hook := range []string{"pre" + name, "post" + name} {
 			if value := manifest.Scripts[hook]; value != "" {

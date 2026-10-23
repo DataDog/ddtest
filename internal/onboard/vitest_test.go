@@ -88,7 +88,7 @@ func TestVitestCIResolvesScriptsWithoutMatchingEchoedText(t *testing.T) {
 	root := newJestRepository(t, "")
 	writeScripts(t, root, map[string]string{"test": "pnpm test:types && vitest run", "test:types": "tsgo --noEmit", "other": "jest"})
 	for command, matched := range map[string]bool{"pnpm test": true, "pnpm test:types": false, "echo vitest": false, "pnpm other": false} {
-		remaining := 256
+		remaining := packageScriptExpansionLimit
 		r := resolveJestSequence(root, root, command, nil, &remaining, "vitest")
 		require.Empty(t, r.Reason, command)
 		require.Equal(t, matched, r.Matched, command)

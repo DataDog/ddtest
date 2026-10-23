@@ -90,14 +90,21 @@ func MochaValidationCommand(root, command string) (string, error) {
 			}
 			command = "npm test"
 		} else {
+			// Like Jest and Vitest, a single CI command is validated directly,
+			// with its CI environment applied. Say what needs --all otherwise.
 			item := scope.Commands[0]
-			if filepath.Clean(item.Directory) != "." || len(item.Prerequisites) > 0 || len(item.Environment) > 0 || len(item.UnvalidatedSetup) > 0 {
-				return "", fmt.Errorf("mocha CI setup requires --all and review of unresolved setup")
+			switch {
+			case len(item.UnvalidatedSetup) > 0:
+				return "", fmt.Errorf("the Mocha CI command needs setup review: %s; use --all after reviewing it, or --command", strings.Join(item.UnvalidatedSetup, "; "))
+			case len(item.Prerequisites) > 0:
+				return "", fmt.Errorf("the Mocha CI command needs preparation steps; use --all to run them in a disposable copy")
+			case filepath.Clean(item.Directory) != ".":
+				return "", fmt.Errorf("the Mocha CI command runs in %s; use --all, or --command with that package's command", item.Directory)
 			}
 			command = item.Command
 		}
 	}
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
 	if resolved.Reason != "" || !resolved.SingleJest || len(resolved.Tests) != 1 || len(resolved.Builds) > 0 {
 		return "", fmt.Errorf("mocha validation requires one resolved invocation, preserving coverage and setup: %s. Use --all for separate CI commands; --command is not an implicit shell", resolved.Reason)
@@ -108,9 +115,34 @@ func MochaValidationCommand(root, command string) (string, error) {
 // MochaUsesNYC follows resolved package aliases so local validation does not
 // stack a second coverage wrapper around the customer's existing invocation.
 func MochaUsesNYC(root, command string) bool {
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	result := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
 	return result.Reason == "" && len(result.Tests) == 1 && result.Tests[0].usesNYC
+}
+
+// MochaCoverageSetup reports the coverage wrapper (nyc, c8 or none), whether
+// Mocha runs in parallel mode, and whether its inputs are native ESM, so a
+// missing coverage result can name its cause.
+func MochaCoverageSetup(root, command string) (wrapper string, parallel, esm bool) {
+	remaining := packageScriptExpansionLimit
+	result := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	if result.Reason != "" || len(result.Tests) != 1 {
+		return "", false, false
+	}
+	test := result.Tests[0]
+	// An alias keeps the caller's command; the probe command keeps the wrapper.
+	for _, command := range []string{test.Command, test.mochaProbeCommand} {
+		if words, err := shellquote.Split(command); err == nil && len(words) > 0 && slices.Contains([]string{"nyc", "c8"}, filepath.Base(words[0])) {
+			wrapper = filepath.Base(words[0])
+		}
+	}
+	if test.usesNYC {
+		wrapper = "nyc"
+	}
+	for _, arg := range test.mochaRunnerArgs {
+		parallel = parallel || arg == "--parallel" || arg == "-p" || arg == "--parallel=true"
+	}
+	return wrapper, parallel, test.mochaESM
 }
 
 // This is a discovery hint, not a JavaScript interpreter or proof of execution.
@@ -157,7 +189,7 @@ func resolveMochaNode(root, directory string, words []string) commandResolution 
 // MochaProbeCommand omits companion lint/assertion checks only for synthetic
 // probes. The paired real-suite runs always execute the entire original alias.
 func MochaProbeCommand(root, command string) string {
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	result := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
 	if result.Reason == "" && len(result.Tests) == 1 && result.Tests[0].mochaProbeCommand != "" {
 		return result.Tests[0].mochaProbeCommand
@@ -168,7 +200,7 @@ func MochaProbeCommand(root, command string) string {
 // MochaProbePlan preserves runner cwd and scoped assignments while omitting
 // package lifecycle/companion tools only for synthetic probes.
 func MochaProbePlan(root, command string) TestCommand {
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
 	if resolved.Reason == "" && len(resolved.Tests) == 1 {
 		item := resolved.Tests[0]
@@ -185,7 +217,7 @@ func MochaProbePlan(root, command string) TestCommand {
 }
 
 func MochaRunnerDirectory(root, command string) string {
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
 	if resolved.Reason == "" && len(resolved.Tests) == 1 && resolved.Tests[0].mochaLookupDirectory != "" {
 		return filepath.Join(root, resolved.Tests[0].mochaLookupDirectory)
@@ -236,19 +268,7 @@ func mochaWatchMode(directory string, args []string) bool {
 	}
 	// Static discovery never evaluates configuration JavaScript. Effective
 	// dynamic options are inspected in preflight by the installed Mocha parser.
-	configs := []string{".mocharc.json", ".mocharc.yaml", ".mocharc.yml", ".mocharc.js", ".mocharc.cjs", ".mocharc.mjs"}
-	if slices.Contains(args, "--no-config") {
-		configs = nil
-	}
-	for i, arg := range args {
-		if arg == "--config" && i+1 < len(args) {
-			configs = append(configs, args[i+1])
-		}
-		if strings.HasPrefix(arg, "--config=") {
-			configs = append(configs, strings.TrimPrefix(arg, "--config="))
-		}
-	}
-	for _, name := range configs {
+	for _, name := range mochaConfigFiles(args) {
 		if !filepath.IsLocal(name) {
 			continue
 		}
@@ -268,7 +288,7 @@ func mochaWatchMode(directory string, args []string) bool {
 var mochaWatchSetting = regexp.MustCompile(`(?m)(?:^|[,{\s])"?watch"?\s*:\s*true\b`)
 
 func MochaRunnerArguments(root, command string) []string {
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
 	if resolved.Reason == "" && len(resolved.Tests) == 1 {
 		return resolved.Tests[0].mochaRunnerArgs

@@ -299,7 +299,10 @@ func outcomeKeys(run validationRun) []string {
 }
 
 func compareJest(baseline, instrumented validationRun) verdict {
-	if baseline.ResultError != "" || executedTests(baseline) == 0 {
+	if baseline.ResultError != "" {
+		return verdict{Status: "inconclusive", Reason: "The uninstrumented run did not produce usable results: " + reportText(baseline.ResultError) + "."}
+	}
+	if executedTests(baseline) == 0 {
 		return verdict{Status: "inconclusive", Reason: "The uninstrumented run did not produce results for any executed tests; check project setup using the recorded baseline command."}
 	}
 	if baseline.Facts.TestEventCount > 0 {

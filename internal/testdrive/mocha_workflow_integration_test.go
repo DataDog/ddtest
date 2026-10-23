@@ -33,7 +33,7 @@ func TestPublicMochaTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "coverage disabled", "scoped alias", "CLI retries", "suite retries", "all thresholds", "TDD"} {
+	for _, mode := range []string{"passing", "existing failure", "coverage disabled", "scoped alias", "CLI retries", "suite retries", "all thresholds", "TDD", "subpackage", "nested fixture"} {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -78,6 +78,24 @@ func TestPublicMochaTestdrive(t *testing.T) {
 				write("test/one.test.cjs", `const assert=require('node:assert/strict');suite('math',()=>test('adds',()=>assert.equal(require('../lib/add.cjs')(1,1),2)))`)
 				write("runner.cjs", `const Mocha=require('mocha');const runner=new Mocha({ui:'tdd'});runner.addFile('test/one.test.cjs');runner.run(n=>{process.exitCode=n?1:0})`)
 			}
+			if mode == "nested fixture" {
+				// The suite starts its own Mocha run while loading and while
+				// testing; neither nested run may affect the comparison.
+				write("fixture/inner.cjs", `describe('inner',()=>it('inner fail',()=>{throw new Error('inner fail')}))`)
+				nested := `const {spawnSync}=require('node:child_process');const nested=()=>spawnSync(process.execPath,[require.resolve('mocha/bin/mocha.js'),'inner.cjs'],{cwd:require('node:path').join(__dirname,'../fixture')});`
+				write("test/one.test.cjs", nested+`nested();const assert=require('node:assert/strict');describe('math',()=>it('adds',()=>{assert.equal(nested().status,1);assert.equal(require('../lib/add.cjs')(1,1),2)}))`)
+			}
+			programmatic := "      - run: npm run programmatic\n        env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}\n"
+			if mode == "subpackage" {
+				// Mocha and NYC are installed only in the package Mocha runs in.
+				write("package.json", `{"scripts":{"test":"cd packages/unit && npm test"}}`)
+				write("packages/unit/package.json", `{"scripts":{"test":"nyc -- mocha 'test/*.test.cjs'"},"devDependencies":{"mocha":"11.7.6","nyc":"17.1.0","dd-trace":"6.21.0"}}`)
+				write("packages/unit/lib/add.cjs", `module.exports=(a,b)=>a+b`)
+				write("packages/unit/test/one.test.cjs", `const assert=require('node:assert/strict');describe('math',()=>it('adds',()=>assert.equal(require('../lib/add.cjs')(1,1),2)))`)
+				write("packages/unit/.nycrc.json", `{"include":["lib/**/*.cjs"],"extension":[".cjs"],"reporter":"none"}`)
+				require.NoError(t, os.Rename(filepath.Join(root, "node_modules"), filepath.Join(root, "packages/unit/node_modules")))
+				programmatic = ""
+			}
 			write(".github/workflows/ci.yml", `jobs:
   test:
     runs-on: ubuntu-latest
@@ -88,9 +106,7 @@ func TestPublicMochaTestdrive(t *testing.T) {
         with: {languages: js, js-tracer-version: '6.21.0'}
       - run: npm test
         env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}
-      - run: npm run programmatic
-        env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}
-`)
+`+programmatic)
 			output, err = command(root, "git", "init", "-q")
 			require.NoError(t, err, string(output))
 			if mode == "passing" {
@@ -119,7 +135,11 @@ func TestPublicMochaTestdrive(t *testing.T) {
 			}
 			report := readValidationReport(t, root)
 			require.Equal(t, "compatible", report.Compatibility.Status, string(output))
-			require.Len(t, report.Configurations, 2)
+			configurations := 2
+			if mode == "subpackage" {
+				configurations = 1
+			}
+			require.Len(t, report.Configurations, configurations)
 			for _, configuration := range report.Configurations {
 				names := map[string]bool{}
 				for _, feature := range report.Features {

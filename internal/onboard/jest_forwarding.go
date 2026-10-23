@@ -152,7 +152,7 @@ func forwardJestScript(root, directory, command string, depth int, count *int, s
 			continue
 		}
 		part := shellCommand(words)
-		remaining := 256
+		remaining := packageScriptExpansionLimit
 		resolution := resolveJestSequence(root, directory, part, nil, &remaining)
 		if resolution.Matched {
 			switch words[0] {

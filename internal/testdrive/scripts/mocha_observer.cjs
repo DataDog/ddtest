@@ -33,7 +33,8 @@ function observeRunner (prototype) {
     process.env.DDTEST_MOCHA_OWNER = String(process.pid)
     observed.add(this)
     const file = path.join(process.env.DDTEST_MOCHA_RESULTS, `${process.pid}-${sequence++}.json`)
-    const report = { complete: false, tests: [], errors: [] }
+    // With delay, Mocha waits for a global run() call before it starts.
+    const report = { complete: false, delayed: Boolean(this._opts && this._opts.delay), tests: [], errors: [] }
     const save = () => fs.writeFileSync(file, JSON.stringify(report))
     save()
     const failure = error => {
@@ -63,6 +64,19 @@ function observeRunner (prototype) {
       observed.delete(this)
     })
     return originalRun.apply(this, args)
+  }
+}
+// Claim ownership before test files load: a fixture spawned while loading
+// tests or setup would otherwise become an owner of its own.
+{
+  const Mocha = internal('mocha')
+  for (const name of ['loadFiles', 'loadFilesAsync', 'run']) {
+    const original = Mocha.prototype[name]
+    if (!original) continue
+    Mocha.prototype[name] = function (...args) {
+      if (!mochaWorker && process.env.MOCHA_WORKER_ID === undefined) process.env.DDTEST_MOCHA_OWNER ??= String(process.pid)
+      return original.apply(this, args)
+    }
   }
 }
 observeRunner(Runner.prototype)

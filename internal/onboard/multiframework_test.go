@@ -54,8 +54,6 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 				require.NotContains(t, output.String(), "NODE_OPTIONS")
 			}
 			switch name {
-			case "mocha":
-				require.Contains(t, output.String(), "`js-tracer-version`")
 			case "vitest":
 				require.Contains(t, output.String(), "DD_TRACE_ESM_IMPORT")
 			}

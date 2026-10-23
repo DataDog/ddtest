@@ -59,15 +59,17 @@ type runSpec struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
-	ReplacedReporters               []string
-	Role                            runRole
-	temporaryRoot                   string
-	commandOutput                   string
-	commandError                    error
-	Project                         string
-	Skipping                        *skippingDiagnostic
-	root                            string
-	checkoutRoot                    string
+	ReplacedReporters []string
+	Role              runRole
+	temporaryRoot     string
+	commandOutput     string
+	commandError      error
+	Project           string
+	Skipping          *skippingDiagnostic
+	root              string
+	checkoutRoot      string
+	// Why a real-suite Mocha run may report no per-test coverage.
+	coverageCause                   string
 	framework                       string
 	Name                            string
 	Command                         string
@@ -141,10 +143,14 @@ func (r validationRun) summary() runSummary {
 		}
 		summary.Coverage = &coverageSummary{Status: status, CoveredTests: r.Facts.CoveredTestCount, TotalTests: r.Facts.TestCount, Level: r.Facts.CoverageLevel, Ratio: float64(r.Facts.CoveredTestCount) / float64(r.Facts.TestCount)}
 		summary.Coverage.Reason = fmt.Sprintf("Coverage reported for %d/%d real tests; synthetic probes are excluded.", r.Facts.CoveredTestCount, r.Facts.TestCount)
-		if status != "observed" && slices.ContainsFunc(r.Tests, func(test jestTest) bool {
+		cause := r.coverageCause
+		if cause == "" && slices.ContainsFunc(r.Tests, func(test jestTest) bool {
 			return filepath.Ext(test.File) == ".mjs" || filepath.Ext(test.File) == ".mts"
 		}) {
-			summary.Coverage.Reason += " Native ESM coverage is not supported by NYC's require hook. Tracing imports do not instrument source coverage; review a separate ESM instrumentation step."
+			cause = mochaESMCoverageCause
+		}
+		if status != "observed" && cause != "" {
+			summary.Coverage.Reason += " " + cause
 		}
 	}
 	// A setup failure before execution must not look like a successful command.
@@ -511,6 +517,16 @@ func tracerDescription(result validationResult) string {
 		return result.Tracer
 	}
 	return result.Tracer + " · " + result.TracerSource
+}
+
+// The reason of the first real-suite run without coverage, or "".
+func missingRealCoverageReason(result validationResult) string {
+	for _, run := range result.Runs {
+		if run.Coverage != nil && run.Coverage.Status != "observed" {
+			return run.Coverage.Reason
+		}
+	}
+	return ""
 }
 
 func missingRealCoverage(result validationResult) bool {
