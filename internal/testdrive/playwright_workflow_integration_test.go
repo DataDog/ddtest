@@ -44,7 +44,7 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
-			require.NoError(t, copyConfiguration(ctx, modules, filepath.Join(root, "node_modules")))
+			require.NoError(t, copyConfiguration(ctx, modules, filepath.Join(root, "node_modules"), false))
 			write := func(name, value string) {
 				require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
 				requireWriteFile(t, filepath.Join(root, name), value)
