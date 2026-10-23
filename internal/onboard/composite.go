@@ -63,7 +63,7 @@ func expandCompositeSteps(root, source string, steps []runtimeStep) []runtimeSte
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
 		root = resolved
 	}
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	var expand func(runtimeStep, []string) []runtimeStep
 	expand = func(step runtimeStep, stack []string) []runtimeStep {
 		remaining--

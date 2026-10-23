@@ -45,6 +45,9 @@ func summarizeValidation(result validationResult) validationSummary {
 		if supportsValidationFramework(result.Framework) && !hasValidationPair(result) {
 			summary.BlockingChecks = append(summary.BlockingChecks, "current baseline and reporting-only execution evidence is missing")
 		}
+		if missingRealCoverage(result) {
+			summary.BlockingChecks = append(summary.BlockingChecks, displayName(result.Framework)+" real-suite coverage was not observed: "+missingRealCoverageReason(result)+" Synthetic skipping probes do not validate coverage of customer source; preserve coverage thresholds.")
+		}
 		if result.Compatibility.Status != "" && result.Compatibility.Status != "compatible" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility: "+result.Compatibility.Status)
 		}

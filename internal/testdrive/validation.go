@@ -59,15 +59,17 @@ type runSpec struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
-	ReplacedReporters               []string
-	Role                            runRole
-	temporaryRoot                   string
-	commandOutput                   string
-	commandError                    error
-	Project                         string
-	Skipping                        *skippingDiagnostic
-	root                            string
-	checkoutRoot                    string
+	ReplacedReporters []string
+	Role              runRole
+	temporaryRoot     string
+	commandOutput     string
+	commandError      error
+	Project           string
+	Skipping          *skippingDiagnostic
+	root              string
+	checkoutRoot      string
+	// Why a real-suite Mocha run may report no per-test coverage.
+	coverageCause                   string
 	framework                       string
 	Name                            string
 	Command                         string
@@ -94,9 +96,19 @@ type testCounts struct {
 	Other   int `json:"other"`
 }
 
+type coverageSummary struct {
+	Reason       string  `json:"reason,omitempty"`
+	Ratio        float64 `json:"covered_test_ratio"`
+	Status       string  `json:"status"`
+	CoveredTests int     `json:"covered_tests"`
+	TotalTests   int     `json:"total_tests"`
+	Level        string  `json:"level,omitempty"`
+}
+
 type runSummary struct {
 	ReplacedReporters               []string            `json:"replaced_reporters,omitempty"`
 	Role                            runRole             `json:"role"`
+	Coverage                        *coverageSummary    `json:"coverage,omitempty"`
 	ExecutionPath                   string              `json:"execution_path,omitempty"`
 	Workers                         int                 `json:"workers,omitempty"`
 	PlannerSkipped                  bool                `json:"probe_skipped_by_planner,omitempty"`
@@ -123,6 +135,23 @@ func (r validationRun) summary() runSummary {
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)
+	}
+	if r.framework == "mocha" && r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") && r.Facts.TestCount > 0 {
+		status := "observed"
+		if r.Facts.CoveredTestCount == 0 {
+			status = "not observed"
+		}
+		summary.Coverage = &coverageSummary{Status: status, CoveredTests: r.Facts.CoveredTestCount, TotalTests: r.Facts.TestCount, Level: r.Facts.CoverageLevel, Ratio: float64(r.Facts.CoveredTestCount) / float64(r.Facts.TestCount)}
+		summary.Coverage.Reason = fmt.Sprintf("Coverage reported for %d/%d real tests; synthetic probes are excluded.", r.Facts.CoveredTestCount, r.Facts.TestCount)
+		cause := r.coverageCause
+		if cause == "" && slices.ContainsFunc(r.Tests, func(test jestTest) bool {
+			return filepath.Ext(test.File) == ".mjs" || filepath.Ext(test.File) == ".mts"
+		}) {
+			cause = mochaESMCoverageCause
+		}
+		if status != "observed" && cause != "" {
+			summary.Coverage.Reason += " " + cause
+		}
 	}
 	// A setup failure before execution must not look like a successful command.
 	if r.Command != "" {
@@ -422,7 +451,7 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	result.CompletedAt = time.Now().UTC()
 	result.WorkingDirectory = repositoryRoot
 	result.CIExecution = verdict{Status: "not exercised", Reason: "Local-only validation; CI execution and Datadog backend processing were not exercised."}
-	result.LocalSuccess = result.Compatibility.Status == "compatible" && result.Error == "" && featureChecksPassed(result.Framework, result.Features)
+	result.LocalSuccess = result.Compatibility.Status == "compatible" && result.Error == "" && featureChecksPassed(result.Framework, result.Features) && !missingRealCoverage(*result)
 	if supportsValidationFramework(result.Framework) {
 		result.LocalSuccess = result.LocalSuccess && hasValidationPair(*result)
 	}
@@ -488,4 +517,23 @@ func tracerDescription(result validationResult) string {
 		return result.Tracer
 	}
 	return result.Tracer + " · " + result.TracerSource
+}
+
+// The reason of the first real-suite run without coverage, or "".
+func missingRealCoverageReason(result validationResult) string {
+	for _, run := range result.Runs {
+		if run.Coverage != nil && run.Coverage.Status != "observed" {
+			return run.Coverage.Reason
+		}
+	}
+	return ""
+}
+
+func missingRealCoverage(result validationResult) bool {
+	for _, run := range result.Runs {
+		if run.Coverage != nil && run.Coverage.Status != "observed" {
+			return true
+		}
+	}
+	return false
 }

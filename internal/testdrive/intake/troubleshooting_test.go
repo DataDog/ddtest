@@ -57,7 +57,7 @@ func TestTroubleshootFrameworkWithoutNYC(t *testing.T) {
 			if tc.framework == "Mocha" {
 				wantTitle = "Install nyc for Mocha coverage"
 				require.NotContains(t, advice[0].Text, "./node_modules/.bin/nyc ddtest")
-				require.Contains(t, advice[0].Text, "Testdrive will use NYC automatically")
+				require.Contains(t, advice[0].Text, "Select the same NYC-wrapped command")
 			}
 			require.Equal(t, wantTitle, advice[0].Title)
 			require.Contains(t, advice[0].Text, "npm install --save-dev nyc")
@@ -91,4 +91,13 @@ func TestTroubleshootFrameworkWithoutNYC(t *testing.T) {
 			require.Empty(t, Troubleshoot(root, tc.framework, Facts{}))
 		})
 	}
+}
+
+func TestMochaExistingBabelIstanbulAdvice(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "babel.config.cjs"), []byte(`module.exports={plugins:['istanbul']}`), 0600))
+	advice := Troubleshoot(root, "Mocha", Facts{MissingCoverage: true})
+	require.Len(t, advice, 1)
+	require.Equal(t, "Check existing Babel Istanbul instrumentation", advice[0].Title)
+	require.NotContains(t, advice[0].Text, "npm install")
 }

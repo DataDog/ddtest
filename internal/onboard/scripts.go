@@ -8,6 +8,7 @@ package onboard
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,6 +21,7 @@ import (
 // A resolution can be unrelated, matched, or unresolved. A matched command with
 // an unresolved component is still inconclusive; it must not hide custom wrappers.
 type commandResolution struct {
+	MochaAuxiliary bool
 	OtherFramework bool
 	Setup          []string
 
@@ -55,7 +57,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		}
 		return commandResolution{}
 	}
-	if language != "javascript" || (framework != "jest" && framework != "vitest") {
+	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "mocha") {
 		return commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, framework)}
 	}
 	// GitHub expands these before the shell runs; they are not shell syntax.
@@ -93,12 +95,23 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return result
 	}
 
-	remaining := 256
+	if framework == "mocha" {
+		if result, ok := reviewMochaBrowserStep(root, resolvedDirectory, step.Run); ok {
+			return result
+		}
+	}
+	remaining := packageScriptExpansionLimit
 	result := resolveJestSequence(root, resolvedDirectory, step.Run, nil, &remaining, framework)
 
 	if _, err := staticCommands(step.Run); err != nil {
 		if metadata, ok := resolveMetadataStep(root, workflow, job, step, framework); ok {
 			return metadata
+		}
+	}
+	if result.MochaAuxiliary && (result.ReviewReason == "" || result.Matched) {
+		result.Reason = joinDiagnostic(result.Reason, "Node script is not identified as Mocha outside a resolved Mocha package command; review its test scope.")
+		for i := range result.Tests {
+			result.Tests[i].UnvalidatedSetup = append(result.Tests[i].UnvalidatedSetup, result.Reason)
 		}
 	}
 	if !result.Matched && result.Reason == "" && result.ReviewReason != "" {
@@ -108,10 +121,14 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	return result
 }
 
+// Bound package script and composite expansion so a cyclic or very large
+// alias graph cannot hang discovery.
+const packageScriptExpansionLimit = 256
+
 // Resolve only ordinary static commands and package script aliases. Never run
 // a shell, load JavaScript, or rewrite the CI entry point during discovery.
 func resolveJestCommand(directory, command string, stack []string) commandResolution {
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	return resolveJestSequence(directory, directory, command, stack, &remaining)
 }
 
@@ -141,7 +158,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 		}
 		*remaining--
 		if *remaining < 0 {
-			return unresolvedCommand("Package script expansion exceeds 256 commands")
+			return unresolvedCommand(fmt.Sprintf("Package script expansion exceeds %d commands", packageScriptExpansionLimit))
 		}
 		if len(words) > 0 && words[0] == "cd" {
 			if len(words) != 2 {
@@ -172,6 +189,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			}
 		}
 		result.Tests = append(result.Tests, part.Tests...)
+		result.MochaAuxiliary = result.MochaAuxiliary || part.MochaAuxiliary
 		setup = append(setup, part.Setup...)
 
 		result.Builds = append(result.Builds, part.Builds...)
@@ -212,12 +230,12 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	if len(words) == 0 {
 		return commandResolution{}
 	}
-	command := shellCommand(words)
 	words, assignments, err := commandEnvironment(words)
 	if err != nil {
 		return unresolvedCommand(err.Error())
 	}
 	defer func() { applyCommandEnvironment(&result, assignments) }()
+	command := shellCommand(words)
 	if literalFileOperation(words) {
 		return commandResolution{}
 	}
@@ -258,6 +276,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			words = words[2:]
 		}
 
+		if framework == "mocha" && len(words) > 0 && slices.Contains([]string{"--no-install", "--no"}, words[0]) {
+			words = words[1:]
+		}
 		if npmExec {
 			separator := slices.Index(words, "--")
 			for i, word := range words {
@@ -281,16 +302,38 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	runner := framework
 
 	if words[0] == runner || words[0] == "./node_modules/.bin/"+runner || words[0] == "node_modules/.bin/"+runner || words[0] == filepath.Join(directory, "node_modules", ".bin", runner) {
+		if framework == "mocha" && mochaWatchMode(directory, words[1:]) {
+			return unresolvedCommand("Mocha watch mode is not supported; select a finite test command")
+		}
 		if framework == "jest" && jestMetadataOptions(words[1:]) {
 			return commandResolution{}
 		}
 		canonicalRoot, _ := filepath.EvalSymlinks(root)
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
-		return commandResolution{Matched: true, SingleJest: true, Evidence: command,
-			Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}}}
+		entry := TestCommand{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}
+		if framework == "mocha" {
+			entry.mochaIstanbul = MochaBabelIstanbulConfigured(directory)
+			entry.mochaRunnerArgs = slices.Clone(words[1:])
+			entry.mochaProbeCommand = shellquote.Join(words...)
+			entry.mochaLookupDirectory = filepath.ToSlash(relative)
+			entry.mochaProbeDirectory = filepath.ToSlash(relative)
+			entry.mochaESM = mochaESMInputs(directory, words[1:])
+		}
+		return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{entry}}
 	}
 
+	if framework == "mocha" {
+		if words[0] == "mochify" || mochaBrowserShell(root, directory, words[0]) {
+			return commandResolution{ReviewReason: "Mochify browser tests are outside Node Mocha validation: " + command}
+		}
+		if words[0] == "node" {
+			return resolveMochaNode(root, directory, words)
+		}
+		if filepath.Base(words[0]) == "c8" || filepath.Base(words[0]) == "nyc" {
+			return resolveMochaCoverage(root, directory, words, stack, remaining, framework)
+		}
+	}
 	if tool, ok := discoveryTools[words[0]]; ok {
 		return resolveDiscoveryTool(root, directory, words, framework, tool)
 	}
@@ -323,8 +366,17 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 
 		return unresolvedCommand("Unsupported script orchestration: " + command)
 	case "npm-run-all", "npm-run-all2", "run-s":
-
-		return unresolvedCommand("Unsupported script orchestration: " + command)
+		if framework != "mocha" || len(words) < 2 {
+			return unresolvedCommand("Unsupported script orchestration: " + command)
+		}
+		var scripts []string
+		for _, name := range words[1:] {
+			if strings.ContainsAny(name, "*?[]{} ") || strings.HasPrefix(name, "-") {
+				return unresolvedCommand("Script orchestration needs literal script names: " + command)
+			}
+			scripts = append(scripts, shellquote.Join("npm", "run", name))
+		}
+		return resolveJestSequence(root, directory, strings.Join(scripts, " && "), stack, remaining, framework)
 
 	case "npm", "yarn", "pnpm", "bun":
 		// Yarn without a subcommand installs dependencies. npm accepts global
@@ -427,11 +479,73 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		script += " " + shellquote.Join(args...)
 	}
 
-	result := resolveJestSequence(root, directory, script, append(slices.Clone(stack), key), remaining, frameworks...)
+	mocha := len(frameworks) > 0 && frameworks[0] == "mocha"
+	var result commandResolution
+	if mocha && strings.HasPrefix(command, "npm ") {
+		// npm starts each lifecycle script in a fresh shell at the package root.
+		// Resolve them independently so an inner cd/export cannot affect the next hook.
+		singleInvocation := true
+		for _, part := range []string{manifest.Scripts["pre"+name], script, manifest.Scripts["post"+name]} {
+			if part == "" {
+				continue
+			}
+			resolved := resolveJestSequence(root, directory, part, append(slices.Clone(stack), key), remaining, frameworks...)
+			if resolved.Matched {
+				singleInvocation = singleInvocation && resolved.SingleJest
+			}
+			result.Tests = append(result.Tests, resolved.Tests...)
+			result.Builds = append(result.Builds, resolved.Builds...)
+			result.Setup = append(result.Setup, resolved.Setup...)
+			result.Matched = result.Matched || resolved.Matched
+			result.OtherFramework = result.OtherFramework || resolved.OtherFramework
+			result.MochaAuxiliary = result.MochaAuxiliary || resolved.MochaAuxiliary
+			result.Reason = joinDiagnostic(result.Reason, resolved.Reason)
+			result.ReviewReason = joinDiagnostic(result.ReviewReason, resolved.ReviewReason)
+			result.Evidence = joinDiagnostic(result.Evidence, resolved.Evidence)
+		}
+		lifecycle = ""
+		result.SingleJest = singleInvocation && len(result.Tests) == 1 && manifest.Scripts["pre"+name] == "" && manifest.Scripts["post"+name] == ""
+	} else {
+		result = resolveJestSequence(root, directory, script, append(slices.Clone(stack), key), remaining, frameworks...)
+	}
+
+	if mocha && lifecycle == "" && result.Reason == "" && !result.Matched && result.MochaAuxiliary && name == "build" {
+		return commandResolution{Builds: []BuildCommand{{Directory: repositoryPath(root, directory), Command: command, Kind: "package-build"}}}
+	}
+	if mocha && len(result.Tests) > 1 {
+		return unresolvedCommand("Multiple Mocha invocations in one package alias require ordered execution review; preserve the original alias: " + command)
+	}
+	if mocha && lifecycle == "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
+		if !result.SingleJest && result.Tests[0].mochaProbeCommand == "" {
+			result.Tests[0].mochaProbeCommand = result.Tests[0].Command
+		}
+		result.SingleJest = true
+		result.MochaAuxiliary = false
+		// The full alias starts at the caller for lifecycle fidelity; probes
+		// retain their resolved runner directory and scoped environment.
+		result.Tests[0].Directory = repositoryPath(root, directory)
+		if len(result.Tests[0].Environment) > 0 {
+			// Outer assignments apply, but an inner script's own assignment
+			// (MODE=inner under MODE=outer npm run unit) wins, as in the shell.
+			merged := maps.Clone(result.Tests[0].Environment)
+			maps.Copy(merged, result.Tests[0].mochaProbeEnvironment)
+			result.Tests[0].mochaProbeEnvironment = merged
+		}
+		for _, hook := range []string{"pre" + name, "post" + name} {
+			if value := manifest.Scripts[hook]; value != "" {
+				result.Tests[0].LifecycleHooks = append(result.Tests[0].LifecycleHooks, repositoryPath(root, directory)+": "+hook+" -> "+value)
+			}
+		}
+		result.Tests[0].Environment = nil
+		result.Tests[0].Resolution = command + " -> " + result.Evidence
+		result.Tests[0].Command = command
+		result.Tests[0].Prerequisites = nil
+		result.Builds = nil
+	}
 
 	// An npm alias without -- consumes newly appended runner flags. Expand
 	// this boundary when forwarding, while retaining already-safe aliases.
-	if result.SingleJest {
+	if result.SingleJest && !mocha {
 		commands, err := staticCommands(script)
 		if err == nil && len(commands) == 1 {
 			words, _, err := commandEnvironment(commands[0])

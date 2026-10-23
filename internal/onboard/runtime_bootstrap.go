@@ -8,6 +8,7 @@ package onboard
 import (
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -74,7 +75,24 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		}
 		return ""
 	}
-	return checkJestBootstrap(workflow, job, step, row, frameworks...)
+	if reason := checkJestBootstrap(workflow, job, step, row, frameworks...); reason != "" {
+		return reason
+	}
+	if len(frameworks) > 0 && frameworks[0] == "mocha" {
+		for _, command := range commands {
+			if command.mochaESM && checkJestBootstrap(workflow, job, step, row, "vitest") != "" {
+				return "Mocha ESM inputs require the action's --import ${{ env.DD_TRACE_ESM_IMPORT }} alongside its require preload"
+			}
+			if !command.usesNYC && !command.mochaIstanbul {
+				reason := "Cannot verify Istanbul/NYC coverage setup for Mocha CI command: " + command.Command + ". Wrap the original command with npx --no-install nyc --, adding nyc as a dev dependency if the project does not declare it; real source coverage is checked separately."
+				if words, err := shellquote.Split(command.Command); err == nil && len(words) > 0 && filepath.Base(words[0]) == "c8" {
+					reason = "Mocha CI command uses c8: " + command.Command + ". c8's V8 coverage is not reported per test; wrap the Mocha command with npx --no-install nyc -- instead."
+				}
+				return reason
+			}
+		}
+	}
+	return ""
 }
 
 func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {

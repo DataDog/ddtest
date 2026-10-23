@@ -274,6 +274,9 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 	if t.framework.Name() == "vitest" {
 		preflight = t.checkVitestPreflight
 	}
+	if t.framework.Name() == "mocha" {
+		preflight = t.checkMochaPreflight
+	}
 	if err := preflight(ctx, output, &result); err != nil {
 		result.Error = err.Error()
 		return err

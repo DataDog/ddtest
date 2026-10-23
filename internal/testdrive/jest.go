@@ -299,7 +299,10 @@ func outcomeKeys(run validationRun) []string {
 }
 
 func compareJest(baseline, instrumented validationRun) verdict {
-	if baseline.ResultError != "" || executedTests(baseline) == 0 {
+	if baseline.ResultError != "" {
+		return verdict{Status: "inconclusive", Reason: "The uninstrumented run did not produce usable results: " + reportText(baseline.ResultError) + "."}
+	}
+	if executedTests(baseline) == 0 {
 		return verdict{Status: "inconclusive", Reason: "The uninstrumented run did not produce results for any executed tests; check project setup using the recorded baseline command."}
 	}
 	if baseline.Facts.TestEventCount > 0 {
@@ -408,6 +411,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 
 func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
 	run := t.runJest
+	if t.framework.Name() == "mocha" {
+		run = t.runMocha
+	}
 	if t.framework.Name() == "vitest" {
 		run = t.runVitest
 	}
@@ -443,6 +449,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	}
 	if t.framework.Name() == "vitest" {
 		return t.runVitestFeatures(ctx, output, session, preload, baseline, result)
+	}
+	if t.framework.Name() == "mocha" {
+		return t.runMochaFeatures(ctx, output, session, preload, baseline, result)
 	}
 	if err := t.runJestFeatures(ctx, output, session, preload, result); err != nil {
 		return err

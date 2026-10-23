@@ -155,7 +155,12 @@ func TestJestValidationCommandKeepsCIEnvironment(t *testing.T) {
 `)
 	selected, err := JestValidationCommand(root)
 	require.NoError(t, err)
-	require.Equal(t, "NODE_OPTIONS=--experimental-vm-modules TZ=UTC "+shellquote.Join(filepath.Join(root, "node_modules/.bin/jest")), selected)
+	require.Equal(t, "TZ=UTC "+shellquote.Join(filepath.Join(root, "node_modules/.bin/jest")), selected)
+	plan, err := JestExecutionCommand(root)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"NODE_OPTIONS": "--experimental-vm-modules"}, plan.Environment, "testdrive adds its preload to NODE_OPTIONS, so it isn't a command assignment")
+	_, _, _, err = ParseValidationCommand(plan.Command)
+	require.NoError(t, err, "the selected command must stay runnable")
 
 	root = newJestRepository(t, `jobs:
   utc:

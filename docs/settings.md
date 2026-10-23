@@ -113,3 +113,7 @@ Use `--all --check-only --yes` before `--all --yes`, or select a focused command
 with `--command "npx vitest run --config ci.ts"`. Testdrive translates `--vitest-config` (including its environment setting) into
 the corresponding selected-command option; an explicit command config wins. See
 [Vitest validation](running.md#vitest-testdrive-validation) for scope and evidence.
+
+### Mocha testdrive validation
+
+See [Mocha validation](running.md#mocha-testdrive-validation) for commands, coverage requirements and limitations.

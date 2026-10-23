@@ -25,7 +25,7 @@ func TestScopeDirectoryChangesAndUnsafeInputs(t *testing.T) {
 		{"cd $(node setup.js) && npm test", 0, ""},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
-			remaining := 256
+			remaining := packageScriptExpansionLimit
 			result := resolveJestSequence(root, root, tc.command, nil, &remaining, "jest")
 			require.Len(t, result.Tests, tc.count)
 			if tc.count > 0 {
@@ -52,7 +52,7 @@ func TestPartialShellDiscoveryPreservesStateBoundaries(t *testing.T) {
 		"pnpm add react@$(node version.js)\npnpm test",
 		"node setup.js > setup.log && pnpm test",
 	} {
-		remaining := 256
+		remaining := packageScriptExpansionLimit
 		result := resolveJestSequence(root, root, command, nil, &remaining, "jest")
 		require.Len(t, result.Tests, 1, command)
 		require.NotEmpty(t, result.Tests[0].UnvalidatedSetup, command)
@@ -65,7 +65,7 @@ func TestPartialShellDiscoveryPreservesStateBoundaries(t *testing.T) {
 		"if true; then cd app; fi; pnpm test", "pnpm add $DEP | pnpm test",
 		"pnpm add $DEP & pnpm test", "$COMMAND && pnpm test",
 	} {
-		remaining := 256
+		remaining := packageScriptExpansionLimit
 		result := resolveJestSequence(root, root, command, nil, &remaining, "jest")
 		require.Empty(t, result.Tests, command)
 		require.NotEmpty(t, result.Reason, command)

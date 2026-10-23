@@ -13,17 +13,29 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
-	ScopeCommand     string            `json:"-"` // Original invocation before adding a forwarding wrapper.
-	ProbeLintSkipped bool              `json:"probe_lint_skipped,omitempty"`
-	ReviewReason     string            `json:"review_reason,omitempty"`
-	Resolution       string            `json:"resolution,omitempty"`
-	Directory        string            `json:"directory"`
-	Command          string            `json:"command"`
-	Environment      map[string]string `json:"environment,omitempty"`
-	locations        []commandLocation
-	Locations        []string       `json:"locations,omitempty"`
-	Prerequisites    []BuildCommand `json:"prerequisites,omitempty"`
-	UnvalidatedSetup []string       `json:"unvalidated_setup,omitempty"`
+	ProbeCoverageThresholdsDisabled bool `json:"-"`
+	mochaIstanbul                   bool
+	LifecycleHooks                  []string `json:"lifecycle_hooks,omitempty"`
+	mochaRunnerArgs                 []string
+	mochaLookupDirectory            string
+	mochaProbeDirectory             string
+	mochaProbeEnvironment           map[string]string
+
+	ScopeCommand      string            `json:"-"` // Original invocation before adding a forwarding wrapper.
+	ProbeLintSkipped  bool              `json:"probe_lint_skipped,omitempty"`
+	ReviewReason      string            `json:"review_reason,omitempty"`
+	Resolution        string            `json:"resolution,omitempty"`
+	Directory         string            `json:"directory"`
+	Command           string            `json:"command"`
+	Environment       map[string]string `json:"environment,omitempty"`
+	locations         []commandLocation
+	Locations         []string       `json:"locations,omitempty"`
+	Prerequisites     []BuildCommand `json:"prerequisites,omitempty"`
+	UnvalidatedSetup  []string       `json:"unvalidated_setup,omitempty"`
+	CICoverageCommand string         `json:"ci_coverage_command,omitempty"`
+	mochaESM          bool
+	mochaProbeCommand string
+	usesNYC           bool
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same
@@ -66,7 +78,7 @@ func yarnImplicitInstall(words []string) bool {
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" {
+	if framework != "jest" && framework != "vitest" && framework != "mocha" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
@@ -145,6 +157,12 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 						resolution.Builds[j].Environment = mergeEnvironment(env, resolution.Builds[j].Environment)
 					}
 					for _, entry := range resolution.Tests {
+						if framework == "mocha" && !entry.usesNYC && !entry.mochaIstanbul {
+							parts, err := staticCommands(entry.Command)
+							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {
+								entry.CICoverageCommand = "npx --no-install nyc -- " + entry.Command
+							}
+						}
 
 						for j := range entry.Prerequisites {
 							entry.Prerequisites[j].Environment = mergeEnvironment(env, entry.Prerequisites[j].Environment)
@@ -189,7 +207,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 
 // ValidationCommands also resolves a selected local alias, for scope accounting.
 func ValidationCommands(root, command, framework string) []TestCommand {
-	remaining := 256
+	remaining := packageScriptExpansionLimit
 	return resolveJestSequence(root, root, command, nil, &remaining, framework).Tests
 }
 

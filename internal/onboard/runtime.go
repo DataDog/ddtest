@@ -382,6 +382,14 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 
 func evaluateRuntimeTest(ctx context.Context, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, resolution commandResolution, state runtimeState, finding RuntimeFinding, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) RuntimeFinding {
 	finding.Code = ""
+	if len(frameworks) > 0 && frameworks[0] == "mocha" && mochaInstrumentationDisabled(workflow, job, step, row) {
+		finding.Status, finding.Code = StatusExcluded, CodeExcludedRuntime
+		finding.Reason = "Mocha tests still run, but DD_CIVISIBILITY_ENABLED=false excludes this entry from instrumentation. This runtime was not validated with the tracer."
+		if reason := checkExcludedJestBootstrap(workflow, job, step, row); reason != "" {
+			finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedExclusion, reason
+		}
+		return finding
+	}
 	if state.action == "" {
 		finding.Status, finding.Code = StatusIncompatible, CodeMissingInstrumentation
 		if state.skippedAction {
@@ -525,4 +533,18 @@ func actionSelectsJavaScript(step runtimeStep, row map[string]any) (bool, error)
 		return false, err
 	}
 	return languages == "all" || slices.Contains(strings.Fields(languages), "js"), nil
+}
+
+func mochaInstrumentationDisabled(workflow ciWorkflow, job runtimeJob, step runtimeStep, rows ...map[string]any) bool {
+	value := ""
+	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		if current, ok := env["DD_CIVISIBILITY_ENABLED"]; ok {
+			value = current
+		}
+	}
+	if len(rows) > 0 {
+		resolved, err := bootstrapOptions(value, rows[0], conditionEnvironment(workflow, job, step, rows[0]))
+		return err == nil && resolved == "false"
+	}
+	return value == "false"
 }
