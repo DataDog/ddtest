@@ -32,8 +32,34 @@ def contained(root, relative):
     return result
 
 
-def verify_library(directory, manifest):
+def verify_test_inventory(directory):
+    """Check that each test TESTS.json records as adapted still has that hash."""
+    inventory = directory / "TESTS.json"
+    if not inventory.is_file():
+        return []
     errors = []
+    prefix = f"internal/thirdparty/{directory.name}/"
+    for entry in json.loads(inventory.read_text()).get("files", []):
+        destination = entry.get("destination", "")
+        if "adapted_sha256" not in entry:
+            continue
+        if not destination.startswith(prefix):
+            errors.append(f"test inventory destination outside {prefix}: {destination}")
+            continue
+        try:
+            file = contained(directory, destination[len(prefix):])
+        except ValueError as error:
+            errors.append(str(error))
+            continue
+        if not file.is_file():
+            errors.append(f"test inventory file missing: {destination}")
+        elif digest(file) != entry["adapted_sha256"]:
+            errors.append(f"test inventory hash changed: {destination}")
+    return errors
+
+
+def verify_library(directory, manifest):
+    errors = verify_test_inventory(directory)
     if not re.fullmatch(r"[0-9a-f]{40}", manifest["commit"]):
         errors.append("an exact 40-character upstream commit is required")
     entries = manifest["files"]

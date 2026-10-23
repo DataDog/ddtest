@@ -37,7 +37,9 @@ The SDK's [test inventory](../internal/thirdparty/dd-trace-go/TESTS.json) record
 ported assertions and adaptations. The platform
 [extraction inventory](../internal/thirdparty/xsys/EXTRACTION.json) identifies
 selected declarations and their origins. These records need to agree with
-`SOURCE.json` after an update.
+`SOURCE.json` after an update. `upstream.py verify` checks each test that the
+test inventory records with an `adapted_sha256`: a change to such a test needs
+its new hash there, and its `adaptation` says what the change keeps or adds.
 
 The SDK's [performance adaptation record](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md)
 explains each hot-path change, its ownership/lifetime rules and the regression
@@ -92,6 +94,8 @@ python3 scripts/upstream.py verify
 original hashes, and refuses missing files, unregistered code and changed
 license texts. It cannot advance the SDK base. Origin READMEs and local test
 inventories are also hashed; editing them needs the same review and rehash.
+`rehash` also refuses a test whose hash the test inventory no longer records,
+so update `TESTS.json` first.
 
 ## Updating the SDK base
 

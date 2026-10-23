@@ -1,6 +1,7 @@
 """Contracts for the offline provenance audit and upstream comparisons."""
 
 import hashlib
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -33,6 +34,27 @@ class SourceAuditTests(unittest.TestCase):
         self.assertIn("local source changed: source.go", errors)
         self.assertIn("source absent from manifest: new.go", errors)
         self.assertIn("license missing from source/manifest: LICENSE", errors)
+
+    def test_detects_a_test_that_its_inventory_no_longer_describes(self):
+        (self.root / "source_test.go").write_text("package example\n")
+        self.manifest["files"].append({"path": "source_test.go", "sha256": upstream.digest(self.root / "source_test.go")})
+        destination = f"internal/thirdparty/{self.root.name}/source_test.go"
+        inventory = {"files": [
+            {"destination": destination, "adapted_sha256": upstream.digest(self.root / "source_test.go")},
+            {"destination": f"internal/thirdparty/{self.root.name}/fixture_test.go"},
+        ]}
+        (self.root / "TESTS.json").write_text(json.dumps(inventory))
+        self.assertEqual(upstream.verify_library(self.root, self.manifest), [])
+        (self.root / "source_test.go").write_text("package example // changed\n")
+        self.assertIn(f"test inventory hash changed: {destination}", upstream.verify_library(self.root, self.manifest))
+        (self.root / "source_test.go").unlink()
+        self.assertIn(f"test inventory file missing: {destination}", upstream.verify_library(self.root, self.manifest))
+        inventory["files"][0]["destination"] = "internal/thirdparty/other/source_test.go"
+        (self.root / "TESTS.json").write_text(json.dumps(inventory))
+        self.assertIn(
+            f"test inventory destination outside internal/thirdparty/{self.root.name}/: internal/thirdparty/other/source_test.go",
+            upstream.verify_library(self.root, self.manifest),
+        )
 
     def test_rejects_source_paths_outside_the_recorded_root(self):
         for path in ("../source.go", "/source.go", "..\\source.go"):
