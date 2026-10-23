@@ -242,3 +242,23 @@ func TestPlaywrightDiscoveryOwnsImportSideEffects(t *testing.T) {
 		return e != nil
 	}, 3*time.Second, 20*time.Millisecond)
 }
+
+func TestPlaywrightDiscoveryWithFileTerminatorOnlyLists(t *testing.T) {
+	modules := os.Getenv("DDTEST_PLAYWRIGHT_NODE_MODULES")
+	if modules == "" {
+		t.Skip("set DDTEST_PLAYWRIGHT_NODE_MODULES")
+	}
+	root := t.TempDir()
+	t.Chdir(root)
+	require.NoError(t, os.Symlink(modules, filepath.Join(root, "node_modules")))
+	marker := filepath.Join(root, "executed")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "tests"), 0700))
+	requireWriteFile(t, filepath.Join(root, "playwright.config.cjs"), `module.exports={testDir:'tests'};`)
+	requireWriteFile(t, filepath.Join(root, "tests", "foo.spec.cjs"), fmt.Sprintf(`const {test}=require('@playwright/test');test('selected',()=>require('node:fs').writeFileSync(%q,'1'));`, marker))
+	requireWriteFile(t, filepath.Join(root, "tests", "other.spec.cjs"), `const {test}=require('@playwright/test');test('other',()=>{});`)
+	drive := &Testdrive{command: filepath.Join(root, "node_modules", ".bin", "playwright"), args: []string{"test", "--", "tests/foo.spec.cjs"}, executor: &ext.DefaultCommandExecutor{Timeout: 30 * time.Second}, repositoryRoot: root}
+	discovered, err := drive.inspectPlaywright(t.Context(), root, "", "")
+	require.NoError(t, err)
+	require.Len(t, discovered.Tests, 1, "the file filter after -- still selects one file")
+	require.NoFileExists(t, marker, "discovery lists tests; it must not execute them")
+}

@@ -11,7 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -347,4 +349,68 @@ func TestProcessStartedAfterOwnerClosedStopsWithoutFailingTheRun(t *testing.T) {
 	data, err := os.ReadFile(env["DDTEST_PROCESS_ERRORS"])
 	require.True(t, err != nil || len(data) == 0, "no connection failure is recorded: %s", data)
 	_ = owner.Close()
+}
+
+func TestSynchronousLaunchesAreSupervised(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node is required")
+	}
+	// A backgrounded non-Node descendant, as configuration or setup code may start.
+	background := `sh -c 'echo $$ > "$0"; while :; do sleep 1; done' %q >/dev/null 2>&1 &`
+	for name, launch := range map[string]string{
+		"spawnSync":    `require('node:child_process').spawnSync('/bin/sh', ['-c', %q])`,
+		"execSync":     `require('node:child_process').execSync(%q)`,
+		"execFileSync": `require('node:child_process').execFileSync('/bin/sh', ['-c', %q])`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			directory := t.TempDir()
+			env := map[string]string{}
+			owner, err := startProcessOwner(directory, env)
+			require.NoError(t, err)
+			pidFile := filepath.Join(t.TempDir(), "pid")
+			command := exec.CommandContext(t.Context(), node, "-e", fmt.Sprintf(launch, fmt.Sprintf(background, pidFile)))
+			command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, string(output))
+			var pid int
+			require.Eventually(t, func() bool {
+				data, err := os.ReadFile(pidFile)
+				pid, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+				return err == nil && pid > 0
+			}, 5*time.Second, 20*time.Millisecond)
+			t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+			require.NoError(t, owner.Close())
+			require.Eventually(t, func() bool { return syscall.Kill(pid, 0) != nil }, 3*time.Second, 20*time.Millisecond, "the descendant of a synchronous launch outlived its owner")
+		})
+	}
+}
+
+func TestSynchronousLaunchesKeepNativeResultsAndErrors(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node is required")
+	}
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	script := `const assert = require('node:assert'), cp = require('node:child_process')
+const result = cp.spawnSync('/bin/sh', ['-c', 'echo out; exit 3'], {encoding: 'utf8'})
+assert.equal(result.status, 3); assert.equal(result.stdout, 'out\n')
+assert.equal(cp.spawnSync('echo', ['shell', 'words'], {shell: true, encoding: 'utf8'}).stdout, 'shell words\n')
+assert.equal(cp.execSync('echo hi', {encoding: 'utf8'}), 'hi\n')
+assert.equal(cp.execFileSync(process.execPath, ['-p', '1 + 1'], {encoding: 'utf8'}), '2\n')
+assert.equal(cp.execFileSync('cat', {input: 'piped', encoding: 'utf8'}), 'piped')
+assert.throws(() => cp.execFileSync('/bin/sh', ['-c', 'exit 4'], {stdio: 'pipe'}), {message: 'Command failed: /bin/sh -c exit 4', status: 4})
+assert.throws(() => cp.execSync('exit 5', {stdio: 'pipe'}), {message: 'Command failed: exit 5', status: 5})
+assert.equal(cp.spawnSync('/no/such/executable').error.code, 'ENOENT')
+const timedOut = cp.spawnSync('/bin/sh', ['-c', 'sleep 5'], {timeout: 300})
+assert.equal(timedOut.error.message, 'spawnSync /bin/sh ETIMEDOUT'); assert.equal(timedOut.error.path, '/bin/sh')
+assert.deepEqual(timedOut.error.spawnargs, ['-c', 'sleep 5']); assert.equal(timedOut.signal, 'SIGTERM')`
+	command := exec.CommandContext(t.Context(), node, "-e", script)
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
 }

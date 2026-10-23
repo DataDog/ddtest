@@ -229,3 +229,21 @@ func TestFocusedCommandEnvironmentIsReportedWithSecretsMasked(t *testing.T) {
 	require.Contains(t, string(data), `"PLAYWRIGHT_JUNIT_OUTPUT_NAME": "results.xml"`)
 	require.NotContains(t, string(data), "abc")
 }
+
+func TestPlaywrightGeneratedOptionsPrecedeTheFileTerminator(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		args    []string
+		want    []string
+	}{
+		{"playwright", []string{"test", "--", "tests/foo.spec.js"}, []string{"test", "--list", "--", "tests/foo.spec.js"}},
+		{"npx", []string{"playwright", "test", "--", "tests/foo.spec.js"}, []string{"playwright", "test", "--list", "--", "tests/foo.spec.js"}},
+		{"playwright", []string{"test", "--project=chromium"}, []string{"test", "--project=chromium", "--list"}},
+		{"npm", []string{"test"}, []string{"test", "--", "--list"}},
+		{"npm", []string{"test", "--", "--", "tests/foo.spec.js"}, []string{"test", "--", "--list", "--", "tests/foo.spec.js"}},
+		{"npm", []string{"exec", "playwright", "test"}, []string{"exec", "playwright", "test", "--", "--list"}},
+		{"npm", []string{"exec", "--", "playwright", "test", "--", "tests/foo.spec.js"}, []string{"exec", "--", "playwright", "test", "--list", "--", "tests/foo.spec.js"}},
+	} {
+		require.Equal(t, tc.want, playwrightArgs(tc.command, tc.args, "--list"), "%s %v", tc.command, tc.args)
+	}
+}

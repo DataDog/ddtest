@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
@@ -155,12 +156,18 @@ func readPlaywrightResults(path string, run *validationRun) (playwrightResults, 
 	return result, nil
 }
 
+// Generated options must precede Playwright's own --, after which every
+// operand is a file filter; npm scripts and npx/pnpm/yarn forms are handled by
+// the shared helper.
 func playwrightArgs(command string, args []string, additions ...string) []string {
-	result := slices.Clone(args)
-	if filepath.Base(command) == "npm" && !slices.Contains(result, "--") {
-		result = append(result, "--")
+	if filepath.Base(command) == "npm" && (len(args) == 0 || !slices.Contains([]string{"test", "t", "tst", "run", "run-script"}, args[0])) {
+		// npm exec reads options anywhere before its --, so forward them after it.
+		if index := slices.Index(args, "--"); index >= 0 {
+			return append(slices.Clone(args[:index+1]), framework.WithFrameworkOptions(command, args[index+1:], "playwright", additions...)...)
+		}
+		return append(append(slices.Clone(args), "--"), additions...)
 	}
-	return append(result, additions...)
+	return framework.WithFrameworkOptions(command, args, "playwright", additions...)
 }
 
 func (t *Testdrive) playwrightInvocation(args []string) (string, []string) {

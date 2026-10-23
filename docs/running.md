@@ -637,8 +637,10 @@ config files and patch targets cannot resolve outside the checkout. Windows
 symlink creation can require Developer Mode or additional privilege.
 
 Marked abandoned configuration copies and sessions are recovered under the
-repository lock on the next invocation. Unmarked files and other repositories'
-storage are preserved. Failed full attempts replace old JSON evidence and remove
+repository lock on the next invocation. On macOS and Linux the lock lives in
+`/tmp`, like process-ownership storage, whatever `TMPDIR` is, so two invocations
+of one checkout with different `TMPDIR` values still exclude each other.
+Unmarked files and other repositories' storage are preserved. Failed full attempts replace old JSON evidence and remove
 stale HTML; check-only can retain one explicitly historical execution and leaves
 its HTML unchanged. HTML keeps every instrumented reporting snapshot, including
 repeat pairs, while aggregate execution counts include each primary run once.

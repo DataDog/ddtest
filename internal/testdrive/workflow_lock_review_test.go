@@ -9,9 +9,17 @@ import (
 	"testing"
 )
 
+// usePrivateWorkflowLocks keeps tests from changing the shared /tmp lock folder.
+func usePrivateWorkflowLocks(t *testing.T) {
+	t.Helper()
+	previous := workflowLockParent
+	workflowLockParent = t.TempDir()
+	t.Cleanup(func() { workflowLockParent = previous })
+}
+
 func TestWorkflowLockRejectsSharedDirectoryAndSymlink(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("TMPDIR", t.TempDir())
+	usePrivateWorkflowLocks(t)
 	directory := workflowLockDirectory(root)
 	require.NoError(t, os.Mkdir(directory, 0777))
 	require.NoError(t, os.Chmod(directory, 0777))
@@ -35,7 +43,7 @@ func TestWorkflowLockRejectsSharedDirectoryAndSymlink(t *testing.T) {
 
 func TestClosingAnOldLockCannotRemoveTheNextLock(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("TMPDIR", t.TempDir())
+	usePrivateWorkflowLocks(t)
 	first, err := acquireWorkflowLock(root)
 	require.NoError(t, err)
 	require.NoError(t, first.Close())
@@ -43,6 +51,20 @@ func TestClosingAnOldLockCannotRemoveTheNextLock(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, second.Close()) }()
 	require.NoError(t, first.Close())
+	_, err = acquireWorkflowLock(root)
+	require.ErrorIs(t, err, errWorkflowBusy)
+}
+
+func TestWorkflowLockIgnoresTMPDIR(t *testing.T) {
+	root := t.TempDir()
+	usePrivateWorkflowLocks(t)
+	t.Setenv("TMPDIR", t.TempDir())
+	first, err := acquireWorkflowLock(root)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, first.Close()) }()
+	// A second invocation with another TMPDIR would otherwise recover the
+	// first one's live /tmp process-owner storage as abandoned.
+	t.Setenv("TMPDIR", t.TempDir())
 	_, err = acquireWorkflowLock(root)
 	require.ErrorIs(t, err, errWorkflowBusy)
 }
