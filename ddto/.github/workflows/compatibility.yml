@@ -41,8 +41,10 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
         run: |
-          # Go tip changes daily, independently of the change under test.
-          if [[ "$EVENT" == schedule || "$EVENT" == workflow_dispatch ]]; then
+          # Go tip changes daily, independently of the change under test, so a
+          # pull request can fail on tip without causing it. A push to main
+          # reuses its pull request's run, tip included, and skips tip otherwise.
+          if [[ "$EVENT" != push ]]; then
             python scripts/ci_shards.py matrix --with-tip >> "$GITHUB_OUTPUT"
             echo "tip-enabled=true" >> "$GITHUB_OUTPUT"
           else
@@ -285,7 +287,8 @@ jobs:
         with:
           name: go-tip-toolchain
           path: ${{ runner.temp }}/toolchain/
-          retention-days: 1
+          # As long as the groups' results: rerunning a failed tip job needs it.
+          retention-days: 7
 
   mini:
     name: mini (Linux, ${{ matrix.go }}, ${{ matrix.mode }}, ${{ matrix.job }})

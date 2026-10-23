@@ -467,8 +467,8 @@ version and cover Testify, goleak, coverage, fuzz/examples and deferred delivery
 Go 1.26 and 1.27 run the complete SDK differential suite. Tip runs the native
 Mini fixtures and manual SDK span-copy cases; the frozen Orchestrion reference
 cannot currently serve as a tip oracle. Check Orchestrion separately before
-extending the tip job to those comparisons. Pull requests do not run tip; start
-the workflow manually to check tip before the nightly run.
+extending the tip job to those comparisons. Pull requests, nightly and manual
+runs test tip.
 
 Run `python scripts/dependency_boundary.py` before publication; the
 compatibility workflow runs it too. It fails on any external requirement or
@@ -509,8 +509,8 @@ processes and failure paths. Its comparison preserves CI attributes and
 hierarchy semantics while allowing the documented APM-only differences.
 Do not expand normalization to hide a changed CI value.
 
-The CI matrix executes Go 1.25/1.26/1.27 on Linux, plus tip on nightly and
-manual runs, and Go 1.27 on macOS/Windows. Linux also runs `-race`. Inspect the
+The CI matrix executes Go 1.25/1.26/1.27 on Linux, plus tip on pull requests,
+nightly and manual runs, and Go 1.27 on macOS/Windows. Linux also runs `-race`. Inspect the
 current head and PR merge checks after publication and verify that their
 checked-out inputs match the proposed change. Cross-compiling another
 architecture establishes build compatibility only. Actual intake acceptance and

@@ -122,7 +122,7 @@ program leaves running after it exits are not ended.
 
 Mini uses native Go 1.25 APIs. `internal/compat` contains only `AsType` and
 `Pointer`, which adapt Go 1.26 helpers used by the incorporated sources. CI
-checks Go 1.25, 1.26 and 1.27; scheduled and manual runs also build Go tip and
+checks Go 1.25, 1.26 and 1.27; pull requests, scheduled and manual runs also build Go tip and
 record its revision. The full SDK reference requires Go 1.26. Go 1.25 and tip
 have a native Mini feature suite, and tip also checks manual SDK span copies.
 The frozen Orchestrion reference fails on tip, so its complete differential

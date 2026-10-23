@@ -205,7 +205,7 @@ families and tip:
 | Linux | 1.25 | Native Mini suite in normal and `-race` modes; `GOTOOLCHAIN=local` prevents an upgrade |
 | Linux | 1.26 | Complete SDK differential suite |
 | Linux | 1.27 | Complete SDK differential suite in normal and `-race` modes |
-| Linux | tip | Native Mini suite and manual SDK span-copy cases; source commit recorded before building Go. Nightly and on manual dispatch |
+| Linux | tip | Native Mini suite and manual SDK span-copy cases; source commit recorded before building Go. Pull requests, nightly and manual dispatch |
 | macOS | 1.27 | Normal suite |
 | Windows | 1.27 | Normal suite |
 
@@ -233,8 +233,10 @@ Pull requests, pushes to `main`, a nightly schedule and manual dispatch start th
 workflow. Changes limited to `docs/` or `README.md` do not. A new push to a pull
 request cancels its previous run. A push to `main` whose tree already passed a
 complete run of a branch in this repository, typically the squash merge of an
-up-to-date pull request, reuses that run instead of repeating the matrix. Go tip
-changes independently of this repository, so it runs nightly and on demand.
+up-to-date pull request, reuses that run instead of repeating the matrix. Pull
+requests, nightly and manual runs also test Go tip, which changes independently
+of this repository: a pull request can fail on tip without causing it. A push to
+`main` that runs the matrix itself skips tip.
 
 ### Parallel test groups
 
@@ -261,7 +263,7 @@ flowchart LR
     Plan[Group matrix] --> Audit[Source and dependency audit]
     Plan --> Differential[Differential jobs]
     Plan --> Mini[Go 1.25 jobs]
-    Plan -. nightly .-> Tip[Tip jobs]
+    Plan -. not on push .-> Tip[Tip jobs]
     Toolchain[Build shared Go tip] -.-> Tip
     Audit --> Evidence[Complete compatibility evidence]
     Differential --> Evidence

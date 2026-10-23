@@ -259,7 +259,7 @@ reference are unchanged.
 Linux Go 1.26/1.27 and macOS/Windows Go 1.27. The Linux Go 1.27 race suite runs
 Mini first; the normal suites run the SDK first. Each differential configuration
 runs the complete suite once, split into test groups. Go 1.25 runs native Mini
-in normal/race modes. A nightly native job builds Go tip, records its revision
+in normal/race modes. A native job builds Go tip, records its revision
 and also checks manual SDK span copies; the frozen Orchestrion reference fails
 on tip, so that job does not establish Orchestrion parity.
 
