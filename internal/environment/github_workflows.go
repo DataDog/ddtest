@@ -138,6 +138,11 @@ func inspectTestJobs(root string, contents []byte, language, name string) (found
 	return foundTests, foundTests, nil
 }
 
+// LooksLikeTestCommand recognizes literal framework invocations without running project code.
+func LooksLikeTestCommand(root, commands, language, name string) bool {
+	return looksLikeTestJob(root, commands, language, name, 0)
+}
+
 // Resolve literal invocations without running project code. Limit script recursion
 // so cycles in package.json cannot hang onboarding.
 func looksLikeTestJob(root, commands, language, name string, depth int) bool {
