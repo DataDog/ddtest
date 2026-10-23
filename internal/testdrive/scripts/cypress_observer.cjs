@@ -41,6 +41,9 @@ function createObservedConfig (project, requested, directory, probe, component) 
       const observe = (event, handler) => event === 'after:run' ? handlers.push(handler) : on(event, handler)
       const returned = setup ? await setup.call(this, observe, effective) : effective
       const resolved = returned || effective
+      // A customer setupNodeEvents has the final word on config. Only the
+      // auto-retries probe lets the tracer apply a native retry budget.
+      if (options.probe && options.probeMode !== 'fail-once') resolved.retries = 0
       let probeExecutions = 0
       if (options.probe) {
         resolved.env = { ...resolved.env, __ddtest_probe_mode: options.probeMode }
@@ -79,8 +82,15 @@ function probeConfig (config) {
   }
   return typeof config === 'string' ? JSON.stringify(parsed) : parsed
 }
+// Cypress reads CYPRESS_RETRIES in any case; probes never inherit it.
+function clearRetryVariables (env) {
+  for (const name of Object.keys(env)) {
+    if (name.toUpperCase() === 'CYPRESS_RETRIES') delete env[name]
+  }
+}
 module.exports = createObservedConfig
 module.exports.probeConfig = probeConfig
+module.exports.clearRetryVariables = clearRetryVariables
 
 const cli = process.argv[1] || ''
 if (/[/\\](?:cypress[/\\]bin[/\\]cypress|\.bin[/\\]cypress)(?:\.js)?$/.test(cli) &&
@@ -119,8 +129,9 @@ if (/[/\\](?:cypress[/\\]bin[/\\]cypress|\.bin[/\\]cypress)(?:\.js)?$/.test(cli)
   if (probe) {
     take(['--spec', '-s'])
     const config = take(['--config', '-c'])
-    if (config) appendOptions('--config', probeConfig(config))
+    appendOptions('--config', config ? probeConfig(config) : 'retries=0')
     appendOptions('--spec', probe)
+    clearRetryVariables(process.env)
   }
   const wrapper = createObservedConfig(project, requested, directory, probe, args.includes('--component'))
   appendOptions('--project', project, '--config-file', wrapper)

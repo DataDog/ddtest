@@ -1,6 +1,7 @@
 package onboard
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -38,6 +39,16 @@ func TestCypressDoesNotGuessACommand(t *testing.T) {
 	entry, err := CypressExecutionCommand(root, "")
 	require.NoError(t, err)
 	require.Equal(t, "npm run arbitrary-name", entry.Command)
+}
+
+func TestCypressDoesNotFallBackToAScriptWhenCIHasAnUnresolvedCommand(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"test": "cypress run"})
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".github", "workflows", "ci.yml"), []byte("jobs:\n  e2e:\n    steps:\n      - run: npx start-server-and-test 'node server.js' http://localhost:3000 'cypress run'\n"), 0644))
+	_, err := CypressExecutionCommand(root, "")
+	require.ErrorContains(t, err, "the Cypress CI command could not be resolved; select the command to validate with --command")
+	require.ErrorContains(t, err, "start-server-and-test")
 }
 
 func TestCypressComponentCommandsAreExplicitlyUnsupported(t *testing.T) {
@@ -176,6 +187,23 @@ func TestCypressSecretRedactionPreservesNonKeyOptions(t *testing.T) {
 		require.NotContains(t, redacted, "secret")
 		require.Contains(t, redacted, "REDACTED")
 	}
+}
+
+func TestCypressRecordingVariablesAreRedactedButProseKeepsShortOptions(t *testing.T) {
+	for _, command := range []string{"CYPRESS_RECORD_KEY=secret npx cypress run", "env CYPRESS_CLOUD_TOKEN='secret value' cypress run"} {
+		require.NotContains(t, RedactCypressCommand(command), "secret")
+		require.NotContains(t, RedactCypressText(command), "secret")
+	}
+	require.Equal(t, "the -kitten option", RedactCypressText("the -kitten option"))
+	require.Equal(t, "failed: npx cypress run -k[REDACTED]", RedactCypressText("failed: npx cypress run -ksecret"))
+	scope := ValidationScope{Commands: []TestCommand{{Command: "npm test -- -k secret", Environment: map[string]string{"CYPRESS_RECORD_KEY": "secret", "TERM": "xterm"}, Locations: []string{"ci.yml / test / step 1 (npm test -- -k secret)"}}}, Unresolved: []string{"ci.yml / test / step 2 (CYPRESS_RECORD_KEY=secret cypress run): unresolved"}}
+	redacted := RedactCypressScope(scope)
+	var output bytes.Buffer
+	WriteValidationScope(&output, redacted)
+	require.NotContains(t, output.String(), "secret")
+	require.Equal(t, "[REDACTED]", redacted.Commands[0].Environment["CYPRESS_RECORD_KEY"])
+	require.Equal(t, "xterm", redacted.Commands[0].Environment["TERM"])
+	require.Equal(t, "secret", scope.Commands[0].Environment["CYPRESS_RECORD_KEY"], "the executed scope keeps its values")
 }
 
 func TestCypressLiteralStatusGatesRemainOutsideExecution(t *testing.T) {

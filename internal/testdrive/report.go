@@ -144,6 +144,7 @@ type reportRuntime struct {
 	Framework, Tracer, Command, Output, Error string
 	Environment                               environmentInfo
 	SetupFailure                              *reportCard
+	NotExercised                              []string
 	// Validation runs delete captured traffic after the run.
 	TrafficDeleted bool
 }
@@ -276,6 +277,9 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	}
 	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "not supported" && findings.TestEventCount > 0 {
 		model.Cards = append(model.Cards, reportCard{Kind: strings.ToLower(info.Framework) + "-coverage-unavailable", Severity: "info", Title: info.Framework + " coverage and skipping are not supported", Count: 1, Context: policy.Reason})
+	}
+	for _, reason := range info.NotExercised {
+		model.Cards = append(model.Cards, reportCard{Kind: "not-exercised", Severity: "info", Title: "Not exercised by this validation", Count: 1, Context: reason})
 	}
 	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "deferred" {
 		model.Cards = append(model.Cards, reportCard{PolicyStatus: policy.Status, Kind: strings.ToLower(info.Framework) + "-tia-deferred", Severity: "info", Title: info.Framework + " Test Impact Analysis validation is deferred", Count: 1, Context: policy.Reason})

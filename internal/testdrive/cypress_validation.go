@@ -20,6 +20,8 @@ import (
 	"github.com/kballard/go-shellquote"
 )
 
+const cypressComponentNotExercised = "Cypress component testing is configured but not supported by ddtest; only the selected e2e command was exercised."
+
 const cypressTIADeferredReason = "Cypress Test Impact Analysis (skipping and application coverage) is deferred and was not validated. ddtest does not check application coverage yet; preserve any existing coverage setup."
 
 //go:embed scripts/cypress_observer.cjs
@@ -53,8 +55,8 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 		}
 	}
 	result.Preflight = check
-	if t.cypress != nil && t.cypress.Platform != "" && t.cypress.Platform != runtime.GOOS {
-		return fmt.Errorf("cypress %s configuration cannot be validated on %s", t.cypress.Platform, runtime.GOOS)
+	if platform := t.cypressSelected.Platform; platform != "" && platform != runtime.GOOS {
+		return fmt.Errorf("cypress %s configuration cannot be validated on %s", platform, runtime.GOOS)
 	}
 	if runtime.GOOS == "windows" {
 		return fmt.Errorf("cypress process supervision is not supported on Windows; this configuration remains unvalidated")
@@ -90,6 +92,29 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 		return fmt.Errorf("inspect Cypress package metadata: %w", err)
 	}
 	check.Version = metadata.Version
+	// Resolve the tracer before the browser and runtime checks, so a blocked
+	// preflight still reports the project tracer it would have used.
+	installer, ok := t.platform.(*platform.JavaScript)
+	if !ok {
+		return fmt.Errorf("cypress requires JavaScript tracer selection")
+	}
+	options := platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args, Environment: t.configurationEnvironment}
+	if metadata.Preload != "" && options.Environment["DD_TRACE_PACKAGE"] == "" && os.Getenv("DD_TRACE_PACKAGE") == "" {
+		options.Environment = mergeConfigurationEnvironment(t.configurationEnvironment, map[string]string{"DD_TRACE_PACKAGE": metadata.Preload})
+		preload, err := installer.DetectTracer(ctx, options)
+		if err != nil {
+			return fmt.Errorf("inspect consumer package tracer: %w", err)
+		}
+		t.projectTracer = preload
+		// Keep later verification on the same package-local preload as preflight.
+		t.configurationEnvironment = options.Environment
+	}
+	selection, err := installer.ResolveTestdriveTracer(ctx, options)
+	result.Selection = &selection
+	if err != nil {
+		return err
+	}
+	result.Tracer, result.TracerSource = "dd-trace@"+selection.Version, selection.Source
 	if t.cypress != nil {
 		if browser, ok := t.cypress.Options["browser"].(string); ok && browser != "" && browser != "electron" && !strings.ContainsAny(browser, "/\\") {
 			data, err := t.executor.CombinedOutput(ctx, "node", []string{metadata.CLI, "info"}, map[string]string{"NODE_OPTIONS": stripDatadogNodeOptions(t.nodeOptions()), "NO_COLOR": "1"})
@@ -118,27 +143,6 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 			return fmt.Errorf("cypress preflight: %s", check.Verdict.Reason)
 		}
 	}
-	installer, ok := t.platform.(*platform.JavaScript)
-	if !ok {
-		return fmt.Errorf("cypress requires JavaScript tracer selection")
-	}
-	options := platform.TracerOptions{Version: t.tracerVersion, Command: t.command, Args: t.args, Environment: t.configurationEnvironment}
-	if metadata.Preload != "" && options.Environment["DD_TRACE_PACKAGE"] == "" && os.Getenv("DD_TRACE_PACKAGE") == "" {
-		options.Environment = mergeConfigurationEnvironment(t.configurationEnvironment, map[string]string{"DD_TRACE_PACKAGE": metadata.Preload})
-		preload, err := installer.DetectTracer(ctx, options)
-		if err != nil {
-			return fmt.Errorf("inspect consumer package tracer: %w", err)
-		}
-		t.projectTracer = preload
-		// Keep later verification on the same package-local preload as preflight.
-		t.configurationEnvironment = options.Environment
-	}
-	selection, err := installer.ResolveTestdriveTracer(ctx, options)
-	result.Selection = &selection
-	if err != nil {
-		return err
-	}
-	result.Tracer, result.TracerSource = "dd-trace@"+selection.Version, selection.Source
 	check.Verdict = checkCypressSupport(*check, selection)
 	if result.CIRuntime != nil {
 		result.CISelection = compareCISelection(*result.CIRuntime, selection.Version)
@@ -172,11 +176,17 @@ func cypressBrowserAvailable(info, requested string) (bool, bool) {
 	return false, known
 }
 
+// Bound engine ranges read from installed packages before comparing them.
+const (
+	cypressEngineRangeLimit    = 4096
+	cypressEngineBranchesLimit = 16
+)
+
 // Cypress and application engines commonly list supported Node release lines
 // with caret unions. Keep other npm range syntax explicitly unvalidated.
 func checkCypressNodeEngine(node, requirement string) (string, string) {
 	branches := strings.Split(requirement, "||")
-	if len(requirement) > 4096 || len(branches) > 16 {
+	if len(requirement) > cypressEngineRangeLimit || len(branches) > cypressEngineBranchesLimit {
 		return "inconclusive", "Node engine range exceeds the validation limit."
 	}
 	status := "incompatible"
@@ -359,7 +369,7 @@ func readCypressResults(path string, run *validationRun) {
 	}
 	run.FrameworkNode = result.ConfigNode
 	if result.ComponentConfigured {
-		run.Diagnostic += " Cypress component testing is not supported by ddtest; only the selected e2e command was exercised."
+		run.NotExercised = append(run.NotExercised, cypressComponentNotExercised)
 	}
 	run.ProbeExecutions = result.ProbeExecutions
 	for _, spec := range result.Runs {
@@ -383,6 +393,15 @@ func readCypressResults(path string, run *validationRun) {
 			run.Tests = append(run.Tests, item)
 		}
 	}
+}
+
+// A native retry history is part of the outcome: a test that needed a retry
+// without instrumentation but passed at once with it behaved differently.
+func cypressOutcome(test jestTest) string {
+	if len(test.CypressAttempts) == 0 {
+		return ""
+	}
+	return "\nattempts=" + strings.Join(test.CypressAttempts, ",")
 }
 
 func (t *Testdrive) runCypressFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {

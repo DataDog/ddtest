@@ -35,15 +35,22 @@ func TestCypressBrowserInventoryUsesSelectedPackage(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(module, "bin"), 0700))
 	requireWriteFile(t, filepath.Join(directory, "package.json"), `{}`)
 	requireWriteFile(t, filepath.Join(module, "package.json"), `{"version":"15.1.0","engines":{"node":">=20"}}`)
-	requireWriteFile(t, filepath.Join(module, "bin/cypress"), `require('node:fs').writeFileSync('inventory-called','yes');console.log('Detected 1 browser installed:\n1. Chrome\n - Name: chrome\n - Channel: stable\n')`)
-	drive := Testdrive{repositoryRoot: directory, configurationRoot: root, executor: cypressPackageExecutor{directory}, nodeVersion: func() string { return "24.14.1" }, configurationEnvironment: map[string]string{"NODE_OPTIONS": ""}, cypress: &onboard.CypressCommand{Options: map[string]any{"browser": "chrome"}}}
-	var result validationResult
-	// This harness deliberately has no tracer platform; inventory must complete
-	// from frontend's package before preflight reaches tracer selection.
-	require.Error(t, drive.checkCypressPreflight(t.Context(), io.Discard, &result))
+	requireWriteFile(t, filepath.Join(module, "bin/cypress"), `require('node:fs').writeFileSync('inventory-called','yes');console.log('Detected 1 browser installed:\n1. Firefox\n - Name: firefox\n - Channel: stable\n')`)
+	tracer := filepath.Join(directory, "node_modules/dd-trace")
+	require.NoError(t, os.MkdirAll(filepath.Join(tracer, "ci"), 0700))
+	requireWriteFile(t, filepath.Join(tracer, "ci/init.js"), `module.exports={}`)
+	requireWriteFile(t, filepath.Join(tracer, "package.json"), `{"version":"6.20.1","engines":{"node":">=22"}}`)
+	t.Setenv("DD_TRACE_PACKAGE", "")
+	t.Chdir(directory)
+	drive := Testdrive{platform: platform.NewJavaScript(), tracerLabel: "dd-trace@latest", repositoryRoot: directory, configurationRoot: root, executor: cypressPackageExecutor{directory}, nodeVersion: func() string { return "24.14.1" }, configurationEnvironment: map[string]string{"NODE_OPTIONS": ""}, cypress: &onboard.CypressCommand{Options: map[string]any{"browser": "chrome"}}}
+	result := validationResult{Tracer: drive.tracerLabel}
+	// The inventory comes from frontend's package, and a missing browser still
+	// reports the project tracer rather than the requested label.
+	require.ErrorContains(t, drive.checkCypressPreflight(t.Context(), io.Discard, &result), "cypress browser preflight")
 	require.Equal(t, "15.1.0", result.Preflight.Version)
 	require.FileExists(t, filepath.Join(directory, "inventory-called"))
 	require.NoDirExists(t, filepath.Join(root, "node_modules"))
+	require.Equal(t, "dd-trace@6.20.1 · project", tracerDescription(result))
 }
 
 func TestCypressRootAliasInspectsItsConsumerPackage(t *testing.T) {

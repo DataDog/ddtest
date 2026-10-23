@@ -109,7 +109,7 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	if err != nil {
 		return err
 	}
-	defer func() { preflightErr = errors.Join(preflightErr, os.RemoveAll(directory)) }()
+	defer func() { preflightErr = errors.Join(preflightErr, removeMarkedStorage(directory)) }()
 	if err := markSessionStorage(directory, t.ownershipRoot()); err != nil {
 		return err
 	}
@@ -254,6 +254,24 @@ func releaseParts(version string) (int, int, bool) {
 	return major, minor, e1 == nil && e2 == nil && e3 == nil
 }
 
+// frameworkPreflight returns the selected framework's own prerequisite checks,
+// bound to t. A framework without them gets nil, never another framework's.
+func (t *Testdrive) frameworkPreflight() func(context.Context, io.Writer, *validationResult) error {
+	switch t.framework.Name() {
+	case "jest":
+		return t.checkJestPreflight
+	case "vitest":
+		return t.checkVitestPreflight
+	case "mocha":
+		return t.checkMochaPreflight
+	case "playwright":
+		return t.checkPlaywrightPreflight
+	case "cypress":
+		return t.checkCypressPreflight
+	}
+	return nil
+}
+
 func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer) (runErr error) {
 	result := validationResult{Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: true,
 		Compatibility: verdict{Status: onboard.StatusNotExercised, Reason: "Configuration checks only; run testdrive without --check-only for paired execution."},
@@ -271,12 +289,11 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 	result.Scope = &scope
 	check := checkConfigurationCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
 	result.CIRuntime = &check
-	preflight := t.checkJestPreflight
-	if t.framework.Name() == "vitest" {
-		preflight = t.checkVitestPreflight
-	}
-	if t.framework.Name() == "mocha" {
-		preflight = t.checkMochaPreflight
+	preflight := t.frameworkPreflight()
+	if preflight == nil {
+		err := fmt.Errorf("configuration checks are not supported for %s", t.framework.Name())
+		result.Error = err.Error()
+		return err
 	}
 	if err := preflight(ctx, output, &result); err != nil {
 		result.Error = err.Error()

@@ -234,7 +234,7 @@ func (t *Testdrive) checkPlaywrightPreflight(ctx context.Context, output io.Writ
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(directory) }()
+	defer func() { _ = removeMarkedStorage(directory) }()
 	if err := markSessionStorage(directory, t.ownershipRoot()); err != nil {
 		return err
 	}

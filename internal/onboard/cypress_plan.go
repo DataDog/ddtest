@@ -19,13 +19,14 @@ type CypressCommand struct {
 	CLI         []string       `json:"cli,omitempty"`
 	Start       [][]string     `json:"start,omitempty"`
 	WaitOn      []string       `json:"wait_on,omitempty"`
-	WaitTimeout int            `json:"wait_timeout_seconds,omitempty"`
+	WaitTimeout float64        `json:"wait_timeout_seconds,omitempty"`
 	Platform    string         `json:"platform,omitempty"`
 }
 
 // Limits bound literal CI inputs without executing a shell or unbounded setup.
 const cypressInputLimit = 16384
 const cypressDefaultWaitTimeout = 60
+const cypressMaxWaitTimeout = 3600
 
 var cypressResolvedInputs = []string{"browser", "config", "env", "expose", "project", "config-file", "spec", "headed", "quiet", "component", "working-directory", "command-prefix", "command", "build", "start", "start-windows", "wait-on", "wait-on-timeout", "runTests"}
 
@@ -33,17 +34,9 @@ func cypressActionPlan(root string, workflow ciWorkflow, job runtimeJob, step ru
 	options := map[string]any{"record": false, "parallel": false}
 	plan := &CypressCommand{Action: step.Uses, Options: options, WaitTimeout: cypressDefaultWaitTimeout}
 	if job.RunsOn != nil {
-		runner, ok := job.RunsOn.(string)
-		if !ok || !strings.HasPrefix(runner, "ubuntu-") && !strings.HasPrefix(runner, "macos-") && !strings.HasPrefix(runner, "windows-") {
+		plan.Platform = cypressRunnerPlatform(job.RunsOn)
+		if plan.Platform == "" {
 			return unresolvedCommand("Cypress action runner OS requires a resolved hosted label")
-		}
-		switch {
-		case strings.HasPrefix(runner, "windows-"):
-			plan.Platform = "windows"
-		case strings.HasPrefix(runner, "macos-"):
-			plan.Platform = "darwin"
-		case strings.HasPrefix(runner, "ubuntu-"):
-			plan.Platform = "linux"
 		}
 	}
 	for key, value := range step.With {
@@ -63,7 +56,8 @@ func cypressActionPlan(root string, workflow ciWorkflow, job runtimeJob, step ru
 		case "config-file":
 			options["configFile"] = value
 		case "spec":
-			options[key] = strings.FieldsFunc(value, func(c rune) bool { return c == ',' || c == '\n' })
+			// Like the action, keep commas (and brace globs) for Cypress to parse.
+			options[key] = strings.Join(strings.Split(strings.TrimSpace(value), "\n"), ",")
 		case "headed", "quiet", "component":
 			options[key] = cypressInputBool(value, false)
 			if key == "component" && options[key] == true && step.With["command"] == "" {
@@ -105,9 +99,10 @@ func cypressActionPlan(root string, workflow ciWorkflow, job runtimeJob, step ru
 		}
 	}
 	if value := step.With["wait-on-timeout"]; value != "" {
-		seconds, err := strconv.Atoi(value)
-		if err != nil || seconds <= 0 || seconds > 3600 {
-			return unresolvedCommand("Cypress wait-on timeout must be between 1 and 3600 seconds")
+		// The action reads this input with parseFloat, so fractions are valid.
+		seconds, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err != nil || !(seconds > 0 && seconds <= cypressMaxWaitTimeout) {
+			return unresolvedCommand("Cypress wait-on timeout must be more than 0 and at most 3600 seconds")
 		}
 		plan.WaitTimeout = seconds
 	}
@@ -158,7 +153,23 @@ func cypressActionPlan(root string, workflow ciWorkflow, job runtimeJob, step ru
 			entry.Prerequisites = append(entry.Prerequisites, BuildCommand{Directory: directory, Command: shellquote.Join(words...), Kind: "build"})
 		}
 	}
+	entry.Platform = plan.Platform
 	return commandResolution{Matched: true, Tests: []TestCommand{entry}, Evidence: step.Uses + " -> " + entry.Command}
+}
+
+// cypressRunnerPlatform maps a resolved hosted runner label to its GOOS.
+// Self-hosted, grouped and unresolved runners return "".
+func cypressRunnerPlatform(runsOn any) string {
+	runner, _ := runsOn.(string)
+	switch {
+	case strings.HasPrefix(runner, "windows-"):
+		return "windows"
+	case strings.HasPrefix(runner, "macos-"):
+		return "darwin"
+	case strings.HasPrefix(runner, "ubuntu-"):
+		return "linux"
+	}
+	return ""
 }
 
 // Support the ordinary two-command startup pattern without executing shell

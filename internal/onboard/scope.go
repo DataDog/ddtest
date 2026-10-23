@@ -16,6 +16,7 @@ import (
 type TestCommand struct {
 	CypressPackage                  string          `json:"cypress_package_directory,omitempty"`
 	Cypress                         *CypressCommand `json:"cypress,omitempty"`
+	Platform                        string          `json:"platform,omitempty"` // GOOS of the resolved hosted CI runner, when known.
 	ProbeCoverageThresholdsDisabled bool            `json:"-"`
 	mochaIstanbul                   bool
 	LifecycleHooks                  []string `json:"lifecycle_hooks,omitempty"`
@@ -202,6 +203,9 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 						entry.Environment = mergeEnvironment(env, entry.Environment)
 						entry.Directory = filepath.ToSlash(filepath.Clean(entry.Directory))
 						entry.locations = []commandLocation{location}
+						if framework == "cypress" {
+							entry.Platform = cypressRunnerPlatform(job.RunsOn)
+						}
 						commands = append(commands, entry)
 					}
 					if resolution.Reason != "" {
@@ -214,7 +218,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				allReview = append(allReview, review...)
 				for _, entry := range commands {
 					index := slices.IndexFunc(scope.Commands, func(previous TestCommand) bool {
-						return reflect.DeepEqual(previous.Cypress, entry.Cypress) && previous.Directory == entry.Directory && previous.Command == entry.Command && previous.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
+						return reflect.DeepEqual(previous.Cypress, entry.Cypress) && previous.Platform == entry.Platform && previous.Directory == entry.Directory && previous.Command == entry.Command && previous.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
 					})
 					if index < 0 {
 						scope.Commands = append(scope.Commands, entry)

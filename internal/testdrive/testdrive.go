@@ -45,6 +45,7 @@ type localIntake interface {
 type Testdrive struct {
 	cypressPackage           string
 	cypressSelected          onboard.TestCommand
+	cypressDiscovered        bool // cypressSelected came from CI discovery, not --command.
 	configurationSourceRoot  string
 	scopeCommand             string
 	cypress                  *onboard.CypressCommand
@@ -171,6 +172,12 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			return nil, fmt.Errorf("resolve JavaScript repository root: %w", err)
 		}
 	}
+	// Command selection and CI environment matching share one discovery.
+	var scope onboard.ValidationScope
+	var scopeErr error
+	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
+		scope, scopeErr = onboard.DiscoverValidationScope(repositoryRoot, runner.Name())
+	}
 	if runner.Name() == "jest" && !all {
 		var selected string
 		if configurationOnly {
@@ -203,7 +210,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	// A failed discovery still runs startup recovery and replaces the earlier
 	// report after confirmation, so a stale PASSED result never stays current.
 	if runner.Name() == "playwright" && !all {
-		selected, resolveErr := onboard.PlaywrightValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		selected, resolveErr := onboard.PlaywrightValidationCommandInScope(repositoryRoot, strings.TrimSpace(settings.GetCommand()), scope, scopeErr)
 		if resolveErr != nil {
 			discoveryError = resolveErr
 		} else if selected != "" {
@@ -216,7 +223,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 	if runner.Name() == "cypress" && !all {
-		selectedPlan, err = onboard.CypressExecutionCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		selectedPlan, err = onboard.CypressExecutionCommandInScope(repositoryRoot, strings.TrimSpace(settings.GetCommand()), scope, scopeErr)
 		if err != nil {
 			discoveryError = err
 		} else if selectedPlan.Cypress != nil {
@@ -232,7 +239,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 
 	if runner.Name() == "mocha" && !all {
-		selected, resolveErr := onboard.MochaValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		selected, resolveErr := onboard.MochaValidationCommandInScope(repositoryRoot, strings.TrimSpace(settings.GetCommand()), scope, scopeErr)
 		if resolveErr != nil {
 			discoveryError = resolveErr
 		} else if selected != "" {
@@ -252,7 +259,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		session.persistent = true
 	}
 	if runner.Name() == "vitest" && !all {
-		selectedPlan, discoveryError = onboard.VitestValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		selectedPlan, discoveryError = onboard.VitestValidationCommandInScope(repositoryRoot, strings.TrimSpace(settings.GetCommand()), scope, scopeErr)
 		if discoveryError == nil {
 			words, splitErr := shellquote.Split(selectedPlan.Command)
 			if splitErr != nil || len(words) == 0 {
@@ -301,7 +308,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
 		// A command matching a discovered CI configuration replays its environment,
 		// including the variables GitHub sets on every step.
-		matched := matchingConfigurationEnvironment(repositoryRoot, runner.Name(), scopeCommand)
+		matched := matchingConfigurationEnvironment(scope, scopeErr, repositoryRoot, runner.Name(), scopeCommand)
 		if matched != nil {
 			matched = onboard.WithGitHubActionsDefaults(matched)
 		}
@@ -336,6 +343,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	drive.allConfigurations = all
 	if runner.Name() == "cypress" {
 		drive.cypressSelected = selectedPlan
+		drive.cypressDiscovered = strings.TrimSpace(settings.GetCommand()) == "" && discoveryError == nil
 		drive.cypress, drive.cypressCommand, drive.cypressPackage = selectedPlan.Cypress, selectedPlan.Command, selectedPlan.CypressPackage
 	}
 
@@ -350,19 +358,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		drive.executor = configurationExecutor{drive.executor, configurationEnvironment}
 	}
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
-		drive.preflight = drive.checkJestPreflight
-	}
-	if runner.Name() == "cypress" {
-		drive.preflight = drive.checkCypressPreflight
-	}
-	if runner.Name() == "vitest" {
-		drive.preflight = drive.checkVitestPreflight
-	}
-	if runner.Name() == "playwright" {
-		drive.preflight = drive.checkPlaywrightPreflight
-	}
-	if runner.Name() == "mocha" {
-		drive.preflight = drive.checkMochaPreflight
+		drive.preflight = drive.frameworkPreflight()
 	}
 	if installer, ok := detectedPlatform.(*platform.JavaScript); ok {
 		drive.resolveJSTracer = installer.ResolveRegistryTracer
@@ -389,6 +385,8 @@ func (t *Testdrive) Preview(output io.Writer) {
 		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		if err != nil {
 			_, _ = fmt.Fprintln(output, err)
+		} else if t.framework.Name() == "cypress" {
+			onboard.WriteValidationScope(output, onboard.RedactCypressScope(scope))
 		} else {
 			onboard.WriteValidationScope(output, scope)
 		}
@@ -449,7 +447,11 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(install...))
 	}
 
-	_, _ = fmt.Fprintf(output, "  - command: %s\n", shellquote.Join(append([]string{command}, args...)...))
+	preview := shellquote.Join(append([]string{command}, args...)...)
+	if t.framework.Name() == "cypress" {
+		preview = onboard.RedactCypressCommand(preview)
+	}
+	_, _ = fmt.Fprintf(output, "  - command: %s\n", preview)
 	if t.framework.Name() == "mocha" {
 		for _, entry := range onboard.ValidationCommands(t.repositoryRoot, shellquote.Join(append([]string{command}, args...)...), "mocha") {
 			onboard.WriteLifecycleHooks(output, entry)
@@ -523,16 +525,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	} else if t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
 		child := *t
 		child.workflowRoot = t.repositoryRoot
-		child.preflight = child.checkVitestPreflight
-		if child.framework.Name() == "cypress" {
-			child.preflight = child.checkCypressPreflight
-		}
-		if child.framework.Name() == "playwright" {
-			child.preflight = child.checkPlaywrightPreflight
-		}
-		if child.framework.Name() == "mocha" {
-			child.preflight = child.checkMochaPreflight
-		}
+		child.preflight = child.frameworkPreflight()
 		// The run executes in a disposable copy; publish its report here instead.
 		var models []reportModel
 		child.reportModels = &models
@@ -555,11 +548,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		if err != nil {
 			runErr = errors.Join(runErr, err)
 		} else {
-			command := t.scopeCommand
-			if command == "" {
-				command = shellquote.Join(append([]string{t.command}, t.args...)...)
-			}
-			setSingleConfigurationScope(t.repositoryRoot, &result, scope, command, t.configurationEnvironment)
+			t.setConfigurationScope(&result, scope)
 		}
 	}
 	if runErr != nil {
@@ -579,6 +568,22 @@ func (t *Testdrive) publishCopiedRunReport(output io.Writer, result *validationR
 		return err
 	}
 	return announceHTMLReport(output, t.repositoryRoot, t.framework.Name())
+}
+
+// setConfigurationScope credits this single run to the discovered
+// configurations it executed.
+func (t *Testdrive) setConfigurationScope(result *validationResult, scope onboard.ValidationScope) {
+	if t.cypressDiscovered {
+		// The selected CI configuration ran as discovered, including its build,
+		// working directory and managed startup; its command text alone may not.
+		setSelectedConfigurationScope(result, scope, []onboard.TestCommand{t.cypressSelected}, t.configurationEnvironment)
+		return
+	}
+	command := t.scopeCommand
+	if command == "" {
+		command = shellquote.Join(append([]string{t.command}, t.args...)...)
+	}
+	setSingleConfigurationScope(t.repositoryRoot, result, scope, command, t.configurationEnvironment)
 }
 
 // Startup recovery runs under the repository lock, before any new work.
@@ -701,7 +706,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 				return result, err
 			}
 			defer func() {
-				if err := os.RemoveAll(owned); err != nil {
+				if err := removeMarkedStorage(owned); err != nil {
 					runErr = errors.Join(runErr, err)
 				}
 			}()

@@ -101,3 +101,47 @@ func TestCypressBrowserInventoryDoesNotSubstituteChannels(t *testing.T) {
 	require.False(t, available)
 	require.False(t, known)
 }
+
+func TestCypressAPIProbeDisablesEveryCustomerRetrySource(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node is required")
+	}
+	for _, config := range []any{nil, map[string]any{"retries": 2, "viewportWidth": 800}} {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules", "cypress"), 0700))
+		files := map[string]string{
+			"package.json":       `{}`,
+			"api.cjs":            cypressAPI,
+			"observer.cjs":       cypressObserver,
+			"probe.cy.js":        ``,
+			"cypress.config.cjs": `module.exports={retries:3,e2e:{setupNodeEvents:(on,cfg)=>({...cfg,retries:2})}}`,
+			"node_modules/cypress/index.js": `exports.run=async options=>{
+				const assert=require('assert')
+				assert.equal(process.env.CYPRESS_RETRIES,undefined);assert.equal(process.env.cypress_retries,undefined)
+				assert.equal(options.config.retries,0)
+				const config=require(options.configFile),events={}
+				const effective=await config.e2e.setupNodeEvents((event,handler)=>{events[event]=handler},{retries:options.config.retries})
+				assert.equal(effective.retries,0)
+				const results={totalFailed:0,runs:[]}
+				await events['after:run'](results)
+				return results
+			}`,
+		}
+		for name, content := range files {
+			require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(content), 0600))
+		}
+		options := map[string]any{"browser": "electron"}
+		if config != nil {
+			options["config"] = config
+		}
+		data, err := json.Marshal(onboard.CypressCommand{Action: "cypress-io/github-action@v7", Options: options})
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "plan.json"), data, 0600))
+		command := exec.CommandContext(t.Context(), node, filepath.Join(root, "api.cjs"), filepath.Join(root, "plan.json"))
+		command.Dir = root
+		command.Env = append(os.Environ(), "NODE_OPTIONS=", "CYPRESS_RETRIES=2", "cypress_retries=2", "DDTEST_PROBE_MODE=fail", "DDTEST_CYPRESS_DIRECTORY="+root, "DDTEST_CYPRESS_PROBE="+filepath.Join(root, "probe.cy.js"))
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, string(output))
+	}
+}

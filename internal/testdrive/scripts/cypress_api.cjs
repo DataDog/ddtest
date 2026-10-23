@@ -98,7 +98,8 @@ async function run () {
     options.project = project
     if (process.env.DDTEST_CYPRESS_PROBE) {
       options.spec = process.env.DDTEST_CYPRESS_PROBE
-      if (options.config) options.config = observe.probeConfig(options.config)
+      options.config = observe.probeConfig(options.config || {})
+      observe.clearRetryVariables(process.env)
     }
     fs.writeFileSync(path.join(directory, 'invocation.json'), JSON.stringify({
       command: process.execPath, args: [process.argv[1], process.argv[2]], api: options

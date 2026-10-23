@@ -67,7 +67,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 			return result, err
 		}
 		defer func() {
-			err := os.RemoveAll(parent)
+			err := removeMarkedStorage(parent)
 			if err != nil {
 				result.Cleanup = &verdict{Status: "failed", Reason: "Could not remove configuration workspace: " + parent}
 			}
@@ -139,17 +139,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	t.refreshConfigurationTracer(ctx)
 	if t.preflight != nil {
-		if t.framework.Name() == "vitest" {
-			t.preflight = t.checkVitestPreflight
-		} else if t.framework.Name() == "playwright" {
-			t.preflight = t.checkPlaywrightPreflight
-		} else if t.framework.Name() == "cypress" {
-			t.preflight = t.checkCypressPreflight
-		} else if t.framework.Name() == "mocha" {
-			t.preflight = t.checkMochaPreflight
-		} else {
-			t.preflight = t.checkJestPreflight
-		}
+		t.preflight = t.frameworkPreflight()
 	}
 	return t.runPreparedChecksOrTests(ctx, output)
 }

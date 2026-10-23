@@ -129,9 +129,9 @@ func TestCypressActionPlansPreserveOptionsAndRejectUnknownInputs(t *testing.T) {
 	plan := result.Tests[0].Cypress
 	require.Equal(t, "firefox", plan.Options["browser"])
 	require.Equal(t, false, plan.Options["record"])
-	require.Equal(t, []string{"a.cy.js", "b.cy.js"}, plan.Options["spec"])
+	require.Equal(t, "a.cy.js,b.cy.js", plan.Options["spec"])
 	require.Equal(t, [][]string{{"npm", "start"}}, plan.Start)
-	require.Equal(t, 45, plan.WaitTimeout)
+	require.Equal(t, 45.0, plan.WaitTimeout)
 	require.Len(t, result.Tests[0].Prerequisites, 1)
 	step.With["custom-unknown"] = "x"
 	require.NotEmpty(t, resolveCypressAction(t.TempDir(), ciWorkflow{}, runtimeJob{}, step).Reason)
@@ -182,5 +182,18 @@ func TestCypressResolvesConditionalApplicationFlagsWithoutForwardingActionPaths(
 			require.NoError(t, err)
 			require.Equal(t, tc.want, env["COVERAGE"])
 		})
+	}
+}
+
+func TestCypressActionWaitOnTimeoutAcceptsFractionalSeconds(t *testing.T) {
+	for value, want := range map[string]float64{"30.5": 30.5, "45": 45, "0.25": 0.25, "3600": 3600} {
+		step := runtimeStep{Uses: "cypress-io/github-action@v7", With: map[string]string{"wait-on": "http://localhost:8080", "wait-on-timeout": value}}
+		result := resolveCypressAction(t.TempDir(), ciWorkflow{}, runtimeJob{}, step)
+		require.Empty(t, result.Reason, value)
+		require.Equal(t, want, result.Tests[0].Cypress.WaitTimeout, value)
+	}
+	for _, value := range []string{"0", "-1", "3601", "NaN", "Inf", "soon"} {
+		step := runtimeStep{Uses: "cypress-io/github-action@v7", With: map[string]string{"wait-on": "http://localhost:8080", "wait-on-timeout": value}}
+		require.Contains(t, resolveCypressAction(t.TempDir(), ciWorkflow{}, runtimeJob{}, step).Reason, "wait-on timeout", value)
 	}
 }

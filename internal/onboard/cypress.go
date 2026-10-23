@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -40,14 +41,18 @@ func resolveCypressNode(root, directory string, words []string) commandResolutio
 	return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{CypressPackage: filepath.ToSlash(relative), Directory: filepath.ToSlash(relative), Command: command}}}
 }
 
-// CypressValidationCommand keeps server orchestration in the original alias.
-func CypressValidationCommand(root, command string) (string, error) {
-	entry, err := CypressExecutionCommand(root, command)
-	return entry.Command, err
-}
-
 // CypressExecutionCommand chooses one declared invocation; it never invents one.
 func CypressExecutionCommand(root, command string) (TestCommand, error) {
+	var scope ValidationScope
+	var err error
+	if command == "" {
+		scope, err = DiscoverValidationScope(root, "cypress")
+	}
+	return CypressExecutionCommandInScope(root, command, scope, err)
+}
+
+// CypressExecutionCommandInScope selects from an already discovered scope.
+func CypressExecutionCommandInScope(root, command string, scope ValidationScope, scopeErr error) (TestCommand, error) {
 	if command != "" {
 		remaining := 256
 		resolution := resolveJestSequence(root, root, command, nil, &remaining, "cypress")
@@ -59,18 +64,32 @@ func CypressExecutionCommand(root, command string) (TestCommand, error) {
 			return TestCommand{}, fmt.Errorf("cypress command requires one supported headless invocation")
 		}
 		entry := entries[0]
+		// The original command is relative to the caller, even when it selects
+		// another package (npm --prefix); CypressPackage keeps that package.
 		entry.Command = command
+		entry.Directory = "."
 		return entry, nil
 	}
-	scope, err := DiscoverValidationScope(root, "cypress")
-	if err != nil {
-		return TestCommand{}, err
+	if scopeErr != nil {
+		return TestCommand{}, scopeErr
 	}
 	if len(scope.Commands) == 1 {
 		return scope.Commands[0], nil
 	}
 	if len(scope.Commands) > 1 {
+		// Rows for other runner OSes stay unvalidated; they never make a host
+		// configuration ambiguous.
+		host := slices.DeleteFunc(slices.Clone(scope.Commands), func(entry TestCommand) bool {
+			return entry.Platform != "" && entry.Platform != runtime.GOOS
+		})
+		if len(host) == 1 {
+			return host[0], nil
+		}
 		return TestCommand{}, fmt.Errorf("multiple Cypress CI commands found; select --command or use --all")
+	}
+	// A package script stands in only when CI has no Cypress command at all.
+	if len(scope.Unresolved) > 0 {
+		return TestCommand{}, fmt.Errorf("the Cypress CI command could not be resolved; select the command to validate with --command: %s", strings.Join(scope.Unresolved, "; "))
 	}
 	data, err := os.ReadFile(filepath.Join(root, "package.json"))
 	var pkg struct{ Scripts map[string]string }

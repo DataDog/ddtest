@@ -56,10 +56,7 @@ func cypressCIContexts(root string) []map[string]string {
 	if err != nil {
 		return nil
 	}
-	remote := strings.TrimSpace(string(data))
-	remote = strings.TrimPrefix(remote, "https://github.com/")
-	remote = strings.TrimPrefix(remote, "git@github.com:")
-	owner, repository, found := strings.Cut(strings.TrimSuffix(remote, ".git"), "/")
+	owner, repository, found := strings.Cut(strings.TrimSuffix(githubRemotePath(strings.TrimSpace(string(data))), ".git"), "/")
 	if !found || !forkJobOwner.MatchString(owner) || !regexp.MustCompile(`^[A-Za-z0-9_.-]+$`).MatchString(repository) {
 		return nil
 	}
@@ -201,4 +198,13 @@ func cypressLocalNodeOptions(value string, workflow ciWorkflow, job runtimeJob, 
 		ordinary = resolved
 	}
 	return ordinary, nil
+}
+
+// githubRemotePath returns owner/repository for HTTPS, ssh:// (with an
+// optional port) and scp-like GitHub remotes.
+func githubRemotePath(remote string) string {
+	if parsed, err := url.Parse(remote); err == nil && (parsed.Scheme == "https" || parsed.Scheme == "ssh") && parsed.Hostname() == "github.com" {
+		return strings.TrimPrefix(parsed.Path, "/")
+	}
+	return strings.TrimPrefix(remote, "git@github.com:")
 }

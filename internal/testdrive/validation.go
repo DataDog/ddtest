@@ -65,7 +65,6 @@ type validationRun struct {
 	FrameworkNode     string
 	NativeCommand     string
 	ProbeExecutions   *int
-	Coverage          *coverageSummary
 	ExecutionContext  string `json:"execution_context,omitempty"`
 	temporaryRoot     string
 	commandOutput     string
@@ -93,6 +92,8 @@ type validationRun struct {
 	SuiteErrors                     []string
 	SuiteFailures                   []string
 	Facts                           intake.Facts
+	// Parts of the customer's suite that this run could not exercise.
+	NotExercised []string
 }
 
 type testCounts struct {
@@ -133,6 +134,7 @@ type runSummary struct {
 	ProbeMode                       string              `json:"probe_mode,omitempty"`
 	ProbeCoverageThresholdsDisabled bool                `json:"probe_coverage_thresholds_disabled,omitempty"`
 	Diagnostic                      string              `json:"diagnostic,omitempty"`
+	NotExercised                    []string            `json:"not_exercised,omitempty"`
 	ExitCode                        *int                `json:"exit_code"`
 	ResultError                     string              `json:"result_error,omitempty"`
 	TestCounts                      testCounts          `json:"test_counts"`
@@ -141,12 +143,12 @@ type runSummary struct {
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{Coverage: r.Coverage, FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
-		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
+	summary := runSummary{FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), NotExercised: r.NotExercised, SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)
 	}
-	if summary.Coverage == nil && r.framework == "mocha" && r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") && r.Facts.TestCount > 0 {
+	if r.framework == "mocha" && r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") && r.Facts.TestCount > 0 {
 		status := "observed"
 		if r.Facts.CoveredTestCount == 0 {
 			status = "not observed"
@@ -324,7 +326,11 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 			_, _ = fmt.Fprintln(output)
 		}
 		for _, entry := range result.CIRuntime.Review {
-			_, _ = fmt.Fprintf(output, "  - Review separately: %s / %s / step %d (%s): %s\n", entry.Workflow, entry.Job, entry.Step, entry.Command, entry.Reason)
+			command := entry.Command
+			if result.Framework == "cypress" {
+				command = onboard.RedactCypressCommand(command)
+			}
+			_, _ = fmt.Fprintf(output, "  - Review separately: %s / %s / step %d (%s): %s\n", entry.Workflow, entry.Job, entry.Step, command, entry.Reason)
 		}
 	}
 	if result.CISelection != nil {
@@ -363,6 +369,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	}
 	if len(result.Summary.BlockingChecks) > 0 {
 		_, _ = fmt.Fprintf(output, "Blocking checks: %s\n", strings.Join(result.Summary.BlockingChecks, "; "))
+	}
+	for _, reason := range result.Summary.NotExercised {
+		_, _ = fmt.Fprintf(output, "Not exercised: %s\n", reason)
 	}
 	_, _ = fmt.Fprintf(output, "CI configuration: %s\nCI execution: not exercised\nReal Datadog credentials required for these local checks: no\nPreserve this verdict in the onboarding response. A failed local feature check is not explained by missing real Datadog credentials.\n", result.Summary.CIConfiguration)
 	if retained := result.Retained; retained != nil {
@@ -523,10 +532,13 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 
 }
 
-// Runs that stop before a tracer is selected have no source to show.
+// Runs that stop before a tracer is selected show the request, marked as such.
 func tracerDescription(result validationResult) string {
 	if result.TracerSource == "" {
-		return result.Tracer
+		if result.Tracer == "" || result.Tracer == "not selected" {
+			return result.Tracer
+		}
+		return result.Tracer + " · not resolved"
 	}
 	return result.Tracer + " · " + result.TracerSource
 }

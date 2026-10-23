@@ -141,7 +141,7 @@ func TestForwardedScriptKeepsScopeAndCIEnvironment(t *testing.T) {
 	require.Equal(t, "passed", result.Configurations[0].Status)
 	// Explicit local assignments win over CI defaults and remain a scope finding.
 	local := "TZ=Europe/Madrid npm test"
-	env := matchingConfigurationEnvironment(root, "jest", local)
+	env := matchingConfigurationEnvironment(scope, nil, root, "jest", local)
 	require.Equal(t, "Europe/Madrid", env["TZ"])
 	result = completeValidationFixture("jest")
 	setSingleConfigurationScope(root, &result, scope, local, env)
@@ -197,9 +197,11 @@ func TestNpxCIStepIsExercisedByDefaultAndCommandRuns(t *testing.T) {
 	}
 }
 
-func TestTracerDescriptionOmitsAMissingSource(t *testing.T) {
+func TestTracerDescriptionMarksAMissingSource(t *testing.T) {
 	require.Equal(t, "not selected", tracerDescription(validationResult{Tracer: "not selected"}))
 	require.Equal(t, "dd-trace@5.132.0 · project", tracerDescription(validationResult{Tracer: "dd-trace@5.132.0", TracerSource: "project"}))
+	// A run blocked before tracer resolution shows the request, not a version.
+	require.Equal(t, "dd-trace@latest · not resolved", tracerDescription(validationResult{Tracer: "dd-trace@latest"}))
 }
 
 func TestUnpreparedConfigurationCopyKeepsIgnoredInputs(t *testing.T) {

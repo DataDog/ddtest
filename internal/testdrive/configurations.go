@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -30,17 +31,20 @@ type configurationResult struct {
 }
 
 func setSingleConfigurationScope(root string, result *validationResult, scope onboard.ValidationScope, executionCommand string, executionEnvironment map[string]string) {
+	setSelectedConfigurationScope(result, scope, onboard.ValidationCommands(root, executionCommand, result.Framework), executionEnvironment)
+}
+
+// setSelectedConfigurationScope credits the executed result only to discovered
+// configurations with the same resolved plan as one of the selected entries.
+func setSelectedConfigurationScope(result *validationResult, scope onboard.ValidationScope, selected []onboard.TestCommand, executionEnvironment map[string]string) {
 	result.Scope = &scope
-	selected := onboard.ValidationCommands(root, executionCommand, result.Framework)
-	if result.Framework == "cypress" && strings.HasPrefix(executionCommand, "Cypress.run(") {
-		for _, entry := range scope.Commands {
-			if entry.Command == executionCommand {
-				selected = append(selected, entry)
-			}
-		}
-	}
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Run testdrive --all after required setup to validate every discovered configuration."}}
+		if !hostConfiguration(entry) {
+			item.Compatibility.Reason = nonHostConfigurationReason(entry)
+			result.Configurations = append(result.Configurations, item)
+			continue
+		}
 		for _, command := range selected {
 			if sameConfiguration(command, entry) && len(entry.UnvalidatedSetup) == 0 {
 				for key, required := range entry.Environment {
@@ -89,21 +93,34 @@ func configurationStatus(result validationResult) string {
 	}
 	return "passed"
 }
+
+// Managed startup, readiness and the action API are part of the plan, so a
+// bare command never stands in for a configuration that also needs them.
 func sameConfiguration(a, b onboard.TestCommand) bool {
-	return a.Command == b.Command && a.Directory == b.Directory && slices.EqualFunc(a.Prerequisites, b.Prerequisites, onboard.EqualPreparation)
+	return a.Command == b.Command && a.Directory == b.Directory && slices.EqualFunc(a.Prerequisites, b.Prerequisites, onboard.EqualPreparation) &&
+		reflect.DeepEqual(a.Cypress, b.Cypress) && (a.Platform == "" || b.Platform == "" || a.Platform == b.Platform)
+}
+
+// hostConfiguration reports whether a configuration's CI runner OS can be
+// executed on this host; an unknown runner is assumed to match.
+func hostConfiguration(entry onboard.TestCommand) bool {
+	return entry.Platform == "" || entry.Platform == runtime.GOOS
+}
+
+func nonHostConfigurationReason(entry onboard.TestCommand) string {
+	return entry.Platform + " Cypress configuration was not executed on this " + runtime.GOOS + " host. Use a matching runner; this variant remains unvalidated."
 }
 
 // Never guess between two CI variants with different environments.
-func matchingConfigurationEnvironment(root, framework, command string) map[string]string {
-	scope, err := onboard.DiscoverValidationScope(root, framework)
-	if err != nil {
+func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr error, root, framework, command string) map[string]string {
+	if scopeErr != nil {
 		return nil
 	}
 	var matched bool
 	var result map[string]string
 	for _, selected := range onboard.ValidationCommands(root, command, framework) {
 		for _, entry := range scope.Commands {
-			if !sameConfiguration(selected, entry) || len(entry.UnvalidatedSetup) > 0 {
+			if !sameConfiguration(selected, entry) || !hostConfiguration(entry) || len(entry.UnvalidatedSetup) > 0 {
 				continue
 			}
 			candidate := mergeConfigurationEnvironment(entry.Environment, selected.Environment)
@@ -115,6 +132,15 @@ func matchingConfigurationEnvironment(root, framework, command string) map[strin
 		}
 	}
 	return result
+}
+
+// A suspected regression in one configuration outranks configurations that
+// could not be compared, so --all fails like a default or --command run.
+func combineConfigurationCompatibility(current, next verdict) verdict {
+	if current.Status == "suspected regression" {
+		return current
+	}
+	return next
 }
 
 func applyScopeVerdict(result *validationResult) {
@@ -154,11 +180,16 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 	var runErrors []error
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
-		if entry.Cypress != nil && entry.Cypress.Platform != "" && entry.Cypress.Platform != runtime.GOOS {
-			result.Compatibility = verdict{Status: "inconclusive", Reason: "At least one discovered OS variant was not executed; see configurations."}
-			item.Error = entry.Cypress.Platform + " Cypress configuration was not executed on this " + runtime.GOOS + " host. Use a matching runner; this variant remains unvalidated."
+		if !hostConfiguration(entry) {
+			result.Compatibility = combineConfigurationCompatibility(result.Compatibility, verdict{Status: "inconclusive", Reason: "At least one discovered OS variant was not executed; see configurations."})
+			item.Error = nonHostConfigurationReason(entry)
 			result.Configurations = append(result.Configurations, item)
 			continue
+		}
+		// Terminal lines, labels and errors never repeat a recording key.
+		displayed, environment := entry.Command, entry.Environment
+		if t.framework.Name() == "cypress" {
+			displayed, environment = onboard.RedactCypressCommand(displayed), onboard.RedactCypressEnvironment(environment)
 		}
 		words, parseErr := shellquote.Split(entry.Command)
 		if entry.Cypress != nil {
@@ -169,7 +200,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			parseErr = err
 		}
 		if len(words) == 0 || strings.Contains(words[0], "=") {
-			parseErr = fmt.Errorf("configuration command needs explicit environment/wrapper review: %s", entry.Command)
+			parseErr = fmt.Errorf("configuration command needs explicit environment/wrapper review: %s", displayed)
 		}
 		if len(entry.UnvalidatedSetup) > 0 {
 			parseErr = fmt.Errorf("configuration requires separate CI setup; paired execution was not started: %s", strings.Join(entry.UnvalidatedSetup, "; "))
@@ -180,25 +211,23 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if parseErr != nil {
 			item.Error = reportText(parseErr.Error())
 			item.Status = "blocked"
-			result.Compatibility = verdict{Status: "inconclusive", Reason: "At least one discovered configuration did not execute; see configurations."}
-			runErrors = append(runErrors, fmt.Errorf("%s: %w", entry.Command, parseErr))
+			result.Compatibility = combineConfigurationCompatibility(result.Compatibility, verdict{Status: "inconclusive", Reason: "At least one discovered configuration did not execute; see configurations."})
+			runErrors = append(runErrors, fmt.Errorf("%s: %w", displayed, parseErr))
 			result.Configurations = append(result.Configurations, item)
 			continue
 		}
-		_, _ = fmt.Fprintf(output, "\nConfiguration %d/%d: %s\n", len(result.Configurations)+1, len(scope.Commands), entry.Command)
+		_, _ = fmt.Fprintf(output, "\nConfiguration %d/%d: %s\n", len(result.Configurations)+1, len(scope.Commands), displayed)
 
-		label := fmt.Sprintf("configuration %d: %s", len(result.Configurations)+1, entry.Command)
-		if t.framework.Name() == "cypress" {
-			label = onboard.RedactCypressCommand(label)
-		}
-		for _, key := range slices.Sorted(maps.Keys(entry.Environment)) {
-			if entry.Environment[key] == "" {
+		label := fmt.Sprintf("configuration %d: %s", len(result.Configurations)+1, displayed)
+		for _, key := range slices.Sorted(maps.Keys(environment)) {
+			if environment[key] == "" {
 				label += " (" + key + " cleared)"
 			} else {
-				label += " (" + key + "=" + entry.Environment[key] + ")"
+				label += " (" + key + "=" + environment[key] + ")"
 			}
 		}
 		child := *t
+		child.cypressSelected = entry
 		child.cypress, child.cypressCommand, child.cypressPackage = entry.Cypress, entry.Command, entry.CypressPackage
 		child.workflowRoot = t.repositoryRoot
 		child.allConfigurations = false
@@ -211,29 +240,19 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		child.playwrightGuard = entry.ExitOnFailure
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
-		child.preflight = child.checkJestPreflight
-		if child.framework.Name() == "cypress" {
-			child.preflight = child.checkCypressPreflight
-		}
-		if child.framework.Name() == "playwright" {
-			child.preflight = child.checkPlaywrightPreflight
-		}
-		if child.framework.Name() == "vitest" {
-			child.preflight = child.checkVitestPreflight
-		}
-		if child.framework.Name() == "mocha" {
-			child.preflight = child.checkMochaPreflight
-		}
+		child.preflight = child.frameworkPreflight()
 		before := len(models)
 		execution, childErr := child.runPreparedConfiguration(ctx, output, &item)
 		prepareValidationResult(t.repositoryRoot, &execution)
 		completeConfigurationItem(&item, execution, childErr)
 		result.Configurations = append(result.Configurations, item)
 		if childErr != nil {
-			runErrors = append(runErrors, fmt.Errorf("%s: %w", entry.Command, childErr))
+			runErrors = append(runErrors, fmt.Errorf("%s: %w", displayed, childErr))
 		}
-		if execution.Compatibility.Status != "compatible" {
-			result.Compatibility = verdict{Status: "inconclusive", Reason: "At least one discovered configuration did not pass its paired comparison; see configurations."}
+		if execution.Compatibility.Status == "suspected regression" {
+			result.Compatibility = verdict{Status: "suspected regression", Reason: "At least one discovered configuration differs between uninstrumented and reporting-only runs; see configurations."}
+		} else if execution.Compatibility.Status != "compatible" {
+			result.Compatibility = combineConfigurationCompatibility(result.Compatibility, verdict{Status: "inconclusive", Reason: "At least one discovered configuration did not pass its paired comparison; see configurations."})
 		}
 		if result.Preflight == nil {
 			result.Preflight = execution.Preflight

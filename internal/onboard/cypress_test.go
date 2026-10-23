@@ -10,11 +10,11 @@ import (
 func TestCypressDiscoveryPreservesServerAliases(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"start": "node scripts/start.js", "cy:run": "cypress run", "e2e": "cypress run --browser chrome", "local:run": "start-test 8080 cy:run", "test:ci": "run-p --race start e2e"})
-	_, err := CypressValidationCommand(root, "")
+	_, err := CypressExecutionCommand(root, "")
 	require.ErrorContains(t, err, "multiple Cypress package scripts")
-	command, err := CypressValidationCommand(root, "npm run local:run")
+	entry, err := CypressExecutionCommand(root, "npm run local:run")
 	require.NoError(t, err)
-	require.Equal(t, "npm run local:run", command)
+	require.Equal(t, "npm run local:run", entry.Command, "server orchestration stays in the original alias")
 	for _, command := range []string{"npm run local:run", "npm run test:ci", "npx --no-install cypress run --browser chrome", "node -C development node_modules/cypress/bin/cypress run", "node --conditions=development --require ./setup.cjs node_modules/.bin/cypress run"} {
 		remaining := 256
 		result := resolveJestSequence(root, root, command, nil, &remaining, "cypress")
@@ -54,7 +54,7 @@ func TestCypressActionAndStatusGateAreClassifiedSeparately(t *testing.T) {
 func TestCypressNodeDiscoveryDoesNotTreatInlineScriptsAsCLI(t *testing.T) {
 	root := t.TempDir()
 	for _, command := range []string{"node -e node_modules/cypress/bin/cypress run", "node scripts/runner.js run", "node --require node_modules/cypress/bin/cypress run", "node --import"} {
-		_, err := CypressValidationCommand(root, command)
+		_, err := CypressExecutionCommand(root, command)
 		require.Error(t, err, command)
 	}
 }
@@ -112,12 +112,12 @@ func TestCypressScopeKeepsMetadataAndStatusJobsOutsideExecution(t *testing.T) {
 func TestCypressDefaultPrefersTheActualCICoverageAlias(t *testing.T) {
 	root := newJestRepository(t, "jobs:\n  tests:\n    steps:\n      - run: npm run test:ci:record:coverage\n")
 	writeScripts(t, root, map[string]string{"start": "node start.js", "start:coverage": "node start.js --coverage", "e2e": "cypress run", "e2e:record": "cypress run --record", "local:run": "start-test 8080 e2e", "test:ci:record:coverage": "run-p --race start:coverage e2e:record"})
-	command, err := CypressValidationCommand(root, "")
+	entry, err := CypressExecutionCommand(root, "")
 	require.NoError(t, err)
-	require.Equal(t, "npm run test:ci:record:coverage", command)
-	command, err = CypressValidationCommand(root, "npm run local:run")
+	require.Equal(t, "npm run test:ci:record:coverage", entry.Command)
+	entry, err = CypressExecutionCommand(root, "npm run local:run")
 	require.NoError(t, err)
-	require.Equal(t, "npm run local:run", command, "an explicit customer command still overrides CI selection")
+	require.Equal(t, "npm run local:run", entry.Command, "an explicit customer command still overrides CI selection")
 }
 
 func TestCypressLocalPlanKeepsApplicationFlagsButSeparatesCIInstallation(t *testing.T) {

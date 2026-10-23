@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/onboard"
@@ -84,28 +85,42 @@ func TestCypressNativeResultsKeepDuplicatesAndFailures(t *testing.T) {
 	}
 }
 
+func TestCypressDisclosesThatConfiguredComponentTestingWasNotExercised(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "results.json")
+	requireWriteFile(t, path, `{"complete":true,"componentConfigured":true,"runs":[]}`)
+	var run validationRun
+	readCypressResults(path, &run)
+	require.Equal(t, []string{cypressComponentNotExercised}, run.NotExercised)
+	result := validationResult{Framework: "cypress", Runs: []runSummary{run.summary(), run.summary()}}
+	require.Equal(t, []string{cypressComponentNotExercised}, summarizeValidation(result).NotExercised)
+	model := buildReport(t.TempDir(), intake.Facts{TestEventCount: 1}, false, reportRuntime{Framework: "Cypress", NotExercised: run.NotExercised})
+	require.True(t, slices.ContainsFunc(model.Cards, func(card reportCard) bool { return card.Context == cypressComponentNotExercised }))
+}
+
 func TestCypressObserverPreservesConfigAndAfterRunHandlers(t *testing.T) {
 	node, err := exec.LookPath("node")
 	require.NoError(t, err)
-	for _, mode := range []string{"baseline", "control", "plugin-retries"} {
+	for _, mode := range []string{"baseline", "control", "plugin-retries", "customer-retries"} {
 		probe := mode != "baseline"
 		root := t.TempDir()
 		directory := t.TempDir()
 		t.Chdir(root)
-		config := "module.exports={reporter:'custom',retries:3,e2e:{setupNodeEvents:async(on,cfg)=>{on('after:run',()=>{require('node:fs').writeFileSync('user-after-run','called')});on('task',{existing:()=>1});if(process.env.DDTEST_OBSERVER_RETRY_TEST==='plugin-retries'){if(cfg.retries!==0)throw new Error('native probe retries must be disabled before plugin setup');cfg.retries=2};return {...cfg,custom:'kept'}}}}"
+		config := "module.exports={reporter:'custom',retries:3,e2e:{setupNodeEvents:async(on,cfg)=>{on('after:run',()=>{require('node:fs').writeFileSync('user-after-run','called')});on('task',{existing:()=>1});if(process.env.DDTEST_OBSERVER_RETRY_TEST==='plugin-retries'){if(cfg.retries!==0)throw new Error('native probe retries must be disabled before plugin setup');cfg.retries=2};return {...cfg,custom:'kept',...process.env.DDTEST_OBSERVER_RETRY_TEST==='customer-retries'&&{retries:2}}}}}"
 		requireWriteFile(t, filepath.Join(root, "cypress.config.cjs"), config)
 		observer := filepath.Join(root, "observer.cjs")
 		requireWriteFile(t, observer, cypressObserver)
 		cli := filepath.Join(root, "node_modules/cypress/bin/cypress")
 		require.NoError(t, os.MkdirAll(filepath.Dir(cli), 0700))
-		requireWriteFile(t, cli, "const assert=require('node:assert/strict'); const fs=require('node:fs'); (async()=>{const args=process.argv.slice(3);assert.ok(args.includes('--browser'));assert.ok(args.includes('chrome'));assert.ok(!args.includes('--record'));assert.ok(!args.includes('--parallel'));const configPath=args[args.indexOf('--config-file')+1];assert.equal(fs.realpathSync(require('node:path').dirname(configPath)),fs.realpathSync(process.cwd()));assert.ok(args.indexOf('--config-file')<args.indexOf('--'));const config=require(configPath);assert.equal(config.reporter,'custom');const handlers={};const effective=await config.e2e.setupNodeEvents((event,fn)=>{handlers[event]=event==='task'?{...handlers[event],...fn}:fn},{retries:config.retries});assert.equal(effective.custom,'kept');assert.equal(effective.retries,process.env.DDTEST_OBSERVER_RETRY_TEST==='plugin-retries'?2:process.env.DDTEST_CYPRESS_PROBE?0:3);assert.equal(handlers.task.existing(),1);await handlers['after:run']({status:'finished',runs:[]});assert.equal(fs.readFileSync('user-after-run','utf8'),'called')})().catch(e=>{console.error(e);process.exitCode=1})")
+		requireWriteFile(t, cli, "const assert=require('node:assert/strict'); const fs=require('node:fs'); (async()=>{const args=process.argv.slice(3);assert.ok(args.includes('--browser'));assert.ok(args.includes('chrome'));assert.ok(!args.includes('--record'));assert.ok(!args.includes('--parallel'));const configPath=args[args.indexOf('--config-file')+1];assert.equal(fs.realpathSync(require('node:path').dirname(configPath)),fs.realpathSync(process.cwd()));assert.ok(args.indexOf('--config-file')<args.indexOf('--'));const config=require(configPath);assert.equal(config.reporter,'custom');const handlers={};const effective=await config.e2e.setupNodeEvents((event,fn)=>{handlers[event]=event==='task'?{...handlers[event],...fn}:fn},{retries:config.retries});assert.equal(effective.custom,'kept');assert.equal(effective.retries,process.env.DDTEST_OBSERVER_RETRY_TEST==='plugin-retries'?2:process.env.DDTEST_CYPRESS_PROBE?0:3);assert.equal(process.env.CYPRESS_RETRIES,process.env.DDTEST_CYPRESS_PROBE?undefined:'2');if(process.env.DDTEST_CYPRESS_PROBE)assert.equal(args[args.indexOf('--config')+1],'retries=0');assert.equal(handlers.task.existing(),1);await handlers['after:run']({status:'finished',runs:[]});assert.equal(fs.readFileSync('user-after-run','utf8'),'called')})().catch(e=>{console.error(e);process.exitCode=1})")
 		command := exec.CommandContext(t.Context(), node, "--require", observer, cli, "run", "--browser", "chrome", "--record", "--parallel", "--group", "CI group", "-P"+root, "-Ccypress.config.cjs", "--")
 		command.Dir = root
 		probePath := ""
 		if probe {
 			probePath = filepath.Join(root, "probe.cy.js")
 		}
-		command.Env = append(os.Environ(), "NODE_OPTIONS=", "DDTEST_CYPRESS_DIRECTORY="+directory, "DDTEST_CYPRESS_PROBE="+probePath, "DDTEST_OBSERVER_RETRY_TEST="+mode)
+		// Only the auto-retries probe lets the tracer keep a native retry budget.
+		probeMode := map[string]string{"control": "pass", "plugin-retries": "fail-once", "customer-retries": "fail"}[mode]
+		command.Env = append(os.Environ(), "NODE_OPTIONS=", "CYPRESS_RETRIES=2", "DDTEST_PROBE_MODE="+probeMode, "DDTEST_CYPRESS_DIRECTORY="+directory, "DDTEST_CYPRESS_PROBE="+probePath, "DDTEST_OBSERVER_RETRY_TEST="+mode)
 		output, err := command.CombinedOutput()
 		require.NoError(t, err, string(output))
 		original, err := os.ReadFile(filepath.Join(root, "cypress.config.cjs"))
@@ -215,6 +230,59 @@ func TestCypressPublishedReportRedactsKeysWithoutDroppingConfigurationEvidence(t
 	require.Equal(t, "[REDACTED]", decoded.Configurations[0].Cypress.CLI[3])
 }
 
+func TestCypressPublishedReportRedactsRecordingVariablesAndKeepsProse(t *testing.T) {
+	prose := "Use the -kitten option; --key fake-long-key is documented."
+	result := validationResult{Framework: "cypress", Error: prose,
+		CommandEnvironment: map[string]string{"CYPRESS_RECORD_KEY": "fake-env-key"},
+		Runs:               []runSummary{{Command: "CYPRESS_CLOUD_TOKEN=fake-token npx cypress run"}},
+		Configurations: []configurationResult{{TestCommand: onboard.TestCommand{Command: "CYPRESS_RECORD_KEY='fake-env-key' npx cypress run -k fake-short-key",
+			Environment: map[string]string{"CYPRESS_RECORD_KEY": "fake-env-key", "CYPRESS_CLOUD_TOKEN": "fake-token", "TERM": "xterm"},
+			Locations:   []string{"ci.yml / test / step 1 (CYPRESS_RECORD_KEY=fake-env-key npx cypress run -kfake-short-key)"}}}}}
+	data, err := json.Marshal(result)
+	require.NoError(t, err)
+	for _, secret := range []string{"fake-env-key", "fake-token", "fake-short-key", "fake-long-key"} {
+		require.NotContains(t, string(data), secret)
+	}
+	var decoded validationResult
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.Equal(t, "Use the -kitten option; --key [REDACTED] is documented.", decoded.Error)
+	require.Equal(t, "xterm", decoded.Configurations[0].Environment["TERM"])
+	require.Equal(t, "[REDACTED]", decoded.Configurations[0].Environment["CYPRESS_RECORD_KEY"])
+}
+
+func TestCypressPreviewRedactsRecordingKeys(t *testing.T) {
+	for _, all := range []bool{false, true} {
+		root := t.TempDir()
+		requireWriteFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"cypress":"16.1.1"},"scripts":{"test:ci":"cypress run --record --key fake-key-123"}}`)
+		require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+		requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  tests:\n    steps:\n      - run: npx cypress run --record --key fake-key-123\n        env: {CYPRESS_RECORD_KEY: fake-env-key}\n")
+		t.Chdir(root)
+		drive, err := Prepare(PrepareOptions{TracerVersion: "6.21.0", All: all})
+		require.NoError(t, err)
+		var output bytes.Buffer
+		drive.Preview(&output)
+		require.NotContains(t, output.String(), "fake-key-123")
+		require.NotContains(t, output.String(), "fake-env-key")
+		require.Contains(t, output.String(), "[REDACTED]")
+	}
+}
+
+func TestCypressPreviewWithoutACommandDoesNotGuessOne(t *testing.T) {
+	for _, all := range []bool{false, true} {
+		root := t.TempDir()
+		requireWriteFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"cypress":"16.1.1"}}`)
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules", ".bin"), 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "node_modules", ".bin", "cypress"), []byte("#!/bin/sh\n"), 0700))
+		t.Chdir(root)
+		drive, err := Prepare(PrepareOptions{TracerVersion: "6.21.0", All: all})
+		require.NoError(t, err)
+		var output bytes.Buffer
+		drive.Preview(&output)
+		require.NotContains(t, output.String(), "- command:")
+		require.NotContains(t, output.String(), "cypress run")
+	}
+}
+
 func TestCypressProbeOptionsOverrideOnlyNativeRetries(t *testing.T) {
 	root := t.TempDir()
 	observer := filepath.Join(root, "observer.cjs")
@@ -250,6 +318,22 @@ func TestCypressNativeRetryTelemetryDoesNotDependOnArrivalOrder(t *testing.T) {
 	require.Equal(t, "unexpected_retry", verifyJestTelemetry(run).Code)
 	run.Facts.Tests[0].Attempts = run.Facts.Tests[0].Attempts[1:]
 	require.Equal(t, "inconclusive", verifyJestTelemetry(run).Status, "every native attempt must have matching telemetry")
+}
+
+func TestCypressPairedComparisonIncludesNativeRetryHistory(t *testing.T) {
+	retried := testRun("passed", 0)
+	retried.framework = "cypress"
+	retried.Tests[0].CypressAttempts = []string{"failed", "passed"}
+	retried.Facts.Tests[0].Attempts = []intake.TestRun{{Status: "fail"}, {Status: "pass", Retry: true, RetryReason: "external"}}
+	immediate := testRun("passed", 0)
+	immediate.framework = "cypress"
+	immediate.Tests[0].CypressAttempts = []string{"passed"}
+	require.Equal(t, "compatible", compareJest(withoutTelemetry(retried), retried).Status)
+	require.Equal(t, "suspected regression", compareJest(withoutTelemetry(retried), immediate).Status)
+	// The same change in both pairs recurs; a history that changes between
+	// repeats is reported as varying instead.
+	require.Equal(t, "suspected regression", compareRepeatedJavaScript(withoutTelemetry(retried), immediate, withoutTelemetry(retried), immediate).Status)
+	require.Equal(t, "varying_outcomes", compareRepeatedJavaScript(withoutTelemetry(retried), immediate, withoutTelemetry(immediate), immediate).Code)
 }
 
 func TestCypressBackgroundPortCheckUsesDeclaredBaseURL(t *testing.T) {

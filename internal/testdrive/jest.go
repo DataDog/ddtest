@@ -291,7 +291,7 @@ func outcomeKeys(run validationRun) []string {
 	keys = append(keys, run.SuiteErrors...)
 	keys = append(keys, run.SuiteFailures...)
 	for _, test := range run.Tests {
-		keys = append(keys, test.File+" › "+test.Name+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test))
+		keys = append(keys, test.File+" › "+test.Name+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test))
 	}
 	for i := range keys {
 		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])

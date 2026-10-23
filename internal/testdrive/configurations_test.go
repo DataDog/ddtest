@@ -185,3 +185,20 @@ func TestPackageNativeIdentitiesKeepCheckoutPrefixes(t *testing.T) {
 	counts := nativeExecutionCounts(run)
 	require.Equal(t, 2, *counts.SourceTestIdentities)
 }
+
+func TestAllKeepsASuspectedRegressionFailedLikeASingleRun(t *testing.T) {
+	regression := verdict{Status: "suspected regression", Reason: "differs"}
+	inconclusive := verdict{Status: "inconclusive", Reason: "not compared"}
+	require.Equal(t, regression, combineConfigurationCompatibility(regression, inconclusive), "a later blocked configuration must not hide the regression")
+	require.Equal(t, inconclusive, combineConfigurationCompatibility(verdict{Status: "compatible"}, inconclusive))
+
+	result := completeValidationFixture("jest")
+	result.Compatibility = combineConfigurationCompatibility(regression, inconclusive)
+	result.Scope = &onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest a"}, {Directory: ".", Command: "jest b"}}}
+	result.Configurations = []configurationResult{{TestCommand: result.Scope.Commands[0], Status: "incomplete"}, {TestCommand: result.Scope.Commands[1], Status: "blocked"}}
+	root := t.TempDir()
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
+	report := readValidationReport(t, root)
+	require.Equal(t, "FAILED", report.Summary.Status)
+	require.Equal(t, "FAILED", report.Summary.LocalValidation)
+}

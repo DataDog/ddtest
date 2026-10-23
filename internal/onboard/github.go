@@ -78,7 +78,9 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 	}
 
 	_, _ = fmt.Fprintln(output)
-	if scope != nil {
+	if scope != nil && name == "cypress" {
+		WriteValidationScope(output, RedactCypressScope(*scope))
+	} else if scope != nil {
 		WriteValidationScope(output, *scope)
 	}
 	_, _ = fmt.Fprintln(output, strings.TrimSpace(instructions(language, name)))
