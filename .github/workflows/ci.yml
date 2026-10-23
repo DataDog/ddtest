@@ -148,8 +148,10 @@ jobs:
       - name: Install Python test dependencies
         run: python -m pip install "ddtrace>=4.11.0" pytest
 
+      # The release's installer downloads its executable for the runner, checks it
+      # against SHA256SUMS and adds it to PATH for the next steps.
       - name: Install ddto
-        run: go install "github.com/tonyredondo/dd-ci-testing-poc/cmd/ddto@${DDTO_VERSION}"
+        run: curl -fsSL "https://github.com/tonyredondo/dd-ci-testing-poc/releases/download/${DDTO_VERSION}/install.sh" | bash -s -- --version "${DDTO_VERSION}"
 
       - name: Run tests
         run: ddto test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
