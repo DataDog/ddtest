@@ -14,6 +14,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -42,28 +44,34 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	jestProject          jestProject
+	probeLintSkipped     bool
+	commandReviewReason  string
 	preflightEnvironment map[string]string
 	discoveryError       error
+	preflight            func(context.Context, io.Writer, *validationResult) error
 	repositoryRoot       string
-	framework            framework.Framework
-	language             string
-	command              string
-	args                 []string
-	tracerLabel          string
-	platform             platform.Platform
-	tracerVersion        string
-	projectTracer        string
-	session              *Session
-	installCommand       string
-	installArgs          []string
-	executor             commandExecutor
-	startIntake          func(string) (localIntake, error)
-	nodeVersion          func() string
-	environmentInfo      environmentInfo
-	preflight            *reportCard
-	checkOnly            bool
-	resolveJSTags        func(context.Context) (map[string]string, error)
-	resolveJSTracer      func(context.Context, string) (platform.JSSelection, error)
+	// Git checkout root; tracer source files are relative to it.
+	checkoutRoot       string
+	framework          framework.Framework
+	language           string
+	command            string
+	args               []string
+	tracerLabel        string
+	platform           platform.Platform
+	tracerVersion      string
+	projectTracer      string
+	session            *Session
+	installCommand     string
+	installArgs        []string
+	executor           commandExecutor
+	startIntake        func(string, intake.Scenario) (localIntake, error)
+	nodeVersion        func() string
+	environmentInfo    environmentInfo
+	environmentFailure *reportCard
+	checkOnly          bool
+	resolveJSTags      func(context.Context) (map[string]string, error)
+	resolveJSTracer    func(context.Context, string) (platform.JSSelection, error)
 }
 
 // Prepare detects the repository and probes the selected test environment and tracer.
@@ -111,15 +119,28 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	command, args := runner.Command()
 	configurationOnly := configuration.CheckOnly
 	var discoveryError error
+	var selectedPlan onboard.TestCommand
 	var preflightEnvironment map[string]string
-	if configurationOnly {
-		if runner.Name() != "jest" {
-			return nil, fmt.Errorf("configuration preflight currently supports Jest only")
+	if configurationOnly && !frameworkFeaturePolicies[runner.Name()].CheckOnly {
+		return nil, fmt.Errorf("configuration preflight currently supports Jest only")
+	}
+	if frameworkFeaturePolicies[runner.Name()].Preflight {
+		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
+		if err != nil {
+			return nil, fmt.Errorf("resolve Jest repository root: %w", err)
 		}
-		entry, selectionErr := onboard.JestConfigurationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
-		err = selectionErr
-		selected := entry.Command
-		preflightEnvironment = entry.Environment
+		var selected string
+		if configurationOnly {
+			var entry onboard.TestCommand
+			entry, err = onboard.JestConfigurationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+			selected, preflightEnvironment = entry.Command, entry.Environment
+		} else if override := strings.TrimSpace(settings.GetCommand()); override != "" {
+			selectedPlan, err = onboard.ForwardJestExecution(repositoryRoot, override)
+			selected = selectedPlan.Command
+		} else {
+			selectedPlan, err = onboard.JestExecutionCommand(repositoryRoot)
+			selected = selectedPlan.Command
+		}
 		if err != nil {
 			discoveryError = err
 		}
@@ -129,13 +150,22 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 				discoveryError = fmt.Errorf("invalid Jest command: %s", selected)
 			} else {
 				command, args = words[0], words[1:]
+				if command == "npx" && !slices.Contains(args, "--no-install") {
+					args = append([]string{"--no-install"}, args...)
+				}
 			}
 
 		}
 	}
+	// A failed discovery still runs startup recovery and replaces the earlier
+	// report after confirmation, so a stale PASSED result never stays current.
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
-	session := planSession(repositoryRoot)
+	session := planSession()
+	if !supportsValidationFramework(runner.Name()) {
+		session.directory = filepath.Join(repositoryRoot, ".testoptimization", "testdrive", session.ID())
+		session.persistent = true
+	}
 	if runner.Name() == "vitest" {
 		command, args, err = vitestTestdriveCommand(session.Directory())
 		if err != nil {
@@ -152,7 +182,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		command, args, source = pythonTestdriveCommand(repositoryRoot, command, args, strings.TrimSpace(settings.GetCommand()) != "")
 		environment, preflight = pythonEnvironmentInfo(ctx, command, args, source)
 	case "javascript":
-		if !configurationOnly {
+		if !configurationOnly && discoveryError == nil {
 			environment = nodeEnvironmentInfo(ctx, command)
 		}
 	case "ruby":
@@ -163,7 +193,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		options.Command, options.Args = environment.Executable, nil
 	}
 	var projectTracer string
-	if preflight == nil && !configurationOnly {
+	if preflight == nil && !configurationOnly && discoveryError == nil {
 		projectTracer, _ = detectedPlatform.DetectTracer(ctx, options)
 	}
 	var installCommand string
@@ -175,8 +205,19 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 
-	drive := &Testdrive{projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
-		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }, nodeVersion: currentNodeVersion, environmentInfo: environment, preflight: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
+	checkoutRoot := repositoryRoot
+	if checkout := git.GetSourceRoot(); checkout != "" {
+		if canonical, err := filepath.EvalSymlinks(checkout); err == nil {
+			checkoutRoot = canonical
+		}
+	}
+	drive := &Testdrive{checkoutRoot: checkoutRoot, probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
+		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
+			return intake.StartScenario(directory, scenario)
+		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
+	if frameworkFeaturePolicies[runner.Name()].Preflight {
+		drive.preflight = drive.checkJestPreflight
+	}
 	if installer, ok := detectedPlatform.(*platform.JavaScript); ok {
 		drive.resolveJSTracer = installer.ResolveRegistryTracer
 		drive.resolveJSTags = installer.RegistryTracerTags
@@ -186,16 +227,19 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 
 func displayName(name string) string {
 	names := map[string]string{"javascript": "JavaScript", "python": "Python", "ruby": "Ruby", "jest": "Jest", "mocha": "Mocha", "cypress": "Cypress", "playwright": "Playwright", "cucumber": "Cucumber", "vitest": "Vitest", "pytest": "pytest", "rspec": "RSpec", "minitest": "Minitest"}
-	return names[name]
+	if label := names[name]; label != "" {
+		return label
+	}
+	return name
 }
 
 // Preview describes the filesystem and process changes that Run will make.
 func (t *Testdrive) Preview(output io.Writer) {
+	if t.discoveryError != nil {
+		_, _ = fmt.Fprintf(output, "Command discovery failed: %s\nWith --yes, save a failed report without running tests.\n", t.discoveryError)
+		return
+	}
 	if t.checkOnly {
-		if t.discoveryError != nil {
-			_, _ = fmt.Fprintf(output, "Command discovery failed: %s\nWith --yes, save failed configuration findings without running tests.\n", t.discoveryError)
-			return
-		}
 		_, _ = fmt.Fprintln(output, "Check configuration only: load Jest configuration with --showConfig, resolve tracer metadata and review static CI runtimes. No tracer installation or tests; write .testoptimization/testdrive.json. Jest configuration may execute project JavaScript. CI execution and Datadog backend processing remain untested.")
 		return
 	}
@@ -209,9 +253,18 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintln(output)
 	t.environmentInfo.write(output)
 	_, _ = fmt.Fprintln(output, "\nRun:")
-	_, _ = fmt.Fprintf(output, "  - create an output folder: %s\n", directory)
-	if t.preflight != nil {
-		_, _ = fmt.Fprintf(output, "  - save findings and troubleshooting; tests will not run: %s\n", t.preflight.Title)
+	if supportsValidationFramework(t.framework.Name()) {
+		_, _ = fmt.Fprintln(output, "  - compare the original suite without instrumentation and with reporting-only instrumentation; repeat differing pairs")
+		_, _ = fmt.Fprintln(output, "  - discover a temporary probe with the original Jest configuration; check retries, EFD, skipping, quarantine, disabled tests and attempt-to-fix per selected project")
+		_, _ = fmt.Fprintln(output, "  - keep .testoptimization/testdrive.json and .testoptimization/report.html; remove owned probes, temporary tracer and run files")
+	}
+	if supportsValidationFramework(t.framework.Name()) {
+		_, _ = fmt.Fprintf(output, "  - use private temporary scratch storage: %s (removed after the run)\n", directory)
+	} else {
+		_, _ = fmt.Fprintf(output, "  - create an output folder: %s\n", directory)
+	}
+	if t.environmentFailure != nil {
+		_, _ = fmt.Fprintf(output, "  - save findings and troubleshooting; tests will not run: %s\n", t.environmentFailure.Title)
 	} else if t.projectTracer != "" {
 		_, _ = fmt.Fprintf(output, "  - reuse installed %s; no installation is needed\n", t.installedTracerLabel(t.projectTracer))
 	} else if t.language == "python" {
@@ -257,61 +310,177 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 }
 
-// Run prepares the tracer and executes the detected test suite.
-func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
+func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
+	lock, err := acquireWorkflowLock(t.repositoryRoot)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+	if err := t.recoverStartup(output); err != nil {
+		return t.finishStartupFailure(output, err)
+	}
 	if t.checkOnly {
 		return t.runConfigurationChecks(ctx, output)
 	}
-	session := t.session
-	if session == nil {
-		session = planSession(t.repositoryRoot)
+	if t.discoveryError != nil {
+		result := validationResult{Framework: t.framework.Name(), Tracer: t.tracerLabel, Error: t.discoveryError.Error(),
+			Compatibility: verdict{Status: "not exercised", Reason: "Command discovery failed; no tests were run."}}
+		return errors.Join(t.discoveryError, finishValidation(output, t.repositoryRoot, result))
 	}
-	if err := session.create(); err != nil {
+
+	result, runErr := t.run(ctx, output)
+	result.Framework = t.framework.Name()
+	if runErr != nil {
+		result.Error = runErr.Error()
+	}
+	return errors.Join(runErr, finishValidation(output, t.repositoryRoot, result))
+}
+
+// Startup recovery runs under the repository lock, before any new work.
+func (t *Testdrive) recoverStartup(output io.Writer) error {
+	if err := recoverSessions(t.repositoryRoot, output); err != nil {
 		return err
 	}
-	if t.preflight != nil {
-		return t.finishRun(output, session, intake.Facts{}, []byte(t.preflight.Context), errors.New(t.preflight.Title), nil, "Not installed")
+	if !probeRecoveryEnabled() {
+		return nil
+	}
+	return recoverProbesWithOutput(t.repositoryRoot, output)
+}
+
+func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validationResult, runErr error) {
+	session := t.session
+	if session == nil {
+		session = planSession()
+	}
+	if !supportsValidationFramework(t.framework.Name()) {
+		session.directory = filepath.Join(t.repositoryRoot, ".testoptimization", "testdrive", session.ID())
+		session.persistent = true
+	}
+	session.root = canonicalWorkflowRoot(t.repositoryRoot)
+	if err := session.create(); err != nil {
+		return result, err
+	}
+
+	t.session = session
+	result = validationResult{CheckOnly: t.checkOnly, Session: session.ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel,
+		Compatibility: verdict{Status: "inconclusive", Reason: "Validation did not complete."}}
+	defer func() {
+		cleanupErr := session.Close()
+		result.Cleanup = &verdict{Status: "passed", Reason: "Owned session storage removed."}
+		if session.persistent {
+			result.Cleanup = &verdict{Status: "not exercised", Reason: "Legacy diagnostics retained."}
+		}
+		if cleanupErr != nil {
+			result.Cleanup = &verdict{Status: "failed", Reason: reportText(cleanupErr.Error())}
+		}
+		runErr = errors.Join(runErr, cleanupErr)
+		if runErr != nil {
+			result.Error = runErr.Error()
+		}
+	}()
+
+	if t.environmentFailure != nil {
+		result.Compatibility = verdict{Status: "not exercised", Reason: t.environmentFailure.Title}
+		_, _ = fmt.Fprintf(output, "\nEnvironment check: %s\n%s\n", t.environmentFailure.Title, t.environmentFailure.Context)
+		execution := validationRun{Command: shellquote.Join(append([]string{t.command}, t.args...)...), commandOutput: t.environmentFailure.Context}
+		if !supportsValidationFramework(t.framework.Name()) {
+			path := filepath.Join(session.Directory(), testOutputFilename)
+			if err := os.WriteFile(path, []byte(t.environmentFailure.Context), 0600); err != nil {
+				return result, err
+			}
+			model := buildReport(t.repositoryRoot, intake.Facts{}, false, reportRuntime{Environment: t.environmentInfo, SetupFailure: t.environmentFailure})
+			findings, err := writeDiagnostics(t.repositoryRoot, session.Directory(), intake.Facts{}, model, false)
+			if err != nil {
+				return result, err
+			}
+			writeDiagnosticPaths(output, t.repositoryRoot, findings, path, "")
+		}
+		if err := t.writeHTMLReport(output, &result, execution); err != nil {
+			return result, err
+		}
+		return result, errors.New(t.environmentFailure.Title)
+	}
+
+	if supportsValidationFramework(t.framework.Name()) {
+		check := checkConfigurationCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
+		result.CIRuntime = &check
+		if t.preflight != nil {
+			if err := t.preflight(ctx, output, &result); err != nil {
+				return result, err
+			}
+		}
+	}
+
+	if t.projectTracer != "" {
+		_, _ = fmt.Fprintf(output, "\nReusing installed %s...\n", t.installedTracerLabel(t.projectTracer))
+	} else {
+		_, _ = fmt.Fprintf(output, "\nInstalling %s...\n", t.tracerLabel)
+	}
+	version := t.tracerVersion
+	if result.Selection != nil && result.Selection.Version != "" {
+		version = result.Selection.Version
 	}
 	installation := platform.TracerInstallation{Project: t.projectTracer != ""}
 	if t.language == "javascript" {
 		installation.Path = t.projectTracer
 	}
 	if t.projectTracer == "" {
-		_, _ = fmt.Fprintf(output, "\nInstalling %s...\n", t.tracerLabel)
-		directory := session.Directory()
 		var err error
+		directory := session.Directory()
 		if t.language == "python" {
-			directory, err = os.MkdirTemp("", "ddtest-python-*")
+			// The owner marker lets startup recovery remove this folder after a
+			// hard kill; the environment itself stays in an empty subfolder.
+			owned, err := os.MkdirTemp("", "ddtest-python-*")
 			if err != nil {
-				return fmt.Errorf("create temporary Python environment: %w", err)
+				return result, err
 			}
 			defer func() {
-				if err := os.RemoveAll(directory); err != nil {
-					runErr = errors.Join(runErr, fmt.Errorf("remove temporary Python environment: %w", err))
+				if err := os.RemoveAll(owned); err != nil {
+					runErr = errors.Join(runErr, err)
 				}
 			}()
+			if err := markSessionStorage(owned, t.repositoryRoot); err != nil {
+				return result, err
+			}
+			directory = filepath.Join(owned, "environment")
+			if err := os.Mkdir(directory, 0700); err != nil {
+				return result, err
+			}
 		}
-		options := platform.TracerOptions{Directory: directory, Version: t.tracerVersion, Command: t.command, Args: t.args}
+		options := platform.TracerOptions{Directory: directory, Version: version, Command: t.command, Args: t.args}
 		if t.language == "python" && t.environmentInfo.Executable != "" {
 			options.Command, options.Args = t.environmentInfo.Executable, nil
 		}
 		installation, err = t.platform.InstallTestdriveTracer(ctx, options)
 		if err != nil {
-			return err
+			return result, err
 		}
 	}
 
-	tracerLabel := t.tracerLabel
+	result.TracerSource = "temporary installation"
 	if t.language == "ruby" {
-		// Bundler owns the project dependency selection.
-		tracerLabel = "datadog-ci · installed in project"
+		result.TracerSource = "project bundle installation"
 	}
 	if installation.Project {
-		tracerLabel = t.installedTracerLabel(t.projectTracer) + " · reused"
+		result.Tracer = t.installedTracerLabel(t.projectTracer)
+		result.TracerSource = "project installation · reused"
 	}
-	server, err := t.startIntake(session.Directory())
+	if supportsValidationFramework(t.framework.Name()) {
+		if result.Selection != nil {
+			if err := verifyInstalledSelection(ctx, installation.Path, &result); err != nil {
+				return result, err
+			}
+			result.Preflight.Verdict = checkJestSupport(*result.Preflight, *result.Selection)
+			if result.Preflight.Verdict.Status != "compatible" {
+				return result, fmt.Errorf("jest preflight: %s", result.Preflight.Verdict.Reason)
+			}
+		}
+		runErr = t.runJavaScriptValidation(ctx, output, session, installation.Path, &result)
+		return
+	}
+	server, err := t.startIntake(session.Directory(), intake.Scenario{})
 	if err != nil {
-		return err
+		return result, err
 	}
 	intakeClosed := false
 	defer func() {
@@ -323,7 +492,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	command, args := t.executionCommand()
 	if t.framework.Name() == "vitest" {
 		if err := writeVitestEntrypoint(session.Directory()); err != nil {
-			return err
+			return result, err
 		}
 	}
 	_, _ = fmt.Fprintf(output, "Running %s...\n", shellquote.Join(append([]string{command}, args...)...))
@@ -331,77 +500,34 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	maps.Copy(env, installation.Env)
 
 	testOutput, testErr := t.executor.CombinedOutput(ctx, command, args, env)
+	execution := validationRun{Role: roleReporting, Name: "reporting-only", Command: shellquote.Join(append([]string{command}, args...)...),
+		Instrumented: true, ExitCode: commandExitCode(testErr), commandOutput: string(testOutput), commandError: testErr}
+	result.Runs = []runSummary{execution.summary()}
+
+	testOutputPath := filepath.Join(session.Directory(), testOutputFilename)
+	if err := os.WriteFile(testOutputPath, testOutput, 0644); err != nil {
+		return result, fmt.Errorf("save test output: %w", err)
+	}
+	if testErr != nil {
+		result.Runs[0].Diagnostic = commandDiagnostic(testOutput)
+		writeCommandFailure(output, displayName(t.framework.Name()), testOutput)
+	}
 
 	// Drain the intake before taking the snapshot used by the report.
 	closeErr := server.Close()
 	intakeClosed = true
-	var findings intake.Facts
-	if closeErr == nil {
-		findings, closeErr = server.Facts()
+	if closeErr != nil {
+		return result, closeErr
 	}
-	return t.finishRun(output, session, findings, testOutput, testErr, closeErr, tracerLabel)
-}
-
-func (t *Testdrive) finishRun(output io.Writer, session *Session, findings intake.Facts, testOutput []byte, testErr, analysisErr error, tracerLabel string) error {
-	command, args := t.executionCommand()
-	testOutputPath := filepath.Join(session.Directory(), testOutputFilename)
-	if err := os.WriteFile(testOutputPath, testOutput, 0644); err != nil {
-		return fmt.Errorf("save test output: %w", err)
+	findings, err := server.Facts()
+	if err != nil {
+		return result, err
 	}
-	var diagnosticsPath string
-	defer func() {
-		trafficPath := ""
-		if t.preflight == nil {
-			trafficPath = filepath.Join(session.Directory(), "intake")
-		}
-		writeDiagnosticPaths(output, t.repositoryRoot, diagnosticsPath, testOutputPath, trafficPath)
-	}()
-	if testErr != nil {
-		if t.preflight != nil {
-			_, _ = fmt.Fprintln(output, "\nEnvironment check:")
-		} else {
-			_, _ = fmt.Fprintf(output, "\n%s command output:\n", displayName(t.framework.Name()))
-		}
-		captured := strings.TrimSpace(string(testOutput))
-		lines := strings.Split(captured, "\n")
-		switch {
-		case captured == "":
-			_, _ = fmt.Fprintln(output, "The command produced no output.")
-		case len(lines) > 80:
-			_, _ = fmt.Fprintln(output, strings.Join(lines[:40], "\n"))
-			_, _ = fmt.Fprintf(output, "\n... %d %s omitted; see the full test output below ...\n\n", len(lines)-80, plural(len(lines)-80, "line", "lines"))
-			_, _ = fmt.Fprintln(output, strings.Join(lines[len(lines)-40:], "\n"))
-		default:
-			_, _ = fmt.Fprintln(output, captured)
-		}
-	}
-
-	if analysisErr != nil {
-		return analysisErr
-	}
-	runtime := reportRuntime{
-		Framework: displayName(t.framework.Name()), Tracer: tracerLabel, Environment: t.environmentInfo, SetupFailure: t.preflight,
-		Command: shellquote.Join(append([]string{command}, args...)...), Output: string(testOutput),
-	}
+	runtime := reportRuntime{Environment: t.environmentInfo, SetupFailure: t.environmentFailure, Framework: displayName(t.framework.Name()), Tracer: result.Tracer + " · " + result.TracerSource, Command: execution.Command, Output: string(testOutput)}
 	if testErr != nil {
 		runtime.Error = testErr.Error()
 	}
-	commandFailed := testErr != nil && t.preflight == nil
-	model := buildReport(t.repositoryRoot, findings, commandFailed, runtime)
-	var err error
-	diagnosticsPath, err = writeDiagnostics(t.repositoryRoot, session.Directory(), findings, model, commandFailed)
-	if err != nil {
-		return err
-	}
-	model.Artifacts = append(model.Artifacts, reportArtifact{Title: "Findings JSON", Href: diagnosticsFilename})
-	reportPath, err := writeReportModel(session.Directory(), model)
-	if err != nil {
-		return err
-	}
-	reportURL, err := fileURL(reportPath)
-	if err != nil {
-		return fmt.Errorf("create report link: %w", err)
-	}
+	model := buildReport(t.repositoryRoot, findings, testErr != nil, runtime)
 
 	_, _ = fmt.Fprintln(output)
 	if findings.TestEventCount > 0 {
@@ -411,6 +537,11 @@ func (t *Testdrive) finishRun(output io.Writer, session *Session, findings intak
 	}
 	writeFindings(output, findings, model.Cards...)
 	t.environmentInfo.write(output)
+	diagnosticsPath, err := writeDiagnostics(t.repositoryRoot, session.Directory(), findings, model, testErr != nil)
+	if err != nil {
+		return result, err
+	}
+	writeDiagnosticPaths(output, t.repositoryRoot, diagnosticsPath, testOutputPath, filepath.Join(session.Directory(), "intake"))
 	_, _ = fmt.Fprintln(output, "\nRun details:")
 	_, _ = fmt.Fprintf(output, "  Test events: %d\n", findings.TestEventCount)
 	_, _ = fmt.Fprintf(output, "  Tests: %d · Suites: %d\n", findings.TestCount, len(model.Suites))
@@ -442,33 +573,38 @@ func (t *Testdrive) finishRun(output io.Writer, session *Session, findings intak
 	if findings.TestEventCount == 0 {
 		status = "No test results received"
 	}
-	if t.preflight != nil {
-		status = "Not run (environment check failed)"
-	}
 	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), status)
-	_, _ = fmt.Fprintf(output, "  Datadog library: %s\n", tracerLabel)
-	_, _ = fmt.Fprintf(output, "  Command: %s\n", runtime.Command)
-	reportLabel, err := filepath.Rel(t.repositoryRoot, reportPath)
-	if err != nil {
-		reportLabel = reportPath
-	}
-	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(reportURL, reportLabel))
-
-	if t.preflight != nil {
-		return testErr
-	}
+	_, _ = fmt.Fprintf(output, "  Datadog library: %s · %s\n", result.Tracer, result.TracerSource)
+	_, _ = fmt.Fprintf(output, "  Command: %s\n", execution.Command)
+	result.Compatibility = verdict{Status: "inconclusive", Reason: "This framework has no compatibility adapter yet; telemetry alone does not validate behavior."}
+	result.Features = []featureResult{{Name: "all", Status: "unvalidated", Reason: "Controlled feature scenarios are not implemented for " + displayName(t.framework.Name()) + "."}}
+	result.Runs[0].TestEventCount = findings.TestEventCount
+	execution.Facts = findings
+	runErr = t.writeHTMLReport(output, &result, execution)
 	if testErr != nil {
-		return fmt.Errorf("%s failed after sending %d test event(s): %w", t.framework.Name(), findings.TestEventCount, testErr)
+		runErr = errors.Join(runErr, fmt.Errorf("%s failed after sending %d test event(s): %w", t.framework.Name(), findings.TestEventCount, testErr))
+	} else if findings.TestEventCount == 0 {
+		runErr = errors.Join(runErr, fmt.Errorf("%s command exited successfully, but Test Optimization sent no test events", t.framework.Name()))
 	}
-	if findings.TestEventCount == 0 {
-		return fmt.Errorf("%s command exited successfully, but Test Optimization sent no test events", t.framework.Name())
-	}
-	return nil
+	return
 }
 
 func writeFindings(output io.Writer, findings intake.Facts, cards ...reportCard) {
+	writeRunFindings(output, findings, true, cards...)
+}
+
+// Validation sessions delete captured traffic with their storage; only legacy
+// telemetry-only sessions keep it under .testoptimization for inspection.
+func inspectionHint(trafficRetained bool, retained string) string {
+	if trafficRetained {
+		return retained
+	}
+	return "Inspect the test output."
+}
+
+func writeRunFindings(output io.Writer, findings intake.Facts, trafficRetained bool, cards ...reportCard) {
 	if len(findings.ConfigurationErrors) > 0 {
-		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. Inspect the captured traffic and test output.\n", strings.Join(findings.ConfigurationErrors, ", "))
+		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. %s\n", strings.Join(findings.ConfigurationErrors, ", "), inspectionHint(trafficRetained, "Inspect the captured traffic and test output."))
 	}
 	count := len(findings.ConfigurationErrors)
 	for _, finding := range cards {
@@ -494,7 +630,7 @@ func writeFindings(output io.Writer, findings intake.Facts, cards ...reportCard)
 	}
 	if findings.EmptyCoverageEntryCount > 0 {
 		count += findings.EmptyCoverageEntryCount
-		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.\n", findings.EmptyCoverageEntryCount)
+		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. %s\n", findings.EmptyCoverageEntryCount, inspectionHint(trafficRetained, "Inspect the captured traffic."))
 		writeTroubleshooting(output, cards, "error")
 	}
 	for _, size := range []int{
@@ -629,8 +765,41 @@ func testEnvironment(intakeURL, sessionID string) map[string]string {
 	}
 }
 
+func reportingEnvironment(intakeURL, sessionID string) map[string]string {
+	return map[string]string{
+		constants.APIKeyEnvironmentVariable:                           "ddtest-testdrive",
+		constants.TestOptimizationEnabledEnvironmentVariable:          "true",
+		constants.TestOptimizationAgentlessEnabledEnvironmentVariable: "true",
+		constants.TestOptimizationAgentlessURLEnvironmentVariable:     intakeURL,
+		constants.TestOptimizationTestSessionNameEnvironmentVariable:  "ddtest testdrive " + sessionID,
+		"DD_CIVISIBILITY_GIT_UPLOAD_ENABLED":                          "false",
+		"DD_CIVISIBILITY_ITR_ENABLED":                                 "true",
+		"DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED":         "false",
+		"DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED":               "false",
+		"DD_TEST_EARLY_FLAKE_DETECTION_RETRY_COUNT":                   "1",
+		"DD_CIVISIBILITY_FLAKY_RETRY_ENABLED":                         "false",
+		"DD_CIVISIBILITY_FLAKY_RETRY_COUNT":                           "2",
+		"DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED":            "false",
+		"DD_TEST_FAILED_TEST_REPLAY_ENABLED":                          "false",
+		"DD_TEST_MANAGEMENT_ENABLED":                                  "false",
+		"DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES":                   "1",
+		"DD_INSTRUMENTATION_TELEMETRY_ENABLED":                        "false",
+		"DD_TRACE_STARTUP_LOGS":                                       "false",
+		"DD_TRACE_ENABLED":                                            "true",
+		"DD_REMOTE_CONFIG_ENABLED":                                    "false",
+		"DD_PROFILING_ENABLED":                                        "false",
+		"DD_APPSEC_ENABLED":                                           "false",
+		"DD_DYNAMIC_INSTRUMENTATION_ENABLED":                          "false",
+		"DD_TRACE_AGENT_URL":                                          intakeURL,
+		"DD_CIVISIBILITY_CODE_COVERAGE_ENABLED":                       "true",
+	}
+}
+
 func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]string {
 	env := testEnvironment(intakeURL, sessionID)
+	if t.framework != nil && supportsValidationFramework(t.framework.Name()) {
+		env = reportingEnvironment(intakeURL, sessionID)
+	}
 	switch t.language {
 	case "javascript":
 		maps.Copy(env, t.javascriptEnvironment(path))
@@ -659,4 +828,31 @@ func (t *Testdrive) installedTracerLabel(detected string) string {
 		return name + "@" + version
 	}
 	return name
+}
+
+// Show upstream's bounded failure output without linking temporary logs that
+// session cleanup removes. The compact report retains a bounded diagnostic.
+func writeCommandFailure(output io.Writer, label string, data []byte) {
+	_, _ = fmt.Fprintf(output, "\n%s command output:\n", label)
+	captured := strings.TrimSpace(string(data))
+	lines := strings.Split(captured, "\n")
+	switch {
+	case captured == "":
+		_, _ = fmt.Fprintln(output, "The command produced no output.")
+	case len(lines) > 80:
+		_, _ = fmt.Fprintln(output, strings.Join(lines[:40], "\n"))
+		_, _ = fmt.Fprintf(output, "\n... %d %s omitted ...\n\n", len(lines)-80, plural(len(lines)-80, "line", "lines"))
+		_, _ = fmt.Fprintln(output, strings.Join(lines[len(lines)-40:], "\n"))
+	default:
+		_, _ = fmt.Fprintln(output, captured)
+	}
+	_, _ = fmt.Fprintf(output, "\nBounded diagnostic: %s\n", validationPath(""))
+}
+
+func (t *Testdrive) finishStartupFailure(output io.Writer, err error) error {
+	result := validationResult{Framework: t.framework.Name(), CheckOnly: t.checkOnly, Error: err.Error(), Compatibility: verdict{Status: "inconclusive", Code: "recovery_failed", Reason: "Owned startup recovery did not finish."}}
+	if t.checkOnly {
+		result.Preflight = &jestPreflight{Verdict: verdict{Status: "inconclusive", Code: "recovery_failed", Reason: err.Error()}}
+	}
+	return errors.Join(err, finishValidation(output, t.repositoryRoot, result))
 }

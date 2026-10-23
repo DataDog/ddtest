@@ -2,6 +2,7 @@ package testdrive
 
 import (
 	"encoding/json"
+	"github.com/DataDog/ddtest/internal/environment"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +22,10 @@ func javascriptEnvironment(ciInitPath string) map[string]string {
 }
 
 func stripDatadogNodeOptions(value string) string {
-	fields := strings.Fields(value)
+	fields, err := environment.SplitNodeOptions(value)
+	if err != nil {
+		return value
+	}
 	kept := make([]string, 0, len(fields))
 	for index := 0; index < len(fields); index++ {
 		field := fields[index]
@@ -42,12 +46,12 @@ func stripDatadogNodeOptions(value string) string {
 		}
 		kept = append(kept, field)
 	}
-	return strings.Join(kept, " ")
+	return environment.JoinNodeOptions(kept)
 }
 
 func isDatadogNodePreload(value string) bool {
-	value = strings.Trim(value, `"'`)
-	return value == "dd-trace/ci/init" || strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/ci/init.js") ||
+	value = strings.ReplaceAll(value, `\`, "/")
+	return value == "dd-trace/ci/init" || value == "dd-trace/register.js" || strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/ci/init.js") ||
 		strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/register.js")
 }
 

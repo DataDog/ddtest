@@ -63,12 +63,13 @@ type storedMultipartPart struct {
 
 // Server is a local HTTP intake.
 type Server struct {
-	server    *http.Server
-	url       string
-	done      chan error
-	closeOnce sync.Once
-	closeErr  error
-	directory string
+	collectEvents bool
+	server        *http.Server
+	url           string
+	done          chan error
+	closeOnce     sync.Once
+	closeErr      error
+	directory     string
 
 	handlersMu sync.Mutex
 	handlers   sync.WaitGroup
@@ -81,6 +82,11 @@ type Server struct {
 // Start starts an HTTP intake on a kernel-assigned loopback port and stores
 // every request under the testdrive session directory.
 func Start(sessionDirectory string) (*Server, error) {
+	return StartScenario(sessionDirectory, Scenario{})
+}
+
+// StartScenario starts an isolated intake with fixed responses for one experiment.
+func StartScenario(sessionDirectory string, scenario Scenario) (*Server, error) {
 	intakeDirectory := filepath.Join(sessionDirectory, intakeDirectoryName)
 	if err := os.MkdirAll(intakeDirectory, 0755); err != nil {
 		return nil, fmt.Errorf("create local testdrive intake directory: %w", err)
@@ -92,12 +98,13 @@ func Start(sessionDirectory string) (*Server, error) {
 	}
 
 	server := &Server{
-		url:       "http://" + listener.Addr().String(),
-		done:      make(chan error, 1),
-		directory: intakeDirectory,
+		collectEvents: scenario.Feature != "" && scenario.Feature != "reporting-only",
+		url:           "http://" + listener.Addr().String(),
+		done:          make(chan error, 1),
+		directory:     intakeDirectory,
 	}
 	httpServer := &http.Server{
-		Handler:           server.recordRequests(newHandler()),
+		Handler:           server.recordRequests(scenarioHandler(scenario)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	server.server = httpServer

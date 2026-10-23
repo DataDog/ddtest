@@ -13,6 +13,8 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
+	ProbeLintSkipped bool              `json:"probe_lint_skipped,omitempty"`
+	ReviewReason     string            `json:"review_reason,omitempty"`
 	Resolution       string            `json:"resolution,omitempty"`
 	Directory        string            `json:"directory"`
 	Command          string            `json:"command"`

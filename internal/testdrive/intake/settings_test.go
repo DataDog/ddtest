@@ -102,3 +102,81 @@ func TestGitNegotiation(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, unknown.Code)
 	require.Contains(t, unknown.Body.String(), "unsupported")
 }
+
+func TestScenarioResponsesEnableOnlySelectedBehavior(t *testing.T) {
+	for _, feature := range []string{"reporting-only", "auto-retries", "early-flake-detection", "skipping", "quarantine", "disabled", "attempt-to-fix"} {
+		t.Run(feature, func(t *testing.T) {
+			handler := scenarioHandler(Scenario{Feature: feature, Module: "custom-module", Suite: "../../src/probe.test.js", SourceFile: "src/probe.test.js", Test: "probe"})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SettingsURLPath, bytes.NewBufferString(`{"data":{}}`)))
+			require.Equal(t, http.StatusOK, response.Code)
+			var settings api.SettingsResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &settings))
+			attributes := settings.Data.Attributes
+			require.Equal(t, feature == "auto-retries", attributes.FlakyTestRetriesEnabled)
+			require.Equal(t, feature == "early-flake-detection", attributes.EarlyFlakeDetection.Enabled)
+			require.Equal(t, feature == "skipping", attributes.TestsSkipping)
+			require.Equal(t, feature == "quarantine" || feature == "disabled" || feature == "attempt-to-fix", attributes.TestManagement.Enabled)
+			require.False(t, attributes.ImpactedTestsEnabled)
+			require.False(t, attributes.DIEnabled)
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(`{}`)))
+			if feature == "skipping" {
+				require.Contains(t, response.Body.String(), `"suite":"src/probe.test.js"`)
+				require.NotContains(t, response.Body.String(), "../../")
+			} else {
+				require.Contains(t, response.Body.String(), `"data":[]`)
+			}
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.TestManagementTestsURLPath, bytes.NewBufferString(`{}`)))
+			if attributes.TestManagement.Enabled {
+				require.Contains(t, response.Body.String(), `"custom-module"`)
+				require.Contains(t, response.Body.String(), `"../../src/probe.test.js"`)
+				require.Contains(t, response.Body.String(), `"probe"`)
+			} else {
+				require.Contains(t, response.Body.String(), `"modules":{}`)
+			}
+		})
+	}
+}
+
+func TestSkippingWithoutSourceDoesNotReturnTheSuiteIdentity(t *testing.T) {
+	response := httptest.NewRecorder()
+	handler := scenarioHandler(Scenario{Feature: "skipping", Suite: "../../src/probe.test.js"})
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(`{}`)))
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), `"data":[]`)
+	require.NotContains(t, response.Body.String(), "probe.test.js")
+}
+
+func TestSkippingUsesTheRequestedProtocolLevel(t *testing.T) {
+	handler := scenarioHandler(Scenario{Feature: "skipping", Suite: "../../reported/probe.cy.js", SourceFile: "cypress/probe.cy.js", Test: "ddtest validation probe"})
+	for _, tc := range []struct{ request, want string }{
+		{"{\"data\":{\"attributes\":{\"test_level\":\"test\"}}}", "{\"type\":\"test\",\"attributes\":{\"suite\":\"../../reported/probe.cy.js\",\"name\":\"ddtest validation probe\"}}"},
+		{"{\"data\":{\"attributes\":{\"test_level\":\"suite\"}}}", "{\"type\":\"suite\",\"attributes\":{\"suite\":\"cypress/probe.cy.js\"}}"},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(tc.request)))
+		require.Equal(t, http.StatusOK, response.Code)
+		var result struct{ Data []json.RawMessage }
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+		require.Len(t, result.Data, 1)
+		require.JSONEq(t, tc.want, string(result.Data[0]))
+	}
+}
+
+func TestKnownTestsIncludeTheEmittedModule(t *testing.T) {
+	response := httptest.NewRecorder()
+	scenarioHandler(Scenario{Feature: "early-flake-detection", Module: "named project"}).ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.KnownTestsURLPath, bytes.NewBufferString(`{}`)))
+	require.Equal(t, http.StatusOK, response.Code)
+	var data struct {
+		Data struct {
+			Attributes struct {
+				Tests map[string]json.RawMessage `json:"tests"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &data))
+	require.JSONEq(t, `{}`, string(data.Data.Attributes.Tests["named project"]))
+	require.JSONEq(t, `{}`, string(data.Data.Attributes.Tests["jest"]))
+}

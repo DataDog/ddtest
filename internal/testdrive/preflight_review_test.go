@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,6 +21,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/Masterminds/semver/v3"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
@@ -41,7 +43,10 @@ func TestMissingJestNeverInvokesPackageDownloader(t *testing.T) {
 	t.Cleanup(func() { viper.Reset(); settings.Init() })
 	run, err := Prepare(PrepareOptions{CheckOnly: true})
 	require.NoError(t, err)
-	run.startIntake = func(string) (localIntake, error) { t.Fatal("check-only must not start intake"); return nil, nil }
+	run.startIntake = func(string, intake.Scenario) (localIntake, error) {
+		t.Fatal("check-only must not start intake")
+		return nil, nil
+	}
 	require.Error(t, run.Run(t.Context(), &bytes.Buffer{}))
 	var report validationResult
 	data, err := os.ReadFile(validationPath(root))
@@ -216,4 +221,18 @@ func TestCheckOnlyPreparationDoesNotRunNodeStartupHooks(t *testing.T) {
 	run.Preview(&bytes.Buffer{})
 	require.NoFileExists(t, "NODE_WAS_STARTED")
 	require.NoDirExists(t, ".testoptimization")
+}
+
+func TestFullValidationKeepsNestedCheckoutCIUnvalidated(t *testing.T) {
+	run := preparedTestdrive(t)
+	checkout := filepath.Dir(run.repositoryRoot)
+	require.NoError(t, exec.Command("git", "init", "-q", checkout).Run())
+	require.NoError(t, os.MkdirAll(filepath.Join(checkout, ".github", "workflows"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(checkout, ".github", "workflows", "ci.yml"), []byte(`jobs: {tests: {steps: [{run: 'npm test'}]}}`), 0600))
+	run.platform = &fakeTracer{err: errors.New("stop after CI inspection")}
+	require.Error(t, run.Run(t.Context(), &bytes.Buffer{}))
+	report := readValidationReport(t, run.repositoryRoot)
+	require.NotNil(t, report.CIRuntime)
+	require.Equal(t, onboard.StatusInconclusive, report.CIRuntime.Status)
+	require.Equal(t, onboard.CodeNestedCIScope, report.CIRuntime.Review[0].Code)
 }

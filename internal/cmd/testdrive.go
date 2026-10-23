@@ -24,7 +24,7 @@ func newTestdriveCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "testdrive",
 		Short: "Try Test Optimization on the local test suite",
-		Long:  "Runs the detected test suite once with Datadog Test Optimization and a local intake. No Datadog API key is required. With --check-only, inspect Jest configuration and static CI/tracer compatibility without installing a tracer or running tests.",
+		Long:  fmt.Sprintf("For %[1]s, compares native test results without and with instrumentation, then checks advanced features using temporary probes under the original configuration. Matching existing test failures are acceptable. Other frameworks run reporting-only checks against a local intake. No Datadog API key is required. With --check-only, inspect %[1]s configuration and static CI/tracer compatibility without installing a tracer or running tests.", testdrive.ValidationFrameworkNames()),
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.NoArgs(cmd, args); err != nil {
 				return err
@@ -35,7 +35,7 @@ func newTestdriveCommand() *cobra.Command {
 	}
 	var version string
 	var checkOnly bool
-	command.Flags().BoolVar(&checkOnly, "check-only", false, "Check Jest configuration, tracer selection and static CI runtimes without installing a tracer or running tests")
+	command.Flags().BoolVar(&checkOnly, "check-only", false, "Check "+testdrive.ValidationFrameworkNames()+" configuration, tracer selection and static CI runtimes without installing a tracer or running tests")
 	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {

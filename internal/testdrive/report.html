@@ -1336,7 +1336,7 @@ THE SOFTWARE.
         aria-label="Run details"
       >
         <h2>Run details</h2>
-        <p class="run-totals">{{ len .Tests }} {{ plural (len .Tests) "test" "tests" }} · {{ len .Suites }} {{ plural (len .Suites) "suite" "suites" }}</p>
+        <p class="run-totals">{{ if .ExecutionCounts }}{{ .ExecutionCounts.TestExecutions }} reported test executions{{ if .ExecutionCounts.SourceTestIdentities }} · {{ .ExecutionCounts.SourceTestIdentities }} source-test identities{{ end }}{{ else }}{{ len .Tests }} {{ plural (len .Tests) "test" "tests" }}{{ end }} · {{ len .Suites }} {{ plural (len .Suites) "suite" "suites" }}</p>
         {{ if .NoTestEvents }}<p class="no-test-events">No test events received.</p>{{ end }}
         <dl class="facts">
           {{ range $index, $fact := .Facts }}
@@ -1358,7 +1358,7 @@ THE SOFTWARE.
           {{ else }}
             <p class="muted">The command produced no output.</p>
           {{ end }}
-          <a href="test-output.txt">Open full output file</a>
+          {{ range .Artifacts }}{{ if eq .Href "test-output.txt" }}<a href="{{ .Href }}">Open full output file</a>{{ end }}{{ end }}
         </details>
       </section>
       <nav class="tabs" role="tablist" aria-label="Report sections">

@@ -110,7 +110,7 @@ func requireNPMIntegration(t *testing.T) {
 }
 
 func prepareInstrumentedJestFixture(ctx context.Context, repositoryRoot, sessionName string) (*instrumentedJestFixture, error) {
-	session, err := testdrive.NewSession(repositoryRoot)
+	session, err := testdrive.NewSession()
 	if err != nil {
 		return nil, err
 	}

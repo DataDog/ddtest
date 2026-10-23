@@ -37,5 +37,5 @@ func (t *Testdrive) installedJest(ctx context.Context) (string, []string, error)
 	if info, statErr := os.Stat(entry); statErr == nil && !info.IsDir() {
 		return "node", append(append(args, entry), t.args...), nil
 	}
-	return "", nil, fmt.Errorf("cannot resolve installed Jest in this project; install dependencies first, then rerun check-only")
+	return "", nil, fmt.Errorf("cannot resolve installed Jest in this project; install dependencies first, then rerun the same command")
 }

@@ -38,7 +38,11 @@ type jestRuntime struct {
 }
 
 func prepareJestRuntimeCapture(env map[string]string) (string, string, error) {
-	directory, err := os.MkdirTemp("", "ddtest-jest-preflight-")
+	return prepareJestRuntimeCaptureIn("", env)
+}
+
+func prepareJestRuntimeCaptureIn(parent string, env map[string]string) (string, string, error) {
+	directory, err := os.MkdirTemp(parent, "ddtest-jest-preflight-")
 	if err != nil {
 		return "", "", err
 	}

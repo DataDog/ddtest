@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"errors"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/testdrive"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"os"
@@ -194,5 +195,13 @@ func TestCheckOnlyNonInteractiveHintPreservesEveryFlag(t *testing.T) {
 	want := "`ddtest testdrive --check-only --framework jest --tracer-version 'git:main branch' --yes`"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("hint = %v, want %s", err, want)
+	}
+}
+
+func TestTestdriveHelpUsesRegisteredFrameworkNames(t *testing.T) {
+	command := newTestdriveCommand()
+	names := testdrive.ValidationFrameworkNames()
+	if !strings.Contains(command.Long, names) || !strings.Contains(command.Flags().Lookup("check-only").Usage, names) {
+		t.Fatalf("help must use registered validation frameworks: %s", names)
 	}
 }

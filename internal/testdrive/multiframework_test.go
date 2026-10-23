@@ -7,7 +7,6 @@ package testdrive
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -56,18 +55,14 @@ printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$las
 					drive.platform = &fakeTracer{}
 					executor := &fakeTestdriveExecutor{}
 					drive.executor = executor
-					drive.startIntake = func(string) (localIntake, error) {
+					drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 						return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
 					}
 					require.NoError(t, drive.Run(t.Context(), &output))
+					require.NotContains(t, output.String(), "INCOMPLETE")
 					require.True(t, strings.HasPrefix(executor.env["RUBYOPT"], preloads+" "))
 					require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
-					var diagnostics runDiagnostics
-					data, err := os.ReadFile(filepath.Join(drive.session.Directory(), diagnosticsFilename))
-					require.NoError(t, err)
-					require.NoError(t, json.Unmarshal(data, &diagnostics))
-					require.Equal(t, drive.environmentInfo, diagnostics.Environment)
-					report, err := os.ReadFile(filepath.Join(drive.session.Directory(), reportFilename))
+					report, err := os.ReadFile(htmlReportPath(root))
 					require.NoError(t, err)
 					require.Contains(t, string(report), "Ruby 3.4.7")
 					require.Contains(t, string(report), "/selected ruby/bin/ruby")
@@ -102,26 +97,29 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			require.Contains(t, preview.String(), displayName(name))
 			_, err = os.Stat(filepath.Join(root, ".testoptimization"))
 			require.True(t, os.IsNotExist(err), "preview must be read-only")
-			// Execution below is simulated; environment prerequisite checks have their own tests.
-			run.preflight = nil
+			if name == "jest" {
+				return
+			} // Paired validation has separate real-run tests.
+			run.environmentFailure = nil
 			run.nodeVersion = func() string { return "v20.0.0" }
 			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
 			run.platform = installer
 			run.projectTracer = ""
-			run.projectTracer = ""
-			run.projectTracer = ""
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
-			run.startIntake = func(string) (localIntake, error) {
+			run.startIntake = func(string, intake.Scenario) (localIntake, error) {
 				return &fakeIntake{url: "http://127.0.0.1:1234", findings: intake.Facts{TestEventCount: 1, TestCount: 1}}, nil
 			}
 			var output bytes.Buffer
 			require.NoError(t, run.Run(t.Context(), &output))
+			require.NotContains(t, output.String(), "INCOMPLETE")
+			require.NotContains(t, output.String(), "Validation verdict")
+			require.Contains(t, output.String(), "Test events received.")
 			require.Contains(t, output.String(), displayName(name)+": Passed")
 			require.Contains(t, output.String(), "Tests with coverage: 0 / 1")
 			require.Equal(t, "ddtest-testdrive", executor.env["DD_API_KEY"])
 			if name == "cucumber" {
-				require.Equal(t, "true", executor.env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"])
+				require.Equal(t, "true", executor.env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"], "frameworks without a controlled adapter retain main settings")
 			}
 			switch run.language {
 			case "javascript":
@@ -131,16 +129,13 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 				require.Contains(t, executor.env["PYTEST_ADDOPTS"], "--ddtrace")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			case "ruby":
-				var diagnostics runDiagnostics
-				data, err := os.ReadFile(filepath.Join(run.session.Directory(), diagnosticsFilename))
+				report, err := os.ReadFile(htmlReportPath(root))
 				require.NoError(t, err)
-				require.NoError(t, json.Unmarshal(data, &diagnostics))
-				require.Equal(t, run.environmentInfo, diagnostics.Environment)
-				require.Equal(t, "Ruby from PATH", diagnostics.Environment.Source)
+				require.Contains(t, string(report), "Ruby from PATH")
 				require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
 				require.Contains(t, preview.String(), "Bundler updates Gemfile and Gemfile.lock.")
 				require.NotContains(t, preview.String(), "It will not change")
-				require.Contains(t, output.String(), "datadog-ci · installed in project")
+				require.Contains(t, output.String(), "datadog-ci@latest · project bundle installation")
 				require.Contains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			}
@@ -237,7 +232,7 @@ func TestCypressTestdrivePreservesCommand(t *testing.T) {
 			run.nodeVersion = func() string { return "v20.20.0" }
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
-			run.startIntake = func(string) (localIntake, error) {
+			run.startIntake = func(string, intake.Scenario) (localIntake, error) {
 				return &fakeIntake{findings: intake.Facts{TestEventCount: 1, TestCount: 1}}, nil
 			}
 			var output bytes.Buffer

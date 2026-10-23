@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -30,9 +31,11 @@ type jestProject struct {
 	DisplayName struct {
 		Name string `json:"name"`
 	} `json:"displayName"`
-	Runner      string `json:"testRunner"`
-	Environment string `json:"testEnvironment"`
-	Root        string `json:"rootDir"`
+	Runner                 string   `json:"testRunner"`
+	Environment            string   `json:"testEnvironment"`
+	Root                   string   `json:"rootDir"`
+	InjectGlobals          *bool    `json:"injectGlobals,omitempty"`
+	ExtensionsToTreatAsEsm []string `json:"extensionsToTreatAsEsm,omitempty"`
 }
 
 type jestPreflight struct {
@@ -49,7 +52,13 @@ type jestPreflight struct {
 
 func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, result *validationResult) (preflightErr error) {
 	command, baseArgs := t.command, t.args
-	if command == "npx" {
+	if slices.Contains([]string{"npm", "npx", "pnpm", "yarn", "bun"}, filepath.Base(command)) {
+		if _, _, err := t.installedJest(ctx); err != nil {
+			result.Preflight = &jestPreflight{Verdict: verdict{Status: onboard.StatusInconclusive, Code: onboard.CodeJestNotInstalled, Reason: err.Error()}}
+			return err
+		}
+	}
+	if command == "npx" && !slices.Contains(baseArgs, "--no-install") {
 		baseArgs = append([]string{"--no-install"}, baseArgs...)
 	}
 	if command == "jest" {
@@ -60,7 +69,7 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 			return err
 		}
 	}
-	args := framework.WithFrameworkOptions(command, baseArgs, "jest", "--showConfig")
+	args := framework.WithFrameworkOptions(command, baseArgs, "jest", "--showConfig", "--watchman=false")
 	check := &jestPreflight{Command: shellquote.Join(append([]string{command}, args...)...), Verdict: verdict{Status: onboard.StatusInconclusive, Reason: "Effective Jest configuration was not resolved."}}
 	result.Preflight = check
 	_, _ = fmt.Fprintf(output, "Inspecting Jest configuration: %s\n", check.Command)
@@ -75,11 +84,20 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 		options = explicit
 	}
 	env["NODE_OPTIONS"] = stripDatadogNodeOptions(options)
-	directory, capture, err := prepareJestRuntimeCapture(env)
+	parent := ""
+	if t.session != nil {
+		if info, err := os.Stat(t.session.Directory()); err == nil && info.IsDir() {
+			parent = t.session.Directory()
+		}
+	}
+	directory, capture, err := prepareJestRuntimeCaptureIn(parent, env)
 	if err != nil {
 		return err
 	}
 	defer func() { preflightErr = errors.Join(preflightErr, os.RemoveAll(directory)) }()
+	if err := markSessionStorage(directory, t.repositoryRoot); err != nil {
+		return err
+	}
 	env["DD_CIVISIBILITY_ENABLED"] = "false"
 	env["DD_TRACE_ENABLED"] = "false"
 	data, err := t.executor.CombinedOutput(ctx, command, args, env)
@@ -103,6 +121,9 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	}
 	runtime, err := readJestRuntimeCapture(capture)
 	if err != nil {
+		if t.commandReviewReason != "" {
+			return fmt.Errorf("%w; command review: %s. Scripts that set NODE_OPTIONS must preserve inherited validation preloads", err, t.commandReviewReason)
+		}
 		return err
 	}
 	check.Node, check.Executable, check.Arguments = runtime.Node, runtime.Executable, runtime.Arguments
@@ -147,9 +168,24 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 // Node engines alone do not describe framework/runner compatibility.
 var jestTracerMinimums = map[int]string{5: "24.8", 6: "28"}
 
+// Projects excluded by --selectProjects or --ignoreProjects never run, so their
+// runner does not matter. Feature validation applies the same selection.
+func selectedJestProjects(check jestPreflight) []jestProject {
+	if len(check.Projects) < 2 || check.Arguments == nil {
+		return check.Projects
+	}
+	var selected []jestProject
+	for _, project := range check.Projects {
+		if _, ok := projectArgs("jest", check.Arguments, project.DisplayName.Name); ok {
+			selected = append(selected, project)
+		}
+	}
+	return selected
+}
+
 func checkJestSupport(check jestPreflight, selection platform.JSSelection) verdict {
 	var problems []string
-	for _, project := range check.Projects {
+	for _, project := range selectedJestProjects(check) {
 		runner := filepath.ToSlash(project.Runner)
 		if !strings.Contains(runner, "/jest-circus/") && runner != "jest-circus/runner" {
 			problems = append(problems, "Jest requires the jest-circus runner for Test Optimization; add the matching jest-circus version and set testRunner to 'jest-circus/runner', or choose a supported Jest upgrade")
@@ -240,4 +276,43 @@ func checkConfigurationCIRuntimes(ctx context.Context, packageRoot, frameworkNam
 		check.Review = append(check.Review, onboard.RuntimeFinding{Workflow: ".github/workflows", Status: onboard.StatusNotExercised, Code: onboard.CodeNestedCIScope, Reason: check.Reason})
 	}
 	return check
+}
+
+func verifyInstalledSelection(ctx context.Context, preload string, result *validationResult) error {
+	if result.Selection == nil {
+		return fmt.Errorf("tracer selection metadata is missing")
+	}
+	var selected platform.JSSelection
+	var err error
+	if result.Selection.Source == "project" {
+		selected, err = platform.NewJavaScript().ResolveTestdriveTracer(ctx, platform.TracerOptions{Version: result.Selection.Requested})
+	} else {
+		data, readErr := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(preload)), "package.json"))
+		err = readErr
+		if err == nil {
+			var manifest struct {
+				Version string `json:"version"`
+				Engines struct {
+					Node string `json:"node"`
+				} `json:"engines"`
+			}
+			err = json.Unmarshal(data, &manifest)
+			selected.Version, selected.Node = manifest.Version, manifest.Engines.Node
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("read installed tracer metadata: %w", err)
+	}
+	if selected.Version == "" || selected.Node == "" {
+		return fmt.Errorf("installed tracer metadata has no version or Node requirement")
+	}
+	if result.Selection.Version != "" && selected.Version != result.Selection.Version {
+		return fmt.Errorf("installed dd-trace %s differs from preflight selection %s", selected.Version, result.Selection.Version)
+	}
+	result.Selection.Version, result.Selection.Node = selected.Version, selected.Node
+	result.Tracer = "dd-trace@" + selected.Version
+	if result.CIRuntime != nil {
+		result.CISelection = compareCISelection(*result.CIRuntime, selected.Version)
+	}
+	return nil
 }
