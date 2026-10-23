@@ -15,12 +15,21 @@ type featurePolicy struct {
 
 type frameworkPolicy struct {
 	Paired, CheckOnly, ProbeRecovery, Preflight, Configurations bool
+	SourceCoverage                                              bool
 	ConfigurationFiles                                          []string
 	Features                                                    []featurePolicy
 }
 
 var frameworkFeaturePolicies = map[string]frameworkPolicy{
-	"jest": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"jest.config.js", "jest.config.cjs", "jest.config.mjs", "jest.config.ts", "jest.config.cts", "jest.config.mts", "jest.config.json"}, Features: []featurePolicy{
+	"playwright": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
+		{Name: "auto-retries", Status: "required"},
+		{Name: "early-flake-detection", Status: "required"},
+		{Name: "skipping", Status: "not supported", Reason: playwrightSkippingReason},
+		{Name: "quarantine", Status: "required"},
+		{Name: "disabled", Status: "required"},
+		{Name: "attempt-to-fix", Status: "required"},
+	}},
+	"jest": {SourceCoverage: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"jest.config.js", "jest.config.cjs", "jest.config.mjs", "jest.config.ts", "jest.config.cts", "jest.config.mts", "jest.config.json"}, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"},
 		{Name: "early-flake-detection", Status: "required"},
 		{Name: "skipping", Status: "required"},
@@ -28,7 +37,7 @@ var frameworkFeaturePolicies = map[string]frameworkPolicy{
 		{Name: "disabled", Status: "required"},
 		{Name: "attempt-to-fix", Status: "required"},
 	}},
-	"vitest": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"vitest.config.js", "vitest.config.ts", "vitest.config.mjs", "vitest.config.mts", "vitest.config.cjs", "vitest.config.cts", "vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.mts", "vite.config.cjs", "vite.config.cts"}, Features: []featurePolicy{
+	"vitest": {SourceCoverage: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"vitest.config.js", "vitest.config.ts", "vitest.config.mjs", "vitest.config.mts", "vitest.config.cjs", "vitest.config.cts", "vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.mts", "vite.config.cjs", "vite.config.cts"}, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"},
 		{Name: "early-flake-detection", Status: "required"},
 		{Name: "skipping", Status: "required"},
@@ -36,7 +45,7 @@ var frameworkFeaturePolicies = map[string]frameworkPolicy{
 		{Name: "disabled", Status: "required"},
 		{Name: "attempt-to-fix", Status: "required"},
 	}},
-	"mocha": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
+	"mocha": {SourceCoverage: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"},
 		{Name: "early-flake-detection", Status: "required"},
 		{Name: "skipping", Status: "required"},
@@ -111,4 +120,13 @@ func ValidationFrameworkNames() string {
 	}
 	slices.Sort(names)
 	return strings.Join(names, ", ")
+}
+
+func skippingPolicy(framework string) featurePolicy {
+	for _, policy := range featurePolicies(framework) {
+		if policy.Name == "skipping" {
+			return policy
+		}
+	}
+	return featurePolicy{Status: "required"}
 }

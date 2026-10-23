@@ -45,16 +45,20 @@ type localIntake interface {
 type Testdrive struct {
 	configurationSourceRoot  string
 	scopeCommand             string
+	playwrightGuard          bool
+	playwrightProject        string
 	configurationEnvironment map[string]string
-	allowReviewedBuilds      bool
-	commandTimeout           time.Duration
-	allConfigurations        bool
-	reportModels             *[]reportModel
-	workflowRoot             string
-	configurationRoot        string
-	vitestArguments          []string
-	vitestReporters          []string
-	vitestProbeArguments     []string
+	// Leading VAR=value assignments parsed from --command.
+	commandAssignments   map[string]string
+	allowReviewedBuilds  bool
+	commandTimeout       time.Duration
+	allConfigurations    bool
+	reportModels         *[]reportModel
+	workflowRoot         string
+	configurationRoot    string
+	vitestArguments      []string
+	vitestReporters      []string
+	vitestProbeArguments []string
 	// Inspection may legitimately resolve no options (a bare vitest).
 	vitestInspected, vitestProbeInspected bool
 	vitestNode                            string
@@ -148,14 +152,14 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
 	if all && !frameworkFeaturePolicies[runner.Name()].Configurations {
-		return nil, fmt.Errorf("--all currently validates Jest, Vitest and Mocha only")
+		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Mocha and Playwright only")
 	}
 
 	var discoveryError error
 	var selectedPlan onboard.TestCommand
 	var preflightEnvironment map[string]string
 	if configurationOnly && !frameworkFeaturePolicies[runner.Name()].CheckOnly {
-		return nil, fmt.Errorf("configuration preflight currently supports Jest, Vitest and Mocha only")
+		return nil, fmt.Errorf("configuration preflight currently supports Jest, Vitest, Mocha and Playwright only")
 	}
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
@@ -194,6 +198,19 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	// A failed discovery still runs startup recovery and replaces the earlier
 	// report after confirmation, so a stale PASSED result never stays current.
+	if runner.Name() == "playwright" && !all {
+		selected, resolveErr := onboard.PlaywrightValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		if resolveErr != nil {
+			discoveryError = resolveErr
+		} else if selected != "" {
+			words, splitErr := shellquote.Split(selected)
+			if splitErr != nil || len(words) == 0 {
+				discoveryError = fmt.Errorf("invalid Playwright command: %s", selected)
+			} else {
+				command, args = words[0], words[1:]
+			}
+		}
+	}
 	if runner.Name() == "mocha" && !all {
 		selected, resolveErr := onboard.MochaValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
 		if resolveErr != nil {
@@ -286,7 +303,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 
-	drive := &Testdrive{probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
+	drive := &Testdrive{commandAssignments: commandAssignments, probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
@@ -309,6 +326,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	if runner.Name() == "vitest" {
 		drive.preflight = drive.checkVitestPreflight
+	}
+	if runner.Name() == "playwright" {
+		drive.preflight = drive.checkPlaywrightPreflight
 	}
 	if runner.Name() == "mocha" {
 		drive.preflight = drive.checkMochaPreflight
@@ -374,6 +394,9 @@ func (t *Testdrive) Preview(output io.Writer) {
 	if supportsValidationFramework(t.framework.Name()) {
 		_, _ = fmt.Fprintln(output, "  - compare the original suite without instrumentation and with reporting-only instrumentation; repeat differing pairs")
 		_, _ = fmt.Fprintln(output, "  - discover a temporary probe with the original framework configuration; check retries, EFD, skipping, quarantine, disabled tests and attempt-to-fix per selected project")
+		if policy := skippingPolicy(t.framework.Name()); policy.Status == "not supported" {
+			_, _ = fmt.Fprintln(output, "  - TIA skipping/per-test coverage: "+policy.Status+"; "+policy.Reason)
+		}
 		_, _ = fmt.Fprintln(output, "  - keep .testoptimization/testdrive.json and .testoptimization/report.html; remove owned probes, temporary tracer and run files")
 	}
 	if supportsValidationFramework(t.framework.Name()) {
@@ -463,10 +486,13 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	var result validationResult
 	if t.discoveryError != nil {
 		result, runErr = t.run(ctx, output)
-	} else if t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
+	} else if t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
 		child := *t
 		child.workflowRoot = t.repositoryRoot
 		child.preflight = child.checkVitestPreflight
+		if child.framework.Name() == "playwright" {
+			child.preflight = child.checkPlaywrightPreflight
+		}
 		if child.framework.Name() == "mocha" {
 			child.preflight = child.checkMochaPreflight
 		}
@@ -480,6 +506,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 	result.Framework = t.framework.Name()
 	result.FocusedCommand = frameworkFeaturePolicies[t.framework.Name()].Configurations && strings.TrimSpace(settings.GetCommand()) != ""
+	result.CommandEnvironment = reportedEnvironment(t.commandAssignments)
 	if frameworkFeaturePolicies[t.framework.Name()].Configurations {
 		prepareValidationResult(t.repositoryRoot, &result)
 		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
@@ -517,6 +544,9 @@ func (t *Testdrive) recoverStartup(output io.Writer) error {
 	if err := recoverSessions(t.repositoryRoot, output); err != nil {
 		return err
 	}
+	if err := recoverProcessOwners(t.repositoryRoot, output); err != nil {
+		return err
+	}
 	if !probeRecoveryEnabled() {
 		return nil
 	}
@@ -542,6 +572,14 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		Compatibility: verdict{Status: "inconclusive", Reason: "Validation did not complete."}}
 	defer func() {
 		cleanupErr := session.Close()
+		var supervision *processSupervisionError
+		if errors.As(runErr, &supervision) {
+			result.Compatibility = verdict{Status: "not exercised", Code: supervision.Code, Reason: supervision.Error()}
+		}
+		var processCleanup *processCleanupError
+		if errors.As(runErr, &processCleanup) {
+			cleanupErr = errors.Join(cleanupErr, processCleanup)
+		}
 		result.Cleanup = &verdict{Status: "passed", Reason: "Owned session storage removed."}
 		if session.persistent {
 			result.Cleanup = &verdict{Status: "not exercised", Reason: "Legacy diagnostics retained."}
@@ -662,6 +700,8 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			}
 			if t.framework.Name() == "vitest" {
 				result.Preflight.Verdict = checkVitestSupport(*result.Preflight, *result.Selection)
+			} else if t.framework.Name() == "playwright" {
+				result.Preflight.Verdict = checkPlaywrightSupport(*result.Preflight, *result.Selection)
 			} else if t.framework.Name() == "mocha" {
 				result.Preflight.Verdict = checkMochaSupport(*result.Preflight, *result.Selection)
 			} else {

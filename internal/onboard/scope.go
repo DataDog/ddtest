@@ -24,6 +24,7 @@ type TestCommand struct {
 	ScopeCommand      string            `json:"-"` // Original invocation before adding a forwarding wrapper.
 	ProbeLintSkipped  bool              `json:"probe_lint_skipped,omitempty"`
 	ReviewReason      string            `json:"review_reason,omitempty"`
+	ExitOnFailure     bool              `json:"exit_on_failure,omitempty"`
 	Resolution        string            `json:"resolution,omitempty"`
 	Directory         string            `json:"directory"`
 	Command           string            `json:"command"`
@@ -78,7 +79,7 @@ func yarnImplicitInstall(words []string) bool {
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" && framework != "mocha" {
+	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
@@ -109,12 +110,15 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				var unresolved, review []scopeDiagnostic
 				var commands []TestCommand
 				for i, step := range job.Steps {
-
 					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 					if conditionErr == nil && !active {
 						continue
 					}
 					location := commandLocation{Workflow: workflow.Path, Job: name, Matrix: maps.Clone(row), Step: stepNumber(step, i), Command: step.Run}
+					if framework == "playwright" && strings.Split(step.Uses, "@")[0] == "actions/upload-artifact" && step.Run == "" && step.ResolutionError == "" {
+						review = append(review, scopeDiagnostic{location, "artifact upload is outside local Playwright execution"})
+						continue
+					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
 					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
 					for _, setup := range resolution.Setup {
@@ -184,7 +188,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				allReview = append(allReview, review...)
 				for _, entry := range commands {
 					index := slices.IndexFunc(scope.Commands, func(previous TestCommand) bool {
-						return previous.Directory == entry.Directory && previous.Command == entry.Command && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
+						return previous.Directory == entry.Directory && previous.Command == entry.Command && previous.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
 					})
 					if index < 0 {
 						scope.Commands = append(scope.Commands, entry)

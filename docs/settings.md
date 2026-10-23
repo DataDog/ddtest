@@ -117,3 +117,5 @@ the corresponding selected-command option; an explicit command config wins. See
 ### Mocha testdrive validation
 
 See [Mocha validation](running.md#mocha-testdrive-validation) for commands, coverage requirements and limitations.
+
+Playwright testdrive accepts a simple original CLI command through `--command`, or discovers CI commands through `--all`. The supported controls and browser supervision are described in [Playwright validation](running.md#playwright-validation). No browser or project options are guessed.

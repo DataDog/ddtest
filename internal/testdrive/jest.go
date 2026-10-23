@@ -23,6 +23,7 @@ import (
 )
 
 type jestTest struct {
+	Playwright    *playwrightIdentity `json:"playwright,omitempty"`
 	telemetryName *string
 	File          string `json:"file"`
 	Name          string `json:"name"`
@@ -289,7 +290,7 @@ func outcomeKeys(run validationRun) []string {
 	keys = append(keys, run.SuiteErrors...)
 	keys = append(keys, run.SuiteFailures...)
 	for _, test := range run.Tests {
-		keys = append(keys, test.File+" › "+test.Name+": "+test.Status+"\n"+test.Failure)
+		keys = append(keys, test.File+" › "+test.Name+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test))
 	}
 	for i := range keys {
 		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])
@@ -339,6 +340,9 @@ func compareJest(baseline, instrumented validationRun) verdict {
 }
 
 func verifyJestTelemetry(run validationRun) verdict {
+	if run.framework == "playwright" {
+		return verifyPlaywrightTelemetry(run)
+	}
 	if run.Facts.TestEventCount == 0 {
 		return verdict{Status: "inconclusive", Reason: "The instrumented run sent no test events; matching test outcomes do not prove instrumentation worked."}
 	}
@@ -411,6 +415,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 
 func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
 	run := t.runJest
+	if t.framework.Name() == "playwright" {
+		run = t.runPlaywright
+	}
 	if t.framework.Name() == "mocha" {
 		run = t.runMocha
 	}
@@ -449,6 +456,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	}
 	if t.framework.Name() == "vitest" {
 		return t.runVitestFeatures(ctx, output, session, preload, baseline, result)
+	}
+	if t.framework.Name() == "playwright" {
+		return t.runPlaywrightFeatures(ctx, output, session, preload, baseline, result)
 	}
 	if t.framework.Name() == "mocha" {
 		return t.runMochaFeatures(ctx, output, session, preload, baseline, result)

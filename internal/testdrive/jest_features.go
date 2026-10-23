@@ -358,6 +358,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	}
 	passed, failed, retries := 0, 0, 0
 	quarantined, disabled, attemptToFix, skipped := false, false, false, false
+	omittedPlaywrightIdentity := false
 	for _, event := range run.Facts.Events {
 		tags := event.Tags
 		if isSkippedJestProbe(event, identity.Module, identity.Suite, identity.SourceFile) {
@@ -367,6 +368,10 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 			continue
 		}
 		moduleMatches := tags["test.module"] == identity.Module
+		if feature == "disabled" && run.framework == "playwright" && !moduleMatches && playwrightDisabledProbe(tags, identity, run) {
+			moduleMatches = true
+			omittedPlaywrightIdentity = true
+		}
 		if event.Type != "test" || tags["test.name"] != identity.Name || !moduleMatches {
 			continue
 		}
@@ -400,7 +405,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 			nativeSkip++
 		}
 	}
-	nativeRepeated := nativePass >= 2 || (run.framework == "vitest" && nativePass == 1)
+	nativeRepeated := nativePass >= 2 || ((run.framework == "vitest" || run.framework == "playwright") && nativePass == 1)
 	success := false
 	switch feature {
 	case "auto-retries":
@@ -438,6 +443,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 			"disabled":              "The normally failing probe was reported disabled/skipped, with no executed test body and a successful command.",
 			"attempt-to-fix":        "The marked passing probe ran repeatedly with attempt_to_fix retry evidence and a successful command.",
 		}[feature]
+		if omittedPlaywrightIdentity {
+			result.Reason += " The tracer omitted module/browser identity on the disabled event; the unique probe source, suite and name were matched to its single native project/browser."
+		}
 		if feature == "skipping" && run.Skipping != nil && run.Skipping.SuiteNameChanged {
 			result.Reason += " The tracer reported a different test.suite for the skipped suite; both names are retained in the skipping diagnostics."
 		}

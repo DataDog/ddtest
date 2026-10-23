@@ -24,8 +24,14 @@ func lockWorkflowFile(file *os.File) error {
 	return err
 }
 
+// workflowLockParent is fixed, not TMPDIR: invocations of one checkout with
+// different TMPDIR values must exclude each other, because recovery scans the
+// shared process-owner storage under /tmp (processSocketBase) and the
+// repository's probe records. Tests point it at a private directory.
+var workflowLockParent = "/tmp"
+
 func workflowLockDirectory(string) string {
-	return filepath.Join(os.TempDir(), fmt.Sprintf("ddtest-workflow-locks-%d", os.Getuid()))
+	return filepath.Join(workflowLockParent, fmt.Sprintf("ddtest-workflow-locks-%d", os.Getuid()))
 }
 func ownedByCurrentUser(info os.FileInfo) bool {
 	stat, ok := info.Sys().(*syscall.Stat_t)

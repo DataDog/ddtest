@@ -637,8 +637,10 @@ config files and patch targets cannot resolve outside the checkout. Windows
 symlink creation can require Developer Mode or additional privilege.
 
 Marked abandoned configuration copies and sessions are recovered under the
-repository lock on the next invocation. Unmarked files and other repositories'
-storage are preserved. Failed full attempts replace old JSON evidence and remove
+repository lock on the next invocation. On macOS and Linux the lock lives in
+`/tmp`, like process-ownership storage, whatever `TMPDIR` is, so two invocations
+of one checkout with different `TMPDIR` values still exclude each other.
+Unmarked files and other repositories' storage are preserved. Failed full attempts replace old JSON evidence and remove
 stale HTML; check-only can retain one explicitly historical execution and leaves
 its HTML unchanged. HTML keeps every instrumented reporting snapshot, including
 repeat pairs, while aggregate execution counts include each primary run once.
@@ -751,3 +753,13 @@ The preview lists retained lifecycle hooks and warns that any may upload or
 publish, including through indirect scripts. Those hooks run in the disposable
 copy for both comparisons; synthetic probes omit them while retaining the
 runner's scoped environment and working directory.
+
+### Playwright validation
+
+Use `ddtest testdrive --framework playwright --all --check-only --yes` to list the discovered test configuration and check runtime/tracer compatibility without installing a tracer or executing tests. Install the repository dependencies and required Playwright browsers first. Configuration loading executes project JavaScript under the same process ownership supervision. The Unix supervisor uses Bash and `ps`; idle guards exit after their group empties and never load the tracer.
+
+Run `ddtest testdrive --framework playwright --all --yes` for all discovered commands, or replace `--all` with `--command 'npm test'` for a simple package alias. Testdrive runs in a temporary checkout, preserving the Playwright configuration, browser projects and native retries. It adds the same builtin summary/native-result reporter through `PW_TEST_REPORTER` alongside the customer reporters and uses the same process supervisor in both modes, redirects artifacts, compares test identities/attempts/failures and exit codes, and checks local telemetry. Matching existing failures are acceptable. This baseline disables dd-trace but is not an unmodified shell execution. Asynchronous non-IPC children run in private process groups so browser and server descendants can be stopped even after their launcher exits. Node IPC children retain their IPC channel and receive the ownership preload even with a custom environment. Feature probes replace the actual CLI’s file, project, shard and repeat selectors after package aliases expand and disable dependency/teardown projects with `--no-deps`; the full comparison retains those original selections. Probe runs record both the launcher command and the resolved native command.
+
+Each executed project gets separate retries, EFD, quarantine, disabled-test and attempt-to-fix controls. Playwright TIA skipping and per-test coverage are unsupported; the report records that exception without counting it as a passing check. Opaque setup, incomplete native results or unsupported detached process options keep validation incomplete, with a structured compatibility code for supervision failures. Literal leading environment assignments in `--command` use the shared command parser. Owned server/browser processes stop when validation ends or the owning connection closes; reused customer servers are preserved.
+
+Keep `.testoptimization/report.html` and `testdrive.json`. HTML retains full test-command output; JSON retains bounded diagnostics and aggregate evidence. Actual CI and Datadog backend processing remain untested locally.

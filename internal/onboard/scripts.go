@@ -57,7 +57,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		}
 		return commandResolution{}
 	}
-	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "mocha") {
+	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright") {
 		return commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, framework)}
 	}
 	// GitHub expands these before the shell runs; they are not shell syntax.
@@ -137,6 +137,18 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 		return unresolvedCommand("Package script nesting exceeds 16 levels")
 	}
 
+	if len(frameworks) > 0 && frameworks[0] == "playwright" {
+		if inner, ok := playwrightFailureGuard(command); ok {
+			result := resolveJestSequence(root, directory, inner, stack, remaining, frameworks...)
+			if result.Reason != "" || !result.SingleJest || len(result.Tests) != 1 || len(result.Builds) > 0 {
+				return unresolvedCommand("Playwright failure guard requires a single test invocation")
+			}
+			result.Tests[0].ExitOnFailure = true
+			// Package-manager arguments would be appended to exit, not Playwright.
+			result.SingleJest = false
+			return result
+		}
+	}
 	commands, err := discoverCommands(command)
 	if err != nil {
 		return unresolvedCommand(repositoryError(root, err))
@@ -308,6 +320,12 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		if framework == "jest" && jestMetadataOptions(words[1:]) {
 			return commandResolution{}
 		}
+		if framework == "playwright" && (len(words) < 2 || words[1] != "test") {
+			return commandResolution{ReviewReason: "Playwright setup/tool command is outside test execution: " + command}
+		}
+		if framework == "playwright" && playwrightInteractiveMode(words[2:]) {
+			return unresolvedCommand("Playwright UI and debug modes are interactive and are not supported; select a finite test command")
+		}
 		canonicalRoot, _ := filepath.EvalSymlinks(root)
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
@@ -354,6 +372,11 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		return commandResolution{}
 	}
 	switch words[0] {
+	case "turbo":
+		if framework == "playwright" {
+			return reviewPlaywrightTurbo(root, directory, words, stack, remaining)
+		}
+		return unresolvedCommand("Cannot statically resolve command: " + command)
 	case "git":
 		if gitReleaseOperation(words) {
 			return commandResolution{ReviewReason: "Git release operation is outside " + framework + " validation; review separately, including any Git hooks: " + command}
@@ -458,6 +481,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	script, ok := manifest.Scripts[name]
 
 	if !ok {
+		if len(frameworks) > 0 && frameworks[0] == "playwright" && name == "playwright" && (strings.HasPrefix(command, "pnpm playwright") || strings.HasPrefix(command, "yarn playwright")) {
+			return resolveJestWords(root, directory, append([]string{"playwright"}, args...), stack, remaining, frameworks...)
+		}
 		if len(frameworks) > 0 && frameworks[0] == "vitest" && name == "vitest" && (strings.HasPrefix(command, "pnpm vitest") || strings.HasPrefix(command, "yarn vitest")) {
 			return resolveJestWords(root, directory, append([]string{"vitest"}, args...), stack, remaining, frameworks...)
 		}
@@ -602,6 +628,20 @@ func jestMetadataOptions(args []string) bool {
 		}
 		option, value, explicit := strings.Cut(arg, "=")
 		if slices.Contains([]string{"--help", "-h", "--version", "-v", "--showConfig", "--show-config"}, option) && (!explicit || value == "true") {
+			return true
+		}
+	}
+	return false
+}
+
+// --ui waits for the user and --debug opens the Inspector without a timeout.
+func playwrightInteractiveMode(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		option, _, _ := strings.Cut(arg, "=")
+		if slices.Contains([]string{"--ui", "--ui-host", "--ui-port", "--debug"}, option) {
 			return true
 		}
 	}

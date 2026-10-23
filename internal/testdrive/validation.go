@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -61,6 +62,8 @@ type runSpec struct {
 type validationRun struct {
 	ReplacedReporters []string
 	Role              runRole
+	NativeCommand     string
+	ExecutionContext  string `json:"execution_context,omitempty"`
 	temporaryRoot     string
 	commandOutput     string
 	commandError      error
@@ -108,6 +111,8 @@ type coverageSummary struct {
 type runSummary struct {
 	ReplacedReporters               []string            `json:"replaced_reporters,omitempty"`
 	Role                            runRole             `json:"role"`
+	NativeCommand                   string              `json:"native_command,omitempty"`
+	ExecutionContext                string              `json:"execution_context,omitempty"`
 	Coverage                        *coverageSummary    `json:"coverage,omitempty"`
 	ExecutionPath                   string              `json:"execution_path,omitempty"`
 	Workers                         int                 `json:"workers,omitempty"`
@@ -131,7 +136,7 @@ type runSummary struct {
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+	summary := runSummary{NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)
@@ -174,9 +179,11 @@ func (r validationRun) summary() runSummary {
 }
 
 type validationResult struct {
-	TelemetryOnly      bool                     `json:"telemetry_only,omitempty"`
-	SchemaVersion      int                      `json:"schema_version"`
-	FocusedCommand     bool                     `json:"focused_command,omitempty"`
+	TelemetryOnly  bool `json:"telemetry_only,omitempty"`
+	SchemaVersion  int  `json:"schema_version"`
+	FocusedCommand bool `json:"focused_command,omitempty"`
+	// Leading VAR=value assignments of --command, with secret-like values masked.
+	CommandEnvironment map[string]string        `json:"command_environment,omitempty"`
 	Configurations     []configurationResult    `json:"configurations,omitempty"`
 	ReportingCounts    *executionCounts         `json:"reporting_counts,omitempty"`
 	Scope              *onboard.ValidationScope `json:"scope,omitempty"`
@@ -536,4 +543,21 @@ func missingRealCoverage(result validationResult) bool {
 		}
 	}
 	return false
+}
+
+var secretEnvironmentName = regexp.MustCompile(`(?i)(key|token|secret|password|passwd|auth|credential)`)
+
+// Report what a focused command set, without copying credentials into the report.
+func reportedEnvironment(environment map[string]string) map[string]string {
+	if len(environment) == 0 {
+		return nil
+	}
+	reported := make(map[string]string, len(environment))
+	for key, value := range environment {
+		if secretEnvironmentName.MatchString(key) {
+			value = "[REDACTED]"
+		}
+		reported[key] = value
+	}
+	return reported
 }
