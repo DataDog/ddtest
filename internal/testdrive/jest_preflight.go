@@ -295,6 +295,8 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 	result.Scope = &scope
 	check := checkConfigurationCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
 	result.CIRuntime = &check
+	t.defaultToCITracer(check)
+	result.Tracer = t.tracerLabel
 	preflight := t.frameworkPreflight()
 	if preflight == nil {
 		err := fmt.Errorf("configuration checks are not supported for %s", t.framework.Name())

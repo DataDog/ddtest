@@ -8,7 +8,7 @@ import (
 )
 
 // A policy describes what must be exercised, never an assumed passing result.
-// Browser adapters add their not-supported/deferred exceptions with their PRs.
+// Browser adapters add their not-supported exceptions with their PRs.
 type featurePolicy struct {
 	Name   string
 	Status string
@@ -40,10 +40,10 @@ var frameworkFeaturePolicies = map[string]frameworkPolicy{
 	"cucumber": {SourceCoverage: true, ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"cucumber.js", "cucumber.cjs", "cucumber.mjs", "cucumber.json", "cucumber.yaml", "cucumber.yml"}, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "required"}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
 	}},
-	"cypress": {ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true,
+	"cypress": {SourceCoverage: true, ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true,
 		// Cypress --config/-c take inline settings such as retries=2.
 		ConfigurationOptions: []string{"--config-file", "-C"}, Features: []featurePolicy{
-			{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "deferred", Reason: cypressTIADeferredReason}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
+			{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "required"}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
 		}},
 	"playwright": {Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"},

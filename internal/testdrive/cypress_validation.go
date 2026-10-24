@@ -22,8 +22,6 @@ import (
 
 const cypressComponentNotExercised = "Cypress component testing is configured but not supported by ddtest; only the selected e2e command was exercised."
 
-const cypressTIADeferredReason = "Cypress Test Impact Analysis (skipping and application coverage) is deferred and was not validated. ddtest does not check application coverage yet; preserve any existing coverage setup."
-
 //go:embed scripts/cypress_observer.cjs
 var cypressObserver string
 
@@ -38,8 +36,19 @@ try { preload = local.resolve('dd-trace/ci/init') } catch (error) {
   if (error.code !== 'MODULE_NOT_FOUND') throw error
 }
 const cypress = local('cypress/package.json')
+// Read the manifest directly: package exports can hide package.json.
+let codeCoverage = ''
+for (const directory of local.resolve.paths('@cypress/code-coverage') || []) {
+  try {
+    codeCoverage = JSON.parse(require('node:fs').readFileSync(path.join(directory, '@cypress', 'code-coverage', 'package.json'), 'utf8')).version
+    break
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+}
 console.log(JSON.stringify({
   preload,
+  codeCoverage,
   cli: path.join(path.dirname(local.resolve('cypress/package.json')), 'bin', 'cypress'),
   version: cypress.version,
   requirements: [cypress.engines?.node, local('./package.json').engines?.node].filter(Boolean)
@@ -86,12 +95,14 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 		Preload      string
 		CLI          string
 		Version      string
+		CodeCoverage string
 		Requirements []string
 	}
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return fmt.Errorf("inspect Cypress package metadata: %w", err)
 	}
 	check.Version = metadata.Version
+	t.cypressCodeCoverage = metadata.CodeCoverage
 	// Resolve the tracer before the browser and runtime checks, so a blocked
 	// preflight still reports the project tracer it would have used.
 	installer, ok := t.platform.(*platform.JavaScript)
@@ -321,6 +332,13 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 		return run, err
 	}
 	readCypressResults(filepath.Join(directory, "results.json"), &run)
+	if instrumented && probePath == "" && run.ResultError == "" {
+		code := run.cypressCode
+		if code.Project == "" {
+			code.Project = filepath.ToSlash(t.cypressPackage)
+		}
+		run.Coverage = cypressSourceCoverage(t.checkoutRoot(), code, run.Facts, run.Tests)
+	}
 
 	var invocation struct {
 		Command string
@@ -353,6 +371,8 @@ func readCypressResults(path string, run *validationRun) {
 		Complete            bool
 		ConfigNode          string
 		ComponentConfigured bool
+		ProjectRoot         string
+		SupportFile         string
 		ProbeExecutions     *int
 		Message             string
 		Runs                []struct {
@@ -375,6 +395,7 @@ func readCypressResults(path string, run *validationRun) {
 		return
 	}
 	run.FrameworkNode = result.ConfigNode
+	run.cypressCode = cypressTestCode{Project: result.ProjectRoot, SupportFile: result.SupportFile}
 	if result.ComponentConfigured {
 		run.NotExercised = append(run.NotExercised, cypressComponentNotExercised)
 	}
@@ -418,13 +439,36 @@ func (t *Testdrive) runCypressFeatures(ctx context.Context, output io.Writer, se
 		return nil
 	}
 	defer func() { runErr = errors.Join(runErr, removeProbe(t.checkoutRoot(), probe)) }()
-	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
+	outputs := map[string]string{}
+	err = runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
 		role := roleProbeFeature
 		if scenario.Feature == "" {
 			role = roleProbeControl
 		}
-		return t.runCypress(ctx, output, session, preload, runSpec{Name: name, Role: role, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
+		run, err := t.runCypress(ctx, output, session, preload, runSpec{Name: name, Role: role, Instrumented: true, Scenario: scenario, ProbePath: probe, ProbeMode: mode})
+		outputs[scenario.Feature] = run.commandOutput
+		return run, err
 	}, result)
+	explainCypressCodeCoverageSkips(result.Features, t.cypressCodeCoverage, outputs)
+	return err
+}
+
+const cypressCodeCoverageSkipReason = "@cypress/code-coverage %s fails its afterEach hook when the tracer skips the first test of a spec: its support file reads coverage state that only its own beforeEach initializes, and the tracer's earlier beforeEach skipped the test. Test Impact Analysis skipping and disabled tests can't run with it. Upgrade to @cypress/code-coverage 4 or later, which requires Cypress 15.10 or later."
+
+// explainCypressCodeCoverageSkips names the known @cypress/code-coverage 3
+// crash when a runtime skip failed in an afterEach hook.
+func explainCypressCodeCoverageSkips(features []featureResult, codeCoverage string, outputs map[string]string) {
+	major, _, known := releaseParts(codeCoverage)
+	if !known || major >= 4 {
+		return
+	}
+	for i, feature := range features {
+		output := outputs[feature.Name]
+		if (feature.Name != "skipping" && feature.Name != "disabled") || feature.Status != "failed" || !strings.Contains(output, "after each") || !strings.Contains(output, "code-coverage") {
+			continue
+		}
+		features[i].Reason = fmt.Sprintf(cypressCodeCoverageSkipReason, codeCoverage)
+	}
 }
 
 const cypressProbeSource = `let attempts = 0;

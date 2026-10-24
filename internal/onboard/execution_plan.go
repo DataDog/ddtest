@@ -21,7 +21,6 @@ type ExecutionPlan struct {
 	TracerNode          string            `json:"tracer_node,omitempty"`
 	Initialization      string            `json:"initialization"`
 	Features            []string          `json:"feature_scenarios"`
-	DeferredFeatures    map[string]string `json:"deferred_features,omitempty"`
 	CIRuntime           *RuntimeCheck     `json:"ci_runtime,omitempty"`
 	Scope               ValidationScope   `json:"scope"`
 }

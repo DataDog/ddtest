@@ -676,23 +676,14 @@ func TestReportExplainsBrowserCoverageBesideTheCount(t *testing.T) {
 		name, framework, explanation string
 		facts                        intake.Facts
 	}{
-		{
-			name: "partial Cypress coverage", framework: "Cypress",
-			facts:       intake.Facts{TestCount: 111, CoveredTestCount: 60, CoverageLevel: "test"},
-			explanation: cypressTIADeferredReason,
-		},
-		{
-			name: "missing Cypress coverage", framework: "Cypress",
-			facts:       intake.Facts{TestCount: 1, MissingCoverage: true},
-			explanation: cypressTIADeferredReason,
-		},
+		// Cypress coverage gaps are real findings, not a browser limitation.
+		{name: "partial Cypress coverage", framework: "Cypress", facts: intake.Facts{TestCount: 111, CoveredTestCount: 60, CoverageLevel: "test"}},
+		{name: "missing Cypress coverage", framework: "Cypress", facts: intake.Facts{TestCount: 1, MissingCoverage: true}},
 		{
 			name: "confirmed Vitest browser limitation", framework: "Vitest",
 			facts:       intake.Facts{TestCount: 2, CoveredTestCount: 1, BrowserCoverageUnavailable: true},
 			explanation: intake.BrowserCoverageContext,
 		},
-		{name: "fully covered Cypress", framework: "Cypress", explanation: cypressTIADeferredReason, facts: intake.Facts{TestCount: 1, CoveredTestCount: 1}},
-		{name: "Cypress without test events", framework: "Cypress", explanation: cypressTIADeferredReason},
 		{name: "Vitest without browser evidence", framework: "Vitest", facts: intake.Facts{TestCount: 2, CoveredTestCount: 1}},
 		{name: "other framework", framework: "Jest", facts: intake.Facts{TestCount: 2, CoveredTestCount: 1}},
 	} {

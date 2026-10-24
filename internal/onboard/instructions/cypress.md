@@ -27,10 +27,13 @@ the CI setup, then validate with the customer's actual headless command.
    instrumentation works. Keep an existing manual integration; if browser
    instrumentation is missing, report the concrete diagnostics and review the
    documented manual Cypress plugin/support setup.
-4. Cypress Test Impact Analysis (TIA skipping and application coverage validation)
-   is deferred in testdrive. ddtest does not check Cypress TIA or application
-   coverage yet; preserve any existing coverage setup. A successful run does not
-   validate Cypress TIA; report it as deferred, not passed or unsupported by the tracer.
+4. Cypress Test Impact Analysis needs application coverage: the tested page must
+   expose Istanbul's window.__coverage__ (babel-plugin-istanbul or
+   vite-plugin-istanbul in the build served to Cypress). Testdrive requires that
+   coverage in the real suite and a test-level ITR skip of its probe. Preserve an
+   existing coverage setup; @cypress/code-coverage is not required. Version 3 of
+   @cypress/code-coverage fails when the tracer skips a test; it needs version 4
+   or later, which requires Cypress 15.10 or later.
 5. Before final validation, run the repository checks appropriate to any config
    or startup source files you edited, including their existing lint rules.
    Run ddtest testdrive --all --tracer-version <exact-release>
@@ -58,9 +61,9 @@ the CI setup, then validate with the customer's actual headless command.
    and parallel grouping, keeps the reporter and browser options, and records
    native after:run results. No real Datadog or Cypress Cloud key is needed.
    Cypress component testing and Windows process supervision are not supported by this validation. Unsupported commands/configurations remain incomplete; preserve their scope.
-6. Review both native runs, the telemetry comparison and the five required controlled
-   feature results (automatic retries, early flake detection, quarantine, disabled
-   tests and attempt-to-fix), with TIA explicitly deferred. Use the report's compatibility.status; matching counts alone
+6. Review both native runs, the telemetry comparison, real-suite coverage and the six
+   required controlled feature results (automatic retries, early flake detection,
+   skipping, quarantine, disabled tests and attempt-to-fix). Use the report's compatibility.status; matching counts alone
    cannot establish compatibility. Existing failures can pass when test identities,
    results, failure details and exit codes match. Preserve an inconclusive verdict.
    Fix configuration or instrumentation errors and rerun the complete command.

@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/onboard"
@@ -179,9 +181,9 @@ func TestCypressRejectsSetupFailureDespitePassingNativeResults(t *testing.T) {
 	require.Len(t, run.Tests, 1, "complete native results must not hide setup failure")
 }
 
-func TestCypressTIAExceptionKeepsOtherControlsMandatory(t *testing.T) {
+func TestCypressTIAIsRequired(t *testing.T) {
 	result := completeValidationFixture("cypress")
-	result.Runs[1].Coverage = &coverageSummary{Status: "not observed"}
+	result.Runs[1].Coverage = &coverageSummary{Status: "observed", CoveredTests: 1, TotalTests: 1}
 	root := t.TempDir()
 	var output bytes.Buffer
 	require.NoError(t, finishValidation(&output, root, result))
@@ -189,32 +191,150 @@ func TestCypressTIAExceptionKeepsOtherControlsMandatory(t *testing.T) {
 	require.True(t, report.LocalSuccess)
 	require.Equal(t, "PASSED", report.Summary.Status)
 	require.Len(t, report.Features, 6)
-	require.Contains(t, output.String(), cypressTIADeferredReason)
 	for i, feature := range result.Features {
-		if feature.Name == "skipping" {
-			require.Equal(t, "deferred", feature.Status)
-			require.False(t, featureSatisfied("jest", feature))
-			require.False(t, featureSatisfied("vitest", feature))
-			require.False(t, featureSatisfied("mocha", feature))
-			continue
-		}
+		require.Equal(t, "passed", feature.Status)
 		for _, status := range []string{"failed", "inconclusive", "deferred", "not supported"} {
 			result.Features[i].Status = status
 			require.False(t, featureChecksPassed("cypress", result.Features), "%s %s must block completion", feature.Name, status)
 		}
 		result.Features[i].Status = feature.Status
 	}
-	require.False(t, featureSatisfied("cypress", featureResult{Name: "skipping", Status: "not supported"}))
+
+	result.Runs[1].Coverage = &coverageSummary{Status: "not observed", Reason: cypressMissingCoverageReason}
+	require.True(t, missingRealCoverage(result))
+	require.Contains(t, strings.Join(summarizeValidation(result).BlockingChecks, "\n"), "Cypress real-suite coverage was not observed: "+cypressMissingCoverageReason)
 }
 
-func TestCypressReportDisclosesDeferredTIAWithoutCoverageWarning(t *testing.T) {
+func TestCypressReportWarnsAboutMissingCoverage(t *testing.T) {
 	model := buildReport(t.TempDir(), intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true}, false, reportRuntime{Framework: "Cypress"})
-	var output bytes.Buffer
-	require.NoError(t, testdriveReport.Execute(&output, model))
-	require.Contains(t, output.String(), cypressTIADeferredReason)
-	for _, card := range model.Cards {
-		require.NotEqual(t, intake.MissingCoverageFinding, card.Kind)
+	require.True(t, slices.ContainsFunc(model.Cards, func(card reportCard) bool { return card.Kind == intake.MissingCoverageFinding }))
+}
+
+func TestCypressSkippingAcceptsTestLevelITREvidence(t *testing.T) {
+	identity := intake.Test{Module: "cypress", Suite: "cypress/e2e/probe.cy.js", SourceFile: "cypress/e2e/probe.cy.js", Name: "ddtest " + probeName}
+	skipped := map[string]string{"test.module": identity.Module, "test.suite": identity.Suite, "test.name": identity.Name, "test.status": "skip", "test.skipped_by_itr": "true"}
+	zero := 0
+	run := validationRun{framework: "cypress", ProbeExecutions: &zero, Tests: []jestTest{{Name: identity.Name, Status: "skipped"}},
+		Facts: intake.Facts{TestEventCount: 1, Events: []intake.Event{{Type: "test", Tags: skipped}}}}
+	feature := evaluateFeature("skipping", run, identity)
+	require.Equal(t, "passed", feature.Status, feature.Reason)
+	diagnostic := diagnoseSkipping(run, intake.Scenario{Feature: "skipping", Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile})
+	require.True(t, diagnostic.SkippedByITR)
+	require.True(t, diagnostic.IdentityMatched)
+
+	executed := 1
+	run.ProbeExecutions = &executed
+	require.Equal(t, "failed", evaluateFeature("skipping", run, identity).Status, "a skipped event cannot hide an executed body")
+	run.ProbeExecutions = &zero
+
+	notITR := map[string]string{}
+	for key, value := range skipped {
+		notITR[key] = value
 	}
+	delete(notITR, "test.skipped_by_itr")
+	run.Facts.Events = []intake.Event{{Type: "test", Tags: notITR}}
+	require.Equal(t, "failed", evaluateFeature("skipping", run, identity).Status, "a plain skip is not ITR evidence")
+
+	run.Facts = intake.Facts{TestEventCount: 2, Events: []intake.Event{{Type: "test", Tags: skipped}, {Type: "test", Tags: map[string]string{"test.module": identity.Module, "test.suite": identity.Suite, "test.name": identity.Name, "test.status": "fail"}}}}
+	require.Equal(t, "failed", evaluateFeature("skipping", run, identity).Status, "a reported execution contradicts the skip")
+}
+
+func TestCypressSourceCoverageCountsOnlyApplicationFiles(t *testing.T) {
+	root := t.TempDir()
+	for _, file := range []string{"src/app.js", "cypress/e2e/todo.cy.js", "cypress/support/e2e.js", "node_modules/lib/index.js", "e2e/todo.cy.js"} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, file)), 0755))
+		requireWriteFile(t, filepath.Join(root, file), "")
+	}
+	native := []jestTest{{File: filepath.Join(root, "e2e/todo.cy.js"), Name: "adds"}}
+	facts := func(files ...string) intake.Facts {
+		return intake.Facts{TestCount: 2, CoverageLevel: "test", Tests: []intake.Test{{Name: "adds", CoveredFiles: files}, {Name: "removes"}}}
+	}
+
+	coverage := cypressSourceCoverage(root, cypressTestCode{}, facts("cypress/support/e2e.js", "src/app.js"), native)
+	require.Equal(t, "observed", coverage.Status)
+	require.Equal(t, 1, coverage.CoveredTests)
+	require.Equal(t, 2, coverage.TotalTests)
+	require.InDelta(t, 0.5, coverage.Ratio, 0.001)
+
+	coverage = cypressSourceCoverage(root, cypressTestCode{}, facts(filepath.Join(root, "cypress/e2e/todo.cy.js"), "e2e/todo.cy.js", "node_modules/lib/index.js"), native)
+	require.Equal(t, "not observed", coverage.Status)
+	require.Contains(t, coverage.Reason, "only Cypress specs, support code or dependencies")
+
+	coverage = cypressSourceCoverage(root, cypressTestCode{}, facts("src/missing.js"), native)
+	require.Equal(t, "invalid", coverage.Status)
+	require.Contains(t, coverage.Reason, "src/missing.js")
+
+	coverage = cypressSourceCoverage(root, cypressTestCode{}, facts(), native)
+	require.Equal(t, "not observed", coverage.Status)
+	require.Equal(t, cypressMissingCoverageReason, coverage.Reason)
+
+	coverage = cypressSourceCoverage(root, cypressTestCode{}, intake.Facts{TestCount: 1, CoverageLevel: "suite", Tests: []intake.Test{{Module: "cypress", Suite: "e2e/todo.cy.js", Name: "adds"}},
+		SuiteCoverages: []intake.SuiteCoverage{{Module: "cypress", Suite: "e2e/todo.cy.js", Files: []string{"src/app.js"}}}}, native)
+	require.Equal(t, "observed", coverage.Status, "suite coverage is associated with the suite's tests")
+	// A Cypress package in a monorepo keeps its own cypress folder.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "packages/web/cypress"), 0755))
+	requireWriteFile(t, filepath.Join(root, "packages/web/cypress/support.js"), "")
+	require.Equal(t, "not observed", cypressSourceCoverage(root, cypressTestCode{Project: "packages/web"}, facts("packages/web/cypress/support.js"), native).Status)
+	// Cypress reports the effective project and support file: a --project
+	// folder keeps its own cypress folder, and a support file can live anywhere.
+	for _, file := range []string{"e2e/cypress/support/e2e.js", "test/support.js"} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, file)), 0755))
+		requireWriteFile(t, filepath.Join(root, file), "")
+	}
+	require.Equal(t, "not observed", cypressSourceCoverage(root, cypressTestCode{Project: filepath.Join(root, "e2e")}, facts("e2e/cypress/support/e2e.js"), native).Status)
+	coverage = cypressSourceCoverage(root, cypressTestCode{Project: root, SupportFile: filepath.Join(root, "test/support.js")}, facts("test/support.js"), native)
+	require.Equal(t, "not observed", coverage.Status)
+	require.Contains(t, coverage.Reason, "only Cypress specs, support code or dependencies")
+	require.Equal(t, "observed", cypressSourceCoverage(root, cypressTestCode{Project: root, SupportFile: filepath.Join(root, "test/support.js")}, facts("test/support.js", "src/app.js"), native).Status)
+}
+
+func TestCypressObserverReportsEffectiveProjectAndSupportFile(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "cypress.config.cjs"), "module.exports={e2e:{}}")
+	requireWriteFile(t, filepath.Join(root, "observer.cjs"), cypressObserver)
+	script := `const fs=require('node:fs'),path=require('node:path'),[observer,root]=process.argv.slice(1)
+ const config=require(require(observer)(root,null,root,false,false))
+ ;(async()=>{
+   for (const supportFile of [path.join(root,'test/support.js'),false]) {
+     const handlers={}
+     await config.e2e.setupNodeEvents((event,handler)=>{handlers[event]=handler},{projectRoot:path.join(root,'e2e'),supportFile})
+     await handlers['after:run']({runs:[]})
+     const {projectRoot,supportFile:reported}=JSON.parse(fs.readFileSync(path.join(root,'results.json'),'utf8'))
+     console.log(JSON.stringify({projectRoot,supportFile:reported}))
+   }
+ })()`
+	output, err := exec.CommandContext(t.Context(), "node", "-e", script, filepath.Join(root, "observer.cjs"), root).CombinedOutput()
+	require.NoError(t, err, string(output))
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	require.Len(t, lines, 2)
+	project, _ := json.Marshal(filepath.Join(root, "e2e"))
+	require.Contains(t, lines, `{"projectRoot":`+string(project)+`,"supportFile":`+strconv.Quote(filepath.Join(root, "test/support.js"))+`}`)
+	require.Contains(t, lines, `{"projectRoot":`+string(project)+`}`, "supportFile: false has no support code to exclude")
+}
+
+func TestCypressCodeCoverage3SkipCrashIsNamed(t *testing.T) {
+	crash := `1) "after each" hook for "validation probe": TypeError: Cannot read properties of undefined (reading 'forEach')
+      at Context.eval (webpack:///./node_modules/@cypress/code-coverage/support.js:145:0)`
+	features := func() []featureResult {
+		return []featureResult{{Name: "skipping", Status: "failed", Reason: "generic"}, {Name: "disabled", Status: "failed", Reason: "generic"}, {Name: "quarantine", Status: "failed", Reason: "generic"}}
+	}
+	outputs := map[string]string{"skipping": crash, "disabled": crash, "quarantine": crash}
+
+	named := features()
+	explainCypressCodeCoverageSkips(named, "3.14.7", outputs)
+	require.Contains(t, named[0].Reason, "@cypress/code-coverage 3.14.7 fails its afterEach hook")
+	require.Contains(t, named[1].Reason, "Upgrade to @cypress/code-coverage 4 or later")
+	require.Equal(t, "failed", named[0].Status)
+	require.Equal(t, "generic", named[2].Reason, "only runtime skips trigger the crash")
+
+	for _, version := range []string{"4.0.3", ""} {
+		unchanged := features()
+		explainCypressCodeCoverageSkips(unchanged, version, outputs)
+		require.Equal(t, "generic", unchanged[0].Reason, version)
+	}
+	unchanged := features()
+	explainCypressCodeCoverageSkips(unchanged, "3.14.7", map[string]string{"skipping": "AssertionError: expected skip"})
+	require.Equal(t, "generic", unchanged[0].Reason, "other failures keep their own reason")
 }
 
 func TestCypressPublishedReportRedactsKeysWithoutDroppingConfigurationEvidence(t *testing.T) {
