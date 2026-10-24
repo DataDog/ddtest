@@ -40,7 +40,7 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "sharded repeated alias", "unsupported detached spawn", "dependency projects and bare playwright"} {
+	for _, mode := range playwrightWorkflowScenarios.selected(t) {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -261,4 +261,10 @@ func TestPlaywrightDiscoveryWithFileTerminatorOnlyLists(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, discovered.Tests, 1, "the file filter after -- still selects one file")
 	require.NoFileExists(t, marker, "discovery lists tests; it must not execute them")
+}
+
+// Relative durations from CI; see integrationScenarios.
+var playwrightWorkflowScenarios = integrationScenarios{
+	names:   []string{"passing", "existing failure", "sharded repeated alias", "unsupported detached spawn", "dependency projects and bare playwright"},
+	weights: map[string]int{"dependency projects and bare playwright": 17, "existing failure": 12, "sharded repeated alias": 5, "unsupported detached spawn": 2},
 }

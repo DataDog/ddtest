@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/testdrive"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,11 +30,11 @@ func TestPublicJestTestdrive(t *testing.T) {
 	build.Dir = "../.."
 	output, err := build.CombinedOutput()
 	require.NoError(t, err, string(output))
-	modes := []string{"passing", "existing failure", "script selection", "multiple selected projects", "sharded threshold script", "native retries", "temporary tracer", "missing Jest", "script startup override", "controlled mismatch", "CJS disabled globals", "ESM disabled globals"}
-	if _, err := os.Stat(filepath.Join(modules, "ts-jest")); err == nil {
-		modes = append(modes, "TypeScript", "TypeScript isolated modules", "TypeScript disabled globals")
-	}
-	for _, mode := range modes {
+	_, tsErr := os.Stat(filepath.Join(modules, "ts-jest"))
+	for _, mode := range testdrive.JestWorkflowScenarios(t) {
+		if strings.HasPrefix(mode, "TypeScript") && tsErr != nil {
+			continue // Only runtimes with ts-jest installed exercise TypeScript.
+		}
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)

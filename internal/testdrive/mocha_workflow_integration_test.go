@@ -33,7 +33,7 @@ func TestPublicMochaTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "coverage disabled", "scoped alias", "CLI retries", "suite retries", "all thresholds", "TDD", "subpackage", "nested fixture", "nested programmatic"} {
+	for _, mode := range mochaWorkflowScenarios.selected(t) {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -199,4 +199,10 @@ func TestPublicMochaTestdrive(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Relative durations from CI; see integrationScenarios.
+var mochaWorkflowScenarios = integrationScenarios{
+	names:   []string{"passing", "existing failure", "coverage disabled", "scoped alias", "CLI retries", "suite retries", "all thresholds", "TDD", "subpackage", "nested fixture", "nested programmatic"},
+	weights: map[string]int{"passing": 15},
 }
