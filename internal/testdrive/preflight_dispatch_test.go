@@ -20,12 +20,13 @@ import (
 func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 	javascript := platform.NewJavaScript()
 	frameworks := map[string]framework.Framework{
-		"jest":       framework.NewJest(javascript),
-		"vitest":     framework.NewVitest(javascript),
-		"mocha":      framework.NewMocha(javascript),
-		"playwright": framework.NewPlaywright(javascript),
-		"cypress":    framework.NewCypress(javascript),
-		"cucumber":   framework.NewCucumber(javascript),
+		"jest":        framework.NewJest(javascript),
+		"vitest":      framework.NewVitest(javascript),
+		"mocha":       framework.NewMocha(javascript),
+		"playwright":  framework.NewPlaywright(javascript),
+		"cypress":     framework.NewCypress(javascript),
+		"cucumber":    framework.NewCucumber(javascript),
+		"webdriverio": framework.NewWebdriverIO(javascript),
 	}
 	for name, policy := range frameworkFeaturePolicies {
 		if !policy.Preflight {

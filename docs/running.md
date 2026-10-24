@@ -820,3 +820,32 @@ being hidden by a serial rerun. The selected dd-trace sends no suite coverage
 from Cucumber parallel workers, so the report says so and does not advise adding
 NYC. When coverage is missing, the advice follows the command's own setup: NYC
 already on the command, c8, or no coverage tool.
+
+### WebdriverIO validation
+
+Install project dependencies and the browsers/drivers required by the original
+WDIO configuration. `ddtest onboard --framework webdriverio` prints scoped CI
+setup instructions without editing files. The action installs tracing in CI;
+local testdrive uses an existing tracer or a temporary installation.
+
+Run `ddtest testdrive --framework webdriverio --all --check-only --yes` to inspect
+the inventory, then `ddtest testdrive --framework webdriverio --command 'npm test'
+--yes` for one actual local-runner command. An explicit `--all` executes every
+discovered configuration; inventory alone is not permission to start the matrix.
+Both comparison modes preserve configuration, services, hooks, reporters and
+capabilities, with the same native observer and process supervisor. Baseline
+tracing is disabled; matching existing failures are acceptable. Missing native
+worker results or incomplete telemetry keep validation incomplete.
+
+Each selected capability needs retries, EFD, quarantine, disabled-test and
+attempt-to-fix controls. TIA skipping and code coverage are unsupported and are
+never counted as passed. Browser runners, custom adapters and standalone browser
+automation remain outside this validation. Unknown wrappers and dynamic script
+orchestration stay visible for review. Preserve unrelated servers; an occupied
+static-server port blocks execution until local setup is resolved.
+
+A focused pass certifies only that command; unexecuted variants can leave overall
+onboarding incomplete. Finish CI edits before the final full run and report both
+verdicts. Only `.testoptimization/report.html` and `testdrive.json` remain. HTML
+contains full test output; JSON bounds diagnostics. Actual customer CI and Datadog
+backend processing are not exercised locally.

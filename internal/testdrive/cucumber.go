@@ -344,7 +344,7 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 	command, args = selected.executionCommand()
 	env["PATH"] = filepath.Join(t.repositoryRoot, "node_modules/.bin") + string(os.PathListSeparator) + os.Getenv("PATH")
 	run.Command = shellquote.Join(append([]string{command}, args...)...)
-	owner, err := t.ownPlaywrightProcesses(directory, env)
+	owner, err := t.ownProcesses(directory, env)
 	if err != nil {
 		return run, err
 	}

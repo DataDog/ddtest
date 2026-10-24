@@ -637,3 +637,49 @@ jobs:
           test_filter='^TestPublicCucumberTestdrive$'
           if [ '${{ matrix.cucumber }}' = '8.11.1' ]; then test_filter='^TestPublicCucumberTestdrive/passing$'; fi
           go test -v ./internal/testdrive -run "$test_filter" -failfast -count=1 -timeout=12m
+
+  testdrive-webdriverio-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # npm runs every scenario across shards; pnpm checks its layout on one.
+        include:
+          - {package-manager: npm, shard: '1/4'}
+          - {package-manager: npm, shard: '2/4'}
+          - {package-manager: npm, shard: '3/4'}
+          - {package-manager: npm, shard: '4/4'}
+          - {package-manager: pnpm, shard: '1/1'}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install WebdriverIO testdrive fixture dependencies
+        run: |
+          mkdir -p "$RUNNER_TEMP/wdio-testdrive"
+          printf '{"private":true}\n' > "$RUNNER_TEMP/wdio-testdrive/package.json"
+          if [ '${{ matrix.package-manager }}' = 'pnpm' ]; then
+            npm exec --yes --package=pnpm@10.20.0 -- pnpm --dir "$RUNNER_TEMP/wdio-testdrive" add --save-dev --save-exact @wdio/cli@9.20.0 @wdio/local-runner@9.20.0 @wdio/mocha-framework@9.20.0 @wdio/jasmine-framework@9.20.0 @wdio/spec-reporter@9.20.0 dd-trace@6.20.1
+          else
+            npm install --prefix "$RUNNER_TEMP/wdio-testdrive" @wdio/cli@9.20.0 @wdio/local-runner@9.20.0 @wdio/mocha-framework@9.20.0 @wdio/jasmine-framework@9.20.0 @wdio/spec-reporter@9.20.0 dd-trace@6.20.1 --save-exact --no-audit --no-fund
+          fi
+      - name: Validate real browser outcomes with Linux Xvfb supervision
+        env:
+          DDTEST_WEBDRIVERIO_NODE_MODULES: ${{ runner.temp }}/wdio-testdrive/node_modules
+          DDTEST_CHROME_BINARY: /usr/bin/google-chrome
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
+        run: |
+          command -v xvfb-run
+          if [ '${{ matrix.package-manager }}' = 'pnpm' ]; then
+            go test -v ./internal/testdrive -run '^TestPublicWebdriverIOTestdrive$/^passing$' -failfast -count=1 -timeout=8m
+          else
+            go test -v ./internal/testdrive -run '^TestPublicWebdriverIOTestdrive$' -failfast -count=1 -timeout=12m
+          fi
+          if [ '${{ matrix.shard }}' = '1/4' ] || [ '${{ matrix.package-manager }}' = 'pnpm' ]; then
+            go test -v ./internal/framework ./internal/testdrive -run '^TestWebdriverIO' -failfast -count=1 -timeout=5m
+          fi

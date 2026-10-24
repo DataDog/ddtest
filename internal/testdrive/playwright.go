@@ -198,7 +198,7 @@ func (t *Testdrive) inspectPlaywright(ctx context.Context, directory, probe, pro
 	}
 	env["DDTEST_PLAYWRIGHT_REPORT"] = resultPath
 	env["PW_TEST_REPORTER"] = reporter
-	owner, err := t.ownPlaywrightProcesses(directory, env)
+	owner, err := t.ownProcesses(directory, env)
 	if err != nil {
 		return result, err
 	}
@@ -332,7 +332,7 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(children)
-	owner, err := t.ownPlaywrightProcesses(directory, env)
+	owner, err := t.ownProcesses(directory, env)
 	if err != nil {
 		return run, err
 	}

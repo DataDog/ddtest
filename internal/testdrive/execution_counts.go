@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-const sourceIdentityScope = "Native file and full test name, including reported source location and project/browser/repeat identity. Counts cover reporting-only results, including skipped results, once per configuration; retries remain attempts. Matching source identities across commands do not establish equivalent configurations or environments."
+const sourceIdentityScope = "Native file and full test name, including reported source location and project/browser/capability/repeat identity. Counts cover reporting-only results, including skipped results, once per configuration; retries remain attempts. Matching source identities across commands do not establish equivalent configurations or environments."
 
 // Keep identity keys only while combining results. The compact report retains
 // counts, not a second copy of every native test or telemetry event.
@@ -22,8 +22,8 @@ type executionCounts struct {
 }
 
 type sourceTestIdentity struct {
-	Framework, File, Name, Browser, Project string
-	Repeat                                  int
+	Framework, File, Name, Browser, Project, Capability, TestID string
+	Repeat                                                      int
 }
 
 func nativeExecutionCounts(run validationRun) *executionCounts {
@@ -49,6 +49,10 @@ func nativeExecutionCounts(run validationRun) *executionCounts {
 			identity.Project = test.Playwright.Project
 			identity.Browser = test.Playwright.Browser
 			identity.Repeat = test.Playwright.Repeat
+		}
+		if test.WebdriverIOCapability != "" || test.WebdriverIOTestID != "" {
+			// The same key as the paired comparison: one identity per capability and native test.
+			identity.Browser, identity.Capability, identity.TestID = test.WebdriverIOBrowser, test.WebdriverIOCapability, test.WebdriverIOTestID
 		}
 		if _, duplicate := counts.identities[identity]; duplicate {
 			counts.Reason = "Source-test identities are unavailable because native file/name identities repeat within a configuration."

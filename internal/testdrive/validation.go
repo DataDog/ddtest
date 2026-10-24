@@ -61,22 +61,23 @@ type runSpec struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
-	ReplacedReporters []string
-	Role              runRole
-	cucumberParallel  bool
-	cucumberSupport   *cucumberSupport
-	FrameworkNode     string
-	NativeCommand     string
-	ProbeExecutions   *int
-	Coverage          *coverageSummary
-	ExecutionContext  string `json:"execution_context,omitempty"`
-	temporaryRoot     string
-	commandOutput     string
-	commandError      error
-	Project           string
-	Skipping          *skippingDiagnostic
-	root              string
-	checkoutRoot      string
+	webdriverIOAttempts []jestTest
+	ReplacedReporters   []string
+	Role                runRole
+	cucumberParallel    bool
+	cucumberSupport     *cucumberSupport
+	FrameworkNode       string
+	NativeCommand       string
+	ProbeExecutions     *int
+	Coverage            *coverageSummary
+	ExecutionContext    string `json:"execution_context,omitempty"`
+	temporaryRoot       string
+	commandOutput       string
+	commandError        error
+	Project             string
+	Skipping            *skippingDiagnostic
+	root                string
+	checkoutRoot        string
 	// Why a real-suite Mocha run may report no per-test coverage.
 	coverageCause                   string
 	framework                       string
@@ -334,7 +335,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		}
 		for _, entry := range result.CIRuntime.Review {
 			command := entry.Command
-			if result.Framework == "cypress" {
+			if onboard.RedactsCommandKeys(result.Framework) {
 				command = onboard.RedactCypressCommand(command)
 			}
 			_, _ = fmt.Fprintf(output, "  - Review separately: %s / %s / step %d (%s): %s\n", entry.Workflow, entry.Job, entry.Step, command, entry.Reason)

@@ -241,7 +241,7 @@ parallelism details, see [Running DDTest](docs/running.md).
 | CLI flag | What it does |
 | --- | --- |
 | `--platform` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
-| `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`. |
+| `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`, `webdriverio` (`wdio`). |
 | `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, and Playwright run/discovery. Vitest `plan`/`run` reject this option; testdrive accepts an explicit Vitest CLI or supported `ddtest run` command. |
 | `--vitest-config` | Vitest config file used by both planning and execution; defaults to Vitest config discovery. See [migration instructions](docs/running.md#vitest-integration). |
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
@@ -321,3 +321,13 @@ See [Mocha validation](docs/running.md#mocha-testdrive-validation) for commands,
 Cucumber testdrive also compares native scenario outcomes and exercises all six
 controls, requiring real application source coverage through the project's NYC
 setup. See [Cucumber validation](docs/running.md#cucumber-validation).
+
+### WebdriverIO validation
+
+Use `ddtest onboard --framework webdriverio` for setup instructions, then
+`ddtest testdrive --framework webdriverio --all --check-only --yes` for the
+configuration inventory. Execute a focused command with `--command 'npm test'`
+without `--check-only`. The local runner with Mocha or Jasmine is supported;
+standalone automation, custom adapters and browser runners remain unvalidated.
+Five controlled features are required; TIA skipping and coverage are unsupported.
+See [WebdriverIO validation](docs/running.md#webdriverio-validation).

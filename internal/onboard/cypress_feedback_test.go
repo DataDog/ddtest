@@ -196,6 +196,7 @@ func TestCypressRecordingVariablesAreRedactedButProseKeepsShortOptions(t *testin
 	}
 	require.Equal(t, "the -kitten option", RedactCypressText("the -kitten option"))
 	require.Equal(t, "failed: npx cypress run -k[REDACTED]", RedactCypressText("failed: npx cypress run -ksecret"))
+	require.Equal(t, "failed: npx wdio run wdio.conf.js -k[REDACTED]", RedactCypressText("failed: npx wdio run wdio.conf.js -ksecret"))
 	scope := ValidationScope{Commands: []TestCommand{{Command: "npm test -- -k secret", Environment: map[string]string{"CYPRESS_RECORD_KEY": "secret", "TERM": "xterm"}, Locations: []string{"ci.yml / test / step 1 (npm test -- -k secret)"}}}, Unresolved: []string{"ci.yml / test / step 2 (CYPRESS_RECORD_KEY=secret cypress run): unresolved"}}
 	redacted := RedactCypressScope(scope)
 	var output bytes.Buffer

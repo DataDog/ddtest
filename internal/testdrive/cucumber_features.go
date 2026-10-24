@@ -161,7 +161,7 @@ func (t *Testdrive) startCucumberProbeLifecycle(ctx context.Context, output io.W
 	env["NODE_OPTIONS"] = stripDatadogNodeOptions(t.nodeOptions())
 	env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	env["PATH"] = filepath.Join(t.repositoryRoot, "node_modules/.bin") + string(os.PathListSeparator) + os.Getenv("PATH")
-	owner, err := t.ownPlaywrightProcesses(directory, env)
+	owner, err := t.ownProcesses(directory, env)
 	if err != nil {
 		return nil, err
 	}
