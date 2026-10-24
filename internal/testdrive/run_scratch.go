@@ -20,8 +20,14 @@ func (r *validationRun) ownTemporaryDirectory(directory string, env map[string]s
 		return fmt.Errorf("create run temporary directory: %w", err)
 	}
 	r.temporaryRoot = temporary
-	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
-		env[key] = r.temporaryRoot
-	}
+	useTemporaryDirectory(env, r.temporaryRoot)
 	return nil
+}
+
+// useTemporaryDirectory points a helper's temporary files, such as Jest's
+// haste cache or npm's compile cache, at a directory ddtest removes.
+func useTemporaryDirectory(env map[string]string, directory string) {
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		env[key] = directory
+	}
 }

@@ -51,6 +51,7 @@ func TestPythonRubyOnboardMatchesMain(t *testing.T) {
 				}
 				for _, run := range []func(*bytes.Buffer) error{
 					func(output *bytes.Buffer) error { return Run(output) },
+					func(output *bytes.Buffer) error { return Start(output) },
 				} {
 					var output bytes.Buffer
 					require.NoError(t, run(&output))

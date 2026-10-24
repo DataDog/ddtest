@@ -76,10 +76,7 @@ func setupRuntimeCondition(root string, workflow ciWorkflow, job runtimeJob, req
 		return "", nil
 	}
 	if !slices.Contains(compatible, true) {
-		if esm {
-			return "", fmt.Errorf("no CI runtime supports tracer Node requirement %s plus ESM registration (Node >=18.19 <19 or >=20.6)", requirement)
-		}
-		return "", fmt.Errorf("no CI runtime supports tracer Node requirement %s", requirement)
+		return "", &NodeRuntimeGap{Requirement: requirement, ESM: esm}
 	}
 	// Find one scalar matrix column that identifies the same partition. This
 	// avoids replacing the customer's strategy or adding metadata to every row.

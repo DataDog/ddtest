@@ -849,3 +849,12 @@ onboarding incomplete. Finish CI edits before the final full run and report both
 verdicts. Only `.testoptimization/report.html` and `testdrive.json` remain. HTML
 contains full test output; JSON bounds diagnostics. Actual customer CI and Datadog
 backend processing are not exercised locally.
+
+### Coordinated execution for coding agents
+
+Use `ddtest testdrive --framework <name> --all --agent --yes` for an existing
+JavaScript setup. Follow its structured next action, then `testdrive --report`
+for a fresh final response. `--report --detail plan` inspects resolved commands
+without running them. `onboard --apply --yes` adds recognized setup first. See
+[agent coordination](onboarding.md#agent-coordination-and-fresh-results) for
+bounded resume, setup facts, services, exclusions and freshness guarantees.

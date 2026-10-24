@@ -1,0 +1,91 @@
+package testdrive
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/stretchr/testify/require"
+)
+
+func TestSetupUnresolvedNamesThePendingPrerequisite(t *testing.T) {
+	entry := onboard.TestCommand{ID: "jest-1", Command: "jest", Directory: ".", Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "npm run build", Kind: onboard.PreparationNeedsFacts}}}
+	require.Equal(t, []string{"prerequisite npm run build needs expected_files"}, pendingSetup(entry))
+	template := setupFactsTemplate("fingerprint", entry)
+	require.Equal(t, "jest", template.Configurations[0].Prerequisites[0].ForCommand)
+	empty := setupFactsTemplate("fingerprint", onboard.TestCommand{ID: "jest-1", Command: "jest", Directory: "."})
+	require.Equal(t, "jest", empty.Configurations[0].Prerequisites[0].ForCommand)
+}
+
+func TestPrerequisiteFactErrorsNameWhatIsWrong(t *testing.T) {
+	root := canonicalWorkflowRoot(t.TempDir())
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"build":"node build.js"}}`)
+	for _, tc := range []struct {
+		argv, files []string
+		want        string
+	}{
+		{[]string{"./evil.sh"}, []string{"dist/out.js"}, "must use an installed package script or node with a local script"},
+		{[]string{"node"}, []string{"dist/out.js"}, "prerequisite script must be repository-local"},
+		{[]string{"npm", "run", "build"}, nil, "expected repository files"},
+		{nil, []string{"dist/out.js"}, "prerequisite requires an argv"},
+	} {
+		err := validatePrerequisiteFact(root, root, PrerequisiteFact{Argv: tc.argv, ExpectedFiles: tc.files})
+		require.ErrorContains(t, err, tc.want, tc.argv)
+		if len(tc.argv) > 0 && len(tc.files) > 0 {
+			require.NotContains(t, err.Error(), "requires an argv and expected", "both were supplied")
+		}
+	}
+}
+
+func TestBlockerCountMatchesTheListedItems(t *testing.T) {
+	result := focusedValidationFixture("jest")
+	result.Summary = summarizeValidation(result)
+	result.Summary.BlockingChecks = []string{"first blocker", "second blocker", "third blocker"}
+	require.Contains(t, validationHandoff(result), "Blockers: 3 — first blocker; second blocker; and 1 more.")
+}
+
+func TestUnreadableReportAndFinishedResumeHaveCodes(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0700))
+	requireWriteFile(t, validationPath(root), "not json")
+	_, err := readPreviousValidation(root)
+	require.ErrorIs(t, err, errReportUnreadable)
+	var output bytes.Buffer
+	require.Error(t, renderReportFailure(&output, "json", err))
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Equal(t, "report_unreadable", result.Code)
+	require.NotContains(t, result.Reason, "invalid character", "no raw parser error")
+
+	t.Setenv("TMPDIR", t.TempDir())
+	drive := &Testdrive{repositoryRoot: canonicalWorkflowRoot(t.TempDir()), framework: &framework.Vitest{}, language: "javascript"}
+	output.Reset()
+	require.Error(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json", Resume: strings.Repeat("a", 32)}))
+	result = onboard.AgentResult{}
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Equal(t, "resume_not_found", result.Code)
+	require.NotContains(t, result.Reason, "lstat")
+}
+
+func TestFrameworkListsFollowThePolicyTable(t *testing.T) {
+	all := frameworkNamesWith(func(policy frameworkPolicy) bool { return policy.Configurations })
+	for _, name := range []string{"Cucumber", "Cypress", "Jest", "Mocha", "Playwright", "Vitest", "WebdriverIO"} {
+		require.Contains(t, all, name)
+	}
+}
+
+func TestJestPreflightKeepsHelperTemporaryFilesInOwnedStorage(t *testing.T) {
+	run := preflightFixture(t, "30.2.0", "jest-circus/runner.js")
+	run.checkOnly = true
+	require.NoError(t, run.Run(t.Context(), &bytes.Buffer{}))
+	executor := run.executor.(*preflightExecutor)
+	temporary := executor.environment["TMPDIR"]
+	require.NotEmpty(t, temporary, "Jest's haste cache and npm's compile cache must not land in the user's TMPDIR")
+	require.NotEqual(t, filepath.Clean(os.TempDir()), filepath.Clean(temporary))
+	require.NoDirExists(t, temporary, "the owned directory is removed after preflight")
+}

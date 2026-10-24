@@ -161,7 +161,7 @@ func TestPublicCypressTestdrive(t *testing.T) {
 				require.Error(t, err)
 				require.Contains(t, string(output), "component testing is not supported")
 				require.Empty(t, readValidationReport(t, root).Runs, "unsupported selection must start no Cypress runs")
-				output, err = command(root, binary, "onboard", "--framework", "cypress")
+				output, err = command(root, binary, "onboard", "--instructions", "--framework", "cypress")
 				require.NoError(t, err, string(output))
 				require.Contains(t, string(output), "deferred")
 				output, err = command(root, binary, "testdrive", "--framework", "cypress", "--all", "--check-only", "--yes")

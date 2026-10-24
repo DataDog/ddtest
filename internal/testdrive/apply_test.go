@@ -23,14 +23,13 @@ func TestSetupSelectionUsesInstalledTracerAndChecksEveryRuntime(t *testing.T) {
 			workflow := "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '" + tc.node + "'}\n      - run: npm test\n"
 			requireWriteFile(t, filepath.Join(drive.repositoryRoot, ".github/workflows/test.yml"), workflow)
 			scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "npx jest"}}}
-			selected, err := drive.selectSetupTracer(t.Context(), scope, false)
+			selected, err := drive.selectWorkflowTracer(t.Context(), scope, false)
 			if tc.want != "" {
 				require.ErrorContains(t, err, tc.want)
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, "6.16.0", selected.Version)
-			require.Equal(t, "project", selected.Source)
+			require.Equal(t, "6.16.0", selected)
 			require.Equal(t, workflow, readApplyFile(t, drive.repositoryRoot, ".github/workflows/test.yml"), "selection must not edit CI")
 		})
 	}
@@ -39,7 +38,7 @@ func TestSetupSelectionUsesInstalledTracerAndChecksEveryRuntime(t *testing.T) {
 func TestSetupSelectionRejectsAbsentCIAndConflictingPins(t *testing.T) {
 	drive := preflightFixture(t, "30.2.0", "jest-circus/runner.js")
 	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "npx jest"}}}
-	_, err := drive.selectSetupTracer(t.Context(), scope, false)
+	_, err := drive.selectWorkflowTracer(t.Context(), scope, false)
 	require.ErrorContains(t, err, "CI test runtime is unresolved")
 	require.NoError(t, os.MkdirAll(filepath.Join(drive.repositoryRoot, ".github/workflows"), 0700))
 	job := `    steps:
@@ -51,7 +50,7 @@ func TestSetupSelectionRejectsAbsentCIAndConflictingPins(t *testing.T) {
         env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}
 `
 	requireWriteFile(t, filepath.Join(drive.repositoryRoot, ".github/workflows/test.yml"), "jobs:\n  first:\n"+strings.ReplaceAll(job, "VERSION", "6.16.0")+"  second:\n"+strings.ReplaceAll(job, "VERSION", "6.17.0"))
-	_, err = drive.selectSetupTracer(t.Context(), scope, false)
+	_, err = drive.selectWorkflowTracer(t.Context(), scope, false)
 	require.ErrorContains(t, err, "multiple tracer versions")
 }
 
@@ -88,9 +87,9 @@ func TestSetupSelectionResolvesExecutableFromOwningPackage(t *testing.T) {
 	requireWriteFile(t, filepath.Join(pkg, "node_modules/.bin/jest"), "")
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
 	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '24.14.1'}\n      - run: cd packages/app && jest\n")
-	selected, err := drive.selectSetupTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: "packages/app", Command: "jest"}}}, false)
+	selected, err := drive.selectWorkflowTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: "packages/app", Command: "jest"}}}, false)
 	require.NoError(t, err)
-	require.Equal(t, "6.16.0", selected.Version)
+	require.Equal(t, "6.16.0", selected)
 	require.Equal(t, filepath.Join(pkg, "node_modules/.bin/jest"), drive.executor.(*preflightExecutor).name)
 }
 
@@ -99,9 +98,9 @@ func TestSetupSelectionPreservesDiscoveredNodeOptions(t *testing.T) {
 	root := drive.repositoryRoot
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
 	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '24'}\n      - run: npm test\n")
-	selected, err := drive.selectSetupTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "npx jest", Environment: map[string]string{"NODE_OPTIONS": "--conditions=customer"}}}}, false)
+	selected, err := drive.selectWorkflowTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "npx jest", Environment: map[string]string{"NODE_OPTIONS": "--conditions=customer"}}}}, false)
 	require.NoError(t, err)
-	require.Equal(t, "6.16.0", selected.Version)
+	require.Equal(t, "6.16.0", selected)
 	require.Contains(t, drive.executor.(*preflightExecutor).environment["NODE_OPTIONS"], "--conditions=customer")
 }
 

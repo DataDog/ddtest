@@ -194,7 +194,7 @@ func TestPublicWebdriverIOTestdrive(t *testing.T) {
 			output, err = command(root, "git", "init", "-q")
 			require.NoError(t, err, string(output))
 			if mode == "passing" {
-				output, err = command(root, binary, "onboard", "--framework", "webdriverio")
+				output, err = command(root, binary, "onboard", "--instructions", "--framework", "webdriverio")
 				require.NoError(t, err, string(output))
 				require.Contains(t, string(output), "WebdriverIO")
 				output, err = command(root, binary, "testdrive", "--framework", "webdriverio", "--all", "--check-only", "--yes")

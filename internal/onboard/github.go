@@ -11,6 +11,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"text/template"
 
 	"github.com/DataDog/ddtest/internal/environment"
 )
@@ -110,7 +111,8 @@ func instructions(language, name string) string {
 		return strings.ReplaceAll(mochaInstructions, "ddtest testdrive", "ddtest testdrive --framework mocha")
 	}
 	if language == "javascript" && name == "vitest" {
-		return strings.ReplaceAll(vitestInstructions, "ddtest testdrive", "ddtest testdrive --framework vitest")
+		heading, rest, _ := strings.Cut(vitestInstructions, "\n\n")
+		return strings.ReplaceAll(heading+"\n\n"+javascriptAutomaticSetup+"\n\n"+rest, "ddtest testdrive", "ddtest testdrive --framework vitest")
 	}
 	actionLanguage := language
 	var bootstrap string
@@ -131,9 +133,13 @@ func instructions(language, name string) string {
 	}
 	// Empty inputs override the action's pinned defaults and request the latest release.
 	tracerSetting := actionLanguage + "-tracer-version: '' # Latest release"
-	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap, "__TRACER_SETTING__", tracerSetting).Replace(gitHubInstructions)
+	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap, "__TRACER_SETTING__", tracerSetting, "__AUTOMATIC_SETUP__", javascriptAutomaticSetup).Replace(renderGitHubInstructions(language))
 	return strings.ReplaceAll(text, "ddtest testdrive", "ddtest testdrive --framework "+name)
 }
+
+// javascriptAutomaticSetup is the agent paragraph shared by the generic and
+// Vitest instructions. It points at the preview before the applying command.
+const javascriptAutomaticSetup = "For automatic setup, preview the recognized edits with `ddtest onboard --apply`, which writes nothing, then apply them with `ddtest onboard --apply --yes`. ddtest resolves the actual CI commands, tracer and supported runtime scope, applies recognized edits, then validates locally. Follow its structured next action for unsupported setup. Do not run parallel validation or change the selected framework/command to bypass a blocker. Use `ddtest testdrive --agent --all --yes` to validate existing setup. Preserve the generated final verdict and report links; after any source/configuration edits or configuration-only checks, run full validation again. `--instructions` prints this manual fallback."
 
 const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set NODE_OPTIONS for later steps, so merge this into the existing test step, preserving any current Node options:\n\n```yaml\nenv:\n  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\n```\n\nThe --import loader is required for Vitest and other ESM tests."
 
@@ -149,3 +155,13 @@ const cypressBootstrap = `Cypress also needs browser-side instrumentation; NODE_
 4. Keep the project's existing application startup, browser installation, and cypress run command. Do not use cypress open.
 
 Use the same pattern for e2e or component configuration, whichever the selected job runs. The local testdrive creates equivalent wrappers inside its session automatically. See https://docs.datadoghq.com/tests/setup/javascript/ for the Cypress plugin contract.`
+
+var gitHubInstructionsTemplate = template.Must(template.New("github").Delims("[[", "]]").Parse(gitHubInstructions))
+
+func renderGitHubInstructions(language string) string {
+	var output strings.Builder
+	if err := gitHubInstructionsTemplate.Execute(&output, language); err != nil {
+		panic(err)
+	}
+	return output.String()
+}

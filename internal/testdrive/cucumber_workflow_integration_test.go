@@ -227,7 +227,7 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 			output, err = command(root, "git", "init", "-q")
 			require.NoError(t, err, string(output))
 			if mode == "passing" {
-				output, err = command(root, binary, "onboard", "--framework", "cucumber")
+				output, err = command(root, binary, "onboard", "--instructions", "--framework", "cucumber")
 				require.NoError(t, err, string(output))
 				require.Contains(t, string(output), "NYC")
 				output, err = command(root, binary, "testdrive", "--framework", "cucumber", "--all", "--check-only", "--yes")

@@ -136,9 +136,15 @@ func probeRecoveryEnabled() bool {
 
 // ValidationFrameworkNames keeps CLI guidance aligned with registered adapters.
 func ValidationFrameworkNames() string {
+	return frameworkNamesWith(func(policy frameworkPolicy) bool { return policy.Paired })
+}
+
+// frameworkNamesWith lists the display names of frameworks whose policy
+// matches, so user-facing lists follow the policy table.
+func frameworkNamesWith(match func(frameworkPolicy) bool) string {
 	var names []string
 	for name, policy := range frameworkFeaturePolicies {
-		if policy.Paired {
+		if match(policy) {
 			names = append(names, displayName(name))
 		}
 	}

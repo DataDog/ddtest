@@ -49,6 +49,10 @@ type Testdrive struct {
 	configurationSourceRoot  string
 	scopeCommand             string
 	cucumberCoverage         map[string]string
+	workflowSelect           func(context.Context, onboard.ValidationScope, bool) (string, error)
+	workflowPlan             *onboard.ExecutionPlan
+	workflowScope            *onboard.ValidationScope
+	workflowRun              func(context.Context, io.Writer) error
 	cucumberSupport          *cucumberSupport
 	webdriverIOCapability    *int
 	cucumberNode             string
@@ -162,14 +166,14 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
 	if all && !frameworkFeaturePolicies[runner.Name()].Configurations {
-		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Mocha, Playwright and Cypress only")
+		return nil, fmt.Errorf("--all currently validates %s only", frameworkNamesWith(func(policy frameworkPolicy) bool { return policy.Configurations }))
 	}
 
 	var discoveryError error
 	var selectedPlan onboard.TestCommand
 	var preflightEnvironment map[string]string
 	if configurationOnly && !frameworkFeaturePolicies[runner.Name()].CheckOnly {
-		return nil, fmt.Errorf("configuration preflight currently supports Jest, Vitest, Mocha, Playwright and Cypress only")
+		return nil, fmt.Errorf("configuration preflight currently supports %s only", frameworkNamesWith(func(policy frameworkPolicy) bool { return policy.CheckOnly }))
 	}
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
@@ -452,7 +456,13 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintln(output, "\nRun:")
 	if supportsValidationFramework(t.framework.Name()) {
 		_, _ = fmt.Fprintln(output, "  - compare the original suite without instrumentation and with reporting-only instrumentation; repeat differing pairs")
-		_, _ = fmt.Fprintln(output, "  - discover a temporary probe with the original framework configuration; check retries, EFD, skipping, quarantine, disabled tests and attempt-to-fix per selected project")
+		var required []string
+		for _, policy := range featurePolicies(t.framework.Name()) {
+			if policy.Status == "required" {
+				required = append(required, policy.Name)
+			}
+		}
+		_, _ = fmt.Fprintf(output, "  - discover a temporary probe with the original framework configuration; check %s per selected project\n", strings.Join(required, ", "))
 		if policy := skippingPolicy(t.framework.Name()); policy.Status == "not supported" || policy.Status == "deferred" {
 			_, _ = fmt.Fprintln(output, "  - TIA skipping/per-test coverage: "+policy.Status+"; "+policy.Reason)
 		}
@@ -529,11 +539,21 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		}
 	}()
 
+	if ctx.Value(workflowLockKey{}) == canonicalWorkflowRoot(t.repositoryRoot) {
+		return t.runLocked(ctx, output)
+	}
 	lock, err := acquireWorkflowLock(t.repositoryRoot)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = lock.Close() }()
+	return t.runLocked(ctx, output)
+}
+
+func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr error) {
+	if err := cleanupExpiredCheckpoints(); err != nil {
+		return t.finishStartupFailure(output, err)
+	}
 	if err := t.recoverStartup(output); err != nil {
 		return t.finishStartupFailure(output, err)
 	}
@@ -574,7 +594,13 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	result.CommandEnvironment = reportedEnvironment(t.commandAssignments)
 	if frameworkFeaturePolicies[t.framework.Name()].Configurations {
 		prepareValidationResult(t.repositoryRoot, &result)
-		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+		var scope onboard.ValidationScope
+		var err error
+		if t.workflowScope != nil {
+			scope = *t.workflowScope
+		} else {
+			scope, err = onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+		}
 		if err != nil {
 			runErr = errors.Join(runErr, err)
 		} else {
