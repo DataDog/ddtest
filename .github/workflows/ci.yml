@@ -56,6 +56,12 @@ jobs:
       - name: Install Python test dependencies
         run: python -m pip install "ddtrace>=4.11.0" pytest
 
+      - name: Install evaluator package-manager fixture
+        run: npm install --global pnpm@12.14.0
+
+      - name: Test onboarding evaluator
+        run: python -m unittest discover -s skills/ddtest-onboarding-eval/scripts -p 'test_*.py'
+
       - name: Format check
         run: |
           if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
@@ -709,3 +715,23 @@ jobs:
           if [ '${{ matrix.shard }}' = '1/4' ] || [ '${{ matrix.package-manager }}' = 'pnpm' ]; then
             go test -v ./internal/framework ./internal/testdrive -run '^TestWebdriverIO' -failfast -count=1 -timeout=5m
           fi
+
+  onboarding-evaluator-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build fake agent image (no model sessions)
+        run: |
+          scripts=skills/ddtest-onboarding-eval/scripts
+          docker build --target offline -t ddtest-eval-offline -f "$scripts/Dockerfile" "$scripts"
+          echo "DDTEST_EVAL_TEST_IMAGE=$(docker image inspect --format '{{.Id}}' ddtest-eval-offline)" >> "$GITHUB_ENV"
+      - name: Verify environment, signals and detached process isolation
+        run: python -m unittest discover -s skills/ddtest-onboarding-eval/scripts -p test_container.py -v
