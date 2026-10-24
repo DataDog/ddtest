@@ -84,6 +84,17 @@ func setSelectedConfigurationScope(result *validationResult, scope onboard.Valid
 	}
 }
 
+// creditPreparation keeps a focused run's preparation receipts on the
+// configurations it was credited to, so recovery can name builds awaiting review.
+func creditPreparation(result *validationResult, executed configurationResult) {
+	for i := range result.Configurations {
+		item := &result.Configurations[i]
+		if item.Status != "not exercised" && len(item.Preparation) == 0 && sameConfiguration(item.TestCommand, executed.TestCommand) {
+			item.Preparation = executed.Preparation
+		}
+	}
+}
+
 // The same current-evidence predicate is used by a child, a focused command,
 // and final publication. Scope completeness is applied separately.
 func validationPassed(result validationResult) bool {

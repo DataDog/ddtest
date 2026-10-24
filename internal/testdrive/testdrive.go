@@ -573,6 +573,7 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr err
 	}
 
 	var result validationResult
+	var prepared *configurationResult
 	if t.discoveryError != nil {
 		result, runErr = t.run(ctx, output)
 	} else if t.framework.Name() == "webdriverio" || t.framework.Name() == "cucumber" || t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
@@ -588,7 +589,8 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr err
 			entry = child.cypressSelected
 			entry.Environment = child.configurationEnvironment
 		}
-		result, runErr = child.runPreparedConfiguration(ctx, output, &configurationResult{TestCommand: entry})
+		prepared = &configurationResult{TestCommand: entry}
+		result, runErr = child.runPreparedConfiguration(ctx, output, prepared)
 		runErr = errors.Join(runErr, t.publishCopiedRunReport(output, &result, models))
 	} else {
 		result, runErr = t.run(ctx, output)
@@ -609,6 +611,9 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr err
 			runErr = errors.Join(runErr, err)
 		} else {
 			t.setConfigurationScope(&result, scope)
+			if prepared != nil {
+				creditPreparation(&result, *prepared)
+			}
 		}
 	}
 	if runErr != nil {

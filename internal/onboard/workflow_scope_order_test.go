@@ -1,6 +1,7 @@
 package onboard
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,4 +66,28 @@ func TestBabelNodeSetupRequestsOutputsAndPostTestCopiesStaySeparate(t *testing.T
 	require.Equal(t, PreparationNeedsFacts, scope.Commands[0].Prerequisites[0].Kind)
 	require.Empty(t, scope.Commands[0].UnvalidatedSetup)
 	require.NotEmpty(t, scope.Review)
+}
+
+func TestPostTestLookaheadResolvesLaterStepsForTheRow(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"build": "tsc", "test": "jest", "test:built": "jest --selectProjects built"})
+	path := filepath.Join(root, ".github/workflows/test.yml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+	write := func(steps string) ValidationScope {
+		require.NoError(t, os.WriteFile(path, []byte("jobs:\n  test:\n    strategy:\n      matrix:\n        script: ['test:built']\n    steps:\n      - run: npm test\n      - run: npm run build\n"+steps), 0600))
+		scope, err := DiscoverWorkflowScope(root, "jest")
+		require.NoError(t, err)
+		return scope
+	}
+	// The later test is only recognizable after matrix substitution.
+	scope := write("      - run: npm run ${{ matrix.script }}\n")
+	require.Len(t, scope.Commands, 2)
+	require.Empty(t, scope.Commands[0].Prerequisites)
+	require.Len(t, scope.Commands[1].Prerequisites, 1, "the build precedes the matrix-selected test")
+	require.Equal(t, "tsc", scope.Commands[1].Prerequisites[0].Command)
+	// A later test skipped for this row does not keep post-test work.
+	scope = write("      - if: matrix.script == 'other'\n        run: npm test\n")
+	require.Len(t, scope.Commands, 1)
+	require.Empty(t, scope.Commands[0].Prerequisites)
+	require.Contains(t, fmt.Sprint(scope.Review), "Post-test preparation requires separate review")
 }

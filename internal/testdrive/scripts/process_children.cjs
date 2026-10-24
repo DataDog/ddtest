@@ -96,15 +96,26 @@ fail_group() {
   printf '%s\n' '{"code":"unowned_process_group","reason":"child group is shared with the supervisor or cannot be verified"}' >> "$DDTEST_PROCESS_ERRORS"
   exit ${unsupportedExit}
 }
-group=$$
+group=$$; keepers=
 if [ "$keeper_mode" = inherited ]; then
   group=$("$ps_tool" -o pgid= -p "$$") || fail_group
   supervisor_group=$("$ps_tool" -o pgid= -p "$DDTEST_PROCESS_SUPERVISOR_PID") || fail_group
   [ "$group" != "$supervisor_group" ] || fail_group
+  # One keeper anchors an inherited group: reuse a live one. A keeper withdraws
+  # its record before its final check, so this launcher is seen if it relies on it.
+  group=$((group)); keepers="\${DDTEST_PROCESS_OWNER%/*}/group.$group"
+  for shared in "$keepers"/*; do
+    state=$("$ps_tool" -o pgid=,stat= -p "\${shared##*/}" 2>/dev/null) || continue
+    read -r shared_group shared_state <<< "$state"
+    if [ "$shared_group" = "$group" ] && [ "\${shared_state#Z}" = "$shared_state" ]; then
+      unset DDTEST_PROCESS_GUARD
+      exec "$@"
+    fi
+  done
 fi
 ready=$("$mktemp_tool" "\${DDTEST_PROCESS_OWNER%/*}/ready.XXXXXXXX") || exit 1
 (unset NODE_CHANNEL_FD NODE_CHANNEL_SERIALIZATION_MODE
-NODE_OPTIONS= DD_TRACE_ENABLED=false DD_CIVISIBILITY_ENABLED=false exec "$keeper_node" "$keeper_script" "$group" "$ready") </dev/null >/dev/null 2>&1 ${closeExtra} &
+NODE_OPTIONS= DD_TRACE_ENABLED=false DD_CIVISIBILITY_ENABLED=false exec "$keeper_node" "$keeper_script" "$group" "$ready" "$keepers") </dev/null >/dev/null 2>&1 ${closeExtra} &
 keeper=$!; attempts=0
 while [ ! -s "$ready" ]; do
   kill -0 "$keeper" 2>/dev/null || exit 1
