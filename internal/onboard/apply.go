@@ -350,12 +350,21 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 		if path == ".npmignore" && edit.before == nil {
 			continue
 		} // Creating it would disable npm's .gitignore fallback.
-		entries := []string{".testoptimization"}
+		// ddtest writes .testoptimization/ at the root only. NYC writes
+		// .nyc_output/ in each covered command's directory, so its entry is
+		// unanchored and a root-only pattern doesn't cover it.
+		entries := []string{"/.testoptimization/"}
 		if coverageAdded {
-			entries = append(entries, ".nyc_output")
+			entries = append(entries, ".nyc_output/")
 		}
 		for _, line := range strings.Split(strings.ReplaceAll(string(edit.before), "\r\n", "\n"), "\n") {
-			entries = slices.DeleteFunc(entries, func(entry string) bool { return strings.Trim(strings.TrimSpace(line), "/") == entry })
+			line = strings.TrimSpace(line)
+			entries = slices.DeleteFunc(entries, func(entry string) bool {
+				if entry == ".nyc_output/" {
+					return strings.TrimSuffix(strings.TrimPrefix(line, "**/"), "/") == ".nyc_output"
+				}
+				return strings.Trim(line, "/") == ".testoptimization"
+			})
 		}
 		if len(entries) == 0 {
 			continue
@@ -369,7 +378,7 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 			edit.after = append(edit.after, []byte(newline)...)
 		}
 		for _, entry := range entries {
-			edit.after = append(edit.after, []byte("/"+entry+"/"+newline)...)
+			edit.after = append(edit.after, []byte(entry+newline)...)
 		}
 		edits = append(edits, edit)
 	}
@@ -501,17 +510,9 @@ func setupWindowsRunner(job runtimeJob) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	labels := []any{job.RunsOn}
-	if list, ok := job.RunsOn.([]any); ok {
-		labels = list
-	}
 	for _, row := range rows {
-		for _, label := range labels {
-			text, ok := label.(string)
-			if !ok {
-				continue
-			}
-			runner, err := runtimeValue(text, row)
+		for _, label := range runnerLabels(job.RunsOn) {
+			runner, err := runtimeValue(label, row)
 			if err != nil {
 				return false, err
 			}

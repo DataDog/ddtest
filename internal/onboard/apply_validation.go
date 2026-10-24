@@ -12,7 +12,7 @@ import (
 )
 
 func setupNeedsESM(root, framework string, workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
-	if slices.Contains([]string{"vitest", "cucumber", "webdriverio"}, framework) {
+	if setupImportsESM(framework) {
 		return true
 	}
 	resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
@@ -116,7 +116,7 @@ func validateSetupWorkflow(root, framework string, before, after []byte) error {
 				if !active {
 					continue
 				}
-				if reason := checkJestBootstrap(planned, updated, bootstrap, row, framework == "vitest" || framework == "cucumber" || framework == "webdriverio"); reason != "" {
+				if reason := checkJestBootstrap(planned, updated, bootstrap, row, setupImportsESM(framework)); reason != "" {
 					return fmt.Errorf("planned initialization: %s", reason)
 				}
 				noAction, err := effectiveBootstrapOptions(planned, updated, bootstrap, row, false)

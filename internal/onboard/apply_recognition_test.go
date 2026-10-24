@@ -77,6 +77,22 @@ func TestNpmOwnOptionsAreNotScriptArguments(t *testing.T) {
 	require.Equal(t, "packages/a", resolution.Tests[0].Directory)
 }
 
+func TestRetainedNpmSelectionAliasRunsFromCaller(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, filepath.Join(root, "packages/a"), map[string]string{"test": "nyc mocha"})
+	for _, command := range []string{"npm test --workspace packages/a", "npm test --prefix packages/a"} {
+		remaining := 256
+		resolution := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+		require.Empty(t, resolution.Reason, command)
+		require.Len(t, resolution.Tests, 1, command)
+		// npm resolves the selection from the caller; replaying the retained
+		// alias from packages/a would look for packages/a/packages/a.
+		require.Equal(t, command, resolution.Tests[0].Command)
+		require.Equal(t, ".", resolution.Tests[0].Directory, command)
+		require.Equal(t, "packages/a", resolution.Tests[0].mochaProbeDirectory, command)
+	}
+}
+
 func TestApplyAcceptsNpmOptionsAndWorkingDirectories(t *testing.T) {
 	for name, steps := range map[string]string{
 		"if-present":        "      - run: npm run build --if-present\n      - run: npm test\n",
@@ -104,6 +120,8 @@ func TestApplyRefusesWindowsRunnersForEveryFramework(t *testing.T) {
 	for name, runner := range map[string]string{
 		"label":  "    runs-on: windows-latest\n",
 		"matrix": "    strategy: {matrix: {os: [ubuntu-latest, windows-latest]}}\n    runs-on: ${{ matrix.os }}\n",
+		"group":  "    runs-on: {group: windows-runners}\n",
+		"labels": "    runs-on: {group: large-runners, labels: Windows}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			workflow := "jobs:\n  test:\n" + runner + "    defaults: {run: {shell: bash}}\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '22'}\n      - run: npm test\n"

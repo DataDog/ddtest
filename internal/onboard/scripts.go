@@ -536,6 +536,13 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			// test runner in a different package directory.
 			original, _ := filepath.EvalSymlinks(directory)
 			result.SingleJest = result.SingleJest && scriptDirectory == original
+			// A retained alias still carries its package selection, so it
+			// replays from the caller; npm would apply the selection twice.
+			for i := range result.Tests {
+				if result.Tests[i].Command == shellCommand(words) {
+					result.Tests[i].Directory = repositoryPath(root, directory)
+				}
+			}
 		}
 		return result
 	default:
