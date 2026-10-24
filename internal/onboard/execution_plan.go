@@ -45,11 +45,13 @@ func AssignConfigurationIDs(scope *ValidationScope) {
 		environment := configurationIdentityEnvironment(entry.Environment)
 		data, _ := json.Marshal(struct {
 			Command, Directory string
-			Environment        map[string]string
-			Cypress            *CypressCommand
-			Prerequisites      []BuildCommand
-			ExitOnFailure      bool
-		}{entry.Command, entry.Directory, environment, entry.Cypress, prerequisites, entry.ExitOnFailure})
+			// Empty for runner-independent commands, keeping their IDs stable.
+			Platform      string `json:",omitempty"`
+			Environment   map[string]string
+			Cypress       *CypressCommand
+			Prerequisites []BuildCommand
+			ExitOnFailure bool
+		}{entry.Command, entry.Directory, entry.Platform, environment, entry.Cypress, prerequisites, entry.ExitOnFailure})
 		entry.ID = fmt.Sprintf("configuration-%x", sha256.Sum256(data))[:30]
 	}
 }

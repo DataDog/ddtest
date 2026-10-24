@@ -29,7 +29,8 @@ func TestPrerequisiteFactErrorsNameWhatIsWrong(t *testing.T) {
 		argv, files []string
 		want        string
 	}{
-		{[]string{"./evil.sh"}, []string{"dist/out.js"}, "must use an installed package script or node with a local script"},
+		{[]string{"evil.sh"}, []string{"dist/out.js"}, "must use an installed package script, or node, sh, bash or ./ with a local script"},
+		{[]string{"./missing.sh"}, []string{"dist/out.js"}, "no such file"},
 		{[]string{"node"}, []string{"dist/out.js"}, "prerequisite script must be repository-local"},
 		{[]string{"npm", "run", "build"}, nil, "expected repository files"},
 		{nil, []string{"dist/out.js"}, "prerequisite requires an argv"},
@@ -88,4 +89,29 @@ func TestJestPreflightKeepsHelperTemporaryFilesInOwnedStorage(t *testing.T) {
 	require.NotEmpty(t, temporary, "Jest's haste cache and npm's compile cache must not land in the user's TMPDIR")
 	require.NotEqual(t, filepath.Clean(os.TempDir()), filepath.Clean(temporary))
 	require.NoDirExists(t, temporary, "the owned directory is removed after preflight")
+}
+
+func TestPrerequisiteFactsAcceptTheShellScriptsDiscoveryOffers(t *testing.T) {
+	root := canonicalWorkflowRoot(t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts/build.sh"), []byte("#!/bin/sh\necho built\n"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts/plain.sh"), []byte("echo plain\n"), 0600))
+	for _, argv := range [][]string{{"./scripts/build.sh"}, {"bash", "scripts/build.sh"}, {"sh", "scripts/plain.sh"}} {
+		require.NoError(t, validatePrerequisiteFact(root, root, PrerequisiteFact{Argv: argv, ExpectedFiles: []string{"dist/out.js"}}), argv)
+	}
+	require.ErrorContains(t, validatePrerequisiteFact(root, root, PrerequisiteFact{Argv: []string{"./scripts/plain.sh"}, ExpectedFiles: []string{"dist/out.js"}}), "not executable")
+	outside := filepath.Join(t.TempDir(), "outside.sh")
+	require.NoError(t, os.WriteFile(outside, []byte("echo outside\n"), 0700))
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "scripts/link.sh")))
+	require.ErrorContains(t, validatePrerequisiteFact(root, root, PrerequisiteFact{Argv: []string{"bash", "scripts/link.sh"}, ExpectedFiles: []string{"dist/out.js"}}), "escapes the repository")
+	require.ErrorContains(t, validatePrerequisiteFact(root, root, PrerequisiteFact{Argv: []string{"./scripts"}, ExpectedFiles: []string{"dist/out.js"}}), "not a regular file")
+}
+
+func TestUnreadableReportDoesNotBlockCIPreservation(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0700))
+	requireWriteFile(t, validationPath(root), "not json")
+	result := validationResult{Framework: "mocha"}
+	require.NoError(t, checkCIPreservation(root, &result), "fresh results must replace an unreadable report")
+	require.NotNil(t, result.CIPreservation)
 }

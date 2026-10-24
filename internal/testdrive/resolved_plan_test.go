@@ -135,6 +135,20 @@ func TestBuildFactExecutesInDeclaredPackageAndRequiresItsOutput(t *testing.T) {
 	require.ErrorContains(t, drive.runBuildPrerequisites(t.Context(), io.Discard, &item), "Declared build output")
 }
 
+func TestBuildFactRunsARepositoryShellScriptDirectly(t *testing.T) {
+	root := canonicalWorkflowRoot(t.TempDir())
+	t.Chdir(root)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "packages/app/scripts"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "packages/app/scripts/build.sh"), []byte("#!/bin/sh\necho ok > built.js\n"), 0700))
+	drive := &Testdrive{repositoryRoot: root, executor: &ext.DefaultCommandExecutor{}}
+	item := configurationResult{TestCommand: onboard.TestCommand{Directory: "packages/app", Prerequisites: []onboard.BuildCommand{{Kind: onboard.PreparationNeedsFacts, Directory: "packages/app", Command: "./scripts/build.sh", ExpectedFiles: []string{"packages/app/built.js"}}}}}
+	require.NoError(t, drive.runBuildPrerequisites(t.Context(), io.Discard, &item))
+	require.FileExists(t, filepath.Join(root, "packages/app/built.js"))
+	item.Preparation = nil
+	item.Prerequisites[0].Kind = ""
+	require.ErrorContains(t, drive.runBuildPrerequisites(t.Context(), io.Discard, &item), "environment/executable review", "only fact-backed setup runs a path")
+}
+
 func TestResumeAlwaysExecutesNewPairAndStopsIdenticalFailures(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	root := t.TempDir()
@@ -335,6 +349,14 @@ func TestCypressPortFactsPreserveCIAndActionOptions(t *testing.T) {
 	require.NoError(t, checkCypressStartupPorts(entry.Cypress))
 	require.NotEmpty(t, entry.LocalOverrides)
 	require.ErrorContains(t, applyPortFact(root, &entry, onboard.PortOverrideFact{Environment: "OTHER_PORT", SourceFile: "serve.js"}), "does not declare")
+	if ipv6, err := net.Listen("tcp", "[::1]:0"); err == nil {
+		// A literal IPv6 loopback application keeps its interface.
+		ipv6Entry := onboard.TestCommand{Directory: ".", Cypress: &onboard.CypressCommand{Start: [][]string{{"npm", "run", "start"}}, WaitOn: []string{"http://" + ipv6.Addr().String()}, Options: map[string]any{"config": map[string]any{"baseUrl": "http://" + ipv6.Addr().String()}}}}
+		require.NoError(t, configurePortFact(root, &ipv6Entry, onboard.PortOverrideFact{Environment: "PORT", SourceFile: "serve.js"}, true))
+		require.True(t, strings.HasPrefix(ipv6Entry.Cypress.WaitOn[0], "http://[::1]:"), ipv6Entry.Cypress.WaitOn[0])
+		require.Equal(t, ipv6Entry.Cypress.WaitOn[0], ipv6Entry.Cypress.Options["config"].(map[string]any)["baseUrl"])
+		_ = ipv6.Close()
+	}
 	original.Options["config"] = "viewportWidth=1000"
 	entry.Cypress = original
 	require.ErrorContains(t, applyPortFact(root, &entry, onboard.PortOverrideFact{Environment: "PORT", SourceFile: "serve.js"}), "custom Cypress config string")
