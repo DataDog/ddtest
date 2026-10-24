@@ -36,6 +36,30 @@ class ModelAuthTests(unittest.TestCase):
         self.assertFalse(login.destination.exists())
         self.assertIn('rotated-refresh',secrets)
 
+    def test_repository_written_login_is_never_persisted(self):
+        for replacement in ({'tokens':{'access_token':'attacker-access','refresh_token':'attacker-refresh'}}, 'not json'):
+            self.source.write_text(json.dumps(self.data))
+            login=ModelLogin('codex',self.home,set(),path=self.source)
+            login.install()
+            login.suspend()
+            login.resume()
+            # The agent session runs repository commands as the same user.
+            login.destination.write_text(replacement if isinstance(replacement,str) else json.dumps(replacement))
+            login.close()
+            self.assertEqual(json.loads(self.source.read_text()),self.data)
+            self.assertTrue(login.unpersisted_change)
+            self.assertFalse(login.destination.exists())
+
+    def test_login_planted_during_setup_is_never_persisted(self):
+        login=ModelLogin('codex',self.home,set(),path=self.source)
+        login.install()
+        login.suspend()
+        planted={'tokens':{'access_token':'planted-access','refresh_token':'planted-refresh'}}
+        login.destination.write_text(json.dumps(planted))
+        login.close()
+        self.assertEqual(json.loads(self.source.read_text()),self.data)
+        self.assertTrue(login.unpersisted_change)
+
     def test_concurrent_evaluators_cannot_fork_refresh_state(self):
         first=ModelLogin('codex',self.home,set(),path=self.source)
         first.install()

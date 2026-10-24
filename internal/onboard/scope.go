@@ -196,7 +196,12 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					laterTest := false
 					if len(resolution.Setup)+len(resolution.Builds) > 0 && len(commands) > 0 && !resolution.Matched && (resolution.Reason == "" || resolution.Review) && !slices.ContainsFunc(resolution.Builds, func(build BuildCommand) bool { return build.Kind == PreparationNeedsFacts }) {
 						for _, later := range job.Steps[i+1:] {
-							laterTest = laterTest || resolveTestStep(root, workflow, job, later, "javascript", framework).Matched
+							if active, err := stepCondition(later, row, conditionEnvironment(workflow, job, runtimeStep{}, row)); err == nil && !active {
+								continue
+							}
+							// Resolve like the main scan so matrix-selected tests are recognized.
+							resolvedLater, _, _ := resolveVariantStep(workflow, job, later, row, framework)
+							laterTest = laterTest || resolveTestStep(root, workflow, job, resolvedLater, "javascript", framework).Matched
 						}
 						if !laterTest {
 							for _, setup := range resolution.Setup {

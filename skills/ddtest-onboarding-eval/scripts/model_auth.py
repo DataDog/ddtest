@@ -81,6 +81,8 @@ class ModelLogin:
 
     The lock coordinates evaluators, not unrelated host CLIs. If another client
     changes the login while a trial runs, never overwrite its newer credentials.
+    Repository commands run as the agent's user and can rewrite the trial login,
+    so only the state the CLI left before the checkout existed is persisted.
     """
     def __init__(self, agent, home, secrets, path=None, existing=False):
         self.agent, self.home, self.secrets = agent, home, secrets
@@ -92,6 +94,8 @@ class ModelLogin:
         self.initial = None
         self.env = {}
         self.suspended = None
+        self.repository_started = False
+        self.unpersisted_change = False
 
     def install(self):
         if self.existing and self.path is None:
@@ -141,6 +145,8 @@ class ModelLogin:
         self.check_destination()
         # Dependency scripts must not see model credentials during setup.
         self.suspended = self.read_destination()
+        # From here on, the login file is writable by untrusted repository code.
+        self.repository_started = True
         remove_login(self.payload(None), self.home.parent)
 
     def resume(self):
@@ -152,8 +158,19 @@ class ModelLogin:
         try:
             self.check_destination()
             if self.initial is not None and persist:
-                updated = self.read_destination() or self.suspended or self.initial
+                try:
+                    current = self.read_destination()
+                except ValueError:
+                    if not self.repository_started:
+                        raise
+                    current = {}  # An unreadable replacement is never persisted.
+                trusted = self.suspended if self.repository_started else current
+                updated = trusted or self.initial
+                remember(current, self.secrets)
                 remember(updated, self.secrets)
+                # A refresh during the agent session is indistinguishable from a
+                # repository-written substitute; report it, never write it back.
+                self.unpersisted_change = self.repository_started and current not in (None, self.suspended)
                 if updated != self.initial:
                     if self.path.read_bytes() != self.original:
                         raise ValueError("Model login changed outside this trial; refreshed credentials were not written over it")

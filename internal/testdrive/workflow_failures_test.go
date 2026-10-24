@@ -155,3 +155,15 @@ func TestReviewedBuildBlockerReturnsFlagRatherThanNewFacts(t *testing.T) {
 	require.Contains(t, result.Location, "npm run build")
 	require.Equal(t, "needs_input", result.Status)
 }
+
+func TestFocusedRunKeepsPreparationReceiptsOnItsConfiguration(t *testing.T) {
+	build := onboard.BuildCommand{Directory: ".", Command: "pnpm run build", Kind: onboard.PreparationPackageBuild}
+	executed := onboard.TestCommand{Command: "npm test", Directory: ".", Prerequisites: []onboard.BuildCommand{build}}
+	other := onboard.TestCommand{Command: "npm run test:other", Directory: "."}
+	result := validationResult{Framework: "cucumber", Compatibility: verdict{Status: "not exercised"}}
+	setSelectedConfigurationScope(&result, onboard.ValidationScope{Commands: []onboard.TestCommand{executed, other}}, []onboard.TestCommand{executed}, nil)
+	receipt := buildResult{BuildCommand: build, Status: "blocked", Code: "preparation_review_required"}
+	creditPreparation(&result, configurationResult{TestCommand: executed, Preparation: []buildResult{receipt}})
+	require.Equal(t, []buildResult{receipt}, result.Configurations[0].Preparation)
+	require.Empty(t, result.Configurations[1].Preparation, "an uncredited configuration did not run this preparation")
+}

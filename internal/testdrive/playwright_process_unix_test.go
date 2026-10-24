@@ -466,3 +466,38 @@ func TestSupervisorRefusesGroupSharedWithItsGoOwner(t *testing.T) {
 	require.ErrorAs(t, owner.Close(), &supervision)
 	require.Equal(t, "unowned_process_group", supervision.Code)
 }
+
+func TestInheritedGroupChildrenShareOneKeeper(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	clients := func() int {
+		count := 0
+		owner.clients.Range(func(_, _ any) bool { count++; return true })
+		return count
+	}
+	// Ten ordinary children in the parent's own group, one after another; the
+	// parent keeps running until stdin closes.
+	script := `const cp=require('node:child_process');let i=0;const next=()=>{if(i++===10){console.log('done');process.stdin.resume();process.stdin.on('end',()=>process.exit(0));return}cp.spawn('/bin/sleep',['0.01'],{stdio:'ignore'}).on('close',next)};next()`
+	command := exec.CommandContext(t.Context(), node, "-e", script)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	stdin, err := command.StdinPipe()
+	require.NoError(t, err)
+	stdout, err := command.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, command.Start())
+	line := make([]byte, 5)
+	_, err = io.ReadFull(stdout, line)
+	require.NoError(t, err)
+	require.Equal(t, "done\n", string(line))
+	// The parent plus one keeper shared by its group, not one per child.
+	require.LessOrEqual(t, clients(), 2)
+	require.NoError(t, stdin.Close())
+	require.NoError(t, command.Wait())
+	require.Eventually(t, func() bool { return clients() == 0 }, 5*time.Second, 50*time.Millisecond, "keepers must not keep one another alive")
+}

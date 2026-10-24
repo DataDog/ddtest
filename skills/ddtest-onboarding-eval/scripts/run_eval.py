@@ -721,6 +721,8 @@ def run(args):
             login.close(persist=cleanup_confirmed)
             if login_installed:
                 manifest["login"] = "removed"
+            if login.unpersisted_change:
+                manifest["login_refresh"] = "not persisted: the trial login changed after repository code could write it; if the host CLI stops authenticating, log in again"
         except (OSError, RuntimeError, ValueError) as error:
             if login_installed:
                 manifest["login"] = "not removed"

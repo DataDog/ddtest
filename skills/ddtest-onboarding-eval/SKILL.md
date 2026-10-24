@@ -67,6 +67,10 @@ MCP configuration. Do not forward cloud, GitHub, npm or SSH credentials.
 
 The runner preserves refresh metadata, serializes evaluations sharing a login,
 and writes refreshed authentication back only if the source has not changed.
+Only a refresh made before the checkout exists (during the model preflight) is
+written back: repository commands can rewrite the trial login, so a change
+during the agent session is reported as `login_refresh` in the run record, not
+persisted.
 Do not use that same OAuth login concurrently in unrelated CLIs. A model-response
 preflight runs before cloning/installing; an expired or revoked account stops
 there, without repeated trial attempts or automatic login flows. `--login-json`
