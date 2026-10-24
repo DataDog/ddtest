@@ -342,3 +342,21 @@ without `--check-only`. The local runner with Mocha or Jasmine is supported;
 standalone automation, custom adapters and browser runners remain unvalidated.
 Five controlled features are required; TIA skipping and coverage are unsupported.
 See [WebdriverIO validation](docs/running.md#webdriverio-validation).
+
+### Developer onboarding experiments
+
+The [ddtest onboarding evaluation skill](skills/ddtest-onboarding-eval/SKILL.md)
+compares uncoached Codex/Claude onboarding in fresh repositories. It is maintainer
+tooling, separate from customer onboarding and the ddtest binary.
+
+**Use the container runner with a clean trusted image, no cloud/GitHub/npm
+credentials or MCP servers, and an explicitly selected throwaway agent login.**
+Repository install scripts and auto-approved agents must not run on the host with
+personal credentials. CLI permission modes alone do not isolate a trial.
+
+The evaluator reads the skill; the tested agent receives only a simple prompt
+pointing to the binary. Evidence includes redacted public tool activity, current
+product report verdicts and owned cleanup. The runner pins/checks CLI versions,
+isolates configuration and removes the container on interruption or timeout.
+See the skill for setup, independent grading and marker-verified cleanup. CI uses
+fake CLIs and offline fixtures, never real model sessions.
