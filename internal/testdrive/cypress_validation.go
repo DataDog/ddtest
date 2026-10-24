@@ -333,7 +333,11 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 	}
 	readCypressResults(filepath.Join(directory, "results.json"), &run)
 	if instrumented && probePath == "" && run.ResultError == "" {
-		run.Coverage = cypressSourceCoverage(t.checkoutRoot(), filepath.ToSlash(t.cypressPackage), run.Facts, run.Tests)
+		code := run.cypressCode
+		if code.Project == "" {
+			code.Project = filepath.ToSlash(t.cypressPackage)
+		}
+		run.Coverage = cypressSourceCoverage(t.checkoutRoot(), code, run.Facts, run.Tests)
 	}
 
 	var invocation struct {
@@ -367,6 +371,8 @@ func readCypressResults(path string, run *validationRun) {
 		Complete            bool
 		ConfigNode          string
 		ComponentConfigured bool
+		ProjectRoot         string
+		SupportFile         string
 		ProbeExecutions     *int
 		Message             string
 		Runs                []struct {
@@ -389,6 +395,7 @@ func readCypressResults(path string, run *validationRun) {
 		return
 	}
 	run.FrameworkNode = result.ConfigNode
+	run.cypressCode = cypressTestCode{Project: result.ProjectRoot, SupportFile: result.SupportFile}
 	if result.ComponentConfigured {
 		run.NotExercised = append(run.NotExercised, cypressComponentNotExercised)
 	}

@@ -17,13 +17,32 @@ import (
 
 const cypressMissingCoverageReason = "No application source coverage observed. Instrument the application served to Cypress with Istanbul (babel-plugin-istanbul or vite-plugin-istanbul) so the tested page exposes window.__coverage__. Specs, support files and dependencies alone are insufficient."
 
+// cypressTestCode locates the code Cypress itself loads: the effective
+// project, whose cypress/ folder holds test code, and the configured support
+// file. Paths are absolute or relative to the checkout.
+type cypressTestCode struct {
+	Project     string
+	SupportFile string
+}
+
 // cypressSourceCoverage checks that the real suite's coverage, read by the
 // tracer from the tested page's window.__coverage__, names application files.
-// Files in the Cypress folder, specs and dependencies are not application code.
-func cypressSourceCoverage(root, project string, facts intake.Facts, native []jestTest) *coverageSummary {
+// Files in the Cypress folder, the support file, specs and dependencies are
+// not application code.
+func cypressSourceCoverage(root string, code cypressTestCode, facts intake.Facts, native []jestTest) *coverageSummary {
 	if canonical, err := filepath.EvalSymlinks(root); err == nil {
 		root = canonical
 	}
+	project := filepath.ToSlash(code.Project)
+	if filepath.IsAbs(code.Project) {
+		project = ""
+		if resolved, err := filepath.EvalSymlinks(code.Project); err == nil {
+			if relative, err := filepath.Rel(root, resolved); err == nil && filepath.IsLocal(relative) {
+				project = filepath.ToSlash(relative)
+			}
+		}
+	}
+	support, _ := cucumberCoverageFile(root, code.SupportFile)
 	specs := map[string]bool{}
 	for _, test := range native {
 		if local, ok := cucumberCoverageFile(root, test.File); ok {
@@ -46,7 +65,7 @@ func cypressSourceCoverage(root, project string, facts intake.Facts, native []je
 				if invalidExample == "" {
 					invalidExample = reportText(file)
 				}
-			case specs[local] || strings.HasPrefix(local, testFolder) || strings.HasPrefix(local, "node_modules/") || strings.Contains(local, "/node_modules/"):
+			case specs[local] || local == support || strings.HasPrefix(local, testFolder) || strings.HasPrefix(local, "node_modules/") || strings.Contains(local, "/node_modules/"):
 				testOnly = true
 			default:
 				covered = true

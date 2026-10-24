@@ -73,6 +73,7 @@ type validationRun struct {
 	ExecutionContext    string `json:"execution_context,omitempty"`
 	temporaryRoot       string
 	commandOutput       string
+	cypressCode         cypressTestCode
 	commandError        error
 	Project             string
 	Skipping            *skippingDiagnostic
