@@ -151,6 +151,10 @@ func (w *WebdriverIO) RunTests(ctx context.Context, files []string, env map[stri
 	if err != nil {
 		return err
 	}
+	// Inherited options that already load dd-trace need no override; keep them.
+	if _, found := options["NODE_OPTIONS"]; !found {
+		options["NODE_OPTIONS"] = os.Getenv("NODE_OPTIONS")
+	}
 	options["NODE_OPTIONS"] += " --import " + strconv.Quote(utils.FileURL(observer))
 	absolute := make([]string, len(files))
 	for i, file := range files {

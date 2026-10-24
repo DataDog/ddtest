@@ -335,7 +335,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		}
 		for _, entry := range result.CIRuntime.Review {
 			command := entry.Command
-			if result.Framework == "cypress" {
+			if onboard.RedactsCommandKeys(result.Framework) {
 				command = onboard.RedactCypressCommand(command)
 			}
 			_, _ = fmt.Fprintf(output, "  - Review separately: %s / %s / step %d (%s): %s\n", entry.Workflow, entry.Job, entry.Step, command, entry.Reason)

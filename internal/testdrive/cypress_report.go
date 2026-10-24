@@ -13,7 +13,7 @@ import (
 func (result validationResult) MarshalJSON() ([]byte, error) {
 	type plain validationResult
 	data, err := json.Marshal(plain(result))
-	if err != nil || (result.Framework != "cypress" && result.Framework != "webdriverio") {
+	if err != nil || !onboard.RedactsCommandKeys(result.Framework) {
 		return data, err
 	}
 	var fields any

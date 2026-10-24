@@ -188,7 +188,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		}
 		// Terminal lines, labels and errors never repeat a recording key.
 		displayed, environment := entry.Command, entry.Environment
-		if t.framework.Name() == "cypress" {
+		if onboard.RedactsCommandKeys(t.framework.Name()) {
 			displayed, environment = onboard.RedactCypressCommand(displayed), onboard.RedactCypressEnvironment(environment)
 		}
 		words, parseErr := shellquote.Split(entry.Command)

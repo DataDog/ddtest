@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/discovery"
@@ -44,6 +45,18 @@ console.log(JSON.stringify({
 	output, err := exec.CommandContext(t.Context(), "node", "--input-type=module", "-e", script, observer).CombinedOutput()
 	require.NoError(t, err, string(output))
 	require.JSONEq(t, `{"entries":["cli","worker","cli",""],"ports":[4567,4567,8080]}`, string(output))
+}
+
+func TestWebdriverIORunKeepsInheritedNodeOptionsWithTheObserver(t *testing.T) {
+	// The platform adds no override when inherited options already load dd-trace.
+	inherited := "-r dd-trace/ci/init --import dd-trace/register.js --max-old-space-size=4096"
+	t.Setenv("NODE_OPTIONS", inherited)
+	executor := &cucumberCommandExecutor{}
+	runner := NewWebdriverIO(&testPlatform{})
+	runner.executor = executor
+	require.NoError(t, runner.RunTests(t.Context(), []string{"selected.spec.js"}, map[string]string{}))
+	require.True(t, strings.HasPrefix(executor.capturedEnv["NODE_OPTIONS"], inherited+" --import "), executor.capturedEnv["NODE_OPTIONS"])
+	require.Contains(t, executor.capturedEnv["NODE_OPTIONS"], "webdriverio_observer.mjs")
 }
 
 type webdriverIODiscoveryExecutor struct{ root string }

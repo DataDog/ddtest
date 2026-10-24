@@ -18,8 +18,14 @@ var cypressSecretVariables = []string{"CYPRESS_RECORD_KEY", "CYPRESS_CLOUD_TOKEN
 
 var cypressSecretAssignment = regexp.MustCompile(`\b((?:CYPRESS_RECORD_KEY|CYPRESS_CLOUD_TOKEN)=)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s;]+)`)
 
-// Text that quotes a Cypress invocation is redacted as a command.
-var cypressInvocation = regexp.MustCompile(`\bcypress\s+run\b`)
+// Text that quotes a Cypress or WebdriverIO invocation is redacted as a command.
+var cypressInvocation = regexp.MustCompile(`\b(?:cypress\s+run|wdio)\b`)
+
+// RedactsCommandKeys reports whether a framework's commands may carry
+// credentials: Cypress recording keys and WebdriverIO grid keys share --key/-k.
+func RedactsCommandKeys(framework string) bool {
+	return framework == "cypress" || framework == "webdriverio"
+}
 
 func RedactCypressCommand(command string) string {
 	return cypressKeyArgument.ReplaceAllString(cypressSecretAssignment.ReplaceAllString(command, "${1}[REDACTED]"), "${1}[REDACTED]")
