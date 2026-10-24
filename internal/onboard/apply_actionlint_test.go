@@ -56,7 +56,7 @@ func TestGeneratedSetupWorkflowsActionlint(t *testing.T) {
 					require.NotContains(t, strings.ReplaceAll(string(data), "\r\n", ""), "\n")
 					ignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
 					require.NoError(t, err)
-					require.Equal(t, "node_modules/\r\n/.testoptimization/\r\n/.nyc_output/\r\n", string(ignore), "the CRLF case wraps Mocha in nyc, so its output is ignored too")
+					require.Equal(t, "node_modules/\r\n/.testoptimization/\r\n.nyc_output/\r\n", string(ignore), "the CRLF case wraps Mocha in nyc, so its output is ignored too")
 				}
 				if tc.name == "comments" || tc.crlf {
 					require.Less(t, strings.Index(string(data), "Configure Datadog"), strings.Index(string(data), "This comment describes the test"))

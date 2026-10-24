@@ -15,8 +15,14 @@ import (
 
 const setupCommandBudget = 256
 
+// setupImportsESM reports frameworks whose CI preload always registers the
+// tracer's ESM loader, as their recipes and local validation do.
+func setupImportsESM(framework string) bool {
+	return slices.Contains([]string{"vitest", "cucumber", "webdriverio", "playwright"}, framework)
+}
+
 func setupPreload(framework string) string {
-	if framework == "vitest" || framework == "cucumber" || framework == "webdriverio" {
+	if setupImportsESM(framework) {
 		return vitestPreload
 	}
 	return "-r ${{ env.DD_TRACE_PACKAGE }}"
@@ -124,7 +130,9 @@ func setupMochaCoverage(root, directory, framework, command string) (string, err
 	if esm {
 		return "", errors.New(mochaESMCoverageGap)
 	}
-	if len(offsets) > 0 && !slices.ContainsFunc(directories, declaresNYC) {
+	// npx --no-install resolves nyc from each wrapped command's package, so a
+	// declaration in one independent package does not cover the others.
+	if len(offsets) > 0 && !declaresNYC(root) && slices.ContainsFunc(directories[1:], func(directory string) bool { return !declaresNYC(directory) }) {
 		return "", setupDependencyGap(root, []string{"nyc"})
 	}
 	slices.Sort(offsets)

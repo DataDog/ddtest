@@ -21,13 +21,34 @@ func TestSetupPlanDescribesLocalImpactBeforeApplying(t *testing.T) {
 	require.Contains(t, impact, ".nyc_output/")
 	diff, err := plan.Diff()
 	require.NoError(t, err)
-	require.Contains(t, diff, "+/.testoptimization/\n+/.nyc_output/\n")
+	require.Contains(t, diff, "+/.testoptimization/\n+.nyc_output/\n")
 
 	_, err = plan.Apply(true)
 	require.NoError(t, err)
 	plan, err = PlanJavaScriptSetup(root, "mocha", "6.20.1", "datadoghq.com", ">=22")
 	require.NoError(t, err)
 	require.True(t, plan.Configured(), "a second plan has nothing left to edit")
+}
+
+func TestSetupIgnoresNYCOutputInNestedWorkingDirectories(t *testing.T) {
+	for existing, want := range map[string]string{
+		"":                  "/.testoptimization/\n.nyc_output/\n",
+		"/.nyc_output/\n":   "/.nyc_output/\n/.testoptimization/\n.nyc_output/\n",
+		".nyc_output\n":     ".nyc_output\n/.testoptimization/\n",
+		"**/.nyc_output/\n": "**/.nyc_output/\n/.testoptimization/\n",
+	} {
+		root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '24'}\n      - run: npm test\n        working-directory: sub\n")
+		require.NoError(t, os.Mkdir(filepath.Join(root, "sub"), 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "sub/package.json"), []byte(`{"scripts":{"test":"mocha"},"devDependencies":{"mocha":"11.7.6","nyc":"17.1.0"}}`), 0600))
+		if existing != "" {
+			require.NoError(t, os.WriteFile(filepath.Join(root, ".gitignore"), []byte(existing), 0600))
+		}
+		_, err := ApplyJavaScriptSetup(root, "mocha", "6.20.1", "datadoghq.com", ">=22")
+		require.NoError(t, err)
+		ignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+		require.NoError(t, err)
+		require.Equal(t, want, string(ignore), "a root-only pattern doesn't cover sub/.nyc_output/")
+	}
 }
 
 func TestScopedSetupImpactNamesPOSIXScripts(t *testing.T) {

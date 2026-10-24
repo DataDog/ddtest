@@ -54,6 +54,19 @@ func TestApplyMochaESMInitializesImportLoader(t *testing.T) {
 	}
 }
 
+func TestApplyPlaywrightInitializesImportLoader(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '24'}\n      - run: npx playwright test\n")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"type":"module","devDependencies":{"@playwright/test":"1.59.1"}}`), 0600))
+	_, err := ApplyJavaScriptSetup(root, "playwright", "6.20.1", "datadoghq.com", ">=22")
+	require.NoError(t, err)
+	data, err := os.ReadFile(filepath.Join(root, ".github/workflows/test.yml"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "--import {1}', env.DD_TRACE_PACKAGE, env.DD_TRACE_ESM_IMPORT")
+	var generated ciWorkflow
+	require.NoError(t, yaml.Unmarshal(data, &generated))
+	require.Empty(t, checkJestBootstrap(generated, generated.Jobs["test"], generated.Jobs["test"].Steps[2], nil, true))
+}
+
 func TestApplyScopedPartitionPreservesOtherFramework(t *testing.T) {
 	root := mixedCucumberSetupRepository(t)
 	path := filepath.Join(root, "package.json")
@@ -207,6 +220,23 @@ func TestApplyResolvesMochaCoverageInTheStepWorkingDirectory(t *testing.T) {
 			require.Empty(t, checkTestBootstrap(updated, updated.Jobs["test"], steps[2], nil, resolveTestStep(root, updated, updated.Jobs["test"], steps[2], "javascript", "mocha").Tests, "mocha"))
 		})
 	}
+}
+
+func TestApplyRequiresNYCInEveryIndependentWrappedPackage(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - run: cd a && npm test && cd ../b && npm test\n")
+	for directory, nyc := range map[string]string{"a": `,"nyc":"17.1.0"`, "b": ""} {
+		require.NoError(t, os.Mkdir(filepath.Join(root, directory), 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(root, directory, "package.json"), []byte(`{"scripts":{"test":"mocha"},"devDependencies":{"mocha":"11.7.6"`+nyc+`}}`), 0600))
+	}
+	command := "cd a && npm test && cd ../b && npm test"
+	_, err := setupMochaCoverage(root, root, "mocha", command)
+	var dependencies *SetupDependencyGap
+	require.ErrorAs(t, err, &dependencies, "b's wrapper can't resolve a's nyc")
+	require.Equal(t, []string{"nyc"}, dependencies.Packages)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "b/package.json"), []byte(`{"scripts":{"test":"mocha"},"devDependencies":{"mocha":"11.7.6","nyc":"17.1.0"}}`), 0600))
+	wrapped, err := setupMochaCoverage(root, root, "mocha", command)
+	require.NoError(t, err)
+	require.Equal(t, "cd a && npx --no-install nyc -- npm test && cd ../b && npx --no-install nyc -- npm test", wrapped)
 }
 
 func TestApplyRefusesACdItCannotFollow(t *testing.T) {
