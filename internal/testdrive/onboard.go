@@ -55,6 +55,8 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	if options.Format == "json" {
 		result.NextCommand = append(result.NextCommand, "--format", "json")
+	} else if options.Apply && options.Format == "agent" {
+		result.NextCommand = append(result.NextCommand, "--agent")
 	}
 
 	if t.commandTimeout > 0 {
@@ -137,7 +139,12 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		case "report_result", "supply_input", "apply_source_edit", "wait":
 			result.NextCommand = nil
 		case "request_capability":
-			result.NextCommand = append([]string{}, result.ResumeCommand...)
+			// Without a checkpoint there is nothing to resume; rerun from the start.
+			if len(result.ResumeCommand) > 0 {
+				result.NextCommand = append([]string{}, result.ResumeCommand...)
+			} else {
+				result.NextCommand = append([]string{}, recoveryCommand...)
+			}
 		}
 		if checkpoint != nil && checkpoint.Attempts >= maxWorkflowAttempts {
 			result.NextAction = "report_result"

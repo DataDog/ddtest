@@ -19,10 +19,9 @@ func checkCIPreservation(root string, result *validationResult) error {
 	if result.Framework != "mocha" && result.Framework != "cucumber" && result.Framework != "webdriverio" {
 		return nil
 	}
-	previous, err := readPreviousValidation(root)
-	if err != nil {
-		return err
-	}
+	// An unreadable saved report has no usable baseline; the fresh results
+	// written by this run replace it.
+	previous, _ := readPreviousValidation(root)
 	current, err := onboard.CIMatrixRows(root, result.Framework)
 	if err != nil {
 		result.CIPreservation = &verdict{Status: "inconclusive", Reason: reportText(err.Error())}

@@ -453,20 +453,25 @@ func validatePrerequisiteFact(root, directory string, fact PrerequisiteFact) err
 		if manifest.Scripts[fact.Argv[2]] == "" {
 			return fmt.Errorf("unknown prerequisite script %q", fact.Argv[2])
 		}
-	case "node":
+	case "node", "sh", "bash":
 		if len(fact.Argv) < 2 || !filepath.IsLocal(fact.Argv[1]) {
 			return fmt.Errorf("prerequisite script must be repository-local")
 		}
-		resolved, err := filepath.EvalSymlinks(filepath.Join(directory, fact.Argv[1]))
+		if _, err := repositoryScript(root, directory, fact.Argv[1]); err != nil {
+			return err
+		}
+	default:
+		// Discovery also offers a repository shell script run directly.
+		if !strings.HasPrefix(fact.Argv[0], "./") {
+			return fmt.Errorf("prerequisite must use an installed package script, or node, sh, bash or ./ with a local script")
+		}
+		info, err := repositoryScript(root, directory, fact.Argv[0])
 		if err != nil {
 			return err
 		}
-		local, err := filepath.Rel(canonicalWorkflowRoot(root), resolved)
-		if err != nil || !filepath.IsLocal(local) {
-			return fmt.Errorf("prerequisite script escapes the repository")
+		if info.Mode().Perm()&0o111 == 0 {
+			return fmt.Errorf("prerequisite script %s is not executable", fact.Argv[0])
 		}
-	default:
-		return fmt.Errorf("prerequisite must use an installed package script or node with a local script")
 	}
 	for _, name := range fact.ExpectedFiles {
 		if !filepath.IsLocal(name) || strings.HasPrefix(filepath.ToSlash(name), "node_modules/") || strings.HasPrefix(filepath.ToSlash(name), ".git/") || strings.HasPrefix(filepath.ToSlash(name), ".testoptimization/") {
@@ -474,6 +479,27 @@ func validatePrerequisiteFact(root, directory string, fact PrerequisiteFact) err
 		}
 	}
 	return nil
+}
+
+// repositoryScript resolves a prerequisite script from directory, following
+// symlinks, and requires a regular file inside the repository.
+func repositoryScript(root, directory, name string) (os.FileInfo, error) {
+	resolved, err := filepath.EvalSymlinks(filepath.Join(directory, name))
+	if err != nil {
+		return nil, err
+	}
+	local, err := filepath.Rel(canonicalWorkflowRoot(root), resolved)
+	if err != nil || !filepath.IsLocal(local) {
+		return nil, fmt.Errorf("prerequisite script escapes the repository")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("prerequisite script %s is not a regular file", name)
+	}
+	return info, nil
 }
 
 func excludedFingerprintPath(name string) bool {

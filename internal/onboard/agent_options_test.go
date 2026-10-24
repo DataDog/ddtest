@@ -32,6 +32,16 @@ func TestConfigurationIdentityIgnoresOnlyEmptyInstrumentationOptions(t *testing.
 	require.NotEqual(t, original.Commands[0].ID, empty.Commands[0].ID)
 }
 
+func TestConfigurationIdentitySeparatesRunnerPlatforms(t *testing.T) {
+	scope := ValidationScope{Commands: []TestCommand{{Command: "cypress run", Directory: "."}, {Command: "cypress run", Directory: ".", Platform: "linux"}, {Command: "cypress run", Directory: ".", Platform: "windows"}}}
+	AssignConfigurationIDs(&scope)
+	require.NotEqual(t, scope.Commands[0].ID, scope.Commands[1].ID)
+	require.NotEqual(t, scope.Commands[1].ID, scope.Commands[2].ID, "facts must target one platform variant")
+	unchanged := ValidationScope{Commands: []TestCommand{{Command: "jest", Directory: "."}}}
+	AssignConfigurationIDs(&unchanged)
+	require.Equal(t, "configuration-87a556e2440b3268", unchanged.Commands[0].ID, "IDs without a platform are unchanged")
+}
+
 func TestPlainRenderingIsTextOnly(t *testing.T) {
 	result := AgentResult{Status: "needs_input", Phase: "setup", Code: "setup_unresolved", Reason: "declare the build", NextAction: "supply_input",
 		InputTemplate: &SetupFacts{SchemaVersion: 2, Fingerprint: "abc"}, ResumeCommand: []string{"ddtest", "onboard", "--resume", "id"},

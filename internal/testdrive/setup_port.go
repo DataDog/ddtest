@@ -80,7 +80,13 @@ func configurePortFact(root string, entry *onboard.TestCommand, fact onboard.Por
 		entry.PortOverride = &copyFact
 		return nil
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	// Keep a literal loopback host such as ::1 so an IPv6-only application is
+	// still reached; localhost keeps resolving to 127.0.0.1.
+	host := address.Hostname()
+	if host == "localhost" {
+		host = "127.0.0.1"
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
 	if err != nil {
 		return err
 	}
@@ -88,7 +94,7 @@ func configurePortFact(root string, entry *onboard.TestCommand, fact onboard.Por
 	if err := listener.Close(); err != nil {
 		return err
 	}
-	address.Host = net.JoinHostPort("127.0.0.1", port)
+	address.Host = net.JoinHostPort(host, port)
 	if existing, ok := config["baseUrl"].(string); ok && existing != "" {
 		base, err := url.Parse(existing)
 		if err != nil || base.Hostname() != address.Hostname() && base.Hostname() != "localhost" {
