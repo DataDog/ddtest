@@ -561,6 +561,19 @@ class VerdictTests(unittest.TestCase):
         for text in ("Onboarding validation: INCOMPLETE.", "Onboarding is not complete. INCOMPLETE", "Workflow edits are complete. INCOMPLETE"):
             self.assertEqual(run_eval.reporting_verdict(text, report)["status"], "review")
 
+    def test_negated_reported_status_and_other_verdicts_contradict_incomplete(self):
+        for claim in ("Status is not incomplete.", "Onboarding isn't incomplete.", "Onboarding validation: PASSED.",
+                      "Onboarding validation: FAILED.", "Setup did not fail; onboarding is complete."):
+            with self.subTest(claim=claim):
+                result = run_eval.reporting_verdict(self.compact_answer() + "\n" + claim, self.compact_report())
+                self.assertEqual(result["status"], "fail")
+                self.assertTrue(result["differences"])
+        for status in ("PASSED", "COMPLETE LOCALLY", "FAILED"):
+            with self.subTest(status=status):
+                report = {"summary": {"status": status}}
+                self.assertEqual(run_eval.reporting_verdict("Onboarding validation: " + status + ".", report)["status"], "review")
+        self.assertEqual(run_eval.reporting_verdict("Onboarding validation: PASSED.", {"summary": {"status": "COMPLETE LOCALLY"}})["status"], "review")
+
     def test_repeated_labeled_facts_must_all_agree(self):
         for claim in (
                 "Reporting: 999 test executions; 888 source-test identities.",

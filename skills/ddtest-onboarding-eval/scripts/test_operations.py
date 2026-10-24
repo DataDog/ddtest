@@ -68,6 +68,42 @@ class TeardownTests(unittest.TestCase):
         self.assertFalse(manifest["retry_recommended"])
         self.assertEqual(manifest["status"], "failed")
 
+    def test_unstoppable_agent_fails_the_trial_without_racing_evidence(self):
+        def stop_processes(_self):
+            raise RuntimeError("Could not stop agent processes")
+        with patch.object(fixtures.FakeContainer, "stop_processes", stop_processes):
+            code, manifest = self.case.trial()
+        self.assertEqual(code, 1)
+        self.assertEqual(manifest["status"], "failed")
+        self.assertFalse(manifest["isolation"]["processes_stopped"])
+        self.assertIn("Could not stop agent processes", manifest["collection_errors"])
+        for name in ("changes.patch", "status.txt"):
+            self.assertFalse((self.case.args.output / name).exists())
+
+    def test_finalization_failures_are_persisted_as_failed(self):
+        def remove_login(login, trial):
+            raise OSError("login removal failed")
+        login = self.case.root / "codex-login.json"
+        login.write_text(json.dumps({"tokens": {"accessToken": "throwaway-token"}}))
+        self.case.args.login_json = login
+        with patch.object(fixtures.run_eval, "remove_login", remove_login):
+            code, manifest = self.case.trial()
+        self.assertEqual(code, 1)
+        self.assertEqual(manifest["login"], "not removed")
+        self.assertEqual(manifest["status"], "failed")
+        self.case.args.login_json = None
+        self.case.args.output = self.case.root / "git-evidence"
+        real = Path.open
+        def open_evidence(path, *args, **kwargs):
+            if path.name == "status.txt":
+                raise OSError("evidence folder unavailable")
+            return real(path, *args, **kwargs)
+        with patch.object(Path, "open", open_evidence):
+            code, manifest = self.case.trial()
+        self.assertEqual(code, 1)
+        self.assertEqual(manifest["status"], "failed")
+        self.assertIn("evidence folder unavailable", manifest["collection_errors"])
+
     def test_docker_control_timeout_is_recorded_instead_of_escaping(self):
         def start(_self):
             with patch.object(isolation.subprocess, "run", side_effect=subprocess.TimeoutExpired(["docker", "create"], 20)):
@@ -120,6 +156,22 @@ class CleanupWithoutRunManifestTests(unittest.TestCase):
         with patch.object(isolation, "docker_control", side_effect=self.control([str(self.trial)], calls)):
             self.assertEqual(isolation.cleanup(self.output), self.trial)
         self.assertFalse(self.trial.exists())
+        self.assertEqual(calls, ["inspect", "rm", "inspect"])
+
+    def test_cleanup_matches_a_mounted_trial_path_containing_spaces(self):
+        storage = tempfile.TemporaryDirectory()
+        self.addCleanup(storage.cleanup)
+        root = (Path(storage.name) / "trial root").resolve()
+        root.mkdir()
+        trial = Path(tempfile.mkdtemp(prefix="dde-", dir=root)).resolve()
+        output = root / "evidence"
+        output.mkdir()
+        isolation.mark_trial(trial, output, self.name)
+        calls = []
+        with patch.dict(os.environ, {isolation.TRIAL_ROOT_VARIABLE: str(root)}), \
+                patch.object(isolation, "docker_control", side_effect=self.control([str(trial)], calls)):
+            self.assertEqual(isolation.cleanup(output), trial)
+        self.assertFalse(trial.exists())
         self.assertEqual(calls, ["inspect", "rm", "inspect"])
 
     def test_cleanup_refuses_a_container_that_does_not_mount_the_trial(self):
