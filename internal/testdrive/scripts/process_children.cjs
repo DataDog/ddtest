@@ -67,6 +67,7 @@ function withoutOwnership (env) {
 function withOwnership (env) {
   env.DDTEST_PROCESS_OWNER = process.env.DDTEST_PROCESS_OWNER
   env.DDTEST_PROCESS_ERRORS = process.env.DDTEST_PROCESS_ERRORS
+  env.DDTEST_PROCESS_SUPERVISOR_PID = process.env.DDTEST_PROCESS_SUPERVISOR_PID
   if (!(env.NODE_OPTIONS || '').includes(__filename)) {
     env.NODE_OPTIONS = (env.NODE_OPTIONS || '') + ' --require ' + JSON.stringify(__filename)
   }
@@ -86,14 +87,24 @@ function unsupportedLaunch () {
 
 // The helper shell's arguments: it starts a keeper in the target's new process
 // group, then execs the original executable with its own PID, parent and pipes.
-function launcherArguments (file, args, stdio) {
+function launcherArguments (file, args, stdio, detached = true) {
   // Close browser protocol pipes only in the keeper, before Node starts.
   // The original executable inherits the untouched descriptors via exec.
   const closeExtra = Array.isArray(stdio) ? stdio.slice(3).map((_, i) => `${i + 3}<&-`).join(' ') : ''
-  const launcher = `keeper_node=$1; keeper_script=$2; mktemp_tool=$3; sleep_tool=$4; rm_tool=$5; shift 5
+  const launcher = `keeper_node=$1; keeper_script=$2; mktemp_tool=$3; sleep_tool=$4; rm_tool=$5; ps_tool=$6; keeper_mode=$7; shift 7
+fail_group() {
+  printf '%s\n' '{"code":"unowned_process_group","reason":"child group is shared with the supervisor or cannot be verified"}' >> "$DDTEST_PROCESS_ERRORS"
+  exit ${unsupportedExit}
+}
+group=$$
+if [ "$keeper_mode" = inherited ]; then
+  group=$("$ps_tool" -o pgid= -p "$$") || fail_group
+  supervisor_group=$("$ps_tool" -o pgid= -p "$DDTEST_PROCESS_SUPERVISOR_PID") || fail_group
+  [ "$group" != "$supervisor_group" ] || fail_group
+fi
 ready=$("$mktemp_tool" "\${DDTEST_PROCESS_OWNER%/*}/ready.XXXXXXXX") || exit 1
 (unset NODE_CHANNEL_FD NODE_CHANNEL_SERIALIZATION_MODE
-NODE_OPTIONS= DD_TRACE_ENABLED=false DD_CIVISIBILITY_ENABLED=false exec "$keeper_node" "$keeper_script" "$$" "$ready") </dev/null >/dev/null 2>&1 ${closeExtra} &
+NODE_OPTIONS= DD_TRACE_ENABLED=false DD_CIVISIBILITY_ENABLED=false exec "$keeper_node" "$keeper_script" "$group" "$ready") </dev/null >/dev/null 2>&1 ${closeExtra} &
 keeper=$!; attempts=0
 while [ ! -s "$ready" ]; do
   kill -0 "$keeper" 2>/dev/null || exit 1
@@ -106,7 +117,7 @@ unset DDTEST_PROCESS_GUARD
 exec "$@"`
   // Bash closes descriptors above 9; -p ignores ambient BASH_ENV/functions
   // in this helper shell while leaving the target's environment untouched.
-  return ['-p', '-c', launcher, 'ddtest-owned-launcher', process.execPath, require.resolve('./process_guard.cjs'), tool('mktemp'), tool('sleep'), tool('rm'), file, ...args]
+  return ['-p', '-c', launcher, 'ddtest-owned-launcher', process.execPath, require.resolve('./process_guard.cjs'), tool('mktemp'), tool('sleep'), tool('rm'), tool('ps'), detached ? 'detached' : 'inherited', file, ...args]
 }
 
 const envPairs = env => Object.entries(env).map(([key, value]) => key + '=' + value)
@@ -132,8 +143,8 @@ if (process.env.DDTEST_PROCESS_OWNER && !process.env.DDTEST_PROCESS_GUARD) {
     }
     if (process.platform === 'win32' || (args.length && args[0] !== options.file)) unsupportedLaunch()
     env.DDTEST_PROCESS_GUARD = '1'
-    return Reflect.apply(spawn, this, [{ ...options, file: '/bin/bash', detached: true,
-      args: ['/bin/bash', ...launcherArguments(options.file, args.slice(1), stdio)], envPairs: envPairs(env) }])
+    return Reflect.apply(spawn, this, [{ ...options, file: '/bin/bash', detached: options.detached,
+      args: ['/bin/bash', ...launcherArguments(options.file, args.slice(1), stdio, options.detached)], envPairs: envPairs(env) }])
   }
 
   // spawnSync, execSync and execFileSync never reach the asynchronous hook, and

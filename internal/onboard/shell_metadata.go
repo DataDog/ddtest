@@ -206,3 +206,33 @@ func metadataInvocations(command string) ([]metadataInvocation, bool) {
 	}
 	return commands, true
 }
+
+// Recognize uploader/administration entry points without treating downloaded
+// code or a GitHub operation as part of local test execution. No broad curl,
+// bash, gh or command-substitution exemption is permitted.
+func externalCIReporting(command string) bool {
+	if strings.TrimSpace(command) == "bash <(curl -s https://codecov.io/bash)" {
+		return true
+	}
+	file, ok := parseCIShell(command)
+	if !ok || len(file.Stmts) != 1 {
+		return false
+	}
+	stmt := file.Stmts[0]
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || stmt.Background || stmt.Negated || len(stmt.Redirs) > 0 || len(call.Assigns) > 0 || len(call.Args) < 3 {
+		return false
+	}
+	if call.Args[0].Lit() != "gh" || call.Args[1].Lit() != "pr" || call.Args[2].Lit() != "merge" {
+		return false
+	}
+	valid := true
+	for _, word := range call.Args[3:] {
+		if shellText(word) == `"$PR_URL"` || shellText(word) == `"${PR_URL}"` {
+			continue
+		}
+		_, err := literalShellWord(word)
+		valid = valid && err == nil
+	}
+	return valid
+}

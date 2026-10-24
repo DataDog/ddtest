@@ -80,6 +80,34 @@ class ContainerTests(unittest.TestCase):
             self.assertIn('file_change' if agent=='codex' else 'Write',activity)
         self.assertEqual(canary.read_text(),'HOST-CREDENTIAL-CANARY')
 
+    def test_pnpm_configuration_uses_container_paths(self):
+        import shlex
+        script="import subprocess; p=subprocess.check_output(['pnpm','config','get','store-dir'],text=True).strip(); assert p=='/trial/caches/pnpm-store',p"
+        self.args.setup_command=[shlex.join(['/usr/bin/python3','-c',script])]
+        code,manifest=self.trial()
+        self.assertEqual(code,0,manifest.get('error'))
+        self.assertEqual(manifest['isolation']['cleanup'],'removed')
+
+    def test_selected_fake_login_preflight_keeps_credentials_out_of_setup(self):
+        import shlex
+        for agent,key in (('codex','tokens'),('claude','claudeAiOauth')):
+            with self.subTest(agent=agent):
+                self.args.agent=agent
+                self.args.output=self.root/(agent+'-login-evidence')
+                login=self.root/(agent+'-login.json')
+                payload={key:{'accessToken':'fake-model-only-token'}}
+                login.write_text(json.dumps(payload))
+                self.args.login_json=login
+                script="import pathlib,os; h=pathlib.Path(os.environ['HOME']); assert not (h/'.codex/auth.json').exists(); assert not (h/'.claude/.credentials.json').exists()"
+                self.args.setup_command=[shlex.join(['/usr/bin/python3','-c',script])]
+                code,manifest=self.trial()
+                self.assertEqual(code,0,manifest.get('error'))
+                self.assertEqual(manifest['authentication']['status'],'passed')
+                self.assertEqual(manifest['login'],'removed')
+                self.assertEqual(json.loads(login.read_text()),payload)
+                home=Path(manifest['trial_directory'])/'home'
+                self.assertFalse((home/('.codex/auth.json' if agent=='codex' else '.claude/.credentials.json')).exists())
+
     def options(self,**values):
         import shlex
         script="import pathlib,json; pathlib.Path('fake-options.json').write_text("+repr(json.dumps(values))+"); pathlib.Path('.git/info/exclude').write_text('fake-options.json\\n')"
@@ -132,7 +160,8 @@ class ContainerTests(unittest.TestCase):
             self.assertEqual(container.execute(['/usr/bin/env'],trial,env,10,lines.append,None,executor),0)
         finally:
             container.close()
-        self.assertEqual(dict(line.split('=',1) for line in lines if line),env)
+        expected={key:container.inside(value) for key,value in env.items()}
+        self.assertEqual(dict(line.split('=',1) for line in lines if line),expected)
         self.assertNotIn('forwarded-value',' '.join(seen[0]))
 
     def test_stopping_processes_ends_a_detached_agent_and_keeps_the_container(self):

@@ -200,7 +200,7 @@ func (t *Testdrive) selectSetupTracer(ctx context.Context, scope onboard.Validat
 		if err := validateConfigurationFiles(probe.checkoutRoot(), probe.repositoryRoot, probe.args, policy.ConfigurationFiles, policy.configurationOptions()); err != nil {
 			return platform.JSSelection{}, err
 		}
-		probe.bindPreflight()
+		probe.preflight = probe.frameworkPreflight()
 		check := validationResult{CIRuntime: &ci}
 		err = probe.preflightInDirectory(ctx, directory, &check)
 		if check.Selection == nil || check.Selection.Version == "" || check.Preflight == nil {
@@ -257,26 +257,6 @@ func (t *Testdrive) preflightInDirectory(ctx context.Context, directory string, 
 	}
 	defer func() { runErr = errors.Join(runErr, os.Chdir(previous)) }()
 	return t.preflight(ctx, io.Discard, result)
-}
-
-// Bind method values after copying a drive so preflight uses its command and workspace.
-func (t *Testdrive) bindPreflight() {
-	switch t.framework.Name() {
-	case "vitest":
-		t.preflight = t.checkVitestPreflight
-	case "playwright":
-		t.preflight = t.checkPlaywrightPreflight
-	case "mocha":
-		t.preflight = t.checkMochaPreflight
-	case "cypress":
-		t.preflight = t.checkCypressPreflight
-	case "cucumber":
-		t.preflight = t.checkCucumberPreflight
-	case "webdriverio":
-		t.preflight = t.checkWebdriverIOPreflight
-	default:
-		t.preflight = t.checkJestPreflight
-	}
 }
 
 // removeEmptyDirectories removes directory if it holds only empty directories.

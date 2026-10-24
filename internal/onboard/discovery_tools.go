@@ -20,36 +20,44 @@ const (
 // project configuration. Plugin-capable tools remain visible for review, and
 // unknown wrappers never become safe just because their script is named build.
 var discoveryTools = map[string]discoveryTool{
-	"echo":        metadataTool,  // Shell builtin: prints its already-inspected literal arguments.
-	"printf":      metadataTool,  // Shell builtin: formats literal arguments; substitutions are inspected separately.
-	"true":        metadataTool,  // Shell builtin with no child command.
-	"false":       failingTool,   // Always fails; && followers cannot be assumed to execute.
-	"mkdir":       metadataTool,  // Creates directories; does not dispatch a test runner.
-	"cp":          metadataTool,  // Copies files; mutations are retained as setup diagnostics.
-	"jq":          reviewTool,    // Transforms data; only literal filters/paths are accepted for redirection.
-	"eslint":      reviewTool,    // Linter; plugins/configuration need separate review.
-	"standard":    reviewTool,    // Linter; configuration needs separate review.
-	"prettier":    reviewTool,    // Formatter; plugins/configuration need separate review.
-	"oxlint":      reviewTool,    // Linter; configuration needs separate review.
-	"oxfmt":       reviewTool,    // Common formatter; configuration needs separate review.
-	"flow":        reviewTool,    // Type checker; not a Jest entry point.
-	"codecov":     reviewTool,    // Coverage uploader; not a Jest entry point.
-	"docusaurus":  reviewTool,    // Documentation builder; plugins/configuration need separate review.
-	"vitepress":   reviewTool,    // Documentation builder; plugins/configuration need separate review.
-	"tsc":         buildTool,     // TypeScript compiler; records the build prerequisite.
-	"tsgo":        buildTool,     // TypeScript compiler; records the build prerequisite.
-	"rollup":      buildTool,     // Bundler; plugins/configuration need separate review.
-	"webpack":     buildTool,     // Bundler; plugins/configuration need separate review.
-	"tsup":        buildTool,     // Bundler; plugins/configuration need separate review.
-	"unbuild":     buildTool,     // Bundler; plugins/configuration need separate review.
-	"jest":        frameworkTool, // Explicit test runner; matched before this table for the selected framework.
-	"vitest":      frameworkTool, // Explicit different test runner; outside Jest scope.
-	"playwright":  frameworkTool, // Explicit different test runner; outside Jest scope.
-	"mocha":       frameworkTool, // Explicit different test runner; outside Jest scope.
-	"cypress":     frameworkTool, // Explicit different test runner; outside Jest scope.
-	"cucumber-js": frameworkTool, // Explicit different test runner; outside Jest scope.
-	"tap":         frameworkTool, // Explicit different test runner; outside Jest scope.
-	"mochify":     frameworkTool, // Explicit different test runner; outside Jest scope.
+	"echo":          metadataTool,  // Shell builtin: prints its already-inspected literal arguments.
+	"printf":        metadataTool,  // Shell builtin: formats literal arguments; substitutions are inspected separately.
+	"true":          metadataTool,  // Shell builtin with no child command.
+	"false":         failingTool,   // Always fails; && followers cannot be assumed to execute.
+	"mkdir":         metadataTool,  // Creates directories; does not dispatch a test runner.
+	"cp":            metadataTool,  // Copies files; mutations are retained as setup diagnostics.
+	"jq":            reviewTool,    // Transforms data; only literal filters/paths are accepted for redirection.
+	"ls-engines":    reviewTool,    // Dependency runtime checker; no selected test invocation.
+	"gherkin-lint":  reviewTool,    // Feature-file linter; plugins need separate review.
+	"lockfile-lint": reviewTool,    // Dependency metadata checker.
+	"remark":        reviewTool,    // Markdown tooling; plugins need separate review.
+	"publint":       reviewTool,    // Published-package metadata checker.
+	"ban":           reviewTool,    // Sensitive-file linter; configuration needs separate review.
+	"eslint":        reviewTool,    // Linter; plugins/configuration need separate review.
+	"standard":      reviewTool,    // Linter; configuration needs separate review.
+	"prettier":      reviewTool,    // Formatter; plugins/configuration need separate review.
+	"oxlint":        reviewTool,    // Linter; configuration needs separate review.
+	"oxfmt":         reviewTool,    // Common formatter; configuration needs separate review.
+	"flow":          reviewTool,    // Type checker; not a Jest entry point.
+	"codecov":       reviewTool,    // Coverage uploader; not a Jest entry point.
+	"documentation": reviewTool,    // Documentation generator; plugins need separate review.
+	"docusaurus":    reviewTool,    // Documentation builder; plugins/configuration need separate review.
+	"vitepress":     reviewTool,    // Documentation builder; plugins/configuration need separate review.
+	"tsc":           buildTool,     // TypeScript compiler; records the build prerequisite.
+	"tsgo":          buildTool,     // TypeScript compiler; records the build prerequisite.
+	"babel":         buildTool,     // Compiler; preserve its explicit build invocation.
+	"rollup":        buildTool,     // Bundler; plugins/configuration need separate review.
+	"webpack":       buildTool,     // Bundler; plugins/configuration need separate review.
+	"tsup":          buildTool,     // Bundler; plugins/configuration need separate review.
+	"unbuild":       buildTool,     // Bundler; plugins/configuration need separate review.
+	"jest":          frameworkTool, // Explicit test runner; matched before this table for the selected framework.
+	"vitest":        frameworkTool, // Explicit different test runner; outside Jest scope.
+	"playwright":    frameworkTool, // Explicit different test runner; outside Jest scope.
+	"mocha":         frameworkTool, // Explicit different test runner; outside Jest scope.
+	"cypress":       frameworkTool, // Explicit different test runner; outside Jest scope.
+	"cucumber-js":   frameworkTool, // Explicit different test runner; outside Jest scope.
+	"tap":           frameworkTool, // Explicit different test runner; outside Jest scope.
+	"mochify":       frameworkTool, // Explicit different test runner; outside Jest scope.
 }
 
 func resolveDiscoveryTool(root, directory string, words []string, framework string, tool discoveryTool) commandResolution {

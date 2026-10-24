@@ -86,3 +86,32 @@ func TestJestArgumentsLeaveNonScriptNodeEntryPointsNative(t *testing.T) {
 	require.Contains(t, output, "Cannot find module")
 	require.NotContains(t, output, "realpathSync")
 }
+
+// Early Jest 29 exposes build/args.js without the later public yargsOptions export.
+func TestJestArgumentsEarly29Layout(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node required")
+	}
+	root := t.TempDir()
+	main := filepath.Join(root, "node_modules/jest/bin/jest.js")
+	cli := filepath.Join(root, "node_modules/jest-cli")
+	require.NoError(t, os.MkdirAll(filepath.Dir(main), 0700))
+	require.NoError(t, os.MkdirAll(filepath.Join(cli, "build"), 0700))
+	requireWriteFile(t, main, `console.log(JSON.stringify(process.argv.slice(2)))`)
+	requireWriteFile(t, filepath.Join(cli, "package.json"), `{"name":"jest-cli","version":"29.4.3","main":"index.js"}`)
+	requireWriteFile(t, filepath.Join(cli, "index.js"), `exports.run=()=>{}`)
+	requireWriteFile(t, filepath.Join(cli, "build/args.js"), `exports.options={config:{type:'string'},runInBand:{type:'boolean'}}`)
+	env := map[string]string{}
+	require.NoError(t, redirectJestArguments(t.TempDir(), jestArgumentRequest{Output: "result.json", Probe: "probe.test.js"}, env))
+	cmd := exec.Command(node, main, "--config", "customer.cjs", "--runInBand", "old.test.js")
+	cmd.Env = append(os.Environ(), "NODE_OPTIONS="+env["NODE_OPTIONS"])
+	data, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(data))
+	var args []string
+	require.NoError(t, json.Unmarshal(data, &args))
+	require.Contains(t, args, "customer.cjs")
+	require.Contains(t, args, "--runInBand")
+	require.Contains(t, args, "probe.test.js")
+	require.NotContains(t, args, "old.test.js")
+}

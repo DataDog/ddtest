@@ -239,7 +239,9 @@ func TestStoppedWorkflowCannotLeaveEarlierSuccessAsCurrent(t *testing.T) {
 	require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Apply: true, Format: "json"}), "scope_unresolved")
 	current := readValidationReport(t, root)
 	require.Equal(t, "INCOMPLETE", current.Summary.Status)
-	require.Nil(t, current.Retained, "full failed attempts must not inherit an earlier pass")
-	require.Nil(t, current.LastExecution)
+	require.NotNil(t, current.Retained)
+	require.NotNil(t, current.LastExecution)
+	require.False(t, current.LastExecution.Current)
+	require.False(t, current.Success)
 	require.Empty(t, current.Runs)
 }

@@ -86,7 +86,7 @@ func localNodeSetup(root, directory string, words []string, depth int) bool {
 		_, ok := repositoryFile(root, directory, words[1])
 		return ok
 	}
-	if words[0] == "node" && !strings.HasPrefix(words[1], "-") && filepath.IsLocal(words[1]) {
+	if (words[0] == "node" || words[0] == "babel-node") && !strings.HasPrefix(words[1], "-") && filepath.IsLocal(words[1]) {
 		_, ok := repositoryFile(root, directory, words[1])
 		return ok
 	}

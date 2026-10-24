@@ -59,7 +59,12 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		slices.Sort(workflows)
 	}
 	if len(workflows) == 0 {
-		return fmt.Errorf("onboard could not find a GitHub Actions workflow that runs %s", name)
+		if language != "javascript" {
+			return fmt.Errorf("onboard could not find a GitHub Actions workflow that runs %s", name)
+		}
+		_, _ = fmt.Fprintf(output, "CI discovery is incomplete: no GitHub Actions test workflow was resolved for %s. The guidance below is manual; it does not certify CI. Run ddtest testdrive --framework %s --command <your-test-command> --check-only --yes to inspect the local setup.\n\n", name, name)
+		_, _ = fmt.Fprintln(output, strings.TrimSpace(instructions(language, name)))
+		return nil
 	}
 
 	_, _ = fmt.Fprintf(output, "DDTest found %s, %s, and GitHub Actions.\n", language, name)
@@ -139,7 +144,7 @@ func instructions(language, name string) string {
 
 // javascriptAutomaticSetup is the agent paragraph shared by the generic and
 // Vitest instructions. It points at the preview before the applying command.
-const javascriptAutomaticSetup = "For automatic setup, preview the recognized edits with `ddtest onboard --apply`, which writes nothing, then apply them with `ddtest onboard --apply --yes`. ddtest resolves the actual CI commands, tracer and supported runtime scope, applies recognized edits, then validates locally. Follow its structured next action for unsupported setup. Do not run parallel validation or change the selected framework/command to bypass a blocker. Use `ddtest testdrive --agent --all --yes` to validate existing setup. Preserve the generated final verdict and report links; after any source/configuration edits or configuration-only checks, run full validation again. `--instructions` prints this manual fallback."
+const javascriptAutomaticSetup = "For automatic setup, preview the recognized edits with `ddtest onboard --apply`, which writes nothing, then apply them with `ddtest onboard --apply --yes`. ddtest resolves the actual CI commands, tracer and supported runtime scope, applies recognized edits, then validates locally. Follow its structured next action for unsupported setup. Run validation in the foreground and wait for its exit; never use nohup, shell background jobs, sleep loops or process-name polling. If the host returns a task/session ID, wait using that host tool. Do not run parallel validation or change the selected framework/command to bypass a blocker. Use `ddtest testdrive --agent --all --yes` to validate existing setup. Preserve the generated final verdict and report links; after any source/configuration edits or configuration-only checks, run full validation again. `--instructions` prints this manual fallback."
 
 const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set NODE_OPTIONS for later steps, so merge this into the existing test step, preserving any current Node options:\n\n```yaml\nenv:\n  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\n```\n\nThe --import loader is required for Vitest and other ESM tests."
 

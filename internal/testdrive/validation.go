@@ -405,7 +405,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	_, _ = fmt.Fprintf(output, "CI configuration: %s\nCI execution: not exercised\nReal Datadog credentials required for these local checks: no\nPreserve this verdict in the onboarding response. A failed local feature check is not explained by missing real Datadog credentials.\n", result.Summary.CIConfiguration)
 	if retained := result.Retained; retained != nil {
 		previous := retained.Result
-		_, _ = fmt.Fprintf(output, "\nLast full execution: %s / %s\nLocal execution: %s earlier; not rerun\n%s\n", previous.Session, previous.CompletedAt.Format(time.RFC3339), result.LastExecution.Status, retained.Reason)
+		_, _ = fmt.Fprintf(output, "\nEarlier execution attempt: %s / %s\nLocal execution: %s earlier; not rerun\n%s\n", previous.Session, previous.CompletedAt.Format(time.RFC3339), result.LastExecution.Status, retained.Reason)
 		for _, feature := range previous.Features {
 			if feature.Status != "passed" {
 				_, _ = fmt.Fprintf(output, "Earlier feature check: %s/%s %s\n", feature.Project, feature.Name, feature.Status)
@@ -538,6 +538,9 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	if result.Scope != nil {
 		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved) == 0
 		for _, command := range result.Scope.Commands {
+			if ciInstrumentationDisabled(command) {
+				continue
+			}
 			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0 && (!result.CheckOnly || len(command.Prerequisites) == 0 || len(result.Configurations) > 0)
 		}
 	}

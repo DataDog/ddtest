@@ -320,6 +320,9 @@ func (state *runtimeState) trackNode(job runtimeJob, step runtimeStep, row map[s
 		state.node = step.With["node-version"]
 		state.source = step.Source
 		state.platform = nodeDistributionPlatform(job.RunsOn, step.With["architecture"], row)
+	} else if node := persistedNVMRuntime(step.Run); node != "" {
+		state.node, state.source = node, step.Source
+		state.platform = nodeDistributionPlatform(job.RunsOn, "", row)
 	} else if changesNodeRuntime(step.Run) {
 		state.node = "" // A run step cannot establish later shells' PATH without verified persistence.
 		state.source = step.Source
