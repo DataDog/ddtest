@@ -33,6 +33,15 @@ class ControlTests(unittest.TestCase):
         self.assertIn("colima.yaml", message)
         self.assertIn(isolation.TRIAL_ROOT_VARIABLE, message)
 
+    def test_containers_never_inherit_client_proxy_credentials(self):
+        container = isolation.Container(Path("/private/tmp/dde-trial"), "sha256:" + "0" * 64)
+        with patch.object(isolation, "docker_control") as control:
+            container.create()
+        arguments = control.call_args.args
+        for variable in ("HTTP_PROXY", "https_proxy", "ALL_PROXY", "no_proxy"):
+            self.assertIn(variable + "=", arguments)
+        self.assertLess(arguments.index("HTTP_PROXY="), arguments.index(container.image))
+
     def test_missing_containers_are_recognized_in_any_case(self):
         for message in ("Error: No such object: x", "error: no such object: x", "Error response from daemon: No such container: x"):
             self.assertTrue(isolation.missing(completed(["inspect"], 1, stderr=message)))
@@ -79,6 +88,26 @@ class TeardownTests(unittest.TestCase):
         self.assertIn("Could not stop agent processes", manifest["collection_errors"])
         for name in ("changes.patch", "status.txt"):
             self.assertFalse((self.case.args.output / name).exists())
+
+    def test_unreadable_reports_fail_the_trial(self):
+        code, manifest = self.case.trial({"FAKE_REPORT_JSON": "{not json"})
+        self.assertEqual(code, 1)
+        self.assertEqual(manifest["status"], "failed")
+        self.assertTrue(manifest["collection_errors"])
+
+    def test_finalization_failures_outrank_contradicting_answers(self):
+        real = Path.open
+        def open_evidence(path, *args, **kwargs):
+            if path.name == "status.txt":
+                raise OSError("evidence folder unavailable")
+            return real(path, *args, **kwargs)
+        with patch.object(Path, "open", open_evidence):
+            code, manifest = self.case.trial({"FAKE_REPORT_JSON": json.dumps({"summary": {"status": "INCOMPLETE"}}),
+                                              "FAKE_RESPONSE": "Onboarding is complete."})
+        self.assertEqual(code, 1)
+        self.assertEqual(manifest["agent_reporting"]["status"], "fail")
+        self.assertEqual(manifest["status"], "failed")
+        self.assertNotEqual(manifest.get("failure_kind"), "agent_reporting")
 
     def test_finalization_failures_are_persisted_as_failed(self):
         def remove_login(login, trial):

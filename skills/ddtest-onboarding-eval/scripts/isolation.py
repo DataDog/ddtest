@@ -47,6 +47,12 @@ def docker_control(*arguments, check=True):
         raise RuntimeError(f"Docker control timed out after {CONTROL_TIMEOUT}s: docker {arguments[0]}") from error
 
 
+# Docker injects proxies from the client's config.json, credentials included,
+# into every container's initial environment. Empty values prevent that.
+PROXY_OVERRIDES = [argument for name in ("HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "ALL_PROXY", "NO_PROXY")
+                   for variable in (name, name.lower()) for argument in ("--env", variable + "=")]
+
+
 class Container:
     """Only trial storage is mounted; the evaluator and evidence stay on the host."""
 
@@ -91,7 +97,7 @@ class Container:
                      "--user", f"{os.getuid()}:{os.getgid()}",
                      "--mount", f"type=bind,src={self.trial},dst={self.trial}",
                      "--tmpfs", "/tmp:rw,nosuid,nodev,size=1g", "--entrypoint", "/bin/sh",
-                     self.image, "-c", "cat >/dev/null")
+                     *PROXY_OVERRIDES, self.image, "-c", "cat >/dev/null")
 
     def attach(self):
         # Closing this input on controller death also ends PID 1, including all

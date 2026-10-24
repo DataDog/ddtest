@@ -290,8 +290,8 @@ def reporting_verdict(text, report):
 
 
 def negated(text, start):
-    """A claim negated earlier in its own sentence is not a claim."""
-    sentence = re.split(r"[.!?;\n]", text[:start])[-1]
+    """A claim negated earlier in its own clause is not a claim."""
+    sentence = re.split(r"[.!?;,\n]|\bbut\b", text[:start])[-1]
     return re.search(r"\b(?:not|never|no longer|isn't|wasn't|hasn't|haven't|cannot|can't|without|yet to)\b|n't\b", sentence) is not None
 
 
@@ -752,7 +752,7 @@ def run(args):
                 if not isinstance(report,dict):
                     raise ValueError("Report must be a JSON object")
         except (OSError, ValueError) as error:
-            manifest.setdefault("collection_errors", []).append(str(error))
+            code = finalization_failed(str(error))
         try:
             manifest["agent_reporting"] = reporting_verdict(final_response, report)
             manifest["ddtest_runtime"] = report_runtime(report, manifest.get("node_runtime", {}).get("version"))
@@ -765,8 +765,10 @@ def run(args):
             manifest["status"] = "failed"
             code = 1
         if manifest["agent_reporting"]["status"] == "fail":
-            manifest["status"] = "agent_failed"
-            manifest["failure_kind"] = "agent_reporting"
+            # An evaluator or finalization failure outranks the agent's reporting.
+            if manifest["status"] != "failed":
+                manifest["status"] = "agent_failed"
+                manifest["failure_kind"] = "agent_reporting"
             manifest["retry_recommended"] = False
             code = 1
         if manifest["ddtest_runtime"]["status"] == "mismatch":
