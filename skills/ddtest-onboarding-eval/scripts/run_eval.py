@@ -223,12 +223,17 @@ def reporting_verdict(text, report):
         elif found != expected:
             differences.append(f"{label}: stated {found}, report says {expected}.")
 
-    for match in re.finditer(r"\b(?:onboarding(?:\s+validation)?|status)\s*(?::|is|was|has been)?\s*(?:successfully\s+|fully\s+)?(incomplete|complete locally|complete|completed|done|successful)\b", plain):
+    for match in re.finditer(r"\b(?:onboarding(?:\s+validation)?|status)\s*(?::|is|was|has been)?\s*(n't\s+|not\s+|never\s+)?(?:successfully\s+|fully\s+)?(incomplete|complete locally|complete|completed|done|successful|passed|failed)\b", plain):
         if negated(plain, match.start()):
             continue
-        stated = match[1].upper()
-        if stated in ("COMPLETE", "COMPLETED", "DONE", "SUCCESSFUL"):
+        stated = match[2].upper()
+        if stated in ("COMPLETE", "COMPLETED", "DONE", "SUCCESSFUL") or stated == "PASSED" and summary.get("status") == "COMPLETE LOCALLY":
             stated = "COMPLETE LOCALLY"
+        if match[1]:
+            # "Status is not incomplete" denies the reported status.
+            if summary.get("status") == stated:
+                differences.append(f"onboarding verdict: stated not {stated}, report says {stated}.")
+            continue
         compare("onboarding verdict", summary.get("status"), stated)
     if summary.get("status") != "COMPLETE LOCALLY":
         for match in re.finditer(r"\b(?:(?:fully|successfully|completely)\s+onboarded|onboarded\s+(?:this|the)\s+(?:repo|repository|project)|onboarding\s+(?:succeeded|is\s+finished|was\s+a\s+success)|(?:everything|all)\s+(?:is\s+)?(?:done|complete|set up))\b", extra):
@@ -286,7 +291,7 @@ def reporting_verdict(text, report):
 
 def negated(text, start):
     """A claim negated earlier in its own sentence is not a claim."""
-    sentence = re.split(r"[.!?\n]", text[:start])[-1]
+    sentence = re.split(r"[.!?;\n]", text[:start])[-1]
     return re.search(r"\b(?:not|never|no longer|isn't|wasn't|hasn't|haven't|cannot|can't|without|yet to)\b|n't\b", sentence) is not None
 
 
@@ -562,6 +567,13 @@ def run(args):
     overrides = agent_environment(args.agent, args.timeout, framework)
     manifest["agent_environment"] = overrides
 
+    def finalization_failed(error):
+        # Unconfirmed teardown or evidence outranks the agent's own result.
+        manifest.setdefault("collection_errors", []).append(error)
+        if manifest["status"] != "interrupted":
+            manifest["status"] = "failed"
+        return 1
+
     def emit(event):
         nonlocal agent_failed, agent_completed
         if event["type"] == "agent_error":
@@ -694,9 +706,10 @@ def run(args):
                 manifest["isolation"]["processes_stopped"] = True
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 manifest["isolation"]["processes_stopped"] = False
-                manifest.setdefault("collection_errors", []).append(str(error))
-                code = 1
-        if "commit" in manifest:
+                code = finalization_failed(str(error))
+        # Processes that could not be stopped may still change the checkout, so
+        # its diff and status would not be stable evidence.
+        if "commit" in manifest and manifest["isolation"].get("processes_stopped", True):
             for name, argv in (
                 ("changes.patch", ["git", "diff", "--no-ext-diff", "--no-textconv", manifest["commit"], "--"]),
                 ("status.txt", ["git", "status", "--short", "--untracked-files=all"]),
@@ -705,8 +718,7 @@ def run(args):
                     with (output / name).open("w") as destination:
                         command(argv, cwd=checkout, timeout=30, destination=destination)
                 except (OSError, subprocess.SubprocessError, RuntimeError, TimeoutError) as error:
-                    manifest.setdefault("collection_errors", []).append(str(error))
-                    code = 1
+                    code = finalization_failed(str(error))
         try:
             container.close()
             manifest["isolation"]["cleanup"] = "removed"
@@ -721,8 +733,7 @@ def run(args):
                 manifest["login"] = "removed"
             except (OSError, RuntimeError) as error:
                 manifest["login"] = "not removed"
-                manifest.setdefault("collection_errors", []).append(str(error))
-                code = 1
+                code = finalization_failed(str(error))
         cleanup_confirmed = manifest["isolation"]["cleanup"] == "removed"
         if (agent_failed or agent_timed_out) and cleanup_confirmed:
             manifest["failure_kind"] = failure_kind(agent_errors, agent_timed_out)

@@ -312,7 +312,7 @@ def remove_recorded_container(marker, trial, run):
             return
         if result.returncode:
             raise RuntimeError(result.stderr.strip())
-        if str(trial) not in result.stdout.split():
+        if str(trial) not in result.stdout.splitlines():
             raise ValueError(f"Container {name} does not mount the owned trial; remove it manually after review")
         remove_container(name)
     except RuntimeError as error:
