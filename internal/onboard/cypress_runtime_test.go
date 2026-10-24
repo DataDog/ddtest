@@ -43,6 +43,20 @@ func TestCypressForkCannotInstallWithUnavailableCredentials(t *testing.T) {
 	require.Equal(t, "missing_fork_guard", findings[0].Code)
 }
 
+func TestCypressRejectsDirectSecretConditionEvenWithKnownContext(t *testing.T) {
+	job := runtimeJob{Context: map[string]string{"secrets.DD_API_KEY": "present", "scenario": "push"}}
+	job.Steps = []runtimeStep{{Uses: "datadog/test-visibility-github-action@v3", If: "${{ secrets.DD_API_KEY != '' }}", With: map[string]string{"languages": "js"}}}
+	findings := checkRuntimeJob(t.Context(), "", ciWorkflow{}, "tests", job, []commandResolution{{}}, nil, nil, nil, "cypress")
+	require.Len(t, findings, 1)
+	require.Equal(t, StatusInconclusive, findings[0].Status)
+	require.Equal(t, CodeUnresolvedCondition, findings[0].Code)
+	require.Contains(t, findings[0].Reason, "job-level environment variable")
+	for _, expression := range []string{"secrets.DD_API_KEY != ''", "false && secrets.DD_API_KEY != ''"} {
+		_, err := runtimeCondition(expression, nil, map[string]string{"\x00secrets.DD_API_KEY": "present"})
+		require.ErrorContains(t, err, "secrets context in if")
+	}
+}
+
 func TestCypressActionRuntimeIsKnownBeforeTracerInstallation(t *testing.T) {
 	job := runtimeJob{Steps: []runtimeStep{
 		{Uses: "actions/setup-node@v4", With: map[string]string{"node-version": "24"}},

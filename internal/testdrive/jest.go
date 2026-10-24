@@ -521,6 +521,11 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 		unavailableFeatures(result, reason)
 		return nil
 	}
+	if len(baseline.Tests) == 0 && (baseline.ResultError != "" || baseline.ExitCode != 0) {
+		result.Features = []featureResult{{Name: "all", Status: "not exercised", Reason: "The native suite did not produce test results. Resolve its startup/setup diagnostic before feature or coverage validation."}}
+		result.Compatibility = verdict{Status: "inconclusive", Code: "native_startup_failed", Reason: "Native execution failed before any test results. Resolve the baseline startup/setup diagnostic first: " + reportText(baseline.Diagnostic+" "+baseline.ResultError)}
+		return nil
+	}
 	if t.framework.Name() == "webdriverio" {
 		return t.runWebdriverIOFeatures(ctx, output, session, preload, baseline, result)
 	}

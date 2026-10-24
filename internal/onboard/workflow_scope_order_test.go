@@ -48,3 +48,21 @@ func TestShellScriptBuildStepsCanBeDeclaredAsFacts(t *testing.T) {
 		require.NotEmpty(t, result.Reason, "%s stays unresolved: not an executable repository script", build)
 	}
 }
+
+func TestBabelNodeSetupRequestsOutputsAndPostTestCopiesStaySeparate(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts/build.js"), []byte("// generates lib/index.js"), 0600))
+	writeScripts(t, root, map[string]string{"build": "babel-node scripts/build.js", "test": "jest", "docs": "documentation build src/index.js -f html -o docs && sed -i.bak 's/old/new/g' docs/index.html && rm docs/index.html.bak && rsync -a docs/ site/docs"})
+	path := filepath.Join(root, ".github/workflows/test.yml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+	require.NoError(t, os.WriteFile(path, []byte("jobs:\n  test:\n    steps:\n      - run: npm run build\n      - run: npm test\n      - run: npm run docs\n"), 0600))
+	scope, err := DiscoverWorkflowScope(root, "jest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Len(t, scope.Commands[0].Prerequisites, 1)
+	require.Equal(t, PreparationNeedsFacts, scope.Commands[0].Prerequisites[0].Kind)
+	require.Empty(t, scope.Commands[0].UnvalidatedSetup)
+	require.NotEmpty(t, scope.Review)
+}

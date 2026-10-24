@@ -54,6 +54,12 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if language == "javascript" && framework == "cypress" && cypressStatusGate(step.Run) {
 		return commandResolution{Review: true, Reason: "CI status gate is outside Cypress test execution"}
 	}
+	if words, err := shellquote.Split(strings.TrimSpace(step.Run)); err == nil && len(words) == 2 && words[0] == "exit" && (words[1] == "0" || words[1] == "1") {
+		return commandResolution{Review: true, Reason: "Standalone CI status gate is outside " + framework + " test execution"}
+	}
+	if step.Run == "" && slices.Contains([]string{"actions/upload-artifact", "stateful/vscode-server-action", "coverallsapp/github-action"}, uses) {
+		return commandResolution{Review: true, Reason: "Post-test reporting/debug action is outside " + framework + " execution; its condition and implementation require separate review."}
+	}
 	if step.ResolutionError != "" {
 		return unresolvedCommand(step.ResolutionError)
 	}
@@ -99,8 +105,19 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if result, ok := resolveReleaseInput(resolvedDirectory, step.Run, framework); ok {
 		return result
 	}
+	if externalCIReporting(step.Run) {
+		return commandResolution{Review: true, Reason: "External CI reporting/repository administration is outside " + framework + " validation; review separately; it is never executed locally: " + step.Run}
+	}
 	if literalDataRedirect(step.Run) {
 		return commandResolution{Review: true, Reason: "Literal data transformation requires separate review: " + step.Run, Setup: []string{"File output changes require separate validation: " + step.Run}}
+	}
+	// Literal, replayable preparation must be classified before the broader
+	// shell-setup recognizer. Otherwise a pinned dependency variant is degraded
+	// to an opaque mutation and its per-configuration plan can never execute.
+	if commands, err := staticCommands(step.Run); err == nil && len(commands) == 1 {
+		if build, ok := localPreparation(root, resolvedDirectory, commands[0]); ok {
+			return commandResolution{Builds: []BuildCommand{build}}
+		}
 	}
 	if result, ok := resolveCIShell(root, workflow, job, step, framework); ok {
 		return result
@@ -434,24 +451,19 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return commandResolution{ReviewReason: "Git content comparison is outside " + framework + " validation; review separately, including configured diff helpers."}
 		}
 		return unresolvedCommand("Unsupported git command requires review: " + command)
-	case "start-test", "start-server-and-test", "run-p":
+	case "run-p":
+		if framework != "cypress" {
+			return resolveScriptGroup(root, directory, words, stack, remaining, framework)
+		}
+		return resolveCypressOrchestration(root, directory, words, stack, remaining)
+	case "start-test", "start-server-and-test":
 		if framework == "cypress" {
 			return resolveCypressOrchestration(root, directory, words, stack, remaining)
 		}
 
 		return unresolvedCommand("Unsupported script orchestration: " + command)
 	case "npm-run-all", "npm-run-all2", "run-s":
-		if (framework != "mocha" && framework != "cucumber" && framework != "webdriverio") || len(words) < 2 {
-			return unresolvedCommand("Unsupported script orchestration: " + command)
-		}
-		var scripts []string
-		for _, name := range words[1:] {
-			if strings.ContainsAny(name, "*?[]{} ") || strings.HasPrefix(name, "-") {
-				return unresolvedCommand("Script orchestration needs literal script names: " + command)
-			}
-			scripts = append(scripts, shellquote.Join("npm", "run", name))
-		}
-		return resolveJestSequence(root, directory, strings.Join(scripts, " && "), stack, remaining, framework)
+		return resolveScriptGroup(root, directory, words, stack, remaining, framework)
 
 	case "npm", "yarn", "pnpm", "bun":
 		// Yarn without a subcommand installs dependencies. npm accepts global
@@ -470,6 +482,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		}
 		if (words[0] == "npm" || words[0] == "pnpm") && words[1] == "publish" {
 			return resolveNpmPublish(directory, words, framework)
+		}
+		if words[0] == "npm" && slices.Contains([]string{"ls", "list"}, words[1]) {
+			return commandResolution{ReviewReason: "Dependency inspection is outside " + framework + " validation: " + command}
 		}
 		if slices.Equal(words, []string{"npm", "config", "get", "cache"}) {
 			return commandResolution{}
@@ -621,7 +636,8 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 
 	mocha := len(frameworks) > 0 && frameworks[0] == "mocha"
 	cucumber := len(frameworks) > 0 && frameworks[0] == "cucumber"
-	cucumberScoped := cucumber && strings.HasPrefix(script, cucumberScopedOptions+" ")
+	cucumberScoped := cucumber && cucumberScopedScript(script)
+	cucumberInlineIstanbul := cucumber && cucumberInlineIstanbulScript(script)
 	if cucumber {
 		script = cucumberDiscoveryScript(script)
 		parts, err := staticCommands(script)
@@ -634,7 +650,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	}
 	webdriverIOScoped := len(frameworks) > 0 && frameworks[0] == "webdriverio" && strings.HasPrefix(script, webdriverIOScopedOptions+" ")
 	if len(frameworks) > 0 && frameworks[0] == "webdriverio" {
-		script = webdriverIODiscoveryScript(script)
+		script = webdriverIOAliasDiscovery(script)
 	}
 	var result commandResolution
 	if (mocha || cucumber || (len(frameworks) > 0 && (frameworks[0] == "cypress" || frameworks[0] == "webdriverio"))) && strings.HasPrefix(command, "npm ") {
@@ -647,14 +663,15 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 				continue
 			}
 			scoped := false
+			inlineIstanbul := cucumberInlineIstanbulScript(part)
 			if cucumber {
-				scoped = strings.HasPrefix(part, cucumberScopedOptions+" ")
+				scoped = cucumberScopedScript(part)
 				part = cucumberDiscoveryScript(part)
 			}
 			wdio := len(frameworks) > 0 && frameworks[0] == "webdriverio"
 			if wdio {
 				scoped = strings.HasPrefix(part, webdriverIOScopedOptions+" ")
-				part = webdriverIODiscoveryScript(part)
+				part = webdriverIOAliasDiscovery(part)
 			}
 			resolved := resolveJestSequence(root, directory, part, append(slices.Clone(stack), key), remaining, frameworks...)
 			if cucumber || wdio {
@@ -664,6 +681,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 					if scoped && resolved.Reason == "" && !resolved.OtherFramework && len(resolved.Tests) == 1 {
 						if cucumber {
 							resolved.Tests[i].cucumberScoped = true
+							resolved.Tests[i].cucumberInlineIstanbul = inlineIstanbul
 						} else {
 							resolved.Tests[i].webdriverIOScoped = true
 						}
@@ -675,6 +693,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 			}
 			if len(resolved.Tests) > 0 {
 				leaf = phase
+			}
+			for i := range resolved.Tests {
+				resolved.Tests[i].Prerequisites = append(slices.Clone(result.Builds), resolved.Tests[i].Prerequisites...)
 			}
 			result.Tests = append(result.Tests, resolved.Tests...)
 			result.Builds = append(result.Builds, resolved.Builds...)
@@ -714,15 +735,13 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 
 	if cucumberScoped && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
 		result.Tests[0].cucumberScoped = true
+		result.Tests[0].cucumberInlineIstanbul = result.Tests[0].cucumberInlineIstanbul || cucumberInlineIstanbul
 	}
 	if mocha && lifecycle == "" && result.Reason == "" && !result.Matched && result.MochaAuxiliary && name == "build" {
 		return commandResolution{Builds: []BuildCommand{{Directory: repositoryPath(root, directory), Command: command, Kind: "package-build"}}}
 	}
 	if len(frameworks) > 0 && frameworks[0] == "cypress" && len(result.Tests) > 1 {
 		return unresolvedCommand("Multiple Cypress invocations in one package alias require ordered execution review; preserve the original alias: " + command)
-	}
-	if len(frameworks) > 0 && frameworks[0] == "webdriverio" && len(result.Tests) > 1 {
-		return unresolvedCommand("Multiple WebdriverIO invocations in one package alias require ordered execution review; preserve the original alias: " + command)
 	}
 	if (mocha || cucumber) && len(result.Tests) > 1 {
 		label := "Mocha"
@@ -737,7 +756,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		}
 		result.SingleJest = true
 		result.MochaAuxiliary = false
-		if cucumber && (result.Tests[0].Directory != repositoryPath(root, directory) || len(result.Tests[0].Environment) > 0) {
+		if cucumber && (result.Tests[0].Directory != repositoryPath(root, directory) || (len(result.Tests[0].Environment) > 0 && (len(result.Tests[0].Environment) != 1 || result.Tests[0].Environment["DEBUG"] == ""))) {
 			return unresolvedCommand("Cucumber alias changes its inner working directory or environment; use an explicit scoped invocation after reviewing that setup: " + command)
 		}
 		// The full alias starts at the caller for lifecycle fidelity; probes
@@ -758,6 +777,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		result.Tests[0].Environment = nil
 		result.Tests[0].Resolution = command + " -> " + result.Evidence
 		result.Tests[0].Command = command
+		result.Tests[0].LifecyclePrerequisites = append(result.Tests[0].LifecyclePrerequisites, result.Tests[0].Prerequisites...)
 		result.Tests[0].Prerequisites = nil
 		result.Builds = nil
 	}
@@ -776,7 +796,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 
 	// Preserve the package manager's build entry point, including its lifecycle
 	// and orchestration, when expansion cannot represent that build alone.
-	if name == "build" && !result.Matched && orchestratedBuild(root, directory, script, manifest.Scripts, stack, remaining, frameworks...) {
+	if name == "build" && !result.Matched && (orchestratedBuild(root, directory, script, manifest.Scripts, stack, remaining, frameworks...) || (result.Reason == "" && len(result.Builds) > 0 && len(result.Setup) > 0)) {
 		relative := repositoryPath(root, directory)
 		return commandResolution{Reason: lifecycle, Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
 	}

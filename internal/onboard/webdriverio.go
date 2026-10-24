@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // Match the shared resolver budget; bound source reads used only for discovery hints.
@@ -111,4 +113,50 @@ func WebdriverIOValidationCommand(root, command string) (string, error) {
 		return "", fmt.Errorf("WebdriverIO validation requires one resolved wdio run invocation; preserve configuration and setup")
 	}
 	return command, nil
+}
+
+// Package aliases keep their original shell command during execution. For
+// discovery only, preserve a literal --spec glob as one runner argument so it
+// cannot obscure that alias's WDIO invocation. No other expansion is accepted.
+func webdriverIOAliasDiscovery(script string) string {
+	script = webdriverIODiscoveryScript(script)
+	file, ok := parseCIShell(script)
+	if !ok || len(file.Stmts) != 1 {
+		return script
+	}
+	stmt := file.Stmts[0]
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || stmt.Background || stmt.Negated || len(stmt.Redirs) > 0 {
+		return script
+	}
+	words := []string{}
+	for _, arg := range call.Args {
+		value, err := literalShellWord(arg)
+		if err != nil {
+			value = arg.Lit()
+		}
+		if value == "" {
+			return script
+		}
+		words = append(words, value)
+	}
+	normalized, _, err := commandEnvironment(words)
+	if err != nil || len(normalized) < 2 || normalized[0] != "wdio" {
+		return script
+	}
+	changed := false
+	for i, arg := range call.Args {
+		if !unquotedGlob(arg) {
+			continue
+		}
+		if i == 0 || call.Args[i-1].Lit() != "--spec" || arg.Lit() == "" || !filepath.IsLocal(arg.Lit()) || strings.ContainsAny(arg.Lit(), "$`~") {
+			return script
+		}
+		call.Args[i] = &syntax.Word{Parts: []syntax.WordPart{&syntax.SglQuoted{Value: arg.Lit()}}}
+		changed = true
+	}
+	if !changed {
+		return script
+	}
+	return shellText(file)
 }

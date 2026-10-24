@@ -223,6 +223,9 @@ func localPreparation(root, directory string, words []string) (BuildCommand, boo
 		}
 		kind = "dependencies"
 	}
+	if npmDependencyPreparation(words) {
+		kind = PreparationDependencies
+	}
 	if len(words) == 4 && words[0] == "sed" && strings.HasPrefix(words[1], "-i") && !strings.ContainsAny(words[1], "/\\") {
 		script := strings.TrimPrefix(words[2], "1")
 		if literalSedSubstitution(script) && filepath.IsLocal(words[3]) && !strings.HasPrefix(words[3], "-") && !strings.ContainsAny(words[3], "$`\n:") {
@@ -287,4 +290,32 @@ func orchestratedBuild(root, directory, script string, scripts map[string]string
 // EqualPreparation compares executable preparation, including its step-local environment.
 func EqualPreparation(a, b BuildCommand) bool {
 	return a.Kind == b.Kind && a.Directory == b.Directory && a.Command == b.Command && maps.Equal(a.Environment, b.Environment)
+}
+
+var npmDependencyName = regexp.MustCompile(`^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$`)
+var npmPinnedDependency = regexp.MustCompile(`^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// Record literal matrix dependency variants as reviewed preparation. They run
+// only in isolated per-configuration workspaces; never mutate the source tree.
+func npmDependencyPreparation(words []string) bool {
+	if len(words) < 3 || words[0] != "npm" || (!slices.Contains(words, "--save-dev") && !slices.Contains(words, "-D")) || !slices.Contains([]string{"install", "i", "rm", "remove", "uninstall"}, words[1]) {
+		return false
+	}
+	args := words[2:]
+	for len(args) > 0 && slices.Contains([]string{"--silent", "--save-dev", "-D"}, args[0]) {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return false
+	}
+	for _, arg := range args {
+		if words[1] == "install" || words[1] == "i" {
+			if !npmPinnedDependency.MatchString(arg) {
+				return false
+			}
+		} else if !npmDependencyName.MatchString(arg) {
+			return false
+		}
+	}
+	return true
 }

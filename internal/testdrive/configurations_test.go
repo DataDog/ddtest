@@ -26,7 +26,7 @@ func TestSelectedCommandDoesNotCertifyOtherConfigurations(t *testing.T) {
 	require.Equal(t, "not exercised", result.Configurations[1].Status)
 	prepareValidationResult(root, &result)
 	require.False(t, result.Success)
-	require.False(t, result.LocalSuccess)
+	require.True(t, result.LocalSuccess, "completed local evidence is separate from unvalidated CI configurations")
 	summary := summarizeValidation(result)
 	require.Equal(t, "INCOMPLETE", summary.Status)
 	require.Contains(t, strings.Join(summary.BlockingChecks, "\n"), "production.ts: not exercised")
@@ -126,7 +126,7 @@ func TestSourceRunDoesNotValidateCIPreparedConfiguration(t *testing.T) {
 	result.Success, result.LocalSuccess = true, true
 	applyScopeVerdict(&result)
 	require.False(t, result.Success)
-	require.False(t, result.LocalSuccess)
+	require.True(t, result.LocalSuccess, "completed local evidence is separate from unvalidated CI configurations")
 }
 
 func TestAllDoesNotExecuteAConfigurationWithoutItsCISetup(t *testing.T) {

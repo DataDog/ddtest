@@ -62,28 +62,28 @@ func hasPairedExecution(result validationResult) bool {
 	return supportsValidationFramework(result.Framework) && hasValidationPair(result)
 }
 
-// Keep one historical paired run, never a growing chain of reports. Its verdict
+// Keep one historical execution attempt, never a growing chain of reports. Its verdict
 // is not reused: config, source, dependencies or environment may have changed.
 // As with probe execution, callers must run testdrive invocations sequentially.
 func retainExecution(root string, result *validationResult) error {
 	result.Retained = nil
-	if !result.CheckOnly || hasPairedExecution(*result) {
+	if hasValidationExecution(*result) {
 		return nil
 	}
 	previous, err := readPreviousValidation(root)
 	if err != nil {
 		return err
 	}
-	if previous == nil {
+	if previous == nil || previous.Framework != result.Framework {
 		return nil
 	}
-	if !hasPairedExecution(*previous) {
+	if !hasValidationExecution(*previous) {
 		if previous.Retained == nil || previous.Retained.Result == nil {
 			return nil
 		}
 		previous = previous.Retained.Result
 	}
-	if !hasPairedExecution(*previous) {
+	if !hasValidationExecution(*previous) {
 		return nil
 	}
 	previous.Retained = nil

@@ -21,7 +21,13 @@ if '--fixture-mode' in sys.argv:
         Path('fake-options.json').write_text(json.dumps(modes[mode]))
         with Path('.git/info/exclude').open('a') as stream:stream.write('\nfake-options.json\n')
     sys.exit(0)
-observed={'fake_agent':True,'argv':sys.argv[1:],'prompt':sys.stdin.read(),'environment':dict(os.environ)}
+prompt=sys.stdin.read()
+if prompt.startswith('Reply AUTH_OK only'):
+    events=([{'type':'item.completed','item':{'type':'agent_message','text':'AUTH_OK'}},{'type':'turn.completed'}]
+            if agent=='codex' else [{'type':'result','result':'AUTH_OK'}])
+    for event in events:print(json.dumps(event),flush=True)
+    sys.exit(0)
+observed={'fake_agent':True,'argv':sys.argv[1:],'prompt':prompt,'environment':dict(os.environ)}
 Path('observed.json').write_text(json.dumps(observed))
 options=Path('fake-options.json')
 options=json.loads(options.read_text()) if options.exists() else {}

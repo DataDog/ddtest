@@ -7,7 +7,7 @@ description: Compare uncoached Codex or Claude onboarding trials in fresh reposi
 
 **Run untrusted repositories and auto-approved agents only with the container
 runner below. Use a clean trusted image, no cloud/GitHub/npm credentials or MCP
-servers, and an explicitly selected throwaway agent login. A CLI permission mode
+servers, and explicitly authorized model authentication. A CLI permission mode
 alone is not isolation.** The container has network access for public source,
 packages and the selected model service. Do not publish, run real CI, or use a
 real Datadog intake in these trials.
@@ -35,7 +35,12 @@ Colima, add it under `mounts:` (with `writable: true`) in
 can't see fails before cloning, naming the folder. Keep the root short: Watchman's
 socket lives inside each trial, and a root too long for it is refused. Select a public repository, exact commit/ref, dependency setup commands,
 and project-compatible runtime/browser prerequisites. Compare agents at the same
-commit, binary and image. Record ddtest's source commit and dirty state outside
+commit, binary and image. Use the optional `browsers` image target or a trusted
+derived image for browser suites. Select the project-compatible package manager
+explicitly in setup. `--readiness-command` runs a native browser/runner check after
+setup and before the agent; failures are evaluator-environment failures. Temporary
+storage is executable and the container mount uses `/trial` to avoid Unix socket
+path limits. Record emulation and resource limits when interpreting timings. Record ddtest's source commit and dirty state outside
 the target checkout.
 
 Build the trusted image (add project-specific OS/browser dependencies to a
@@ -53,18 +58,25 @@ ARCH=$(docker image inspect --format '{{.Architecture}}' "$IMAGE")
 GOOS=linux GOARCH="$ARCH" go build -o /absolute/path/to/ddtest-linux .
 ```
 
-Use a login JSON from a **throwaway account**. `--login-json` copies only Codex's
-`tokens` or Claude's `claudeAiOauth` into a private home, after setup completes.
-It never copies settings, hooks, skills, histories or MCP configuration. No API
-key, SSH agent, parent Claude session or credential environment is forwarded.
-That selected login is accessible to the tested agent; it must not grant access
-to any real customer or developer account. It is written after setup without
-following links out of the trial, and deleted from the retained trial at
-teardown. Forwarded environment values reach the container through a private
-`--env-file`, never the `docker exec` command line; never pass a secret as a
-plain command argument (`--setup-command`, `--repo`), where `ps` can read it. The image must contain no system-wide
-agent configuration. Container trials run as the host UID with dropped
-capabilities, a read-only root and only one writable bind mount: their own trial.
+Use a separate test account when available. An explicitly authorized existing
+CLI account works with `--existing-login`; no manual JSON export or new login is
+needed for each trial. Codex uses its model-authentication file; Claude can use
+its trusted managed model helper or OAuth file. Only model authentication and
+model-service routing are selected, never settings, hooks, histories, OTEL or
+MCP configuration. Do not forward cloud, GitHub, npm or SSH credentials.
+
+The runner preserves refresh metadata, serializes evaluations sharing a login,
+and writes refreshed authentication back only if the source has not changed.
+Do not use that same OAuth login concurrently in unrelated CLIs. A model-response
+preflight runs before cloning/installing; an expired or revoked account stops
+there, without repeated trial attempts or automatic login flows. `--login-json`
+remains available for an explicitly selected file. Container trials run as the
+host UID with dropped capabilities, a read-only root and one owned trial mount.
+The selected login remains accessible to the tested agent. Use a separate account
+when possible and existing account credentials only with explicit authorization.
+Credential installation uses descriptor-based paths without following symlinks.
+Environment values use a private `--env-file`, never the Docker command line.
+The container has no access to the host CLI profile or its MCP configuration.
 
 ## Run
 
@@ -73,13 +85,13 @@ python3 skills/ddtest-onboarding-eval/scripts/run_eval.py \
   --image "$IMAGE" \
   --repo https://github.com/moment/luxon.git --ref <chosen-commit-or-ref> \
   --ddtest /absolute/path/to/ddtest-linux --agent codex --framework jest \
-  --login-json /absolute/path/to/throwaway-codex-auth.json \
+  --existing-login \
   --setup-command 'npm ci --no-audit --no-fund' \
   --output /absolute/path/to/new-luxon-codex-evidence
 ```
 
 Repeat with `--agent claude`, its selected login and a new output directory.
-The runner explicitly fetches the ref, records its resolved SHA, and creates a
+The runner mounts storage at the short container path `/trial`, explicitly fetches the ref, records its resolved SHA, and creates a
 fresh clone and private caches every time. Submodules are opt-in with
 `--submodules`. Setup arguments use `shlex` without an implicit shell; setup must
 leave tracked/untracked Git state clean. Optional `--node` selects an absolute
@@ -89,10 +101,13 @@ CLI default applies. `run.json` records the CLI version and requested model.
 
 The tested prompt is exactly:
 
-> Use ddtest in /temporary/trial/bin and onboard this repository to test-optimization.
+> Use ddtest in /trial/bin and onboard this repository to test-optimization.
 
 `--framework <name>` adds only “for <name> only”. Let ddtest guide the agent.
-Codex uses automatic approval and an empty MCP table in a private `CODEX_HOME`.
+Codex uses an empty MCP table in a private `CODEX_HOME`. The mandatory container
+provides its isolation; the CLI runs without a second namespace sandbox, which
+cannot start under the container's dropped capabilities. Never use that CLI mode
+for untrusted repositories on the host.
 Claude uses automatic permission mode, no setting sources and strict empty MCP
 configuration. Its Bash tasks remain synchronous with framework-scoped timeouts.
 Neither inherits the evaluator's CLI profile. Flag references:
@@ -118,7 +133,7 @@ concrete evidence:
   behavior-changing features disabled. Equal existing failures can be compatible.
 - **Feature controls:** require the product's supported controls and independent
   outcomes. Deferred/unsupported checks never count as passed.
-- **Reporting:** require `summary.final_response` unchanged in the final answer;
+- **Reporting:** prefer the copyable `summary.final_response`, but accept factual paraphrases;
   compare additional claims against `summary.status`, `local_validation`,
   `blocking_checks`, selected/executed validation, configuration coverage,
   `reporting_counts` and `last_execution.current`. Historical counts must remain

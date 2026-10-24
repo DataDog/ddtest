@@ -19,6 +19,7 @@ type packageScript struct {
 }
 
 type TestCommand struct {
+	CIInstrumentationExcluded       bool              `json:"ci_instrumentation_excluded,omitempty"`
 	LocalOverrides                  []string          `json:"local_overrides,omitempty"`
 	ID                              string            `json:"id,omitempty"`
 	Services                        []ServiceCommand  `json:"services,omitempty"`
@@ -33,7 +34,8 @@ type TestCommand struct {
 	Platform                        string          `json:"platform,omitempty"` // GOOS of the resolved hosted CI runner, when known.
 	ProbeCoverageThresholdsDisabled bool            `json:"-"`
 	mochaIstanbul                   bool
-	LifecycleHooks                  []string `json:"lifecycle_hooks,omitempty"`
+	LifecyclePrerequisites          []BuildCommand `json:"lifecycle_prerequisites,omitempty"`
+	LifecycleHooks                  []string       `json:"lifecycle_hooks,omitempty"`
 	mochaRunnerArgs                 []string
 	mochaLookupDirectory            string
 	mochaProbeDirectory             string
@@ -57,6 +59,7 @@ type TestCommand struct {
 	usesNYC                 bool
 	cucumberCoverageWrapper string
 	cucumberScoped          bool
+	cucumberInlineIstanbul  bool
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same
@@ -118,7 +121,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
-			if framework == "cypress" || framework == "cucumber" {
+			{
 				candidate := false
 				for _, step := range job.Steps {
 					resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
@@ -153,6 +156,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				if !active {
 					continue
 				}
+				installerActive, installerSkipped := false, false
 				var pendingSetup []string
 				var preparation []BuildCommand
 				var unresolved, review []scopeDiagnostic
@@ -162,6 +166,15 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						step.If = ""
 					}
 					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
+					if strings.EqualFold(strings.Split(step.Uses, "@")[0], githubAction) && conditionErr == nil {
+						if selected, err := actionSelectsJavaScript(step, row); err == nil && selected {
+							if active {
+								installerActive = true
+							} else {
+								installerSkipped = true
+							}
+						}
+					}
 					if conditionErr == nil && !active {
 						continue
 					}
@@ -176,6 +189,24 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						directory, dirErr := repositoryDirectory(root, root, stepDirectory(workflow, job, resolved))
 						if dirErr == nil {
 							resolution = classifyFactPrerequisites(root, directory, resolved.Run, framework, resolution)
+						}
+					}
+					// Known non-test output mutations after the last selected test cannot
+					// prepare that test. Unknown commands still remain unresolved.
+					laterTest := false
+					if len(resolution.Setup)+len(resolution.Builds) > 0 && len(commands) > 0 && !resolution.Matched && (resolution.Reason == "" || resolution.Review) && !slices.ContainsFunc(resolution.Builds, func(build BuildCommand) bool { return build.Kind == PreparationNeedsFacts }) {
+						for _, later := range job.Steps[i+1:] {
+							laterTest = laterTest || resolveTestStep(root, workflow, job, later, "javascript", framework).Matched
+						}
+						if !laterTest {
+							for _, setup := range resolution.Setup {
+								review = append(review, scopeDiagnostic{location, "Post-test output/setup requires separate review: " + setup})
+							}
+							for _, build := range resolution.Builds {
+								review = append(review, scopeDiagnostic{location, "Post-test preparation requires separate review: " + build.Command})
+							}
+							resolution.Builds = nil
+							resolution.Setup = nil
 						}
 					}
 					for _, setup := range resolution.Setup {
@@ -218,6 +249,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						resolution.Builds[j].Environment = mergeEnvironment(env, resolution.Builds[j].Environment)
 					}
 					for _, entry := range resolution.Tests {
+						entry.CIInstrumentationExcluded = ((installerSkipped && !installerActive) || mochaInstrumentationDisabled(workflow, job, resolved, row)) && checkExcludedJestBootstrap(workflow, job, resolved, row) == ""
 						if framework == "mocha" && !entry.usesNYC && !entry.mochaIstanbul {
 							parts, err := staticCommands(entry.Command)
 							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {
@@ -265,7 +297,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				allReview = append(allReview, review...)
 				for _, entry := range commands {
 					index := slices.IndexFunc(scope.Commands, func(previous TestCommand) bool {
-						return reflect.DeepEqual(previous.Cypress, entry.Cypress) && previous.Platform == entry.Platform && previous.Directory == entry.Directory && previous.Command == entry.Command && previous.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
+						return previous.CIInstrumentationExcluded == entry.CIInstrumentationExcluded && reflect.DeepEqual(previous.Cypress, entry.Cypress) && previous.Platform == entry.Platform && previous.Directory == entry.Directory && previous.Command == entry.Command && previous.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
 					})
 					if index < 0 {
 						scope.Commands = append(scope.Commands, entry)

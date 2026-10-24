@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/stretchr/testify/require"
 )
@@ -185,4 +186,45 @@ func TestCheckOnlyCoverageCountsDiscoveredCommands(t *testing.T) {
 func TestNoHTMLBlockerBeforeAnyTestRan(t *testing.T) {
 	summary := summarizeValidation(validationResult{Framework: "vitest", Error: "Vitest watch mode is not supported by testdrive"})
 	require.NotContains(t, summary.BlockingChecks, "no current HTML findings report")
+}
+
+func TestExplicitCIOptOutsAreNotFailedOrPassedExecutions(t *testing.T) {
+	result := focusedValidationFixture("mocha")
+	result.FocusedCommand = false
+	excluded := onboard.TestCommand{Command: "npm run legacy", Environment: map[string]string{"DD_CIVISIBILITY_ENABLED": "false"}}
+	result.Scope = &onboard.ValidationScope{Commands: []onboard.TestCommand{result.Configurations[0].TestCommand, excluded}}
+	result.Configurations = []configurationResult{result.Configurations[0], excludedConfiguration(excluded)}
+	root := t.TempDir()
+	require.NoError(t, finishValidation(&bytes.Buffer{}, root, result))
+	report := readValidationReport(t, root)
+	require.True(t, report.Success)
+	require.Equal(t, "PASSED", report.Summary.ExecutedValidation.Status)
+	require.Equal(t, 1, report.Summary.ConfigurationCoverage.Validated)
+	require.Equal(t, 1, report.Summary.ConfigurationCoverage.Excluded)
+	require.Equal(t, 1, report.Summary.ConfigurationCoverage.Paired)
+	require.Contains(t, report.Summary.FinalResponse, "not executed or validated locally")
+	// Merely labeling an unrun configuration excluded cannot waive validation.
+	result.Configurations[1].Environment = nil
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
+	// Excluding everything still cannot establish a paired/feature pass.
+	result.Configurations = []configurationResult{excludedConfiguration(excluded)}
+	result.Runs = nil
+	result.Features = nil
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
+}
+
+func TestAllConfigurationsDoesNotExecuteExplicitOptOutPreparation(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "must-not-execute", Environment: map[string]string{"DD_CIVISIBILITY_ENABLED": "false"}, Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "npm install --save-dev mocha@2.5.3", Kind: onboard.PreparationDependencies}}}}}
+	// No executor or native preflight is supplied: an attempt to execute this
+	// excluded row would fail rather than generate a passing synthetic receipt.
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Mocha{}, language: "javascript", workflowScope: &scope}
+	require.Error(t, drive.runAllConfigurations(t.Context(), &bytes.Buffer{}), "an entirely excluded scope is not a completed validation")
+	result := readValidationReport(t, root)
+	require.Len(t, result.Configurations, 1)
+	require.Equal(t, "excluded", result.Configurations[0].Status)
+	require.Empty(t, result.Configurations[0].Preparation)
+	require.False(t, result.Configurations[0].ExecutionAttempted)
+	require.False(t, result.Success)
 }

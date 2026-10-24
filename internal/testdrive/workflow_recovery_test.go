@@ -27,7 +27,13 @@ func TestRepeatedFreshWorkflowStopsWithoutPilingUpCheckpoints(t *testing.T) {
 		require.Error(t, drive.Workflow(t.Context(), &out, WorkflowOptions{Apply: true, Format: "json"}))
 		var result onboard.AgentResult
 		require.NoError(t, json.Unmarshal(out.Bytes(), &result))
-		require.Empty(t, result.NextCommand, "unresolved scope cannot progress by repeating the command")
+		require.NotContains(t, result.NextCommand, "--apply", "unresolved scope cannot progress by repeating apply")
+		require.Empty(t, result.ResumeCommand)
+		if i < maxWorkflowAttempts-1 {
+			require.Contains(t, result.NextCommand, "--instructions", "only the read-only fallback can progress")
+		} else {
+			require.Empty(t, result.NextCommand)
+		}
 		if i == 0 {
 			id = result.RunID
 		}

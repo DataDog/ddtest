@@ -29,13 +29,17 @@ func runtimeCondition(value string, row map[string]any, environments ...map[stri
 	if len(value) > 4096 || strings.ContainsRune(value, 0) {
 		return false, fmt.Errorf("CI condition exceeds 4096 characters or contains a NUL byte")
 	}
-	p := conditionParser{rest: value, row: row}
+	p := conditionParser{rest: value, row: row, ifCondition: true}
 	if len(environments) > 0 {
 		p.env = environments[0]
 	}
 	result, err := p.expression(0)
 	if err != nil || strings.TrimSpace(p.rest) != "" {
-		return false, fmt.Errorf("cannot statically resolve CI condition %q; unsupported syntax requires review, not a workflow rewrite", value)
+		reason := "unsupported syntax requires review, not a workflow rewrite"
+		if err != nil {
+			reason += ": " + err.Error()
+		}
+		return false, fmt.Errorf("cannot statically resolve CI condition %q; %s", value, reason)
 	}
 	return conditionTruthy(result), nil
 }
@@ -45,6 +49,8 @@ type conditionParser struct {
 	row   map[string]any
 	env   map[string]string
 	depth int
+	// Secrets are allowed in environment expressions, but never in GitHub if.
+	ifCondition bool
 }
 
 func (p *conditionParser) take(token string) bool {
@@ -299,6 +305,9 @@ func (p *conditionParser) atom() (any, error) {
 			return value, nil
 		}
 	}
+	if p.ifCondition && strings.HasPrefix(token, "secrets.") {
+		return nil, fmt.Errorf("GitHub does not allow the secrets context in if; set a job-level environment variable from the secret and test env.<name> instead")
+	}
 	if strings.HasPrefix(token, "inputs.") || strings.HasPrefix(token, "github.") || strings.HasPrefix(token, "steps.") || strings.HasPrefix(token, "secrets.") {
 		if value, exists := p.env["\x00"+token]; exists {
 			return value, nil
@@ -388,6 +397,11 @@ func possibleJobCondition(value string, row map[string]any) (bool, error) {
 	condition := strings.TrimSpace(value)
 	if strings.HasPrefix(condition, "${{") && strings.HasSuffix(condition, "}}") {
 		condition = strings.TrimSpace(condition[3 : len(condition)-2])
+	}
+	// These job-wide status guards admit an ordinary successful CI path.
+	// Step guards remain strict so conditional setup cannot certify another step.
+	if condition == "!cancelled()" || condition == "success()" || condition == "always()" {
+		return true, nil
 	}
 	if branchJobGuard.MatchString(condition) {
 		return true, nil

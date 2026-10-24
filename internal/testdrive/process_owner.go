@@ -65,6 +65,7 @@ func startProcessOwner(directory string, env map[string]string) (*processOwner, 
 	owner, err := newProcessOwner()
 	if err == nil {
 		env["DDTEST_PROCESS_OWNER"] = owner.listener.Addr().String()
+		env["DDTEST_PROCESS_SUPERVISOR_PID"] = fmt.Sprint(os.Getpid())
 		env["DDTEST_PROCESS_ERRORS"] = errorsPath
 		owner.errorsPath = errorsPath
 	}

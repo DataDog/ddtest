@@ -24,35 +24,48 @@ import (
 const cucumberImpactedWorkaround = "DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false"
 
 const cucumberScopedOptions = `NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}"`
+const cucumberInlineIstanbulOptions = `NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-} --experimental-loader @istanbuljs/esm-loader-hook"`
+
+func cucumberInlineIstanbulScript(script string) bool {
+	script = cucumberDebugPrefix.ReplaceAllString(strings.TrimSpace(script), "")
+	return strings.HasPrefix(script, cucumberInlineIstanbulOptions+" ")
+}
+
+func cucumberScopedScript(script string) bool {
+	script = cucumberDebugPrefix.ReplaceAllString(strings.TrimSpace(script), "")
+	return strings.HasPrefix(script, cucumberScopedOptions+" ") || strings.HasPrefix(script, cucumberInlineIstanbulOptions+" ")
+}
+
+// DEBUG controls logging, not runner selection. The original npm alias still
+// evaluates this self-reference at runtime; never substitute loader/path variables.
+var cucumberDebugPrefix = regexp.MustCompile(`^DEBUG="[A-Za-z0-9_:*.,/-]*\$(?:DEBUG|\{DEBUG\})"\s+`)
 
 func cucumberDiscoveryScript(script string) string {
-	return strings.NewReplacer(cucumberScopedOptions, "", cucumberImpactedWorkaround, "").Replace(script)
+	script = strings.TrimSpace(strings.NewReplacer(cucumberScopedOptions, "", cucumberInlineIstanbulOptions, "", cucumberImpactedWorkaround, "").Replace(script))
+	return cucumberDebugPrefix.ReplaceAllString(script, "")
 }
 
 func CucumberValidationCommand(root, command string) (string, error) {
+	entry, err := CucumberExecutionCommand(root, command)
+	return entry.Command, err
+}
+
+func CucumberExecutionCommand(root, command string) (TestCommand, error) {
 	if strings.TrimSpace(command) == "" {
 		scope, err := DiscoverValidationScope(root, "cucumber")
 		if err != nil {
-			return "", err
+			return TestCommand{}, err
 		}
 		if len(scope.Commands) == 0 {
-			return "", nil
+			return TestCommand{}, nil
 		}
 		// A CI environment alone is applied to the run, as for Jest and Playwright.
 		if len(scope.Commands) != 1 || filepath.Clean(scope.Commands[0].Directory) != "." || len(scope.Commands[0].Prerequisites) > 0 {
-			return "", fmt.Errorf("cucumber CI commands or build prerequisites require --all")
+			return TestCommand{}, fmt.Errorf("cucumber CI commands or build prerequisites require --all")
 		}
-		command = scope.Commands[0].Command
+		return scope.Commands[0], nil
 	}
-	parts, err := staticCommands(command)
-	if err != nil || len(parts) != 1 {
-		return "", fmt.Errorf("cucumber command must forward formatter options to one invocation; review compound setup separately")
-	}
-	resolved := ValidationCommands(root, command, "cucumber")
-	if len(resolved) != 1 || len(resolved[0].UnvalidatedSetup) > 0 {
-		return "", fmt.Errorf("cucumber validation needs one resolved invocation with its profile and setup; use --all for CI commands")
-	}
-	return command, nil
+	return cucumberFocusedPlan(root, command)
 }
 
 // CucumberProbeCommand returns the selected Cucumber leaf, resolved through
@@ -161,7 +174,11 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 		if resolved, err := effectiveBootstrapOptions(workflow, job, resolvedStep, row, true); err == nil {
 			options = resolved
 		}
-		if !nodeOptionsLoad(options, "@istanbuljs/esm-loader-hook") {
+		inline := len(commands) > 0
+		for _, command := range commands {
+			inline = inline && command.cucumberInlineIstanbul
+		}
+		if !inline && !nodeOptionsLoad(options, "@istanbuljs/esm-loader-hook") {
 			return "Cannot verify Istanbul instrumentation for native ESM Cucumber CI code. Include --experimental-loader @istanbuljs/esm-loader-hook in the scoped Cucumber Node options, or review custom/pre-instrumented source coverage separately."
 		}
 	}

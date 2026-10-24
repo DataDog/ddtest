@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/stretchr/testify/require"
 )
@@ -54,15 +55,14 @@ func TestCypressAPIPreservesOptionsHooksAndCleansStartup(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(root, "plan.json"), data, 0600))
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			command := exec.CommandContext(ctx, node, filepath.Join(root, "api.cjs"), filepath.Join(root, "plan.json"))
-			command.Dir = root
-			command.WaitDelay = 2 * time.Second
 			env := map[string]string{}
 			owner, err := startProcessOwner(root, env)
 			require.NoError(t, err)
-			command.Env = append(os.Environ(), "DDTEST_API_LATE_START_FAILURE="+lateFailure, "DDTEST_CYPRESS_DIRECTORY="+root, "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"], "NODE_OPTIONS=--require "+filepath.Join(root, "children.cjs"))
+			env["DDTEST_API_LATE_START_FAILURE"], env["DDTEST_CYPRESS_DIRECTORY"] = lateFailure, root
+			env["NODE_OPTIONS"] = "--require " + filepath.Join(root, "children.cjs")
 			t.Cleanup(func() { require.NoError(t, owner.Close()) })
-			output, err := command.CombinedOutput()
+			executor := &ext.DefaultCommandExecutor{Timeout: 10 * time.Second}
+			output, err := executor.CombinedOutputInDirectory(ctx, root, node, []string{filepath.Join(root, "api.cjs"), filepath.Join(root, "plan.json")}, env)
 			require.NoError(t, owner.Close())
 			if lateFailure == "true" {
 				require.Error(t, err, string(output))

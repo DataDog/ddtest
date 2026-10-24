@@ -264,7 +264,7 @@ func TestMochaCoverageGateRequiresRealSuiteEvidence(t *testing.T) {
 
 func TestCoverageBlockerUsesTheSelectedFramework(t *testing.T) {
 	for _, name := range []string{"jest", "vitest", "mocha"} {
-		result := validationResult{Framework: name, Runs: []runSummary{{Coverage: &coverageSummary{Status: "not observed"}}}}
+		result := validationResult{Framework: name, Compatibility: verdict{Status: "compatible"}, Runs: []runSummary{{Coverage: &coverageSummary{Status: "not observed"}}}}
 		summary := summarizeValidation(result)
 		require.Contains(t, strings.Join(summary.BlockingChecks, "\n"), displayName(name)+" real-suite coverage")
 	}
