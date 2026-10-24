@@ -288,6 +288,22 @@ func TestCypressSourceCoverageCountsOnlyApplicationFiles(t *testing.T) {
 	require.Equal(t, "observed", cypressSourceCoverage(root, cypressTestCode{Project: root, SupportFile: filepath.Join(root, "test/support.js")}, facts("test/support.js", "src/app.js"), native).Status)
 }
 
+func TestCypressSourceCoverageRebasesPrebuiltPathsIntoTheIsolatedCopy(t *testing.T) {
+	source, copied := t.TempDir(), t.TempDir()
+	for _, root := range []string{source, copied} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "src"), 0755))
+		requireWriteFile(t, filepath.Join(root, "src/app.js"), "")
+	}
+	// The prebuilt bundle names the original checkout, not the copy.
+	facts := intake.Facts{TestCount: 1, CoverageLevel: "test", Tests: []intake.Test{{Name: "adds", CoveredFiles: []string{filepath.Join(source, "src/app.js")}}}}
+	require.Equal(t, "invalid", cypressSourceCoverage(copied, cypressTestCode{}, facts, nil).Status)
+	require.Equal(t, "observed", cypressSourceCoverage(copied, cypressTestCode{Source: source}, facts, nil).Status)
+	facts.Tests[0].CoveredFiles = []string{filepath.Join(source, "cypress/e2e/todo.cy.js")}
+	require.NoError(t, os.MkdirAll(filepath.Join(copied, "cypress/e2e"), 0755))
+	requireWriteFile(t, filepath.Join(copied, "cypress/e2e/todo.cy.js"), "")
+	require.Equal(t, "not observed", cypressSourceCoverage(copied, cypressTestCode{Source: source}, facts, nil).Status, "rebased test code is still excluded")
+}
+
 func TestCypressObserverReportsEffectiveProjectAndSupportFile(t *testing.T) {
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "cypress.config.cjs"), "module.exports={e2e:{}}")

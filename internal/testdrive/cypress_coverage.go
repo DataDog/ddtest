@@ -23,6 +23,9 @@ const cypressMissingCoverageReason = "No application source coverage observed. I
 type cypressTestCode struct {
 	Project     string
 	SupportFile string
+	// Source is the original checkout when Cypress ran in an isolated copy.
+	// A prebuilt bundle keeps Istanbul's absolute paths into it.
+	Source string
 }
 
 // cypressSourceCoverage checks that the real suite's coverage, read by the
@@ -59,7 +62,7 @@ func cypressSourceCoverage(root string, code cypressTestCode, facts intake.Facts
 	for _, test := range facts.Tests {
 		covered := false
 		for _, file := range slices.Concat(test.CoveredFiles, bySuite[[2]string{test.Module, test.Suite}]) {
-			local, valid := cucumberCoverageFile(root, file)
+			local, valid := cucumberCoverageFile(root, rebaseCoverageFile(code.Source, root, file))
 			switch {
 			case !valid:
 				if invalidExample == "" {
@@ -91,4 +94,26 @@ func cypressSourceCoverage(root string, code cypressTestCode, facts intake.Facts
 		result.Reason = cypressMissingCoverageReason
 	}
 	return result
+}
+
+// rebaseCoverageFile maps an absolute path beneath the original checkout to
+// the same file in the isolated copy.
+func rebaseCoverageFile(source, root, file string) string {
+	if source == "" {
+		return file
+	}
+	native := filepath.FromSlash(strings.ReplaceAll(file, "\\", "/"))
+	if !filepath.IsAbs(native) {
+		return file
+	}
+	bases := []string{source}
+	if canonical, err := filepath.EvalSymlinks(source); err == nil {
+		bases = append(bases, canonical)
+	}
+	for _, base := range bases {
+		if relative, err := filepath.Rel(base, native); err == nil && filepath.IsLocal(relative) {
+			return filepath.Join(root, relative)
+		}
+	}
+	return file
 }

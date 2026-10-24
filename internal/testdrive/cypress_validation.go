@@ -337,6 +337,9 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 		if code.Project == "" {
 			code.Project = filepath.ToSlash(t.cypressPackage)
 		}
+		if t.isolated {
+			code.Source = t.configurationSourceRoot
+		}
 		run.Coverage = cypressSourceCoverage(t.checkoutRoot(), code, run.Facts, run.Tests)
 	}
 
