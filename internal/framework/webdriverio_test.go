@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -27,6 +28,22 @@ func TestWebdriverIORunPreservesCommandAndSelectsOnlyRequestedFiles(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, []string{filepath.Join(root, "selected.spec.js")}, files)
 	require.Contains(t, executor.capturedEnv["NODE_OPTIONS"], "webdriverio_observer.mjs")
+}
+
+func TestWebdriverIOObserverRecognizesWindowsEntriesAndDefaultServerPorts(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required")
+	}
+	observer, err := PrepareWebdriverIOObserver(t.TempDir())
+	require.NoError(t, err)
+	script := `const {wdioEntryPoint, staticServerPorts} = await import(process.argv[1]);
+console.log(JSON.stringify({
+  entries: ['C:\\repo\\node_modules\\@wdio\\cli\\bin\\wdio.js', 'C:\\repo\\node_modules\\@wdio\\local-runner\\build\\run.js', '/repo/node_modules/@wdio/cli/bin/wdio.js', 'C:\\repo\\node_modules\\npm\\bin\\npm-cli.js'].map(wdioEntryPoint),
+  ports: staticServerPorts(['static-server', ['static-server', {folders: []}], ['static-server', {port: 8080}], ['chromedriver', {port: 9515}]]),
+}));`
+	output, err := exec.CommandContext(t.Context(), "node", "--input-type=module", "-e", script, observer).CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.JSONEq(t, `{"entries":["cli","worker","cli",""],"ports":[4567,4567,8080]}`, string(output))
 }
 
 type webdriverIODiscoveryExecutor struct{ root string }

@@ -3,6 +3,20 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
+// @wdio/static-server-service listens on 4567 unless a port is configured,
+// including when it is listed by name without options.
+export function staticServerPorts(services = []) {
+  return services.map(service => Array.isArray(service) ? service : [service])
+    .filter(([name]) => name === 'static-server').map(([, options]) => Number(options?.port ?? 4567));
+}
+
+// Windows entry paths use backslashes; match the WDIO CLI and worker in either form.
+export function wdioEntryPoint(entry) {
+  const normalized = entry.replaceAll('\\', '/');
+  if (normalized.includes('/@wdio/cli/')) return 'cli';
+  return normalized.includes('/@wdio/local-runner/') ? 'worker' : '';
+}
+
 // Entry-point resolution selects the same dependency graph as the actual CLI,
 // including nested/pnpm installations. Ordinary npm/application processes do nothing.
 export async function installObserver(cli) {
@@ -51,8 +65,7 @@ export async function installObserver(cli) {
       files: multiremote ? [...new Set(this.getSpecs().flat(Infinity).map(localFile))] : [...new Set(selections().flatMap(selection => selection.files))],
       grouped_specs: grouped(),
       multiremote,
-      static_server_ports: config.services.filter(service => Array.isArray(service) && service[0] === 'static-server' && service[1]?.port != null)
-        .map(service => Number(service[1].port)),
+      static_server_ports: staticServerPorts(config.services),
       selections: selections(),
       capabilities: Array.isArray(capabilities) ? capabilities.map(cap => Object.fromEntries(
         ['browserName', 'browserVersion', 'platformName'].filter(key => typeof cap[key] === 'string').map(key => [key, cap[key]])
@@ -117,8 +130,9 @@ export async function installObserver(cli) {
 }
 let entry = process.argv[1] ? path.resolve(process.argv[1]) : '';
 try { entry = fs.realpathSync(entry); } catch {}
-if (/[\/]@wdio[\/](?:cli|local-runner)[\/]/.test(entry)) {
+const entryPoint = wdioEntryPoint(entry);
+if (entryPoint) {
   const require = createRequire(entry);
-  const cli = entry.includes('/@wdio/cli/') ? require.resolve('@wdio/cli') : process.env.DDTEST_WDIO_CLI || require.resolve('@wdio/cli');
+  const cli = entryPoint === 'cli' ? require.resolve('@wdio/cli') : process.env.DDTEST_WDIO_CLI || require.resolve('@wdio/cli');
   await installObserver(cli);
 }
