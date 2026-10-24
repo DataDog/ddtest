@@ -32,9 +32,9 @@ func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrument
 	for i, run := range []validationRun{baseline, instrumented, baselineAgain, instrumentedAgain} {
 		outcomes[i] = map[identity][]string{}
 		for _, test := range run.Tests {
-			key := identity{test.File, test.Name, playwrightLabel(test)}
+			key := identity{test.File, test.Name, playwrightLabel(test) + webdriverIOOutcome(test)}
 			identities[key] = true
-			outcomes[i][key] = append(outcomes[i][key], test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test))
+			outcomes[i][key] = append(outcomes[i][key], test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test)+webdriverIOAttemptOutcome(test))
 		}
 		for _, values := range outcomes[i] {
 			slices.Sort(values)

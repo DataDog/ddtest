@@ -63,7 +63,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		}
 		return commandResolution{}
 	}
-	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber") {
+	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio") {
 		return commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, framework)}
 	}
 	// GitHub expands these before the shell runs; they are not shell syntax.
@@ -299,7 +299,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			words = words[2:]
 		}
 
-		if (framework == "mocha" || framework == "cypress" || framework == "cucumber") && len(words) > 0 && slices.Contains([]string{"--no-install", "--no"}, words[0]) {
+		if (framework == "mocha" || framework == "cypress" || framework == "cucumber" || framework == "webdriverio") && len(words) > 0 && slices.Contains([]string{"--no-install", "--no"}, words[0]) {
 			words = words[1:]
 		}
 		if npmExec {
@@ -322,7 +322,14 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return unresolvedCommand("Missing executable: " + command)
 		}
 	}
+
+	if framework != "webdriverio" && filepath.Base(words[0]) == "wdio" {
+		return commandResolution{OtherFramework: true}
+	}
 	runner := framework
+	if framework == "webdriverio" {
+		runner = "wdio"
+	}
 	if framework == "cucumber" {
 		runner = "cucumber-js"
 	}
@@ -333,6 +340,10 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		}
 		if framework == "jest" && jestMetadataOptions(words[1:]) {
 			return commandResolution{}
+		}
+		// Any other first argument is a config path, whatever its file name.
+		if framework == "webdriverio" && len(words) > 1 && slices.Contains([]string{"config", "install", "repl"}, words[1]) {
+			return commandResolution{ReviewReason: "WebdriverIO setup/tool command is outside test execution: " + command}
 		}
 		if framework == "cypress" && (len(words) < 2 || words[1] != "run") {
 			return commandResolution{ReviewReason: "Cypress setup/interactive command is outside headless validation: " + command}
@@ -369,6 +380,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{entry}}
 	}
 
+	if framework == "webdriverio" && words[0] == "node" {
+		return resolveWebdriverIONode(root, directory, words)
+	}
 	if framework == "cypress" && words[0] == "node" {
 		return resolveCypressNode(root, directory, words)
 	}
@@ -427,7 +441,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 
 		return unresolvedCommand("Unsupported script orchestration: " + command)
 	case "npm-run-all", "npm-run-all2", "run-s":
-		if (framework != "mocha" && framework != "cucumber") || len(words) < 2 {
+		if (framework != "mocha" && framework != "cucumber" && framework != "webdriverio") || len(words) < 2 {
 			return unresolvedCommand("Unsupported script orchestration: " + command)
 		}
 		var scripts []string
@@ -500,6 +514,22 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 
 func resolvePackageScript(root, directory, name string, args, stack []string, command string, remaining *int, frameworks ...string) commandResolution {
 
+	if len(frameworks) > 0 && frameworks[0] == "webdriverio" && strings.HasPrefix(command, "npm ") {
+		canonicalRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			return unresolvedCommand("Cannot resolve repository root")
+		}
+		for {
+			if _, err := os.Stat(filepath.Join(directory, "package.json")); err == nil {
+				break
+			}
+			relative, err := filepath.Rel(canonicalRoot, directory)
+			if err != nil || !filepath.IsLocal(relative) || relative == "." {
+				break
+			}
+			directory = filepath.Dir(directory)
+		}
+	}
 	key := repositoryPath(root, filepath.Join(directory, "package.json")) + ":" + name
 	if slices.Contains(stack, key) {
 		return unresolvedCommand("Package script cycle: " + strings.Join(append(slices.Clone(stack), key), " -> "))
@@ -556,8 +586,12 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 			return unresolvedCommand("Cucumber aliases must forward formatter options to one invocation; compound scripts require explicit setup review: " + command)
 		}
 	}
+	webdriverIOScoped := len(frameworks) > 0 && frameworks[0] == "webdriverio" && strings.HasPrefix(script, webdriverIOScopedOptions+" ")
+	if len(frameworks) > 0 && frameworks[0] == "webdriverio" {
+		script = webdriverIODiscoveryScript(script)
+	}
 	var result commandResolution
-	if (mocha || cucumber || (len(frameworks) > 0 && frameworks[0] == "cypress")) && strings.HasPrefix(command, "npm ") {
+	if (mocha || cucumber || (len(frameworks) > 0 && (frameworks[0] == "cypress" || frameworks[0] == "webdriverio"))) && strings.HasPrefix(command, "npm ") {
 		// npm starts each lifecycle script in a fresh shell at the package root.
 		// Resolve them independently so an inner cd/export cannot affect the next hook.
 		singleInvocation := true
@@ -600,6 +634,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		result = resolveJestSequence(root, directory, script, append(slices.Clone(stack), key), remaining, frameworks...)
 	}
 
+	if webdriverIOScoped && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
+		result.Tests[0].webdriverIOScoped = true
+	}
 	if cucumberScoped && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
 		result.Tests[0].cucumberScoped = true
 	}
@@ -609,6 +646,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	if len(frameworks) > 0 && frameworks[0] == "cypress" && len(result.Tests) > 1 {
 		return unresolvedCommand("Multiple Cypress invocations in one package alias require ordered execution review; preserve the original alias: " + command)
 	}
+	if len(frameworks) > 0 && frameworks[0] == "webdriverio" && len(result.Tests) > 1 {
+		return unresolvedCommand("Multiple WebdriverIO invocations in one package alias require ordered execution review; preserve the original alias: " + command)
+	}
 	if (mocha || cucumber) && len(result.Tests) > 1 {
 		label := "Mocha"
 		if cucumber {
@@ -616,7 +656,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		}
 		return unresolvedCommand("Multiple " + label + " invocations in one package alias require ordered execution review; preserve the original alias: " + command)
 	}
-	if (mocha || cucumber || (len(frameworks) > 0 && frameworks[0] == "cypress")) && lifecycle == "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
+	if (mocha || cucumber || (len(frameworks) > 0 && (frameworks[0] == "cypress" || frameworks[0] == "webdriverio"))) && lifecycle == "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
 		if !result.SingleJest && result.Tests[0].mochaProbeCommand == "" {
 			result.Tests[0].mochaProbeCommand = result.Tests[0].Command
 		}

@@ -525,21 +525,6 @@ func TestReportRuntimeFacts(t *testing.T) {
 	}
 }
 
-func TestAbsoluteFileURL(t *testing.T) {
-	for path, want := range map[string]string{
-		`C:\repo\report.html`:                "file:///C:/repo/report.html",
-		`C:\project space\report.html`:       "file:///C:/project%20space/report.html",
-		`\\server\share\report.html`:         "file://server/share/report.html",
-		`\\server\share space\report#1.html`: "file://server/share%20space/report%231.html",
-		`/repo space/report#1.html`:          "file:///repo%20space/report%231.html",
-		`/repo\name/report.html`:             "file:///repo%5Cname/report.html",
-	} {
-		if got := absoluteFileURL(path); got != want {
-			t.Errorf("absoluteFileURL(%q) = %q, want %q", path, got, want)
-		}
-	}
-}
-
 func TestReportExplorerKeepsIdentitiesEscapedAndDetailsDistinct(t *testing.T) {
 	tests := []intake.Test{
 		{Name: `same <script>alert(1)</script>`, Module: "one", Suite: "shared", Parameters: `{"case":1}`, Status: "pass"},

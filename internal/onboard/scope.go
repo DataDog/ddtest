@@ -14,6 +14,7 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
+	webdriverIOScoped               bool
 	cucumberProbeCommand            string
 	cucumberProbeBefore             []LifecycleScript
 	cucumberProbeAfter              []LifecycleScript
@@ -88,7 +89,7 @@ func yarnImplicitInstall(words []string) bool {
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" {
+	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 

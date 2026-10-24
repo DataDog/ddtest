@@ -286,10 +286,10 @@ func TestSupervisedGuardSupportsDescriptorsAboveNine(t *testing.T) {
 	require.NoError(t, err, string(output))
 }
 
-func TestRecoverPlaywrightOwnershipStorageIsRepositoryScoped(t *testing.T) {
+func TestRecoverProcessOwnershipStorageIsRepositoryScoped(t *testing.T) {
 	root := t.TempDir()
 	drive := &Testdrive{repositoryRoot: root}
-	owner, err := drive.ownPlaywrightProcesses(t.TempDir(), map[string]string{})
+	owner, err := drive.ownProcesses(t.TempDir(), map[string]string{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, owner.Close()) })
 	unrelated, err := os.MkdirTemp(processSocketBase(), "ddtest-process-")

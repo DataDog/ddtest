@@ -17,6 +17,7 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/utils"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -54,7 +55,10 @@ func (j *JavaScript) Detect(repositoryRoot string) (bool, error) {
 func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 	root := "."
 	hint := settings.GetFramework()
-	candidates := []framework.Framework{framework.NewJest(j), framework.NewMocha(j), framework.NewCypress(j), framework.NewPlaywright(j), framework.NewCucumber(j), framework.NewVitest(j)}
+	if hint == "wdio" {
+		hint = "webdriverio"
+	}
+	candidates := []framework.Framework{framework.NewJest(j), framework.NewWebdriverIO(j), framework.NewMocha(j), framework.NewCypress(j), framework.NewPlaywright(j), framework.NewCucumber(j), framework.NewVitest(j)}
 	if hint == "" {
 		manifest, found, err := readPackageManifest(root)
 		if err != nil {
@@ -68,12 +72,19 @@ func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 				switch f.Name() {
 				case "playwright":
 					names = append(names, "@playwright/test")
+				case "webdriverio":
+					names = append(names, "@wdio/cli", "wdio")
 				case "cucumber":
 					names = append(names, "@cucumber/cucumber", "cucumber-js")
 				}
 				return !manifest.usesAny(names...)
 			})
 		}
+	}
+	// Preserve the pre-WebdriverIO default when it accompanies an existing runner.
+	// Existing ambiguity between two older frameworks is unchanged.
+	if hint == "" && len(candidates) > 1 {
+		candidates = slices.DeleteFunc(candidates, func(f framework.Framework) bool { return f.Name() == "webdriverio" })
 	}
 	fw, err := selectFramework(j.Name(), hint, candidates)
 	if err != nil {
@@ -122,14 +133,16 @@ func addNodeImport(platformEnv map[string]string, module string) map[string]stri
 		return platformEnv
 	}
 
+	// --import resolves its value as a URL, so absolute paths become file URLs:
+	// a Windows drive path would otherwise be read as the URL scheme "c:".
 	if preload := os.Getenv("DD_TRACE_ESM_IMPORT"); preload != "" {
-		module = strconv.Quote(preload)
+		module = strconv.Quote(importSpecifier(preload))
 	} else {
 		// An explicit external CI preload also identifies its register module,
 		// even when the action's optional ESM variable is unavailable.
 		preload := nodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
 		if filepath.IsAbs(preload) {
-			module = strconv.Quote(filepath.Join(filepath.Dir(filepath.Dir(preload)), "register.js"))
+			module = strconv.Quote(utils.FileURL(filepath.Join(filepath.Dir(filepath.Dir(preload)), "register.js")))
 		}
 	}
 	importOption := nodeImportArg + " " + module
@@ -138,6 +151,15 @@ func addNodeImport(platformEnv map[string]string, module string) map[string]stri
 	}
 	platformEnv[nodeOptionsEnvVar] = importOption
 	return platformEnv
+}
+
+// importSpecifier keeps module names and URLs, and turns an absolute path
+// into the file URL that --import needs on every platform.
+func importSpecifier(value string) string {
+	if filepath.IsAbs(value) {
+		return utils.FileURL(value)
+	}
+	return value
 }
 
 func javascriptProbeEnv() map[string]string {
