@@ -43,7 +43,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	runner := *t
 	t = &runner
 	t.configurationEnvironment = onboard.WithGitHubActionsDefaults(item.Environment)
-	if !t.checkOnly {
+	if !t.checkOnly && item.PortOverride == nil {
 		if err := checkCypressStartupPorts(t.cypress, t.configurationEnvironment); err != nil {
 			return result, err
 		}
@@ -61,7 +61,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	original, workspace := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
-	if !t.checkOnly && (len(item.Prerequisites) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {
+	if !t.checkOnly && (len(item.Prerequisites) > 0 || len(item.Services) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {
 		parent, err := os.MkdirTemp("", "ddtest-configuration-")
 		if err != nil {
 			return result, err
@@ -118,6 +118,26 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	t.executor = configurationExecutor{executor, isolatedCIEnvironment(nil, original, checkout)}
 	if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration preparation failed; tests were not started."}
+		return result, err
+	}
+
+	if item.PortOverride != nil && !t.checkOnly {
+		if err := configurePortFact(t.repositoryRoot, &item.TestCommand, *item.PortOverride, true); err != nil {
+			return result, fmt.Errorf("application port override unavailable immediately before startup: %w", err)
+		}
+		t.cypress = item.Cypress
+		if err := checkCypressStartupPorts(t.cypress, item.Environment); err != nil {
+			return result, fmt.Errorf("application port was taken before startup; retry full validation without stopping the other listener: %w", err)
+		}
+	}
+	ctx, stop, err := t.startSetupServices(ctx, output, item)
+	defer func() {
+		if err := stop(); err != nil {
+			result.Cleanup = &verdict{Status: "failed", Reason: err.Error()}
+			runErr = errors.Join(runErr, err)
+		}
+	}()
+	if err != nil {
 		return result, err
 	}
 	t.configurationEnvironment = isolatedCIEnvironment(onboard.WithGitHubActionsDefaults(item.Environment), original, checkout)

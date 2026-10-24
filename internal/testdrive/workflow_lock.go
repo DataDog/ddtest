@@ -14,6 +14,8 @@ import (
 	"sync"
 )
 
+type workflowLockKey struct{}
+
 var errWorkflowBusy = errors.New("another ddtest workflow is active")
 
 // OS locks are released after a crash. Unix releases remove the file while

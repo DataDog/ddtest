@@ -53,7 +53,7 @@ func TestPublicWebdriverIOApply(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
 		requireWriteFile(t, filepath.Join(root, name), value)
 	}
-	write("package.json", `{"scripts":{"test":"npm run browser-tests","browser-tests":"wdio run wdio.conf.cjs"},"devDependencies":{"@wdio/cli":"9.20.0","@wdio/local-runner":"9.20.0","@wdio/mocha-framework":"9.20.0","dd-trace":"6.20.1"}}`)
+	write("package.json", `{"private":true,"scripts":{"test":"npm run browser-tests","browser-tests":"wdio run wdio.conf.cjs"},"devDependencies":{"@wdio/cli":"9.20.0","@wdio/local-runner":"9.20.0","@wdio/mocha-framework":"9.20.0","dd-trace":"6.20.1"}}`)
 	write("wdio.conf.cjs", `exports.config={
  runner: 'local',
  framework:'mocha',specs:['./test/*.js'],maxInstances:1,reporters:[],capabilities:[{browserName:'chrome','goog:chromeOptions':{binary:process.env.DDTEST_CHROME_BINARY,args:['--headless=new','--no-sandbox','--disable-dev-shm-usage']},...(process.env.DDTEST_CHROMEDRIVER_BINARY?{'wdio:chromedriverOptions':{binary:process.env.DDTEST_CHROMEDRIVER_BINARY}}:{})}]

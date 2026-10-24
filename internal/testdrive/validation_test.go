@@ -80,7 +80,7 @@ func TestReportSizeDoesNotScaleWithTestEvents(t *testing.T) {
 	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
 	data, err := os.ReadFile(validationPath(root))
 	require.NoError(t, err)
-	require.Less(t, len(data), 15000) // Includes a bounded final-response copy; never raw events.
+	require.Less(t, len(data), 16000) // Includes bounded final and onboarding response copies; never raw events.
 	for _, absent := range []string{"raw-test-name", "raw-test-failure", "raw-suite-error", "raw-telemetry-test", "raw-event-stack", `"telemetry"`, `"output"`, `"tests"`} {
 		require.NotContains(t, string(data), absent)
 	}

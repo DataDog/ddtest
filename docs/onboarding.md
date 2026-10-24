@@ -89,3 +89,64 @@ validation from actual CI execution and Datadog processing, which are not proven
 by these local checks. `--site` selects the site for a new action (default
 `DD_SITE`, then `datadoghq.com`); `--tracer-version` is a fallback when no project
 or CI version is selected.
+
+### Agent coordination and fresh results
+
+Use the same short request for a coding agent:
+
+> Use ddtest to onboard this repository to test-optimization for vitest only.
+
+JavaScript `onboard` shows a short next command in a terminal and returns a versioned next action when piped or requested with `--agent`/`--format json`.
+Output format rule: plain `onboard` is the only command that looks at the terminal, so a piped `ddtest onboard` gives a coding agent its JSON handoff.
+`testdrive --report` always renders the saved result as structured output (`--format agent` by default, or `--format json`). Plain `onboard --apply --yes`
+and plain `testdrive` print text only; the agent's final response is in `summary.final_response` of the JSON report and in `--agent` results, not in plain output.
+`onboard --apply --yes` applies recognized setup and runs the shared coordinator.
+For existing setup, use `testdrive --framework vitest --all --agent --yes`.
+Plain testdrive keeps its earlier execution behavior; explicit `--agent` or
+`--format json` selects coordination. Supplying `--facts` also selects the coordinator. Structured execution requires `--yes` and never opens an interactive prompt. Python/Ruby instructions and plain execution
+remain unchanged; structured validation is unsupported and returns no next command.
+
+The coordinator owns one resolved execution plan: actual commands, directories,
+environments, builds, runtime/tracer selection, initialization and feature policy.
+A run cannot omit unresolved configurations to earn a complete verdict. Checks
+include source preservation, Git/npm report exclusions, owned process/temp cleanup,
+and current execution evidence. The npm package check uses
+`npm pack --dry-run --ignore-scripts --json`; it neither publishes nor runs hooks.
+Checks and source-edit hashes stay in the bounded JSON; full output stays in HTML.
+
+Results distinguish ready, needs_input, blocked_environment, unsupported,
+validation_failed, selected_passed and complete_locally. Follow the returned argv
+without guessing a different framework, tracer or suite. Missing capability and
+setup facts are distinct from failed test assertions. Registry transport may retry
+once; authentication, permissions and feature failures are not silently retried.
+
+A checkpoint caches successful preparation only. `--resume <run_id>` always runs
+fresh tests and invalidates preparation after source, runtime, tracer, facts or
+binary changes. Three identical failures stop with a reportable blocker. Temporary
+coordination lives outside the checkout, with a lock preventing concurrent runs. Locks are released and removed; expired private checkpoints and stale owned sessions are reclaimed at startup. Repeating the same failed input/scope shares one bounded attempt counter even without `--resume`, whichever failure code each attempt returns. A rejected `--facts` file, stale facts or an invalid `--resume` runs no tests and leaves an earlier report untouched. A `supply_input` or `report_result` response does not offer a blind retry command.
+
+When repository-specific setup needs help, save the returned input template outside
+the checkout and use `--facts /absolute/path/setup.json` with `--all`. Facts bind to
+an input fingerprint covering the whole Git checkout (including nested package changes) and a configuration ID, can add validated local build argv,
+expected output files, services/readiness and documented port overrides, and cannot
+remove commands or change assertions. Services run in disposable copies with bounded
+readiness and cleanup. Their lifetime follows the configuration context, while each test/build command retains its own timeout. Live ownership leases stop declared services if the coordinator is killed. `--report --detail plan` or `--detail <configuration_id>`
+shows details capped at 1 MiB; add the returned resume ID for an unfinished plan.
+Unknown local Node build scripts in CI, including `npm run build && npm test`
+and separate build steps, produce a template naming the original prerequisite.
+Facts must declare its expected outputs; the command stays visible in the plan.
+Unknown test runners, shell conditions and unrelated commands cannot be erased.
+Known and fact-declared prerequisites preserve their original CI order. Rejected replacement facts do not overwrite accepted setup. Only facts schema 2 is accepted. Result schema 2 and plan schema 1 are separate
+formats with independent versions.
+
+Owned instrumentation edits carry validated facts forward. A dependency-install
+handoff changes manifests/lockfiles, so ddtest returns `facts_refresh_required`
+with a template for the new fingerprint. Review and save it outside the checkout,
+then resume. Arbitrary source changes never silently inherit a previous binding.
+
+After execution, follow `next_command` to `testdrive --report`. It verifies current
+source/runtime inputs, installed tracer and a private result digest bound to this ddtest binary, then renders `final_response`, including retained absolute
+report links. Both `--agent` and `--format json` emit exactly one JSON object on stdout, including errors. Only ordinary verbose execution prints progress/logs. `--format json` lets a host display the response directly. Changed inputs,
+stale results cannot produce a fresh completion claim. A later check-only attempt retains the full run’s binding; it does not create new execution evidence. Editing the public report cannot certify it or inject a saved recovery executable. Saved command options and `--report --detail plan` from the report are used only after receipt verification. Missing/expired private receipts require full validation again. A plain `testdrive` run replaces the report without the workflow checks or binding, so `--report` returns `plain_report` with the workflow command to run; a check-only run keeps the earlier binding and plan.
+Do not run extra cache audits or rewrite the verdict. Actual CI execution and
+Datadog backend processing remain untested.

@@ -116,6 +116,7 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	}
 	env["DD_CIVISIBILITY_ENABLED"] = "false"
 	env["DD_TRACE_ENABLED"] = "false"
+	useTemporaryDirectory(env, directory)
 	data, err := t.executor.CombinedOutput(ctx, command, args, env)
 	if err != nil {
 		return fmt.Errorf("inspect Jest configuration: %w; verify --command includes the repository's Jest config and required setup", err)
