@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -249,31 +250,66 @@ func TestCypressSourceCoverageCountsOnlyApplicationFiles(t *testing.T) {
 		return intake.Facts{TestCount: 2, CoverageLevel: "test", Tests: []intake.Test{{Name: "adds", CoveredFiles: files}, {Name: "removes"}}}
 	}
 
-	coverage := cypressSourceCoverage(root, "", facts("cypress/support/e2e.js", "src/app.js"), native)
+	coverage := cypressSourceCoverage(root, cypressTestCode{}, facts("cypress/support/e2e.js", "src/app.js"), native)
 	require.Equal(t, "observed", coverage.Status)
 	require.Equal(t, 1, coverage.CoveredTests)
 	require.Equal(t, 2, coverage.TotalTests)
 	require.InDelta(t, 0.5, coverage.Ratio, 0.001)
 
-	coverage = cypressSourceCoverage(root, "", facts(filepath.Join(root, "cypress/e2e/todo.cy.js"), "e2e/todo.cy.js", "node_modules/lib/index.js"), native)
+	coverage = cypressSourceCoverage(root, cypressTestCode{}, facts(filepath.Join(root, "cypress/e2e/todo.cy.js"), "e2e/todo.cy.js", "node_modules/lib/index.js"), native)
 	require.Equal(t, "not observed", coverage.Status)
 	require.Contains(t, coverage.Reason, "only Cypress specs, support code or dependencies")
 
-	coverage = cypressSourceCoverage(root, "", facts("src/missing.js"), native)
+	coverage = cypressSourceCoverage(root, cypressTestCode{}, facts("src/missing.js"), native)
 	require.Equal(t, "invalid", coverage.Status)
 	require.Contains(t, coverage.Reason, "src/missing.js")
 
-	coverage = cypressSourceCoverage(root, "", facts(), native)
+	coverage = cypressSourceCoverage(root, cypressTestCode{}, facts(), native)
 	require.Equal(t, "not observed", coverage.Status)
 	require.Equal(t, cypressMissingCoverageReason, coverage.Reason)
 
-	coverage = cypressSourceCoverage(root, "", intake.Facts{TestCount: 1, CoverageLevel: "suite", Tests: []intake.Test{{Module: "cypress", Suite: "e2e/todo.cy.js", Name: "adds"}},
+	coverage = cypressSourceCoverage(root, cypressTestCode{}, intake.Facts{TestCount: 1, CoverageLevel: "suite", Tests: []intake.Test{{Module: "cypress", Suite: "e2e/todo.cy.js", Name: "adds"}},
 		SuiteCoverages: []intake.SuiteCoverage{{Module: "cypress", Suite: "e2e/todo.cy.js", Files: []string{"src/app.js"}}}}, native)
 	require.Equal(t, "observed", coverage.Status, "suite coverage is associated with the suite's tests")
 	// A Cypress package in a monorepo keeps its own cypress folder.
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "packages/web/cypress"), 0755))
 	requireWriteFile(t, filepath.Join(root, "packages/web/cypress/support.js"), "")
-	require.Equal(t, "not observed", cypressSourceCoverage(root, "packages/web", facts("packages/web/cypress/support.js"), native).Status)
+	require.Equal(t, "not observed", cypressSourceCoverage(root, cypressTestCode{Project: "packages/web"}, facts("packages/web/cypress/support.js"), native).Status)
+	// Cypress reports the effective project and support file: a --project
+	// folder keeps its own cypress folder, and a support file can live anywhere.
+	for _, file := range []string{"e2e/cypress/support/e2e.js", "test/support.js"} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, file)), 0755))
+		requireWriteFile(t, filepath.Join(root, file), "")
+	}
+	require.Equal(t, "not observed", cypressSourceCoverage(root, cypressTestCode{Project: filepath.Join(root, "e2e")}, facts("e2e/cypress/support/e2e.js"), native).Status)
+	coverage = cypressSourceCoverage(root, cypressTestCode{Project: root, SupportFile: filepath.Join(root, "test/support.js")}, facts("test/support.js"), native)
+	require.Equal(t, "not observed", coverage.Status)
+	require.Contains(t, coverage.Reason, "only Cypress specs, support code or dependencies")
+	require.Equal(t, "observed", cypressSourceCoverage(root, cypressTestCode{Project: root, SupportFile: filepath.Join(root, "test/support.js")}, facts("test/support.js", "src/app.js"), native).Status)
+}
+
+func TestCypressObserverReportsEffectiveProjectAndSupportFile(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "cypress.config.cjs"), "module.exports={e2e:{}}")
+	requireWriteFile(t, filepath.Join(root, "observer.cjs"), cypressObserver)
+	script := `const fs=require('node:fs'),path=require('node:path'),[observer,root]=process.argv.slice(1)
+ const config=require(require(observer)(root,null,root,false,false))
+ ;(async()=>{
+   for (const supportFile of [path.join(root,'test/support.js'),false]) {
+     const handlers={}
+     await config.e2e.setupNodeEvents((event,handler)=>{handlers[event]=handler},{projectRoot:path.join(root,'e2e'),supportFile})
+     await handlers['after:run']({runs:[]})
+     const {projectRoot,supportFile:reported}=JSON.parse(fs.readFileSync(path.join(root,'results.json'),'utf8'))
+     console.log(JSON.stringify({projectRoot,supportFile:reported}))
+   }
+ })()`
+	output, err := exec.CommandContext(t.Context(), "node", "-e", script, filepath.Join(root, "observer.cjs"), root).CombinedOutput()
+	require.NoError(t, err, string(output))
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	require.Len(t, lines, 2)
+	project, _ := json.Marshal(filepath.Join(root, "e2e"))
+	require.Contains(t, lines, `{"projectRoot":`+string(project)+`,"supportFile":`+strconv.Quote(filepath.Join(root, "test/support.js"))+`}`)
+	require.Contains(t, lines, `{"projectRoot":`+string(project)+`}`, "supportFile: false has no support code to exclude")
 }
 
 func TestCypressCodeCoverage3SkipCrashIsNamed(t *testing.T) {
