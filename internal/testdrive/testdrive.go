@@ -415,7 +415,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		if err != nil {
 			_, _ = fmt.Fprintln(output, err)
-		} else if t.framework.Name() == "cypress" {
+		} else if onboard.RedactsCommandKeys(t.framework.Name()) {
 			onboard.WriteValidationScope(output, onboard.RedactCypressScope(scope))
 		} else {
 			onboard.WriteValidationScope(output, scope)
@@ -478,7 +478,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 
 	preview := shellquote.Join(append([]string{command}, args...)...)
-	if t.framework.Name() == "cypress" {
+	if onboard.RedactsCommandKeys(t.framework.Name()) {
 		preview = onboard.RedactCypressCommand(preview)
 	}
 	_, _ = fmt.Fprintf(output, "  - command: %s\n", preview)

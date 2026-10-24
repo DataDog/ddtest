@@ -110,6 +110,18 @@ func TestWebdriverIOUnknownNodeWrapperStillBlocks(t *testing.T) {
 	require.False(t, result.Review)
 }
 
+func TestWebdriverIOScopedBootstrapChecksConditionalBranches(t *testing.T) {
+	root := t.TempDir()
+	step := runtimeStep{Run: "if npm -ps ls @wdio/cli | grep -q @wdio/cli; then npm test; else npm test; fi", Env: map[string]string{"DD_WDIO_NODE_OPTIONS": "-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}"}}
+	writeScripts(t, root, map[string]string{"test": "wdio run wdio.conf.cjs"})
+	require.Contains(t, checkWebdriverIOBootstrap(root, ciWorkflow{}, runtimeJob{}, step, nil), "must start with")
+	writeScripts(t, root, map[string]string{"test": webdriverIOScopedOptions + " wdio run wdio.conf.cjs"})
+	require.Empty(t, checkWebdriverIOBootstrap(root, ciWorkflow{}, runtimeJob{}, step, nil))
+	// A scoped preload no resolved leaf consumes cannot certify the step.
+	step.Run = "node unknown-wrapper.js"
+	require.Contains(t, checkWebdriverIOBootstrap(root, ciWorkflow{}, runtimeJob{}, step, nil), "no resolved WDIO leaf consumes it")
+}
+
 func TestWebdriverIOBootstrapAcceptsNpmTestShorthand(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"test": webdriverIOScopedOptions + " wdio run wdio.conf.cjs"})

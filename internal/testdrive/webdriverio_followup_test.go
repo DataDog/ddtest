@@ -1,6 +1,7 @@
 package testdrive
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,6 +64,31 @@ func TestWebdriverIOPublishedReportRedactsGridKeys(t *testing.T) {
 		require.NotContains(t, string(data), secret)
 	}
 	require.Contains(t, string(data), "--key [REDACTED]")
+}
+
+func TestWebdriverIOPreviewRedactsGridKeys(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"@wdio/cli":"9.20.0"}}`)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  tests:\n    steps:\n      - run: npx wdio run wdio.conf.js --key fake-ci-key\n")
+	t.Chdir(root)
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	for _, all := range []bool{false, true} {
+		// --command and --all are exclusive: preview the override, then the CI scope.
+		viper.Reset()
+		viper.Set("framework", "webdriverio")
+		if !all {
+			viper.Set("command", "npx wdio run wdio.conf.js --key fake-key-123")
+		}
+		settings.Init()
+		drive, err := Prepare(PrepareOptions{TracerVersion: "6.21.0", All: all})
+		require.NoError(t, err)
+		var output bytes.Buffer
+		drive.Preview(&output)
+		require.NotContains(t, output.String(), "fake-key-123")
+		require.NotContains(t, output.String(), "fake-ci-key")
+		require.Contains(t, output.String(), "--key [REDACTED]")
+	}
 }
 
 func TestWebdriverIOReporterUsesTheCLIThatStartedTheRun(t *testing.T) {

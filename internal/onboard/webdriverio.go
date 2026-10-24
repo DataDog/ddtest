@@ -50,8 +50,8 @@ func resolveWebdriverIONode(root, directory string, words []string) commandResol
 }
 
 func checkWebdriverIOBootstrap(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) string {
-	remaining := webdriverIOScriptBudget
-	resolution := resolveJestSequence(root, filepath.Join(root, stepDirectory(workflow, job, step)), step.Run, nil, &remaining, "webdriverio")
+	// Resolve the step as validation does, including supported CI conditionals.
+	resolution := resolveTestStep(root, workflow, job, step, "javascript", "webdriverio")
 	scoped := ""
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		if value, ok := layer["DD_WDIO_NODE_OPTIONS"]; ok {
@@ -63,6 +63,9 @@ func checkWebdriverIOBootstrap(root string, workflow ciWorkflow, job runtimeJob,
 	}
 	if scoped == "" {
 		return checkJestBootstrap(workflow, job, step, row, true)
+	}
+	if len(resolution.Tests) == 0 {
+		return "DD_WDIO_NODE_OPTIONS is set, but no resolved WDIO leaf consumes it; resolve the step's WDIO invocations first"
 	}
 	for _, command := range resolution.Tests {
 		if !command.webdriverIOScoped {
