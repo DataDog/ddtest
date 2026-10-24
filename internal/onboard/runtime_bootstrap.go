@@ -117,7 +117,20 @@ func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			}
 		}
 	}
-	return "Cannot verify the action's JavaScript preload in this test step's effective NODE_OPTIONS. Preserve custom initialization and report it for review."
+	return unverifiedPreloadReason
+}
+
+const unverifiedPreloadReason = "Cannot verify the action's JavaScript preload in this test step's effective NODE_OPTIONS. Preserve custom initialization and report it for review."
+
+// stepSetsNoNodeOptions reports whether no workflow, job or step layer sets
+// NODE_OPTIONS, so adding the action's preload overrides nothing custom.
+func stepSetsNoNodeOptions(workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		if _, ok := env["NODE_OPTIONS"]; ok {
+			return false
+		}
+	}
+	return true
 }
 
 func bootstrapOptions(value string, row map[string]any, env map[string]string) (string, error) {

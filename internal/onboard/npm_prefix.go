@@ -6,7 +6,9 @@
 package onboard
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -51,4 +53,63 @@ func repositoryDirectory(root, directory, prefix string) (string, error) {
 		return "", fmt.Errorf("npm --prefix directory escapes the repository: %s", prefix)
 	}
 	return target, nil
+}
+
+// npmScriptOptions are npm's own options on a run/test invocation. npm parses
+// every option before "--" itself instead of forwarding it to the script; only
+// these are known to leave the selected script unchanged.
+type npmScriptOptions struct {
+	directory string // -w/--workspace or --prefix, relative to the caller
+	ifPresent bool
+}
+
+func npmScriptArguments(args []string) ([]string, npmScriptOptions, error) {
+	var options npmScriptOptions
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		name, value, inline := strings.Cut(args[i], "=")
+		switch name {
+		case "--":
+			return append(rest, args[i:]...), options, nil
+		case "--if-present":
+			if inline && value != "true" {
+				return nil, options, fmt.Errorf("unsupported npm --if-present value")
+			}
+			options.ifPresent = true
+		case "--silent", "-s", "--quiet", "-q":
+			if inline {
+				return nil, options, fmt.Errorf("unsupported npm %s value", name)
+			}
+		case "--loglevel":
+			if !inline {
+				i++
+			}
+		case "-w", "--workspace", "--prefix":
+			if !inline {
+				if i+1 >= len(args) {
+					return nil, options, fmt.Errorf("npm %s requires a directory", name)
+				}
+				i++
+				value = args[i]
+			}
+			if options.directory != "" {
+				return nil, options, fmt.Errorf("multiple npm package selections require review")
+			}
+			options.directory = value
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	return rest, options, nil
+}
+
+func packageScriptExists(directory, name string) bool {
+	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
+	if err != nil {
+		return false
+	}
+	var manifest struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	return json.Unmarshal(data, &manifest) == nil && manifest.Scripts[name] != ""
 }
