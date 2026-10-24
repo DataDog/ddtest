@@ -122,6 +122,7 @@ type coverageSummary struct {
 type runSummary struct {
 	ReplacedReporters               []string            `json:"replaced_reporters,omitempty"`
 	Role                            runRole             `json:"role"`
+	NativeResults                   string              `json:"native_results,omitempty"`
 	FrameworkNode                   string              `json:"framework_node,omitempty"`
 	NativeCommand                   string              `json:"native_command,omitempty"`
 	ProbeExecutions                 *int                `json:"probe_executions,omitempty"`
@@ -153,6 +154,12 @@ type runSummary struct {
 func (r validationRun) summary() runSummary {
 	summary := runSummary{Coverage: r.Coverage, FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), Timeout: r.Timeout, ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), NotExercised: r.NotExercised, SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
+	if r.framework == "cucumber" || r.framework == "webdriverio" {
+		summary.NativeResults = "observed"
+		if r.ResultError != "" {
+			summary.NativeResults = "unavailable"
+		}
+	}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)
 	}
@@ -199,6 +206,9 @@ type validationResult struct {
 	FocusedCommand bool `json:"focused_command,omitempty"`
 	// Leading VAR=value assignments of --command, with secret-like values masked.
 	CommandEnvironment map[string]string        `json:"command_environment,omitempty"`
+	CIPreservation     *verdict                 `json:"ci_preservation,omitempty"`
+	CIBaseline         []string                 `json:"ci_baseline,omitempty"`
+	Workflow           *WorkflowEvidence        `json:"workflow,omitempty"`
 	Configurations     []configurationResult    `json:"configurations,omitempty"`
 	ReportingCounts    *executionCounts         `json:"reporting_counts,omitempty"`
 	Scope              *onboard.ValidationScope `json:"scope,omitempty"`
@@ -293,6 +303,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		_, _ = fmt.Fprintf(output, "\nResults JSON: %s\n", validationPath(""))
 		return nil
 	}
+	if err := checkCIPreservation(repositoryRoot, &result); err != nil {
+		return err
+	}
 	if !result.CheckOnly && result.ReportingCounts == nil {
 		result.ReportingCounts = reportingExecutionCounts(result.Runs)
 	}
@@ -302,6 +315,8 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	}
 	setValidationEvidence(&result)
 	result.Summary = summarizeValidation(result)
+	result.Summary.Facts = validationFacts(result)
+	result.Summary.FinalResponse = validationHandoff(result)
 	data, err := marshalValidation(result)
 	if err != nil {
 		return fmt.Errorf("encode validation results: %w", err)
@@ -309,6 +324,12 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	path := validationPath(repositoryRoot)
 	if err := writeValidation(path, append(data, '\n')); err != nil {
 		return err
+	}
+
+	if !result.CheckOnly && result.Workflow != nil {
+		if err := saveWorkflowReceipt(repositoryRoot, result); err != nil {
+			return fmt.Errorf("save private validation receipt: %w", err)
+		}
 	}
 
 	if result.CIRuntime != nil {
@@ -506,16 +527,22 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	if supportsValidationFramework(result.Framework) {
 		result.LocalSuccess = result.LocalSuccess && hasValidationPair(*result)
 	}
-	result.Success = result.LocalSuccess
+	result.Success = result.LocalSuccess && workflowChecksPassed(result.Workflow)
 	if supportsValidationFramework(result.Framework) {
 		result.Success = result.Success && result.HTMLReportCurrent && result.Cleanup != nil && result.Cleanup.Status == "passed"
 	}
-	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
+	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
+		result.Success = false
+	}
+	result.ChecksPassed = workflowChecksPassed(result.Workflow) && result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
 	if result.Scope != nil {
 		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved) == 0
 		for _, command := range result.Scope.Commands {
 			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0 && (!result.CheckOnly || len(command.Prerequisites) == 0 || len(result.Configurations) > 0)
 		}
+	}
+	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
+		result.Success, result.ChecksPassed = false, false
 	}
 	if result.CISelection != nil {
 		result.Success = result.Success && result.CISelection.Status == "compatible"

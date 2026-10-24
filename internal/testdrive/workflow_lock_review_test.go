@@ -3,10 +3,15 @@
 package testdrive
 
 import (
-	"github.com/stretchr/testify/require"
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/stretchr/testify/require"
 )
 
 // usePrivateWorkflowLocks keeps tests from changing the shared /tmp lock folder.
@@ -67,4 +72,26 @@ func TestWorkflowLockIgnoresTMPDIR(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	_, err = acquireWorkflowLock(root)
 	require.ErrorIs(t, err, errWorkflowBusy)
+}
+
+func TestCoordinationFailureKeepsAnExecutableAgentCommand(t *testing.T) {
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(blocked, nil, 0600))
+	previous := workflowLockParent
+	workflowLockParent = blocked
+	t.Cleanup(func() { workflowLockParent = previous })
+	root := t.TempDir()
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript"}
+	for _, format := range []string{"agent", "json"} {
+		var output bytes.Buffer
+		require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Apply: true, Format: format}), "coordination_unavailable")
+		var result onboard.AgentResult
+		require.NoError(t, json.Unmarshal(output.Bytes(), &result), output.String())
+		require.Equal(t, "request_capability", result.NextAction)
+		want := append(onboard.OnboardingCommand("vitest"), "--agent")
+		if format == "json" {
+			want = append(onboard.OnboardingCommand("vitest"), "--format", "json")
+		}
+		require.Equal(t, want, result.NextCommand, "the agent retries the same structured onboarding command")
+	}
 }

@@ -73,6 +73,36 @@ func (p *SetupPlan) Diff() (string, error) {
 	return out.String(), nil
 }
 
+// DirtyFiles lists target files with uncommitted changes, outside a Git
+// checkout none.
+func (p *SetupPlan) DirtyFiles() ([]string, error) {
+	if len(p.edits) == 0 {
+		return nil, nil
+	}
+	check := exec.Command("git", "rev-parse", "--show-toplevel")
+	check.Dir = p.root
+	if _, err := check.Output(); err != nil {
+		return nil, nil
+	}
+	args := []string{"status", "--porcelain=v1", "--untracked-files=all", "--"}
+	for _, edit := range p.edits {
+		args = append(args, edit.path)
+	}
+	command := exec.Command("git", args...)
+	command.Dir = p.root
+	status, err := command.Output()
+	if err != nil {
+		return nil, err
+	}
+	var dirty []string
+	for _, line := range strings.Split(strings.TrimRight(string(status), "\n"), "\n") {
+		if len(line) > 3 {
+			dirty = append(dirty, line[3:])
+		}
+	}
+	return dirty, nil
+}
+
 func (p *SetupPlan) Apply(allowDirty bool) ([]SetupChange, error) {
 	return p.apply(allowDirty, os.Rename)
 }
@@ -87,29 +117,13 @@ func (p *SetupPlan) apply(allowDirty bool, rename func(string, string) error) ([
 			return nil, fmt.Errorf("%s changed during planning; rerun onboarding", edit.path)
 		}
 	}
-	if !allowDirty && len(p.edits) > 0 {
-		check := exec.Command("git", "rev-parse", "--show-toplevel")
-		check.Dir = p.root
-		if _, err := check.Output(); err == nil {
-			args := []string{"status", "--porcelain=v1", "--untracked-files=all", "--"}
-			for _, edit := range p.edits {
-				args = append(args, edit.path)
-			}
-			command := exec.Command("git", args...)
-			command.Dir = p.root
-			status, err := command.Output()
-			if err != nil {
-				return nil, err
-			}
-			if len(status) > 0 {
-				var dirty []string
-				for _, line := range strings.Split(strings.TrimRight(string(status), "\n"), "\n") {
-					if len(line) > 3 {
-						dirty = append(dirty, line[3:])
-					}
-				}
-				return nil, &SetupGap{"source edits", "Target files have uncommitted changes (" + strings.Join(dirty, ", ") + "). Review the preview, then commit/stash them or explicitly pass --allow-dirty with --apply --yes to preserve and extend those edits."}
-			}
+	if !allowDirty {
+		dirty, err := p.DirtyFiles()
+		if err != nil {
+			return nil, err
+		}
+		if len(dirty) > 0 {
+			return nil, &DirtyWorkflowGap{Files: dirty}
 		}
 	}
 	// Stage every replacement first, so staging failures never leave a partial apply.

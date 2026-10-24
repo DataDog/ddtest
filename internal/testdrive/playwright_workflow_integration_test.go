@@ -107,7 +107,7 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 			output, err = command(root, "git", "init", "-q")
 			require.NoError(t, err, string(output))
 			if mode == "passing" {
-				output, err = command(root, binary, "onboard", "--framework", "playwright")
+				output, err = command(root, binary, "onboard", "--instructions", "--framework", "playwright")
 				require.NoError(t, err, string(output))
 				require.Contains(t, string(output), "already appears in every detected test workflow")
 				output, err = command(root, binary, "testdrive", "--framework", "playwright", "--all", "--check-only", "--yes")

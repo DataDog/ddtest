@@ -1,6 +1,7 @@
 package onboard
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -75,6 +76,25 @@ func TestSetupDirtyRefusalListsFiles(t *testing.T) {
 	require.NoError(t, err)
 	_, err = plan.Apply(false)
 	require.ErrorContains(t, err, "uncommitted changes (.github/")
+	var dirty *DirtyWorkflowGap
+	require.ErrorAs(t, err, &dirty, "a dirty target is its own gap, not an unsupported CI edit")
+	listed, err := plan.DirtyFiles()
+	require.NoError(t, err)
+	require.Equal(t, dirty.Files, listed)
+	require.Contains(t, strings.Join(listed, " "), ".github/")
+}
+
+func TestOldCIRuntimeNamesTheUpgradeInsteadOfAManualHook(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '18.20.4'}\n      - run: npx vitest run\n")
+	_, err := PlanJavaScriptSetup(root, "vitest", "6.20.1", "datadoghq.com", ">=22")
+	var runtime *NodeRuntimeGap
+	require.ErrorAs(t, err, &runtime)
+	require.Contains(t, runtime.Location, ".github/workflows/")
+	require.Equal(t, ">=22", runtime.Requirement)
+	require.Contains(t, err.Error(), "Upgrade the CI Node version")
+	require.Contains(t, err.Error(), "--tracer-version")
+	var gap *SetupGap
+	require.False(t, errors.As(err, &gap), "an old CI runtime is not a CI hook to integrate by hand")
 }
 
 func TestSetupAnchorRefusalNamesItsJobAndLine(t *testing.T) {

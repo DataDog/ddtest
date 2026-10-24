@@ -7,6 +7,7 @@ package onboard
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -29,6 +30,29 @@ type SetupChange struct {
 type SetupGap struct{ Location, Reason string }
 
 func (g *SetupGap) Error() string { return g.Location + ": " + g.Reason }
+
+// DirtyWorkflowGap names target files with uncommitted changes; committing or
+// stashing them, or an explicit --allow-dirty, lets setup proceed.
+type DirtyWorkflowGap struct{ Files []string }
+
+func (g *DirtyWorkflowGap) Error() string {
+	return "source edits: Target files have uncommitted changes (" + strings.Join(g.Files, ", ") + "). Review the preview, then commit/stash them or explicitly pass --allow-dirty with --apply --yes to preserve and extend those edits."
+}
+
+// NodeRuntimeGap means no CI Node runtime satisfies the selected tracer. The fix
+// is a CI Node upgrade or an older tracer, not a hand-written CI hook.
+type NodeRuntimeGap struct {
+	Location, Requirement string
+	ESM                   bool
+}
+
+func (g *NodeRuntimeGap) Error() string {
+	requirement := g.Requirement
+	if g.ESM {
+		requirement += " plus ESM registration (Node >=18.19 <19 or >=20.6)"
+	}
+	return g.Location + ": no CI runtime supports tracer Node requirement " + requirement + ". Upgrade the CI Node version (actions/setup-node) to one the tracer supports, or select an older tracer with --tracer-version."
+}
 
 type setupEdit struct {
 	path          string
@@ -183,6 +207,11 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 				before := job
 				before.Steps = job.Steps[:index]
 				value, err := setupRuntimeCondition(root, workflow, before, requirement, setupNeedsESM(root, framework, workflow, job, job.Steps[index]))
+				var runtimeGap *NodeRuntimeGap
+				if errors.As(err, &runtimeGap) {
+					runtimeGap.Location = location
+					return nil, runtimeGap
+				}
 				if err != nil {
 					return nil, gap(err.Error())
 				}

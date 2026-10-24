@@ -428,11 +428,11 @@ jobs:
         include:
           - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: testdrive, shard: '1/2', tests: 'TestPublicJestTestdrive'}
           - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
-          - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)'}
+          - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)|TestPublicCoordinatorJestFactsAndFreshReport'}
           - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: configurations, shard: '1/1', tests: 'TestPublicJest(Configurations|TwoPackageConfiguration|LoaderConfiguration)'}
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: testdrive, shard: '1/2', tests: 'TestPublicJestTestdrive'}
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
-          - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)'}
+          - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)|TestPublicCoordinatorJestFactsAndFreshReport'}
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: configurations, shard: '1/1', tests: 'TestPublicJest(Configurations|TwoPackageConfiguration|LoaderConfiguration)'}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

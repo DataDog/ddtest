@@ -121,3 +121,13 @@ See [Mocha validation](running.md#mocha-testdrive-validation) for commands, cove
 Playwright testdrive accepts a simple original CLI command through `--command`, or discovers CI commands through `--all`. The supported controls and browser supervision are described in [Playwright validation](running.md#playwright-validation). No browser or project options are guessed.
 
 Cypress `testdrive --all` preserves discovered CLI and action-API selections. Use `--command` for an explicit original headless alias, including its server setup. Cloud recording/grouping is disabled locally, and TIA/application coverage validation is deferred. See [Cypress validation](running.md#cypress-validation).
+
+### Agent workflow inputs
+
+`onboard --instructions` prints manual guidance; plain JavaScript `onboard`
+returns its next action. `onboard --apply --yes` and `testdrive --agent --yes`
+coordinate local validation. `--format json` returns structured results.
+`testdrive --report` renders saved evidence after checking freshness; `--detail`
+selects the plan or a configuration. `--resume` continues preparation, never a
+cached test verdict. `--facts` supplies fingerprint-bound setup JSON outside the
+checkout and requires complete discovered scope (`--all` for testdrive).

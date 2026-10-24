@@ -20,14 +20,15 @@ import (
 
 type configurationResult struct {
 	onboard.TestCommand
-	PairedExecution        bool           `json:"paired_execution"`
-	ExecutionAttempted     bool           `json:"execution_attempted"`
-	EnvironmentDifferences []string       `json:"environment_differences,omitempty"`
-	Status                 string         `json:"status"`
-	Compatibility          verdict        `json:"compatibility"`
-	Preflight              *jestPreflight `json:"preflight,omitempty"`
-	Error                  string         `json:"error,omitempty"`
-	Preparation            []buildResult  `json:"preparation,omitempty"`
+	PairedExecution        bool               `json:"paired_execution"`
+	ExecutionAttempted     bool               `json:"execution_attempted"`
+	EnvironmentDifferences []string           `json:"environment_differences,omitempty"`
+	Status                 string             `json:"status"`
+	Compatibility          verdict            `json:"compatibility"`
+	Preflight              *jestPreflight     `json:"preflight,omitempty"`
+	Error                  string             `json:"error,omitempty"`
+	Preparation            []buildResult      `json:"preparation,omitempty"`
+	ServiceExecutions      []serviceExecution `json:"service_executions,omitempty"`
 }
 
 func setSingleConfigurationScope(root string, result *validationResult, scope onboard.ValidationScope, executionCommand string, executionEnvironment map[string]string) {
@@ -166,7 +167,13 @@ func applyScopeVerdict(result *validationResult) {
 // source, configuration, runtime or tracer edits. Each configuration has its own
 // paired comparison and feature controls, and shares only the final report pair.
 func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) error {
-	scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+	var scope onboard.ValidationScope
+	var err error
+	if t.workflowScope != nil {
+		scope = *t.workflowScope
+	} else {
+		scope, err = onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+	}
 	if err == nil && len(scope.Commands) == 0 {
 		err = fmt.Errorf("no explicit %s CI invocations discovered; review discovery and use --command for local validation", t.framework.Name())
 	}

@@ -117,7 +117,7 @@ func TestPublicMochaTestdrive(t *testing.T) {
 			output, err = command(root, "git", "init", "-q")
 			require.NoError(t, err, string(output))
 			if mode == "passing" {
-				output, err = command(root, binary, "onboard", "--framework", "mocha")
+				output, err = command(root, binary, "onboard", "--instructions", "--framework", "mocha")
 				require.NoError(t, err, string(output))
 				require.Contains(t, string(output), "Istanbul/NYC")
 				output, err = command(root, binary, "testdrive", "--framework", "mocha", "--all", "--check-only", "--yes")

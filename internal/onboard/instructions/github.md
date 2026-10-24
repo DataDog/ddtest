@@ -2,6 +2,9 @@
 
 Apply this setup to every GitHub Actions job that runs __FRAMEWORK__.
 
+[[if eq . "javascript"]]__AUTOMATIC_SETUP__
+
+[[end -]]
 ## 1. Instrument the test job
 
 Add this step after checkout and dependency installation, immediately before the first test step:

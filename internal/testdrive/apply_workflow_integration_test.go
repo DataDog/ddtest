@@ -96,7 +96,9 @@ jobs:
 	require.NoError(t, err)
 	require.Contains(t, string(after), "js-tracer-version: 6.20.1")
 	require.Contains(t, string(after), "run: npm test # keep the customer command")
-	require.Contains(t, string(output), "before ")
+	// Plain onboarding prints text; the structured result (with edit hashes) is --format json.
+	require.Contains(t, string(output), "Changed: .github/workflows/test.yml")
+	require.NotContains(t, string(output), "before_sha256")
 	changes, err := os.ReadFile(filepath.Join(root, ".gitignore"))
 	require.NoError(t, err)
 	require.Contains(t, string(changes), "/.testoptimization/")

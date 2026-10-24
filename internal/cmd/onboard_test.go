@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"io"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -67,5 +68,19 @@ func TestOnboardApplyRefusesOtherLanguagesBeforeRuntimeSetup(t *testing.T) {
 			require.NotContains(t, err.Error(), "--all")
 			require.NotContains(t, output.String(), "Usage:")
 		})
+	}
+}
+
+func TestAgentHelpOmitsUnrelatedPlannerFlags(t *testing.T) {
+	command := newOnboardCommand(func(io.Writer) error { return nil })
+	command.SetArgs([]string{"--help"})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	if err := command.ExecuteContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "--facts") || !strings.Contains(text, "--framework") || strings.Contains(text, "--ci-job-overhead") {
+		t.Fatalf("agent help is missing workflow flags or includes unrelated tuning: %s", text)
 	}
 }
