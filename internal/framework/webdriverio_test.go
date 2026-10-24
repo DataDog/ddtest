@@ -47,6 +47,32 @@ console.log(JSON.stringify({
 	require.JSONEq(t, `{"entries":["cli","worker","cli",""],"ports":[4567,4567,8080]}`, string(output))
 }
 
+func TestWebdriverIOObserverHandlesPrefixedCapabilitySelectors(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required")
+	}
+	observer, err := PrepareWebdriverIOObserver(t.TempDir())
+	require.NoError(t, err)
+	script := `const {capabilitySelectors, setCapabilitySelectors} = await import(process.argv[1]);
+const prefixed = {'wdio:specs': ['a.js'], 'wdio:exclude': ['b.js']};
+const read = [capabilitySelectors(prefixed), capabilitySelectors({specs: ['c.js']})];
+const legacy = {specs: ['c.js']}, plain9 = {}, plain10 = {};
+setCapabilitySelectors(prefixed, ['x.js'], [], 9);
+setCapabilitySelectors(legacy, ['x.js'], [], 9);
+setCapabilitySelectors(plain9, ['x.js'], [], 9);
+setCapabilitySelectors(plain10, ['x.js'], ['y.js'], 10);
+console.log(JSON.stringify({read, prefixed, legacy, plain9, plain10}));`
+	output, err := exec.CommandContext(t.Context(), "node", "--input-type=module", "-e", script, observer).CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.JSONEq(t, `{
+  "read": [[["a.js"], ["b.js"]], [["c.js"], null]],
+  "prefixed": {"wdio:specs": ["x.js"], "wdio:exclude": []},
+  "legacy": {"specs": ["x.js"], "exclude": []},
+  "plain9": {"specs": ["x.js"], "exclude": []},
+  "plain10": {"wdio:specs": ["x.js"], "wdio:exclude": ["y.js"]}
+}`, string(output))
+}
+
 func TestWebdriverIORunKeepsInheritedNodeOptionsWithTheObserver(t *testing.T) {
 	// The platform adds no override when inherited options already load dd-trace.
 	inherited := "-r dd-trace/ci/init --import dd-trace/register.js --max-old-space-size=4096"

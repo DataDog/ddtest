@@ -17,6 +17,22 @@ export function wdioEntryPoint(entry) {
   return normalized.includes('/@wdio/local-runner/') ? 'worker' : '';
 }
 
+// WDIO 9 reads a capability's selectors from specs or wdio:specs (likewise
+// exclude); WDIO 10 only from the wdio: keys.
+export function capabilitySelectors(cap) {
+  return [cap.specs || cap['wdio:specs'], cap.exclude || cap['wdio:exclude']];
+}
+
+// Rewrites selectors in the form the capability uses (prefixed on WDIO 10+).
+export function setCapabilitySelectors(cap, specs, exclude, major) {
+  if ('wdio:specs' in cap || 'wdio:exclude' in cap || major >= 10) {
+    delete cap.specs; delete cap.exclude;
+    cap['wdio:specs'] = specs; cap['wdio:exclude'] = exclude;
+  } else {
+    cap.specs = specs; cap.exclude = exclude;
+  }
+}
+
 // Entry-point resolution selects the same dependency graph as the actual CLI,
 // including nested/pnpm installations. Ordinary npm/application processes do nothing.
 export async function installObserver(cli) {
@@ -38,13 +54,13 @@ export async function installObserver(cli) {
     const localFile = file => file.startsWith('file:') ? fileURLToPath(file) : file;
     const selections = () => Array.isArray(capabilities) ? capabilities.map(cap => ({
       capability: ids.get(cap), browser: cap.browserName,
-      files: this.getSpecs(cap.specs, cap.exclude).flat(Infinity).map(localFile)
+      files: this.getSpecs(...capabilitySelectors(cap)).flat(Infinity).map(localFile)
     })) : [];
     // Multiremote (object-form capabilities) runs every instance in one session
     // over the global selection; it has no per-capability specs.
     const multiremote = !Array.isArray(capabilities) && capabilities != null && typeof capabilities === 'object';
     // A grouped spec ([['setup.js', 'case.js']]) runs its files in one worker.
-    const grouped = () => (multiremote ? [this.getSpecs()] : Array.isArray(capabilities) ? capabilities.map(cap => this.getSpecs(cap.specs, cap.exclude)) : [])
+    const grouped = () => (multiremote ? [this.getSpecs()] : Array.isArray(capabilities) ? capabilities.map(cap => this.getSpecs(...capabilitySelectors(cap))) : [])
       .some(specs => specs.some(Array.isArray));
     const cloudGrid = [];
     // Connection options may also be set per capability (or per multiremote
@@ -57,10 +73,11 @@ export async function installObserver(cli) {
     if ((config.services || []).some(service => cloudNames.test(String(Array.isArray(service) ? service[0] : service)))) cloudGrid.push('cloud provider service');
     const caps = Array.isArray(capabilities) ? capabilities : Object.values(capabilities || {}).map(value => value.capabilities || value);
     if (caps.some(cap => Object.keys(cap).some(key => /^(?:sauce|bstack|browserstack|lt|tb):/i.test(key)))) cloudGrid.push('cloud provider capability');
+    const version = JSON.parse(fs.readFileSync(path.join(path.dirname(cli), '../package.json'), 'utf8')).version;
     const describe = () => ({
       cloud_grid: cloudGrid,
       node: process.version,
-      version: JSON.parse(fs.readFileSync(path.join(path.dirname(cli), '../package.json'), 'utf8')).version,
+      version,
       runner, framework: config.framework,
       files: multiremote ? [...new Set(this.getSpecs().flat(Infinity).map(localFile))] : [...new Set(selections().flatMap(selection => selection.files))],
       grouped_specs: grouped(),
@@ -81,11 +98,12 @@ export async function installObserver(cli) {
     const files = process.env.DDTEST_WDIO_PROBE ? [process.env.DDTEST_WDIO_PROBE]
       : process.env.DDTEST_WDIO_FILES ? JSON.parse(process.env.DDTEST_WDIO_FILES) : null;
     if (files) {
+      const major = Number.parseInt(version, 10);
       // A planned batch keeps each capability's own selection: each one runs only
       // the assigned files it would select itself. Probes replace every selection.
       const real = file => { try { return fs.realpathSync(localFile(file)); } catch { return localFile(file); } };
       const own = !process.env.DDTEST_WDIO_PROBE && Array.isArray(capabilities)
-        ? capabilities.map(cap => new Set(this.getSpecs(cap.specs, cap.exclude).flat(Infinity).map(real)))
+        ? capabilities.map(cap => new Set(this.getSpecs(...capabilitySelectors(cap)).flat(Infinity).map(real)))
         : null;
       config.specs = config.spec = files;
       config.exclude = []; config.suite = [];
@@ -93,13 +111,14 @@ export async function installObserver(cli) {
         // The spec list overrides capability specs, so drop the files a
         // capability would not select through its exclude list instead.
         const kept = capabilities.filter((cap, i) => {
-          cap.specs = files; cap.exclude = files.filter(file => !own[i].has(real(file)));
-          return cap.exclude.length < files.length;
+          const exclude = files.filter(file => !own[i].has(real(file)));
+          setCapabilitySelectors(cap, files, exclude, major);
+          return exclude.length < files.length;
         });
         if (kept.length === 0) throw new Error('No WDIO capability selects the assigned spec files');
         capabilities.splice(0, capabilities.length, ...kept);
       } else if (Array.isArray(capabilities)) for (const cap of capabilities) {
-        cap.specs = files; cap.exclude = [];
+        setCapabilitySelectors(cap, files, [], major);
       }
       // The batch is already this runner's share; native sharding would split it again.
       if (!process.env.DDTEST_WDIO_PROBE) config.shard = {current: 1, total: 1};
