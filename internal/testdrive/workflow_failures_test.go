@@ -167,3 +167,25 @@ func TestFocusedRunKeepsPreparationReceiptsOnItsConfiguration(t *testing.T) {
 	require.Equal(t, []buildResult{receipt}, result.Configurations[0].Preparation)
 	require.Empty(t, result.Configurations[1].Preparation, "an uncredited configuration did not run this preparation")
 }
+
+func TestFocusedCucumberRunIsCreditedThroughItsRetainedPlan(t *testing.T) {
+	root := t.TempDir()
+	for name, value := range map[string]string{
+		"package.json":             `{"scripts":{"build":"tsc -p .","bdd":"cucumber-js"},"devDependencies":{"@cucumber/cucumber":"10.9.0","typescript":"5.9.3"}}`,
+		".github/workflows/ci.yml": "jobs:\n  bdd:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm run build\n      - run: npm run bdd\n",
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(value), 0600))
+	}
+	scope, err := onboard.DiscoverValidationScope(root, "cucumber")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.NotEmpty(t, scope.Commands[0].Prerequisites, "the CI build is the test's prerequisite")
+	plan, err := onboard.CucumberExecutionCommand(root, "npm run bdd")
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Prerequisites, "the focused plan retains the CI build")
+	drive := &Testdrive{repositoryRoot: root, framework: framework.NewCucumber(platform.NewJavaScript()), selectedPlan: plan, command: "npm", args: []string{"run", "bdd"}}
+	result := completeValidationFixture("cucumber")
+	drive.setConfigurationScope(&result, scope)
+	require.Equal(t, "passed", result.Configurations[0].Status, "the focused run executed the CI build with the test")
+}

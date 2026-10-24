@@ -96,7 +96,9 @@ fail_group() {
   printf '%s\n' '{"code":"unowned_process_group","reason":"child group is shared with the supervisor or cannot be verified"}' >> "$DDTEST_PROCESS_ERRORS"
   exit ${unsupportedExit}
 }
-group=$$; keepers=
+# Keepers of every owned group share one registry, so launches in a detached
+# group reuse its keeper and keepers never count one another as live.
+group=$$; keepers="\${DDTEST_PROCESS_OWNER%/*}/group.$group"
 if [ "$keeper_mode" = inherited ]; then
   group=$("$ps_tool" -o pgid= -p "$$") || fail_group
   supervisor_group=$("$ps_tool" -o pgid= -p "$DDTEST_PROCESS_SUPERVISOR_PID") || fail_group

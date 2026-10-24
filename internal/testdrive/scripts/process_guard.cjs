@@ -8,7 +8,7 @@ const idlePollMilliseconds = 150
 // The launcher execs the original command, preserving its PID, parent, pipes
 // and exit behavior. This live member anchors that same detached group.
 const group = Number(process.argv[2])
-// Keepers of an inherited group record themselves so launchers reuse one and
+// Keepers record themselves per group so launchers reuse one and
 // keepers never count one another as live members.
 const keepers = process.argv[4]
 const self = keepers && path.join(keepers, String(process.pid))

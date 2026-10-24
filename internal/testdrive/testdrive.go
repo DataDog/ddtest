@@ -644,6 +644,11 @@ func (t *Testdrive) setConfigurationScope(result *validationResult, scope onboar
 		setSelectedConfigurationScope(result, scope, []onboard.TestCommand{t.cypressSelected}, t.configurationEnvironment)
 		return
 	}
+	if t.framework.Name() == "cucumber" && len(t.selectedPlan.Prerequisites) > 0 {
+		// The focused plan ran the CI preparation its command text drops.
+		setSelectedConfigurationScope(result, scope, []onboard.TestCommand{t.selectedPlan}, t.configurationEnvironment)
+		return
+	}
 	command := t.scopeCommand
 	if command == "" {
 		command = shellquote.Join(append([]string{t.command}, t.args...)...)

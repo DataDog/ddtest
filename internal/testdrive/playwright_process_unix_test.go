@@ -501,3 +501,38 @@ func TestInheritedGroupChildrenShareOneKeeper(t *testing.T) {
 	require.NoError(t, command.Wait())
 	require.Eventually(t, func() bool { return clients() == 0 }, 5*time.Second, 50*time.Millisecond, "keepers must not keep one another alive")
 }
+
+func TestDetachedGroupKeeperIsSharedWithItsInheritedChildren(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	clients := func() int {
+		count := 0
+		owner.clients.Range(func(_, _ any) bool { count++; return true })
+		return count
+	}
+	// A detached Node child launches an ordinary child in its own new group,
+	// then both exit while the parent keeps running until stdin closes.
+	script := `const cp=require('node:child_process');const child="require('node:child_process').spawn('/bin/sleep',['0.01'],{stdio:'ignore'}).on('close',()=>process.exit(0))";cp.spawn(process.execPath,['-e',child],{detached:true,stdio:'ignore'}).on('close',()=>{console.log('done');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))})`
+	command := exec.CommandContext(t.Context(), node, "-e", script)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	stdin, err := command.StdinPipe()
+	require.NoError(t, err)
+	stdout, err := command.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, command.Start())
+	line := make([]byte, 5)
+	_, err = io.ReadFull(stdout, line)
+	require.NoError(t, err)
+	require.Equal(t, "done\n", string(line))
+	// Only the parent remains: the detached group's keeper and its inherited
+	// children's launches share one registry, so no keeper outlives the group.
+	require.Eventually(t, func() bool { return clients() <= 1 }, 5*time.Second, 50*time.Millisecond, "keepers must not keep one another alive")
+	require.NoError(t, stdin.Close())
+	require.NoError(t, command.Wait())
+}
