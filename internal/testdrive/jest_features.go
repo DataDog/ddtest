@@ -374,11 +374,17 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	passed, failed, retries := 0, 0, 0
 	quarantined, disabled, attemptToFix, skipped := false, false, false, false
 	omittedPlaywrightIdentity := false
+	// Test-level skipping (Cypress) reports the skipped test itself.
+	skippedTestEvents := 0
 	for _, event := range run.Facts.Events {
 		tags := event.Tags
 
 		if isSkippedJestProbe(event, identity.Module, identity.Suite, identity.SourceFile) {
 			skipped = true
+		}
+		if isSkippedProbeTest(event, identity) {
+			skipped = true
+			skippedTestEvents++
 		}
 		if tags["test.suite"] != identity.Suite {
 			continue
@@ -429,7 +435,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	case "early-flake-detection":
 		success = passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
 	case "skipping":
-		success = skipped && executedTests(run) == 0 && run.Facts.TestEventCount == 0
+		success = skipped && executedTests(run) == 0 && passed+failed == 0 && run.Facts.TestEventCount == skippedTestEvents
 	case "quarantine":
 		// Quarantine changes the command outcome, not necessarily the native
 		// assertion status. Some Jest versions retain the failing assertion.
@@ -457,7 +463,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		result.Reason = map[string]string{
 			"auto-retries":          "The fail-once probe failed, retried with auto_test_retry evidence, and recovered to a successful command.",
 			"early-flake-detection": "The new passing probe ran repeatedly with early_flake_detection retry evidence.",
-			"skipping":              "The normally failing probe suite was skipped by ITR; no test body executed and the command succeeded.",
+			"skipping":              "The normally failing probe was skipped by ITR; no test body executed and the command succeeded.",
 			"quarantine":            "The normally failing probe still reported its failure and quarantine tag, while the command succeeded.",
 			"disabled":              "The normally failing probe was reported disabled/skipped, with no executed test body and a successful command.",
 			"attempt-to-fix":        "The marked passing probe ran repeatedly with attempt_to_fix retry evidence and a successful command.",

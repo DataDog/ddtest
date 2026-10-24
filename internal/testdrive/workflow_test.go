@@ -72,13 +72,11 @@ func TestSharedWorkflowAcrossFrameworksPreservesAssertionsAndPackagingFailures(t
 				require.Len(t, report.Workflow.Checks, 5)
 				if runner.Name() == "playwright" || runner.Name() == "webdriverio" {
 					require.Contains(t, report.Workflow.Plan.UnsupportedFeatures, "skipping")
-					require.Empty(t, report.Workflow.Plan.DeferredFeatures)
 					require.Len(t, report.Workflow.Plan.Features, 5)
 				}
 				if runner.Name() == "cypress" {
-					require.Contains(t, report.Workflow.Plan.DeferredFeatures, "skipping")
 					require.Empty(t, report.Workflow.Plan.UnsupportedFeatures)
-					require.Len(t, report.Workflow.Plan.Features, 5)
+					require.Len(t, report.Workflow.Plan.Features, 6)
 				}
 				var result onboard.AgentResult
 				require.NoError(t, json.Unmarshal(output.Bytes(), &result))

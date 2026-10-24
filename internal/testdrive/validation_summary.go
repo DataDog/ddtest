@@ -199,9 +199,6 @@ func validationHandoff(result validationResult) string {
 		fmt.Fprintf(&block, " %s not supported.", strings.Join(unsupported, ", "))
 	}
 	block.WriteByte('\n')
-	if result.Framework == "cypress" {
-		block.WriteString(cypressTIADeferredReason + "\n")
-	}
 	coverageRuns, coveredRuns, coveredTests, totalTests := 0, 0, 0, 0
 	var levels []string
 	for _, run := range result.Runs {
@@ -304,7 +301,7 @@ func validationHandoff(result validationResult) string {
 
 func validationFeatureCounts(framework string, features []featureResult) (passed, total int, unsupported []string) {
 	for _, feature := range features {
-		if feature.Name == "all" || (skippingPolicy(framework).Status == "deferred" && feature.Name == "skipping" && featureSatisfied(framework, feature)) {
+		if feature.Name == "all" {
 			continue
 		}
 		if feature.Status == "not supported" && featureSatisfied(framework, feature) {
@@ -368,9 +365,6 @@ func validationFacts(result validationResult) []string {
 			text = append(text[:240], '…')
 		}
 		facts = append(facts, string(text))
-	}
-	if result.Framework == "cypress" {
-		facts = append(facts, cypressTIADeferredReason)
 	}
 	passed, total, _ := validationFeatureCounts(result.Framework, result.Features)
 	if total == 0 {

@@ -576,7 +576,8 @@ make the checks incomplete. Run from the package directory; use `--command` only
 after reviewing required setup.
 
 `--tracer-version` selects a fallback only: an existing project tracer takes
-precedence. npm metadata uses the customer's configured registry, proxy and auth.
+precedence. Without it, testdrive falls back to the release that every
+instrumented CI job pins, and to the latest release when CI selections differ. npm metadata uses the customer's configured registry, proxy and auth.
 Runtime selectors and version files resolve to a timestamped exact release from
 Node metadata. CI may use a different cached patch when setup-node does not set
 `check-latest`; static checks do not prove which binary ran in CI.

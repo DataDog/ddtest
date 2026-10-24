@@ -59,11 +59,16 @@ func TestPublicCypressTestdrive(t *testing.T) {
 				t.Setenv("DDTEST_CYPRESS_PID_LOG", filepath.Join(t.TempDir(), "pids.jsonl"))
 				write("cypress.config.cjs", `module.exports=require('cypress').defineConfig({video:false,e2e:{supportFile:false,setupNodeEvents(on){require('node:fs').appendFileSync(process.env.DDTEST_CYPRESS_PID_LOG,JSON.stringify([process.pid,process.ppid])+'\n');on('after:run',()=>console.log('customer after:run'))}}})`)
 			}
+			// The tested page exposes Istanbul-shaped window.__coverage__ for the
+			// application file, as an instrumented build would.
+			write("src/index.html", `<script src="app.js"></script>`)
+			write("src/app.js", `window.__coverage__={'src/app.js':{path:'src/app.js',statementMap:{0:{start:{line:1,column:0},end:{line:1,column:1}}},fnMap:{},branchMap:{},s:{0:1},f:{},b:{}}}`)
+			visit := "cy.visit('src/index.html');"
 			want := "1"
 			if mode == "existing failure" {
 				want = "2"
 			}
-			write("cypress/e2e/one.cy.js", `describe('browser',()=>it('works',()=>cy.wrap(1).should('eq',`+want+`)))`)
+			write("cypress/e2e/one.cy.js", `describe('browser',()=>it('works',()=>{`+visit+`cy.wrap(1).should('eq',`+want+`)}))`)
 			write(".github/workflows/ci.yml", `jobs:
   browser:
     steps:
@@ -76,7 +81,7 @@ func TestPublicCypressTestdrive(t *testing.T) {
 `)
 			if mode == "native retries" {
 				write("cypress.config.cjs", `module.exports=require('cypress').defineConfig({video:false,retries:{runMode:2},e2e:{supportFile:false,setupNodeEvents(on){let count=0;on('task',{attempt:()=>++count});on('after:run',()=>console.log('customer after:run'))}}})`)
-				write("cypress/e2e/one.cy.js", `describe('browser',()=>{it('retries once',()=>cy.task('attempt').should('satisfy',n=>n%2===0));it('stable',()=>cy.wrap(1).should('eq',1))})`)
+				write("cypress/e2e/one.cy.js", `describe('browser',()=>{it('retries once',()=>{`+visit+`cy.task('attempt').should('satisfy',n=>n%2===0)});it('stable',()=>{`+visit+`cy.wrap(1).should('eq',1)})})`)
 			}
 			if mode == "type retries" {
 				write("cypress.config.cjs", strings.Replace(config, "e2e:{", "e2e:{retries:{runMode:2},", 1))
@@ -120,7 +125,7 @@ func TestPublicCypressTestdrive(t *testing.T) {
 `, address))
 			}
 			if mode == "action API" {
-				write("cypress/e2e/one.cy.js", `it('action inputs',()=>{expect(Cypress.config('viewportWidth')).to.equal(800);expect(Cypress.env('feature')).to.equal(true);expect(Cypress.env('number')).to.equal(7);cy.wrap(1).should('eq',1)})`)
+				write("cypress/e2e/one.cy.js", `it('action inputs',()=>{`+visit+`expect(Cypress.config('viewportWidth')).to.equal(800);expect(Cypress.env('feature')).to.equal(true);expect(Cypress.env('number')).to.equal(7);cy.wrap(1).should('eq',1)})`)
 			}
 			if mode == "action custom CLI" {
 				write("build.cjs", `require('node:fs').writeFileSync('generated.json',JSON.stringify({ready:true}))`)
@@ -136,7 +141,7 @@ func TestPublicCypressTestdrive(t *testing.T) {
 			if mode == "subpackage" {
 				projectRoot = filepath.Join(root, "frontend")
 				require.NoError(t, os.MkdirAll(projectRoot, 0700))
-				for _, name := range []string{"node_modules", "package.json", "cypress.config.cjs", "cypress"} {
+				for _, name := range []string{"node_modules", "package.json", "cypress.config.cjs", "cypress", "src"} {
 					require.NoError(t, os.Rename(filepath.Join(root, name), filepath.Join(projectRoot, name)))
 				}
 				write("package.json", `{"scripts":{"test":"npm --prefix frontend test"}}`)
@@ -163,7 +168,7 @@ func TestPublicCypressTestdrive(t *testing.T) {
 				require.Empty(t, readValidationReport(t, root).Runs, "unsupported selection must start no Cypress runs")
 				output, err = command(root, binary, "onboard", "--instructions", "--framework", "cypress")
 				require.NoError(t, err, string(output))
-				require.Contains(t, string(output), "deferred")
+				require.Contains(t, string(output), "window.__coverage__")
 				output, err = command(root, binary, "testdrive", "--framework", "cypress", "--all", "--check-only", "--yes")
 				require.NoError(t, err, string(output))
 				check := readValidationReport(t, root)
@@ -254,11 +259,7 @@ func TestPublicCypressTestdrive(t *testing.T) {
 			require.Equal(t, "compatible", report.Compatibility.Status)
 			require.Len(t, report.Features, 6)
 			for _, feature := range report.Features {
-				if feature.Name == "skipping" {
-					require.Equal(t, "deferred", feature.Status)
-				} else {
-					require.Equal(t, "passed", feature.Status, feature)
-				}
+				require.Equal(t, "passed", feature.Status, feature)
 			}
 			if mode == "action API" || mode == "action custom CLI" || mode == "action retries" {
 				require.Len(t, report.Configurations, 1)
@@ -277,7 +278,6 @@ func TestPublicCypressTestdrive(t *testing.T) {
 			require.True(t, report.HTMLReportCurrent)
 			html, err := os.ReadFile(htmlReportPath(root))
 			require.NoError(t, err)
-			require.Contains(t, string(html), cypressTIADeferredReason)
 			require.Contains(t, string(html), "customer after:run")
 			require.NotContains(t, string(html), "fake-secret")
 			if mode == "action API" || mode == "action custom CLI" || mode == "action retries" {
@@ -293,9 +293,15 @@ func TestPublicCypressTestdrive(t *testing.T) {
 			raw, err := os.ReadFile(filepath.Join(root, ".testoptimization", "testdrive.json"))
 			require.NoError(t, err)
 			require.NotContains(t, string(raw), "fake-secret")
+			coverageRuns := 0
 			for _, run := range report.Runs {
-				require.Nil(t, run.Coverage, "deferred application coverage must not be presented as invalid")
+				if run.Coverage != nil {
+					coverageRuns++
+					require.Equal(t, "observed", run.Coverage.Status, run.Coverage.Reason)
+					require.Equal(t, run.Coverage.TotalTests, run.Coverage.CoveredTests)
+				}
 			}
+			require.Positive(t, coverageRuns, "real-suite application coverage must be checked")
 			entries, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
 			require.NoError(t, err)
 			require.Len(t, entries, 2)

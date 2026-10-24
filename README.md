@@ -35,7 +35,7 @@ source preservation, report exclusions and cleanup. Finish with
 execution behavior; `onboard --instructions` prints manual guidance. See
 [agent onboarding](docs/onboarding.md#agent-coordination-and-fresh-results).
 
-For Jest, Vitest, Mocha, Playwright and Cypress, testdrive compares the original test suite without and with instrumentation, then validates supported advanced features using temporary probes. Playwright reports TIA skipping and per-test coverage as unsupported; Cypress TIA/application-coverage validation is deferred. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
+For Jest, Vitest, Mocha, Playwright and Cypress, testdrive compares the original test suite without and with instrumentation, then validates supported advanced features using temporary probes. Playwright reports TIA skipping and per-test coverage as unsupported. Cypress TIA requires application coverage from the tested page (Istanbul `window.__coverage__`) and a test-level skip of the probe. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
 
 No Datadog account or Agent is needed. Testdrive links to an HTML report under
 `.testoptimization/report.html` with a compact `.testoptimization/testdrive.json`. Use `--yes` after reviewing the preview in
@@ -46,8 +46,9 @@ For Jest, start with [testdrive configuration checks](docs/running.md#testdrive-
 
 For repositories with several Jest configurations, use `ddtest testdrive --framework jest --all --yes` to validate discovered CI commands and their prerequisites. Unknown setup stays explicitly unvalidated; `--command` selects a focused command. See [configuration validation](docs/running.md#validate-all-discovered-jest-configurations).
 
-Testdrive reuses a detected project tracer; otherwise it installs the latest
-release (`--tracer-version` selects a fallback release or `git:<ref>`).
+Testdrive reuses a detected project tracer; otherwise it installs the release
+every instrumented CI job pins, or the latest release (`--tracer-version`
+selects a fallback release or `git:<ref>`).
 JavaScript/Python installs are isolated. Ruby runs `bundle add datadog-ci`,
 updating the project's Gemfile and lockfile.
 
