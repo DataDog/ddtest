@@ -49,7 +49,7 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "lifecycle", "nested alias", "existing failure", "no application coverage", "package directory", "custom support coverage", "support library", "support helper", "feature application", "thresholds", "native retries", "profile retries", "CLI selectors", "profile selectors", "catch-all", "parallel", "outlines", "pending", "pending non-strict", "undefined", "undefined non-strict", "ambiguous", "ESM", "CJS ESM import", "scoped options", "c8", "timeout", "recovery", "child process", "profile run options", "CLI run options", "probe lifecycle"} {
+	for _, mode := range cucumberWorkflowScenarios.selected(t) {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -420,4 +420,10 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Relative durations from CI; see integrationScenarios.
+var cucumberWorkflowScenarios = integrationScenarios{
+	names:   []string{"passing", "lifecycle", "nested alias", "existing failure", "no application coverage", "package directory", "custom support coverage", "support library", "support helper", "feature application", "thresholds", "native retries", "profile retries", "CLI selectors", "profile selectors", "catch-all", "parallel", "outlines", "pending", "pending non-strict", "undefined", "undefined non-strict", "ambiguous", "ESM", "CJS ESM import", "scoped options", "c8", "timeout", "recovery", "child process", "profile run options", "CLI run options", "probe lifecycle"},
+	weights: map[string]int{"recovery": 26, "ESM": 20, "CJS ESM import": 18, "parallel": 15, "c8": 14, "child process": 13, "timeout": 6},
 }

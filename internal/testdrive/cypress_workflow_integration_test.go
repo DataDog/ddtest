@@ -42,7 +42,7 @@ func TestPublicCypressTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"recovery", "passing", "existing failure", "action API", "action custom CLI", "native retries", "type retries", "CLI retries", "action retries", "TypeScript", "ESM", "subpackage"} {
+	for _, mode := range cypressWorkflowScenarios.selected(t) {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -324,4 +324,10 @@ func TestCypressTypeScriptWrapperTranspilesToCommonJS(t *testing.T) {
  assert.equal(typeof require(wrapper).default.e2e.setupNodeEvents,'function');`
 	output, err := exec.CommandContext(t.Context(), "node", "-e", script, root, modules).CombinedOutput()
 	require.NoError(t, err, string(output))
+}
+
+// Relative durations from CI; see integrationScenarios.
+var cypressWorkflowScenarios = integrationScenarios{
+	names:   []string{"recovery", "passing", "existing failure", "action API", "action custom CLI", "native retries", "type retries", "CLI retries", "action retries", "TypeScript", "ESM", "subpackage"},
+	weights: map[string]int{"recovery": 23},
 }

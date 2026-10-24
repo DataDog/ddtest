@@ -418,19 +418,22 @@ jobs:
           args: --timeout=5m
 
   jest-testdrive-workflow:
+    name: jest-testdrive-workflow (${{ matrix.node }}, ${{ matrix.jest }}, ${{ matrix.group }} ${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        # Per runtime: TestPublicJestTestdrive over two shards, plus two groups of
+        # configuration tests of similar length; together they are the full set.
         include:
-          - node: '24'
-            jest: '30.5.1'
-            tracer: '6.15.0'
-            typescript: ''
-          - node: '20'
-            jest: '29.7.0'
-            tracer: '5.132.0'
-            typescript: 'ts-jest@29 typescript@5 @types/jest@29'
+          - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: testdrive, shard: '1/2', tests: 'TestPublicJestTestdrive'}
+          - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
+          - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)'}
+          - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: configurations, shard: '1/1', tests: 'TestPublicJest(Configurations|TwoPackageConfiguration|LoaderConfiguration)'}
+          - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: testdrive, shard: '1/2', tests: 'TestPublicJestTestdrive'}
+          - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
+          - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)'}
+          - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: configurations, shard: '1/1', tests: 'TestPublicJest(Configurations|TwoPackageConfiguration|LoaderConfiguration)'}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -444,7 +447,8 @@ jobs:
       - name: Validate paired outcomes, all feature probes and cleanup
         env:
           DDTEST_JEST_NODE_MODULES: ${{ runner.temp }}/jest-testdrive/node_modules
-        run: go test -v ./internal/testdrive -run '^TestPublicJest(Testdrive|Configurations|PackageConfiguration|TwoPackageConfiguration|LoaderConfiguration|ForwardedConfiguration)$' -count=1 -timeout=20m
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
+        run: go test -v ./internal/testdrive -run '^(${{ matrix.tests }})$' -count=1 -timeout=12m
 
   windows-probe-diagnostics:
     runs-on: windows-latest
@@ -521,7 +525,11 @@ jobs:
 
   testdrive-mocha-workflow:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1/2', '2/2']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -535,11 +543,16 @@ jobs:
       - name: Validate CLI, programmatic runner, existing failures and coverage gate
         env:
           DDTEST_MOCHA_NODE_MODULES: ${{ runner.temp }}/mocha-testdrive/node_modules
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
         run: go test -v ./internal/testdrive -run '^(TestPublicMochaTestdrive|TestMochaProbeCoverageThresholdControls|TestMochaDelayedCommandUsesSharedTimeout|TestMochaPreflightResolvesSelectedPackage)$' -count=1 -timeout=10m
 
   testdrive-playwright-workflow:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1/2', '2/2']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -559,11 +572,17 @@ jobs:
       - name: Validate browser execution, existing failures and supervised cleanup
         env:
           DDTEST_PLAYWRIGHT_NODE_MODULES: ${{ runner.temp }}/playwright-testdrive/node_modules
-        run: go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects)$' -count=1 -timeout=18m
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
+        run: go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects)$' -count=1 -timeout=12m
 
   testdrive-cypress-workflow:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Scenarios are split by integration_shard_test.go; each runs exactly once.
+        shard: ['1/5', '2/5', '3/5', '4/5', '5/5']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -580,15 +599,26 @@ jobs:
         env:
           DDTEST_CYPRESS_NODE_MODULES: ${{ runner.temp }}/cypress-testdrive/node_modules
           CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
-        run: xvfb-run -a go test -v ./internal/testdrive -run '^(TestPublicCypressTestdrive|TestCypressTypeScriptWrapperTranspilesToCommonJS)$' -failfast -count=1 -timeout=30m
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
+        run: xvfb-run -a go test -v ./internal/testdrive -run '^(TestPublicCypressTestdrive|TestCypressTypeScriptWrapperTranspilesToCommonJS)$' -failfast -count=1 -timeout=12m
 
   testdrive-cucumber-workflow:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        cucumber: ["8.11.1", "10.9.0", "13.3.0"]
+        # 10.9.0 and 13.3.0 run every scenario across shards; 8.11.1 the floor check.
+        include:
+          - {cucumber: '8.11.1', shard: '1/1'}
+          - {cucumber: '10.9.0', shard: '1/4'}
+          - {cucumber: '10.9.0', shard: '2/4'}
+          - {cucumber: '10.9.0', shard: '3/4'}
+          - {cucumber: '10.9.0', shard: '4/4'}
+          - {cucumber: '13.3.0', shard: '1/4'}
+          - {cucumber: '13.3.0', shard: '2/4'}
+          - {cucumber: '13.3.0', shard: '3/4'}
+          - {cucumber: '13.3.0', shard: '4/4'}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -602,7 +632,8 @@ jobs:
       - name: Validate native scenarios, matching failures and source coverage
         env:
           DDTEST_CUCUMBER_NODE_MODULES: ${{ runner.temp }}/cucumber-testdrive/node_modules
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
         run: |
           test_filter='^TestPublicCucumberTestdrive$'
           if [ '${{ matrix.cucumber }}' = '8.11.1' ]; then test_filter='^TestPublicCucumberTestdrive/passing$'; fi
-          go test -v ./internal/testdrive -run "$test_filter" -failfast -count=1 -timeout=22m
+          go test -v ./internal/testdrive -run "$test_filter" -failfast -count=1 -timeout=12m
