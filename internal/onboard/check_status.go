@@ -17,6 +17,7 @@ const (
 	CodeExcludedRuntime              string = "excluded_runtime"
 	CodeUnverifiedExclusion          string = "unverified_exclusion"
 	CodeUnverifiedInitialization     string = "unverified_initialization"
+	CodeMissingInitialization        string = "missing_initialization"
 	CodeRuntimeUnknown               string = "runtime_unknown"
 	CodeNodeResolution               string = "node_resolution_failed"
 	CodeTracerMetadata               string = "tracer_metadata_failed"

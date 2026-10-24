@@ -71,23 +71,7 @@ var shellVariable = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
 // Without an explicit shell, GitHub runs Windows steps with PowerShell. Only a
 // statically known Windows label changes the default; Bash is used elsewhere.
 func runnerDefaultShell(job runtimeJob, row map[string]any) string {
-	var labels []string
-	var collect func(any)
-	collect = func(value any) {
-		switch value := value.(type) {
-		case string:
-			labels = append(labels, value)
-		case []any:
-			for _, item := range value {
-				collect(item)
-			}
-		case map[string]any:
-			collect(value["labels"])
-			collect(value["group"])
-		}
-	}
-	collect(job.RunsOn)
-	for _, label := range labels {
+	for _, label := range runnerLabels(job.RunsOn) {
 		resolved, err := interpolateMatrix(label, row)
 		if err == nil && strings.Contains(strings.ToLower(resolved), "windows") {
 			return "pwsh"
@@ -339,4 +323,25 @@ func nvmRuntime(command string) string {
 		return node
 	}
 	return ""
+}
+
+// runnerLabels lists runs-on labels in scalar, list and {group, labels} forms.
+func runnerLabels(runsOn any) []string {
+	var labels []string
+	var collect func(any)
+	collect = func(value any) {
+		switch value := value.(type) {
+		case string:
+			labels = append(labels, value)
+		case []any:
+			for _, item := range value {
+				collect(item)
+			}
+		case map[string]any:
+			collect(value["labels"])
+			collect(value["group"])
+		}
+	}
+	collect(runsOn)
+	return labels
 }

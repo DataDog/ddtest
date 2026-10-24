@@ -3,6 +3,8 @@ package testdrive
 import (
 	"slices"
 	"strings"
+
+	"github.com/DataDog/ddtest/internal/onboard"
 )
 
 // A policy describes what must be exercised, never an assumed passing result.
@@ -137,6 +139,18 @@ func ValidationFrameworkNames() string {
 	var names []string
 	for name, policy := range frameworkFeaturePolicies {
 		if policy.Paired {
+			names = append(names, displayName(name))
+		}
+	}
+	slices.Sort(names)
+	return strings.Join(names, ", ")
+}
+
+// AutomaticSetupFrameworkNames lists validated frameworks that --apply edits.
+func AutomaticSetupFrameworkNames() string {
+	var names []string
+	for name, policy := range frameworkFeaturePolicies {
+		if policy.Paired && onboard.SupportsAutomaticSetup(name) {
 			names = append(names, displayName(name))
 		}
 	}
