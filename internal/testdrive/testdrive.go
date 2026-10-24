@@ -60,6 +60,7 @@ type Testdrive struct {
 	cucumberExecutable       string
 	cypress                  *onboard.CypressCommand
 	cypressCommand           string
+	cypressCodeCoverage      string // Installed @cypress/code-coverage version, if any.
 	playwrightGuard          bool
 	playwrightProject        string
 	configurationEnvironment map[string]string
@@ -94,6 +95,7 @@ type Testdrive struct {
 	tracerLabel                           string
 	platform                              platform.Platform
 	tracerVersion                         string
+	tracerVersionDefaulted                bool // --tracer-version was not given.
 	projectTracer                         string
 	session                               *Session
 	installCommand                        string
@@ -113,8 +115,11 @@ type PrepareOptions struct {
 	AllowReviewedBuilds bool
 	Timeout             time.Duration
 	TracerVersion       string
-	CheckOnly           bool
-	All                 bool
+	// DefaultTracerVersion marks TracerVersion as the flag default, which a
+	// version pinned by every instrumented CI job replaces.
+	DefaultTracerVersion bool
+	CheckOnly            bool
+	All                  bool
 }
 
 func checkTemporaryStorage() error {
@@ -370,7 +375,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 
-	drive := &Testdrive{selectedPlan: selectedPlan, commandAssignments: commandAssignments, probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
+	drive := &Testdrive{selectedPlan: selectedPlan, commandAssignments: commandAssignments, probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerVersionDefaulted: configuration.DefaultTracerVersion, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
@@ -466,7 +471,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 			}
 		}
 		_, _ = fmt.Fprintf(output, "  - discover a temporary probe with the original framework configuration; check %s per selected project\n", strings.Join(required, ", "))
-		if policy := skippingPolicy(t.framework.Name()); policy.Status == "not supported" || policy.Status == "deferred" {
+		if policy := skippingPolicy(t.framework.Name()); policy.Status == "not supported" {
 			_, _ = fmt.Fprintln(output, "  - TIA skipping/per-test coverage: "+policy.Status+"; "+policy.Reason)
 		}
 		_, _ = fmt.Fprintln(output, "  - keep .testoptimization/testdrive.json and .testoptimization/report.html; remove owned probes, temporary tracer and run files")
@@ -740,6 +745,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			check = onboard.CheckCIRuntimes(ctx, ciRoot, t.framework.Name())
 		}
 		result.CIRuntime = &check
+		t.defaultToCITracer(check)
 		if t.preflight != nil {
 			if err := t.preflight(ctx, output, &result); err != nil {
 				return result, err
@@ -956,12 +962,7 @@ func writeRunFindings(output io.Writer, findings intake.Facts, trafficRetained b
 		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. %s\n", strings.Join(findings.ConfigurationErrors, ", "), inspectionHint(trafficRetained, "Inspect the captured traffic and test output."))
 	}
 	count := len(findings.ConfigurationErrors)
-	coverageDeferred := false
 	for _, finding := range cards {
-		if finding.PolicyStatus == "deferred" {
-			coverageDeferred = true
-			_, _ = fmt.Fprintln(output, "Info: "+finding.Context)
-		}
 		if finding.Scope != runFindingScope {
 			continue
 		}
@@ -972,7 +973,7 @@ func writeRunFindings(output io.Writer, findings intake.Facts, trafficRetained b
 	if findings.TestEventCount == 0 {
 		_, _ = fmt.Fprintln(output, "Test findings unavailable: no test events were received.")
 	}
-	if findings.MissingCoverage && !coverageDeferred {
+	if findings.MissingCoverage {
 		count++
 		context := intake.MissingCoverageContext
 		for _, card := range cards {
@@ -1188,6 +1189,28 @@ func (t *Testdrive) installedTracerLabel(detected string) string {
 		return name + "@" + version
 	}
 	return name
+}
+
+// defaultToCITracer validates the tracer every instrumented CI job selects
+// when --tracer-version was not given. A project-installed tracer still wins.
+func (t *Testdrive) defaultToCITracer(check onboard.RuntimeCheck) {
+	if !t.tracerVersionDefaulted || t.language != "javascript" {
+		return
+	}
+	pinned := ""
+	for _, job := range check.Jobs {
+		if job.Status == onboard.StatusExcluded {
+			continue
+		}
+		version := strings.TrimPrefix(job.Tracer, "dd-trace@")
+		if version == "" || (pinned != "" && version != pinned) {
+			return
+		}
+		pinned = version
+	}
+	if pinned != "" {
+		t.tracerVersion, t.tracerLabel = pinned, "dd-trace@"+pinned
+	}
 }
 
 // Show upstream's bounded failure output without linking temporary logs that

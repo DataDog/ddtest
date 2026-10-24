@@ -113,8 +113,8 @@ func TestPythonRubyAndCypressPreviewsDoNotPromiseUnsupportedChecks(t *testing.T)
 				require.NotContains(t, output.String(), "temporary probe test")
 				require.NotContains(t, output.String(), "Node runtimes")
 			} else {
-				require.Contains(t, output.String(), "is deferred and was not validated")
-				require.NotContains(t, output.String(), "EFD, skipping")
+				require.Contains(t, output.String(), "early-flake-detection, skipping, quarantine")
+				require.NotContains(t, output.String(), "TIA skipping/per-test coverage:")
 			}
 		})
 	}

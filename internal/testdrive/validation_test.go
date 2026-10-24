@@ -107,3 +107,35 @@ func TestRunSummaryDistinguishesUnstartedCommandsAndProbeModes(t *testing.T) {
 	require.Equal(t, 0, *probe.ExitCode)
 	require.Equal(t, testCounts{Passed: 1, Skipped: 1}, probe.TestCounts)
 }
+
+func TestDefaultTracerFollowsTheCIPinnedVersion(t *testing.T) {
+	jobs := func(tracers ...string) onboard.RuntimeCheck {
+		check := onboard.RuntimeCheck{Status: "compatible"}
+		for _, tracer := range tracers {
+			check.Jobs = append(check.Jobs, onboard.RuntimeFinding{Status: "compatible", Tracer: tracer})
+		}
+		return check
+	}
+	excluded := jobs("dd-trace@6.20.1")
+	excluded.Jobs = append(excluded.Jobs, onboard.RuntimeFinding{Status: onboard.StatusExcluded})
+	for _, tc := range []struct {
+		name      string
+		check     onboard.RuntimeCheck
+		defaulted bool
+		want      string
+	}{
+		{"every job pins one version", jobs("dd-trace@6.20.1", "dd-trace@6.20.1"), true, "6.20.1"},
+		{"excluded jobs are ignored", excluded, true, "6.20.1"},
+		{"explicit version wins", jobs("dd-trace@6.20.1"), false, "latest"},
+		{"different versions stay ambiguous", jobs("dd-trace@6.20.1", "dd-trace@6.21.0"), true, "latest"},
+		{"an unresolved job stays ambiguous", jobs("dd-trace@6.20.1", ""), true, "latest"},
+		{"no CI selection", jobs(), true, "latest"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			drive := &Testdrive{language: "javascript", tracerVersion: "latest", tracerLabel: "dd-trace@latest", tracerVersionDefaulted: tc.defaulted}
+			drive.defaultToCITracer(tc.check)
+			require.Equal(t, tc.want, drive.tracerVersion)
+			require.Equal(t, "dd-trace@"+tc.want, drive.tracerLabel)
+		})
+	}
+}

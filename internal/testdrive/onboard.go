@@ -235,11 +235,6 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		switch policy.Status {
 		case "required":
 			plan.Features = append(plan.Features, policy.Name)
-		case "deferred":
-			if plan.DeferredFeatures == nil {
-				plan.DeferredFeatures = map[string]string{}
-			}
-			plan.DeferredFeatures[policy.Name] = policy.Reason
 		case "not supported":
 			if plan.UnsupportedFeatures == nil {
 				plan.UnsupportedFeatures = map[string]string{}
