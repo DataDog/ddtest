@@ -14,6 +14,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/utils"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
@@ -106,7 +107,7 @@ func TestJavaScript_ActionEnvironment(t *testing.T) {
 	env := javascript.baseEnv()
 	require.Equal(t, os.Getenv(nodeOptionsEnvVar)+" -r "+strconv.Quote(preload), env[nodeOptionsEnvVar])
 	addNodeImport(env, ddTraceRegisterModule)
-	require.Equal(t, "--import "+strconv.Quote(register)+" "+os.Getenv(nodeOptionsEnvVar)+" -r "+strconv.Quote(preload), env[nodeOptionsEnvVar])
+	require.Equal(t, "--import "+strconv.Quote(utils.FileURL(register))+" "+os.Getenv(nodeOptionsEnvVar)+" -r "+strconv.Quote(preload), env[nodeOptionsEnvVar])
 }
 
 func TestJavaScript_ExplicitPreloadsTakePrecedence(t *testing.T) {
@@ -124,7 +125,7 @@ func TestJavaScript_RegisterUsesExternalPreloadInstallation(t *testing.T) {
 	t.Setenv("DD_TRACE_ESM_IMPORT", "")
 	env := NewJavaScript().baseEnv()
 	addNodeImport(env, ddTraceRegisterModule)
-	require.Equal(t, `--import "/customer install/dd-trace/register.js" `+os.Getenv(nodeOptionsEnvVar), env[nodeOptionsEnvVar])
+	require.Equal(t, `--import "file:///customer%20install/dd-trace/register.js" `+os.Getenv(nodeOptionsEnvVar), env[nodeOptionsEnvVar], "--import needs a URL, so the absolute path is a file URL")
 }
 
 func TestJavaScript_InvalidActionPackageDoesNotSelectAnotherTracer(t *testing.T) {

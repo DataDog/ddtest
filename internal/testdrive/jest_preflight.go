@@ -39,19 +39,20 @@ type jestProject struct {
 }
 
 type jestPreflight struct {
-	RunnerBinary        *runnerBinary         `json:"runner_binary,omitempty"`
-	PlaywrightProjects  []playwrightProject   `json:"playwright_projects,omitempty"`
-	VitestProjects      []vitestProject       `json:"vitest_projects,omitempty"`
-	ExecutionPath       string                `json:"execution_path,omitempty"`
-	Verdict             verdict               `json:"verdict"`
-	Command             string                `json:"command"`
-	Node                string                `json:"node"`
-	Executable          string                `json:"executable,omitempty"`
-	Arguments           []string              `json:"arguments,omitempty"`
-	Version             string                `json:"version"`
-	Projects            []jestProject         `json:"projects"`
-	Recommendation      *tracerRecommendation `json:"recommendation,omitempty"`
-	RecommendationNotes []string              `json:"recommendation_notes,omitempty"`
+	WebdriverIO         *framework.WebdriverIOConfig `json:"webdriverio,omitempty"`
+	RunnerBinary        *runnerBinary                `json:"runner_binary,omitempty"`
+	PlaywrightProjects  []playwrightProject          `json:"playwright_projects,omitempty"`
+	VitestProjects      []vitestProject              `json:"vitest_projects,omitempty"`
+	ExecutionPath       string                       `json:"execution_path,omitempty"`
+	Verdict             verdict                      `json:"verdict"`
+	Command             string                       `json:"command"`
+	Node                string                       `json:"node"`
+	Executable          string                       `json:"executable,omitempty"`
+	Arguments           []string                     `json:"arguments,omitempty"`
+	Version             string                       `json:"version"`
+	Projects            []jestProject                `json:"projects"`
+	Recommendation      *tracerRecommendation        `json:"recommendation,omitempty"`
+	RecommendationNotes []string                     `json:"recommendation_notes,omitempty"`
 }
 
 func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, result *validationResult) (preflightErr error) {
@@ -270,6 +271,8 @@ func (t *Testdrive) frameworkPreflight() func(context.Context, io.Writer, *valid
 		return t.checkCypressPreflight
 	case "cucumber":
 		return t.checkCucumberPreflight
+	case "webdriverio":
+		return t.checkWebdriverIOPreflight
 	}
 	return nil
 }

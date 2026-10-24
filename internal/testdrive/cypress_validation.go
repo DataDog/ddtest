@@ -277,7 +277,7 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 		env["DDTEST_CYPRESS_SOURCE_ROOT"] = t.configurationSourceRoot
 	}
 	defer func() { runErr = errors.Join(runErr, removeCypressWrappers(directory)) }()
-	owner, err := t.ownPlaywrightProcesses(directory, env)
+	owner, err := t.ownProcesses(directory, env)
 	if err != nil {
 		return run, err
 	}

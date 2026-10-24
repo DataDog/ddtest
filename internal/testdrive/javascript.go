@@ -3,6 +3,7 @@ package testdrive
 import (
 	"encoding/json"
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/utils"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,7 +110,7 @@ func (t *Testdrive) javascriptEnvironment(path string) map[string]string {
 	if supportsNodeRegister(version) {
 		registerPath := filepath.Join(filepath.Dir(filepath.Dir(path)), "register.js")
 		if info, err := os.Stat(registerPath); err == nil && info.Mode().IsRegular() {
-			env["NODE_OPTIONS"] += " --import " + strconv.Quote(absoluteFileURL(registerPath))
+			env["NODE_OPTIONS"] += " --import " + strconv.Quote(utils.FileURL(registerPath))
 		}
 	}
 	return env

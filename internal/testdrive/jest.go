@@ -23,15 +23,19 @@ import (
 )
 
 type jestTest struct {
-	CucumberAttempts []string            `json:"-"`
-	CucumberLine     int                 `json:"-"`
-	CypressAttempts  []string            `json:"-"`
-	Playwright       *playwrightIdentity `json:"playwright,omitempty"`
-	telemetryName    *string
-	File             string `json:"file"`
-	Name             string `json:"name"`
-	Status           string `json:"status"`
-	Failure          string `json:"failure,omitempty"`
+	WebdriverIOCapability string              `json:"webdriverio_capability,omitempty"`
+	WebdriverIOTestID     string              `json:"webdriverio_test_id,omitempty"`
+	WebdriverIOBrowser    string              `json:"webdriverio_browser,omitempty"`
+	CucumberAttempts      []string            `json:"-"`
+	WebdriverIOAttempts   []string            `json:"-"`
+	CucumberLine          int                 `json:"-"`
+	CypressAttempts       []string            `json:"-"`
+	Playwright            *playwrightIdentity `json:"playwright,omitempty"`
+	telemetryName         *string
+	File                  string `json:"file"`
+	Name                  string `json:"name"`
+	Status                string `json:"status"`
+	Failure               string `json:"failure,omitempty"`
 }
 
 type jestResults struct {
@@ -293,7 +297,7 @@ func outcomeKeys(run validationRun) []string {
 	keys = append(keys, run.SuiteErrors...)
 	keys = append(keys, run.SuiteFailures...)
 	for _, test := range run.Tests {
-		keys = append(keys, test.File+" › "+test.Name+cucumberLocation(test)+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test))
+		keys = append(keys, repositoryTestFile(run, test.File)+" › "+test.Name+cucumberLocation(test)+playwrightLabel(test)+webdriverIOOutcome(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test)+webdriverIOAttemptOutcome(test))
 	}
 	for i := range keys {
 		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])
@@ -357,6 +361,9 @@ func compareJest(baseline, instrumented validationRun) verdict {
 }
 
 func verifyJestTelemetry(run validationRun) verdict {
+	if run.framework == "webdriverio" {
+		return verifyWebdriverIOTelemetry(run)
+	}
 	if run.framework == "cucumber" {
 		return verifyCucumberTelemetry(run)
 	}
@@ -456,6 +463,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 
 func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
 	run := t.runJest
+	if t.framework.Name() == "webdriverio" {
+		run = t.runWebdriverIO
+	}
 	if t.framework.Name() == "cucumber" {
 		run = t.runCucumber
 	}
@@ -511,6 +521,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 		unavailableFeatures(result, reason)
 		return nil
 	}
+	if t.framework.Name() == "webdriverio" {
+		return t.runWebdriverIOFeatures(ctx, output, session, preload, baseline, result)
+	}
 	if t.framework.Name() == "cucumber" {
 		return t.runCucumberFeatures(ctx, output, session, preload, baseline, result)
 	}
@@ -534,6 +547,18 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 
 // Only the temporary directory created for this run is interchangeable. Keep
 // file suffixes and arbitrary customer paths/names intact, including failures.
+// repositoryTestFile shows a native test file relative to the checkout the run
+// used, so differences name repository paths, not a temporary copy.
+func repositoryTestFile(run validationRun, file string) string {
+	if run.root == "" || !filepath.IsAbs(file) {
+		return file
+	}
+	if relative, err := filepath.Rel(run.root, file); err == nil && filepath.IsLocal(relative) {
+		return filepath.ToSlash(relative)
+	}
+	return file
+}
+
 func normalizeOwnedTemporaryPath(run validationRun, value string) string {
 	if run.temporaryRoot == "" {
 		return value

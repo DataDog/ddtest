@@ -95,11 +95,12 @@ func JestWorkflowScenarios(t *testing.T) []string {
 }
 
 var shardedIntegrationScenarios = map[string]integrationScenarios{
-	"cypress":    cypressWorkflowScenarios,
-	"jest":       jestWorkflowScenarios,
-	"cucumber":   cucumberWorkflowScenarios,
-	"mocha":      mochaWorkflowScenarios,
-	"playwright": playwrightWorkflowScenarios,
+	"cypress":     cypressWorkflowScenarios,
+	"jest":        jestWorkflowScenarios,
+	"webdriverio": webdriverIOWorkflowScenarios,
+	"cucumber":    cucumberWorkflowScenarios,
+	"mocha":       mochaWorkflowScenarios,
+	"playwright":  playwrightWorkflowScenarios,
 }
 
 func TestIntegrationShardsRunEveryScenarioExactlyOnce(t *testing.T) {

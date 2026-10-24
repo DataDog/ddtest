@@ -163,7 +163,7 @@ func (o *processOwner) supervisionError() error {
 
 // Process sockets may need a shorter root than session storage on Darwin.
 // Record the same private repository ownership used for crash recovery.
-func (t *Testdrive) ownPlaywrightProcesses(directory string, env map[string]string) (*processOwner, error) {
+func (t *Testdrive) ownProcesses(directory string, env map[string]string) (*processOwner, error) {
 	owner, err := startProcessOwner(directory, env)
 	if err != nil {
 		return nil, err
