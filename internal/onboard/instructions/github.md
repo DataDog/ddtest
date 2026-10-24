@@ -30,7 +30,7 @@ Keep the existing test command and unrelated workflow content unchanged. Add the
 Run the local, credential-free setup check:
 
 ```shell
-ddtest testdrive
+[[if eq . "javascript"]]ddtest testdrive --agent --yes[[else]]ddtest testdrive[[end]]
 ```
 
 After it finishes, post every `Open report:` link printed by `ddtest testdrive` to the user so they can open the local Test Optimization report. Do not only summarize the result.

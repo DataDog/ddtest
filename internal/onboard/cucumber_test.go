@@ -2,6 +2,7 @@ package onboard
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,7 +33,7 @@ func TestCucumberLiteralAliasesPreserveCoverageAndProfiles(t *testing.T) {
 	require.NoError(t, err)
 }
 func TestCucumberAmbiguousAliasesStayUnvalidated(t *testing.T) {
-	for _, script := range []string{"MODE=inner cucumber-js features", "cd nested && cucumber-js features", `DEBUG="any,$DEBUG" cucumber-js features`, "run-s test:*", "cucumber-js one && cucumber-js two"} {
+	for _, script := range []string{"MODE=inner cucumber-js features", "cd nested && cucumber-js features", `DEBUG="any,$OTHER" cucumber-js features`, "run-s missing:*", "cucumber-js one && cucumber-js two"} {
 		t.Run(script, func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.MkdirAll(filepath.Join(root, "nested"), 0700))
@@ -181,4 +182,23 @@ func TestCucumberProbeLifecycleListsTheHooksAroundTheLeaf(t *testing.T) {
 			require.Equal(t, tc.after, names(after))
 		})
 	}
+}
+
+func TestCucumberInlineIstanbulRemainsScopedToOriginalAlias(t *testing.T) {
+	root := t.TempDir()
+	script := cucumberInlineIstanbulOptions + ` DEBUG="any,$DEBUG" nyc -- cucumber-js features --profile ci`
+	data, err := json.Marshal(map[string]any{"type": "module", "scripts": map[string]string{"test": script}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), data, 0600))
+	step := runtimeStep{Run: "npm test", Env: map[string]string{"DD_CUCUMBER_NODE_OPTIONS": "-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}"}}
+	resolution := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, step, "javascript", "cucumber")
+	require.Empty(t, resolution.Reason)
+	require.Len(t, resolution.Tests, 1)
+	require.True(t, resolution.Tests[0].cucumberScoped)
+	require.True(t, resolution.Tests[0].cucumberInlineIstanbul)
+	require.Equal(t, "npm test", resolution.Tests[0].Command)
+	require.Empty(t, checkCucumberBootstrap(root, ciWorkflow{}, runtimeJob{}, step, nil, resolution.Tests))
+	actual, err := os.ReadFile(filepath.Join(root, "package.json"))
+	require.NoError(t, err)
+	require.Equal(t, data, actual)
 }

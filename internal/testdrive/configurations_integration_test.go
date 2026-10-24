@@ -139,7 +139,10 @@ func TestPublicJestConfigurations(t *testing.T) {
 		require.NotEmpty(t, item.Preparation[0].Diagnostic)
 	}
 	require.Empty(t, failed.Runs)
-	require.Nil(t, failed.Retained)
+	// The earlier full execution stays as history only; it certifies nothing now.
+	require.NotNil(t, failed.Retained)
+	require.NotNil(t, failed.LastExecution)
+	require.False(t, failed.LastExecution.Current)
 	entries, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
 	require.NoError(t, err)
 	require.Len(t, entries, 1)

@@ -173,7 +173,7 @@ func resolveCIShell(root string, workflow ciWorkflow, job runtimeJob, step runti
 			}
 			if redirect, ok := node.(*syntax.Redirect); ok && redirect.Op == syntax.AppOut {
 				target := strings.Trim(shellText(redirect.Word), `"`)
-				if target == "$GITHUB_PATH" || target == "${GITHUB_PATH}" {
+				if (target == "$GITHUB_PATH" || target == "${GITHUB_PATH}") && persistedNVMRuntime(step.Run) == "" {
 					setup = append(setup, "CI PATH changes require separate validation: "+step.Run)
 				}
 			}
@@ -344,4 +344,37 @@ func runnerLabels(runsOn any) []string {
 	}
 	collect(runsOn)
 	return labels
+}
+
+// A shell-local nvm use does not affect later steps. This exact append persists
+// the selected installation directory for GitHub's next shell. Extra PATH writes
+// or conflicting runtime selections remain unresolved.
+func persistedNVMRuntime(command string) string {
+	node := nvmRuntime(command)
+	if node == "" {
+		return ""
+	}
+	file, _ := parseCIShell(command)
+	writes := 0
+	valid := true
+	syntax.Walk(file, func(n syntax.Node) bool {
+		stmt, ok := n.(*syntax.Stmt)
+		if !ok {
+			return true
+		}
+		for _, redirect := range stmt.Redirs {
+			target := strings.Trim(shellText(redirect.Word), `"`)
+			if target != "$GITHUB_PATH" && target != "${GITHUB_PATH}" {
+				continue
+			}
+			writes++
+			call, ok := stmt.Cmd.(*syntax.CallExpr)
+			valid = valid && ok && redirect.Op == syntax.AppOut && redirect.N == nil && len(stmt.Redirs) == 1 && len(call.Assigns) == 0 && shellText(call) == `dirname "$(nvm which `+node+`)"`
+		}
+		return true
+	})
+	if valid && writes == 1 && len(file.Stmts) > 1 && len(file.Stmts[len(file.Stmts)-1].Redirs) == 1 {
+		return node
+	}
+	return ""
 }

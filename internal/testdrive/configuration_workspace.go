@@ -59,6 +59,9 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 			return result, err
 		}
 	}
+	if len(item.UnvalidatedSetup) > 0 {
+		return result, fmt.Errorf("configuration setup requires review before tests: %s; use the resolved --all plan or supply the requested setup facts", strings.Join(item.UnvalidatedSetup, "; "))
+	}
 	original, workspace := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
 	if !t.checkOnly && (len(item.Prerequisites) > 0 || len(item.Services) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {

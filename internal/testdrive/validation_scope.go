@@ -19,6 +19,7 @@ func hasValidationPair(result validationResult) bool {
 
 type configurationCoverage struct {
 	Discovered   int `json:"discovered"`
+	Excluded     int `json:"excluded"`
 	Executed     int `json:"executed"`
 	Paired       int `json:"paired"`
 	Validated    int `json:"validated"`
@@ -92,6 +93,10 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 			if configuration.Status == "passed" && configuration.PairedExecution {
 				executed.Passed++
 			}
+		}
+		if configurationExcluded(configuration) {
+			coverage.Excluded++
+			continue
 		}
 		switch configuration.Status {
 		case "passed":

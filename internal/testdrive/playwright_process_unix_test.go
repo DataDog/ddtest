@@ -70,7 +70,8 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, node, "-e", parent)
-			cmd.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(dir, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"])
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			cmd.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(dir, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"])
 			output, err := cmd.CombinedOutput()
 			require.NoError(t, err, string(output))
 			var port []byte
@@ -145,7 +146,8 @@ child.stdio[3].end('hello\n');child.on('close',code=>{assert.equal(code,7);asser
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, node, "-e", script)
-	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"])
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"])
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
 }
@@ -160,6 +162,7 @@ func TestInitialOwnerConnectionFailureDoesNotKillCustomerProcess(t *testing.T) {
 	owner, err := startProcessOwner(directory, env)
 	require.NoError(t, err)
 	command := exec.CommandContext(t.Context(), node, "-e", `setTimeout(() => console.log('customer code survived'), 50)`)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+filepath.Join(directory, "missing"), "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -181,7 +184,8 @@ func TestUnsupportedDetachedSpawnInvalidatesValidation(t *testing.T) {
 	marker := filepath.Join(directory, "unowned-child")
 	script := fmt.Sprintf(`require('node:child_process').spawn('/bin/sh',['-c',%q],{detached:true,argv0:'custom',stdio:'ignore'})`, "touch "+marker)
 	command := exec.CommandContext(t.Context(), node, "-e", script)
-	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
 	output, err := command.CombinedOutput()
 	require.Error(t, err, string(output))
 	require.Equal(t, 86, command.ProcessState.ExitCode())
@@ -217,9 +221,10 @@ func TestSupervisedSpawnPreservesNativeArgumentsAndErrors(t *testing.T) {
  console.log(JSON.stringify(result));})().catch(e=>{console.error(e);process.exitCode=1})`
 	invoke := func(supervised bool) []byte {
 		command := exec.CommandContext(t.Context(), node, "-e", script, directory, denied, orphan)
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		command.Env = append(os.Environ(), "BASH_ENV="+shellInit)
 		if supervised {
-			command.Env = append(command.Env, "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+			command.Env = append(command.Env, "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
 		}
 		output, err := command.CombinedOutput()
 		require.NoError(t, err, string(output))
@@ -243,7 +248,8 @@ func TestShortLivedChildrenReleaseGuardsWithoutLoadingPreloads(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, node, "-e", script)
-	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+preload+" --require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+preload+" --require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
 	require.Contains(t, string(output), "done")
@@ -265,7 +271,8 @@ func TestSupervisorToleratesDeletedPreloadsAndErrorDirectory(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, owner.Close()) })
 	script := `const fs=require('node:fs');for(const name of ['children.cjs','process_owner.cjs','process_guard.cjs'])fs.unlinkSync(process.argv[1]+'/'+name);const c=require('node:child_process').spawn(process.execPath,['-e',"console.log('late child survived')"],{stdio:'inherit'});c.on('close',code=>process.exitCode=code)`
 	command := exec.CommandContext(t.Context(), node, "-e", script, directory)
-	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+filepath.Join(directory, "missing", "errors"))
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"], "DDTEST_PROCESS_ERRORS="+filepath.Join(directory, "missing", "errors"))
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
 	require.Contains(t, string(output), "late child survived")
@@ -281,7 +288,8 @@ func TestSupervisedGuardSupportsDescriptorsAboveNine(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, owner.Close()) })
 	script := `const assert=require('node:assert');const stdio=['ignore','ignore','pipe',...Array(9).fill('pipe')];const c=require('node:child_process').spawn('/bin/bash',['-c','echo high >&11; exit 7'],{stdio});let output='';c.stdio[11].on('data',b=>output+=b);c.stderr.pipe(process.stderr);for(let i=3;i<11;i++)c.stdio[i].destroy();c.on('close',code=>{assert.equal(code,7);assert.equal(output,'high\n')});`
 	command := exec.CommandContext(t.Context(), node, "-e", script)
-	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
 }
@@ -413,4 +421,83 @@ assert.deepEqual(timedOut.error.spawnargs, ['-c', 'sleep 5']); assert.equal(time
 	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
+}
+
+func TestSupervisorPreservesWebServerGroupTeardown(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	// Playwright stops its detached server's whole group and then awaits pipe
+	// closure. Ordinary grandchildren must stay in that group for this to work.
+	grandchild := `process.stdout.write('ready\n');setInterval(()=>{},1000)`
+	child := fmt.Sprintf(`require('node:child_process').spawn(process.execPath,['-e',%q],{stdio:'inherit'});setInterval(()=>{},1000)`, grandchild)
+	script := fmt.Sprintf(`const cp=require('node:child_process');const c=cp.spawn(process.execPath,['-e',%q],{detached:true,stdio:['ignore','pipe','pipe']});c.stdout.once('data',()=>process.kill(-c.pid,'SIGTERM'));c.on('close',()=>{console.log('server group closed');process.exit(0)});`, child)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, node, "-e", script)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.WaitDelay = time.Second
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"])
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.Contains(t, string(output), "server group closed")
+}
+
+func TestSupervisorRefusesGroupSharedWithItsGoOwner(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	marker := filepath.Join(directory, "must-not-start")
+	script := fmt.Sprintf(`const c=require('node:child_process').spawn('/bin/sh',['-c',%q],{stdio:'inherit'});c.on('close',code=>process.exitCode=code)`, "touch "+marker)
+	command := exec.CommandContext(t.Context(), node, "-e", script)
+	// Deliberately share the test process's group; supervising it must fail closed.
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	output, err := command.CombinedOutput()
+	require.Error(t, err, string(output))
+	require.NoFileExists(t, marker)
+	var supervision *processSupervisionError
+	require.ErrorAs(t, owner.Close(), &supervision)
+	require.Equal(t, "unowned_process_group", supervision.Code)
+}
+
+func TestInheritedGroupChildrenShareOneKeeper(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	clients := func() int {
+		count := 0
+		owner.clients.Range(func(_, _ any) bool { count++; return true })
+		return count
+	}
+	// Ten ordinary children in the parent's own group, one after another; the
+	// parent keeps running until stdin closes.
+	script := `const cp=require('node:child_process');let i=0;const next=()=>{if(i++===10){console.log('done');process.stdin.resume();process.stdin.on('end',()=>process.exit(0));return}cp.spawn('/bin/sleep',['0.01'],{stdio:'ignore'}).on('close',next)};next()`
+	command := exec.CommandContext(t.Context(), node, "-e", script)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	stdin, err := command.StdinPipe()
+	require.NoError(t, err)
+	stdout, err := command.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, command.Start())
+	line := make([]byte, 5)
+	_, err = io.ReadFull(stdout, line)
+	require.NoError(t, err)
+	require.Equal(t, "done\n", string(line))
+	// The parent plus one keeper shared by its group, not one per child.
+	require.LessOrEqual(t, clients(), 2)
+	require.NoError(t, stdin.Close())
+	require.NoError(t, command.Wait())
+	require.Eventually(t, func() bool { return clients() == 0 }, 5*time.Second, 50*time.Millisecond, "keepers must not keep one another alive")
 }

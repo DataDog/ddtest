@@ -54,6 +54,25 @@ func TestSetupSelectionRejectsAbsentCIAndConflictingPins(t *testing.T) {
 	require.ErrorContains(t, err, "multiple tracer versions")
 }
 
+func TestSetupSelectionHonorsExplicitCIOptOuts(t *testing.T) {
+	drive := preflightFixture(t, "30.2.0", "jest-circus/runner.js")
+	root := drive.repositoryRoot
+	drive.executor = workflowPreflightExecutor{root: root, runner: "jest"}
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '24.14.1'}\n      - run: npm test\n")
+	active := onboard.TestCommand{Directory: ".", Command: "jest"}
+	excluded := onboard.TestCommand{Directory: ".", Command: "unknown-command", CIInstrumentationExcluded: true}
+	selected, err := drive.selectWorkflowTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{excluded, active}}, false)
+	require.NoError(t, err, "an excluded runner must not be preflighted")
+	require.Equal(t, "6.16.0", selected)
+
+	_, err = drive.selectWorkflowTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{excluded}}, false)
+	require.ErrorContains(t, err, "no configurations enabled for instrumentation")
+	excluded.CIInstrumentationExcluded = false
+	_, err = drive.selectWorkflowTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{active, excluded}}, false)
+	require.Error(t, err, "unknown active runners must still block setup")
+}
+
 func TestApplyRejectsUnknownSetupBeforeSourceEdits(t *testing.T) {
 	drive := preflightFixture(t, "30.2.0", "jest-circus/runner.js")
 	path := filepath.Join(drive.repositoryRoot, ".github/workflows/test.yml")

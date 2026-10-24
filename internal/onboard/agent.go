@@ -228,7 +228,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	return WriteAgentResult(output, AgentResult{
 		Status: "ready", Phase: "onboarding", NextAction: "run_command", NextCommand: command,
 		Capabilities: []string{"registry metadata and package download network access", "local process execution and loopback listeners", "private temporary storage"},
-		Reason:       strings.TrimSpace("Run next_command once with the listed capabilities, then wait. ddtest owns tracer selection, recognized CI edits, testdrive, package exclusions and cleanup. It returns exact blockers for unsupported setup. No Datadog key is required locally. Do not write CI or launch a parallel preflight first. " + notice),
+		Reason:       strings.TrimSpace("Run next_command once in the foreground with the listed capabilities, then wait for its exit. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. ddtest owns tracer selection, recognized CI edits, testdrive, package exclusions and cleanup. It returns exact blockers for unsupported setup. No Datadog key is required locally. Do not write CI or launch a parallel preflight first. " + notice),
 	})
 }
 

@@ -103,6 +103,8 @@ env:
 ```
 
 Keep installation and its added preload under the same existing fork/key guard.
+For a new key guard, assign the secret to a job-level environment variable and
+check `env.<name>` in the step condition. GitHub forbids `secrets.*` directly in `if`.
 Preserve the test step in the uninstrumented branch. Exclude `.testoptimization/`
 from Git and published packages, including any package `files`/`.npmignore` rules.
 Actual CI execution and Datadog/Cypress Cloud processing are not tested locally.

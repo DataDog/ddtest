@@ -55,6 +55,7 @@ class ReviewTests(unittest.TestCase):
                 login = self.case.root/(agent+'-login.json')
                 login.write_text(json.dumps({key:{'accessToken':'throwaway-token'},'mcpServers':{'datadog':{}},'hooks':{'bad':'command'}}))
                 self.case.args.login_json = login
+                self.case.args.setup_command = [shlex.join([sys.executable,'-c',"import pathlib,os; assert not pathlib.Path(os.environ['HOME'],'.codex/auth.json').exists(); assert not pathlib.Path(os.environ['HOME'],'.claude/.credentials.json').exists()"])]
                 code,manifest = self.case.trial({'CLAUDE_CODE_SESSION_ID':'parent-session'})
                 self.assertEqual(code,0)
                 home=Path(manifest['trial_directory'])/'home'
@@ -149,6 +150,16 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(arguments[arguments.index('/usr/bin/env')+1:],['-u','NODE_VERSION','-u','HOSTNAME','node','--version'])
         with self.assertRaises(ValueError):
             container.execute(['true'],trial,{'BAD':'line\nbreak'},5,lambda _:None,None,executor)
+
+    def test_low_storage_stops_before_clone_or_model(self):
+        from types import SimpleNamespace
+        with patch.object(run_eval.shutil,'disk_usage',return_value=SimpleNamespace(free=0)):
+            code,manifest=self.case.trial()
+        self.assertEqual(code,1)
+        self.assertEqual(manifest['failure_kind'],'evaluator_environment')
+        self.assertEqual(manifest['failure_stage'],'storage_readiness')
+        self.assertEqual(manifest['commands'],[])
+        self.assertEqual(manifest['isolation']['cleanup'],'removed')
 
     def test_ref_is_checked_at_programmatic_entry_and_explicitly_fetched(self):
         self.case.args.ref='--upload-pack=bad'

@@ -100,6 +100,13 @@ func TestOnboardNamedSetupBlockersReturnExecutableRecovery(t *testing.T) {
 				require.Equal(t, "supply_input", result.NextAction)
 				require.Contains(t, result.Location, ".github/workflows/test.yml")
 				require.Contains(t, result.Reason, "--allow-dirty")
+				require.Contains(t, result.ResumeCommand, "onboard")
+				require.Contains(t, result.ResumeCommand, "--apply")
+				require.Contains(t, result.ResumeCommand, "--allow-dirty")
+				checkpoint, err := readCheckpoint(result.RunID)
+				require.NoError(t, err)
+				require.True(t, checkpoint.Apply)
+				require.NotEmpty(t, result.SetupDiff)
 			case "metadata permission":
 				require.Equal(t, "registry_permission", result.Code)
 				require.Equal(t, []string{"package metadata"}, result.Capabilities)
@@ -124,4 +131,39 @@ func TestWorkflowWithoutTestCommandsSaysSoAsJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal(output.Bytes(), &result), output.String())
 	require.Equal(t, "scope_unresolved", result.Code)
 	require.Equal(t, "No Jest test command was found in GitHub Actions workflows or package scripts.", result.Reason)
+}
+
+func TestReviewedBuildBlockerReturnsFlagRatherThanNewFacts(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"private":true}`)
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Cucumber{}, language: "javascript", tracerVersion: "5.132.0", projectTracer: "fixture", executor: workflowCheckExecutor{}, nodeVersion: currentNodeVersion}
+	drive.workflowRun = func(_ context.Context, out io.Writer) error {
+		r := completeValidationFixture("cucumber")
+		r.Compatibility = verdict{Status: "not exercised"}
+		r.Configurations = []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm test"}, Status: "blocked", Preparation: []buildResult{{BuildCommand: onboard.BuildCommand{Command: "npm run build"}, Status: "blocked", Code: "preparation_review_required"}}}}
+		r.Runs = nil
+		return finishValidation(out, root, r)
+	}
+	var output bytes.Buffer
+	require.Error(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json"}))
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Equal(t, "preparation_review_required", result.Code)
+	require.Contains(t, result.ResumeCommand, "--allow-reviewed-builds")
+	require.Nil(t, result.InputTemplate)
+	require.Contains(t, result.Location, "npm run build")
+	require.Equal(t, "needs_input", result.Status)
+}
+
+func TestFocusedRunKeepsPreparationReceiptsOnItsConfiguration(t *testing.T) {
+	build := onboard.BuildCommand{Directory: ".", Command: "pnpm run build", Kind: onboard.PreparationPackageBuild}
+	executed := onboard.TestCommand{Command: "npm test", Directory: ".", Prerequisites: []onboard.BuildCommand{build}}
+	other := onboard.TestCommand{Command: "npm run test:other", Directory: "."}
+	result := validationResult{Framework: "cucumber", Compatibility: verdict{Status: "not exercised"}}
+	setSelectedConfigurationScope(&result, onboard.ValidationScope{Commands: []onboard.TestCommand{executed, other}}, []onboard.TestCommand{executed}, nil)
+	receipt := buildResult{BuildCommand: build, Status: "blocked", Code: "preparation_review_required"}
+	creditPreparation(&result, configurationResult{TestCommand: executed, Preparation: []buildResult{receipt}})
+	require.Equal(t, []buildResult{receipt}, result.Configurations[0].Preparation)
+	require.Empty(t, result.Configurations[1].Preparation, "an uncredited configuration did not run this preparation")
 }

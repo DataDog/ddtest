@@ -67,7 +67,7 @@ func summarizeValidation(result validationResult) validationSummary {
 		// A hang explains the missing results, coverage and probes; say it once.
 		timeouts := timedOutRuns(result)
 		summary.BlockingChecks = append(summary.BlockingChecks, timeouts...)
-		if len(timeouts) == 0 && missingRealCoverage(result) {
+		if len(timeouts) == 0 && missingRealCoverage(result) && (result.Compatibility.Status == "" || result.Compatibility.Status == "compatible") {
 			summary.BlockingChecks = append(summary.BlockingChecks, displayName(result.Framework)+" real-suite coverage was not observed: "+missingRealCoverageReason(result)+" Synthetic skipping probes do not validate coverage of customer source; preserve coverage thresholds.")
 		}
 		if result.Compatibility.Status != "" && result.Compatibility.Status != "compatible" {
@@ -102,14 +102,14 @@ func summarizeValidation(result validationResult) validationSummary {
 			summary.BlockingChecks = append(summary.BlockingChecks, "unresolved CI scope: "+reason)
 		}
 		for _, configuration := range result.Configurations {
-			if configuration.Status != "passed" {
+			if configuration.Status != "passed" && !configurationExcluded(configuration) {
 				summary.BlockingChecks = append(summary.BlockingChecks, "configuration "+configuration.Command+": "+configuration.Status)
 			}
 		}
 	}
 	// Success is scoped to an explicitly selected command; the overall summary
 	// continues to expose every unvalidated repository configuration.
-	if result.Scope != nil && (len(result.Scope.Unresolved) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return c.Status != "passed" })) && summary.Status != "FAILED" {
+	if result.Scope != nil && (len(result.Scope.Unresolved) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return c.Status != "passed" && !configurationExcluded(c) })) && summary.Status != "FAILED" {
 		summary.Status = "INCOMPLETE"
 	}
 	summary.ConfigurationCoverage, summary.ExecutedValidation = summarizeConfigurationCoverage(result)
@@ -160,6 +160,9 @@ func validationHandoff(result validationResult) string {
 	fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s.\n", summary.Status, summary.LocalValidation)
 	if coverage := summary.ConfigurationCoverage; coverage != nil && coverage.Discovered > 0 {
 		fmt.Fprintf(&block, "Configurations: %d/%d validated; %d executed, %d paired; %d blocked, %d not exercised, %d incomplete.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete)
+		if coverage.Excluded > 0 {
+			fmt.Fprintf(&block, "CI opt-outs: %d excluded from instrumentation; not executed or validated locally. Original CI tests are preserved.\n", coverage.Excluded)
+		}
 	}
 	current := !result.CheckOnly && (result.LastExecution == nil || result.LastExecution.Current)
 	if counts := result.ReportingCounts; counts != nil {
@@ -417,7 +420,7 @@ func validationFacts(result validationResult) []string {
 	}
 	if result.Retained != nil {
 		previous := result.Retained.Result
-		facts = append(facts, "Last full execution (historical; not revalidated): "+previous.Session+". Local status: "+executionStatus(previous))
+		facts = append(facts, "Earlier execution attempt (historical; not revalidated): "+previous.Session+". Local status: "+executionStatus(previous))
 		appendRuns("Historical ", previous.Runs)
 		for _, feature := range previous.Features {
 			if feature.Name != "all" {

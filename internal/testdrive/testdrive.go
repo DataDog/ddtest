@@ -43,6 +43,7 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	selectedPlan             onboard.TestCommand
 	cypressPackage           string
 	cypressSelected          onboard.TestCommand
 	cypressDiscovered        bool // cypressSelected came from CI discovery, not --command.
@@ -247,7 +248,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 	if runner.Name() == "cucumber" && !all {
-		selected, resolveErr := onboard.CucumberValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		var resolveErr error
+		selectedPlan, resolveErr = onboard.CucumberExecutionCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		selected := selectedPlan.Command
 		if resolveErr != nil {
 			discoveryError = resolveErr
 		} else if selected != "" {
@@ -367,7 +370,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 
-	drive := &Testdrive{commandAssignments: commandAssignments, probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
+	drive := &Testdrive{selectedPlan: selectedPlan, commandAssignments: commandAssignments, probeLintSkipped: selectedPlan.ProbeLintSkipped, commandReviewReason: selectedPlan.ReviewReason, projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
@@ -570,6 +573,7 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr err
 	}
 
 	var result validationResult
+	var prepared *configurationResult
 	if t.discoveryError != nil {
 		result, runErr = t.run(ctx, output)
 	} else if t.framework.Name() == "webdriverio" || t.framework.Name() == "cucumber" || t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
@@ -579,12 +583,14 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr err
 		// The run executes in a disposable copy; publish its report here instead.
 		var models []reportModel
 		child.reportModels = &models
-		entry := onboard.TestCommand{Environment: child.configurationEnvironment}
+		entry := child.selectedPlan
+		entry.Environment = child.configurationEnvironment
 		if child.framework.Name() == "cypress" {
 			entry = child.cypressSelected
 			entry.Environment = child.configurationEnvironment
 		}
-		result, runErr = child.runPreparedConfiguration(ctx, output, &configurationResult{TestCommand: entry})
+		prepared = &configurationResult{TestCommand: entry}
+		result, runErr = child.runPreparedConfiguration(ctx, output, prepared)
 		runErr = errors.Join(runErr, t.publishCopiedRunReport(output, &result, models))
 	} else {
 		result, runErr = t.run(ctx, output)
@@ -605,6 +611,9 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr err
 			runErr = errors.Join(runErr, err)
 		} else {
 			t.setConfigurationScope(&result, scope)
+			if prepared != nil {
+				creditPreparation(&result, *prepared)
+			}
 		}
 	}
 	if runErr != nil {

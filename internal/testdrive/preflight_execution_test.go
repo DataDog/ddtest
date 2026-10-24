@@ -7,7 +7,11 @@ package testdrive
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,4 +97,38 @@ func TestJestRuntimeCaptureUsesExecutingProcess(t *testing.T) {
 	require.NoError(t, os.Remove(path))
 	_, err = readJestRuntimeCapture(path)
 	require.Error(t, err, "unknown runtimes must not fall back to unrelated PATH Node")
+}
+
+type dispatchExecutor struct{ script string }
+
+func (e *dispatchExecutor) CombinedOutput(_ context.Context, _ string, args []string, _ map[string]string) ([]byte, error) {
+	e.script = strings.Join(args, " ")
+	return nil, fmt.Errorf("stop at framework inspection")
+}
+func TestDirectCheckOnlyUsesSelectedFramework(t *testing.T) {
+	for _, name := range []string{"jest", "vitest", "mocha", "cucumber", "playwright", "cypress", "webdriverio"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			requireWriteFile(t, filepath.Join(root, "package.json"), `{"private":true}`)
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			viper.Set("framework", name)
+			settings.Init()
+			t.Cleanup(func() { viper.Reset(); settings.Init() })
+			t.Chdir(root)
+			selected, err := platform.NewJavaScript().DetectFramework()
+			require.NoError(t, err)
+			executor := &dispatchExecutor{}
+			drive := &Testdrive{repositoryRoot: root, framework: selected, executor: executor, nodeVersion: func() string { return "24.19.0" }, command: "node"}
+			require.Error(t, drive.runConfigurationChecks(t.Context(), &bytes.Buffer{}))
+			report := readValidationReport(t, root)
+			require.Equal(t, name, report.Framework)
+			if name != "jest" {
+				require.NotContains(t, report.Error, "Jest")
+			}
+			if name == "cucumber" || name == "playwright" || name == "cypress" {
+				require.NotEmpty(t, executor.script)
+			}
+		})
+	}
 }

@@ -51,6 +51,13 @@ if os.environ.get("FAKE_PLAIN_ERROR"):
     print(os.environ["FAKE_PLAIN_ERROR"], file=sys.stderr)
     sys.exit(1)
 prompt = sys.stdin.read()
+if prompt.startswith("Reply AUTH_OK only"):
+    if pathlib.Path(sys.argv[0]).name == "codex":
+        events=[{"type":"item.completed","item":{"type":"agent_message","text":"AUTH_OK"}},{"type":"turn.completed"}]
+    else:
+        events=[{"type":"result","result":"AUTH_OK"}]
+    for event in events: print(json.dumps(event))
+    sys.exit(0)
 pathlib.Path("observed.json").write_text(json.dumps({
     "prompt": prompt, "argv": sys.argv[1:], "environment":dict(os.environ),
     "agent_environment": {key: os.environ.get(key) for key in ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS")},
@@ -504,7 +511,7 @@ class VerdictTests(unittest.TestCase):
                 "[HTML report](</customer/repo/.testoptimization/report.html>)\n"
                 "[JSON evidence](</customer/repo/.testoptimization/testdrive.json>)\n")
 
-    def test_canonical_handoff_is_required_but_extra_prose_is_allowed(self):
+    def test_canonical_handoff_allows_extra_prose_but_paraphrase_needs_review(self):
         answer = self.compact_answer()
         result = run_eval.reporting_verdict(answer + "\nSome owner setup is still required.\n", self.compact_report())
         self.assertEqual(result["status"], "pass")
@@ -513,6 +520,24 @@ class VerdictTests(unittest.TestCase):
         self.assertIn("independent technical evaluation", result["reason"])
         paraphrase = answer.replace("5/8 validated", "5 / 8 fully validated")
         self.assertEqual(run_eval.reporting_verdict(paraphrase,self.compact_report())["status"],"review")
+
+    def test_plain_language_verdicts_are_checked_but_canonical_handoff_is_required(self):
+        answer = self.compact_answer().replace("Onboarding validation: INCOMPLETE. Local validation: PASSED.",
+            "Overall onboarding remains INCOMPLETE. Local validation passed: all controls matched.")
+        result = run_eval.reporting_verdict(answer, self.compact_report())
+        self.assertEqual(result["status"], "review", result)
+        self.assertFalse(result["canonical_handoff"])
+        for wrong in (answer.replace("remains INCOMPLETE", "remains complete"),
+                      answer.replace("validation passed", "validation failed")):
+            self.assertEqual(run_eval.reporting_verdict(wrong, self.compact_report())["status"], "fail")
+
+    def test_local_verdict_excludes_following_explanation(self):
+        answer = self.compact_answer().replace("Local validation: PASSED.",
+            "Local validation: PASSED — compatibility and native outcomes match.")
+        result = run_eval.reporting_verdict(answer, self.compact_report())
+        self.assertEqual(result["status"], "review", result)
+        wrong = answer + "\nLocal validation: FAILED — the run did not finish."
+        self.assertEqual(run_eval.reporting_verdict(wrong, self.compact_report())["status"], "fail")
 
     def test_swapped_distinct_counts_and_scope_upgrades_fail(self):
         for original, wrong in (("96 test executions; 32 source-test identities", "32 test executions; 96 source-test identities"),
