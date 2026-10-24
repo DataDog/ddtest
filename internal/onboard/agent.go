@@ -200,6 +200,12 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		}
 		return Run(output)
 	}
+	if options.Command != "" {
+		// onboard --apply validates every discovered configuration, which rejects
+		// a single-command override; never hand off a command that cannot run.
+		err := fmt.Errorf("--command selects one suite, but onboarding applies and validates every discovered CI configuration")
+		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input", RequiredInput: []string{"Omit --command to onboard every discovered configuration, or validate one suite with testdrive --framework " + runner.Name() + " --command <command>."}}))
+	}
 	command := OnboardingCommand(runner.Name())
 	if len(command) == 0 {
 		return errors.Join(fmt.Errorf("%s", TransientExecutableReason), WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "onboarding", Code: "transient_executable", Reason: TransientExecutableReason, NextAction: "supply_input"}))

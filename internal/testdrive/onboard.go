@@ -195,6 +195,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			_, _ = fmt.Fprintf(output, "==> %s\n", phase)
 		}
 	}
+	if t.checkOnly && options.FactsFile != "" {
+		return fail("needs_input", "invalid_options", "--facts cannot be combined with --check-only.", "Omit --check-only to validate the supplied facts, or omit --facts for configuration-only checks.")
+	}
 	if t.checkOnly {
 		if options.Format == "verbose" {
 			return t.Run(ctx, output)

@@ -13,12 +13,24 @@ func TestStartHandoffPreservesAllDeclaredSetupOptions(t *testing.T) {
 	t.Chdir(t.TempDir())
 	require.NoError(t, os.WriteFile("package.json", []byte(`{"scripts":{"test":"vitest run"},"devDependencies":{"vitest":"4.1.11"}}`), 0600))
 	var out bytes.Buffer
-	require.NoError(t, StartWithOptions(&out, StartOptions{Format: "json", Site: "datadoghq.eu", Tracer: "6.20.1", Facts: "/external/facts.json", Platform: "javascript", Command: "npm test"}))
+	require.NoError(t, StartWithOptions(&out, StartOptions{Format: "json", Site: "datadoghq.eu", Tracer: "6.20.1", Facts: "/external/facts.json", Platform: "javascript"}))
 	var state AgentResult
 	require.NoError(t, json.Unmarshal(out.Bytes(), &state))
-	for _, value := range []string{"--format", "json", "--site", "datadoghq.eu", "--tracer-version", "6.20.1", "--facts", "/external/facts.json", "--platform", "javascript", "--command", "npm test"} {
+	for _, value := range []string{"--format", "json", "--site", "datadoghq.eu", "--tracer-version", "6.20.1", "--facts", "/external/facts.json", "--platform", "javascript"} {
 		require.Contains(t, state.NextCommand, value)
 	}
+}
+
+func TestStartRejectsCommandOverrideBeforeApplyHandoff(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("package.json", []byte(`{"scripts":{"test":"vitest run"},"devDependencies":{"vitest":"4.1.11"}}`), 0600))
+	var out bytes.Buffer
+	require.Error(t, StartWithOptions(&out, StartOptions{Format: "json", Command: "npm test"}))
+	var state AgentResult
+	require.NoError(t, json.Unmarshal(out.Bytes(), &state))
+	require.Equal(t, "needs_input", state.Status)
+	require.Equal(t, "invalid_options", state.Code)
+	require.Empty(t, state.NextCommand, "onboard --apply validates every configuration and rejects --command")
 }
 
 func TestConfigurationIdentityIgnoresOnlyEmptyInstrumentationOptions(t *testing.T) {

@@ -115,3 +115,24 @@ func TestUnreadableReportDoesNotBlockCIPreservation(t *testing.T) {
 	require.NoError(t, checkCIPreservation(root, &result), "fresh results must replace an unreadable report")
 	require.NotNil(t, result.CIPreservation)
 }
+
+func TestCheckOnlyWorkflowRejectsFactsWithoutReplacingTheReport(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	root := canonicalWorkflowRoot(t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0700))
+	requireWriteFile(t, validationPath(root), `{"schema_version":1}`)
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript", checkOnly: true}
+	var output bytes.Buffer
+	require.Error(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json", FactsFile: filepath.Join(t.TempDir(), "missing.json")}))
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Equal(t, "invalid_options", result.Code)
+	data, err := os.ReadFile(validationPath(root))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"schema_version":1}`, string(data), "rejected input must leave the saved report untouched")
+}
+
+func TestCIPreservationFailureIsABlockingCheck(t *testing.T) {
+	result := validationResult{Framework: "mocha", CIPreservation: &verdict{Status: "failed", Reason: "baseline matrix row 'node 20' is missing"}}
+	require.Contains(t, strings.Join(summarizeValidation(result).BlockingChecks, "\n"), "CI preservation: failed — baseline matrix row 'node 20' is missing")
+}

@@ -97,6 +97,9 @@ func summarizeValidation(result validationResult) validationSummary {
 	if result.CIRuntime != nil && result.CIRuntime.Status != "compatible" && result.CIRuntime.Status != "not applicable" {
 		summary.BlockingChecks = append(summary.BlockingChecks, "CI runtime: "+result.CIRuntime.Status)
 	}
+	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
+		summary.BlockingChecks = append(summary.BlockingChecks, "CI preservation: "+result.CIPreservation.Status+" — "+result.CIPreservation.Reason)
+	}
 	if result.Scope != nil {
 		for _, reason := range result.Scope.Unresolved {
 			summary.BlockingChecks = append(summary.BlockingChecks, "unresolved CI scope: "+reason)
