@@ -60,6 +60,7 @@ func repositoryDirectory(root, directory, prefix string) (string, error) {
 // these are known to leave the selected script unchanged.
 type npmScriptOptions struct {
 	directory string // -w/--workspace or --prefix, relative to the caller
+	workspace bool   // directory came from -w/--workspace, which also takes a package name
 	ifPresent bool
 }
 
@@ -95,7 +96,7 @@ func npmScriptArguments(args []string) ([]string, npmScriptOptions, error) {
 			if options.directory != "" {
 				return nil, options, fmt.Errorf("multiple npm package selections require review")
 			}
-			options.directory = value
+			options.directory, options.workspace = value, name != "--prefix"
 		default:
 			rest = append(rest, args[i])
 		}
@@ -112,4 +113,66 @@ func packageScriptExists(directory, name string) bool {
 		Scripts map[string]string `json:"scripts"`
 	}
 	return json.Unmarshal(data, &manifest) == nil && manifest.Scripts[name] != ""
+}
+
+// npmWorkspaceDirectory resolves -w/--workspace as npm does: the name of a
+// package declared by the nearest workspaces manifest, otherwise a directory.
+func npmWorkspaceDirectory(root, directory, selector string) (string, error) {
+	for project := directory; ; project = filepath.Dir(project) {
+		if patterns, ok := npmWorkspacePatterns(project); ok {
+			for _, pattern := range patterns {
+				// Negations and ** globs are not expanded; a path selector still works.
+				if strings.HasPrefix(pattern, "!") || strings.Contains(pattern, "**") {
+					continue
+				}
+				matches, _ := filepath.Glob(filepath.Join(project, pattern))
+				for _, match := range matches {
+					if npmPackageName(match) == selector {
+						return repositoryDirectory(root, project, match[len(project)+1:])
+					}
+				}
+			}
+			break
+		}
+		if relative, err := filepath.Rel(root, project); err != nil || relative == "." || !filepath.IsLocal(relative) {
+			break
+		}
+	}
+	return repositoryDirectory(root, directory, selector)
+}
+
+func npmWorkspacePatterns(directory string) ([]string, bool) {
+	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
+	if err != nil {
+		return nil, false
+	}
+	var manifest struct {
+		Workspaces json.RawMessage `json:"workspaces"`
+	}
+	if json.Unmarshal(data, &manifest) != nil || len(manifest.Workspaces) == 0 {
+		return nil, false
+	}
+	var patterns []string
+	if json.Unmarshal(manifest.Workspaces, &patterns) != nil {
+		var object struct {
+			Packages []string `json:"packages"`
+		}
+		if json.Unmarshal(manifest.Workspaces, &object) != nil {
+			return nil, false
+		}
+		patterns = object.Packages
+	}
+	return patterns, true
+}
+
+func npmPackageName(directory string) string {
+	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
+	if err != nil {
+		return ""
+	}
+	var manifest struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(data, &manifest)
+	return manifest.Name
 }

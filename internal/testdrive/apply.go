@@ -199,10 +199,7 @@ func (t *Testdrive) selectSetupTracer(ctx context.Context, scope onboard.Validat
 			if status == "incompatible" && job.Code == "missing_instrumentation" {
 				continue
 			}
-			// Setup adds the action and its preload; only custom or conflicting
-			// initialization still needs review.
-			repairable := job.Code == onboard.CodeMissingInstrumentation || job.Code == onboard.CodeMissingInitialization
-			if status != "compatible" || !repairable && job.Status != "compatible" {
+			if status != "compatible" || !repairableSetupFinding(t.framework.Name(), job) && job.Status != "compatible" {
 				return platform.JSSelection{}, fmt.Errorf("%s / %s / step %d: %s %s", job.Workflow, job.Job, job.Step, job.Reason, reason)
 			}
 		}
@@ -213,6 +210,14 @@ func (t *Testdrive) selectSetupTracer(ctx context.Context, scope onboard.Validat
 		version = selected.Version
 	}
 	return selected, nil
+}
+
+// repairableSetupFinding reports whether setup itself fixes the finding: it adds
+// the action and its preload, and wraps uninstrumented Mocha commands with NYC.
+// Only custom or conflicting initialization still needs review.
+func repairableSetupFinding(framework string, job onboard.RuntimeFinding) bool {
+	return job.Code == onboard.CodeMissingInstrumentation || job.Code == onboard.CodeMissingInitialization ||
+		framework == "mocha" && job.Code == onboard.CodeUnverifiedInitialization && strings.HasPrefix(job.Reason, onboard.MochaCoverageGap)
 }
 
 func (t *Testdrive) preflightInDirectory(ctx context.Context, directory string, result *validationResult) (runErr error) {

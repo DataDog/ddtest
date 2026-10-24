@@ -517,7 +517,11 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		}
 		scriptDirectory := directory
 		if options.directory != "" {
-			target, err := repositoryDirectory(root, directory, options.directory)
+			resolve := repositoryDirectory
+			if options.workspace {
+				resolve = npmWorkspaceDirectory
+			}
+			target, err := resolve(root, directory, options.directory)
 			if err != nil {
 				return unresolvedCommand(repositoryError(root, err))
 			}

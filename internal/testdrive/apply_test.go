@@ -155,6 +155,7 @@ func TestSetupSelectionRefusesConfigurationOutsideTheCheckout(t *testing.T) {
 				require.NoError(t, os.Symlink(outside, filepath.Join(root, "jest.config.js")))
 			}
 			require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+			require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
 			requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '24.14.1'}\n      - run: npm test\n")
 			executor := drive.executor.(*preflightExecutor)
 			_, err := drive.selectSetupTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: tc.command(outside)}}}, false)
@@ -183,4 +184,19 @@ func TestRemoveEmptyDirectoriesKeepsAnyFile(t *testing.T) {
 	requireWriteFile(t, filepath.Join(kept, "testdrive.json"), "{}")
 	removeEmptyDirectories(kept)
 	require.FileExists(t, filepath.Join(kept, "testdrive.json"))
+}
+
+func TestSetupSelectionAcceptsMochaCoverageThatSetupWraps(t *testing.T) {
+	// Setup wraps a Mocha command with NYC; c8 coverage needs a manual switch.
+	for command, repairable := range map[string]bool{"npm test": true, "npx c8 mocha": false} {
+		root := t.TempDir()
+		requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"mocha"},"devDependencies":{"mocha":"11.7.6","nyc":"17.1.0","c8":"10.1.3"}}`)
+		require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+		requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '24.14.1'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: js, js-tracer-version: '6.20.1'}\n      - run: "+command+"\n        env:\n          NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}\n")
+		ci := onboard.CheckCIRuntimes(t.Context(), root, "mocha")
+		require.Len(t, ci.Jobs, 1, command)
+		require.Equal(t, onboard.CodeUnverifiedInitialization, ci.Jobs[0].Code, command)
+		require.Equal(t, repairable, repairableSetupFinding("mocha", ci.Jobs[0]), "%s: %s", command, ci.Jobs[0].Reason)
+		require.False(t, repairableSetupFinding("jest", ci.Jobs[0]), "only Mocha setup adds the NYC wrapper")
+	}
 }

@@ -149,3 +149,31 @@ func TestMissingPreloadIsReportedSeparatelyFromCustomInitialization(t *testing.T
 		}
 	}
 }
+
+func TestNpmWorkspaceSelectorsResolveDeclaredPackageNames(t *testing.T) {
+	for name, workspaces := range map[string]string{"array": `["packages/*"]`, "object": `{"packages":["packages/*"]}`} {
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"workspaces":`+workspaces+`}`), 0644))
+		for directory, manifest := range map[string]string{
+			"packages/a": `{"name":"@scope/app","scripts":{"test":"jest --selected"}}`,
+			"packages/b": `{"name":"app","scripts":{"test":"jest --named"}}`,
+			// npm selects the workspace named app, not this unrelated folder.
+			"app": `{"scripts":{"test":"jest --unrelated"}}`,
+		} {
+			require.NoError(t, os.MkdirAll(filepath.Join(root, directory), 0755))
+			require.NoError(t, os.WriteFile(filepath.Join(root, directory, "package.json"), []byte(manifest), 0644))
+		}
+		for command, want := range map[string]string{
+			"npm test -w @scope/app":          "jest --selected",
+			"npm test --workspace=app":        "jest --named",
+			"npm test --workspace packages/a": "jest --selected",
+			"npm test --prefix app":           "jest --unrelated",
+		} {
+			remaining := 256
+			resolution := resolveJestSequence(root, root, command, nil, &remaining, "jest")
+			require.Empty(t, resolution.Reason, "%s: %s", name, command)
+			require.Len(t, resolution.Tests, 1, "%s: %s", name, command)
+			require.Equal(t, want, resolution.Tests[0].Command, "%s: %s", name, command)
+		}
+	}
+}
