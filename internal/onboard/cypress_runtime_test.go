@@ -211,3 +211,59 @@ func TestCypressActionWaitOnTimeoutAcceptsFractionalSeconds(t *testing.T) {
 		require.Contains(t, resolveCypressAction(t.TempDir(), ciWorkflow{}, runtimeJob{}, step).Reason, "wait-on timeout", value)
 	}
 }
+
+func TestCypressCredentialGuardPreservesLocalNodeOptions(t *testing.T) {
+	workflow := ciWorkflow{Env: map[string]string{"NODE_OPTIONS": "--max-old-space-size=2048"}}
+	job := runtimeJob{Env: map[string]string{"DD_API_KEY": "${{ secrets.DD_API_KEY }}"}, Steps: []runtimeStep{{ID: "dd", Uses: "datadog/test-visibility-github-action@v3"}}}
+	for _, expression := range []string{
+		"${{ env.DD_API_KEY != '' && format('{0} -r {1}', env.NODE_OPTIONS, env.DD_TRACE_PACKAGE) || env.NODE_OPTIONS }}",
+		"${{ steps.dd.outcome == 'success' && format('{0} -r {1}', env.NODE_OPTIONS, env.DD_TRACE_PACKAGE) || env.NODE_OPTIONS }}",
+	} {
+		step := runtimeStep{Run: "npx cypress run", Env: map[string]string{"NODE_OPTIONS": expression}}
+		_, env, err := resolveVariantStep(workflow, job, step, nil, "cypress")
+		require.NoError(t, err, expression)
+		require.Equal(t, "--max-old-space-size=2048", env["NODE_OPTIONS"])
+		require.NotContains(t, env, "DD_API_KEY")
+	}
+	for _, expression := range []string{
+		"${{ env.DD_API_KEY != '' && format('-r {0} --trace-warnings', env.DD_TRACE_PACKAGE) || '' }}",
+		"${{ secrets.UNKNOWN != '' && format('-r {0}', env.DD_TRACE_PACKAGE) || '' }}",
+	} {
+		_, _, err := resolveVariantStep(workflow, job, runtimeStep{Run: "npx cypress run", Env: map[string]string{"NODE_OPTIONS": expression}}, nil, "cypress")
+		require.Error(t, err, "unknown contexts or different ordinary flags must stay unvalidated")
+	}
+}
+
+func TestCypressCredentialGuardValidatesBothCIPaths(t *testing.T) {
+	const guarded = "${{ env.DD_API_KEY != '' && format('{0} -r {1}', env.NODE_OPTIONS, env.DD_TRACE_PACKAGE) || env.NODE_OPTIONS }}"
+	for _, key := range []string{"present", ""} {
+		for _, conditional := range []bool{true, false} {
+			t.Run(key+map[bool]string{true: " guarded", false: " unguarded"}[conditional], func(t *testing.T) {
+				options := guarded
+				if !conditional {
+					options = "-r ${{ env.DD_TRACE_PACKAGE }}"
+				}
+				workflow := ciWorkflow{Env: map[string]string{"NODE_OPTIONS": "--max-old-space-size=2048"}}
+				job := runtimeJob{Env: map[string]string{"DD_API_KEY": "${{ secrets.DD_API_KEY }}"}, Context: map[string]string{"secrets.DD_API_KEY": key, "scenario": "push"}, Steps: []runtimeStep{
+					{Uses: "actions/setup-node@v4", With: map[string]string{"node-version": "24"}},
+					{ID: "dd", Uses: "datadog/test-visibility-github-action@v3", If: "env.DD_API_KEY != ''", With: map[string]string{"languages": "js", "js-tracer-version": "6.21.0"}},
+					{Uses: "cypress-io/github-action@v7", ActionNode: "24", Env: map[string]string{"NODE_OPTIONS": options}},
+				}}
+				resolutions := []commandResolution{{}, {}, {Matched: true, Tests: []TestCommand{{Cypress: &CypressCommand{Action: "cypress-io/github-action@v7"}}}}}
+				resolve := func(context.Context, string, string) (tracerRequirement, error) {
+					return tracerRequirement{Version: "6.21.0", Node: ">=22"}, nil
+				}
+				findings := checkRuntimeJob(t.Context(), "", workflow, "tests", job, resolutions, nil, nil, resolve, "cypress")
+				require.Len(t, findings, 1)
+				switch {
+				case key != "":
+					require.Equal(t, "compatible", findings[0].Status)
+				case conditional:
+					require.Equal(t, "excluded", findings[0].Status, "secretless CI must still run tests without the tracer")
+				default:
+					require.Equal(t, "incompatible", findings[0].Status, "loading an uninstalled tracer must fail validation")
+				}
+			})
+		}
+	}
+}

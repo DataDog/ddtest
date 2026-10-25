@@ -14,7 +14,11 @@ the CI setup, then validate with the customer's actual headless command.
    action API path, testdrive reads the action's runs.using Node major. Run with
    a compatible release of that major, satisfying the application's engines too.
    Use an existing runtime manager or an isolated runtime; preserve CI versions.
-3. Initialize the action's tracer in every Cypress test step using NODE_OPTIONS.
+3. Initialize dd-trace through NODE_OPTIONS, as for other Node.js frameworks:
+   `NODE_OPTIONS='-r dd-trace/ci/init' <existing test command>` when dd-trace is
+   installed in the test project's dependencies. For the GitHub action's isolated
+   installation, use its exported initializer path as shown below; the bare
+   package name does not resolve an isolated action installation.
    Preserve tests on fork pull requests where Datadog secrets are unavailable:
    guard tracer installation and its added preload together, without guarding
    or removing the existing test step. Keep existing NODE_OPTIONS in the
@@ -23,10 +27,10 @@ the CI setup, then validate with the customer's actual headless command.
    defineConfig and supported CLI config loading. Prefer exporting the existing
    config through Cypress's defineConfig for programmatic runners such as
    cypress-io/github-action. Preserve existing setupNodeEvents, event callbacks
-   and supportFile. Do not add a second plugin/support wrapper when automatic
-   instrumentation works. Keep an existing manual integration; if browser
-   instrumentation is missing, report the concrete diagnostics and review the
-   documented manual Cypress plugin/support setup.
+   and supportFile. Do not add or generate tracer plugin/support wrappers as
+   part of onboarding. Preserve an existing manual integration. If the preload
+   does not install browser instrumentation, report the concrete diagnostic as
+   a blocker before proposing a manual integration.
 4. Cypress Test Impact Analysis needs application coverage: the tested page must
    expose Istanbul's window.__coverage__ (babel-plugin-istanbul or
    vite-plugin-istanbul in the build served to Cypress). Testdrive requires that
@@ -34,8 +38,14 @@ the CI setup, then validate with the customer's actual headless command.
    existing coverage setup; @cypress/code-coverage is not required. Version 3 of
    @cypress/code-coverage fails when the tracer skips a test; it needs version 4
    or later, which requires Cypress 15.10 or later.
-5. Before final validation, run the repository checks appropriate to any config
-   or startup source files you edited, including their existing lint rules.
+5. Finish ALL repository edits before final validation, including CI, coverage
+   instrumentation, README/documentation, ignored-file rules and lint/format fixes.
+   Run the repository checks appropriate to any config or startup source files
+   you edited, including their existing lint rules. Validation is a read-only
+   phase for the agent: after launching testdrive, only wait with the host tool
+   until it exits. Do not edit any file or run parallel cleanup, lint fixes or
+   documentation updates while it runs. Such edits invalidate the snapshot and
+   require a new full run; ddtest stops remaining browser launches when detected.
    Run ddtest testdrive --all --tracer-version <exact-release>
    --yes after all edits. A final run overriding one alias is insufficient for
    onboarding when other CLI or API configurations were discovered.
@@ -102,8 +112,13 @@ Merge the action's preload into the original test step's existing Node options:
 
 ```yaml
 env:
-  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}
+  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}
 ```
+
+The action's DD_TRACE_PACKAGE resolves dd-trace/ci/init in its isolated install.
+Cypress does not need the ESM --import loader merely because its config uses ESM.
+Do not add manual dd-trace plugin/support imports to the Cypress config or support
+file. Application Istanbul coverage for TIA is a separate build requirement.
 
 Keep installation and its added preload under the same existing fork/key guard.
 For a new key guard, assign the secret to a job-level environment variable and

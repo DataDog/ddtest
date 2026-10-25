@@ -13,6 +13,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
 
@@ -190,13 +191,13 @@ func TestMochaSetupEditsPreserveAdditionalPrerequisites(t *testing.T) {
 }
 
 func TestWorkflowReturnsSetupRepairsWithoutWeakeningFeatureFailures(t *testing.T) {
-	for _, scenario := range []string{"build setup", "service port", "source mutation", "feature failure"} {
+	for _, scenario := range []string{"build setup", "service port", "source mutation", "Cypress documentation mutation", "feature failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)
 			runner := framework.Framework(&framework.Vitest{})
 			testCommand := "vitest run"
-			if scenario == "service port" {
+			if scenario == "service port" || scenario == "Cypress documentation mutation" {
 				runner = &framework.Cypress{}
 				testCommand = "cypress run"
 			}
@@ -210,6 +211,22 @@ func TestWorkflowReturnsSetupRepairsWithoutWeakeningFeatureFailures(t *testing.T
 				switch scenario {
 				case "source mutation":
 					requireWriteFile(t, filepath.Join(root, "source.js"), "changed during execution\n")
+				case "Cypress documentation mutation":
+					require.NotNil(t, drive.workflowSourceCheck)
+					require.NoError(t, drive.workflowSourceCheck(t.Context()))
+					requireWriteFile(t, filepath.Join(root, "README.md"), "edited while a browser was running\n")
+					next := &Testdrive{workflowSourceCheck: drive.workflowSourceCheck,
+						startIntake: func(string, intake.Scenario) (localIntake, error) {
+							t.Fatal("source changes must stop the next browser run before intake/process startup")
+							return nil, nil
+						}}
+					session := planSession()
+					defer func() { require.NoError(t, session.Close()) }()
+					_, err := next.runCypress(t.Context(), out, session, "", runSpec{Name: "reporting-only", Role: roleReporting})
+					require.ErrorContains(t, err, "remaining browser runs stopped")
+					require.ErrorContains(t, err, "documentation and formatting")
+					result.Error = err.Error()
+					result.Compatibility.Status = "inconclusive"
 				case "feature failure":
 					result.Features[0].Status = "failed"
 				default:
@@ -241,7 +258,7 @@ func TestWorkflowReturnsSetupRepairsWithoutWeakeningFeatureFailures(t *testing.T
 				require.NotNil(t, result.InputTemplate)
 				require.Equal(t, "server.js", result.InputTemplate.Configurations[0].PortOverride.SourceFile)
 				require.Equal(t, "PORT", result.InputTemplate.Configurations[0].PortOverride.Environment)
-			case "source mutation":
+			case "source mutation", "Cypress documentation mutation":
 				require.Equal(t, "validation_incomplete", result.Code)
 				require.Contains(t, strings.Join(result.RequiredInput, " "), "source_preservation")
 			case "feature failure":
@@ -251,6 +268,76 @@ func TestWorkflowReturnsSetupRepairsWithoutWeakeningFeatureFailures(t *testing.T
 			require.Contains(t, result.ResumeCommand, "--format")
 			require.Contains(t, result.ResumeCommand, "json")
 			require.Empty(t, result.FinalResponse)
+		})
+	}
+}
+
+func TestMochaWorkflowRequiresSetupOnlyForInstrumentedCIConfigurations(t *testing.T) {
+	for _, scenario := range []string{"excluded legacy setup", "active legacy setup", "unknown excluded consumer"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			requireWriteFile(t, filepath.Join(root, "package.json"), `{"private":true,"scripts":{"test":"mocha test.js"}}`)
+			require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+			legacyEnabled, extra := "false", ""
+			if scenario == "active legacy setup" {
+				legacyEnabled = "true"
+			}
+			if scenario == "unknown excluded consumer" {
+				extra = "      - if: matrix.datadog == false\n        run: unknown-test-wrapper\n"
+			}
+			workflow := `jobs:
+  test:
+    strategy:
+      matrix:
+        include:
+          - {node: '8', datadog: LEGACY}
+          - {node: '24', datadog: true}
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '${{ matrix.node }}'}
+      - uses: datadog/test-visibility-github-action@v3
+        if: matrix.datadog
+        with: {languages: js}
+      - run: |
+          if [[ "${{ matrix.node }}" -lt 10 ]]; then
+            xargs -n1 npm rm --silent --save-dev
+          fi
+EXTRA      - run: npm test
+        env:
+          NODE_OPTIONS: ${{ matrix.datadog && format('-r {0}', env.DD_TRACE_PACKAGE) || '' }}
+`
+			workflow = strings.ReplaceAll(strings.ReplaceAll(workflow, "LEGACY", legacyEnabled), "EXTRA", extra)
+			requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), workflow)
+			drive := &Testdrive{repositoryRoot: root, framework: &framework.Mocha{}, language: "javascript", tracerVersion: "6.20.1", projectTracer: "fixture", executor: workflowCheckExecutor{}, nodeVersion: currentNodeVersion, allConfigurations: true}
+			executions := 0
+			drive.workflowRun = func(_ context.Context, out io.Writer) error {
+				executions++
+				require.Len(t, drive.workflowScope.Commands, 2, "excluded configurations remain in the evidence scope")
+				template := scopeFactsTemplate("snapshot", *drive.workflowScope)
+				require.Len(t, template.Configurations, 1, "excluded configurations must not request setup facts")
+				return finishValidation(out, root, completeValidationFixture("mocha"))
+			}
+			var output bytes.Buffer
+			err := drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json", ExplicitVersion: true})
+			var result onboard.AgentResult
+			require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+			switch scenario {
+			case "excluded legacy setup":
+				require.NoError(t, err)
+				require.Equal(t, "complete_locally", result.Status)
+				require.Equal(t, 1, executions)
+			case "active legacy setup":
+				require.Error(t, err)
+				require.Equal(t, "scope_unresolved", result.Code)
+				require.Contains(t, result.Reason, "xargs")
+				require.Zero(t, executions)
+			case "unknown excluded consumer":
+				require.Error(t, err)
+				require.Equal(t, "scope_unresolved", result.Code)
+				require.Zero(t, executions)
+			}
+			require.Equal(t, workflow, readApplyFile(t, root, ".github/workflows/test.yml"), "testdrive must preserve the legacy matrix and setup")
 		})
 	}
 }

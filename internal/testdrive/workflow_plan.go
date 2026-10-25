@@ -72,11 +72,14 @@ func setupFactsTemplate(fingerprint string, entry onboard.TestCommand) *onboard.
 	return &onboard.SetupFacts{SchemaVersion: 2, Fingerprint: fingerprint, Configurations: []onboard.ConfigurationFact{fact}}
 }
 
-// scopeFactsTemplate lists every discovered configuration for the current
-// snapshot, so rejected facts can be rewritten against its fingerprint and IDs.
+// scopeFactsTemplate lists configurations eligible for instrumentation, so
+// rejected facts can be rewritten against the current fingerprint and IDs.
 func scopeFactsTemplate(fingerprint string, scope onboard.ValidationScope) *onboard.SetupFacts {
 	template := &onboard.SetupFacts{SchemaVersion: 2, Fingerprint: fingerprint}
 	for _, entry := range scope.Commands {
+		if ciInstrumentationDisabled(entry) {
+			continue
+		}
 		template.Configurations = append(template.Configurations, setupFactsTemplate(fingerprint, entry).Configurations...)
 	}
 	return template

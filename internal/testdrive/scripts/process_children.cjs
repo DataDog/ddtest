@@ -180,7 +180,8 @@ if (process.env.DDTEST_PROCESS_OWNER && !process.env.DDTEST_PROCESS_GUARD) {
     if (!ownerAvailable()) return { env: withoutOwnership(env) }
     if (process.platform === 'win32' || (options.argv0 !== undefined && options.argv0 !== file)) unsupportedLaunch()
     withOwnership(env).DDTEST_PROCESS_GUARD = '1'
-    return { file: '/bin/bash', args: launcherArguments(file, args, options.stdio), options: { ...options, env, detached: true }, original: { file, args } }
+    // Preserve native groups so framework teardown reaches synchronous servers.
+    return { file: '/bin/bash', args: launcherArguments(file, args, options.stdio, !!options.detached), options: { ...options, env }, original: { file, args } }
   }
   // Errors name the original executable and command, never the helper shell.
   const restoreErrorSubject = (error, launch, command) => {

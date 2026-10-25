@@ -61,6 +61,9 @@ func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOp
 		return fmt.Errorf("CI discovery needs review before automatic setup: %v", scope.Unresolved)
 	}
 	for _, entry := range scope.Commands {
+		if ciInstrumentationDisabled(entry) {
+			continue
+		}
 		if len(entry.UnvalidatedSetup) > 0 || missingPrerequisiteFacts(entry) {
 			return fmt.Errorf("%s requires setup review: %s", entry.Command, strings.Join(entry.UnvalidatedSetup, "; "))
 		}
@@ -176,6 +179,9 @@ func (t *Testdrive) selectSetupTracer(ctx context.Context, scope onboard.Validat
 	}
 	var selected platform.JSSelection
 	for _, entry := range scope.Commands {
+		if ciInstrumentationDisabled(entry) {
+			continue
+		}
 		words, err := shellquote.Split(entry.Command)
 		if entry.Cypress != nil {
 			words, err = []string{"node"}, nil
@@ -240,6 +246,9 @@ func (t *Testdrive) selectSetupTracer(ctx context.Context, scope onboard.Validat
 		}
 		selected = selection
 		version = selected.Version
+	}
+	if selected.Version == "" {
+		return platform.JSSelection{}, fmt.Errorf("no configurations enabled for instrumentation")
 	}
 	return selected, nil
 }

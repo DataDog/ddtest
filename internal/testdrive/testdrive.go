@@ -54,6 +54,7 @@ type Testdrive struct {
 	workflowPlan             *onboard.ExecutionPlan
 	workflowScope            *onboard.ValidationScope
 	workflowRun              func(context.Context, io.Writer) error
+	workflowSourceCheck      func(context.Context) error
 	cucumberSupport          *cucumberSupport
 	webdriverIOCapability    *int
 	cucumberNode             string

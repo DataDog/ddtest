@@ -65,6 +65,11 @@ func TestSetupSelectionHonorsExplicitCIOptOuts(t *testing.T) {
 	selected, err := drive.selectWorkflowTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{excluded, active}}, false)
 	require.NoError(t, err, "an excluded runner must not be preflighted")
 	require.Equal(t, "6.16.0", selected)
+	selection, err := drive.selectSetupTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{excluded, active}}, false)
+	require.NoError(t, err, "plain apply must share the coordinator's exclusion policy")
+	require.Equal(t, "6.16.0", selection.Version)
+	_, err = drive.selectSetupTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{excluded}}, false)
+	require.ErrorContains(t, err, "no configurations enabled for instrumentation")
 
 	_, err = drive.selectWorkflowTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{excluded}}, false)
 	require.ErrorContains(t, err, "no configurations enabled for instrumentation")
