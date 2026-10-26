@@ -120,9 +120,12 @@ Only CI that can reach a selected test is in scope. Jobs whose steps can't start
 one (system packages, coverage merging, linting, publishing, another framework)
 are listed as not a test consumer, and unresolved steps after a job's last
 possible test are listed as outside the test path; unknown executables, actions,
-package scripts and repository files still block. A job guard that reads only
-runtime context (`github.actor`, `github.event_name`, `needs.<job>.outputs`) is
-validated as a possible CI path and reported as unverified. A matrix axis computed
+package scripts and repository files still block, and so do interpreter
+invocations (`bash -c`, `node -e`, a script file) and npm settings that change
+how scripts execute (`ignore-scripts`, `script-shell`). A job guard that reads only
+runtime context (`github.actor`, `github.event_name`, `github.run_number`,
+`needs.<job>.outputs`) is validated as a possible CI path and reported as
+unverified; only a guard that is false for every outcome excludes the job. A matrix axis computed
 at runtime (`fromJson(...)`) that only step commands read becomes one unverified
 value, so the job's tests run with the locally installed dependencies. Plain argv
 commands under `shell: pwsh`, including the Windows default, are read as POSIX

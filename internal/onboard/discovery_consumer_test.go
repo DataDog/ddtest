@@ -44,9 +44,8 @@ func TestDiscoveryIgnoresJobsAndSetupOutsideTheTestPath(t *testing.T) {
     steps:
       - run: npm install -g npm@latest
       - run: |
-          node <<'EOF'
-          const { execFileSync } = require('child_process')
-          console.log(execFileSync('npm', ['test']).toString())
+          cat > release-notes.md <<'EOF'
+          Run npm test before publishing.
           EOF
       - run: npm stage publish --tag "$NPM_DIST_TAG"
         env: {NPM_DIST_TAG: '${{ steps.dist-tag.outputs.tag }}'}
@@ -204,6 +203,10 @@ func TestPossibleJobConditionPath(t *testing.T) {
 		{"needs.release.outputs.created == 'true' || github.event_name == 'workflow_dispatch'", true, true},
 		{"matrix.os == 'linux' && github.actor == 'bot'", false, false},
 		{"github.ref == 'refs/heads/main'", true, false},
+		// Sampled values can't reach every number; only an impossible guard excludes the job.
+		{"github.run_number > 10", true, true},
+		{"github.run_attempt > 1 && github.event_name != 'schedule'", true, true},
+		{"github.run_attempt > 1 && false", false, false},
 	} {
 		active, assumed, err := possibleJobConditionPath(tc.condition, map[string]any{"os": "windows"})
 		require.NoError(t, err, tc.condition)
@@ -250,9 +253,37 @@ func TestMayStartTests(t *testing.T) {
 		"make test":              true,
 		"npx cucumber-js":        true,
 		"pnpm exec playwright install && npm test": true,
+		"bash -c 'npm test'":                       true,
+		"node -e \"require('./scripts/test')\"":    true,
+		"node --enable-source-maps scripts/ci.js":  true,
+		"bash < scripts/ci.sh":                     true,
+		"node --version":                           false,
+		"pnpm":                                     true,
 	} {
 		require.Equal(t, want, mayStartTests(runtimeStep{Run: run}, "cucumber"), run)
 	}
 	require.True(t, mayStartTests(runtimeStep{Uses: "./.github/actions/test"}, "cucumber"))
 	require.False(t, mayStartTests(runtimeStep{Run: "npm install @playwright/test@latest"}, "playwright"), "a scoped package spec is not an executable")
+}
+
+func TestNpmConfigSettingsThatChangeExecutionStayUnresolved(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"test": "mocha"})
+	for run, setup := range map[string]bool{
+		"npm config set loglevel error":                          true,
+		"npm config set registry=https://registry.example.test/": true,
+		"npm config set @acme:registry https://npm.acme.test/":   true,
+		"npm config set --location project fetch-retries 5":      true,
+		"npm config set ignore-scripts true":                     false,
+		"npm config set script-shell /bin/bash":                  false,
+		"npm config set loglevel error node-options=--require=x": false,
+	} {
+		result := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: run}, "javascript", "mocha")
+		if setup {
+			require.False(t, result.Matched, run)
+			require.NotContains(t, result.Reason, "can change how test scripts execute", run)
+		} else {
+			require.Contains(t, result.Reason, "can change how test scripts execute", run)
+		}
+	}
 }

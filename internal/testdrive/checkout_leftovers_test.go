@@ -37,3 +37,15 @@ func TestHandoffNamesCheckoutLeftovers(t *testing.T) {
 	result.Cleanup.Leftovers = []string{"playwright-report/"}
 	require.Contains(t, validationHandoff(result), "Cleanup: passed (ddtest sessions only). Left in the checkout: playwright-report/; remove them unless they belong there.")
 }
+
+func TestAggregateKeepsDisclosuresFromPassingConfigurations(t *testing.T) {
+	result := validationResult{Cleanup: &verdict{Status: "passed", Reason: "Temporary sessions removed for all configurations."}}
+	shared := result.Cleanup
+	discloseConfigurationSideEffects(&result, []string{"coverage/", "playwright-report/", "coverage/"}, map[string]string{"DD_TRACE_DISABLED_INSTRUMENTATIONS": "router"})
+	require.Equal(t, "passed", result.Cleanup.Status)
+	require.Equal(t, []string{"coverage/", "playwright-report/"}, result.Cleanup.Leftovers)
+	require.Contains(t, result.Cleanup.Reason, "Left in the checkout by commands run there: coverage/, playwright-report/.")
+	require.Equal(t, map[string]string{"DD_TRACE_DISABLED_INSTRUMENTATIONS": "router"}, result.AmbientDatadogEnvironment)
+	require.Empty(t, shared.Leftovers, "a configuration's own verdict is not modified")
+	require.Contains(t, validationHandoff(result), "DD_TRACE_DISABLED_INSTRUMENTATIONS=router")
+}

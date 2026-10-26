@@ -24,6 +24,9 @@ var taskRunners = []string{"npx", "bunx", "make", "just", "task", "nx", "turbo",
 
 var interpreters = []string{"node", "bash", "sh", "zsh", "deno", "tsx", "ts-node"}
 
+// Interpreter invocations that only print metadata.
+var interpreterMetadataFlags = []string{"--version", "-v", "-V", "--help", "-h"}
+
 // Package-manager subcommands that start a package script or binary.
 var scriptSubcommands = []string{"test", "t", "tst", "run", "run-script", "exec", "x", "dlx", "start"}
 
@@ -91,8 +94,11 @@ func mayStartTests(step runtimeStep, framework string) bool {
 				return true
 			}
 		case slices.Contains(interpreters, base):
-			// Interpreters start tests only when they execute a file.
-			if len(words) > 1 && !strings.HasPrefix(words[1], "-") && !strings.HasPrefix(words[1], "<") {
+			// -c/-e, a file or stdin can all start a test launcher; version
+			// and help queries never do.
+			metadataOnly := len(words) > 1 && !slices.ContainsFunc(words[1:], func(word string) bool { return !slices.Contains(interpreterMetadataFlags, word) })
+			// Print mode evaluates one expression to print a value, such as a version.
+			if !metadataOnly && (len(words) < 2 || words[1] != "-p" && words[1] != "--print") {
 				return true
 			}
 		case slices.Contains([]string{"npm", "pnpm", "yarn", "bun"}, base):

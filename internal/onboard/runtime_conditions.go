@@ -460,11 +460,56 @@ func possibleJobConditionPath(value string, row map[string]any) (active, assumed
 		}
 		return false, nil
 	}
-	passed, tryErr := try(0)
-	if tryErr != nil {
+	if passed, tryErr := try(0); tryErr == nil && passed {
+		return true, true, nil
+	}
+	// The sampled values are not exhaustive (a run number can exceed any
+	// literal), so a failed search only excludes the job when the guard is false
+	// for every outcome of its runtime-context comparisons.
+	possible, abstractErr := possibleRuntimeOutcome(value, row)
+	if abstractErr != nil {
 		return false, false, err
 	}
-	return passed, passed, nil
+	return possible, possible, nil
+}
+
+var runtimeComparison = regexp.MustCompile(`(?:\b(?:github|needs|inputs|vars)\.[A-Za-z0-9_.-]+\s*(?:==|!=|<=|>=|<|>)\s*(?:'(?:[^']|'')*'|-?[0-9]+(?:\.[0-9]+)?|true|false|null|\b(?:github|needs|inputs|vars)\.[A-Za-z0-9_.-]+)|(?:'(?:[^']|'')*'|-?[0-9]+(?:\.[0-9]+)?|true|false|null)\s*(?:==|!=|<=|>=|<|>)\s*\b(?:github|needs|inputs|vars)\.[A-Za-z0-9_.-]+)`)
+
+// possibleRuntimeOutcome treats each runtime-context comparison (and each bare
+// runtime operand) as independently true or false. Correlated comparisons can
+// only make fewer outcomes reachable, so a guard false for every assignment is
+// impossible; any passing assignment leaves the job a possible CI path.
+func possibleRuntimeOutcome(value string, row map[string]any) (bool, error) {
+	atoms := 0
+	abstract := runtimeComparison.ReplaceAllStringFunc(value, func(string) string {
+		atoms++
+		return fmt.Sprintf("\x00%d\x00", atoms-1)
+	})
+	abstract = runtimeContextOperand.ReplaceAllStringFunc(abstract, func(string) string {
+		atoms++
+		return fmt.Sprintf("\x00%d\x00", atoms-1)
+	})
+	if atoms == 0 || atoms > 6 {
+		return false, fmt.Errorf("runtime condition has %d context comparisons", atoms)
+	}
+	for assignment := 0; assignment < 1<<atoms; assignment++ {
+		condition := abstract
+		for atom := range atoms {
+			outcome := "false"
+			if assignment&(1<<atom) != 0 {
+				outcome = "true"
+			}
+			condition = strings.ReplaceAll(condition, fmt.Sprintf("\x00%d\x00", atom), outcome)
+		}
+		passed, err := runtimeCondition(condition, row)
+		if err != nil {
+			return false, err
+		}
+		if passed {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func knownJobCondition(value string, row map[string]any) (bool, error) {

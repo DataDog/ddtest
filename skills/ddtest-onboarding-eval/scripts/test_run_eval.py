@@ -470,6 +470,19 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(manifest["agent_artifacts"], {"memory_files": [".claude/projects/-trial-repo/memory/note.md"]})
 
+    def test_memory_scan_does_not_follow_symlinked_roots(self):
+        home = self.root / "memory-home"
+        outside = self.root / "outside" / "projects" / "-x" / "memory"
+        outside.mkdir(parents=True)
+        (outside / "host-note.md").write_text("host")
+        home.mkdir()
+        (home / ".claude").symlink_to(self.root / "outside", target_is_directory=True)
+        self.assertEqual(run_eval.agent_memory_files(home), [])
+        (home / ".claude").unlink()
+        (home / ".claude").mkdir()
+        (home / ".claude" / "projects").symlink_to(self.root / "outside" / "projects", target_is_directory=True)
+        self.assertEqual(run_eval.agent_memory_files(home), [])
+
     def test_setup_failure_is_recorded_without_launching_agent(self):
         self.args.setup_command = [f"{shlex.quote(sys.executable)} -c 'import sys; sys.exit(7)'"]
         code, manifest = self.trial()

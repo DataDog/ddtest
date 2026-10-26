@@ -199,6 +199,8 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		Compatibility: verdict{Status: "compatible", Reason: "Every discovered configuration passed its own paired comparison; configurations were not compared against each other."}, Cleanup: &verdict{Status: "passed", Reason: "Temporary sessions removed for all configurations."}}
 	var models []reportModel
 	var runErrors []error
+	var leftovers []string
+	ambient := map[string]string{}
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
 		if ciInstrumentationDisabled(entry) {
@@ -299,6 +301,10 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if execution.Cleanup != nil && execution.Cleanup.Status != "passed" {
 			result.Cleanup = execution.Cleanup
 		}
+		if execution.Cleanup != nil {
+			leftovers = append(leftovers, execution.Cleanup.Leftovers...)
+		}
+		maps.Copy(ambient, execution.AmbientDatadogEnvironment)
 		for _, run := range execution.Runs {
 			run.Configuration = label
 			result.Runs = append(result.Runs, run)
@@ -312,6 +318,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			labelConfigurationModel(&models[i], label)
 		}
 	}
+	discloseConfigurationSideEffects(&result, leftovers, ambient)
 	if t.checkOnly {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration checks only; run --all without --check-only for all paired executions and features."}
 	}
@@ -463,4 +470,22 @@ func excludedConfiguration(entry onboard.TestCommand) configurationResult {
 
 func configurationExcluded(entry configurationResult) bool {
 	return entry.Status == "excluded" && ciInstrumentationDisabled(entry.TestCommand)
+}
+
+// discloseConfigurationSideEffects keeps inherited Datadog settings and checkout
+// leftovers from every configuration, including passing ones, in the aggregate.
+func discloseConfigurationSideEffects(result *validationResult, leftovers []string, ambient map[string]string) {
+	if len(ambient) > 0 {
+		result.AmbientDatadogEnvironment = ambient
+	}
+	if len(leftovers) == 0 || result.Cleanup == nil {
+		return
+	}
+	cleanup := *result.Cleanup
+	slices.Sort(leftovers)
+	cleanup.Leftovers = slices.Compact(leftovers)
+	if !strings.Contains(cleanup.Reason, "Left in the checkout") {
+		cleanup.Reason += " Left in the checkout by commands run there: " + strings.Join(cleanup.Leftovers, ", ") + "."
+	}
+	result.Cleanup = &cleanup
 }

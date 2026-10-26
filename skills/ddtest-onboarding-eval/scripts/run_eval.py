@@ -190,7 +190,11 @@ def agent_environment(agent, timeout, framework=None):
 def agent_memory_files(home):
     """Names only: the trial home is writable by untrusted code, so never follow links."""
     found = []
-    for root, directories, files in os.walk(home / ".claude" / "projects"):
+    projects = home / ".claude" / "projects"
+    # os.walk follows a symlinked starting path even without followlinks.
+    if any(path.is_symlink() for path in (home, home / ".claude", projects)):
+        return []
+    for root, directories, files in os.walk(projects):
         if os.path.basename(root) == "memory":
             found.extend(str(Path(root, name).relative_to(home)) for name in files)
     return sorted(found)

@@ -500,9 +500,14 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		if slices.Equal(words, []string{"npm", "config", "get", "cache"}) {
 			return commandResolution{}
 		}
-		// npm configuration (loglevel, registry, cache) is runner setup; like
-		// dependency installation, it is never replayed locally.
+		// npm configuration that only affects logging, registries or the cache is
+		// runner setup; like dependency installation, it is never replayed
+		// locally. Settings such as ignore-scripts or script-shell change how
+		// test scripts execute, so they stay unresolved.
 		if words[0] == "npm" && len(words) > 2 && words[1] == "config" && slices.Contains([]string{"set", "get", "list", "ls"}, words[2]) {
+			if words[2] == "set" && !npmSetupSettings(words[3:]) {
+				return unresolvedCommand("npm setting can change how test scripts execute and is not replayed locally: " + command)
+			}
 			return commandResolution{ReviewReason: "npm configuration setup is outside " + framework + " validation; CI setup itself is not executed locally: " + command}
 		}
 		// These are setup/metadata commands, not explicit test entry points.
@@ -917,4 +922,30 @@ func powershellArgvOnly(shell, run string) bool {
 		}
 	}
 	return true
+}
+
+// npm settings that cannot change which scripts run or how they execute.
+var npmSetupSettingNames = []string{"loglevel", "registry", "cache", "fund", "audit", "progress", "update-notifier", "color", "prefer-offline", "prefer-online", "fetch-retries", "fetch-retry-mintimeout", "fetch-retry-maxtimeout", "fetch-timeout", "maxsockets", "strict-ssl", "cafile", "ca", "proxy", "https-proxy", "noproxy", "always-auth"}
+
+// npmSetupSettings reports whether `npm config set` arguments only set
+// logging, registry, cache or network options (key value or key=value pairs).
+func npmSetupSettings(args []string) bool {
+	var keys []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			if args[i] == "--location" || args[i] == "-L" {
+				i++
+			}
+			continue
+		}
+		key, _, assigned := strings.Cut(args[i], "=")
+		keys = append(keys, key)
+		if !assigned {
+			i++ // The next word is this key's value.
+		}
+	}
+	return len(keys) > 0 && !slices.ContainsFunc(keys, func(key string) bool {
+		// Scoped registries and per-registry credentials are registry setup.
+		return !slices.Contains(npmSetupSettingNames, key) && !strings.HasSuffix(key, ":registry") && !strings.HasPrefix(key, "//")
+	})
 }
