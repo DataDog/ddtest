@@ -207,6 +207,13 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 	var tracerConfiguration string
 	var leftovers []string
 	ambient := map[string]string{}
+	if t.language == "ruby" {
+		ci := onboard.RubyCIConfiguration(t.checkoutRoot(), t.framework.Name())
+		if !slices.ContainsFunc(scope.Commands, func(entry onboard.TestCommand) bool { return !ciInstrumentationDisabled(entry) }) {
+			ci.Status, ci.Reason = "inconclusive", "Every CI entry excludes instrumentation; at least one compatible instrumented CI consumer is required."
+		}
+		result.CIRuntime = &ci
+	}
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
 		if ciInstrumentationDisabled(entry) {

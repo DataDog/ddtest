@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
@@ -142,16 +143,16 @@ func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, re
 		if gemfile == "" {
 			gemfile = "Gemfile"
 		}
-		lockfile := gemfile + ".lock"
-		if filepath.Base(gemfile) == "gems.rb" {
-			lockfile = filepath.Join(filepath.Dir(gemfile), "gems.locked")
+		lockfile := rubyLockfile(gemfile)
+		if !filepath.IsAbs(lockfile) {
+			lockfile = filepath.Join(t.repositoryRoot, lockfile)
 		}
 		if _, err := os.Stat(lockfile); err != nil {
 			check.Verdict.Reason = "Run bundle install for the selected Gemfile before configuration-only validation; its lockfile is unavailable."
 			return errors.New(check.Verdict.Reason)
 		}
 	}
-	ci := onboard.RubyCIConfiguration(t.repositoryRoot, t.framework.Name())
+	ci := onboard.RubyCIConfiguration(t.checkoutRoot(), t.framework.Name())
 	jobs, err := json.Marshal(ci.Jobs)
 	if err != nil {
 		return err
@@ -295,7 +296,7 @@ func (t *Testdrive) runRuby(ctx context.Context, output io.Writer, session *Sess
 	if scenario.Feature == "" {
 		scenario.Feature = "reporting-only"
 	}
-	run.root, run.framework = t.repositoryRoot, t.framework.Name()
+	run.root, run.checkoutRoot, run.framework = t.repositoryRoot, t.checkoutRoot(), t.framework.Name()
 	directory := filepath.Join(session.Directory(), name)
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return run, err
@@ -359,7 +360,7 @@ func (t *Testdrive) runRuby(ctx context.Context, output io.Writer, session *Sess
 	}
 	readRubyResults(env["DDTEST_RUBY_RESULTS"], &run)
 	if instrumented && probe == "" {
-		run.Coverage = rubySourceCoverage(t.repositoryRoot, run.Facts, run.Tests)
+		run.Coverage = rubySourceCoverage(t.checkoutRoot(), run.Facts, run.Tests)
 	}
 	if probe != "" {
 		count := 0
@@ -391,8 +392,30 @@ func rubySourceCoverage(root string, facts intake.Facts, native []jestTest) *cov
 		}
 	}
 
-	// The shared file check accepts only existing repository source and excludes
-	// native test files; Ruby coverage has the same filename contract as JS.
+	// Keep test helpers/support out of application evidence without discarding
+	// their actual coverage from the retained intake/report.
+	applicationFiles := func(files []string) []string {
+		var kept []string
+		for _, file := range files {
+			local, _ := cucumberCoverageFile(root, file)
+			parts := strings.Split(filepath.ToSlash(local), "/")
+			if slices.Contains(parts, "test") || slices.Contains(parts, "tests") || slices.Contains(parts, "spec") ||
+				slices.Contains([]string{"test_helper.rb", "spec_helper.rb", "rails_helper.rb"}, filepath.Base(local)) ||
+				strings.HasSuffix(local, "_test.rb") || strings.HasSuffix(local, "_spec.rb") {
+				continue
+			}
+			kept = append(kept, file)
+		}
+		return kept
+	}
+	facts.Tests = slices.Clone(facts.Tests)
+	for i := range facts.Tests {
+		facts.Tests[i].CoveredFiles = applicationFiles(facts.Tests[i].CoveredFiles)
+	}
+	facts.SuiteCoverages = slices.Clone(facts.SuiteCoverages)
+	for i := range facts.SuiteCoverages {
+		facts.SuiteCoverages[i].Files = applicationFiles(facts.SuiteCoverages[i].Files)
+	}
 	coverage := cypressSourceCoverage(root, cypressTestCode{}, facts, native)
 	switch coverage.Status {
 	case "observed":
@@ -416,6 +439,7 @@ func readRubyResults(directory string, run *validationRun) {
 			Complete bool
 			Tests    []struct {
 				File, Name, Status, Failure string
+				ClassName                   string  `json:"class_name"`
 				TelemetryName               *string `json:"telemetry_name"`
 				TelemetryScopedID           string  `json:"telemetry_scoped_id"`
 			}
@@ -427,7 +451,15 @@ func readRubyResults(directory string, run *validationRun) {
 			return
 		}
 		for _, test := range result.Tests {
-			run.Tests = append(run.Tests, jestTest{File: filepath.Clean(test.File), Name: test.Name, Status: test.Status, Failure: failureSignature(test.Failure), telemetryName: test.TelemetryName, telemetryScopedID: test.TelemetryScopedID})
+			native := jestTest{File: filepath.Clean(test.File), Name: test.Name, Status: test.Status, Failure: failureSignature(test.Failure), telemetryName: test.TelemetryName, telemetryScopedID: test.TelemetryScopedID, telemetryClass: test.ClassName}
+			if test.ClassName != "" {
+				native.Name = test.ClassName + "#" + test.Name
+				if native.telemetryName == nil {
+					name := test.Name
+					native.telemetryName = &name
+				}
+			}
+			run.Tests = append(run.Tests, native)
 		}
 		run.SuiteErrors = append(run.SuiteErrors, result.Errors...)
 	}

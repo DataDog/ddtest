@@ -347,7 +347,7 @@ func validProbeControl(run validationRun, status string) bool {
 		return false
 	}
 	for _, test := range run.Tests {
-		if (test.Name == probeName || run.framework == "minitest" && test.Name == "test_ddtest_validation_probe") && test.Status == status {
+		if (test.Name == probeName || run.framework == "minitest" && (test.Name == "test_ddtest_validation_probe" || test.Name == "DDTestValidationProbe#test_ddtest_validation_probe")) && test.Status == status {
 			return status != "failed" || strings.Contains(test.Failure, "ddtest intentional failure")
 		}
 	}
@@ -420,7 +420,11 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	}
 	nativePass, nativeFail, nativeSkip := 0, 0, 0
 	for _, test := range run.Tests {
-		if test.Name != identity.Name {
+		name := test.Name
+		if run.framework == "minitest" && test.telemetryClass == "DDTestValidationProbe" && test.telemetryName != nil {
+			name = *test.telemetryName
+		}
+		if name != identity.Name {
 			result.Status = "inconclusive"
 			result.Reason = "The scenario selected tests beyond the controlled probe."
 			return result

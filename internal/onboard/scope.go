@@ -249,7 +249,11 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					}
 					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 					if strings.EqualFold(strings.Split(step.Uses, "@")[0], githubAction) && conditionErr == nil {
-						if selected, err := actionSelectsJavaScript(step, row); err == nil && selected {
+						language := "js"
+						if framework == "rspec" || framework == "minitest" {
+							language = "ruby"
+						}
+						if selected, err := actionSelectsLanguage(step, row, language); err == nil && selected {
 							if active {
 								installerActive = true
 							} else {

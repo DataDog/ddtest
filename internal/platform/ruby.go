@@ -140,10 +140,15 @@ func (r *Ruby) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 }
 
 // DetectTracer reads the project tracer's bundle information.
-func (r *Ruby) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
+func (r *Ruby) DetectTracer(ctx context.Context, options TracerOptions) (string, error) {
 	// Detection is also used by testdrive's read-only preparation. Bundler must
 	// not resolve or write a customer lockfile before validation is approved.
-	gemVersion, err := r.detectTracerVersion(ctx, map[string]string{"BUNDLE_FROZEN": "true"})
+	env := maps.Clone(options.Environment)
+	if env == nil {
+		env = map[string]string{}
+	}
+	env["BUNDLE_FROZEN"] = "true"
+	gemVersion, err := r.detectTracerVersion(ctx, env)
 	if err != nil {
 		return "", err
 	}

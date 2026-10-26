@@ -32,6 +32,7 @@ type jestTest struct {
 	CypressAttempts       []string            `json:"-"`
 	Playwright            *playwrightIdentity `json:"playwright,omitempty"`
 	telemetryScopedID     string
+	telemetryClass        string
 	telemetryName         *string
 	File                  string `json:"file"`
 	Name                  string `json:"name"`
@@ -383,12 +384,20 @@ func verifyJestTelemetry(run validationRun) verdict {
 	type identity struct{ file, name, status string }
 	expected := make(map[identity]int)
 	anonymous := make(map[string]bool)
+	classes := make(map[string][]string)
 	for _, test := range run.Tests {
 		status := map[string]string{"passed": "pass", "failed": "fail"}[test.Status]
 		if status != "" {
 			name := test.Name
 			if test.telemetryName != nil {
 				name = *test.telemetryName
+			}
+			if run.framework == "minitest" && test.telemetryClass != "" {
+				key := test.File + "\x00" + name
+				if !slices.Contains(classes[key], test.telemetryClass) {
+					classes[key] = append(classes[key], test.telemetryClass)
+				}
+				name = test.telemetryClass + "\x00" + name
 			}
 			if run.framework == "rspec" && test.telemetryScopedID != "" {
 				name = "scoped_id:" + test.telemetryScopedID
@@ -414,6 +423,18 @@ func verifyJestTelemetry(run validationRun) verdict {
 		}
 		file = filepath.Clean(file)
 		name := test.Name
+		if candidates := classes[file+"\x00"+name]; run.framework == "minitest" && len(candidates) > 0 {
+			matches := []string{}
+			for _, class := range candidates {
+				if test.Suite == class || strings.HasPrefix(test.Suite, class+" at ") {
+					matches = append(matches, class)
+				}
+			}
+			// Missing or ambiguous class evidence must not match by method alone.
+			if len(matches) == 1 {
+				name = matches[0] + "\x00" + name
+			}
+		}
 		if run.framework == "rspec" {
 			var parameters struct {
 				Metadata struct {

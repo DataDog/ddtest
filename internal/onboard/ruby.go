@@ -48,18 +48,17 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			if !environment.LooksLikeTestCommand(filepath.Join(root, directory), step.Run, "ruby", framework) {
 				return commandResolution{Review: true, Reason: "Ruby maintenance task is outside test validation."}
 			}
-			other := "test"
+			task, other := "spec", "test"
 			if framework == "minitest" {
-				other = "spec"
+				task, other = "test", "spec"
 			}
 			for _, word := range words[1:] {
 				if word == other || strings.HasPrefix(word, other+":") {
+					if slices.ContainsFunc(words[1:], func(word string) bool { return word == task || strings.HasPrefix(word, task+":") }) {
+						return unresolvedCommand("Mixed Rake invocation runs both Ruby frameworks; validate each selected-framework entry point explicitly.")
+					}
 					return commandResolution{Review: true, Reason: "Rake " + other + " task belongs to the other Ruby framework; validate it separately."}
 				}
-			}
-			task := "spec"
-			if framework == "minitest" {
-				task = "test"
 			}
 			known := len(words) == 1 && rubyDefaultTask(root, directory, task)
 			for _, word := range words[1:] {

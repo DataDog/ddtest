@@ -306,6 +306,19 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 		result.Error = err.Error()
 		return err
 	}
+	if t.language == "ruby" && !t.isolated {
+		// Bundler can execute Gemfiles/gemspecs even with a frozen lockfile.
+		// Focused configuration-only checks need the same boundary as --all.
+		runner := *t
+		runner.preflight = runner.frameworkPreflight()
+		item := configurationResult{TestCommand: onboard.TestCommand{Directory: ".", Environment: t.configurationEnvironment}}
+		checked, err := runner.runPreparedConfiguration(ctx, output, &item)
+		result.Preflight, result.CIRuntime, result.Tracer = checked.Preflight, checked.CIRuntime, checked.Tracer
+		if err != nil {
+			result.Error = err.Error()
+		}
+		return err
+	}
 	if err := preflight(ctx, output, &result); err != nil {
 		result.Error = err.Error()
 		return err

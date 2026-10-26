@@ -109,11 +109,15 @@ jobs:
 	scope, err := DiscoverValidationScope(root, "minitest")
 	require.NoError(t, err)
 	require.Empty(t, scope.Unresolved)
-	require.Len(t, scope.Commands, 2)
+	require.Len(t, scope.Commands, 4, "instrumented and excluded consumers retain separate configurations")
 	for i, gemfile := range []string{"gemfiles/rails_7.1.gemfile", "gemfiles/rails_8.0.gemfile"} {
-		require.Equal(t, gemfile, scope.Commands[i].Environment["BUNDLE_GEMFILE"])
-		require.Empty(t, scope.Commands[i].UnvalidatedSetup)
-		require.Len(t, scope.Commands[i].Locations, 2, "both original runtime consumers remain in the inventory")
+		for j := range 2 {
+			entry := scope.Commands[i*2+j]
+			require.Equal(t, gemfile, entry.Environment["BUNDLE_GEMFILE"])
+			require.Empty(t, entry.UnvalidatedSetup)
+			require.Len(t, entry.Locations, 1)
+			require.Equal(t, j == 1, entry.CIInstrumentationExcluded)
+		}
 	}
 	ci := RubyCIConfiguration(root, "minitest")
 	require.Len(t, ci.Jobs, 4)
@@ -197,10 +201,19 @@ func TestI18nOriginalRakeAndNumericMatrixNeedOnlyInstrumentation(t *testing.T) {
 	scope, err := DiscoverValidationScope(root, "minitest")
 	require.NoError(t, err)
 	require.Empty(t, scope.Unresolved)
-	require.Len(t, scope.Commands, 6)
+	instrumented, consumers, excludedConsumers := 0, 0, 0
 	for _, entry := range scope.Commands {
 		require.Equal(t, "bundle exec rake", entry.Command)
+		consumers += len(entry.Locations)
+		if entry.CIInstrumentationExcluded {
+			excludedConsumers += len(entry.Locations)
+		} else {
+			instrumented++
+		}
 	}
+	require.Equal(t, 6, instrumented)
+	require.Equal(t, 31, consumers, "all original runtime consumers remain in the inventory")
+	require.Equal(t, 9, excludedConsumers, "explicit opt-outs remain separate from instrumented configurations")
 	ci := RubyCIConfiguration(root, "minitest")
 	require.Len(t, ci.Jobs, 31)
 	excluded := 0

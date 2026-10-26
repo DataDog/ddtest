@@ -60,7 +60,9 @@ printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$las
 					}
 					require.ErrorContains(t, drive.Run(t.Context(), &output), "ruby bundle did not produce framework metadata")
 					require.NotContains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument", "preflight disables tracing")
-					require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
+					require.True(t, filepath.IsAbs(executor.env["BUNDLE_GEMFILE"]))
+					require.Contains(t, executor.env["BUNDLE_GEMFILE"], filepath.Join("checkout", "config", "Gemfile.test"))
+					require.NotContains(t, executor.env["BUNDLE_GEMFILE"], root, "Bundler must inspect the selected manifest only in the owned copy")
 					require.Contains(t, output.String(), "ruby bundle did not produce framework metadata")
 				} else {
 					require.Empty(t, drive.environmentInfo.Executable)

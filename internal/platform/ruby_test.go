@@ -614,3 +614,17 @@ func TestRubyProbeFailureAttemptsInstall(t *testing.T) {
 	require.Equal(t, "bundle", executor.commands[1].name)
 	require.Equal(t, []string{"add", "datadog-ci"}, executor.commands[1].args)
 }
+
+func TestRubyDetectTracerUsesSelectedBundleEnvironment(t *testing.T) {
+	environment := map[string]string{"BUNDLE_GEMFILE": "gemfiles/selected.gemfile", "BUNDLE_FROZEN": "false", "APP_ENV": "test"}
+	executor := &mockCommandExecutor{combinedOutput: []byte("  * datadog-ci (1.42.0)\n"), onCombinedOutput: func(name string, args []string, env map[string]string) {
+		require.Equal(t, "gemfiles/selected.gemfile", env["BUNDLE_GEMFILE"])
+		require.Equal(t, "true", env["BUNDLE_FROZEN"])
+		require.Equal(t, "test", env["APP_ENV"])
+	}}
+	ruby := &Ruby{executor: executor}
+	detected, err := ruby.DetectTracer(t.Context(), TracerOptions{Environment: environment})
+	require.NoError(t, err)
+	require.Contains(t, detected, "1.42.0")
+	require.Equal(t, "false", environment["BUNDLE_FROZEN"], "do not modify the caller's environment")
+}

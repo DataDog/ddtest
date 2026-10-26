@@ -80,15 +80,28 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
 		if key == "BUNDLE_GEMFILE" && len(frameworks) > 0 && (frameworks[0] == "rspec" || frameworks[0] == "minitest") {
-			// github.workspace names this checkout, not the CI runner's absolute
-			// path. Keep matrix Gemfiles distinct and relocate them in the copy.
-			value = strings.NewReplacer("${{ github.workspace }}/", "", "${{github.workspace}}/", "").Replace(value)
-			value, err = interpolateMatrix(value, row)
+			// Bundler resolves ordinary paths from the test working directory;
+			// github.workspace paths instead start at the checkout root.
+			relative := strings.NewReplacer("${{ github.workspace }}/", "", "${{github.workspace}}/", "").Replace(value)
+			workspacePath := relative != value
+			value, err = interpolateMatrix(relative, row)
 			if err != nil {
 				return step, nil, err
 			}
-			if !filepath.IsLocal(value) || strings.ContainsAny(value, "$`~\\\x00") {
+			directory := filepath.Clean(stepDirectory(workflow, job, step))
+			target := filepath.Join(directory, value)
+			if workspacePath {
+				target = value
+			}
+			if !filepath.IsLocal(target) || filepath.IsAbs(value) || strings.ContainsAny(value, "$`~\\\x00") {
 				return step, nil, fmt.Errorf("BUNDLE_GEMFILE must resolve to a repository-local path: %s", value)
+			}
+			if workspacePath {
+				value, err = filepath.Rel(directory, target)
+				if err != nil {
+					return step, nil, err
+				}
+				value = filepath.ToSlash(value)
 			}
 		}
 		if key == "RUBYOPT" && len(frameworks) > 0 && (frameworks[0] == "rspec" || frameworks[0] == "minitest") {

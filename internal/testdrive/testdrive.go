@@ -175,9 +175,17 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			return nil, err
 		}
 	}
-	command, args := runner.Command()
 	configurationOnly := configuration.CheckOnly
 	all := configuration.All
+	var command string
+	var args []string
+	if language == "ruby" && runner.Name() == "minitest" {
+		// Minitest.Command probes Rails through Bundler. Resolve explicit CI or
+		// user commands first, without loading the original Gemfile.
+		command, args = "bundle", []string{"exec", "rake", "test"}
+	} else {
+		command, args = runner.Command()
+	}
 	if all && strings.TrimSpace(settings.GetCommand()) != "" {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
@@ -189,6 +197,19 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if language == "ruby" && !all {
 		selected, selectErr := onboard.RubyValidationCommand(repositoryRoot, runner.Name(), settings.GetCommand())
 		discoveryError = selectErr
+		if selected == "" && selectErr == nil && runner.Name() == "minitest" {
+			// Preserve Rails/Rake default detection, but run its bundle probes
+			// only in owned storage, including configuration-only previews.
+			isolator := Testdrive{repositoryRoot: repositoryRoot}
+			discoveryError = isolator.inRubyWorkflowCopy(context.Background(), func(root string) (probeErr error) {
+				if err := os.Chdir(root); err != nil {
+					return err
+				}
+				defer func() { probeErr = errors.Join(probeErr, os.Chdir(repositoryRoot)) }()
+				command, args = runner.Command()
+				return nil
+			})
+		}
 		if selected != "" {
 			words, parseErr := shellquote.Split(selected)
 			if parseErr != nil || len(words) == 0 {
@@ -384,7 +405,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		options.Command, options.Args = environment.Executable, nil
 	}
 	var projectTracer string
-	if preflight == nil && !configurationOnly && discoveryError == nil {
+	if preflight == nil && !configurationOnly && discoveryError == nil && language != "ruby" {
 		projectTracer, _ = detectedPlatform.DetectTracer(ctx, options)
 	}
 	var installCommand string

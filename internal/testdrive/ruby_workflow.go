@@ -73,26 +73,13 @@ func (t *Testdrive) rubyBundleReadiness(ctx context.Context, scope onboard.Valid
 				continue
 			}
 			env := isolatedCIEnvironment(entry.Environment, t.repositoryRoot, root)
-			gemfile := env["BUNDLE_GEMFILE"]
-			if gemfile == "" {
-				gemfile = os.Getenv("BUNDLE_GEMFILE")
-			}
-			if gemfile == "" {
-				gemfile = filepath.Join(entry.Directory, "Gemfile")
-			}
-			if filepath.IsAbs(gemfile) {
-				relative, err := filepath.Rel(canonicalWorkflowRoot(t.repositoryRoot), canonicalWorkflowRoot(gemfile))
-				if err != nil || !filepath.IsLocal(relative) {
-					return fmt.Errorf("BUNDLE_GEMFILE is outside the repository")
-				}
-				gemfile = relative
-			}
-			if !filepath.IsLocal(gemfile) {
-				return fmt.Errorf("BUNDLE_GEMFILE is outside the repository")
+			gemfile, err := rubyConfigurationGemfile(t.repositoryRoot, entry.Directory, env)
+			if err != nil {
+				return err
 			}
 			env["BUNDLE_GEMFILE"] = filepath.Join(root, gemfile)
 			env["RUBYOPT"] = ""
-			_, lockErr := os.Stat(filepath.Join(root, gemfile+".lock"))
+			_, lockErr := os.Stat(filepath.Join(root, rubyLockfile(gemfile)))
 			var checkErr error
 			if lockErr == nil {
 				executor, ok := t.executor.(directoryExecutor)
@@ -108,6 +95,37 @@ func (t *Testdrive) rubyBundleReadiness(ctx context.Context, scope onboard.Valid
 		return nil
 	})
 	return missing, err
+}
+
+// Return a checkout-relative manifest while preserving Bundler's cwd semantics.
+func rubyConfigurationGemfile(root, directory string, env map[string]string) (string, error) {
+	gemfile, explicit := env["BUNDLE_GEMFILE"]
+	if !explicit {
+		gemfile = os.Getenv("BUNDLE_GEMFILE")
+	}
+	if gemfile == "" {
+		gemfile = "Gemfile"
+		if _, err := os.Stat(filepath.Join(root, directory, gemfile)); os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.Join(root, directory, "gems.rb")); err == nil {
+				gemfile = "gems.rb"
+			}
+		}
+	}
+	if !filepath.IsAbs(gemfile) {
+		gemfile = filepath.Join(root, directory, gemfile)
+	}
+	relative, err := filepath.Rel(canonicalWorkflowRoot(root), canonicalWorkflowRoot(gemfile))
+	if err != nil || !filepath.IsLocal(relative) {
+		return "", fmt.Errorf("BUNDLE_GEMFILE is outside the repository; use a repository-local Gemfile for isolated Ruby validation")
+	}
+	return relative, nil
+}
+
+func rubyLockfile(gemfile string) string {
+	if filepath.Base(gemfile) == "gems.rb" {
+		return filepath.Join(filepath.Dir(gemfile), "gems.locked")
+	}
+	return gemfile + ".lock"
 }
 
 const rubyPackageFilesScript = `require 'json'; require 'rubygems'

@@ -147,21 +147,11 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	t.configurationEnvironment = isolatedCIEnvironment(onboard.WithGitHubActionsDefaults(item.Environment), original, checkout)
 	if t.language == "ruby" {
-		gemfile := t.configurationEnvironment["BUNDLE_GEMFILE"]
-		if gemfile == "" {
-			gemfile = os.Getenv("BUNDLE_GEMFILE")
+		gemfile, err := rubyConfigurationGemfile(original, item.Directory, t.configurationEnvironment)
+		if err != nil {
+			return result, err
 		}
-		if filepath.IsAbs(gemfile) {
-			canonical, err := filepath.EvalSymlinks(gemfile)
-			if err != nil {
-				return result, err
-			}
-			relative, err := filepath.Rel(canonicalWorkflowRoot(original), canonical)
-			if err != nil || !filepath.IsLocal(relative) {
-				return result, fmt.Errorf("BUNDLE_GEMFILE is outside the repository; use a repository-local Gemfile for isolated Ruby validation")
-			}
-			t.configurationEnvironment["BUNDLE_GEMFILE"] = filepath.Join(workspace, relative)
-		}
+		t.configurationEnvironment["BUNDLE_GEMFILE"] = filepath.Join(workspace, gemfile)
 	}
 	t.executor = configurationExecutor{executor, t.configurationEnvironment}
 	directory, err := localSetupDirectory(workspace, item.Directory)
@@ -401,10 +391,11 @@ func (t *Testdrive) checkoutRoot() string {
 }
 
 func (t *Testdrive) refreshConfigurationTracer(ctx context.Context) {
-	if installer, ok := t.platform.(*platform.JavaScript); ok {
+	switch t.platform.(type) {
+	case *platform.JavaScript, *platform.Ruby:
 		// Missing project dependencies select the normal temporary fallback.
-		// Never retain a path resolved in another package or outside this copy.
-		t.projectTracer, _ = installer.DetectTracer(ctx, platform.TracerOptions{Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
+		// Never retain a tracer resolved in a different package or Ruby bundle.
+		t.projectTracer, _ = t.platform.DetectTracer(ctx, platform.TracerOptions{Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
 	}
 }
 

@@ -92,7 +92,7 @@ else
     def record(result)
       klass = Minitest::Runnable.runnables.find { |candidate| candidate.name == result.class_name }
       location = klass&.instance_method(result.name)&.source_location
-      DDTestObserver::TESTS << {file: location ? File.expand_path(location.first) : "", name: result.name,
+      DDTestObserver::TESTS << {file: location ? File.expand_path(location.first) : "", class_name: result.class_name, name: result.name,
                                telemetry_name: DDTestObserver.telemetry_name(result.name),
                                status: result.skipped? ? "pending" : (result.passed? ? "passed" : "failed"),
                                failure: result.failures.map { |failure| DDTestObserver.failure(failure) }.join("\n")}

@@ -667,11 +667,15 @@ func fetchRuntimeMetadata(ctx context.Context, client *http.Client, address stri
 }
 
 func actionSelectsJavaScript(step runtimeStep, row map[string]any) (bool, error) {
+	return actionSelectsLanguage(step, row, "js")
+}
+
+func actionSelectsLanguage(step runtimeStep, row map[string]any, language string) (bool, error) {
 	languages, err := runtimeValue(step.With["languages"], row)
 	if err != nil {
 		return false, err
 	}
-	return languages == "all" || slices.Contains(strings.Fields(languages), "js"), nil
+	return languages == "all" || slices.Contains(strings.Fields(languages), language), nil
 }
 
 func mochaInstrumentationDisabled(workflow ciWorkflow, job runtimeJob, step runtimeStep, rows ...map[string]any) bool {
