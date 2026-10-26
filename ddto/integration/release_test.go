@@ -17,38 +17,55 @@ import (
 // releaseTag is the version of the release executable that these tests build.
 const releaseTag = "v9.8.7-test"
 
-var releaseBuild struct {
+type releaseBuildOnce struct {
 	once      sync.Once
 	path, err string
 }
 
-// releaseExecutable builds the host's release executable once per test
+var releaseBuild, ddtestReleaseBuild releaseBuildOnce
+
+// releaseExecutable builds the host's release executable of ddto once per test
 // process, in TestMain's directory.
 func releaseExecutable(t *testing.T) string {
 	t.Helper()
-	releaseBuild.once.Do(func() {
+	return buildRelease(t, &releaseBuild, "ddto", testEnv("GOFLAGS="))
+}
+
+// ddtestReleaseExecutable builds the host's release executable of ddtest, as
+// ddtest's make release does: ddtest needs a newer Go than some jobs pin, so
+// its build switches toolchains, as the driver's does.
+func ddtestReleaseExecutable(t *testing.T) string {
+	t.Helper()
+	return buildRelease(t, &ddtestReleaseBuild, "ddtest", testEnv("GOFLAGS=", "GOTOOLCHAIN=auto"),
+		"-main", "..", "-name", "ddtest", "-ldflags", "-X github.com/DataDog/ddtest/internal/buildinfo.Version="+releaseTag)
+}
+
+func buildRelease(t *testing.T, build *releaseBuildOnce, name string, env []string, flags ...string) string {
+	t.Helper()
+	build.once.Do(func() {
 		dist, err := os.MkdirTemp(sharedParityRoot, "release-")
 		if err != nil {
-			releaseBuild.err = err.Error()
+			build.err = err.Error()
 			return
 		}
-		out, stderr, code, _, err := runCommand("..", testEnv("GOFLAGS="), "go", "run", "./scripts/release", "-version", releaseTag, "-o", dist, "-target", runtime.GOOS+"/"+runtime.GOARCH)
+		args := append([]string{"run", "./scripts/release", "-version", releaseTag, "-o", dist, "-target", runtime.GOOS + "/" + runtime.GOARCH}, flags...)
+		out, stderr, code, _, err := runCommand("..", env, "go", args...)
 		switch {
 		case err != nil:
-			releaseBuild.err = err.Error()
+			build.err = err.Error()
 		case code != 0:
-			releaseBuild.err = out + "\n" + stderr
+			build.err = out + "\n" + stderr
 		default:
-			releaseBuild.path = filepath.Join(dist, "ddto-"+runtime.GOOS+"-"+runtime.GOARCH)
+			build.path = filepath.Join(dist, name+"-"+runtime.GOOS+"-"+runtime.GOARCH)
 			if runtime.GOOS == "windows" {
-				releaseBuild.path += ".exe"
+				build.path += ".exe"
 			}
 		}
 	})
-	if releaseBuild.path == "" {
-		t.Fatalf("release build: %s", releaseBuild.err)
+	if build.path == "" {
+		t.Fatalf("%s release build: %s", name, build.err)
 	}
-	return releaseBuild.path
+	return build.path
 }
 
 // A release executable carries the Mini runtime's sources and its tool
@@ -117,17 +134,19 @@ func TestReleaseExecutableIsSelfContained(t *testing.T) {
 	}
 }
 
-// The install scripts install the host's release executable from a release's
-// files after checking SHA256SUMS, keep it on the next run and add its
-// directory to GITHUB_PATH: install.sh in Unix shells, install.ps1 in
-// PowerShell, Windows included. Git Bash on Windows is left out, as bash there
-// can also name WSL's launcher.
+// ddtest's install scripts install the host's release executable of ddtest
+// from a release's files after checking SHA256SUMS, keep it on the next run
+// and add its directory to GITHUB_PATH: install.sh in Unix shells, install.ps1
+// in PowerShell, Windows included. Git Bash on Windows is left out, as bash
+// there can also name WSL's launcher.
 func TestInstallScriptsInstallTheReleaseExecutable(t *testing.T) {
 	root, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	driver := releaseExecutable(t)
+	// The scripts are ddtest's, in the scripts directory of its repository.
+	scriptsDir := filepath.Join(root, "..", "scripts")
+	driver := ddtestReleaseExecutable(t)
 	data, err := os.ReadFile(driver)
 	if err != nil {
 		t.Fatal(err)
@@ -147,10 +166,10 @@ func TestInstallScriptsInstallTheReleaseExecutable(t *testing.T) {
 	}
 	scripts := map[string][]string{}
 	if _, err := exec.LookPath("bash"); err == nil && runtime.GOOS != "windows" {
-		scripts["install.sh"] = []string{"bash", filepath.Join(root, "scripts", "install.sh")}
+		scripts["install.sh"] = []string{"bash", filepath.Join(scriptsDir, "install.sh")}
 	}
 	if _, err := exec.LookPath("pwsh"); err == nil {
-		scripts["install.ps1"] = []string{"pwsh", "-NoProfile", "-NonInteractive", "-File", filepath.Join(root, "scripts", "install.ps1")}
+		scripts["install.ps1"] = []string{"pwsh", "-NoProfile", "-NonInteractive", "-File", filepath.Join(scriptsDir, "install.ps1")}
 	}
 	if len(scripts) == 0 {
 		if os.Getenv("GITHUB_ACTIONS") == "true" {
@@ -165,23 +184,23 @@ func TestInstallScriptsInstallTheReleaseExecutable(t *testing.T) {
 			if err := os.WriteFile(githubPath, nil, 0644); err != nil {
 				t.Fatal(err)
 			}
-			env := testEnv("DDTO_DOWNLOAD_URL="+url, "DDTO_INSTALL_DIR="+dir, "DDTO_VERSION=", "GITHUB_PATH="+githubPath)
+			env := testEnv("DDTEST_INSTALL_DOWNLOAD_URL="+url, "DDTEST_INSTALL_DIR="+dir, "DDTEST_INSTALL_VERSION=", "GITHUB_PATH="+githubPath)
 			for _, want := range []string{"(release latest)", "(already installed)"} {
 				out, stderr, code := command(t, root, env, script[0], script[1:]...)
 				if code != 0 || !strings.Contains(stderr, want) {
 					t.Fatalf("want %s: %d\n%s\n%s", want, code, out, stderr)
 				}
 			}
-			installed := filepath.Join(dir, "ddto")
+			installed := filepath.Join(dir, "ddtest")
 			if runtime.GOOS == "windows" {
 				installed += ".exe"
 			}
-			if out, stderr, code := command(t, root, testEnv(), installed, "--version"); code != 0 || out != "ddto "+releaseTag+"\n" {
+			if out, stderr, code := command(t, root, testEnv(), installed, "--version"); code != 0 || out != releaseTag+"\n" {
 				t.Fatalf("installed --version: %d %q %s", code, out, stderr)
 			}
 			// The executable is copied beside its name and renamed over it.
 			if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
-				t.Fatalf("install directory holds %v, %v; want only ddto", entries, err)
+				t.Fatalf("install directory holds %v, %v; want only ddtest", entries, err)
 			}
 			// A script can write another spelling of the directory, such as
 			// Windows' long form of an 8.3 temporary path.

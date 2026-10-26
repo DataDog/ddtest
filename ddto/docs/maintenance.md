@@ -312,12 +312,17 @@ names; a runtime package outside those directories needs a new entry in
 `runtimeDirs`. `TestReleaseExecutableIsSelfContained` builds the host's
 executable with a version and runs it with an empty user cache and module
 cache and a module proxy that refuses every request.
-`scripts/test_install.py` runs `install.sh` and, with `pwsh`, `install.ps1`
-against a local server: a checked download, a checksum mismatch, the
-`go install` fallback, an installed executable of the same version and
-`GITHUB_PATH`. `TestInstallScriptsInstallTheReleaseExecutable` installs the
-host's release executable with each script that the platform has, PowerShell
-on Windows included.
+ddtest's install scripts, `install.sh` and `install.ps1` in the
+[scripts directory of its repository](../../scripts), are in each release with
+the `SHA256SUMS` that they check the executables with; `make release` adds them,
+and the release workflows install the Linux executable from the release's files
+with both before publishing. [`test_install.py`](../../scripts/test_install.py),
+which ddtest's CI runs, runs them against a local server: a checked download, a
+checksum mismatch, a platform without an executable, an installed executable
+of the same version and `GITHUB_PATH`.
+`TestInstallScriptsInstallTheReleaseExecutable` installs the host's release
+executable of ddtest with each script that the platform has, PowerShell on
+Windows included.
 
 ## Verification before publication
 

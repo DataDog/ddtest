@@ -50,6 +50,16 @@ jobs:
       - name: Build binaries
         run: make release VERSION="$VERSION"
 
+      # The executables report the version, and the install scripts install them
+      # from the release's files after checking SHA256SUMS.
+      - name: Check the release files
+        run: |
+          test "$(dist/ddtest-linux-amd64 --version)" = "$VERSION"
+          DDTEST_INSTALL_DOWNLOAD_URL="file://$PWD/dist" bash dist/install.sh --dir "$RUNNER_TEMP/bin"
+          cmp dist/ddtest-linux-amd64 "$RUNNER_TEMP/bin/ddtest"
+          DDTEST_INSTALL_DOWNLOAD_URL="file://$PWD/dist" pwsh -NoProfile -NonInteractive -File dist/install.ps1 -Dir "$RUNNER_TEMP/bin-pwsh"
+          cmp dist/ddtest-linux-amd64 "$RUNNER_TEMP/bin-pwsh/ddtest"
+
       - name: Create Release and Upload Assets
         env:
           GH_TOKEN: ${{ steps.octo-sts.outputs.token }}

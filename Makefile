@@ -26,8 +26,10 @@ run:
 # ddto's release builder links ddtest with the runtime sources and the tool
 # wrapper that ddtest instrument provides to the projects it instruments, and
 # gives them ddtest's version. It takes SemVer, so a version such as
-# pre-release-<sha> becomes v0.0.0-pre-release-<sha>.
+# pre-release-<sha> becomes v0.0.0-pre-release-<sha>. The release also holds
+# the install scripts and the SHA256SUMS that they check the executables with.
 RELEASE_BUILD = go -C ddto run ./scripts/release -main .. -name ddtest -version $(if $(filter v%,$(VERSION)),$(VERSION),v0.0.0-$(VERSION)) -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)" -o ../dist
+SHA256SUM = $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
 release:
 	mkdir -p dist
 	$(RELEASE_BUILD) -target linux/amd64
@@ -36,3 +38,5 @@ release:
 	$(RELEASE_BUILD) -target darwin/arm64
 	$(RELEASE_BUILD) -target windows/amd64
 	$(RELEASE_BUILD) -target windows/arm64
+	cp scripts/install.sh scripts/install.ps1 dist/
+	cd dist && $(SHA256SUM) ddtest-* install.sh install.ps1 > SHA256SUMS

@@ -13,17 +13,15 @@ import threading
 import unittest
 
 SCRIPTS = Path(__file__).resolve().parent
-# The installers still install the standalone releases of DataDog/ddto.
-MODULE = "github.com/DataDog/ddto"
 OS = {"Linux": "linux", "Darwin": "darwin"}.get(platform.system())
 ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower())
 
 
-def fake_ddto(version="v1.2.3"):
-    return f'#!/bin/sh\nif [ "$1" = --version ]; then echo "ddto {version}"; else echo usage: ddto; fi\n'
+def fake_ddtest(version="v1.2.3"):
+    return f'#!/bin/sh\nif [ "$1" = --version ]; then echo "{version}"; else echo usage: ddtest; fi\n'
 
 
-FAKE_DDTO = fake_ddto()
+FAKE_DDTEST = fake_ddtest()
 
 
 class Recording(http.server.SimpleHTTPRequestHandler):
@@ -50,16 +48,16 @@ class InstallTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         self.url = f"http://127.0.0.1:{server.server_port}"
-        self.asset = f"ddto-{OS}-{ARCH}"
+        self.asset = f"ddtest-{OS}-{ARCH}"
 
-    def release(self, data=FAKE_DDTO, checksum=None):
+    def release(self, data=FAKE_DDTEST, checksum=None):
         (self.assets / self.asset).write_text(data)
         digest = checksum or hashlib.sha256(data.encode()).hexdigest()
-        (self.assets / "SHA256SUMS").write_text(f"{digest}  {self.asset}\n{'0' * 64}  ddto-other-arch\n")
+        (self.assets / "SHA256SUMS").write_text(f"{digest}  {self.asset}\n{'0' * 64}  ddtest-other-arch\n")
 
     def install(self, *args, path=None, github_path=None, cwd=None, **extra):
-        env = {key: value for key, value in os.environ.items() if not key.startswith(("DDTO_", "GITHUB_"))}
-        env.update(DDTO_DOWNLOAD_URL=self.url, DDTO_INSTALL_DIR=str(self.dir), PATH=path or os.environ["PATH"])
+        env = {key: value for key, value in os.environ.items() if not key.startswith(("DDTEST_INSTALL_", "GITHUB_"))}
+        env.update(DDTEST_INSTALL_DOWNLOAD_URL=self.url, DDTEST_INSTALL_DIR=str(self.dir), PATH=path or os.environ["PATH"])
         env.update(extra)
         if github_path:
             env["GITHUB_PATH"] = str(github_path)
@@ -68,28 +66,12 @@ class InstallTests(unittest.TestCase):
     def command(self, *args):
         return ["bash", str(SCRIPTS / "install.sh"), *args]
 
-    def fake_go(self, built=FAKE_DDTO):
-        """Returns a PATH whose go records its arguments and installs a fake ddto in GOBIN."""
-        tools = self.root / "tools"
-        tools.mkdir()
-        go = tools / "go"
-        (tools / "ddto").write_text(built)
-        # go env GOHOSTOS and GOHOSTARCH answer for the host; install records
-        # its arguments and the platform it builds for.
-        # Like go install, it refuses a relative GOBIN.
-        go.write_text(f'#!/bin/sh\nif [ "$1" = env ]; then case $2 in GOHOSTOS) echo {OS};; GOHOSTARCH) echo {ARCH};; esac; exit 0; fi\n'
-                      'case "$GOBIN" in /*|?:*) ;; *) echo "GOBIN must be an absolute path" >&2; exit 1;; esac\n'
-                      f'echo "$@" > "{self.root}/go-args"\necho "$GOOS/$GOARCH" > "{self.root}/go-platform"\n'
-                      f'cp "{tools}/ddto" "$GOBIN/ddto"\nchmod +x "$GOBIN/ddto"\n')
-        go.chmod(0o755)
-        return f"{tools}{os.pathsep}{os.environ['PATH']}"
-
     def test_installs_the_checked_release_executable(self):
         self.release()
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
-        installed = self.dir / "ddto"
-        self.assertEqual(installed.read_text(), FAKE_DDTO)
+        installed = self.dir / "ddtest"
+        self.assertEqual(installed.read_text(), FAKE_DDTEST)
         self.assertTrue(os.access(installed, os.X_OK))
         self.assertIn("(release latest)", result.stderr)
 
@@ -100,39 +82,36 @@ class InstallTests(unittest.TestCase):
         self.release()
         result = self.install(TMPDIR=str(temporary))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.dir / "ddto").read_text(), FAKE_DDTO)
+        self.assertEqual((self.dir / "ddtest").read_text(), FAKE_DDTEST)
 
-    def test_rejects_a_checksum_mismatch_without_falling_back(self):
+    def test_rejects_a_checksum_mismatch(self):
         self.release(checksum="f" * 64)
-        result = self.install(path=self.fake_go())
+        result = self.install()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("does not match SHA256SUMS", result.stderr)
-        self.assertFalse((self.dir / "ddto").exists())
-        self.assertFalse((self.root / "go-args").exists())
+        self.assertFalse((self.dir / "ddtest").exists())
 
-    def test_builds_with_go_install_without_a_release_executable(self):
-        # The project's target platform does not change the host's build.
-        result = self.install("--version", "v1.2.3", path=self.fake_go(), GOOS="windows", GOARCH="386")
-        self.assertEqual(result.returncode, 0, result.stderr)
+    def test_fails_without_a_release_executable(self):
+        (self.assets / "SHA256SUMS").write_text(f"{'0' * 64}  ddtest-other-arch\n")
+        result = self.install("--version", "v1.2.3")
+        self.assertNotEqual(result.returncode, 0)
         self.assertIn(f"no release executable {self.asset}", result.stderr)
-        self.assertEqual((self.root / "go-args").read_text().split(), ["install", f"{MODULE}/cmd/ddto@v1.2.3"])
-        self.assertEqual((self.root / "go-platform").read_text().strip(), f"{OS}/{ARCH}")
-        self.assertIn("(go install @v1.2.3)", result.stderr)
+        self.assertIn("download ddtest from https://github.com/DataDog/ddtest/releases", result.stderr)
+        self.assertFalse((self.dir / "ddtest").exists())
 
-    def preinstall(self, data=FAKE_DDTO):
+    def preinstall(self, data=FAKE_DDTEST):
         self.dir.mkdir()
-        installed = self.dir / "ddto"
+        installed = self.dir / "ddtest"
         installed.write_text(data)
         installed.chmod(0o755)
 
     def test_keeps_an_installed_requested_version_without_downloading(self):
         self.preinstall()
-        result = self.install("--version", "v1.2.3", path=self.fake_go())
+        result = self.install("--version", "v1.2.3")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("ddto v1.2.3 in", result.stderr)
+        self.assertIn("ddtest v1.2.3 in", result.stderr)
         self.assertIn("(already installed)", result.stderr)
         self.assertEqual(self.paths, [])
-        self.assertFalse((self.root / "go-args").exists())
 
     def test_keeps_the_latest_release_when_its_checksum_matches(self):
         self.release()
@@ -144,15 +123,15 @@ class InstallTests(unittest.TestCase):
 
     def test_replaces_another_version(self):
         self.release()
-        self.preinstall(fake_ddto("v1.0.0"))
+        self.preinstall(fake_ddtest("v1.0.0"))
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.dir / "ddto").read_text(), FAKE_DDTO)
+        self.assertEqual((self.dir / "ddtest").read_text(), FAKE_DDTEST)
         self.assertEqual(self.paths, ["/SHA256SUMS", "/" + self.asset])
 
     def test_keeps_the_installed_version_when_the_copy_fails(self):
         self.release()
-        self.preinstall(fake_ddto("v1.0.0"))
+        self.preinstall(fake_ddtest("v1.0.0"))
         # A cp that fails partway, as on a full disk.
         tools = self.root / "tools"
         tools.mkdir()
@@ -160,24 +139,24 @@ class InstallTests(unittest.TestCase):
         (tools / "cp").chmod(0o755)
         result = self.install(path=f"{tools}{os.pathsep}{os.environ['PATH']}")
         self.assertNotEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.dir / "ddto").read_text(), fake_ddto("v1.0.0"))
-        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["ddto"])
+        self.assertEqual((self.dir / "ddtest").read_text(), fake_ddtest("v1.0.0"))
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["ddtest"])
 
     def test_keeps_the_installed_version_when_chmod_fails(self):
         self.release()
-        self.preinstall(fake_ddto("v1.0.0"))
+        self.preinstall(fake_ddtest("v1.0.0"))
         tools = self.root / "tools"
         tools.mkdir()
         (tools / "chmod").write_text("#!/bin/sh\nexit 1\n")
         (tools / "chmod").chmod(0o755)
         result = self.install(path=f"{tools}{os.pathsep}{os.environ['PATH']}")
         self.assertNotEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.dir / "ddto").read_text(), fake_ddto("v1.0.0"))
-        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["ddto"])
+        self.assertEqual((self.dir / "ddtest").read_text(), fake_ddtest("v1.0.0"))
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["ddtest"])
 
     def test_removes_its_copy_when_terminated(self):
         self.release()
-        self.preinstall(fake_ddto("v1.0.0"))
+        self.preinstall(fake_ddtest("v1.0.0"))
         # The runner cancels the job while the copy beside the target runs.
         tools = self.root / "tools"
         tools.mkdir()
@@ -185,43 +164,16 @@ class InstallTests(unittest.TestCase):
         (tools / "cp").chmod(0o755)
         result = self.install(path=f"{tools}{os.pathsep}{os.environ['PATH']}")
         self.assertNotEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.dir / "ddto").read_text(), fake_ddto("v1.0.0"))
-        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["ddto"])
-
-    def test_builds_with_a_relative_temporary_directory(self):
-        result = self.install("--version", "v1.2.3", path=self.fake_go(), cwd=self.root, TMPDIR=".")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.dir / "ddto").read_text(), FAKE_DDTO)
-
-    def test_keeps_the_installed_version_when_the_build_does_not_run(self):
-        # As a GOAMD64 that the host's CPU lacks would build.
-        self.preinstall(fake_ddto("v1.0.0"))
-        result = self.install("--version", "v1.2.3", path=self.fake_go("#!/bin/sh\nexit 1\n"))
-        self.assertNotEqual(result.returncode, 0, result.stderr)
-        self.assertIn("does not run on this host", result.stderr)
-        self.assertEqual((self.dir / "ddto").read_text(), fake_ddto("v1.0.0"))
+        self.assertEqual((self.dir / "ddtest").read_text(), fake_ddtest("v1.0.0"))
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["ddtest"])
 
     def test_hides_the_download_url_credentials(self):
         url = self.url.replace("http://", "http://reader:secret@") + "/missing?token=sensitive"
-        result = self.install(path=self.fake_go(), DDTO_DOWNLOAD_URL=url)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.install(DDTEST_INSTALL_DOWNLOAD_URL=url)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"no SHA256SUMS at {self.url}/missing", result.stderr)
         self.assertNotIn("secret", result.stderr)
         self.assertNotIn("sensitive", result.stderr)
-
-    def test_keeps_the_installed_version_when_the_built_copy_fails(self):
-        # Without a release executable, go install builds elsewhere and the
-        # copy beside the target fails, as on a full disk there.
-        self.preinstall(fake_ddto("v1.0.0"))
-        path = self.fake_go()
-        tools = self.root / "tools"
-        (tools / "cp").write_text('#!/bin/sh\ncase "$2" in *.tmp.*) printf partial > "$2"; exit 1;; esac\nexec /bin/cp "$@"\n')
-        (tools / "cp").chmod(0o755)
-        result = self.install(path=path)
-        self.assertNotEqual(result.returncode, 0, result.stderr)
-        self.assertTrue((self.root / "go-args").exists())
-        self.assertEqual((self.dir / "ddto").read_text(), fake_ddto("v1.0.0"))
-        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["ddto"])
 
     def test_adds_the_directory_to_github_path(self):
         self.release()
@@ -254,9 +206,6 @@ class PowerShellInstallTests(InstallTests):
 
     def test_keeps_the_installed_version_when_the_copy_fails(self):
         self.skipTest("Copy-Item does not run cp; install.ps1 moves its copy over the target the same way")
-
-    def test_keeps_the_installed_version_when_the_built_copy_fails(self):
-        self.skipTest("Copy-Item does not run cp; install.ps1 publishes go install's build the same way")
 
     def test_removes_its_copy_when_terminated(self):
         self.skipTest("Copy-Item does not run cp; install.ps1 removes its copy in a finally block")

@@ -62,6 +62,10 @@ jobs:
       - name: Test onboarding evaluator
         run: python -m unittest discover -s skills/ddtest-onboarding-eval/scripts -p 'test_*.py'
 
+      # install.sh, and with the runner's pwsh install.ps1, against local release files.
+      - name: Test install scripts
+        run: python -m unittest discover -s scripts -p 'test_*.py'
+
       # ddto is its own module, checked by its own workflow; its benchmark
       # fixtures are deliberately compact.
       - name: Format check

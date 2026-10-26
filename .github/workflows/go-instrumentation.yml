@@ -13,6 +13,8 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'internal/cmd/instrument.go'
+      - 'scripts/install.sh'
+      - 'scripts/install.ps1'
       - '.github/workflows/go-instrumentation.yml'
   pull_request:
     paths:
@@ -23,6 +25,8 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'internal/cmd/instrument.go'
+      - 'scripts/install.sh'
+      - 'scripts/install.ps1'
       - '.github/workflows/go-instrumentation.yml'
   schedule:
     - cron: '17 3 * * *'
