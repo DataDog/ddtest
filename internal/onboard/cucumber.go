@@ -26,14 +26,116 @@ const cucumberImpactedWorkaround = "DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENA
 const cucumberScopedOptions = `NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}"`
 const cucumberInlineIstanbulOptions = `NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-} --experimental-loader @istanbuljs/esm-loader-hook"`
 
-func cucumberInlineIstanbulScript(script string) bool {
+// Source loaders keep TypeScript or transpiled support files loadable; they
+// neither replace instrumentation nor select another executable.
+var cucumberSourceLoaders = []string{"tsx", "tsx/esm", "tsx/cjs", "ts-node/register", "ts-node/register/transpile-only", "ts-node/esm",
+	"@babel/register", "@swc-node/register", "esbuild-register", "source-map-support/register", "@istanbuljs/esm-loader-hook"}
+
+var cucumberScopedPrefix = regexp.MustCompile(`^` + cucumberScopedPattern)
+var cucumberScopedAnywhere = regexp.MustCompile(cucumberScopedPattern)
+
+const cucumberScopedPattern = `NODE_OPTIONS="\$\{NODE_OPTIONS:-\} \$\{DD_CUCUMBER_NODE_OPTIONS:-\}((?: [^"$\x60\\]+)?)"(?: |$)`
+
+// cucumberLoaderFlags returns the loader entries of value when it holds only
+// well-known source loaders, in their original order.
+func cucumberLoaderFlags(value string) (string, bool) {
+	words, err := environment.SplitNodeOptions(value)
+	if err != nil || len(words) == 0 {
+		return "", false
+	}
+	var kept []string
+	for i := 0; i < len(words); i++ {
+		key, module, equals := strings.Cut(words[i], "=")
+		if !slices.Contains([]string{"-r", "--require", "--import", "--loader", "--experimental-loader"}, key) {
+			return "", false
+		}
+		if !equals {
+			if i+1 >= len(words) {
+				return "", false
+			}
+			i++
+			module = words[i]
+		}
+		if !slices.Contains(cucumberSourceLoaders, module) {
+			return "", false
+		}
+		kept = append(kept, key, module)
+	}
+	return strings.Join(kept, " "), true
+}
+
+// cucumberScopedLoaders reports whether script starts with the scoped prefix,
+// and the well-known source loaders it keeps after the inherited options.
+func cucumberScopedLoaders(script string) (string, bool) {
 	script = cucumberDebugPrefix.ReplaceAllString(strings.TrimSpace(script), "")
-	return strings.HasPrefix(script, cucumberInlineIstanbulOptions+" ")
+	match := cucumberScopedPrefix.FindStringSubmatch(script)
+	if match == nil {
+		return "", false
+	}
+	if strings.TrimSpace(match[1]) == "" {
+		return "", true
+	}
+	return cucumberLoaderFlags(match[1])
+}
+
+func cucumberInlineIstanbulScript(script string) bool {
+	loaders, scoped := cucumberScopedLoaders(script)
+	return scoped && nodeOptionsLoad(loaders, "@istanbuljs/esm-loader-hook")
 }
 
 func cucumberScopedScript(script string) bool {
-	script = cucumberDebugPrefix.ReplaceAllString(strings.TrimSpace(script), "")
-	return strings.HasPrefix(script, cucumberScopedOptions+" ") || strings.HasPrefix(script, cucumberInlineIstanbulOptions+" ")
+	_, scoped := cucumberScopedLoaders(script)
+	return scoped
+}
+
+// cucumberLoaderOverride recognizes a leaf whose literal NODE_OPTIONS holds
+// only source loaders, as in `cross-env NODE_OPTIONS="--import tsx" cucumber-js`.
+// It replaces inherited preloads, so it is never run as is: setup rewrites it to
+// the scoped prefix, keeping the loaders. rest is the script without it.
+func cucumberLoaderOverride(script string) (rest, loaders string, ok bool) {
+	words, err := shellquote.Split(strings.TrimSpace(script))
+	if err != nil || len(words) == 0 {
+		return "", "", false
+	}
+	crossEnv := words[0] == "cross-env"
+	if crossEnv {
+		words = words[1:]
+	}
+	var kept []string
+	for len(words) > 0 && shellAssignment(words[0]) {
+		key, value, _ := strings.Cut(words[0], "=")
+		if key == "NODE_OPTIONS" {
+			if loaders != "" {
+				return "", "", false
+			}
+			if loaders, ok = cucumberLoaderFlags(value); !ok {
+				return "", "", false
+			}
+		} else {
+			kept = append(kept, words[0])
+		}
+		words = words[1:]
+	}
+	if loaders == "" || len(words) == 0 {
+		return "", "", false
+	}
+	if crossEnv && len(kept) > 0 {
+		kept = append([]string{"cross-env"}, kept...)
+	}
+	return shellCommand(append(kept, words...)), loaders, true
+}
+
+// cucumberLoaderReason explains why an unscoped loader override blocks a run.
+func cucumberLoaderReason(script, loaders, rest string) string {
+	return fmt.Sprintf("Cucumber script sets NODE_OPTIONS=%q, replacing inherited tracer preloads, so dd-trace cannot load: %s. `ddtest onboard --framework cucumber --apply` rewrites it to %s, keeping the loader", loaders, script, cucumberScopedReplacement(loaders, rest))
+}
+
+func cucumberScopedReplacement(loaders, rest string) string {
+	prefix := cucumberScopedOptions
+	if loaders != "" {
+		prefix = strings.TrimSuffix(prefix, `"`) + " " + loaders + `"`
+	}
+	return prefix + " " + rest
 }
 
 // DEBUG controls logging, not runner selection. The original npm alias still
@@ -41,7 +143,9 @@ func cucumberScopedScript(script string) bool {
 var cucumberDebugPrefix = regexp.MustCompile(`^DEBUG="[A-Za-z0-9_:*.,/-]*\$(?:DEBUG|\{DEBUG\})"\s+`)
 
 func cucumberDiscoveryScript(script string) string {
-	script = strings.TrimSpace(strings.NewReplacer(cucumberScopedOptions, "", cucumberInlineIstanbulOptions, "", cucumberImpactedWorkaround, "").Replace(script))
+	script = cucumberDebugPrefix.ReplaceAllString(strings.TrimSpace(script), "")
+	script = cucumberScopedAnywhere.ReplaceAllString(script, "")
+	script = strings.TrimSpace(strings.ReplaceAll(script, cucumberImpactedWorkaround, ""))
 	return cucumberDebugPrefix.ReplaceAllString(script, "")
 }
 
@@ -93,6 +197,17 @@ func CucumberProbeLifecycle(root, command string) (before, after []LifecycleScri
 		return nil, nil, fmt.Errorf("cucumber probe lifecycle could not be resolved: %s", result.Reason)
 	}
 	return result.Tests[0].cucumberProbeBefore, result.Tests[0].cucumberProbeAfter, nil
+}
+
+// CucumberLoaderOverride explains why the selected Cucumber leaf cannot load
+// the tracer until setup scopes its NODE_OPTIONS loader, or returns "".
+func CucumberLoaderOverride(root, command string) string {
+	for _, entry := range ValidationCommands(root, command, "cucumber") {
+		if entry.cucumberLoaderReason != "" {
+			return entry.cucumberLoaderReason
+		}
+	}
+	return ""
 }
 
 func CucumberUsesNYC(root, command string) bool {

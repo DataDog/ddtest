@@ -99,6 +99,14 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 		if framework == "webdriverio" {
 			prefix = webdriverIOScopedOptions
 		}
+		loaders := ""
+		if framework == "cucumber" {
+			// Keep in-script source loaders after the inherited options instead of
+			// letting their NODE_OPTIONS replace the tracer preload.
+			if rest, found, ok := cucumberLoaderOverride(script); ok {
+				script, loaders = rest, found
+			}
+		}
 		if strings.HasPrefix(script, prefix+" ") {
 			if framework != "cucumber" || strings.Contains(script, cucumberImpactedWorkaround) {
 				continue
@@ -141,6 +149,9 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 		extra := ""
 		if framework == "cucumber" {
 			extra = " " + cucumberImpactedWorkaround
+		}
+		if loaders != "" {
+			prefix = strings.TrimSuffix(prefix, `"`) + " " + loaders + `"`
 		}
 		replacement := prefix + extra + " " + script
 		key, _ := json.Marshal(name)

@@ -70,6 +70,10 @@ func (t *Testdrive) checkCucumberPreflight(ctx context.Context, output io.Writer
 			t.cucumberNode, t.cucumberExecutable = installed.NodePath, installed.Executable
 		}
 	}
+	// Setup planning runs this preflight too, and setup is what scopes the loader.
+	if reason := onboard.CucumberLoaderOverride(t.repositoryRoot, check.Command); reason != "" {
+		_, _ = fmt.Fprintf(output, "Cucumber setup required before tests: %s\n", reason)
+	}
 	installer, ok := t.platform.(*platform.JavaScript)
 	if !ok {
 		return fmt.Errorf("cucumber requires the JavaScript tracer selector")
@@ -283,6 +287,10 @@ func cucumberSharedExampleNames(root string, tests []jestTest) string {
 }
 
 func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+	// A replaced NODE_OPTIONS drops the tracer preload, so no run would report.
+	if reason := onboard.CucumberLoaderOverride(t.repositoryRoot, shellquote.Join(append([]string{t.command}, t.args...)...)); reason != "" {
+		return run, errors.New(reason)
+	}
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	run.framework, run.root, run.Name, run.Instrumented, run.ProbeMode = "cucumber", t.checkoutRoot(), name, instrumented, probeMode

@@ -30,6 +30,11 @@ feature paths, profiles, support imports and test commands.
    ```
 
    Preserve the original script's arguments, paths and other environment values.
+   A script that sets its own source loader, such as
+   `cross-env NODE_OPTIONS="--import tsx" cucumber-js`, keeps it after the
+   inherited options: `NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-} --import tsx" cucumber-js`.
+   `ddtest onboard --apply` makes this edit for well-known loaders (tsx, ts-node,
+   @babel/register); other modules set in NODE_OPTIONS still need review.
    On its existing CI test step set:
 
    ```yaml

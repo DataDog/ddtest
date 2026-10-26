@@ -654,8 +654,13 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	cucumber := len(frameworks) > 0 && frameworks[0] == "cucumber"
 	cucumberScoped := cucumber && cucumberScopedScript(script)
 	cucumberInlineIstanbul := cucumber && cucumberInlineIstanbulScript(script)
+	loaderReason := ""
 	if cucumber {
 		script = cucumberDiscoveryScript(script)
+		if rest, loaders, ok := cucumberLoaderOverride(script); ok {
+			loaderReason = cucumberLoaderReason(script, loaders, rest)
+			script = rest
+		}
 		parts, err := staticCommands(script)
 		if variable := shellVariable.FindStringSubmatch(script); err != nil && variable != nil {
 			return unresolvedCommand("Cucumber alias uses unresolved environment variable $" + variable[1] + "; select the command with its value expanded: " + command)
@@ -749,6 +754,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		}
 	}
 
+	if loaderReason != "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
+		result.Tests[0].cucumberLoaderReason = loaderReason
+	}
 	if cucumberScoped && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
 		result.Tests[0].cucumberScoped = true
 		result.Tests[0].cucumberInlineIstanbul = result.Tests[0].cucumberInlineIstanbul || cucumberInlineIstanbul

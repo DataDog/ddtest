@@ -205,7 +205,7 @@ func TestCucumberInlineIstanbulRemainsScopedToOriginalAlias(t *testing.T) {
 
 func TestCucumberFocusedCommandNamesWhyItDidNotResolve(t *testing.T) {
 	root := t.TempDir()
-	writeScripts(t, root, map[string]string{"test:bdd": `cross-env NODE_OPTIONS="--import tsx" cucumber-js`})
+	writeScripts(t, root, map[string]string{"test:bdd": `cross-env NODE_OPTIONS="--require ./setup.js" cucumber-js`})
 	_, err := CucumberExecutionCommand(root, "npm run test:bdd")
 	require.ErrorContains(t, err, "command overrides instrumentation or executable selection")
 	require.ErrorContains(t, err, "report this blocker rather than rewriting package scripts")

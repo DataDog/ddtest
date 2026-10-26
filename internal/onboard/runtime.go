@@ -379,6 +379,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 			state.source = "container image"
 		}
 	}
+	skippedTest := false
 	for i, step := range job.Steps {
 		uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 		resolution := resolutions[i]
@@ -403,6 +404,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 			return fail(CodeUnresolvedCondition, err.Error())
 		}
 		if !active {
+			skippedTest = skippedTest || test
 			if job.Context != nil && step.ID != "" {
 				job.Context["steps."+step.ID+".outcome"] = "skipped"
 			}
@@ -447,6 +449,12 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 			}
 		}
 		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, step, row, resolution, state, finding, resolveNode, resolve, frameworks...))
+	}
+	if len(findings) == 0 && skippedTest {
+		// The row runs the job without its tests, e.g. `if: matrix.node != '20'`.
+		finding.Step, finding.Command, finding.Resolution = 0, "", ""
+		finding.Status, finding.Code, finding.Reason = StatusExcluded, CodeExcludedRuntime, "Test steps are skipped by their conditions on this matrix row."
+		return []RuntimeFinding{finding}
 	}
 	if len(findings) == 0 {
 		return fail(CodeUnresolvedCommand, "No active test step could be checked.")

@@ -62,6 +62,7 @@ type TestCommand struct {
 	cucumberCoverageWrapper string
 	cucumberScoped          bool
 	cucumberInlineIstanbul  bool
+	cucumberLoaderReason    string // Set when an in-script NODE_OPTIONS loader still replaces preloads.
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same
