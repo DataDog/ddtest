@@ -52,7 +52,9 @@ def redact(value):
             value = value.replace(secret, "[REDACTED]")
     value = re.sub(r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", "[REDACTED PRIVATE KEY]", value, flags=re.S)
     value = re.sub(r"\b(?:AKIA[A-Z0-9]{16}|(?:gh[pousr]_|github_pat_|npm_|sk-)[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b", "[REDACTED]", value)
-    value = re.sub(r"(?i)((?:\b[\w-]{0,80}(?:token|secret|password|api[_-]?key)|\bauthorization)[\"']?\s*[:=]\s*[\"']?)(?:bearer\s+)?[^\s,;\"'}]+", r"\1[REDACTED]", value)
+    # A GitHub Actions expression such as ${{ secrets.DD_API_KEY }} names a
+    # secret without containing it, so the workflow evidence keeps it intact.
+    value = re.sub(r"(?i)((?:\b[\w-]{0,80}(?:token|secret|password|api[_-]?key)|\bauthorization)[\"']?\s*[:=]\s*[\"']?)(?!\$\{\{)(?:bearer\s+)?[^\s,;\"'}]+", r"\1[REDACTED]", value)
     return value
 
 

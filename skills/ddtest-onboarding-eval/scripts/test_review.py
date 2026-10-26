@@ -280,6 +280,16 @@ class EvidenceTests(unittest.TestCase):
             self.assertNotIn(denied,text)
         self.assertIn('https://example.com',text)
 
+    def test_workflow_secret_references_survive_redaction(self):
+        patch_text=("+          api_key: ${{ secrets.DD_API_KEY }}\n"
+                    "+          DD_API_KEY: '${{ secrets.DD_API_KEY }}'\n"
+                    "+          token: real-token-value\n")
+        text=run_eval.redact(patch_text)
+        self.assertIn("api_key: ${{ secrets.DD_API_KEY }}",text)
+        self.assertIn("DD_API_KEY: '${{ secrets.DD_API_KEY }}'",text)
+        self.assertNotIn("real-token-value",text)
+        self.assertIn("token: [REDACTED]",text)
+
     def test_setup_private_keys_remain_redacted_across_lines_and_excerpt_boundaries(self):
         clean = run_eval.LineRedactor()
         lines = ["-----BEGIN PRIVATE KEY-----", "PRIVATEBODY"*1000, "-----END PRIVATE KEY-----", "safe diagnostic"]
