@@ -563,10 +563,12 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(result["output"].startswith("[truncated]"))
 
 
-class CypressEnvironmentTests(unittest.TestCase):
+class FrameworkEnvironmentTests(unittest.TestCase):
     def test_long_matrix_timeout_is_scoped_and_bounded(self):
-        self.assertEqual(run_eval.agent_environment("claude", 7200, "cypress")["BASH_MAX_TIMEOUT_MS"], "3600000")
-        self.assertEqual(run_eval.agent_environment("claude", 30, "cypress")["BASH_MAX_TIMEOUT_MS"], "30000")
+        for framework in ("cypress", "rspec", "minitest"):
+            self.assertEqual(run_eval.agent_environment("claude", 7200, framework)["BASH_MAX_TIMEOUT_MS"], "3600000")
+            self.assertEqual(run_eval.agent_environment("claude", 1800, framework)["BASH_MAX_TIMEOUT_MS"], "1800000")
+            self.assertEqual(run_eval.agent_environment("claude", 30, framework)["BASH_MAX_TIMEOUT_MS"], "30000")
         self.assertEqual(run_eval.agent_environment("claude", 7200, "jest")["BASH_MAX_TIMEOUT_MS"], "600000")
         self.assertEqual(run_eval.agent_environment("codex", 7200, "cypress"), {})
 

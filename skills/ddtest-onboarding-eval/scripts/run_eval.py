@@ -179,7 +179,7 @@ def agent_environment(agent, timeout, framework=None):
         return {}
     # Print mode cannot resume a conversation after its final result. Keep Bash
     # synchronous and allow long paired runs without the default 120s handoff.
-    maximum = 3600000 if framework == "cypress" else 600000
+    maximum = 3600000 if framework in ("cypress", "rspec", "minitest") else 600000
     bash_timeout = str(min(maximum, int(timeout * 1000)))
     # Auto-memory would persist trial conclusions in the disposable home and
     # mix agent notes into the evidence; trials must stay independent.
