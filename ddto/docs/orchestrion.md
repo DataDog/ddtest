@@ -1,48 +1,48 @@
 # Mini with Orchestrion
 
 Use both instruments when a test binary needs application tracing and CI
-Visibility. `ddto` inserts the testing hooks and Mini runtime. Orchestrion
+Visibility. `ddtest instrument` inserts the testing hooks and Mini runtime. Orchestrion
 instruments the application and its dependencies using the client's existing
 configuration. The resulting binary reports tests through Mini and application
 spans through the full SDK.
 
 Both instruments run during compilation. An existing binary must be rebuilt to
-add Mini; `ddto` does not modify executable files.
+add Mini; `ddtest instrument` does not modify executable files.
 
 ## Build and run
 
 Run these commands from the client module, with its usual Orchestrion pin and
-configuration. Install Orchestrion separately; it is not a dependency of the
-`ddto` driver.
+configuration. Install Orchestrion separately; it is not a dependency of
+ddtest.
 
 ```sh
 # Orchestrion installed on PATH:
-ddto orchestrion go test ./...
+ddtest instrument orchestrion go test ./...
 
 # Orchestrion declared as a Go tool in the client module:
-ddto go tool orchestrion go test ./...
+ddtest instrument go tool orchestrion go test ./...
 
 # Existing compiler-wrapper configuration:
-ddto test -toolexec="orchestrion toolexec" ./...
-GOFLAGS='"-toolexec=orchestrion toolexec"' ddto test ./...
+ddtest instrument test -toolexec="orchestrion toolexec" ./...
+GOFLAGS='"-toolexec=orchestrion toolexec"' ddtest instrument test ./...
 ```
 
 Mini remains the default. `--runtime=sdk` still selects the pinned full SDK as
-the CI reporter. SDK builds bypass only the testing integrations owned by ddto;
+the CI reporter. SDK builds bypass only the testing integrations owned by the CLI;
 the SDK itself still passes through Orchestrion.
 
 To compile now and execute later:
 
 ```sh
 mkdir -p test-binaries
-ddto orchestrion go test -c -o "$PWD/test-binaries/" ./...
+ddtest instrument orchestrion go test -c -o "$PWD/test-binaries/" ./...
 
 # Execute from the working directory expected by the package's tests.
 DD_CIVISIBILITY_ENABLED=parent ./test-binaries/example.test \
   -test.count=1 -test.timeout=10m -test.v
 ```
 
-The executable contains both instruments and can run without `ddto` or
+The executable contains both instruments and can run without `ddtest instrument` or
 Orchestrion. Mini starts its CI runtime. APM uses the application's usual SDK
 lifecycle; tests that need an active APM tracer can start and stop it in their
 `TestMain` or fixture. Set the normal agent or agentless CI Visibility
@@ -68,16 +68,16 @@ go -C testdata/orchestrion build -mod=readonly -o "$(go env GOPATH)/bin/orchestr
 For a client using `go tool orchestrion`, update its tool dependency graph with
 `go get golang.org/x/tools@v0.50.0` before building with Go 1.27.2. Go then
 builds the declared tool with the active toolchain. For an installed executable,
-rebuild it with those dependencies and that toolchain. ddto uses the client's
+rebuild it with those dependencies and that toolchain. The CLI uses the client's
 selected tool and dependencies as they are.
 
 ## One owner for each integration
 
 ```mermaid
 flowchart TD
-    CLI["ddto prepares testing overlay"] --> Tools["Go compiler wrapper"]
+    CLI["ddtest instrument prepares<br/>testing overlay"] --> Tools["Go compiler wrapper"]
     Tools --> Owned["testing, Testify and Mini sources"]
-    Owned --> Native["Native compiler with ddto hooks"]
+    Owned --> Native["Native compiler with the CLI's hooks"]
     Tools --> SDK["SDK CI enablement boundaries"]
     SDK --> Guard["Mini disables SDK CI only"]
     Tools --> App["Application and other dependencies"]
@@ -175,7 +175,7 @@ invalid CLI forms and a missing executable, and the client's module and source
 files are checked for changes. Unit tests cover private API drift, tool
 dispatch, quoting, version probes and temporary-file cleanup.
 
-The compatibility workflow runs these suites on Linux, macOS and Windows with
+The Go instrumentation workflow runs these suites on Linux, macOS and Windows with
 loopback HTTP receivers and synthetic credentials. They prove neither
 acceptance by a production intake nor the behavior of any particular private
 service's tests.

@@ -1,15 +1,15 @@
 # AGENTS.md
 
-This file tells coding agents how to install `ddto`, use it to report a Go
+This file tells coding agents how to install `ddtest instrument`, use it to report a Go
 project's tests to Datadog Test Optimization (CI Visibility), and choose its
 settings for that project. The last section is for agents changing this
 repository.
 
-`ddto` is an experimental proof of concept. It wraps `go test`: it prepares
+`ddtest instrument` is an experimental proof of concept. It wraps `go test`: it prepares
 temporary build overlays, lets Go compile and run the tests, and exits with
-Go's status. ddto leaves no files of its own in the project, but, as with the
+Go's status. The CLI leaves no files of its own in the project, but, as with the
 SDK, the run can still change it. With `-mod=mod`, Go updates `go.mod` and
-`go.sum` as it would without ddto. The Git work can fetch into `.git`: the
+`go.sum` as it would without the CLI. The Git work can fetch into `.git`: the
 repository upload deepens a shallow clone, impacted-test detection fetches the
 base branch, and a pull-request run in a shallow clone fetches its head
 commit. `DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=false` and
@@ -17,9 +17,10 @@ commit. `DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=false` and
 
 ## Install
 
-`ddto` ships in ddtest as `ddtest instrument`: wherever this file runs
-`ddto <arguments>`, ddtest runs `ddtest instrument <arguments>`, with the same
-behavior. It needs a Go 1.25 or newer toolchain on `PATH`. The project under
+`ddtest instrument` is ddtest's command for Go. It was the standalone `ddto`
+CLI before: `ddto <arguments>` is now `ddtest instrument <arguments>`, with the
+same behavior, and the [README](README.md#changes-from-the-standalone-ddto)
+lists the other names that changed. It needs a Go 1.25 or newer toolchain on `PATH`. The project under
 test keeps its own language version; Go 1.21 and newer are tested.
 
 Prefer ddtest's release executable for the host. It carries the runtime's
@@ -58,11 +59,11 @@ files.
 1. Find how the project runs its tests: the CI workflow, a `Makefile` or a
    script that calls `go test`, and any `GOFLAGS`. Keep those flags and
    package patterns as they are.
-2. Put `ddto` in front of the command. `go test <args>` becomes
-   `ddto test <args>`, and `go -C dir test <args>` becomes
-   `ddto go -C dir test <args>`. ddto runs any other command unchanged, so a
+2. Put `ddtest instrument` in front of the command. `go test <args>` becomes
+   `ddtest instrument test <args>`, and `go -C dir test <args>` becomes
+   `ddtest instrument go -C dir test <args>`. The CLI runs any other command unchanged, so a
    script can prefix all of its `go` commands; only `go test` reports.
-3. Leave the project's test caching as it is. The first ddto run builds
+3. Leave the project's test caching as it is. The first `ddtest instrument` run builds
    different test binaries, so Go runs every package again. After that, a
    package whose result Go takes from its test cache runs no tests and sends
    nothing in that run, as with plain `go test`. A run whose results all come
@@ -75,18 +76,18 @@ files.
    [Verify that tests report](#verify-that-tests-report).
 
 ```sh
-DD_SERVICE=my-service DD_ENV=ci ddto test -race ./...
+DD_SERVICE=my-service DD_ENV=ci ddtest instrument test -race ./...
 ```
 
 ## Configure delivery
 
-With a Datadog Agent, ddto needs no setting: it uses `DD_TRACE_AGENT_URL`,
+With a Datadog Agent, the CLI needs no setting: it uses `DD_TRACE_AGENT_URL`,
 then `DD_AGENT_HOST` and `DD_TRACE_AGENT_PORT`, then the Agent's Unix socket,
 then `http://localhost:8126`. Without an Agent, send directly to Datadog:
 
 ```sh
 DD_CIVISIBILITY_AGENTLESS_ENABLED=true DD_SITE=datadoghq.com \
-  ddto test ./...
+  ddtest instrument test ./...
 ```
 
 Agentless delivery also needs `DD_API_KEY`. Take it from the CI secret store
@@ -110,21 +111,21 @@ appear with `-v` or when a test fails. Run one package with debug logs, and
 with `-count=1` so that it runs even when Go has its result cached:
 
 ```sh
-DD_TRACE_DEBUG=true ddto test -count=1 -v ./path/to/pkg 2>&1 |
+DD_TRACE_DEBUG=true ddtest instrument test -count=1 -v ./path/to/pkg 2>&1 |
   grep -E 'runtime=mini|plan ready|WARN|ERROR|send finished'
 ```
 
-- `runtime=mini` and `plan ready` mean ddto instrumented the build.
+- `runtime=mini` and `plan ready` mean the CLI instrumented the build.
 - `test-cycle: send finished ... status=ok` means the events reached the Agent
   or the intake.
 - `TestOptimization.run ... ERROR` lines report failed requests, such as
   `connection refused` when no Agent listens.
 - `TestOptimization.build ... WARN: ... running go test without CI Visibility`
-  means ddto ran plain `go test` and reported nothing; the line gives the
+  means the CLI ran plain `go test` and reported nothing; the line gives the
   reason.
 
 [CLI build diagnostics](docs/cli-debug.md) explains every line, and
-`--keep-ci-state` keeps the state that ddto shared with the test processes.
+`--keep-ci-state` keeps the state that the CLI shared with the test processes.
 
 ## Choose settings for the target
 
@@ -145,7 +146,7 @@ ports or files left open cause the same problem.
 For those projects, run retries in separate processes:
 
 ```sh
-DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process ddto test ./...
+DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process ddtest instrument test ./...
 ```
 
 The first attempt still runs in the test binary's process. Each retry then
@@ -178,7 +179,7 @@ Mini sends events from background goroutines while tests run. Tests that count
 goroutines, check for open connections, or measure tight timings can notice
 them. Set `DD_CIVISIBILITY_DEFERRED_DELIVERY=true` to send only between test
 groups; parallel groups then hold their events in memory until they finish.
-goleak needs no setting, because ddto pauses CI delivery and filters its own
+goleak needs no setting, because the CLI pauses CI delivery and filters its own
 goroutines for every goleak check.
 
 ### Project traits
@@ -188,14 +189,14 @@ goroutines for every goleak check.
 | Testify suites, v1.4.0 or newer v1 | Nothing. An unsupported version warns and its methods report as ordinary subtests. |
 | goleak, v1.3.0 or newer v1 | Nothing. |
 | dd-trace-go for APM in tests | Nothing: Mini stays the only CI reporter and APM keeps its own delivery. Spans that the SDK tracer starts from `t.Context()` also appear under the test. |
-| Orchestrion builds | `ddto orchestrion go test ...`, `ddto go tool orchestrion go test ...`, or keep `-toolexec="orchestrion toolexec"` after `ddto test`. See [Orchestrion](docs/orchestrion.md) for toolchain requirements. |
+| Orchestrion builds | `ddtest instrument orchestrion go test ...`, `ddtest instrument go tool orchestrion go test ...`, or keep `-toolexec="orchestrion toolexec"` after `ddtest instrument test`. See [Orchestrion](docs/orchestrion.md) for toolchain requirements. |
 | A `toolchain` line that makes Go download a newer toolchain | Nothing. The first run builds a mirror of that toolchain and relinks, so it is slower. |
 | Vendoring or `go.work` | Nothing. |
-| `go test -exec` or a cross-compilation helper | Nothing, unless ddto warns that it cannot resolve the program. |
+| `go test -exec` or a cross-compilation helper | Nothing, unless the CLI warns that it cannot resolve the program. |
 | Test binaries built with `-c` and run later | Where they run, set `DD_CIVISIBILITY_ENABLED=parent` and the delivery variables, and run each binary from its package directory. |
 | Test Impact Analysis enabled in Datadog | Build with coverage in count or atomic mode, such as `-cover -covermode=atomic`, so each test reports the code it ran. Set mode reports only aggregate coverage. |
 | A monorepo that wants one service per CODEOWNERS team | `DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS=true`, with `DD_SERVICE` unset. See [Services from CODEOWNERS](docs/codeowners-service.md). |
-| A large repository whose Git upload is slow | `--git-upload-timeout=2m` after `ddto test`. |
+| A large repository whose Git upload is slow | `--git-upload-timeout=2m` after `ddtest instrument test`. |
 | Fuzzing with `-fuzz` | Nothing: fuzz roots and seeds report, generated inputs do not. |
 | `go test file_test.go` or standard-library packages | Not instrumented: name packages instead of files. |
 | Bazel | The payload-file and manifest modes have not been tested with a real Bazel build; see [Mini runtime](docs/mini-runtime.md#delivery-and-offline-output). |
@@ -215,7 +216,7 @@ run:
 
 `DD_CIVISIBILITY_ENABLED=false` switches off all reporting: the build is still
 instrumented, but the tests run as with `go test` and send nothing. When the
-variable is absent, ddto sets it to `parent`. A test binary then reports, and
+variable is absent, the CLI sets it to `parent`. A test binary then reports, and
 once Mini has started it sets the variable to `false` for the processes it
 starts. A helper started before that, from `init` or from `TestMain` before
 `m.Run`, inherits `parent`; if it is itself an instrumented test binary, start
@@ -227,34 +228,33 @@ default.
 
 1. Run the same command with plain `go test`. If it also fails, the problem
    belongs to the project.
-2. If only the ddto build fails, keep the output of a run with
-   `DD_TRACE_DEBUG=true` and [report it](#report-a-ddto-bug). To unblock CI,
-   run `go test` without the `ddto` prefix; `DD_CIVISIBILITY_ENABLED=false`
+2. If only the build under `ddtest instrument` fails, keep the output of a run with
+   `DD_TRACE_DEBUG=true` and [report it](#report-a-bug-in-ddtest-instrument). To unblock CI,
+   run `go test` without the `ddtest instrument` prefix; `DD_CIVISIBILITY_ENABLED=false`
    does not skip the instrumented build.
-3. If tests fail only under ddto, check the retry and delivery settings above,
+3. If tests fail only under the CLI, check the retry and delivery settings above,
    then compare with `--runtime=sdk`, which uses the unmodified dd-trace-go
    SDK and needs the version pinned in
    [`internal/version`](internal/version/version.go).
 
-Never edit the project's sources, `go.mod` or `go.sum` to work around ddto,
-and never set `DD_CIVISIBILITY_INTERNAL_*` or `DDTEST_INSTRUMENT_*` variables: ddto manages
+Never edit the project's sources, `go.mod` or `go.sum` to work around the CLI,
+and never set `DD_CIVISIBILITY_INTERNAL_*` or `DDTEST_INSTRUMENT_*` variables: the CLI manages
 them.
 
-## Report a ddto bug
+## Report a bug in ddtest instrument
 
-When a problem belongs to ddto, tell the user and offer to prepare an issue in
+When a problem belongs to the CLI, tell the user and offer to prepare an issue in
 [this repository](https://github.com/DataDog/ddtest/issues).
-That covers a build that fails only under ddto, a panic or an `ERROR` line
+That covers a build that fails only under the CLI, a panic or an `ERROR` line
 from `TestOptimization.build` or `TestOptimization.run`, a run that hangs,
 missing or wrong events, and a `WARN` fallback to plain `go test` that the
 project does not explain. Collect:
 
-1. ddto's version from
-   `go version -m "$(command -v ddto)" | grep -E '^\s+(mod|build\s+vcs\.)'`,
-   which prints its module version and, for a binary built from a checkout,
-   the commit and whether it had local changes, plus `go version` and
+1. ddtest's version from `ddtest --version` and, for a binary built from a
+   checkout, `go version -m "$(command -v ddtest)" | grep -E '^\s+(mod|build\s+vcs\.)'`,
+   which prints the commit and whether it had local changes, plus `go version` and
    `go env GOOS GOARCH GOTOOLCHAIN GOFLAGS`.
-2. The ddto command that fails, the plain `go test` command that works, and
+2. The ddtest instrument command that fails, the plain `go test` command that works, and
    both exit codes.
 3. The `DD_*` variables set for the run, with secrets written as `<set>`.
 4. What the project uses: the `go` line of its `go.mod`, the modules its
@@ -285,12 +285,12 @@ directory, with this layout:
 
 ### Commands
 
-- ddto: `<command>`, exit <code>
+- ddtest instrument: `<command>`, exit <code>
 - go test: `<command>`, exit <code>
 
 ### Environment
 
-- ddto: <module version and commit>
+- ddtest: <version, and commit for a build from a checkout>
 - Go: <go version>, <GOOS>/<GOARCH>
 - Settings: <DD_* variables, secrets as <set>>
 - Project: go <version>; <Testify, goleak, dd-trace-go, Orchestrion versions>; <vendor, go.work, -exec>
@@ -310,7 +310,7 @@ Show it to the user, then print a link that opens GitHub's new-issue form
 with the title and body filled in:
 
 ```sh
-python3 - /tmp/ddto-issue.md "ddto test: <one-line summary>" <<'EOF'
+python3 - /tmp/ddtest-instrument-issue.md "ddtest instrument test: <one-line summary>" <<'EOF'
 import sys, urllib.parse
 query = urllib.parse.urlencode(
     {"title": sys.argv[2], "body": open(sys.argv[1]).read()},
@@ -324,20 +324,21 @@ GitHub rejects very long links, so keep the link under about 8,000
 characters: trim the output in the body, and ask the user to attach the full
 log to the issue instead. The user reviews and submits the issue. Create it
 yourself, for example with
-`gh issue create --repo DataDog/ddtest --title "<summary>" --body-file /tmp/ddto-issue.md`,
+`gh issue create --repo DataDog/ddtest --title "<summary>" --body-file /tmp/ddtest-instrument-issue.md`,
 only when the user asks you to.
 
-## Use ddto from another project
+## Use ddtest instrument from another project
 
-To make agents in another repository use ddto, add this to that repository's
+To make agents in another repository use `ddtest instrument`, add this to that repository's
 `AGENTS.md` or `CLAUDE.md`:
 
 ```markdown
 ## Datadog Test Optimization
 
-Run Go tests through ddto so they report to Datadog Test Optimization.
-Install it with `go install github.com/DataDog/ddtest/ddto/cmd/ddto@main`
-and run `ddto test` with the usual `go test` flags and packages.
+Run Go tests through `ddtest instrument` so they report to Datadog Test Optimization.
+Install ddtest with
+`curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/install.sh | bash`
+and run `ddtest instrument go test` with the usual `go test` flags and packages.
 Settings for this project: <for example DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process>.
 Guide: https://github.com/DataDog/ddtest/blob/main/ddto/AGENTS.md
 ```

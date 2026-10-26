@@ -8,7 +8,7 @@ delivery behavior. Neither feature adds a runtime module dependency.
 Set `DD_CIVISIBILITY_DEFERRED_DELIVERY=true` before running the test binary:
 
 ```sh
-DD_CIVISIBILITY_DEFERRED_DELIVERY=true ddto test --runtime=mini -count=1 ./...
+DD_CIVISIBILITY_DEFERRED_DELIVERY=true ddtest instrument test --runtime=mini -count=1 ./...
 ```
 
 The runtime reads the variable once, when its CI client starts. Changing it
@@ -25,8 +25,8 @@ background senders, payloads sent together can arrive in any order.
 
 Either way, a test process keeps its events until a batch fills or CI
 Visibility closes. A crash ends the process without closing it: testing's
-`-timeout` alarm, and an unrecovered panic with `ddto --panic-hook`, close it
-first, and `ddto` reports the other crashes in its test session. See
+`-timeout` alarm, and an unrecovered panic with `--panic-hook`, close it
+first, and `ddtest instrument` reports the other crashes in its test session. See
 [Crashes](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#crashes).
 
 With the variable enabled, delivery runs between completed test groups, and
@@ -124,13 +124,13 @@ sends. Canceling either wait starts no request and leaves no waiter goroutine.
 
 `Client.Close` returns a final delivery error, including a failed background
 payload that was already in flight when closing started. Rejected payloads are
-counted once. The runtime logs this error and any dropped events; `ddto`
+counted once. The runtime logs this error and any dropped events; `ddtest instrument`
 returns the `go` command's exit code. A later empty `Close` does not report an
 older failure again.
 
 ## Automatic goleak integration
 
-When the selected Mini test graph reaches `go.uber.org/goleak`, `ddto` prepares
+When the selected Mini test graph reaches `go.uber.org/goleak`, `ddtest instrument` prepares
 its `Find` entry. This is automatic in both ordinary and deferred delivery.
 Calling `VerifyNone`, `VerifyTestMain` or a helper in another module reaches
 that same entry. An unused requirement in `go.mod` does not activate the integration.
@@ -217,7 +217,7 @@ import `testing`, so its prepared source and hook are hashed into a package-only
 `-gcflags=go.uber.org/goleak=...` sentinel import directory. Go supplies imports
 through `-importcfg`, so the sentinel is never read. Existing applicable user
 compiler flags are retained. Only goleak's action key needs this extra marker,
-and ddto keeps no build cache of its own for it. Covered goleak inputs are
+and the CLI keeps no build cache of its own for it. Covered goleak inputs are
 edited after Go's coverage generation, preserving the original coverage
 layout.
 
@@ -318,7 +318,7 @@ with per-test coverage enabled by the local settings endpoint.
 with `GODEBUG=tracebackancestors=10`, including detection of user goroutines and
 HTTP connections. Unit tests cover other fork version schemes, upstream
 upgrades/downgrades, local replacements and incompatible entries or overlays.
-Both integration tests run in the cross-platform compatibility workflow.
+Both integration tests run in the cross-platform Go instrumentation workflow.
 `TestGoleakCacheAndWarmVersionGuard` checks unchanged cache reuse, a changed
 goleak source with unrelated standard packages still cached, and rejection of an
 unsupported version with unchanged cached source.

@@ -1318,7 +1318,7 @@ Worker logs that are not regular files: reading a FIFO could block.
 `getGithubActionsJobID` still reads `JOB_CHECK_RUN_ID` first. A handed value
 is the diagnostics result: an empty one means none, so the process does not
 scan again, and tests that disable the scan ignore it too. Processes that ddto
-did not start, the SDK runtime and binaries run outside `ddto test` scan as
+did not start, the SDK runtime and binaries run outside `ddtest instrument test` scan as
 before. With a 2 MB Worker log, the scan took 0.44 ms and allocated 2.1 MB per
 process, and 0.62 ms with 31 logs; a handed value takes 31 ns. When upstream
 changes the scan, update `githubjob` and keep the precedence above.
@@ -1420,14 +1420,14 @@ its first Git commands. The signals that
 ddto forwards to go test also reach the worker from the terminal, and the
 worker handles them as a `stop` with reason `signal`. Test processes, whose handler has no context and which never set the
 Git context, keep their behavior.
-Processes outside the worker's checkout, binaries run outside `ddto test`, the
+Processes outside the worker's checkout, binaries run outside `ddtest instrument test`, the
 SDK runtime, Bazel's offline modes, `-c` and `-n`, and commands with a `-exec`
 program or a cross-compilation helper keep the per-process behavior.
 
 Test processes that use the state no longer count the Git commands and
 repository requests that the worker made; the worker reports them, see
 [Telemetry from ddto's CLI](#telemetry-from-ddtos-cli). With 8 packages
-against a local fake Agent, a `ddto test` run made one commit search and one
+against a local fake Agent, a `ddtest instrument test` run made one commit search and one
 upload instead of eight each, and took 0.47 instead of 0.62 s; each test
 process's bootstrap dropped from 12 to 5 ms.
 
@@ -1657,7 +1657,7 @@ Go's cache keys, because cmd/go takes each tool's identity from its `-V=full`
 output through the wrapper. The cacheable flags are the newest supported Go's:
 Go has only added to them, so a flag outside them disables the cache in every
 version. Test processes outside the worker's checkout, binaries run outside
-`ddto test` and the SDK runtime keep their own requests and scopes.
+`ddtest instrument test` and the SDK runtime keep their own requests and scopes.
 
 Checks: `TestCLIReadCacheScopeIdentity`, `TestCLITestProcessClients`,
 `TestCLIReadCacheLastsTheInvocation`,
@@ -1679,7 +1679,7 @@ Checks: `TestCLIReadCacheScopeIdentity`, `TestCLITestProcessClients`,
 `integration/TestMiniCLIStateRequestsAhead`, which runs the worker and then
 a test process that makes no request of its own, also with services from
 CODEOWNERS, and `integration/TestMiniCLIStateSharedRequests`, which checks one
-request per endpoint, or per service, in a `ddto test` run that runs every
+request per endpoint, or per service, in a `ddtest instrument test` run that runs every
 test, also with `GOEXPERIMENT`, none in a run whose results all come from the
 cache, also with cacheable flags after `-args` and with `-o`, a `linking` mark
 only in a run with a result outside the cache, ddto's `tests.json` and the removed cache
@@ -2747,7 +2747,7 @@ every workload was wrapped to create a module. That method and
 and `testing.go` takes the option in place of a blank line, so its lines keep
 their positions.
 
-ddto's own test session, which one `ddto test` command shares, has no modules
+ddto's own test session, which one `ddtest instrument test` command shares, has no modules
 in ddto's process. A test process that joined it records the empty reason in
 its close record instead, when `testing.M.Run` succeeded, and
 `FinishCLISession` skips the session only when go test succeeded, no process

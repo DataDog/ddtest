@@ -1,19 +1,19 @@
 # CLI build diagnostics
 
-Set `DD_TRACE_DEBUG=true` to see what `ddto` does before the test runtime
+Set `DD_TRACE_DEBUG=true` to see what `ddtest instrument` does before the test runtime
 starts. The CLI writes diagnostics to `stderr` with the prefix
 `TestOptimization.build v0.0.0-dev`. Mini runtime logs use
 `TestOptimization.run  v0.0.0-dev`. Both prefixes use the version in
 `internal/version`; the SDK backend keeps its own logger and SDK version.
 
 ```sh
-DD_TRACE_DEBUG=true ddto test -count=1 ./...
+DD_TRACE_DEBUG=true ddtest instrument test -count=1 ./...
 ```
 
 For a build-only investigation, compile the test binary without running it:
 
 ```sh
-DD_TRACE_DEBUG=true ddto test -c -o ./tests.bin .
+DD_TRACE_DEBUG=true ddtest instrument test -c -o ./tests.bin .
 ```
 
 `DD_TRACE_DEBUG` accepts Go's `strconv.ParseBool` values, including `true`, `1`
@@ -42,12 +42,12 @@ The log records:
   whether files were linked or copied, how many, and how long it took. Without
   a usable mirror, `instrumentation bypass goroot_mirror=unavailable` follows
   the warning, and native `go test` runs.
-- When ddto must wrap a `-exec` program or the cross-compilation helper and
+- When the CLI must wrap a `-exec` program or the cross-compilation helper and
   cannot reproduce how `go test` finds or starts it, `instrumentation bypass
   exec_program=unresolved`, `exec_program=unquotable` or `exec_helper=relative`
   follows the warning, and native `go test` runs.
 - The `work` package pattern, also in `-coverpkg` or a per-package flag such
-  as `-gcflags=work=…`, with a workspace that ddto provides: Mini is one of its
+  as `-gcflags=work=…`, with a workspace that the CLI provides: Mini is one of its
   main modules, so `instrumentation bypass package_pattern=work` follows the
   warning, and native `go test` runs.
 - Standard library tests, as `go test fmt`, `std` or `all` select them:
@@ -57,10 +57,10 @@ The log records:
   dependency's package selects them: go rejects overlay entries there, so
   `instrumentation bypass module_cache_tests` follows the warning, and native
   `go test` runs.
-- Outside a Go module, where ddto cannot provide its runtime:
+- Outside a Go module, where the CLI cannot provide its runtime:
   `instrumentation bypass no_module` follows the warning, and native `go test`
   runs, which reports what it cannot run there.
-- A workspace whose runtime ddto cannot resolve or provide, as offline with a
+- A workspace whose runtime the CLI cannot resolve or provide, as offline with a
   vendored one: `instrumentation bypass workspace_runtime_unavailable` follows
   the warning, and native `go test` runs, which can still build it.
 - An `-overlay` that deletes the module's `go.mod`, after which go finds
@@ -72,13 +72,13 @@ The log records:
   files, which a module before Go 1.23 can import:
   `instrumentation bypass vendor_without_runtime` follows the warning, which
   says how to vendor it, and native `go test` runs.
-- When go rejects the command or its environment while ddto prepares it, as
+- When go rejects the command or its environment while the CLI prepares it, as
   with `-p=0`, an unknown flag in `GOFLAGS`, a missing `-C` directory or
   `-modfile`, an `-overlay` file that go cannot read or parse, or a `go.sum`
   without a checksum that the build needs,
   `instrumentation bypass go_rejected="<reason>"`, and native
-  `go test` runs and reports the error with its own exit status. ddto adds a
-  warning only if that `go test` passes, which means the failure was ddto's.
+  `go test` runs and reports the error with its own exit status. The CLI adds a
+  warning only if that `go test` passes, which means the failure was the CLI's.
 - With coverage, whether testing gets the in-memory per-test coverage hook:
   `per-test coverage in_memory_hook=true`, or `false` with the reason. A test
   process's own log says whether it uses the hook: `per-test coverage in
@@ -95,8 +95,8 @@ The log records:
 - For a release executable, the state of the runtime sources it carries:
   `bundled runtime state=created` with the extraction's duration, `reused`, or
   `unavailable` with the error. Without a usable user cache, `state=temporary`
-  follows: the run's temporary directory holds them. Otherwise ddto looks for
-  its version in the module cache. `state=stale` comes first when ddto
+  follows: the run's temporary directory holds them. Otherwise the CLI looks for
+  its version in the module cache. `state=stale` comes first when the CLI
   extracts them again.
 - The `testing` transformation, its source and rewritten-file counts, and the
   Fuzz and parallel-stop hooks selected for that runtime.
@@ -131,12 +131,12 @@ The log records:
   those that could not tell every file, overflowed contexts, socket or pipe
   reads, and singleflight calls that leaked to windows. See
   [Experimental file coverage](mini-runtime.md#experimental-file-coverage).
-- `test session owned=true` when ddto owns the command's
+- `test session owned=true` when the CLI owns the command's
   [test session](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#ddtos-test-session),
   followed by `test session id=<id> dir=<dir>`; `false`
   comes with the reason, such as `--session-per-binary`, and the test
   processes then report their own. After go test, with `DD_TRACE_DEBUG=true`,
-  ddto logs each process it found
+  the CLI logs each process it found
   (`civisibility: test session process <file> closed=<bool> exit_code=<n|none> crash_output_bytes=<n> modules=<n> suites=<n>`),
   where the session's CI tags come from
   (`civisibility: test session CI tags directory=<dir> git_worker_record=<bool> git_timeout=<d>`)
@@ -163,10 +163,10 @@ The log records:
 - With a selective tool, the state of its wrapper executable:
   `tool wrapper state=created` with `source=build`, or `source=bundle` when a
   release executable wrote the wrapper it carries, and the duration; `reused`;
-  or `unavailable` with the error, in which case ddto itself is the wrapper.
+  or `unavailable` with the error, in which case the CLI itself is the wrapper.
   `tool wrapper bundled=unusable` means the carried wrapper did not run, and
-  ddto built one.
-  `state=stale` comes first when ddto must rebuild it and waits for runs that
+  the CLI built one.
+  `state=stale` comes first when the CLI must rebuild it and waits for runs that
   still use the old one; a signal ends that wait. See
   [the bypass](testify.md#the-bypass-and-cache-contract).
 - When the Git worker requests for the test processes, and why: see
@@ -303,16 +303,16 @@ with `-v` or when the package fails.
 | `civisibility: the process crashes (<timeout/panic>); failing the running tests and closing CI Visibility first: <message>` | testing's `-timeout` alarm, or an unrecovered panic with `--panic-hook`, is about to end the process. The stack follows for a panic. |
 | `civisibility: failed <n> running tests before the crash` and `civisibility: closed CI Visibility before the crash duration=<d>` | The tests that the crash interrupted were reported as failed, and the events were sent; the crash then ends the process as without Mini. |
 | `civisibility: os.Exit while the process crashes; the crash ends the process` | The tests finished while Mini sent before a crash; the crash keeps its exit status. |
-| `civisibility: joined the CLI's test session id=<id> record=<file> crash_output=<file>` and `civisibility: reporting in the CLI's test session id=<id>` | The process reports in the session of ddto's command, and where its record and crash output are; `WARN: civisibility: ... reports its own session` says why it could not. |
-| `civisibility: test session record lines=<n> failed=<n> first_error=<error>` | Once CI Visibility closes: how many module and suite starts and ends, and session closes, the process recorded for ddto, which recreates the containers left open if the process crashes, and whether a write failed. |
+| `civisibility: joined the CLI's test session id=<id> record=<file> crash_output=<file>` and `civisibility: reporting in the CLI's test session id=<id>` | The process reports in the session of the CLI's command, and where its record and crash output are; `WARN: civisibility: ... reports its own session` says why it could not. |
+| `civisibility: test session record lines=<n> failed=<n> first_error=<error>` | Once CI Visibility closes: how many module and suite starts and ends, and session closes, the process recorded for the CLI, which recreates the containers left open if the process crashes, and whether a write failed. |
 | `civisibility: failed the test name=<name> suite=<suite> for the crash (<timeout/panic>) final_status=<status>` | A test that the crash interrupted, reported as failed. |
-| `civisibility: recorded the close of this process in the CLI's test session exit_code=<n> tags=<n> skip_if_empty=<bool> empty=<bool>` | The process closed CI Visibility and left its session tags for ddto. `empty=true` means it ran no test and passed; see [Decisions in a test process](#decisions-in-a-test-process). |
+| `civisibility: recorded the close of this process in the CLI's test session exit_code=<n> tags=<n> skip_if_empty=<bool> empty=<bool>` | The process closed CI Visibility and left its session tags for the CLI. `empty=true` means it ran no test and passed; see [Decisions in a test process](#decisions-in-a-test-process). |
 
 A process that ends without any of these lines was ended by something that
 runs no Go code first: a fatal runtime error, an unrecovered panic in another
 goroutine without `--panic-hook`, the race detector with
 `GORACE=halt_on_error=1`, or a signal that cannot be caught, such as SIGKILL.
-The test lines still show which test was running. In ddto's test session, ddto
+The test lines still show which test was running. In the CLI's test session, the CLI
 then logs, with `DD_TRACE_DEBUG=true`,
 `civisibility: test process process-<id> ended without closing CI Visibility (<reason>); recreated <n> events`
 and, when the crash output names the test,
@@ -330,7 +330,7 @@ level and allocates nothing:
 | `civisibility: dynamic automatic test retries test="<name>" first_duration=<d> bucket=<0-4> retry_count=<n>` | The retries that a test gets, if its first execution fails, from that execution's duration |
 | `civisibility: EFD has no retries for test="<name>" first_duration=<d>, using automatic test retries` | A test that Early Flake Detection would retry took 5 min or more, which it does not retry, so a failure gets automatic test retries instead |
 | `civisibility: EFD retries suppressed for failing test="<name>", using automatic test retries` | Early Flake Detection stopped retrying in a faulty session, so a test that still fails gets automatic test retries |
-| `civisibility: session close finished … skip_if_empty=<bool> empty=<bool>` | `empty=true`: the session ran no test and passed, so it is reported as skipped with `test.session.empty_reason=zero_tests`. A test process in ddto's test session says the same on its `recorded the close` line, and ddto reports its session as skipped only when every test process was empty, with `empty=true` on its `sending ddto's test session` line. In a test process, `skip_if_empty=false` after a successful run means it could not tell whether it ran nothing, and an earlier `a session that runs nothing` line says why |
+| `civisibility: session close finished … skip_if_empty=<bool> empty=<bool>` | `empty=true`: the session ran no test and passed, so it is reported as skipped with `test.session.empty_reason=zero_tests`. A test process in the CLI's test session says the same on its `recorded the close` line, and the CLI reports its session as skipped only when every test process was empty, with `empty=true` on its `sending the CLI's test session` line. In a test process, `skip_if_empty=false` after a successful run means it could not tell whether it ran nothing, and an earlier `a session that runs nothing` line says why |
 | `civisibility: a session that runs nothing will not be reported as skipped: wrapped_tests=… wrapped_fuzz=… wrapped_examples=… wrapped_benchmarks=…` | Some workloads, such as benchmarks that `TestMain` selects, run without the module that would show they ran, so an empty session stays passed |
 | `civisibility.cov: testing will write its coverage profile to <file>` | Without `-coverprofile`, testing writes its profile to a temporary file for the session's coverage, so it prints its coverage line once. `no temporary coverage profile: <error>` says why it could not, and `session coverage will read the -coverprofile profile` that the command set one |
 | `civisibility.cov: session coverage from the profile that testing wrote: <file>` or `… from testing's tear-down: <file>` | Where the session's coverage percentage, its ITR backfill and the LCOV upload come from. `error getting coverage file: testing wrote no coverage profile` means no coverage was reported, as after `-list` |
@@ -338,7 +338,7 @@ level and allocates nothing:
 | `civisibility: no CODEOWNERS file in the CI workspace "<dir>", tests have no owners` or `… in "<dir>" or "<dir>", where the CI workspace "<dir>" is not a directory, …` | Where CODEOWNERS was searched: the CI workspace, or, when it is not a directory where the test runs, the current and test binary's directories |
 | `civisibility: CODEOWNERS discovery failed, it will be retried: <error>` | A directory or file could not be read; the next lookup, for another test or suite, tries again |
 
-ddto's Git worker, whose log `--keep-ci-state` keeps in `worker.log`, logs how
+The CLI's Git worker, whose log `--keep-ci-state` keeps in `worker.log`, logs how
 it packs the commits that the backend asks for:
 
 | Line | Meaning |
@@ -349,19 +349,19 @@ it packs the commits that the backend asks for:
 
 ## Requests ahead
 
-ddto's Git worker requests the settings, known tests, skippable tests and test
+The CLI's Git worker requests the settings, known tests, skippable tests and test
 management data for the test processes, which then find the responses in the
 invocation's read cache. With `DD_TRACE_DEBUG=true`, each side logs its part.
 Add `--keep-ci-state` to keep the worker's log, `worker.log`.
 
-`ddto`, on `stderr`:
+`ddtest instrument`, on `stderr`:
 
 | Line | Meaning |
 | --- | --- |
 | `test runtime version=… source=go_env\|go_tool_compile` | The Go version that the worker requests with, as the test binaries report it; `go_tool_compile` when `GOEXPERIMENT` adds experiments |
-| `git worker test description packages=… goarch=… runs_every_test=… go_version=…` | What ddto handed the worker in `tests.json` |
+| `git worker test description packages=… goarch=… runs_every_test=… go_version=…` | What the CLI handed the worker in `tests.json` |
 | `git worker requests_ahead=while_building reason=…` | go test takes no result from its cache, so the worker requests while it builds. The reason is the first one: `local directory mode`, `test binary flag -count`, `… in GOFLAGS`, an unknown flag, or test binary arguments after the packages, `-args` or `--`. It never shows a value |
-| `git worker requests_ahead=at_link` | Results may come from Go's cache: the worker requests when go test links a test binary, which ddto's tool marks as `linking` |
+| `git worker requests_ahead=at_link` | Results may come from Go's cache: the worker requests when go test links a test binary, which the CLI's tool marks as `linking` |
 | `git worker requests_ahead=at_first_test reason="-o …"` | `-o` or `-a` link even cached results, so the worker waits for a test process |
 | `git worker read cache removed left_directories_removed=…` | The invocation's cache entries went with it; the count is of directories that earlier, killed invocations left |
 
@@ -375,13 +375,13 @@ The worker, in `worker.log`:
 | `civisibility: CLI request ahead settings failed`, `… known tests failed`, … | A request failed; test processes request it again themselves. The error hides a URL's user and password |
 | `civisibility: CLI requests ahead stop: the settings require Git` | The settings change after the upload, so test processes request after it |
 | `civisibility: CLI requests ahead not needed: …` | go test exited before any test process used the state, as when every result came from its cache; `started` tells whether requests had begun and were cancelled |
-| `civisibility: CLI requests ahead stopped: the CLI stopped the worker [reason:…]` | ddto stopped the worker first, for a `signal` or `timeout` |
+| `civisibility: CLI requests ahead stopped: the CLI stopped the worker [reason:…]` | The CLI stopped the worker first, for a `signal` or `timeout` |
 
 Test processes, in their output, and the worker:
 
 | Line | Meaning |
 | --- | --- |
-| `civisibility.read_cache: invocation scope [directory:cli/… ttl:1h0m0s]` | The process shares ddto's invocation's cache |
+| `civisibility.read_cache: invocation scope [directory:cli/… ttl:1h0m0s]` | The process shares the CLI's invocation's cache |
 | `civisibility.read_cache: hit [endpoint:… key:… scope:cli]` | The response was there, usually from the worker |
 | `civisibility.read_cache: hit after wait [… waited:…]` | Another process was requesting it; this one waited for its response, for up to 2 s, or up to two minutes while that process runs |
 | `civisibility.read_cache: owner gone, taking over [… waited:…]` | The process that held the key's lock ended without releasing it; this one took the lock, requested and stored the response |
@@ -403,15 +403,15 @@ For example, a `-count=1` run:
 
 ## Commands other than go test
 
-ddto runs any other command unchanged. With `DD_TRACE_DEBUG=true`, it logs on
+The CLI runs any other command unchanged. With `DD_TRACE_DEBUG=true`, it logs on
 `stderr` which program it started and how. The lines name the command and
 count its arguments; they never show them. A test form logs its name,
-`command="go -C test"` for example, before ddto parses its own options.
+`command="go -C test"` for example, before the CLI parses its own options.
 
-On Unix, ddto replaces itself with the program, searching `PATH` as the
+On Unix, the CLI replaces itself with the program, searching `PATH` as the
 platform's `execvp` does. Its lines come before the program's output. They
 go to a duplicate of `stderr`, so a reader that already closed it does not
-end ddto before the program starts:
+end the CLI before the program starts:
 
 ```text
 … TestOptimization.build v0.0.0-dev DEBUG: +40µs pass-through command="go" args=2
@@ -421,21 +421,21 @@ end ddto before the program starts:
 … TestOptimization.build v0.0.0-dev DEBUG: +63µs pass-through exec path="/usr/local/go/bin/go"
 ```
 
-For `ddto gotestsum` and `--go-shim`, ddto puts its own `go` first on the
+For `ddtest instrument gotestsum` and `--go-shim`, the CLI puts its own `go` first on the
 command's `PATH`, and logs why and how:
 
 | Line | Meaning |
 | --- | --- |
-| `go_shim reason=flag\|gotestsum\|launcher\|go_run_program` | Why the command gets ddto's `go`: `--go-shim`; gotestsum, run directly, with `go tool` or with `go run`; a `go run` or `go tool` that arrived through ddto's `go`, as from a script under `--go-shim`; or the program of a `go run`, which ddto starts again as `go run`'s `-exec` program |
-| `go_shim first_on_path=<dir>` | The directory of ddto's `go` that the command gets first on `PATH`. Without it after a `reason` line, a `WARN` says why ddto ran the command without its `go` |
+| `go_shim reason=flag\|gotestsum\|launcher\|go_run_program` | Why the command gets the CLI's `go`: `--go-shim`; gotestsum, run directly, with `go tool` or with `go run`; a `go run` or `go tool` that arrived through the CLI's `go`, as from a script under `--go-shim`; or the program of a `go run`, which the CLI starts again as `go run`'s `-exec` program |
+| `go_shim first_on_path=<dir>` | The directory of the CLI's `go` that the command gets first on `PATH`. Without it after a `reason` line, a `WARN` says why the CLI ran the command without its `go` |
 | `go_shim go=<path>` | For a go command, the toolchain's go that it runs |
-| `go_shim go_command=run_exec\|module_tool\|toolchain_tool\|tool_not_built\|native` | How that go command runs: `go run` with ddto as its `-exec` program; a tool of the module, which ddto runs itself as `go tool` would; a tool of the toolchain, or one that `go tool -n` could not build, which `go tool` runs and reports; or unchanged |
-| `go_shim module_tool="<tool>" path=<path> args=<n> goroot=kept\|set\|removed` | The module tool that ddto runs, its binary and its argument count, and whether ddto kept `GOROOT` or, after a toolchain switch, set or removed it as `go` does |
-| `go_shim module_tool forwarded signals=["<name>" …]` | The signals that ddto received while the tool ran and forwarded to it, as `go tool` does, logged once the tool ends |
-| `go_shim module_tool exited code=<n> duration=<d>` | ddto's exit status: the tool's, or 1 when the tool did not start or exit cleanly, as `go tool` does. A `go_shim module_tool ended error="<error>"` line before it says why (`signal: killed`, for example) |
-| `go_shim as_go=true` | This ddto runs as that `go`, so its go test reports with the command's arguments and no ddto options |
-| `go_shim left=<dir>` | Run as that `go`, or under the command, ddto left the directory off `PATH` again, so the tests and the go commands it runs see the caller's `PATH` |
-| `nested_go depth=<n>` | This ddto go command runs inside `<n>-1` other ddto go commands, as gotestsum's `go test` runs inside `ddto go tool gotestsum`. ddto stops at 9 with an error that names the go on `PATH` |
+| `go_shim go_command=run_exec\|module_tool\|toolchain_tool\|tool_not_built\|native` | How that go command runs: `go run` with the CLI as its `-exec` program; a tool of the module, which the CLI runs itself as `go tool` would; a tool of the toolchain, or one that `go tool -n` could not build, which `go tool` runs and reports; or unchanged |
+| `go_shim module_tool="<tool>" path=<path> args=<n> goroot=kept\|set\|removed` | The module tool that the CLI runs, its binary and its argument count, and whether the CLI kept `GOROOT` or, after a toolchain switch, set or removed it as `go` does |
+| `go_shim module_tool forwarded signals=["<name>" …]` | The signals that the CLI received while the tool ran and forwarded to it, as `go tool` does, logged once the tool ends |
+| `go_shim module_tool exited code=<n> duration=<d>` | The CLI's exit status: the tool's, or 1 when the tool did not start or exit cleanly, as `go tool` does. A `go_shim module_tool ended error="<error>"` line before it says why (`signal: killed`, for example) |
+| `go_shim as_go=true` | This process runs as that `go`, so its go test reports with the command's arguments and none of the CLI's options |
+| `go_shim left=<dir>` | Run as that `go`, or under the command, the CLI left the directory off `PATH` again, so the tests and the go commands it runs see the caller's `PATH` |
+| `nested_go depth=<n>` | This ddtest instrument go command runs inside `<n>-1` other ddtest instrument go commands, as gotestsum's `go test` runs inside `ddtest instrument go tool gotestsum`. The CLI stops at 9 with an error that names the go on `PATH` |
 
 Each `exec path` line is a candidate, and a `failed` line follows each
 candidate that did not start. The last `exec path` line without one is the
@@ -444,7 +444,7 @@ the kernel could not start, such as a script without `#!`, which `/bin/sh`
 then runs. `skip path_entry=… bytes=…` marks a `PATH` entry too long for the
 libc, which it does not search.
 
-On Windows, ddto starts the program in a job and waits for it:
+On Windows, the CLI starts the program in a job and waits for it:
 
 ```text
 … TestOptimization.build v0.0.0-dev DEBUG: +40µs pass-through command="build.cmd" args=1
@@ -453,22 +453,22 @@ On Windows, ddto starts the program in a job and waits for it:
 … TestOptimization.build v0.0.0-dev DEBUG: +1.2s pass-through exited code=0 duration=1.2s
 ```
 
-`caller_command_line=true` means the program received ddto's command line
-after `ddto` as written. `job=false` means no job was available, so the program
-would outlive a terminated ddto; a preceding `job unavailable step=create|limits|assign`
+`caller_command_line=true` means the program received the CLI's command line
+after `ddtest instrument` as written. `job=false` means no job was available, so the program
+would outlive a terminated CLI; a preceding `job unavailable step=create|limits|assign`
 line says which call failed. The program runs once it is resumed, so its
 first output can come before `started`.
 
 ## Keeping the CI state
 
-With the Mini runtime and CI Visibility enabled, `ddto test` starts a Git
+With the Mini runtime and CI Visibility enabled, `ddtest instrument test` starts a Git
 worker and shares state with the test processes in a temporary directory,
-`ddtest-instrument-git-*` in the system's temporary directory. `ddto` removes it when the
+`ddtest-instrument-git-*` in the system's temporary directory. `ddtest instrument` removes it when the
 command ends. To keep it for debugging:
 
 ```sh
-ddto test --keep-ci-state ./...                 # prints: INFO: kept the CI state in /tmp/ddtest-instrument-git-…
-ddto test --keep-ci-state=ci-state.zip ./...    # prints: INFO: archived the CI state in /…/ci-state.zip
+ddtest instrument test --keep-ci-state ./...                 # prints: INFO: kept the CI state in /tmp/ddtest-instrument-git-…
+ddtest instrument test --keep-ci-state=ci-state.zip ./...    # prints: INFO: archived the CI state in /…/ci-state.zip
 ```
 
 | File | Contents |
@@ -476,14 +476,14 @@ ddto test --keep-ci-state=ci-state.zip ./...    # prints: INFO: archived the CI 
 | `git.json` | The checkout's Git metadata that the worker read once, and the upload wait that test processes use |
 | `telemetry.json` | The invocation's telemetry application: runtime ID, application and host |
 | `seq/` | One file per telemetry request number taken, by the worker or a test process |
-| `linking` | Present when `go test` linked a test binary in a run whose results could come from its cache; `ddto`'s tool writes it |
+| `linking` | Present when `go test` linked a test binary in a run whose results could come from its cache; the CLI's tool writes it |
 | `used` | Present when a test process used the state |
 | `upload.json` | The repository upload's result, or why it failed or stopped |
 | `impacted.json` | The impacted-tests base commit and modified files, or why they were not computed |
-| `tests.json` | `ddto`'s description of the test processes: their architecture, whether `go test` runs every test package without its result cache, and each test package's directory and module |
+| `tests.json` | The CLI's description of the test processes: their architecture, whether `go test` runs every test package without its result cache, and each test package's directory and module |
 | `telemetry-failure-*` | Telemetry requests that a test process could not deliver |
 | `worker.log` | The worker's own log; add `DD_TRACE_DEBUG=true` for its debug lines |
-| `ci-state.json` | `ddto`'s view: whether it handed the state over and why, the upload timeout, how the worker ended (`exited`, `stopped` or `killed`), the stop reason and how long `ddto` waited after `go test` |
+| `ci-state.json` | The CLI's view: whether it handed the state over and why, the upload timeout, how the worker ended (`exited`, `stopped` or `killed`), the stop reason and how long `ddtest instrument` waited after `go test` |
 
 A command that starts no worker, such as the SDK runtime, `-c` or a disabled
 CI Visibility, prints that it has no CI state. The state holds repository

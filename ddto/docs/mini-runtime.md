@@ -1,6 +1,6 @@
 # Mini runtime configuration and API
 
-Mini is the default CI Visibility runtime used by `ddto`. It retains the
+Mini is the default CI Visibility runtime used by `ddtest instrument`. It retains the
 SDK's testing policies and writes native CI events without importing the APM
 tracer. Use the [README](../README.md) for installation and common commands.
 
@@ -12,7 +12,7 @@ associate operations without changing APM parentage.
 
 ## Configuration
 
-Set these variables in the environment of `ddto`, or of a compiled test binary:
+Set these variables in the environment of `ddtest instrument`, or of a compiled test binary:
 
 | Variable | Behavior |
 | --- | --- |
@@ -38,7 +38,7 @@ environment; APM YAML/Fleet configuration is excluded.
 
 Each test binary initializes its own CI runtime, including settings, then
 flushes at session close. A multi-package command can therefore have several
-sessions and independent network startup/shutdown costs. Under `ddto test`,
+sessions and independent network startup/shutdown costs. Under `ddtest instrument test`,
 test binaries report telemetry under the application of
 [the Git worker](#the-git-worker). Settings
 and initial telemetry overlap and finish before tests are admitted. Delivery
@@ -47,7 +47,7 @@ failures are logged without replacing the Go command's result.
 ## Runtime provisioning
 
 An ordinary module needs no persistent runtime requirement. When the runtime
-is absent, `ddto` supplies it through temporary copies of the effective
+is absent, `ddtest instrument` supplies it through temporary copies of the effective
 `go.mod` and `go.sum`, passed to Go with `-modfile`, and it respects explicit
 modfiles and their overlays. Provisioning never edits the client's files,
 although `-mod=mod` still lets Go's own package query make its usual edits.
@@ -87,7 +87,7 @@ requires does not: native `go test` reports `updates to go.mod needed`, which
 Detecting it would take a second package load in module mode on every run.
 
 The temporary `go.work`, and the `GOFLAGS` adapted for it, apply only to the
-`go test` command that `ddto` starts, including the build tools it runs or
+`go test` command that `ddtest instrument` starts, including the build tools it runs or
 chains, such as a user's `-toolexec`. In the test process, Mini's
 `internal/goenv/restore` package restores the caller's `GOWORK` and `GOFLAGS`,
 and with a [toolchain mirror](#toolchains-in-the-module-cache) the native
@@ -104,16 +104,16 @@ environment.
 One case escapes the restore. A dependency that imports `syscall` but not `os`
 can initialize before the restore package when its import path sorts first; if
 it reads `GOWORK`, `GOFLAGS`, `GOROOT` or `PATH` through `syscall` during
-initialization, it sees `ddto`'s values. Ordinary code reads them through `os`,
+initialization, it sees the CLI's values. Ordinary code reads them through `os`,
 and starts commands through `os/exec`, after the restore.
 
 A `go test -exec` program, or the `go_$GOOS_$GOARCH_exec` helper that Go uses
-when cross-compiling, starts before the test binary. `ddto` runs it through
-`ddto test-exec`, which restores the caller's values first; Go already
-disables result caching for such runs. `ddto` looks a program name up as Go
+when cross-compiling, starts before the test binary. `ddtest instrument` runs it through
+`ddtest test-exec`, which restores the caller's values first; Go already
+disables result caching for such runs. `ddtest instrument` looks a program name up as Go
 does, on the caller's `PATH` from Go's working directory. For a program that Go
 could not run, or would run through a path relative to that directory, as
-`GODEBUG=execerrdot=0` allows, `ddto` warns and runs native `go test`, which
+`GODEBUG=execerrdot=0` allows, `ddtest instrument` warns and runs native `go test`, which
 reports or runs it. Arguments reach the program as Go parsed them, including an
 unquoted argument with both quote characters. On Windows, where the wrapper
 cannot replace itself, the program runs in a job that ends it if Go terminates
@@ -141,7 +141,7 @@ dependency versions are retained.
 ### Toolchains in the module cache
 
 A toolchain that `GOTOOLCHAIN` downloads lives in `GOMODCACHE`, where Go rejects
-every overlay entry, including the rewritten `testing` sources. `ddto test` then
+every overlay entry, including the rewritten `testing` sources. `ddtest instrument test` then
 runs go from a mirror of that toolchain in the user cache, under `ddtest/instrument/goroots`.
 The mirror has the same files, hard-linked where the filesystem allows and
 copied otherwise. Windows always gets copies, because deleting a read-only hard
@@ -161,27 +161,27 @@ with the toolchain's `bin` first in `PATH`, so tests that run `go` get the same
 toolchain. `runtime.GOROOT()` and standard-library paths in stack traces still
 name the mirror, and tests of the SDK runtime see its `GOROOT` and `PATH`. A
 launcher such as Orchestrion finds the mirror's `go` first in `PATH`, so
-`ddto` passes it a `-exec` program by the path that `go test` would use. When
+`ddtest instrument` passes it a `-exec` program by the path that `go test` would use. When
 no mirror is possible, for example because the user cache lies in
-`GOMODCACHE`, the toolchain, or the module or its checkout, `ddto test` warns
+`GOMODCACHE`, the toolchain, or the module or its checkout, `ddtest instrument test` warns
 and runs `go test` without CI Visibility.
 
 ### The Git worker
 
 On GitHub Actions without a numeric `JOB_CHECK_RUN_ID`, each test process would
-read the runner's `Worker_*.log` files to find the job ID. `ddto` reads them
+read the runner's `Worker_*.log` files to find the job ID. `ddtest instrument` reads them
 once while it prepares the build and hands the result to Mini's test processes
 in `DDTEST_INSTRUMENT_GITHUB_JOB_ID`. The restore package removes that variable when it
 restores `GOWORK` and `GOFLAGS`, before `os` initializes, so client code that
 reads the environment through `os` never sees it. An empty value means the
-files name no job, and the process does not read them again. `ddto` hands
+files name no job, and the process does not read them again. `ddtest instrument` hands
 nothing when a `-exec` program or a cross-compilation helper would see the
 variable before the test binary, or when the scan is still running a second
 after preparation; each process then reads the files itself.
 
 Each test process also used to read the checkout's Git metadata, upload the
 repository's missing commits and, with impacted tests, discover the base branch
-and compute the diff. Now `ddto` starts a worker, `ddto ci-git-worker`, in the
+and compute the diff. Now `ddtest instrument` starts a worker, `ddtest ci-git-worker`, in the
 invocation's directory while it prepares the build. The worker reads the Git
 metadata before `go test` starts and hands it, through `DDTEST_INSTRUMENT_GIT_STATE`, to the
 test processes of the same checkout, which then run no Git command for it.
@@ -191,8 +191,8 @@ the local commits with the backend's while `go test` builds; that request only
 reads. Otherwise the worker waits until `go test` links a test binary or a test
 process starts, so a run whose results all come from the cache sends no
 request. Go links a test binary only for a result outside its test cache, and
-`ddto` adds its tool to `go test` to tell the worker when that happens. Each of
-those tool calls starts ddto's small wrapper first, about 1.2 ms
+`ddtest instrument` adds its tool to `go test` to tell the worker when that happens. Each of
+those tool calls starts the CLI's small wrapper first, about 1.2 ms
 ([phase 3](optimization-plan.md#phase-3-ddtos-startup-as-the-compiler-wrapper)).
 A change that leaves a test binary identical, such as an edited comment, still
 relinks it, so the worker sends its request. With `-o` or `-a`, which link even
@@ -204,10 +204,10 @@ files once. Test processes wait for those results where they used to wait for
 their own work. When every result comes from Go's test cache, no test process
 starts, and the worker neither changes the repository nor uploads.
 
-`ddto` waits for the worker before it exits, as test processes waited for their
+`ddtest instrument` waits for the worker before it exits, as test processes waited for their
 own uploads, for at most `--git-upload-timeout` (one minute by default) after
 `go test` exits; test processes also wait at most that long for its result.
-Then, or on a signal, `ddto` stops the worker. The worker interrupts its Git
+Then, or on a signal, `ddtest instrument` stops the worker. The worker interrupts its Git
 command, so that Git removes its lock files, and it stops its requests, removes
 its pack files, records the stopped upload and closes the telemetry
 application.
@@ -215,7 +215,7 @@ Only a worker that does not stop within ten seconds is killed. `--keep-ci-state`
 keeps the shared state for debugging; see
 [CLI build diagnostics](cli-debug.md#keeping-the-ci-state). The exceptions for
 the job ID apply here too, and test processes outside the worker's checkout, or
-started outside `ddto test`, keep doing this work themselves.
+started outside `ddtest instrument test`, keep doing this work themselves.
 
 The worker also owns the invocation's telemetry application. Test processes
 that receive its state send their metrics and logs under the worker's runtime
@@ -232,7 +232,7 @@ with the test processes' Go version and architecture, for each service that
 their packages report. The read cache, scoped to the invocation for the worker
 and its test processes, hands them the responses, so the first test starts
 without waiting for the network: the requests overlap the link of its test
-binary. A test process whose request differs makes its own. `ddto` also hands
+binary. A test process whose request differs makes its own. `ddtest instrument` also hands
 each test package's module to the test processes, which then start no
 `go list` for per-test coverage, LCOV reports or backfill.
 
@@ -249,10 +249,10 @@ Mini is read with `go mod edit -json`. Only module files that mention Mini's
 path, or contain a backslash that could escape it, need that command; those
 commands run concurrently, and their results apply in workspace order.
 Go's `work` package pattern selects the packages of every main module, Mini's
-included, so with a workspace that `ddto` provides, `work` as a package or
-`-coverpkg` pattern makes `ddto` warn and run native `go test`.
+included, so with a workspace that `ddtest instrument` provides, `work` as a package or
+`-coverpkg` pattern makes `ddtest instrument` warn and run native `go test`.
 
-`ddto` uses a vendor directory only where Go would: with `-mod=vendor`, or by
+`ddtest instrument` uses a vendor directory only where Go would: with `-mod=vendor`, or by
 default when the `go` directive is at least 1.14 and `modules.txt` was written
 for the same mode. A `go mod vendor` tree beside `go.work` belongs to its module,
 so workspace builds ignore it, and a `go work vendor` tree is ignored with
@@ -281,7 +281,7 @@ the client's file, so no contents are copied and edits in place stay live. Go
 sees regular files, as `//go:embed` requires: it rejects symbolic links. Real
 directories keep vendored packages visible to wildcard patterns such as
 `example.com/helper/...`; Go ignores linked directories there. Links inside the
-client's vendor tree stay links. Like Go, `ddto` follows a `vendor` directory
+client's vendor tree stay links. Like Go, `ddtest instrument` follows a `vendor` directory
 that is itself a link. Where hard links fail, as when the user cache is on
 another filesystem, files are copied with their times. On Windows, read-only
 files are copied too: removing a read-only hard link there clears the
@@ -305,7 +305,7 @@ When a new workspace is created, entries unused for 14 days are removed, but
 only while their lock can be taken exclusively without waiting, so a workspace
 in use is never removed. A run that waited while another removed its workspace
 rebuilds it. Removing a workspace deletes only its own links and copies, and
-deleting the directory by hand is safe when no `ddto` run is active.
+deleting the directory by hand is safe when no `ddtest instrument` run is active.
 
 Without a usable user cache, the links live in the run's temporary directory.
 Where the client's own links cannot be recreated, as on Windows without the
@@ -416,7 +416,7 @@ too, so a pattern that matches that file, such as `//go:embed *` in a tested
 package, embeds it as well.
 
 Per-test coverage, in count or atomic mode, reads the coverage counters in
-memory through a hook that `ddto` adds to `testing`. Each test's covered lines
+memory through a hook that `ddtest instrument` adds to `testing`. Each test's covered lines
 are the same as with the two text profiles per test that the SDK writes and
 reads back. Without those, Gin's packages with `-coverpkg=./...
 -covermode=atomic` run in 0.55 s instead of 6.3 s at 4 CPUs, and test
@@ -440,9 +440,9 @@ first one, taken before the first test, instead of the final percentage. The
 The [adaptation record](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#per-test-coverage-counters-in-memory)
 lists every case.
 
-When `-coverpkg` covers `testing` itself, coverage reports lines of ddto's
+When `-coverpkg` covers `testing` itself, coverage reports lines of the CLI's
 rewritten `testing.go`: `go tool cover` ignores `//line` directives, so lines
-after ddto's hooks appear shifted, in per-test coverage and in the
+after the CLI's hooks appear shifted, in per-test coverage and in the
 `-coverprofile` that `go test` writes. Stack traces keep the original lines,
 because the compiler applies the directives. The coverage of `testing`'s own
 code is also attributed by timing: `T.Run` continues in the parent goroutine
@@ -453,7 +453,7 @@ which follows the runtime import that each tested package gets, covers them
 too: the `-coverprofile` and its percentage count their statements, which
 native `go test` would not build.
 
-With `-race`, `ddto` overlays Mini's sources with copies that mark each
+With `-race`, `ddtest instrument` overlays Mini's sources with copies that mark each
 function declaration `//go:norace`, so the race detector does not instrument
 Mini's own memory accesses: with 2,000 empty tests, about 22 µs less per test.
 Client code and `testing` stay instrumented, and Mini's locks, channels and
@@ -468,8 +468,8 @@ Mini's packages, directly or through a helper package, as tests that use
 `testopt` do, Mini keeps full instrumentation, so memory that the client passes
 to Mini's API, such as a pointer tag value, stays checked as under
 `go test -race`. Mini's own tests also keep it, with `go test -race` or when the
-named packages belong to Mini. So does Mini in `GOMODCACHE`, where `go install`
-leaves the sources of the `ddto` it builds: Go rejects any overlay entry there.
+named packages belong to Mini. So does a published Mini in `GOMODCACHE`, whose
+sources Go keeps there: Go rejects any overlay entry there.
 Compiling Mini with `-race=false` would remove
 more, but the compiler would then make Mini's atomics invisible to the
 detector, which would report races that do not exist.
@@ -486,7 +486,7 @@ read [source maintenance](maintenance.md) and the
 
 ### Experimental file coverage
 
-`ddto test --experimental-file-coverage` takes per-test coverage from file
+`ddtest instrument test --experimental-file-coverage` takes per-test coverage from file
 marks instead of Go's coverage counters. `DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE`
 enables it without the flag: `true` for the default, `context` for
 `=context`. When the flag is given it decides, and a value that is neither a
@@ -495,7 +495,7 @@ so a mark per source file is enough. Per-test coverage then works without
 `-cover`, and it reaches every package of the repository that a test runs,
 not only the packages that `-coverpkg` names.
 
-**What changes in the build.** ddto lists the build with its tests
+**What changes in the build.** The CLI lists the build with its tests
 (`go list -deps -test`) and rewrites, through its overlay, every Go file of
 the repository's packages:
 - **The repository's packages:** those inside the Git working tree that holds
@@ -539,20 +539,20 @@ statement of theirs:
 - cgo files;
 - files with a function directive under which the call could change behavior,
   such as `//go:nosplit` or `//go:norace`;
-- files that ddto's own overlay replaces.
+- files that the CLI's own overlay replaces.
 
 Rows name files without line bitmaps.
 
 **When it applies.** The flag applies only with Mini and without Go's coverage
 flags, which would make cover count the marks, and without `-race`, where the
 marks' atomics would order goroutines for the race detector. It also needs a
-selected Mini that reads banks. Otherwise ddto prints
+selected Mini that reads banks. Otherwise the CLI prints
 `--experimental-file-coverage: <reason>; per-test coverage keeps Go's coverage counters`
 and builds as without the flag. It also refuses in these cases:
 - Orchestrion's `-toolexec`;
 - a test binary that can load plugins: a plugin built without the marks
   would not load next to the packages it shares with the binary;
-- vendored dependencies that ddto provides from its cache, outside the
+- vendored dependencies that the CLI provides from its cache, outside the
   repository;
 - an embed pattern that would match a generated file, since patterns resolve
   through the overlay, and, on Windows, an embed pattern with a backslash;
@@ -565,7 +565,7 @@ holds only its own code.
 
 `--experimental-file-coverage=context` keeps `t.Parallel()`, and each test
 still reports only the files that ran for it. Each goroutine carries a
-context: the tests, and the singleflight calls, that it works for. ddto's
+context: the tests, and the singleflight calls, that it works for. The CLI's
 overlay edits the toolchain so that contexts flow where work does:
 - a goroutine starts with its creator's context;
 - a channel keeps the union of its senders' contexts. A receive of a value
@@ -586,17 +586,17 @@ overlay edits the toolchain so that contexts flow where work does:
 
 A site sets its file's bit in the current goroutine's context. When a receive
 adds tests to a context, the files of the receiver's stack go to them as well:
-the rest of each frame's statement runs for them before the next site. ddto
+the rest of each frame's statement runs for them before the next site. The CLI
 edits x/sync's singleflight through its compiler wrapper, as it does goleak,
 because Go does not overlay the module cache.
 
 The mode needs one build of the edited standard library per toolchain, which
 Go's build cache keeps. When an edit does not match the toolchain or a
-library, or the repository has more than about four million files, ddto
+library, or the repository has more than about four million files, the CLI
 prints `--experimental-file-coverage=context: <reason>; tests run one at a
 time while coverage is collected` and builds serial marks. A test binary keeps
 `t.Parallel()` when it has context banks, so one built with `-c` keeps it
-when it runs without ddto.
+when it runs without the CLI.
 
 Context mode has the gaps that .NET's `ExecutionContext` also has:
 - work handed on through a mutex, `sync.Cond` or shared memory without a

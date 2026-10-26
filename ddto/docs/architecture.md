@@ -22,7 +22,7 @@ does not need the CLI.
 ```mermaid
 flowchart TB
     subgraph build["Build time"]
-        CLI["ddto test: choose<br/>sdk or mini"] --> Plan["Resolve packages and<br/>prepare overlay"]
+        CLI["ddtest instrument test: choose<br/>sdk or mini"] --> Plan["Resolve packages and<br/>prepare overlay"]
         Plan --> Selection{"Testify, goleak, SDK hooks,<br/>coverage, Orchestrion<br/>or link signal?"}
         Selection -->|Yes| Tools["Selective<br/>compiler/coverage<br/>wrapper"]
         Selection -->|No| Go["Native go test:<br/>compile and link"]

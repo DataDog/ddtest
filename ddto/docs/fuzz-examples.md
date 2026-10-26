@@ -104,7 +104,7 @@ duration is now always used, clamped at zero.
 The matrix crosses 16 scenarios, manual and automatic entrypoints, and Mini's
 normal and deferred delivery, for 64 comparisons. Automatic SDK means the
 frozen Orchestrion binary and the exact PR's advice; automatic Mini means this
-checkout's `ddto`.
+checkout's `ddtest instrument`.
 Counts below are sessions/modules/suites/tests/spans. Manual and automatic
 instrumentation can differ because automatic hooks see nested `T.Run` calls.
 Mini is compared with the matching SDK mode.
@@ -147,7 +147,7 @@ ORCHESTRION_BIN="$(go env GOPATH)/bin/orchestrion" \
 python scripts/parity_report.py artifacts/parity.json --output artifacts/parity.md
 ```
 
-The compatibility workflow writes per-case times and all 64 + 14 combinations
+The Go instrumentation workflow writes per-case times and all 64 + 14 combinations
 to its report and rejects missing, duplicated or failing rows. Times measure
 prebuilt binaries, including startup and delivery, so they say nothing about
 compilation.

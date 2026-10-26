@@ -12,7 +12,7 @@ sockets, a bounded fuzz campaign and CI telemetry. None of this establishes
 complete product parity.
 
 The SDK reports one session per test binary. `ddto` reports one session for
-the command, so comparisons that run `ddto test` over several packages pass it
+the command, so comparisons that run `ddtest instrument test` over several packages pass it
 `--session-per-binary`, and `TestMiniTestSessionSpansTheCommand` checks the
 command's session. Comparisons of compiled test binaries are unaffected.
 
@@ -265,7 +265,7 @@ on tip, so that job does not establish Orchestrion parity.
 
 The matrix runs on pull requests, pushes to `main`, the nightly schedule and
 manual dispatch. Feature branch pushes use the pull request run instead of
-launching a second matrix, and [validation](validation.md#compatibility-workflow)
+launching a second matrix, and [validation](validation.md#go-instrumentation-workflow)
 describes when a run is skipped. Each group uploads JSON counts, supplemental
 evidence and logs under artifact names that include the mode, and the final job
 renders a Markdown table per configuration, which also appears in the GitHub job

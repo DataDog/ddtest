@@ -116,7 +116,7 @@ matching without external reference tools.
 The integration suite checks actual HTTP payloads, source ownership and package
 services in normal and deferred delivery. Compiled binaries also cover Testify,
 goleak, external tests, coverage, `-race`, `-trimpath` and directory changes in
-TestMain. The compatibility workflow runs these tests on Linux, macOS and Windows.
+TestMain. The Go instrumentation workflow runs these tests on Linux, macOS and Windows.
 
 ```sh
 go test -race ./internal/thirdparty/dd-trace-go/civisibility/utils/codeownership

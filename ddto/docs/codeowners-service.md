@@ -16,7 +16,7 @@ service is `service-payments`. To use a repository prefix:
 unset DD_SERVICE
 DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS=true \
 DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS_FORMAT='dd-go-$(owner)' \
-ddto test ./...
+ddtest instrument test ./...
 ```
 
 Quote the format with single quotes. Your shell must pass `$(owner)` literally;
@@ -42,7 +42,7 @@ metadata. A service derived automatically retains
 
 ## Package identity and delivery
 
-Each test binary has one service, and its own test session: `ddto` does not
+Each test binary has one service, and its own test session: `ddtest instrument` does not
 report one session for the command, whose packages would have several
 services. Session, module, suite and test events use
 that identity, as do settings requests, CI logs and telemetry. The result is
@@ -61,7 +61,7 @@ flowchart TD
     Format --> Clients["Use one service for events and CI clients"]
 ```
 
-`ddto` records the generated test package's source location during `init`,
+`ddtest instrument` records the generated test package's source location during `init`,
 before `TestMain` can change directories. The registration reads no source or
 CODEOWNERS when disabled. Generated files remain identical for packages with
 the same Go name, so preparation can keep sharing their backing file. Source
@@ -98,7 +98,7 @@ missing inputs and concurrent readers. The integration tests compile and run
 multiple packages with identical names, external tests, Testify and goleak.
 They check standalone execution, `TestMain` directory changes, `-race`,
 `-trimpath`, coverage, deferred delivery, settings, telemetry and logs against
-HTTP receivers, in the existing compatibility workflow.
+HTTP receivers, in the existing Go instrumentation workflow.
 
 For an integration that previously forced a global `DD_SERVICE`, remove that
 value from the Mini path before enabling this feature. Otherwise the explicit

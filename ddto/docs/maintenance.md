@@ -421,7 +421,7 @@ copies must keep every token and position of their sources:
 `TestNoraceSourcePreservesPositions` checks each Mini runtime file, and
 `TestMiniRaceInstrumentsClientOnly` checks a built binary. Clients that import
 Mini keep it instrumented (`TestMiniRaceKeepsMiniInstrumentedForAPIClients`).
-Because `ddto test -race` no longer race-checks Mini's own code, keep running
+Because `ddtest instrument test -race` no longer race-checks Mini's own code, keep running
 Mini's unit tests with `go test -race`.
 
 Vendor workspaces are content-addressed: bump `vendorWorkspaceLayout` in
@@ -446,7 +446,7 @@ extending the tip job to those comparisons. Pull requests, nightly and manual
 runs test tip.
 
 Run `python scripts/dependency_boundary.py` before publication; the
-compatibility workflow runs it too. It fails on any external requirement or
+Go instrumentation workflow runs it too. It fails on any external requirement or
 nonstandard runtime package outside this module. Consumer regressions cover
 older dependencies, readonly/mod flags and Go 1.21 language behavior.
 

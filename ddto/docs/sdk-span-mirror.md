@@ -1,6 +1,6 @@
 # SDK spans under Mini tests
 
-When `ddto` builds a Mini test binary that uses `dd-trace-go/v2`, SDK spans
+When `ddtest instrument` builds a Mini test binary that uses `dd-trace-go/v2`, SDK spans
 can also appear beneath the test in CI Visibility. Each copy gets a new Mini
 span ID. The SDK span keeps its original trace ID, parent, sampling and APM
 delivery. This works with manual SDK calls and
@@ -132,7 +132,7 @@ per-span reflection or worker goroutine.
 against real APM and CI HTTP receivers. `TestMiniSDKMirrorContextMatrix`
 checks parallel isolation, cleanup cancellation, pooled contexts, in-process
 retries, agent/agentless delivery, deferred delivery, goleak, Orchestrion and
-`-race` with SDK coverage. The regular compatibility workflow runs these
+`-race` with SDK coverage. The regular Go instrumentation workflow runs these
 checks on Linux, macOS and Windows. `TestSDKMirrorCosmeticChanges` compiles and
 executes transformed fixtures, including renames, context import aliases,
 declaration styles, late field updates, early returns and panics. Rejection

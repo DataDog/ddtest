@@ -1,11 +1,19 @@
 # Documentation
 
-Start with the [README](../README.md) to install `ddto`, configure delivery
-and run your first tests. Coding agents have their own guide in
-[AGENTS.md](../AGENTS.md). These guides cover the current implementation.
-Measurement reports describe the exact revisions in their manifests.
+Start with the [README](../README.md) to install ddtest, configure delivery
+and run your first tests with `ddtest instrument`. Coding agents have their own
+guide in [AGENTS.md](../AGENTS.md). These guides cover the current
+implementation. Measurement reports describe the exact revisions in their
+manifests.
 
-## Using ddto
+`ddto` is the internal name of the instrumentation, of this module and of its
+packages, and the maintenance guides use it for the component; the commands
+that they show run as `ddtest instrument <arguments>`.
+[Changes from the standalone ddto](../README.md#changes-from-the-standalone-ddto)
+lists the other names that changed. The optimization plan and backlog keep the
+`ddto` commands of the runs that they recorded.
+
+## Using ddtest instrument
 
 | Task | Guide |
 | --- | --- |

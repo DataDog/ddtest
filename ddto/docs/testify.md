@@ -1,6 +1,6 @@
 # Testify suite instrumentation
 
-`ddto` registers a Testify suite at the entry of the client's original
+`ddtest instrument` registers a Testify suite at the entry of the client's original
 `suite.Run`. All callers reach that entry, including helpers in other modules.
 Testify still owns its runner, assertions, lifecycle hooks and `WithStats`.
 The SDK backend calls its original registration hook. Mini registers a scope
@@ -10,7 +10,7 @@ its descendants and cleanup. This keeps `TestShared#01` attached to the second
 suite when two suites expose `TestShared`. An ordinary sibling after
 `suite.Run` gets no stale suite metadata.
 
-Use `ddto` and the Mini runtime from the same revision: the scoped hook is
+Use `ddtest instrument` and the Mini runtime from the same revision: the scoped hook is
 an internal linkname contract.
 
 The scope follows Testify's serial method runner, so concurrent `suite.Run`
@@ -26,7 +26,7 @@ selected version and the actual `Run` signature, including versioned and local
 replacements. A v2 module needs a separate review.
 
 An older or newer major version, an unknown version, or an unrecognized `Run`
-entry does not stop the build. `ddto` prints a warning and leaves Testify
+entry does not stop the build. `ddtest instrument` prints a warning and leaves Testify
 uninstrumented; its suite methods are still reported as ordinary subtests,
 without Testify suite metadata. Unreadable sources and reserved-name collisions
 remain errors.
@@ -73,7 +73,7 @@ overlays for both runtimes. The `DataDog-fork` case of
 with native Go, SDK and Mini, including race and coverage. It checks native
 behavior, suite hierarchy, lifecycle hooks, external helpers, panic, coverage,
 retries and ordinary/deferred Mini delivery. These tests run in the existing
-cross-platform compatibility workflow.
+cross-platform Go instrumentation workflow.
 
 ## Preparation and tool selection
 
@@ -145,17 +145,17 @@ a selected transform avoid entirely.
 
 The wrapper is therefore a small executable of its own,
 [`internal/toolwrap`](../internal/toolwrap), which imports only the standard
-library. It starts in about 1.2 ms on Linux, against 2.4 ms for ddto's own
-executable, and runs ddto's private `tool-overlay` entrypoint for the calls
-that need the plan. ddto builds it from sources that it embeds, once per
+library. It starts in about 1.2 ms on Linux, against 2.4 ms for the CLI's own
+executable, and runs the CLI's private `tool-overlay` entrypoint for the calls
+that need the plan. The CLI builds it from sources that it embeds, once per
 version and host, into `ddtest/instrument/toolwraps` in its user cache; a release executable
-writes the wrapper it carries, already built for its platform. ddto applies the
+writes the wrapper it carries, already built for its platform. The CLI applies the
 rules of the [toolchain mirrors](mini-runtime.md#toolchains-in-the-module-cache)
 beside it: a run holds the executable, one unused for 14 days is removed, and
 a user cache within `GOMODCACHE`, the toolchain or the module is not used.
 
-Before each `ddto test` uses the executable, it must print its key. When it
-cannot be built or run, ddto itself is the wrapper, through `tool-overlay`,
+Before each `ddtest instrument test` uses the executable, it must print its key. When it
+cannot be built or run, the CLI itself is the wrapper, through `tool-overlay`,
 with the same results. Go keys its caches on each tool's `-V=full` output
 instead of the `-toolexec` command, so either wrapper reuses the same cache
 entries.
@@ -172,12 +172,12 @@ The fingerprint excludes temporary backing paths, so a new preparation with
 the same inputs can reuse Go's cache, while a source, runtime or contract change
 updates its key. The contract test checks actual compiler invocations: a changed
 marker rebuilds Testify while `strings`, `fmt` and `crypto/sha256` remain
-cached. ddto keeps no build cache of its own.
+cached. The CLI keeps no build cache of its own.
 
 A plan and its selective tool command belong together. Building a prepared
 Testify plan manually without its tool wrapper is outside this contract: it
 could store an uninstrumented object under the prepared dependency identity.
-`ddto` always supplies both.
+`ddtest instrument` always supplies both.
 
 ## Coverage
 
@@ -195,7 +195,7 @@ coverage denominator stay intact. This supports coverage patterns that include
 ```mermaid
 sequenceDiagram
     participant Go as go test
-    participant Tool as ddto tool-overlay
+    participant Tool as ddtest tool-overlay
     participant Cover as go tool cover
     participant Compile as go tool compile
     Go->>Cover: Original Testify sources, when selected for coverage
@@ -237,7 +237,7 @@ modules through `replace` and `go.work`, dynamic tool activation, native tool
 identities and failures, and cache invalidation. A bounded fuzz test checks
 source edits.
 
-The compatibility workflow discovers these tests on Linux Go 1.26/1.27 and
+The Go instrumentation workflow discovers these tests on Linux Go 1.26/1.27 and
 macOS/Windows Go 1.27. Go 1.25 and tip run selected native Mini fixtures with
 Testify, coverage, goleak and deferred delivery. Linux also runs the stable
 toolchains with the race harness. Local Linux runs and cross-compilation

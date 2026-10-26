@@ -1,5 +1,10 @@
 # Optimization backlog
 
+> Written for the standalone `ddto` CLI, before it moved into ddtest: its
+> commands and figures are those of the runs it recorded. In ddtest,
+> `ddto <arguments>` is `ddtest instrument <arguments>`; see
+> [Changes from the standalone ddto](../README.md#changes-from-the-standalone-ddto).
+
 These are the changes that could still make the POC faster or lighter: Mini,
 the test runtime that `ddto` links into test binaries, and `ddto` itself.
 Orchestrion is out of scope. Each item is its own experiment and pull request.

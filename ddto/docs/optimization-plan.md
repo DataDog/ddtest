@@ -1,5 +1,10 @@
 # Optimization plan
 
+> Written for the standalone `ddto` CLI, before it moved into ddtest: its
+> commands and figures are those of the runs it recorded. In ddtest,
+> `ddto <arguments>` is `ddtest instrument <arguments>`; see
+> [Changes from the standalone ddto](../README.md#changes-from-the-standalone-ddto).
+
 This plan was written on 2026-10-13 from the benchmark refresh at `137a912`
 ([#39](https://github.com/tonyredondo/dd-ci-testing-poc/pull/39)). It covered
 six workstreams, the GOROOT mirror and the five costs that
