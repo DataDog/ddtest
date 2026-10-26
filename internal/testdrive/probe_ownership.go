@@ -234,7 +234,7 @@ func recoverProbes(root string) error { return recoverProbesWithOutput(root, io.
 
 func recoverProbesWithOutput(root string, output io.Writer) error {
 	// Nothing to recover until a probe was written. Repositories that never ran
-	// a probe, such as Python or Ruby ones, may keep .testoptimization symlinked.
+	// a probe, such as Ruby ones, may keep .testoptimization symlinked.
 	if _, err := os.Lstat(filepath.Join(canonicalWorkflowRoot(root), ".testoptimization", ".probes")); os.IsNotExist(err) {
 		return nil
 	}

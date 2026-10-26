@@ -95,6 +95,12 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 		check.Verdict.Status, check.Verdict.Reason = onboard.ComparePythonRequirement(metadata.Python, selection.RequiresPython)
 	}
 	ci := onboard.CheckPythonCIRuntimes(ctx, t.repositoryRoot, selection.Version)
+	if previous := result.CIRuntime; previous != nil && slices.ContainsFunc(previous.Review, func(finding onboard.RuntimeFinding) bool { return finding.Code == onboard.CodeNestedCIScope }) {
+		ci.Review = append(ci.Review, previous.Review...)
+		if ci.Status == onboard.StatusCompatible || ci.Status == onboard.StatusNotApplicable {
+			ci.Status, ci.Reason = previous.Status, previous.Reason
+		}
+	}
 	result.CIRuntime = &ci
 	_, _ = fmt.Fprintf(output, "pytest %s; Python %s; tracer %s (%s). Preflight: %s — %s\n", check.Version, check.Python, result.Tracer, result.TracerSource, check.Verdict.Status, check.Verdict.Reason)
 	if check.Verdict.Status != "compatible" {
@@ -341,11 +347,16 @@ func (t *Testdrive) runPytestFeatures(ctx context.Context, output io.Writer, ses
 	if err != nil {
 		return err
 	}
-	defer func() { runErr = errors.Join(runErr, os.RemoveAll(owned)) }()
+	defer func() {
+		if err := os.Remove(owned); !os.IsNotExist(err) {
+			runErr = errors.Join(runErr, err)
+		}
+	}()
 	probe := filepath.Join(owned, "test_ddtest_probe.py")
-	if err := os.WriteFile(probe, []byte(pytestProbeSource), 0600); err != nil {
+	if err := createOwnedProbe(root, probe, []byte(pytestProbeSource)); err != nil {
 		return err
 	}
+	defer func() { runErr = errors.Join(runErr, removeProbe(root, probe)) }()
 	inventory, err := t.runPytest(ctx, output, session, preload, runSpec{Name: "probe-inventory", Role: roleProbeControl, Instrumented: true, ProbePath: probe, ProbeMode: "pass"})
 	result.Runs = append(result.Runs, inventory.summary())
 	if err != nil {

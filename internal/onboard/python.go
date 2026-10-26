@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/kballard/go-shellquote"
 	"go.yaml.in/yaml/v3"
 )
@@ -83,26 +84,77 @@ func readPythonRelease(reader io.Reader) (PythonRelease, error) {
 func pythonJobCandidate(root string, workflow ciWorkflow, job runtimeJob) bool {
 	rows, err := runtimeMatrix(job.Strategy.Matrix)
 	if err != nil {
+		// Inspect only referenced command values to identify relevant jobs. This
+		// does not expand unsupported matrices or authorize their execution.
+		for _, step := range job.Steps {
+			for _, match := range pythonMatrixCommandReference.FindAllStringSubmatch(step.Run, -1) {
+				for _, value := range pythonMatrixCommandValues(job.Strategy.Matrix, strings.Split(match[1], ".")) {
+					candidate := step
+					candidate.Run = strings.ReplaceAll(step.Run, match[0], value)
+					if pythonStepCandidate(root, workflow, job, candidate) {
+						return true
+					}
+				}
+			}
+		}
 		rows = []map[string]any{nil}
 	}
 	for _, row := range rows {
 		for _, step := range job.Steps {
 			resolved, _, _ := resolveVariantStep(workflow, job, step, row, "pytest")
-			resolution := resolvePythonStep(root, workflow, job, resolved)
-			if resolution.Matched || environment.LooksLikeTestCommand(root, resolved.Run, "python", "pytest") {
+			if pythonStepCandidate(root, workflow, job, resolved) {
 				return true
-			}
-			if !resolution.Review && resolution.Reason != "" {
-				commands, _ := staticCommands(resolved.Run)
-				for _, words := range commands {
-					if _, ok := pythonRunnerArguments(words, "tox"); ok {
-						return true // Unknown tox configuration must not disappear as a typing/lint job.
-					}
-				}
 			}
 		}
 	}
 	return false
+}
+
+func pythonStepCandidate(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	resolution := resolvePythonStep(root, workflow, job, step)
+	if resolution.Matched || environment.LooksLikeTestCommand(root, step.Run, "python", "pytest") {
+		return true
+	}
+	if resolution.Review || resolution.Reason == "" {
+		return false
+	}
+	commands, _ := staticCommands(step.Run)
+	for _, words := range commands {
+		if _, ok := pythonRunnerArguments(words, "tox"); ok {
+			return true // Unknown tox configuration is not an unrelated typing/lint job.
+		}
+		for i, word := range words {
+			if i != 0 && (len(words) < 2 || words[1] != "run" || !slices.Contains([]string{"uv", "poetry"}, filepath.Base(words[0]))) {
+				break
+			}
+			if index := PythonModuleIndex(words[i+1:]); strings.HasPrefix(filepath.Base(word), "python") && index >= 0 && slices.Contains([]string{"pytest", "tox"}, words[i+index+2]) {
+				return true // Retain interpreter-like wrappers as unresolved, never native commands.
+			}
+		}
+	}
+	return false
+}
+
+var pythonMatrixCommandReference = regexp.MustCompile(`\$\{\{\s*matrix\.([a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*)\s*\}\}`)
+
+func pythonMatrixCommandValues(value any, path []string) []string {
+	if len(path) == 0 {
+		if text, ok := value.(string); ok {
+			return []string{text}
+		}
+		return nil
+	}
+	var values []string
+	switch value := value.(type) {
+	case map[string]any:
+		values = pythonMatrixCommandValues(value[path[0]], path[1:])
+		values = append(values, pythonMatrixCommandValues(value["include"], path)...)
+	case []any:
+		for _, item := range value {
+			values = append(values, pythonMatrixCommandValues(item, path)...)
+		}
+	}
+	return values
 }
 
 // Restrict static checks to numeric minimum/maximum constraints. Other PEP 440
@@ -196,7 +248,7 @@ func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
 	if base == runner {
 		return words[1:], true
 	}
-	if strings.HasPrefix(base, "python") {
+	if platform.IsPythonExecutable(words[0]) {
 		index := PythonModuleIndex(words[1:])
 		if index >= 0 && words[index+2] == runner {
 			return words[index+3:], true
@@ -227,18 +279,21 @@ func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
 // A setup-python version does not prove the interpreter chosen by a wrapper or
 // a different versioned executable. Keep those commands unverified in static CI
 // analysis; local preflight inspects the environment that actually executes.
-func pythonRuntimeOverride(words []string, python string) bool {
+func pythonRuntimeOverride(words []string, python string, environment map[string]string) bool {
 	if len(words) == 0 {
 		return false
 	}
 	base := strings.TrimSuffix(filepath.Base(words[0]), ".exe")
-	if strings.HasPrefix(base, "python") {
+	if platform.IsPythonExecutable(words[0]) {
 		return strings.ContainsAny(words[0], "/\\") || base != "python" && base != "python3" && base != "python"+python
 	}
 	if (base == "uv" || base == "poetry") && len(words) > 2 && words[1] == "run" {
+		if base == "uv" && environment["UV_PYTHON"] != "" {
+			return true
+		}
 		for i := 2; i < len(words); i++ {
 			if pythonInvocation(words[i:]) {
-				return pythonRuntimeOverride(words[i:], python)
+				return pythonRuntimeOverride(words[i:], python, environment)
 			}
 			if _, ok := pythonRunnerArguments(words[i:], "tox"); ok {
 				return false
@@ -315,7 +370,7 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 			continue
 		}
 		setup := base == "pip" || base == "pip3" || (base == "uv" && len(words) > 1 && slices.Contains([]string{"sync", "pip"}, words[1]))
-		if strings.HasPrefix(base, "python") && len(words) > 2 && words[1] == "-m" && slices.Contains([]string{"pip", "venv"}, words[2]) {
+		if platform.IsPythonExecutable(words[0]) && len(words) > 2 && words[1] == "-m" && slices.Contains([]string{"pip", "venv"}, words[2]) {
 			setup = true
 		}
 		if setup {
@@ -426,7 +481,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 							}
 						}
 					}
-					resolved, _, envErr := resolveVariantStep(workflow, job, step, row, "pytest")
+					resolved, environment, envErr := resolveVariantStep(workflow, job, step, row, "pytest")
 					r := resolvePythonStep(root, workflow, job, resolved)
 					if !r.Matched && (r.Review || r.Reason == "") {
 						continue
@@ -444,7 +499,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 						finding.Reason = r.Reason
 					case action == "":
 						finding.Status, finding.Code, finding.Reason = "incompatible", "missing_instrumentation", "No Datadog Python action runs before this pytest step. Preserve the test command and add instrumentation."
-					case slices.ContainsFunc(commands, func(words []string) bool { return pythonRuntimeOverride(words, python) }):
+					case slices.ContainsFunc(commands, func(words []string) bool { return pythonRuntimeOverride(words, python, environment) }):
 						finding.Reason = "The CI command selects its own Python interpreter; setup-python does not establish that runtime's compatibility. Validate the selected environment separately."
 					default:
 						selection, ok := cache[requested]

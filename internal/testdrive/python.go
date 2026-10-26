@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 // Selection only affects testdrive. Production pytest discovery and RunTests
@@ -97,7 +98,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 // or arbitrary wrappers. Keep uv's environment selectors on every probe.
 func pythonProbeCommand(command string, args []string) (string, []string, error) {
 	base := strings.TrimSuffix(filepath.Base(command), ".exe")
-	if strings.HasPrefix(base, "python") {
+	if platform.IsPythonExecutable(command) {
 		if index := onboard.PythonModuleIndex(args); index >= 0 {
 			return command, slices.Clone(args[:index]), nil
 		}
@@ -117,7 +118,7 @@ func pythonProbeCommand(command string, args []string) (string, []string, error)
 				prefix = append(prefix, arg)
 				continue
 			}
-			if strings.HasPrefix(filepath.Base(arg), "python") || strings.TrimSuffix(filepath.Base(arg), ".exe") == "pytest" {
+			if platform.IsPythonExecutable(arg) || strings.TrimSuffix(filepath.Base(arg), ".exe") == "pytest" {
 				interpreter, interpreterArgs, err := pythonProbeCommand(arg, args[i+1:])
 				if strings.TrimSuffix(arg, ".exe") == "pytest" {
 					interpreter = "python" + filepath.Ext(arg)

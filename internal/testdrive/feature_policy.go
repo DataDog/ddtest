@@ -34,7 +34,7 @@ func (p frameworkPolicy) configurationOptions() []string {
 }
 
 var frameworkFeaturePolicies = map[string]frameworkPolicy{
-	"pytest": {SourceCoverage: true, ProbeBodyCounts: true, Paired: true, CheckOnly: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"}, Features: []featurePolicy{
+	"pytest": {SourceCoverage: true, ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"}, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "required"}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
 	}},
 	"webdriverio": {ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
