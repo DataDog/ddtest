@@ -332,7 +332,7 @@ func withTracerLimitation(result *validationResult, feature featureResult) featu
 	if limitation == "" || feature.Status != "failed" {
 		return feature
 	}
-	return featureResult{Name: feature.Name, Status: "known limitation", Code: tracerLimitation, Reason: limitation + " Observed: " + feature.Reason}
+	return featureResult{Name: feature.Name, Status: "known limitation", Code: tracerLimitation, ObservedCode: feature.Code, Reason: limitation + " Observed: " + feature.Reason}
 }
 
 func validProbeControl(run validationRun, status string) bool {
@@ -466,8 +466,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 			result.Reason = "The mock returned the control's test.source.file, but that path differs from both repository-relative and project-relative probe paths. The probe executed instead of skipping; inspect the recorded skipping path mismatch. Preserve the original framework configuration. Real Datadog credentials are not required."
 		}
 		// The tracer reported the probe exactly once, as the runner ran it, with
-		// none of the requested control: no retry, management tag or skip.
-		applied := retries > 0 || quarantined || disabled || attemptToFix || skipped
+		// none of the requested control: no retry, management tag or skip. An
+		// attempt-to-fix tag alone is not its control; the control is the retries.
+		applied := retries > 0 || quarantined || disabled || skipped || attemptToFix && feature != "attempt-to-fix"
 		if feature != "skipping" && !applied && passed+failed == 1 && nativePass+nativeFail+nativeSkip == 1 {
 			result.Code = tracerControlNotApplied
 			result.Reason = fmt.Sprintf("The tracer did not apply the %s control: telemetry reported the probe once (%d passed, %d failed) with no retry or test management evidence, and the runner ran it once (%d passed, %d failed, %d skipped; exit %d). The local intake served the control, so no customer change is expected to fix this; report it.",

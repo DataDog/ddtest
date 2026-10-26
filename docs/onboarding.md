@@ -135,11 +135,18 @@ Automatic Mocha tracer recommendations use the verified major-5 and major-6 boot
 
 Agents edit only CI workflow and ignore files, where a result asks for it. Any other
 change ddtest needs, such as coverage instrumentation, loaders or dependencies, is
-returned as an exact edit for the user to approve. Agents never rename tests or
+returned as an exact edit for the user to approve. For Cypress without application
+coverage, a recognized browserify, Vite or webpack build gets that edit in the run's
+`coverage.edit` (install command, files and how to serve the instrumented build);
+other builds get the instrumentation guidance. Agents never rename tests or
 rewrite CI or package scripts so ddtest can parse them; they report the blocker.
 A final result tells the agent to relay `final_response` verbatim. An incomplete or
 failed verdict starts with `NOT COMPLETE:`, so a paraphrase cannot turn it into a
 completion claim.
+
+When the host runs out of open file descriptors while isolating the checkout,
+the result is `blocked_environment` (`file_descriptors_exhausted`) with
+`next_action: run_command`: free descriptors and rerun the same command.
 
 Results distinguish ready, needs_input, blocked_environment, unsupported,
 validation_failed, selected_passed and complete_locally. Follow the returned argv

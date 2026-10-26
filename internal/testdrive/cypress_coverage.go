@@ -92,6 +92,10 @@ func cypressSourceCoverage(root string, code cypressTestCode, facts intake.Facts
 		result.Reason = "Coverage named only Cypress specs, support code or dependencies. Instrument the application served to Cypress, not only the test bundle."
 	default:
 		result.Reason = cypressMissingCoverageReason
+		if edit := cypressCoverageEdit(root); edit != nil {
+			result.Edit = edit
+			result.Reason = cypressCoverageEditReason(edit)
+		}
 	}
 	return result
 }

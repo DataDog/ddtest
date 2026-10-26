@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/onboard"
@@ -266,6 +267,15 @@ func checkConfigurationSpace(directory string, needed int64) error {
 	}
 	return nil
 }
+
+// fileDescriptorsExhaustedCode marks a run stopped by the process or system
+// open-file limit, typically while copying a large node_modules.
+const fileDescriptorsExhaustedCode = "file_descriptors_exhausted"
+
+func fileDescriptorsExhausted(err error) bool {
+	return errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE)
+}
+
 func copyConfiguration(ctx context.Context, source, target string, keepIgnored bool) error {
 	canonical, err := filepath.EvalSymlinks(source)
 	if err != nil {

@@ -43,8 +43,11 @@ type featureResult struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"`
 	// Code marks failures no customer change is expected to fix.
-	Code   string `json:"code,omitempty"`
-	Reason string `json:"reason"`
+	Code string `json:"code,omitempty"`
+	// ObservedCode keeps the evaluated failure code when Code reports a
+	// known limitation instead, such as tracer_control_not_applied.
+	ObservedCode string `json:"observed_code,omitempty"`
+	Reason       string `json:"reason"`
 }
 
 const (
@@ -138,6 +141,9 @@ type coverageSummary struct {
 	CoveredTests int     `json:"covered_tests"`
 	TotalTests   int     `json:"total_tests"`
 	Level        string  `json:"level,omitempty"`
+	// Edit is an exact, approval-gated instrumentation change for a recognized
+	// application build when no application coverage was observed.
+	Edit *coverageEdit `json:"edit,omitempty"`
 }
 
 type runSummary struct {

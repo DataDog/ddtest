@@ -115,9 +115,17 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		}
 		switch status {
 		case "blocked_environment":
-			if code == "workflow_busy" {
+			switch code {
+			case "workflow_busy":
 				result.NextAction = "wait"
-			} else {
+			case fileDescriptorsExhaustedCode:
+				// A transient host limit, not a missing capability: retry as is.
+				result.NextAction = "run_command"
+				result.NextCommand = append([]string{}, recoveryCommand...)
+				if len(result.ResumeCommand) > 0 {
+					result.NextCommand = append([]string{}, result.ResumeCommand...)
+				}
+			default:
 				result.NextAction = "request_capability"
 			}
 		case "needs_input":
@@ -567,6 +575,10 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		result.Capabilities = []string{localRuntime.Capability()}
 		result.JSONReport = validationPath(t.repositoryRoot)
 		return fail("blocked_environment", "local_runtime_mismatch", runErr.Error(), "Provide only the named runtime: put an existing installation first on PATH (a version manager or a user-provided install), then run resume_command unchanged. Ask the user before downloading a runtime and never install one inside the repository. Do not change CI, the tracer or test scope to avoid this path.")
+	}
+	if fileDescriptorsExhausted(runErr) {
+		result.JSONReport = validationPath(t.repositoryRoot)
+		return fail("blocked_environment", fileDescriptorsExhaustedCode, runErr.Error(), "The host ran out of open file descriptors while isolating the checkout, often because other heavy processes share it. Wait for or stop those processes, or raise the open-file limit, then run next_command unchanged. This says nothing about the tests or the tracer; do not change CI, the tracer or test scope.")
 	}
 	var supervision *processSupervisionError
 	if errors.As(runErr, &supervision) {
