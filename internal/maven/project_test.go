@@ -89,6 +89,9 @@ func TestIsTestCommand(t *testing.T) {
 }
 
 func TestValidationCannotPublishOrSelectOutsideCopy(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "module"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "module/pom.xml"), []byte(`<project/>`), 0600))
 	for _, args := range [][]string{
 		{"deploy"}, {"test", "deploy"}, {"package", "deploy:deploy-file"},
 		{"test", "org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file"},
@@ -96,9 +99,38 @@ func TestValidationCannotPublishOrSelectOutsideCopy(t *testing.T) {
 		{"test", "-f=/outside/pom.xml"}, {"test", "-f=../pom.xml"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			require.Error(t, ValidateTestdriveCommand("mvn", args))
+			require.Error(t, ValidateTestdriveCommand(root, "mvn", args))
 		})
 	}
-	require.NoError(t, ValidateTestdriveCommand("./mvnw", []string{"-f", "module/pom.xml", "-Pci", "verify"}))
-	require.NoError(t, ValidateTestdriveCommand("mvn", []string{"test", "-f=module/pom.xml"}))
+	require.NoError(t, ValidateTestdriveCommand(root, "./mvnw", []string{"-f", "module/pom.xml", "-Pci", "verify"}))
+	require.NoError(t, ValidateTestdriveCommand(root, "mvn", []string{"test", "-f=module/pom.xml"}))
+}
+
+func TestValidationAllowsPOMAliasesWithinTheRepository(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "module"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project/>`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "module/pom.xml"), []byte(`<project/>`), 0600))
+	require.NoError(t, os.Symlink("module", filepath.Join(root, "alias")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "module/pom.xml"), filepath.Join(root, "alias.xml")))
+	for _, args := range [][]string{{"test"}, {"test", "-f", "."}, {"test", "--file", "alias"}, {"test", "-f=alias.xml"}, {"test", "--file=module/pom.xml"}, {"-ff", "test"}, {"-fae", "test"}, {"-fn", "test"}} {
+		require.NoError(t, ValidateTestdriveCommand(root, "mvn", args), "%v", args)
+	}
+}
+
+func TestProjectsRejectSymlinkedRootAndModulePOMs(t *testing.T) {
+	for _, path := range []string{"pom.xml", "child/pom.xml"} {
+		t.Run(path, func(t *testing.T) {
+			root := t.TempDir()
+			outside := filepath.Join(t.TempDir(), "pom.xml")
+			require.NoError(t, os.WriteFile(outside, []byte(`<project/>`), 0600))
+			require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0700))
+			if path != "pom.xml" {
+				require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project><modules><module>child</module></modules></project>`), 0600))
+			}
+			require.NoError(t, os.Symlink(outside, filepath.Join(root, path)))
+			_, err := Projects(root)
+			require.ErrorContains(t, err, "POM must stay inside")
+		})
+	}
 }

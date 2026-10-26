@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,7 +209,38 @@ printf '%s' '<testsuite><testcase classname="ResourceTest" name="resources"/></t
 	require.Zero(t, run.ExitCode, run.commandOutput)
 	require.Empty(t, run.ResultError)
 	require.Len(t, run.Tests, 1)
+	require.NoDirExists(t, run.temporaryRoot, "completed Maven copies must be reclaimed before the next run")
 	require.FileExists(t, filepath.Join(root, "target/sentinel"), "original build output must also stay untouched")
+}
+
+func TestMavenRunRejectsSymlinkedPOMsBeforeExecution(t *testing.T) {
+	for _, args := range [][]string{
+		{"-f", "linked/pom.xml", "clean", "test"},
+		{"--file", "linked", "clean", "test"},
+		{"test", "-f=linked/pom.xml"},
+		{"test", "--file=linked-file.xml"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			root, shared := t.TempDir(), t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project><artifactId>local</artifactId></project>`), 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(shared, "pom.xml"), []byte(`<project><artifactId>shared</artifactId></project>`), 0600))
+			require.NoError(t, os.Symlink(shared, filepath.Join(root, "linked")))
+			require.NoError(t, os.Symlink(filepath.Join(shared, "pom.xml"), filepath.Join(root, "linked-file.xml")))
+			sentinel := filepath.Join(shared, "maven-executed")
+			t.Setenv("MAVEN_EXTERNAL_SENTINEL", sentinel)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "mvnw"), []byte("#!/bin/sh\n: > \"$MAVEN_EXTERNAL_SENTINEL\"\n"), 0700))
+			session, err := NewSession()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, session.Close()) })
+			drive := &Testdrive{repositoryRoot: root, framework: framework.NewMaven("junit5", nil), command: "./mvnw", args: args, session: session,
+				startIntake: func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{url: "http://127.0.0.1:1"}, nil },
+			}
+			run, err := drive.mavenRun(t.Context(), io.Discard, "baseline", "", intake.Scenario{}, "", nil)
+			require.ErrorContains(t, err, "POM must stay inside")
+			require.NoFileExists(t, sentinel)
+			require.NoDirExists(t, run.temporaryRoot, "setup failures must also reclaim their copy")
+		})
+	}
 }
 
 func TestMavenRunNormalizesOnlyOwnedWorkspacePaths(t *testing.T) {
@@ -319,6 +351,7 @@ func TestMavenTimeoutPreservesExecutionRoleAndDiagnostic(t *testing.T) {
 	require.Contains(t, run.Timeout, "--timeout")
 	require.Contains(t, run.ResultError, "--timeout")
 	require.Equal(t, run.Command, run.NativeCommand)
+	require.NoDirExists(t, run.temporaryRoot)
 	require.NoDirExists(t, filepath.Join(root, "target"))
 }
 

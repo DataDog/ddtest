@@ -69,3 +69,29 @@ func TestMavenHandoffPreservesSelectedCommandTracerAndTimeout(t *testing.T) {
 	}
 	require.Contains(t, result.Instruction, "datadoghq.eu")
 }
+
+func TestMavenOnboardingFallsBackWhenCIDiscoveryIsIncomplete(t *testing.T) {
+	for _, workflow := range []string{"", ".gitlab-ci.yml", ".github/workflows/tests.yml"} {
+		t.Run(workflow, func(t *testing.T) {
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			t.Chdir(t.TempDir())
+			require.NoError(t, os.WriteFile("pom.xml", []byte(`<project><dependencies><dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId></dependency></dependencies></project>`), 0600))
+			if workflow != "" {
+				require.NoError(t, os.MkdirAll(filepath.Dir(workflow), 0700))
+				require.NoError(t, os.WriteFile(workflow, []byte("jobs:\n  test:\n    steps:\n      - run: ./scripts/custom-test-wrapper\n"), 0600))
+			}
+			for _, run := range []func(*bytes.Buffer) error{
+				func(output *bytes.Buffer) error { return Run(output) },
+				func(output *bytes.Buffer) error { return Start(output) },
+			} {
+				var output bytes.Buffer
+				require.NoError(t, run(&output))
+				require.Contains(t, output.String(), "CI discovery is incomplete")
+				require.Contains(t, output.String(), "--framework junit5")
+				require.Contains(t, output.String(), "MAVEN_OPTS")
+				require.Contains(t, output.String(), "does not certify CI")
+			}
+		})
+	}
+}

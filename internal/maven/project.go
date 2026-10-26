@@ -72,6 +72,9 @@ func Projects(root string) ([]Project, error) {
 			return fmt.Errorf("maven reactor exceeds 256 modules")
 		}
 		seen[directory] = true
+		if err := validatePOM(canonical, filepath.Join(relative, "pom.xml")); err != nil {
+			return err
+		}
 		data, err := os.ReadFile(filepath.Join(directory, "pom.xml"))
 		if err != nil {
 			return err
@@ -220,10 +223,11 @@ func IsTestCommand(command string, args []string) bool {
 
 // ValidateTestdriveCommand keeps project selection inside the disposable copy
 // and prevents publishing artifacts as a side effect of local validation.
-func ValidateTestdriveCommand(command string, args []string) error {
+func ValidateTestdriveCommand(root, command string, args []string) error {
 	if !IsTestCommand(command, args) {
 		return fmt.Errorf("select a literal mvn/mvnw test or verify command; shell wrappers and other build systems require separate validation")
 	}
+	pom := "pom.xml"
 	for i, arg := range args {
 		if arg == "deploy" || strings.HasSuffix(arg, ":deploy") || strings.HasSuffix(arg, ":deploy-file") || arg == "site-deploy" {
 			return fmt.Errorf("maven publishing goals are not supported by local testdrive; select the test/verify portion of the CI command")
@@ -238,12 +242,45 @@ func ValidateTestdriveCommand(command string, args []string) error {
 		if value, ok := strings.CutPrefix(arg, "--file="); ok {
 			file = value
 		}
-		if strings.HasPrefix(arg, "-f") && len(arg) > 2 && !strings.HasPrefix(arg, "--") {
+		if strings.HasPrefix(arg, "-f") && len(arg) > 2 && !strings.HasPrefix(arg, "--") && !slices.Contains([]string{"-ff", "-fae", "-fn"}, arg) {
 			file = strings.TrimPrefix(arg[2:], "=")
 		}
-		if file != "" && !filepath.IsLocal(file) {
-			return fmt.Errorf("maven POM must stay inside the disposable repository: %s", file)
+		if file != "" {
+			if !filepath.IsLocal(file) {
+				return fmt.Errorf("maven POM must stay inside the disposable repository: %s", file)
+			}
+			pom = file
 		}
+	}
+	return validatePOM(root, pom)
+}
+
+// Maven accepts either a POM file or its directory. Check the resolved file,
+// including the default and reactor POMs, before any build can follow a symlink.
+func validatePOM(root, pom string) error {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(root, pom)
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		path = filepath.Join(path, "pom.xml")
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+	relative, err := filepath.Rel(root, resolved)
+	if err != nil || !filepath.IsLocal(relative) {
+		return fmt.Errorf("maven POM must stay inside the disposable repository: %s", pom)
 	}
 	return nil
 }

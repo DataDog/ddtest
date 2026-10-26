@@ -62,7 +62,7 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		slices.Sort(workflows)
 	}
 	if len(workflows) == 0 {
-		if language != "javascript" {
+		if language != "javascript" && language != "java" {
 			return fmt.Errorf("onboard could not find a GitHub Actions workflow that runs %s", name)
 		}
 		_, _ = fmt.Fprintf(output, "CI discovery is incomplete: no GitHub Actions test workflow was resolved for %s. The guidance below is manual; it does not certify CI. Run ddtest testdrive --framework %s --command <your-test-command> --check-only --yes to inspect the local setup.\n\n", name, name)

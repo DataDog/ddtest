@@ -31,6 +31,10 @@ func Run(output io.Writer) error {
 	}
 	provider, err := environment.DetectRepositoryCIProvider(repositoryRoot)
 	if err != nil {
+		if detectedPlatform.Name() == "java" {
+			_, _ = fmt.Fprintf(output, "CI discovery is incomplete: %s. The Maven guidance below is manual; it does not certify CI.\n\n%s\n", err, instructions(detectedPlatform.Name(), runner.Name()))
+			return nil
+		}
 		return fmt.Errorf("onboard: %w", err)
 	}
 	switch provider := provider.(type) {

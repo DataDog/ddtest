@@ -62,7 +62,7 @@ func (t *Testdrive) runMaven(ctx context.Context, output io.Writer) (runErr erro
 			return fmt.Errorf("invalid Maven command quoting")
 		}
 	}
-	if err := maven.ValidateTestdriveCommand(t.command, t.args); err != nil {
+	if err := maven.ValidateTestdriveCommand(t.repositoryRoot, t.command, t.args); err != nil {
 		return err
 	}
 	projects, err := maven.Projects(t.repositoryRoot)
@@ -191,9 +191,13 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 	if err != nil {
 		return run, err
 	}
+	defer func() { runErr = errors.Join(runErr, os.RemoveAll(directory)) }()
 	run.temporaryRoot = directory
 	workspace := filepath.Join(directory, "repository")
 	if err := copyConfiguration(ctx, t.repositoryRoot, workspace, true); err != nil {
+		return run, err
+	}
+	if err := maven.ValidateTestdriveCommand(workspace, t.command, t.args); err != nil {
 		return run, err
 	}
 	projects, err := maven.Projects(workspace)
@@ -324,8 +328,8 @@ func compareMavenNative(baseline, reporting validationRun) verdict {
 	if reason := pairTimeout(baseline, reporting); reason != "" {
 		return verdict{Status: "inconclusive", Code: "command_timeout", Reason: reason}
 	}
-	if baseline.ResultError != "" || reporting.ResultError != "" || executedTests(baseline) == 0 {
-		return verdict{Status: "inconclusive", Code: "native_results_unavailable", Reason: reportText("Both runs need fresh native results for executed tests. " + baseline.ResultError + " " + reporting.ResultError)}
+	if baseline.ResultError != "" || executedTests(baseline) == 0 {
+		return verdict{Status: "inconclusive", Code: "native_results_unavailable", Reason: reportText("The baseline needs fresh native results for executed tests. " + baseline.ResultError)}
 	}
 	if baseline.Facts.TestEventCount != 0 {
 		return verdict{Status: "inconclusive", Code: "baseline_instrumented", Reason: "The baseline emitted test events; disable existing instrumentation before comparison."}

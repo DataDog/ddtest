@@ -95,3 +95,38 @@ func TestMavenHistoryCheckOnlyDoesNotArchiveCurrentFailure(t *testing.T) {
 	require.Nil(t, history)
 	require.NoFileExists(t, filepath.Join(filepath.Dir(validationPath(root)), mavenFailureJSON))
 }
+
+func TestMavenReportingCrashRemainsARegressionAcrossReruns(t *testing.T) {
+	for _, reportError := range []string{"no native test results under target", "parse native report: unexpected EOF"} {
+		t.Run(reportError, func(t *testing.T) {
+			root := t.TempDir()
+			baseline := validationRun{Role: roleBaseline, Command: "mvn test", Tests: []jestTest{{File: ". / Suite", Name: "test", Status: "passed"}}}
+			reporting := validationRun{Role: roleReporting, Command: "mvn test", Instrumented: true, ExitCode: 134, ResultError: reportError, Diagnostic: "instrumented JVM crashed before writing reports"}
+			comparison := compareMavenNative(baseline, reporting)
+			require.Equal(t, "suspected regression", comparison.Status)
+			require.Equal(t, "native_outcome_mismatch", comparison.Code)
+			result := validationResult{Framework: "junit5", Session: "crash", Compatibility: comparison, Runs: []runSummary{baseline.summary(), reporting.summary()}, HTMLReportCurrent: true}
+			require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0700))
+			require.NoError(t, os.WriteFile(htmlReportPath(root), []byte(`JVM crash <a href="testdrive.json">JSON</a>`), 0600))
+			require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
+			history, err := preserveMavenFailure(root, false)
+			require.NoError(t, err)
+			require.Equal(t, "crash", history.Session)
+			archive := filepath.Join(filepath.Dir(validationPath(root)), mavenFailureJSON)
+			before, err := os.ReadFile(archive)
+			require.NoError(t, err)
+			require.Contains(t, string(before), reportError)
+			require.Contains(t, string(before), "instrumented JVM crashed")
+			result.Session, result.Compatibility, result.PreviousFailure = "later", compareMavenNative(baseline, baseline), history
+			matching := baseline
+			matching.Role, matching.Instrumented = roleReporting, true
+			result.Runs = []runSummary{baseline.summary(), matching.summary()}
+			require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
+			_, err = preserveMavenFailure(root, false)
+			require.NoError(t, err)
+			after, err := os.ReadFile(archive)
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+		})
+	}
+}
