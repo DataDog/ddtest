@@ -61,7 +61,9 @@ func sharedDriver(t *testing.T, root string) string {
 		// executable, so only the driver's build switches toolchains.
 		args := []string{"build", "-o", bin}
 		if coverDir != "" {
-			args = append(args, "-cover", "-coverpkg=github.com/DataDog/ddtest/ddto/...")
+			// A pattern below ddtest's module matches none of ddto's packages,
+			// which come from another module; ci_shards.py coverage keeps ddto's.
+			args = append(args, "-cover", "-coverpkg=github.com/DataDog/ddtest/...")
 		}
 		out, stderr, code, _, err := runCommand(filepath.Join(root, ".."), testEnv("GOFLAGS=", "GOTOOLCHAIN=auto"), "go", append(args, ".")...)
 		switch {
