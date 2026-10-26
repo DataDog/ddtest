@@ -29,6 +29,9 @@ type validationSummary struct {
 	RealCredentialsRequired bool            `json:"real_credentials_required"`
 	// Steps only the repository owner can take; local validation cannot do them.
 	HumanActions []string `json:"human_actions,omitempty"`
+	// Caveats name CI values this run could not reproduce exactly; they never
+	// block completion.
+	Caveats []string `json:"caveats,omitempty"`
 }
 
 // apiKeyAction is the one step CI needs that no local run can perform.
@@ -109,8 +112,10 @@ func summarizeValidation(result validationResult) validationSummary {
 	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
 		summary.BlockingChecks = append(summary.BlockingChecks, "CI preservation: "+result.CIPreservation.Status+" — "+result.CIPreservation.Reason)
 	}
+	caveats, fidelityBlockers := ciFidelity(&result)
+	summary.Caveats = caveats
 	if result.Scope != nil {
-		summary.BlockingChecks = append(summary.BlockingChecks, scopeBlockers(result.Scope.Unresolved)...)
+		summary.BlockingChecks = append(summary.BlockingChecks, scopeBlockers(append(slices.Clone(result.Scope.Unresolved), fidelityBlockers...))...)
 		for _, configuration := range result.Configurations {
 			if configuration.Status != "passed" && !configurationExcluded(configuration) && !alreadyExplained(summary.BlockingChecks, configuration.Error) {
 				summary.BlockingChecks = append(summary.BlockingChecks, "configuration "+configuration.Command+": "+configuration.Status)
@@ -119,7 +124,7 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	// Success is scoped to an explicitly selected command; the overall summary
 	// continues to expose every unvalidated repository configuration.
-	if result.Scope != nil && (len(result.Scope.Unresolved) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return c.Status != "passed" && !configurationExcluded(c) })) && summary.Status != "FAILED" {
+	if result.Scope != nil && (len(result.Scope.Unresolved)+len(fidelityBlockers) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return c.Status != "passed" && !configurationExcluded(c) })) && summary.Status != "FAILED" {
 		summary.Status = "INCOMPLETE"
 	}
 	summary.ConfigurationCoverage, summary.ExecutedValidation = summarizeConfigurationCoverage(result)
@@ -129,6 +134,10 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	if result.Workflow != nil {
 		for _, check := range result.Workflow.Checks {
+			// The scope blockers already list each unresolved entry.
+			if check.Name == "ci_scope" && result.Scope != nil && len(result.Scope.Unresolved)+len(fidelityBlockers) > 0 {
+				continue
+			}
 			if check.Status != "passed" && check.Status != "not applicable" {
 				summary.BlockingChecks = append(summary.BlockingChecks, "workflow "+check.Name+": "+check.Status+" — "+reportText(check.Reason))
 			}
@@ -202,8 +211,17 @@ func validationHandoff(result validationResult) string {
 	fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s.\n", summary.Status, summary.LocalValidation)
 	if coverage := summary.ConfigurationCoverage; coverage != nil && coverage.Discovered > 0 {
 		fmt.Fprintf(&block, "Configurations: %d/%d validated; %d executed, %d paired; %d blocked, %d not exercised, %d incomplete.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete)
-		if coverage.Excluded > 0 {
-			fmt.Fprintf(&block, "CI opt-outs: %d excluded from instrumentation; not executed or validated locally. Original CI tests are preserved.\n", coverage.Excluded)
+		windows := 0
+		for _, configuration := range result.Configurations {
+			if configurationExcluded(configuration) && configuration.WindowsRunner {
+				windows++
+			}
+		}
+		if optOuts := coverage.Excluded - windows; optOuts > 0 {
+			fmt.Fprintf(&block, "CI opt-outs: %d excluded from instrumentation; not executed or validated locally. Original CI tests are preserved.\n", optOuts)
+		}
+		if windows > 0 {
+			fmt.Fprintf(&block, "Windows runners: %d not instrumented; ddtest doesn't set up or validate Windows runners locally. Add manual initialization to instrument them. Original CI tests are preserved.\n", windows)
 		}
 		if coverage.Executed == 0 && !result.CheckOnly && hasValidationPair(result) {
 			block.WriteString(uncreditedExecution(result))
@@ -287,6 +305,9 @@ func validationHandoff(result validationResult) string {
 			fmt.Fprintf(&block, "Not tried: %s (no dd-trace release supports them; ddtest skipped them on its own, no approval needed).\n", job)
 		}
 	}
+	for _, caveat := range summary.Caveats {
+		block.WriteString("Caveat (not a blocker): " + caveat + "\n")
+	}
 	if supportsValidationFramework(result.Framework) && summary.CIConfiguration != "compatible" && summary.CIConfiguration != "not applicable" {
 		block.WriteString("CI edits require a full local rerun; an actual CI run does not update this local report.\n")
 	}
@@ -360,7 +381,7 @@ func validationHandoff(result validationResult) string {
 		block.WriteString("\nCleanup: not recorded.")
 	}
 	if result.Workflow != nil {
-		fmt.Fprintf(&block, "\nWorkflow checks: %d recorded; Git/package exclusions and owned cleanup: %s. Preserve both reports. No further cache or package audit is required for unchanged inputs.", len(result.Workflow.Checks), map[bool]string{true: "passed", false: "incomplete"}[workflowChecksPassed(result.Workflow)])
+		fmt.Fprintf(&block, "\nWorkflow checks: %d recorded; Git/package exclusions and owned cleanup: %s. Preserve both reports. No further cache or package audit is required for unchanged inputs.", len(result.Workflow.Checks), map[bool]string{true: "passed", false: "incomplete"}[exclusionAndCleanupChecksPassed(result.Workflow)])
 	} else {
 		block.WriteString(" Verify your own scratch and Git/package report exclusions; preserve customer files and both reports.")
 	}

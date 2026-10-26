@@ -98,7 +98,7 @@ Windows runners are never instrumented: the action's tracer installation and
 the preload are unverified there, so they need manual initialization. In a job
 whose runner is one matrix value, the inserted action skips the Windows rows by
 that value, so the other rows are instrumented and the Windows rows keep running
-without the tracer. Scoped
+without the tracer; the report lists them as Windows runners, not as opt-outs. Scoped
 Cucumber/WebdriverIO package preambles also use POSIX shell syntax; Windows
 developers using `cmd.exe` need portable hooks before using these edited scripts.
 
@@ -151,9 +151,15 @@ when that leaf is the chain's only and last link. CI files of other providers
 listed for review; they are not analyzed. A job guard that reads only
 runtime context (`github.actor`, `github.event_name`, `github.run_number`,
 `needs.<job>.outputs`) is validated as a possible CI path and reported as
-unverified; only a guard that is false for every outcome excludes the job. A matrix axis computed
-at runtime (`fromJson(...)`) that only step commands read becomes one unverified
-value, so the job's tests run with the locally installed dependencies. Plain argv
+unverified; only a guard that is false for every outcome excludes the job. Validation runs as
+close to CI as it can; where a CI value can't be reproduced locally, the report
+names it as a caveat instead of a blocker. A matrix axis computed at runtime
+(`fromJson(...)`) that only a dependency install reads becomes one value: the
+job's tests run with the locally installed dependencies, and the axis is a
+caveat once every configuration of that job passed with a framework version the
+tracer supports. Otherwise, or when anything else reads the axis, it blocks. An
+accepted substitute runtime is reported as a caveat too. Caveats never prevent
+COMPLETE LOCALLY. Plain argv
 commands under `shell: pwsh`, including the Windows default, are read as POSIX
 commands, including npm package specs such as `@scope/name@version`; PowerShell
 syntax, doubled quotes and multi-line test steps remain unresolved.

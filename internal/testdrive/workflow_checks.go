@@ -118,6 +118,23 @@ func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.Workfl
 	return []onboard.WorkflowCheck{git, pack, cleanup}
 }
 
+// exclusionAndCleanupChecksPassed covers only the report-exclusion and owned
+// cleanup checks the handoff line names; scope checks are reported separately.
+func exclusionAndCleanupChecksPassed(workflow *WorkflowEvidence) bool {
+	if workflow == nil {
+		return true
+	}
+	for _, check := range workflow.Checks {
+		if !slices.Contains([]string{"git_report_exclusions", "package_report_exclusions", "package_check_cleanup", "validation_cleanup"}, check.Name) {
+			continue
+		}
+		if check.Status != "passed" && check.Status != "not applicable" {
+			return false
+		}
+	}
+	return true
+}
+
 func workflowChecksPassed(workflow *WorkflowEvidence) bool {
 	if workflow == nil {
 		return true

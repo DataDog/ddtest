@@ -133,8 +133,26 @@ func TestComputedMatrixAxisStillValidatesTheTestCommand(t *testing.T) {
 	}
 	require.Len(t, validated, 1, "%+v", scope.Commands)
 	require.Contains(t, validated[0].Locations[0], "${{ matrix.playwrightVersion }}")
-	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "matrix axis playwrightVersion is computed at runtime")
-	require.NotContains(t, strings.Join(scope.Unresolved, "\n"), "not a bounded static list")
+	// Only a dependency install reads the axis, so validation decides from the
+	// job's results whether it is a caveat; discovery doesn't block on it.
+	require.Equal(t, []ComputedAxis{{Workflow: ".github/workflows/test.yml", Job: "test", Axis: "playwrightVersion"}}, scope.ComputedAxes)
+	require.NotContains(t, strings.Join(scope.Unresolved, "\n"), "computed at runtime")
+
+	// Any other step reading the axis could change the tests unseen.
+	other := newJestRepository(t, `jobs:
+  test:
+    strategy:
+      matrix:
+        playwrightVersion: ${{ fromJson(needs.versions.outputs.versions) }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ matrix.playwrightVersion }}" > .playwright-version
+      - run: npm test
+`)
+	writeScripts(t, other, map[string]string{"test": "playwright test"})
+	scope, err = DiscoverValidationScope(other, "playwright")
+	require.NoError(t, err)
+	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "Setup other than a dependency install reads a matrix axis computed at runtime")
 
 	for _, use := range []string{"runs-on: ${{ matrix.playwrightVersion }}", "env: {PW: '${{ matrix.playwrightVersion }}'}"} {
 		root := newJestRepository(t, `jobs:
@@ -410,4 +428,47 @@ func TestPowerShellScopedPackagesAndQuoting(t *testing.T) {
 	} {
 		require.Equal(t, want, powershellArgvOnly("pwsh", run), run)
 	}
+}
+
+func TestWindowsGuardedRowsAreReportedAsWindowsRunners(t *testing.T) {
+	workflow := `jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '24.14.1'}
+      - uses: datadog/test-visibility-github-action@v3
+        if: matrix.os != 'windows-latest'
+        with: {languages: js, js-tracer-version: '6.20.1'}
+      - run: npm test
+        env:
+          NODE_OPTIONS: "${{ env.DD_TRACE_PACKAGE && format('-r {0}', env.DD_TRACE_PACKAGE) || '' }}"
+`
+	root := newJestRepository(t, workflow)
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	var windows, instrumented int
+	for _, command := range scope.Commands {
+		if command.WindowsRunner {
+			require.True(t, command.CIInstrumentationExcluded)
+			windows++
+		} else if !command.CIInstrumentationExcluded {
+			instrumented++
+		}
+	}
+	require.Equal(t, 1, windows, "%+v", scope.Commands)
+	require.Equal(t, 1, instrumented, "%+v", scope.Commands)
+
+	check := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "6.20.1", Node: ">=18"}, nil
+	}, "jest")
+	reasons := []string{}
+	for _, job := range check.Jobs {
+		reasons = append(reasons, job.Reason)
+	}
+	require.Contains(t, reasons, WindowsRunnerBranch, "ddtest's own Windows guard is not a fork/API-key opt-out")
+	require.NotContains(t, reasons, GuardedActionBranch)
 }

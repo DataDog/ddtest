@@ -25,7 +25,10 @@ type TestCommand struct {
 	CIInstrumentationExcluded bool `json:"ci_instrumentation_excluded,omitempty"`
 	// UnsupportedNode marks an exclusion ddtest made itself: no dd-trace release
 	// runs on the entry's CI Node, so it is not tried.
-	UnsupportedNode                 bool              `json:"unsupported_node,omitempty"`
+	UnsupportedNode bool `json:"unsupported_node,omitempty"`
+	// WindowsRunner marks an exclusion on a Windows runner, whose Datadog
+	// action is skipped: ddtest can't set up or validate Windows locally.
+	WindowsRunner                   bool              `json:"windows_runner,omitempty"`
 	LocalOverrides                  []string          `json:"local_overrides,omitempty"`
 	ID                              string            `json:"id,omitempty"`
 	Services                        []ServiceCommand  `json:"services,omitempty"`
@@ -95,6 +98,23 @@ type ValidationScope struct {
 	Commands   []TestCommand `json:"commands"`
 	Unresolved []string      `json:"unresolved,omitempty"`
 	Review     []string      `json:"review,omitempty"`
+	// ComputedAxes can't be replayed locally value by value. Validation
+	// decides whether each is a caveat or a blocker from its job's results.
+	ComputedAxes []ComputedAxis `json:"computed_axes,omitempty"`
+}
+
+// ComputedAxis is a matrix axis computed at runtime (for example from
+// fromJson) that only a dependency install reads; the job's tests run with the
+// locally installed dependencies instead of each CI value.
+type ComputedAxis struct {
+	Workflow string `json:"workflow"`
+	Job      string `json:"job"`
+	Axis     string `json:"axis"`
+}
+
+// Location is the workflow/job prefix shared by the job's command locations.
+func (axis ComputedAxis) Location() string {
+	return axis.Workflow + " / " + axis.Job
 }
 
 func yarnImplicitInstall(words []string) bool {
@@ -165,7 +185,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				continue
 			}
 			for _, axis := range computed {
-				scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": matrix axis "+axis+" is computed at runtime; its tests are validated with the locally installed dependencies, and other "+axis+" values remain unverified")
+				scope.ComputedAxes = append(scope.ComputedAxes, ComputedAxis{Workflow: workflow.Path, Job: name, Axis: axis})
 			}
 			conditionNoted := false
 			var notTried []string
@@ -231,9 +251,14 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
 					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
 					if readsComputedAxis(step.Run, computed, row) && !resolution.Matched && !stepMayStartTests(root, workflow, job, step, framework) {
-						// Setup that installs a computed variant is the unverified
-						// axis itself; the tests run with the installed dependencies.
-						review = append(review, scopeDiagnostic{location, "Setup reads a matrix axis computed at runtime; not replayed locally"})
+						// A dependency install of a computed variant is the axis
+						// itself; the tests run with the installed dependencies.
+						// Any other reader could change the tests unseen.
+						if !dependencyInstallOnly(step.Run) {
+							unresolved = append(unresolved, scopeDiagnostic{location, "Setup other than a dependency install reads a matrix axis computed at runtime; it can't be replayed locally"})
+							continue
+						}
+						review = append(review, scopeDiagnostic{location, "Dependency install reads a matrix axis computed at runtime; not replayed locally"})
 						continue
 					}
 					if allowSetupFacts && conditionErr == nil && envErr == nil {
@@ -321,6 +346,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						if unsupportedNode {
 							entry.CIInstrumentationExcluded, entry.UnsupportedNode = true, true
 						}
+						entry.WindowsRunner = entry.CIInstrumentationExcluded && installerSkipped && windowsRow(job, row)
 						if framework == "mocha" && !entry.usesNYC && !entry.mochaIstanbul {
 							parts, err := staticCommands(entry.Command)
 							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {
@@ -495,6 +521,33 @@ func changesDependencies(words []string) bool {
 		}
 	}
 	return installs && !toolchain
+}
+
+// windowsRow reports whether a matrix row runs on a Windows runner.
+func windowsRow(job runtimeJob, row map[string]any) bool {
+	for _, label := range runnerLabels(job.RunsOn) {
+		if runner, err := runtimeValue(label, row); err == nil && strings.HasPrefix(strings.ToLower(runner), "windows") {
+			return true
+		}
+	}
+	return false
+}
+
+// dependencyInstallOnly reports whether every command in a step installs
+// project dependencies (npm install pkg@${{ matrix.version }}), with workflow
+// expressions standing in for literal values.
+func dependencyInstallOnly(command string) bool {
+	commands, err := staticCommands(workflowExpression.ReplaceAllString(command, "value"))
+	if err != nil || len(commands) == 0 {
+		return false
+	}
+	for _, words := range commands {
+		words, _, err = commandEnvironment(words)
+		if err != nil || !changesDependencies(words) {
+			return false
+		}
+	}
+	return true
 }
 
 func readsComputedAxis(command string, axes []string, row map[string]any) bool {

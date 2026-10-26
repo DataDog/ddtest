@@ -41,6 +41,10 @@ type RuntimeCheck struct {
 // its own condition on some branch. The step still runs, uninstrumented.
 const GuardedActionBranch = "The Datadog action's condition is false for this branch (for example, no API key on forks), so this test step runs uninstrumented by design. This branch is not validated as instrumented."
 
+// WindowsRunnerBranch explains a Windows row whose Datadog action is skipped:
+// ddtest doesn't set up or validate Windows runners locally.
+const WindowsRunnerBranch = "Windows runner: the Datadog action is skipped here because ddtest doesn't set up or validate Windows runners locally. These tests run uninstrumented; add manual initialization to instrument them."
+
 type RuntimeFinding struct {
 	Workflow        string          `json:"workflow"`
 	Job             string          `json:"job"`
@@ -503,6 +507,9 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 				return finding
 			}
 			finding.Reason = GuardedActionBranch
+			if windowsRow(job, row) {
+				finding.Reason = WindowsRunnerBranch
+			}
 			return finding
 		}
 		// No dd-trace release runs on this Node, so the missing action is not a

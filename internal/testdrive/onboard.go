@@ -323,7 +323,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		// blockers. With nothing ready, there is nothing to set up or validate.
 		partial := len(scope.Unresolved) > 0 && slices.ContainsFunc(scope.Commands, func(entry onboard.TestCommand) bool { return t.readyConfiguration(entry) })
 		if partial {
-			result.Checks = append(result.Checks, onboard.WorkflowCheck{Name: "ci_scope", Status: onboard.StatusInconclusive, Reason: "Ready configurations proceed; unresolved CI stays unedited, unvalidated and reported: " + strings.Join(scope.Unresolved, "; ")})
+			result.Checks = append(result.Checks, scopeCheck(scope.Unresolved))
 		}
 		if len(scope.Commands) == 0 || len(scope.Unresolved) > 0 && !partial {
 			result.Location = strings.Join(scope.Unresolved[:min(1, len(scope.Unresolved))], "")
@@ -650,7 +650,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	progress("verification")
 	workflow := &WorkflowEvidence{ValidationCommand: recoveryCommand, Plan: plan, Fingerprint: before, Node: t.workflowNodeVersion(), FactsSHA256: factsHash, Changes: result.Changes}
-	workflow.Checks = append(result.Checks, t.verifyReportExclusions(ctx)...)
+	workflow.Checks = append(refreshScopeCheck(result.Checks, validation.Scope), t.verifyReportExclusions(ctx)...)
 	after, snapshotErr := InputFingerprint(ctx, t.repositoryRoot)
 	sourceCheck := onboard.WorkflowCheck{Name: "source_preservation", Status: "passed", Reason: "Original checkout inputs unchanged by validation; builds/probes ran in owned storage."}
 	if snapshotErr != nil || after != before {
@@ -1117,4 +1117,28 @@ func (t *Testdrive) workflowValidationResume(executable, name, selected string, 
 		command = append(command, AcceptSubstituteRuntimeFlag)
 	}
 	return command
+}
+
+// scopeCheck records that ready configurations proceeded around unresolved CI.
+// The summary lists the entries once, as scope blockers, not again as a check.
+func scopeCheck(unresolved []string) onboard.WorkflowCheck {
+	return onboard.WorkflowCheck{Name: "ci_scope", Status: onboard.StatusInconclusive, Reason: "Ready configurations proceed; unresolved CI stays unedited, unvalidated and reported: " + strings.Join(unresolved, "; ")}
+}
+
+// refreshScopeCheck re-evaluates the pre-setup ci_scope check against the scope
+// discovered after setup: ddtest's own edits, such as a Windows guard, can
+// resolve entries that blocked before them.
+func refreshScopeCheck(checks []onboard.WorkflowCheck, scope *onboard.ValidationScope) []onboard.WorkflowCheck {
+	checks = slices.Clone(checks)
+	for i, check := range checks {
+		if check.Name != "ci_scope" || scope == nil {
+			continue
+		}
+		if len(scope.Unresolved) == 0 {
+			checks[i] = onboard.WorkflowCheck{Name: "ci_scope", Status: "passed", Reason: "No unresolved CI remains after setup; every discovered entry is validated, excluded or reported as a caveat."}
+		} else {
+			checks[i] = scopeCheck(scope.Unresolved)
+		}
+	}
+	return checks
 }

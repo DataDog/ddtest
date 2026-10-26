@@ -579,7 +579,8 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	}
 	result.ChecksPassed = workflowChecksPassed(result.Workflow) && result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
 	if result.Scope != nil {
-		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved) == 0
+		_, fidelityBlockers := ciFidelity(result)
+		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved)+len(fidelityBlockers) == 0
 		for _, command := range result.Scope.Commands {
 			if ciInstrumentationDisabled(command) {
 				continue
