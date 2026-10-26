@@ -843,7 +843,38 @@ func tracerOnlyFeatures(validation validationResult) (map[string]featureResult, 
 // compatible configuration's "incomplete" line.
 func restatesTracerOnlyFailures(validation validationResult, check string) bool {
 	tracerOnly, others := tracerOnlyFeatures(validation)
-	return len(tracerOnly) > 0 && !others && (check == featureCoverageBlocker || pairedConfigurationBlocker(validation, check))
+	return len(tracerOnly) > 0 && !others && featureResultsComplete(validation) &&
+		(check == featureCoverageBlocker || pairedConfigurationBlocker(validation, check))
+}
+
+// featureResultsComplete reports whether every project has a result for every
+// required feature and every paired configuration produced one, so a missing
+// result is never hidden behind tracer-only failures.
+func featureResultsComplete(validation validationResult) bool {
+	projects := map[string]map[string]bool{}
+	for _, feature := range validation.Features {
+		if projects[feature.Project] == nil {
+			projects[feature.Project] = map[string]bool{}
+		}
+		projects[feature.Project][feature.Name] = true
+	}
+	paired := 0
+	for _, configuration := range validation.Configurations {
+		if configuration.PairedExecution {
+			paired++
+		}
+	}
+	if len(projects) == 0 || len(projects) < paired {
+		return false
+	}
+	for _, names := range projects {
+		for _, policy := range featurePolicies(validation.Framework) {
+			if !names[policy.Name] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // configurationStatusLine reports whether check is the summary's derived
