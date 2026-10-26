@@ -80,7 +80,13 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 	// count them the same way a full run does.
 	if len(result.Configurations) == 0 && result.Scope != nil {
 		coverage.Discovered = len(result.Scope.Commands)
-		coverage.NotExercised = len(result.Scope.Commands)
+		for _, command := range result.Scope.Commands {
+			if ciInstrumentationDisabled(command) {
+				coverage.Excluded++
+			} else {
+				coverage.NotExercised++
+			}
+		}
 	}
 	executed := &executedValidation{Status: "NOT EXERCISED", Reason: "No current paired execution was completed. Earlier results do not validate this invocation."}
 	for _, configuration := range result.Configurations {

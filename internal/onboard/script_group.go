@@ -83,7 +83,10 @@ func resolveScriptGroup(root, directory string, words, stack []string, remaining
 		}
 	}
 	if !parallel {
-		return resolveJestSequence(root, directory, strings.Join(commands, " && "), stack, remaining, framework)
+		result := resolveJestSequence(root, directory, strings.Join(commands, " && "), stack, remaining, framework)
+		// Group options target the orchestrator, not its single test runner.
+		result.SingleJest = false
+		return result
 	}
 	result := commandResolution{}
 	for _, command := range commands {
@@ -96,7 +99,6 @@ func resolveScriptGroup(root, directory string, words, stack []string, remaining
 		result.Reason = joinDiagnostic(result.Reason, branch.Reason)
 		result.ReviewReason = joinDiagnostic(result.ReviewReason, branch.ReviewReason)
 	}
-	result.SingleJest = len(result.Tests) == 1 && result.Reason == "" && !result.OtherFramework
 	return result
 }
 

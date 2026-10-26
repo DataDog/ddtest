@@ -11,7 +11,7 @@ import tempfile
 
 def selected_login(data, agent):
     key = "tokens" if agent == "codex" else "claudeAiOauth"
-    if not isinstance(data.get(key), dict):
+    if not isinstance(data, dict) or not isinstance(data.get(key), dict):
         raise ValueError("Selected login has no supported model credentials")
     result = {key: data[key]}
     if agent == "codex":
@@ -145,6 +145,7 @@ class ModelLogin:
         self.check_destination()
         # Dependency scripts must not see model credentials during setup.
         self.suspended = self.read_destination()
+        remember(self.suspended, self.secrets)
         # From here on, the login file is writable by untrusted repository code.
         self.repository_started = True
         remove_login(self.payload(None), self.home.parent)

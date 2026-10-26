@@ -777,7 +777,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		result.Tests[0].Environment = nil
 		result.Tests[0].Resolution = command + " -> " + result.Evidence
 		result.Tests[0].Command = command
-		result.Tests[0].LifecyclePrerequisites = append(result.Tests[0].LifecyclePrerequisites, result.Tests[0].Prerequisites...)
+		result.Tests[0].LifecyclePrerequisites = append(slices.Clone(result.Tests[0].Prerequisites), result.Tests[0].LifecyclePrerequisites...)
 		result.Tests[0].Prerequisites = nil
 		result.Builds = nil
 	}

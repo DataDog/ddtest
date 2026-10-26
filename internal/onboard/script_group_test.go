@@ -55,3 +55,33 @@ func TestCucumberLoggingPrefixAndOrchestratedLifecycleBuild(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, probe, "--profile noWip")
 }
+
+func TestScriptGroupsCannotForwardJestFlagsDirectly(t *testing.T) {
+	for _, command := range []string{"run-p lint unit", "run-p unit", "run-s lint unit", "run-s unit", "npm-run-all --parallel lint unit", "npm-run-all --serial unit"} {
+		t.Run(command, func(t *testing.T) {
+			root := t.TempDir()
+			writeScripts(t, root, map[string]string{"test": command, "lint": "eslint .", "unit": "jest --runInBand"})
+			resolution := resolveJestCommand(root, "npm test", nil)
+			require.True(t, resolution.Matched, "discovery must retain the original runner")
+			require.Empty(t, resolution.Reason)
+			require.False(t, resolution.SingleJest, "one discovered runner does not imply forwarding through an orchestrator")
+			_, err := ForwardJestExecution(root, "npm test")
+			require.ErrorContains(t, err, "cannot forward probe options")
+			require.ErrorContains(t, err, "requires review")
+		})
+	}
+}
+
+func TestNestedCucumberBuildPrerequisitesPreserveExecutionOrder(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"pretest": "tsc --outDir dist", "test": "npm run bdd", "prebdd": "babel dist --out-dir lib", "bdd": "cucumber-js features"})
+	remaining := 256
+	result := resolveJestSequence(root, root, "npm test", nil, &remaining, "cucumber")
+	require.Empty(t, result.Reason)
+	require.Len(t, result.Tests, 1)
+	var commands []string
+	for _, build := range result.Tests[0].LifecyclePrerequisites {
+		commands = append(commands, build.Command)
+	}
+	require.Equal(t, []string{"tsc --outDir dist", "babel dist --out-dir lib"}, commands, "the outer build must produce dist before the inner hook consumes it")
+}

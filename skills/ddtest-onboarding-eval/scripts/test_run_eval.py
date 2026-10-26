@@ -156,6 +156,56 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, manifest["trial_directory"], ignore_errors=True)
         return code, manifest
 
+    def test_preflight_refresh_is_redacted_before_finalization(self):
+        source = self.root / "selected-login.json"
+        source.write_text(json.dumps({"tokens": {"access_token": "synthetic-original-access", "refresh_token": "synthetic-original-refresh"}}))
+        self.args.login_json = source
+        refreshed = "opaqueRotatedValueForReview218"
+        execute = FakeContainer.execute
+        def refresh_or_print(container, argv, cwd, env, timeout, on_line, prompt, executor):
+            code = execute(container, argv, cwd, env, timeout, on_line, prompt, executor)
+            if prompt and prompt.startswith("Reply AUTH_OK only"):
+                destination = Path(env["CODEX_HOME"]) / "auth.json"
+                data = json.loads(destination.read_text())
+                data["tokens"]["refresh_token"] = refreshed
+                destination.write_text(json.dumps(data))
+            elif prompt:
+                on_line(json.dumps({"type": "item.completed", "item": {
+                    "type": "command_execution", "command": "echo model response", "exit_code": 0,
+                    "aggregated_output": "response " + refreshed}}))
+            return code
+        with patch.object(FakeContainer, "execute", refresh_or_print):
+            code, manifest = self.trial()
+        self.assertEqual(code, 0)
+        activity = (self.args.output / "activity.jsonl").read_text()
+        self.assertIn("response [REDACTED]", activity)
+        self.assertNotIn(refreshed, activity)
+        self.assertEqual(json.loads(source.read_text())["tokens"]["refresh_token"], refreshed)
+        self.assertEqual(manifest["login"], "removed")
+
+    def test_non_object_trial_login_does_not_abort_evidence_collection(self):
+        execute = FakeContainer.execute
+        for replacement in ([], None, 42):
+            with self.subTest(replacement=replacement):
+                source = self.root / "selected-login.json"
+                original = {"tokens": {"access_token": "synthetic-original-access"}}
+                source.write_text(json.dumps(original))
+                self.args.login_json = source
+                self.args.output = self.root / ("non-object-" + str(replacement))
+                def replace_login(container, argv, cwd, env, timeout, on_line, prompt, executor):
+                    code = execute(container, argv, cwd, env, timeout, on_line, prompt, executor)
+                    if prompt and not prompt.startswith("Reply AUTH_OK only"):
+                        (Path(env["CODEX_HOME"]) / "auth.json").write_text(json.dumps(replacement))
+                    return code
+                with patch.object(FakeContainer, "execute", replace_login):
+                    code, manifest = self.trial()
+                self.assertEqual(code, 0)
+                self.assertEqual(manifest["login"], "removed")
+                self.assertIn("not persisted", manifest["login_refresh"])
+                self.assertEqual(json.loads(source.read_text()), original)
+                self.assertTrue((self.args.output / "changes.patch").is_file())
+                self.assertTrue((self.args.output / "activity.jsonl").is_file())
+
     def selected_node(self, version="24.18.0"):
         selected = self.root / "selected" / "node"
         selected.parent.mkdir()

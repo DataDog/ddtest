@@ -228,3 +228,24 @@ func TestAllConfigurationsDoesNotExecuteExplicitOptOutPreparation(t *testing.T) 
 	require.False(t, result.Configurations[0].ExecutionAttempted)
 	require.False(t, result.Success)
 }
+
+func TestCheckOnlyConfigurationCoverageRetainsExplicitCIOptOuts(t *testing.T) {
+	result := validationResult{Framework: "mocha", CheckOnly: true, Scope: &onboard.ValidationScope{Commands: []onboard.TestCommand{
+		{Command: "npm test"},
+		{Command: "npm run legacy", CIInstrumentationExcluded: true},
+		{Command: "npm run disabled", Environment: map[string]string{"DD_CIVISIBILITY_ENABLED": "false"}},
+	}}}
+	coverage, executed := summarizeConfigurationCoverage(result)
+	require.Equal(t, 3, coverage.Discovered)
+	require.Equal(t, 2, coverage.Excluded)
+	require.Equal(t, 1, coverage.NotExercised)
+	require.Zero(t, coverage.Executed)
+	require.Zero(t, coverage.Validated)
+	require.Equal(t, "NOT EXERCISED", executed.Status)
+	root := t.TempDir()
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, result), "check-only is not an executed validation")
+	report := readValidationReport(t, root)
+	require.Equal(t, 2, report.Summary.ConfigurationCoverage.Excluded)
+	require.Contains(t, report.Summary.FinalResponse, "CI opt-outs: 2 excluded from instrumentation; not executed or validated locally")
+	require.NotContains(t, report.Summary.FinalResponse, "COMPLETE LOCALLY")
+}

@@ -37,7 +37,7 @@ class ModelAuthTests(unittest.TestCase):
         self.assertIn('rotated-refresh',secrets)
 
     def test_repository_written_login_is_never_persisted(self):
-        for replacement in ({'tokens':{'access_token':'attacker-access','refresh_token':'attacker-refresh'}}, 'not json'):
+        for replacement in ({'tokens':{'access_token':'attacker-access','refresh_token':'attacker-refresh'}}, 'not json', [], None, 42):
             self.source.write_text(json.dumps(self.data))
             login=ModelLogin('codex',self.home,set(),path=self.source)
             login.install()
