@@ -342,22 +342,6 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			preflightEnvironment = mergeConfigurationEnvironment(preflightEnvironment, assignments)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	var environment environmentInfo
-	var preflight *reportCard
-	switch language {
-	case "python":
-		var source string
-		command, args, source = pythonTestdriveCommand(repositoryRoot, command, args, strings.TrimSpace(settings.GetCommand()) != "")
-		environment, preflight = pythonEnvironmentInfo(ctx, command, args, source)
-	case "javascript":
-		if !configurationOnly && discoveryError == nil {
-			environment = nodeEnvironmentInfo(ctx, command)
-		}
-	case "ruby":
-		environment = rubyEnvironmentInfo(ctx)
-	}
 	scopeCommand := selectedPlan.ScopeCommand
 	if scopeCommand == "" {
 		scopeCommand = originalCommand
@@ -373,6 +357,22 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		configurationEnvironment = mergeConfigurationEnvironment(matched, preflightEnvironment)
 		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, selectedPlan.Environment)
 		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, commandAssignments)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var environment environmentInfo
+	var preflight *reportCard
+	switch language {
+	case "python":
+		var source string
+		command, args, source = pythonTestdriveCommand(repositoryRoot, command, args, strings.TrimSpace(settings.GetCommand()) != "")
+		environment, preflight = pythonEnvironmentInfo(ctx, command, args, source, configurationEnvironment)
+	case "javascript":
+		if !configurationOnly && discoveryError == nil {
+			environment = nodeEnvironmentInfo(ctx, command)
+		}
+	case "ruby":
+		environment = rubyEnvironmentInfo(ctx)
 	}
 	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args, Environment: configurationEnvironment}
 	if language == "python" && environment.Executable != "" {
@@ -413,6 +413,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		drive.executor = &ext.DefaultCommandExecutor{Timeout: timeout}
 	}
 	drive.configurationEnvironment = configurationEnvironment
+	if language == "python" {
+		drive.pytestEnvironment = maps.Clone(configurationEnvironment)
+	}
 	if len(configurationEnvironment) > 0 {
 		drive.executor = configurationExecutor{drive.executor, configurationEnvironment}
 	}

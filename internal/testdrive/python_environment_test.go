@@ -91,6 +91,41 @@ func TestPythonProbePreservesEnvironmentSelectors(t *testing.T) {
 	require.ErrorContains(t, err, "--with")
 }
 
+func TestFocusedPythonPreparationKeepsCIEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable fixture")
+	}
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("PATH", root)
+	t.Setenv("VIRTUAL_ENV", "")
+	t.Setenv("CONDA_PREFIX", "")
+	t.Setenv("APP_MODE", "host")
+	old := settings.Get().Command
+	settings.Get().Command = "uv run --no-sync python -m pytest"
+	t.Cleanup(func() { settings.Get().Command = old })
+	requireWriteFile(t, "pyproject.toml", "[tool.pytest.ini_options]\n")
+	require.NoError(t, os.MkdirAll(".github/workflows", 0755))
+	requireWriteFile(t, ".github/workflows/test.yml", `jobs:
+  tests:
+    steps:
+      - run: uv run --no-sync python -m pytest
+        env:
+          APP_MODE: ci
+          UV_PROJECT_ENVIRONMENT: .venv-ci
+          PYTHONPATH: src
+          PYTEST_ADDOPTS: '-k selected -p ddtrace'
+`)
+	require.NoError(t, os.WriteFile("uv", []byte("#!/bin/sh\n[ \"$APP_MODE\" = ci ] || exit 3\n[ \"$UV_PROJECT_ENVIRONMENT\" = .venv-ci ] || exit 4\nfor last; do :; done\nprintf '%s' '{\"executable\":\"python\",\"version\":\"3.12.8\",\"pytest\":true}' > \"$last\"\n"), 0755))
+	drive, err := Prepare(PrepareOptions{TracerVersion: "4.16.0"})
+	require.NoError(t, err)
+	require.Nil(t, drive.environmentFailure, "initial environment inspection must use the selected CI environment")
+	require.Equal(t, "ci", drive.pytestEnvironment["APP_MODE"])
+	require.Equal(t, "src", drive.pytestEnvironment["PYTHONPATH"])
+	require.Equal(t, "-k selected -p ddtrace", drive.pytestEnvironment["PYTEST_ADDOPTS"])
+	require.Equal(t, drive.configurationEnvironment, drive.pytestEnvironment)
+}
+
 func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX executable fixture")
