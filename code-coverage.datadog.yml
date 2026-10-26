@@ -1,0 +1,14 @@
+schema-version: v1
+ignore:
+  # ddto's incorporated upstream sources (dd-trace-go, msgp, fwd, x/sys), like
+  # vendored code: their manifests pin them to upstream, whose tests they keep
+  # (see ddto/internal/thirdparty/README.md).
+  - "ddto/internal/thirdparty/"
+  # ddto's tools, test helpers, fixtures and archived records, which ddtest
+  # does not ship.
+  - "ddto/cmd/"
+  - "ddto/docs/"
+  - "ddto/integration/"
+  - "ddto/internal/testassert/"
+  - "ddto/scripts/"
+  - "ddto/testdata/"

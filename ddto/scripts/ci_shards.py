@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -18,6 +19,11 @@ import parity_report
 
 ROOT = Path(__file__).resolve().parents[1]
 INTEGRATION = "github.com/DataDog/ddtest/ddto/integration"
+# ddto's module is the ddto directory of ddtest's: its coverage paths are
+# relative to ddtest's repository.
+REPOSITORY_MODULE = "github.com/DataDog/ddtest/"
+MODULE = REPOSITORY_MODULE + "ddto/"
+COVER_BLOCK = re.compile(r"(\S+):(\d+\.\d+,\d+\.\d+) (\d+) (\d+)")
 CONFIGURATIONS = (
     ("differential", "ubuntu-latest", "1.26.x", "normal"),
     ("differential", "ubuntu-latest", "1.27.x", "normal"),
@@ -230,6 +236,16 @@ def run_group(args, groups, shard, base, environment, shards):
         raise ValueError("empty CI selection")
     report = "parity-race" if args.mode == "race" else "parity"
     env = dict(base, PARITY_REPORT_PATH=str(output.resolve() / (report + ".json")))
+    if args.coverage:
+        cover = args.coverage.resolve() / shard
+        if units:
+            cover.mkdir(parents=True)
+            # TestGetCoverage replaces the coverage that its binary reports, which
+            # -coverpkg instruments for real.
+            run_flags += ["-coverpkg=./...", "-coverprofile=" + str(cover / "units.cover"), "-skip=^TestGetCoverage$"]
+        else:
+            (cover / "covdata").mkdir(parents=True)
+            env["DDTO_TEST_COVERDIR"] = str(cover / "covdata")
     command = ["go", "test", *flags, "-json", "-count=1", "-timeout=" + args.timeout, *run_flags, *targets]
     manifest = dict(schema=1, suite=args.suite, os=args.os, go=args.go, mode=args.mode, shard=shard,
                     revision=capture("git", "rev-parse", "HEAD"), tree=capture("git", "rev-parse", "HEAD^{tree}"),
@@ -256,7 +272,7 @@ def run(args):
     if config not in CONFIGURATIONS or not shards or len(shards) != len(set(shards)) \
             or any(shard not in SHARDS[args.suite] for shard in shards) or args.parallel < 1:
         raise ValueError("unsupported CI configuration")
-    if args.output.exists():
+    if args.output.exists() or args.coverage and args.coverage.exists():
         raise ValueError("output directory already exists; choose a fresh directory")
     args.output.mkdir(parents=True)
     environment = json.loads(capture("go", "env", "-json", "GOVERSION", "GOOS", "GOARCH"))
@@ -292,6 +308,45 @@ def run(args):
             list(pool.map(attempt, shards))
     if failures:
         raise ValueError("; ".join(sorted(failures)))
+
+
+def add_cover_blocks(blocks, lines):
+    """Add a Go coverprofile's blocks of ddto's packages: a block is covered if
+    any profile covers it."""
+    for line in lines:
+        match = COVER_BLOCK.fullmatch(line.strip())
+        if not match or not match[1].startswith(MODULE):
+            continue
+        key = (match[1].removeprefix(REPOSITORY_MODULE), match[2])
+        statements, covered = blocks.get(key, (0, False))
+        blocks[key] = (max(statements, int(match[3])), covered or int(match[4]) > 0)
+
+
+def coverage(args):
+    """Merge what run --coverage collected into one Go coverprofile whose paths
+    are relative to ddtest's repository, as Datadog reads them."""
+    blocks = {}
+    for profile in sorted(args.input.rglob("units.cover")):
+        add_cover_blocks(blocks, profile.read_text(encoding="utf-8").splitlines())
+    for counters in sorted(path for path in args.input.rglob("covdata") if path.is_dir()):
+        # Fixtures built with -cover can write there too, in another counter mode;
+        # go tool covdata reads the files of one binary at a time.
+        for meta in sorted(counters.glob("covmeta.*")):
+            with tempfile.TemporaryDirectory() as temp:
+                digest = meta.name.removeprefix("covmeta.")
+                for file in [meta, *counters.glob(f"covcounters.{digest}.*")]:
+                    shutil.copy(file, temp)
+                profile = Path(temp) / "profile.txt"
+                # The toolchain that built the driver, from ddtest's go.mod.
+                subprocess.run(["go", "tool", "covdata", "textfmt", "-i=" + temp, "-o=" + str(profile),
+                                "-pkg=" + MODULE + "..."], cwd=ROOT.parent, check=True,
+                               env=dict(os.environ, GOFLAGS="", GOTOOLCHAIN="auto"))
+                add_cover_blocks(blocks, profile.read_text(encoding="utf-8").splitlines())
+    if not blocks:
+        raise ValueError(f"no coverage of ddto's packages in {args.input}")
+    lines = ["mode: set"] + [f"{path}:{position} {statements} {int(covered)}"
+                             for (path, position), (statements, covered) in sorted(blocks.items())]
+    args.output.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def retry(args, sleep=time.sleep):
@@ -394,10 +449,14 @@ def main():
     run_parser.add_argument("--parallel", type=int, default=1, help="groups to run at the same time")
     run_parser.add_argument("--timeout", default="20m")
     run_parser.add_argument("--output", type=Path, required=True)
+    run_parser.add_argument("--coverage", type=Path, help="collect the coverage of ddto's packages here")
     aggregate_parser = commands.add_parser("aggregate")
     aggregate_parser.add_argument("--input", type=Path, required=True)
     aggregate_parser.add_argument("--output", type=Path, required=True)
     aggregate_parser.add_argument("--with-tip", action="store_true")
+    coverage_parser = commands.add_parser("coverage", help="merge what run --coverage collected into one Go coverprofile")
+    coverage_parser.add_argument("--input", type=Path, required=True)
+    coverage_parser.add_argument("--output", type=Path, required=True)
     retry_parser = commands.add_parser("retry")
     retry_parser.add_argument("--attempts", type=int, default=3)
     retry_parser.add_argument("--timeout", type=float, default=300, help="seconds per attempt")
@@ -415,6 +474,8 @@ def main():
             run(args)
         elif args.command == "retry":
             retry(args)
+        elif args.command == "coverage":
+            coverage(args)
         else:
             aggregate(args)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:

@@ -275,6 +275,18 @@ report step, and the Testify fixture requires every Testify policy case, timing
 and count comparison to pass. Reports record their source revision and the
 inputs that were actually tested.
 
+Each test job also reports the coverage of ddto's packages to Datadog, beside
+ddtest's own report. `ci_shards.py run --coverage` runs the unit tests with
+`-coverpkg=./...` and builds the integration tests' driver with coverage of
+ddto's packages (`DDTO_TEST_COVERDIR`), so the driver and every process that it
+starts from its executable write their counters; `ci_shards.py coverage` merges
+both into one profile with paths relative to ddtest's repository. Datadog
+merges the reports of a commit, and
+[`code-coverage.datadog.yml`](../../code-coverage.datadog.yml) leaves the
+incorporated upstream sources, tools, test helpers and fixtures out of the
+totals. The Mini runtime's code that runs inside the fixtures' test processes
+counts only through its unit tests.
+
 The normal and deferred `testing` matrices share one covered set of SDK, Mini
 and Orchestrion binaries. Testify shares its own race/coverage set. Both sets
 keep their source directories through the test process, including `-count`

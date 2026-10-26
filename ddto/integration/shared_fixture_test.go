@@ -34,6 +34,12 @@ var (
 	}
 )
 
+// coverDir, from DDTO_TEST_COVERDIR, collects the coverage of what the driver
+// runs, for CI's coverage report: the driver is built with coverage of ddto's
+// packages, and testEnv hands GOCOVERDIR to every command, so the driver and
+// each process that it starts from its executable write their counters there.
+var coverDir = os.Getenv("DDTO_TEST_COVERDIR")
+
 // sharedDriver builds ddtest, which runs ddto as ddtest instrument, once per
 // test process: ddto's module is the ddto directory of ddtest's checkout.
 // The driver is an immutable build of this checkout that tests only execute,
@@ -53,7 +59,11 @@ func sharedDriver(t *testing.T, root string) string {
 		// ddtest needs a newer Go than the oldest that ddto supports, which
 		// some jobs pin with GOTOOLCHAIN=local: users run a release
 		// executable, so only the driver's build switches toolchains.
-		out, stderr, code, _, err := runCommand(filepath.Join(root, ".."), testEnv("GOFLAGS=", "GOTOOLCHAIN=auto"), "go", "build", "-o", bin, ".")
+		args := []string{"build", "-o", bin}
+		if coverDir != "" {
+			args = append(args, "-cover", "-coverpkg=github.com/DataDog/ddtest/ddto/...")
+		}
+		out, stderr, code, _, err := runCommand(filepath.Join(root, ".."), testEnv("GOFLAGS=", "GOTOOLCHAIN=auto"), "go", append(args, ".")...)
 		switch {
 		case err != nil:
 			sharedDriverBuild.err = err.Error()

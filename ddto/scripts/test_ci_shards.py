@@ -235,6 +235,74 @@ class ShardTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 ci_shards.aggregate(args)
 
+    def test_coverage_merges_unit_and_driver_profiles_with_repository_paths(self):
+        units = self.root / "in" / "units"
+        units.mkdir(parents=True)
+        (units / "units.cover").write_text(
+            "mode: atomic\n"
+            "github.com/DataDog/ddtest/ddto/cli/cli.go:1.1,2.2 2 4\n"
+            "github.com/DataDog/ddtest/ddto/internal/runner/run.go:1.1,2.2 3 0\n"
+            "github.com/DataDog/ddtest/ddto/internal/runner/run.go:3.1,4.2 1 0\n"
+            "example.com/fixture/a.go:1.1,2.2 1 1\n")
+        counters = self.root / "in" / "cli" / "covdata"
+        counters.mkdir(parents=True)
+        for name in ("covmeta.aa", "covcounters.aa.1.2", "covmeta.bb", "covcounters.bb.1.2"):
+            (counters / name).write_text(name)
+        profiles = {"aa": "mode: set\ngithub.com/DataDog/ddtest/ddto/cli/cli.go:1.1,2.2 2 0\n"
+                          "github.com/DataDog/ddtest/ddto/internal/runner/run.go:1.1,2.2 3 1\n"
+                          "github.com/DataDog/ddtest/main.go:5.1,6.2 2 1\n",
+                    "bb": "mode: atomic\nexample.com/fixture/b.go:1.1,2.2 1 5\n"}
+
+        def textfmt(command, **_):
+            directory = Path(next(arg for arg in command if arg.startswith("-i="))[3:])
+            files = sorted(path.name for path in directory.iterdir())
+            digest = files[0].split(".")[1]
+            # One binary's files at a time: their counter modes may differ.
+            self.assertEqual([f"covcounters.{digest}.1.2", f"covmeta.{digest}"], files)
+            Path(next(arg for arg in command if arg.startswith("-o="))[3:]).write_text(profiles[digest])
+
+        output = self.root / "coverage.out"
+        args = type("Args", (), dict(input=self.root / "in", output=output))()
+        with mock.patch("subprocess.run", side_effect=textfmt) as run:
+            ci_shards.coverage(args)
+        self.assertEqual(2, run.call_count)
+        self.assertEqual("mode: set\n"
+                         "ddto/cli/cli.go:1.1,2.2 2 1\n"
+                         "ddto/internal/runner/run.go:1.1,2.2 3 1\n"
+                         "ddto/internal/runner/run.go:3.1,4.2 1 0\n", output.read_text())
+        args.input = self.root / "empty"
+        args.input.mkdir()
+        with self.assertRaisesRegex(ValueError, "no coverage"):
+            ci_shards.coverage(args)
+
+    def test_run_collects_coverage_of_units_and_of_the_driver(self):
+        commands = []
+
+        def stream(command, output, units, env, prefix):
+            commands.append((command, env))
+            return 0, {name: "pass" for name in selected}
+
+        for shard in ("units", "native"):
+            output = self.root / "out"
+            args = type("Args", (), dict(output=output, mode="normal", timeout="20m", suite="mini", go="1.25.x",
+                                         os="ubuntu-latest", parallel=1, coverage=self.root / "cover"))()
+            output.mkdir(exist_ok=True)
+            selected = [ci_shards.INTEGRATION.replace("integration", "cli")] if shard == "units" else \
+                ci_shards.selected_tests(self.groups, "mini", "1.25.x", shard, "ubuntu-latest")
+            listing = ["\n".join(selected)] if shard == "units" else []
+            with mock.patch("ci_shards.capture", side_effect=[*listing, "revision", "tree"]), \
+                    mock.patch("ci_shards.stream_tests", side_effect=stream):
+                ci_shards.run_group(args, self.groups, shard, {}, {}, [shard])
+        (units, units_env), (native, native_env) = commands
+        cover = (self.root / "cover").resolve()
+        self.assertIn("-coverprofile=" + str(cover / "units" / "units.cover"), units)
+        self.assertIn("-coverpkg=./...", units)
+        self.assertIn("-skip=^TestGetCoverage$", units)
+        self.assertNotIn("DDTO_TEST_COVERDIR", units_env)
+        self.assertEqual(str(cover / "native" / "covdata"), native_env["DDTO_TEST_COVERDIR"])
+        self.assertTrue((cover / "native" / "covdata").is_dir())
+        self.assertFalse(any(arg.startswith("-cover") for arg in native))
+
 
 if __name__ == "__main__":
     unittest.main()
