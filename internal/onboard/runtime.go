@@ -243,6 +243,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 					}
 					rowJob.Steps[i] = resolved
 					rowResolutions[i] = resolveTestStep(root, workflow, rowJob, resolved, "javascript", framework)
+					rowResolutions[i] = resolveFactBackedRuntime(ctx, root, workflow, rowJob, resolved, framework, rowResolutions[i])
 					if rowResolutions[i].Review {
 						rowResolutions[i] = commandResolution{}
 					} else if resolveErr != nil && (rowResolutions[i].Matched || rowResolutions[i].Reason != "") {

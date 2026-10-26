@@ -26,6 +26,15 @@ ddtest onboard --framework vitest --apply --yes # Apply reviewed setup and valid
 ddtest testdrive  # Preview, confirm, and run tests locally
 ```
 
+For agent-driven execution, use `ddtest onboard --framework vitest --apply --yes`
+or `ddtest testdrive --framework vitest --all --agent --yes`. The shared coordinator
+returns a resolved plan, precise blockers and bounded resume commands; it checks
+source preservation, report exclusions and cleanup. Finish with
+`ddtest testdrive --report` to verify freshness and render the factual verdict.
+`--format json` is available to hosts. Plain testdrive retains its existing
+execution behavior; `onboard --instructions` prints manual guidance. See
+[agent onboarding](docs/onboarding.md#agent-coordination-and-fresh-results).
+
 For Jest, Vitest, Mocha, Playwright and Cypress, testdrive compares the original test suite without and with instrumentation, then validates supported advanced features using temporary probes. Playwright reports TIA skipping and per-test coverage as unsupported; Cypress TIA/application-coverage validation is deferred. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
 
 No Datadog account or Agent is needed. Testdrive links to an HTML report under

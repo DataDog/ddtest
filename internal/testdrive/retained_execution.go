@@ -91,6 +91,9 @@ func retainExecution(root string, result *validationResult) error {
 	return nil
 }
 
+// errReportUnreadable marks a saved report that exists but can't be parsed.
+var errReportUnreadable = errors.New("saved validation report is unreadable; rerun full validation to replace it")
+
 func readPreviousValidation(root string) (*validationResult, error) {
 	file, err := os.Open(validationPath(root))
 	if errors.Is(err, os.ErrNotExist) {
@@ -112,7 +115,7 @@ func readPreviousValidation(root string) (*validationResult, error) {
 	}
 	var previous validationResult
 	if err := json.Unmarshal(data, &previous); err != nil {
-		return nil, fmt.Errorf("preserve earlier execution report: existing report is unreadable: %w", err)
+		return nil, fmt.Errorf("preserve earlier execution report: %w (%v)", errReportUnreadable, err)
 	}
 	return &previous, nil
 }

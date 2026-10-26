@@ -21,6 +21,8 @@ type ApplyOptions struct {
 	ExplicitTracer bool
 	Preview        bool
 	AllowDirty     bool
+	// FactsFile supplies the same setup facts the coordinator would accept.
+	FactsFile string
 }
 
 func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOptions) (runErr error) {
@@ -49,6 +51,9 @@ func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOp
 		return err
 	}
 	scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+	if options.FactsFile != "" {
+		scope, ctx, err = t.factsSetupScope(ctx, options.FactsFile)
+	}
 	if err != nil {
 		return err
 	}
@@ -56,7 +61,7 @@ func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOp
 		return fmt.Errorf("CI discovery needs review before automatic setup: %v", scope.Unresolved)
 	}
 	for _, entry := range scope.Commands {
-		if len(entry.UnvalidatedSetup) > 0 {
+		if len(entry.UnvalidatedSetup) > 0 || missingPrerequisiteFacts(entry) {
 			return fmt.Errorf("%s requires setup review: %s", entry.Command, strings.Join(entry.UnvalidatedSetup, "; "))
 		}
 	}
@@ -87,7 +92,11 @@ func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOp
 		}
 	}
 	if options.Preview {
-		_, err = fmt.Fprintln(output, "Preview only; no source files changed and no tests executed. Review this diff, then pass --apply --yes to apply and validate it.")
+		next := "pass --apply --yes to apply and validate it."
+		if dirty, err := plan.DirtyFiles(); err == nil && len(dirty) > 0 {
+			next = "commit or stash " + strings.Join(dirty, ", ") + " and pass --apply --yes, or pass --apply --yes --allow-dirty to extend those uncommitted edits."
+		}
+		_, err = fmt.Fprintln(output, "Preview only; no source files changed and no tests executed. Review this diff, then "+next)
 		return err
 	}
 	changes, err := plan.Apply(options.AllowDirty)
@@ -118,6 +127,29 @@ func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOp
 		return err
 	}
 	return fresh.Run(ctx, output)
+}
+
+// factsSetupScope discovers the scope as the coordinator does and applies the
+// facts bound to the current input fingerprint, so a preview shows what
+// --apply --yes with the same facts would edit.
+func (t *Testdrive) factsSetupScope(ctx context.Context, factsFile string) (onboard.ValidationScope, context.Context, error) {
+	fingerprint, err := InputFingerprint(ctx, t.repositoryRoot)
+	if err != nil {
+		return onboard.ValidationScope{}, ctx, err
+	}
+	scope, err := onboard.DiscoverWorkflowScope(t.repositoryRoot, t.framework.Name())
+	if err != nil {
+		return onboard.ValidationScope{}, ctx, err
+	}
+	onboard.AssignConfigurationIDs(&scope)
+	data, err := readSetupFacts(t.repositoryRoot, factsFile)
+	if err != nil {
+		return onboard.ValidationScope{}, ctx, err
+	}
+	if _, err := applySetupFactsData(t.repositoryRoot, data, fingerprint, &scope); err != nil {
+		return onboard.ValidationScope{}, ctx, fmt.Errorf("setup facts %s: %w", factsFile, err)
+	}
+	return scope, onboard.WithWorkflowSetupScope(ctx, t.repositoryRoot, scope), nil
 }
 
 func (t *Testdrive) selectSetupTracer(ctx context.Context, scope onboard.ValidationScope, explicit bool) (platform.JSSelection, error) {

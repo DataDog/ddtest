@@ -19,6 +19,10 @@ type packageScript struct {
 }
 
 type TestCommand struct {
+	LocalOverrides                  []string          `json:"local_overrides,omitempty"`
+	ID                              string            `json:"id,omitempty"`
+	Services                        []ServiceCommand  `json:"services,omitempty"`
+	PortOverride                    *PortOverrideFact `json:"port_override,omitempty"`
 	webdriverIOScoped               bool
 	packageScripts                  []packageScript
 	cucumberProbeCommand            string
@@ -66,6 +70,10 @@ const (
 )
 
 type BuildCommand struct {
+	FactSource    string   `json:"fact_source,omitempty"`
+	ExpectedFiles []string `json:"expected_files,omitempty"`
+	Argv          []string `json:"argv,omitempty"`
+
 	Environment map[string]string `json:"environment,omitempty"`
 	Kind        PreparationKind   `json:"kind,omitempty"`
 	Directory   string            `json:"directory"`
@@ -93,6 +101,10 @@ func yarnImplicitInstall(words []string) bool {
 // DiscoverValidationScope reads CI and package aliases without running them.
 // Unknown fragments stay visible alongside known test invocations.
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
+	return discoverValidationScope(root, framework, false)
+}
+
+func discoverValidationScope(root, framework string, allowSetupFacts bool) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
 	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio" {
@@ -160,6 +172,12 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
 					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+					if allowSetupFacts && conditionErr == nil && envErr == nil {
+						directory, dirErr := repositoryDirectory(root, root, stepDirectory(workflow, job, resolved))
+						if dirErr == nil {
+							resolution = classifyFactPrerequisites(root, directory, resolved.Run, framework, resolution)
+						}
+					}
 					for _, setup := range resolution.Setup {
 						unresolved = append(unresolved, scopeDiagnostic{location, setup})
 					}
@@ -226,6 +244,23 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 					preparation = append(preparation, resolution.Builds...)
 					pendingSetup = append(pendingSetup, resolution.Setup...)
 				}
+				if allowSetupFacts {
+					for _, build := range preparation {
+						if build.Kind != PreparationNeedsFacts {
+							continue
+						}
+						attached := false
+						for _, entry := range commands {
+							for _, candidate := range entry.Prerequisites {
+								attached = attached || (candidate.Command == build.Command && candidate.Directory == build.Directory)
+							}
+						}
+						if !attached {
+							scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": local Node command has no following test configuration; review explicitly: "+build.Command)
+						}
+					}
+				}
+
 				allUnresolved = append(allUnresolved, unresolved...)
 				allReview = append(allReview, review...)
 				for _, entry := range commands {
