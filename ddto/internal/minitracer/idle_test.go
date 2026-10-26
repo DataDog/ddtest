@@ -94,15 +94,11 @@ func TestDeferredClientKeepsPayloadLimitsAndOrder(t *testing.T) {
 }
 
 func TestDeferredFailureRetainsUnsentChunks(t *testing.T) {
-	var attempts atomic.Int32
-	var delivered atomic.Int32
+	var mu sync.Mutex
+	delivered := map[string]int{}
 	var failing atomic.Bool
 	failing.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if attempts.Add(1) == 2 && failing.Load() {
-			w.WriteHeader(401)
-			return
-		}
 		var payload testCyclePayload
 		var events ciEvents
 		if err := msgp.Decode(r.Body, &payload); err != nil {
@@ -113,7 +109,21 @@ func TestDeferredFailureRetainsUnsentChunks(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		delivered.Add(int32(len(events)))
+		names := make([]string, 0, len(events))
+		for _, event := range events {
+			names = append(names, event.Content.Name)
+		}
+		// Every request with the second batch fails, so the failure also
+		// holds when the transport retries a request whose response it lost.
+		if failing.Load() && slices.Contains(names, "third") {
+			w.WriteHeader(401)
+			return
+		}
+		mu.Lock()
+		for _, name := range names {
+			delivered[name]++
+		}
+		mu.Unlock()
 		w.WriteHeader(202)
 	}))
 	defer server.Close()
@@ -121,23 +131,31 @@ func TestDeferredFailureRetainsUnsentChunks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
-		s, _ := client.StartSpan(context.Background(), "test")
+	order := []string{"first", "second", "third", "fourth", "fifth"}
+	for _, name := range order {
+		s, _ := client.StartSpan(context.Background(), name)
 		s.Finish()
 	}
 	if err := client.Flush(context.Background()); err == nil {
 		t.Fatal("lost delivery failure")
 	}
 	// The batches are sent together; only the failed one stays queued.
-	if delivered.Load() >= 5 || client.DroppedEvents() != 0 {
-		t.Fatal("failed batch was not retained", delivered.Load(), client.DroppedEvents())
+	mu.Lock()
+	retained := delivered["third"] == 0 && delivered["fourth"] == 0
+	mu.Unlock()
+	if !retained || client.DroppedEvents() != 0 {
+		t.Fatal("failed batch was not retained", delivered, client.DroppedEvents())
 	}
 	failing.Store(false)
 	if err := client.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if delivered.Load() != 5 {
-		t.Fatal("lost or duplicated retained chunks", delivered.Load())
+	mu.Lock()
+	defer mu.Unlock()
+	for _, name := range order {
+		if delivered[name] != 1 {
+			t.Fatal("lost or duplicated retained chunks", delivered)
+		}
 	}
 }
 
