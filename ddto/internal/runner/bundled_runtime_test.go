@@ -69,7 +69,7 @@ func TestBundledRuntimeExtractsOnceAndRepairs(t *testing.T) {
 	}
 	root := ensure("created")
 	source := filepath.Join(root, "testopt", "testopt.go")
-	if filepath.Dir(root) != filepath.Join(cache, "ddto", "runtimes") || !validMiniSource(root) {
+	if filepath.Dir(root) != filepath.Join(cache, cacheSubdir, "runtimes") || !validMiniSource(root) {
 		t.Fatalf("unexpected root %s", root)
 	}
 	if data, err := os.ReadFile(source); err != nil || string(data) != testRuntimeFiles["testopt/testopt.go"] {
@@ -119,7 +119,7 @@ func TestBundledRuntimeRejectsEntriesOutsideItsRoot(t *testing.T) {
 	if _, _, err := ensureBundledRuntime(t.Context(), testGoEnvironment(t), ".", testRuntimeArchive(t, files), nil); err == nil {
 		t.Fatal("extracted an entry outside its root")
 	}
-	if _, err := os.Stat(filepath.Join(cache, "ddto", "escape.go")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cache, cacheSubdir, "escape.go")); !os.IsNotExist(err) {
 		t.Fatalf("escaped entry written: %v", err)
 	}
 }

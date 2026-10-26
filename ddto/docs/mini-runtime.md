@@ -59,7 +59,7 @@ after building the CLI. Keep the CLI and runtime at the same revision because
 their private testing hooks must agree.
 
 A [release executable](maintenance.md#releases) carries the runtime's sources
-instead. It extracts them once per version into `ddto/runtimes` in its user
+instead. It extracts them once per version into `ddtest/instrument/runtimes` in its user
 cache and uses that directory as it would use a checkout. The rules of the
 [toolchain mirrors](#toolchains-in-the-module-cache) apply: a run holds the
 directory, one unused for 14 days is removed, and a copy that misses a file is
@@ -142,7 +142,7 @@ dependency versions are retained.
 
 A toolchain that `GOTOOLCHAIN` downloads lives in `GOMODCACHE`, where Go rejects
 every overlay entry, including the rewritten `testing` sources. `ddto test` then
-runs go from a mirror of that toolchain in the user cache, under `ddto/goroots`.
+runs go from a mirror of that toolchain in the user cache, under `ddtest/instrument/goroots`.
 The mirror has the same files, hard-linked where the filesystem allows and
 copied otherwise. Windows always gets copies, because deleting a read-only hard
 link there would clear the module cache file's attribute. Copies write the
@@ -171,7 +171,7 @@ and runs `go test` without CI Visibility.
 On GitHub Actions without a numeric `JOB_CHECK_RUN_ID`, each test process would
 read the runner's `Worker_*.log` files to find the job ID. `ddto` reads them
 once while it prepares the build and hands the result to Mini's test processes
-in `DDTO_GITHUB_JOB_ID`. The restore package removes that variable when it
+in `DDTEST_INSTRUMENT_GITHUB_JOB_ID`. The restore package removes that variable when it
 restores `GOWORK` and `GOFLAGS`, before `os` initializes, so client code that
 reads the environment through `os` never sees it. An empty value means the
 files name no job, and the process does not read them again. `ddto` hands
@@ -183,7 +183,7 @@ Each test process also used to read the checkout's Git metadata, upload the
 repository's missing commits and, with impacted tests, discover the base branch
 and compute the diff. Now `ddto` starts a worker, `ddto ci-git-worker`, in the
 invocation's directory while it prepares the build. The worker reads the Git
-metadata before `go test` starts and hands it, through `DDTO_GIT_STATE`, to the
+metadata before `go test` starts and hands it, through `DDTEST_INSTRUMENT_GIT_STATE`, to the
 test processes of the same checkout, which then run no Git command for it.
 
 When `go test` runs every test package, as with `-count=1`, the worker compares
@@ -289,7 +289,7 @@ attribute of the file that it shares. Linking updates the client file's
 change time, so Git may check its contents once. Alternate
 modfiles keep working in any spelling, including `GOFLAGS`.
 
-The workspace lives in the user cache, under `ddto/vendor-workspaces`, at a
+The workspace lives in the user cache, under `ddtest/instrument/vendor-workspaces`, at a
 path derived from its `go.work`, manifest, and the names, sizes and times of the
 vendored files, which each run reads without reading file contents. Go's build
 cache keys include each package directory, so this stable path lets unchanged

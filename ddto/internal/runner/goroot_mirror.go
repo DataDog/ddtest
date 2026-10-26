@@ -29,7 +29,7 @@ import (
 
 const (
 	gorootMirrorRetention = 14 * 24 * time.Hour
-	gorootMirrorMarker    = ".ddto-goroot-mirror.json"
+	gorootMirrorMarker    = ".goroot-mirror.json"
 )
 
 // gorootMirrorLink creates a mirror's file; tests replace it to force copies.
@@ -45,7 +45,7 @@ type gorootMirror struct {
 	// lock is held shared while the plan's go commands use the mirror, so a
 	// pruner cannot remove it.
 	lock *os.File
-	// saved are the DDTO_ORIGINAL_ entries for the GOROOT and PATH that test
+	// saved are the DDTEST_INSTRUMENT_ORIGINAL_ entries for the GOROOT and PATH that test
 	// processes would see natively.
 	saved []string
 	// toolchain runs the plan's go commands from the mirror.
@@ -157,6 +157,9 @@ func resolvedPath(path string) string {
 	}
 }
 
+// cacheSubdir is the directory of ddto's files in the user cache.
+var cacheSubdir = filepath.Join("ddtest", "instrument")
+
 // ddtoCacheDir returns the directory name in ddto's user cache. It must not
 // lie within GOMODCACHE, the toolchain or the module, which must stay
 // unchanged.
@@ -168,7 +171,7 @@ func ddtoCacheDir(env *goEnvironment, dir, name string) (string, error) {
 	if !filepath.IsAbs(cache) {
 		return "", fmt.Errorf("user cache directory %q is not absolute", cache)
 	}
-	parent := filepath.Join(cache, "ddto", name)
+	parent := filepath.Join(cache, cacheSubdir, name)
 	resolved := resolvedPath(parent)
 	protected := []string{env.GOMODCACHE, env.GOROOT, dir}
 	for _, file := range []string{env.GOMOD, env.GOWORK} {

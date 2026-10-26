@@ -327,7 +327,7 @@ func TestGOROOTMirrorPruning(t *testing.T) {
 		roots = append(roots, root)
 	}
 	defer usedLock.Close()
-	parent := filepath.Join(cache, "ddto", "goroots")
+	parent := filepath.Join(cache, cacheSubdir, "goroots")
 	stale := time.Now().Add(-gorootMirrorRetention - time.Hour)
 	for _, root := range roots[:2] {
 		if err := os.Chtimes(root, stale, stale); err != nil {
@@ -527,13 +527,13 @@ func TestGOROOTMirrorOverlappingPlans(t *testing.T) {
 	if err := os.Chtimes(b.root, stale, stale); err != nil {
 		t.Fatal(err)
 	}
-	pruneGOROOTMirrors(filepath.Join(cache, "ddto", "goroots"), "another-key")
+	pruneGOROOTMirrors(filepath.Join(cache, cacheSubdir, "goroots"), "another-key")
 	if !validGOROOTMirror(b.root, env) {
 		t.Fatal("a plan's mirror was pruned after another plan released it")
 	}
 	// Releasing the last plan lets pruning remove the mirror.
 	Plan{gorootMirror: b}.Release()
-	pruneGOROOTMirrors(filepath.Join(cache, "ddto", "goroots"), "another-key")
+	pruneGOROOTMirrors(filepath.Join(cache, cacheSubdir, "goroots"), "another-key")
 	if _, err := os.Stat(b.root); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("a released mirror was kept: %v", err)
 	}

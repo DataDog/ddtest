@@ -483,7 +483,7 @@ ddto test --keep-ci-state=ci-state.zip ./...    # prints: INFO: archived the CI 
 | `tests.json` | `ddto`'s description of the test processes: their architecture, whether `go test` runs every test package without its result cache, and each test package's directory and module |
 | `telemetry-failure-*` | Telemetry requests that a test process could not deliver |
 | `worker.log` | The worker's own log; add `DD_TRACE_DEBUG=true` for its debug lines |
-| `ddto.json` | `ddto`'s view: whether it handed the state over and why, the upload timeout, how the worker ended (`exited`, `stopped` or `killed`), the stop reason and how long `ddto` waited after `go test` |
+| `ci-state.json` | `ddto`'s view: whether it handed the state over and why, the upload timeout, how the worker ended (`exited`, `stopped` or `killed`), the stop reason and how long `ddto` waited after `go test` |
 
 A command that starts no worker, such as the SDK runtime, `-c` or a disabled
 CI Visibility, prints that it has no CI state. The state holds repository

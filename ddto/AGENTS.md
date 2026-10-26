@@ -236,7 +236,7 @@ default.
    [`internal/version`](internal/version/version.go).
 
 Never edit the project's sources, `go.mod` or `go.sum` to work around ddto,
-and never set `DD_CIVISIBILITY_INTERNAL_*` or `DDTO_*` variables: ddto manages
+and never set `DD_CIVISIBILITY_INTERNAL_*` or `DDTEST_INSTRUMENT_*` variables: ddto manages
 them.
 
 ## Report a ddto bug

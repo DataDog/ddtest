@@ -61,7 +61,7 @@ func TestToolWrapperLifecycle(t *testing.T) {
 		return out
 	}
 	created := run(cache, "created")
-	executable := filepath.Join(userCacheIn(cache), "ddto", "toolwraps")
+	executable := filepath.Join(userCacheIn(cache), "ddtest", "instrument", "toolwraps")
 	if entries, err := os.ReadDir(executable); err != nil || len(entries) == 0 {
 		t.Fatalf("no wrapper in %s: %v", executable, err)
 	}

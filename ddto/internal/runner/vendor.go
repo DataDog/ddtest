@@ -550,7 +550,7 @@ func stableVendorWorkspace(ctx context.Context, work string, vendor vendorManife
 		}
 	}
 	key := hex.EncodeToString(hash.Sum(nil))[:32]
-	parent := filepath.Join(cache, "ddto", "vendor-workspaces")
+	parent := filepath.Join(cache, cacheSubdir, "vendor-workspaces")
 	root := filepath.Join(parent, key)
 	manifest := vendor.contents(original, root)
 	if err := os.MkdirAll(parent, 0700); err != nil {

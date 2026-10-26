@@ -19,7 +19,7 @@ func TestGoShimArgs(t *testing.T) {
 	defer func(previous func() (string, error)) { userCacheDir = previous }(userCacheDir)
 	userCacheDir = func() (string, error) { return cache, nil }
 	sep := string(os.PathListSeparator)
-	shim := filepath.Join(cache, "ddto", "go-shim", "0123456789abcdef")
+	shim := filepath.Join(cache, cacheSubdir, "go-shim", "0123456789abcdef")
 	other := "/usr/local/go/bin"
 	if runtime.GOOS == "windows" {
 		// A quoted entry may hold the separator.
@@ -52,8 +52,8 @@ func TestGoShimArgs(t *testing.T) {
 	}
 	// A go shim in another user cache, as in an environment that a command
 	// filtered, is left too, and look-alike entries are kept.
-	elsewhere := filepath.Join(t.TempDir(), "ddto", "go-shim", "fedcba9876543210")
-	keep := []string{filepath.Join(t.TempDir(), "ddto", "go-shim", "not-a-shim"), filepath.Join(t.TempDir(), "go-shim", "0123456789abcdef"), "ddto/go-shim/0123456789abcdef"}
+	elsewhere := filepath.Join(t.TempDir(), cacheSubdir, "go-shim", "fedcba9876543210")
+	keep := []string{filepath.Join(t.TempDir(), cacheSubdir, "go-shim", "not-a-shim"), filepath.Join(t.TempDir(), "go-shim", "0123456789abcdef"), filepath.Join(t.TempDir(), "instrument", "go-shim", "0123456789abcdef"), filepath.Join(t.TempDir(), "xddtest", "instrument", "go-shim", "0123456789abcdef"), "ddtest/instrument/go-shim/0123456789abcdef"}
 	t.Setenv("PATH", strings.Join(append([]string{elsewhere}, keep...), sep))
 	if _, fromShim := GoShimArgs([]string{"go", "version"}); !fromShim || os.Getenv("PATH") != strings.Join(keep, sep) || goShimLeft != elsewhere {
 		t.Fatalf("PATH=%q left %q", os.Getenv("PATH"), goShimLeft)
@@ -75,7 +75,7 @@ func TestUseGoShim(t *testing.T) {
 		t.Fatal(command, tool, err)
 	}
 	dir := goShimFirst
-	if !strings.HasPrefix(dir, filepath.Join(cache, "ddto", "go-shim")) || os.Getenv("PATH") != dir+string(os.PathListSeparator)+"/usr/bin" {
+	if !strings.HasPrefix(dir, filepath.Join(cache, cacheSubdir, "go-shim")) || os.Getenv("PATH") != dir+string(os.PathListSeparator)+"/usr/bin" {
 		t.Fatalf("shim %q PATH=%q", dir, os.Getenv("PATH"))
 	}
 	name := "go"

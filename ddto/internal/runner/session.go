@@ -69,7 +69,7 @@ func startTestSession(cli CLIOptions, opts options, plan Plan, dir string, start
 	if err != nil {
 		return nil, err.Error()
 	}
-	sessionDir, err := os.MkdirTemp("", "ddto-session-")
+	sessionDir, err := os.MkdirTemp("", "ddtest-instrument-session-")
 	if err != nil {
 		return nil, err.Error()
 	}

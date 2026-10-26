@@ -126,7 +126,7 @@ func Main(args []string, name string) {
 			os.Exit(runner.RunWithGoShim(args, goShimReason))
 		}
 		// Any other command runs unchanged, before ddto sets anything but
-		// DDTO_NESTED_GO for go: ddto in front of a go command, or any other,
+		// DDTEST_INSTRUMENT_NESTED_GO for go: ddto in front of a go command, or any other,
 		// is transparent.
 		os.Exit(runner.ExecCommand(args))
 	}

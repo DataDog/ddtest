@@ -275,7 +275,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	vendorProvided := false
 	// The plan holds Go files. With a temporary directory inside the module, a
 	// leading _ keeps them out of the module's ./... patterns.
-	temp, e := os.MkdirTemp("", "_ddto-")
+	temp, e := os.MkdirTemp("", "_ddtest-instrument-")
 	if e != nil {
 		return plan, e
 	}

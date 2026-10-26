@@ -112,7 +112,7 @@ func TestReleaseExecutableIsSelfContained(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "go.sum")); !os.IsNotExist(err) {
 		t.Fatalf("client go.sum was created: %v", err)
 	}
-	if entries, err := os.ReadDir(filepath.Join(userCacheIn(cache), "ddto", "runtimes")); err != nil || len(entries) == 0 {
+	if entries, err := os.ReadDir(filepath.Join(userCacheIn(cache), "ddtest", "instrument", "runtimes")); err != nil || len(entries) == 0 {
 		t.Fatalf("no extracted runtime: %v", err)
 	}
 }

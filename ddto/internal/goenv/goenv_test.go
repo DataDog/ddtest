@@ -44,8 +44,8 @@ func TestRestoreAppliesAndRemovesSavedValues(t *testing.T) {
 // A mirrored toolchain's test processes get the GOROOT and PATH that go test
 // gives them natively, which ddto computes rather than reads.
 func TestRestoreAppliesComputedToolchainValues(t *testing.T) {
-	t.Setenv("GOROOT", "/cache/ddto/goroots/go1.27.1")
-	t.Setenv("PATH", "/cache/ddto/goroots/go1.27.1/bin:/usr/bin")
+	t.Setenv("GOROOT", "/cache/ddtest/instrument/goroots/go1.27.1")
+	t.Setenv("PATH", "/cache/ddtest/instrument/goroots/go1.27.1/bin:/usr/bin")
 	native := "/mod/golang.org/toolchain@v0.0.1-go1.27.1.linux-amd64"
 	for _, entry := range []string{SaveValue("GOROOT", native, true), SaveValue("PATH", native+"/bin:/usr/bin", true)} {
 		name, value, _ := strings.Cut(entry, "=")
@@ -55,7 +55,7 @@ func TestRestoreAppliesComputedToolchainValues(t *testing.T) {
 	if os.Getenv("GOROOT") != native || os.Getenv("PATH") != native+"/bin:/usr/bin" {
 		t.Fatalf("GOROOT=%q PATH=%q", os.Getenv("GOROOT"), os.Getenv("PATH"))
 	}
-	t.Setenv("GOROOT", "/cache/ddto/goroots/go1.27.1")
+	t.Setenv("GOROOT", "/cache/ddtest/instrument/goroots/go1.27.1")
 	name, value, _ := strings.Cut(SaveValue("GOROOT", "", false), "=")
 	t.Setenv(name, value)
 	Restore()

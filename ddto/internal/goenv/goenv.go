@@ -13,7 +13,7 @@ package goenv
 import "syscall"
 
 // SavedPrefix names the variables that carry a caller's original settings.
-const SavedPrefix = "DDTO_ORIGINAL_"
+const SavedPrefix = "DDTEST_INSTRUMENT_ORIGINAL_"
 
 // Settings are the variables that ddto may replace for go test.
 var Settings = [...]string{"GOWORK", "GOFLAGS", "GOROOT", "PATH"}
@@ -55,16 +55,16 @@ func Restore() {
 // GitHubJobIDHandoff carries the GitHub Actions job ID that ddto reads once
 // from the runner's diagnostics for every test process. An empty value means
 // that the diagnostics name none.
-const GitHubJobIDHandoff = "DDTO_GITHUB_JOB_ID"
+const GitHubJobIDHandoff = "DDTEST_INSTRUMENT_GITHUB_JOB_ID"
 
 // GitStateHandoff carries the directory where ddto writes the Git metadata,
 // repository upload and impacted-test state that it computes once for every
 // test process of the same checkout.
-const GitStateHandoff = "DDTO_GIT_STATE"
+const GitStateHandoff = "DDTEST_INSTRUMENT_GIT_STATE"
 
 // TestSessionHandoff carries the directory of the test session that ddto
 // owns for its go test command, in which its test processes report.
-const TestSessionHandoff = "DDTO_TEST_SESSION"
+const TestSessionHandoff = "DDTEST_INSTRUMENT_TEST_SESSION"
 
 // handoffs are the values that ddto hands to test processes.
 var handoffs = [...]string{GitHubJobIDHandoff, GitStateHandoff, TestSessionHandoff}

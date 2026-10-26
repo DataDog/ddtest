@@ -106,7 +106,7 @@ func TestVendorWorkspaceLinksAndReusesCachedDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(got, filepath.Join(cache, "ddto", "vendor-workspaces")+string(filepath.Separator)) {
+	if !strings.HasPrefix(got, filepath.Join(cache, cacheSubdir, "vendor-workspaces")+string(filepath.Separator)) {
 		t.Fatalf("workspace outside the user cache: %s", got)
 	}
 	vendor := filepath.Join(filepath.Dir(got), "vendor")

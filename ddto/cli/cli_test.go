@@ -12,7 +12,7 @@ import (
 // commands.
 func TestHandles(t *testing.T) {
 	bin := filepath.Join("bin", "ddtest")
-	shim := filepath.Join("cache", "ddto", "go-shim", "0123456789abcdef", "go")
+	shim := filepath.Join("cache", "ddtest", "instrument", "go-shim", "0123456789abcdef", "go")
 	for _, tc := range []struct {
 		args []string
 		want bool

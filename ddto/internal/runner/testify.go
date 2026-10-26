@@ -241,7 +241,7 @@ func prepareLibraryCompile(plan *LibraryEntry, args []string) ([]string, func(),
 		if !found {
 			continue
 		}
-		file, err := os.CreateTemp(filepath.Dir(args[i]), "ddto-suite-*.go")
+		file, err := os.CreateTemp(filepath.Dir(args[i]), "ddtest-instrument-suite-*.go")
 		if err != nil {
 			cleanup()
 			return nil, nil, err

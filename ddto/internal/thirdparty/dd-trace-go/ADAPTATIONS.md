@@ -1309,7 +1309,7 @@ expression. [`civisibility/utils/githubjob`](civisibility/utils/githubjob/github
 holds that scan, moved from `ci_providers.go` with exported names and a
 debug-function parameter, so that ddto can run it once per invocation without
 the CI metadata packages. ddto hands the result to Mini's test processes in
-`DDTO_GITHUB_JOB_ID`, and `goenv/restore` removes the variable before `os`
+`DDTEST_INSTRUMENT_GITHUB_JOB_ID`, and `goenv/restore` removes the variable before `os`
 initializes, as it restores the caller's Go settings. With a `-exec` program or a cross-compilation helper, which
 would see the variable first, ddto hands nothing; it also stops waiting for a
 scan that is still running a second after preparation. The scan now skips
@@ -1337,7 +1337,7 @@ the base branch and compute the diff. ddto now runs that work once per
 invocation in a worker, [`civisibility/cligit`](civisibility/cligit/cligit.go),
 started in the invocation's directory with the test processes' environment.
 It writes its results to a state directory that ddto hands to Mini's test
-processes in `DDTO_GIT_STATE`, which `goenv/restore` removes before `os`
+processes in `DDTEST_INSTRUMENT_GIT_STATE`, which `goenv/restore` removes before `os`
 initializes.
 
 - [`civisibility/utils/cli_git_state.go`](civisibility/utils/cli_git_state.go)
@@ -2111,7 +2111,7 @@ binary's exit code. With ddto, the session belongs to the command:
 `startTestSession` in `internal/runner/session.go` creates it, with a new ID,
 ddto's command (`utils.TestCommand` of ddto's arguments) and its working
 directory, writes them as `session.json` in a new directory and hands the
-directory to go test's test processes as `DDTO_TEST_SESSION`, which
+directory to go test's test processes as `DDTEST_INSTRUMENT_TEST_SESSION`, which
 `goenv.Receive` removes while a test process initializes. A test process of a
 runtime that supports it reports in that session:
 - `HandedCLISession` in

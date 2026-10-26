@@ -380,7 +380,7 @@ func runMirroredToolchain(t *testing.T, dir string, env []string, goCommand, cac
 			t.Fatalf("run %d: exit %d, want %s:\n%s%s", i, code, want, out, stderr)
 		}
 		got := parseToolchainView(t, out)
-		mirrors := filepath.Join(userCacheIn(cache), "ddto", "goroots")
+		mirrors := filepath.Join(userCacheIn(cache), "ddtest", "instrument", "goroots")
 		if !strings.HasPrefix(got.runtime, mirrors) {
 			t.Errorf("runtime.GOROOT %q is not a mirror in %s", got.runtime, mirrors)
 		}

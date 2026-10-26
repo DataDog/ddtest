@@ -20,7 +20,7 @@ import (
 )
 
 func TestHandoffHidden(t *testing.T) {
-	if value, ok := os.LookupEnv("DDTO_GITHUB_JOB_ID"); ok {
+	if value, ok := os.LookupEnv("DDTEST_INSTRUMENT_GITHUB_JOB_ID"); ok {
 		t.Fatalf("handoff visible to the client: %q", value)
 	}
 }
@@ -37,9 +37,9 @@ func TestHandoffHidden(t *testing.T) {
 	for _, c := range []struct {
 		handoff, jobID, url string
 	}{
-		{"DDTO_GITHUB_JOB_ID=4242", `"ci.job.id":"4242"`, `/actions/runs/123/job/4242"`},
+		{"DDTEST_INSTRUMENT_GITHUB_JOB_ID=4242", `"ci.job.id":"4242"`, `/actions/runs/123/job/4242"`},
 		// The CLI found no ID: the job name and checks URL remain.
-		{"DDTO_GITHUB_JOB_ID=", `"ci.job.id":"unit"`, `/commit/0123456789abcdef0123456789abcdef01234567/checks"`},
+		{"DDTEST_INSTRUMENT_GITHUB_JOB_ID=", `"ci.job.id":"unit"`, `/commit/0123456789abcdef0123456789abcdef01234567/checks"`},
 	} {
 		capture := runCIWireCase(t, dir, bin, []string{"-test.run=^TestHandoffHidden$"}, append(github, c.handoff), false, false)
 		payloads, err := json.Marshal(capture.payloads)
@@ -65,8 +65,8 @@ import (
 )
 
 func main() {
-	if value, ok := os.LookupEnv("DDTO_GITHUB_JOB_ID"); ok {
-		os.Stderr.WriteString("launcher sees DDTO_GITHUB_JOB_ID=" + value + "\n")
+	if value, ok := os.LookupEnv("DDTEST_INSTRUMENT_GITHUB_JOB_ID"); ok {
+		os.Stderr.WriteString("launcher sees DDTEST_INSTRUMENT_GITHUB_JOB_ID=" + value + "\n")
 		os.Exit(3)
 	}
 	cmd := exec.Command(os.Args[1], os.Args[2:]...)

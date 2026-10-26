@@ -80,7 +80,7 @@ func TestToolWrapperCreatesAndReuses(t *testing.T) {
 	}
 	lock.Close()
 	key := toolWrapperKey()
-	want := filepath.Join(cache, "ddto", "toolwraps", key[:16]+"-"+env.GOHOSTOS+"_"+env.GOHOSTARCH, toolWrapperName(env.GOHOSTOS))
+	want := filepath.Join(cache, cacheSubdir, "toolwraps", key[:16]+"-"+env.GOHOSTOS+"_"+env.GOHOSTARCH, toolWrapperName(env.GOHOSTOS))
 	if path != want || !strings.Contains(log.String(), "tool wrapper state=created") {
 		t.Fatalf("path %s, want %s:\n%s", path, want, log.String())
 	}
@@ -159,7 +159,7 @@ func TestToolWrapperBuildFailure(t *testing.T) {
 	if _, _, err := ensureToolWrapper(ctx, testGoEnvironment(t), ".", nil); err == nil || !strings.Contains(err.Error(), "building the tool wrapper") {
 		t.Fatal("a build without go:", err)
 	}
-	entries, err := os.ReadDir(filepath.Join(cache, "ddto", "toolwraps"))
+	entries, err := os.ReadDir(filepath.Join(cache, cacheSubdir, "toolwraps"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestToolWrapperUnrunnableBuild(t *testing.T) {
 	if _, _, err := ensureToolWrapper(t.Context(), testGoEnvironment(t), ".", nil); err == nil || !strings.Contains(err.Error(), "does not run") {
 		t.Fatal("an executable for another platform:", err)
 	}
-	entries, err := os.ReadDir(filepath.Join(cache, "ddto", "toolwraps"))
+	entries, err := os.ReadDir(filepath.Join(cache, cacheSubdir, "toolwraps"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestToolWrapperConcurrentCreators(t *testing.T) {
 // abandoned staging directories, but not one that a run holds.
 func TestToolWrapperPruning(t *testing.T) {
 	cache := useTestUserCache(t)
-	parent := filepath.Join(cache, "ddto", "toolwraps")
+	parent := filepath.Join(cache, cacheSubdir, "toolwraps")
 	stale := time.Now().Add(-gorootMirrorRetention - time.Hour)
 	for _, name := range []string{"old", "held", "old.tmp-1"} {
 		if err := os.MkdirAll(filepath.Join(parent, name), 0700); err != nil {
@@ -503,8 +503,8 @@ func TestSelectToolCommand(t *testing.T) {
 		wrapper string
 		want    []string
 	}{
-		{"/cache/ddto-toolwrap", []string{"/cache/ddto-toolwrap", "/ddto", "testify", "/plan.json"}},
-		{`/cache/it's "x"/ddto-toolwrap`, []string{"/ddto", "tool-overlay", "testify", "/plan.json"}},
+		{"/cache/ddtest-toolexec", []string{"/cache/ddtest-toolexec", "/ddto", "testify", "/plan.json"}},
+		{`/cache/it's "x"/ddtest-toolexec`, []string{"/ddto", "tool-overlay", "testify", "/plan.json"}},
 		{"", []string{"/ddto", "tool-overlay", "testify", "/plan.json"}},
 	} {
 		path := filepath.Join(t.TempDir(), "wrapper.lock")

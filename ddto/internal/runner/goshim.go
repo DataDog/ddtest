@@ -626,7 +626,7 @@ func goShimRoot() (string, error) {
 	if !filepath.IsAbs(cache) {
 		return "", fmt.Errorf("user cache directory %q is not absolute", cache)
 	}
-	return filepath.Join(cache, "ddto", "go-shim"), nil
+	return filepath.Join(cache, cacheSubdir, "go-shim"), nil
 }
 
 // goShimDir returns the directory of a go that is this ddto: a symbolic link
@@ -707,9 +707,9 @@ func withoutGoShims(list string) (kept, left string) {
 }
 
 // isGoShimEntry reports whether a PATH entry is a directory that goShimDir
-// makes, ddto/go-shim/ and 16 hexadecimal digits, in any user cache: an
-// environment that a command filtered may name another. It reads no file, so
-// a slow PATH entry does not delay ddto.
+// makes, ddtest/instrument/go-shim/ and 16 hexadecimal digits, in any user
+// cache: an environment that a command filtered may name another. It reads no
+// file, so a slow PATH entry does not delay ddto.
 func isGoShimEntry(entry string) bool {
 	if entry == "" || !filepath.IsAbs(entry) {
 		return false
@@ -719,7 +719,7 @@ func isGoShimEntry(entry string) bool {
 	if len(name) != 16 || strings.Trim(name, "0123456789abcdef") != "" {
 		return false
 	}
-	return filepath.Base(parent) == "go-shim" && filepath.Base(filepath.Dir(parent)) == "ddto"
+	return filepath.Base(parent) == "go-shim" && strings.HasSuffix(filepath.Dir(parent), string(filepath.Separator)+cacheSubdir)
 }
 
 // pathListEntries splits a PATH list where filepath.SplitList does, but keeps

@@ -127,7 +127,7 @@ A design audit showed that a mirror cannot hide its path from
 `runtime.GOROOT()` or from linked standard-library paths. The alternative,
 transforming `testing` in the compiler wrapper, measured +3.4% on Gin and
 +5.1% on Chi cold builds where the wrapper is otherwise off, so the mirror
-stayed. The mirrors live under `ddto/goroots` in the user cache.
+stayed. The mirrors live under `ddtest/instrument/goroots` in the user cache.
 
 Windows copies files, because deleting a read-only hard link there clears the
 module cache file's attribute. Copies write the bytes, because a btrfs reflink

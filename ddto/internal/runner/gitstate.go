@@ -42,7 +42,7 @@ var gitWorkerStopWait = 10 * time.Second
 // Files that --keep-ci-state adds to the state.
 const (
 	ciStateWorkerLog = "worker.log"
-	ciStateSummary   = "ddto.json"
+	ciStateSummary   = "ci-state.json"
 )
 
 // gitWorker runs, once per invocation, the Git work that every Mini test
@@ -70,7 +70,7 @@ type gitWorker struct {
 	summary       ciStateSummaryFile
 }
 
-// ciStateSummaryFile records ddto's view of the worker, in ddto.json.
+// ciStateSummaryFile records ddto's view of the worker, in ci-state.json.
 type ciStateSummaryFile struct {
 	GoVersion       string `json:"go_version,omitempty"`
 	RecordReady     bool   `json:"record_ready"`
@@ -102,7 +102,7 @@ func startGitWorker(cli CLIOptions, opts options, dir string, debug *cliDebug, s
 	if err != nil {
 		return nil
 	}
-	state, err := os.MkdirTemp("", "ddto-git-")
+	state, err := os.MkdirTemp("", "ddtest-instrument-git-")
 	if err != nil {
 		return nil
 	}

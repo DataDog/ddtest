@@ -14,7 +14,7 @@ import (
 // nestedGoVariable counts the ddto commands that run go around a process. A
 // go on PATH that starts ddto, such as a script that runs ddto go, would make
 // every ddto command start another, without end.
-const nestedGoVariable = "DDTO_NESTED_GO"
+const nestedGoVariable = "DDTEST_INSTRUMENT_NESTED_GO"
 
 // maxNestedGo is more ddto commands inside each other's tests than a project
 // runs.

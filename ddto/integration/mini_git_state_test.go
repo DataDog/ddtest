@@ -143,7 +143,7 @@ func TestMiniGitStateHandoff(t *testing.T) {
 
 	state := runGitWorker(t, dir, driver, "", fromGit...)
 	handedTrace := filepath.Join(t.TempDir(), "git-trace.log")
-	got := gitTags(t, runCIWireCase(t, dir, bin, args, env("GIT_TRACE="+handedTrace, "DDTO_GIT_STATE="+state), false, false))
+	got := gitTags(t, runCIWireCase(t, dir, bin, args, env("GIT_TRACE="+handedTrace, "DDTEST_INSTRUMENT_GIT_STATE="+state), false, false))
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("handed Git tags differ:\n got %v\nwant %v", got, want)
 	}
@@ -163,7 +163,7 @@ func TestMiniGitStateHandoff(t *testing.T) {
 	}
 	otherState := runGitWorker(t, other, driver, "", fromGit...)
 	otherTrace := filepath.Join(t.TempDir(), "git-trace.log")
-	if got := gitTags(t, runCIWireCase(t, dir, bin, args, env("GIT_TRACE="+otherTrace, "DDTO_GIT_STATE="+otherState), false, false)); !reflect.DeepEqual(got, want) {
+	if got := gitTags(t, runCIWireCase(t, dir, bin, args, env("GIT_TRACE="+otherTrace, "DDTEST_INSTRUMENT_GIT_STATE="+otherState), false, false)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("another checkout's state changed the tags:\n got %v\nwant %v", got, want)
 	}
 	if commands := gitCommands(t, otherTrace); !strings.Contains(commands, "rev-parse --show-toplevel") {
@@ -330,7 +330,7 @@ func TestMiniGitStateImpactedTests(t *testing.T) {
 		t.Fatalf("worker wrote no impacted-tests state: %v", err)
 	}
 	handedTrace := filepath.Join(t.TempDir(), "git-trace.log")
-	if modified := runImpactedCase(t, dir, bin, append(fromGit, "GIT_TRACE="+handedTrace, "DDTO_GIT_STATE="+state)); modified != "true" {
+	if modified := runImpactedCase(t, dir, bin, append(fromGit, "GIT_TRACE="+handedTrace, "DDTEST_INSTRUMENT_GIT_STATE="+state)); modified != "true" {
 		t.Fatalf("handed TestPass modified=%q", modified)
 	}
 	commands := gitCommands(t, handedTrace)
@@ -352,7 +352,7 @@ func TestMiniGitStateDeferredWaitsForUpload(t *testing.T) {
 	defer server.Close()
 	env := testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL,
 		"DD_API_KEY=fixture", "DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=true", "DD_CIVISIBILITY_DEFERRED_DELIVERY=true", "DD_TRACE_DEBUG=true",
-		"DDTO_GIT_STATE="+state, "TMPDIR="+t.TempDir())
+		"DDTEST_INSTRUMENT_GIT_STATE="+state, "TMPDIR="+t.TempDir())
 	// The worker ends its upload after the test process has started.
 	go func() {
 		time.Sleep(500 * time.Millisecond)
@@ -394,7 +394,7 @@ func TestMiniGitStateDeferredWaitsForUpload(t *testing.T) {
 	}
 	out.Reset()
 	cmd = exec.Command(bin, "-test.v", "-test.run=^TestPass$")
-	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, append(env, "DDTO_GIT_STATE="+unfinished), &out, &out
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, append(env, "DDTEST_INSTRUMENT_GIT_STATE="+unfinished), &out, &out
 	started := time.Now()
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("fixture: %v\n%s", err, out.String())
@@ -550,8 +550,8 @@ func TestMiniGitStateStopsUploadCleanly(t *testing.T) {
 		StopReason string `json:"stop_reason"`
 		Waited     string `json:"waited_after_go_test"`
 	}
-	if err := json.Unmarshal(files["ddto.json"], &summary); err != nil || summary.Worker != "stopped" || summary.StopReason != "timeout" {
-		t.Fatalf("ddto.json %s, %v", files["ddto.json"], err)
+	if err := json.Unmarshal(files["ci-state.json"], &summary); err != nil || summary.Worker != "stopped" || summary.StopReason != "timeout" {
+		t.Fatalf("ci-state.json %s, %v", files["ci-state.json"], err)
 	}
 	if waited, err := time.ParseDuration(summary.Waited); err != nil || waited > 30*time.Second {
 		t.Fatalf("ddto waited %s for a stopped upload: %v", summary.Waited, err)

@@ -26,7 +26,7 @@ func TestToolWrapperWaitStopsOnSignal(t *testing.T) {
 	if out, stderr, code := command(t, dir, env, driver, args...); code != 0 {
 		t.Fatal(out, stderr)
 	}
-	parent := filepath.Join(userCacheIn(cache), "ddto", "toolwraps")
+	parent := filepath.Join(userCacheIn(cache), "ddtest", "instrument", "toolwraps")
 	entries, err := os.ReadDir(parent)
 	if err != nil {
 		t.Fatal(err)

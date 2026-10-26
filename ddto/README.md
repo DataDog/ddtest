@@ -86,7 +86,7 @@ commands; only `go test` reports to CI Visibility. gotestsum, and any command
 after `--go-shim`, report the `go test` that they run; see
 [gotestsum](#gotestsum) and [Other test wrappers](#other-test-wrappers). The
 one addition is for
-go: its environment gets `DDTO_NESTED_GO`, which counts the ddto commands that
+go: its environment gets `DDTEST_INSTRUMENT_NESTED_GO`, which counts the ddto commands that
 run go around it. A `go` on `PATH` that starts ddto again, such as a script
 that runs `ddto go`, would otherwise make ddto start itself without end; ddto
 stops at the ninth with an error that names that `go`. With

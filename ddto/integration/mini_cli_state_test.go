@@ -158,7 +158,7 @@ func TestMiniCLIStateRequestsAhead(t *testing.T) {
 	proceed := startWorker(t, dir, driver, env, state, dir)
 	// No test process has started: the worker requests on its own.
 	intake.wait(t, map[string]int{"known": 1, "skippable": 1, "management": 1})
-	if out, stderr, code := command(t, dir, append(env, "DDTO_GIT_STATE="+state), bin, "-test.run=^TestPass$"); code != 0 {
+	if out, stderr, code := command(t, dir, append(env, "DDTEST_INSTRUMENT_GIT_STATE="+state), bin, "-test.run=^TestPass$"); code != 0 {
 		t.Fatalf("fixture: %d %s %s", code, out, stderr)
 	}
 	proceed()

@@ -17,11 +17,11 @@ const (
 	// UserToolexecEnv carries the user's -toolexec after ddto's input
 	// transformation. Orchestrion skips packages that ddto owns; unrelated
 	// wrappers run every tool.
-	UserToolexecEnv = "DDTO_USER_TOOLEXEC"
+	UserToolexecEnv = "DDTEST_INSTRUMENT_USER_TOOLEXEC"
 	// OrchestrionBypassEnv names the runtime whose packages Orchestrion skips.
-	OrchestrionBypassEnv = "DDTO_ORCHESTRION_BYPASS"
+	OrchestrionBypassEnv = "DDTEST_INSTRUMENT_ORCHESTRION_BYPASS"
 	// GitStateHandoff is goenv.GitStateHandoff: ddto's Git worker state.
-	GitStateHandoff = "DDTO_GIT_STATE"
+	GitStateHandoff = "DDTEST_INSTRUMENT_GIT_STATE"
 	// LinkingFile is the SDK's CLIGitLinkingFile in that state.
 	LinkingFile = "linking"
 	// MiniModule is the module of ddto and its Mini runtime.
@@ -39,7 +39,7 @@ const (
 	SDKTracerPackage        = "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
 	// KeyFlag makes the wrapper executable print its key, which ddto checks
 	// before it uses the executable.
-	KeyFlag = "-ddto-toolwrap-key"
+	KeyFlag = "-ddtest-toolexec-key"
 )
 
 // Main runs the wrapper executable, given its arguments after its name: ddto's
