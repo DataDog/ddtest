@@ -160,13 +160,20 @@ func resolveFactBackedRuntime(ctx context.Context, root string, workflow ciWorkf
 		if build.Kind != PreparationNeedsFacts {
 			continue
 		}
-		found := false
+		found, activeConsumer, excludedConsumer := false, false, false
 		for _, entry := range binding.scope.Commands {
 			for _, accepted := range entry.Prerequisites {
-				found = found || (accepted.Kind == PreparationNeedsFacts && accepted.Command == build.Command && accepted.Directory == build.Directory && accepted.FactSource != "" && len(accepted.ExpectedFiles) > 0)
+				if accepted.Kind != PreparationNeedsFacts || accepted.Command != build.Command || accepted.Directory != build.Directory {
+					continue
+				}
+				activeConsumer = activeConsumer || !entry.CIInstrumentationExcluded
+				excludedConsumer = excludedConsumer || entry.CIInstrumentationExcluded
+				found = found || (accepted.FactSource != "" && len(accepted.ExpectedFiles) > 0)
 			}
 		}
-		if !found {
+		// Excluded consumers never execute locally. Shared prerequisites still
+		// need accepted facts when any active configuration consumes them.
+		if !found && (activeConsumer || !excludedConsumer) {
 			return resolution
 		}
 	}

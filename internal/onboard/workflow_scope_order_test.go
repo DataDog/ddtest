@@ -1,9 +1,11 @@
 package onboard
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -90,4 +92,76 @@ func TestPostTestLookaheadResolvesLaterStepsForTheRow(t *testing.T) {
 	require.Len(t, scope.Commands, 1)
 	require.Empty(t, scope.Commands[0].Prerequisites)
 	require.Contains(t, fmt.Sprint(scope.Review), "Post-test preparation requires separate review")
+}
+
+func TestFactBackedRuntimeRequiresFactsOnlyForActiveConsumers(t *testing.T) {
+	for _, framework := range []string{"jest", "vitest"} {
+		for _, scenario := range []string{"excluded separate setup", "excluded inline setup", "shared setup without facts", "shared setup with facts", "unknown excluded setup"} {
+			t.Run(framework+"/"+scenario, func(t *testing.T) {
+				setup := "      - if: matrix.enabled == false\n        run: node setup.js\n"
+				tests := "      - run: npm test\n"
+				switch scenario {
+				case "excluded inline setup":
+					setup = "      - if: matrix.enabled == false\n        run: node setup.js && npm test\n        env: {NODE_OPTIONS: '', DD_CIVISIBILITY_ENABLED: 'false'}\n"
+					tests = "      - if: matrix.enabled\n        run: npm test\n"
+				case "shared setup without facts", "shared setup with facts":
+					setup = "      - run: node setup.js\n"
+				case "unknown excluded setup":
+					setup = "      - if: matrix.enabled == false\n        run: unknown-setup-tool\n"
+				}
+				options := "${{ matrix.enabled && format('-r {0}', env.DD_TRACE_PACKAGE) || '' }}"
+				if framework == "vitest" {
+					options = "${{ matrix.enabled && format('-r {0} --import {1}', env.DD_TRACE_PACKAGE, env.DD_TRACE_ESM_IMPORT) || '' }}"
+				}
+				root := newJestRepository(t, `jobs:
+  test:
+    strategy:
+      matrix:
+        include:
+          - {node: '8', enabled: false}
+          - {node: '24', enabled: true}
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '${{ matrix.node }}'}
+      - uses: datadog/test-visibility-github-action@v3
+        if: matrix.enabled
+        with: {languages: js, js-tracer-version: '5.132.0'}
+`+setup+tests+`        env:
+          NODE_OPTIONS: `+options+`
+          DD_CIVISIBILITY_ENABLED: ${{ matrix.enabled && 'true' || 'false' }}
+`)
+				command := "jest"
+				if framework == "vitest" {
+					command = "vitest run"
+				}
+				writeScripts(t, root, map[string]string{"test": command})
+				require.NoError(t, os.WriteFile(filepath.Join(root, "setup.js"), []byte(`require('fs').writeFileSync('must-not-execute', 'executed')`), 0600))
+				scope, err := DiscoverWorkflowScope(root, framework)
+				require.NoError(t, err)
+				if scenario == "shared setup with facts" {
+					for i := range scope.Commands {
+						for j := range scope.Commands[i].Prerequisites {
+							scope.Commands[i].Prerequisites[j].FactSource = "accepted setup facts"
+							scope.Commands[i].Prerequisites[j].ExpectedFiles = []string{"generated.js"}
+						}
+					}
+				}
+				ctx := WithWorkflowSetupScope(t.Context(), root, scope)
+				result := checkCIRuntimes(ctx, root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+					return tracerRequirement{Version: "5.132.0", Node: ">=18"}, nil
+				}, framework)
+				blocked := scenario == "shared setup without facts" || scenario == "unknown excluded setup"
+				if blocked {
+					require.NotEqual(t, StatusCompatible, result.Status)
+					require.True(t, slices.ContainsFunc(result.Jobs, func(f RuntimeFinding) bool { return f.Code == CodeUnresolvedCommand }), result.Jobs)
+				} else {
+					require.Equal(t, StatusCompatible, result.Status, result.Jobs)
+					require.Len(t, result.Jobs, 2)
+					require.True(t, slices.ContainsFunc(result.Jobs, func(f RuntimeFinding) bool { return f.Status == StatusExcluded }), result.Jobs)
+					require.True(t, slices.ContainsFunc(result.Jobs, func(f RuntimeFinding) bool { return f.Status == StatusCompatible }), result.Jobs)
+				}
+				require.NoFileExists(t, filepath.Join(root, "must-not-execute"), "runtime analysis must never execute setup")
+			})
+		}
+	}
 }

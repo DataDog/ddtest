@@ -46,7 +46,7 @@ the CI setup, then validate with the customer's actual headless command.
    until it exits. Do not edit any file or run parallel cleanup, lint fixes or
    documentation updates while it runs. Such edits invalidate the snapshot and
    require a new full run; ddtest stops remaining browser launches when detected.
-   Run ddtest testdrive --all --tracer-version <exact-release>
+   Run ddtest testdrive --agent --all --tracer-version <exact-release>
    --yes after all edits. A final run overriding one alias is insufficient for
    onboarding when other CLI or API configurations were discovered.
    Record/parallel workflows do not require a Cloud key locally: testdrive disables

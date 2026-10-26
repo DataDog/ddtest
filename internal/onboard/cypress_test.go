@@ -193,6 +193,7 @@ func TestCypressDirectServerOrchestrationReplaysItsStartup(t *testing.T) {
 
 func TestCypressInstructionsUseAutomaticPreload(t *testing.T) {
 	text := instructions("javascript", "cypress")
+	require.Contains(t, text, "ddtest testdrive --framework cypress --agent --all --tracer-version <exact-release>", "the final validation must enter Workflow to enforce source preservation")
 	require.Contains(t, text, "NODE_OPTIONS='-r dd-trace/ci/init'")
 	require.Contains(t, text, "NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}")
 	require.Contains(t, text, "window.__coverage__", "TIA still needs application coverage")
