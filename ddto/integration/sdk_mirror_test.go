@@ -19,7 +19,7 @@ import (
 	"context"
 	"errors"
 	"github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
-	"github.com/DataDog/ddto/propagation"
+	"github.com/DataDog/ddtest/ddto/propagation"
 	"os"
 	"testing"
 	"time"

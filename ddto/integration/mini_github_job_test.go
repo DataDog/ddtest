@@ -33,7 +33,7 @@ func TestHandoffHidden(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("compile: %d %s %s", code, out, stderr)
 	}
-	github := []string{"GITHUB_SHA=0123456789abcdef0123456789abcdef01234567", "GITHUB_SERVER_URL=https://github.com", "GITHUB_REPOSITORY=DataDog/ddto", "GITHUB_RUN_ID=123", "GITHUB_RUN_ATTEMPT=1", "GITHUB_JOB=unit", "JOB_CHECK_RUN_ID="}
+	github := []string{"GITHUB_SHA=0123456789abcdef0123456789abcdef01234567", "GITHUB_SERVER_URL=https://github.com", "GITHUB_REPOSITORY=DataDog/ddtest", "GITHUB_RUN_ID=123", "GITHUB_RUN_ATTEMPT=1", "GITHUB_JOB=unit", "JOB_CHECK_RUN_ID="}
 	for _, c := range []struct {
 		handoff, jobID, url string
 	}{

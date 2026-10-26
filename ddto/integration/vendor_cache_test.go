@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 // A compile-only guard cannot validate a package recovered from Go's cache.
@@ -19,12 +19,12 @@ func TestTestifyVersionGuardWithWarmVendoredSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	mod := fmt.Sprintf("module example.com/vendor-cache-guard\n\ngo 1.26.0\nrequire (\ngithub.com/DataDog/ddto v0.0.0\ngithub.com/stretchr/testify v1.11.1\n)\nreplace github.com/DataDog/ddto => %s\nreplace github.com/stretchr/testify => github.com/stretchr/testify v1.11.1\n", filepath.ToSlash(root))
+	mod := fmt.Sprintf("module example.com/vendor-cache-guard\n\ngo 1.26.0\nrequire (\ngithub.com/DataDog/ddtest/ddto v0.0.0\ngithub.com/stretchr/testify v1.11.1\n)\nreplace github.com/DataDog/ddtest/ddto => %s\nreplace github.com/stretchr/testify => github.com/stretchr/testify v1.11.1\n", filepath.ToSlash(root))
 	source := `package guard
 import (
  "testing"
  "github.com/stretchr/testify/suite"
- _ "github.com/DataDog/ddto/testopt"
+ _ "github.com/DataDog/ddtest/ddto/testopt"
 )
 type ExampleSuite struct {suite.Suite}
 func(s *ExampleSuite) TestPass() {s.True(true)}

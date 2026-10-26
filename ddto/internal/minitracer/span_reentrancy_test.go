@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/ddtrace/ext"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/ddtrace/ext"
 )
 
 func TestReservedTagsUpdateEventFields(t *testing.T) {

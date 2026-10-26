@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/toolwrap"
-	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
+	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 const (

@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	assert "github.com/DataDog/ddto/internal/testassert"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/bazel"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
-	civisibilitynet "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry"
+	assert "github.com/DataDog/ddtest/ddto/internal/testassert"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/bazel"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	civisibilitynet "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry"
 )
 
 func TestEnsureSettingsInitializationManifestModeSkipsRepositoryUpload(t *testing.T) {

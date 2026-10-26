@@ -10,8 +10,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/testassert/require"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/locking"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/locking"
 )
 
 type retryParityTrace struct {

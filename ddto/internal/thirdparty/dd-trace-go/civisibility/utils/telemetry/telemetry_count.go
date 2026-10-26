@@ -8,9 +8,9 @@ package telemetry
 import (
 	"sync"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry"
 )
 
 func getTestingFramework(testingFramework string) TestingFramework {

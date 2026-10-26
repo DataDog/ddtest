@@ -14,13 +14,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/hostname/azure"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/hostname/ec2"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/hostname/ecs"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/hostname/gce"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/hostname/validate"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/hostname/azure"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/hostname/ec2"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/hostname/ecs"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/hostname/gce"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/hostname/validate"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // For testing purposes

@@ -45,10 +45,10 @@ import (
 	_ "unsafe"
 )
 
-//go:linkname __dd_civisibility_signalNotify github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.signalNotify
+//go:linkname __dd_civisibility_signalNotify github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.signalNotify
 var __dd_civisibility_signalNotify func(chan<- os.Signal, chan<- int, ...os.Signal) []os.Signal
 
-//go:linkname __dd_civisibility_signalStop github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.signalStop
+//go:linkname __dd_civisibility_signalStop github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.signalStop
 var __dd_civisibility_signalStop func(chan<- os.Signal)
 
 // Mini's channel, the signals it holds and those that the process ignores

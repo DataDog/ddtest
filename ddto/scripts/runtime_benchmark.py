@@ -161,7 +161,7 @@ class Runner:
                     raise RuntimeError('original runtime binary build failed: '+case['id'])
                 for binary in destination.glob('*.test'):
                     symbols = subprocess.check_output([str(self.go),'tool','nm',str(binary)], text=True)
-                    hook = 'github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.instrumentTestingMWithControl'
+                    hook = 'github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.instrumentTestingMWithControl'
                     if hook not in symbols or b'ddci-real-test-body-edit-999' in binary.read_bytes():
                         raise ValueError('runtime executable is uninstrumented or contains an edit marker')
                     records.append(dict(case=case['id'],cpus=count,variant='mini',path=str(binary),
@@ -201,7 +201,7 @@ class Runner:
             DD_CIVISIBILITY_AGENTLESS_ENABLED='true', DD_CIVISIBILITY_AGENTLESS_URL=receiver.url,
             DD_TRACE_AGENT_URL=receiver.url, DD_API_KEY='local-benchmark-placeholder',
             DD_SERVICE='dd-ci-local-benchmark', DD_ENV='benchmark', DD_TEST_SESSION_NAME='benchmark',
-            DD_GIT_REPOSITORY_URL='https://github.com/DataDog/ddto.git',
+            DD_GIT_REPOSITORY_URL='https://github.com/DataDog/ddtest.git',
             DD_GIT_COMMIT_SHA='1111111111111111111111111111111111111111',
             DD_CIVISIBILITY_FLAKY_RETRY_ENABLED='false',
             DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED='false',

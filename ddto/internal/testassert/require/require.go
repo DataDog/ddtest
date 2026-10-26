@@ -1,7 +1,7 @@
 // Package require provides fatal versions of the SDK test assertions.
 package require
 
-import assert "github.com/DataDog/ddto/internal/testassert"
+import assert "github.com/DataDog/ddtest/ddto/internal/testassert"
 
 type TestingT interface {
 	Errorf(string, ...any)

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
 )
 
 // A process that ended but that its parent has not reaped is not running,

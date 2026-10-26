@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/locking"
-	"github.com/DataDog/ddto/internal/thirdparty/xsys/windows"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/locking"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/xsys/windows"
 )
 
 // ProcessRetryContainmentSupported reports whether this platform can contain

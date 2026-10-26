@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/instrument"
+	"github.com/DataDog/ddtest/ddto/internal/instrument"
 )
 
 func TestFuzzHookTargetsSelectedRuntime(t *testing.T) {
 	for _, runtime := range []Runtime{Mini, SDK} {
 		hooks := hooksForRuntime(runtime, false, false)
 		prefix := "github.com/DataDog/dd-trace-go/v2/internal/civisibility/"
-		other := "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/"
+		other := "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/"
 		if runtime == Mini {
 			prefix, other = other, prefix
 		}

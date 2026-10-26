@@ -11,7 +11,7 @@ import (
 	"encoding/hex"
 	"os"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/env"
 )
 
 const rootSessionIDEnvVar = "_DD_ROOT_GO_SESSION_ID"

@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/DataDog/ddto/internal/instrument"
+	"github.com/DataDog/ddtest/ddto/internal/instrument"
 )
 
 const (

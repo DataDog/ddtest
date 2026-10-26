@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // A crash ends the process without running exit hooks or deferred calls, so

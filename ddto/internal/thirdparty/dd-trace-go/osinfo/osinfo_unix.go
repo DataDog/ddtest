@@ -14,8 +14,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
-	"github.com/DataDog/ddto/internal/thirdparty/xsys/unix"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/xsys/unix"
 )
 
 // detect fills the OS metadata. Upstream runs it as the package's init.

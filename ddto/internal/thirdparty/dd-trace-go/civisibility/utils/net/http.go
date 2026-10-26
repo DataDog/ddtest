@@ -22,9 +22,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/DataDog/ddto/internal/cidelivery"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
-	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddtest/ddto/internal/cidelivery"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
 )
 
 // Constants for common strings

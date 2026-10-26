@@ -9,13 +9,13 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/cidelivery"
-	tracer "github.com/DataDog/ddto/internal/minitracer"
-	assert "github.com/DataDog/ddto/internal/testassert"
-	"github.com/DataDog/ddto/internal/testassert/require"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	internalenv "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddtest/ddto/internal/cidelivery"
+	tracer "github.com/DataDog/ddtest/ddto/internal/minitracer"
+	assert "github.com/DataDog/ddtest/ddto/internal/testassert"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	internalenv "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/env"
 )
 
 func TestInternalCiVisibilityInitializationParentModeRewritesEnvAfterTracerInitialization(t *testing.T) {

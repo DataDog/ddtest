@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DataDog/ddto/internal/toolwrap"
+	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
 )
 
 type flagKind uint8

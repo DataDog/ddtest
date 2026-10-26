@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // BoolEnv returns the parsed boolean value of an environment variable, or

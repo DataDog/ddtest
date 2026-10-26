@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/DataDog/ddto/internal/thirdparty/xsys/windows/registry"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/xsys/windows/registry"
 )
 
 // detect fills the OS metadata. Upstream runs it as the package's init.

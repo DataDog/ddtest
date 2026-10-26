@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/cligit"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/cligit"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
 // TestGitWorkerHelperProcess is a worker for the tests below. By default it

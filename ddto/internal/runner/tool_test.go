@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/goenv"
+	"github.com/DataDog/ddtest/ddto/internal/goenv"
 )
 
 func TestToolDispatch(t *testing.T) {

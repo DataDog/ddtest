@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 // RunCoverTool handles Go's cover tool for ddto's private -toolexec

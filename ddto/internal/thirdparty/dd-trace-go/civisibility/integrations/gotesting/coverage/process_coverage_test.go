@@ -15,9 +15,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/testassert/require"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
-	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
 )
 
 func TestMergeProcessCoverageProfilesAddsIsolatedCounts(t *testing.T) {

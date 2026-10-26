@@ -1,4 +1,4 @@
-module github.com/DataDog/ddto/testdata/orchestrion
+module github.com/DataDog/ddtest/ddto/testdata/orchestrion
 
 go 1.26.0
 

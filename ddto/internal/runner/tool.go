@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/DataDog/ddto/internal/instrument"
-	"github.com/DataDog/ddto/internal/toolwrap"
-	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/instrument"
+	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
+	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 // userToolexecEnv carries the user's -toolexec after ddto's input transformation.

@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	tracer "github.com/DataDog/ddto/internal/minitracer"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
+	tracer "github.com/DataDog/ddtest/ddto/internal/minitracer"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
 )
 
 // Test Module

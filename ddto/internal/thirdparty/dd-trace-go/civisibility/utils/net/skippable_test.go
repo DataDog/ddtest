@@ -16,9 +16,9 @@ import (
 	"strings"
 	"testing"
 
-	assert "github.com/DataDog/ddto/internal/testassert"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/bazel"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
+	assert "github.com/DataDog/ddtest/ddto/internal/testassert"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/bazel"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
 )
 
 func TestSkippableApiRequest(t *testing.T) {

@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
-	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
 )
 
 // A crash names a test only through a frame of a top-level test function,

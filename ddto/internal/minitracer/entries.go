@@ -1,6 +1,6 @@
 package minitracer
 
-import "github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
+import "github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
 
 // A span's metadata and metrics are sets of unique keys. Up to linearEntries
 // entries live in a slice, searched linearly: a test event's 22 metadata

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/testassert/require"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
 // resetCrashForTesting forgets an earlier test's crash.

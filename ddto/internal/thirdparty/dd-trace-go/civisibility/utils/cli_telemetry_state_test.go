@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry"
 )
 
 // Processes that report the CLI's application take distinct, gap-free

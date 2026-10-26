@@ -12,8 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/citransport"
-	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddtest/ddto/internal/citransport"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
 )
 
 func effectiveCommonMeta(payload *testCycleBatch, event *ciEvent) map[string]string {

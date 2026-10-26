@@ -10,10 +10,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	infra "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
+	infra "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 const ServiceFromCodeOwnersEnv = "DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS"

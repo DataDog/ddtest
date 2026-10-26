@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	infra "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go"
+	infra "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go"
 )
 
 const (

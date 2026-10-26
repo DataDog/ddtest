@@ -420,7 +420,7 @@ func TestMiniOrchestrionClientPinnedTool(t *testing.T) {
 	installComposedAPM(t, dir)
 	// An ordinary client only declares Orchestrion and the SDK. Mini is supplied
 	// through a temporary modfile, including when -C changes the working directory.
-	out, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", "-droprequire=github.com/DataDog/ddto", "-dropreplace=github.com/DataDog/ddto")
+	out, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", "-droprequire=github.com/DataDog/ddtest/ddto", "-dropreplace=github.com/DataDog/ddtest/ddto")
 	if code != 0 {
 		t.Fatal(out, stderr)
 	}

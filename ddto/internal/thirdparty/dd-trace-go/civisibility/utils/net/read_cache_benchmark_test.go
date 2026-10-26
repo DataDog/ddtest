@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
 // readCacheBenchmarkRequest is a stable semantic request that resembles the

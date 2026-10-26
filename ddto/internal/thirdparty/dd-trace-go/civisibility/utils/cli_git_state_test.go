@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/goenv"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/goenv"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
 // git runs git in dir and returns its trimmed output.

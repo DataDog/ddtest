@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
 )
 
 type tracedRoundTrip func(*http.Request) (*http.Response, error)

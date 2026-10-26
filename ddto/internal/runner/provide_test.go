@@ -56,7 +56,7 @@ func TestMiniSourceRoot(t *testing.T) {
 	version := "v0.0.0-20261006182246-a8e3f52b0606"
 	checkout := t.TempDir()
 	// GOMODCACHE escapes the module path's upper-case letters.
-	cached := filepath.Join(cache, "github.com", "!data!dog", "ddto@"+version)
+	cached := filepath.Join(cache, "github.com", "!data!dog", "ddtest", "ddto@"+version)
 	for _, root := range []string{checkout, cached} {
 		if err := os.MkdirAll(filepath.Join(root, "testopt"), 0700); err != nil {
 			t.Fatal(err)

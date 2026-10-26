@@ -9,10 +9,10 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/knownmetrics"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/internal"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/knownmetrics"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
 )
 
 type distributions struct {

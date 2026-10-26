@@ -13,12 +13,12 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	tracer "github.com/DataDog/ddto/internal/minitracer"
-	infra "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
+	tracer "github.com/DataDog/ddtest/ddto/internal/minitracer"
+	infra "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // CLISessionEnd describes the end of the go test command whose session ddto

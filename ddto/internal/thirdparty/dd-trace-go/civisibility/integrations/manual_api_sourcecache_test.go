@@ -17,12 +17,12 @@ import (
 	"testing"
 	"time"
 
-	assert "github.com/DataDog/ddto/internal/testassert"
-	"github.com/DataDog/ddto/internal/testassert/require"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/codeownership"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
+	assert "github.com/DataDog/ddtest/ddto/internal/testassert"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/codeownership"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // namedSourceFixtureFunc provides a stable top-level declaration for cache tests.
@@ -100,7 +100,7 @@ func resetSourceCacheTestState(t *testing.T) {
 	resetCIVisibilityStateForTesting()
 	utils.AddCITagsMap(map[string]string{
 		constants.CIWorkspacePath:  sourcePathRepositoryRoot(t),
-		constants.GitRepositoryURL: "https://github.com/DataDog/ddto.git",
+		constants.GitRepositoryURL: "https://github.com/DataDog/ddtest.git",
 	})
 	t.Cleanup(resetCIVisibilityStateForTesting)
 }

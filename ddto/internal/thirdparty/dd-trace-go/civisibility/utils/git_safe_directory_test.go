@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
 )
 
 // A linked worktree and a submodule have a .git file instead of a directory.

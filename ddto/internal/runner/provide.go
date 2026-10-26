@@ -14,8 +14,8 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/DataDog/ddto/internal/toolwrap"
-	pocversion "github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
+	pocversion "github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 const miniModule = toolwrap.MiniModule
@@ -261,7 +261,7 @@ func miniSourceRoot(sourceFile, moduleCache, version string) string {
 
 // escapeModuleCachePath escapes a module path or version as GOMODCACHE names
 // it: each upper-case letter becomes "!" and its lower-case form, so
-// github.com/DataDog/ddto is cached as github.com/!data!dog/ddto.
+// github.com/DataDog/ddtest/ddto is cached as github.com/!data!dog/ddto.
 func escapeModuleCachePath(value string) string {
 	var escaped strings.Builder
 	for _, r := range value {

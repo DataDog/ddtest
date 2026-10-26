@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/testassert/require"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/bazel"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
-	civisibilitynet "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/locking"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/bazel"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	civisibilitynet "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/locking"
 )
 
 func TestReadCachePreservesAdditionalFeatureInitialization(t *testing.T) {

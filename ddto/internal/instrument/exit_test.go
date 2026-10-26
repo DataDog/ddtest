@@ -88,7 +88,7 @@ func TestExitHookMatchesMiniRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hook["func __dd_civisibility_forcedExit()"] || !hook["linkname __dd_civisibility_forcedExit github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.forcedExit"] {
+	if !hook["func __dd_civisibility_forcedExit()"] || !hook["linkname __dd_civisibility_forcedExit github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.forcedExit"] {
 		t.Error("ExitHook does not link Mini's integrations.forcedExit")
 	}
 }

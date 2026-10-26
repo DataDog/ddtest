@@ -364,7 +364,7 @@ go mod verify
 go list -deps -f '{{if and (not .Standard) .Module}}{{.Module.Path}}{{end}}' ./testopt ./cmd/ddto | sort -u
 ```
 
-The final command should list only `github.com/DataDog/ddto`.
+The final command should list only `github.com/DataDog/ddtest/ddto`.
 The distributed module has no `require` directives. This includes test-only
 dependencies: a consumer's `go mod tidy` also examines dependency tests. Ported
 SDK assertions use [`internal/testassert`](../internal/testassert/assert.go) and

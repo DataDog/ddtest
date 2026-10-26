@@ -13,7 +13,7 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
-	"github.com/DataDog/ddto/internal/thirdparty/xsys/windows"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/xsys/windows"
 )
 
 // createBreakawayFromJob starts a process outside its parent's job.

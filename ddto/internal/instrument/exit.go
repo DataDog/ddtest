@@ -19,7 +19,7 @@ import (
 	_ "unsafe"
 )
 
-//go:linkname __dd_civisibility_forcedExit github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.forcedExit
+//go:linkname __dd_civisibility_forcedExit github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.forcedExit
 func __dd_civisibility_forcedExit()
 
 func init() {

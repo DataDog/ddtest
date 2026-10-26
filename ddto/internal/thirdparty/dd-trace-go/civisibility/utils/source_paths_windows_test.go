@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	assert "github.com/DataDog/ddto/internal/testassert"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	assert "github.com/DataDog/ddtest/ddto/internal/testassert"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
 func TestResolveSourceFilePathWindows(t *testing.T) {

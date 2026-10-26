@@ -15,11 +15,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/bazel"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/osinfo"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/bazel"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/osinfo"
 )
 
 var (

@@ -46,7 +46,7 @@ another directory on `PATH`. In PowerShell, set `$env:DDTO_VERSION` and
 Without an executable for the platform, it builds `ddto` with `go install`; a
 checksum mismatch stops it. To use another
 revision, build it with
-`go install github.com/DataDog/ddto/cmd/ddto@main`. Go puts
+`go install github.com/DataDog/ddtest/ddto/cmd/ddto@main`. Go puts
 the binary in `$(go env GOBIN)`, or in `$(go env GOPATH)/bin` when `GOBIN` is
 empty; add that directory to `PATH` if `ddto --version` is not found. Do not add
 this module to the project's `go.mod`: each run supplies the runtime through
@@ -242,7 +242,7 @@ them.
 ## Report a ddto bug
 
 When a problem belongs to ddto, tell the user and offer to prepare an issue in
-[this repository](https://github.com/DataDog/ddto/issues).
+[this repository](https://github.com/DataDog/ddtest/issues).
 That covers a build that fails only under ddto, a panic or an `ERROR` line
 from `TestOptimization.build` or `TestOptimization.run`, a run that hangs,
 missing or wrong events, and a `WARN` fallback to plain `go test` that the
@@ -315,7 +315,7 @@ query = urllib.parse.urlencode(
     {"title": sys.argv[2], "body": open(sys.argv[1]).read()},
     quote_via=urllib.parse.quote,
 )
-print("https://github.com/DataDog/ddto/issues/new?" + query)
+print("https://github.com/DataDog/ddtest/issues/new?" + query)
 EOF
 ```
 
@@ -323,7 +323,7 @@ GitHub rejects very long links, so keep the link under about 8,000
 characters: trim the output in the body, and ask the user to attach the full
 log to the issue instead. The user reviews and submits the issue. Create it
 yourself, for example with
-`gh issue create --repo DataDog/ddto --title "<summary>" --body-file /tmp/ddto-issue.md`,
+`gh issue create --repo DataDog/ddtest --title "<summary>" --body-file /tmp/ddto-issue.md`,
 only when the user asks you to.
 
 ## Use ddto from another project
@@ -335,10 +335,10 @@ To make agents in another repository use ddto, add this to that repository's
 ## Datadog Test Optimization
 
 Run Go tests through ddto so they report to Datadog Test Optimization.
-Install it with `go install github.com/DataDog/ddto/cmd/ddto@main`
+Install it with `go install github.com/DataDog/ddtest/ddto/cmd/ddto@main`
 and run `ddto test` with the usual `go test` flags and packages.
 Settings for this project: <for example DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process>.
-Guide: https://github.com/DataDog/ddto/blob/main/AGENTS.md
+Guide: https://github.com/DataDog/ddtest/blob/main/ddto/AGENTS.md
 ```
 
 ## Changing this repository

@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/testassert/require"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
 type fakeUnit [6]uint32 // StLine, StCol, EnLine, EnCol, NxStmts, Parent

@@ -9,7 +9,7 @@ behavior that [feature parity](ci-parity.md) defines.
 
 Item numbers are stable, because the [optimization plan](optimization-plan.md)
 and pull requests cite them. A missing number was completed or dropped. The
-[version of this file before the 2026-10-15 rewrite](https://github.com/DataDog/ddto/blob/513beea/docs/optimization-backlog.md)
+[version of this file before the 2026-10-15 rewrite](https://github.com/tonyredondo/dd-ci-testing-poc/blob/513beea/docs/optimization-backlog.md)
 keeps those analyses, and the costs that earlier reviews checked and left
 unchanged.
 

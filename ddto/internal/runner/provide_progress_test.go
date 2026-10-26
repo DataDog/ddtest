@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	pocversion "github.com/DataDog/ddto/internal/version"
+	pocversion "github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 // Observe real Go output before its module download is allowed to finish.

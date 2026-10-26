@@ -16,17 +16,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DataDog/ddto/internal/bundle"
-	"github.com/DataDog/ddto/internal/goenv"
-	"github.com/DataDog/ddto/internal/instrument"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
-	"github.com/DataDog/ddto/internal/toolwrap"
-	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/bundle"
+	"github.com/DataDog/ddtest/ddto/internal/goenv"
+	"github.com/DataDog/ddtest/ddto/internal/instrument"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
+	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 const SDKVersion = version.SDKVersion
 const sdkPackage = "github.com/DataDog/dd-trace-go/v2/civisibility"
-const miniPackage = "github.com/DataDog/ddto/testopt"
+const miniPackage = "github.com/DataDog/ddtest/ddto/testopt"
 
 type goPackage struct {
 	commandLine                        bool // Selected by the original package query, not dependency discovery.

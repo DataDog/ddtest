@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/DataDog/ddto/internal/runner"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/globalconfig"
-	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/runner"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/globalconfig"
+	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 func main() {

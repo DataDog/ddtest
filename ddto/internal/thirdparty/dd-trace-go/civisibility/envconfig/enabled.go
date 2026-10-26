@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	internalenv "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	internalenv "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/env"
 )
 
 // EnabledMode is the parsed mode for DD_CIVISIBILITY_ENABLED.

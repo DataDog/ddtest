@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 type cliDebugKey struct{}

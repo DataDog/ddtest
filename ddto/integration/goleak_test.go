@@ -39,7 +39,7 @@ import (
  "strings"
  "testing"
  "go.uber.org/goleak"
- "github.com/DataDog/ddto/testopt"
+ "github.com/DataDog/ddtest/ddto/testopt"
  "example.com/leakhelper"
 )
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }

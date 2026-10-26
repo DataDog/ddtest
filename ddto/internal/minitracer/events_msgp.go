@@ -3,7 +3,7 @@
 package minitracer
 
 import (
-	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
 )
 
 // DecodeMsg implements msgp.Decodable

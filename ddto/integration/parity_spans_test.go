@@ -20,7 +20,7 @@ func TestCIVisibilityAdditionalSpans(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	module := "module github.com/DataDog/ddto/parityprobe\n\ngo 1.26.0\nrequire (\n github.com/DataDog/ddto v0.0.0\n github.com/DataDog/dd-trace-go/v2 " + sdkVersion + "\n)\nreplace github.com/DataDog/ddto => " + filepath.ToSlash(root) + "\n"
+	module := "module github.com/DataDog/ddtest/ddto/parityprobe\n\ngo 1.26.0\nrequire (\n github.com/DataDog/ddtest/ddto v0.0.0\n github.com/DataDog/dd-trace-go/v2 " + sdkVersion + "\n)\nreplace github.com/DataDog/ddtest/ddto => " + filepath.ToSlash(root) + "\n"
 	if err = os.WriteFile(filepath.Join(probe, "go.mod"), []byte(module), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -46,12 +46,12 @@ func TestSpans(t *testing.T) {
 		runtimeImport := `tracer "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
  _ "github.com/DataDog/dd-trace-go/v2/civisibility"`
 		if backend == "mini" {
-			runtimeImport = `tracer "github.com/DataDog/ddto/internal/minitracer"`
+			runtimeImport = `tracer "github.com/DataDog/ddtest/ddto/internal/minitracer"`
 		}
 		bridge := "//go:linkname testContext github.com/DataDog/dd-trace-go/v2/internal/civisibility/integrations/gotesting.getTestOptimizationContext\nfunc testContext(tb testing.TB) context.Context"
 		if backend == "mini" {
 			bridge = "// Native testing context, including trace identity and cancellation.\nfunc testContext(tb testing.TB) context.Context { return testopt.Context(tb) }"
-			runtimeImport += "\n \"github.com/DataDog/ddto/testopt\""
+			runtimeImport += "\n \"github.com/DataDog/ddtest/ddto/testopt\""
 		}
 		fixtureSource := strings.Replace(strings.Replace(source, "RUNTIME", runtimeImport, 1), "CONTEXT_BRIDGE", bridge, 1)
 		if err = os.WriteFile(filepath.Join(probe, "spans_test.go"), []byte(fixtureSource), 0600); err != nil {

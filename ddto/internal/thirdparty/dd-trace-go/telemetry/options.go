@@ -8,7 +8,7 @@ package telemetry
 import (
 	"strings"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/stacktrace"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/stacktrace"
 )
 
 // WithTags returns a LogOption that appends the tags for the telemetry log message. Tags are key-value pairs that are then

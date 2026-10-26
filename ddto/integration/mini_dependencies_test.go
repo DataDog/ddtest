@@ -16,11 +16,11 @@ func TestMiniConsumerAddsOnlyOwnModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := t.TempDir()
-	mod := []byte("module example.com/mini-consumer\n\ngo 1.25.0\n\nrequire github.com/DataDog/ddto v0.0.0\n\nreplace github.com/DataDog/ddto => " + strconv.Quote(filepath.ToSlash(root)) + "\n")
+	mod := []byte("module example.com/mini-consumer\n\ngo 1.25.0\n\nrequire github.com/DataDog/ddtest/ddto v0.0.0\n\nreplace github.com/DataDog/ddtest/ddto => " + strconv.Quote(filepath.ToSlash(root)) + "\n")
 	if err := os.WriteFile(filepath.Join(client, "go.mod"), mod, 0600); err != nil {
 		t.Fatal(err)
 	}
-	source := []byte("package main\nimport _ \"github.com/DataDog/ddto/testopt\"\nfunc main() {}\n")
+	source := []byte("package main\nimport _ \"github.com/DataDog/ddtest/ddto/testopt\"\nfunc main() {}\n")
 	if err := os.WriteFile(filepath.Join(client, "main.go"), source, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestMiniConsumerAddsOnlyOwnModule(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if len(parsed.Require) != 1 || parsed.Require[0].Path != "github.com/DataDog/ddto" {
+	if len(parsed.Require) != 1 || parsed.Require[0].Path != "github.com/DataDog/ddtest/ddto" {
 		t.Fatalf("consumer requires extra modules: %+v", parsed.Require)
 	}
 	// Requirements apply to consumers even when only the SDK's tests import
@@ -51,7 +51,7 @@ func TestMiniConsumerAddsOnlyOwnModule(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &own); err != nil {
 		t.Fatal(err)
 	}
-	declared := map[string]string{"example.com/mini-consumer": "", "github.com/DataDog/ddto": "v0.0.0"}
+	declared := map[string]string{"example.com/mini-consumer": "", "github.com/DataDog/ddtest/ddto": "v0.0.0"}
 	if len(own.Require) != 0 {
 		t.Fatalf("distributed runtime declares external modules: %+v", own.Require)
 	}
@@ -82,7 +82,7 @@ func TestMiniConsumerAddsOnlyOwnModule(t *testing.T) {
 			}
 			t.Fatal(err)
 		}
-		if !pkg.Standard && pkg.Module != nil && pkg.Module.Path != "github.com/DataDog/ddto" && pkg.Module.Path != "example.com/mini-consumer" {
+		if !pkg.Standard && pkg.Module != nil && pkg.Module.Path != "github.com/DataDog/ddtest/ddto" && pkg.Module.Path != "example.com/mini-consumer" {
 			t.Fatalf("external runtime package %s from %s", pkg.ImportPath, pkg.Module.Path)
 		}
 	}

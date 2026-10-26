@@ -17,7 +17,7 @@ import parity_report
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INTEGRATION = "github.com/DataDog/ddto/integration"
+INTEGRATION = "github.com/DataDog/ddtest/ddto/integration"
 CONFIGURATIONS = (
     ("differential", "ubuntu-latest", "1.26.x", "normal"),
     ("differential", "ubuntu-latest", "1.27.x", "normal"),

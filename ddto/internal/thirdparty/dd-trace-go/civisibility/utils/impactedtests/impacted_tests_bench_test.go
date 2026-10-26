@@ -8,7 +8,7 @@ package impactedtests
 import (
 	"testing"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
 )
 
 // newBenchmarkImpactedTestAnalyzer creates a representative analyzer with

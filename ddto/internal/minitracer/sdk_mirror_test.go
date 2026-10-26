@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/DataDog/ddto/propagation"
+	"github.com/DataDog/ddtest/ddto/propagation"
 )
 
 func TestSDKMirrorScopeAndCancellation(t *testing.T) {

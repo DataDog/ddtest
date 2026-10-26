@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DataDog/ddto/internal/goenv"
-	"github.com/DataDog/ddto/internal/goenv/crashout"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/goenv"
+	"github.com/DataDog/ddtest/ddto/internal/goenv/crashout"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // ddto owns one test session per go test command: it sends the session event,

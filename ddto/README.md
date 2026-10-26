@@ -49,14 +49,14 @@ the test binaries.
 To build `ddto` from source instead:
 
 ```sh
-go install github.com/DataDog/ddto/cmd/ddto@main
+go install github.com/DataDog/ddtest/ddto/cmd/ddto@main
 ```
 
 Go places `ddto` in `GOBIN`, or `$(go env GOPATH)/bin` when `GOBIN` is unset.
 Add that directory to `PATH`. To build from a local checkout:
 
 ```sh
-git clone https://github.com/DataDog/ddto.git
+git clone https://github.com/DataDog/ddtest.git
 cd ddto
 go build -o bin/ddto ./cmd/ddto
 ```

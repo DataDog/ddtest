@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	globaltelemetry "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/telemetrytest"
+	globaltelemetry "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/telemetrytest"
 )
 
 func TestRemoveEmptyStrings(t *testing.T) {

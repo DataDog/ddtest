@@ -10,7 +10,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
 )
 
 type rawBytes []byte

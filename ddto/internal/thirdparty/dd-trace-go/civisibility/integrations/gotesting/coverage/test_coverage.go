@@ -26,14 +26,14 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/DataDog/ddto/internal/cidelivery"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/locking"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
-	runtimeTelemetry "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry"
+	"github.com/DataDog/ddtest/ddto/internal/cidelivery"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/locking"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+	runtimeTelemetry "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry"
 )
 
 const (

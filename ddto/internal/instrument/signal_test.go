@@ -113,7 +113,7 @@ func TestSignalHookMatchesMiniRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const integrations = "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations."
+	const integrations = "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations."
 	for _, decl := range signalRuntimeAPI {
 		name, typ, _ := strings.Cut(strings.TrimPrefix(decl, "var "), " ")
 		if !hook["var __dd_civisibility_"+name+" "+typ] || !hook["linkname __dd_civisibility_"+name+" "+integrations+name] {

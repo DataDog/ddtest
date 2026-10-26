@@ -41,7 +41,7 @@ func TestMiniCLIWithoutSDK(t *testing.T) {
 		t.Fatalf("Mini default failed: %d %s", code, stderr)
 	}
 	symbols, stderr, code := command(t, dir, testEnv(), "go", "tool", "nm", bin)
-	if code != 0 || strings.Contains(symbols, "github.com/DataDog/dd-trace-go/v2/internal/civisibility") || !strings.Contains(symbols, "github.com/DataDog/ddto/internal/minitracer") {
+	if code != 0 || strings.Contains(symbols, "github.com/DataDog/dd-trace-go/v2/internal/civisibility") || !strings.Contains(symbols, "github.com/DataDog/ddtest/ddto/internal/minitracer") {
 		t.Fatalf("default did not select Mini: %d %s", code, stderr)
 	}
 	if after, err := os.ReadFile(filepath.Join(dir, "go.mod")); err != nil || string(after) != string(before) {
@@ -54,7 +54,7 @@ func TestMiniCLIWithoutSDK(t *testing.T) {
 		t.Fatalf("SDK could not be provided: %d %s", code, stderr)
 	}
 	symbols, stderr, code = command(t, dir, testEnv(), "go", "tool", "nm", bin)
-	if code != 0 || !strings.Contains(symbols, "github.com/DataDog/dd-trace-go/v2/internal/civisibility") || strings.Contains(symbols, "github.com/DataDog/ddto/internal/minitracer") {
+	if code != 0 || !strings.Contains(symbols, "github.com/DataDog/dd-trace-go/v2/internal/civisibility") || strings.Contains(symbols, "github.com/DataDog/ddtest/ddto/internal/minitracer") {
 		t.Fatalf("explicit SDK selection failed: %d %s", code, stderr)
 	}
 	if after, err := os.ReadFile(filepath.Join(dir, "go.mod")); err != nil || string(after) != string(before) {
@@ -77,7 +77,7 @@ func TestMiniCLIWithoutSDK(t *testing.T) {
 		t.Fatal(stderr)
 	}
 	for _, line := range strings.Fields(out) {
-		if !strings.HasPrefix(line, "github.com/DataDog/ddto/") {
+		if !strings.HasPrefix(line, "github.com/DataDog/ddtest/ddto/") {
 			t.Fatalf("driver external dependency: %s", line)
 		}
 	}
@@ -113,7 +113,7 @@ func TestMiniCLIWithoutSDK(t *testing.T) {
 func TestMiniPublicTestingContext(t *testing.T) {
 	dir, driver := prepareMiniFixture(t)
 	source := `package fixture_test
-import("context";"testing";"github.com/DataDog/ddto/testopt";"github.com/DataDog/ddto/propagation")
+import("context";"testing";"github.com/DataDog/ddtest/ddto/testopt";"github.com/DataDog/ddtest/ddto/propagation")
 func TestPortableContext(t *testing.T){
  ctx:=testopt.Context(t)
  parent,ok:=propagation.FromContext(ctx);if !ok{t.Fatal("missing test identity")}

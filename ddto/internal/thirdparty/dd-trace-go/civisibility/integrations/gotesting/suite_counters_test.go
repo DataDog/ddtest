@@ -8,7 +8,7 @@ package gotesting
 import (
 	"testing"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
 )
 
 type counterStubModule struct {

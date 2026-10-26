@@ -4,7 +4,7 @@ import (
 	"context"
 	"sort"
 
-	"github.com/DataDog/ddto/internal/instrument"
+	"github.com/DataDog/ddtest/ddto/internal/instrument"
 )
 
 // Optional integrations and SDK CI ownership share the test-import graph query.

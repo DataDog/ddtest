@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	assert "github.com/DataDog/ddto/internal/testassert"
-	"github.com/DataDog/ddto/internal/testassert/require"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
-	civisibilityutils "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	assert "github.com/DataDog/ddtest/ddto/internal/testassert"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	civisibilityutils "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
 // A local run's read-cache scope is ddto's invocation when the process uses

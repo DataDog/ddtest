@@ -11,11 +11,11 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/DataDog/ddto/internal/compat"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/mapper"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+	"github.com/DataDog/ddtest/ddto/internal/compat"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/internal"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/mapper"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
 )
 
 // NewClient creates a new telemetry client with the given service, environment, and version and config.

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 // The runtime archive holds the module files and the non-test sources of the

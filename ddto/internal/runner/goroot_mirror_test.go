@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/goenv"
+	"github.com/DataDog/ddtest/ddto/internal/goenv"
 )
 
 // fakeModuleCacheToolchain lays out the files a mirror needs, read-only like

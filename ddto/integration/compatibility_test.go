@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/runner"
+	"github.com/DataDog/ddtest/ddto/internal/runner"
 )
 
 const sdkVersion = runner.SDKVersion
@@ -127,7 +127,7 @@ func testEnv(extra ...string) []string {
 	env = append(env, orchestrionPinChecked+"=true")
 	// Fixtures live in temporary directories. Without VCS stamping, go never
 	// runs git for a repository found above them, which can belong to anything.
-	env = append(env, "GOFLAGS=-buildvcs=false", "DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=false", "DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED=false", "DD_INSTRUMENTATION_TELEMETRY_ENABLED=false", "DD_APPSEC_ENABLED=false", "DD_SERVICE=ddto", "DD_ENV=poc", "DD_TEST_SESSION_NAME=poc", "DD_GIT_REPOSITORY_URL=https://github.com/DataDog/ddto.git", "DD_GIT_COMMIT_SHA=1111111111111111111111111111111111111111", "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=false", "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED=false")
+	env = append(env, "GOFLAGS=-buildvcs=false", "DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=false", "DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED=false", "DD_INSTRUMENTATION_TELEMETRY_ENABLED=false", "DD_APPSEC_ENABLED=false", "DD_SERVICE=ddto", "DD_ENV=poc", "DD_TEST_SESSION_NAME=poc", "DD_GIT_REPOSITORY_URL=https://github.com/DataDog/ddtest.git", "DD_GIT_COMMIT_SHA=1111111111111111111111111111111111111111", "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=false", "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED=false")
 	return append(env, extra...)
 }
 func command(t *testing.T, dir string, env []string, name string, args ...string) (string, string, int) {

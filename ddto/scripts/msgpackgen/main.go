@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/DataDog/ddto/scripts/internal/messagepack"
+	"github.com/DataDog/ddtest/ddto/scripts/internal/messagepack"
 )
 
 func main() {

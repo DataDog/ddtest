@@ -13,8 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
 )
 
 // CaptureRoundTripper records every request body sent through it, decoded as

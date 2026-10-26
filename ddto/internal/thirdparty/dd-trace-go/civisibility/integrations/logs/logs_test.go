@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	assert "github.com/DataDog/ddto/internal/testassert"
-	"github.com/DataDog/ddto/internal/testassert/require"
+	assert "github.com/DataDog/ddtest/ddto/internal/testassert"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
 )
 
 // resetGlobalState is a helper that resets the package level variables that keep

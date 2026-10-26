@@ -18,7 +18,7 @@ import (
 	"sync/atomic"
 	_ "unsafe" // for go:linkname
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // Per-test coverage reads the counters in memory when ddto's testing overlay

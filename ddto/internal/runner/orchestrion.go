@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/DataDog/ddto/internal/toolwrap"
+	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
 )
 
 const orchestrionBypassEnv = toolwrap.OrchestrionBypassEnv

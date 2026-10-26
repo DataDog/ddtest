@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/DataDog/ddto/internal/instrument"
-	"github.com/DataDog/ddto/internal/toolwrap"
+	"github.com/DataDog/ddtest/ddto/internal/instrument"
+	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
 )
 
 // --experimental-file-coverage=context: goroutines carry the tests that they

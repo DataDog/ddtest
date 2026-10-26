@@ -10,7 +10,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
 )
 
 func exerciseITRCoverageBackfillState(t *testing.T) {

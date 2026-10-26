@@ -106,7 +106,7 @@ require (
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
-	github.com/DataDog/ddto v0.0.0
+	github.com/DataDog/ddtest/ddto v0.0.0
 	github.com/trailofbits/go-mutexasserts v0.0.0-20250514102930-c1f3d2e37561 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/urfave/cli/v2 v2.27.7 // indirect
@@ -145,7 +145,7 @@ require (
 
 
 
-replace github.com/DataDog/ddto => @POC_ROOT@
+replace github.com/DataDog/ddtest/ddto => @POC_ROOT@
 
 require example.com/testkit v0.0.0
 replace example.com/testkit => ./testkit

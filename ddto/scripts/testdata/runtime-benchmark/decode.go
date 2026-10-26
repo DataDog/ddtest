@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
 )
 
 // The runtime receiver decodes outside the measured cgroup.

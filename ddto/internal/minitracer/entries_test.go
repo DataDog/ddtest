@@ -10,8 +10,8 @@ import (
 	"time"
 	"weak"
 
-	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
-	"github.com/DataDog/ddto/propagation"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddtest/ddto/propagation"
 )
 
 func (m metaSet) asMap() map[string]string {

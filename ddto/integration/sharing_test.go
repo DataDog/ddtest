@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/runner"
+	"github.com/DataDog/ddtest/ddto/internal/runner"
 )
 
 func addSharedPackages(t *testing.T, dir string) {

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
 )
 
 // parseCoverProfile adapts readCoverProfile to the SDK's per-file map, so

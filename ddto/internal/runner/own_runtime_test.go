@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/instrument"
+	"github.com/DataDog/ddtest/ddto/internal/instrument"
 )
 
 // The CLI's own runtime sources pass every runtime check that ddto runs, on

@@ -5,7 +5,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/DataDog/ddto/internal/thirdparty/xsys/windows"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/xsys/windows"
 )
 
 var procLockFileEx = windows.NewLazySystemDLL("kernel32.dll").NewProc("LockFileEx")

@@ -5,7 +5,7 @@ package instrument
 // sends its events and returns the message, so the alarm panics as before. The
 // alarm's panic ends the process without running exit hooks or deferred
 // calls, which loses every event that Mini buffered. Mini only.
-const TimeoutHook = `//go:linkname __dd_civisibility_instrumentTestTimeout github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.instrumentTestTimeout
+const TimeoutHook = `//go:linkname __dd_civisibility_instrumentTestTimeout github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.instrumentTestTimeout
 func __dd_civisibility_instrumentTestTimeout(string) string
 `
 

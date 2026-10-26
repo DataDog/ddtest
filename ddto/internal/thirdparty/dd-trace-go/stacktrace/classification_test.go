@@ -12,7 +12,7 @@ func TestConcurrentStackClassification(t *testing.T) {
 		pkg  string
 		want frameType
 	}{
-		{"github.com/DataDog/ddto/testopt", frameTypeDatadog},
+		{"github.com/DataDog/ddtest/ddto/testopt", frameTypeDatadog},
 		{"github.com/DataDog/dd-trace-go/v2/civisibility", frameTypeDatadog},
 		{"runtime", frameTypeRuntime},
 		{"net/http.test", frameTypeRuntime},

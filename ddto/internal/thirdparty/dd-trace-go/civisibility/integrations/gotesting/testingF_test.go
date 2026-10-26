@@ -12,7 +12,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/DataDog/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
 )
 
 func TestCompleteFuzzTargetLifecycleCleanupFatalSuppressesBodyPanic(t *testing.T) {

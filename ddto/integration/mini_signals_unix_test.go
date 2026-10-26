@@ -152,7 +152,7 @@ func TestTERM(t *testing.T) {
 	t.Fatal("SIGTERM did not end the process")
 }
 `})
-	coverMini := "-coverpkg=github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	coverMini := "-coverpkg=github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
 	for _, tc := range []struct {
 		name, run string
 		args      []string

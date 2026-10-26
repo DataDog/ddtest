@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/propctx"
+	"github.com/DataDog/ddtest/ddto/internal/propctx"
 )
 
 func TestW3CAndDatadogExchange(t *testing.T) {

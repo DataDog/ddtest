@@ -27,12 +27,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DataDog/ddto/internal/bundle"
-	"github.com/DataDog/ddto/internal/toolwrap"
-	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/bundle"
+	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
+	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
-const module = "github.com/DataDog/ddto"
+const module = "github.com/DataDog/ddtest/ddto"
 
 // targets are the platforms of GitHub's hosted runners and of most developers.
 var targets = []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64", "windows/arm64"}

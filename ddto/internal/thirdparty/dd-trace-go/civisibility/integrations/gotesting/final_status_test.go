@@ -8,7 +8,7 @@ package gotesting
 import (
 	"testing"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
 // A final status keeps its value as an interface, without allocating for the

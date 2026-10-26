@@ -6,9 +6,9 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/DataDog/ddto/internal/minitracer"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
-	"github.com/DataDog/ddto/propagation"
+	"github.com/DataDog/ddtest/ddto/internal/minitracer"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	"github.com/DataDog/ddtest/ddto/propagation"
 )
 
 // Bind before the user body can publish its T/B. Go still owns cancelCtx; the

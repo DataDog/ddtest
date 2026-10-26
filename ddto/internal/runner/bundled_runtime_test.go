@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/toolwrap"
+	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
 )
 
 // testRuntimeFiles is a minimal Mini module.

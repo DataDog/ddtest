@@ -142,7 +142,7 @@ func TestTimeoutHookMatchesMiniRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hook["func __dd_civisibility_instrumentTestTimeout(string) string"] || !hook["linkname __dd_civisibility_instrumentTestTimeout github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.instrumentTestTimeout"] {
+	if !hook["func __dd_civisibility_instrumentTestTimeout(string) string"] || !hook["linkname __dd_civisibility_instrumentTestTimeout github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.instrumentTestTimeout"] {
 		t.Error("TimeoutHook does not link Mini's gotesting.instrumentTestTimeout")
 	}
 }

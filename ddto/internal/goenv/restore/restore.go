@@ -8,7 +8,7 @@
 // including client dependencies that do not import testing.
 package restore
 
-import "github.com/DataDog/ddto/internal/goenv"
+import "github.com/DataDog/ddtest/ddto/internal/goenv"
 
 func init() {
 	goenv.Restore()

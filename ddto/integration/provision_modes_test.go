@@ -53,7 +53,7 @@ func TestWorkspace(t *testing.T){if workhelper.Value!=7{t.Fatal("workspace helpe
 			work := "go 1.21\nuse(\n./client\n./helper\n)\n"
 			if workspaceReplacement {
 				sdkRoot, _ := filepath.Abs("..")
-				work += fmt.Sprintf("replace github.com/DataDog/ddto => %q\n", filepath.ToSlash(sdkRoot))
+				work += fmt.Sprintf("replace github.com/DataDog/ddtest/ddto => %q\n", filepath.ToSlash(sdkRoot))
 			}
 			writeBuildFixture(t, root, map[string]string{"go.work": work})
 			beforeClient, _ := os.ReadFile(filepath.Join(client, "go.mod"))

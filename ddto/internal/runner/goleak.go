@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DataDog/ddto/internal/instrument"
+	"github.com/DataDog/ddtest/ddto/internal/instrument"
 )
 
 // prepareGoleak returns a warning instead of an entry when the selected goleak

@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 // The go that ddto puts first on PATH for gotestsum, which runs go test

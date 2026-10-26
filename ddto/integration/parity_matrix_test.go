@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/version"
+	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
 // policySettings deliberately keeps remote settings independent from the
@@ -71,7 +71,7 @@ func parityCases() []parityCase {
 		{Name: "list", Features: []string{"lifecycle", "list"}, Args: []string{"-test.list=TestPass"}},
 		// Fuzz and Examples are covered against SDK PR #5442 in TestFuzzExampleParity.
 		{Name: "settings-unavailable", Features: []string{"settings", "failure"}, Args: run("TestPass"), Policy: policySettings{SettingsFailure: true}, MinTests: 1},
-		{Name: "tags-version-ci", Features: []string{"metadata", "version", "ci"}, Args: run("TestPass"), Env: []string{"DD_VERSION=parity-1", "DD_TAGS=team:ci,custom:retained", "GITHUB_ACTIONS=true", "GITHUB_JOB=unit-tests", "GITHUB_REPOSITORY=DataDog/ddto", "GITHUB_RUN_ID=123"}, MinTests: 1},
+		{Name: "tags-version-ci", Features: []string{"metadata", "version", "ci"}, Args: run("TestPass"), Env: []string{"DD_VERSION=parity-1", "DD_TAGS=team:ci,custom:retained", "GITHUB_ACTIONS=true", "GITHUB_JOB=unit-tests", "GITHUB_REPOSITORY=DataDog/ddtest", "GITHUB_RUN_ID=123"}, MinTests: 1},
 		{Name: "coverage-pass-skip", Features: []string{"coverage", "skip"}, Args: run("Test(Pass|Skip)"), Policy: policySettings{Coverage: true}, Coverage: true, MinTests: 2},
 		{Name: "coverage-parallel-shuffle", Features: []string{"coverage", "parallel", "shuffle"}, Args: append(run("Test(Pass|Parallel)"), "-test.shuffle=42", "-test.parallel=8"), Policy: policySettings{Coverage: true}, Coverage: true, MinTests: 10},
 		{Name: "coverage-report", Features: []string{"coverage-report"}, Args: run("TestPass"), Policy: policySettings{CoverageReport: true}, Env: []string{"DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED=true", "DD_CODE_COVERAGE_FLAGS=unit,parity"}, MinTests: 1},

@@ -6,8 +6,8 @@ import "bytes"
 const Version = "v1.6.4"
 const FwdVersion = "v1.2.0"
 
-const RuntimeImport = "github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
-const FwdImport = "github.com/DataDog/ddto/internal/thirdparty/fwd"
+const RuntimeImport = "github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
+const FwdImport = "github.com/DataDog/ddtest/ddto/internal/thirdparty/fwd"
 
 // RelocateImports binds copied/generated code to the internal runtime subsets.
 func RelocateImports(data []byte) []byte {

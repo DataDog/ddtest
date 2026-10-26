@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/citransport"
-	"github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
+	"github.com/DataDog/ddtest/ddto/internal/citransport"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
 )
 
 // startTestSpanBothWays starts the same test event from the integrations'

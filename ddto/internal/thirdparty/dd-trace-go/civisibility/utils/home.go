@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/env"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/env"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // This code is based on: https://github.com/mitchellh/go-homedir/blob/v1.1.0/homedir.go (MIT License)

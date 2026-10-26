@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
 // SourceFilePath contains the source path variants CI Visibility needs for one runtime source file.

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/citransport"
+	"github.com/DataDog/ddtest/ddto/internal/citransport"
 )
 
 func TestCommonMetadataOverridesKeepByteBudget(t *testing.T) {

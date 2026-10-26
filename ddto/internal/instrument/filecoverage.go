@@ -396,7 +396,7 @@ func FileCoverageContextRuntimeError(sources map[string][]byte) error {
 
 // FileCoveragePackage is the Mini package that declares the epoch and the
 // bank list that instrumented packages link to.
-const FileCoveragePackage = "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage"
+const FileCoveragePackage = "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage"
 
 // SymbolPrefix returns the prefix of the symbol names of the package with
 // import path, as the linker escapes it (cmd/internal/objabi.PathToPrefix).

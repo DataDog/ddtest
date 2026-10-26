@@ -4,7 +4,7 @@
 //go:generate go run ../../scripts/msgpackgen -file=events.go -unexported -marshal=false -o=events_msgp.go -tests=false
 package minitracer
 
-import "github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
+import "github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
 
 type testCyclePayload struct {
 	Version  int32                        `msg:"version"`

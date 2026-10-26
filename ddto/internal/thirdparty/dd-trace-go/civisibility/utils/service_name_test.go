@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
 func TestCodeOwnersPackageService(t *testing.T) {

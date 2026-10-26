@@ -105,15 +105,15 @@ import (
  "context"
  _ "unsafe"
 )
-//go:linkname __ddtoMirrorEnable github.com/DataDog/ddto/internal/minitracer.sdkMirrorEnable
+//go:linkname __ddtoMirrorEnable github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorEnable
 func __ddtoMirrorEnable()
 func init(){ __ddtoMirrorEnable() }
-//go:linkname __ddtoMirrorStart github.com/DataDog/ddto/internal/minitracer.sdkMirrorStart
+//go:linkname __ddtoMirrorStart github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorStart
 func __ddtoMirrorStart(context.Context,any,string) any
-//go:linkname __ddtoMirrorContext github.com/DataDog/ddto/internal/minitracer.sdkMirrorContext
+//go:linkname __ddtoMirrorContext github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorContext
 func __ddtoMirrorContext(context.Context,any) context.Context
-//go:linkname __ddtoMirrorCapture github.com/DataDog/ddto/internal/minitracer.sdkMirrorCapture
+//go:linkname __ddtoMirrorCapture github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorCapture
 func __ddtoMirrorCapture(any,string,string,string,string,int64,int64,int32,func(func(string,string)bool),map[string]float64,[16]byte,uint64) any
-//go:linkname __ddtoMirrorDeliver github.com/DataDog/ddto/internal/minitracer.sdkMirrorDeliver
+//go:linkname __ddtoMirrorDeliver github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorDeliver
 func __ddtoMirrorDeliver(any)
 `

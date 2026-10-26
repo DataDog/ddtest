@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/citransport"
+	"github.com/DataDog/ddtest/ddto/internal/citransport"
 	// Sends the crash output to ddto's test session, if it hands one.
-	_ "github.com/DataDog/ddto/internal/goenv/crashout"
+	_ "github.com/DataDog/ddtest/ddto/internal/goenv/crashout"
 	// Restores the caller's Go settings before any package that imports os.
-	_ "github.com/DataDog/ddto/internal/goenv/restore"
-	"github.com/DataDog/ddto/internal/minitracer"
-	infra "github.com/DataDog/ddto/internal/thirdparty/dd-trace-go"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	_ "github.com/DataDog/ddtest/ddto/internal/goenv/restore"
+	"github.com/DataDog/ddtest/ddto/internal/minitracer"
+	infra "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
 // Config controls the native event client.

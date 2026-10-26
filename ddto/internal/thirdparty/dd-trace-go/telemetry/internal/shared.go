@@ -3,8 +3,8 @@
 package internal
 
 import (
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/globalconfig"
-	"github.com/DataDog/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/globalconfig"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
 )
 
 // SharedApp is a telemetry application that several processes report as

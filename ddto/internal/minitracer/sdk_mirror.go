@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	_ "unsafe" // compiler hooks use go:linkname without importing the SDK
 
-	"github.com/DataDog/ddto/propagation"
+	"github.com/DataDog/ddtest/ddto/propagation"
 )
 
 type sdkTestScopeKey struct{}

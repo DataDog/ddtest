@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddto/internal/toolwrap"
+	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
 )
 
 // ddtoToolexec reports whether a go -x trace runs ddto's -toolexec: its

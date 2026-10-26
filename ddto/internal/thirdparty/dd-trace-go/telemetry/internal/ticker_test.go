@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddto/internal/cidelivery"
+	"github.com/DataDog/ddtest/ddto/internal/cidelivery"
 )
 
 // Deferred tickers run at idle checkpoints, but no more often than their

@@ -3,7 +3,7 @@ package integrations
 import (
 	"context"
 
-	"github.com/DataDog/ddto/internal/minitracer"
+	"github.com/DataDog/ddtest/ddto/internal/minitracer"
 )
 
 // NativeTestContext preserves Go's cancellation and attaches the CI identity

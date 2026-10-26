@@ -13,7 +13,7 @@ package fixture
 import (
  "time"
  "github.com/tinylib/msgp/msgp"
- "github.com/DataDog/ddto/internal/thirdparty/msgp/msgp"
+ "github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
 )
 var _ = time.Now
 var _ msgp.Raw
