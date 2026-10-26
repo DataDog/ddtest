@@ -200,3 +200,30 @@ func TestWebdriverIORunSelectedFilesIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"test/a.js", "test/b.js"}, files)
 }
+
+func TestWebdriverIOObserverReadsTheAdaptersJasmineCore(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required")
+	}
+	observer, err := PrepareWebdriverIOObserver(t.TempDir())
+	require.NoError(t, err)
+	root := t.TempDir()
+	write := func(name, content string) {
+		path := filepath.Join(root, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	}
+	write("node_modules/@wdio/cli/bin/wdio.js", "")
+	write("node_modules/@wdio/jasmine-framework/package.json", `{"name":"@wdio/jasmine-framework","main":"build/index.js"}`)
+	write("node_modules/@wdio/jasmine-framework/build/index.js", "")
+	write("node_modules/jasmine-core/package.json", `{"name":"jasmine-core","version":"5.9.0","main":"lib/jasmine-core.js"}`)
+	write("node_modules/jasmine-core/lib/jasmine-core.js", "")
+	script := `const {jasmineCoreVersion} = await import(process.argv[1]);
+const {pathToFileURL} = await import('node:url');
+const path = await import('node:path');
+const resolve = (name, from) => pathToFileURL(path.join(process.argv[2], 'node_modules', name, 'build/index.js')).href;
+console.log(JSON.stringify({found: jasmineCoreVersion(resolve, process.argv[3]), missing: jasmineCoreVersion(() => { throw new Error('absent'); }, process.argv[3]) ?? null}));`
+	output, err := exec.CommandContext(t.Context(), "node", "--input-type=module", "-e", script, observer, root, filepath.Join(root, "node_modules/@wdio/cli/bin/wdio.js")).CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.JSONEq(t, `{"found":"5.9.0","missing":null}`, string(output))
+}

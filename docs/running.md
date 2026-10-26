@@ -848,7 +848,11 @@ worker results or incomplete telemetry keep validation incomplete.
 
 Each selected capability needs retries, EFD, quarantine, disabled-test and
 attempt-to-fix controls. TIA skipping and code coverage are unsupported and are
-never counted as passed. Browser runners, custom adapters and standalone browser
+never counted as passed. With Jasmine on jasmine-core 5, dd-trace does not apply
+retries, EFD, disabled-test or attempt-to-fix controls; those report a `known
+limitation` (never passed) and upgrading to WebdriverIO 10 (jasmine-core 6) enables
+them. A control the tracer reported without applying is `tracer_control_not_applied`;
+report such blockers rather than changing the suite. Browser runners, custom adapters and standalone browser
 automation remain outside this validation. Unknown wrappers and dynamic script
 orchestration stay visible for review. Preserve unrelated servers; an occupied
 static-server port blocks execution until local setup is resolved.

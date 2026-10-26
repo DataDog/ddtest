@@ -172,3 +172,12 @@ func skippingPolicy(framework string) featurePolicy {
 	}
 	return featurePolicy{Status: "required"}
 }
+
+// tracerFeatureLimitation explains a required feature the selected tracer is
+// known not to apply for this framework setup, or returns "".
+func tracerFeatureLimitation(result *validationResult, feature string) string {
+	if result.Framework != "webdriverio" || result.Preflight == nil {
+		return ""
+	}
+	return webdriverIOJasmineLimitation(result.Preflight.WebdriverIO, feature)
+}

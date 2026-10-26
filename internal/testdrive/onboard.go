@@ -677,14 +677,60 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			result.RequiredInput = []string{"User decision: accept the evidence from Node " + sub.Local + " in place of CI's Node " + sub.CI + " by running resume_command, or put an existing Node " + sub.CI + " first on PATH and rerun resume_command without " + AcceptSubstituteRuntimeFlag + "."}
 			return fail("needs_input", "substitute_runtime_unaccepted", sub.blocker(), "Every check passed on a compatible substitute runtime. Ask the user which option to take; do not accept it yourself, download a runtime, or change CI, the tracer or the test scope.")
 		}
-		result.RequiredInput = validation.Summary.BlockingChecks[:min(3, len(validation.Summary.BlockingChecks))]
-		return fail("validation_failed", "validation_incomplete", strings.Join(result.RequiredInput, "; "), "Address only these current blockers, then rerun full validation. A failed feature or exclusion check remains failed.")
+		reportOnly, actionable := splitTracerOnlyBlockers(validation)
+		if len(actionable) == 0 && len(reportOnly) > 0 {
+			result.RequiredInput = reportOnly
+			return fail("validation_failed", "validation_incomplete", strings.Join(reportOnly, "; "), "Report these blockers to the user as they are: the tracer did not apply these controls for this framework setup, and no customer change is expected to fix them. Do not change the suite, CI, configuration or tracer to work around them, and do not rerun.")
+		}
+		result.RequiredInput = actionable[:min(3, len(actionable))]
+		needs := "Address only these current blockers, then rerun full validation. A failed feature or exclusion check remains failed."
+		if len(reportOnly) > 0 {
+			needs += " Report, without trying to fix, these tracer limitations: " + strings.Join(reportOnly, "; ") + "."
+		}
+		return fail("validation_failed", "validation_incomplete", strings.Join(result.RequiredInput, "; "), needs)
 	}
 	if err := checkpoint.remove(); err != nil {
 		return fail("blocked_environment", "checkpoint_cleanup_failed", err.Error(), "Restore access to private checkpoint storage.")
 	}
 	result.Status = "complete_locally"
 	return onboard.RenderAgentResult(output, result, options.Format)
+}
+
+// splitTracerOnlyBlockers separates blockers only a tracer change can address
+// (with their reasons) from the rest. The summary lines that merely restate a
+// tracer-only feature failure are dropped.
+func splitTracerOnlyBlockers(validation validationResult) (reportOnly, actionable []string) {
+	tracerOnly := map[string]featureResult{}
+	others := false
+	for _, feature := range validation.Features {
+		if featureSatisfied(validation.Framework, feature) {
+			continue
+		}
+		if feature.tracerOnly() {
+			tracerOnly[fmt.Sprintf("%s/%s: %s", feature.Project, feature.Name, feature.Status)] = feature
+		} else {
+			others = true
+		}
+	}
+	for _, check := range validation.Summary.BlockingChecks {
+		if feature, ok := tracerOnly[check]; ok {
+			reportOnly = append(reportOnly, check+" — "+feature.Reason)
+			continue
+		}
+		if len(tracerOnly) > 0 && !others && (check == "not every project has every required feature result" || pairedConfigurationBlocker(validation, check)) {
+			continue
+		}
+		actionable = append(actionable, check)
+	}
+	return reportOnly, actionable
+}
+
+// pairedConfigurationBlocker reports whether check only says that a compatible,
+// paired configuration is incomplete, which its feature results explain.
+func pairedConfigurationBlocker(validation validationResult, check string) bool {
+	return slices.ContainsFunc(validation.Configurations, func(c configurationResult) bool {
+		return c.PairedExecution && c.Compatibility.Status == "compatible" && check == "configuration "+c.Command+": "+c.Status
+	})
 }
 
 func reattachSetupFacts(updated *onboard.ValidationScope, previous onboard.ValidationScope, afterEdit bool) error {

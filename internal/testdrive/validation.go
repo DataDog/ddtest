@@ -42,7 +42,22 @@ type featureResult struct {
 	Project string `json:"project,omitempty"`
 	Name    string `json:"name"`
 	Status  string `json:"status"`
-	Reason  string `json:"reason"`
+	// Code marks failures no customer change is expected to fix.
+	Code   string `json:"code,omitempty"`
+	Reason string `json:"reason"`
+}
+
+const (
+	// The tracer reported the probe but applied none of the requested control.
+	tracerControlNotApplied = "tracer_control_not_applied"
+	// A required feature the tracer is known not to apply for this setup.
+	tracerLimitation = "tracer_limitation"
+)
+
+// tracerOnly reports whether the feature failed in a way only a tracer change
+// can address.
+func (f featureResult) tracerOnly() bool {
+	return f.Code == tracerControlNotApplied || f.Code == tracerLimitation
 }
 
 type runRole string

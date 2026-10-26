@@ -156,7 +156,29 @@ func checkWebdriverIOSupport(check jestPreflight, selection platform.JSSelection
 	if status != "compatible" {
 		return verdict{Status: status, Reason: reason}
 	}
-	return verdict{Status: "compatible", Reason: "Runtime and tracer requirements match. Paired execution and supported feature controls are still required; TIA skipping/coverage are not supported."}
+	reason = "Runtime and tracer requirements match. Paired execution and supported feature controls are still required; TIA skipping/coverage are not supported."
+	if limitation := webdriverIOJasmineLimitation(check.WebdriverIO, "auto-retries"); limitation != "" {
+		reason += " " + limitation
+	}
+	return verdict{Status: "compatible", Reason: reason}
+}
+
+// dd-trace's WDIO Jasmine hook reads the running spec when jasmine-core's
+// Spec execution starts; jasmine-core 5 only sets it later, so these
+// controls never engage there.
+var webdriverIOJasmineLimitedFeatures = []string{"auto-retries", "early-flake-detection", "disabled", "attempt-to-fix"}
+
+// webdriverIOJasmineLimitation explains a feature the tracer is known not to
+// apply for this WDIO Jasmine installation, or returns "".
+func webdriverIOJasmineLimitation(config *framework.WebdriverIOConfig, feature string) string {
+	if config == nil || config.Framework != "jasmine" || !slices.Contains(webdriverIOJasmineLimitedFeatures, feature) {
+		return ""
+	}
+	major, _, known := releaseParts(config.JasmineCore)
+	if !known || major >= 6 {
+		return ""
+	}
+	return "Known dd-trace limitation: with jasmine-core " + config.JasmineCore + " (<6), the tracer's WebdriverIO Jasmine hook does not see the running spec, so auto-retries, early flake detection, disabled and attempt-to-fix are not applied. Quarantine is unaffected. Upgrading to WebdriverIO 10 (jasmine-core 6) enables them; no other customer change is expected to."
 }
 
 type webdriverIOWorkerReport struct {
