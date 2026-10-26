@@ -287,6 +287,12 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(observed["prompt"], f"Use ddtest in {checkout.parent / 'bin'} and onboard this repository to test-optimization.")
         self.assertNotIn("--model", observed["argv"])
 
+    def test_ruby_runtime_checks_every_configuration(self):
+        self.assertEqual(run_eval.report_ruby_runtime({}, "3.3.11")["status"], "not observed")
+        self.assertEqual(run_eval.report_ruby_runtime({"preflight": {"ruby": "3.3.11"}}, "3.3.11")["status"], "matched")
+        report = {"preflight": {"ruby": "3.3.11"}, "configurations": [{"preflight": {"ruby": "3.4.9"}}]}
+        self.assertEqual(run_eval.report_ruby_runtime(report, "3.3.11")["status"], "mismatch")
+
     def test_short_owned_state_path_accepts_real_watchman_socket(self):
         code, manifest = self.trial()
         self.assertEqual(code, 0)

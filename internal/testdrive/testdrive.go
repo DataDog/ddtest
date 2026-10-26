@@ -532,7 +532,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 	_, _ = fmt.Fprintln(output)
 	if t.language == "ruby" && t.projectTracer == "" {
-		_, _ = fmt.Fprintln(output, "Bundler updates Gemfile and Gemfile.lock.")
+		_, _ = fmt.Fprintln(output, "Bundler updates only the disposable copy of Gemfile and Gemfile.lock; the original bundle is preserved.")
 		return
 	}
 	patterns := map[string][]string{

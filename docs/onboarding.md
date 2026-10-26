@@ -16,8 +16,8 @@ ddtest onboard --framework vitest --apply --yes
 ```
 
 Use the selected framework name for Jest, Mocha, Playwright, Cucumber or
-WebdriverIO. Cypress hooks still require explicit setup. Python and Ruby retain
-their existing instructions and testdrive behavior; automatic apply is JavaScript
+WebdriverIO. Cypress hooks still require explicit setup. Python retains its existing instructions and testdrive behavior. Ruby supports
+plain RSpec/Minitest validation as described below; automatic apply is JavaScript
 only.
 
 The editor preserves existing project and CI tracer selections, including tracers
@@ -122,8 +122,8 @@ and plain `testdrive` print text only; the agent's final response is in `summary
 `onboard --apply --yes` applies recognized setup and runs the shared coordinator.
 For existing setup, use `testdrive --framework vitest --all --agent --yes`.
 Plain testdrive keeps its earlier execution behavior; explicit `--agent` or
-`--format json` selects coordination. Supplying `--facts` also selects the coordinator. Structured execution requires `--yes` and never opens an interactive prompt. Python/Ruby instructions and plain execution
-remain unchanged; structured validation is unsupported and returns no next command.
+`--format json` selects coordination. Supplying `--facts` also selects the coordinator. Structured execution requires `--yes` and never opens an interactive prompt. Structured validation is unsupported for Python/Ruby and returns no next command.
+Use plain Ruby testdrive for the RSpec/Minitest validation described below.
 
 The coordinator owns one resolved execution plan: actual commands, directories,
 environments, builds, runtime/tracer selection, initialization and feature policy.
@@ -254,3 +254,5 @@ or explicit instrumentation exclusions that preserve their original test steps.
 Ruby agent/JSON coordination and automatic CI edits remain unsupported.
 Run `ddtest onboard --framework rspec` (or `minitest`) for the manual setup
 steps, then retain both reports and the final response from plain testdrive.
+Successful plain Ruby validation reports `PASSED`; `COMPLETE LOCALLY` belongs to
+the structured coordinator and is not claimed for Ruby.

@@ -94,6 +94,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		if key == "RUBYOPT" && len(frameworks) > 0 && (frameworks[0] == "rspec" || frameworks[0] == "minitest") {
 			// Local validation owns the tracer preload; preserve companion Ruby options.
 			value = strings.NewReplacer("${{ env.RUBYOPT }}", "", "${{env.RUBYOPT}}", "").Replace(value)
+			value = strings.TrimSpace(value)
 		}
 		// Local Cypress validation disables Cloud recording and uses the
 		// evaluator's private binary cache. Never resolve or forward CI keys

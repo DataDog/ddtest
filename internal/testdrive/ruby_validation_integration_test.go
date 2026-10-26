@@ -78,6 +78,9 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 					TestCounts struct{ Passed, Failed int } `json:"test_counts"`
 				}
 				Retained any `json:"retained_execution"`
+				Summary  struct {
+					FinalResponse string `json:"final_response"`
+				}
 			}
 			path := filepath.Join(root, ".testoptimization/testdrive.json")
 			data, err := os.ReadFile(path)
@@ -100,8 +103,11 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 			matrixWorkflow = strings.Replace(matrixWorkflow, "      - uses: datadog/", "      - if: matrix.ruby != 'head'\n        uses: datadog/", 1)
 			integrationFile(t, root, ".github/workflows/test.yml", matrixWorkflow)
 			output = integrationCommand(t, ctx, root, env, binary, "testdrive", "--framework", framework, "--all", "--yes")
-			require.Contains(t, output, "Onboarding validation: COMPLETE LOCALLY")
-			require.Contains(t, output, "1 instrumented, 1 excluded, 0 unverified")
+			require.Contains(t, output, "Validation verdict: PASSED")
+			data, err = os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, json.Unmarshal(data, &result))
+			require.Contains(t, result.Summary.FinalResponse, "Ruby versions 1 instrumented, 1 excluded, 0 unverified")
 			// Excluding every consumer must never manufacture completed onboarding.
 			integrationFile(t, root, ".github/workflows/test.yml", strings.Replace(matrixWorkflow, "matrix.ruby != 'head'", "false", 1))
 			excluded := exec.CommandContext(ctx, binary, "testdrive", "--framework", framework, "--all", "--check-only", "--yes")

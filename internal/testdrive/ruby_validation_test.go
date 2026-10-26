@@ -207,7 +207,7 @@ func TestRubyReportsRequirePairedExecutionAndFeatureValidation(t *testing.T) {
 				require.Equal(t, complete, err == nil)
 				report := readValidationReport(t, root)
 				require.Equal(t, complete, report.Success)
-				require.Equal(t, map[bool]string{false: "INCOMPLETE", true: "COMPLETE LOCALLY"}[complete], report.Summary.Status)
+				require.Equal(t, map[bool]string{false: "INCOMPLETE", true: "PASSED"}[complete], report.Summary.Status)
 			})
 		}
 	}

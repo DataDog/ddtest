@@ -52,7 +52,13 @@ the target checkout.
 Build the trusted image (add project-specific OS/browser dependencies to a
 reviewed derived image if needed). Never bake personal configuration or secrets
 into an image. The supplied image pins Node, pnpm, Codex and Claude; unexpected
-CLI versions fail before cloning. The binary must also start inside the image;
+CLI versions fail before cloning. For `--framework rspec` or `minitest`, use a
+trusted derived image with the project-compatible Ruby and Bundler installed.
+The runner records its Ruby version before cloning and checks the report against
+that version. Install dependencies in the private trial HOME (for example,
+`bundle config set --global path /trial/home/bundle`, then `bundle install`) and
+use `bundle check` as the readiness command.
+The binary must also start inside the image;
 its version and hash are recorded before a model session begins.
 
 ```sh

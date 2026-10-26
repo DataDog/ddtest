@@ -47,6 +47,8 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			require.NoError(t, Run(&output))
 			require.Contains(t, output.String(), "languages: "+language)
 			switch name {
+			case "rspec", "minitest":
+				require.Contains(t, output.String(), "`ruby-tracer-version`")
 			case "mocha", "cucumber":
 				require.Contains(t, output.String(), "`js-tracer-version`")
 			case "vitest", "playwright", "cypress":

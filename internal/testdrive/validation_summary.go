@@ -189,7 +189,7 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.OnboardingResponse += " Local execution runtime: Node " + summary.LocalNode + "."
 	}
 	if summary.CIScope != nil {
-		summary.OnboardingResponse += fmt.Sprintf(" CI Node scope (static): configured for instrumentation: %s; excluded from instrumentation: %s; unresolved or blocked: %s.", scopeList(summary.CIScope.Instrumented), scopeList(summary.CIScope.Excluded), scopeList(summary.CIScope.Unverified))
+		summary.OnboardingResponse += fmt.Sprintf(" CI runtime scope (static): configured for instrumentation: %s; excluded from instrumentation: %s; unresolved or blocked: %s.", scopeList(summary.CIScope.Instrumented), scopeList(summary.CIScope.Excluded), scopeList(summary.CIScope.Unverified))
 	}
 	if len(summary.BlockingChecks) > 0 {
 		summary.OnboardingResponse += " Blocking checks: " + strings.Join(summary.BlockingChecks[:min(3, len(summary.BlockingChecks))], "; ") + "."
@@ -329,8 +329,12 @@ func validationHandoff(result validationResult) string {
 	block.WriteString(repositoryChangesHandoff(result.RepositoryChanges))
 	if scope := summary.CIScope; scope != nil {
 		// The scope groups CI jobs by Node version, so these count versions, not jobs.
+		runtime := "Node"
+		if result.Framework == "rspec" || result.Framework == "minitest" {
+			runtime = "Ruby"
+		}
 		instrumented, excluded, unverified := scope.counts()
-		fmt.Fprintf(&block, "CI runtime scope (static): Node versions %d instrumented, %d excluded, %d unverified (each version counted once; per-job findings in Results JSON).\n", instrumented, excluded, unverified)
+		fmt.Fprintf(&block, "CI runtime scope (static): %s versions %d instrumented, %d excluded, %d unverified (each version counted once; per-job findings in Results JSON).\n", runtime, instrumented, excluded, unverified)
 		for _, job := range scope.NotTried {
 			fmt.Fprintf(&block, "Not tried: %s (below Node 18, the oldest dd-trace major ddtest supports; ddtest skipped them on its own, no approval needed).\n", job)
 		}

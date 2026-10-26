@@ -347,6 +347,14 @@ def report_runtime(report, requested=None):
             "scope": "Final ddtest report only; framework-owned Node runtimes and historical execution have separate scopes."}
 
 
+def report_ruby_runtime(report, requested):
+    observed = sorted({preflight["ruby"] for preflight in [report.get("preflight") or {},
+        *[(configuration.get("preflight") or {}) for configuration in report.get("configurations") or []]]
+        if preflight.get("ruby")})
+    return {"requested_version": requested, "observed_versions": observed,
+            "status": "not observed" if not observed else "matched" if observed == [requested] else "mismatch"}
+
+
 def agent_command(agent, model):
     if agent == "codex":
         # Production execution is always inside Container. A nested CLI namespace
@@ -630,6 +638,9 @@ def run(args):
                                         "codex_login_shell": False}
             if runtime["executable"] != expected_executable:
                 raise RuntimeError("Selected Node executable did not run; inspect node_runtime")
+        if framework in ("rspec", "minitest"):
+            manifest["ruby_runtime"] = json.loads(command(["ruby", "-rjson", "-e",
+                'puts JSON.generate(executable: RbConfig.ruby, version: RUBY_VERSION)'], timeout=CLI_STARTUP_TIMEOUT))
         manifest["cli_version"] = command([args.agent, "--version"], timeout=CLI_STARTUP_TIMEOUT)
         expected_cli = container.cli_versions[args.agent]
         if not re.search(r"(?<![\d.])"+re.escape(expected_cli)+r"(?![\d.])", manifest["cli_version"]):
@@ -786,6 +797,14 @@ def run(args):
         try:
             manifest["agent_reporting"] = reporting_verdict(final_response, report)
             manifest["ddtest_runtime"] = report_runtime(report, manifest.get("node_runtime", {}).get("version"))
+            if "ruby_runtime" in manifest:
+                manifest["ddtest_ruby_runtime"] = report_ruby_runtime(report, manifest["ruby_runtime"]["version"])
+                if manifest["ddtest_ruby_runtime"]["status"] == "mismatch":
+                    manifest["status"], manifest["failure_kind"] = "failed", "evaluator_environment"
+                    manifest["failure_stage"] = "ddtest_ruby_runtime"
+                    manifest["error"] = "Final ddtest Ruby runtime differs from the selected image runtime"
+                    manifest["retry_recommended"] = False
+                    code = 1
         except (AttributeError, TypeError, ValueError) as error:
             # Reports are untrusted trial output. A malformed nested field must
             # not prevent durable evidence after the container has been removed.
@@ -847,7 +866,7 @@ def main():
     parser.add_argument("--agent", choices=("codex", "claude"))
     parser.add_argument("--node", type=Path,
                         help="Absolute Node executable for setup and Codex non-login shells; Codex only")
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio"),
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio", "rspec", "minitest"),
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--readiness-command", action="append", default=[], help="Repeatable native runtime/browser readiness checks before the uncoached agent")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")

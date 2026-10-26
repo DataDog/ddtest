@@ -295,7 +295,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if result.Preflight == nil {
 			result.Preflight = execution.Preflight
 		}
-		if result.Selection == nil && execution.Selection != nil {
+		if result.Selection == nil && (execution.Selection != nil || result.Tracer == "not selected" && execution.Tracer != "") {
 			result.Selection = execution.Selection
 			result.Tracer = execution.Tracer
 			result.TracerSource = execution.TracerSource

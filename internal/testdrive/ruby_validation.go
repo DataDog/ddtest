@@ -313,6 +313,22 @@ func (t *Testdrive) runRuby(ctx context.Context, output io.Writer, session *Sess
 }
 
 func rubySourceCoverage(root string, facts intake.Facts, native []jestTest) *coverageSummary {
+	if canonical, err := filepath.EvalSymlinks(root); err == nil {
+		root = canonical
+	}
+	var files []string
+	for _, test := range facts.Tests {
+		files = append(files, test.CoveredFiles...)
+	}
+	for _, suite := range facts.SuiteCoverages {
+		files = append(files, suite.Files...)
+	}
+	for _, file := range files {
+		if _, valid := cucumberCoverageFile(root, file); !valid {
+			return &coverageSummary{Status: "invalid", TotalTests: facts.TestCount, Level: facts.CoverageLevel, Reason: "Ruby coverage names missing or outside-repository files; preserve repository-relative source paths."}
+		}
+	}
+
 	// The shared file check accepts only existing repository source and excludes
 	// native test files; Ruby coverage has the same filename contract as JS.
 	coverage := cypressSourceCoverage(root, cypressTestCode{}, facts, native)
