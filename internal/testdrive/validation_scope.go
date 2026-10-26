@@ -1,6 +1,10 @@
 package testdrive
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/DataDog/ddtest/internal/maven"
+	"slices"
+)
 
 func hasValidationPair(result validationResult) bool {
 	if result.CheckOnly {
@@ -30,6 +34,7 @@ type configurationCoverage struct {
 }
 
 type executedValidation struct {
+	Scope          string `json:"scope,omitempty"`
 	Status         string `json:"status"`
 	Configurations int    `json:"configurations"`
 	Passed         int    `json:"passed"`
@@ -75,6 +80,20 @@ func selectedValidation(result validationResult) verdict {
 func summarizeConfigurationCoverage(result validationResult) (*configurationCoverage, *executedValidation) {
 	if !supportsValidationFramework(result.Framework) {
 		return nil, nil
+	}
+	if slices.Contains(maven.FrameworkNames, result.Framework) {
+		executed := &executedValidation{Scope: "selected Maven command", Status: "NOT EXERCISED", Reason: "No current paired Maven execution was completed; CI configuration is outside this local command validation."}
+		if hasValidationExecution(result) {
+			executed.Configurations, executed.Status = 1, "INCOMPLETE"
+			if result.LocalSuccess {
+				executed.Passed, executed.Status = 1, "PASSED"
+			}
+			if result.Compatibility.Status == "suspected regression" {
+				executed.Status = "FAILED"
+			}
+			executed.Reason = "Selected Maven command only: paired native outcomes, telemetry identities and supported controls. Other modules/profiles, CI Java/tracer selection and backend processing are not certified."
+		}
+		return nil, executed
 	}
 	coverage := &configurationCoverage{Discovered: len(result.Configurations)}
 	// Check-only lists discovered commands without per-configuration results;

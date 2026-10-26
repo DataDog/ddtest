@@ -102,13 +102,17 @@ func summarizeValidation(result validationResult) validationSummary {
 		if result.Compatibility.Status != "" && result.Compatibility.Status != "compatible" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility: "+result.Compatibility.Status)
 		}
-		for _, feature := range result.Features {
-			if !featureSatisfied(result.Framework, feature) && !slices.ContainsFunc(timeouts, func(timeout string) bool { return strings.HasPrefix(feature.Reason, timeout) }) {
-				summary.BlockingChecks = append(summary.BlockingChecks, fmt.Sprintf("%s/%s: %s", feature.Project, feature.Name, feature.Status))
+		if reason := mavenFeatureBlockReason(result); reason != "" {
+			summary.BlockingChecks = append(summary.BlockingChecks, reason)
+		} else {
+			for _, feature := range result.Features {
+				if !featureSatisfied(result.Framework, feature) && !slices.ContainsFunc(timeouts, func(timeout string) bool { return strings.HasPrefix(feature.Reason, timeout) }) {
+					summary.BlockingChecks = append(summary.BlockingChecks, fmt.Sprintf("%s/%s: %s", feature.Project, feature.Name, feature.Status))
+				}
 			}
-		}
-		if !featureChecksPassed(result.Framework, result.Features) {
-			summary.BlockingChecks = append(summary.BlockingChecks, featureCoverageBlocker)
+			if !featureChecksPassed(result.Framework, result.Features) {
+				summary.BlockingChecks = append(summary.BlockingChecks, featureCoverageBlocker)
+			}
 		}
 		if result.Cleanup == nil {
 			summary.BlockingChecks = append(summary.BlockingChecks, "owned cleanup was not exercised")
@@ -231,7 +235,16 @@ func validationHandoff(result validationResult) string {
 		fmt.Fprintf(&block, "Selected %s testdrive: %s.\n", displayName(result.Framework), summary.SelectedValidation.Status)
 	}
 	if executed := summary.ExecutedValidation; executed != nil {
-		fmt.Fprintf(&block, "Executed %s validations: %s (%d/%d).\n", displayName(result.Framework), executed.Status, executed.Passed, executed.Configurations)
+		if executed.Scope == "selected Maven command" {
+			fmt.Fprintf(&block, "Selected Maven command validation: %s.\n", executed.Status)
+		} else {
+			fmt.Fprintf(&block, "Executed %s validations: %s (%d/%d).\n", displayName(result.Framework), executed.Status, executed.Passed, executed.Configurations)
+		}
+	}
+	writeMavenComparisons(&block, result)
+	writeMavenCoverage(&block, result.MavenCoverage)
+	if previous := result.PreviousFailure; previous != nil {
+		fmt.Fprintf(&block, "Previous failed comparison: %s (%s), historical; a later matching run does not explain it. Preserve its JSON/HTML evidence.\n", previous.Session, previous.Framework)
 	}
 	fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s.\n", summary.Status, summary.LocalValidation)
 	if coverage := summary.ConfigurationCoverage; coverage != nil && coverage.Discovered > 0 {
@@ -277,7 +290,9 @@ func validationHandoff(result validationResult) string {
 	}
 	fmt.Fprintf(&block, "Compatibility: %s. ", compatibility)
 	passed, total, unsupported := validationFeatureCounts(result.Framework, result.Features)
-	if total == 0 {
+	if reason := mavenFeatureBlockReason(result); reason != "" && current {
+		block.WriteString("Features: not run. " + reason)
+	} else if total == 0 {
 		block.WriteString("Features: not exercised.")
 	} else if !current {
 		fmt.Fprintf(&block, "Historical features (not revalidated): %d/%d supported checks passed.", passed, total)
@@ -400,6 +415,12 @@ func validationHandoff(result validationResult) string {
 		block.WriteString("\nHTML report unavailable.\n")
 	}
 	block.WriteString(link("Results JSON", validationPath(result.WorkingDirectory)))
+	if previous := result.PreviousFailure; previous != nil {
+		block.WriteString("\n" + link("Previous failed comparison JSON", filepath.Join(filepath.Dir(validationPath(result.WorkingDirectory)), mavenFailureJSON)))
+		if previous.HTMLReport != "" {
+			block.WriteString("\n" + link("Previous failed comparison HTML", filepath.Join(filepath.Dir(validationPath(result.WorkingDirectory)), mavenFailureHTML)))
+		}
+	}
 	if result.Cleanup != nil {
 		fmt.Fprintf(&block, "\nCleanup: %s (ddtest sessions only)", result.Cleanup.Status)
 		if result.Cleanup.Status != "passed" {
@@ -488,7 +509,9 @@ func validationFacts(result validationResult) []string {
 		facts = append(facts, string(text))
 	}
 	passed, total, _ := validationFeatureCounts(result.Framework, result.Features)
-	if total == 0 {
+	if reason := mavenFeatureBlockReason(result); reason != "" {
+		facts = append(facts, "Features: not run. "+reason)
+	} else if total == 0 {
 		facts = append(facts, "Features: not exercised.")
 	} else {
 		fact := fmt.Sprintf("Features: %d/%d project-feature checks passed.", passed, total)

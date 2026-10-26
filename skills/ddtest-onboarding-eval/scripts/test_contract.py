@@ -35,9 +35,13 @@ class ProductContractTests(unittest.TestCase):
                 self.assertIsInstance(summary['selected_validation']['status'],str)
                 executed=summary['executed_validation']
                 for field in ('status','passed','configurations'):self.assertIn(field,executed)
-                coverage=summary['configuration_coverage']
-                for field in ('validated','discovered','executed','paired','blocked','not_exercised','incomplete'):
-                    self.assertIsInstance(coverage[field],int)
+                if report['framework'] in {'junit4','junit5','testng','spock','cucumber-java','karate','scalatest','munit'}:
+                    self.assertNotIn('configuration_coverage',summary)
+                    self.assertEqual(executed['scope'],'selected Maven command')
+                else:
+                    coverage=summary['configuration_coverage']
+                    for field in ('validated','discovered','executed','paired','blocked','not_exercised','incomplete'):
+                        self.assertIsInstance(coverage[field],int)
                 for field in ('test_executions','source_test_identities'):self.assertIn(field,report['reporting_counts'])
                 self.assertIsInstance(report['last_execution']['current'],bool)
                 self.assertIsInstance(report['configuration_check'],dict)

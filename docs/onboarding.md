@@ -250,10 +250,13 @@ ddtest testdrive --framework junit5 --check-only --yes
 ddtest testdrive --framework junit5 --command './mvnw verify' --tracer-version 1.67.1 --yes
 ```
 
-Maven `onboard` prints manual setup guidance, and Maven `testdrive` uses the
-preview and confirmation flow shown above. Automatic `onboard --apply` and the
-`--agent`/`--format` coordinator are currently available for supported JavaScript
-frameworks.
+Maven `onboard` prints manual setup guidance. `onboard --agent` (or
+`--format json`) returns a `ready` handoff with `manual_setup_required`, the
+instructions command, and local check-only/full validation commands; it does not
+apply CI edits. Explicit command, tracer and timeout options are preserved.
+Maven `testdrive` uses the preview and confirmation flow shown above. Automatic
+`onboard --apply` and the testdrive `--agent`/`--format` coordinator remain scoped
+to supported JavaScript frameworks.
 
 Use the project's actual Maven command, profiles and modules. The default is
 `./mvnw test`, or `mvn test` without a wrapper. Framework selection labels the
@@ -265,6 +268,29 @@ reporting-only Java-agent run, including identities, outcomes, exception
 type/message and exit code, then reconciles test events. Full stack traces and
 command output remain in the HTML report. Existing failures are acceptable when
 both executions agree.
+
+The JSON separates `native_comparison` from `telemetry_comparison`, with stable
+reason codes and at most ten identity/outcome differences. Empty tracer test
+names and duplicate/missing executions remain inconclusive even when aggregate
+counts match. Feature probes blocked by these comparisons are reported as not
+run. A selected-command local pass is separate from CI certification; Maven does
+not emit zero-valued JavaScript CI configuration counters.
+
+`maven_coverage` lists native results per declared module and static action
+presence per detected Java test workflow. A reactor `SKIPPED` module is not
+reached; other modules without native results remain not observed. Profile-only
+modules are candidates, and neither static action presence nor one local command
+certifies a CI JDK/tracer matrix.
+
+Before another full Maven run, the latest earlier suspected regression is saved
+as `.testoptimization/maven-previous-failure.json` and, when available, its
+companion HTML. The JSON embeds the earlier result under `result`; the current
+report links it through `previous_failed_comparison`. One archive slot is kept,
+without nesting older history. A later matching run does not explain an earlier
+instrumented-only failure. Check-only does not create an archive or rerun tests.
+Preserve this history with the current report pair during cleanup. Symlinked,
+unrecognized, oversized or mismatched history is refused before another full
+run can replace the current evidence.
 
 Local feature probes exercise the project's existing Maven test provider in
 temporary repository copies. Framework dependencies inherited from matching local

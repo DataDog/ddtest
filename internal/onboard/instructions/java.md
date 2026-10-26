@@ -29,7 +29,15 @@ Onboard this Maven repository to Datadog Test Optimization:
    Datadog API key. Missing native XML results, excluded tests, missing telemetry,
    unsupported probes or unverified CI remain incomplete. A local command does
    not certify other profiles, integration-test commands, CI Java versions or
-   real backend processing. Rerun after final setup edits.
+   real backend processing. Rerun after final setup edits. Run validation in the
+   foreground and wait using the host's task/session tool; do not use background
+   jobs or sleep loops. Read and preserve `summary.final_response` from the JSON,
+   including its exact verdict, blockers and report links. Native outcome parity
+   and telemetry identity reconciliation are separate: matching existing failures
+   are allowed, while equal event totals do not prove identity agreement. When
+   telemetry is unresolved, feature probes were not run. An actual CI run cannot
+   update this local verdict. Preserve any `previous_failed_comparison` evidence;
+   a later matching run does not explain an earlier instrumented-only failure.
 
 This Maven-first path supports onboard/testdrive. Use Maven's native command for
 production optimization; ddtest plan/run, Gradle, Bazel and SBT are outside this path.

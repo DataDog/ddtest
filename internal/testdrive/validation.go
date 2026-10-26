@@ -83,6 +83,7 @@ type runSpec struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
+	mavenCoverage       []mavenModuleCoverage
 	mavenModules        map[string]string
 	webdriverIOAttempts []jestTest
 	missingSourceLoader string // Explains a .js import that only exists as TypeScript.
@@ -148,39 +149,40 @@ type coverageSummary struct {
 }
 
 type runSummary struct {
-	ReplacedReporters               []string            `json:"replaced_reporters,omitempty"`
-	Role                            runRole             `json:"role"`
-	NativeResults                   string              `json:"native_results,omitempty"`
-	FrameworkNode                   string              `json:"framework_node,omitempty"`
-	NativeCommand                   string              `json:"native_command,omitempty"`
-	ProbeExecutions                 *int                `json:"probe_executions,omitempty"`
-	ExecutionContext                string              `json:"execution_context,omitempty"`
-	Coverage                        *coverageSummary    `json:"coverage,omitempty"`
-	ExecutionPath                   string              `json:"execution_path,omitempty"`
-	Workers                         int                 `json:"workers,omitempty"`
-	PlannerSkipped                  bool                `json:"probe_skipped_by_planner,omitempty"`
-	Configuration                   string              `json:"configuration,omitempty"`
-	NativeCounts                    *executionCounts    `json:"native_counts,omitempty"`
-	ProbeLintSkipped                bool                `json:"probe_lint_skipped,omitempty"`
-	Project                         string              `json:"project,omitempty"`
-	Skipping                        *skippingDiagnostic `json:"skipping,omitempty"`
-	Name                            string              `json:"name"`
-	Command                         string              `json:"command,omitempty"`
-	Instrumented                    bool                `json:"instrumented"`
-	ProbeMode                       string              `json:"probe_mode,omitempty"`
-	ProbeCoverageThresholdsDisabled bool                `json:"probe_coverage_thresholds_disabled,omitempty"`
-	Diagnostic                      string              `json:"diagnostic,omitempty"`
-	NotExercised                    []string            `json:"not_exercised,omitempty"`
-	ExitCode                        *int                `json:"exit_code"`
-	ResultError                     string              `json:"result_error,omitempty"`
-	Timeout                         string              `json:"timeout,omitempty"`
-	TestCounts                      testCounts          `json:"test_counts"`
-	SuiteErrorCount                 int                 `json:"suite_error_count"`
-	TestEventCount                  int                 `json:"test_event_count"`
+	MavenModules                    []mavenModuleCoverage `json:"maven_modules,omitempty"`
+	ReplacedReporters               []string              `json:"replaced_reporters,omitempty"`
+	Role                            runRole               `json:"role"`
+	NativeResults                   string                `json:"native_results,omitempty"`
+	FrameworkNode                   string                `json:"framework_node,omitempty"`
+	NativeCommand                   string                `json:"native_command,omitempty"`
+	ProbeExecutions                 *int                  `json:"probe_executions,omitempty"`
+	ExecutionContext                string                `json:"execution_context,omitempty"`
+	Coverage                        *coverageSummary      `json:"coverage,omitempty"`
+	ExecutionPath                   string                `json:"execution_path,omitempty"`
+	Workers                         int                   `json:"workers,omitempty"`
+	PlannerSkipped                  bool                  `json:"probe_skipped_by_planner,omitempty"`
+	Configuration                   string                `json:"configuration,omitempty"`
+	NativeCounts                    *executionCounts      `json:"native_counts,omitempty"`
+	ProbeLintSkipped                bool                  `json:"probe_lint_skipped,omitempty"`
+	Project                         string                `json:"project,omitempty"`
+	Skipping                        *skippingDiagnostic   `json:"skipping,omitempty"`
+	Name                            string                `json:"name"`
+	Command                         string                `json:"command,omitempty"`
+	Instrumented                    bool                  `json:"instrumented"`
+	ProbeMode                       string                `json:"probe_mode,omitempty"`
+	ProbeCoverageThresholdsDisabled bool                  `json:"probe_coverage_thresholds_disabled,omitempty"`
+	Diagnostic                      string                `json:"diagnostic,omitempty"`
+	NotExercised                    []string              `json:"not_exercised,omitempty"`
+	ExitCode                        *int                  `json:"exit_code"`
+	ResultError                     string                `json:"result_error,omitempty"`
+	Timeout                         string                `json:"timeout,omitempty"`
+	TestCounts                      testCounts            `json:"test_counts"`
+	SuiteErrorCount                 int                   `json:"suite_error_count"`
+	TestEventCount                  int                   `json:"test_event_count"`
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{Coverage: r.Coverage, FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+	summary := runSummary{MavenModules: r.mavenCoverage, Coverage: r.Coverage, FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), Timeout: r.Timeout, ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), NotExercised: r.NotExercised, SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	if r.framework == "cucumber" || r.framework == "webdriverio" {
 		summary.NativeResults = "observed"
@@ -247,6 +249,10 @@ type validationResult struct {
 	// Uncommitted changes outside CI workflows and ignore files, such as the
 	// dependencies and coverage config ddtest prescribes for validation.
 	RepositoryChanges []repositoryChange `json:"repository_changes,omitempty"`
+	NativeComparison    *verdict       `json:"native_comparison,omitempty"`
+	TelemetryComparison *verdict       `json:"telemetry_comparison,omitempty"`
+	MavenCoverage       *mavenCoverage `json:"maven_coverage,omitempty"`
+	PreviousFailure     *mavenFailure  `json:"previous_failed_comparison,omitempty"`
 	// Leading VAR=value assignments of --command, with secret-like values masked.
 	CommandEnvironment map[string]string        `json:"command_environment,omitempty"`
 	CIPreservation     *verdict                 `json:"ci_preservation,omitempty"`
@@ -415,6 +421,8 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	if result.CheckOnly {
 		_, _ = fmt.Fprintln(output, "Configuration checks only. Compatibility tests and features were not rerun by this invocation.")
 	}
+	writeMavenComparisons(output, result)
+	writeMavenCoverage(output, result.MavenCoverage)
 	_, _ = fmt.Fprintf(output, "\nCompatibility (this invocation): %s\n%s\n", result.Compatibility.Status, result.Compatibility.Reason)
 	for _, difference := range result.Compatibility.Differences {
 		_, _ = fmt.Fprintf(output, "  - %s\n", difference)
@@ -431,7 +439,11 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	}
 	_, _ = fmt.Fprintf(output, "\nValidation verdict: %s\nLocal validation: %s\n", result.Summary.Status, result.Summary.LocalValidation)
 	if execution := result.Summary.ExecutedValidation; execution != nil {
-		_, _ = fmt.Fprintf(output, "Executed %s validations: %s — %s\n", displayName(result.Framework), execution.Status, execution.Reason)
+		if execution.Scope == "selected Maven command" {
+			_, _ = fmt.Fprintf(output, "Selected Maven command validation: %s — %s\n", execution.Status, execution.Reason)
+		} else {
+			_, _ = fmt.Fprintf(output, "Executed %s validations: %s — %s\n", displayName(result.Framework), execution.Status, execution.Reason)
+		}
 	}
 	if coverage := result.Summary.ConfigurationCoverage; coverage != nil {
 		if coverage.Discovered > 0 {
@@ -442,6 +454,13 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	}
 	if selected := result.Summary.SelectedValidation; selected != nil {
 		_, _ = fmt.Fprintf(output, "Selected %s testdrive: %s — %s\n", displayName(result.Framework), selected.Status, selected.Reason)
+	}
+	if previous := result.PreviousFailure; previous != nil {
+		_, _ = fmt.Fprintf(output, "Previous failed Maven comparison: %s (%s), historical; a later matching run does not explain it. JSON: %s", previous.Session, previous.Framework, filepath.Join(filepath.Dir(validationPath("")), mavenFailureJSON))
+		if previous.HTMLReport != "" {
+			_, _ = fmt.Fprintf(output, "; HTML: %s", filepath.Join(filepath.Dir(validationPath("")), mavenFailureHTML))
+		}
+		_, _ = fmt.Fprintln(output)
 	}
 	if len(result.Summary.BlockingChecks) > 0 {
 		_, _ = fmt.Fprintf(output, "Blocking checks: %s\n", strings.Join(result.Summary.BlockingChecks, "; "))

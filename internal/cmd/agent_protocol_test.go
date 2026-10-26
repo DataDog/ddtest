@@ -127,3 +127,23 @@ func TestUnsupportedLanguageDoesNotRequestExecutionConsent(t *testing.T) {
 		})
 	}
 }
+
+func TestJavaOnboardAgentOffersManualSetupWithoutUnsupportedVerdict(t *testing.T) {
+	t.Chdir(t.TempDir())
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	require.NoError(t, os.WriteFile("pom.xml", []byte(`<project><dependencies><dependency><groupId>junit</groupId><artifactId>junit</artifactId></dependency></dependencies></project>`), 0600))
+	command := newOnboardCommand(nil)
+	command.SetArgs([]string{"--agent"})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(io.Discard)
+	require.NoError(t, command.ExecuteContext(t.Context()))
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Equal(t, "manual_setup_required", result.Code)
+	require.Contains(t, result.NextCommand, "--instructions")
+	require.Contains(t, result.Checks[1].Command, "--check-only")
+	require.NoDirExists(t, ".testoptimization")
+}

@@ -42,7 +42,11 @@ func (t *Testdrive) previewMaven(output io.Writer) {
 }
 
 func (t *Testdrive) runMaven(ctx context.Context, output io.Writer) (runErr error) {
-	result := validationResult{Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Session: t.session.ID(), Compatibility: verdict{Status: "not exercised", Reason: "Maven validation has not executed."},
+	history, err := preserveMavenFailure(t.repositoryRoot, t.checkOnly)
+	if err != nil {
+		return fmt.Errorf("preserve previous failed Maven comparison before starting another run: %w", err)
+	}
+	result := validationResult{PreviousFailure: history, Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Session: t.session.ID(), Compatibility: verdict{Status: "not exercised", Reason: "Maven validation has not executed."},
 		CISelection: &verdict{Status: "inconclusive", Reason: "This Maven-first adapter validates the selected local command. Review CI Java/tracer versions and every Maven profile separately; CI configuration is not certified."}}
 	defer func() {
 		if runErr != nil {
@@ -66,6 +70,7 @@ func (t *Testdrive) runMaven(ctx context.Context, output io.Writer) (runErr erro
 	if err != nil {
 		return err
 	}
+	result.MavenCoverage = discoverMavenCoverage(t.repositoryRoot)
 	for _, project := range projects {
 		_, _ = fmt.Fprintf(output, "Maven module %s (%s): %s\n", project.Directory, project.Artifact, strings.Join(project.Frameworks(), ", "))
 	}
@@ -112,12 +117,22 @@ func (t *Testdrive) runMaven(ctx context.Context, output io.Writer) (runErr erro
 		return err
 	}
 	result.Runs = append(result.Runs, reporting.summary())
-	result.Compatibility = compareMaven(baseline, reporting)
+	native := compareMavenNative(baseline, reporting)
+	telemetry := verdict{Status: "not exercised", Code: "native_comparison_blocked", Reason: "Establish matching native outcomes before telemetry reconciliation."}
+	if native.Status == "compatible" {
+		telemetry = verifyMavenTelemetry(reporting)
+	}
+	result.NativeComparison, result.TelemetryComparison = &native, &telemetry
+	result.Compatibility = native
+	if native.Status == "compatible" {
+		result.Compatibility = telemetry
+	}
+	result.MavenCoverage.Modules = reporting.mavenCoverage
 	if err := t.writeHTMLReport(output, &result, reporting); err != nil {
 		return err
 	}
 	if result.Compatibility.Status != "compatible" {
-		unavailableFeatures(&result, "Establish compatible baseline/reporting results before feature checks.")
+		unavailableFeatures(&result, mavenFeatureBlockReason(result))
 		return nil
 	}
 	return t.mavenFeatures(ctx, output, agent, projects, reporting, &result)
@@ -282,6 +297,9 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 		return run, projectErr
 	}
 	run.mavenModules = mavenModuleDirectories(projects)
+	if probe == nil {
+		run.mavenCoverage = observeMavenModules(projects, tests, string(data))
+	}
 	if len(projects) == 1 && t.framework.Name() == "scalatest" {
 		run.mavenModules["org.scalatest.tools.Runner"] = projects[0].Directory
 	}
@@ -301,31 +319,75 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 }
 
 func compareMaven(baseline, reporting validationRun) verdict {
-	if baseline.ResultError != "" || reporting.ResultError != "" || executedTests(baseline) == 0 {
-		return verdict{Status: "inconclusive", Reason: "Both runs need fresh native test results for executed tests. " + baseline.ResultError + " " + reporting.ResultError}
-	}
-	if baseline.Facts.TestEventCount != 0 {
-		return verdict{Status: "inconclusive", Reason: "The baseline emitted test events; disable existing instrumentation before comparison."}
-	}
-	if !slices.Equal(outcomeKeys(baseline), outcomeKeys(reporting)) {
-		return verdict{Status: "suspected regression", Reason: "Maven exit code, native test identities, outcomes or exception type/message differ."}
+	if native := compareMavenNative(baseline, reporting); native.Status != "compatible" {
+		return native
 	}
 	return verifyMavenTelemetry(reporting)
 }
 
+func compareMavenNative(baseline, reporting validationRun) verdict {
+	if reason := pairTimeout(baseline, reporting); reason != "" {
+		return verdict{Status: "inconclusive", Code: "command_timeout", Reason: reason}
+	}
+	if baseline.ResultError != "" || reporting.ResultError != "" || executedTests(baseline) == 0 {
+		return verdict{Status: "inconclusive", Code: "native_results_unavailable", Reason: reportText("Both runs need fresh native results for executed tests. " + baseline.ResultError + " " + reporting.ResultError)}
+	}
+	if baseline.Facts.TestEventCount != 0 {
+		return verdict{Status: "inconclusive", Code: "baseline_instrumented", Reason: "The baseline emitted test events; disable existing instrumentation before comparison."}
+	}
+	left, right := map[string]int{}, map[string]int{}
+	for _, key := range outcomeKeys(baseline) {
+		left[key]++
+	}
+	for _, key := range outcomeKeys(reporting) {
+		right[key]++
+	}
+	difference := mavenDifferences(left, right, "baseline", "reporting-only")
+	if difference.DifferenceCount > 0 {
+		difference.Status, difference.Code = "suspected regression", "native_outcome_mismatch"
+		difference.Reason = "Native Maven identities, outcomes, exception details or exit code differ. These differences remain unexplained; an uninstrumented subset rerun cannot clear them."
+		return difference
+	}
+	return verdict{Status: "compatible", Code: "native_outcomes_match", Reason: "Native Maven identities, outcomes, exception details and exit code match. Matching existing failures are acceptable and do not block compatibility."}
+}
+
+// Count multiplicity before bounding diagnostics; neither truncation nor equal
+// total event counts may conceal a missing, duplicated or renamed execution.
+func mavenDifferences(expected, observed map[string]int, left, right string) verdict {
+	keys := map[string]bool{}
+	for key := range expected {
+		keys[key] = true
+	}
+	for key := range observed {
+		keys[key] = true
+	}
+	var result verdict
+	for _, key := range slices.Sorted(maps.Keys(keys)) {
+		if expected[key] == observed[key] {
+			continue
+		}
+		result.DifferenceCount++
+		if len(result.Differences) < maxReportDifferences {
+			result.Differences = append(result.Differences, reportText(fmt.Sprintf("%s: %s=%d, %s=%d", key, left, expected[key], right, observed[key])))
+		}
+	}
+	return result
+}
+
 func verifyMavenTelemetry(run validationRun) verdict {
 	if len(run.Facts.ConfigurationErrors) > 0 {
-		return verdict{Status: "inconclusive", Reason: "Java tracer configuration errors: " + strings.Join(run.Facts.ConfigurationErrors, "; ")}
+		return verdict{Status: "inconclusive", Code: "java_configuration_error", Reason: reportText("Java tracer configuration errors: " + strings.Join(run.Facts.ConfigurationErrors, "; "))}
 	}
-	// Include multiplicity: parameterized cases can share a tracer name, and
-	// aggregating counts must never conceal missing or unexpected executions.
-	type identity struct{ module, suite, name, status string }
-	expected, observed := map[identity]int{}, map[identity]int{}
+	expected, observed := map[string]int{}, map[string]int{}
+	identity := func(module, suite, name, status string) string {
+		return fmt.Sprintf("module=%q suite=%q test=%q status=%q", module, suite, name, status)
+	}
 	for _, test := range run.Tests {
 		module, suite, _ := strings.Cut(test.File, " / ")
 		status := map[string]string{"passed": "pass", "failed": "fail", "skipped": "skip"}[test.Status]
-		expected[identity{module, suite, mavenTestName(test.Name), status}]++
+		expected[identity(module, suite, mavenTestName(test.Name), status)]++
 	}
+	missingNames := 0
 	for _, test := range run.Facts.Tests {
 		name := test.Module
 		for _, plugin := range []string{"maven-surefire-plugin", "maven-failsafe-plugin", "tycho-surefire-plugin"} {
@@ -336,25 +398,33 @@ func verifyMavenTelemetry(run validationRun) verdict {
 		}
 		module, ok := run.mavenModules[name]
 		if !ok || module == "ambiguous" {
-			return verdict{Status: "inconclusive", Reason: "Java test.module cannot be reconciled with a unique Maven reactor module: " + test.Module}
+			return verdict{Status: "inconclusive", Code: "java_module_unresolved", Reason: reportText("Java test.module cannot be reconciled with a unique Maven reactor module: " + test.Module)}
 		}
 		suite := test.Suite
-		// Cucumber's JUnit XML uses the feature title as classname, while the
-		// tracer prefixes that same title with the feature resource URI.
 		if _, title, ok := strings.Cut(suite, ".feature:"); ok {
 			suite = title
 		}
 		for _, attempt := range test.Attempts {
 			if attempt.Retry {
-				return verdict{Status: "inconclusive", Reason: "Unexpected Java retry in reporting-only mode."}
+				return verdict{Status: "inconclusive", Code: "unexpected_java_retry", Reason: "Unexpected Java retry in reporting-only mode."}
 			}
-			observed[identity{module, suite, mavenEventTestName(test), attempt.Status}]++
+			if test.Name == "" {
+				missingNames++
+			}
+			observed[identity(module, suite, mavenEventTestName(test), attempt.Status)]++
 		}
 	}
-	if len(expected) == 0 || !maps.Equal(expected, observed) {
-		return verdict{Status: "inconclusive", Reason: "Native Maven identities/statuses/counts do not match Java test events; inspect XML reporter naming, mixed frameworks and parameterized tests."}
+	difference := mavenDifferences(expected, observed, "native", "telemetry")
+	if len(expected) == 0 || difference.DifferenceCount > 0 {
+		difference.Status, difference.Code = "inconclusive", "java_identity_mismatch"
+		difference.Reason = "Native and telemetry source-test identities or outcome multiplicities do not reconcile. Equal aggregate totals are insufficient. Inspect the bounded differences; feature probes were not run."
+		if missingNames > 0 {
+			difference.Code = "java_test_name_missing"
+			difference.Reason = fmt.Sprintf("%d Java test executions have an empty test.name. Native names cannot be reconciled with unnamed telemetry; equal totals and matching existing failures do not establish compatibility. Feature probes were not run.", missingNames)
+		}
+		return difference
 	}
-	return verdict{Status: "compatible", Reason: "Maven native identities, outcomes, exception types/messages and exit code match; reporting-only test events reconcile with native results. Existing failures are acceptable."}
+	return verdict{Status: "compatible", Code: "java_identities_match", Reason: "Java test identities, outcomes and multiplicities reconcile with native Maven results."}
 }
 
 // The Java tracer uses Maven's project display name, falling back to artifactId.

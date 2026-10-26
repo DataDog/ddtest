@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"errors"
+	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/kballard/go-shellquote"
 )
@@ -204,6 +205,32 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	runner, err := detected.DetectFramework()
 	if err != nil {
 		return fail("framework_unresolved", err)
+	}
+	if detected.Name() == "java" && options.Format != "" && slices.Contains(maven.FrameworkNames, runner.Name()) {
+		local := DDTestCommand("testdrive", "--framework", runner.Name(), "--yes")
+		if len(local) == 0 {
+			return fail("transient_executable", errors.New(strings.TrimSuffix(TransientExecutableReason, ".")))
+		}
+		for _, option := range []struct{ name, value string }{{"command", options.Command}, {"tracer-version", options.Tracer}, {"timeout", options.Timeout}} {
+			if option.value != "" {
+				local = append(local, "--"+option.name, option.value)
+			}
+		}
+		instruction := "Follow the Maven instructions, preserve every existing CI test command and matrix, and account for every detected test workflow. Run full testdrive with the actual CI command after the final edits. Run validation in the foreground; wait using the host's task/session tool, without background jobs or sleep loops. Read summary.final_response from testdrive.json and preserve its verdict, blockers and report links. Matching existing failures are allowed; equal event totals alone do not establish telemetry identity agreement. Local validation does not certify CI Java/tracer selection or backend processing."
+		if options.Site != "" {
+			instruction += fmt.Sprintf(" Requested CI Datadog site: %q.", options.Site)
+		}
+		return WriteAgentResult(output, AgentResult{
+			Status: "ready", Phase: "onboarding", Code: "manual_setup_required",
+			Reason:     "Automatic Maven CI edits are not implemented. Java local testdrive validation is supported.",
+			NextAction: "run_command", NextCommand: DDTestCommand("onboard", "--instructions", "--framework", runner.Name()),
+			Checks: []WorkflowCheck{
+				{Name: "automatic_setup", Status: "not supported"},
+				{Name: "local_validation", Status: "available", Command: append(slices.Clone(local), "--check-only")},
+				{Name: "full_local_validation", Status: "not exercised", Command: local},
+			},
+			Instruction: instruction,
+		})
 	}
 	if detected.Name() != "javascript" {
 		if options.Format != "" {

@@ -372,3 +372,16 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(run_eval.reporting_verdict(canonical,report)['status'],'pass')
             if not current:
                 self.assertEqual(run_eval.reporting_verdict(canonical+'\nReporting: 96 test executions; 32 source-test identities.',report)['status'],'fail')
+
+
+class MavenScopeReviewTests(unittest.TestCase):
+    def test_maven_selected_command_is_independent_of_ci_configuration(self):
+        canonical = "Selected Maven command validation: PASSED.\nOnboarding validation: INCOMPLETE. Local validation: PASSED."
+        report = {"summary":{"status":"INCOMPLETE","local_validation":"PASSED",
+                  "executed_validation":{"scope":"selected Maven command","status":"PASSED"},
+                  "final_response":canonical}}
+        self.assertEqual(run_eval.reporting_verdict(canonical,report)['status'],'pass')
+        changed = canonical.replace('command validation: PASSED','command validation: INCOMPLETE')
+        self.assertEqual(run_eval.reporting_verdict(changed,report)['status'],'fail')
+        report['summary']['executed_validation']['scope'] = 'all CI configurations'
+        self.assertEqual(run_eval.reporting_verdict(canonical,report)['status'],'fail')

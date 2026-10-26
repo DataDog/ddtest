@@ -269,9 +269,15 @@ def reporting_verdict(text, report):
                 unsupported.append(f"Success claim \"{match[0]}\" while the report status is {summary.get('status') or 'unavailable'}.")
     for match in re.finditer(r"\blocal\s+validation\s*(?::|is|was|remains)?\s*((?:passed|failed|incomplete|not exercised)(?: earlier; not rerun)?|historical only)\b", plain):
         compare("local verdict", summary.get("local_validation"), match[1].strip().upper())
+    for match in re.finditer(r"\bselected maven command validation:\s*(passed|incomplete|not exercised|failed)\b",plain):
+        executed = summary.get("executed_validation") or {}
+        compare("Maven validation scope", "selected Maven command", executed.get("scope"))
+        compare("Maven local command verdict",executed.get("status"),match[1].upper())
     for key, label in (("selected_validation", "selected"), ("executed_validation", "executed")):
         expected = summary.get(key) or {}
         for match in re.finditer(r"\b"+label+r"[^:\n]*\b(?:testdrive|validations?):\s*(passed|incomplete|not exercised|failed)\b(?:\s*\((\d+)\s*/\s*(\d+)\))?", plain):
+            if label == "selected" and match[0].startswith("selected maven command validation:"):
+                continue
             compare(label+" verdict", expected.get("status"), match[1].upper())
             if key == "executed_validation" and match[2]:
                 compare("executed configuration ratio", (expected.get("passed"), expected.get("configurations")), (int(match[2]),int(match[3])))
