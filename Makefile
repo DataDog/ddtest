@@ -24,7 +24,9 @@ install:
 run:
 	go run main.go
 # ddto's release builder links ddtest with the runtime sources and the tool
-# wrapper that ddtest instrument provides to the projects it instruments.
+# wrapper that ddtest instrument provides to the projects it instruments, and
+# gives them ddtest's version. It takes SemVer, so a version such as
+# pre-release-<sha> becomes v0.0.0-pre-release-<sha>.
 release:
 	mkdir -p dist
-	go -C ddto run ./scripts/release -main .. -name ddtest -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)" -o ../dist
+	go -C ddto run ./scripts/release -main .. -name ddtest -version $(if $(filter v%,$(VERSION)),$(VERSION),v0.0.0-$(VERSION)) -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)" -o ../dist

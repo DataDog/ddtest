@@ -282,50 +282,20 @@ accepted.
 
 ## Releases
 
-Run the [release workflow](../.github/workflows/release.yml) from the
-Actions tab, on `main`, with a version such as `v0.1.0` or `v0.1.0-rc.1`. It
-refuses other branches. It:
+ddto is released with ddtest, by ddtest's release and prerelease workflows.
+Both run `make release`, which builds ddtest's executables with
+[`scripts/release`](../scripts/release/main.go) and `-version` set to
+ddtest's version. The executables, the runtime sources that they carry, logs,
+telemetry and test events report it, through `-overlay`; the checkout keeps
+`0.0.0-dev`, which development builds report. `scripts/release` takes
+`vMAJOR.MINOR.PATCH` with an optional prerelease, so the Makefile passes a
+version that does not start with `v`, such as a prerelease's
+`pre-release-<sha>`, as `v0.0.0-pre-release-<sha>`. Its `-stamp` mode, which
+wrote a version into the checkout for the release commits of ddto's own
+releases, is not used.
 
-1. Writes that version as `Number` in
-   [`internal/version`](../internal/version/version.go) with
-   `go run ./scripts/release -version <version> -stamp`, commits it and tags
-   the commit. Only the tag points to that commit; `main` keeps its
-   development version.
-   `go install ...@<version>` therefore builds the release's source and reports
-   its version too: `ddto --version`, logs, telemetry and test events.
-2. Builds the executables with `go run ./scripts/release -o dist`, checks that
-   `ddto --version` reports the version, and runs
-   [`install.sh`](../scripts/install.sh) and
-   [`install.ps1`](../scripts/install.ps1) against the built files.
-3. Pushes the tag and publishes the release with the executables, `install.sh`,
-   `install.ps1` and `SHA256SUMS`. A version with a suffix publishes a
-   prerelease. GitHub generates the notes from the pull requests merged since
-   the previous final release, which the workflow passes as the start tag:
-   the previous tag points to its own release commit, outside the new tag's
-   history, so GitHub would otherwise list every pull request.
-4. After a release without a suffix, a second job opens a pull request that
-   sets `main`'s version to the release's with `-dev`, such as `0.1.0-dev`.
-   GitHub runs the workflows of a pull request that a workflow opens only
-   after a user with write access approves them, so approve them there, then
-   merge it like any other. If that job fails, rerun it alone: it reuses the
-   branch and its pull request.
-
-`scripts/release` rejects a version that is not `vMAJOR.MINOR.PATCH` with an
-optional prerelease, a prerelease with a numeric identifier that starts with
-zero, such as `-rc.01`, which SemVer and Go refuse, and a release above `v1`: the module path has no `/vN`
-suffix, so `go install` could not resolve it. It also rejects a Go
-pseudo-version, such as `v0.0.0-20261022063454-376fffe35f8e`, from which `go
-install` would take another commit than the tag's. The workflow stops before
-building when the tag exists. So if publishing fails after the tag was pushed,
-as when GitHub cannot create the release, a rerun stops there too: delete the
-release, if GitHub created one, and the tag, with
-`git push origin :refs/tags/<version>`, then rerun. The new run makes its own
-release commit. Builds from `main` report the last release
-with `-dev`, or `0.0.0-dev` before the first one. Without `-stamp`,
-`-version` sets the version through `-overlay` for a local build, without
-changing the checkout.
-
-[`scripts/release`](../scripts/release/main.go) builds `ddto-<os>-<arch>` for
+[`scripts/release`](../scripts/release/main.go) builds `<name>-<os>-<arch>`
+(`-name`; `ddtest`, with `-main ..`, for ddtest's releases) for
 Linux, macOS and Windows on `amd64` and `arm64`. Each executable carries the
 two files of [`internal/bundle`](../internal/bundle/bundle.go): a zip of the
 runtime's sources, which are `go.mod`, the license files (`LICENSE`,
