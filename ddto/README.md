@@ -1,20 +1,17 @@
-# ddto
+# ddtest instrument: Go test instrumentation
 
-`ddto` instruments Go tests and reports them to Datadog Test Optimization
-(CI Visibility). Run it in place of `go test`; it prepares temporary build
-overlays, then lets Go compile and execute the tests.
+`ddtest instrument` instruments Go tests and reports them to Datadog Test
+Optimization (CI Visibility). Put it in front of `go test`: it prepares
+temporary build overlays, then lets Go compile and execute the tests.
 
-The default Mini runtime contains the CI policies from `dd-trace-go` and a
-small event client. It adds no external runtime module dependencies. Your
-application can still use the full SDK for APM. This repository is an
-experimental POC; compatibility is checked against pinned Go, SDK and library
-versions.
+This directory holds its Go module, `github.com/DataDog/ddtest/ddto`; `ddto` is
+the internal name of the module and its packages. The default Mini runtime
+contains the CI policies from `dd-trace-go` and a small event client. It adds
+no external runtime module dependencies. Your application can still use the
+full SDK for APM. The instrumentation is experimental; compatibility is
+checked against pinned Go, SDK and library versions.
 
 ## Install
-
-`ddto` ships in [ddtest](../README.md) as `ddtest instrument`: wherever these
-docs run `ddto <arguments>`, ddtest runs `ddtest instrument <arguments>`, with
-the same behavior.
 
 Shell examples use POSIX syntax. On Windows, use Git Bash or set environment
 variables with PowerShell; locally built executables can use a `.exe` suffix.
@@ -37,12 +34,16 @@ and check it against the release's `SHA256SUMS`. `--version v1.2.3` picks a
 release and `--dir` another directory; in PowerShell, set
 `$env:DDTEST_INSTALL_VERSION` and `$env:DDTEST_INSTALL_DIR` first, or run
 `& ([scriptblock]::Create((irm <url>/install.ps1))) -Version v1.2.3 -Dir C:\tools`.
-They keep an installed executable of the same version, so a persistent runner
-downloads nothing for a requested version and only `SHA256SUMS` for the latest.
-Without an executable for the platform, or when its checksum differs, they
-stop. In GitHub Actions they add the directory to `PATH` for later steps;
-`install.ps1` also adds it to the current session. `ddtest instrument
---version` prints the installed version.
+`DDTEST_INSTALL_DOWNLOAD_URL` names a mirror of the release's files. The
+scripts keep an installed executable of the same version, so a persistent
+runner downloads nothing for a requested version and only `SHA256SUMS` for the
+latest. Without an executable for the platform, or when its checksum differs,
+they stop. In GitHub Actions they add the directory to `PATH` for later steps;
+`install.ps1` also adds it to the current session.
+
+`ddtest instrument --version` prints `ddtest instrument <version>`: the
+instrumentation is released with ddtest and reports ddtest's version, in its
+logs, telemetry and test events too.
 
 Releases have `ddtest-<os>-<arch>` for Linux, macOS (`darwin`) and Windows on
 `amd64` and `arm64`, with `.exe` on Windows. Each executable carries the Mini
@@ -55,16 +56,20 @@ To build from a checkout of ddtest instead:
 ```sh
 git clone https://github.com/DataDog/ddtest.git
 cd ddtest
-make install                  # ddtest, in GOBIN or the first GOPATH entry's bin
+make install                      # ddtest, in GOBIN or the first GOPATH entry's bin
 cd ddto
-go build -o bin/ddto ./cmd/ddto   # or ddto alone, for this module's own development
+go build -o bin/ddto ./cmd/ddto   # the standalone ddto, for this module's own development
 ```
 
 Coding agents can follow [AGENTS.md](AGENTS.md), which covers installation,
-verification and the settings to choose for a project. Run the resulting
-binary from the module you want to test. A toolchain that
+verification and the settings to choose for a project. AGENTS.md and the
+[documents](docs/README.md) of this directory still write `ddto <arguments>`:
+in ddtest, that is `ddtest instrument <arguments>`, with the same behavior.
+
+Run `ddtest instrument` from the module you want to test. A toolchain that
 `GOTOOLCHAIN` downloads into `GOMODCACHE` works too: Go rejects overlays there,
-so `ddto` runs that toolchain from a mirror in its user cache.
+so the CLI runs that toolchain from a mirror in its user cache, under
+`ddtest/instrument/goroots`.
 [Runtime provisioning](docs/mini-runtime.md#runtime-provisioning) covers the
 mirror, vendor mode, workspaces and local replacements.
 
@@ -73,31 +78,32 @@ mirror, vendor mode, workspaces and local replacements.
 With a Datadog Agent that accepts CI Visibility requests, run from your project:
 
 ```sh
-DD_SERVICE=my-tests DD_ENV=ci ddto test ./...
+DD_SERVICE=my-tests DD_ENV=ci ddtest instrument go test ./...
 ```
 
-`ddto go test` is the same as `ddto test`, also with go's `-C dir` before
-`test`. Any other command runs unchanged, with its arguments, standard
-streams, environment and exit status: `ddto go build ./...` runs `go build
-./...`. As with `env`, a command that is not found exits with 127, and one
-that cannot run with 126. A CI script can put `ddto` in front of its go
-commands; only `go test` reports to CI Visibility. gotestsum, and any command
-after `--go-shim`, report the `go test` that they run; see
-[gotestsum](#gotestsum) and [Other test wrappers](#other-test-wrappers). The
-one addition is for
-go: its environment gets `DDTEST_INSTRUMENT_NESTED_GO`, which counts the ddto commands that
-run go around it. A `go` on `PATH` that starts ddto again, such as a script
-that runs `ddto go`, would otherwise make ddto start itself without end; ddto
-stops at the ninth with an error that names that `go`. With
-`DD_TRACE_DEBUG=true`, ddto logs on `stderr` which program it started and
-how; see [CLI build diagnostics](docs/cli-debug.md#commands-other-than-go-test).
+`ddtest instrument test` is the short form of `ddtest instrument go test`, also
+with go's `-C dir` before `test`. Any other command runs unchanged, with its
+arguments, standard streams, environment and exit status:
+`ddtest instrument go build ./...` runs `go build ./...`. As with `env`, a
+command that is not found exits with 127, and one that cannot run with 126. A
+CI script can put `ddtest instrument` in front of its go commands; only
+`go test` reports to CI Visibility. gotestsum, and any command after
+`--go-shim`, report the `go test` that they run; see [gotestsum](#gotestsum)
+and [Other test wrappers](#other-test-wrappers). The one addition is for go:
+its environment gets `DDTEST_INSTRUMENT_NESTED_GO`, which counts the
+`ddtest instrument` commands that run go around it. A `go` on `PATH` that
+starts the CLI again, such as a script that runs `ddtest instrument go`, would
+otherwise make it start itself without end; it stops at the ninth with an
+error that names that `go`. With `DD_TRACE_DEBUG=true`, the CLI logs on
+`stderr` which program it started and how; see
+[CLI build diagnostics](docs/cli-debug.md#commands-other-than-go-test).
 
-ddto is a Go program, and a command starts with the process state that Go's
+ddtest is a Go program, and a command starts with the process state that Go's
 runtime leaves. On Unix, some signals that the caller ignored or blocked,
 such as SIGTERM, reach the command with their default action, and a standard
 stream that the caller closed is open on `/dev/null`. On Windows, the
-command receives ddto's command line after `ddto` as written, and ddto waits
-for it in a job that ends it if ddto is terminated.
+command receives ddtest's command line after `ddtest instrument` as written,
+and ddtest waits for it in a job that ends it if ddtest is terminated.
 
 Set `DD_TRACE_AGENT_URL` to select an Agent address. Without an override, Mini
 uses the default Agent Unix socket when present, then `http://localhost:8126`.
@@ -106,7 +112,7 @@ configuration and select your Datadog site:
 
 ```sh
 DD_CIVISIBILITY_AGENTLESS_ENABLED=true DD_SITE=datadoghq.com \
-  ddto test ./...
+  ddtest instrument go test ./...
 ```
 
 Git metadata normally comes from the checkout and CI environment. Repository
@@ -129,24 +135,24 @@ your sources unchanged. Explicit `-mod=mod` still permits Go's own module edits.
 
 ```sh
 # Select tests and keep Go's normal output.
-ddto test -count=1 -run '^TestRequest$' -v ./...
+ddtest instrument go test -count=1 -run '^TestRequest$' -v ./...
 
 # Race detection and atomic coverage of client packages.
-ddto test -count=1 -race -covermode=atomic -coverpkg=./... ./...
+ddtest instrument go test -count=1 -race -covermode=atomic -coverpkg=./... ./...
 
 # JSON output; CLI diagnostics stay on stderr.
-ddto test -count=1 -json ./...
+ddtest instrument go test -count=1 -json ./...
 
 # Compile test binaries without running tests or sending runtime events.
 mkdir -p test-binaries
-ddto test -c -o "$PWD/test-binaries/" ./...
+ddtest instrument go test -c -o "$PWD/test-binaries/" ./...
 
 # Execute one compiled binary from the package's expected working directory.
 DD_CIVISIBILITY_ENABLED=parent ./test-binaries/example.test \
   -test.count=1 -test.timeout=10m -test.v
 
 # Compare with the pinned, unmodified full SDK runtime.
-ddto test --runtime=sdk -count=1 ./...
+ddtest instrument go test --runtime=sdk -count=1 ./...
 ```
 
 Mini is selected when `--runtime` is omitted. Both `--runtime=mini` and
@@ -156,8 +162,8 @@ custom test flags, `-args` or `--`, which begin the test binary's arguments.
 More options follow the same rule:
 
 - `--git-upload-timeout=2m` (default one minute) bounds every wait for the
-  repository upload of `ddto`'s Git worker. Test processes wait at most that
-  long for its result, and `ddto` waits at most that long after `go test`
+  repository upload of the CLI's Git worker. Test processes wait at most that
+  long for its result, and the CLI waits at most that long after `go test`
   exits, then stops the upload cleanly.
 - `--keep-ci-state` keeps the invocation's CI state and prints where;
   `--keep-ci-state=state.zip` archives it. See
@@ -175,7 +181,7 @@ More options follow the same rule:
   Analysis from one mark per source file instead of Go's coverage counters. It
   needs no `-cover`, and it reports every package of the repository that a
   test runs. Rows name files without line bitmaps. Without Mini, with Go's
-  coverage flags or with `-race`, ddto warns and keeps Go's counters.
+  coverage flags or with `-race`, the CLI warns and keeps Go's counters.
   Top-level tests then run one at a time while coverage is collected.
   `--experimental-file-coverage=context` keeps `t.Parallel()`: goroutines,
   channels and timers carry the tests that they work for, so each test still
@@ -184,43 +190,45 @@ More options follow the same rule:
   same; the flag decides when both are set.
   See [Experimental file coverage](docs/mini-runtime.md#experimental-file-coverage).
 
-`ddto` reports one test session per command: every package's tests report in
-it, and it lasts the command and has `go test`'s exit status. A test binary run
-without `ddto` reports its own session, and so does each test binary when a
-tested package lies in another Git checkout than `go test`'s directory, whose
-Git metadata and service the session takes. When a test process crashes, the
-session says how; testing's `-timeout` sends the tests' events first, and so
-does an unrecovered panic with `--panic-hook`. For other crashes, `ddto`
-reports, failed, the module and suites that the process left open and the test
-that the crash names. [Details](internal/thirdparty/dd-trace-go/ADAPTATIONS.md#ddtos-test-session)
+`ddtest instrument` reports one test session per command: every package's
+tests report in it, and it lasts the command and has `go test`'s exit status.
+A test binary run without `ddtest instrument` reports its own session, and so
+does each test binary when a tested package lies in another Git checkout than
+`go test`'s directory, whose Git metadata and service the session takes. When
+a test process crashes, the session says how; testing's `-timeout` sends the
+tests' events first, and so does an unrecovered panic with `--panic-hook`. For
+other crashes, the CLI reports, failed, the module and suites that the process
+left open and the test that the crash names.
+[Details](internal/thirdparty/dd-trace-go/ADAPTATIONS.md#ddtos-test-session)
 
 `--runtime=sdk` requires the exact SDK version pinned in
 [`internal/version`](internal/version/version.go).
 
 ## gotestsum
 
-Put `ddto` in front of the gotestsum command that you already run:
+Put `ddtest instrument` in front of the gotestsum command that you already run:
 
 ```sh
-ddto gotestsum --format testname --junitfile junit.xml -- -race ./...
-ddto go tool gotestsum -- ./...                      # a tool of the module
-ddto go tool -modfile=tools.mod gotestsum -- ./...   # or of a tools modfile
-ddto go run gotest.tools/gotestsum@v1.13.0 -- ./...
+ddtest instrument gotestsum --format testname --junitfile junit.xml -- -race ./...
+ddtest instrument go tool gotestsum -- ./...                      # a tool of the module
+ddtest instrument go tool -modfile=tools.mod gotestsum -- ./...   # or of a tools modfile
+ddtest instrument go run gotest.tools/gotestsum@v1.13.0 -- ./...
 ```
 
 gotestsum keeps its arguments, output and exit status, with `--packages`,
 `--rerun-fails`, `--watch`, `--junitfile` and `--raw-command`, and the
-`go test` that it runs reports to CI Visibility. ddto puts a `go` of its own,
-in its user cache, first on gotestsum's `PATH`. When gotestsum runs
-`go test -json …`, that `go` runs `ddto go test -json …`, and every ddto
-leaves it off `PATH`, so the tests see gotestsum's `PATH`. `go run` and
-`go tool` put `$GOROOT/bin` first on their program's `PATH`, so ddto runs
-gotestsum through its own `-exec` program or directly.
+`go test` that it runs reports to CI Visibility. The CLI puts a `go` of its
+own, in its user cache under `ddtest/instrument/go-shim`, first on gotestsum's
+`PATH`. When gotestsum runs `go test -json …`, that `go` runs
+`ddtest instrument go test -json …`, and each of them leaves it off `PATH`, so
+the tests see gotestsum's `PATH`. `go run` and `go tool` put `$GOROOT/bin`
+first on their program's `PATH`, so the CLI runs gotestsum through its own
+`-exec` program or directly.
 
 Each `go test` that gotestsum runs reports its own session, such as each
-`--rerun-fails` run. ddto's options, such as `--runtime`, do not apply there,
-so a test flag named `--runtime` stays the test's. If ddto cannot set up its
-`go`, it warns and runs gotestsum without CI Visibility.
+`--rerun-fails` run. The CLI's options, such as `--runtime`, do not apply
+there, so a test flag named `--runtime` stays the test's. If the CLI cannot
+set up its `go`, it warns and runs gotestsum without CI Visibility.
 
 ## Other test wrappers
 
@@ -228,10 +236,10 @@ so a test flag named `--runtime` stays the test's. If ddto cannot set up its
 that does:
 
 ```sh
-ddto --go-shim make test
-ddto --go-shim task test
-ddto --go-shim ./scripts/test.sh
-ddto --go-shim go run ./tools/testrunner
+ddtest instrument --go-shim make test
+ddtest instrument --go-shim task test
+ddtest instrument --go-shim ./scripts/test.sh
+ddtest instrument --go-shim go run ./tools/testrunner
 ```
 
 Each `go test` that the command runs reports its own session, and other go
@@ -239,9 +247,9 @@ commands run unchanged. Only a `go` found on `PATH` reports: a command that
 runs `$GOROOT/bin/go` by its path or sets its own `PATH` runs `go test`
 without CI Visibility, as do commands that `go generate` starts, which find
 `$GOROOT/bin` first. A `go run` or `go tool` that the command starts keeps
-ddto's `go` for its program, unless `go run` has its own `-exec` or builds for
-another platform; then ddto warns and runs it without its `go`.
-`ddto --go-shim go test …` is `ddto go test …`.
+the CLI's `go` for its program, unless `go run` has its own `-exec` or builds
+for another platform; then the CLI warns and runs it without its `go`.
+`ddtest instrument --go-shim go test …` is `ddtest instrument go test …`.
 
 ## What is supported
 
@@ -257,7 +265,7 @@ another platform; then ddto warns and runs it without its `go`.
 | Bazel | Offline manifest and payload-file contracts; a real Bazel toolchain invocation is not part of the validation. [Details](docs/mini-runtime.md#delivery-and-offline-output) |
 | Platforms | Linux with Go 1.25/1.26/1.27 and tip, macOS and Windows with Go 1.27; Linux also runs Go 1.25 and 1.27 with `-race`. [CI matrix](docs/validation.md#compatibility-workflow) |
 
-When using `ddto`, a client's `go.mod` can declare Go 1.21 or newer; the
+With `ddtest instrument`, a client's `go.mod` can declare Go 1.21 or newer; the
 installed toolchain must meet Mini's Go 1.25 minimum. Older toolchains are
 rejected before module provisioning. Instrumentation preserves the client's
 language version, including its loop-variable behavior. A direct `testopt`
@@ -271,12 +279,12 @@ checks from live intake, UI and downstream-project validation.
 
 ## Environment variables
 
-Set these variables before invoking `ddto` or a compiled test binary. The
-tables describe the default Mini runtime; `--runtime=sdk` uses the pinned SDK's
-configuration. Boolean settings accept `true` and `false`. CI-provider variables
-are detected automatically. Internal retry and compiler-wrapper variables are
-managed by the tool.
-
+Set these variables before invoking `ddtest instrument` or a compiled test
+binary. The tables describe the default Mini runtime; `--runtime=sdk` uses the
+pinned SDK's configuration. Boolean settings accept `true` and `false`.
+CI-provider variables are detected automatically. The CLI hands its own
+processes variables that start with `DDTEST_INSTRUMENT_`, such as the Git
+state, the test session and the saved Go settings; do not set them.
 ### Reporting and delivery
 
 | Variable | Default | Meaning |
@@ -363,15 +371,39 @@ including manifest credentials and validation limits.
 ## Debug and maintain
 
 ```sh
-DD_TRACE_DEBUG=true ddto test -count=1 -v ./...
+DD_TRACE_DEBUG=true ddtest instrument go test -count=1 -v ./...
 ```
 
-Build logs use `TestOptimization.build`; Mini logs use `TestOptimization.run`.
-Both include timestamps. [Reading the timings](docs/cli-debug.md) explains
-preparation, subprocesses, requests and shutdown, including overlapping phases.
+Build logs start with `TestOptimization.build <version>` and Mini logs with
+`TestOptimization.run  <version>`, with ddtest's version. Both include
+timestamps. [Reading the timings](docs/cli-debug.md) explains preparation,
+subprocesses, requests and shutdown, including overlapping phases.
 
 The [documentation index](docs/README.md) links user guides, architecture
 diagrams, compatibility tests and source-update procedures.
+
+## Changes from the standalone ddto
+
+The instrumentation was a separate CLI, `ddto`, before it moved into ddtest.
+Its behavior is the same; what it is called, and what it leaves on your
+machine, changed:
+
+| Before, with ddto | Now, with ddtest instrument |
+| --- | --- |
+| `ddto test ./...`, `ddto gotestsum …`, `ddto --go-shim …` | `ddtest instrument go test ./...`, `ddtest instrument gotestsum …`, `ddtest instrument --go-shim …` |
+| Standalone ddto releases, `ddto-<os>-<arch>`, ddto's own version | ddtest's releases, `ddtest-<os>-<arch>`, ddtest's version |
+| Install settings `DDTO_VERSION`, `DDTO_INSTALL_DIR`, `DDTO_DOWNLOAD_URL`; a fallback to `go install` | `DDTEST_INSTALL_VERSION`, `DDTEST_INSTALL_DIR`, `DDTEST_INSTALL_DOWNLOAD_URL`; no fallback |
+| Variables that the CLI hands its processes: `DDTO_NESTED_GO`, `DDTO_GIT_STATE`, `DDTO_TEST_SESSION`, `DDTO_GITHUB_JOB_ID`, `DDTO_USER_TOOLEXEC`, `DDTO_ORCHESTRION_BYPASS`, `DDTO_ORIGINAL_*` | `DDTEST_INSTRUMENT_NESTED_GO`, `DDTEST_INSTRUMENT_GIT_STATE`, `DDTEST_INSTRUMENT_TEST_SESSION`, `DDTEST_INSTRUMENT_GITHUB_JOB_ID`, `DDTEST_INSTRUMENT_USER_TOOLEXEC`, `DDTEST_INSTRUMENT_ORCHESTRION_BYPASS`, `DDTEST_INSTRUMENT_ORIGINAL_*` |
+| User cache `<UserCacheDir>/ddto/` | `<UserCacheDir>/ddtest/instrument/`, with the same `runtimes`, `toolwraps`, `goroots`, `vendor-workspaces` and `go-shim` |
+| Tool wrapper `ddto-toolwrap` | `ddtest-toolexec` |
+| Temporary directories and files `ddto-*` and `_ddto-*` | `ddtest-instrument-*` and `_ddtest-instrument-*` |
+| CI state file `ddto.json`, GOROOT mirror record `.ddto-goroot-mirror.json` | `ci-state.json`, `.goroot-mirror.json` |
+| Messages, warnings and logs that named ddto | They say the CLI; the debug phase of the whole command is `cli` |
+| Module `github.com/DataDog/ddto` | `github.com/DataDog/ddtest/ddto`, in this directory |
+
+A previous ddto's cache under `<UserCacheDir>/ddto/` is no longer used; remove
+it to reclaim its space. The variables that the CLI hands its processes are
+internal: nothing needs to set them.
 
 <!-- build-benchmark-summary:start -->
 ## Benchmarks
