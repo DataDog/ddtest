@@ -75,4 +75,4 @@ backend are not exercised.
 `testdrive --report` reads saved pytest evidence as `historical_report` with
 `freshness_unverified`; it does not rerun tests or certify current source,
 dependencies or Python. Rerun testdrive before claiming current success. The
-structured `--agent` onboarding coordinator remains JavaScript-only.
+structured onboarding coordinator remains JavaScript-only.
