@@ -65,6 +65,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if t.allowReviewedBuilds {
 		result.NextCommand = append(result.NextCommand, "--allow-reviewed-builds")
 	}
+	if t.acceptSubstituteRuntime {
+		result.NextCommand = append(result.NextCommand, AcceptSubstituteRuntimeFlag)
+	}
 	if options.ExplicitVersion {
 		result.NextCommand = append(result.NextCommand, "--tracer-version", t.tracerVersion)
 	}
@@ -342,7 +345,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			}
 		}
 		if pin != "" {
-			prepared, err := Prepare(PrepareOptions{TracerVersion: pin, All: t.allConfigurations, Timeout: t.commandTimeout, AllowReviewedBuilds: t.allowReviewedBuilds})
+			prepared, err := Prepare(PrepareOptions{TracerVersion: pin, All: t.allConfigurations, Timeout: t.commandTimeout, AllowReviewedBuilds: t.allowReviewedBuilds, AcceptSubstituteRuntime: t.acceptSubstituteRuntime})
 			if err != nil {
 				return fail("needs_input", "validation_preparation", err.Error(), "Resolve the named local prerequisite.")
 			}
@@ -489,7 +492,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		t.workflowScope = &scope
 		t.tracerVersion = selected
 		// Prepare once more to bind installation commands to the exact release.
-		prepared, err := Prepare(PrepareOptions{TracerVersion: selected, All: true, Timeout: t.commandTimeout, AllowReviewedBuilds: t.allowReviewedBuilds})
+		prepared, err := Prepare(PrepareOptions{TracerVersion: selected, All: true, Timeout: t.commandTimeout, AllowReviewedBuilds: t.allowReviewedBuilds, AcceptSubstituteRuntime: t.acceptSubstituteRuntime})
 		if err != nil {
 			return fail("needs_input", "validation_preparation", err.Error(), "Resolve the named installed dependency or command prerequisite.")
 		}
@@ -665,6 +668,14 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				reason += ": " + cause
 			}
 			return fail("needs_input", "configuration_setup_failed", reason, "Tests were not compared for this configuration. Correct only its declared setup; preserve scope and assertions.")
+		}
+		// Evidence that passed on a compatible substitute runtime is the user's to accept.
+		if sub := validation.RuntimeSubstitution; sub != nil && !sub.Accepted && slices.Equal(validation.Summary.BlockingChecks, []string{sub.blocker()}) {
+			if !slices.Contains(result.ResumeCommand, AcceptSubstituteRuntimeFlag) {
+				result.ResumeCommand = append(result.ResumeCommand, AcceptSubstituteRuntimeFlag)
+			}
+			result.RequiredInput = []string{"User decision: accept the evidence from Node " + sub.Local + " in place of CI's Node " + sub.CI + " by running resume_command, or put an existing Node " + sub.CI + " first on PATH and rerun resume_command without " + AcceptSubstituteRuntimeFlag + "."}
+			return fail("needs_input", "substitute_runtime_unaccepted", sub.blocker(), "Every check passed on a compatible substitute runtime. Ask the user which option to take; do not accept it yourself, download a runtime, or change CI, the tracer or the test scope.")
 		}
 		result.RequiredInput = validation.Summary.BlockingChecks[:min(3, len(validation.Summary.BlockingChecks))]
 		return fail("validation_failed", "validation_incomplete", strings.Join(result.RequiredInput, "; "), "Address only these current blockers, then rerun full validation. A failed feature or exclusion check remains failed.")
@@ -944,6 +955,9 @@ func (t *Testdrive) workflowValidationResume(executable, name, selected string, 
 	}
 	if t.allowReviewedBuilds {
 		command = append(command, "--allow-reviewed-builds")
+	}
+	if t.acceptSubstituteRuntime {
+		command = append(command, AcceptSubstituteRuntimeFlag)
 	}
 	return command
 }

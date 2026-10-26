@@ -125,7 +125,12 @@ func TestPublicCypressTestdrive(t *testing.T) {
 `, address))
 			}
 			if mode == "action API" {
-				write("cypress/e2e/one.cy.js", `it('action inputs',()=>{`+visit+`expect(Cypress.config('viewportWidth')).to.equal(800);expect(Cypress.env('feature')).to.equal(true);expect(Cypress.env('number')).to.equal(7);cy.wrap(1).should('eq',1)})`)
+				// Cypress 16 removed Cypress.env(); action env inputs are read with cy.env().
+				inputs := `expect(Cypress.env('feature')).to.equal(true);expect(Cypress.env('number')).to.equal(7);`
+				if cypressMajor(t, modules) >= 16 {
+					inputs = `cy.env('feature').should('equal',true);cy.env('number').should('equal',7);`
+				}
+				write("cypress/e2e/one.cy.js", `it('action inputs',()=>{`+visit+`expect(Cypress.config('viewportWidth')).to.equal(800);`+inputs+`cy.wrap(1).should('eq',1)})`)
 			}
 			if mode == "action custom CLI" {
 				write("build.cjs", `require('node:fs').writeFileSync('generated.json',JSON.stringify({ready:true}))`)
@@ -336,4 +341,16 @@ func TestCypressTypeScriptWrapperTranspilesToCommonJS(t *testing.T) {
 var cypressWorkflowScenarios = integrationScenarios{
 	names:   []string{"recovery", "passing", "existing failure", "action API", "action custom CLI", "native retries", "type retries", "CLI retries", "action retries", "TypeScript", "ESM", "subpackage"},
 	weights: map[string]int{"recovery": 23},
+}
+
+// cypressMajor reads the installed Cypress major so fixtures follow its API.
+func cypressMajor(t *testing.T, modules string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(modules, "cypress", "package.json"))
+	require.NoError(t, err)
+	var metadata struct{ Version string }
+	require.NoError(t, json.Unmarshal(data, &metadata))
+	major, err := strconv.Atoi(strings.SplitN(metadata.Version, ".", 2)[0])
+	require.NoError(t, err)
+	return major
 }

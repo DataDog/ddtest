@@ -92,6 +92,9 @@ func summarizeValidation(result validationResult) validationSummary {
 			summary.BlockingChecks = append(summary.BlockingChecks, "no current HTML findings report")
 		}
 	}
+	if result.RuntimeSubstitution != nil && !result.RuntimeSubstitution.Accepted && !result.CheckOnly {
+		summary.BlockingChecks = append(summary.BlockingChecks, result.RuntimeSubstitution.blocker())
+	}
 	if result.CISelection != nil && result.CISelection.Status != "compatible" {
 		summary.BlockingChecks = append(summary.BlockingChecks, "CI tracer agreement: "+result.CISelection.Status)
 	}

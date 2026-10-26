@@ -178,6 +178,8 @@ type StartOptions struct {
 	Human               bool
 	Timeout             string
 	AllowReviewedBuilds bool
+	// AcceptSubstituteRuntime is forwarded to the onboarding handoff.
+	AcceptSubstituteRuntime bool
 }
 
 func Start(output io.Writer) error { return StartWithOptions(output, StartOptions{}) }
@@ -223,6 +225,9 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	}
 	if options.AllowReviewedBuilds {
 		command = append(command, "--allow-reviewed-builds")
+	}
+	if options.AcceptSubstituteRuntime {
+		command = append(command, "--accept-substitute-runtime")
 	}
 	notice := ExecutableFallbackNotice()
 	if options.Human {

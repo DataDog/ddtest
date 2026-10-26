@@ -207,6 +207,9 @@ func (r validationRun) summary() runSummary {
 }
 
 type validationResult struct {
+	// Set when a compatible local runtime stood in for the CI runtime.
+	RuntimeSubstitution *runtimeSubstitution `json:"runtime_substitution,omitempty"`
+
 	TelemetryOnly  bool `json:"telemetry_only,omitempty"`
 	SchemaVersion  int  `json:"schema_version"`
 	FocusedCommand bool `json:"focused_command,omitempty"`
@@ -604,7 +607,9 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 		result.Success = validationPassed(*result)
 	}
 	applyScopeVerdict(result)
-
+	if result.RuntimeSubstitution != nil && !result.RuntimeSubstitution.Accepted {
+		result.Success = false
+	}
 }
 
 // Runs that stop before a tracer is selected show the request, marked as such.

@@ -109,6 +109,9 @@ type Testdrive struct {
 	checkOnly                             bool
 	resolveJSTags                         func(context.Context) (map[string]string, error)
 	resolveJSTracer                       func(context.Context, string) (platform.JSSelection, error)
+
+	// acceptSubstituteRuntime completes validation on a compatible local runtime.
+	acceptSubstituteRuntime bool
 }
 
 // Prepare detects the repository and probes the selected test environment and tracer.
@@ -121,6 +124,9 @@ type PrepareOptions struct {
 	DefaultTracerVersion bool
 	CheckOnly            bool
 	All                  bool
+
+	// AcceptSubstituteRuntime completes validation on a compatible local runtime.
+	AcceptSubstituteRuntime bool
 }
 
 func checkTemporaryStorage() error {
@@ -392,6 +398,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 
 	drive.scopeCommand = scopeCommand
 	drive.allowReviewedBuilds = configuration.AllowReviewedBuilds
+	drive.acceptSubstituteRuntime = configuration.AcceptSubstituteRuntime
 	drive.commandTimeout = timeout
 	if supportsValidationFramework(runner.Name()) {
 		drive.executor = &ext.DefaultCommandExecutor{Timeout: timeout}

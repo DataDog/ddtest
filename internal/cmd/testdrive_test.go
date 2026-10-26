@@ -211,7 +211,7 @@ func TestTestdriveHelpUsesRegisteredFrameworkNames(t *testing.T) {
 
 func TestTestdrivePreparationFlagsRemainRegistered(t *testing.T) {
 	command := newTestdriveCommand()
-	for _, name := range []string{"all", "check-only", "timeout", "allow-reviewed-builds"} {
+	for _, name := range []string{"all", "check-only", "timeout", "allow-reviewed-builds", "accept-substitute-runtime"} {
 		if command.Flags().Lookup(name) == nil {
 			t.Errorf("missing preparation flag %s", name)
 		}

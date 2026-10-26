@@ -38,10 +38,11 @@ func newTestdriveCommand() *cobra.Command {
 	var version, facts, format, resume, detail, site string
 	var checkOnly, agent, report bool
 	var all bool
-	var allowReviewedBuilds bool
+	var allowReviewedBuilds, acceptSubstituteRuntime bool
 	var timeout time.Duration
 	command.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "Maximum duration of each subprocess, including each full test-suite run")
 	command.Flags().BoolVar(&allowReviewedBuilds, "allow-reviewed-builds", false, "Allow reviewed bundlers, package build lifecycle scripts and dependency changes in isolated copies (may use the network)")
+	command.Flags().BoolVar(&acceptSubstituteRuntime, "accept-substitute-runtime", false, "Complete validation on a compatible local Node when CI uses a different major; ask the user first")
 	command.Flags().BoolVar(&all, "all", false, "Validate every discovered "+testdrive.ValidationFrameworkNames()+" CI configuration, preserving environment and known build prerequisites")
 	command.Flags().BoolVar(&checkOnly, "check-only", false, "Check "+testdrive.ValidationFrameworkNames()+" configuration, tracer selection and static CI runtimes without installing a tracer or running tests")
 	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer; defaults to the release every instrumented CI job pins, else latest")
@@ -101,7 +102,7 @@ func newTestdriveCommand() *cobra.Command {
 			}
 		}
 
-		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, DefaultTracerVersion: !cmd.Flags().Changed("tracer-version"), CheckOnly: checkOnly, All: all, Timeout: timeout, AllowReviewedBuilds: allowReviewedBuilds})
+		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, DefaultTracerVersion: !cmd.Flags().Changed("tracer-version"), CheckOnly: checkOnly, All: all, Timeout: timeout, AllowReviewedBuilds: allowReviewedBuilds, AcceptSubstituteRuntime: acceptSubstituteRuntime})
 		if err != nil {
 			return fail("validation_preparation", err)
 		}

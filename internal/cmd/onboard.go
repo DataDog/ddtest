@@ -24,7 +24,7 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 	var apply, yes, instructions, allowDirty, agent bool
 	var version, facts, site, format, resume string
 	var timeout time.Duration
-	var reviewed bool
+	var reviewed, substitute bool
 	command := &cobra.Command{
 		Use:   "onboard",
 		Short: "Start here: onboard this repository to Test Optimization",
@@ -69,7 +69,7 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 				if site == "" {
 					site = os.Getenv("DD_SITE")
 				}
-				execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, All: true, Timeout: timeout, AllowReviewedBuilds: reviewed})
+				execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, All: true, Timeout: timeout, AllowReviewedBuilds: reviewed, AcceptSubstituteRuntime: substitute})
 				if err != nil {
 					return fail("validation_preparation", err)
 				}
@@ -104,11 +104,12 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 			if cmd.Flags().Changed("timeout") {
 				selectedTimeout = timeout.String()
 			}
-			return onboard.StartWithOptions(cmd.OutOrStdout(), onboard.StartOptions{Timeout: selectedTimeout, AllowReviewedBuilds: reviewed, Format: selectedFormat, Site: site, Tracer: selectedTracer, Facts: facts, Platform: settings.GetPlatform(), Command: settings.GetCommand(), Human: isTerminalWriter(cmd.OutOrStdout()) && !structured})
+			return onboard.StartWithOptions(cmd.OutOrStdout(), onboard.StartOptions{Timeout: selectedTimeout, AllowReviewedBuilds: reviewed, AcceptSubstituteRuntime: substitute, Format: selectedFormat, Site: site, Tracer: selectedTracer, Facts: facts, Platform: settings.GetPlatform(), Command: settings.GetCommand(), Human: isTerminalWriter(cmd.OutOrStdout()) && !structured})
 		},
 	}
 	command.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "Maximum duration per test or preparation command")
 	command.Flags().BoolVar(&reviewed, "allow-reviewed-builds", false, "Allow explicitly reviewed preparation in isolated copies")
+	command.Flags().BoolVar(&substitute, "accept-substitute-runtime", false, "Complete validation on a compatible local Node when CI uses a different major; ask the user first")
 	command.Flags().BoolVar(&agent, "agent", false, "Return exactly one structured result for a coding agent")
 	command.Flags().BoolVar(&apply, "apply", false, "Apply recognized Node CLI CI setup and run full local validation; unsupported layouts return a precise blocker")
 	command.Flags().BoolVar(&yes, "yes", false, "Allow the declared source edits and local test execution")

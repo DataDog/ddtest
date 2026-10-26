@@ -22,3 +22,22 @@ func (e *localRuntimeError) Error() string {
 func (e *localRuntimeError) Capability() string {
 	return "Node " + e.Required + " runtime first on PATH"
 }
+
+// AcceptSubstituteRuntimeFlag opts in to completing validation on a compatible
+// local runtime that differs from the one CI uses.
+const AcceptSubstituteRuntimeFlag = "--accept-substitute-runtime"
+
+// runtimeSubstitution records validation that ran on a compatible local Node
+// in place of the major a CI path uses. The evidence is real, but it is not the
+// CI runtime, so completion needs explicit acceptance.
+type runtimeSubstitution struct {
+	Source   string `json:"source"`
+	CI       string `json:"ci_node"`
+	Local    string `json:"local_node"`
+	Reason   string `json:"reason"`
+	Accepted bool   `json:"accepted"`
+}
+
+func (s *runtimeSubstitution) blocker() string {
+	return fmt.Sprintf("runtime fidelity: validated on substitute Node %s; %s runs on Node %s. Accept this evidence with %s, or put an existing Node %s first on PATH and rerun", s.Local, s.Source, s.CI, AcceptSubstituteRuntimeFlag, s.CI)
+}

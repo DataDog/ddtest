@@ -136,6 +136,7 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 			}
 		}
 	}
+	var mismatch *localRuntimeError
 	if t.cypress != nil && t.cypress.Action != "" {
 		node, err := onboard.CypressActionNode(ctx, t.cypress.Action)
 		if err != nil {
@@ -144,18 +145,29 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 		major, _, known := releaseParts(check.Node)
 		required, err := strconv.Atoi(node)
 		if err != nil || !known || major != required {
-			mismatch := &localRuntimeError{Source: "The Cypress action API (" + t.cypress.Action + ")", Required: node, Local: check.Node}
-			check.Verdict = verdict{Status: "inconclusive", Reason: mismatch.Error()}
+			mismatch = &localRuntimeError{Source: "The Cypress action API (" + t.cypress.Action + ")", Required: node, Local: check.Node}
+		}
+	}
+	// A different local major is a usable substitute only when both Cypress and
+	// the selected tracer support it; otherwise the named runtime is required.
+	blocked := func(reason string) error {
+		if mismatch != nil {
+			check.Verdict = verdict{Status: "inconclusive", Reason: mismatch.Error() + " The local runtime cannot substitute for it: " + reason}
 			return fmt.Errorf("cypress API preflight: %w", mismatch)
 		}
+		return fmt.Errorf("cypress preflight: %s", check.Verdict.Reason)
 	}
-	for _, requirement := range metadata.Requirements {
-		if status, reason := checkCypressNodeEngine(check.Node, requirement); status != "compatible" {
-			check.Verdict = verdict{Status: status, Reason: "Cypress/project Node requirement " + requirement + ": " + reason}
-			return fmt.Errorf("cypress preflight: %s", check.Verdict.Reason)
-		}
+	check.Verdict = cypressRuntimeVerdict(*check, metadata.Requirements, selection)
+	if check.Verdict.Status != "compatible" && strings.HasPrefix(check.Verdict.Reason, cypressRequirementPrefix) {
+		return blocked(check.Verdict.Reason)
 	}
-	check.Verdict = checkCypressSupport(*check, selection)
+	if mismatch != nil && check.Verdict.Status == "compatible" {
+		result.RuntimeSubstitution = &runtimeSubstitution{Source: mismatch.Source, CI: mismatch.Required, Local: check.Node, Accepted: t.acceptSubstituteRuntime,
+			Reason: "Local Node " + check.Node + " satisfies Cypress " + check.Version + "'s Node requirements and " + result.Tracer + "'s runtime support, so the suite runs here instead of on Node " + mismatch.Required + "."}
+		_, _ = fmt.Fprintf(output, "Runtime substitution: %s\n", result.RuntimeSubstitution.Reason)
+	} else if mismatch != nil {
+		return blocked(check.Verdict.Reason)
+	}
 	if result.CIRuntime != nil {
 		result.CISelection = compareCISelection(*result.CIRuntime, selection.Version)
 	}
@@ -221,6 +233,19 @@ func checkCypressNodeEngine(node, requirement string) (string, string) {
 		}
 	}
 	return status, fmt.Sprintf("Node %s: %s with %s.", node, status, requirement)
+}
+
+const cypressRequirementPrefix = "Cypress/project Node requirement "
+
+// cypressRuntimeVerdict decides whether the local Node can run this Cypress and
+// tracer, so a different CI major can be substituted only when both support it.
+func cypressRuntimeVerdict(check jestPreflight, requirements []string, selection platform.JSSelection) verdict {
+	for _, requirement := range requirements {
+		if status, reason := checkCypressNodeEngine(check.Node, requirement); status != "compatible" {
+			return verdict{Status: status, Reason: cypressRequirementPrefix + requirement + ": " + reason}
+		}
+	}
+	return checkCypressSupport(check, selection)
 }
 
 func checkCypressSupport(check jestPreflight, selection platform.JSSelection) verdict {
@@ -481,7 +506,7 @@ func explainCypressCodeCoverageSkips(features []featureResult, codeCoverage stri
 }
 
 const cypressProbeSource = `let attempts = 0;
-const mode = Cypress.env('__ddtest_probe_mode');
+const mode = typeof Cypress.expose === 'function' ? Cypress.expose('__ddtest_probe_mode') : Cypress.env('__ddtest_probe_mode');
 describe('ddtest', () => { (mode ? it : it.skip)('validation probe', () => {
  attempts++;
  return cy.task('ddtest:validation:attempt').then(() => {
