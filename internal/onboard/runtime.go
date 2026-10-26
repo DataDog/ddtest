@@ -37,6 +37,10 @@ type RuntimeCheck struct {
 }
 
 // RuntimeFinding records the metadata used to check one CI runtime.
+// GuardedActionBranch explains a test step whose Datadog action is skipped by
+// its own condition on some branch. The step still runs, uninstrumented.
+const GuardedActionBranch = "The Datadog action's condition is false for this branch (for example, no API key on forks), so this test step runs uninstrumented by design. This branch is not validated as instrumented."
+
 type RuntimeFinding struct {
 	Workflow        string          `json:"workflow"`
 	Job             string          `json:"job"`
@@ -470,6 +474,8 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 				finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedExclusion, reason
 				return finding
 			}
+			finding.Reason = GuardedActionBranch
+			return finding
 		}
 		finding.Reason = "No Datadog JavaScript action runs before this test step for this matrix entry. It is not validated as instrumented."
 		return finding

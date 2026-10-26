@@ -558,6 +558,12 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		result.JSONReport = validationPath(t.repositoryRoot)
 		return fail("blocked_environment", runtimeMetadata.Code, runErr.Error(), "Resolve only the named registry/storage capability, then rerun next_command. The failed attempt remains incomplete in json_report.")
 	}
+	var localRuntime *localRuntimeError
+	if errors.As(runErr, &localRuntime) {
+		result.Capabilities = []string{localRuntime.Capability()}
+		result.JSONReport = validationPath(t.repositoryRoot)
+		return fail("blocked_environment", "local_runtime_mismatch", runErr.Error(), "Provide only the named runtime: put an existing installation first on PATH (a version manager or a user-provided install), then run resume_command unchanged. Ask the user before downloading a runtime and never install one inside the repository. Do not change CI, the tracer or test scope to avoid this path.")
+	}
 	var supervision *processSupervisionError
 	if errors.As(runErr, &supervision) {
 		result.JSONReport = validationPath(t.repositoryRoot)

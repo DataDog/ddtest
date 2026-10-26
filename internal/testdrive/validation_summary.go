@@ -441,13 +441,28 @@ func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
 		return nil
 	}
 	scope := &ciRuntimeScope{}
+	// A step whose guarded Datadog action is skipped on some branch (for
+	// example, forks without a key) is still instrumented on that runtime; the
+	// skipped branch is not a separately excluded configuration.
+	type stepRuntime struct {
+		workflow, job, node string
+		step                int
+	}
+	instrumented := map[stepRuntime]bool{}
+	for _, job := range check.Jobs {
+		if job.Status == "compatible" {
+			instrumented[stepRuntime{job.Workflow, job.Job, job.Node, job.Step}] = true
+		}
+	}
 	for _, job := range check.Jobs {
 		label := nodeScopeLabel(job.Node)
 		switch job.Status {
 		case "compatible":
 			scope.Instrumented = appendUnique(scope.Instrumented, label)
 		case "excluded":
-			scope.Excluded = appendUnique(scope.Excluded, label)
+			if job.Reason != onboard.GuardedActionBranch || !instrumented[stepRuntime{job.Workflow, job.Job, job.Node, job.Step}] {
+				scope.Excluded = appendUnique(scope.Excluded, label)
+			}
 		default:
 			scope.Unverified = appendUnique(scope.Unverified, label)
 		}

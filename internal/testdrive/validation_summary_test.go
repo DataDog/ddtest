@@ -211,6 +211,21 @@ func TestVerdictStatesLocalRuntimeAndDeduplicatedCIScope(t *testing.T) {
 	require.NotContains(t, scope.Excluded, "lts/*")
 }
 
+func TestCIScopeDoesNotCountAGuardedActionBranchAsExcluded(t *testing.T) {
+	// The same Cypress step is instrumented when the key exists and runs
+	// uninstrumented on forks; only a deliberate opt-out is an excluded runtime.
+	guarded := onboard.RuntimeFinding{Workflow: "main.yml", Job: "cypress-run", Step: 3, Node: "20", Status: "excluded", Code: onboard.CodeExcludedRuntime, Reason: onboard.GuardedActionBranch}
+	instrumented := onboard.RuntimeFinding{Workflow: "main.yml", Job: "cypress-run", Step: 3, Node: "20", Status: "compatible"}
+	optOut := onboard.RuntimeFinding{Workflow: "main.yml", Job: "legacy", Step: 2, Node: "20", Status: "excluded", Code: onboard.CodeExcludedRuntime, Reason: "DD_CIVISIBILITY_ENABLED=false excludes this entry."}
+	scope := summarizeCIScope(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{instrumented, guarded, instrumented, guarded}})
+	require.Equal(t, []string{"20"}, scope.Instrumented)
+	require.Empty(t, scope.Excluded)
+	scope = summarizeCIScope(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{instrumented, guarded, optOut}})
+	require.Equal(t, []string{"20"}, scope.Excluded, "a deliberate opt-out on the same Node stays excluded")
+	scope = summarizeCIScope(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{guarded}})
+	require.Equal(t, []string{"20"}, scope.Excluded, "a step never instrumented on that Node stays excluded")
+}
+
 func TestHandoffSummarizesUnexecutedMochaConsumerWithoutRepeatingCommands(t *testing.T) {
 	result := validationResult{Framework: "mocha", Scope: &onboard.ValidationScope{}, Compatibility: verdict{Status: "not exercised"}, Configurations: []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm run build", Resolution: "npm run build -> npm run test-esm -> mocha test.mjs"}, Status: "not exercised", Compatibility: verdict{Status: "not exercised"}, Error: "unresolved cloud credentials"}}, Features: []featureResult{{Name: "skipping", Status: "passed"}}}
 	result.Summary = summarizeValidation(result)

@@ -144,8 +144,9 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 		major, _, known := releaseParts(check.Node)
 		required, err := strconv.Atoi(node)
 		if err != nil || !known || major != required {
-			check.Verdict = verdict{Status: "inconclusive", Reason: "The Cypress action API uses Node " + node + ". Run testdrive with a compatible Node " + node + " runtime to validate this path; local " + check.Node + " is a different runtime."}
-			return fmt.Errorf("cypress API preflight: %s", check.Verdict.Reason)
+			mismatch := &localRuntimeError{Source: "The Cypress action API (" + t.cypress.Action + ")", Required: node, Local: check.Node}
+			check.Verdict = verdict{Status: "inconclusive", Reason: mismatch.Error()}
+			return fmt.Errorf("cypress API preflight: %w", mismatch)
 		}
 	}
 	for _, requirement := range metadata.Requirements {

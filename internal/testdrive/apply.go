@@ -220,6 +220,15 @@ func (t *Testdrive) selectSetupTracer(ctx context.Context, scope onboard.Validat
 			if rec := check.Preflight.Recommendation; rec != nil && len(rec.Unresolved) == 0 && len(rec.Compatible) > 0 {
 				selection = rec.Selection
 			}
+			// Setup instruments every active CI row, so the default release must
+			// run on each of their Node versions, not only on the local one.
+			if len(unsupportedCINodes(ci, selection)) > 0 && t.resolveJSTracer != nil && t.resolveJSTags != nil {
+				rec, _ := recommendJavaScriptTracer(ctx, *check.Preflight, &ci, t.resolveJSTracer, t.resolveJSTags, t.framework.Name())
+				if rec == nil || len(rec.Unsupported) > 0 || len(rec.Unresolved) > 0 {
+					return platform.JSSelection{}, ciTracerMajorsError(ci, selection, rec)
+				}
+				selection = rec.Selection
+			}
 		}
 		support := map[string]func(jestPreflight, platform.JSSelection) verdict{"jest": checkJestSupport, "vitest": checkVitestSupport, "mocha": checkMochaSupport, "playwright": checkPlaywrightSupport, "cypress": checkCypressSupport, "cucumber": checkCucumberSupport, "webdriverio": checkWebdriverIOSupport}[t.framework.Name()]
 		if verdict := support(*check.Preflight, selection); verdict.Status != "compatible" {
@@ -234,8 +243,8 @@ func (t *Testdrive) selectSetupTracer(ctx context.Context, scope onboard.Validat
 			if job.Code == "excluded_runtime" {
 				continue
 			}
-			if status == "incompatible" && job.Code == "missing_instrumentation" {
-				continue
+			if status == "incompatible" {
+				return platform.JSSelection{}, ciTracerMajorsError(ci, selection, nil)
 			}
 			if status != "compatible" || !repairableSetupFinding(t.framework.Name(), job) && job.Status != "compatible" {
 				return platform.JSSelection{}, fmt.Errorf("%s / %s / step %d: %s %s", job.Workflow, job.Job, job.Step, job.Reason, reason)
@@ -251,6 +260,39 @@ func (t *Testdrive) selectSetupTracer(ctx context.Context, scope onboard.Validat
 		return platform.JSSelection{}, fmt.Errorf("no configurations enabled for instrumentation")
 	}
 	return selected, nil
+}
+
+// unsupportedCINodes lists active CI rows whose known Node cannot run the
+// release. Excluded rows stay uninstrumented, so they never constrain it.
+func unsupportedCINodes(ci onboard.RuntimeCheck, selection platform.JSSelection) []onboard.RuntimeFinding {
+	var rows []onboard.RuntimeFinding
+	for _, job := range ci.Jobs {
+		node := job.Node
+		if job.NodeResolution != nil {
+			node = job.NodeResolution.Version
+		}
+		if job.Code == onboard.CodeExcludedRuntime || node == "" {
+			continue
+		}
+		if status, _ := onboard.CompareNodeRequirement(node, selection.Node); status == onboard.StatusIncompatible {
+			rows = append(rows, job)
+		}
+	}
+	return rows
+}
+
+// ciTracerMajorsError names the CI rows a release cannot run on and, when no
+// single verified release covers every row, says so instead of guessing.
+func ciTracerMajorsError(ci onboard.RuntimeCheck, selection platform.JSSelection, rec *tracerRecommendation) error {
+	var rows []string
+	for _, job := range unsupportedCINodes(ci, selection) {
+		rows = appendUnique(rows, fmt.Sprintf("%s / %s / step %d (Node %s)", job.Workflow, job.Job, job.Step, nodeScopeLabel(job.Node)))
+	}
+	message := fmt.Sprintf("dd-trace@%s requires Node %s, which these CI rows do not provide: %s.", selection.Version, selection.Node, strings.Join(rows, "; "))
+	if rec != nil {
+		message += fmt.Sprintf(" The best verified release, dd-trace@%s, supports CI Node %s but not %s.", rec.Selection.Version, scopeList(rec.Compatible), scopeList(append(append([]string{}, rec.Unsupported...), rec.Unresolved...)))
+	}
+	return fmt.Errorf("%s CI rows need different dd-trace majors; select one --tracer-version every instrumented row supports, or explicitly exclude the older rows from instrumentation", message)
 }
 
 // repairableSetupFinding reports whether setup itself fixes the finding: it adds

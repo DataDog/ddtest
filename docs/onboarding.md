@@ -114,6 +114,8 @@ and current execution evidence. The npm package check uses
 `npm pack --dry-run --ignore-scripts --json`; it neither publishes nor runs hooks.
 Checks and source-edit hashes stay in the bounded JSON; full output stays in HTML.
 
+`onboard --apply` selects a tracer every CI row it instruments can run: when the default release needs a newer Node than a CI job provides, it picks the verified release that supports all of them, or stops and names the rows that need different majors. When a CI path, such as the Cypress action API, runs on a Node major the local host lacks, the result is `blocked_environment` (`local_runtime_mismatch`) naming that runtime. Put an existing installation first on PATH and run the resume command; ddtest never downloads a runtime.
+
 Automatic Mocha tracer recommendations use the verified major-5 and major-6 bootstrap contracts. Exact releases still come from registry tags; obsolete Node tags cannot win by covering more legacy CI rows. An explicitly selected or installed unverified major remains unvalidated instead of being silently replaced.
 
 Results distinguish ready, needs_input, blocked_environment, unsupported,

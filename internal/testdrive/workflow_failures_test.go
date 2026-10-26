@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -26,6 +27,7 @@ func TestWorkflowExecutionBlockersRemainTypedAndNeverCertifySuccess(t *testing.T
 		{"process capability", "process_unavailable", "request_capability", &processSupervisionError{Code: "process_unavailable", Reason: "process ownership unavailable"}},
 		{"detached command", "unsupported_detached_spawn", "report_result", &processSupervisionError{Code: "unsupported_detached_spawn", Reason: "detached command"}},
 		{"report conflict", "execution_result_conflict", "report_result", errors.New("execution failed despite a complete report")},
+		{"local runtime", "local_runtime_mismatch", "request_capability", fmt.Errorf("cypress API preflight: %w", &localRuntimeError{Source: "The Cypress action API", Required: "20", Local: "v24.14.1"})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -42,6 +44,11 @@ func TestWorkflowExecutionBlockersRemainTypedAndNeverCertifySuccess(t *testing.T
 			require.NoError(t, json.Unmarshal(output.Bytes(), &result))
 			require.Equal(t, tc.code, result.Code)
 			require.Equal(t, tc.action, result.NextAction)
+			if tc.code == "local_runtime_mismatch" {
+				require.Equal(t, []string{"Node 20 runtime first on PATH"}, result.Capabilities)
+				require.Contains(t, result.Reason, "Ask the user before downloading a runtime")
+				require.NotEmpty(t, result.ResumeCommand)
+			}
 			require.Empty(t, result.FinalResponse)
 			require.NotEqual(t, "complete_locally", result.Status)
 		})
