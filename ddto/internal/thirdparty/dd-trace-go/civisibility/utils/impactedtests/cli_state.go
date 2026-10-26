@@ -86,7 +86,7 @@ func handedAnalyzer() (*ImpactedTestAnalyzer, bool) {
 	for _, file := range state.Files {
 		modifiedFiles = append(modifiedFiles, fileWithBitmap{file: file.File, bitmap: file.Bitmap})
 	}
-	logger.Debug("civisibility.ImpactedTests: loaded from ddto [from: %s to %s]: %v", state.BaseCommit, state.CurrentCommit, modifiedFiles) //nolint:gocritic // File list debug logging
+	logger.Debug("civisibility.ImpactedTests: loaded from the CLI [from: %s to %s]: %v", state.BaseCommit, state.CurrentCommit, modifiedFiles) //nolint:gocritic // File list debug logging
 	analyzer := &ImpactedTestAnalyzer{
 		modifiedFiles:    modifiedFiles,
 		currentCommitSha: state.CurrentCommit,

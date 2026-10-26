@@ -277,7 +277,7 @@ func resolveModuleInfo() {
 	// ddto's state describes the module of each test package that it runs.
 	if path, dir, ok := cliModuleInfo(moduleInfoSource.dir); ok {
 		modulePath, moduleDir = path, dir
-		log.Debug("civisibility.coverage: module from ddto's test description [module:%s]", modulePath)
+		log.Debug("civisibility.coverage: module from the CLI's test description [module:%s]", modulePath)
 		return
 	}
 	started := time.Now()

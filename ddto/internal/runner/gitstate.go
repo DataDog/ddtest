@@ -275,11 +275,11 @@ func (w *gitWorker) recordMissingResults() {
 	var upload utils.CLIGitUpload
 	if errors.Is(utils.ReadCLIGitStateFile(w.state, utils.CLIGitUploadFile, &upload), os.ErrNotExist) {
 		w.debug.printf("git worker exited without an upload result")
-		_ = utils.WriteCLIGitStateFile(w.state, utils.CLIGitUploadFile, utils.CLIGitUpload{Error: "ddto git worker exited"})
+		_ = utils.WriteCLIGitStateFile(w.state, utils.CLIGitUploadFile, utils.CLIGitUpload{Error: "the CLI's Git worker exited"})
 	}
 	var state impactedtests.CLIState
 	if errors.Is(utils.ReadCLIGitStateFile(w.state, utils.CLIGitImpactedFile, &state), os.ErrNotExist) {
-		_ = utils.WriteCLIGitStateFile(w.state, utils.CLIGitImpactedFile, impactedtests.CLIState{Reason: "ddto git worker exited"})
+		_ = utils.WriteCLIGitStateFile(w.state, utils.CLIGitImpactedFile, impactedtests.CLIState{Reason: "the CLI's Git worker exited"})
 	}
 }
 
@@ -518,7 +518,7 @@ func RunGitWorker(_ context.Context, args []string, stdin io.Reader, results io.
 	if len(args) > 2 {
 		wait, err := time.ParseDuration(args[2])
 		if err != nil {
-			fmt.Fprintln(stderr, "ddto git worker:", err)
+			fmt.Fprintln(stderr, "git worker:", err)
 			return 2
 		}
 		uploadWait = wait
@@ -530,7 +530,7 @@ func RunGitWorker(_ context.Context, args []string, stdin io.Reader, results io.
 	signal.Notify(interrupts, forwardedSignals...)
 	defer signal.Stop(interrupts)
 	if err := cligit.Run(state, runtimeID, uploadWait, stdin, results, interrupts); err != nil {
-		fmt.Fprintln(stderr, "ddto git worker:", err)
+		fmt.Fprintln(stderr, "git worker:", err)
 		return 1
 	}
 	return 0

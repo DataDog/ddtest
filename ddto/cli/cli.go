@@ -109,7 +109,7 @@ func Main(args []string, name string) {
 		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR: --go-shim needs a command")
 		os.Exit(2)
 	case !goShim && len(args) == 1 && (args[0] == "--version" || args[0] == "-version"):
-		fmt.Println("ddto " + version.Tag)
+		fmt.Println(prog + " " + version.Tag)
 		os.Exit(0)
 	case !goShim && (len(args) == 0 || args[0] == "-h" || args[0] == "-help" || args[0] == "--help"):
 		fmt.Fprintln(os.Stderr, "usage: "+prog+" [go | orchestrion go | go tool orchestrion go] test [--runtime=mini|sdk] [--git-upload-timeout=1m] [--keep-ci-state[=file.zip]] [--panic-hook] [--session-per-binary] [--experimental-file-coverage] [go test flags] [packages] (default: mini)")

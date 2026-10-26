@@ -88,13 +88,13 @@ func TestReceiveRemovesHandedValues(t *testing.T) {
 }
 
 func TestReceiveRemovesGitState(t *testing.T) {
-	t.Setenv(GitStateHandoff, "/tmp/ddto-git-state")
+	t.Setenv(GitStateHandoff, "/tmp/ddtest-instrument-git-state")
 	Receive()
 	t.Cleanup(Receive)
 	if value, ok := os.LookupEnv(GitStateHandoff); ok {
 		t.Fatalf("handed Git state remains visible: %q", value)
 	}
-	if dir, ok := GitState(); !ok || dir != "/tmp/ddto-git-state" {
+	if dir, ok := GitState(); !ok || dir != "/tmp/ddtest-instrument-git-state" {
 		t.Fatalf("Git state %q, %t", dir, ok)
 	}
 	if _, ok := GitHubJobID(); ok {

@@ -276,7 +276,7 @@ func createCITagsMap() map[string]string {
 	localTags[constants.TestCommand] = cmd
 	// The command, and a session name made from it, hold the test's arguments,
 	// which can carry a token: debug lines say only where they come from.
-	log.Debug("civisibility: test command from ddto's session: %t", session != nil)
+	log.Debug("civisibility: test command from the CLI's session: %t", session != nil)
 
 	// Populate the test session name
 	sessionNameSource := "the test command"

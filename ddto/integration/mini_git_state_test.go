@@ -557,7 +557,7 @@ func TestMiniGitStateStopsUploadCleanly(t *testing.T) {
 		t.Fatalf("ddto waited %s for a stopped upload: %v", summary.Waited, err)
 	}
 	var upload struct{ Error string }
-	if err := json.Unmarshal(files["upload.json"], &upload); err != nil || upload.Error != "ddto stopped the repository upload: timeout" {
+	if err := json.Unmarshal(files["upload.json"], &upload); err != nil || upload.Error != "the CLI stopped the repository upload: timeout" {
 		t.Fatalf("upload.json %s, %v", files["upload.json"], err)
 	}
 	for _, name := range []string{"git.json", "telemetry.json", "used", "worker.log"} {

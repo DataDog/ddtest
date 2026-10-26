@@ -29,7 +29,8 @@ import sys
 import time
 
 DEBUG = re.compile(r'TestOptimization\.build\S* v\S+ DEBUG: \+\S+ (.*)$')
-DURATIONS = {'prepare': 'prepare finished', 'go_test': 'go test finished', 'ddto': 'ddto finished'}
+# Executables before the move to ddtest name the whole command's phase ddto.
+DURATIONS = {'prepare': 'prepare finished', 'go_test': 'go test finished', 'ddto': ('cli finished', 'ddto finished')}
 UNITS = {'µs': 1e-3, 'ms': 1.0, 's': 1000.0}
 
 

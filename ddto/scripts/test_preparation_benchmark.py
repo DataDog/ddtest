@@ -11,7 +11,7 @@ TestOptimization.build v0.1.1-dev DEBUG: +44.9ms runtime own_source_packages=51
 TestOptimization.build v0.1.1-dev DEBUG: +74.951ms prepare finished duration=74.731ms status=ok
 something else on stderr
 TestOptimization.build v0.1.1-dev DEBUG: +179.7ms go test finished duration=104.8ms status=ok
-TestOptimization.build v0.1.1-dev DEBUG: +179.781ms ddto finished duration=0.18s status=ok
+TestOptimization.build v0.1.1-dev DEBUG: +179.781ms cli finished duration=0.18s status=ok
 """
 
 
@@ -19,6 +19,10 @@ class PreparationBenchmarkTests(unittest.TestCase):
     def test_parse_reads_durations_and_own_packages(self):
         self.assertEqual({'own_packages': 51, 'prepare': 74.731, 'go_test': 104.8, 'ddto': 180.0},
                          benchmark.parse(LOG))
+
+    def test_parse_reads_the_phase_of_earlier_executables(self):
+        self.assertEqual({'ddto': 180.0}, benchmark.parse(
+            'TestOptimization.build v0.1.1-dev DEBUG: +179.781ms ddto finished duration=0.18s status=ok\n'))
 
     def test_parse_ignores_other_lines(self):
         self.assertEqual({}, benchmark.parse('prepare finished duration=1ms\n'))

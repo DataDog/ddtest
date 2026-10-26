@@ -119,13 +119,13 @@ func FinishCLISession(end CLISessionEnd) (CLISessionSummary, error) {
 		}
 	}
 	if len(processes) == 0 && end.ExitCode == 0 {
-		log.Debug("civisibility: no test process joined ddto's test session and go test succeeded; no session to send")
+		log.Debug("civisibility: no test process joined the CLI's test session and go test succeeded; no session to send")
 		return summary, nil
 	}
 	// The CI tags, Git's included, and the service are the test processes':
 	// they run in go test's directory, which -C can move from ddto's.
 	if restore, err := chdirForCITags(end.Session.WorkingDirectory); err != nil {
-		log.Debug("civisibility: test session CI tags read from ddto's directory: %s", err.Error())
+		log.Debug("civisibility: test session CI tags read from the CLI's directory: %s", err.Error())
 	} else {
 		defer restore()
 	}
@@ -159,7 +159,7 @@ func FinishCLISession(end CLISessionEnd) (CLISessionSummary, error) {
 	}
 	empty := len(crashes) == 0 && cliSessionEmpty(processes)
 	if log.DebugEnabled() {
-		log.Debug("civisibility: sending ddto's test session id=%d exit_code=%d duration=%s tags=%d coverage=%v crashed_processes=%d empty=%t", end.Session.ID, end.ExitCode, end.Finish.Sub(end.Start), len(merged), merged[constants.CodeCoveragePercentageOfTotalLines], len(crashes), empty)
+		log.Debug("civisibility: sending the CLI's test session id=%d exit_code=%d duration=%s tags=%d coverage=%v crashed_processes=%d empty=%t", end.Session.ID, end.ExitCode, end.Finish.Sub(end.Start), len(merged), merged[constants.CodeCoveragePercentageOfTotalLines], len(crashes), empty)
 	}
 	for _, p := range crashes {
 		if p.closed == nil {

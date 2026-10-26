@@ -83,7 +83,7 @@ func TestMiniGitWorkerStopsOnInterrupt(t *testing.T) {
 					t.Fatalf("the signalled worker recorded no upload: %s", stderr.String())
 				}
 			}
-			if upload.Error != "ddto stopped the repository upload: signal" {
+			if upload.Error != "the CLI stopped the repository upload: signal" {
 				t.Fatalf("upload %+v", upload)
 			}
 			if _, err := io.WriteString(input, "exited\n"); err != nil {

@@ -122,7 +122,7 @@ func TestRunUsesOuterValidationStatusInsteadOfBuildExitCode(t *testing.T) {
 // process: ddto handles it, before ddtest sets anything, and exits.
 func TestDispatchHandsInstrumentToDdto(t *testing.T) {
 	stdout, _, code := dispatchHelper(t, "instrument", "--version")
-	if code != 0 || !strings.HasPrefix(stdout, "ddto v") {
+	if code != 0 || !strings.Contains(stdout, " instrument v") || strings.Contains(stdout, "ddto") {
 		t.Fatalf("instrument --version: exit %d, stdout %q", code, stdout)
 	}
 	_, stderr, code := dispatchHelper(t, "instrument")

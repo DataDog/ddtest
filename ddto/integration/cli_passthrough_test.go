@@ -370,7 +370,7 @@ func TestCLIStopsWhenGoStartsDdto(t *testing.T) {
 	env := prependPATH(testEnv("GO_SHIM_DDTO="+driver), buildProgram(t, goShimProgram, "go"))
 	for _, args := range [][]string{{"go", "version"}, {"test", "--runtime=mini", "-count=1", "."}} {
 		_, stderr, code := command(t, dir, env, driver, args...)
-		if code != 2 || !strings.Contains(stderr, "9 ddto commands run inside each other") || !strings.Contains(stderr, "starts ddto again") {
+		if code != 2 || !strings.Contains(stderr, "9 CLI commands run inside each other") || !strings.Contains(stderr, "starts the CLI again") {
 			t.Fatalf("ddto %v with a go that starts ddto: exit %d\n%s", args, code, stderr)
 		}
 	}

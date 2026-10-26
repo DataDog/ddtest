@@ -40,7 +40,7 @@ func TestNestGoCommand(t *testing.T) {
 			t.Fatalf("%s=%q; want %d", nestedGoVariable, got, depth)
 		}
 	}
-	if err := NestGoCommand(); err == nil || !strings.Contains(err.Error(), "starts ddto again") {
+	if err := NestGoCommand(); err == nil || !strings.Contains(err.Error(), "starts the CLI again") {
 		t.Fatalf("past %d nested ddto commands: %v", maxNestedGo, err)
 	}
 	for args, want := range map[string]bool{"go build": true, "/usr/local/go/bin/go version": true, "go.exe env": true, "gotestsum --": false, "": false} {

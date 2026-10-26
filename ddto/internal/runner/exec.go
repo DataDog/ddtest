@@ -34,7 +34,7 @@ func NestGoCommand() error {
 		if err != nil {
 			goPath = "go"
 		}
-		return fmt.Errorf("%d ddto commands run inside each other: the go command on PATH, %s, starts ddto again; put the Go toolchain's go first on PATH", depth+1, goPath)
+		return fmt.Errorf("%d CLI commands run inside each other: the go command on PATH, %s, starts the CLI again; put the Go toolchain's go first on PATH", depth+1, goPath)
 	}
 	return os.Setenv(nestedGoVariable, strconv.Itoa(depth+1))
 }

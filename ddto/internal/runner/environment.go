@@ -45,7 +45,7 @@ var errRelativeProgram = errors.New("found relative to the current directory, wh
 // errUnknownProgram is a lookup that ddto cannot reproduce: through a PATH
 // entry relative to another drive's current directory, or with an execerrdot
 // setting that GODEBUG limits to some call stacks.
-var errUnknownProgram = errors.New("looked up through a PATH entry or GODEBUG setting that ddto cannot reproduce")
+var errUnknownProgram = errors.New("looked up through a PATH entry or GODEBUG setting that the CLI cannot reproduce")
 
 // lookPathFrom looks file up on PATH as exec.LookPath does with dir as the
 // current directory, where go test looks up -exec programs and the

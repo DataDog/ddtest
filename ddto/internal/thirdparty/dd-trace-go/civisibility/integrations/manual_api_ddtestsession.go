@@ -134,7 +134,7 @@ func CreateTestSession(options ...TestSessionStartOption) TestSession {
 		// Each test process keeps reporting its session's telemetry, as
 		// without ddto.
 		s.cliRecord, s.cliTags = record, map[string]any{}
-		log.Debug("civisibility: reporting in ddto's test session id=%d", sessionID)
+		log.Debug("civisibility: reporting in the CLI's test session id=%d", sessionID)
 	}
 
 	// Creating telemetry event created
@@ -192,7 +192,7 @@ func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption)
 	// After unlocking: a client can replace the logger.
 	defer func() {
 		if recordedTags >= 0 && log.DebugEnabled() {
-			log.Debug("civisibility: recorded the close of this process in ddto's test session exit_code=%d tags=%d skip_if_empty=%t empty=%t", exitCode, recordedTags, skipIfEmpty, empty && exitCode == 0)
+			log.Debug("civisibility: recorded the close of this process in the CLI's test session exit_code=%d tags=%d skip_if_empty=%t empty=%t", exitCode, recordedTags, skipIfEmpty, empty && exitCode == 0)
 		}
 	}()
 	if log.DebugEnabled() {

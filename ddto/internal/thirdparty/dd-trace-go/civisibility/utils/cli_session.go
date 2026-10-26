@@ -98,14 +98,14 @@ func HandedCLISession() (*CLISession, *CLISessionRecord) {
 		}
 		var session CLISession
 		if err := ReadCLIGitStateFile(dir, CLISessionFile, &session); err != nil || session.ID == 0 {
-			log.Warn("civisibility: ddto's test session in %s is unusable; this process reports its own session: %v", dir, err)
+			log.Warn("civisibility: the CLI's test session in %s is unusable; this process reports its own session: %v", dir, err)
 			return
 		}
 		stem, err := crashout.Stem()
 		if err != nil {
 			// The record still lets ddto close the containers of a process
 			// that dies, without its crash output.
-			log.Warn("civisibility: no crash output for ddto's test session: %s", err.Error())
+			log.Warn("civisibility: no crash output for the CLI's test session: %s", err.Error())
 		}
 		var file *os.File
 		if stem != "" {
@@ -114,7 +114,7 @@ func HandedCLISession() (*CLISession, *CLISessionRecord) {
 			file, err = createUniqueUnlogged(dir, "process-", CLISessionRecordExt)
 		}
 		if err != nil {
-			log.Warn("civisibility: cannot record this process in ddto's test session; it reports its own session: %s", err.Error())
+			log.Warn("civisibility: cannot record this process in the CLI's test session; it reports its own session: %s", err.Error())
 			return
 		}
 		cliSession, cliSessionRecord = &session, &CLISessionRecord{file: file}
@@ -122,7 +122,7 @@ func HandedCLISession() (*CLISession, *CLISessionRecord) {
 		if stem != "" {
 			crash = stem + ".crash"
 		}
-		log.Debug("civisibility: joined ddto's test session id=%d record=%s crash_output=%s", session.ID, file.Name(), crash)
+		log.Debug("civisibility: joined the CLI's test session id=%d record=%s crash_output=%s", session.ID, file.Name(), crash)
 	})
 	return cliSession, cliSessionRecord
 }

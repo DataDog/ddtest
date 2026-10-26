@@ -299,7 +299,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		return plan, e
 	}
 	if !supportsGoToolchain(opts.environment.GOVERSION) {
-		return plan, fmt.Errorf("ddto requires Go 1.25 or newer; selected toolchain is %q", opts.environment.GOVERSION)
+		return plan, fmt.Errorf("Go test instrumentation requires Go 1.25 or newer; selected toolchain is %q", opts.environment.GOVERSION)
 	}
 	if to, ok := replacements[filepath.Clean(opts.environment.GOMOD)]; ok && to == "" && opts.environment.GOMOD != "" {
 		// go finds another module root through the overlay, or none.
@@ -393,7 +393,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		// Mini is a main module of the workspace that ddto provides, so go's
 		// work pattern would select its packages too.
 		if plan.Workfile != "" && (slices.Contains(opts.packages, "work") || slices.Contains(opts.coverPatterns, "work") || opts.workFlagPattern) {
-			return plan, &nativeGoError{"package_pattern=work", errors.New("the work package pattern would include ddto's runtime module")}
+			return plan, &nativeGoError{"package_pattern=work", errors.New("the work package pattern would include the CLI's runtime module")}
 		}
 	}
 	if plan.Workfile != "" && len(replacements) != 0 {
@@ -459,7 +459,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			// The module does not require the runtime: provide it through a
 			// temporary go.mod instead of failing or editing the module.
 			if plan.Modfile, e = provideRuntime(ctx, dir, opts, runtime, temp, replacements, progress); e != nil {
-				return plan, fmt.Errorf("%s: %s\nddto could not provide it: %w", p.ImportPath, p.Error.Err, e)
+				return plan, fmt.Errorf("%s: %s\nthe CLI could not provide it: %w", p.ImportPath, p.Error.Err, e)
 			}
 			opts.buildFlags = append(opts.buildFlags, "-modfile="+plan.Modfile)
 			if listed, e = list(patterns...); e != nil {
@@ -638,12 +638,12 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		if p.Module == nil {
 			// Such as with go test fmt, std or all, whose expansion includes the
 			// runtime's own standard dependencies with a ddto workspace.
-			return plan, &nativeGoError{"stdlib_tests", fmt.Errorf("ddto does not instrument standard library tests: %s", p.ImportPath)}
+			return plan, &nativeGoError{"stdlib_tests", fmt.Errorf("the CLI does not instrument standard library tests: %s", p.ImportPath)}
 		}
 		if cache := opts.environment.GOMODCACHE; cache != "" && filePathHasPrefix(p.Dir, cache) {
 			// A downloaded dependency's tests: go rejects any overlay entry
 			// beneath GOMODCACHE.
-			return plan, &nativeGoError{"module_cache_tests", fmt.Errorf("ddto does not instrument the tests of a package in the module cache: %s", p.ImportPath)}
+			return plan, &nativeGoError{"module_cache_tests", fmt.Errorf("the CLI does not instrument the tests of a package in the module cache: %s", p.ImportPath)}
 		}
 		testPackage := p.Name + "_test"
 		if len(p.XTestGoFiles) == 0 && !runtimeImports[p.ImportPath] {
@@ -926,14 +926,14 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	if debug != nil {
 		stderr = debug.writer
 	}
-	started := debug.start("ddto")
+	started := debug.start("cli")
 	defer func() {
 		var err error
 		if exitCode != 0 {
 			err = errors.New("command failed")
 		}
 		started.finish(err)
-		debug.printf("ddto exit_code=%d", exitCode)
+		debug.printf("cli exit_code=%d", exitCode)
 	}()
 	debug.printf("runtime=%s", runtime)
 	signals := make(chan os.Signal, 4)

@@ -257,7 +257,7 @@ func startCIVisibilitySignalHandler() {
 		return
 	}
 	if signalNotify == nil || signalStop == nil {
-		log.Debug("civisibility: no signal handler: os/signal was built without ddto's overlay")
+		log.Debug("civisibility: no signal handler: os/signal was built without the CLI's overlay")
 		return
 	}
 	var signals, ignored []os.Signal

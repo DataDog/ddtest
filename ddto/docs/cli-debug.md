@@ -105,7 +105,7 @@ The log records:
   signals that would end the process, and `exit hook installed=true` when
   testing closes Mini's CI Visibility in `os.Exit`; `false` comes with the
   reason. A test process without the signal hook logs
-  `civisibility: no signal handler: os/signal was built without ddto's overlay`
+  `civisibility: no signal handler: os/signal was built without the CLI's overlay`
   and handles no signal, as under go test. A test process that `os.Exit`
   ends during its tests logs
   `civisibility: os.Exit before CI Visibility closed; closing it`, and
@@ -141,7 +141,7 @@ The log records:
   where the session's CI tags come from
   (`civisibility: test session CI tags directory=<dir> git_worker_record=<bool> git_timeout=<d>`)
   and what it sends
-  (`civisibility: sending ddto's test session id=<id> exit_code=<n> duration=<d> tags=<n> coverage=<pct> crashed_processes=<n> empty=<bool>`),
+  (`civisibility: sending the CLI's test session id=<id> exit_code=<n> duration=<d> tags=<n> coverage=<pct> crashed_processes=<n> empty=<bool>`),
   where `empty=true` means that every process that joined ran nothing, so a
   successful session is reported as skipped
   ([empty test sessions](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#empty-test-sessions)).
@@ -303,10 +303,10 @@ with `-v` or when the package fails.
 | `civisibility: the process crashes (<timeout/panic>); failing the running tests and closing CI Visibility first: <message>` | testing's `-timeout` alarm, or an unrecovered panic with `--panic-hook`, is about to end the process. The stack follows for a panic. |
 | `civisibility: failed <n> running tests before the crash` and `civisibility: closed CI Visibility before the crash duration=<d>` | The tests that the crash interrupted were reported as failed, and the events were sent; the crash then ends the process as without Mini. |
 | `civisibility: os.Exit while the process crashes; the crash ends the process` | The tests finished while Mini sent before a crash; the crash keeps its exit status. |
-| `civisibility: joined ddto's test session id=<id> record=<file> crash_output=<file>` and `civisibility: reporting in ddto's test session id=<id>` | The process reports in the session of ddto's command, and where its record and crash output are; `WARN: civisibility: ... reports its own session` says why it could not. |
+| `civisibility: joined the CLI's test session id=<id> record=<file> crash_output=<file>` and `civisibility: reporting in the CLI's test session id=<id>` | The process reports in the session of ddto's command, and where its record and crash output are; `WARN: civisibility: ... reports its own session` says why it could not. |
 | `civisibility: test session record lines=<n> failed=<n> first_error=<error>` | Once CI Visibility closes: how many module and suite starts and ends, and session closes, the process recorded for ddto, which recreates the containers left open if the process crashes, and whether a write failed. |
 | `civisibility: failed the test name=<name> suite=<suite> for the crash (<timeout/panic>) final_status=<status>` | A test that the crash interrupted, reported as failed. |
-| `civisibility: recorded the close of this process in ddto's test session exit_code=<n> tags=<n> skip_if_empty=<bool> empty=<bool>` | The process closed CI Visibility and left its session tags for ddto. `empty=true` means it ran no test and passed; see [Decisions in a test process](#decisions-in-a-test-process). |
+| `civisibility: recorded the close of this process in the CLI's test session exit_code=<n> tags=<n> skip_if_empty=<bool> empty=<bool>` | The process closed CI Visibility and left its session tags for ddto. `empty=true` means it ran no test and passed; see [Decisions in a test process](#decisions-in-a-test-process). |
 
 A process that ends without any of these lines was ended by something that
 runs no Go code first: a fatal runtime error, an unrecovered panic in another
@@ -375,7 +375,7 @@ The worker, in `worker.log`:
 | `civisibility: CLI request ahead settings failed`, `… known tests failed`, … | A request failed; test processes request it again themselves. The error hides a URL's user and password |
 | `civisibility: CLI requests ahead stop: the settings require Git` | The settings change after the upload, so test processes request after it |
 | `civisibility: CLI requests ahead not needed: …` | go test exited before any test process used the state, as when every result came from its cache; `started` tells whether requests had begun and were cancelled |
-| `civisibility: CLI requests ahead stopped: ddto stopped the worker [reason:…]` | ddto stopped the worker first, for a `signal` or `timeout` |
+| `civisibility: CLI requests ahead stopped: the CLI stopped the worker [reason:…]` | ddto stopped the worker first, for a `signal` or `timeout` |
 
 Test processes, in their output, and the worker:
 
@@ -387,7 +387,7 @@ Test processes, in their output, and the worker:
 | `civisibility.read_cache: owner gone, taking over [… waited:…]` | The process that held the key's lock ended without releasing it; this one took the lock, requested and stored the response |
 | `civisibility.read_cache: waiter fallback [… waited:…]` | The owner released its lock without a response, or the wait ran out; this process requested for itself, without storing the response |
 | `civisibility.read_cache: miss [… duration:… cacheable:… error:…]` | This process requested it itself. `cacheable` says whether the response may be stored; a store that fails logs its own line, such as `temp write failed` or `rename failed`. In a test process with `scope:cli`, the worker's request differed, had not started, failed, or was not stored |
-| `civisibility.coverage: module from ddto's test description` or `… from go list [… duration:…]` | Where per-test coverage found the test package's module |
+| `civisibility.coverage: module from the CLI's test description` or `… from go list [… duration:…]` | Where per-test coverage found the test package's module |
 
 A test process prints its output only with `-v` or when a test fails.
 
@@ -463,11 +463,11 @@ first output can come before `started`.
 
 With the Mini runtime and CI Visibility enabled, `ddto test` starts a Git
 worker and shares state with the test processes in a temporary directory,
-`ddto-git-*` in the system's temporary directory. `ddto` removes it when the
+`ddtest-instrument-git-*` in the system's temporary directory. `ddto` removes it when the
 command ends. To keep it for debugging:
 
 ```sh
-ddto test --keep-ci-state ./...                 # prints: INFO: kept the CI state in /tmp/ddto-git-…
+ddto test --keep-ci-state ./...                 # prints: INFO: kept the CI state in /tmp/ddtest-instrument-git-…
 ddto test --keep-ci-state=ci-state.zip ./...    # prints: INFO: archived the CI state in /…/ci-state.zip
 ```
 

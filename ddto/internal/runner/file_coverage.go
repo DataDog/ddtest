@@ -58,7 +58,7 @@ func fileCoverageRefusal(plan *Plan, opts options, vendorProvided bool, listed [
 	case vendorProvided:
 		// The vendored packages compile from ddto's cache, outside the
 		// repository, and their files would be missing.
-		return "ddto provides the vendored dependencies from its cache"
+		return "the CLI provides the vendored dependencies from its cache"
 	}
 	coverage := findPackage(listed, miniCoveragePackage)
 	if coverage == nil {

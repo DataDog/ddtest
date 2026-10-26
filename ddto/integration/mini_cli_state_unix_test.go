@@ -64,7 +64,7 @@ func TestMiniCLIStateGivesModuleToCoverage(t *testing.T) {
 	if got := run("DDTEST_INSTRUMENT_GIT_STATE=" + state); strings.Contains(got, "list") {
 		t.Fatalf("with ddto's state, the test process started go list: %q", got)
 	}
-	if !strings.Contains(output, "civisibility.coverage: module from ddto's test description [module:"+modulePath+"]") {
+	if !strings.Contains(output, "civisibility.coverage: module from the CLI's test description [module:"+modulePath+"]") {
 		t.Fatalf("the debug log does not say that the module came from ddto:\n%s", output)
 	}
 	if _, err := os.Stat(filepath.Join(state, "used")); err != nil {

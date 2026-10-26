@@ -337,7 +337,7 @@ func TestFileCoverageRefusal(t *testing.T) {
 		{"cover", mini, options{coverage: true}, false, runtime("new"), "Go's coverage flags are set"},
 		{"race", mini, options{race: true}, false, runtime("new"), "-race"},
 		{"orchestrion", &Plan{mini: true, orchestrion: true}, options{}, false, runtime("new"), "Orchestrion's -toolexec"},
-		{"vendor", mini, options{}, true, runtime("new"), "ddto provides the vendored dependencies from its cache"},
+		{"vendor", mini, options{}, true, runtime("new"), "the CLI provides the vendored dependencies from its cache"},
 		{"unlisted", mini, options{}, false, nil, "the runtime's coverage package not listed"},
 		{"older runtime", mini, options{}, false, runtime("old"), "the runtime's coverage package lacks var fileCoverageEpoch uint64"},
 		{"supported", mini, options{}, false, runtime("new"), ""},

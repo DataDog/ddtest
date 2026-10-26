@@ -165,7 +165,7 @@ func Run(dir, runtimeID string, uploadWait time.Duration, input io.Reader, resul
 		// search's git commands end, interrupted or killed, only while this
 		// process runs.
 		if ctx.Err() != nil {
-			log.Debug("civisibility: CLI requests ahead stopped: ddto stopped the worker [reason:%s started:%t]", cli.stopReason(), requests != nil)
+			log.Debug("civisibility: CLI requests ahead stopped: the CLI stopped the worker [reason:%s started:%t]", cli.stopReason(), requests != nil)
 		} else {
 			log.Debug("civisibility: CLI requests ahead not needed: go test exited before a test process used the state [started:%t]", requests != nil)
 		}
@@ -504,9 +504,9 @@ func upload(ctx context.Context, cli *cliInput, c client, uploadEnabled bool, se
 	bytes, err := gitupload.Upload(hooks)
 	if ctx.Err() != nil {
 		reason := cli.stopReason()
-		log.Warn("civisibility: ddto stopped the repository upload after %d bytes: %s", bytes, reason)
+		log.Warn("civisibility: the CLI stopped the repository upload after %d bytes: %s", bytes, reason)
 		logError("civisibility: CLI repository upload stopped", "reason:"+stopTag(reason))
-		return utils.CLIGitUpload{Bytes: bytes, Error: "ddto stopped the repository upload: " + reason}
+		return utils.CLIGitUpload{Bytes: bytes, Error: "the CLI stopped the repository upload: " + reason}
 	}
 	if err != nil {
 		log.Error("civisibility: error uploading repository changes: %s", err.Error())
@@ -533,7 +533,7 @@ func impacted(ctx context.Context, c client, uploaded utils.CLIGitUpload, settin
 		return impactedtests.CLIState{Reason: "no CI Visibility client"}
 	}
 	if ctx.Err() != nil {
-		return impactedtests.CLIState{Reason: "ddto stopped the worker"}
+		return impactedtests.CLIState{Reason: "the CLI stopped the worker"}
 	}
 	result := <-settings
 	response, err := result.response, result.err
@@ -551,7 +551,7 @@ func impacted(ctx context.Context, c client, uploaded utils.CLIGitUpload, settin
 	}
 	state := impactedtests.ComputeCLIState()
 	if ctx.Err() != nil {
-		return impactedtests.CLIState{Reason: "ddto stopped the worker"}
+		return impactedtests.CLIState{Reason: "the CLI stopped the worker"}
 	}
 	if !state.Computed {
 		logError("civisibility: CLI impacted tests state not computed")

@@ -107,7 +107,7 @@ func provideRuntime(ctx context.Context, dir string, opts options, selected Runt
 		if source == "" || source == os.DevNull {
 			// go test runs outside a module, as for go test errors, and
 			// reports what it cannot run there.
-			return "", &nativeGoError{"no_module", errors.New("ddto provides its runtime only inside a Go module")}
+			return "", &nativeGoError{"no_module", errors.New("the CLI provides its runtime only inside a Go module")}
 		}
 	} else if !filepath.IsAbs(source) {
 		source = filepath.Join(dir, source)
@@ -190,7 +190,7 @@ func requireMini(ctx context.Context, dir, modfile, localRoot, version string, p
 		debugFromContext(ctx).printf("mini source=published-version")
 		return goGetRuntime(ctx, dir, modfile, miniModule+"@"+version, progress)
 	}
-	return fmt.Errorf("cannot provide %s: ddto has no available local sources or published version; require it in the module or add a replace directive", miniModule)
+	return fmt.Errorf("cannot provide %s: the CLI has no available local sources or published version; require it in the module or add a replace directive", miniModule)
 }
 
 // requireLocalMini keeps the consumer's source language unchanged. Our module
@@ -206,7 +206,7 @@ func requireLocalMini(ctx context.Context, dir, modfile, root, selectedVersion, 
 	}
 	args := []string{"mod", "edit", "-modfile=" + modfile, "-require=" + miniModule + "@" + selectedVersion}
 	if required := moduleDirective(data, "go"); required != "" && goversion.Compare("go"+goVersion, "go"+required) < 0 {
-		return fmt.Errorf("selected Mini requires module Go %s; ddto will not change consumer language Go %s: use a workspace with the selected runtime", required, goVersion)
+		return fmt.Errorf("selected Mini requires module Go %s; the CLI will not change consumer language Go %s: use a workspace with the selected runtime", required, goVersion)
 	}
 	if addReplace {
 		args = append(args, "-replace="+miniModule+"="+root)

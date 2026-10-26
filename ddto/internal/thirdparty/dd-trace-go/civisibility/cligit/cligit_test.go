@@ -425,11 +425,11 @@ func TestRunStopsUploadOnRequest(t *testing.T) {
 	}
 	_ = cli.Close()
 	var upload utils.CLIGitUpload
-	if err := utils.ReadCLIGitStateFile(used, utils.CLIGitUploadFile, &upload); err != nil || upload.Error != "ddto stopped the repository upload: timeout" {
+	if err := utils.ReadCLIGitStateFile(used, utils.CLIGitUploadFile, &upload); err != nil || upload.Error != "the CLI stopped the repository upload: timeout" {
 		t.Fatalf("upload %+v, %v", upload, err)
 	}
 	var state impactedtests.CLIState
-	if err := utils.ReadCLIGitStateFile(used, utils.CLIGitImpactedFile, &state); err != nil || state.Computed || state.Reason != "ddto stopped the worker" {
+	if err := utils.ReadCLIGitStateFile(used, utils.CLIGitImpactedFile, &state); err != nil || state.Computed || state.Reason != "the CLI stopped the worker" {
 		t.Fatalf("impacted %+v, %v", state, err)
 	}
 	select {
@@ -564,7 +564,7 @@ func TestRunWaitsForTheStoppedSearch(t *testing.T) {
 			}
 			want := "CLI requests ahead not needed: go test exited before a test process used the state [started:true]"
 			if end != Exited {
-				want = "CLI requests ahead stopped: ddto stopped the worker [reason:signal started:true]"
+				want = "CLI requests ahead stopped: the CLI stopped the worker [reason:signal started:true]"
 			}
 			if !strings.Contains(strings.Join(logs.Logs(), "\n"), want) {
 				t.Fatalf("the debug log lacks %q:\n%s", want, strings.Join(logs.Logs(), "\n"))
@@ -664,7 +664,7 @@ func TestRunStopsOnInterrupt(t *testing.T) {
 	<-sending
 	interrupts <- os.Interrupt
 	var upload utils.CLIGitUpload
-	if err := utils.WaitCLIGitStateFile(used, utils.CLIGitUploadFile, &upload, time.Minute); err != nil || upload.Error != "ddto stopped the repository upload: signal" {
+	if err := utils.WaitCLIGitStateFile(used, utils.CLIGitUploadFile, &upload, time.Minute); err != nil || upload.Error != "the CLI stopped the repository upload: signal" {
 		t.Fatalf("upload %+v, %v", upload, err)
 	}
 	if _, err := io.WriteString(cli, Exited+"\n"); err != nil {

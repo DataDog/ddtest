@@ -197,7 +197,7 @@ func ChainUserToolexec(args []string) ([]string, error) {
 	}
 	words, err := SplitFlags(chain)
 	if err != nil {
-		return nil, fmt.Errorf("ddto: invalid -toolexec %q: %w", chain, err)
+		return nil, fmt.Errorf("invalid -toolexec %q: %w", chain, err)
 	}
 	return append(words, args...), nil
 }
