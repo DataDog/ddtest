@@ -11,10 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"time"
-
-	"github.com/DataDog/ddtest/internal/maven"
 )
 
 type retainedExecution struct {
@@ -62,7 +59,7 @@ func executionStatus(result *validationResult) string {
 }
 
 func hasPairedExecution(result validationResult) bool {
-	return (supportsValidationFramework(result.Framework) || slices.Contains(maven.FrameworkNames, result.Framework)) && hasValidationPair(result)
+	return supportsValidationFramework(result.Framework) && hasValidationPair(result)
 }
 
 // Keep one historical execution attempt, never a growing chain of reports. Its verdict

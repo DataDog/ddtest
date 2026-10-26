@@ -19,7 +19,10 @@ class ProductContractTests(unittest.TestCase):
                            check=False,capture_output=True,text=True,timeout=180)
             self.assertEqual(command.returncode,0,command.stdout+command.stderr)
             reports=json.loads(output.read_text())
-        self.assertEqual(len(reports),14)
+        frameworks = {"jest", "vitest", "mocha", "playwright", "cypress", "cucumber", "webdriverio",
+                      "junit4", "junit5", "testng", "spock", "cucumber-java", "karate", "scalatest", "munit"}
+        self.assertEqual({report["framework"] for report in reports}, frameworks)
+        self.assertEqual(len(reports), 2 * len(frameworks))
         for report in reports:
             with self.subTest(framework=report['framework'],check_only=report['check_only']):
                 self.assertIsInstance(report['schema_version'],int)

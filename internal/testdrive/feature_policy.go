@@ -4,8 +4,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/maven"
+	"github.com/DataDog/ddtest/internal/onboard"
 )
 
 // A policy describes what must be exercised, never an assumed passing result.
@@ -44,14 +44,14 @@ var mavenFeaturePolicies = []featurePolicy{
 }
 
 var frameworkFeaturePolicies = map[string]frameworkPolicy{
-	"junit4": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
-	"junit5": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
-	"testng": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
-	"spock": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"junit4":        {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"junit5":        {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"testng":        {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"spock":         {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
 	"cucumber-java": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
-	"karate": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
-	"scalatest": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
-	"munit": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"karate":        {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"scalatest":     {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"munit":         {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
 	"webdriverio": {ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "not supported", Reason: webdriverIOSkippingReason}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
 	}},

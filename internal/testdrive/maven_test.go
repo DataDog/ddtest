@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/DataDog/ddtest/internal/framework"
 
 	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -161,8 +164,8 @@ func TestMavenJVMEnvironmentPreservesOtherOptions(t *testing.T) {
 func TestMavenCheckOnlyRetainsHistoricalPair(t *testing.T) {
 	root := t.TempDir()
 	previous := validationResult{Framework: "junit5", Session: "executed", Compatibility: verdict{Status: "compatible"}, Runs: []runSummary{
-		(validationRun{Name: "baseline", Command: "mvn test"}).summary(),
-		(validationRun{Name: "reporting-only", Command: "mvn test", Instrumented: true}).summary(),
+		(validationRun{Role: roleBaseline, Name: "baseline", Command: "mvn test"}).summary(),
+		(validationRun{Role: roleReporting, Name: "reporting-only", Command: "mvn test", Instrumented: true}).summary(),
 	}}
 	require.Error(t, finishValidation(&bytes.Buffer{}, root, previous))
 	require.Error(t, finishValidation(&bytes.Buffer{}, root, validationResult{Framework: "junit5", Session: "check", CheckOnly: true}))
@@ -176,4 +179,41 @@ func TestMavenCheckOnlyRetainsHistoricalPair(t *testing.T) {
 	require.Equal(t, "executed", result.LastExecution.Session)
 	require.Len(t, result.Retained.Result.Runs, 2)
 	require.False(t, result.Success)
+}
+
+func TestMavenTimeoutPreservesExecutionRoleAndDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project><groupId>example</groupId><artifactId>suite</artifactId><version>1</version></project>`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "mvnw"), []byte("#!/bin/sh\nsleep 30\n"), 0700))
+	session, err := NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
+	drive := &Testdrive{repositoryRoot: root, framework: framework.NewMaven("junit5", nil), command: "./mvnw", args: []string{"test"}, session: session, commandTimeout: 30 * time.Millisecond,
+		startIntake: func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{url: "http://127.0.0.1:1"}, nil },
+	}
+	run, err := drive.mavenRun(t.Context(), &bytes.Buffer{}, "baseline", "", intake.Scenario{}, "", nil)
+	require.NoError(t, err)
+	require.Equal(t, roleBaseline, run.Role)
+	require.Contains(t, run.Timeout, "--timeout")
+	require.Contains(t, run.ResultError, "--timeout")
+	require.Equal(t, run.Command, run.NativeCommand)
+	require.NoDirExists(t, filepath.Join(root, "target"))
+}
+
+func TestMavenFeaturePoliciesRequireEveryObservedControl(t *testing.T) {
+	for _, name := range maven.FrameworkNames {
+		t.Run(name, func(t *testing.T) {
+			var features []featureResult
+			for _, policy := range featurePolicies(name) {
+				features = append(features, featureResult{Project: "module", Name: policy.Name, Status: "passed"})
+			}
+			require.Len(t, features, 6)
+			require.True(t, featureChecksPassed(name, features))
+			require.False(t, featureChecksPassed(name, features[:5]))
+			features[2].Status = "not supported"
+			require.True(t, featureChecksPassed(name, features), "tracer capability limits must stay explicit")
+			features[0].Status = "inconclusive"
+			require.False(t, featureChecksPassed(name, features))
+		})
+	}
 }

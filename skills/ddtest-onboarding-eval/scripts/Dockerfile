@@ -9,6 +9,24 @@ RUN chmod +x /usr/local/lib/ddtest-fake-agent.py && ln -s /usr/local/lib/ddtest-
 FROM runtime AS agents
 RUN npm install --global @openai/codex@0.163.0 @anthropic-ai/claude-code@2.1.220 && npm cache clean --force
 
+# Java trials use image-owned toolchains; the container runner keeps HOME and
+# Maven's default dependency/wrapper caches inside its owned trial directory.
+FROM maven:3.9-eclipse-temurin-17@sha256:1a352420f7aba21f5ad08df31bab55f74c013fb491f1ae8ab1dd7ff9ed698584 AS maven-toolchain
+FROM eclipse-temurin:8-jdk-jammy@sha256:185d4ef919b98cd195690c33f3fd93bd49c66c70f0b662e54566c0dbaebea6ce AS jdk8
+FROM eclipse-temurin:17-jdk-jammy@sha256:73ed442231ec66cfe48cae0b263ce619a75ab96d162ab325f38fc0a269ee3aab AS jdk17
+
+FROM agents AS maven-runtime
+COPY --from=maven-toolchain /usr/share/maven /usr/share/maven
+RUN ln -s /usr/share/maven/bin/mvn /usr/local/bin/mvn
+
+FROM maven-runtime AS java8
+COPY --from=jdk8 /opt/java/openjdk /opt/java/openjdk
+RUN for tool in java javac javadoc jar; do ln -s /opt/java/openjdk/bin/$tool /usr/local/bin/$tool; done
+
+FROM maven-runtime AS java17
+COPY --from=jdk17 /opt/java/openjdk /opt/java/openjdk
+RUN for tool in java javac javadoc jar; do ln -s /opt/java/openjdk/bin/$tool /usr/local/bin/$tool; done
+
 # Optional browser-ready image. Flags apply only inside this disposable container;
 # customer repository configuration and host browser settings remain untouched.
 FROM agents AS browsers

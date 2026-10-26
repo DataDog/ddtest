@@ -160,6 +160,17 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, manifest["trial_directory"], ignore_errors=True)
         return code, manifest
 
+    def test_java_framework_keeps_uncoached_prompt_in_both_agents(self):
+        for agent in ("codex", "claude"):
+            with self.subTest(agent=agent):
+                self.args.agent = agent
+                self.args.framework = "junit5"
+                self.args.output = self.root / ("java-" + agent)
+                code, manifest = self.trial()
+                self.assertEqual(code, 0)
+                self.assertEqual(manifest["framework_scope"], "junit5")
+                self.assertEqual(manifest["prompt"], f"Use ddtest in {Path(manifest['trial_directory']) / 'bin'} and onboard this repository to test-optimization for junit5 only.")
+
     def test_preflight_refresh_is_redacted_before_finalization(self):
         source = self.root / "selected-login.json"
         source.write_text(json.dumps({"tokens": {"access_token": "synthetic-original-access", "refresh_token": "synthetic-original-refresh"}}))

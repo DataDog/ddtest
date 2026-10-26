@@ -35,7 +35,7 @@ func TestMavenIntegration(t *testing.T) {
 			fixture, err := filepath.Abs(filepath.Join("testdata/maven", name))
 			require.NoError(t, err)
 			root := filepath.Join(t.TempDir(), "repository")
-			require.NoError(t, copyConfiguration(ctx, fixture, root))
+			require.NoError(t, copyConfiguration(ctx, fixture, root, true))
 			init := exec.CommandContext(ctx, "git", "init", "-q", "-b", "juan-fernandez/maven-fixture")
 			init.Dir = root
 			require.NoError(t, init.Run())

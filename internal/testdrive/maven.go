@@ -163,13 +163,22 @@ func mavenJVMEnvironment(agent string) (map[string]string, error) {
 // Every run starts with the same source tree and fresh build output. The
 // original target directories are never read as validation evidence or removed.
 func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent string, scenario intake.Scenario, probeMode string, probe *mavenProbe) (run validationRun, runErr error) {
-	run = validationRun{Name: name, Instrumented: agent != "", ProbeMode: probeMode, framework: t.framework.Name(), root: t.repositoryRoot}
+	role := roleProbeFeature
+	if probe == nil {
+		role = roleBaseline
+		if agent != "" {
+			role = roleReporting
+		}
+	} else if scenario.Feature == "" {
+		role = roleProbeControl
+	}
+	run = validationRun{Role: role, Name: name, Instrumented: agent != "", ProbeMode: probeMode, framework: t.framework.Name(), root: t.repositoryRoot}
 	directory, err := os.MkdirTemp(t.session.Directory(), "maven-")
 	if err != nil {
 		return run, err
 	}
 	workspace := filepath.Join(directory, "repository")
-	if err := copyConfiguration(ctx, t.repositoryRoot, workspace); err != nil {
+	if err := copyConfiguration(ctx, t.repositoryRoot, workspace, true); err != nil {
 		return run, err
 	}
 	if err := filepath.WalkDir(workspace, func(path string, entry fs.DirEntry, err error) error {
@@ -238,10 +247,11 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 	// output. Each JVM is instrumented through Maven's native tracer integration.
 	env["DD_CIVISIBILITY_COMPILER_PLUGIN_AUTO_CONFIGURATION_ENABLED"] = "false"
 	run.Command = shellquote.Join(append([]string{command}, args...)...)
+	run.NativeCommand = run.Command
 	_, _ = fmt.Fprintf(output, "Running Maven %s: %s\n", name, run.Command)
 	// Use an executor with an explicit working directory instead of changing
 	// the parent process's working directory during concurrent intake handling.
-	executor := &ext.DefaultCommandExecutor{}
+	executor := &ext.DefaultCommandExecutor{Timeout: t.commandTimeout}
 	data, commandErr := executor.CombinedOutputInDirectory(ctx, workspace, command, args, env)
 	run.commandOutput, run.commandError = string(data), commandErr
 	run.ExitCode = commandExitCode(commandErr)
@@ -286,7 +296,7 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 			writeCommandFailure(output, "Maven "+name, data)
 		}
 	}
-	return run, nil
+	return markTimeout(run), nil
 }
 
 func compareMaven(baseline, reporting validationRun) verdict {

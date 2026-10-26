@@ -83,7 +83,7 @@ type runSpec struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
-	mavenModules map[string]string
+	mavenModules        map[string]string
 	webdriverIOAttempts []jestTest
 	missingSourceLoader string // Explains a .js import that only exists as TypeScript.
 	ReplacedReporters   []string

@@ -140,7 +140,8 @@ func (t *Testdrive) mavenFeatures(ctx context.Context, output io.Writer, agent s
 		checked = true
 		probe := newMavenProbe(project, selected)
 		if len(probe.files) == 0 {
-			for _, feature := range jestFeatures {
+			for _, policy := range featurePolicies(t.framework.Name()) {
+				feature := policy.Name
 				result.Features = append(result.Features, featureResult{Project: project.Directory, Name: feature, Status: "inconclusive", Reason: "Cannot identify the selected framework's probe runner from the declared Maven dependencies."})
 			}
 			continue
@@ -151,18 +152,21 @@ func (t *Testdrive) mavenFeatures(ctx context.Context, output io.Writer, agent s
 		}
 		result.Runs = append(result.Runs, control.summary())
 		if control.ExitCode != 0 || control.ResultError != "" || len(control.Tests) != 1 || len(control.Facts.Tests) != 1 || control.ProbeExecutions == nil || *control.ProbeExecutions != 1 {
-			for _, feature := range jestFeatures {
+			for _, policy := range featurePolicies(t.framework.Name()) {
+				feature := policy.Name
 				result.Features = append(result.Features, featureResult{Project: project.Directory, Name: feature, Status: "inconclusive", Reason: "The existing Maven configuration did not select exactly one controlled probe; preserve custom source roots, includes and providers and inspect the probe command diagnostics."})
 			}
 			continue
 		}
 		identity := control.Facts.Tests[0]
 		advertised := false
-		for _, feature := range jestFeatures {
+		for _, policy := range featurePolicies(t.framework.Name()) {
+			feature := policy.Name
 			advertised = advertised || mavenCapability(control, identity, feature)
 		}
 		if !advertised {
-			for _, feature := range jestFeatures {
+			for _, policy := range featurePolicies(t.framework.Name()) {
+				feature := policy.Name
 				result.Features = append(result.Features, featureResult{Project: project.Directory, Name: feature, Status: "inconclusive", Reason: "The controlled Java event did not advertise feature capabilities; use a compatible tracer before certifying feature support."})
 			}
 			continue
@@ -173,12 +177,14 @@ func (t *Testdrive) mavenFeatures(ctx context.Context, output io.Writer, agent s
 		}
 		result.Runs = append(result.Runs, failing.summary())
 		if len(failing.Tests) != 1 || failing.Tests[0].Status != "failed" || !strings.Contains(failing.Tests[0].Failure, "ddtest intentional failure") {
-			for _, feature := range jestFeatures {
+			for _, policy := range featurePolicies(t.framework.Name()) {
+				feature := policy.Name
 				result.Features = append(result.Features, featureResult{Project: project.Directory, Name: feature, Status: "inconclusive", Reason: "The intentional failure control was not observed in native results."})
 			}
 			continue
 		}
-		for _, feature := range jestFeatures {
+		for _, policy := range featurePolicies(t.framework.Name()) {
+			feature := policy.Name
 			if !mavenCapability(control, identity, feature) {
 				result.Features = append(result.Features, featureResult{Project: project.Directory, Name: feature, Status: "not supported", Reason: "The selected Java test integration did not advertise this feature in its controlled test event; it was not executed or counted as passed."})
 				continue
