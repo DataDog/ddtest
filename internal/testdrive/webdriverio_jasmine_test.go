@@ -100,3 +100,24 @@ func TestOnlyTracerOnlyFeatureBlockersAreReportedNotRetried(t *testing.T) {
 	_, actionable = splitTracerOnlyBlockers(validation)
 	require.True(t, strings.Contains(strings.Join(actionable, "\n"), "not every project has every required feature result"))
 }
+
+func TestSummaryDropsLinesThatOnlyRestateTracerOnlyFailures(t *testing.T) {
+	result := completeValidationFixture("webdriverio")
+	result.Success = false
+	result.Scope = &onboard.ValidationScope{}
+	result.Features = []featureResult{
+		{Project: "capability 1 (chrome)", Name: "auto-retries", Status: "known limitation", Code: tracerLimitation, Reason: "Known dd-trace limitation."},
+		{Project: "capability 1 (chrome)", Name: "quarantine", Status: "passed"},
+	}
+	result.Configurations = []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm run test:local"}, PairedExecution: true, Status: "incomplete", Compatibility: verdict{Status: "compatible"}}}
+	summary := summarizeValidation(result)
+	require.Contains(t, summary.BlockingChecks, "capability 1 (chrome)/auto-retries: known limitation")
+	require.NotContains(t, summary.BlockingChecks, featureCoverageBlocker)
+	require.NotContains(t, summary.BlockingChecks, "configuration npm run test:local: incomplete")
+
+	// An ordinary feature failure keeps them.
+	result.Features = append(result.Features, featureResult{Project: "capability 1 (chrome)", Name: "disabled", Status: "failed"})
+	summary = summarizeValidation(result)
+	require.Contains(t, summary.BlockingChecks, featureCoverageBlocker)
+	require.Contains(t, summary.BlockingChecks, "configuration npm run test:local: incomplete")
+}

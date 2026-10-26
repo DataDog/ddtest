@@ -799,6 +799,30 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 // (with their reasons) from the rest. The summary lines that merely restate a
 // tracer-only feature failure are dropped.
 func splitTracerOnlyBlockers(validation validationResult) (reportOnly, actionable []string) {
+	tracerOnly, _ := tracerOnlyFeatures(validation)
+	for _, check := range validation.Summary.BlockingChecks {
+		if feature, ok := tracerOnly[check]; ok {
+			reportOnly = append(reportOnly, check+" — "+feature.Reason)
+			continue
+		}
+		if restatesTracerOnlyFailures(validation, check) {
+			continue
+		}
+		actionable = append(actionable, check)
+	}
+	// A configuration's "incomplete" line only restates the other blockers that
+	// caused it; keep it only when it is the sole explanation.
+	derived := func(check string) bool { return configurationStatusLine(validation, check) }
+	if slices.ContainsFunc(validation.Summary.BlockingChecks, func(check string) bool { return !derived(check) }) {
+		actionable = slices.DeleteFunc(actionable, derived)
+	}
+	return reportOnly, actionable
+}
+
+// tracerOnlyFeatures maps each unsatisfied feature's blocker line to the
+// feature when only a tracer change can address it, and reports whether any
+// other feature failed.
+func tracerOnlyFeatures(validation validationResult) (map[string]featureResult, bool) {
 	tracerOnly := map[string]featureResult{}
 	others := false
 	for _, feature := range validation.Features {
@@ -811,23 +835,15 @@ func splitTracerOnlyBlockers(validation validationResult) (reportOnly, actionabl
 			others = true
 		}
 	}
-	for _, check := range validation.Summary.BlockingChecks {
-		if feature, ok := tracerOnly[check]; ok {
-			reportOnly = append(reportOnly, check+" — "+feature.Reason)
-			continue
-		}
-		if len(tracerOnly) > 0 && !others && (check == "not every project has every required feature result" || pairedConfigurationBlocker(validation, check)) {
-			continue
-		}
-		actionable = append(actionable, check)
-	}
-	// A configuration's "incomplete" line only restates the other blockers that
-	// caused it; keep it only when it is the sole explanation.
-	derived := func(check string) bool { return configurationStatusLine(validation, check) }
-	if slices.ContainsFunc(validation.Summary.BlockingChecks, func(check string) bool { return !derived(check) }) {
-		actionable = slices.DeleteFunc(actionable, derived)
-	}
-	return reportOnly, actionable
+	return tracerOnly, others
+}
+
+// restatesTracerOnlyFailures reports whether check only restates feature
+// failures that are all tracer-only: the generic feature-coverage line and a
+// compatible configuration's "incomplete" line.
+func restatesTracerOnlyFailures(validation validationResult, check string) bool {
+	tracerOnly, others := tracerOnlyFeatures(validation)
+	return len(tracerOnly) > 0 && !others && (check == featureCoverageBlocker || pairedConfigurationBlocker(validation, check))
 }
 
 // configurationStatusLine reports whether check is the summary's derived
