@@ -196,3 +196,86 @@ func preparationNeedsReview(directory string, build onboard.BuildCommand) (bool,
 	}
 	return true, strings.Join(found, ", ")
 }
+
+// suggestPrerequisiteOutputs pre-fills each pending prerequisite's
+// expected_files with the git-ignored files its package.json entry points
+// name. These are suggestions from configuration, never from running the
+// prerequisite; the caller still reviews them and accepts them with --facts.
+func suggestPrerequisiteOutputs(ctx context.Context, root string, template *onboard.SetupFacts) {
+	if template == nil {
+		return
+	}
+	for i := range template.Configurations {
+		for j := range template.Configurations[i].Prerequisites {
+			fact := &template.Configurations[i].Prerequisites[j]
+			if len(fact.Argv) == 0 || len(fact.ExpectedFiles) > 0 {
+				continue
+			}
+			fact.ExpectedFiles = packageEntryOutputs(ctx, root, fact.Directory)
+		}
+	}
+}
+
+// packageEntryOutputs lists repository-relative files named by package.json
+// entry points (main, module, browser, types, exports, bin) that git ignores.
+// A tracked or unignored file is source, not a build output.
+func packageEntryOutputs(ctx context.Context, root, directory string) []string {
+	directory = filepath.FromSlash(directory)
+	if directory == "" {
+		directory = "."
+	}
+	if !filepath.IsLocal(directory) && directory != "." {
+		return []string{}
+	}
+	data, err := os.ReadFile(filepath.Join(root, directory, "package.json"))
+	if err != nil {
+		return []string{}
+	}
+	var manifest map[string]any
+	if json.Unmarshal(data, &manifest) != nil {
+		return []string{}
+	}
+	var targets []string
+	var collect func(any)
+	collect = func(value any) {
+		switch value := value.(type) {
+		case string:
+			targets = append(targets, value)
+		case map[string]any:
+			keys := make([]string, 0, len(value))
+			for key := range value {
+				keys = append(keys, key)
+			}
+			slices.Sort(keys)
+			for _, key := range keys {
+				collect(value[key])
+			}
+		case []any:
+			for _, item := range value {
+				collect(item)
+			}
+		}
+	}
+	for _, key := range []string{"main", "module", "browser", "types", "typings", "exports", "bin"} {
+		collect(manifest[key])
+	}
+	suggestions := []string{}
+	for _, target := range targets {
+		clean := filepath.Clean(filepath.Join(directory, filepath.FromSlash(target)))
+		if !filepath.IsLocal(clean) || strings.Contains(clean, "*") || filepath.Base(clean) == "package.json" || slices.Contains(suggestions, filepath.ToSlash(clean)) {
+			continue
+		}
+		parts := strings.Split(clean, string(filepath.Separator))
+		if slices.Contains(parts, "node_modules") || slices.Contains(parts, ".git") {
+			continue
+		}
+		if exec.CommandContext(ctx, "git", "-C", root, "check-ignore", "-q", "--no-index", "--", filepath.ToSlash(clean)).Run() != nil {
+			continue
+		}
+		suggestions = append(suggestions, filepath.ToSlash(clean))
+		if len(suggestions) == maxExpectedOutputs {
+			break
+		}
+	}
+	return suggestions
+}

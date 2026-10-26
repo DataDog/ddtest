@@ -320,7 +320,8 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.Location = strings.Join(entry.Locations, ", ")
 				result.RequiredInput = []string{"repository-local working directory and supported setup for this exact CI command"}
 				result.InputTemplate = setupFactsTemplate(fingerprint, entry)
-				return fail("needs_input", "setup_unresolved", entry.Command+": "+strings.Join(pendingSetup(entry), "; ")+"; declare the expected outputs of each pending prerequisite", "Find each prerequisite's outputs from its configuration (tsconfig outDir, bundler config, package.json main/exports) or by running it in a disposable copy; do not run it in the checkout. Save input_template as a JSON file outside the checkout, fill expected_files for each prerequisite, then run resume_command with --facts <path>. Preserve this configuration; do not replace it with an easier suite.")
+				suggestPrerequisiteOutputs(ctx, t.repositoryRoot, result.InputTemplate)
+				return fail("needs_input", "setup_unresolved", entry.Command+": "+strings.Join(pendingSetup(entry), "; ")+"; declare the expected outputs of each pending prerequisite", "Find each prerequisite's outputs from its configuration (tsconfig outDir, bundler config, package.json main/exports) or by running it in a disposable copy; do not run it in the checkout. Where input_template already lists expected_files, they are git-ignored package.json entry points: keep the ones this prerequisite produces and add any others it writes. Save input_template as a JSON file outside the checkout, fill expected_files for each prerequisite, then run resume_command with --facts <path>. Preserve this configuration; do not replace it with an easier suite.")
 			}
 		}
 	}

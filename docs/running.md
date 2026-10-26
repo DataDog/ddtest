@@ -621,7 +621,7 @@ Preparation runs customer code. Bundlers marked for review, package build lifecy
 scripts and dependency changes require `--allow-reviewed-builds`; they may use the
 network. Rollup and webpack always load customer configuration; `tsup` and `unbuild`
 need review only when a config file, package.json settings or `--config` exists. The
-review request names what was found and when the agent must ask the user first. Missing tools are reported as `tool_not_installed`. Literal substitutions
+review request names what was found and when the agent must ask the user first. A CI build step is replayed only when the tests can reach its outputs: when its tool and output directories are known and no repository source, test-runner configuration or self-import reaches them, the build is listed for review as not replayed instead. Missing tools are reported as `tool_not_installed`. Literal substitutions
 are applied by Go rather than system sed; regex/backreference patches require
 review. `--timeout` defaults to ten minutes per subprocess and kills its ordinary
 process group on expiry. The limit also applies to each full-suite run, baseline

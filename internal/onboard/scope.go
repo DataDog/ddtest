@@ -305,7 +305,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						for j := range entry.Prerequisites {
 							entry.Prerequisites[j].Environment = mergeEnvironment(env, entry.Prerequisites[j].Environment)
 						}
-						entry.Prerequisites = append(slices.Clone(preparation), entry.Prerequisites...)
+						entry.Prerequisites = append(consumedPreparation(root, preparation, location, &review), entry.Prerequisites...)
 						entry.UnvalidatedSetup = append(slices.Clone(pendingSetup), entry.UnvalidatedSetup...)
 						entry.Environment = mergeEnvironment(env, entry.Environment)
 						entry.Directory = filepath.ToSlash(filepath.Clean(entry.Directory))

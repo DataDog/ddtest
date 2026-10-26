@@ -156,7 +156,7 @@ When repository-specific setup needs help, save the returned input template outs
 the checkout and use `--facts /absolute/path/setup.json` with `--all`. Facts bind to
 an input fingerprint covering the whole Git checkout (including nested package changes) and a configuration ID, can add validated local build argv,
 expected output files, services/readiness and documented port overrides, and cannot
-remove commands or change assertions. Services run in disposable copies with bounded
+remove commands or change assertions. A template for a pending build prerequisite pre-fills `expected_files` with the git-ignored files its package.json entry points name; ddtest never runs the prerequisite to find them, so review the list before supplying it. Services run in disposable copies with bounded
 readiness and cleanup. Their lifetime follows the configuration context, while each test/build command retains its own timeout. Live ownership leases stop declared services if the coordinator is killed. `--report --detail plan` or `--detail <configuration_id>`
 shows details capped at 1 MiB; add the returned resume ID for an unfinished plan.
 Unknown local Node build scripts in CI, including `npm run build && npm test`
