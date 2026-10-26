@@ -48,10 +48,11 @@ func TestPythonToxDiscoversItsDangerousMatrix(t *testing.T) {
 	writeToxProject(t, root, "")
 	scope, err := DiscoverValidationScope(root, "pytest")
 	require.NoError(t, err)
-	require.Empty(t, scope.Unresolved)
+	require.NotEmpty(t, scope.Unresolved)
 	require.Len(t, scope.Commands, 5)
 	locations := 0
 	for _, command := range scope.Commands {
+		require.Contains(t, strings.Join(command.UnvalidatedSetup, "\n"), "Local tox execution is not supported")
 		require.Contains(t, command.Command, "uv run --locked tox run -e ")
 		require.NotContains(t, command.Command, "${{")
 		locations += len(command.Locations)

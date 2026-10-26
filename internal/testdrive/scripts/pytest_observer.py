@@ -68,7 +68,10 @@ def pytest_runtest_logreport(report):
         "file": str((_rootpath / file).resolve()),
         "name": name,
         "status": report.outcome,
-        "failure": str(report.longrepr) if report.failed else "",
+        "failure": "\n".join(filter(None, (
+            previous["failure"] if previous and report.when == "teardown" else "",
+            str(report.longrepr) if report.failed else "",
+        ))),
     }
 
 

@@ -122,7 +122,7 @@ func TestPytestBlockedPluginFailsPreflight(t *testing.T) {
 			})
 		}
 	}
-	require.NoError(t, checkPytestPluginOptions("-p ddtrace", nil))
+	require.NoError(t, checkPytestPluginOptions("-p ddtrace", []string{"pytest"}))
 }
 
 func TestPytestObserverResolvesPathsAgainstRootdir(t *testing.T) {

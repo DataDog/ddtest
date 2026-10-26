@@ -227,6 +227,9 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				// without asking. The Node is the one active at that step: a job
 				// may switch runtimes between test steps.
 				unsupportedAt := func(step int) bool {
+					if framework == "pytest" {
+						return false
+					}
 					node, err := rowSetupNodeBefore(root, workflow, job, row, step)
 					if err != nil || !UnsupportedNode(node) {
 						return false
@@ -237,7 +240,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					return true
 				}
 				finalNode, finalErr := rowSetupNode(root, workflow, job, row)
-				unsupportedRow := finalErr == nil && UnsupportedNode(finalNode)
+				unsupportedRow := framework != "pytest" && finalErr == nil && UnsupportedNode(finalNode)
 				installerActive, installerSkipped := false, false
 				var pendingSetup []string
 				var preparation []BuildCommand
@@ -359,6 +362,11 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						resolution.Builds[j].Environment = mergeEnvironment(env, resolution.Builds[j].Environment)
 					}
 					for _, entry := range resolution.Tests {
+						if framework == "pytest" {
+							for _, reason := range entry.UnvalidatedSetup {
+								unresolved = append(unresolved, scopeDiagnostic{location, reason})
+							}
+						}
 						entry.CIInstrumentationExcluded = ((installerSkipped && !installerActive) || mochaInstrumentationDisabled(workflow, job, resolved, row)) && checkExcludedJestBootstrap(workflow, job, resolved, row) == ""
 						if unsupportedAt(i) {
 							entry.CIInstrumentationExcluded, entry.UnsupportedNode = true, true

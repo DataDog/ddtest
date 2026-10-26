@@ -42,7 +42,7 @@ func (t *Testdrive) checkPytestPreflight(ctx context.Context, output io.Writer, 
 	if configured, ok := t.pytestEnvironment["PYTEST_ADDOPTS"]; ok {
 		addopts = configured
 	}
-	if err := checkPytestPluginOptions(addopts, t.args); err != nil {
+	if err := checkPytestPluginOptions(addopts, append([]string{t.command}, t.args...)); err != nil {
 		check.Verdict = verdict{Status: "incompatible", Reason: err.Error()}
 		return fmt.Errorf("pytest preflight: %w", err)
 	}
@@ -109,12 +109,14 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 	return nil
 }
 
-func checkPytestPluginOptions(addopts string, args []string) error {
-	options, err := shellquote.Split(addopts)
+func checkPytestPluginOptions(addopts string, words []string) error {
+	options, iniAddopts, err := onboard.PytestCommandOptions(addopts, words)
 	if err != nil {
-		return fmt.Errorf("cannot parse PYTEST_ADDOPTS: %w", err)
+		return err
 	}
-	options = append(options, args...)
+	if slices.Contains(iniAddopts, "--no-ddtrace") {
+		return fmt.Errorf("inline pytest addopts disables Datadog instrumentation; remove --no-ddtrace from the effective -o/--override-ini addopts before controlled validation")
+	}
 	for i, option := range options {
 		plugin := strings.TrimPrefix(option, "-p")
 		if option == "-p" && i+1 < len(options) {

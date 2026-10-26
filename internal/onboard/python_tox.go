@@ -13,7 +13,8 @@ import (
 )
 
 // This is a read-only inventory of native tox TOML, not an implementation of
-// tox provisioning. Retain the original wrapper command for local validation.
+// tox provisioning. Retain the wrapper as unresolved local execution while
+// checking its runtime and instrumentation metadata statically.
 type pythonTox struct {
 	Name     string
 	Commands [][]string

@@ -276,6 +276,55 @@ func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
 	return nil, false
 }
 
+// PytestCommandOptions inspects environment and command options, including the
+// last inline addopts override (pytest's -o/--override-ini precedence). Wrapper
+// separators and interpreter options are not pytest arguments. iniAddopts is
+// returned separately so controlled local runs can reject nested disable flags
+// while still replacing direct tracer flags in their paired executions.
+func PytestCommandOptions(addopts string, words []string) (options, iniAddopts []string, err error) {
+	args, ok := pythonRunnerArguments(words, "pytest")
+	if !ok {
+		return nil, nil, fmt.Errorf("cannot identify pytest arguments in %q", words)
+	}
+	options, err = shellquote.Split(addopts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot parse PYTEST_ADDOPTS: %w", err)
+	}
+	options = append(options, args...)
+	var override string
+	for i := 0; i < len(options); i++ {
+		option := options[i]
+		if option == "--" {
+			options = options[:i]
+			break
+		}
+		var value string
+		switch {
+		case option == "-o" || option == "--override-ini":
+			i++
+			if i >= len(options) {
+				return nil, nil, fmt.Errorf("%s requires an ini override", option)
+			}
+			value = options[i]
+		case strings.HasPrefix(option, "--override-ini="):
+			value = strings.TrimPrefix(option, "--override-ini=")
+		case strings.HasPrefix(option, "-o"):
+			value = strings.TrimPrefix(strings.TrimPrefix(option, "-o"), "=")
+		default:
+			continue
+		}
+		key, value, _ := strings.Cut(value, "=")
+		if key == "addopts" {
+			override = value
+		}
+	}
+	iniAddopts, err = shellquote.Split(override)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot parse inline pytest addopts: %w", err)
+	}
+	return append(slices.Clone(iniAddopts), options...), iniAddopts, nil
+}
+
 // A setup-python version does not prove the interpreter chosen by a wrapper or
 // a different versioned executable. Keep those commands unverified in static CI
 // analysis; local preflight inspects the environment that actually executes.
@@ -288,7 +337,7 @@ func pythonRuntimeOverride(words []string, python string, environment map[string
 		return strings.ContainsAny(words[0], "/\\") || base != "python" && base != "python3" && base != "python"+python
 	}
 	if (base == "uv" || base == "poetry") && len(words) > 2 && words[1] == "run" {
-		if base == "uv" && environment["UV_PYTHON"] != "" {
+		if base == "uv" && (environment["UV_PYTHON"] != "" || environment["UV_PROJECT_ENVIRONMENT"] != "") {
 			return true
 		}
 		for i := 2; i < len(words); i++ {
@@ -361,7 +410,8 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 				continue
 			}
 			result.Matched = true
-			result.Tests = append(result.Tests, TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...), Resolution: "Native tox pytest environment " + tox.Name})
+			result.Tests = append(result.Tests, TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...), Resolution: "Native tox pytest environment " + tox.Name,
+				UnvalidatedSetup: []string{"Local tox execution is not supported; activate the selected environment and pass its Python/pytest command with --command."}})
 			continue
 		}
 		base := filepath.Base(words[0])
@@ -556,10 +606,7 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 	if err != nil {
 		return "inconclusive", err.Error()
 	}
-	options, err := shellquote.Split(value)
-	if err != nil {
-		return "inconclusive", "Cannot parse CI PYTEST_ADDOPTS: " + err.Error()
-	}
+	var options []string
 	commands, _ := staticCommands(step.Run)
 	directory := stepDirectory(workflow, job, step)
 	for _, words := range commands {
@@ -567,7 +614,11 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 			directory = filepath.Join(directory, words[1])
 		}
 		if pythonInvocation(words) {
-			options = append(options, words...)
+			commandOptions, _, err := PytestCommandOptions(value, words)
+			if err != nil {
+				return "inconclusive", err.Error()
+			}
+			options = append(options, commandOptions...)
 		}
 		if args, ok := pythonRunnerArguments(words, "tox"); ok {
 			if _, overridden := env["TOX_OVERRIDE"]; overridden {
@@ -587,7 +638,11 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 				return status, reason
 			}
 			for _, command := range tox.Commands {
-				options = append(options, command...)
+				commandOptions, _, err := PytestCommandOptions(value, command)
+				if err != nil {
+					return "inconclusive", err.Error()
+				}
+				options = append(options, commandOptions...)
 			}
 		}
 	}
