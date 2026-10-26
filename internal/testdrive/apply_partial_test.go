@@ -28,7 +28,7 @@ func TestApplyEditsResolvedConfigurationsDespiteUnresolvedCI(t *testing.T) {
 	requireWriteFile(t, path, partialScopeWorkflow)
 	var output bytes.Buffer
 	require.NoError(t, drive.Apply(t.Context(), &output, ApplyOptions{Site: "datadoghq.com", Preview: true}))
-	require.Contains(t, output.String(), "Unresolved CI stays unedited and unvalidated")
+	require.Contains(t, output.String(), "Unresolved CI is not validated locally")
 	require.Contains(t, output.String(), "unknown-wrapper.js")
 	diff := output.String()[strings.Index(output.String(), "---"):]
 	require.Contains(t, diff, "Configure Datadog Test Optimization")

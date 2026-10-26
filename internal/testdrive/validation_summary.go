@@ -117,14 +117,14 @@ func summarizeValidation(result validationResult) validationSummary {
 	if result.Scope != nil {
 		summary.BlockingChecks = append(summary.BlockingChecks, scopeBlockers(append(slices.Clone(result.Scope.Unresolved), fidelityBlockers...))...)
 		for _, configuration := range result.Configurations {
-			if configuration.Status != "passed" && !configurationExcluded(configuration) && !alreadyExplained(summary.BlockingChecks, configuration.Error) {
+			if configuration.RemoteGrid == "" && !configurationSettled(result, configuration) && !alreadyExplained(summary.BlockingChecks, configuration.Error) {
 				summary.BlockingChecks = append(summary.BlockingChecks, "configuration "+configuration.Command+": "+configuration.Status)
 			}
 		}
 	}
 	// Success is scoped to an explicitly selected command; the overall summary
 	// continues to expose every unvalidated repository configuration.
-	if result.Scope != nil && (len(result.Scope.Unresolved)+len(fidelityBlockers) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return c.Status != "passed" && !configurationExcluded(c) })) && summary.Status != "FAILED" {
+	if result.Scope != nil && (len(result.Scope.Unresolved)+len(fidelityBlockers) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return !configurationSettled(result, c) })) && summary.Status != "FAILED" {
 		summary.Status = "INCOMPLETE"
 	}
 	summary.ConfigurationCoverage, summary.ExecutedValidation = summarizeConfigurationCoverage(result)
@@ -210,7 +210,7 @@ func validationHandoff(result validationResult) string {
 	}
 	fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s.\n", summary.Status, summary.LocalValidation)
 	if coverage := summary.ConfigurationCoverage; coverage != nil && coverage.Discovered > 0 {
-		fmt.Fprintf(&block, "Configurations: %d/%d validated; %d executed, %d paired; %d blocked, %d not exercised, %d incomplete.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete)
+		fmt.Fprintf(&block, "Configurations: %d/%d validated; %d executed, %d paired; %d blocked, %d not exercised, %d incomplete%s.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete, remoteOnlyCount(coverage))
 		windows := 0
 		for _, configuration := range result.Configurations {
 			if configurationExcluded(configuration) && configuration.WindowsRunner {

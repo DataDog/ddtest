@@ -16,13 +16,25 @@ import (
 // dependency install alone reads it (so the CI edit can't depend on its
 // value), and every validated configuration of its job passed with a
 // framework version the tracer supports. An accepted substitute runtime is a
-// caveat too; an unaccepted one stays a blocker elsewhere.
+// caveat too; an unaccepted one stays a blocker elsewhere. So is a
+// configuration that runs only on a remote browser grid with CI secrets, once
+// a local configuration of the same suite passed its paired comparison.
 func ciFidelity(result *validationResult) (caveats, blockers []string) {
 	if sub := result.RuntimeSubstitution; sub != nil && sub.Accepted {
 		caveats = append(caveats, fmt.Sprintf("runtime fidelity: validated on substitute Node %s; %s runs on Node %s (accepted).", sub.Local, sub.Source, sub.CI))
 	}
+	for _, configuration := range result.Configurations {
+		if configuration.RemoteGrid == "" {
+			continue
+		}
+		if remoteGridCovered(*result) {
+			caveats = append(caveats, fmt.Sprintf("%s runs on a remote browser grid (%s) and can't run locally; CI runs it with the same Datadog setup, and the local configurations of the same suite were validated.", configuration.Command, configuration.RemoteGrid))
+			continue
+		}
+		blockers = append(blockers, fmt.Sprintf("%s runs only on a remote browser grid (%s), and no local configuration of the same suite was validated", configuration.Command, configuration.RemoteGrid))
+	}
 	if result.Scope == nil {
-		return caveats, nil
+		return caveats, blockers
 	}
 	for _, axis := range result.Scope.ComputedAxes {
 		configurations := jobConfigurations(result, axis)

@@ -45,6 +45,11 @@ func setSelectedConfigurationScope(result *validationResult, scope onboard.Valid
 			result.Configurations = append(result.Configurations, excludedConfiguration(entry))
 			continue
 		}
+		// A remote browser grid runs only in CI; its secrets never exist here.
+		if entry.RemoteGrid != "" {
+			result.Configurations = append(result.Configurations, remoteGridConfiguration(entry))
+			continue
+		}
 		if !hostConfiguration(entry) {
 			item.Compatibility.Reason = nonHostConfigurationReason(entry)
 			result.Configurations = append(result.Configurations, item)
@@ -171,7 +176,7 @@ func applyScopeVerdict(result *validationResult) {
 		result.ChecksPassed = false
 	}
 	for _, configuration := range result.Configurations {
-		if configuration.Status != "passed" && !configurationExcluded(configuration) {
+		if !configurationSettled(*result, configuration) {
 			result.Success = false
 		}
 	}
@@ -205,6 +210,11 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
 		if ciInstrumentationDisabled(entry) {
 			result.Configurations = append(result.Configurations, excludedConfiguration(entry))
+			continue
+		}
+		// A remote browser grid runs only in CI; its secrets never exist here.
+		if entry.RemoteGrid != "" {
+			result.Configurations = append(result.Configurations, remoteGridConfiguration(entry))
 			continue
 		}
 		if !hostConfiguration(entry) {
@@ -322,6 +332,11 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		}
 	}
 	discloseConfigurationSideEffects(&result, leftovers, ambient)
+	// Remote-grid configurations never run here; without a compared local
+	// configuration of the same suite, nothing established compatibility.
+	if slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return c.RemoteGrid != "" }) && !remoteGridCovered(result) {
+		result.Compatibility = combineConfigurationCompatibility(result.Compatibility, verdict{Status: "inconclusive", Reason: "Only remote browser grid configurations were discovered; they can't run locally, so no local comparison established compatibility."})
+	}
 	if t.checkOnly {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration checks only; run --all without --check-only for all paired executions and features."}
 	}
@@ -476,6 +491,26 @@ func excludedConfiguration(entry onboard.TestCommand) configurationResult {
 		reason = "Windows runner: ddtest doesn't set up or validate Windows runners locally, so this entry stays uninstrumented. Add manual initialization to instrument it. Its original CI tests are preserved; no local paired execution or features are claimed."
 	}
 	return configurationResult{TestCommand: entry, Status: "excluded", Compatibility: verdict{Status: "not exercised", Reason: reason}}
+}
+
+func remoteGridConfiguration(entry onboard.TestCommand) configurationResult {
+	reason := entry.RemoteGrid + " runs this configuration on a remote browser grid with CI secrets, so it can't run locally; CI runs it with the same Datadog setup."
+	return configurationResult{TestCommand: entry, Status: "remote only", Compatibility: verdict{Status: "not exercised", Reason: reason}}
+}
+
+// remoteGridCovered reports whether a local configuration of the same suite
+// was compared: only then can a remote-grid configuration be a caveat.
+func remoteGridCovered(result validationResult) bool {
+	return slices.ContainsFunc(result.Configurations, func(configuration configurationResult) bool {
+		return configuration.RemoteGrid == "" && !configurationExcluded(configuration) && configuration.PairedExecution && configuration.Compatibility.Status == "compatible"
+	})
+}
+
+// configurationSettled reports whether a configuration can no longer block
+// completion: it passed, CI excludes it, or it runs only on a remote grid
+// while a local configuration of the same suite was validated.
+func configurationSettled(result validationResult, configuration configurationResult) bool {
+	return configuration.Status == "passed" || configurationExcluded(configuration) || configuration.RemoteGrid != "" && remoteGridCovered(result)
 }
 
 func configurationExcluded(entry configurationResult) bool {

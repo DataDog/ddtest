@@ -89,3 +89,41 @@ func TestScopeCheckIsRefreshedAfterSetupAndNotRepeatedAsABlocker(t *testing.T) {
 	require.Equal(t, []string{"unresolved CI scope: job: unknown wrapper"}, summary.BlockingChecks, "the scope check doesn't repeat the entry")
 	require.Contains(t, validationHandoff(result), "Git/package exclusions and owned cleanup: passed")
 }
+
+func remoteGridFixture(localCompatible bool) validationResult {
+	result := completeValidationFixture("webdriverio")
+	result.Workflow = &WorkflowEvidence{Checks: []onboard.WorkflowCheck{{Name: "git_report_exclusions", Status: "passed"}, {Name: "validation_cleanup", Status: "passed"}}}
+	result.Scope = &onboard.ValidationScope{}
+	local := configurationResult{TestCommand: onboard.TestCommand{Command: "npm run test:local"}, Status: "passed", PairedExecution: true, ExecutionAttempted: true, Compatibility: verdict{Status: "compatible"}}
+	if !localCompatible {
+		local = configurationResult{TestCommand: onboard.TestCommand{Command: "npm run test:local"}, Status: "blocked", Compatibility: verdict{Status: "not exercised"}}
+	}
+	result.Configurations = []configurationResult{local, remoteGridConfiguration(onboard.TestCommand{Command: "npm run test:sauce", RemoteGrid: "Sauce Labs"})}
+	return result
+}
+
+func TestRemoteGridConfigurationIsACaveatOnceALocalOneValidated(t *testing.T) {
+	result := remoteGridFixture(true)
+	result.Success = true
+	applyScopeVerdict(&result)
+	require.True(t, result.Success, "a remote-grid configuration never blocks once the suite validated locally")
+	root := t.TempDir()
+	require.NoError(t, finishValidation(io.Discard, root, result))
+	report := readValidationReport(t, root)
+	require.Equal(t, "COMPLETE LOCALLY", report.Summary.Status, report.Summary.BlockingChecks)
+	require.Empty(t, report.Summary.BlockingChecks)
+	require.Equal(t, []string{"npm run test:sauce runs on a remote browser grid (Sauce Labs) and can't run locally; CI runs it with the same Datadog setup, and the local configurations of the same suite were validated."}, report.Summary.Caveats)
+	require.Equal(t, 1, report.Summary.ConfigurationCoverage.RemoteOnly)
+	require.Contains(t, report.Summary.FinalResponse, "1 remote grid only (CI runs them)")
+}
+
+func TestRemoteGridConfigurationBlocksWithoutALocalValidation(t *testing.T) {
+	result := remoteGridFixture(false)
+	caveats, blockers := ciFidelity(&result)
+	require.Empty(t, caveats)
+	require.Equal(t, []string{"npm run test:sauce runs only on a remote browser grid (Sauce Labs), and no local configuration of the same suite was validated"}, blockers)
+	result.Success = true
+	applyScopeVerdict(&result)
+	require.False(t, result.Success)
+	require.NotEqual(t, "COMPLETE LOCALLY", summarizeValidation(result).Status)
+}

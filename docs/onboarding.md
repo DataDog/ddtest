@@ -132,7 +132,7 @@ and current execution evidence. The npm package check uses
 `npm pack --dry-run --ignore-scripts --json`; it neither publishes nor runs hooks.
 Checks and source-edit hashes stay in the bounded JSON; full output stays in HTML.
 
-`onboard --apply` selects a tracer every CI row it instruments can run: when the default release needs a newer Node than a CI job provides, it picks the verified release that supports all of them, or stops and names the rows that need different majors; every configuration it validates uses that one release, and a stop names the recommended release in its resume command. Configurations that can never run locally, such as WebdriverIO cloud grids and multiremote, don't constrain the tracer: setup leaves them unedited and the report lists them as blockers. When a CI path, such as the Cypress action API, runs on a Node major the local host lacks, ddtest validates on the local Node if both the framework and the tracer support it, and records the substitution in `runtime_substitution`. That evidence completes only with `--accept-substitute-runtime`, a decision for the user; otherwise the result is `needs_input` (`substitute_runtime_unaccepted`) with the accepting resume command. When the local Node is unsupported, the result is `blocked_environment` (`local_runtime_mismatch`) naming the CI runtime. Either way, an existing installation of the CI runtime first on PATH validates without substitution; ddtest never downloads a runtime.
+`onboard --apply` selects a tracer every CI row it instruments can run: when the default release needs a newer Node than a CI job provides, it picks the verified release that supports all of them, or stops and names the rows that need different majors; every configuration it validates uses that one release, and a stop names the recommended release in its resume command. Configurations that can never run locally, such as WebdriverIO cloud grids and multiremote, don't constrain the tracer: a cloud grid whose credentials are CI secrets is instrumented and reported as a caveat, and other such configurations stay unedited and are reported as blockers. When a CI path, such as the Cypress action API, runs on a Node major the local host lacks, ddtest validates on the local Node if both the framework and the tracer support it, and records the substitution in `runtime_substitution`. That evidence completes only with `--accept-substitute-runtime`, a decision for the user; otherwise the result is `needs_input` (`substitute_runtime_unaccepted`) with the accepting resume command. When the local Node is unsupported, the result is `blocked_environment` (`local_runtime_mismatch`) naming the CI runtime. Either way, an existing installation of the CI runtime first on PATH validates without substitution; ddtest never downloads a runtime.
 
 Only CI that can reach a selected test is in scope. Jobs whose steps can't start
 one (system packages, coverage merging, linting, publishing, another framework)
@@ -158,8 +158,12 @@ names it as a caveat instead of a blocker. A matrix axis computed at runtime
 job's tests run with the locally installed dependencies, and the axis is a
 caveat once every configuration of that job passed with a framework version the
 tracer supports. Otherwise, or when anything else reads the axis, it blocks. An
-accepted substitute runtime is reported as a caveat too. Caveats never prevent
-COMPLETE LOCALLY. Plain argv
+accepted substitute runtime is reported as a caveat too. So is a WebdriverIO
+configuration whose CI step reads a remote browser grid's credentials from CI
+secrets (Sauce Labs, BrowserStack, LambdaTest, TestingBot): setup instruments it
+like any other step, and it is reported as running only in CI once a local
+configuration of the same suite passed its paired comparison; without one, it
+blocks. Caveats never prevent COMPLETE LOCALLY. Plain argv
 commands under `shell: pwsh`, including the Windows default, are read as POSIX
 commands, including npm package specs such as `@scope/name@version`; PowerShell
 syntax, doubled quotes and multi-line test steps remain unresolved.

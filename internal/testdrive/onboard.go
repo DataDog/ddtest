@@ -1122,7 +1122,7 @@ func (t *Testdrive) workflowValidationResume(executable, name, selected string, 
 // scopeCheck records that ready configurations proceeded around unresolved CI.
 // The summary lists the entries once, as scope blockers, not again as a check.
 func scopeCheck(unresolved []string) onboard.WorkflowCheck {
-	return onboard.WorkflowCheck{Name: "ci_scope", Status: onboard.StatusInconclusive, Reason: "Ready configurations proceed; unresolved CI stays unedited, unvalidated and reported: " + strings.Join(unresolved, "; ")}
+	return onboard.WorkflowCheck{Name: "ci_scope", Status: onboard.StatusInconclusive, Reason: "Ready configurations proceed; unresolved CI is reported and not validated locally (setup edits a CI step only where it recognizes the test command): " + strings.Join(unresolved, "; ")}
 }
 
 // refreshScopeCheck re-evaluates the pre-setup ci_scope check against the scope

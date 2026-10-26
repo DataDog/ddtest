@@ -28,7 +28,11 @@ type TestCommand struct {
 	UnsupportedNode bool `json:"unsupported_node,omitempty"`
 	// WindowsRunner marks an exclusion on a Windows runner, whose Datadog
 	// action is skipped: ddtest can't set up or validate Windows locally.
-	WindowsRunner                   bool              `json:"windows_runner,omitempty"`
+	WindowsRunner bool `json:"windows_runner,omitempty"`
+	// RemoteGrid names the remote browser grid (such as Sauce Labs) whose CI
+	// secrets the entry reads. It runs only in CI: CI setup instruments it, and
+	// local validation reports it as a caveat instead of running it.
+	RemoteGrid                      string            `json:"remote_grid,omitempty"`
 	LocalOverrides                  []string          `json:"local_overrides,omitempty"`
 	ID                              string            `json:"id,omitempty"`
 	Services                        []ServiceCommand  `json:"services,omitempty"`
@@ -347,6 +351,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 							entry.CIInstrumentationExcluded, entry.UnsupportedNode = true, true
 						}
 						entry.WindowsRunner = entry.CIInstrumentationExcluded && installerSkipped && windowsRow(job, row)
+						entry.RemoteGrid = resolved.RemoteGrid
 						if framework == "mocha" && !entry.usesNYC && !entry.mochaIstanbul {
 							parts, err := staticCommands(entry.Command)
 							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {

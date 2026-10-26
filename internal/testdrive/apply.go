@@ -63,7 +63,7 @@ func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOp
 		return fmt.Errorf("CI discovery needs review before automatic setup: %v", scope.Unresolved)
 	}
 	if partial {
-		_, _ = fmt.Fprintf(output, "Unresolved CI stays unedited and unvalidated; it is reported as a blocker: %s\n", strings.Join(scope.Unresolved, "; "))
+		_, _ = fmt.Fprintf(output, "Unresolved CI is not validated locally; it is reported as a blocker, and setup edits a CI step only where it recognizes the test command: %s\n", strings.Join(scope.Unresolved, "; "))
 	}
 	for _, entry := range scope.Commands {
 		if t.setupStaysReported(entry, partial) {
