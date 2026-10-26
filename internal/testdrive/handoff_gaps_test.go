@@ -40,9 +40,14 @@ func TestWorkflowKeepsTheSubstituteDecisionAmongOtherBlockers(t *testing.T) {
 	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
 	require.Equal(t, "validation_incomplete", result.Code, result.Reason)
 	require.Contains(t, result.Needs, "ask the user whether to accept the evidence from substitute Node v24.14.1")
-	require.Contains(t, result.Needs, AcceptSubstituteRuntimeFlag)
+	require.Contains(t, result.Needs, "run accept_resume_command instead of resume_command")
 	require.Contains(t, result.Needs, "Do not accept it yourself")
 	require.NotContains(t, result.ResumeCommand, AcceptSubstituteRuntimeFlag, "plain resume must not accept the substitute")
+	// The accepting command is derived from the final resume command, so it
+	// carries the same (current) checkpoint id.
+	require.NotEmpty(t, result.RunID)
+	require.Contains(t, result.ResumeCommand, result.RunID)
+	require.Equal(t, append(append([]string{}, result.ResumeCommand...), AcceptSubstituteRuntimeFlag), result.AcceptResumeCommand)
 	require.NotContains(t, result.RequiredInput, fixture.RuntimeSubstitution.blocker())
 	failed := 0
 	for _, item := range result.RequiredInput {

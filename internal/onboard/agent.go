@@ -36,32 +36,35 @@ type SetupFacts struct {
 }
 
 type AgentResult struct {
-	RunID            string          `json:"run_id,omitempty"`
-	Plan             *ExecutionPlan  `json:"plan,omitempty"`
-	PlanSummary      *PlanSummary    `json:"plan_summary,omitempty"`
-	DetailsCommand   []string        `json:"details_command,omitempty"`
-	InputTemplate    *SetupFacts     `json:"input_template,omitempty"`
-	SchemaVersion    int             `json:"schema_version"`
-	Status           string          `json:"status"`
-	Phase            string          `json:"phase"`
-	Code             string          `json:"code,omitempty"`
-	Reason           string          `json:"reason,omitempty"`
-	Location         string          `json:"location,omitempty"`
-	Needs            string          `json:"needs,omitempty"`
-	Capabilities     []string        `json:"required_capabilities,omitempty"`
-	RequiredInput    []string        `json:"required_input,omitempty"`
-	NextAction       string          `json:"next_action,omitempty"`
-	NextCommand      []string        `json:"next_command,omitempty"`
-	ResumeCommand    []string        `json:"resume_command,omitempty"`
-	Instruction      string          `json:"agent_instruction,omitempty"`
-	Fingerprint      string          `json:"input_fingerprint,omitempty"`
-	Checks           []WorkflowCheck `json:"checks,omitempty"`
-	SetupDiff        string          `json:"setup_diff,omitempty"`
-	UndoInstructions string          `json:"undo_instructions,omitempty"`
-	Changes          []SetupChange   `json:"changes,omitempty"`
-	FinalResponse    string          `json:"final_response,omitempty"`
-	JSONReport       string          `json:"json_report,omitempty"`
-	HTMLReport       string          `json:"html_report,omitempty"`
+	RunID          string         `json:"run_id,omitempty"`
+	Plan           *ExecutionPlan `json:"plan,omitempty"`
+	PlanSummary    *PlanSummary   `json:"plan_summary,omitempty"`
+	DetailsCommand []string       `json:"details_command,omitempty"`
+	InputTemplate  *SetupFacts    `json:"input_template,omitempty"`
+	SchemaVersion  int            `json:"schema_version"`
+	Status         string         `json:"status"`
+	Phase          string         `json:"phase"`
+	Code           string         `json:"code,omitempty"`
+	Reason         string         `json:"reason,omitempty"`
+	Location       string         `json:"location,omitempty"`
+	Needs          string         `json:"needs,omitempty"`
+	Capabilities   []string       `json:"required_capabilities,omitempty"`
+	RequiredInput  []string       `json:"required_input,omitempty"`
+	NextAction     string         `json:"next_action,omitempty"`
+	NextCommand    []string       `json:"next_command,omitempty"`
+	ResumeCommand  []string       `json:"resume_command,omitempty"`
+	// AcceptResumeCommand is resume_command plus a decision only the user may
+	// make, such as accepting a substitute runtime.
+	AcceptResumeCommand []string        `json:"accept_resume_command,omitempty"`
+	Instruction         string          `json:"agent_instruction,omitempty"`
+	Fingerprint         string          `json:"input_fingerprint,omitempty"`
+	Checks              []WorkflowCheck `json:"checks,omitempty"`
+	SetupDiff           string          `json:"setup_diff,omitempty"`
+	UndoInstructions    string          `json:"undo_instructions,omitempty"`
+	Changes             []SetupChange   `json:"changes,omitempty"`
+	FinalResponse       string          `json:"final_response,omitempty"`
+	JSONReport          string          `json:"json_report,omitempty"`
+	HTMLReport          string          `json:"html_report,omitempty"`
 }
 
 // PlanSummary keeps routine handoffs independent of CI matrix size.
@@ -155,7 +158,7 @@ func writeAgentText(output io.Writer, result AgentResult) error {
 	for _, line := range []struct {
 		label   string
 		command []string
-	}{{"Next", result.NextCommand}, {"Resume", result.ResumeCommand}, {"Details", result.DetailsCommand}} {
+	}{{"Next", result.NextCommand}, {"Resume", result.ResumeCommand}, {"After user approval", result.AcceptResumeCommand}, {"Details", result.DetailsCommand}} {
 		if len(line.command) > 0 {
 			_, _ = fmt.Fprintf(&text, "%s: %s\n", line.label, shellquote.Join(line.command...))
 		}

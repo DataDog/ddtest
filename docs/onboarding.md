@@ -166,7 +166,11 @@ stopping to ask: dev dependencies through the exact install command, package
 scripts and coverage config. For Cypress without application coverage, a
 recognized browserify, Vite or webpack build gets a test-only edit in the run's
 `coverage.edit` (install command, files and how to serve the instrumented build),
-gated by an environment variable so other builds stay uninstrumented; other builds
+gated by an environment variable so other builds stay uninstrumented. A
+`replace` value names the exact existing line an edit replaces. When `tsc`
+compiles to ignored JavaScript before browserify, the coverage build bundles the
+tracked TypeScript sources with Babel, so coverage names tracked files. Babel
+packages are pinned to the 7 line that babelify supports. Other builds
 get instrumentation guidance, which needs the user's approval like any edit ddtest
 did not prescribe. The final response lists every uncommitted change outside CI and
 ignore files in `repository_changes`, with the commands that revert it, including

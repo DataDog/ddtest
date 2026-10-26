@@ -22,7 +22,6 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
-	"github.com/kballard/go-shellquote"
 )
 
 type WorkflowOptions struct {
@@ -91,6 +90,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	var checkpoint *workflowCheckpoint
 	var factsHash string
 	ownedLock, executed := false, false
+	// acceptFlag, when set, is appended to the final resume command after the
+	// checkpoint rewrites --resume, so the offered command never goes stale.
+	acceptFlag := ""
 	fail := func(status, code, reason, needs string) error {
 		result.Status, result.Code, result.Reason, result.Needs = status, code, reportText(reason), needs
 		if options.Format == "verbose" && result.UndoInstructions != "" {
@@ -113,6 +115,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 					}
 				}
 			}
+		}
+		if acceptFlag != "" && len(result.ResumeCommand) > 0 && !slices.Contains(result.ResumeCommand, acceptFlag) {
+			result.AcceptResumeCommand = append(append([]string{}, result.ResumeCommand...), acceptFlag)
 		}
 		switch status {
 		case "blocked_environment":
@@ -727,8 +732,8 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			// The substitute is still the user's decision when other blockers remain;
 			// it must not be lost among them or accepted by the agent.
 			actionable = slices.DeleteFunc(actionable, func(check string) bool { return check == sub.blocker() })
-			accept := append(append([]string{}, result.ResumeCommand...), AcceptSubstituteRuntimeFlag)
-			decision = " Separately, ask the user whether to accept the evidence from substitute Node " + sub.Local + " in place of CI's Node " + sub.CI + ": once they approve, use `" + shellquote.Join(accept...) + "` instead of resume_command; otherwise put an existing Node " + sub.CI + " first on PATH. Do not accept it yourself or download a runtime."
+			acceptFlag = AcceptSubstituteRuntimeFlag
+			decision = " Separately, ask the user whether to accept the evidence from substitute Node " + sub.Local + " in place of CI's Node " + sub.CI + ": once they approve, run accept_resume_command instead of resume_command; otherwise put an existing Node " + sub.CI + " first on PATH. Do not accept it yourself or download a runtime."
 		}
 		if len(actionable) == 0 && len(reportOnly) > 0 {
 			result.RequiredInput = reportOnly
@@ -776,7 +781,21 @@ func splitTracerOnlyBlockers(validation validationResult) (reportOnly, actionabl
 		}
 		actionable = append(actionable, check)
 	}
+	// A configuration's "incomplete" line only restates the other blockers that
+	// caused it; keep it only when it is the sole explanation.
+	derived := func(check string) bool { return configurationStatusLine(validation, check) }
+	if slices.ContainsFunc(validation.Summary.BlockingChecks, func(check string) bool { return !derived(check) }) {
+		actionable = slices.DeleteFunc(actionable, derived)
+	}
 	return reportOnly, actionable
+}
+
+// configurationStatusLine reports whether check is the summary's derived
+// "configuration <command>: <status>" line for one of the configurations.
+func configurationStatusLine(validation validationResult, check string) bool {
+	return slices.ContainsFunc(validation.Configurations, func(c configurationResult) bool {
+		return check == "configuration "+c.Command+": "+c.Status
+	})
 }
 
 // pairedConfigurationBlocker reports whether check only says that a compatible,
