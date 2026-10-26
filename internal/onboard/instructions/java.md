@@ -32,7 +32,10 @@ Onboard this Maven repository to Datadog Test Optimization:
    real backend processing. Rerun after final setup edits. Run validation in the
    foreground and wait using the host's task/session tool; do not use background
    jobs or sleep loops. Read and preserve `summary.final_response` from the JSON,
-   including its exact verdict, blockers and report links. Native outcome parity
+   including its exact verdict, blockers and report links. Do not describe
+   onboarding as done, complete or finished unless `summary.status` is
+   `COMPLETE LOCALLY`; otherwise say "CI edits prepared; onboarding remains
+   INCOMPLETE". Native outcome parity
    and telemetry identity reconciliation are separate: matching existing failures
    are allowed, while equal event totals do not prove identity agreement. When
    telemetry is unresolved, feature probes were not run. An actual CI run cannot

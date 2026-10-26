@@ -26,6 +26,8 @@ const (
 
 // Test describes one observed test and its attempts.
 type Test struct {
+	// Name remains a display label; this preserves whether the tracer reported it.
+	NameMissing   bool `json:"name_missing,omitempty"`
 	Module        string
 	Parameters    string
 	Name          string
@@ -514,7 +516,7 @@ func uniqueCoveredTestCount(tests []testReference, coverages []coverageReference
 }
 
 func testIdentity(test testReference) string {
-	if test.name != "" || test.suite != "" {
+	if test.name != "" {
 		// Match tracer identity: source locations describe a test, but do not identify it.
 		return fmt.Sprintf("%q/%q/%q/%q", test.module, test.suite, test.name, test.parameters)
 	}
@@ -527,7 +529,7 @@ func testFromReference(test testReference) Test {
 		name = fmt.Sprintf("test %d", test.spanID)
 	}
 	return Test{
-		Name: name, Suite: test.suite, Module: test.module, Parameters: test.parameters, SourceFile: test.sourceFile,
+		Name: name, NameMissing: test.name == "", Suite: test.suite, Module: test.module, Parameters: test.parameters, SourceFile: test.sourceFile,
 		SourceStart: test.sourceStart, SourceEnd: test.sourceEnd, Duration: test.duration,
 	}
 }

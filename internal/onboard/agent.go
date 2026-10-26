@@ -216,7 +216,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 				local = append(local, "--"+option.name, option.value)
 			}
 		}
-		instruction := "Follow the Maven instructions, preserve every existing CI test command and matrix, and account for every detected test workflow. Run full testdrive with the actual CI command after the final edits. Run validation in the foreground; wait using the host's task/session tool, without background jobs or sleep loops. Read summary.final_response from testdrive.json and preserve its verdict, blockers and report links. Matching existing failures are allowed; equal event totals alone do not establish telemetry identity agreement. Local validation does not certify CI Java/tracer selection or backend processing."
+		instruction := "Follow the Maven instructions, preserve every existing CI test command and matrix, and account for every detected test workflow. Run full testdrive with the actual CI command after the final edits. Run validation in the foreground; wait using the host's task/session tool, without background jobs or sleep loops. Read summary.final_response from testdrive.json and preserve its verdict, blockers and report links. Never describe onboarding as done, complete or finished unless summary.status is COMPLETE LOCALLY. Otherwise say CI edits prepared; onboarding remains INCOMPLETE. Matching existing failures are allowed; equal event totals alone do not establish telemetry identity agreement. Local validation does not certify CI Java/tracer selection or backend processing."
 		if options.Site != "" {
 			instruction += fmt.Sprintf(" Requested CI Datadog site: %q.", options.Site)
 		}

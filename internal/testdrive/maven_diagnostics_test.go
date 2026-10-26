@@ -3,6 +3,9 @@ package testdrive
 import (
 	"bytes"
 	"fmt"
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/tinylib/msgp/msgp"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,4 +131,32 @@ func TestMavenCannotSubstituteParameterIndexForMissingMethodName(t *testing.T) {
 	require.Equal(t, "inconclusive", result.Status)
 	require.Equal(t, "java_test_name_missing", result.Code)
 	require.Contains(t, result.Reason, "empty test.name")
+}
+
+func TestMavenMissingNameDiagnosticUsesActualIntakeProvenance(t *testing.T) {
+	server, err := intake.StartScenario(t.TempDir(), intake.Scenario{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, server.Close()) })
+	var events []any
+	for i, status := range []string{"pass", "fail"} {
+		events = append(events, map[string]any{"type": "test", "content": map[string]any{"span_id": uint64(i + 1), "meta": map[string]any{"test.module": "Core", "test.suite": "ExampleTest", "test.status": status}}})
+	}
+	payload, err := msgp.AppendIntf(nil, map[string]any{"events": events})
+	require.NoError(t, err)
+	response, err := http.Post(server.URL()+constants.TestCycleURLPath, "application/msgpack", bytes.NewReader(payload))
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.NoError(t, server.Close())
+	facts, err := server.Facts()
+	require.NoError(t, err)
+	require.Len(t, facts.Tests, 2, "different unnamed spans in one class must not become retries of one fabricated test")
+	require.Empty(t, facts.FlakyTests, "a pass and failure of unknown methods do not establish a flaky test")
+	for _, test := range facts.Tests {
+		require.True(t, test.NameMissing)
+		require.NotEmpty(t, test.Name, "report display labels still need a fallback")
+	}
+	run := validationRun{mavenModules: map[string]string{"Core": "core"}, Tests: []jestTest{{File: "core / ExampleTest", Name: "first", Status: "passed"}, {File: "core / ExampleTest", Name: "second", Status: "failed"}}, Facts: facts}
+	verdict := verifyMavenTelemetry(run)
+	require.Equal(t, "java_test_name_missing", verdict.Code)
+	require.Contains(t, verdict.Reason, "2 Java test executions")
 }

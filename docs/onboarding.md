@@ -303,6 +303,8 @@ Maven display names can differ from artifact IDs and contain spaces. Indexed
 JUnit 5 invocations retain their indexes during telemetry reconciliation. Custom
 parameter display names without an index, or tracer events missing test names,
 remain inconclusive; matching total counts alone do not establish identity agreement.
+Intake display labels never replace missing reported names. Unnamed spans remain
+separate instead of manufacturing retries or flaky tests from different methods.
 
 Features are selected from the controlled test event's advertised capabilities.
 For example, Java tracer 1.67.1 does not advertise skipping or disable for MUnit;

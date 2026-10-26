@@ -49,6 +49,8 @@ func TestMavenAgentReturnsManualSetupWithWorkingValidationCommands(t *testing.T)
 	require.Equal(t, "available", result.Checks[1].Status)
 	require.Contains(t, result.Checks[1].Command, "testdrive")
 	require.Contains(t, result.Instruction, "summary.final_response")
+	require.Contains(t, result.Instruction, "unless summary.status is COMPLETE LOCALLY")
+	require.Contains(t, result.Instruction, "CI edits prepared")
 	require.NotContains(t, output.String(), "framework_unsupported")
 	require.NoDirExists(t, ".testoptimization")
 }

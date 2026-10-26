@@ -408,7 +408,7 @@ func verifyMavenTelemetry(run validationRun) verdict {
 			if attempt.Retry {
 				return verdict{Status: "inconclusive", Code: "unexpected_java_retry", Reason: "Unexpected Java retry in reporting-only mode."}
 			}
-			if test.Name == "" {
+			if test.NameMissing || test.Name == "" {
 				missingNames++
 			}
 			observed[identity(module, suite, mavenEventTestName(test), attempt.Status)]++
