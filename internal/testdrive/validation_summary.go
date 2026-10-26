@@ -60,7 +60,7 @@ func apiKeyHumanAction(check *onboard.RuntimeCheck) string {
 const featureCoverageBlocker = "not every project has every required feature result"
 
 func summarizeValidation(result validationResult) validationSummary {
-	summary := validationSummary{Status: "INCOMPLETE", LocalValidation: "INCOMPLETE", CIConfiguration: "not exercised", CIExecution: "not exercised"}
+	summary := validationSummary{Status: "INCOMPLETE", LocalValidation: "INCOMPLETE", CIConfiguration: "not exercised", CIExecution: "not exercised", BlockingChecks: []string{}}
 	if result.LocalSuccess {
 		summary.LocalValidation = "PASSED"
 	}
