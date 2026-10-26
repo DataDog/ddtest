@@ -27,7 +27,7 @@ func TestOnboardFactsSurviveOwnedEditsAndResume(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, "build.js"), "// explicit build prerequisite\n")
 	requireWriteFile(t, filepath.Join(root, "server.js"), "// explicit application service\n")
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
-	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    strategy:\n      matrix: {node: ['16', '24']}\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '${{ matrix.node }}'}\n      - run: npm test\n")
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    strategy:\n      matrix: {node: ['20', '24']}\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '${{ matrix.node }}'}\n      - run: npm test\n")
 	command := exec.Command("git", "init", "-q")
 	command.Dir = root
 	data, err := command.CombinedOutput()
@@ -291,7 +291,7 @@ func TestMochaWorkflowRequiresSetupOnlyForInstrumentedCIConfigurations(t *testin
     strategy:
       matrix:
         include:
-          - {node: '8', datadog: LEGACY}
+          - {node: '18', datadog: LEGACY}
           - {node: '24', datadog: true}
     steps:
       - uses: actions/setup-node@v4
@@ -300,7 +300,7 @@ func TestMochaWorkflowRequiresSetupOnlyForInstrumentedCIConfigurations(t *testin
         if: matrix.datadog
         with: {languages: js}
       - run: |
-          if [[ "${{ matrix.node }}" -lt 10 ]]; then
+          if [[ "${{ matrix.node }}" -lt 20 ]]; then
             xargs -n1 npm rm --silent --save-dev
           fi
 EXTRA      - run: npm test

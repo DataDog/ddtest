@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -235,7 +236,7 @@ func TestSetupSelectionRefusesTracerThatAnUninstrumentedCIRowCannotRun(t *testin
 	require.ErrorContains(t, err, "CI rows need different dd-trace majors")
 }
 
-func TestSetupSelectionNamesCIRowsNoSingleReleaseSupports(t *testing.T) {
+func TestSetupSelectionSkipsCIRowsNoReleaseSupports(t *testing.T) {
 	drive := preflightFixture(t, "30.2.0", "jest-circus/runner.js")
 	root := drive.repositoryRoot
 	require.NoError(t, os.RemoveAll(filepath.Join(root, "node_modules/dd-trace")))
@@ -246,8 +247,13 @@ func TestSetupSelectionNamesCIRowsNoSingleReleaseSupports(t *testing.T) {
 	t.Setenv("PATH", registry+string(os.PathListSeparator)+os.Getenv("PATH"))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
 	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    strategy:\n      matrix:\n        node: ['16.20.2', '24.14.1']\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '${{ matrix.node }}'}\n      - run: jest\n")
-	_, err := drive.selectSetupTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest"}}}, false)
-	require.ErrorContains(t, err, "(Node 16.20.2)")
-	require.ErrorContains(t, err, "The best verified release, dd-trace@6.17.0, supports CI Node 24.14.1 but not 16.20.2.")
-	require.ErrorContains(t, err, "CI rows need different dd-trace majors")
+	// No dd-trace release runs on Node 16, so that row is ddtest's own
+	// exclusion: it neither constrains the tracer nor asks for approval.
+	selected, err := drive.selectSetupTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest"}}}, false)
+	require.NoError(t, err)
+	require.Equal(t, "6.17.0", selected.Version)
+	ci := onboard.CheckCIRuntimes(t.Context(), root, "jest")
+	require.True(t, slices.ContainsFunc(ci.Jobs, func(job onboard.RuntimeFinding) bool {
+		return job.Node == "16.20.2" && job.Code == onboard.CodeUnsupportedNode && job.Status == onboard.StatusExcluded
+	}), ci.Jobs)
 }

@@ -251,7 +251,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 
 // AgentScope bounds what a coding agent changes during onboarding. Trials
 // showed agents editing builds, manifests and test names to satisfy checks.
-const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. Any other change ddtest prescribes, in a result or in onboard --instructions (coverage instrumentation, loaders, package scripts, dependencies, lockfiles, coverage config), is an exact edit you must show the user and get approval for before making it. Never rename tests or rewrite CI or package scripts so ddtest can parse them; report the blocker instead. Do not inspect the ddtest binary. " + ReadWholeInstruction
+const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. Any other change ddtest prescribes, in a result or in onboard --instructions (coverage instrumentation, loaders, package scripts, dependencies, lockfiles, coverage config), is an exact edit you must show the user and get approval for before making it. Never rename tests or rewrite CI or package scripts so ddtest can parse them; report the blocker instead. CI rows on a Node no dd-trace release supports are skipped by ddtest itself and reported as not tried; that needs no user approval. Do not inspect the ddtest binary. " + ReadWholeInstruction
 
 // ReadWholeInstruction repeats in every result: trials truncated results with
 // head/tail and missed the next step.

@@ -34,10 +34,15 @@ resolve never blocks the configurations that are ready: `--apply` edits and
 validates those, and leaves the unresolved entries unedited and reported as
 blockers, so the result stays incomplete until they are reviewed. A test step
 guarded only by matrix or env values (`if: matrix.node != '20'`) gets the same
-guard on the inserted action. When CI rows need an older tracer major than the
-rest, `--apply` stops and, for Mocha steps whose every row is affected, names the
+guard on the inserted action. CI rows on a Node no dd-trace release supports
+(below Node 18, such as 16 or 17) are ddtest's own decision, not the user's:
+they keep running uninstrumented, `--apply` guards them out of the inserted
+action with a matrix condition or leaves a job that only runs them unedited,
+validation counts them as excluded, and the result names them as "Not tried".
+When CI rows on a supported Node need an older tracer major than the rest,
+`--apply` stops and, for Mocha steps whose every row is affected, names the
 exact `DD_CIVISIBILITY_ENABLED: 'false'` opt-out for the user to approve; it
-never excludes rows itself. A reusable
+never excludes those rows itself. A reusable
 (`workflow_call`) workflow is edited only when it declares
 `on.workflow_call.secrets.DD_API_KEY` and every caller in the repository passes
 it (`secrets: inherit` or `secrets: {DD_API_KEY: ...}`); callers in other

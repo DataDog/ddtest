@@ -45,6 +45,9 @@ func (g *DirtyWorkflowGap) Error() string {
 type NodeRuntimeGap struct {
 	Location, Requirement string
 	ESM                   bool
+	// Unsupported marks a job whose every row runs a Node no dd-trace release
+	// supports; setup leaves it unedited instead of stopping.
+	Unsupported bool
 }
 
 func (g *NodeRuntimeGap) Error() string {
@@ -207,11 +210,19 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 			}
 			requirement := nodeRequirement
 			condition := ""
+			unsupported := false
 			for position, index := range selected {
 				before := job
 				before.Steps = job.Steps[:index]
 				value, err := setupRuntimeCondition(root, workflow, before, requirement, setupNeedsESM(root, framework, workflow, job, job.Steps[index]))
 				var runtimeGap *NodeRuntimeGap
+				if errors.As(err, &runtimeGap) && runtimeGap.Unsupported {
+					// Every row runs a Node no dd-trace release supports: the job
+					// keeps running uninstrumented and validation reports it as not
+					// tried. ddtest decides this; there is no tracer to choose.
+					unsupported = true
+					break
+				}
 				if errors.As(err, &runtimeGap) {
 					runtimeGap.Location = location
 					return nil, runtimeGap
@@ -223,6 +234,9 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 					return nil, gap("Selected test steps use conflicting runtime partitions; configure their initialization explicitly.")
 				}
 				condition = value
+			}
+			if unsupported {
+				continue
 			}
 			layers := []map[string]string{workflow.Env, job.Env}
 			for _, i := range selected {

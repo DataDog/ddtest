@@ -96,6 +96,12 @@ func recommendJavaScriptTracer(ctx context.Context, check jestPreflight, ci *onb
 		candidate := &tracerRecommendation{Selection: selected}
 		if ci != nil {
 			for _, job := range ci.Jobs {
+				// No release covers rows on an unsupported Node, and rows without a
+				// resolved test command are never instrumented, so neither decides
+				// between candidates.
+				if job.Code == onboard.CodeUnsupportedNode || job.Code == onboard.CodeUnresolvedCommand {
+					continue
+				}
 				node := job.Node
 				if job.NodeResolution != nil {
 					node = job.NodeResolution.Version

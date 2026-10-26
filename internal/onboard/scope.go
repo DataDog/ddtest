@@ -22,7 +22,10 @@ type packageScript struct {
 }
 
 type TestCommand struct {
-	CIInstrumentationExcluded       bool              `json:"ci_instrumentation_excluded,omitempty"`
+	CIInstrumentationExcluded bool `json:"ci_instrumentation_excluded,omitempty"`
+	// UnsupportedNode marks an exclusion ddtest made itself: no dd-trace release
+	// runs on the entry's CI Node, so it is not tried.
+	UnsupportedNode                 bool              `json:"unsupported_node,omitempty"`
 	LocalOverrides                  []string          `json:"local_overrides,omitempty"`
 	ID                              string            `json:"id,omitempty"`
 	Services                        []ServiceCommand  `json:"services,omitempty"`
@@ -165,6 +168,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": matrix axis "+axis+" is computed at runtime; its tests are validated with the locally installed dependencies, and other "+axis+" values remain unverified")
 			}
 			conditionNoted := false
+			var notTried []string
 			for _, row := range rows {
 				job := job // Resolve this row without mutating the next row's runner.
 				if framework == "cypress" {
@@ -186,6 +190,16 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				if assumed && !conditionNoted {
 					conditionNoted = true
 					scope.Review = append(scope.Review, workflow.Path+" / "+name+": job condition "+strconv.Quote(strings.TrimSpace(job.If))+" depends on runtime context; validated as a possible CI path, the condition itself is not verified statically.")
+				}
+				// No dd-trace release runs on this row's Node, so its tests are
+				// excluded like an explicit opt-out and its steps never block.
+				// ddtest decides this without asking.
+				unsupportedNode := false
+				if node, err := rowSetupNode(root, workflow, job, row); err == nil && UnsupportedNode(node) {
+					unsupportedNode = true
+					if !slices.Contains(notTried, node) {
+						notTried = append(notTried, node)
+					}
 				}
 				installerActive, installerSkipped := false, false
 				var pendingSetup []string
@@ -304,6 +318,9 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					}
 					for _, entry := range resolution.Tests {
 						entry.CIInstrumentationExcluded = ((installerSkipped && !installerActive) || mochaInstrumentationDisabled(workflow, job, resolved, row)) && checkExcludedJestBootstrap(workflow, job, resolved, row) == ""
+						if unsupportedNode {
+							entry.CIInstrumentationExcluded, entry.UnsupportedNode = true, true
+						}
 						if framework == "mocha" && !entry.usesNYC && !entry.mochaIstanbul {
 							parts, err := staticCommands(entry.Command)
 							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {
@@ -360,6 +377,13 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					}
 				}
 
+				if unsupportedNode {
+					for _, diagnostic := range unresolved {
+						diagnostic.Reason = "Not tried (no dd-trace release supports this Node): " + diagnostic.Reason
+						review = append(review, diagnostic)
+					}
+					unresolved = nil
+				}
 				allUnresolved = append(allUnresolved, unresolved...)
 				allReview = append(allReview, review...)
 				for _, entry := range commands {
@@ -373,6 +397,9 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						scope.Commands[index].packageScripts = append(scope.Commands[index].packageScripts, entry.packageScripts...)
 					}
 				}
+			}
+			if len(notTried) > 0 {
+				scope.Review = append(scope.Review, NotTriedNote(workflow.Path+" / "+name, notTried))
 			}
 		}
 	}

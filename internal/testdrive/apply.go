@@ -283,10 +283,11 @@ func (t *Testdrive) setupStaysReported(entry onboard.TestCommand, partial bool) 
 }
 
 // setupInstrumentsRow reports whether setup instruments this CI row. Excluded
-// rows stay uninstrumented, and rows whose command didn't resolve stay unedited
-// report blockers, so neither constrains the tracer setup selects.
+// rows and rows on a Node no dd-trace release supports stay uninstrumented,
+// and rows whose command didn't resolve stay unedited report blockers, so none
+// of them constrains the tracer setup selects.
 func setupInstrumentsRow(job onboard.RuntimeFinding) bool {
-	return job.Code != onboard.CodeExcludedRuntime && job.Code != onboard.CodeUnresolvedCommand
+	return job.Code != onboard.CodeExcludedRuntime && job.Code != onboard.CodeUnsupportedNode && job.Code != onboard.CodeUnresolvedCommand
 }
 
 // unsupportedCINodes lists instrumented CI rows whose known Node cannot run

@@ -282,6 +282,9 @@ func validationHandoff(result validationResult) string {
 	if scope := summary.CIScope; scope != nil {
 		// The scope groups CI jobs by Node version, so these count versions, not jobs.
 		fmt.Fprintf(&block, "CI runtime scope (static): Node versions %d instrumented, %d excluded, %d unverified; versions in Results JSON.\n", len(scope.Instrumented), len(scope.Excluded), len(scope.Unverified))
+		for _, job := range scope.NotTried {
+			fmt.Fprintf(&block, "Not tried: %s (no dd-trace release supports them; ddtest skipped them on its own, no approval needed).\n", job)
+		}
 	}
 	if supportsValidationFramework(result.Framework) && summary.CIConfiguration != "compatible" && summary.CIConfiguration != "not applicable" {
 		block.WriteString("CI edits require a full local rerun; an actual CI run does not update this local report.\n")
@@ -498,6 +501,9 @@ type ciRuntimeScope struct {
 	Instrumented []string `json:"instrumented,omitempty"`
 	Excluded     []string `json:"excluded,omitempty"`
 	Unverified   []string `json:"unverified,omitempty"`
+	// NotTried names CI jobs on a Node no dd-trace release supports. ddtest
+	// skips them on its own; they count as excluded and never block.
+	NotTried []string `json:"not_tried,omitempty"`
 }
 
 func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
@@ -517,6 +523,22 @@ func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
 		if job.Status == "compatible" {
 			instrumented[stepRuntime{job.Workflow, job.Job, job.Node, job.Step}] = true
 		}
+	}
+	type location struct{ workflow, job string }
+	var skipped []location
+	nodes := map[location][]string{}
+	for _, job := range check.Jobs {
+		if job.Code != onboard.CodeUnsupportedNode {
+			continue
+		}
+		key := location{job.Workflow, job.Job}
+		if nodes[key] == nil {
+			skipped = append(skipped, key)
+		}
+		nodes[key] = appendUnique(nodes[key], nodeScopeLabel(job.Node))
+	}
+	for _, key := range skipped {
+		scope.NotTried = append(scope.NotTried, key.workflow+" / "+key.job+" on Node "+strings.Join(nodes[key], ", "))
 	}
 	for _, job := range check.Jobs {
 		label := nodeScopeLabel(job.Node)

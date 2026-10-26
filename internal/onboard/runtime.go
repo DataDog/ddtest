@@ -451,8 +451,12 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		}
 		finding.Node, finding.NodeSource = state.node, state.source
 		if resolution.Reason != "" {
-			finding.Code, finding.Reason = CodeUnresolvedCommand, "Could not resolve CI test command: "+resolution.Reason
-			findings = append(findings, finding)
+			// A row on a Node no dd-trace release supports is never tried, so
+			// its unresolved steps can't block.
+			if !UnsupportedNode(finding.Node) || state.action != "" {
+				finding.Code, finding.Reason = CodeUnresolvedCommand, "Could not resolve CI test command: "+resolution.Reason
+				findings = append(findings, finding)
+			}
 			if !resolution.Matched {
 				continue
 			}
@@ -499,6 +503,12 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 				return finding
 			}
 			finding.Reason = GuardedActionBranch
+			return finding
+		}
+		// No dd-trace release runs on this Node, so the missing action is not a
+		// gap: ddtest leaves the row uninstrumented and doesn't try it.
+		if UnsupportedNode(finding.Node) {
+			finding.Status, finding.Code, finding.Reason = StatusExcluded, CodeUnsupportedNode, UnsupportedNodeReason(finding.Node)
 			return finding
 		}
 		finding.Reason = "No Datadog JavaScript action runs before this test step for this matrix entry. It is not validated as instrumented."
