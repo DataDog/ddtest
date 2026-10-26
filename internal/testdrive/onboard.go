@@ -123,7 +123,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.NextAction = "run_command"
 				result.NextCommand = []string{recoveryCommand[0], "onboard", "--framework", name, "--instructions"}
 				result.ResumeCommand, result.RequiredInput = nil, nil
-				result.Needs = "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
+				result.Needs = "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it; do not rewrite CI or package scripts only so ddtest can parse them. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
 			case "setup_dependencies_missing":
 				result.NextAction = "run_command"
 			default:
@@ -307,7 +307,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			if len(scope.Commands) == 0 && len(scope.Unresolved) == 0 {
 				reason = "No " + displayName(name) + " test command was found in GitHub Actions workflows or package scripts."
 			}
-			return fail("needs_input", "scope_unresolved", reason, "Resolve the named CI entry point. Facts can add prerequisites to discovered commands; they cannot erase unresolved CI or shrink scope. Use --instructions only for this unsupported integration.")
+			return fail("needs_input", "scope_unresolved", reason, "Facts can add prerequisites to discovered commands; they cannot erase unresolved CI or shrink scope. Do not rewrite CI or package scripts only so ddtest can parse them; report the unresolved entry as a blocker instead. Use --instructions only for this unsupported integration.")
 		}
 		for _, entry := range scope.Commands {
 			if ciInstrumentationDisabled(entry) {
@@ -317,7 +317,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.Location = strings.Join(entry.Locations, ", ")
 				result.RequiredInput = []string{"repository-local working directory and supported setup for this exact CI command"}
 				result.InputTemplate = setupFactsTemplate(fingerprint, entry)
-				return fail("needs_input", "setup_unresolved", entry.Command+": "+strings.Join(pendingSetup(entry), "; ")+"; declare the expected outputs of each pending prerequisite", "Save input_template as a JSON file outside the checkout, fill expected_files for each prerequisite, then run resume_command with --facts <path>. Preserve this configuration; do not replace it with an easier suite.")
+				return fail("needs_input", "setup_unresolved", entry.Command+": "+strings.Join(pendingSetup(entry), "; ")+"; declare the expected outputs of each pending prerequisite", "Find each prerequisite's outputs from its configuration (tsconfig outDir, bundler config, package.json main/exports) or by running it in a disposable copy; do not run it in the checkout. Save input_template as a JSON file outside the checkout, fill expected_files for each prerequisite, then run resume_command with --facts <path>. Preserve this configuration; do not replace it with an easier suite.")
 			}
 		}
 	}
@@ -630,17 +630,22 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		if !workflowChecksPassed(workflow) {
 			result.Phase = "verification"
 		}
-		var reviewCommands []string
+		var reviewCommands, reviewItems []string
 		for _, configuration := range validation.Configurations {
 			for _, build := range configuration.Preparation {
-				if build.Code == "preparation_review_required" {
+				if build.Code == "preparation_review_required" && !slices.Contains(reviewCommands, build.Command) {
 					reviewCommands = append(reviewCommands, build.Command)
+					item := build.Command
+					if build.Diagnostic != "" {
+						item += " (review " + build.Diagnostic + ")"
+					}
+					reviewItems = append(reviewItems, item)
 				}
 			}
 		}
 		if len(reviewCommands) > 0 {
 			result.Location = strings.Join(reviewCommands, "; ")
-			result.RequiredInput = []string{"Review these existing scripts/plugins and their network access, then run resume_command. No new setup facts are required."}
+			result.RequiredInput = []string{"Read " + strings.Join(reviewItems, "; ") + ". The build runs in an isolated copy, never in the checkout. You may run resume_command if it only configures bundling (entries, formats, output) with well-known plugins; ask the user first if it runs unfamiliar plugins or scripts, or downloads anything. No new setup facts are required."}
 			if !slices.Contains(result.ResumeCommand, "--allow-reviewed-builds") {
 				result.ResumeCommand = append(result.ResumeCommand, "--allow-reviewed-builds")
 			}

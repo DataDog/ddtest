@@ -179,3 +179,23 @@ func TestPatchTargetsUseBuildWorkingDirectory(t *testing.T) {
 	require.Equal(t, "src root", string(data))
 	require.Empty(t, executor.commands, "literal patches run in Go on every platform")
 }
+
+func TestZeroConfigBundlersRunWithoutReviewAndConfiguredOnesNameTheirConfig(t *testing.T) {
+	root := t.TempDir()
+	review, _ := preparationNeedsReview(root, onboard.BuildCommand{Command: "unbuild"})
+	require.False(t, review, "zero-config unbuild only bundles the package sources")
+	review, _ = preparationNeedsReview(root, onboard.BuildCommand{Command: "tsup"})
+	require.False(t, review)
+	review, found := preparationNeedsReview(root, onboard.BuildCommand{Command: "rollup -c"})
+	require.True(t, review, "rollup always runs customer configuration")
+	require.Contains(t, found, "--config")
+
+	requireWriteFile(t, filepath.Join(root, "build.config.ts"), "export default {}\n")
+	review, found = preparationNeedsReview(root, onboard.BuildCommand{Command: "unbuild"})
+	require.True(t, review)
+	require.Equal(t, "build.config.ts", found)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"tsup":{"entry":["src/index.ts"]}}`)
+	review, found = preparationNeedsReview(root, onboard.BuildCommand{Command: "tsup"})
+	require.True(t, review)
+	require.Equal(t, `package.json "tsup" settings`, found)
+}

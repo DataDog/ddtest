@@ -33,7 +33,8 @@ func TestHandoffUsesCurrentFactsAndExistingClickableReports(t *testing.T) {
 	require.Error(t, finishValidation(&output, root, result))
 	report := readValidationReport(t, root)
 	block := validationHandoff(report)
-	require.True(t, strings.HasPrefix(block, "Executed Vitest validations: INCOMPLETE (0/1)."))
+	// An incomplete verdict leads with a headline no paraphrase turns into success.
+	require.True(t, strings.HasPrefix(block, "NOT COMPLETE: onboarding validation is INCOMPLETE. Report the blockers below; do not describe onboarding as complete or successful.\nExecuted Vitest validations: INCOMPLETE (0/1)."))
 	require.Contains(t, block, "Onboarding validation: "+report.Summary.Status+".")
 	require.Contains(t, block, "INCOMPLETE")
 	require.Contains(t, block, "skipping: failed")
@@ -325,7 +326,7 @@ func TestCompactHandoffDoesNotInventIdentitiesOrCurrentEvidence(t *testing.T) {
 	require.Contains(t, response, "Selected Mocha testdrive: NOT EXERCISED.")
 	require.Contains(t, response, "Executed Mocha validations: NOT EXERCISED (0/0).")
 	require.Contains(t, response, "Onboarding validation: INCOMPLETE.")
-	require.Contains(t, response, "Historical reporting (not revalidated): 96 test executions; source-test identities unavailable.")
+	require.Contains(t, response, "Historical reporting (not revalidated): 96 test executions; source-test identities unavailable; this count does not affect coverage or feature results.")
 	require.NotContains(t, response, "0 source-test identities")
 	require.Contains(t, response, "Historical features (not revalidated): 6/6 supported checks passed.")
 	require.Contains(t, response, "suite-level, not independent per-test coverage")
@@ -376,4 +377,13 @@ func TestHandoffExplainsAnUncreditedFocusedExecution(t *testing.T) {
 	response := validationHandoff(result)
 	require.Contains(t, response, "Configurations: 0/1 validated; 0 executed, 0 paired")
 	require.Contains(t, response, "This run's command (pnpm exec jest --config original.js) executed and was paired, but matches no discovered CI configuration exactly, so no CI configuration is credited (CI environment differs for: npm_config_loglevel; run --all to validate those values).")
+}
+
+func TestHandoffExplainsUnavailableIdentitiesAndOmitsHeadlineWhenComplete(t *testing.T) {
+	result := completeValidationFixture("jest")
+	result.ReportingCounts = &executionCounts{TestExecutions: 1222, Reason: "Source-test identities are unavailable because native file/name identities repeat within a configuration."}
+	result.Summary = validationSummary{Status: "COMPLETE LOCALLY", LocalValidation: "PASSED", CIConfiguration: "compatible"}
+	response := validationHandoff(result)
+	require.Contains(t, response, "source-test identities unavailable (native file/name identities repeat within a configuration); this count does not affect coverage or feature results.")
+	require.True(t, strings.HasPrefix(response, "Onboarding validation: COMPLETE LOCALLY."), response)
 }

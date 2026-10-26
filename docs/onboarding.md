@@ -118,6 +118,14 @@ Checks and source-edit hashes stay in the bounded JSON; full output stays in HTM
 
 Automatic Mocha tracer recommendations use the verified major-5 and major-6 bootstrap contracts. Exact releases still come from registry tags; obsolete Node tags cannot win by covering more legacy CI rows. An explicitly selected or installed unverified major remains unvalidated instead of being silently replaced.
 
+Agents edit only CI workflow and ignore files, where a result asks for it. Any other
+change ddtest needs, such as coverage instrumentation, loaders or dependencies, is
+returned as an exact edit for the user to approve. Agents never rename tests or
+rewrite CI or package scripts so ddtest can parse them; they report the blocker.
+A final result tells the agent to relay `final_response` verbatim. An incomplete or
+failed verdict starts with `NOT COMPLETE:`, so a paraphrase cannot turn it into a
+completion claim.
+
 Results distinguish ready, needs_input, blocked_environment, unsupported,
 validation_failed, selected_passed and complete_locally. Follow the returned argv
 without guessing a different framework, tracer or suite. Missing capability and

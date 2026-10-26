@@ -17,6 +17,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/kballard/go-shellquote"
 )
 
 type tracerRecommendation struct {
@@ -168,7 +169,12 @@ func (t *Testdrive) recommendTracer(ctx context.Context, output io.Writer, resul
 	}
 	check.Recommendation, check.RecommendationNotes = recommendJavaScriptTracer(ctx, *check, result.CIRuntime, t.resolveJSTracer, t.resolveJSTags, t.framework.Name())
 	if rec := check.Recommendation; rec != nil {
-		_, _ = fmt.Fprintf(output, "Recommended candidate: dd-trace@%s (Node %s). CI Node compatible: %s; unsupported: %s; unresolved: %s.\nPrefer a candidate covering the whole existing matrix before excluding runtimes. Use --tracer-version %s and js-tracer-version: %s, then rerun --check-only before full validation. This is advisory; the current selection and project dependency are unchanged.\n", rec.Selection.Version, rec.Selection.Node, scopeList(rec.Compatible), scopeList(rec.Unsupported), scopeList(rec.Unresolved), rec.Selection.Version, rec.Selection.Version)
+		// Name the exact coordinator run so agents don't fall back to plain testdrive.
+		validate := "ddtest " + shellquote.Join("testdrive", "--framework", t.framework.Name(), "--all", "--agent", "--tracer-version", rec.Selection.Version, "--yes")
+		if command := onboard.DDTestCommand("testdrive", "--framework", t.framework.Name(), "--all", "--agent", "--tracer-version", rec.Selection.Version, "--yes"); len(command) > 0 {
+			validate = shellquote.Join(command...)
+		}
+		_, _ = fmt.Fprintf(output, "Recommended candidate: dd-trace@%s (Node %s). CI Node compatible: %s; unsupported: %s; unresolved: %s.\nPrefer a candidate covering the whole existing matrix before excluding runtimes. Use js-tracer-version: %s in CI, then run full validation through the agent workflow: %s. This is advisory; the current selection and project dependency are unchanged.\n", rec.Selection.Version, rec.Selection.Node, scopeList(rec.Compatible), scopeList(rec.Unsupported), scopeList(rec.Unresolved), rec.Selection.Version, validate)
 	}
 	for _, note := range check.RecommendationNotes {
 		_, _ = fmt.Fprintln(output, "Tracer recommendation: "+note)

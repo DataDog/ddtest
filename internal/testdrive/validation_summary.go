@@ -179,6 +179,11 @@ func uncreditedExecution(result validationResult) string {
 func validationHandoff(result validationResult) string {
 	var block strings.Builder
 	summary := result.Summary
+	if summary.Status != "COMPLETE LOCALLY" && summary.Status != "PASSED" {
+		// A headline that cannot be paraphrased into success, even when a
+		// selected command or the local comparison passed.
+		fmt.Fprintf(&block, "NOT COMPLETE: onboarding validation is %s. Report the blockers below; do not describe onboarding as complete or successful.\n", summary.Status)
+	}
 	if summary.SelectedValidation != nil {
 		fmt.Fprintf(&block, "Selected %s testdrive: %s.\n", displayName(result.Framework), summary.SelectedValidation.Status)
 	}
@@ -203,7 +208,11 @@ func validationHandoff(result validationResult) string {
 		}
 		fmt.Fprintf(&block, "%s: %d test executions; ", label, counts.TestExecutions)
 		if counts.SourceTestIdentities == nil {
-			block.WriteString("source-test identities unavailable.\n")
+			block.WriteString("source-test identities unavailable")
+			if reason := strings.TrimSuffix(strings.TrimPrefix(counts.Reason, "Source-test identities are unavailable because "), "."); reason != "" && reason != counts.Reason {
+				block.WriteString(" (" + reason + ")")
+			}
+			block.WriteString("; this count does not affect coverage or feature results.\n")
 		} else {
 			fmt.Fprintf(&block, "%d source-test identities.\n", *counts.SourceTestIdentities)
 		}

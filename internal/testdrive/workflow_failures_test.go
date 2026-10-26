@@ -148,7 +148,7 @@ func TestReviewedBuildBlockerReturnsFlagRatherThanNewFacts(t *testing.T) {
 	drive.workflowRun = func(_ context.Context, out io.Writer) error {
 		r := completeValidationFixture("cucumber")
 		r.Compatibility = verdict{Status: "not exercised"}
-		r.Configurations = []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm test"}, Status: "blocked", Preparation: []buildResult{{BuildCommand: onboard.BuildCommand{Command: "npm run build"}, Status: "blocked", Code: "preparation_review_required"}}}}
+		r.Configurations = []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm test"}, Status: "blocked", Preparation: []buildResult{{BuildCommand: onboard.BuildCommand{Command: "npm run build"}, Status: "blocked", Code: "preparation_review_required", Diagnostic: "package build lifecycle scripts"}}}}
 		r.Runs = nil
 		return finishValidation(out, root, r)
 	}
@@ -161,6 +161,9 @@ func TestReviewedBuildBlockerReturnsFlagRatherThanNewFacts(t *testing.T) {
 	require.Nil(t, result.InputTemplate)
 	require.Contains(t, result.Location, "npm run build")
 	require.Equal(t, "needs_input", result.Status)
+	// The agent learns what to read and when the decision belongs to the user.
+	require.Contains(t, result.RequiredInput[0], "npm run build (review package build lifecycle scripts)")
+	require.Contains(t, result.RequiredInput[0], "ask the user first")
 }
 
 func TestFocusedRunKeepsPreparationReceiptsOnItsConfiguration(t *testing.T) {
