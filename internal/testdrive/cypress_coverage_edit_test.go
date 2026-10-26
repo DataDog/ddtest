@@ -64,7 +64,7 @@ func TestCypressCoverageEditForViteAndWebpack(t *testing.T) {
 	requireWriteFile(t, filepath.Join(vite, "vite.config.ts"), "export default {}")
 	edit := cypressCoverageEdit(vite)
 	require.Equal(t, "vite", edit.Build)
-	require.Equal(t, "npm install --save-dev vite-plugin-istanbul", edit.Install)
+	require.Equal(t, "npm install --save-dev vite-plugin-istanbul@^9", edit.Install)
 	require.Equal(t, "vite.config.ts", edit.Files[0].Path)
 	require.Contains(t, edit.Files[0].Content, "requireEnv: true")
 	require.Contains(t, edit.Files[0].Content, "include: 'src/**/*'", "modules under src/components are instrumented too")
@@ -112,6 +112,19 @@ func TestCypressCoverageEditUsesBunInBunRepositories(t *testing.T) {
 		requireWriteFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vite":"^7.0.0"}}`)
 		requireWriteFile(t, filepath.Join(root, "vite.config.ts"), "export default {}")
 		requireWriteFile(t, filepath.Join(root, lockfile), "")
-		require.Equal(t, "bun add --dev vite-plugin-istanbul", cypressCoverageEdit(root).Install, lockfile)
+		require.Equal(t, "bun add --dev vite-plugin-istanbul@^9", cypressCoverageEdit(root).Install, lockfile)
 	}
+}
+
+func TestViteCoveragePluginMatchesTheInstalledViteMajor(t *testing.T) {
+	require.Equal(t, "vite-plugin-istanbul@^9", viteIstanbulPlugin(8))
+	require.Equal(t, "vite-plugin-istanbul@^9", viteIstanbulPlugin(7))
+	require.Equal(t, "vite-plugin-istanbul@^7", viteIstanbulPlugin(5))
+	require.Equal(t, "vite-plugin-istanbul@^9", viteIstanbulPlugin(0))
+	require.Empty(t, viteIstanbulPlugin(3))
+
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules", "vite"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "node_modules", "vite", "package.json"), []byte(`{"version":"6.3.5"}`), 0o644))
+	require.Equal(t, 6, installedMajor(root, "vite"))
 }
