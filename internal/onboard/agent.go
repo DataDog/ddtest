@@ -228,7 +228,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 			command = append(command, "--format", "json")
 		}
 		return RenderAgentResult(output, AgentResult{Status: "needs_input", Phase: "onboarding", Code: "ruby_ci_setup_required", NextAction: "apply_source_edit", ResumeCommand: command,
-			Reason: "Apply only the Ruby CI instrumentation and report exclusions below; preserve test commands and matrix values. Then run resume_command once in the foreground and follow its exact next action. Do not use background jobs, sleeps or process polling. Render the final saved response instead of composing a completion claim.", Instruction: instructions.String()}, options.Format)
+			Reason: "Apply only the Ruby CI instrumentation and report exclusions below; preserve test commands, test bodies/helpers, reporters and matrix values. Use the documented CI initializer for forked Minitest suites; do not patch tests to fix telemetry. Then run resume_command once in the foreground and follow its exact next action. Do not use background jobs, sleeps or process polling. Render the final saved response instead of composing a completion claim.", Instruction: instructions.String()}, options.Format)
 	}
 	if detected.Name() != "javascript" {
 		if options.Format != "" {

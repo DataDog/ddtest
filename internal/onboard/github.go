@@ -37,6 +37,15 @@ var vitestInstructions string
 //go:embed instructions/ruby.md
 var rubyInstructions string
 
+// RubyMinitestForkSetup configures the same synchronous transport in CI and
+// local validation for test runners that terminate forked children with exit!.
+//
+//go:embed instructions/ruby_minitest_fork.rb
+var RubyMinitestForkSetup string
+
+//go:embed instructions/ruby_minitest_fork.md
+var rubyMinitestForkInstructions string
+
 //go:embed instructions/github.md
 var gitHubInstructions string
 
@@ -112,7 +121,13 @@ func instructions(language, name string) string {
 
 func frameworkInstructions(language, name string) string {
 	if language == "ruby" {
-		return strings.ReplaceAll(rubyInstructions, "__FRAMEWORK__", name)
+		text := strings.ReplaceAll(rubyInstructions, "__FRAMEWORK__", name)
+		if name == "minitest" {
+			heading, rest, _ := strings.Cut(text, "\n\n")
+			forkSetup := strings.ReplaceAll(rubyMinitestForkInstructions, "__FORK_SETUP__", strings.TrimSpace(RubyMinitestForkSetup))
+			text = heading + "\n\n" + forkSetup + "\n\n" + rest
+		}
+		return text
 	}
 	if language == "javascript" && name == "webdriverio" {
 		return strings.ReplaceAll(webdriverIOInstructions, "ddtest testdrive", "ddtest testdrive --framework webdriverio")

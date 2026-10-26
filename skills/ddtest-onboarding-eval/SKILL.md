@@ -57,7 +57,12 @@ trusted derived image with the project-compatible Ruby and Bundler installed.
 The runner records its Ruby version before cloning and checks the report against
 that version. Install dependencies in the private trial HOME (for example,
 `bundle config set --global path /trial/home/bundle`, then `bundle install`) and
-use `bundle check` as the readiness command. Ruby multi-bundle validation can
+use `bundle check` as the readiness command. For large Ruby matrices, use the
+container-native private `/tmp/bundle` as Bundler's path to avoid bind-mount
+filesystem overhead; it is removed with the container, while lockfiles and both
+reports stay in the checkout until collection. Ruby's `TMPDIR` also uses the
+container's private executable tmpfs; no host cache is mounted there.
+Ruby multi-bundle validation can
 exceed ten minutes for one foreground `testdrive --all`. Claude's synchronous
 Bash allowance is bounded by `--timeout`, up to one hour for Ruby/Cypress; use
 an adequate overall trial timeout for these matrices. This does not change

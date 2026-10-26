@@ -274,3 +274,23 @@ only the tracer release's own incompatible requirement is a definite rejection.
 For reports with 500 or more results, repeated source excerpts and covered-file
 lists are stored once in the standalone HTML and materialized when expanded.
 Search and coverage pagination retain access to this evidence.
+
+For Minitest's `ActiveSupport::Testing::Isolation`, keep fork/`exit!` isolation and
+all existing tests. `onboard --framework minitest` supplies a CI initializer using
+Datadog's public synchronous writer with the configured CI transport. Append it
+after the Datadog action's preload on the existing test step. Testdrive preserves
+that preload order and validates the same initializer; it does not silently add
+a local-only delivery workaround. Synchronous delivery adds network overhead but
+finishes each trace before the child exits. Temporary tracer installation clears
+application preloads, since native gem compilation changes working directory.
+
+For a native-platform dependency that excludes a CI Ruby, testdrive may inspect
+its exact release's portable RubyGems specification. Compatibility requires the
+same gem name/version, a portable platform, identical runtime dependency
+requirements and RubyGems requirements admitting the complete Ruby selector.
+Missing, offline, mismatched or still-incompatible metadata remains inconclusive;
+this never certifies actual CI compilation/execution. A direct tracer requirement
+still rejects an incompatible Ruby. Ruby 2.7 also needs a compatible installer:
+`onboard` shows how to select RubyGems 3.4.22 for that matrix entry, preserving
+both its tests and instrumentation. The old RubyGems 3.1 client can choose a native
+ffi archive requiring Ruby 3.0 instead of the compatible portable release.

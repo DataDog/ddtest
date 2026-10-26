@@ -484,6 +484,11 @@ def run(args):
         directory = trial / name if key == "XDG_STATE_HOME" else trial / "caches" / name
         directory.mkdir(parents=True, exist_ok=True)
         env[key] = str(directory)
+    # Ruby validation builds disposable bundles repeatedly. Keep that high-file-
+    # count scratch on the container's private tmpfs, not a macOS bind mount.
+    # It is removed with the container; retained reports remain in the checkout.
+    if getattr(args, "framework", None) in ("rspec", "minitest"):
+        env["TMPDIR"] = "/tmp"
     # pnpm's own configuration is not inherited by npm commands in test scripts.
     pnpm_config = Path(env["XDG_CONFIG_HOME"]) / "pnpm" / "rc"
     pnpm_config.parent.mkdir()

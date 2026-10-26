@@ -85,6 +85,45 @@ Gem.loaded_specs["trace-dependency"] = Gem::Specification.new { |s| s.name = "tr
 	require.NotContains(t, info.Jobs[0].Requirement, "99")
 }
 
+func TestRubyCIPreflightUsesOnlyMatchingPortablePlatformMetadata(t *testing.T) {
+	ruby, err := exec.LookPath("ruby")
+	if err != nil {
+		t.Skip("Ruby is required")
+	}
+	for _, scenario := range []string{"matching", "different version", "different dependencies", "still incompatible", "offline"} {
+		t.Run(scenario, func(t *testing.T) {
+			setup := `require "rubygems/source"
+framework = Gem::Specification.new { |s| s.name="minitest"; s.version="5.27.0" }
+Gem::Specification.define_singleton_method(:find_by_name) { |*| framework }
+Gem.loaded_specs["datadog-ci"] = Gem::Specification.new { |s| s.name="datadog-ci"; s.version="1.42.0"; s.required_ruby_version=">= 2.7"; s.add_runtime_dependency "native-dependency" }
+Gem.loaded_specs["native-dependency"] = Gem::Specification.new { |s| s.name="native-dependency"; s.version="1.0"; s.platform="aarch64-linux"; s.required_ruby_version=">= 3.0" }
+scenario = ARGV.shift
+portable = Gem::Specification.new { |s| s.name="native-dependency"; s.version=scenario == "different version" ? "2.0" : "1.0"; s.required_ruby_version=scenario == "still incompatible" ? ">= 3.0" : ">= 2.5"; s.add_runtime_dependency "unresolved" if scenario == "different dependencies" }
+source = Object.new
+source.define_singleton_method(:fetch_spec) do |tuple|
+  raise "offline" if scenario == "offline"
+  raise "unexpected requested platform" unless tuple.platform.to_s == "ruby"
+  portable
+end
+Gem::Source.define_singleton_method(:new) { |*| source }
+`
+			jobs, err := json.Marshal([]onboard.RuntimeFinding{{Ruby: "2.7", Status: "not checked", TracerRequested: "1.42.0"}})
+			require.NoError(t, err)
+			data, err := exec.CommandContext(t.Context(), ruby, "-e", setup+rubyPreflightScript, scenario, "minitest", string(jobs)).CombinedOutput()
+			require.NoError(t, err, string(data))
+			var info struct{ Jobs []onboard.RuntimeFinding }
+			require.NoError(t, json.Unmarshal(data, &info))
+			if scenario == "matching" {
+				require.Equal(t, "compatible", info.Jobs[0].Status)
+				require.Contains(t, info.Jobs[0].Reason, "same-version portable gem metadata")
+				require.Contains(t, info.Jobs[0].Requirement, ">= 2.5")
+			} else {
+				require.Equal(t, "inconclusive", info.Jobs[0].Status)
+			}
+		})
+	}
+}
+
 func TestRubyNativeResultsPreserveDuplicatesFailuresAndTelemetryNames(t *testing.T) {
 	directory := t.TempDir()
 	requireWriteFile(t, filepath.Join(directory, "1.json"), `{"complete":true,"tests":[{"file":"/repo/spec/one_spec.rb","name":"group nested example","telemetry_name":"nested example","status":"passed"},{"file":"/repo/spec/one_spec.rb","name":"group nested example","telemetry_name":"nested example","status":"failed","failure":"RuntimeError: customer failure"}],"errors":["before suite failed"]}`)
@@ -161,13 +200,29 @@ func TestRubyRunRetainsCommandAndSeparatesBaselineInstrumentation(t *testing.T) 
 			require.Equal(t, "false", executor.env["DD_CIVISIBILITY_ENABLED"])
 		}
 		require.Equal(t, "false", executor.env["DD_CIVISIBILITY_FLAKY_RETRY_ENABLED"])
+		require.Equal(t, "false", executor.env["DD_CIVISIBILITY_GIT_METADATA_UPLOAD_ENABLED"])
 		require.Equal(t, "false", executor.env["DD_TEST_MANAGEMENT_ENABLED"])
 		require.Equal(t, filepath.Clean(os.TempDir()), filepath.Dir(run.temporaryRoot), "DRb scratch is directly under the supplied TMPDIR")
 		require.NoDirExists(t, run.temporaryRoot)
 	}
 }
 
+func TestRubyRunKeepsCIConfigurationAfterTracerPreload(t *testing.T) {
+	t.Setenv("RUBYOPT", "-W0 -rbundler/setup -rdatadog/ci/auto_instrument -r./ci_datadog.rb")
+	session, err := NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
+	executor := &rubyRecordingExecutor{}
+	drive := &Testdrive{language: "ruby", framework: framework.NewMinitest(platform.NewRuby("")), repositoryRoot: t.TempDir(), command: "bundle", args: []string{"exec", "rake", "test"}, executor: executor,
+		startIntake: func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{}, nil }}
+	_, err = drive.runRuby(t.Context(), io.Discard, session, "", "reporting-only", true, intake.Scenario{}, "", "")
+	require.NoError(t, err)
+	options := executor.env["RUBYOPT"]
+	require.Less(t, strings.Index(options, "datadog/ci/auto_instrument"), strings.Index(options, "ci_datadog.rb"), "the CI initializer must run after the tracer, as it does in CI")
+}
+
 func TestRubyFallbackInstallsOnlyInSessionBundle(t *testing.T) {
+	t.Setenv("RUBYOPT", "-W0 -r./ci/datadog_test_optimization.rb")
 	executor := &rubyRecordingExecutor{}
 	drive := &Testdrive{executor: executor, platform: platform.NewRuby("")}
 	directory := t.TempDir()
@@ -178,6 +233,7 @@ func TestRubyFallbackInstallsOnlyInSessionBundle(t *testing.T) {
 	require.Equal(t, filepath.Join(directory, "bundle"), executor.env["BUNDLE_PATH"])
 	require.Equal(t, filepath.Join(directory, "bundle-config"), executor.env["BUNDLE_APP_CONFIG"])
 	require.Equal(t, drive.rubyTracerEnv, installation.Env)
+	require.Empty(t, executor.env["RUBYOPT"], "native extension compilation must not inherit test preloads tied to the repository working directory")
 }
 
 func TestRubySkippingNeedsIndependentProofOfNoBodyExecution(t *testing.T) {
@@ -281,4 +337,18 @@ func TestRubyHandoffKeepsExistingFailuresVisible(t *testing.T) {
 	result.Runs[1].TestCounts = testCounts{Passed: 174, Failed: 1}
 	result.Summary = summarizeValidation(result)
 	require.Contains(t, validationHandoff(result), "174 passed, 1 failed, 0 skipped")
+}
+
+func TestRubyInstrumentedOptionsPreserveEveryCIRequireForm(t *testing.T) {
+	for _, preload := range []string{"-rdatadog/ci/auto_instrument", "-r datadog/ci/auto_instrument", "--require=datadog/ci/auto_instrument", "--require datadog/ci/auto_instrument.rb"} {
+		original := "-W0 " + preload + " -r./ci_custom.rb"
+		options := rubyRunOptions(original, true)
+		require.Contains(t, options, original)
+		require.Equal(t, 1, strings.Count(options, "datadog/ci/auto_instrument"))
+	}
+	options := rubyRunOptions("-W0 -r./ci_custom.rb", true)
+	require.Less(t, strings.Index(options, "datadog/ci/auto_instrument"), strings.Index(options, "ci_custom.rb"))
+	baseline := rubyRunOptions("-rdatadog/ci/auto_instrument -r./ci_custom.rb", false)
+	require.NotContains(t, baseline, "datadog/ci")
+	require.Contains(t, baseline, "ci_custom.rb")
 }

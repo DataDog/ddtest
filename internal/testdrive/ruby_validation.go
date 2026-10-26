@@ -72,10 +72,37 @@ until pending.empty?
   spec.runtime_dependencies.each { |d| pending << Gem.loaded_specs.fetch(d.name) }
 end
 requirements = specs.values.map(&:required_ruby_version)
-def ruby_ci_requirement_status(selector, tracer, requirements)
+def ruby_ci_requirement_status(selector, tracer, specs)
+  requirements = specs.map(&:required_ruby_version)
   direct = ruby_requirement_status(selector, [tracer.required_ruby_version])
-  return direct unless direct == "compatible"
-  ruby_requirement_status(selector, requirements) == "compatible" ? "compatible" : "inconclusive"
+  return [direct, requirements, []] unless direct == "compatible"
+  return ["compatible", requirements, []] if ruby_requirement_status(selector, requirements) == "compatible"
+
+  # A precompiled native gem can require a newer Ruby than the same release's
+  # portable source gem. Resolve that exact platform variant, without changing
+  # the application bundle or assuming another dependency version is available.
+  portable = []
+  resolved = specs.map do |spec|
+    next spec if ruby_requirement_status(selector, [spec.required_ruby_version]) == "compatible" || spec.platform.to_s == "ruby"
+    require "rubygems/source"
+    require "rubygems/remote_fetcher"
+    require "rubygems/name_tuple"
+    require "timeout"
+    source = Gem::Source.new("https://rubygems.org")
+    candidate = Timeout.timeout(10) { source.fetch_spec(Gem::NameTuple.new(spec.name, spec.version, Gem::Platform::RUBY)) }
+    dependencies = ->(item) { item.runtime_dependencies.map { |d| [d.name, d.requirement.to_s] }.sort }
+    unless candidate.name == spec.name && candidate.version == spec.version && candidate.platform.to_s == "ruby" && dependencies.call(candidate) == dependencies.call(spec)
+      return ["inconclusive", requirements, []]
+    end
+    portable << "#{spec.name}@#{spec.version} (ruby)"
+    candidate
+  end
+  selected = resolved.map(&:required_ruby_version)
+  status = ruby_requirement_status(selector, selected) == "compatible" ? "compatible" : "inconclusive"
+  [status, selected, portable]
+rescue StandardError, LoadError
+  # Missing/offline/unverifiable metadata cannot certify another CI target.
+  ["inconclusive", requirements, []]
 end
 
 jobs = JSON.parse(ARGV.fetch(1))
@@ -87,10 +114,12 @@ jobs.each do |job|
   if !tracer || job["tracer_requested"] != tracer.version.to_s
     job["status"], job["reason"] = "inconclusive", "Pin an exact datadog-ci release matching local validation; floating, different or missing tracer releases require separate validation."
   else
-    job["status"] = ruby_ci_requirement_status(ruby, tracer, requirements)
+    job["status"], selected_requirements, portable = ruby_ci_requirement_status(ruby, tracer, specs.values)
+    job["requirement"] = selected_requirements.map(&:to_s).uniq.join("; ")
     job["reason"] = case job["status"]
     when "compatible"
-      "Every stable release selected by this Ruby version satisfies the locally resolved tracer and its runtime dependencies. The exact tracer release matches; CI bundle resolution, platform/engine support and framework execution remain untested."
+      evidence = portable.empty? ? "the locally resolved tracer and its runtime dependencies" : "the exact tracer and same-version portable gem metadata (#{portable.join(', ')}), with unchanged runtime dependency requirements"
+      "Every stable release selected by this Ruby version satisfies #{evidence}. The exact tracer release matches; CI bundle resolution, native compilation, platform/engine support and framework execution remain untested."
     when "incompatible"
       "Selected CI Ruby does not satisfy this exact tracer release's own RubyGems requirement. Preserve its tests and select a compatible tracer release."
     else
@@ -200,7 +229,8 @@ func (t *Testdrive) installRubyTracer(ctx context.Context, options platform.Trac
 		"BUNDLE_APP_CONFIG": filepath.Join(options.Directory, "bundle-config"),
 	}
 	env := maps.Clone(t.rubyTracerEnv)
-	env["RUBYOPT"] = stripDatadogRubyOptions(t.rubyOptions())
+	// Gem compilation changes directory and must not initialize the test app.
+	env["RUBYOPT"] = ""
 	data, err := t.executor.CombinedOutput(ctx, command, args, env)
 	if err != nil {
 		return platform.TracerInstallation{}, fmt.Errorf("install temporary Ruby tracer: %w: %s", err, commandDiagnostic(data))
@@ -225,6 +255,33 @@ func stripDatadogRubyOptions(options string) string {
 		kept = append(kept, words[i])
 	}
 	return shellquote.Join(kept...)
+}
+
+// Keep an existing CI preload's position: application configuration may depend
+// on Datadog already being initialized. Standalone runs inject it before those
+// preloads, while baseline runs remove only Datadog's instrumentation.
+func rubyRunOptions(options string, instrumented bool) string {
+	prefix := "-rbundler/setup"
+	if !instrumented {
+		return strings.TrimSpace(prefix + " " + stripDatadogRubyOptions(options))
+	}
+	words, _ := shellquote.Split(options)
+	hasAuto := false
+	for i, word := range words {
+		path := ""
+		if (word == "-r" || word == "--require") && i+1 < len(words) {
+			path = words[i+1]
+		} else if value, found := strings.CutPrefix(word, "--require="); found {
+			path = value
+		} else if value, found := strings.CutPrefix(word, "-r"); found {
+			path = value
+		}
+		hasAuto = hasAuto || strings.TrimSuffix(path, ".rb") == "datadog/ci/auto_instrument"
+	}
+	if !hasAuto {
+		prefix += " -rdatadog/ci/auto_instrument"
+	}
+	return strings.TrimSpace(prefix + " " + options)
 }
 
 func (t *Testdrive) runRuby(ctx context.Context, output io.Writer, session *Session, _ string, name string, instrumented bool, scenario intake.Scenario, probe, mode string) (run validationRun, runErr error) {
@@ -258,6 +315,7 @@ func (t *Testdrive) runRuby(ctx context.Context, output io.Writer, session *Sess
 		}
 	}()
 	env := t.environment("", server.URL(), session.ID()+" "+name)
+	env["DD_CIVISIBILITY_GIT_METADATA_UPLOAD_ENABLED"] = "false"
 	configureScenarioEnvironment(env, scenario.Feature)
 	// Ruby's DRb appends a Unix socket name to TMPDIR. Nesting this under
 	// the long session/run paths exceeds macOS's socket path limit.
@@ -270,10 +328,8 @@ func (t *Testdrive) runRuby(ctx context.Context, output io.Writer, session *Sess
 	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 		env[key] = temporary
 	}
-	env["RUBYOPT"] = stripDatadogRubyOptions(t.rubyOptions()) + " -rbundler/setup"
-	if instrumented {
-		env["RUBYOPT"] += " -rdatadog/ci/auto_instrument"
-	} else {
+	env["RUBYOPT"] = rubyRunOptions(t.rubyOptions(), instrumented)
+	if !instrumented {
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
 	env["RUBYOPT"] += " -r" + shellquote.Join(observer)

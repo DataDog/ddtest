@@ -216,3 +216,12 @@ func TestI18nOriginalRakeAndNumericMatrixNeedOnlyInstrumentation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, workflow, string(after))
 }
+
+func TestMinitestInstructionsKeepIsolationAndConfigureBothEnvironments(t *testing.T) {
+	text := instructions("ruby", "minitest")
+	for _, expected := range []string{"ActiveSupport::Testing::Isolation", "Datadog::Tracing::SyncWriter", "${{ env.RUBYOPT }} -r./ci/datadog_test_optimization.rb", "Keep isolation", "3.4.22", "--check-only --tracer-version"} {
+		require.Contains(t, text, expected)
+	}
+	require.NotContains(t, text, "__FORK_SETUP__")
+	require.NotContains(t, instructions("ruby", "rspec"), "SyncWriter")
+}
