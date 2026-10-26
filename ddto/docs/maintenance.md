@@ -476,7 +476,7 @@ nonstandard runtime package outside this module. Consumer regressions cover
 older dependencies, readonly/mod flags and Go 1.21 language behavior.
 
 Install the frozen Orchestrion reference used by the
-[workflow](../.github/workflows/compatibility.yml), then export
+[workflow](../../.github/workflows/ddto-compatibility.yml), then export
 `ORCHESTRION_BIN` to that binary's absolute path. On Windows the binary has an
 `.exe` suffix. Without this variable, the Orchestrion comparison is skipped.
 
@@ -493,7 +493,7 @@ go test -race -covermode=atomic \
 The workflow's `go test` timeout for each group is 20 minutes for normal Linux,
 25 minutes for Linux race and macOS, and 35 minutes for Windows. Job timeouts
 also include setup, every group in the job and reporting. Use the
-[workflow](../.github/workflows/compatibility.yml) as the source of truth when
+[workflow](../../.github/workflows/ddto-compatibility.yml) as the source of truth when
 those limits change.
 
 When a group's duration changes noticeably, rebalance the `jobs` layout in

@@ -1,15 +1,37 @@
-name: Compatibility
+name: ddto compatibility
+# ddto, which ddtest instrument runs, is its own module in ddto/. Its suite runs
+# from there, with ddtest's executable as the driver, when ddto or what runs
+# it changes. Changes limited to ddto's docs do not run it.
 on:
   push:
     branches: [main]
-    paths-ignore: ['docs/**', 'README.md']
+    paths:
+      - 'ddto/**'
+      - '!ddto/docs/**'
+      - '!ddto/README.md'
+      - 'main.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/cmd/instrument.go'
+      - '.github/workflows/ddto-compatibility.yml'
   pull_request:
-    paths-ignore: ['docs/**', 'README.md']
+    paths:
+      - 'ddto/**'
+      - '!ddto/docs/**'
+      - '!ddto/README.md'
+      - 'main.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/cmd/instrument.go'
+      - '.github/workflows/ddto-compatibility.yml'
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    working-directory: ddto
 # A new push to a pull request replaces its running matrix. Other events never
 # share a group, so main and scheduled runs always finish.
 concurrency:
@@ -168,13 +190,13 @@ jobs:
         with:
           path: ${{ runner.temp }}/orchestrion-gocache
           # The job's groups decide which woven builds the cache holds.
-          key: orchestrion-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.job }}-${{ hashFiles('testdata/orchestrion/go.mod', 'testdata/orchestrion/go.sum', 'testdata/fixture/go.sum', 'integration/orchestrion_composition_test.go') }}
+          key: orchestrion-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.job }}-${{ hashFiles('ddto/testdata/orchestrion/go.mod', 'ddto/testdata/orchestrion/go.sum', 'ddto/testdata/fixture/go.sum', 'ddto/integration/orchestrion_composition_test.go') }}
           restore-keys: |
             orchestrion-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.job }}-
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/orchestrion-reference
-          key: orchestrion-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('testdata/orchestrion/go.mod', 'testdata/orchestrion/go.sum') }}
+          key: orchestrion-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('ddto/testdata/orchestrion/go.mod', 'ddto/testdata/orchestrion/go.sum') }}
       # A module fetch from the proxy can fail or stall for minutes. Download
       # explicitly with a deadline and retries, then build without the network.
       - name: Build frozen Orchestrion reference
@@ -254,7 +276,7 @@ jobs:
         if: always()
         with:
           name: ci-shard-differential-${{ matrix.os }}-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
-          path: artifacts/
+          path: ddto/artifacts/
           retention-days: 7
 
   go-tip:
@@ -366,7 +388,7 @@ jobs:
         if: always()
         with:
           name: ci-shard-mini-ubuntu-latest-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
-          path: artifacts/
+          path: ddto/artifacts/
           retention-days: 7
 
   tip:
@@ -418,7 +440,7 @@ jobs:
         if: always()
         with:
           name: ci-shard-mini-ubuntu-latest-go-tip-normal-${{ matrix.job }}
-          path: artifacts/
+          path: ddto/artifacts/
           retention-days: 7
 
   evidence:
@@ -444,7 +466,7 @@ jobs:
         if: needs.plan.outputs.skip != 'true'
         with:
           pattern: ci-shard-*
-          path: shards/
+          path: ddto/shards/
       - name: Verify all groups and render full parity
         id: aggregate
         if: needs.plan.outputs.skip != 'true'
@@ -462,12 +484,12 @@ jobs:
         if: always() && needs.plan.outputs.skip != 'true'
         with:
           name: compatibility-evidence
-          path: reports/
+          path: ddto/reports/
           retention-days: 7
       # Lets a push of this exact tree to main reuse this run.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: success() && needs.plan.outputs.skip != 'true'
         with:
           name: verified-tree-${{ steps.aggregate.outputs.tree }}
-          path: reports/summary.md
+          path: ddto/reports/summary.md
           retention-days: 7
