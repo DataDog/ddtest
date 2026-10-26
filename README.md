@@ -20,7 +20,17 @@ directly; see [Go tests with ddtest instrument](#go-tests-with-ddtest-instrument
 
 ## Try Test Optimization locally
 
-With your project's test dependencies and any required browsers/services ready:
+Install ddtest, which the install script checks against the release's
+`SHA256SUMS` and puts in `~/.local/bin` (in PowerShell, use
+`irm https://github.com/DataDog/ddtest/releases/latest/download/install.ps1 | iex`;
+see [Installation](#installation) for versions and other directories):
+
+```sh
+curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/install.sh | bash
+```
+
+Then, with your project's test dependencies and any required browsers/services
+ready:
 
 ```sh
 ddtest onboard    # GitHub Actions setup instructions
@@ -59,7 +69,8 @@ updating the project's Gemfile and lockfile.
 
 `ddtest instrument` reports a Go project's tests to Datadog Test Optimization
 with nothing added to the project: no SDK, no Orchestrion and no change to its
-code or `go.mod`. Put it in front of the command that runs the tests:
+code or `go.mod`. Install ddtest as in [Installation](#installation), then put it in front of the
+command that runs the tests:
 
 ```sh
 ddtest instrument go test ./...                  # as go test, and the tests report
