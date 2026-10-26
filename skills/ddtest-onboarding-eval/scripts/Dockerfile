@@ -8,3 +8,10 @@ RUN chmod +x /usr/local/lib/ddtest-fake-agent.py && ln -s /usr/local/lib/ddtest-
 
 FROM runtime AS agents
 RUN npm install --global @openai/codex@0.163.0 @anthropic-ai/claude-code@2.1.220 && npm cache clean --force
+
+# Optional browser-ready image. Flags apply only inside this disposable container;
+# customer repository configuration and host browser settings remain untouched.
+FROM agents AS browsers
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb xauth chromium chromium-driver && rm -rf /var/lib/apt/lists/*
+RUN mv /usr/bin/chromium /usr/bin/chromium.original && printf '#!/bin/sh\nexec /usr/bin/chromium.original --no-sandbox --disable-dev-shm-usage "$@"\n' > /usr/bin/chromium && chmod +x /usr/bin/chromium
+RUN printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage "$@"\n' > /usr/local/bin/google-chrome && chmod +x /usr/local/bin/google-chrome

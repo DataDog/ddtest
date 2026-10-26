@@ -51,31 +51,44 @@ func setupNodeResolver(client *http.Client) nodeResolver {
 		at   time.Time
 	}
 	cache := map[string]snapshot{}
-	return func(ctx context.Context, selector, platform string) (NodeResolution, error) {
-		if platform == "" {
-			return NodeResolution{}, fmt.Errorf("cannot determine the CI platform/architecture for Node %q", selector)
-		}
-		source := nodeVersionsManifest
-		if latestNodeAlias(selector) {
-			source = nodeDistributionIndex
-		}
+	load := func(ctx context.Context, source string) snapshot {
 		value, ok := cache[source]
 		if !ok {
 			value.data, value.err = fetchRuntimeMetadata(ctx, client, source)
 			value.at = time.Now().UTC()
 			cache[source] = value
 		}
+		return value
+	}
+	return func(ctx context.Context, selector, platform string) (NodeResolution, error) {
+		if platform == "" {
+			return NodeResolution{}, fmt.Errorf("cannot determine the CI platform/architecture for Node %q", selector)
+		}
+		if !latestNodeAlias(selector) {
+			manifest := load(ctx, nodeVersionsManifest)
+			version, err := "", manifest.err
+			if err == nil {
+				version, err = resolveManifestNode(manifest.data, selector, platform)
+			}
+			if err == nil {
+				return NodeResolution{Version: version, Source: nodeVersionsManifest, ResolvedAt: manifest.at, Platform: platform}, nil
+			}
+			// setup-node needs the manifest to interpret LTS aliases. Numeric
+			// selectors can instead resolve against official distribution files.
+			if strings.HasPrefix(selector, "lts/") {
+				return NodeResolution{}, err
+			}
+		}
+		value := load(ctx, nodeDistributionIndex)
 		if value.err != nil {
 			return NodeResolution{}, value.err
 		}
-		result := NodeResolution{Source: source, ResolvedAt: value.at, Platform: platform}
-		var err error
+		constraint := selector
 		if latestNodeAlias(selector) {
-			result.Version, err = resolveLatestNode(value.data, platform)
-		} else {
-			result.Version, err = resolveManifestNode(value.data, selector, platform)
+			constraint = "*"
 		}
-		return result, err
+		version, err := resolveDistributionNode(value.data, constraint, platform)
+		return NodeResolution{Version: version, Source: nodeDistributionIndex, ResolvedAt: value.at, Platform: platform}, err
 	}
 }
 func latestNodeAlias(alias string) bool {
@@ -83,6 +96,14 @@ func latestNodeAlias(alias string) bool {
 }
 
 func resolveLatestNode(data []byte, platform string) (string, error) {
+	return resolveDistributionNode(data, "*", platform)
+}
+
+func resolveDistributionNode(data []byte, selector, platform string) (string, error) {
+	constraint, err := semver.NewConstraint(selector)
+	if err != nil {
+		return "", fmt.Errorf("unsupported Node selector %q: %w", selector, err)
+	}
 	var releases []struct {
 		Version string   `json:"version"`
 		Files   []string `json:"files"`
@@ -93,12 +114,12 @@ func resolveLatestNode(data []byte, platform string) (string, error) {
 	var best *semver.Version
 	for _, release := range releases {
 		v, err := semver.StrictNewVersion(strings.TrimPrefix(release.Version, "v"))
-		if err == nil && v.Prerelease() == "" && slices.Contains(release.Files, platform) && (best == nil || v.GreaterThan(best)) {
+		if err == nil && v.Prerelease() == "" && constraint.Check(v) && slices.Contains(release.Files, platform) && (best == nil || v.GreaterThan(best)) {
 			best = v
 		}
 	}
 	if best == nil {
-		return "", fmt.Errorf("node distribution index has no release for %q", platform)
+		return "", fmt.Errorf("node distribution index has no release for %q on %q", selector, platform)
 	}
 	return best.String(), nil
 }

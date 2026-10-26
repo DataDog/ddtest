@@ -51,6 +51,13 @@ if os.environ.get("FAKE_PLAIN_ERROR"):
     print(os.environ["FAKE_PLAIN_ERROR"], file=sys.stderr)
     sys.exit(1)
 prompt = sys.stdin.read()
+if prompt.startswith("Reply AUTH_OK only"):
+    if pathlib.Path(sys.argv[0]).name == "codex":
+        events=[{"type":"item.completed","item":{"type":"agent_message","text":"AUTH_OK"}},{"type":"turn.completed"}]
+    else:
+        events=[{"type":"result","result":"AUTH_OK"}]
+    for event in events: print(json.dumps(event))
+    sys.exit(0)
 pathlib.Path("observed.json").write_text(json.dumps({
     "prompt": prompt, "argv": sys.argv[1:], "environment":dict(os.environ),
     "agent_environment": {key: os.environ.get(key) for key in ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS")},
@@ -148,6 +155,56 @@ class RunnerTests(unittest.TestCase):
         manifest = json.loads((self.args.output / "run.json").read_text())
         self.addCleanup(shutil.rmtree, manifest["trial_directory"], ignore_errors=True)
         return code, manifest
+
+    def test_preflight_refresh_is_redacted_before_finalization(self):
+        source = self.root / "selected-login.json"
+        source.write_text(json.dumps({"tokens": {"access_token": "synthetic-original-access", "refresh_token": "synthetic-original-refresh"}}))
+        self.args.login_json = source
+        refreshed = "opaqueRotatedValueForReview218"
+        execute = FakeContainer.execute
+        def refresh_or_print(container, argv, cwd, env, timeout, on_line, prompt, executor):
+            code = execute(container, argv, cwd, env, timeout, on_line, prompt, executor)
+            if prompt and prompt.startswith("Reply AUTH_OK only"):
+                destination = Path(env["CODEX_HOME"]) / "auth.json"
+                data = json.loads(destination.read_text())
+                data["tokens"]["refresh_token"] = refreshed
+                destination.write_text(json.dumps(data))
+            elif prompt:
+                on_line(json.dumps({"type": "item.completed", "item": {
+                    "type": "command_execution", "command": "echo model response", "exit_code": 0,
+                    "aggregated_output": "response " + refreshed}}))
+            return code
+        with patch.object(FakeContainer, "execute", refresh_or_print):
+            code, manifest = self.trial()
+        self.assertEqual(code, 0)
+        activity = (self.args.output / "activity.jsonl").read_text()
+        self.assertIn("response [REDACTED]", activity)
+        self.assertNotIn(refreshed, activity)
+        self.assertEqual(json.loads(source.read_text())["tokens"]["refresh_token"], refreshed)
+        self.assertEqual(manifest["login"], "removed")
+
+    def test_non_object_trial_login_does_not_abort_evidence_collection(self):
+        execute = FakeContainer.execute
+        for replacement in ([], None, 42):
+            with self.subTest(replacement=replacement):
+                source = self.root / "selected-login.json"
+                original = {"tokens": {"access_token": "synthetic-original-access"}}
+                source.write_text(json.dumps(original))
+                self.args.login_json = source
+                self.args.output = self.root / ("non-object-" + str(replacement))
+                def replace_login(container, argv, cwd, env, timeout, on_line, prompt, executor):
+                    code = execute(container, argv, cwd, env, timeout, on_line, prompt, executor)
+                    if prompt and not prompt.startswith("Reply AUTH_OK only"):
+                        (Path(env["CODEX_HOME"]) / "auth.json").write_text(json.dumps(replacement))
+                    return code
+                with patch.object(FakeContainer, "execute", replace_login):
+                    code, manifest = self.trial()
+                self.assertEqual(code, 0)
+                self.assertEqual(manifest["login"], "removed")
+                self.assertIn("not persisted", manifest["login_refresh"])
+                self.assertEqual(json.loads(source.read_text()), original)
+                self.assertTrue((self.args.output / "changes.patch").is_file())
+                self.assertTrue((self.args.output / "activity.jsonl").is_file())
 
     def selected_node(self, version="24.18.0"):
         selected = self.root / "selected" / "node"
@@ -504,7 +561,7 @@ class VerdictTests(unittest.TestCase):
                 "[HTML report](</customer/repo/.testoptimization/report.html>)\n"
                 "[JSON evidence](</customer/repo/.testoptimization/testdrive.json>)\n")
 
-    def test_canonical_handoff_is_required_but_extra_prose_is_allowed(self):
+    def test_canonical_handoff_allows_extra_prose_but_paraphrase_needs_review(self):
         answer = self.compact_answer()
         result = run_eval.reporting_verdict(answer + "\nSome owner setup is still required.\n", self.compact_report())
         self.assertEqual(result["status"], "pass")
@@ -513,6 +570,24 @@ class VerdictTests(unittest.TestCase):
         self.assertIn("independent technical evaluation", result["reason"])
         paraphrase = answer.replace("5/8 validated", "5 / 8 fully validated")
         self.assertEqual(run_eval.reporting_verdict(paraphrase,self.compact_report())["status"],"review")
+
+    def test_plain_language_verdicts_are_checked_but_canonical_handoff_is_required(self):
+        answer = self.compact_answer().replace("Onboarding validation: INCOMPLETE. Local validation: PASSED.",
+            "Overall onboarding remains INCOMPLETE. Local validation passed: all controls matched.")
+        result = run_eval.reporting_verdict(answer, self.compact_report())
+        self.assertEqual(result["status"], "review", result)
+        self.assertFalse(result["canonical_handoff"])
+        for wrong in (answer.replace("remains INCOMPLETE", "remains complete"),
+                      answer.replace("validation passed", "validation failed")):
+            self.assertEqual(run_eval.reporting_verdict(wrong, self.compact_report())["status"], "fail")
+
+    def test_local_verdict_excludes_following_explanation(self):
+        answer = self.compact_answer().replace("Local validation: PASSED.",
+            "Local validation: PASSED — compatibility and native outcomes match.")
+        result = run_eval.reporting_verdict(answer, self.compact_report())
+        self.assertEqual(result["status"], "review", result)
+        wrong = answer + "\nLocal validation: FAILED — the run did not finish."
+        self.assertEqual(run_eval.reporting_verdict(wrong, self.compact_report())["status"], "fail")
 
     def test_swapped_distinct_counts_and_scope_upgrades_fail(self):
         for original, wrong in (("96 test executions; 32 source-test identities", "32 test executions; 96 source-test identities"),

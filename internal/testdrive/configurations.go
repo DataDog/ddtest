@@ -41,6 +41,10 @@ func setSelectedConfigurationScope(result *validationResult, scope onboard.Valid
 	result.Scope = &scope
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Run testdrive --all after required setup to validate every discovered configuration."}}
+		if ciInstrumentationDisabled(entry) {
+			result.Configurations = append(result.Configurations, excludedConfiguration(entry))
+			continue
+		}
 		if !hostConfiguration(entry) {
 			item.Compatibility.Reason = nonHostConfigurationReason(entry)
 			result.Configurations = append(result.Configurations, item)
@@ -77,6 +81,17 @@ func setSelectedConfigurationScope(result *validationResult, scope onboard.Valid
 			}
 		}
 		result.Configurations = append(result.Configurations, item)
+	}
+}
+
+// creditPreparation keeps a focused run's preparation receipts on the
+// configurations it was credited to, so recovery can name builds awaiting review.
+func creditPreparation(result *validationResult, executed configurationResult) {
+	for i := range result.Configurations {
+		item := &result.Configurations[i]
+		if item.Status != "not exercised" && len(item.Preparation) == 0 && sameConfiguration(item.TestCommand, executed.TestCommand) {
+			item.Preparation = executed.Preparation
+		}
 	}
 }
 
@@ -156,9 +171,8 @@ func applyScopeVerdict(result *validationResult) {
 		result.ChecksPassed = false
 	}
 	for _, configuration := range result.Configurations {
-		if configuration.Status != "passed" {
+		if configuration.Status != "passed" && !configurationExcluded(configuration) {
 			result.Success = false
-			result.LocalSuccess = false
 		}
 	}
 }
@@ -187,6 +201,10 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 	var runErrors []error
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
+		if ciInstrumentationDisabled(entry) {
+			result.Configurations = append(result.Configurations, excludedConfiguration(entry))
+			continue
+		}
 		if !hostConfiguration(entry) {
 			result.Compatibility = combineConfigurationCompatibility(result.Compatibility, verdict{Status: "inconclusive", Reason: "At least one discovered OS variant was not executed; see configurations."})
 			item.Error = nonHostConfigurationReason(entry)
@@ -433,4 +451,16 @@ func completeConfigurationItem(item *configurationResult, execution validationRe
 	if childErr != nil && execution.Preflight == nil {
 		item.Status = "blocked"
 	}
+}
+
+func ciInstrumentationDisabled(entry onboard.TestCommand) bool {
+	return entry.CIInstrumentationExcluded || entry.Environment["DD_CIVISIBILITY_ENABLED"] == "false"
+}
+
+func excludedConfiguration(entry onboard.TestCommand) configurationResult {
+	return configurationResult{TestCommand: entry, Status: "excluded", Compatibility: verdict{Status: "not exercised", Reason: "CI explicitly excludes Datadog instrumentation for this entry (disabled flags or a skipped conditional installer). Its original CI tests are preserved; no local paired execution or features are claimed."}}
+}
+
+func configurationExcluded(entry configurationResult) bool {
+	return entry.Status == "excluded" && ciInstrumentationDisabled(entry.TestCommand)
 }

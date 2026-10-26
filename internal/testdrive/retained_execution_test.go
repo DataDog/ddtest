@@ -78,8 +78,10 @@ func TestFailedFullRunNeverReusesEarlierPass(t *testing.T) {
 	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
 	got := readValidationReport(t, root)
 	require.NoFileExists(t, htmlReportPath(root))
-	require.Nil(t, got.Retained)
-	require.Nil(t, got.LastExecution)
+	require.NotNil(t, got.Retained)
+	require.NotNil(t, got.LastExecution)
+	require.False(t, got.LastExecution.Current)
+	require.False(t, got.Success)
 	require.Equal(t, "INCOMPLETE", got.Summary.LocalValidation)
 }
 
@@ -90,4 +92,22 @@ func TestReportsCanReplaceExistingDestinationTwice(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, "second", string(data))
+}
+
+func TestBlockedDiscoveryRetainsPartialExecutionDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	code := 1
+	attempt := validationResult{Framework: "cypress", Session: "timed-out", Error: "browser process resource limit", Runs: []runSummary{{Role: roleBaseline, Name: "baseline", Command: "npm run test:ci", ExitCode: &code, Diagnostic: "Chrome failed to start"}}}
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, attempt))
+	for range 3 {
+		require.Error(t, finishValidation(&bytes.Buffer{}, root, validationResult{Framework: "cypress", Error: "CI discovery blocked"}))
+		got := readValidationReport(t, root)
+		require.False(t, got.Success)
+		require.Empty(t, got.Runs)
+		require.Equal(t, "CI discovery blocked", got.Error)
+		require.NotNil(t, got.Retained)
+		require.Nil(t, got.Retained.Result.Retained)
+		require.Equal(t, "npm run test:ci", got.Retained.Result.Runs[0].Command)
+		require.Equal(t, "Chrome failed to start", got.Retained.Result.Runs[0].Diagnostic)
+	}
 }

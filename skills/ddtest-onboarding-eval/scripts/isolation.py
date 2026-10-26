@@ -93,10 +93,10 @@ class Container:
         # Docker removes the stopped container instead of leaving it behind.
         self.control("create", "--rm", "--pull=never", "--name", self.name, "--interactive", "--init",
                      "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
-                     "--pids-limit=512", "--memory=6g", "--cpus=4",
+                     "--pids-limit=2048", "--memory=6g", "--cpus=4", "--shm-size=1g",
                      "--user", f"{os.getuid()}:{os.getgid()}",
-                     "--mount", f"type=bind,src={self.trial},dst={self.trial}",
-                     "--tmpfs", "/tmp:rw,nosuid,nodev,size=1g", "--entrypoint", "/bin/sh",
+                     "--mount", f"type=bind,src={self.trial},dst=/trial",
+                     "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=2g", "--entrypoint", "/bin/sh",
                      *PROXY_OVERRIDES, self.image, "-c", "cat >/dev/null")
 
     def attach(self):
@@ -122,7 +122,14 @@ class Container:
             time.sleep(0.05)
         raise RuntimeError("Container did not start; inspect the Docker daemon and image")
 
+    def inside(self, value):
+        return str(value).replace(str(self.trial), "/trial")
+
     def execute(self, argv, cwd, env, timeout, on_line, prompt, executor):
+        argv = [self.inside(value) for value in argv]
+        cwd = self.inside(cwd)
+        env = {key: self.inside(value) for key, value in env.items()}
+        prompt = self.inside(prompt) if prompt else prompt
         # Values never appear on the docker command line, where any local
         # process can read them with ps. The private env file is read once by
         # the docker CLI and removed when the command ends.

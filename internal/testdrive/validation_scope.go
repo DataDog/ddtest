@@ -19,6 +19,7 @@ func hasValidationPair(result validationResult) bool {
 
 type configurationCoverage struct {
 	Discovered   int `json:"discovered"`
+	Excluded     int `json:"excluded"`
 	Executed     int `json:"executed"`
 	Paired       int `json:"paired"`
 	Validated    int `json:"validated"`
@@ -79,7 +80,13 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 	// count them the same way a full run does.
 	if len(result.Configurations) == 0 && result.Scope != nil {
 		coverage.Discovered = len(result.Scope.Commands)
-		coverage.NotExercised = len(result.Scope.Commands)
+		for _, command := range result.Scope.Commands {
+			if ciInstrumentationDisabled(command) {
+				coverage.Excluded++
+			} else {
+				coverage.NotExercised++
+			}
+		}
 	}
 	executed := &executedValidation{Status: "NOT EXERCISED", Reason: "No current paired execution was completed. Earlier results do not validate this invocation."}
 	for _, configuration := range result.Configurations {
@@ -92,6 +99,10 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 			if configuration.Status == "passed" && configuration.PairedExecution {
 				executed.Passed++
 			}
+		}
+		if configurationExcluded(configuration) {
+			coverage.Excluded++
+			continue
 		}
 		switch configuration.Status {
 		case "passed":

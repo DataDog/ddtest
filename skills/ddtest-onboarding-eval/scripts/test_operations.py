@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 import isolation
+import model_auth
 import test_run_eval as fixtures
 
 
@@ -110,12 +111,14 @@ class TeardownTests(unittest.TestCase):
         self.assertNotEqual(manifest.get("failure_kind"), "agent_reporting")
 
     def test_finalization_failures_are_persisted_as_failed(self):
-        def remove_login(login, trial):
+        close = model_auth.ModelLogin.close
+        def failed_close(login, persist=True):
+            close(login, persist)
             raise OSError("login removal failed")
         login = self.case.root / "codex-login.json"
         login.write_text(json.dumps({"tokens": {"accessToken": "throwaway-token"}}))
         self.case.args.login_json = login
-        with patch.object(fixtures.run_eval, "remove_login", remove_login):
+        with patch.object(model_auth.ModelLogin, "close", failed_close):
             code, manifest = self.case.trial()
         self.assertEqual(code, 1)
         self.assertEqual(manifest["login"], "not removed")

@@ -95,6 +95,12 @@ func checkMochaSupport(check jestPreflight, selection platform.JSSelection) verd
 	if !known || !tracerKnown {
 		return verdict{Status: "inconclusive", Reason: "Could not resolve the installed Mocha and selected tracer versions."}
 	}
+	// These tracer majors have verified CI bootstrap and validation contracts.
+	// An old latest-node* tag is not evidence that it exposes ci/init or the
+	// controlled features. Preserve explicit/project selections as unvalidated.
+	if tracerMajor != 5 && tracerMajor != 6 {
+		return verdict{Status: "inconclusive", Code: "unverified_tracer_major", Reason: "Controlled Mocha validation is verified for dd-trace majors 5 and 6. This tracer major remains unvalidated; resolve a verified candidate before editing CI."}
+	}
 	// Instrumentation boundaries, not a validation-version allowlist.
 	if (tracerMajor >= 6 && major < 8) || major < 5 || (major == 5 && minor < 2) {
 		return verdict{Status: "incompatible", Reason: "dd-trace 6 requires Mocha >=8; dd-trace 5 requires Mocha >=5.2. Preserve the test matrix and select a compatible tracer."}

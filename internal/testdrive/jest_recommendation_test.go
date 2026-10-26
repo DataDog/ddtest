@@ -73,3 +73,28 @@ func TestTracerRecommendationReportsMetadataFailure(t *testing.T) {
 func recommendationTags(context.Context) (map[string]string, error) {
 	return map[string]string{"latest": "6.17.0", "latest-node18": "5.128.0"}, nil
 }
+
+func TestMochaRecommendationRejectsObsoleteTracerEvenWithLargerNodeCoverage(t *testing.T) {
+	releases := map[string]platform.JSSelection{
+		"0.36.6":  {Version: "0.36.6", Node: ">=8"},
+		"5.132.0": {Version: "5.132.0", Node: ">=18"},
+		"6.20.0":  {Version: "6.20.0", Node: ">=22"},
+	}
+	resolve := func(_ context.Context, selector string) (platform.JSSelection, error) { return releases[selector], nil }
+	tags := func(context.Context) (map[string]string, error) {
+		return map[string]string{"latest": "6.20.0", "latest-node18": "5.132.0", "latest-node8": "0.36.6"}, nil
+	}
+	ci := &onboard.RuntimeCheck{}
+	for _, node := range []string{"8.17", "10.24", "12.22", "18.14", "20.12", "22.0"} {
+		ci.Jobs = append(ci.Jobs, onboard.RuntimeFinding{Node: node})
+	}
+	got, notes := recommendJavaScriptTracer(t.Context(), jestPreflight{Version: "9.2.2", Node: "24.19.0"}, ci, resolve, tags, "mocha")
+	require.Empty(t, notes)
+	require.NotNil(t, got)
+	require.Equal(t, "5.132.0", got.Selection.Version)
+	for _, version := range []string{"0.36.6", "4.55.0", "7.0.0"} {
+		check := checkMochaSupport(jestPreflight{Version: "9.2.2", Node: "24.19.0"}, platform.JSSelection{Version: version, Node: ">=8"})
+		require.Equal(t, "unverified_tracer_major", check.Code)
+		require.NotEqual(t, "compatible", check.Status)
+	}
+}

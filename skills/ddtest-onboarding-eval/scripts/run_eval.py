@@ -21,6 +21,8 @@ import tempfile
 import time
 from urllib.parse import unquote
 
+from model_auth import ModelLogin, login_directory, install_login, remove_login
+
 from isolation import Container, check_socket_budget, cleanup, environment, interrupted, mark_trial, trial_root, validate_image, check_interrupted, begin_teardown, termination_signal
 
 
@@ -223,7 +225,7 @@ def reporting_verdict(text, report):
         elif found != expected:
             differences.append(f"{label}: stated {found}, report says {expected}.")
 
-    for match in re.finditer(r"\b(?:onboarding(?:\s+validation)?|status)\s*(?::|is|was|has been)?\s*(n't\s+|not\s+|never\s+)?(?:successfully\s+|fully\s+)?(incomplete|complete locally|complete|completed|done|successful|passed|failed)\b", plain):
+    for match in re.finditer(r"\b(?:onboarding(?:\s+validation)?|status)\s*(?::|is|was|has been|remains)?\s*(n't\s+|not\s+|never\s+)?(?:successfully\s+|fully\s+)?(incomplete|complete locally|complete|completed|done|successful|passed|failed)\b", plain):
         if negated(plain, match.start()):
             continue
         stated = match[2].upper()
@@ -239,7 +241,7 @@ def reporting_verdict(text, report):
         for match in re.finditer(r"\b(?:(?:fully|successfully|completely)\s+onboarded|onboarded\s+(?:this|the)\s+(?:repo|repository|project)|onboarding\s+(?:succeeded|is\s+finished|was\s+a\s+success)|(?:everything|all)\s+(?:is\s+)?(?:done|complete|set up))\b", extra):
             if not negated(extra, match.start()):
                 unsupported.append(f"Success claim \"{match[0]}\" while the report status is {summary.get('status') or 'unavailable'}.")
-    for match in re.finditer(r"\blocal\s+validation:\s*([^\n.]+)", plain):
+    for match in re.finditer(r"\blocal\s+validation\s*(?::|is|was|remains)?\s*((?:passed|failed|incomplete|not exercised)(?: earlier; not rerun)?|historical only)\b", plain):
         compare("local verdict", summary.get("local_validation"), match[1].strip().upper())
     for key, label in (("selected_validation", "selected"), ("executed_validation", "executed")):
         expected = summary.get(key) or {}
@@ -286,6 +288,7 @@ def reporting_verdict(text, report):
             "Missing canonical handoff needs independent review." if missing else
             "Claims beyond the report need independent review." if unsupported else
             "Canonical handoff retained without direct contradictions; independent technical evaluation is still required.",
+            "canonical_handoff":bool(isinstance(canonical,str) and canonical and canonical in text),
             "checks":checks, "differences":differences[:10], "missing":missing, "unsupported":unsupported[:10]}
 
 
@@ -322,7 +325,9 @@ def report_runtime(report, requested=None):
 
 def agent_command(agent, model):
     if agent == "codex":
-        command = ["codex", "exec", "--approve-for-me", "--json", "-c", "mcp_servers={}"]
+        # Production execution is always inside Container. A nested CLI namespace
+        # sandbox cannot start with the container's dropped capabilities.
+        command = ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "--json", "-c", "mcp_servers={}"]
     else:
         command = ["claude", "--print", "--permission-mode", "auto",
                    "--output-format", "stream-json", "--verbose", "--setting-sources", "",
@@ -390,79 +395,11 @@ def execute(command, cwd, env, timeout, on_line, prompt=None):
             process.stdin.close()
 
 
-def read_login(path, agent):
-    """Select only the CLI's login, never settings, hooks or MCPs."""
-    if path is None:
-        return None
-    data = json.loads(Path(path).read_text())
-    key = "tokens" if agent == "codex" else "claudeAiOauth"
-    if not isinstance(data.get(key), dict):
-        raise ValueError("--login-json must contain only a supported CLI login (tokens or claudeAiOauth)")
-    selected = {key:data[key]}
-    if agent == "codex":
-        selected["auth_mode"] = "chatgpt"
-    def remember(value):
-        if isinstance(value,dict):
-            for item in value.values(): remember(item)
-        elif isinstance(value,str) and len(value)>=6:
-            LOGIN_SECRETS.add(value)
-    remember(data[key])
-    directory, name = ((("home", ".codex"), "auth.json") if agent == "codex"
-                       else (("home", ".claude"), ".credentials.json"))
-    return {"directory": directory, "name": name, "payload": json.dumps(selected)}
-
-
-def login_directory(trial, parts):
-    """Open trial/parts without following symlinks; setup commands own the trial
-    files, so any component may have been replaced to point outside it."""
-    descriptor = os.open(trial, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        for part in parts:
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = child
-        if os.fstat(descriptor).st_uid != os.getuid():
-            raise OSError("not owned by this user")
-        return descriptor
-    except OSError as error:
-        os.close(descriptor)
-        raise RuntimeError("CLI login directory " + "/".join(parts) +
-                           " is not a plain directory in the trial (" + (error.strerror or str(error)) +
-                           "); refusing to install or remove the login") from error
-
-
-def install_login(login, trial):
-    """Write the login after setup, through descriptors that never leave the trial."""
-    if login is None:
-        return
-    descriptor = login_directory(trial, login["directory"])
-    try:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(login["name"], dir_fd=descriptor)
-        file = os.open(login["name"], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
-        with os.fdopen(file, "w") as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write(login["payload"])
-    finally:
-        os.close(descriptor)
-
-
-def remove_login(login, trial):
-    """A retained trial must not keep the agent's login."""
-    descriptor = login_directory(trial, login["directory"])
-    try:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(login["name"], dir_fd=descriptor)
-    finally:
-        os.close(descriptor)
-
-
 def run(args):
     if not math.isfinite(args.timeout) or args.timeout <= 0 or not args.ref or args.ref.startswith("-"):
         raise ValueError("Use a positive finite timeout and a ref that does not start with '-'")
     validate_image(getattr(args,"image",None))
     LOGIN_SECRETS.clear()
-    login = read_login(getattr(args,"login_json",None), args.agent)
     binary = args.ddtest.resolve(strict=True)
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError("--ddtest must be an executable file")
@@ -482,7 +419,7 @@ def run(args):
     # macOS's per-user TMPDIR is too deep for Watchman's Unix socket name.
     # A unique short root still owns every cache/configuration and its cleanup.
     root = trial_root()
-    check_socket_budget(root, os.environ.get("USER") or getpass.getuser())
+    check_socket_budget(Path("/trial"), os.environ.get("USER") or getpass.getuser())
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     trial = Path(tempfile.mkdtemp(prefix="dde-", dir=root)).resolve()
     trial.chmod(0o700)
@@ -521,9 +458,10 @@ def run(args):
     pnpm_store, pnpm_cache = trial / "caches" / "pnpm-store", trial / "caches" / "pnpm"
     pnpm_store.mkdir()
     pnpm_cache.mkdir()
-    pnpm_config.write_text(f"store-dir={pnpm_store}\ncache-dir={pnpm_cache}\n")
+    inside = container.inside if hasattr(container,"inside") else str
+    pnpm_config.write_text(f"store-dir={inside(pnpm_store)}\ncache-dir={inside(pnpm_cache)}\n")
     pnpm_config.with_name("config.yaml").write_text(
-        f"storeDir: {json.dumps(str(pnpm_store))}\ncacheDir: {json.dumps(str(pnpm_cache))}\n")
+        f"storeDir: {json.dumps(inside(pnpm_store))}\ncacheDir: {json.dumps(inside(pnpm_cache))}\n")
     if node is not None:
         (bin_dir / "node").symlink_to(node)
         zdotdir = trial / "zsh"
@@ -545,7 +483,7 @@ def run(args):
     manifest = {"isolation": {"kind":"container", "image":getattr(args,"image",None), "name":container.name,"git_safe_directory":str(checkout)}, "repository": args.repo, "requested_ref": args.ref,
                 "trial_directory": str(trial), "checkout": str(checkout),
                 "ddtest_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-                "agent": args.agent, "requested_model": args.model, "prompt": prompt,
+                "agent": args.agent, "requested_model": args.model, "prompt": container.inside(prompt) if hasattr(container,"inside") else prompt,
                 "framework_scope": framework,
                 "started_at": time.time(), "commands": [], "status": "preparing",
                 "evaluation": "pending", "ci_execution": "not exercised"}
@@ -642,12 +580,17 @@ def run(args):
             raise RuntimeError(f"Command exited {record['exit_code']}: {shlex.join(argv)}")
         return tail.strip()
 
+    login = ModelLogin(args.agent, home, LOGIN_SECRETS, getattr(args,"login_json",None), getattr(args,"existing_login",False))
     code = 1
     container_started = False
     login_installed = False
     try:
+        manifest["failure_stage"]="storage_readiness"
+        if shutil.disk_usage(trial).free < 2*1024**3:
+            raise RuntimeError("Evaluator storage has less than 2 GiB free; no clone or model session started")
         container.start()
         container_started = True
+        manifest.pop("failure_stage",None)
         if node is not None:
             runtime = json.loads(command(["node", "-p",
                 "JSON.stringify({executable: process.execPath, version: process.version, requested_executable: require('node:fs').realpathSync("+json.dumps(str(node))+")})"],
@@ -662,6 +605,28 @@ def run(args):
         if not re.search(r"(?<![\d.])"+re.escape(expected_cli)+r"(?![\d.])", manifest["cli_version"]):
             raise RuntimeError(f"Expected {args.agent} {expected_cli}; image CLI version differs")
         manifest["ddtest_version"] = command([str(bin_dir/"ddtest"),"--version"],timeout=CLI_STARTUP_TIMEOUT)
+        if getattr(args,"login_json",None) or getattr(args,"existing_login",False):
+            manifest["failure_stage"] = "model_authentication"
+            login.install()
+            overrides.update(login.env)
+            preflight_argv = agent_command(args.agent,args.model)
+            if args.agent == "codex":
+                preflight_argv.insert(2,"--skip-git-repo-check")
+            observed = []
+            def auth_line(line):
+                try:
+                    event=json.loads(line)
+                    observed.extend(public_events(event,args.agent))
+                except (ValueError,TypeError):
+                    pass
+            code_auth = container.execute(preflight_argv, home, {**env,**overrides}, min(args.timeout,90), auth_line,
+                "Reply AUTH_OK only. Do not use tools or inspect files.",execute)
+            failed = any(event.get("type")=="agent_error" for event in observed)
+            if code_auth or failed or not any("AUTH_OK" in str(event.get("text","")) for event in observed):
+                raise RuntimeError("Model authentication preflight failed before clone/install; no onboarding trial started")
+            manifest["authentication"] = {"status":"passed", "source":"existing CLI model login" if getattr(args,"existing_login",False) else "selected login", "preflight":"model response before clone/install"}
+            login.suspend()
+            manifest.pop("failure_stage",None)
         command(["git", "clone", "--", args.repo, str(checkout)])
         command(["git", "fetch", "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
         command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
@@ -674,8 +639,19 @@ def run(args):
         status = command(["git", "status", "--porcelain"], cwd=checkout)
         if status:
             raise RuntimeError("Dependency setup changed the checkout; choose setup that leaves it clean")
-        install_login(login, trial)
-        login_installed = login is not None
+        manifest["failure_stage"] = "runtime_readiness"
+        for ready in getattr(args,"readiness_command",[]):
+            command(shlex.split(ready),cwd=checkout)
+        manifest.pop("failure_stage",None)
+        # Setup descendants cannot mutate credential directories during installation.
+        if hasattr(container,"control"):
+            container.control("pause",container.name)
+        try:
+            login.resume()
+            login_installed = bool(login.initial)
+        finally:
+            if hasattr(container,"control"):
+                container.control("unpause",container.name)
         manifest["status"] = "agent_running"
         command(agent_argv, cwd=checkout, agent=True, stdin=prompt)
         if background.unfinished():
@@ -694,6 +670,15 @@ def run(args):
             manifest["failure_kind"] = "infrastructure"
             manifest["failure_stage"] = "cli_startup"
             manifest["retry_recommended"] = True
+        if manifest.get("failure_stage")=="model_authentication":
+            manifest["failure_kind"]="authentication"
+            manifest["retry_recommended"]=False
+        elif manifest.get("failure_stage") in ("runtime_readiness","storage_readiness"):
+            manifest["failure_kind"]="evaluator_environment"
+            manifest["retry_recommended"]=False
+        if manifest.get("status")=="preparing" and not manifest.get("failure_kind"):
+            manifest["failure_kind"]="evaluator_environment"
+            manifest["retry_recommended"]=False
         manifest["error"] = str(error) or "Interrupted"
         print(redact(manifest["error"]), file=sys.stderr)
     finally:
@@ -727,17 +712,24 @@ def run(args):
             manifest["status"] = "failed"
             manifest.setdefault("collection_errors",[]).append(str(error))
             code = 1
-        if login_installed:
-            try:
-                remove_login(login, trial)
-                manifest["login"] = "removed"
-            except (OSError, RuntimeError) as error:
-                manifest["login"] = "not removed"
-                code = finalization_failed(str(error))
         cleanup_confirmed = manifest["isolation"]["cleanup"] == "removed"
         if (agent_failed or agent_timed_out) and cleanup_confirmed:
             manifest["failure_kind"] = failure_kind(agent_errors, agent_timed_out)
             manifest["retry_recommended"] = manifest["failure_kind"] == "infrastructure"
+        try:
+            # Never read refreshed credentials from a potentially live agent.
+            login.close(persist=cleanup_confirmed)
+            if login_installed:
+                manifest["login"] = "removed"
+            if login.unpersisted_change:
+                manifest["login_refresh"] = "not persisted: the trial login changed after repository code could write it; if the host CLI stops authenticating, log in again"
+        except (OSError, RuntimeError, ValueError) as error:
+            if login_installed:
+                manifest["login"] = "not removed"
+            manifest.setdefault("collection_errors",[]).append(str(error))
+            manifest["status"]="failed"
+            manifest["failure_kind"]="authentication"
+            code=1
         report_path = checkout / ".testoptimization" / "testdrive.json"
         report = {}
         try:
@@ -803,7 +795,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cleanup", type=Path, help="Remove the verified owned trial recorded in this output directory")
     parser.add_argument("--image", help="Prebuilt Docker image ID or repository@sha256 digest; required for trials")
-    parser.add_argument("--login-json", type=Path, help="Explicit throwaway CLI login only; never a whole home/configuration")
+    parser.add_argument("--login-json", type=Path, help="Selected model login; refresh updates persist, never copies a profile")
+    parser.add_argument("--existing-login", action="store_true", help="Reuse authorized existing CLI model authentication, including a managed Claude helper")
     parser.add_argument("--submodules", action="store_true", help="Initialize submodules at the requested commit")
     parser.add_argument("--repo", help="Public clone URL reachable from the container")
     parser.add_argument("--ref", help="Commit SHA or ref; resolved SHA is recorded")
@@ -813,6 +806,7 @@ def main():
                         help="Absolute Node executable for setup and Codex non-login shells; Codex only")
     parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio"),
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
+    parser.add_argument("--readiness-command", action="append", default=[], help="Repeatable native runtime/browser readiness checks before the uncoached agent")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")
     parser.add_argument("--output", type=Path, help="New directory for evaluator evidence")
     parser.add_argument("--model", help="Optional requested model; default is the CLI's configured model")

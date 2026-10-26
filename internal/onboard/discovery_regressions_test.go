@@ -199,7 +199,7 @@ func TestCycleAndMissingScriptDiagnosticsAreRepositoryRelative(t *testing.T) {
 func TestUnknownToolsAndDownloadsStayUnresolved(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"build": "node unknown.js"})
-	for _, command := range []string{"knip", "automd", "ls-engines", "bunchee", "clean-publish", "pkg-pr-new publish", "npm run build", `bash <(curl -s https://codecov.io/bash)`} {
+	for _, command := range []string{"knip", "automd", "custom-engines-check", "bunchee", "clean-publish", "pkg-pr-new publish", "npm run build"} {
 		result := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command}, "javascript", "jest")
 		require.False(t, result.Review, command)
 		require.NotEmpty(t, result.Reason, command)

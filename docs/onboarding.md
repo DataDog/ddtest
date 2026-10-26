@@ -108,11 +108,13 @@ remain unchanged; structured validation is unsupported and returns no next comma
 
 The coordinator owns one resolved execution plan: actual commands, directories,
 environments, builds, runtime/tracer selection, initialization and feature policy.
-A run cannot omit unresolved configurations to earn a complete verdict. Checks
+A run cannot omit unresolved configurations to earn a complete verdict. CI rows with a literal `DD_CIVISIBILITY_ENABLED=false` or a verified skipped conditional Datadog installer remain visible as `excluded`: their original CI tests are preserved, but local paired execution and feature validation are not claimed. These opt-outs are counted separately from passed configurations. Unsupported or unavailable variants without an explicit opt-out remain incomplete. Checks
 include source preservation, Git/npm report exclusions, owned process/temp cleanup,
 and current execution evidence. The npm package check uses
 `npm pack --dry-run --ignore-scripts --json`; it neither publishes nor runs hooks.
 Checks and source-edit hashes stay in the bounded JSON; full output stays in HTML.
+
+Automatic Mocha tracer recommendations use the verified major-5 and major-6 bootstrap contracts. Exact releases still come from registry tags; obsolete Node tags cannot win by covering more legacy CI rows. An explicitly selected or installed unverified major remains unvalidated instead of being silently replaced.
 
 Results distinguish ready, needs_input, blocked_environment, unsupported,
 validation_failed, selected_passed and complete_locally. Follow the returned argv

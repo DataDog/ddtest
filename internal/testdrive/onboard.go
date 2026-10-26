@@ -118,9 +118,15 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.NextAction = "request_capability"
 			}
 		case "needs_input":
-			if code == "setup_dependencies_missing" {
+			switch code {
+			case "scope_unresolved":
 				result.NextAction = "run_command"
-			} else {
+				result.NextCommand = []string{recoveryCommand[0], "onboard", "--framework", name, "--instructions"}
+				result.ResumeCommand, result.RequiredInput = nil, nil
+				result.Needs = "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
+			case "setup_dependencies_missing":
+				result.NextAction = "run_command"
+			default:
 				result.NextAction = "supply_input"
 			}
 		case "unsupported":
@@ -431,7 +437,8 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			var dirty *onboard.DirtyWorkflowGap
 			if errors.As(err, &dirty) {
 				result.Location = strings.Join(dirty.Files, ", ")
-				result.RequiredInput = []string{"Commit or stash the listed files, or approve extending their uncommitted edits with --allow-dirty"}
+				result.RequiredInput = []string{"Review setup_diff against the existing target-file edits. With approval to preserve and extend them, run resume_command with --allow-dirty; do not switch to testdrive or change scope."}
+				result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--allow-dirty", "--resume", checkpoint.RunID)
 				return fail("needs_input", "dirty_workflow", err.Error(), "Commit or stash the listed target files, then rerun; add --allow-dirty only when the user approves extending those uncommitted edits.")
 			}
 			var runtimeGap *onboard.NodeRuntimeGap
@@ -605,6 +612,22 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		if !workflowChecksPassed(workflow) {
 			result.Phase = "verification"
 		}
+		var reviewCommands []string
+		for _, configuration := range validation.Configurations {
+			for _, build := range configuration.Preparation {
+				if build.Code == "preparation_review_required" {
+					reviewCommands = append(reviewCommands, build.Command)
+				}
+			}
+		}
+		if len(reviewCommands) > 0 {
+			result.Location = strings.Join(reviewCommands, "; ")
+			result.RequiredInput = []string{"Review these existing scripts/plugins and their network access, then run resume_command. No new setup facts are required."}
+			if !slices.Contains(result.ResumeCommand, "--allow-reviewed-builds") {
+				result.ResumeCommand = append(result.ResumeCommand, "--allow-reviewed-builds")
+			}
+			return fail("needs_input", "preparation_review_required", "Preparation was not executed pending review: "+result.Location, "After reviewing the named commands, opt in using resume_command. Preserve the CI commands, scope and assertions; do not invent build facts.")
+		}
 		if entry, cause := workflowSetupFailure(validation); entry != nil {
 			if entry.Cypress != nil && len(entry.Cypress.Start) > 0 && strings.Contains(validation.Error, "cypress startup port") {
 				result.Location = entry.ID
@@ -633,6 +656,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 func reattachSetupFacts(updated *onboard.ValidationScope, previous onboard.ValidationScope, afterEdit bool) error {
 	matched := map[string]bool{}
 	identity := func(entry onboard.TestCommand) string {
+		// The owned editor may partition instrumentation while preserving the
+		// original command/setup. Each resulting row retains its own new ID.
+		entry.CIInstrumentationExcluded = false
 		entry.Environment = maps.Clone(entry.Environment)
 		if entry.Environment["NODE_OPTIONS"] == "" {
 			delete(entry.Environment, "NODE_OPTIONS")
@@ -696,6 +722,9 @@ func (t *Testdrive) selectWorkflowTracer(ctx context.Context, scope onboard.Vali
 	}
 	var selected platform.JSSelection
 	for _, entry := range scope.Commands {
+		if ciInstrumentationDisabled(entry) {
+			continue
+		}
 		var candidate platform.JSSelection
 		err := workflowPreflight(ctx, func() (err error) {
 			candidate, err = t.selectSetupTracer(ctx, onboard.ValidationScope{Commands: []onboard.TestCommand{entry}}, explicit)
@@ -712,6 +741,9 @@ func (t *Testdrive) selectWorkflowTracer(ctx context.Context, scope onboard.Vali
 			t.workflowPlan.TracerNode = selected.Node
 			t.workflowPlan.Tracer = selected.Version
 		}
+	}
+	if selected.Version == "" {
+		return "", fmt.Errorf("no configurations enabled for instrumentation; explicit CI opt-outs are not validations")
 	}
 	return selected.Version, nil
 }
