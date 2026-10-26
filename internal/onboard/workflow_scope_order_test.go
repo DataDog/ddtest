@@ -118,7 +118,7 @@ func TestFactBackedRuntimeRequiresFactsOnlyForActiveConsumers(t *testing.T) {
     strategy:
       matrix:
         include:
-          - {node: '8', enabled: false}
+          - {node: '18', enabled: false}
           - {node: '24', enabled: true}
     steps:
       - uses: actions/setup-node@v4

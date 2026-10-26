@@ -104,7 +104,7 @@ func validateSetupWorkflow(root, framework string, before, after []byte) error {
 			bootstrap := next
 			bootstrap.Env = maps.Clone(next.Env)
 			bootstrap.Env["NODE_OPTIONS"] = next.Env[key]
-			rows, err := runtimeMatrix(updated.Strategy.Matrix)
+			rows, _, err := jobMatrix(updated)
 			if err != nil {
 				return err
 			}

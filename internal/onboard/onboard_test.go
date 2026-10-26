@@ -34,7 +34,7 @@ jobs:
 	for _, expected := range []string{
 		"DDTest found javascript, jest, and GitHub Actions.",
 		".github/workflows/test.yml",
-		"datadog/test-visibility-github-action@v3",
+		"uses: " + setupActionV3 + " # v3.3.0",
 		"api_key: ${{ secrets.DD_API_KEY }}",
 		"NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}",
 		"ddtest testdrive",

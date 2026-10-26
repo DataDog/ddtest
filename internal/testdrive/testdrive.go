@@ -52,6 +52,7 @@ type Testdrive struct {
 	cucumberCoverage         map[string]string
 	workflowSelect           func(context.Context, onboard.ValidationScope, bool) (string, error)
 	workflowPlan             *onboard.ExecutionPlan
+	workflowReportOnly       []string // Configurations tracer selection left unedited and reported.
 	workflowScope            *onboard.ValidationScope
 	workflowRun              func(context.Context, io.Writer) error
 	workflowSourceCheck      func(context.Context) error
@@ -109,6 +110,9 @@ type Testdrive struct {
 	checkOnly                             bool
 	resolveJSTags                         func(context.Context) (map[string]string, error)
 	resolveJSTracer                       func(context.Context, string) (platform.JSSelection, error)
+
+	// acceptSubstituteRuntime completes validation on a compatible local runtime.
+	acceptSubstituteRuntime bool
 }
 
 // Prepare detects the repository and probes the selected test environment and tracer.
@@ -121,6 +125,9 @@ type PrepareOptions struct {
 	DefaultTracerVersion bool
 	CheckOnly            bool
 	All                  bool
+
+	// AcceptSubstituteRuntime completes validation on a compatible local runtime.
+	AcceptSubstituteRuntime bool
 }
 
 func checkTemporaryStorage() error {
@@ -392,6 +399,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 
 	drive.scopeCommand = scopeCommand
 	drive.allowReviewedBuilds = configuration.AllowReviewedBuilds
+	drive.acceptSubstituteRuntime = configuration.AcceptSubstituteRuntime
 	drive.commandTimeout = timeout
 	if supportsValidationFramework(runner.Name()) {
 		drive.executor = &ext.DefaultCommandExecutor{Timeout: timeout}
@@ -662,6 +670,39 @@ func (t *Testdrive) setConfigurationScope(result *validationResult, scope onboar
 	setSingleConfigurationScope(t.repositoryRoot, result, scope, command, t.configurationEnvironment)
 }
 
+// ambientDatadogEnvironment lists inherited DD_* values that test commands see
+// because neither ddtest nor the CI configuration sets them. A local workaround
+// like disabling an instrumentation must show up in the report.
+// ddtestProcessSettings are the variables main sets on ddtest's own process
+// before any command runs (main.go); they are not the user's settings.
+var ddtestProcessSettings = map[string]string{
+	"DD_CIVISIBILITY_ENABLED":                    "1",
+	"DD_TELEMETRY_DEPENDENCY_COLLECTION_ENABLED": "0",
+}
+
+func ambientDatadogEnvironment(configured map[string]string) map[string]string {
+	managed := testEnvironment("", "")
+	maps.Copy(managed, reportingEnvironment("", ""))
+	ambient := map[string]string{}
+	for _, entry := range os.Environ() {
+		key, value, _ := strings.Cut(entry, "=")
+		if !strings.HasPrefix(key, "DD_") && !strings.HasPrefix(key, "DATADOG_") {
+			continue
+		}
+		if _, ok := managed[key]; ok {
+			continue
+		}
+		if own, ok := ddtestProcessSettings[key]; ok && own == value {
+			continue
+		}
+		if _, ok := configured[key]; ok {
+			continue
+		}
+		ambient[key] = value
+	}
+	return ambient
+}
+
 // Startup recovery runs under the repository lock, before any new work.
 func (t *Testdrive) recoverStartup(output io.Writer) error {
 	if err := recoverSessions(t.repositoryRoot, output); err != nil {
@@ -693,6 +734,14 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	t.session = session
 	result = validationResult{CheckOnly: t.checkOnly, Session: session.ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel,
 		Compatibility: verdict{Status: "inconclusive", Reason: "Validation did not complete."}}
+	if !t.checkOnly {
+		result.AmbientDatadogEnvironment = reportedEnvironment(ambientDatadogEnvironment(t.configurationEnvironment))
+	}
+	// Isolated configurations run in a disposable copy; anything else runs in the checkout.
+	var entriesBefore map[string]bool
+	if !t.isolated {
+		entriesBefore = checkoutEntries(t.repositoryRoot)
+	}
 	defer func() {
 		cleanupErr := session.Close()
 		var supervision *processSupervisionError
@@ -709,6 +758,13 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		}
 		if cleanupErr != nil {
 			result.Cleanup = &verdict{Status: "failed", Reason: reportText(cleanupErr.Error())}
+		}
+		if entriesBefore != nil {
+			// The test command's own outputs are not ddtest's to delete; name them instead of passing silently.
+			if leftovers := checkoutLeftovers(entriesBefore, checkoutEntries(t.repositoryRoot)); len(leftovers) > 0 {
+				result.Cleanup.Leftovers = leftovers
+				result.Cleanup.Reason += " Left in the checkout by commands run there: " + strings.Join(leftovers, ", ") + "."
+			}
 		}
 		runErr = errors.Join(runErr, cleanupErr)
 		if runErr != nil {

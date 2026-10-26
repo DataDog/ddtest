@@ -32,13 +32,35 @@ type verdict struct {
 	Reason          string   `json:"reason"`
 	DifferenceCount int      `json:"difference_count,omitempty"`
 	Differences     []string `json:"differences,omitempty"`
+	// Untracked or ignored checkout entries a run in the checkout left behind.
+	Leftovers []string `json:"leftovers,omitempty"`
+	// Known causes worth checking first; they never change the status.
+	Hints []string `json:"hints,omitempty"`
 }
 
 type featureResult struct {
 	Project string `json:"project,omitempty"`
 	Name    string `json:"name"`
 	Status  string `json:"status"`
-	Reason  string `json:"reason"`
+	// Code marks failures no customer change is expected to fix.
+	Code string `json:"code,omitempty"`
+	// ObservedCode keeps the evaluated failure code when Code reports a
+	// known limitation instead, such as tracer_control_not_applied.
+	ObservedCode string `json:"observed_code,omitempty"`
+	Reason       string `json:"reason"`
+}
+
+const (
+	// The tracer reported the probe but applied none of the requested control.
+	tracerControlNotApplied = "tracer_control_not_applied"
+	// A required feature the tracer is known not to apply for this setup.
+	tracerLimitation = "tracer_limitation"
+)
+
+// tracerOnly reports whether the feature failed in a way only a tracer change
+// can address.
+func (f featureResult) tracerOnly() bool {
+	return f.Code == tracerControlNotApplied || f.Code == tracerLimitation
 }
 
 type runRole string
@@ -62,6 +84,7 @@ type runSpec struct {
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
 	webdriverIOAttempts []jestTest
+	missingSourceLoader string // Explains a .js import that only exists as TypeScript.
 	ReplacedReporters   []string
 	Role                runRole
 	cucumberParallel    bool
@@ -118,6 +141,9 @@ type coverageSummary struct {
 	CoveredTests int     `json:"covered_tests"`
 	TotalTests   int     `json:"total_tests"`
 	Level        string  `json:"level,omitempty"`
+	// Edit is an exact, approval-gated instrumentation change for a recognized
+	// application build when no application coverage was observed.
+	Edit *coverageEdit `json:"edit,omitempty"`
 }
 
 type runSummary struct {
@@ -202,9 +228,24 @@ func (r validationRun) summary() runSummary {
 }
 
 type validationResult struct {
+	// Set when a compatible local runtime stood in for the CI runtime.
+	RuntimeSubstitution *runtimeSubstitution `json:"runtime_substitution,omitempty"`
+	// RuntimeSubstitutions lists every distinct substitution when --all
+	// validated configurations whose CI paths use different Node majors.
+	RuntimeSubstitutions []runtimeSubstitution `json:"runtime_substitutions,omitempty"`
+
 	TelemetryOnly  bool `json:"telemetry_only,omitempty"`
 	SchemaVersion  int  `json:"schema_version"`
 	FocusedCommand bool `json:"focused_command,omitempty"`
+	// A workflow gate stopped this attempt before any test command. The earlier
+	// execution and its HTML findings stay as history; the handoff is still invalidated.
+	StoppedBeforeExecution bool `json:"stopped_before_execution,omitempty"`
+	// DD_* values inherited from ddtest's own environment that reached the test
+	// commands without coming from CI or ddtest, with secret-like values masked.
+	AmbientDatadogEnvironment map[string]string `json:"ambient_datadog_environment,omitempty"`
+	// Uncommitted changes outside CI workflows and ignore files, such as the
+	// dependencies and coverage config ddtest prescribes for validation.
+	RepositoryChanges []repositoryChange `json:"repository_changes,omitempty"`
 	// Leading VAR=value assignments of --command, with secret-like values masked.
 	CommandEnvironment map[string]string        `json:"command_environment,omitempty"`
 	CIPreservation     *verdict                 `json:"ci_preservation,omitempty"`
@@ -280,7 +321,7 @@ func validationPath(repositoryRoot string) string {
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
 	result.SchemaVersion = 1
-	if !result.CheckOnly && !result.HTMLReportCurrent {
+	if !result.CheckOnly && !result.StoppedBeforeExecution && !result.HTMLReportCurrent {
 		if info, err := os.Lstat(htmlReportPath(repositoryRoot)); err == nil && (info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
 			if err := os.Remove(htmlReportPath(repositoryRoot)); err != nil {
 				return err
@@ -310,7 +351,11 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	if !result.CheckOnly && result.ReportingCounts == nil {
 		result.ReportingCounts = reportingExecutionCounts(result.Runs)
 	}
+	if result.Compatibility.Status == "suspected regression" {
+		result.Compatibility.Hints = knownConflictHints(repositoryRoot)
+	}
 	prepareValidationResult(repositoryRoot, &result)
+	result.RepositoryChanges = nonCIChanges(repositoryRoot)
 	if err := retainExecution(repositoryRoot, &result); err != nil {
 		_, _ = fmt.Fprintf(output, "Warning: earlier execution evidence could not be retained: %s. Writing current results.\n", reportText(err.Error()))
 	}
@@ -389,7 +434,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	}
 	if coverage := result.Summary.ConfigurationCoverage; coverage != nil {
 		if coverage.Discovered > 0 {
-			_, _ = fmt.Fprintf(output, "Configuration coverage: %d/%d validated; %d executed, %d paired, %d blocked, %d not exercised, %d incomplete.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete)
+			_, _ = fmt.Fprintf(output, "Configuration coverage: %d/%d validated; %d executed, %d paired, %d blocked, %d not exercised, %d incomplete%s.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete, remoteOnlyCount(coverage))
 		} else {
 			_, _ = fmt.Fprintln(output, "Configuration coverage: no matching CI configurations discovered; current command evidence is reported separately.")
 		}
@@ -537,7 +582,8 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	}
 	result.ChecksPassed = workflowChecksPassed(result.Workflow) && result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
 	if result.Scope != nil {
-		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved) == 0
+		_, fidelityBlockers := ciFidelity(result)
+		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved)+len(fidelityBlockers) == 0
 		for _, command := range result.Scope.Commands {
 			if ciInstrumentationDisabled(command) {
 				continue
@@ -590,7 +636,11 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 		result.Success = validationPassed(*result)
 	}
 	applyScopeVerdict(result)
-
+	for _, sub := range result.substitutions() {
+		if !sub.Accepted {
+			result.Success = false
+		}
+	}
 }
 
 // Runs that stop before a tracer is selected show the request, marked as such.

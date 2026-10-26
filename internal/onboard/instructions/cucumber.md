@@ -30,6 +30,13 @@ feature paths, profiles, support imports and test commands.
    ```
 
    Preserve the original script's arguments, paths and other environment values.
+   A script that sets its own source loader, such as
+   `cross-env NODE_OPTIONS="--import tsx" cucumber-js`, keeps it after the
+   inherited options: `NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-} --import tsx" cucumber-js`.
+   When `ddtest onboard --apply` can edit the job's CI, it makes this edit for
+   well-known loaders (tsx, ts-node, @babel/register); when it reports a
+   blocker instead, make exactly this edit. Other modules set in NODE_OPTIONS
+   still need review.
    On its existing CI test step set:
 
    ```yaml
@@ -45,6 +52,8 @@ feature paths, profiles, support imports and test commands.
 
    The impacted-test workaround is separate from Test Impact Analysis skipping.
    Keep it disabled for Cucumber while validating the existing tracer integration.
+   `ddtest onboard --apply` sets it in the selected package scripts instead of the
+   step; either place disables it for CI, and the scripts also cover local runs.
 3. Finish CI and Git/package report exclusions, then run
    `ddtest testdrive --all --tracer-version <exact-release> --check-only --yes`.
    Fix concrete runtime, missing initialization and mixed-framework scope errors.

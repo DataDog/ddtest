@@ -34,7 +34,7 @@ func TestOnboardUnresolvedScopeReturnsActionWithoutEditsOrTests(t *testing.T) {
 	require.Equal(t, "needs_input", result.Status)
 	require.Equal(t, "discovery", result.Phase)
 	require.Contains(t, result.Reason, "custom-setup")
-	require.NotEmpty(t, result.Needs)
+	require.Contains(t, result.Needs, "do not rewrite CI or package scripts only so ddtest can parse them")
 	require.Equal(t, "run_command", result.NextAction)
 	require.Equal(t, []string{"onboard", "--framework", "vitest", "--instructions"}, result.NextCommand[1:])
 	require.Empty(t, result.RequiredInput)
@@ -103,4 +103,20 @@ func TestUnsupportedWorkflowDoesNotRecommendItself(t *testing.T) {
 	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
 	require.Equal(t, "report_result", result.NextAction)
 	require.Empty(t, result.NextCommand)
+}
+
+func TestUnknownBuildOutputsAreNotDiscoveredByBuildingInTheCheckout(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"jest","build":"node build.js"}}`)
+	requireWriteFile(t, filepath.Join(root, "build.js"), `require('fs').mkdirSync('dist',{recursive:true})`)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    steps:\n      - run: npm run build\n      - run: npm test\n")
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Jest{}, language: "javascript", allConfigurations: true}
+	var output bytes.Buffer
+	require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json"}), "setup_unresolved")
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Equal(t, "setup_unresolved", result.Code)
+	require.Contains(t, result.Needs, "do not run it in the checkout")
+	require.NoDirExists(t, filepath.Join(root, "dist"))
 }

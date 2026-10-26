@@ -67,6 +67,7 @@ func TestAlternatingFailureCodesShareOneAttemptBound(t *testing.T) {
 		require.Equal(t, attempt+1, checkpoint.Attempts, "a flaky cause alternating codes must not reset the counter (%s)", code)
 	}
 	require.Equal(t, maxWorkflowAttempts, checkpoint.Attempts)
+	require.Equal(t, []string{"metadata_network", "validation_preparation", "metadata_network"}, checkpoint.Failures, "the history survives for the final report")
 	path, err := checkpointPath(checkpoint.RunID)
 	require.NoError(t, err)
 	entries, err := os.ReadDir(filepath.Dir(path))

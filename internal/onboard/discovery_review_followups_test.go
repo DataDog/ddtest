@@ -79,13 +79,17 @@ func TestDiscoveryUsesPowerShellDefaultOnWindowsRunners(t *testing.T) {
 			commands = append(commands, command.Command)
 		}
 	}
-	require.Contains(t, commands, "jest --config matrix.js", "the Ubuntu row keeps Bash")
+	require.Contains(t, commands, "jest --config matrix.js", "plain argv means the same under Bash and the Windows pwsh default")
 	require.Contains(t, commands, "jest --config bash.js", "an explicit shell overrides the runner default")
-	require.NotContains(t, commands, "jest --config .jest.config.js")
+	require.NotContains(t, commands, "jest --config .jest.config.js", "a pwsh backslash path is not Bash syntax")
+	for _, command := range scope.Commands {
+		if command.Command == "jest --config matrix.js" {
+			require.Len(t, command.Locations, 2, "both the Ubuntu and the Windows row")
+		}
+	}
 	unresolved := strings.Join(scope.Unresolved, "\n")
 	require.Contains(t, unresolved, "/ windows")
 	require.Contains(t, unresolved, "Unsupported CI shell: pwsh")
-	require.Contains(t, unresolved, `os: "windows-latest"`)
 }
 
 func TestPrintfFormatThatWritesVariablesIsSetup(t *testing.T) {

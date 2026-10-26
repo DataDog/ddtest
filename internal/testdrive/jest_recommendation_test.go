@@ -6,10 +6,12 @@
 package testdrive
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/stretchr/testify/require"
@@ -97,4 +99,19 @@ func TestMochaRecommendationRejectsObsoleteTracerEvenWithLargerNodeCoverage(t *t
 		require.Equal(t, "unverified_tracer_major", check.Code)
 		require.NotEqual(t, "compatible", check.Status)
 	}
+}
+
+func TestTracerRecommendationNamesTheCoordinatorValidationCommand(t *testing.T) {
+	run := &Testdrive{framework: &framework.Jest{}, resolveJSTags: recommendationTags, resolveJSTracer: func(_ context.Context, major string) (platform.JSSelection, error) {
+		return map[string]platform.JSSelection{"5.128.0": {Version: "5.128.0", Node: ">=18"}, "6.17.0": {Version: "6.17.0", Node: ">=22"}}[major], nil
+	}}
+	result := &validationResult{
+		Preflight: &jestPreflight{Version: "28.1.3", Node: "24.14.1", Projects: []jestProject{{Runner: "jest-circus/runner"}}, Verdict: verdict{Status: onboard.StatusCompatible}},
+		Selection: &platform.JSSelection{Requested: "latest", Version: "6.17.0"},
+		CIRuntime: &onboard.RuntimeCheck{Status: "incompatible", Jobs: []onboard.RuntimeFinding{{Node: "20.x"}}},
+	}
+	var output bytes.Buffer
+	run.recommendTracer(t.Context(), &output, result)
+	require.Contains(t, output.String(), "Use js-tracer-version: 5.128.0 in CI, then run full validation through the agent workflow: ")
+	require.Contains(t, output.String(), "testdrive --framework jest --all --agent --tracer-version 5.128.0 --yes")
 }

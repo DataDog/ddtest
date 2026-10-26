@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Expand only bounded, scalar matrices. Includes augment original combinations;
@@ -174,4 +175,64 @@ func CompareNodeRequirement(node, requirement string) (string, string) {
 		return StatusCompatible, fmt.Sprintf("Node %s satisfies %s.", node, requirement)
 	}
 	return StatusIncompatible, fmt.Sprintf("Node %s does not satisfy %s. Preserve test coverage and choose a compatible tracer/runtime.", node, requirement)
+}
+
+// jobMatrix expands a job's matrix. An axis computed at runtime (for example
+// fromJson(needs.versions.outputs.list)) that only step commands read becomes a
+// single unverified value: the job's tests are still discovered and validated
+// with the locally installed dependencies, and computed lists the axes whose
+// other values remain unverified. Any other use of such an axis (runner, runtime
+// selection, environment, working directory, conditions) keeps it unresolved.
+func jobMatrix(job runtimeJob) (rows []map[string]any, computed []string, err error) {
+	rows, err = runtimeMatrix(job.Strategy.Matrix)
+	matrix, ok := job.Strategy.Matrix.(map[string]any)
+	if err == nil || !ok {
+		return rows, nil, err
+	}
+	bounded := maps.Clone(matrix)
+	for key, value := range matrix {
+		if text, isText := value.(string); isText && key != "include" && key != "exclude" && strings.Contains(text, "${{") {
+			bounded[key] = []any{computedAxisSentinel}
+			computed = append(computed, key)
+		}
+	}
+	if len(computed) == 0 {
+		return nil, nil, err
+	}
+	slices.Sort(computed)
+	settings := job
+	settings.Strategy.Matrix = nil
+	settings.Steps = slices.Clone(job.Steps)
+	for i := range settings.Steps {
+		settings.Steps[i].Run = ""
+	}
+	encoded, marshalErr := yaml.Marshal(settings)
+	if marshalErr != nil {
+		return nil, nil, err
+	}
+	for _, axis := range computed {
+		if regexp.MustCompile(`\bmatrix\.` + regexp.QuoteMeta(axis) + `\b`).Match(encoded) {
+			return nil, nil, err
+		}
+	}
+	rows, boundedErr := runtimeMatrix(bounded)
+	if boundedErr != nil {
+		return nil, nil, err
+	}
+	for _, row := range rows {
+		for key, value := range row {
+			if value == computedAxisSentinel {
+				row[key] = computedAxisValue(key)
+			}
+		}
+	}
+	return rows, computed, nil
+}
+
+const computedAxisSentinel = "\x00computed"
+
+// The value stays a workflow expression, so any command that reads it remains
+// visibly unresolved instead of running with a guessed value.
+func computedAxisValue(axis string) string {
+	return "${{ matrix." + axis + " }}"
 }

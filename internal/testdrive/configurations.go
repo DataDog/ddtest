@@ -45,6 +45,11 @@ func setSelectedConfigurationScope(result *validationResult, scope onboard.Valid
 			result.Configurations = append(result.Configurations, excludedConfiguration(entry))
 			continue
 		}
+		// A remote browser grid runs only in CI; its secrets never exist here.
+		if entry.RemoteGrid != "" {
+			result.Configurations = append(result.Configurations, remoteGridConfiguration(entry))
+			continue
+		}
 		if !hostConfiguration(entry) {
 			item.Compatibility.Reason = nonHostConfigurationReason(entry)
 			result.Configurations = append(result.Configurations, item)
@@ -166,12 +171,12 @@ func applyScopeVerdict(result *validationResult) {
 	if result.FocusedCommand {
 		return
 	}
-	if len(result.Scope.Unresolved) > 0 {
+	if _, blockers := ciFidelity(result); len(result.Scope.Unresolved)+len(blockers) > 0 {
 		result.Success = false
 		result.ChecksPassed = false
 	}
 	for _, configuration := range result.Configurations {
-		if configuration.Status != "passed" && !configurationExcluded(configuration) {
+		if !configurationSettled(*result, configuration) {
 			result.Success = false
 		}
 	}
@@ -199,10 +204,17 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		Compatibility: verdict{Status: "compatible", Reason: "Every discovered configuration passed its own paired comparison; configurations were not compared against each other."}, Cleanup: &verdict{Status: "passed", Reason: "Temporary sessions removed for all configurations."}}
 	var models []reportModel
 	var runErrors []error
+	var leftovers []string
+	ambient := map[string]string{}
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
 		if ciInstrumentationDisabled(entry) {
 			result.Configurations = append(result.Configurations, excludedConfiguration(entry))
+			continue
+		}
+		// A remote browser grid runs only in CI; its secrets never exist here.
+		if entry.RemoteGrid != "" {
+			result.Configurations = append(result.Configurations, remoteGridConfiguration(entry))
 			continue
 		}
 		if !hostConfiguration(entry) {
@@ -293,12 +305,19 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if execution.CIRuntime != nil {
 			result.CIRuntime = execution.CIRuntime
 		}
+		for _, sub := range execution.substitutions() {
+			result.addSubstitution(sub)
+		}
 		if result.CISelection == nil || execution.CISelection != nil && execution.CISelection.Status != "compatible" {
 			result.CISelection = execution.CISelection
 		}
 		if execution.Cleanup != nil && execution.Cleanup.Status != "passed" {
 			result.Cleanup = execution.Cleanup
 		}
+		if execution.Cleanup != nil {
+			leftovers = append(leftovers, execution.Cleanup.Leftovers...)
+		}
+		maps.Copy(ambient, execution.AmbientDatadogEnvironment)
 		for _, run := range execution.Runs {
 			run.Configuration = label
 			result.Runs = append(result.Runs, run)
@@ -311,6 +330,12 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		for i := before; i < len(models); i++ {
 			labelConfigurationModel(&models[i], label)
 		}
+	}
+	discloseConfigurationSideEffects(&result, leftovers, ambient)
+	// Remote-grid configurations never run here; without a compared local
+	// configuration of the same suite, nothing established compatibility.
+	if slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return c.RemoteGrid != "" }) && !remoteGridCovered(result) {
+		result.Compatibility = combineConfigurationCompatibility(result.Compatibility, verdict{Status: "inconclusive", Reason: "Only remote browser grid configurations were discovered; they can't run locally, so no local comparison established compatibility."})
 	}
 	if t.checkOnly {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration checks only; run --all without --check-only for all paired executions and features."}
@@ -458,9 +483,54 @@ func ciInstrumentationDisabled(entry onboard.TestCommand) bool {
 }
 
 func excludedConfiguration(entry onboard.TestCommand) configurationResult {
-	return configurationResult{TestCommand: entry, Status: "excluded", Compatibility: verdict{Status: "not exercised", Reason: "CI explicitly excludes Datadog instrumentation for this entry (disabled flags or a skipped conditional installer). Its original CI tests are preserved; no local paired execution or features are claimed."}}
+	reason := "CI explicitly excludes Datadog instrumentation for this entry (disabled flags or a skipped conditional installer). Its original CI tests are preserved; no local paired execution or features are claimed."
+	if entry.UnsupportedNode {
+		reason = "Not tried: this entry's CI Node is below Node 18, the oldest dd-trace major ddtest supports, so ddtest left it uninstrumented on its own. Its original CI tests are preserved; no local paired execution or features are claimed."
+	}
+	if entry.WindowsRunner {
+		reason = "Windows runner: ddtest doesn't set up or validate Windows runners locally, so this entry stays uninstrumented. Add manual initialization to instrument it. Its original CI tests are preserved; no local paired execution or features are claimed."
+	}
+	return configurationResult{TestCommand: entry, Status: "excluded", Compatibility: verdict{Status: "not exercised", Reason: reason}}
+}
+
+func remoteGridConfiguration(entry onboard.TestCommand) configurationResult {
+	reason := entry.RemoteGrid + " runs this configuration on a remote browser grid with CI secrets, so it can't run locally; CI runs it with the same Datadog setup."
+	return configurationResult{TestCommand: entry, Status: "remote only", Compatibility: verdict{Status: "not exercised", Reason: reason}}
+}
+
+// remoteGridCovered reports whether a local configuration of the same suite
+// was compared: only then can a remote-grid configuration be a caveat.
+func remoteGridCovered(result validationResult) bool {
+	return slices.ContainsFunc(result.Configurations, func(configuration configurationResult) bool {
+		return configuration.RemoteGrid == "" && !configurationExcluded(configuration) && configuration.PairedExecution && configuration.Compatibility.Status == "compatible"
+	})
+}
+
+// configurationSettled reports whether a configuration can no longer block
+// completion: it passed, CI excludes it, or it runs only on a remote grid
+// while a local configuration of the same suite was validated.
+func configurationSettled(result validationResult, configuration configurationResult) bool {
+	return configuration.Status == "passed" || configurationExcluded(configuration) || configuration.RemoteGrid != "" && remoteGridCovered(result)
 }
 
 func configurationExcluded(entry configurationResult) bool {
 	return entry.Status == "excluded" && ciInstrumentationDisabled(entry.TestCommand)
+}
+
+// discloseConfigurationSideEffects keeps inherited Datadog settings and checkout
+// leftovers from every configuration, including passing ones, in the aggregate.
+func discloseConfigurationSideEffects(result *validationResult, leftovers []string, ambient map[string]string) {
+	if len(ambient) > 0 {
+		result.AmbientDatadogEnvironment = ambient
+	}
+	if len(leftovers) == 0 || result.Cleanup == nil {
+		return
+	}
+	cleanup := *result.Cleanup
+	slices.Sort(leftovers)
+	cleanup.Leftovers = slices.Compact(leftovers)
+	if !strings.Contains(cleanup.Reason, "Left in the checkout") {
+		cleanup.Reason += " Left in the checkout by commands run there: " + strings.Join(cleanup.Leftovers, ", ") + "."
+	}
+	result.Cleanup = &cleanup
 }

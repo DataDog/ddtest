@@ -32,6 +32,9 @@ type WorkflowEvidence struct {
 	FactsSHA256       string                  `json:"facts_sha256,omitempty"`
 	Changes           []onboard.SetupChange   `json:"changes,omitempty"`
 	Checks            []onboard.WorkflowCheck `json:"checks"`
+	// EarlierAttempts lists the codes of attempts that stopped before this
+	// run on the same resumed workflow, oldest first.
+	EarlierAttempts []string `json:"earlier_attempts,omitempty"`
 }
 
 func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.WorkflowCheck {
@@ -116,6 +119,23 @@ func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.Workfl
 		cleanup.Reason = reportText(err.Error())
 	}
 	return []onboard.WorkflowCheck{git, pack, cleanup}
+}
+
+// exclusionAndCleanupChecksPassed covers only the report-exclusion and owned
+// cleanup checks the handoff line names; scope checks are reported separately.
+func exclusionAndCleanupChecksPassed(workflow *WorkflowEvidence) bool {
+	if workflow == nil {
+		return true
+	}
+	for _, check := range workflow.Checks {
+		if !slices.Contains([]string{"git_report_exclusions", "package_report_exclusions", "package_check_cleanup", "validation_cleanup"}, check.Name) {
+			continue
+		}
+		if check.Status != "passed" && check.Status != "not applicable" {
+			return false
+		}
+	}
+	return true
 }
 
 func workflowChecksPassed(workflow *WorkflowEvidence) bool {

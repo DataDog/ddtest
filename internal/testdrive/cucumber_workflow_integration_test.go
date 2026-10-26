@@ -51,6 +51,9 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 	require.NoError(t, err, string(output))
 	for _, mode := range cucumberWorkflowScenarios.selected(t) {
 		t.Run(mode, func(t *testing.T) {
+			if _, err := os.Stat(filepath.Join(modules, "tsx")); mode == "source loader" && err != nil {
+				t.Skip("tsx is not installed in DDTEST_CUCUMBER_NODE_MODULES")
+			}
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
 			require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root, false))
@@ -166,6 +169,13 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				// The suite's own posttest removes it; keep it out of coverage.
 				appWrite(".nycrc", `{"exclude":["features/support/generated.js","fixtures/**"]}`)
 				appWrite("fixtures/generated.js", `const {Before}=require('@cucumber/cucumber');Before(function(){require('node:fs').appendFileSync(process.env.DDTEST_CUCUMBER_HOOK_FILE,'generated\n')})`)
+			case "source loader":
+				// Modeled on astrologyjs: TypeScript support imports `.js` paths that
+				// only exist as `.ts`, resolved by the script's own tsx loader.
+				script = `NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-} --import tsx" nyc -- cucumber-js --import features/steps.ts --import features/support/hooks.ts`
+				appWrite("features/support/hooks.ts", `import {Before,setWorldConstructor} from "@cucumber/cucumber";class World{};setWorldConstructor(World);Before(function(){if(!(this instanceof World))throw Error("World lost");process.getBuiltinModule('fs').appendFileSync(process.env.DDTEST_CUCUMBER_HOOK_FILE!,'hook\n')})`)
+				appWrite("src/add.ts", "export default (a: number, b: number): number => a + b")
+				appWrite("features/steps.ts", `import {Given} from '@cucumber/cucumber';import add from '../src/add.js';Given('addition works',()=>{if(add(1,1)!==2)throw Error('bad add')})`)
 			case "ESM", "CJS ESM import":
 				script += " --import features/steps.mjs --import features/support/hooks.mjs"
 				appWrite("features/support/hooks.mjs", `import {Before,setWorldConstructor} from "@cucumber/cucumber";class World{};setWorldConstructor(World);Before(function(){if(!(this instanceof World))throw Error("World lost");process.getBuiltinModule('fs').appendFileSync(process.env.DDTEST_CUCUMBER_HOOK_FILE,'hook\n')})`)
@@ -200,7 +210,7 @@ func TestPublicCucumberTestdrive(t *testing.T) {
       - run: npm test
         env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}'}
 `)
-			if mode == "scoped options" {
+			if mode == "scoped options" || mode == "source loader" {
 				path := filepath.Join(root, ".github/workflows/ci.yml")
 				body, err := os.ReadFile(path)
 				require.NoError(t, err)
@@ -424,6 +434,6 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 
 // Relative durations from CI; see integrationScenarios.
 var cucumberWorkflowScenarios = integrationScenarios{
-	names:   []string{"passing", "lifecycle", "nested alias", "existing failure", "no application coverage", "package directory", "custom support coverage", "support library", "support helper", "feature application", "thresholds", "native retries", "profile retries", "CLI selectors", "profile selectors", "catch-all", "parallel", "outlines", "pending", "pending non-strict", "undefined", "undefined non-strict", "ambiguous", "ESM", "CJS ESM import", "scoped options", "c8", "timeout", "recovery", "child process", "profile run options", "CLI run options", "probe lifecycle"},
+	names:   []string{"passing", "lifecycle", "nested alias", "existing failure", "no application coverage", "package directory", "custom support coverage", "support library", "support helper", "feature application", "thresholds", "native retries", "profile retries", "CLI selectors", "profile selectors", "catch-all", "parallel", "outlines", "pending", "pending non-strict", "undefined", "undefined non-strict", "ambiguous", "ESM", "CJS ESM import", "scoped options", "source loader", "c8", "timeout", "recovery", "child process", "profile run options", "CLI run options", "probe lifecycle"},
 	weights: map[string]int{"recovery": 26, "ESM": 20, "CJS ESM import": 18, "parallel": 15, "c8": 14, "child process": 13, "timeout": 6},
 }

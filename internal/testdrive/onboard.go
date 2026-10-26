@@ -65,6 +65,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if t.allowReviewedBuilds {
 		result.NextCommand = append(result.NextCommand, "--allow-reviewed-builds")
 	}
+	if t.acceptSubstituteRuntime {
+		result.NextCommand = append(result.NextCommand, AcceptSubstituteRuntimeFlag)
+	}
 	if options.ExplicitVersion {
 		result.NextCommand = append(result.NextCommand, "--tracer-version", t.tracerVersion)
 	}
@@ -87,6 +90,10 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	var checkpoint *workflowCheckpoint
 	var factsHash string
 	ownedLock, executed := false, false
+	// acceptFlag, when set, is appended to the final resume command after the
+	// checkpoint rewrites --resume, so the offered command never goes stale.
+	acceptFlag := ""
+	turnFinalResponse := ""
 	fail := func(status, code, reason, needs string) error {
 		result.Status, result.Code, result.Reason, result.Needs = status, code, reportText(reason), needs
 		if options.Format == "verbose" && result.UndoInstructions != "" {
@@ -110,11 +117,22 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				}
 			}
 		}
+		if acceptFlag != "" && len(result.ResumeCommand) > 0 && !slices.Contains(result.ResumeCommand, acceptFlag) {
+			result.AcceptResumeCommand = append(append([]string{}, result.ResumeCommand...), acceptFlag)
+		}
 		switch status {
 		case "blocked_environment":
-			if code == "workflow_busy" {
+			switch code {
+			case "workflow_busy":
 				result.NextAction = "wait"
-			} else {
+			case fileDescriptorsExhaustedCode:
+				// A transient host limit, not a missing capability: retry as is.
+				result.NextAction = "run_command"
+				result.NextCommand = append([]string{}, recoveryCommand...)
+				if len(result.ResumeCommand) > 0 {
+					result.NextCommand = append([]string{}, result.ResumeCommand...)
+				}
+			default:
 				result.NextAction = "request_capability"
 			}
 		case "needs_input":
@@ -123,7 +141,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.NextAction = "run_command"
 				result.NextCommand = []string{recoveryCommand[0], "onboard", "--framework", name, "--instructions"}
 				result.ResumeCommand, result.RequiredInput = nil, nil
-				result.Needs = "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
+				result.Needs = "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it; do not rewrite CI or package scripts only so ddtest can parse them. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
 			case "setup_dependencies_missing":
 				result.NextAction = "run_command"
 			default:
@@ -156,6 +174,11 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			result.NextAction = "report_result"
 			result.NextCommand, result.ResumeCommand = nil, nil
 			result.Needs += " Three identical attempts made no progress; stop and report this blocker."
+		}
+		// A setup repair continues the workflow; a report or a user decision ends
+		// the turn and must carry the text to relay.
+		if turnFinalResponse != "" && (result.NextAction == "report_result" || code == "substitute_runtime_unaccepted") {
+			result.FinalResponse = turnFinalResponse
 		}
 		return errors.Join(fmt.Errorf("%s: %s", code, result.Reason), onboard.RenderAgentResult(output, result, options.Format))
 	}
@@ -246,6 +269,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		}
 	}
 
+	plan.KnownLimitations = installedFeatureLimitations(t.repositoryRoot, name)
 	if plan.Site == "" {
 		plan.Site = "datadoghq.com"
 	}
@@ -300,24 +324,41 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	plan.Scope = scope
 	if options.Apply || t.allConfigurations {
-		if len(scope.Unresolved) > 0 || len(scope.Commands) == 0 {
+		// Unresolved CI never blocks the configurations that are ready: setup
+		// edits and validates those, and the unresolved entries stay report
+		// blockers. With nothing ready, there is nothing to set up or validate.
+		partial := len(scope.Unresolved) > 0 && slices.ContainsFunc(scope.Commands, func(entry onboard.TestCommand) bool { return t.readyConfiguration(entry) })
+		if partial {
+			result.Checks = append(result.Checks, scopeCheck(scope.Unresolved))
+		}
+		if len(scope.Commands) == 0 || len(scope.Unresolved) > 0 && !partial {
 			result.Location = strings.Join(scope.Unresolved[:min(1, len(scope.Unresolved))], "")
 			result.RequiredInput = []string{"literal CI test entry point and any unresolved setup relationship"}
 			reason := fmt.Sprintf("Discovered %d commands. %s", len(scope.Commands), strings.Join(scope.Unresolved, "; "))
 			if len(scope.Commands) == 0 && len(scope.Unresolved) == 0 {
 				reason = "No " + displayName(name) + " test command was found in GitHub Actions workflows or package scripts."
 			}
-			return fail("needs_input", "scope_unresolved", reason, "Resolve the named CI entry point. Facts can add prerequisites to discovered commands; they cannot erase unresolved CI or shrink scope. Use --instructions only for this unsupported integration.")
+			needs := "Facts can add prerequisites to discovered commands; they cannot erase unresolved CI or shrink scope. Do not rewrite CI or package scripts only so ddtest can parse them; report the unresolved entry as a blocker instead. Use --instructions only for this unsupported integration."
+			// Manual CI edits follow; name the release CI's Node can run so agents
+			// don't pin a newer major themselves.
+			if !options.ExplicitVersion && t.projectTracer == "" {
+				if version := t.ciRuntimeTracer(ctx); version != "" {
+					plan.Tracer = version
+					needs += " For manual CI edits use js-tracer-version: " + version + " (every detected CI Node runtime supports it) and pass --tracer-version " + version + " to validation."
+				}
+			}
+			return fail("needs_input", "scope_unresolved", reason, needs)
 		}
 		for _, entry := range scope.Commands {
-			if ciInstrumentationDisabled(entry) {
+			if t.setupStaysReported(entry, partial) {
 				continue
 			}
 			if len(entry.UnvalidatedSetup) > 0 || missingPrerequisiteFacts(entry) {
 				result.Location = strings.Join(entry.Locations, ", ")
 				result.RequiredInput = []string{"repository-local working directory and supported setup for this exact CI command"}
 				result.InputTemplate = setupFactsTemplate(fingerprint, entry)
-				return fail("needs_input", "setup_unresolved", entry.Command+": "+strings.Join(pendingSetup(entry), "; ")+"; declare the expected outputs of each pending prerequisite", "Save input_template as a JSON file outside the checkout, fill expected_files for each prerequisite, then run resume_command with --facts <path>. Preserve this configuration; do not replace it with an easier suite.")
+				suggestPrerequisiteOutputs(ctx, t.repositoryRoot, result.InputTemplate)
+				return fail("needs_input", "setup_unresolved", entry.Command+": "+strings.Join(pendingSetup(entry), "; ")+"; declare the expected outputs of each pending prerequisite", "Find each prerequisite's outputs from its configuration (tsconfig outDir, bundler config, package.json main/exports) or by running it in a disposable copy; do not run it in the checkout. Where input_template already lists expected_files, they are git-ignored package.json entry points: keep the ones this prerequisite produces and add any others it writes. Save input_template as a JSON file outside the checkout, fill expected_files for each prerequisite, then run resume_command with --facts <path>. Preserve this configuration; do not replace it with an easier suite.")
 			}
 		}
 	}
@@ -342,7 +383,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			}
 		}
 		if pin != "" {
-			prepared, err := Prepare(PrepareOptions{TracerVersion: pin, All: t.allConfigurations, Timeout: t.commandTimeout, AllowReviewedBuilds: t.allowReviewedBuilds})
+			prepared, err := Prepare(PrepareOptions{TracerVersion: pin, All: t.allConfigurations, Timeout: t.commandTimeout, AllowReviewedBuilds: t.allowReviewedBuilds, AcceptSubstituteRuntime: t.acceptSubstituteRuntime})
 			if err != nil {
 				return fail("needs_input", "validation_preparation", err.Error(), "Resolve the named local prerequisite.")
 			}
@@ -385,8 +426,33 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.Capabilities = []string{capability}
 				return fail("blocked_environment", "metadata_network", problem.Error(), "Restore only the named metadata network capability, then run resume_command. Do not change runtime, tracer or test scope to work around a network failure.")
 			}
+			var majors *ciTracerMajors
+			if errors.As(problem, &majors) {
+				// Resume with the release ddtest recommends rather than the default.
+				if majors.Recommended != "" && !options.ExplicitVersion && checkpoint != nil {
+					result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--tracer-version", majors.Recommended, "--resume", checkpoint.RunID)
+				}
+				if len(majors.Exclusions) > 0 {
+					result.RequiredInput = []string{"the user's choice: one --tracer-version every instrumented CI row supports, or approval to opt these rows out: " + strings.Join(majors.Exclusions, "; ")}
+					return fail("needs_input", "preflight_unresolved", problem.Error(), "Ask the user before excluding any CI row. If they approve, make exactly the listed DD_CIVISIBILITY_ENABLED edits and run resume_command; otherwise rerun with one --tracer-version every instrumented row supports. Never weaken feature checks.")
+				}
+				result.RequiredInput = []string{"one --tracer-version every instrumented CI row supports"}
+				needs := "No opt-out edit applies to these CI rows; do not exclude or rewrite them. Report them as unvalidated blockers unless one --tracer-version supports every instrumented row."
+				if majors.Recommended != "" {
+					needs = "Run resume_command, which selects dd-trace@" + majors.Recommended + ". Rows it cannot run stay unvalidated blockers to report; do not exclude or rewrite CI rows."
+				}
+				return fail("needs_input", "preflight_unresolved", problem.Error(), needs)
+			}
 			result.RequiredInput = []string{"the named runtime/configuration incompatibility"}
-			return fail("needs_input", "preflight_unresolved", problem.Error(), "Resolve this exact mismatch without excluding CI entries or weakening feature checks.")
+			return fail("needs_input", "preflight_unresolved", problem.Error(), "Resolve this exact mismatch without weakening feature checks. Do not exclude or rewrite CI rows to get past it; if it can't be resolved, report it as a blocker.")
+		}
+		if len(t.workflowReportOnly) > 0 {
+			reason := "Not set up or validated locally; reported as blockers: " + strings.Join(t.workflowReportOnly, "; ")
+			if i := slices.IndexFunc(result.Checks, func(check onboard.WorkflowCheck) bool { return check.Name == "ci_scope" }); i >= 0 {
+				result.Checks[i].Reason += "; " + reason
+			} else {
+				result.Checks = append(result.Checks, onboard.WorkflowCheck{Name: "ci_scope", Status: onboard.StatusInconclusive, Reason: reason})
+			}
 		}
 		result.Checks = append(result.Checks, onboard.WorkflowCheck{Name: "preflight_preparation", Status: "passed", Reason: fmt.Sprintf("Verified preflight reused: %t. Test execution is always fresh.", reused)})
 		plan.Tracer = selected
@@ -410,6 +476,12 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			}
 			if err == nil {
 				result.Changes, err = sourcePlan.Apply(options.AllowDirty)
+				// The manifest and lockfile changed only through the install ddtest
+				// prescribed: extend them without asking for --allow-dirty.
+				var dirty *onboard.DirtyWorkflowGap
+				if errors.As(err, &dirty) && checkpoint != nil && onboard.OnlyPrescribedDependencyChanges(t.repositoryRoot, dirty.Files, checkpoint.DependencyPackages) {
+					result.Changes, err = sourcePlan.Apply(true)
+				}
 			}
 			if len(result.Changes) > 0 {
 				names := make([]string, 0, len(result.Changes))
@@ -423,14 +495,16 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			var dependencies *onboard.SetupDependencyGap
 			if errors.As(err, &dependencies) {
 				checkpoint.FactsDependencyHandoff = true
+				checkpoint.DependencyPackages = dependencies.Packages
 				checkpoint.Engine = engineIdentity()
 				checkpoint.FactsSHA256 = factsHash
 				checkpoint.Fingerprint = fingerprint
 				result.Location = "package.json / devDependencies"
 				result.NextCommand = dependencies.Command
 				result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--resume", checkpoint.RunID)
-				result.RequiredInput = []string{"Run next_command once to update the manifest and lockfile, then resume_command. Preserve the selected framework and CI test commands."}
-				return fail("needs_input", "setup_dependencies_missing", err.Error(), "The recognized coverage recipe needs only these dependencies; no CI edits have been made.")
+				result.RequiredInput = []string{"Run next_command once, as given and without asking, to update the manifest and lockfile, then resume_command. Preserve the selected framework and CI test commands."}
+				result.Instruction = onboard.PrescribedEditInstruction
+				return fail("needs_input", "setup_dependencies_missing", err.Error(), "The recognized coverage recipe needs only these dependencies; installing them is a ddtest-prescribed edit, listed with its revert in the final report. No CI edits have been made.")
 			}
 			var dirty *onboard.DirtyWorkflowGap
 			if errors.As(err, &dirty) {
@@ -489,7 +563,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		t.workflowScope = &scope
 		t.tracerVersion = selected
 		// Prepare once more to bind installation commands to the exact release.
-		prepared, err := Prepare(PrepareOptions{TracerVersion: selected, All: true, Timeout: t.commandTimeout, AllowReviewedBuilds: t.allowReviewedBuilds})
+		prepared, err := Prepare(PrepareOptions{TracerVersion: selected, All: true, Timeout: t.commandTimeout, AllowReviewedBuilds: t.allowReviewedBuilds, AcceptSubstituteRuntime: t.acceptSubstituteRuntime})
 		if err != nil {
 			return fail("needs_input", "validation_preparation", err.Error(), "Resolve the named installed dependency or command prerequisite.")
 		}
@@ -558,6 +632,16 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		result.JSONReport = validationPath(t.repositoryRoot)
 		return fail("blocked_environment", runtimeMetadata.Code, runErr.Error(), "Resolve only the named registry/storage capability, then rerun next_command. The failed attempt remains incomplete in json_report.")
 	}
+	var localRuntime *localRuntimeError
+	if errors.As(runErr, &localRuntime) {
+		result.Capabilities = []string{localRuntime.Capability()}
+		result.JSONReport = validationPath(t.repositoryRoot)
+		return fail("blocked_environment", "local_runtime_mismatch", runErr.Error(), "Provide only the named runtime: put an existing installation first on PATH (a version manager or a user-provided install), then run resume_command unchanged. Ask the user before downloading a runtime and never install one inside the repository. Do not change CI, the tracer or test scope to avoid this path.")
+	}
+	if fileDescriptorsExhausted(runErr) {
+		result.JSONReport = validationPath(t.repositoryRoot)
+		return fail("blocked_environment", fileDescriptorsExhaustedCode, runErr.Error(), "The host ran out of open file descriptors while isolating the checkout, often because other heavy processes share it. Wait for or stop those processes, or raise the open-file limit, then run next_command unchanged. If ddtest already edited CI, next_command recognizes those edits and makes no further change before validating again; do not edit or align them by hand. This says nothing about the tests or the tracer; do not change CI, the tracer or test scope.")
+	}
 	var supervision *processSupervisionError
 	if errors.As(runErr, &supervision) {
 		result.JSONReport = validationPath(t.repositoryRoot)
@@ -572,7 +656,10 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	progress("verification")
 	workflow := &WorkflowEvidence{ValidationCommand: recoveryCommand, Plan: plan, Fingerprint: before, Node: t.workflowNodeVersion(), FactsSHA256: factsHash, Changes: result.Changes}
-	workflow.Checks = append(result.Checks, t.verifyReportExclusions(ctx)...)
+	if checkpoint != nil {
+		workflow.EarlierAttempts = slices.Clone(checkpoint.Failures)
+	}
+	workflow.Checks = append(refreshScopeCheck(result.Checks, validation.Scope), t.verifyReportExclusions(ctx)...)
 	after, snapshotErr := InputFingerprint(ctx, t.repositoryRoot)
 	sourceCheck := onboard.WorkflowCheck{Name: "source_preservation", Status: "passed", Reason: "Original checkout inputs unchanged by validation; builds/probes ran in owned storage."}
 	if snapshotErr != nil || after != before {
@@ -619,22 +706,30 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if workflowVerdict(validation) != "complete_locally" {
 		result.Instruction = ""
 		result.NextCommand = nil
+		// Results that end the agent's turn carry the current report's canonical
+		// text, so the agent can relay it verbatim (see fail).
+		turnFinalResponse = validation.Summary.FinalResponse
 		result.ResumeCommand = append(append([]string{}, resume...), "--resume", checkpoint.RunID)
 		result.Phase = "validation"
 		if !workflowChecksPassed(workflow) {
 			result.Phase = "verification"
 		}
-		var reviewCommands []string
+		var reviewCommands, reviewItems []string
 		for _, configuration := range validation.Configurations {
 			for _, build := range configuration.Preparation {
-				if build.Code == "preparation_review_required" {
+				if build.Code == "preparation_review_required" && !slices.Contains(reviewCommands, build.Command) {
 					reviewCommands = append(reviewCommands, build.Command)
+					item := build.Command
+					if build.Diagnostic != "" {
+						item += " (review " + build.Diagnostic + ")"
+					}
+					reviewItems = append(reviewItems, item)
 				}
 			}
 		}
 		if len(reviewCommands) > 0 {
 			result.Location = strings.Join(reviewCommands, "; ")
-			result.RequiredInput = []string{"Review these existing scripts/plugins and their network access, then run resume_command. No new setup facts are required."}
+			result.RequiredInput = []string{"Read " + strings.Join(reviewItems, "; ") + ". The build runs in an isolated copy, never in the checkout. You may run resume_command if it only configures bundling (entries, formats, output) with well-known plugins; ask the user first if it runs unfamiliar plugins or scripts, or downloads anything. No new setup facts are required."}
 			if !slices.Contains(result.ResumeCommand, "--allow-reviewed-builds") {
 				result.ResumeCommand = append(result.ResumeCommand, "--allow-reviewed-builds")
 			}
@@ -655,14 +750,100 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			}
 			return fail("needs_input", "configuration_setup_failed", reason, "Tests were not compared for this configuration. Correct only its declared setup; preserve scope and assertions.")
 		}
-		result.RequiredInput = validation.Summary.BlockingChecks[:min(3, len(validation.Summary.BlockingChecks))]
-		return fail("validation_failed", "validation_incomplete", strings.Join(result.RequiredInput, "; "), "Address only these current blockers, then rerun full validation. A failed feature or exclusion check remains failed.")
+		// Evidence that passed on a compatible substitute runtime is the user's to accept.
+		var subBlockers, subLocal, subCI []string
+		for _, sub := range validation.substitutions() {
+			if !sub.Accepted {
+				subBlockers = append(subBlockers, sub.blocker())
+				subLocal = append(subLocal, "Node "+sub.Local+" in place of CI's Node "+sub.CI)
+				subCI = append(subCI, "Node "+sub.CI)
+			}
+		}
+		if len(subBlockers) > 0 && slices.Equal(validation.Summary.BlockingChecks, subBlockers) {
+			if !slices.Contains(result.ResumeCommand, AcceptSubstituteRuntimeFlag) {
+				result.ResumeCommand = append(result.ResumeCommand, AcceptSubstituteRuntimeFlag)
+			}
+			result.RequiredInput = []string{"User decision: accept the evidence from " + strings.Join(subLocal, " and ") + " by running resume_command, or put an existing " + strings.Join(subCI, " and ") + " first on PATH and rerun resume_command without " + AcceptSubstituteRuntimeFlag + "."}
+			return fail("needs_input", "substitute_runtime_unaccepted", strings.Join(subBlockers, "; "), "Every check passed on a compatible substitute runtime. Ask the user which option to take; do not accept it yourself, download a runtime, or change CI, the tracer or the test scope.")
+		}
+		reportOnly, actionable := splitTracerOnlyBlockers(validation)
+		decision := ""
+		if len(subBlockers) > 0 {
+			// The substitute is still the user's decision when other blockers remain;
+			// it must not be lost among them or accepted by the agent.
+			actionable = slices.DeleteFunc(actionable, func(check string) bool { return slices.Contains(subBlockers, check) })
+			acceptFlag = AcceptSubstituteRuntimeFlag
+			decision = " Separately, ask the user whether to accept the evidence from substitute " + strings.Join(subLocal, " and ") + ": once they approve, run accept_resume_command instead of resume_command; otherwise put an existing " + strings.Join(subCI, " and ") + " first on PATH. Do not accept it yourself or download a runtime."
+		}
+		if len(actionable) == 0 && len(reportOnly) > 0 {
+			result.RequiredInput = reportOnly
+			return fail("validation_failed", "validation_incomplete", strings.Join(reportOnly, "; "), "Report these blockers to the user as they are: the tracer did not apply these controls for this framework setup, and no customer change is expected to fix them. Do not change the suite, CI, configuration or tracer to work around them, and do not rerun."+decision)
+		}
+		// Every actionable blocker is listed: a capped list hid real checks behind
+		// lines that only restate them.
+		result.RequiredInput = actionable
+		needs := "Address only these current blockers, then rerun full validation. A failed feature or exclusion check remains failed."
+		if len(reportOnly) > 0 {
+			needs += " Report, without trying to fix, these tracer limitations: " + strings.Join(reportOnly, "; ") + "."
+		}
+		return fail("validation_failed", "validation_incomplete", strings.Join(result.RequiredInput, "; "), needs+decision)
 	}
 	if err := checkpoint.remove(); err != nil {
 		return fail("blocked_environment", "checkpoint_cleanup_failed", err.Error(), "Restore access to private checkpoint storage.")
 	}
 	result.Status = "complete_locally"
 	return onboard.RenderAgentResult(output, result, options.Format)
+}
+
+// splitTracerOnlyBlockers separates blockers only a tracer change can address
+// (with their reasons) from the rest. The summary lines that merely restate a
+// tracer-only feature failure are dropped.
+func splitTracerOnlyBlockers(validation validationResult) (reportOnly, actionable []string) {
+	tracerOnly := map[string]featureResult{}
+	others := false
+	for _, feature := range validation.Features {
+		if featureSatisfied(validation.Framework, feature) {
+			continue
+		}
+		if feature.tracerOnly() {
+			tracerOnly[fmt.Sprintf("%s/%s: %s", feature.Project, feature.Name, feature.Status)] = feature
+		} else {
+			others = true
+		}
+	}
+	for _, check := range validation.Summary.BlockingChecks {
+		if feature, ok := tracerOnly[check]; ok {
+			reportOnly = append(reportOnly, check+" — "+feature.Reason)
+			continue
+		}
+		if len(tracerOnly) > 0 && !others && (check == "not every project has every required feature result" || pairedConfigurationBlocker(validation, check)) {
+			continue
+		}
+		actionable = append(actionable, check)
+	}
+	// A configuration's "incomplete" line only restates the other blockers that
+	// caused it; keep it only when it is the sole explanation.
+	derived := func(check string) bool { return configurationStatusLine(validation, check) }
+	if slices.ContainsFunc(validation.Summary.BlockingChecks, func(check string) bool { return !derived(check) }) {
+		actionable = slices.DeleteFunc(actionable, derived)
+	}
+	return reportOnly, actionable
+}
+
+// configurationStatusLine reports whether check is the summary's derived
+// "configuration <command>: <status>" line for one of the configurations.
+func configurationStatusLine(validation validationResult, check string) bool {
+	return slices.ContainsFunc(validation.Configurations, func(c configurationResult) bool {
+		return check == "configuration "+c.Command+": "+c.Status
+	})
+}
+
+// pairedConfigurationBlocker reports whether check only says that a compatible,
+// paired configuration is incomplete, which its feature results explain.
+func pairedConfigurationBlocker(validation validationResult, check string) bool {
+	return slices.ContainsFunc(validation.Configurations, func(c configurationResult) bool {
+		return c.PairedExecution && c.Compatibility.Status == "compatible" && check == "configuration "+c.Command+": "+c.Status
+	})
 }
 
 func reattachSetupFacts(updated *onboard.ValidationScope, previous onboard.ValidationScope, afterEdit bool) error {
@@ -733,17 +914,32 @@ func (t *Testdrive) selectWorkflowTracer(ctx context.Context, scope onboard.Vali
 		t.workflowPlan.CIRuntime = &ci
 	}
 	var selected platform.JSSelection
+	t.workflowReportOnly = nil
 	for _, entry := range scope.Commands {
-		if ciInstrumentationDisabled(entry) {
+		// Entries partial apply leaves unedited are reported, never preflighted.
+		if t.setupStaysReported(entry, true) {
 			continue
 		}
+		// One tracer serves every configuration: later entries check the release
+		// the first one selected instead of recommending their own.
+		probe, pinned := t, explicit
+		if selected.Version != "" {
+			pinnedDrive := *t
+			pinnedDrive.tracerVersion = selected.Version
+			probe, pinned = &pinnedDrive, true
+		}
 		var candidate platform.JSSelection
+		var reportOnly []string
 		err := workflowPreflight(ctx, func() (err error) {
-			candidate, err = t.selectSetupTracer(ctx, onboard.ValidationScope{Commands: []onboard.TestCommand{entry}}, explicit)
+			candidate, reportOnly, err = probe.selectSetupTracerReporting(ctx, onboard.ValidationScope{Commands: []onboard.TestCommand{entry}}, pinned)
 			return err
 		})
 		if err != nil {
 			return selected.Version, err
+		}
+		t.workflowReportOnly = append(t.workflowReportOnly, reportOnly...)
+		if candidate.Version == "" {
+			continue
 		}
 		if selected.Version != "" && selected.Version != candidate.Version {
 			return selected.Version, fmt.Errorf("tracer selection changed across configurations")
@@ -755,6 +951,9 @@ func (t *Testdrive) selectWorkflowTracer(ctx context.Context, scope onboard.Vali
 		}
 	}
 	if selected.Version == "" {
+		if len(t.workflowReportOnly) > 0 {
+			return "", noRunnableConfiguration(t.workflowReportOnly)
+		}
 		return "", fmt.Errorf("no configurations enabled for instrumentation; explicit CI opt-outs are not validations")
 	}
 	return selected.Version, nil
@@ -897,7 +1096,7 @@ func invalidatePriorWorkflow(root, framework string, state onboard.AgentResult) 
 	if err != nil || previous == nil || previous.Framework != framework {
 		return
 	}
-	result := validationResult{Session: planSession().ID(), Framework: framework, Error: state.Code + ": " + state.Reason,
+	result := validationResult{Session: planSession().ID(), Framework: framework, Error: state.Code + ": " + state.Reason, StoppedBeforeExecution: true,
 		Compatibility: verdict{Status: "not exercised", Reason: "This workflow attempt stopped before a current full execution."},
 		Workflow:      &WorkflowEvidence{Fingerprint: state.Fingerprint, Node: currentNodeVersion(), Checks: []onboard.WorkflowCheck{{Name: state.Code, Status: "failed", Reason: state.Reason}}}}
 	_ = finishValidation(io.Discard, root, result) // A successfully written INCOMPLETE report also returns an error.
@@ -934,5 +1133,32 @@ func (t *Testdrive) workflowValidationResume(executable, name, selected string, 
 	if t.allowReviewedBuilds {
 		command = append(command, "--allow-reviewed-builds")
 	}
+	if t.acceptSubstituteRuntime {
+		command = append(command, AcceptSubstituteRuntimeFlag)
+	}
 	return command
+}
+
+// scopeCheck records that ready configurations proceeded around unresolved CI.
+// The summary lists the entries once, as scope blockers, not again as a check.
+func scopeCheck(unresolved []string) onboard.WorkflowCheck {
+	return onboard.WorkflowCheck{Name: "ci_scope", Status: onboard.StatusInconclusive, Reason: "Ready configurations proceed; unresolved CI is reported and not validated locally (setup edits a CI step only where it recognizes the test command): " + strings.Join(unresolved, "; ")}
+}
+
+// refreshScopeCheck re-evaluates the pre-setup ci_scope check against the scope
+// discovered after setup: ddtest's own edits, such as a Windows guard, can
+// resolve entries that blocked before them.
+func refreshScopeCheck(checks []onboard.WorkflowCheck, scope *onboard.ValidationScope) []onboard.WorkflowCheck {
+	checks = slices.Clone(checks)
+	for i, check := range checks {
+		if check.Name != "ci_scope" || scope == nil {
+			continue
+		}
+		if len(scope.Unresolved) == 0 {
+			checks[i] = onboard.WorkflowCheck{Name: "ci_scope", Status: "passed", Reason: "No unresolved CI remains after setup; every discovered entry is validated, excluded or reported as a caveat."}
+		} else {
+			checks[i] = scopeCheck(scope.Unresolved)
+		}
+	}
+	return checks
 }

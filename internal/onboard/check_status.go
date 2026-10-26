@@ -15,6 +15,7 @@ const (
 	StatusExcluded                   string = "excluded"
 	CodeMissingInstrumentation       string = "missing_instrumentation"
 	CodeExcludedRuntime              string = "excluded_runtime"
+	CodeUnsupportedNode              string = "unsupported_node"
 	CodeUnverifiedExclusion          string = "unverified_exclusion"
 	CodeUnverifiedInitialization     string = "unverified_initialization"
 	CodeMissingInitialization        string = "missing_initialization"

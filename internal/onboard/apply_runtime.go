@@ -16,39 +16,18 @@ func setupRuntimeCondition(root string, workflow ciWorkflow, job runtimeJob, req
 	if requirement == "" {
 		return "", nil
 	}
-	rows, err := runtimeMatrix(job.Strategy.Matrix)
+	rows, _, err := jobMatrix(job)
 	if err != nil {
 		return "", err
 	}
 	var compatible []bool
+	unsupported := true
 	for _, row := range rows {
-		node := ""
-		for _, step := range job.Steps {
-			if !strings.HasPrefix(strings.ToLower(step.Uses), "actions/setup-node@") && !strings.Contains(step.Run, "nvm") {
-				continue
-			}
-			active, err := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
-			if err != nil {
-				return "", fmt.Errorf("cannot resolve runtime setup condition: %w", err)
-			}
-			if !active {
-				continue
-			}
-			if strings.HasPrefix(strings.ToLower(step.Uses), "actions/setup-node@") {
-				node, err = setupNodeVersion(root, step, row)
-			} else if strings.Contains(step.Run, "nvm") {
-				resolved, e := interpolateMatrix(step.Run, row)
-				if e != nil {
-					return "", e
-				}
-				if value := nvmRuntime(resolved); value != "" {
-					node = value
-				}
-			}
-			if err != nil {
-				return "", err
-			}
+		node, err := rowSetupNode(root, workflow, job, row)
+		if err != nil {
+			return "", err
 		}
+		unsupported = unsupported && UnsupportedNode(node)
 		status, reason := StatusCompatible, ""
 		if requirement != "" {
 			status, reason = CompareNodeRequirement(node, requirement)
@@ -76,7 +55,7 @@ func setupRuntimeCondition(root string, workflow ciWorkflow, job runtimeJob, req
 		return "", nil
 	}
 	if !slices.Contains(compatible, true) {
-		return "", &NodeRuntimeGap{Requirement: requirement, ESM: esm}
+		return "", &NodeRuntimeGap{Requirement: requirement, ESM: esm, Unsupported: unsupported}
 	}
 	// Find one scalar matrix column that identifies the same partition. This
 	// avoids replacing the customer's strategy or adding metadata to every row.
@@ -118,4 +97,66 @@ func setupRuntimeCondition(root string, workflow ciWorkflow, job runtimeJob, req
 		}
 	}
 	return "", fmt.Errorf("runtime partition needs a scalar matrix selector; preserve the matrix and provide explicit initialization")
+}
+
+// rowSetupNode returns the Node version the job's active setup steps select on
+// row, or "" when no step selects one statically.
+func rowSetupNode(root string, workflow ciWorkflow, job runtimeJob, row map[string]any) (string, error) {
+	return rowSetupNodeBefore(root, workflow, job, row, len(job.Steps))
+}
+
+// rowSetupNodeBefore is the Node a row's steps select before step limit: the
+// runtime active when that step runs, since a later setup-node can switch it.
+func rowSetupNodeBefore(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, limit int) (string, error) {
+	node := ""
+	for _, step := range job.Steps[:min(limit, len(job.Steps))] {
+		if !strings.HasPrefix(strings.ToLower(step.Uses), "actions/setup-node@") && !strings.Contains(step.Run, "nvm") {
+			continue
+		}
+		active, err := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
+		if err != nil {
+			return "", fmt.Errorf("cannot resolve runtime setup condition: %w", err)
+		}
+		if !active {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(step.Uses), "actions/setup-node@") {
+			if node, err = setupNodeVersion(root, step, row); err != nil {
+				return "", err
+			}
+			continue
+		}
+		resolved, err := interpolateMatrix(step.Run, row)
+		if err != nil {
+			return "", err
+		}
+		if value := nvmRuntime(resolved); value != "" {
+			node = value
+		}
+	}
+	return node, nil
+}
+
+// SupportedTracerNode is the Node range of the oldest dd-trace major ddtest
+// validates (dd-trace 5 requires Node >=18). A CI row below it runs on no
+// supported release, so ddtest neither instruments nor tries it, without
+// asking: there is no tracer to choose.
+const SupportedTracerNode = ">=18"
+
+// UnsupportedNode reports whether a statically known CI Node version is below
+// every supported dd-trace release. Unknown versions are never unsupported.
+func UnsupportedNode(node string) bool {
+	status, _ := CompareNodeRequirement(node, SupportedTracerNode)
+	return node != "" && status == StatusIncompatible
+}
+
+// UnsupportedNodeReason explains a CI entry ddtest skips on its own.
+func UnsupportedNodeReason(node string) string {
+	return "Node.js " + node + " is not supported by any dd-trace release; this CI entry keeps running uninstrumented and was not tried."
+}
+
+// NotTriedNote names the CI job ddtest skips because no dd-trace release
+// supports its Node versions.
+func NotTriedNote(location string, nodes []string) string {
+	return "Not tried: " + location + " on Node " + strings.Join(nodes, ", ") + " (below Node 18, the oldest dd-trace major ddtest supports; ddtest skips them without instrumenting, no approval needed)"
 }

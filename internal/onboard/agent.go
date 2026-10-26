@@ -36,37 +36,41 @@ type SetupFacts struct {
 }
 
 type AgentResult struct {
-	RunID            string          `json:"run_id,omitempty"`
-	Plan             *ExecutionPlan  `json:"plan,omitempty"`
-	PlanSummary      *PlanSummary    `json:"plan_summary,omitempty"`
-	DetailsCommand   []string        `json:"details_command,omitempty"`
-	InputTemplate    *SetupFacts     `json:"input_template,omitempty"`
-	SchemaVersion    int             `json:"schema_version"`
-	Status           string          `json:"status"`
-	Phase            string          `json:"phase"`
-	Code             string          `json:"code,omitempty"`
-	Reason           string          `json:"reason,omitempty"`
-	Location         string          `json:"location,omitempty"`
-	Needs            string          `json:"needs,omitempty"`
-	Capabilities     []string        `json:"required_capabilities,omitempty"`
-	RequiredInput    []string        `json:"required_input,omitempty"`
-	NextAction       string          `json:"next_action,omitempty"`
-	NextCommand      []string        `json:"next_command,omitempty"`
-	ResumeCommand    []string        `json:"resume_command,omitempty"`
-	Instruction      string          `json:"agent_instruction,omitempty"`
-	Fingerprint      string          `json:"input_fingerprint,omitempty"`
-	Checks           []WorkflowCheck `json:"checks,omitempty"`
-	SetupDiff        string          `json:"setup_diff,omitempty"`
-	UndoInstructions string          `json:"undo_instructions,omitempty"`
-	Changes          []SetupChange   `json:"changes,omitempty"`
-	FinalResponse    string          `json:"final_response,omitempty"`
-	JSONReport       string          `json:"json_report,omitempty"`
-	HTMLReport       string          `json:"html_report,omitempty"`
+	RunID          string         `json:"run_id,omitempty"`
+	Plan           *ExecutionPlan `json:"plan,omitempty"`
+	PlanSummary    *PlanSummary   `json:"plan_summary,omitempty"`
+	DetailsCommand []string       `json:"details_command,omitempty"`
+	InputTemplate  *SetupFacts    `json:"input_template,omitempty"`
+	SchemaVersion  int            `json:"schema_version"`
+	Status         string         `json:"status"`
+	Phase          string         `json:"phase"`
+	Code           string         `json:"code,omitempty"`
+	Reason         string         `json:"reason,omitempty"`
+	Location       string         `json:"location,omitempty"`
+	Needs          string         `json:"needs,omitempty"`
+	Capabilities   []string       `json:"required_capabilities,omitempty"`
+	RequiredInput  []string       `json:"required_input,omitempty"`
+	NextAction     string         `json:"next_action,omitempty"`
+	NextCommand    []string       `json:"next_command,omitempty"`
+	ResumeCommand  []string       `json:"resume_command,omitempty"`
+	// AcceptResumeCommand is resume_command plus a decision only the user may
+	// make, such as accepting a substitute runtime.
+	AcceptResumeCommand []string        `json:"accept_resume_command,omitempty"`
+	Instruction         string          `json:"agent_instruction,omitempty"`
+	Fingerprint         string          `json:"input_fingerprint,omitempty"`
+	Checks              []WorkflowCheck `json:"checks,omitempty"`
+	SetupDiff           string          `json:"setup_diff,omitempty"`
+	UndoInstructions    string          `json:"undo_instructions,omitempty"`
+	Changes             []SetupChange   `json:"changes,omitempty"`
+	FinalResponse       string          `json:"final_response,omitempty"`
+	JSONReport          string          `json:"json_report,omitempty"`
+	HTMLReport          string          `json:"html_report,omitempty"`
 }
 
 // PlanSummary keeps routine handoffs independent of CI matrix size.
 type PlanSummary struct {
 	UnsupportedFeatures map[string]string `json:"unsupported_features,omitempty"`
+	KnownLimitations    map[string]string `json:"known_limitations,omitempty"`
 	Features            []string          `json:"feature_scenarios,omitempty"`
 	Framework           string            `json:"framework"`
 	Tracer              string            `json:"tracer,omitempty"`
@@ -94,7 +98,7 @@ func WriteAgentResult(output io.Writer, result AgentResult) error {
 func RenderAgentResult(output io.Writer, result AgentResult, format string) error {
 	if result.Plan != nil {
 		plan := result.Plan
-		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, UnsupportedFeatures: plan.UnsupportedFeatures}
+		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, UnsupportedFeatures: plan.UnsupportedFeatures, KnownLimitations: plan.KnownLimitations}
 		result.DetailsCommand = DDTestCommand("testdrive", "--report", "--detail", "plan")
 		if format == "json" && len(result.DetailsCommand) > 0 {
 			result.DetailsCommand = append(result.DetailsCommand, "--format", "json")
@@ -105,6 +109,12 @@ func RenderAgentResult(output io.Writer, result AgentResult, format string) erro
 		result.Plan = nil
 	}
 
+	if result.FinalResponse != "" && !strings.Contains(result.Instruction, FinalResponseInstruction) {
+		result.Instruction = strings.TrimSpace(result.Instruction + " " + FinalResponseInstruction)
+	}
+	if !strings.Contains(result.Instruction, ReadWholeInstruction) && !strings.Contains(result.Reason, ReadWholeInstruction) {
+		result.Instruction = strings.TrimSpace(result.Instruction + " " + ReadWholeInstruction)
+	}
 	if format == "verbose" {
 		return writeAgentText(output, result)
 	}
@@ -148,7 +158,7 @@ func writeAgentText(output io.Writer, result AgentResult) error {
 	for _, line := range []struct {
 		label   string
 		command []string
-	}{{"Next", result.NextCommand}, {"Resume", result.ResumeCommand}, {"Details", result.DetailsCommand}} {
+	}{{"Next", result.NextCommand}, {"Resume", result.ResumeCommand}, {"After user approval", result.AcceptResumeCommand}, {"Details", result.DetailsCommand}} {
 		if len(line.command) > 0 {
 			_, _ = fmt.Fprintf(&text, "%s: %s\n", line.label, shellquote.Join(line.command...))
 		}
@@ -175,6 +185,8 @@ type StartOptions struct {
 	Human               bool
 	Timeout             string
 	AllowReviewedBuilds bool
+	// AcceptSubstituteRuntime is forwarded to the onboarding handoff.
+	AcceptSubstituteRuntime bool
 }
 
 func Start(output io.Writer) error { return StartWithOptions(output, StartOptions{}) }
@@ -221,6 +233,9 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	if options.AllowReviewedBuilds {
 		command = append(command, "--allow-reviewed-builds")
 	}
+	if options.AcceptSubstituteRuntime {
+		command = append(command, "--accept-substitute-runtime")
+	}
 	notice := ExecutableFallbackNotice()
 	if options.Human {
 		text := humanOnboardingHandoff(runner.Name(), command)
@@ -233,9 +248,27 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	return WriteAgentResult(output, AgentResult{
 		Status: "ready", Phase: "onboarding", NextAction: "run_command", NextCommand: command,
 		Capabilities: []string{"registry metadata and package download network access", "local process execution and loopback listeners", "private temporary storage"},
-		Reason:       strings.TrimSpace("Run next_command once in the foreground with the listed capabilities, then wait for its exit. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. Finish all manual edits, including README, ignore rules and lint/format fixes, before launching validation. While it runs, only wait: do not edit repository files or run parallel cleanup/checks. Edits invalidate the snapshot and require another full run. ddtest owns tracer selection, recognized CI edits, testdrive, package exclusions and cleanup. It returns exact blockers for unsupported setup. No Datadog key is required locally. Do not write CI or launch a parallel preflight first. " + notice),
+		Reason:       strings.TrimSpace("Run next_command once in the foreground with the listed capabilities, then wait for its exit. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. " + AgentScope + " Finish any edits a result asks for before launching validation. While it runs, only wait: do not edit repository files or run parallel cleanup/checks. Edits invalidate the snapshot and require another full run. ddtest owns tracer selection, recognized CI edits, testdrive, package exclusions and cleanup. It returns exact blockers for unsupported setup. No Datadog key is required locally. Do not write CI or launch a parallel preflight first. " + notice),
 	})
 }
+
+// AgentScope bounds what a coding agent changes during onboarding. Trials
+// showed agents editing builds, manifests and test names to satisfy checks,
+// and stopping a whole run to ask before an install ddtest itself prescribed.
+const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. " + PrescribedEditInstruction + " Any edit ddtest did not prescribe needs the user's approval first. Never rename tests, rewrite CI or package scripts so ddtest can parse them, disable an instrumentation ddtest did not prescribe disabling, or download a runtime; report the blocker instead. CI rows below Node 18, the oldest dd-trace major ddtest supports, are skipped by ddtest itself and reported as not tried; that needs no user approval. Do not inspect the ddtest binary. " + ReadWholeInstruction
+
+// PrescribedEditInstruction lets the agent make the exact non-CI edits ddtest
+// needs for validation (dev dependencies, package scripts, coverage config)
+// without stopping to ask: the final report lists them with a revert.
+const PrescribedEditInstruction = "Make the edits ddtest prescribes for validation, in a result or in onboard --instructions (dev dependencies through the exact install command, package scripts, coverage config and coverage.edit), exactly as given and without asking: do not modify or extend them. The final report lists every change outside CI and ignore files with a revert command."
+
+// ReadWholeInstruction repeats in every result: trials truncated results with
+// head/tail and missed the next step.
+const ReadWholeInstruction = "Each result is one bounded JSON document: read it whole, without head, tail or other truncation."
+
+// FinalResponseInstruction keeps the agent's answer factual: trials showed
+// paraphrases turning an incomplete verdict into a completion claim.
+const FinalResponseInstruction = "Relay final_response verbatim as the first block of your answer, and add context only after it. When it starts with NOT COMPLETE, do not call onboarding complete or successful, and do not record that result as expected or final in notes or memory."
 
 // humanOnboardingHandoff points at the preview, which writes nothing, before
 // the command that applies the edits and runs local validation.

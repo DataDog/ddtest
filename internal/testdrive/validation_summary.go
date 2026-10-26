@@ -3,6 +3,7 @@ package testdrive
 import (
 	"fmt"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,6 +27,31 @@ type validationSummary struct {
 	OnboardingResponse      string          `json:"onboarding_response"`
 	CIExecution             string          `json:"ci_execution"`
 	RealCredentialsRequired bool            `json:"real_credentials_required"`
+	// Steps only the repository owner can take; local validation cannot do them.
+	HumanActions []string `json:"human_actions,omitempty"`
+	// Caveats name CI values this run could not reproduce exactly; they never
+	// block completion.
+	Caveats []string `json:"caveats,omitempty"`
+}
+
+// apiKeyAction is the one step CI needs that no local run can perform. What
+// happens until it exists depends on how the workflow guards the Datadog step.
+const (
+	apiKeyAction        = "Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step fails without failing the job and tests run untraced."
+	apiKeySkippedAction = "Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step is skipped and tests run untraced."
+)
+
+// apiKeyHumanAction picks the wording for a step skipped by an
+// env.DD_API_KEY guard (the Cypress setup) or kept with continue-on-error.
+func apiKeyHumanAction(check *onboard.RuntimeCheck) string {
+	if check != nil {
+		for _, job := range check.Jobs {
+			if job.Reason == onboard.GuardedActionBranch {
+				return apiKeySkippedAction
+			}
+		}
+	}
+	return apiKeyAction
 }
 
 func summarizeValidation(result validationResult) validationSummary {
@@ -36,7 +62,7 @@ func summarizeValidation(result validationResult) validationSummary {
 	if result.CheckOnly {
 		summary.LocalValidation = "NOT EXERCISED"
 	}
-	if result.CheckOnly && result.Retained != nil && result.Retained.Result != nil {
+	if (result.CheckOnly || result.StoppedBeforeExecution) && result.Retained != nil && result.Retained.Result != nil {
 		summary.LocalValidation = strings.ToUpper(executionStatus(result.Retained.Result)) + " EARLIER; NOT RERUN"
 	}
 	if result.Compatibility.Status == "suspected regression" && !result.CheckOnly {
@@ -91,6 +117,11 @@ func summarizeValidation(result validationResult) validationSummary {
 			summary.BlockingChecks = append(summary.BlockingChecks, "no current HTML findings report")
 		}
 	}
+	for _, sub := range result.substitutions() {
+		if !sub.Accepted && !result.CheckOnly {
+			summary.BlockingChecks = append(summary.BlockingChecks, sub.blocker())
+		}
+	}
 	if result.CISelection != nil && result.CISelection.Status != "compatible" {
 		summary.BlockingChecks = append(summary.BlockingChecks, "CI tracer agreement: "+result.CISelection.Status)
 	}
@@ -100,19 +131,19 @@ func summarizeValidation(result validationResult) validationSummary {
 	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
 		summary.BlockingChecks = append(summary.BlockingChecks, "CI preservation: "+result.CIPreservation.Status+" — "+result.CIPreservation.Reason)
 	}
+	caveats, fidelityBlockers := ciFidelity(&result)
+	summary.Caveats = caveats
 	if result.Scope != nil {
-		for _, reason := range result.Scope.Unresolved {
-			summary.BlockingChecks = append(summary.BlockingChecks, "unresolved CI scope: "+reason)
-		}
+		summary.BlockingChecks = append(summary.BlockingChecks, scopeBlockers(append(slices.Clone(result.Scope.Unresolved), fidelityBlockers...))...)
 		for _, configuration := range result.Configurations {
-			if configuration.Status != "passed" && !configurationExcluded(configuration) {
+			if configuration.RemoteGrid == "" && !configurationSettled(result, configuration) && !alreadyExplained(summary.BlockingChecks, configuration.Error) {
 				summary.BlockingChecks = append(summary.BlockingChecks, "configuration "+configuration.Command+": "+configuration.Status)
 			}
 		}
 	}
 	// Success is scoped to an explicitly selected command; the overall summary
 	// continues to expose every unvalidated repository configuration.
-	if result.Scope != nil && (len(result.Scope.Unresolved) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return c.Status != "passed" && !configurationExcluded(c) })) && summary.Status != "FAILED" {
+	if result.Scope != nil && (len(result.Scope.Unresolved)+len(fidelityBlockers) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return !configurationSettled(result, c) })) && summary.Status != "FAILED" {
 		summary.Status = "INCOMPLETE"
 	}
 	summary.ConfigurationCoverage, summary.ExecutedValidation = summarizeConfigurationCoverage(result)
@@ -122,6 +153,10 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	if result.Workflow != nil {
 		for _, check := range result.Workflow.Checks {
+			// The scope blockers already list each unresolved entry.
+			if check.Name == "ci_scope" && result.Scope != nil && len(result.Scope.Unresolved)+len(fidelityBlockers) > 0 {
+				continue
+			}
 			if check.Status != "passed" && check.Status != "not applicable" {
 				summary.BlockingChecks = append(summary.BlockingChecks, "workflow "+check.Name+": "+check.Status+" — "+reportText(check.Reason))
 			}
@@ -136,6 +171,9 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.LocalNode = result.Preflight.Node
 	}
 	summary.CIScope = summarizeCIScope(result.CIRuntime)
+	if summary.CIScope != nil && len(summary.CIScope.Instrumented) > 0 {
+		summary.HumanActions = append(summary.HumanActions, apiKeyHumanAction(result.CIRuntime))
+	}
 	summary.OnboardingResponse = fmt.Sprintf("Onboarding validation: %s. Local validation: %s. CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.", summary.Status, summary.LocalValidation, summary.CIConfiguration)
 	if summary.LocalNode != "" {
 		summary.OnboardingResponse += " Local execution runtime: Node " + summary.LocalNode + "."
@@ -149,11 +187,40 @@ func summarizeValidation(result validationResult) validationSummary {
 	return summary
 }
 
+// A focused command can execute and pass without matching any discovered CI
+// configuration exactly. Say so next to the zero configuration counts.
+func uncreditedExecution(result validationResult) string {
+	command := ""
+	for _, run := range result.Runs {
+		if run.Role == roleBaseline {
+			command = run.Command
+			break
+		}
+	}
+	text := "This run's command executed and was paired"
+	if command != "" {
+		text = fmt.Sprintf("This run's command (%s) executed and was paired", command)
+	}
+	text += ", but matches no discovered CI configuration exactly, so no CI configuration is credited"
+	for _, item := range result.Configurations {
+		if len(item.EnvironmentDifferences) > 0 {
+			text += " (" + strings.TrimSuffix(item.Compatibility.Reason, ".") + ")"
+			break
+		}
+	}
+	return text + ".\n"
+}
+
 // One copyable response, built from the same facts as the compact report. Only
 // link retained files, and never present an earlier HTML report as a new run.
 func validationHandoff(result validationResult) string {
 	var block strings.Builder
 	summary := result.Summary
+	if summary.Status != "COMPLETE LOCALLY" && summary.Status != "PASSED" {
+		// A headline that cannot be paraphrased into success, even when a
+		// selected command or the local comparison passed.
+		fmt.Fprintf(&block, "NOT COMPLETE: onboarding validation is %s. Report the blockers below; do not describe onboarding as complete or successful.\n", summary.Status)
+	}
 	if summary.SelectedValidation != nil {
 		fmt.Fprintf(&block, "Selected %s testdrive: %s.\n", displayName(result.Framework), summary.SelectedValidation.Status)
 	}
@@ -162,9 +229,21 @@ func validationHandoff(result validationResult) string {
 	}
 	fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s.\n", summary.Status, summary.LocalValidation)
 	if coverage := summary.ConfigurationCoverage; coverage != nil && coverage.Discovered > 0 {
-		fmt.Fprintf(&block, "Configurations: %d/%d validated; %d executed, %d paired; %d blocked, %d not exercised, %d incomplete.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete)
-		if coverage.Excluded > 0 {
-			fmt.Fprintf(&block, "CI opt-outs: %d excluded from instrumentation; not executed or validated locally. Original CI tests are preserved.\n", coverage.Excluded)
+		fmt.Fprintf(&block, "Configurations: %d/%d validated; %d executed, %d paired; %d blocked, %d not exercised, %d incomplete%s.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete, remoteOnlyCount(coverage))
+		windows := 0
+		for _, configuration := range result.Configurations {
+			if configurationExcluded(configuration) && configuration.WindowsRunner {
+				windows++
+			}
+		}
+		if optOuts := coverage.Excluded - windows; optOuts > 0 {
+			fmt.Fprintf(&block, "CI opt-outs: %d excluded from instrumentation; not executed or validated locally. Original CI tests are preserved.\n", optOuts)
+		}
+		if windows > 0 {
+			fmt.Fprintf(&block, "Windows runners: %d not instrumented; ddtest doesn't set up or validate Windows runners locally. Add manual initialization to instrument them. Original CI tests are preserved.\n", windows)
+		}
+		if coverage.Executed == 0 && !result.CheckOnly && hasValidationPair(result) {
+			block.WriteString(uncreditedExecution(result))
 		}
 	}
 	current := !result.CheckOnly && (result.LastExecution == nil || result.LastExecution.Current)
@@ -175,7 +254,11 @@ func validationHandoff(result validationResult) string {
 		}
 		fmt.Fprintf(&block, "%s: %d test executions; ", label, counts.TestExecutions)
 		if counts.SourceTestIdentities == nil {
-			block.WriteString("source-test identities unavailable.\n")
+			block.WriteString("source-test identities unavailable")
+			if reason := strings.TrimSuffix(strings.TrimPrefix(counts.Reason, "Source-test identities are unavailable because "), "."); reason != "" && reason != counts.Reason {
+				block.WriteString(" (" + reason + ")")
+			}
+			block.WriteString("; this count does not affect coverage or feature results.\n")
 		} else {
 			fmt.Fprintf(&block, "%d source-test identities.\n", *counts.SourceTestIdentities)
 		}
@@ -199,6 +282,9 @@ func validationHandoff(result validationResult) string {
 		fmt.Fprintf(&block, " %s not supported.", strings.Join(unsupported, ", "))
 	}
 	block.WriteByte('\n')
+	for _, hint := range result.Compatibility.Hints {
+		block.WriteString(hint + "\n")
+	}
 	coverageRuns, coveredRuns, coveredTests, totalTests := 0, 0, 0, 0
 	var levels []string
 	for _, run := range result.Runs {
@@ -227,15 +313,39 @@ func validationHandoff(result validationResult) string {
 		block.WriteString(".\n")
 	}
 	fmt.Fprintf(&block, "CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.\n", summary.CIConfiguration)
+	for _, action := range summary.HumanActions {
+		block.WriteString("Human action: " + action + "\n")
+	}
+	block.WriteString(repositoryChangesHandoff(result.RepositoryChanges))
 	if scope := summary.CIScope; scope != nil {
 		// The scope groups CI jobs by Node version, so these count versions, not jobs.
-		fmt.Fprintf(&block, "CI runtime scope (static): Node versions %d instrumented, %d excluded, %d unverified; versions in Results JSON.\n", len(scope.Instrumented), len(scope.Excluded), len(scope.Unverified))
+		instrumented, excluded, unverified := scope.counts()
+		fmt.Fprintf(&block, "CI runtime scope (static): Node versions %d instrumented, %d excluded, %d unverified (each version counted once; per-job findings in Results JSON).\n", instrumented, excluded, unverified)
+		for _, job := range scope.NotTried {
+			fmt.Fprintf(&block, "Not tried: %s (below Node 18, the oldest dd-trace major ddtest supports; ddtest skipped them on its own, no approval needed).\n", job)
+		}
+	}
+	for _, caveat := range summary.Caveats {
+		block.WriteString("Caveat (not a blocker): " + caveat + "\n")
+	}
+	if result.Workflow != nil && len(result.Workflow.EarlierAttempts) > 0 {
+		fmt.Fprintf(&block, "Earlier attempts for this workflow stopped before this run: %s. This run's results stand on their own; the earlier stops are listed so retries stay visible.\n", strings.Join(result.Workflow.EarlierAttempts, ", "))
+	}
+	for _, disabled := range disabledInstrumentations(result) {
+		block.WriteString("Disabled instrumentation: " + disabled + "\n")
 	}
 	if supportsValidationFramework(result.Framework) && summary.CIConfiguration != "compatible" && summary.CIConfiguration != "not applicable" {
 		block.WriteString("CI edits require a full local rerun; an actual CI run does not update this local report.\n")
 	}
 	if summary.LocalNode != "" {
 		fmt.Fprintf(&block, "Local runtime: Node %s.\n", summary.LocalNode)
+	}
+	if len(result.AmbientDatadogEnvironment) > 0 {
+		var settings []string
+		for _, key := range slices.Sorted(maps.Keys(result.AmbientDatadogEnvironment)) {
+			settings = append(settings, key+"="+result.AmbientDatadogEnvironment[key])
+		}
+		fmt.Fprintf(&block, "Ambient Datadog settings (not from CI) reached local runs: %s. CI runs without them unless the workflow sets them.\n", strings.Join(settings, ", "))
 	}
 	if result.CheckOnly {
 		block.WriteString("Evidence: check-only; paired execution and feature controls were not rerun.\n")
@@ -244,6 +354,8 @@ func validationHandoff(result validationResult) string {
 		if result.CheckOnly {
 			// Check-only keeps the last full run as history; it isn't stale, only not rerun.
 			fmt.Fprintf(&block, "Evidence: check-only kept the earlier full execution (%s) as history without rerunning it; testdrive --report reports that execution.\n", result.LastExecution.Status)
+		} else if result.StoppedBeforeExecution {
+			fmt.Fprintf(&block, "Evidence: this attempt stopped before running tests; the earlier full execution (%s) is kept as history, not rerun. Resolve the blocker, then rerun full validation.\n", result.LastExecution.Status)
 		} else {
 			block.WriteString("Evidence: earlier execution is stale; rerun full validation after configuration checks or edits.\n")
 		}
@@ -288,11 +400,14 @@ func validationHandoff(result validationResult) string {
 			block.WriteString(" — " + briefValidationText(result.Cleanup.Reason))
 		}
 		block.WriteString(".")
+		if len(result.Cleanup.Leftovers) > 0 {
+			fmt.Fprintf(&block, " Left in the checkout: %s; remove them unless they belong there.", strings.Join(result.Cleanup.Leftovers, ", "))
+		}
 	} else {
 		block.WriteString("\nCleanup: not recorded.")
 	}
 	if result.Workflow != nil {
-		fmt.Fprintf(&block, "\nWorkflow checks: %d recorded; Git/package exclusions and owned cleanup: %s. Preserve both reports. No further cache or package audit is required for unchanged inputs.", len(result.Workflow.Checks), map[bool]string{true: "passed", false: "incomplete"}[workflowChecksPassed(result.Workflow)])
+		fmt.Fprintf(&block, "\nWorkflow checks: %d recorded; Git/package exclusions and owned cleanup: %s. Preserve both reports. No further cache or package audit is required for unchanged inputs.", len(result.Workflow.Checks), map[bool]string{true: "passed", false: "incomplete"}[exclusionAndCleanupChecksPassed(result.Workflow)])
 	} else {
 		block.WriteString(" Verify your own scratch and Git/package report exclusions; preserve customer files and both reports.")
 	}
@@ -434,6 +549,9 @@ type ciRuntimeScope struct {
 	Instrumented []string `json:"instrumented,omitempty"`
 	Excluded     []string `json:"excluded,omitempty"`
 	Unverified   []string `json:"unverified,omitempty"`
+	// NotTried names CI jobs on a Node no dd-trace release supports. ddtest
+	// skips them on its own; they count as excluded and never block.
+	NotTried []string `json:"not_tried,omitempty"`
 }
 
 func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
@@ -441,13 +559,44 @@ func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
 		return nil
 	}
 	scope := &ciRuntimeScope{}
+	// A step whose guarded Datadog action is skipped on some branch (for
+	// example, forks without a key) is still instrumented on that runtime; the
+	// skipped branch is not a separately excluded configuration.
+	type stepRuntime struct {
+		workflow, job, node string
+		step                int
+	}
+	instrumented := map[stepRuntime]bool{}
+	for _, job := range check.Jobs {
+		if job.Status == "compatible" {
+			instrumented[stepRuntime{job.Workflow, job.Job, job.Node, job.Step}] = true
+		}
+	}
+	type location struct{ workflow, job string }
+	var skipped []location
+	nodes := map[location][]string{}
+	for _, job := range check.Jobs {
+		if job.Code != onboard.CodeUnsupportedNode {
+			continue
+		}
+		key := location{job.Workflow, job.Job}
+		if nodes[key] == nil {
+			skipped = append(skipped, key)
+		}
+		nodes[key] = appendUnique(nodes[key], nodeScopeLabel(job.Node))
+	}
+	for _, key := range skipped {
+		scope.NotTried = append(scope.NotTried, key.workflow+" / "+key.job+" on Node "+strings.Join(nodes[key], ", "))
+	}
 	for _, job := range check.Jobs {
 		label := nodeScopeLabel(job.Node)
 		switch job.Status {
 		case "compatible":
 			scope.Instrumented = appendUnique(scope.Instrumented, label)
 		case "excluded":
-			scope.Excluded = appendUnique(scope.Excluded, label)
+			if job.Reason != onboard.GuardedActionBranch || !instrumented[stepRuntime{job.Workflow, job.Job, job.Node, job.Step}] {
+				scope.Excluded = appendUnique(scope.Excluded, label)
+			}
 		default:
 			scope.Unverified = appendUnique(scope.Unverified, label)
 		}
@@ -455,9 +604,91 @@ func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
 	return scope
 }
 
+// counts returns each Node version once: instrumented on any job wins over
+// excluded, and excluded over unverified. The lists keep every finding; only
+// the summary line must not add a version to two totals.
+func (scope *ciRuntimeScope) counts() (instrumented, excluded, unverified int) {
+	seen := map[string]bool{}
+	count := func(labels []string) int {
+		n := 0
+		for _, label := range labels {
+			if !seen[label] {
+				seen[label] = true
+				n++
+			}
+		}
+		return n
+	}
+	instrumented = count(scope.Instrumented)
+	excluded = count(scope.Excluded)
+	unverified = count(scope.Unverified)
+	return instrumented, excluded, unverified
+}
+
 func configurationLabel(command string) string {
 	if command == "" {
 		return ""
 	}
 	return command + " / "
+}
+
+// scopeBlockers reports unresolved CI scope once per cause: steps that share
+// a cause (for example one unsupported shell) are listed on one line.
+func scopeBlockers(unresolved []string) []string {
+	var causes []string
+	locations := map[string][]string{}
+	for _, reason := range unresolved {
+		location, cause, found := strings.Cut(reason, "): ")
+		if !found {
+			location, cause = "", reason
+		} else {
+			location += ")"
+		}
+		if _, seen := locations[cause]; !seen {
+			causes = append(causes, cause)
+		}
+		locations[cause] = append(locations[cause], location)
+	}
+	var blockers []string
+	for _, cause := range causes {
+		switch places := locations[cause]; {
+		case len(places) == 1 && places[0] == "":
+			blockers = append(blockers, "unresolved CI scope: "+cause)
+		case len(places) == 1:
+			blockers = append(blockers, "unresolved CI scope: "+places[0]+": "+cause)
+		default:
+			blockers = append(blockers, fmt.Sprintf("unresolved CI scope (%d steps: %s): %s", len(places), strings.Join(places, "; "), cause))
+		}
+	}
+	return blockers
+}
+
+// alreadyExplained reports whether a configuration's error is already listed,
+// so its derived "configuration ...: blocked" line would only repeat it.
+func alreadyExplained(blockers []string, err string) bool {
+	err = strings.TrimSpace(err)
+	return err != "" && slices.ContainsFunc(blockers, func(blocker string) bool { return strings.Contains(blocker, err) })
+}
+
+// disabledInstrumentations names the CI step settings that turn tracer
+// integrations off, with the configuration they apply to: the coverage CI
+// loses must be visible in the handoff, not only in the JSON environment.
+func disabledInstrumentations(result validationResult) []string {
+	var disabled []string
+	for _, configuration := range result.Configurations {
+		for _, key := range slices.Sorted(maps.Keys(configuration.Environment)) {
+			value := configuration.Environment[key]
+			if !onboard.TracerPluginSetting(key) || value == "" {
+				continue
+			}
+			if strings.HasSuffix(key, "_ENABLED") && value != "false" && value != "0" {
+				continue
+			}
+			line := fmt.Sprintf("%s=%s on the CI test step of %s (spans from it are not reported in CI)", key, value, configuration.Command)
+			if !slices.Contains(disabled, line) {
+				disabled = append(disabled, line)
+			}
+		}
+	}
+	return disabled
 }

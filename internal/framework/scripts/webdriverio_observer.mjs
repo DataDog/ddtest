@@ -33,6 +33,22 @@ export function setCapabilitySelectors(cap, specs, exclude, major) {
   }
 }
 
+// jasmine-core as the WDIO Jasmine adapter loads it; the tracer's Jasmine
+// controls depend on its major. Unknown layouts report nothing.
+export function jasmineCoreVersion(resolve, cli) {
+  try {
+    const adapter = fileURLToPath(resolve('@wdio/jasmine-framework', pathToFileURL(cli).href));
+    let directory = path.dirname(createRequire(adapter).resolve('jasmine-core'));
+    for (; directory !== path.dirname(directory); directory = path.dirname(directory)) {
+      const manifest = path.join(directory, 'package.json');
+      if (!fs.existsSync(manifest)) continue;
+      const { name, version } = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+      if (name === 'jasmine-core') return version;
+    }
+  } catch {}
+  return undefined;
+}
+
 // Entry-point resolution selects the same dependency graph as the actual CLI,
 // including nested/pnpm installations. Ordinary npm/application processes do nothing.
 export async function installObserver(cli) {
@@ -79,6 +95,7 @@ export async function installObserver(cli) {
       node: process.version,
       version,
       runner, framework: config.framework,
+      jasmine_core: config.framework === 'jasmine' ? jasmineCoreVersion(resolve, cli) : undefined,
       files: multiremote ? [...new Set(this.getSpecs().flat(Infinity).map(localFile))] : [...new Set(selections().flatMap(selection => selection.files))],
       grouped_specs: grouped(),
       multiremote,

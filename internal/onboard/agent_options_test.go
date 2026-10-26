@@ -70,3 +70,29 @@ func TestPlainRenderingIsTextOnly(t *testing.T) {
 	require.NoError(t, RenderAgentResult(&out, result, "agent"))
 	require.True(t, json.Valid(out.Bytes()), "agent and json formats stay one structured document")
 }
+
+func TestFinalResponseCarriesVerbatimRelayInstruction(t *testing.T) {
+	result := AgentResult{Status: "validation_failed", Phase: "complete", FinalResponse: "NOT COMPLETE: onboarding validation is INCOMPLETE.", Instruction: "Run next_command."}
+	var out bytes.Buffer
+	require.NoError(t, RenderAgentResult(&out, result, "agent"))
+	var state AgentResult
+	require.NoError(t, json.Unmarshal(out.Bytes(), &state))
+	require.Equal(t, "Run next_command. "+FinalResponseInstruction+" "+ReadWholeInstruction, state.Instruction)
+	out.Reset()
+	require.NoError(t, RenderAgentResult(&out, AgentResult{Status: "ready", Phase: "onboarding"}, "agent"))
+	state = AgentResult{}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &state))
+	require.NotContains(t, state.Instruction, FinalResponseInstruction, "the relay rule applies only to a final response")
+	require.Equal(t, ReadWholeInstruction, state.Instruction, "every result is read whole")
+}
+
+func TestReadyHandoffBoundsTheAgentsChanges(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("package.json", []byte(`{"scripts":{"test":"vitest run"},"devDependencies":{"vitest":"4.1.11"}}`), 0600))
+	var out bytes.Buffer
+	require.NoError(t, StartWithOptions(&out, StartOptions{Format: "json"}))
+	var state AgentResult
+	require.NoError(t, json.Unmarshal(out.Bytes(), &state))
+	require.Contains(t, state.Reason, AgentScope)
+	require.NotContains(t, state.Reason, "README", "documentation edits are outside onboarding scope")
+}

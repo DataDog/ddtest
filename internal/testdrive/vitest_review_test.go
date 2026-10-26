@@ -185,9 +185,12 @@ func TestVitestCIMatrixUsesCompatibleTracerFloors(t *testing.T) {
 	}
 	require.NoError(t, yaml.Unmarshal(data, &ci))
 	rows := ci.Jobs["testdrive-vitest-workflow"].Strategy.Matrix.Include
-	require.Len(t, rows, 3)
+	require.Len(t, rows, 4)
 	seen := map[int]bool{}
 	for _, row := range rows {
+		if row.Vitest == "latest" {
+			continue // Unpinned; it catches releases newer than the pinned floors.
+		}
 		major, _, known := releaseParts(row.Vitest)
 		require.True(t, known)
 		seen[major] = true

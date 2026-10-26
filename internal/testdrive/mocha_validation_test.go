@@ -70,7 +70,7 @@ func TestMochaObserverUsesNativeEventsAndKeepsConfiguration(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, "node_modules/mocha/package.json"), `{"name":"mocha","version":"11.8.0"}`)
 	requireWriteFile(t, filepath.Join(root, "node_modules/mocha/lib/runner.js"), `const {EventEmitter}=require('node:events'); module.exports=class Runner extends EventEmitter { run(fn){fn(this);return this} }`)
 	requireWriteFile(t, filepath.Join(dir, "options.js"), `exports.loadOptions=()=>({_:['original.js'],spec:['another.js'],ui:'bdd',require:['setup.js'],reporter:'custom',timeout:1234,retries:3,parallel:true,grep:'original',invert:true})`)
-	requireWriteFile(t, filepath.Join(root, "node_modules/mocha/lib/mocha.js"), `module.exports=class Mocha { constructor(){this.options={ui:"bdd",timeout:1234,reporter:"custom"};this.files=["original.js"];this.suite={retries:n=>this.retryCount=n}} loadFiles(){return this.files} run(fn){fn(this);return this} }`)
+	requireWriteFile(t, filepath.Join(root, "node_modules/mocha/lib/mocha.js"), `module.exports=class Mocha { constructor(){this.options={ui:"bdd",timeout:1234,reporter:"custom"};this.files=["original.js"];this.suite={retries:n=>this.retryCount=n}} loadFiles(){return this.files} run(fn){fn(this);return this} }; module.exports.Runner=require('./runner')`)
 	observer := filepath.Join(root, "observer.cjs")
 	requireWriteFile(t, observer, mochaObserver)
 	requireWriteFile(t, filepath.Join(root, "run.cjs"), `
@@ -101,6 +101,33 @@ runner.run(r=>{r.emit('pass',{...test,fullTitle:()=> 'reused runner'});r.emit('e
 	require.Equal(t, "pending", run.Tests[2].Status)
 	require.Equal(t, "reused runner", run.Tests[3].Name)
 	require.Equal(t, []string{"before hook: setup"}, run.SuiteErrors)
+}
+
+// Mocha 12.0.3 ships lib/runner.js as an ES module, so requiring it returns a
+// namespace without a prototype; the observer must use Mocha.Runner instead.
+func TestMochaObserverFindsAnESMRunner(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	root := t.TempDir()
+	lib := filepath.Join(root, "node_modules/mocha/lib")
+	require.NoError(t, os.MkdirAll(filepath.Join(lib, "cli"), 0700))
+	requireWriteFile(t, filepath.Join(root, "node_modules/mocha/package.json"), `{"name":"mocha","version":"12.0.3","type":"module"}`)
+	requireWriteFile(t, filepath.Join(lib, "runner.js"), `import {EventEmitter} from 'node:events'; export class Runner extends EventEmitter { run(fn){fn(this);return this} }`)
+	requireWriteFile(t, filepath.Join(lib, "mocha.cjs"), `class Mocha { run(fn){fn(this);return this} }; Mocha.Runner=require('./runner.js').Runner; module.exports=Mocha`)
+	observer := filepath.Join(root, "observer.cjs")
+	requireWriteFile(t, observer, mochaObserver)
+	requireWriteFile(t, filepath.Join(root, "run.cjs"), `const Runner=require('mocha/lib/mocha.cjs').Runner;
+const runner=new Runner();runner.run(r=>{r.emit('pass',{type:'test',file:'test.js',fullTitle:()=> 'esm runner'});r.emit('end')});`)
+	command := exec.CommandContext(t.Context(), node, "--require", observer, "run.cjs")
+	command.Dir = root
+	command.Env = append(os.Environ(), "NODE_OPTIONS=", "DDTEST_MOCHA_RESULTS="+root)
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	var run validationRun
+	readMochaResults(root, &run)
+	require.Empty(t, run.ResultError)
+	require.Len(t, run.Tests, 1)
+	require.Equal(t, "esm runner", run.Tests[0].Name)
 }
 
 type mochaScratchExecutor struct {

@@ -11,18 +11,21 @@ import (
 // unresolved plan is useful evidence, never permission to omit a configuration.
 type ExecutionPlan struct {
 	UnsupportedFeatures map[string]string `json:"unsupported_features,omitempty"`
-	SchemaVersion       int               `json:"schema_version"`
-	Fingerprint         string            `json:"input_fingerprint"`
-	Framework           string            `json:"framework"`
-	Runtime             string            `json:"local_runtime"`
-	PackageManager      string            `json:"package_manager,omitempty"`
-	Tracer              string            `json:"tracer,omitempty"`
-	Site                string            `json:"site"`
-	TracerNode          string            `json:"tracer_node,omitempty"`
-	Initialization      string            `json:"initialization"`
-	Features            []string          `json:"feature_scenarios"`
-	CIRuntime           *RuntimeCheck     `json:"ci_runtime,omitempty"`
-	Scope               ValidationScope   `json:"scope"`
+	// Features the tracer is known not to apply for this installation; they
+	// are still checked and never count as passed.
+	KnownLimitations map[string]string `json:"known_limitations,omitempty"`
+	SchemaVersion    int               `json:"schema_version"`
+	Fingerprint      string            `json:"input_fingerprint"`
+	Framework        string            `json:"framework"`
+	Runtime          string            `json:"local_runtime"`
+	PackageManager   string            `json:"package_manager,omitempty"`
+	Tracer           string            `json:"tracer,omitempty"`
+	Site             string            `json:"site"`
+	TracerNode       string            `json:"tracer_node,omitempty"`
+	Initialization   string            `json:"initialization"`
+	Features         []string          `json:"feature_scenarios"`
+	CIRuntime        *RuntimeCheck     `json:"ci_runtime,omitempty"`
+	Scope            ValidationScope   `json:"scope"`
 }
 
 // AssignConfigurationIDs excludes line locations and agent-supplied setup:

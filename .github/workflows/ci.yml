@@ -436,6 +436,9 @@ jobs:
           - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
           - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)|TestPublicCoordinatorJestFactsAndFreshReport'}
           - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: configurations, shard: '1/1', tests: 'TestPublicJest(Configurations|TwoPackageConfiguration|LoaderConfiguration)'}
+          # Unpinned: catches framework releases our pinned versions predate.
+          - {node: '24', jest: 'latest', tracer: '6.15.0', typescript: '', group: testdrive, shard: '1/2', tests: 'TestPublicJestTestdrive'}
+          - {node: '24', jest: 'latest', tracer: '6.15.0', typescript: '', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: testdrive, shard: '1/2', tests: 'TestPublicJestTestdrive'}
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)|TestPublicCoordinatorJestFactsAndFreshReport'}
@@ -449,7 +452,9 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Install real Jest and tracer
-        run: npm install --prefix "${RUNNER_TEMP}/jest-testdrive" jest@${{ matrix.jest }} dd-trace@${{ matrix.tracer }} ${{ matrix.typescript }} typescript@5
+        run: |
+          npm install --prefix "${RUNNER_TEMP}/jest-testdrive" jest@${{ matrix.jest }} dd-trace@${{ matrix.tracer }} ${{ matrix.typescript }} typescript@5
+          npm ls --prefix "${RUNNER_TEMP}/jest-testdrive" --depth=0
       - name: Validate paired outcomes, all feature probes and cleanup
         env:
           DDTEST_JEST_NODE_MODULES: ${{ runner.temp }}/jest-testdrive/node_modules
@@ -514,6 +519,8 @@ jobs:
             tracer: '6.21.0'
           - vitest: '5.0.5'
             tracer: '6.21.0'
+          - vitest: 'latest'
+            tracer: '6.21.0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -522,10 +529,14 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
+      - name: Resolve Vitest version
+        run: |
+          version=$(npm view "vitest@${{ matrix.vitest }}" version)
+          echo "Vitest $version"
+          echo "DDTEST_VITEST_VERSION=$version" >> "$GITHUB_ENV"
       - name: Validate Vitest CLI and Node API paths against local intake
         env:
           DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
-          DDTEST_VITEST_VERSION: ${{ matrix.vitest }}
           DDTEST_VITEST_TRACER_VERSION: ${{ matrix.tracer }}
         run: go test -v ./internal/testdrive -run '^TestPublicVitestRunnerTestdrive$' -count=1 -timeout=15m
 
@@ -561,6 +572,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        mocha: ['11.7.6', 'latest']
         shard: ['1/2', '2/2']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -571,7 +583,9 @@ jobs:
         with:
           node-version: '24'
       - name: Install Mocha testdrive fixture dependencies
-        run: npm install --prefix "$RUNNER_TEMP/mocha-testdrive" mocha@11.7.6 nyc@17.1.0 c8@12.0.0 dd-trace@6.21.0 --no-audit --no-fund
+        run: |
+          npm install --prefix "$RUNNER_TEMP/mocha-testdrive" "mocha@${{ matrix.mocha }}" nyc@17.1.0 c8@12.0.0 dd-trace@6.21.0 --no-audit --no-fund
+          npm ls --prefix "$RUNNER_TEMP/mocha-testdrive" --depth=0
       - name: Validate CLI, programmatic runner, existing failures and coverage gate
         env:
           DDTEST_MOCHA_NODE_MODULES: ${{ runner.temp }}/mocha-testdrive/node_modules
@@ -584,6 +598,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        playwright: ['1.55.1', 'latest']
         shard: ['1/2', '2/2']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -598,14 +613,16 @@ jobs:
           echo "npm_config_cache=$RUNNER_TEMP/playwright-testdrive/cache" >> "$GITHUB_ENV"
           echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/playwright-testdrive/browsers" >> "$GITHUB_ENV"
       - name: Install Playwright testdrive fixture dependencies
-        run: npm install --prefix "$RUNNER_TEMP/playwright-testdrive" @playwright/test@1.55.1 dd-trace@6.20.1 --no-audit --no-fund
+        run: |
+          npm install --prefix "$RUNNER_TEMP/playwright-testdrive" "@playwright/test@${{ matrix.playwright }}" dd-trace@6.20.1 --no-audit --no-fund
+          npm ls --prefix "$RUNNER_TEMP/playwright-testdrive" --depth=0
       - name: Install Chromium
         run: "$RUNNER_TEMP/playwright-testdrive/node_modules/.bin/playwright install --with-deps chromium"
       - name: Validate browser execution, existing failures and supervised cleanup
         env:
           DDTEST_PLAYWRIGHT_NODE_MODULES: ${{ runner.temp }}/playwright-testdrive/node_modules
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
-        run: go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects)$' -count=1 -timeout=12m
+        run: go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects|TestPlaywrightDiscoveryKeepsConfiguredReportsOutOfTheCheckout)$' -count=1 -timeout=12m
 
   testdrive-cypress-workflow:
     runs-on: ubuntu-latest
@@ -613,7 +630,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Scenarios are split by integration_shard_test.go; each runs exactly once.
+        # Scenarios are split by integration_shard_test.go; each runs exactly
+        # once per Cypress version.
+        cypress: ['15.1.0', 'latest']
         shard: ['1/5', '2/5', '3/5', '4/5', '5/5']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -626,7 +645,9 @@ jobs:
       - name: Install Cypress testdrive fixture dependencies
         env:
           CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
-        run: npm install --prefix "$RUNNER_TEMP/cypress-testdrive" cypress@15.1.0 dd-trace@6.20.1 typescript@5.9.3 --save-exact --no-audit --no-fund
+        run: |
+          npm install --prefix "$RUNNER_TEMP/cypress-testdrive" "cypress@${{ matrix.cypress }}" dd-trace@6.20.1 typescript@5.9.3 --save-exact --no-audit --no-fund
+          npm ls --prefix "$RUNNER_TEMP/cypress-testdrive" --depth=0
       - name: Validate original CLI, action API and matching failures with TIA deferred
         env:
           DDTEST_CYPRESS_NODE_MODULES: ${{ runner.temp }}/cypress-testdrive/node_modules
@@ -651,6 +672,10 @@ jobs:
           - {cucumber: '13.3.0', shard: '2/4'}
           - {cucumber: '13.3.0', shard: '3/4'}
           - {cucumber: '13.3.0', shard: '4/4'}
+          - {cucumber: 'latest', shard: '1/4'}
+          - {cucumber: 'latest', shard: '2/4'}
+          - {cucumber: 'latest', shard: '3/4'}
+          - {cucumber: 'latest', shard: '4/4'}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -660,7 +685,9 @@ jobs:
         with:
           node-version: '24'
       - name: Install Cucumber testdrive fixture dependencies
-        run: npm install --prefix "$RUNNER_TEMP/cucumber-testdrive" "@cucumber/cucumber@${{ matrix.cucumber }}" nyc@17.1.0 c8@12.0.0 dd-trace@6.20.1 @istanbuljs/esm-loader-hook@0.3.0 --save-exact --no-audit --no-fund
+        run: |
+          npm install --prefix "$RUNNER_TEMP/cucumber-testdrive" "@cucumber/cucumber@${{ matrix.cucumber }}" nyc@17.1.0 c8@12.0.0 dd-trace@6.20.1 @istanbuljs/esm-loader-hook@0.3.0 tsx@4.23.15 --save-exact --no-audit --no-fund
+          npm ls --prefix "$RUNNER_TEMP/cucumber-testdrive" --depth=0
       - name: Validate native scenarios, matching failures and source coverage
         env:
           DDTEST_CUCUMBER_NODE_MODULES: ${{ runner.temp }}/cucumber-testdrive/node_modules
@@ -677,12 +704,18 @@ jobs:
       fail-fast: false
       matrix:
         # npm runs every scenario across shards; pnpm checks its layout on one.
+        # The latest lane also takes the latest tracer: support for a new
+        # WebdriverIO major lands there first.
         include:
-          - {package-manager: npm, shard: '1/4'}
-          - {package-manager: npm, shard: '2/4'}
-          - {package-manager: npm, shard: '3/4'}
-          - {package-manager: npm, shard: '4/4'}
-          - {package-manager: pnpm, shard: '1/1'}
+          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '1/4'}
+          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '2/4'}
+          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '3/4'}
+          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '4/4'}
+          - {package-manager: pnpm, wdio: '9.20.0', tracer: '6.20.1', shard: '1/1'}
+          - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '1/4'}
+          - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '2/4'}
+          - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '3/4'}
+          - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '4/4'}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -696,10 +729,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/wdio-testdrive"
           printf '{"private":true}\n' > "$RUNNER_TEMP/wdio-testdrive/package.json"
           if [ '${{ matrix.package-manager }}' = 'pnpm' ]; then
-            npm exec --yes --package=pnpm@10.20.0 -- pnpm --dir "$RUNNER_TEMP/wdio-testdrive" add --save-dev --save-exact @wdio/cli@9.20.0 @wdio/local-runner@9.20.0 @wdio/mocha-framework@9.20.0 @wdio/jasmine-framework@9.20.0 @wdio/spec-reporter@9.20.0 dd-trace@6.20.1
+            npm exec --yes --package=pnpm@10.20.0 -- pnpm --dir "$RUNNER_TEMP/wdio-testdrive" add --save-dev --save-exact @wdio/cli@${{ matrix.wdio }} @wdio/local-runner@${{ matrix.wdio }} @wdio/mocha-framework@${{ matrix.wdio }} @wdio/jasmine-framework@${{ matrix.wdio }} @wdio/spec-reporter@${{ matrix.wdio }} dd-trace@${{ matrix.tracer }}
           else
-            npm install --prefix "$RUNNER_TEMP/wdio-testdrive" @wdio/cli@9.20.0 @wdio/local-runner@9.20.0 @wdio/mocha-framework@9.20.0 @wdio/jasmine-framework@9.20.0 @wdio/spec-reporter@9.20.0 dd-trace@6.20.1 --save-exact --no-audit --no-fund
+            npm install --prefix "$RUNNER_TEMP/wdio-testdrive" @wdio/cli@${{ matrix.wdio }} @wdio/local-runner@${{ matrix.wdio }} @wdio/mocha-framework@${{ matrix.wdio }} @wdio/jasmine-framework@${{ matrix.wdio }} @wdio/spec-reporter@${{ matrix.wdio }} dd-trace@${{ matrix.tracer }} --save-exact --no-audit --no-fund
           fi
+          npm ls --prefix "$RUNNER_TEMP/wdio-testdrive" --depth=0
       - name: Validate real browser outcomes with Linux Xvfb supervision
         env:
           DDTEST_WEBDRIVERIO_NODE_MODULES: ${{ runner.temp }}/wdio-testdrive/node_modules

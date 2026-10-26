@@ -320,9 +320,19 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 		if err != nil {
 			return err
 		}
-		result.Features = append(result.Features, evaluateFeature(feature, value, identity))
+		result.Features = append(result.Features, withTracerLimitation(result, evaluateFeature(feature, value, identity)))
 	}
 	return nil
+}
+
+// withTracerLimitation reports a failed feature the tracer is known not to apply
+// as that limitation. The probe still runs, so a fixed tracer release passes.
+func withTracerLimitation(result *validationResult, feature featureResult) featureResult {
+	limitation := tracerFeatureLimitation(result, feature.Name)
+	if limitation == "" || feature.Status != "failed" {
+		return feature
+	}
+	return featureResult{Name: feature.Name, Status: "known limitation", Code: tracerLimitation, ObservedCode: feature.Code, Reason: limitation + " Observed: " + feature.Reason}
 }
 
 func validProbeControl(run validationRun, status string) bool {
@@ -363,12 +373,6 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	if feature == "skipping" && run.framework == "vitest" && run.Facts.SkippableRequests == 0 {
 		result.Status = "inconclusive"
 		result.Reason = "The Vitest tracer did not request skippable suites. Check this tracer release's Vitest Test Impact Analysis support; a successful reporting run does not prove skipping is supported. Real Datadog credentials are not required."
-		return result
-	}
-	if run.ExitCode != 0 {
-		if d := run.Skipping; d != nil && d.PathMismatch && d.SkippableRequests > 0 {
-			result.Reason = "The mock returned the control's test.source.file, but that path differs from both repository-relative and project-relative probe paths. The probe executed instead of skipping; inspect the recorded skipping path mismatch. Preserve the original framework configuration. Real Datadog credentials are not required."
-		}
 		return result
 	}
 	passed, failed, retries := 0, 0, 0
@@ -448,6 +452,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	if frameworkFeaturePolicies[run.framework].ProbeBodyCounts {
 		success = success && run.ProbeExecutions != nil && *run.ProbeExecutions == passed+failed
 	}
+	success = success && run.ExitCode == 0
 	if !success {
 		result.Reason = fmt.Sprintf("Controlled %s did not show the expected behavior: matching telemetry has %d passed, %d failed and %d retries with the expected reason (%d total test events); runner has %d passed, %d failed and %d skipped; exit %d.",
 			feature, passed, failed, retries, run.Facts.TestEventCount, nativePass, nativeFail, nativeSkip, run.ExitCode)
@@ -456,6 +461,18 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 			if failed != 1 {
 				result.Reason = fmt.Sprintf("Retry telemetry count mismatch: expected 1 failed event, received %d. ", failed) + result.Reason
 			}
+		}
+		if d := run.Skipping; run.ExitCode != 0 && d != nil && d.PathMismatch && d.SkippableRequests > 0 {
+			result.Reason = "The mock returned the control's test.source.file, but that path differs from both repository-relative and project-relative probe paths. The probe executed instead of skipping; inspect the recorded skipping path mismatch. Preserve the original framework configuration. Real Datadog credentials are not required."
+		}
+		// The tracer reported the probe exactly once, as the runner ran it, with
+		// none of the requested control: no retry, management tag or skip. An
+		// attempt-to-fix tag alone is not its control; the control is the retries.
+		applied := retries > 0 || quarantined || disabled || skipped || attemptToFix && feature != "attempt-to-fix"
+		if feature != "skipping" && !applied && passed+failed == 1 && nativePass+nativeFail+nativeSkip == 1 {
+			result.Code = tracerControlNotApplied
+			result.Reason = fmt.Sprintf("The tracer did not apply the %s control: telemetry reported the probe once (%d passed, %d failed) with no retry or test management evidence, and the runner ran it once (%d passed, %d failed, %d skipped; exit %d). The local intake served the control, so no customer change is expected to fix this; report it.",
+				feature, passed, failed, nativePass, nativeFail, nativeSkip, run.ExitCode)
 		}
 	}
 	if success {
@@ -480,6 +497,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 
 func probeControlDiagnostic(runs ...validationRun) string {
 	for _, run := range runs {
+		if run.missingSourceLoader != "" {
+			return reportText(run.missingSourceLoader)
+		}
 		if len(run.SuiteErrors) > 0 {
 			return reportText(run.SuiteErrors[0])
 		}

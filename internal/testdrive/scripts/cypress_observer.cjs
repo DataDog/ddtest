@@ -79,7 +79,12 @@ function createObservedConfig (project, requested, directory, probe, component) 
       if (options.probe && options.probeMode !== 'fail-once') resolved.retries = 0
       let probeExecutions = 0
       if (options.probe) {
-        resolved.env = { ...resolved.env, __ddtest_probe_mode: options.probeMode }
+        // Cypress 16 removed Cypress.env() in specs; its replacement reads expose.
+        if (parseInt(effective.version, 10) >= 16) {
+          resolved.expose = { ...resolved.expose, __ddtest_probe_mode: options.probeMode }
+        } else {
+          resolved.env = { ...resolved.env, __ddtest_probe_mode: options.probeMode }
+        }
         on('task', { 'ddtest:validation:attempt': () => { probeExecutions++; return null } })
       }
       on('after:run', async results => {

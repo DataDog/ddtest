@@ -15,3 +15,6 @@ FROM agents AS browsers
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb xauth chromium chromium-driver && rm -rf /var/lib/apt/lists/*
 RUN mv /usr/bin/chromium /usr/bin/chromium.original && printf '#!/bin/sh\nexec /usr/bin/chromium.original --no-sandbox --disable-dev-shm-usage "$@"\n' > /usr/bin/chromium && chmod +x /usr/bin/chromium
 RUN printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage "$@"\n' > /usr/local/bin/google-chrome && chmod +x /usr/local/bin/google-chrome
+# WebdriverIO otherwise downloads Chrome for Testing's driver, which has no
+# linux/arm64 build; the distribution driver matches this Chromium and arch.
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver

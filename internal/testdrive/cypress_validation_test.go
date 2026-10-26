@@ -522,3 +522,41 @@ func TestCypressBackgroundPortCheckUsesDeclaredBaseURL(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, connection.Close())
 }
+
+func TestMissingCypressCoverageAsksForApprovalInsteadOfImprovisedBuildEdits(t *testing.T) {
+	require.Contains(t, cypressMissingCoverageReason, "babel-plugin-istanbul (Babel) or vite-plugin-istanbul (Vite)")
+	require.Contains(t, cypressMissingCoverageReason, "apply it only with their approval")
+	plan := workflowInitialization("cypress")
+	require.Contains(t, plan, "any existing Istanbul instrumentation")
+	require.Contains(t, plan, "do not add it yourself")
+}
+
+func TestCypressProbeModeUsesExposeFromCypress16(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	for version, field := range map[string]string{"16.2.0": "expose", "15.21.1": "env"} {
+		root := t.TempDir()
+		directory := t.TempDir()
+		t.Chdir(root)
+		requireWriteFile(t, filepath.Join(root, "cypress.config.cjs"), "module.exports={e2e:{}}")
+		observer := filepath.Join(root, "observer.cjs")
+		requireWriteFile(t, observer, cypressObserver)
+		cli := filepath.Join(root, "node_modules/cypress/bin/cypress")
+		require.NoError(t, os.MkdirAll(filepath.Dir(cli), 0700))
+		requireWriteFile(t, cli, "const assert=require('node:assert/strict');(async()=>{const args=process.argv.slice(3);const config=require(args[args.indexOf('--config-file')+1]);const effective=await config.e2e.setupNodeEvents(()=>{},{version:process.env.FAKE_CYPRESS_VERSION});const other=process.env.FAKE_FIELD==='expose'?'env':'expose';assert.equal((effective[process.env.FAKE_FIELD]||{}).__ddtest_probe_mode,'fail');assert.equal((effective[other]||{}).__ddtest_probe_mode,undefined)})().catch(e=>{console.error(e);process.exitCode=1})")
+		command := exec.CommandContext(t.Context(), node, "--require", observer, cli, "run", "-P"+root, "-Ccypress.config.cjs")
+		command.Dir = root
+		command.Env = append(os.Environ(), "NODE_OPTIONS=", "DDTEST_PROBE_MODE=fail", "DDTEST_CYPRESS_DIRECTORY="+directory,
+			"DDTEST_CYPRESS_PROBE="+filepath.Join(root, "probe.cy.js"), "FAKE_CYPRESS_VERSION="+version, "FAKE_FIELD="+field)
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s: %s", version, output)
+	}
+	// Cypress 16 throws from Cypress.env(); the probe must read expose instead.
+	script := "let defined=[];globalThis.describe=(n,f)=>f();globalThis.it=(n)=>defined.push(n);it.skip=()=>{};globalThis.cy={task:()=>({then:()=>{}})};" +
+		"globalThis.Cypress={expose:k=>k==='__ddtest_probe_mode'?'pass':undefined,env:()=>{throw new Error('Cypress.env() was removed')}};" +
+		"eval(require('node:fs').readFileSync(0,'utf8'));if(defined.length!==1)throw new Error('probe not defined')"
+	command := exec.CommandContext(t.Context(), node, "-e", script)
+	command.Stdin = strings.NewReader(cypressProbeSource)
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+}

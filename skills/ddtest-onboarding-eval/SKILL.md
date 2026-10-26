@@ -37,7 +37,13 @@ socket lives inside each trial, and a root too long for it is refused. Select a 
 and project-compatible runtime/browser prerequisites. Compare agents at the same
 commit, binary and image. Use the optional `browsers` image target or a trusted
 derived image for browser suites. Select the project-compatible package manager
-explicitly in setup. `--readiness-command` runs a native browser/runner check after
+explicitly in setup. When the project pins a pnpm version (for example in its CI's
+`pnpm/action-setup`), pass `--pnpm <version>`: the runner installs that pnpm
+privately in the trial, verifies it, and puts it first on `PATH` for setup and
+the agent, so lockfiles are not rewritten by the image's pnpm. The `browsers`
+image sets `CHROMEDRIVER_PATH` to the distribution chromedriver matching its
+Chromium and architecture; WebdriverIO otherwise downloads a driver, and Chrome
+for Testing has no linux/arm64 build. `--readiness-command` runs a native browser/runner check after
 setup and before the agent; failures are evaluator-environment failures. Temporary
 storage is executable and the container mount uses `/trial` to avoid Unix socket
 path limits. Record emulation and resource limits when interpreting timings. Record ddtest's source commit and dirty state outside
@@ -79,7 +85,9 @@ host UID with dropped capabilities, a read-only root and one owned trial mount.
 The selected login remains accessible to the tested agent. Use a separate account
 when possible and existing account credentials only with explicit authorization.
 Credential installation uses descriptor-based paths without following symlinks.
-Environment values use a private `--env-file`, never the Docker command line.
+Environment values use a private `--env-file`, never the Docker command line;
+multi-line values (such as managed model headers) are base64-encoded there and
+restored inside the container.
 The container has no access to the host CLI profile or its MCP configuration.
 
 ## Run
@@ -112,8 +120,9 @@ Codex uses an empty MCP table in a private `CODEX_HOME`. The mandatory container
 provides its isolation; the CLI runs without a second namespace sandbox, which
 cannot start under the container's dropped capabilities. Never use that CLI mode
 for untrusted repositories on the host.
-Claude uses automatic permission mode, no setting sources and strict empty MCP
-configuration. Its Bash tasks remain synchronous with framework-scoped timeouts.
+Claude uses automatic permission mode, no setting sources, strict empty MCP
+configuration and disabled auto-memory; any memory files an agent still writes
+are listed under `agent_artifacts` in `run.json`. Its Bash tasks remain synchronous with framework-scoped timeouts.
 Neither inherits the evaluator's CLI profile. Flag references:
 [Codex](https://developers.openai.com/codex/cli/reference),
 [Claude](https://code.claude.com/docs/en/cli-reference).

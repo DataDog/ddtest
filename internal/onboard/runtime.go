@@ -37,6 +37,14 @@ type RuntimeCheck struct {
 }
 
 // RuntimeFinding records the metadata used to check one CI runtime.
+// GuardedActionBranch explains a test step whose Datadog action is skipped by
+// its own condition on some branch. The step still runs, uninstrumented.
+const GuardedActionBranch = "The Datadog action's condition is false for this branch (for example, no API key on forks), so this test step runs uninstrumented by design. This branch is not validated as instrumented."
+
+// WindowsRunnerBranch explains a Windows row whose Datadog action is skipped:
+// ddtest doesn't set up or validate Windows runners locally.
+const WindowsRunnerBranch = "Windows runner: the Datadog action is skipped here because ddtest doesn't set up or validate Windows runners locally. These tests run uninstrumented; add manual initialization to instrument them."
+
 type RuntimeFinding struct {
 	Workflow        string          `json:"workflow"`
 	Job             string          `json:"job"`
@@ -73,6 +81,7 @@ type runtimeStep struct {
 	Source           string                  `yaml:"-"`
 	Parents          []runtimeConditionScope `yaml:"-"`
 	ResolutionError  string                  `yaml:"-"`
+	RemoteGrid       string                  `yaml:"-"`
 	WorkingDirectory string                  `yaml:"working-directory"`
 	Shell            string                  `yaml:"shell"`
 	Env              map[string]string       `yaml:"env"`
@@ -194,19 +203,25 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 			job := workflow.Jobs[name]
 
 			resolutions := make([]commandResolution, len(job.Steps))
-			candidate := false
+			consumer := false
 			for i, step := range job.Steps {
 				resolutions[i] = resolveTestStep(root, workflow, job, step, "javascript", framework)
 				if resolutions[i].Review {
 					result.Review = append(result.Review, RuntimeFinding{Workflow: path, Job: name, Step: stepNumber(step, i), Command: step.Run, Status: StatusNotExercised, Code: CodeUnresolvedCommand, Reason: resolutions[i].Reason})
 					resolutions[i] = commandResolution{}
 				}
-				candidate = candidate || resolutions[i].Matched || resolutions[i].Reason != ""
+				consumer = consumer || resolutions[i].Matched || resolutions[i].Reason != "" && stepMayStartTests(root, workflow, job, step, framework)
 			}
-			if !candidate {
+			if !consumer {
+				// No step can start a selected test, so no instrumented runtime runs here.
+				for i, step := range job.Steps {
+					if resolutions[i].Reason != "" {
+						result.Review = append(result.Review, RuntimeFinding{Workflow: path, Job: name, Step: stepNumber(step, i), Command: step.Run, Status: StatusNotExercised, Code: CodeUnresolvedCommand, Reason: "Not a " + framework + " test consumer: " + resolutions[i].Reason})
+					}
+				}
 				continue
 			}
-			rows, err := runtimeMatrix(job.Strategy.Matrix)
+			rows, _, err := jobMatrix(job)
 			if err != nil {
 				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: path, Job: name, Status: StatusInconclusive, Code: CodeInvalidMatrix, Reason: err.Error()})
 				continue
@@ -277,8 +292,17 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 					}
 				}
 
+				// Context expansions of one row (such as a guarded action's
+				// branches) can repeat a step's finding; report each once.
+				seen := map[string]bool{}
 				for _, contextJob := range jobs {
-					result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, root, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
+					for _, finding := range checkRuntimeJob(ctx, root, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework) {
+						key, _ := json.Marshal(finding)
+						if !seen[string(key)] {
+							seen[string(key)] = true
+							result.Jobs = append(result.Jobs, finding)
+						}
+					}
 				}
 
 			}
@@ -369,10 +393,12 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 			state.source = "container image"
 		}
 	}
+	skippedTest := false
 	for i, step := range job.Steps {
 		uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 		resolution := resolutions[i]
-		test := resolution.Matched || resolution.Reason != ""
+		// An unresolved step that can't start a test is setup, not a test entry.
+		test := resolution.Matched || resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, frameworkName(frameworks))
 		if uses != "actions/setup-node" && uses != githubAction && !changesNodeRuntime(step.Run) && !test {
 			continue
 		}
@@ -392,6 +418,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 			return fail(CodeUnresolvedCondition, err.Error())
 		}
 		if !active {
+			skippedTest = skippedTest || test
 			if job.Context != nil && step.ID != "" {
 				job.Context["steps."+step.ID+".outcome"] = "skipped"
 			}
@@ -429,13 +456,23 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		}
 		finding.Node, finding.NodeSource = state.node, state.source
 		if resolution.Reason != "" {
-			finding.Code, finding.Reason = CodeUnresolvedCommand, "Could not resolve CI test command: "+resolution.Reason
-			findings = append(findings, finding)
+			// A row on a Node no dd-trace release supports is never tried, so
+			// its unresolved steps can't block.
+			if !UnsupportedNode(finding.Node) || state.action != "" {
+				finding.Code, finding.Reason = CodeUnresolvedCommand, "Could not resolve CI test command: "+resolution.Reason
+				findings = append(findings, finding)
+			}
 			if !resolution.Matched {
 				continue
 			}
 		}
 		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, step, row, resolution, state, finding, resolveNode, resolve, frameworks...))
+	}
+	if len(findings) == 0 && skippedTest {
+		// The row runs the job without its tests, e.g. `if: matrix.node != '20'`.
+		finding.Step, finding.Command, finding.Resolution = 0, "", ""
+		finding.Status, finding.Code, finding.Reason = StatusExcluded, CodeExcludedRuntime, "Test steps are skipped by their conditions on this matrix row."
+		return []RuntimeFinding{finding}
 	}
 	if len(findings) == 0 {
 		return fail(CodeUnresolvedCommand, "No active test step could be checked.")
@@ -470,6 +507,17 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 				finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedExclusion, reason
 				return finding
 			}
+			finding.Reason = GuardedActionBranch
+			if windowsRow(job, row) {
+				finding.Reason = WindowsRunnerBranch
+			}
+			return finding
+		}
+		// No dd-trace release runs on this Node, so the missing action is not a
+		// gap: ddtest leaves the row uninstrumented and doesn't try it.
+		if UnsupportedNode(finding.Node) {
+			finding.Status, finding.Code, finding.Reason = StatusExcluded, CodeUnsupportedNode, UnsupportedNodeReason(finding.Node)
+			return finding
 		}
 		finding.Reason = "No Datadog JavaScript action runs before this test step for this matrix entry. It is not validated as instrumented."
 		return finding
@@ -637,4 +685,11 @@ func mochaInstrumentationDisabled(workflow ciWorkflow, job runtimeJob, step runt
 		return err == nil && resolved == "false"
 	}
 	return value == "false"
+}
+
+func frameworkName(frameworks []string) string {
+	if len(frameworks) == 0 {
+		return "jest"
+	}
+	return frameworks[0]
 }

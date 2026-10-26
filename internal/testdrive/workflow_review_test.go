@@ -27,7 +27,7 @@ func TestOnboardFactsSurviveOwnedEditsAndResume(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, "build.js"), "// explicit build prerequisite\n")
 	requireWriteFile(t, filepath.Join(root, "server.js"), "// explicit application service\n")
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
-	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    strategy:\n      matrix: {node: ['16', '24']}\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '${{ matrix.node }}'}\n      - run: npm test\n")
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    strategy:\n      matrix: {node: ['20', '24']}\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '${{ matrix.node }}'}\n      - run: npm test\n")
 	command := exec.Command("git", "init", "-q")
 	command.Dir = root
 	data, err := command.CombinedOutput()
@@ -267,7 +267,12 @@ func TestWorkflowReturnsSetupRepairsWithoutWeakeningFeatureFailures(t *testing.T
 			}
 			require.Contains(t, result.ResumeCommand, "--format")
 			require.Contains(t, result.ResumeCommand, "json")
-			require.Empty(t, result.FinalResponse)
+			if result.Code == "validation_incomplete" {
+				// A report ends the turn: it carries the text to relay verbatim.
+				require.True(t, strings.HasPrefix(result.FinalResponse, "NOT COMPLETE"), result.FinalResponse)
+			} else {
+				require.Empty(t, result.FinalResponse, "a setup repair continues the workflow")
+			}
 		})
 	}
 }
@@ -291,7 +296,7 @@ func TestMochaWorkflowRequiresSetupOnlyForInstrumentedCIConfigurations(t *testin
     strategy:
       matrix:
         include:
-          - {node: '8', datadog: LEGACY}
+          - {node: '18', datadog: LEGACY}
           - {node: '24', datadog: true}
     steps:
       - uses: actions/setup-node@v4
@@ -300,7 +305,7 @@ func TestMochaWorkflowRequiresSetupOnlyForInstrumentedCIConfigurations(t *testin
         if: matrix.datadog
         with: {languages: js}
       - run: |
-          if [[ "${{ matrix.node }}" -lt 10 ]]; then
+          if [[ "${{ matrix.node }}" -lt 20 ]]; then
             xargs -n1 npm rm --silent --save-dev
           fi
 EXTRA      - run: npm test
@@ -314,28 +319,39 @@ EXTRA      - run: npm test
 			drive.workflowRun = func(_ context.Context, out io.Writer) error {
 				executions++
 				require.Len(t, drive.workflowScope.Commands, 2, "excluded configurations remain in the evidence scope")
-				template := scopeFactsTemplate("snapshot", *drive.workflowScope)
-				require.Len(t, template.Configurations, 1, "excluded configurations must not request setup facts")
-				return finishValidation(out, root, completeValidationFixture("mocha"))
+				if scenario == "excluded legacy setup" {
+					template := scopeFactsTemplate("snapshot", *drive.workflowScope)
+					require.Len(t, template.Configurations, 1, "excluded configurations must not request setup facts")
+				}
+				// As --all does: unresolved scope keeps the run incomplete.
+				fixture := completeValidationFixture("mocha")
+				fixture.Scope = drive.workflowScope
+				applyScopeVerdict(&fixture)
+				fixture.Summary = summarizeValidation(fixture)
+				return finishValidation(out, root, fixture)
 			}
 			var output bytes.Buffer
 			err := drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json", ExplicitVersion: true})
 			var result onboard.AgentResult
 			require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+			scopeCheck := ""
+			for _, check := range result.Checks {
+				if check.Name == "ci_scope" {
+					scopeCheck = check.Reason
+				}
+			}
 			switch scenario {
 			case "excluded legacy setup":
 				require.NoError(t, err)
 				require.Equal(t, "complete_locally", result.Status)
 				require.Equal(t, 1, executions)
-			case "active legacy setup":
+			case "active legacy setup", "unknown excluded consumer":
+				// The ready Node 24 row runs; the legacy setup or the unknown
+				// consumer stays an unvalidated blocker and never completes.
 				require.Error(t, err)
-				require.Equal(t, "scope_unresolved", result.Code)
-				require.Contains(t, result.Reason, "xargs")
-				require.Zero(t, executions)
-			case "unknown excluded consumer":
-				require.Error(t, err)
-				require.Equal(t, "scope_unresolved", result.Code)
-				require.Zero(t, executions)
+				require.Equal(t, 1, executions)
+				require.NotEqual(t, "complete_locally", result.Status)
+				require.Contains(t, scopeCheck, map[string]string{"active legacy setup": "xargs", "unknown excluded consumer": "unknown-test-wrapper"}[scenario])
 			}
 			require.Equal(t, workflow, readApplyFile(t, root, ".github/workflows/test.yml"), "testdrive must preserve the legacy matrix and setup")
 		})

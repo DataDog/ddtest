@@ -100,6 +100,14 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 }
 
 func instructions(language, name string) string {
+	text := frameworkInstructions(language, name)
+	if language == "javascript" {
+		return pinSetupAction(text)
+	}
+	return text
+}
+
+func frameworkInstructions(language, name string) string {
 	if language == "javascript" && name == "webdriverio" {
 		return strings.ReplaceAll(webdriverIOInstructions, "ddtest testdrive", "ddtest testdrive --framework webdriverio")
 	}

@@ -2,7 +2,16 @@ const fs = require('node:fs')
 const { createRequire } = require('node:module')
 const path = require('node:path')
 const cliRequire = createRequire(fs.realpathSync(process.argv[1]))
-const LineReporter = require(path.join(path.dirname(cliRequire.resolve('playwright/package.json')), 'lib/reporters/line.js')).default
+const playwrightRoot = path.dirname(cliRequire.resolve('playwright/package.json'))
+const lineReporterPath = path.join(playwrightRoot, 'lib/reporters/line.js')
+// Playwright 1.60 bundles its reporters into lib/runner and exports only their
+// TerminalReporter base. Its epilogue prints the same summary as line.js, which
+// is where the tracer reports disabled tests.
+const LineReporter = fs.existsSync(lineReporterPath)
+  ? require(lineReporterPath).default
+  : class extends require(path.join(playwrightRoot, 'lib/runner/index.js')).base.TerminalReporter {
+    async onEnd (result) { await super.onEnd(result); this.epilogue(false) }
+  }
 
 // Use Playwright's public reporter API for both --list and execution. The file
 // is private session data; only aggregate counts survive in the final report.
