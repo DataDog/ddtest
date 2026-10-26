@@ -195,6 +195,24 @@ jobs:
 	}
 }
 
+func TestPythonReviewRetainsApplicationPathAroundManagedTracer(t *testing.T) {
+	for _, tc := range []struct{ parent, path, expected string }{
+		{"", "${{ env.PYTHONPATH }}:src", "src"},
+		{"lib", "${{env.PYTHONPATH}}:src", "lib:src"},
+		{"lib", "src:${{ env.PYTHONPATH }}:tests", "src:lib:tests"},
+		{"", "src::tests", "src::tests"},
+	} {
+		root := pythonReviewWorkflow(t, "env:\n  PYTHONPATH: '"+tc.parent+"'\njobs:\n  tests:\n    steps:\n      - uses: actions/setup-python@v6\n        with: {python-version: '3.12'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: python, python-tracer-version: '4.16.0'}\n      - run: python -m pytest\n        env:\n          PYTHONPATH: '"+tc.path+"'\n")
+		scope, err := DiscoverValidationScope(root, "pytest")
+		require.NoError(t, err)
+		require.Empty(t, scope.Unresolved)
+		require.Equal(t, tc.expected, scope.Commands[0].Environment["PYTHONPATH"])
+		if strings.Contains(tc.path, "${{") {
+			require.Equal(t, "compatible", pythonReviewRuntime(t, root).Status)
+		}
+	}
+}
+
 func TestPythonReviewEffectiveInstrumentationOptions(t *testing.T) {
 	for _, tc := range []struct{ name, parent, stepEnv, command, status string }{
 		{"step overrides parent", "  PYTEST_ADDOPTS: '-q'\n", "          PYTEST_ADDOPTS: '--ddtrace -q'\n", "python -m pytest", "compatible"},

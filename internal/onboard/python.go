@@ -130,6 +130,39 @@ func pythonInvocation(words []string) bool {
 	return ok
 }
 
+func pythonPathReference(value string) bool {
+	return strings.Join(strings.Fields(value), "") == "${{env.PYTHONPATH}}"
+}
+
+// Replace the action's CI-only path with the application's declared paths.
+// Local validation supplies its own tracer path. Empty reference expansions
+// must not introduce a new current-directory component into PYTHONPATH.
+func pythonApplicationPath(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) string {
+	separator := ":"
+	if runnerDefaultShell(job, row) == "pwsh" {
+		separator = ";"
+	}
+	var result string
+	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		value, declared := layer["PYTHONPATH"]
+		if !declared {
+			continue
+		}
+		var parts []string
+		for _, part := range strings.Split(value, separator) {
+			if pythonPathReference(part) {
+				if result != "" {
+					parts = append(parts, result)
+				}
+			} else {
+				parts = append(parts, part)
+			}
+		}
+		result = strings.Join(parts, separator)
+	}
+	return result
+}
+
 // PythonModuleIndex identifies -m only among interpreter options. Python stops
 // parsing those options at a script, -c, stdin or --; later -m belongs to it.
 // Unknown interpreter options remain unresolved rather than being skipped.
@@ -397,7 +430,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 							if selection.Version != localVersion {
 								finding.Status, finding.Reason = "incompatible", fmt.Sprintf("CI selects ddtrace@%s; local validation selected ddtrace@%s. Align selections or validate the CI release separately.", selection.Version, localVersion)
 							}
-							if value, ok := step.Env["PYTHONPATH"]; ok && !strings.Contains(value, "${{ env.PYTHONPATH }}") {
+							if value, ok := step.Env["PYTHONPATH"]; ok && !slices.ContainsFunc(strings.FieldsFunc(value, func(r rune) bool { return r == ':' || r == ';' }), pythonPathReference) {
 								finding.Status, finding.Reason = "incompatible", "The test step replaces the action's PYTHONPATH; preserve the injected tracer package path."
 							}
 							if status, reason := pythonInstrumentationOptions(root, workflow, job, resolved, row, python); status != "" {
