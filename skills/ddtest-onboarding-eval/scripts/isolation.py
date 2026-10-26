@@ -1,8 +1,8 @@
 """Docker boundary for untrusted repositories, setup scripts and coding agents."""
 
+import base64
 import contextlib
 import json
-import base64
 import os
 from pathlib import Path
 import re

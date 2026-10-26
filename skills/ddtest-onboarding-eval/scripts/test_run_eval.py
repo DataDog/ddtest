@@ -169,6 +169,9 @@ class RunnerTests(unittest.TestCase):
                 code, manifest = self.trial()
                 self.assertEqual(code, 0)
                 self.assertEqual(manifest["framework_scope"], "junit5")
+                observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())
+                self.assertEqual(observed["environment"]["JAVA_TOOL_OPTIONS"], "-Duser.home=" + str(Path(manifest["trial_directory"]) / "home"))
+                self.assertEqual(observed["environment"]["MAVEN_USER_HOME"], str(Path(manifest["trial_directory"]) / "home/.m2"))
                 self.assertEqual(manifest["prompt"], f"Use ddtest in {Path(manifest['trial_directory']) / 'bin'} and onboard this repository to test-optimization for junit5 only.")
 
     def test_preflight_refresh_is_redacted_before_finalization(self):

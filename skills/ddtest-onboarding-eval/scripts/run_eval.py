@@ -26,6 +26,8 @@ from model_auth import ModelLogin, login_directory, install_login, remove_login
 from isolation import Container, check_socket_budget, cleanup, environment, interrupted, mark_trial, trial_root, validate_image, check_interrupted, begin_teardown, termination_signal
 
 
+JAVA_FRAMEWORKS = ("junit4", "junit5", "testng", "spock", "cucumber-java", "karate", "scalatest", "munit")
+
 EXCERPT_LIMIT = 4000
 LOGIN_SECRETS = set()
 
@@ -508,6 +510,14 @@ def run(args):
                            "shell_environment_policy.set.PATH=" + json.dumps(env["PATH"]), "-c",
                            "shell_environment_policy.set.ZDOTDIR=" + json.dumps(env["ZDOTDIR"])]
     framework = getattr(args, "framework", None)
+    if framework in JAVA_FRAMEWORKS:
+        # Numeric container UIDs need not exist in /etc/passwd. Java otherwise
+        # defaults user.home to '?' and creates Maven caches in the checkout.
+        env["JAVA_TOOL_OPTIONS"] = "-Duser.home=" + str(home)
+        env["MAVEN_USER_HOME"] = str(home / ".m2")
+        if args.agent == "codex":
+            for key in ("JAVA_TOOL_OPTIONS", "MAVEN_USER_HOME"):
+                agent_argv[2:2] = ["-c", "shell_environment_policy.set." + key + "=" + json.dumps(env[key])]
     scope = f" for {framework} only" if framework else ""
     prompt = f"Use ddtest in {bin_dir} and onboard this repository to test-optimization{scope}."
     manifest = {"isolation": {"kind":"container", "image":getattr(args,"image",None), "name":container.name,"git_safe_directory":str(checkout)}, "repository": args.repo, "requested_ref": args.ref,
@@ -847,8 +857,7 @@ def main():
     parser.add_argument("--agent", choices=("codex", "claude"))
     parser.add_argument("--node", type=Path,
                         help="Absolute Node executable for setup and Codex non-login shells; Codex only")
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio",
-                                               "junit4", "junit5", "testng", "spock", "cucumber-java", "karate", "scalatest", "munit"),
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio") + JAVA_FRAMEWORKS,
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--readiness-command", action="append", default=[], help="Repeatable native runtime/browser readiness checks before the uncoached agent")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")

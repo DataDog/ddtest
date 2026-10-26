@@ -160,6 +160,30 @@ class ReviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             container.execute(['true'],trial,{'BAD':'nul\0byte'},5,lambda _:None,None,executor)
 
+    def test_multiline_model_headers_are_restored_without_command_line_values(self):
+        import subprocess
+        import sys
+        trial = self.case.root / "headers-trial"
+        trial.mkdir()
+        container = isolation.Container(trial, "sha256:" + "0" * 64)
+        container.container_environment = []
+        headers = "X-First: private-one\nX-Second: private-two"
+        observed = []
+        def executor(arguments, cwd, env, timeout, on_line, prompt):
+            path = Path(arguments[arguments.index("--env-file") + 1])
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertNotIn("private-one", " ".join(arguments))
+            forwarded = dict(line.split("=", 1) for line in path.read_text().splitlines())
+            program = arguments[arguments.index("/usr/bin/env") + 1:]
+            program[0] = sys.executable
+            observed.append(subprocess.check_output(program, env=forwarded, text=True))
+            return 0
+        command = [sys.executable, "-c", "import json,os; print(json.dumps(dict(os.environ)))"]
+        container.execute(command, trial, {"ANTHROPIC_CUSTOM_HEADERS": headers}, 5, lambda _: None, None, executor)
+        restored = json.loads(observed[0])
+        self.assertEqual(restored["ANTHROPIC_CUSTOM_HEADERS"], headers)
+        self.assertNotIn("DDTEST_EVAL_MODEL_ENV", restored)
+
     def test_low_storage_stops_before_clone_or_model(self):
         from types import SimpleNamespace
         with patch.object(run_eval.shutil,'disk_usage',return_value=SimpleNamespace(free=0)):
