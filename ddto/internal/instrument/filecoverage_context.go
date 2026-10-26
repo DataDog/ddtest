@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -386,16 +387,29 @@ const ContextPollHook = "package poll\n\nfunc __ddto_pollRead()\n"
 // TransformContextPoll edits internal/poll, given as the sources that the
 // build compiles, so that readLock calls the runtime's poll hook before a read
 // of a descriptor that the poller watches: a socket, pipe or terminal, not a
-// regular file.
+// regular file. Windows does not poll the pipes of os.Pipe or consoles, which
+// it reads synchronously, so there the hook also runs for those kinds.
 func TransformContextPoll(files map[string][]byte) (map[string][]byte, error) {
-	if err := declarationsError(files, []string{"func (*FD) readLock() error", "field FD.pd pollDesc", "func (*pollDesc) pollable() bool"}, "internal/poll lacks %s"); err != nil {
+	want := []string{"func (*FD) readLock() error", "field FD.pd pollDesc", "func (*pollDesc) pollable() bool"}
+	windows := false
+	for name := range files {
+		windows = windows || filepath.Base(name) == "fd_windows.go"
+	}
+	if windows {
+		want = append(want, "field FD.kind fileKind", "const kindPipe", "const kindConsole")
+	}
+	if err := declarationsError(files, want, "internal/poll lacks %s"); err != nil {
 		return nil, err
 	}
 	return editFiles(files, "internal/poll", func(fs *token.FileSet, file *ast.File, add func(int, string), found map[string]int) {
 		for _, decl := range file.Decls {
 			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil && funcName(fn) == "(*FD) readLock" {
 				fd := fn.Recv.List[0].Names[0].Name
-				add(fs.Position(fn.Body.Lbrace).Offset+1, " if "+fd+".pd.pollable() { __ddto_pollRead() };")
+				condition := fd + ".pd.pollable()"
+				if windows {
+					condition += " || " + fd + ".kind == kindPipe || " + fd + ".kind == kindConsole"
+				}
+				add(fs.Position(fn.Body.Lbrace).Offset+1, " if "+condition+" { __ddto_pollRead() };")
 				found["readLock"]++
 			}
 		}

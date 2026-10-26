@@ -14,7 +14,14 @@ import (
 // a build for this platform compiles.
 func toolchainSources(t *testing.T, path string) (string, map[string][]byte) {
 	t.Helper()
-	pkg, err := build.Default.Import(path, "", 0)
+	return platformSources(t, build.Default, path)
+}
+
+// platformSources returns the Go files of the toolchain's package path that
+// a build with ctxt's platform compiles.
+func platformSources(t *testing.T, ctxt build.Context, path string) (string, map[string][]byte) {
+	t.Helper()
+	pkg, err := ctxt.Import(path, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +69,23 @@ func TestContextEditsKeepLines(t *testing.T) {
 			}
 		})
 	}
+	// Windows reads os.Pipe's pipes and consoles without the poller, and only
+	// its sources name their kinds: check the edit on every host, tip included.
+	t.Run("internal/poll for windows", func(t *testing.T) {
+		ctxt := build.Default
+		ctxt.GOOS = "windows"
+		_, sources := platformSources(t, ctxt, "internal/poll")
+		edited, err := TransformContextPoll(sources)
+		if err != nil {
+			t.Fatalf("%v; review the edits of internal/poll for Windows", err)
+		}
+		for _, src := range edited {
+			if strings.Contains(string(src), ".kind == kindPipe || ") {
+				return
+			}
+		}
+		t.Fatal("the Windows edit of readLock does not cover pipes")
+	})
 }
 
 // TestContextRuntimePropagates builds a program with the context edits and a
@@ -353,6 +377,14 @@ func main() {
 	}), "unknown")
 	expect("io hook", fmt.Sprint(mini.Calls.IO), "1")
 	expect("file", in("A", func() { os.ReadFile("go.mod") }), "A")
+	// So does a pipe read, such as a worker's: Windows does not poll pipes.
+	pipeReader, pipeWriter, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+	go pipeWriter.Write([]byte("x"))
+	expect("pipe", in("A", func() { pipeReader.Read(make([]byte, 1)) }), "unknown")
+	expect("pipe io hook", fmt.Sprint(mini.Calls.IO), "2")
 
 	// A goroutine without a context passes its calls to its children and its
 	// timers, and its sends carry them.
