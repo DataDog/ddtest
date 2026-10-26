@@ -169,8 +169,8 @@ func inputFingerprint(ctx context.Context, root string, depth int) (string, erro
 	files = append(files, "Gemfile.lock")
 	for _, name := range append(slices.Clone(files), indexedNames...) {
 		base := filepath.Base(name)
-		if (strings.HasPrefix(base, "Gemfile") || strings.HasSuffix(base, ".gemfile")) && !strings.HasSuffix(base, ".lock") {
-			files = append(files, name+".lock")
+		if (base == "gems.rb" || strings.HasPrefix(base, "Gemfile") || strings.HasSuffix(base, ".gemfile")) && !strings.HasSuffix(base, ".lock") {
+			files = append(files, rubyLockfile(name))
 		}
 
 		if filepath.Base(name) == "package.json" && !strings.Contains(filepath.ToSlash(name), "node_modules/") {

@@ -312,7 +312,11 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			runErrors = append(runErrors, tracerMismatchError(tracerConfiguration, result.Tracer, displayed, execution.Tracer))
 		}
 		if execution.CIRuntime != nil {
-			result.CIRuntime = execution.CIRuntime
+			if t.language == "ruby" {
+				result.CIRuntime = mergeRubyRuntimeChecks(result.CIRuntime, execution.CIRuntime)
+			} else {
+				result.CIRuntime = execution.CIRuntime
+			}
 		}
 		for _, sub := range execution.substitutions() {
 			result.addSubstitution(sub)

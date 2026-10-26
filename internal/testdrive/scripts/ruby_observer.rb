@@ -58,12 +58,10 @@ if ENV.fetch("DDTEST_RUBY_FRAMEWORK") == "rspec"
       # Derive the expected wire name from native metadata.
       name = example.full_description.strip.sub(group[:description].to_s, "").strip
       file = File.expand_path(metadata[:file_path])
-      # Anonymous examples get generated descriptions after execution. Tracer
-      # releases can render these differently; scoped_id identifies the same
-      # native example without trusting a tracer-generated name.
-      anonymous = Array(metadata[:description_args]).all? { |arg| arg.to_s.strip.empty? }
+      # Scoped IDs distinguish examples even when named descriptions repeat.
+      # They come from native metadata, independently of the tracer's events.
       DDTestObserver::TESTS << {file: file, name: example.full_description, telemetry_name: DDTestObserver.telemetry_name(name),
-                               telemetry_scoped_id: anonymous ? metadata[:scoped_id] : nil,
+                               telemetry_scoped_id: metadata[:scoped_id],
                                status: status, failure: DDTestObserver.failure(example.exception)}
     end
 

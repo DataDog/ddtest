@@ -59,6 +59,7 @@ func TestRubyReviewNestedPreflightInspectsCheckoutCI(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "app"), 0700))
+	requireWriteFile(t, filepath.Join(root, "app/Gemfile"), "# selected app bundle\n")
 	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), `jobs:
   tests:
     steps:

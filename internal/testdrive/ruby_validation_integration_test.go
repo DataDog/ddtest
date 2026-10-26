@@ -181,6 +181,22 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 			require.Error(t, staleErr, string(staleOutput))
 			require.Contains(t, string(staleOutput), "stale_report")
 
+			if framework == "rspec" {
+				// Equal descriptions and failure messages must not hide a swap
+				// between two native examples with different scoped IDs.
+				integrationFile(t, root, "spec/one_spec.rb", `require_relative '../lib/customer'
+RSpec.describe 'customer suite' do
+ it('same description') { Customer.add; raise 'same failure' unless defined?(Datadog::CI) }
+ it('same description') { Customer.add; raise 'same failure' if defined?(Datadog::CI) }
+end
+`)
+				regression := exec.CommandContext(ctx, binary, "testdrive", "--framework", "rspec", "--all", "--yes", "--tracer-version", gems.Tracer)
+				regression.Dir, regression.Env = root, append(os.Environ(), env...)
+				output, err := regression.CombinedOutput()
+				require.Error(t, err, string(output))
+				require.Contains(t, string(output), "suspected regression")
+			}
+
 		})
 	}
 }

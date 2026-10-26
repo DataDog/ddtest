@@ -43,6 +43,7 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	rubyCILocations          []string
 	rubyTracerEnv            map[string]string
 	selectedPlan             onboard.TestCommand
 	cypressPackage           string

@@ -31,7 +31,7 @@ type jestTest struct {
 	CucumberLine          int                 `json:"-"`
 	CypressAttempts       []string            `json:"-"`
 	Playwright            *playwrightIdentity `json:"playwright,omitempty"`
-	telemetryScopedID     string
+	RSpecScopedID         string              `json:"rspec_scoped_id,omitempty"`
 	telemetryClass        string
 	telemetryName         *string
 	File                  string `json:"file"`
@@ -299,7 +299,11 @@ func outcomeKeys(run validationRun) []string {
 	keys = append(keys, run.SuiteErrors...)
 	keys = append(keys, run.SuiteFailures...)
 	for _, test := range run.Tests {
-		keys = append(keys, repositoryTestFile(run, test.File)+" › "+test.Name+cucumberLocation(test)+playwrightLabel(test)+webdriverIOOutcome(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test)+webdriverIOAttemptOutcome(test))
+		scoped := ""
+		if run.framework == "rspec" && test.RSpecScopedID != "" {
+			scoped = " [scoped_id: " + test.RSpecScopedID + "]"
+		}
+		keys = append(keys, repositoryTestFile(run, test.File)+" › "+test.Name+scoped+cucumberLocation(test)+playwrightLabel(test)+webdriverIOOutcome(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test)+webdriverIOAttemptOutcome(test))
 	}
 	for i := range keys {
 		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])
@@ -383,7 +387,7 @@ func verifyJestTelemetry(run validationRun) verdict {
 	}
 	type identity struct{ file, name, status string }
 	expected := make(map[identity]int)
-	anonymous := make(map[string]bool)
+	scopedExamples := make(map[string]bool)
 	classes := make(map[string][]string)
 	for _, test := range run.Tests {
 		status := map[string]string{"passed": "pass", "failed": "fail"}[test.Status]
@@ -399,9 +403,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 				}
 				name = test.telemetryClass + "\x00" + name
 			}
-			if run.framework == "rspec" && test.telemetryScopedID != "" {
-				name = "scoped_id:" + test.telemetryScopedID
-				anonymous[test.File+"\x00"+name] = true
+			if run.framework == "rspec" && test.RSpecScopedID != "" {
+				name = "scoped_id:" + test.RSpecScopedID
+				scopedExamples[test.File+"\x00"+name] = true
 			}
 			expected[identity{test.File, name, status}]++
 		}
@@ -443,7 +447,7 @@ func verifyJestTelemetry(run validationRun) verdict {
 			}
 			if json.Unmarshal([]byte(test.Parameters), &parameters) == nil {
 				id := "scoped_id:" + parameters.Metadata.ScopedID
-				if anonymous[file+"\x00"+id] {
+				if scopedExamples[file+"\x00"+id] {
 					name = id
 				}
 			}

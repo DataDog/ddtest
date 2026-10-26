@@ -46,6 +46,9 @@ func nativeExecutionCounts(run validationRun) *executionCounts {
 			break
 		}
 		identity := sourceTestIdentity{Framework: run.framework, File: filepath.ToSlash(file), Name: normalizeOwnedTemporaryPath(run, test.Name+cucumberLocation(test)), Project: run.Project}
+		if run.framework == "rspec" {
+			identity.TestID = test.RSpecScopedID
+		}
 		if test.Playwright != nil {
 			identity.Project = test.Playwright.Project
 			identity.Browser = test.Playwright.Browser

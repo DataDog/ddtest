@@ -53,6 +53,9 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if item.Directory == "" {
 		item.Directory = "."
 	}
+	if t.language == "ruby" {
+		t.rubyCILocations = slices.Clone(item.Locations)
+	}
 	if t.framework != nil && t.framework.Name() == "vitest" && t.usesVitestRunner() {
 		t.vitestRunner = true
 		var err error

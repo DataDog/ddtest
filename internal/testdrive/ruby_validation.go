@@ -153,6 +153,16 @@ func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, re
 		}
 	}
 	ci := onboard.RubyCIConfiguration(t.checkoutRoot(), t.framework.Name())
+	if len(ci.Jobs) > 0 {
+		locations, err := t.rubyRuntimeLocations()
+		if err != nil {
+			return err
+		}
+		ci.Jobs = slices.DeleteFunc(ci.Jobs, func(job onboard.RuntimeFinding) bool { return !slices.Contains(locations, job.Location) })
+		if len(ci.Jobs) == 0 {
+			ci.Status, ci.Reason = "inconclusive", "No CI consumer matches this Ruby command, working directory and bundle; validate its discovered configuration with --all."
+		}
+	}
 	jobs, err := json.Marshal(ci.Jobs)
 	if err != nil {
 		return err
@@ -177,22 +187,7 @@ func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, re
 	check.Version = info.Version
 	check.Ruby = info.Ruby
 	ci.Jobs = info.Jobs
-	if len(ci.Jobs) > 0 {
-		ci.Status, ci.Reason = "compatible", "Static Ruby CI selections agree with the installed bundle. Actual CI execution remains untested."
-		for _, job := range ci.Jobs {
-			if job.Status != "compatible" && job.Status != "excluded" {
-				ci.Status, ci.Reason = job.Status, job.Reason
-				break
-			}
-		}
-		instrumented := false
-		for _, job := range ci.Jobs {
-			instrumented = instrumented || job.Status == "compatible"
-		}
-		if ci.Status == "compatible" && !instrumented {
-			ci.Status, ci.Reason = "inconclusive", "Every CI entry excludes instrumentation; at least one compatible instrumented CI consumer is required."
-		}
-	}
+	summarizeRubyRuntime(&ci)
 	result.CIRuntime = &ci
 	if !info.Supported {
 		check.Verdict = verdict{Status: "incompatible", Reason: "Ruby validation requires RSpec >=3 or Minitest >=5 and datadog-ci >=1.31.0."}
@@ -219,17 +214,42 @@ func (t *Testdrive) rubyOptions() string {
 	return os.Getenv("RUBYOPT")
 }
 
+const rubyCopyBundleConfig = `require "bundler"; require "fileutils"
+source = Bundler.app_config_path.join("config")
+target = File.join(ARGV.fetch(0), "config")
+FileUtils.mkdir_p(File.dirname(target), mode: 0700)
+FileUtils.cp(source, target) if source.file?
+# Local settings precede BUNDLE_PATH in Bundler. Override only installation
+# routing in the copied settings, retaining mirrors, credentials and build flags.
+settings = Bundler::Settings.new(Pathname.new(ARGV.fetch(0)))
+settings.set_local("path.system", nil)
+settings.set_local("disable_shared_gems", nil)
+settings.set_local("path", ARGV.fetch(1))
+File.chmod(0600, target)
+`
+
 func (t *Testdrive) installRubyTracer(ctx context.Context, options platform.TracerOptions) (platform.TracerInstallation, error) {
 	command, args, err := t.platform.TracerInstallCommand(options)
 	if err != nil {
 		return platform.TracerInstallation{}, err
 	}
+	// Read local settings through Bundler's own Gemfile/BUNDLE_APP_CONFIG rules
+	// before replacing their directory. Credentials stay in private session IO.
+	env := maps.Clone(options.Environment)
+	if env == nil {
+		env = map[string]string{}
+	}
+	env["RUBYOPT"] = ""
+	configuration := filepath.Join(options.Directory, "bundle-config")
+	if _, err := t.executor.CombinedOutput(ctx, "ruby", []string{"-e", rubyCopyBundleConfig, configuration, filepath.Join(options.Directory, "bundle")}, env); err != nil {
+		return platform.TracerInstallation{}, fmt.Errorf("copy effective Bundler configuration: %w", err)
+	}
 	// Keep the fallback bundle and its configuration inside the owned session.
 	t.rubyTracerEnv = map[string]string{
 		"BUNDLE_PATH":       filepath.Join(options.Directory, "bundle"),
-		"BUNDLE_APP_CONFIG": filepath.Join(options.Directory, "bundle-config"),
+		"BUNDLE_APP_CONFIG": configuration,
 	}
-	env := maps.Clone(t.rubyTracerEnv)
+	maps.Copy(env, t.rubyTracerEnv)
 	// Gem compilation changes directory and must not initialize the test app.
 	env["RUBYOPT"] = ""
 	data, err := t.executor.CombinedOutput(ctx, command, args, env)
@@ -451,7 +471,7 @@ func readRubyResults(directory string, run *validationRun) {
 			return
 		}
 		for _, test := range result.Tests {
-			native := jestTest{File: filepath.Clean(test.File), Name: test.Name, Status: test.Status, Failure: failureSignature(test.Failure), telemetryName: test.TelemetryName, telemetryScopedID: test.TelemetryScopedID, telemetryClass: test.ClassName}
+			native := jestTest{File: filepath.Clean(test.File), Name: test.Name, Status: test.Status, Failure: failureSignature(test.Failure), telemetryName: test.TelemetryName, RSpecScopedID: test.TelemetryScopedID, telemetryClass: test.ClassName}
 			if test.ClassName != "" {
 				native.Name = test.ClassName + "#" + test.Name
 				if native.telemetryName == nil {

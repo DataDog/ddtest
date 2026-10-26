@@ -200,7 +200,7 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 					if !resolution.Matched && resolution.Reason == "" {
 						continue
 					}
-					finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Ruby: ruby, Action: action, TracerRequested: tracer, Status: "inconclusive", Reason: "Select a static Ruby version and exact ruby-tracer-version in a Datadog action before this test step; validate other installs separately."}
+					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Ruby: ruby, Action: action, TracerRequested: tracer, Status: "inconclusive", Reason: "Select a static Ruby version and exact ruby-tracer-version in a Datadog action before this test step; validate other installs separately."}
 					if conditionErr != nil || stepErr != nil || resolveErr != nil || resolution.Reason != "" {
 						reasons := []string{resolution.Reason}
 						for _, err := range []error{conditionErr, stepErr, resolveErr} {

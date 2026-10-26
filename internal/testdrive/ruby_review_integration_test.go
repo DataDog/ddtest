@@ -37,10 +37,10 @@ func TestRubyNestedReviewIntegration(t *testing.T) {
 	tests := `require 'minitest/autorun'
 require_relative '../../lib/customer'
 class FirstTest < Minitest::Test
- def test_same; assert_equal 2,Customer.add; end
+ def test_same; assert_equal 'ddtest-config-fixture',Bundler.settings['build.fixture']; assert_equal 2,Customer.add; end
 end
 class SecondTest < Minitest::Test
- def test_same; assert_equal 2,Customer.add; end
+ def test_same; assert_equal 'ddtest-config-fixture',Bundler.settings['build.fixture']; assert_equal 2,Customer.add; end
 end
 `
 	integrationFile(t, root, "app/test/customer_test.rb", tests)
@@ -67,6 +67,10 @@ end
 	integrationFile(t, root, ".github/workflows/test.yml", workflow)
 	integrationCommand(t, ctx, root, nil, "bundle", "lock", "--local")
 	integrationCommand(t, ctx, filepath.Join(root, "app"), []string{"BUNDLE_GEMFILE=gems.rb"}, "bundle", "lock", "--local")
+	// Both modes must retain the effective selected bundle's local settings,
+	// including after fallback installs the tracer into its private config.
+	bundleConfig := "---\nBUNDLE_BUILD__FIXTURE: ddtest-config-fixture\n"
+	integrationFile(t, root, "app/.bundle/config", bundleConfig)
 	manifestBefore, err := os.ReadFile(filepath.Join(root, "app/gems.rb"))
 	require.NoError(t, err)
 	lockBefore, err := os.ReadFile(filepath.Join(root, "app/gems.locked"))
@@ -79,6 +83,14 @@ end
 	receipt := rubyProtocolCommand(t, ctx, root, env, binary, "testdrive", "--report", "--framework", "minitest", "--agent")
 	require.NoError(t, json.Unmarshal([]byte(receipt), &state))
 	require.Equal(t, "complete_locally", state.Status, receipt)
+	// The actual ignored gems.locked participates in the final receipt.
+	integrationFile(t, root, "app/gems.locked", string(lockBefore)+"\n")
+	stale := exec.CommandContext(ctx, binary, "testdrive", "--report", "--framework", "minitest", "--agent")
+	stale.Dir, stale.Env = root, append(os.Environ(), env...)
+	staleOutput, staleErr := stale.CombinedOutput()
+	require.Error(t, staleErr, string(staleOutput))
+	require.Contains(t, string(staleOutput), "stale_report")
+	integrationFile(t, root, "app/gems.locked", string(lockBefore))
 	reportPath := filepath.Join(root, ".testoptimization/testdrive.json")
 	data, err := os.ReadFile(reportPath)
 	require.NoError(t, err)
@@ -116,6 +128,9 @@ end
 	lockAfter, err := os.ReadFile(filepath.Join(root, "app/gems.locked"))
 	require.NoError(t, err)
 	require.Equal(t, lockBefore, lockAfter)
+	configAfter, err := os.ReadFile(filepath.Join(root, "app/.bundle/config"))
+	require.NoError(t, err)
+	require.Equal(t, bundleConfig, string(configAfter))
 	// A changed failing class must be a regression even with the same file/name/message.
 	changed := strings.Replace(tests, "assert_equal 2,Customer.add; end", "assert_equal 2,Customer.add; flunk 'same failure' unless defined?(Datadog::CI); end", 1)
 	changed = strings.Replace(changed, "assert_equal 2,Customer.add; end", "assert_equal 2,Customer.add; flunk 'same failure' if defined?(Datadog::CI); end", 1)
@@ -128,6 +143,10 @@ end
 	require.Contains(t, string(output), "suspected regression")
 	// A real Gemfile's load-time write during focused check-only stays in its copy.
 	integrationFile(t, root, "Gemfile", rootManifest+"File.write('gemfile-generated', Dir.pwd)\n")
-	integrationCommand(t, ctx, root, env, binary, "testdrive", "--framework", "minitest", "--check-only", "--command", "bundle exec rake test", "--yes", "--tracer-version", gems.Tracer)
+	focused := exec.CommandContext(ctx, binary, "testdrive", "--framework", "minitest", "--check-only", "--command", "bundle exec rake test", "--yes", "--tracer-version", gems.Tracer)
+	focused.Dir, focused.Env = root, append(os.Environ(), env...)
+	focusedOutput, focusedErr := focused.CombinedOutput()
+	require.Error(t, focusedErr, string(focusedOutput))
+	require.Contains(t, string(focusedOutput), "No CI consumer matches this Ruby command")
 	require.NoFileExists(t, filepath.Join(root, "gemfile-generated"))
 }
