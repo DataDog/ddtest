@@ -47,6 +47,12 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 			env := []string{}
 			pythonVersion := ""
 			if fixture.name == "pytest" {
+				// The disposable project must not inherit the launcher's CI workspace.
+				t.Setenv("GITHUB_ACTIONS", "true")
+				t.Setenv("GITHUB_WORKSPACE", t.TempDir())
+				workspace, err := filepath.EvalSymlinks(root)
+				require.NoError(t, err)
+				env = append(env, "GITHUB_WORKSPACE="+workspace)
 				venv := filepath.Join(t.TempDir(), "venv")
 				integrationCommand(t, ctx, root, nil, "python3", "-m", "venv", venv)
 				env = append(env, "PATH="+filepath.Join(venv, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"), "VIRTUAL_ENV="+venv)
@@ -110,6 +116,10 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 							ExitCode       int `json:"exit_code"`
 							Instrumented   bool
 							TestEventCount int `json:"test_event_count"`
+							Coverage       *struct {
+								Status       string
+								CoveredTests int `json:"covered_tests"`
+							}
 						}
 					}
 					require.NoError(t, json.Unmarshal(data, &report))
@@ -128,6 +138,9 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 							require.Equal(t, "passed", feature.Status, feature.Name)
 						}
 						require.GreaterOrEqual(t, len(report.Runs), 2)
+						require.NotNil(t, report.Runs[1].Coverage)
+						require.Equal(t, "observed", report.Runs[1].Coverage.Status)
+						require.Positive(t, report.Runs[1].Coverage.CoveredTests)
 						require.Equal(t, "baseline", report.Runs[0].Name)
 						require.False(t, report.Runs[0].Instrumented)
 						require.Zero(t, report.Runs[0].ExitCode)
