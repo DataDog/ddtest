@@ -1,0 +1,2055 @@
+{
+  "date": "2026-10-26",
+  "pull_request": "https://github.com/DataDog/ddtest/pull/194",
+  "baseline_record": "java-maven-oss-2026-10-26.json",
+  "product_source_commit": "6587518f1e9bd2d174e23eee9882c01f09b835e5",
+  "base_commit": "c2782fd0af360ba2fb4baa24b907276c37e248b1",
+  "source_clean_at_build": true,
+  "binary_sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+  "integration_test_binary_sha256": "4c4c8e7114d606f2abd18ff20e4ff18c62173ed6d280e885339d86a2d184076e",
+  "build": {
+    "go": "1.27.3",
+    "goos": "linux",
+    "goarch": "arm64",
+    "cgo_enabled": false
+  },
+  "images": {
+    "java8": "sha256:627a9512cfa6d7174cd6db727a4bb4f5a8eca69ffb33819bd2882b85b224a536",
+    "java17": "sha256:50efcf83f300839ad3555bf41caac5bc5d32de89f12da759ef41207b83d48ed9"
+  },
+  "failsafe_environment_change": {
+    "reason": "Initial Failsafe/Codex setup failed before model session: Too many open files in system",
+    "maven_soft_nofile": 8192,
+    "container_hard_nofile": 524288,
+    "maven_local_repository": "/tmp/ddtest-maven-repository",
+    "cache_storage": "container tmpfs, removed with container",
+    "same_image_binary_ref_prompt": true,
+    "changed_inputs": true,
+    "setup_source": "from pathlib import Path\nimport os\nmaven=Path('/trial/bin/mvn')\nmaven.write_text('#!/bin/sh\\nulimit -n 8192\\nexec /usr/local/bin/mvn \"$@\"\\n')\nmaven.chmod(0o700)\nsettings=Path(os.environ['MAVEN_USER_HOME'])/'settings.xml'\nsettings.parent.mkdir(parents=True,exist_ok=True)\nsettings.write_text('<settings><localRepository>/tmp/ddtest-maven-repository</localRepository></settings>\\n')\n"
+  },
+  "environment": {
+    "dedicated_vm": "Colima ddtest-java-eval",
+    "emulation": false,
+    "vm_cpus": 6,
+    "vm_memory_gib": 12,
+    "cpus_per_container": 4,
+    "memory_gib_per_container": 6,
+    "maven": "3.9.16",
+    "java8": "Temurin 1.8.0_504-b01",
+    "java17": "Temurin 17.0.20.1+1",
+    "model_selection": "fresh CLI defaults; no override",
+    "docker_client": "private empty credential configuration",
+    "ci_execution": "not exercised",
+    "datadog_backend": "not exercised"
+  },
+  "prompt_template": "Use ddtest in /trial/bin and onboard this repository to test-optimization for <framework> only.",
+  "trials": [
+    {
+      "id": "javapoet-claude-final",
+      "observed_comparisons": [
+        {
+          "session": "ddtest-testdrive-2026-10-26-141856-M7H4PGTFKPYFKSGG7O73VHY73U",
+          "completed_at": "2026-10-26T14:21:01.538101753Z",
+          "local_validation": "PASSED",
+          "native_code": "native_outcomes_match",
+          "telemetry_code": "java_identities_match",
+          "suite_runs": [
+            {
+              "role": "baseline",
+              "native_command": "mvn --no-transfer-progress verify source:jar javadoc:jar",
+              "exit_code": 0,
+              "test_counts": {
+                "passed": 388,
+                "failed": 0,
+                "skipped": 1,
+                "other": 0
+              },
+              "test_event_count": 0
+            },
+            {
+              "role": "reporting-only",
+              "native_command": "mvn --no-transfer-progress verify source:jar javadoc:jar",
+              "exit_code": 0,
+              "test_counts": {
+                "passed": 388,
+                "failed": 0,
+                "skipped": 1,
+                "other": 0
+              },
+              "test_event_count": 389
+            }
+          ],
+          "features": {
+            "auto-retries": "passed",
+            "early-flake-detection": "passed",
+            "skipping": "passed",
+            "quarantine": "passed",
+            "disabled": "passed",
+            "attempt-to-fix": "passed"
+          }
+        }
+      ],
+      "evidence_directory": "javapoet-claude-final",
+      "repository": "https://github.com/square/javapoet.git",
+      "commit": "b9017a9503b76e11b4ad4c1a9f050e2d29112cb0",
+      "framework": "junit4",
+      "agent": "claude",
+      "cli_version": "2.1.220 (Claude Code)",
+      "observed_model": [
+        "claude-opus-5[1m]"
+      ],
+      "image": "sha256:627a9512cfa6d7174cd6db727a4bb4f5a8eca69ffb33819bd2882b85b224a536",
+      "runner_status": "completed",
+      "tracer": "dd-java-agent@1.67.1",
+      "local_validation": "PASSED",
+      "overall_status": "INCOMPLETE",
+      "selected_command_validation": {
+        "scope": "selected Maven command",
+        "status": "PASSED",
+        "configurations": 1,
+        "passed": 1,
+        "reason": "Selected Maven command only: paired native outcomes, telemetry identities and supported controls. Other modules/profiles, CI Java/tracer selection and backend processing are not certified."
+      },
+      "native_comparison": {
+        "status": "compatible",
+        "code": "native_outcomes_match",
+        "reason": "Native Maven identities, outcomes, exception details and exit code match. Matching existing failures are acceptable and do not block compatibility."
+      },
+      "telemetry_comparison": {
+        "status": "compatible",
+        "code": "java_identities_match",
+        "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+      },
+      "compatibility": "compatible",
+      "features": {
+        ".": {
+          "auto-retries": "passed",
+          "early-flake-detection": "passed",
+          "skipping": "passed",
+          "quarantine": "passed",
+          "disabled": "passed",
+          "attempt-to-fix": "passed"
+        }
+      },
+      "suite_runs": [
+        {
+          "role": "baseline",
+          "native_command": "mvn --no-transfer-progress verify source:jar javadoc:jar",
+          "exit_code": 0,
+          "test_counts": {
+            "passed": 388,
+            "failed": 0,
+            "skipped": 1,
+            "other": 0
+          },
+          "test_event_count": 0
+        },
+        {
+          "role": "reporting-only",
+          "native_command": "mvn --no-transfer-progress verify source:jar javadoc:jar",
+          "exit_code": 0,
+          "test_counts": {
+            "passed": 388,
+            "failed": 0,
+            "skipped": 1,
+            "other": 0
+          },
+          "test_event_count": 389
+        }
+      ],
+      "maven_coverage": {
+        "workflow_discovery": "observed (static only)",
+        "scope": "selected Maven command",
+        "modules": [
+          {
+            "directory": ".",
+            "artifact": "javapoet",
+            "status": "observed",
+            "native_results": 389
+          }
+        ],
+        "ci_workflows": [
+          {
+            "path": ".github/workflows/build.yml",
+            "instrumentation": "present (static only)",
+            "execution": "not exercised"
+          }
+        ],
+        "reason": "Declared modules include profile candidates. Native results establish execution only for the selected command. Static action presence does not certify CI Java/tracer versions, other commands or remote execution."
+      },
+      "previous_failed_comparison": null,
+      "changed_paths": [
+        ".github/workflows/build.yml",
+        ".gitignore"
+      ],
+      "dependency_changes": [],
+      "testng_dependency_versions_in_final_root_pom": [],
+      "test_source_changes": [],
+      "raw_automated_reporting": {
+        "status": "review",
+        "reason": "Missing canonical handoff needs independent review.",
+        "canonical_handoff": false,
+        "checks": [],
+        "differences": [],
+        "missing": [
+          "unchanged summary.final_response"
+        ],
+        "unsupported": []
+      },
+      "independent_criteria": {
+        "ci_configuration": {
+          "status": "pass",
+          "scope": "static presence only; no CI Java/tracer certification",
+          "evidence": "Java action precedes the unchanged full verify/source:jar/javadoc:jar command. Deploy command and its condition, JDK 8/Zulu selection, POM and test sources remain unchanged; local Temurin validation is not CI JDK certification."
+        },
+        "compatibility": {
+          "status": "pass",
+          "evidence": {
+            "status": "compatible",
+            "code": "java_identities_match",
+            "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+          }
+        },
+        "feature_controls": {
+          "status": "pass",
+          "evidence": [
+            [
+              ".",
+              "auto-retries",
+              "passed"
+            ],
+            [
+              ".",
+              "early-flake-detection",
+              "passed"
+            ],
+            [
+              ".",
+              "skipping",
+              "passed"
+            ],
+            [
+              ".",
+              "quarantine",
+              "passed"
+            ],
+            [
+              ".",
+              "disabled",
+              "passed"
+            ],
+            [
+              ".",
+              "attempt-to-fix",
+              "passed"
+            ]
+          ]
+        },
+        "reporting": {
+          "status": "pass",
+          "evidence": "Starts with CI edits prepared / onboarding INCOMPLETE, retains the correctly scoped quoted handoff, all six controls and full-command counts. Explicitly discloses the earlier compiler filesystem failure and wrong-directory invocation without treating the later pass as their explanation. States that real CI cannot update this local report. Literal blockquote formatting was independently reviewed, not treated as a semantic reporting failure."
+        },
+        "source_preservation": {
+          "status": "pass",
+          "evidence": [
+            ".github/workflows/build.yml",
+            ".gitignore"
+          ]
+        },
+        "ddtest_cleanup": {
+          "status": "pass",
+          "evidence": {
+            "status": "passed",
+            "reason": "Owned Maven copies, probes and tracer installation removed."
+          }
+        },
+        "agent_artifacts": {
+          "status": "not exercised",
+          "evidence": "Tracked status and retained configurations reviewed. No complete independent inventory of ignored build artifacts at agent exit; no scratch-cleanup pass inferred."
+        },
+        "evaluator_teardown": {
+          "status": "pass",
+          "evidence": "Container removed and descendants stopped. Owned scratch is removed separately after preservation."
+        },
+        "ci_execution": {
+          "status": "not exercised"
+        },
+        "datadog_backend": {
+          "status": "not exercised"
+        }
+      },
+      "binary_integrity": {
+        "sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+        "matches_input": true
+      },
+      "report_artifact_hashes": {
+        ".testoptimization/testdrive.json": {
+          "sha256": "7eba7b199a2d56dc15b52eea1d99c56251c8badb91a003aeeeb64237fb80c8c7",
+          "bytes": 16710
+        },
+        ".testoptimization/report.html": {
+          "sha256": "4ea73ce545624fc1849e2b58b853eb4833f09bd7cd642a0712b907a21f786511",
+          "bytes": 3238567
+        }
+      },
+      "scratch_cleanup": "removed"
+    },
+    {
+      "id": "javapoet-codex-final",
+      "observed_comparisons": [],
+      "evidence_directory": "javapoet-codex-final",
+      "repository": "https://github.com/square/javapoet.git",
+      "commit": "b9017a9503b76e11b4ad4c1a9f050e2d29112cb0",
+      "framework": "junit4",
+      "agent": "codex",
+      "cli_version": "codex-cli 0.163.0",
+      "observed_model": [],
+      "image": "sha256:627a9512cfa6d7174cd6db727a4bb4f5a8eca69ffb33819bd2882b85b224a536",
+      "runner_status": "completed",
+      "tracer": "dd-java-agent@1.67.1",
+      "local_validation": "PASSED",
+      "overall_status": "INCOMPLETE",
+      "selected_command_validation": {
+        "scope": "selected Maven command",
+        "status": "PASSED",
+        "configurations": 1,
+        "passed": 1,
+        "reason": "Selected Maven command only: paired native outcomes, telemetry identities and supported controls. Other modules/profiles, CI Java/tracer selection and backend processing are not certified."
+      },
+      "native_comparison": {
+        "status": "compatible",
+        "code": "native_outcomes_match",
+        "reason": "Native Maven identities, outcomes, exception details and exit code match. Matching existing failures are acceptable and do not block compatibility."
+      },
+      "telemetry_comparison": {
+        "status": "compatible",
+        "code": "java_identities_match",
+        "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+      },
+      "compatibility": "compatible",
+      "features": {
+        ".": {
+          "auto-retries": "passed",
+          "early-flake-detection": "passed",
+          "skipping": "passed",
+          "quarantine": "passed",
+          "disabled": "passed",
+          "attempt-to-fix": "passed"
+        }
+      },
+      "suite_runs": [
+        {
+          "role": "baseline",
+          "native_command": "mvn --no-transfer-progress verify source:jar javadoc:jar",
+          "exit_code": 0,
+          "test_counts": {
+            "passed": 388,
+            "failed": 0,
+            "skipped": 1,
+            "other": 0
+          },
+          "test_event_count": 0
+        },
+        {
+          "role": "reporting-only",
+          "native_command": "mvn --no-transfer-progress verify source:jar javadoc:jar",
+          "exit_code": 0,
+          "test_counts": {
+            "passed": 388,
+            "failed": 0,
+            "skipped": 1,
+            "other": 0
+          },
+          "test_event_count": 389
+        }
+      ],
+      "maven_coverage": {
+        "workflow_discovery": "observed (static only)",
+        "scope": "selected Maven command",
+        "modules": [
+          {
+            "directory": ".",
+            "artifact": "javapoet",
+            "status": "observed",
+            "native_results": 389
+          }
+        ],
+        "ci_workflows": [
+          {
+            "path": ".github/workflows/build.yml",
+            "instrumentation": "present (static only)",
+            "execution": "not exercised"
+          }
+        ],
+        "reason": "Declared modules include profile candidates. Native results establish execution only for the selected command. Static action presence does not certify CI Java/tracer versions, other commands or remote execution."
+      },
+      "previous_failed_comparison": null,
+      "changed_paths": [
+        ".github/workflows/build.yml",
+        ".gitignore"
+      ],
+      "dependency_changes": [],
+      "testng_dependency_versions_in_final_root_pom": [],
+      "test_source_changes": [],
+      "raw_automated_reporting": {
+        "status": "review",
+        "reason": "Missing canonical handoff needs independent review.",
+        "canonical_handoff": false,
+        "checks": [],
+        "differences": [],
+        "missing": [
+          "unchanged summary.final_response"
+        ],
+        "unsupported": []
+      },
+      "independent_criteria": {
+        "ci_configuration": {
+          "status": "pass",
+          "scope": "static presence only; no CI Java/tracer certification",
+          "evidence": "Action precedes the unchanged verify/source:jar/javadoc:jar command. JDK 8/Zulu and the conditional deploy step remain unchanged. No POM/test edits; CI runtime and backend not exercised."
+        },
+        "compatibility": {
+          "status": "pass",
+          "evidence": {
+            "status": "compatible",
+            "code": "java_identities_match",
+            "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+          }
+        },
+        "feature_controls": {
+          "status": "pass",
+          "evidence": [
+            [
+              ".",
+              "auto-retries",
+              "passed"
+            ],
+            [
+              ".",
+              "early-flake-detection",
+              "passed"
+            ],
+            [
+              ".",
+              "skipping",
+              "passed"
+            ],
+            [
+              ".",
+              "quarantine",
+              "passed"
+            ],
+            [
+              ".",
+              "disabled",
+              "passed"
+            ],
+            [
+              ".",
+              "attempt-to-fix",
+              "passed"
+            ]
+          ]
+        },
+        "reporting": {
+          "status": "pass",
+          "evidence": "Starts CI edits prepared / overall INCOMPLETE, accurately reports 388 pass + 1 skip and six controls, preserves the exact full CI command and does not claim remote execution. It paraphrases rather than reproduces the canonical handoff. Its final suggestion to run CI is an external verification step; the local report remains unverified for CI selection."
+        },
+        "source_preservation": {
+          "status": "pass",
+          "evidence": [
+            ".github/workflows/build.yml",
+            ".gitignore"
+          ]
+        },
+        "ddtest_cleanup": {
+          "status": "pass",
+          "evidence": {
+            "status": "passed",
+            "reason": "Owned Maven copies, probes and tracer installation removed."
+          }
+        },
+        "agent_artifacts": {
+          "status": "not exercised",
+          "evidence": "Tracked status and retained configurations reviewed. No complete independent inventory of ignored build artifacts at agent exit; no scratch-cleanup pass inferred."
+        },
+        "evaluator_teardown": {
+          "status": "pass",
+          "evidence": "Container removed and descendants stopped. Owned scratch is removed separately after preservation."
+        },
+        "ci_execution": {
+          "status": "not exercised"
+        },
+        "datadog_backend": {
+          "status": "not exercised"
+        }
+      },
+      "binary_integrity": {
+        "sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+        "matches_input": true
+      },
+      "report_artifact_hashes": {
+        ".testoptimization/testdrive.json": {
+          "sha256": "b0d678d3659742815e4fd5d53aea14fde85fb4b8eefa4c7660abfadf98c98835",
+          "bytes": 16710
+        },
+        ".testoptimization/report.html": {
+          "sha256": "1de17fde0684e3859353c5b5cfe65e198649b997c34b80c714085b802c878433",
+          "bytes": 3238518
+        }
+      },
+      "scratch_cleanup": "removed"
+    },
+    {
+      "id": "java-otp-claude-final",
+      "observed_comparisons": [],
+      "evidence_directory": "java-otp-claude-final",
+      "repository": "https://github.com/jchambers/java-otp.git",
+      "commit": "479c9b47576788935b7a35b15f3a12edf7cd4897",
+      "framework": "junit5",
+      "agent": "claude",
+      "cli_version": "2.1.220 (Claude Code)",
+      "observed_model": [
+        "claude-opus-5[1m]"
+      ],
+      "image": "sha256:50efcf83f300839ad3555bf41caac5bc5d32de89f12da759ef41207b83d48ed9",
+      "runner_status": "completed",
+      "tracer": "dd-java-agent@1.67.1",
+      "local_validation": "PASSED",
+      "overall_status": "INCOMPLETE",
+      "selected_command_validation": {
+        "scope": "selected Maven command",
+        "status": "PASSED",
+        "configurations": 1,
+        "passed": 1,
+        "reason": "Selected Maven command only: paired native outcomes, telemetry identities and supported controls. Other modules/profiles, CI Java/tracer selection and backend processing are not certified."
+      },
+      "native_comparison": {
+        "status": "compatible",
+        "code": "native_outcomes_match",
+        "reason": "Native Maven identities, outcomes, exception details and exit code match. Matching existing failures are acceptable and do not block compatibility."
+      },
+      "telemetry_comparison": {
+        "status": "compatible",
+        "code": "java_identities_match",
+        "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+      },
+      "compatibility": "compatible",
+      "features": {
+        ".": {
+          "auto-retries": "passed",
+          "early-flake-detection": "passed",
+          "skipping": "passed",
+          "quarantine": "passed",
+          "disabled": "passed",
+          "attempt-to-fix": "passed"
+        }
+      },
+      "suite_runs": [
+        {
+          "role": "baseline",
+          "native_command": "./mvnw test -B --file pom.xml",
+          "exit_code": 0,
+          "test_counts": {
+            "passed": 100,
+            "failed": 0,
+            "skipped": 0,
+            "other": 0
+          },
+          "test_event_count": 0
+        },
+        {
+          "role": "reporting-only",
+          "native_command": "./mvnw test -B --file pom.xml",
+          "exit_code": 0,
+          "test_counts": {
+            "passed": 100,
+            "failed": 0,
+            "skipped": 0,
+            "other": 0
+          },
+          "test_event_count": 100
+        }
+      ],
+      "maven_coverage": {
+        "workflow_discovery": "observed (static only)",
+        "scope": "selected Maven command",
+        "modules": [
+          {
+            "directory": ".",
+            "artifact": "java-otp",
+            "status": "observed",
+            "native_results": 100
+          }
+        ],
+        "ci_workflows": [
+          {
+            "path": ".github/workflows/deploy.yml",
+            "instrumentation": "present (static only)",
+            "execution": "not exercised"
+          },
+          {
+            "path": ".github/workflows/test.yml",
+            "instrumentation": "present (static only)",
+            "execution": "not exercised"
+          }
+        ],
+        "reason": "Declared modules include profile candidates. Native results establish execution only for the selected command. Static action presence does not certify CI Java/tracer versions, other commands or remote execution."
+      },
+      "previous_failed_comparison": null,
+      "changed_paths": [
+        ".github/workflows/deploy.yml",
+        ".github/workflows/test.yml",
+        ".gitignore"
+      ],
+      "dependency_changes": [],
+      "testng_dependency_versions_in_final_root_pom": [],
+      "test_source_changes": [],
+      "raw_automated_reporting": {
+        "status": "review",
+        "reason": "Missing canonical handoff needs independent review.",
+        "canonical_handoff": false,
+        "checks": [],
+        "differences": [],
+        "missing": [
+          "unchanged summary.final_response"
+        ],
+        "unsupported": []
+      },
+      "independent_criteria": {
+        "ci_configuration": {
+          "status": "pass",
+          "scope": "static presence only; no CI Java/tracer certification",
+          "evidence": "Java action present before the unchanged test and deploy lifecycle commands; original JDK matrix and Maven Central/GPG settings preserved. Local Java 17 and one test command do not certify deployment or all matrix JDKs."
+        },
+        "compatibility": {
+          "status": "pass",
+          "evidence": {
+            "status": "compatible",
+            "code": "java_identities_match",
+            "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+          }
+        },
+        "feature_controls": {
+          "status": "pass",
+          "evidence": [
+            [
+              ".",
+              "auto-retries",
+              "passed"
+            ],
+            [
+              ".",
+              "early-flake-detection",
+              "passed"
+            ],
+            [
+              ".",
+              "skipping",
+              "passed"
+            ],
+            [
+              ".",
+              "quarantine",
+              "passed"
+            ],
+            [
+              ".",
+              "disabled",
+              "passed"
+            ],
+            [
+              ".",
+              "attempt-to-fix",
+              "passed"
+            ]
+          ]
+        },
+        "reporting": {
+          "status": "pass",
+          "evidence": "Clearly starts CI edits prepared / overall INCOMPLETE and preserves the quoted local PASSED handoff, 100 executions, six controls and CI Java/tracer blocker. Explicitly states actual CI cannot update this local verdict. Both detected workflows are instrumented; no dependency or test-source changes. Blockquote formatting was reviewed as a faithful rendering, not a factual contradiction."
+        },
+        "source_preservation": {
+          "status": "pass",
+          "evidence": [
+            ".github/workflows/deploy.yml",
+            ".github/workflows/test.yml",
+            ".gitignore"
+          ]
+        },
+        "ddtest_cleanup": {
+          "status": "pass",
+          "evidence": {
+            "status": "passed",
+            "reason": "Owned Maven copies, probes and tracer installation removed."
+          }
+        },
+        "agent_artifacts": {
+          "status": "not exercised",
+          "evidence": "Tracked status and retained configurations reviewed. No complete independent inventory of ignored build artifacts at agent exit; no scratch-cleanup pass inferred."
+        },
+        "evaluator_teardown": {
+          "status": "pass",
+          "evidence": "Container removed and descendants stopped. Owned scratch is removed separately after preservation."
+        },
+        "ci_execution": {
+          "status": "not exercised"
+        },
+        "datadog_backend": {
+          "status": "not exercised"
+        }
+      },
+      "binary_integrity": {
+        "sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+        "matches_input": true
+      },
+      "report_artifact_hashes": {
+        ".testoptimization/testdrive.json": {
+          "sha256": "196b815dbe8d7935de3bd6747faa7d94410c0cf8b2b29d59bdec393ba3f043bc",
+          "bytes": 16429
+        },
+        ".testoptimization/report.html": {
+          "sha256": "cffae8e2a85b1e4cdfb38719c56ddd7f23ebffb17fb631bb442777e257f62c07",
+          "bytes": 779029
+        }
+      },
+      "scratch_cleanup": "removed"
+    },
+    {
+      "id": "java-otp-codex-final",
+      "observed_comparisons": [],
+      "evidence_directory": "java-otp-codex-final",
+      "repository": "https://github.com/jchambers/java-otp.git",
+      "commit": "479c9b47576788935b7a35b15f3a12edf7cd4897",
+      "framework": "junit5",
+      "agent": "codex",
+      "cli_version": "codex-cli 0.163.0",
+      "observed_model": [],
+      "image": "sha256:50efcf83f300839ad3555bf41caac5bc5d32de89f12da759ef41207b83d48ed9",
+      "runner_status": "completed",
+      "tracer": "dd-java-agent@1.67.1",
+      "local_validation": "PASSED",
+      "overall_status": "INCOMPLETE",
+      "selected_command_validation": {
+        "scope": "selected Maven command",
+        "status": "PASSED",
+        "configurations": 1,
+        "passed": 1,
+        "reason": "Selected Maven command only: paired native outcomes, telemetry identities and supported controls. Other modules/profiles, CI Java/tracer selection and backend processing are not certified."
+      },
+      "native_comparison": {
+        "status": "compatible",
+        "code": "native_outcomes_match",
+        "reason": "Native Maven identities, outcomes, exception details and exit code match. Matching existing failures are acceptable and do not block compatibility."
+      },
+      "telemetry_comparison": {
+        "status": "compatible",
+        "code": "java_identities_match",
+        "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+      },
+      "compatibility": "compatible",
+      "features": {
+        ".": {
+          "auto-retries": "passed",
+          "early-flake-detection": "passed",
+          "skipping": "passed",
+          "quarantine": "passed",
+          "disabled": "passed",
+          "attempt-to-fix": "passed"
+        }
+      },
+      "suite_runs": [
+        {
+          "role": "baseline",
+          "native_command": "./mvnw test -B --file pom.xml",
+          "exit_code": 0,
+          "test_counts": {
+            "passed": 100,
+            "failed": 0,
+            "skipped": 0,
+            "other": 0
+          },
+          "test_event_count": 0
+        },
+        {
+          "role": "reporting-only",
+          "native_command": "./mvnw test -B --file pom.xml",
+          "exit_code": 0,
+          "test_counts": {
+            "passed": 100,
+            "failed": 0,
+            "skipped": 0,
+            "other": 0
+          },
+          "test_event_count": 100
+        }
+      ],
+      "maven_coverage": {
+        "workflow_discovery": "observed (static only)",
+        "scope": "selected Maven command",
+        "modules": [
+          {
+            "directory": ".",
+            "artifact": "java-otp",
+            "status": "observed",
+            "native_results": 100
+          }
+        ],
+        "ci_workflows": [
+          {
+            "path": ".github/workflows/deploy.yml",
+            "instrumentation": "present (static only)",
+            "execution": "not exercised"
+          },
+          {
+            "path": ".github/workflows/test.yml",
+            "instrumentation": "present (static only)",
+            "execution": "not exercised"
+          }
+        ],
+        "reason": "Declared modules include profile candidates. Native results establish execution only for the selected command. Static action presence does not certify CI Java/tracer versions, other commands or remote execution."
+      },
+      "previous_failed_comparison": null,
+      "changed_paths": [
+        ".github/workflows/deploy.yml",
+        ".github/workflows/test.yml",
+        ".gitignore"
+      ],
+      "dependency_changes": [],
+      "testng_dependency_versions_in_final_root_pom": [],
+      "test_source_changes": [],
+      "raw_automated_reporting": {
+        "status": "review",
+        "reason": "Missing canonical handoff needs independent review.",
+        "canonical_handoff": false,
+        "checks": [],
+        "differences": [],
+        "missing": [
+          "unchanged summary.final_response"
+        ],
+        "unsupported": []
+      },
+      "independent_criteria": {
+        "ci_configuration": {
+          "status": "pass",
+          "scope": "static presence only; no CI Java/tracer certification",
+          "evidence": "Both detected Maven workflows get the Java action before unchanged commands. JDK matrix, deployment configuration, POM and test sources preserved; actual CI/JDK compatibility unverified."
+        },
+        "compatibility": {
+          "status": "pass",
+          "evidence": {
+            "status": "compatible",
+            "code": "java_identities_match",
+            "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+          }
+        },
+        "feature_controls": {
+          "status": "pass",
+          "evidence": [
+            [
+              ".",
+              "auto-retries",
+              "passed"
+            ],
+            [
+              ".",
+              "early-flake-detection",
+              "passed"
+            ],
+            [
+              ".",
+              "skipping",
+              "passed"
+            ],
+            [
+              ".",
+              "quarantine",
+              "passed"
+            ],
+            [
+              ".",
+              "disabled",
+              "passed"
+            ],
+            [
+              ".",
+              "attempt-to-fix",
+              "passed"
+            ]
+          ]
+        },
+        "reporting": {
+          "status": "fail",
+          "evidence": "Accurate local 100-test / six-control results and overall INCOMPLETE, but explicitly says CI tracer agreement remains inconclusive until GitHub Actions runs. That contradicts the report: actual CI cannot update or clear this local verdict. The failure is retained, not softened because the opening status is now correct."
+        },
+        "source_preservation": {
+          "status": "pass",
+          "evidence": [
+            ".github/workflows/deploy.yml",
+            ".github/workflows/test.yml",
+            ".gitignore"
+          ]
+        },
+        "ddtest_cleanup": {
+          "status": "pass",
+          "evidence": {
+            "status": "passed",
+            "reason": "Owned Maven copies, probes and tracer installation removed."
+          }
+        },
+        "agent_artifacts": {
+          "status": "not exercised",
+          "evidence": "Tracked status and retained configurations reviewed. No complete independent inventory of ignored build artifacts at agent exit; no scratch-cleanup pass inferred."
+        },
+        "evaluator_teardown": {
+          "status": "pass",
+          "evidence": "Container removed and descendants stopped. Owned scratch is removed separately after preservation."
+        },
+        "ci_execution": {
+          "status": "not exercised"
+        },
+        "datadog_backend": {
+          "status": "not exercised"
+        }
+      },
+      "binary_integrity": {
+        "sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+        "matches_input": true
+      },
+      "report_artifact_hashes": {
+        ".testoptimization/testdrive.json": {
+          "sha256": "bfb597d3c34e53c5ce9a6c7c610ec5b78aea5398fcea3e2a43b153e433a00f1c",
+          "bytes": 16429
+        },
+        ".testoptimization/report.html": {
+          "sha256": "b59711df3bc71b068e9a6b7321de1ceae36d63feed9cab2a9659745a56308c41",
+          "bytes": 779046
+        }
+      },
+      "scratch_cleanup": "removed"
+    },
+    {
+      "id": "failsafe-claude-retry-final",
+      "observed_comparisons": [
+        {
+          "session": "ddtest-testdrive-2026-10-26-145632-PDUZ25V32T73NV7T555QCLLGAP",
+          "completed_at": "2026-10-26T14:56:32.898270554Z",
+          "local_validation": "NOT EXERCISED",
+          "native_code": null,
+          "telemetry_code": null,
+          "suite_runs": [],
+          "features": {
+            "all": "not exercised"
+          }
+        },
+        {
+          "session": "ddtest-testdrive-2026-10-26-145714-FZIBHJ5ENZ6MTPR26AUH5RV27D",
+          "completed_at": "2026-10-26T14:58:36.423396598Z",
+          "local_validation": "INCOMPLETE",
+          "native_code": "native_outcomes_match",
+          "telemetry_code": "java_test_name_missing",
+          "suite_runs": [
+            {
+              "role": "baseline",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 0
+            },
+            {
+              "role": "reporting-only",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 306
+            }
+          ],
+          "features": {
+            "auto-retries": "inconclusive",
+            "early-flake-detection": "inconclusive",
+            "skipping": "inconclusive",
+            "quarantine": "inconclusive",
+            "disabled": "inconclusive",
+            "attempt-to-fix": "inconclusive"
+          }
+        },
+        {
+          "session": "ddtest-testdrive-2026-10-26-150046-SVTRXGKWBUIQ6CKTLMRRIN4X4X",
+          "completed_at": "2026-10-26T15:02:10.271521656Z",
+          "local_validation": "INCOMPLETE",
+          "native_code": "native_outcomes_match",
+          "telemetry_code": "java_test_name_missing",
+          "suite_runs": [
+            {
+              "role": "baseline",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 0
+            },
+            {
+              "role": "reporting-only",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 306
+            }
+          ],
+          "features": {
+            "auto-retries": "inconclusive",
+            "early-flake-detection": "inconclusive",
+            "skipping": "inconclusive",
+            "quarantine": "inconclusive",
+            "disabled": "inconclusive",
+            "attempt-to-fix": "inconclusive"
+          }
+        },
+        {
+          "session": "ddtest-testdrive-2026-10-26-150229-VSBOQ7AKE74BNEEUYWXFVG2GNV",
+          "completed_at": "2026-10-26T15:04:20.347530165Z",
+          "local_validation": "PASSED",
+          "native_code": "native_outcomes_match",
+          "telemetry_code": "java_identities_match",
+          "suite_runs": [
+            {
+              "role": "baseline",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 0
+            },
+            {
+              "role": "reporting-only",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 306
+            }
+          ],
+          "features": {
+            "auto-retries": "not supported",
+            "early-flake-detection": "not supported",
+            "skipping": "passed",
+            "quarantine": "not supported",
+            "disabled": "passed",
+            "attempt-to-fix": "not supported"
+          }
+        },
+        {
+          "session": "ddtest-testdrive-2026-10-26-150447-OTVAZ2VEPR3N6R2MW7S47VH6LL",
+          "completed_at": "2026-10-26T15:07:04.101900156Z",
+          "local_validation": "PASSED",
+          "native_code": "native_outcomes_match",
+          "telemetry_code": "java_identities_match",
+          "suite_runs": [
+            {
+              "role": "baseline",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 0
+            },
+            {
+              "role": "reporting-only",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 306
+            }
+          ],
+          "features": {
+            "auto-retries": "passed",
+            "early-flake-detection": "passed",
+            "skipping": "passed",
+            "quarantine": "passed",
+            "disabled": "passed",
+            "attempt-to-fix": "passed"
+          }
+        },
+        {
+          "session": "ddtest-testdrive-2026-10-26-150757-UZCUXS7RMZQAUDZCEYVSV4HQAS",
+          "completed_at": "2026-10-26T15:10:15.185642627Z",
+          "local_validation": "PASSED",
+          "native_code": "native_outcomes_match",
+          "telemetry_code": "java_identities_match",
+          "suite_runs": [
+            {
+              "role": "baseline",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 0
+            },
+            {
+              "role": "reporting-only",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 306
+            }
+          ],
+          "features": {
+            "auto-retries": "passed",
+            "early-flake-detection": "passed",
+            "skipping": "passed",
+            "quarantine": "passed",
+            "disabled": "passed",
+            "attempt-to-fix": "passed"
+          }
+        }
+      ],
+      "evidence_directory": "resource-fixed/failsafe-claude-retry-final",
+      "repository": "https://github.com/failsafe-lib/failsafe.git",
+      "commit": "ed3f92739669769274cf5c9567fd422929c20ad2",
+      "framework": "testng",
+      "agent": "claude",
+      "cli_version": "2.1.220 (Claude Code)",
+      "observed_model": [
+        "claude-opus-5[1m]"
+      ],
+      "image": "sha256:50efcf83f300839ad3555bf41caac5bc5d32de89f12da759ef41207b83d48ed9",
+      "runner_status": "completed",
+      "tracer": "dd-java-agent@1.67.1",
+      "local_validation": "PASSED",
+      "overall_status": "INCOMPLETE",
+      "selected_command_validation": {
+        "scope": "selected Maven command",
+        "status": "PASSED",
+        "configurations": 1,
+        "passed": 1,
+        "reason": "Selected Maven command only: paired native outcomes, telemetry identities and supported controls. Other modules/profiles, CI Java/tracer selection and backend processing are not certified."
+      },
+      "native_comparison": {
+        "status": "compatible",
+        "code": "native_outcomes_match",
+        "reason": "Native Maven identities, outcomes, exception details and exit code match. Matching existing failures are acceptable and do not block compatibility."
+      },
+      "telemetry_comparison": {
+        "status": "compatible",
+        "code": "java_identities_match",
+        "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+      },
+      "compatibility": "compatible",
+      "features": {
+        "core": {
+          "auto-retries": "passed",
+          "early-flake-detection": "passed",
+          "skipping": "passed",
+          "quarantine": "passed",
+          "disabled": "passed",
+          "attempt-to-fix": "passed"
+        }
+      },
+      "suite_runs": [
+        {
+          "role": "baseline",
+          "native_command": "mvn -B test",
+          "exit_code": 1,
+          "test_counts": {
+            "passed": 305,
+            "failed": 1,
+            "skipped": 0,
+            "other": 0
+          },
+          "test_event_count": 0
+        },
+        {
+          "role": "reporting-only",
+          "native_command": "mvn -B test",
+          "exit_code": 1,
+          "test_counts": {
+            "passed": 305,
+            "failed": 1,
+            "skipped": 0,
+            "other": 0
+          },
+          "test_event_count": 306
+        }
+      ],
+      "maven_coverage": {
+        "workflow_discovery": "observed (static only)",
+        "scope": "selected Maven command",
+        "modules": [
+          {
+            "directory": ".",
+            "artifact": "failsafe-parent",
+            "status": "aggregator (no native results)",
+            "reactor_status": "success",
+            "native_results": 0
+          },
+          {
+            "directory": "core",
+            "artifact": "failsafe",
+            "status": "observed",
+            "reactor_status": "failure",
+            "native_results": 306
+          },
+          {
+            "directory": "modules/okhttp",
+            "artifact": "failsafe-okhttp",
+            "status": "not reached",
+            "reactor_status": "skipped",
+            "native_results": 0
+          },
+          {
+            "directory": "modules/retrofit",
+            "artifact": "failsafe-retrofit",
+            "status": "not reached",
+            "reactor_status": "skipped",
+            "native_results": 0
+          }
+        ],
+        "ci_workflows": [
+          {
+            "path": ".github/workflows/maven.yml",
+            "instrumentation": "present (static only)",
+            "execution": "not exercised"
+          }
+        ],
+        "reason": "Declared modules include profile candidates. Native results establish execution only for the selected command. Static action presence does not certify CI Java/tracer versions, other commands or remote execution."
+      },
+      "previous_failed_comparison": null,
+      "changed_paths": [
+        ".github/workflows/maven.yml",
+        ".gitignore",
+        "pom.xml"
+      ],
+      "dependency_changes": [
+        "pom.xml"
+      ],
+      "testng_dependency_versions_in_final_root_pom": [
+        "7.5"
+      ],
+      "test_source_changes": [],
+      "raw_automated_reporting": {
+        "status": "review",
+        "reason": "Missing canonical handoff needs independent review.",
+        "canonical_handoff": false,
+        "checks": [],
+        "differences": [],
+        "missing": [
+          "unchanged summary.final_response"
+        ],
+        "unsupported": []
+      },
+      "independent_criteria": {
+        "ci_configuration": {
+          "status": "pass",
+          "scope": "static presence only; no CI Java/tracer certification",
+          "evidence": "Java action, explicit Maven instrumentation and tracer 1.67.1 pin before unchanged mvn -B test; original six-way Java/vendor matrix preserved. Root TestNG upgraded to 7.5. Core only observed; okhttp/retrofit not reached. Java 17 local runtime only; actual CI and other JDKs not exercised."
+        },
+        "compatibility": {
+          "status": "pass",
+          "evidence": {
+            "status": "compatible",
+            "code": "java_identities_match",
+            "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+          }
+        },
+        "feature_controls": {
+          "status": "pass",
+          "evidence": [
+            [
+              "core",
+              "auto-retries",
+              "passed"
+            ],
+            [
+              "core",
+              "early-flake-detection",
+              "passed"
+            ],
+            [
+              "core",
+              "skipping",
+              "passed"
+            ],
+            [
+              "core",
+              "quarantine",
+              "passed"
+            ],
+            [
+              "core",
+              "disabled",
+              "passed"
+            ],
+            [
+              "core",
+              "attempt-to-fix",
+              "passed"
+            ]
+          ]
+        },
+        "reporting": {
+          "status": "pass",
+          "evidence": "Clearly starts CI edits prepared / onboarding INCOMPLETE, preserves the local PASSED handoff, explicitly discloses TestNG 6.9.10 to 7.5 upgrade and distinguishes missing-name versus capability changes at 7.4.0. Names core-only coverage, two unreached modules and JDK 8/11 untested. CI pin does not claim certification. Its phrase the upgrade broke nothing is accepted only for the immediately described matching selected-command outcomes; no full-reactor or matrix guarantee is inferred. The Java 8 statement is treated as the vendor-documented 7.5 release-line requirement, not a claim that exact 7.5 is the latest patch."
+        },
+        "source_preservation": {
+          "status": "blocked",
+          "evidence": [
+            ".github/workflows/maven.yml",
+            ".gitignore",
+            "pom.xml"
+          ]
+        },
+        "ddtest_cleanup": {
+          "status": "pass",
+          "evidence": {
+            "status": "passed",
+            "reason": "Owned Maven copies, probes and tracer installation removed."
+          }
+        },
+        "agent_artifacts": {
+          "status": "not exercised",
+          "evidence": "Tracked status and retained configurations reviewed. No complete independent inventory of ignored build artifacts at agent exit; no scratch-cleanup pass inferred."
+        },
+        "evaluator_teardown": {
+          "status": "pass",
+          "evidence": "Container removed and descendants stopped. Owned scratch is removed separately after preservation."
+        },
+        "ci_execution": {
+          "status": "not exercised"
+        },
+        "datadog_backend": {
+          "status": "not exercised"
+        }
+      },
+      "binary_integrity": {
+        "sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+        "matches_input": true
+      },
+      "report_artifact_hashes": {
+        ".testoptimization/testdrive.json": {
+          "sha256": "42f318586e2d505db3e756fc953ae321ed048fc036ad50629518b0228b9a6539",
+          "bytes": 20225
+        },
+        ".testoptimization/report.html": {
+          "sha256": "647048639a5d9b9ff67aa6858bb131e0dfc4e5c79056045be852a3dd318225ee",
+          "bytes": 3511743
+        }
+      },
+      "scratch_cleanup": "removed"
+    },
+    {
+      "id": "failsafe-codex-final",
+      "observed_comparisons": [
+        {
+          "session": "ddtest-testdrive-2026-10-26-145312-366MF4WHSRJYJZIYHKM4LIUJL2",
+          "completed_at": "2026-10-26T14:53:12.613270346Z",
+          "local_validation": "NOT EXERCISED",
+          "native_code": null,
+          "telemetry_code": null,
+          "suite_runs": [],
+          "features": {
+            "all": "not exercised"
+          }
+        },
+        {
+          "session": "ddtest-testdrive-2026-10-26-145317-4Z6QLMPXQ2IF6CL2HLS2GVUHBN",
+          "completed_at": "2026-10-26T14:54:40.353060455Z",
+          "local_validation": "INCOMPLETE",
+          "native_code": "native_outcomes_match",
+          "telemetry_code": "java_test_name_missing",
+          "suite_runs": [
+            {
+              "role": "baseline",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 0
+            },
+            {
+              "role": "reporting-only",
+              "native_command": "mvn -B test",
+              "exit_code": 1,
+              "test_counts": {
+                "passed": 305,
+                "failed": 1,
+                "skipped": 0,
+                "other": 0
+              },
+              "test_event_count": 306
+            }
+          ],
+          "features": {
+            "auto-retries": "inconclusive",
+            "early-flake-detection": "inconclusive",
+            "skipping": "inconclusive",
+            "quarantine": "inconclusive",
+            "disabled": "inconclusive",
+            "attempt-to-fix": "inconclusive"
+          }
+        }
+      ],
+      "evidence_directory": "resource-fixed/failsafe-codex-final",
+      "repository": "https://github.com/failsafe-lib/failsafe.git",
+      "commit": "ed3f92739669769274cf5c9567fd422929c20ad2",
+      "framework": "testng",
+      "agent": "codex",
+      "cli_version": "codex-cli 0.163.0",
+      "observed_model": [],
+      "image": "sha256:50efcf83f300839ad3555bf41caac5bc5d32de89f12da759ef41207b83d48ed9",
+      "runner_status": "completed",
+      "tracer": "dd-java-agent@1.67.1",
+      "local_validation": "INCOMPLETE",
+      "overall_status": "INCOMPLETE",
+      "selected_command_validation": {
+        "scope": "selected Maven command",
+        "status": "INCOMPLETE",
+        "configurations": 1,
+        "passed": 0,
+        "reason": "Selected Maven command only: paired native outcomes, telemetry identities and supported controls. Other modules/profiles, CI Java/tracer selection and backend processing are not certified."
+      },
+      "native_comparison": {
+        "status": "compatible",
+        "code": "native_outcomes_match",
+        "reason": "Native Maven identities, outcomes, exception details and exit code match. Matching existing failures are acceptable and do not block compatibility."
+      },
+      "telemetry_comparison": {
+        "status": "inconclusive",
+        "code": "java_test_name_missing",
+        "reason": "305 Java test executions have an empty test.name. Native names cannot be reconciled with unnamed telemetry; equal totals and matching existing failures do not establish compatibility. Feature probes were not run.",
+        "difference_count": 610,
+        "differences": [
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"shouldThrowOnRetryWhenAlreadyComplete\" status=\"pass\": native=1, telemetry=0",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 1178155903504646966\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 1837834236769876127\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 5348466586312330283\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 6097138686333066312\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 6232446266133128050\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 7620226774864643432\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 7926724829088040103\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"testCompleteForNoResult\" status=\"pass\": native=1, telemetry=0",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"testCompleteOrRetry\" status=\"pass\": native=1, telemetry=0"
+        ]
+      },
+      "compatibility": "inconclusive",
+      "features": {
+        ".": {
+          "auto-retries": "inconclusive",
+          "early-flake-detection": "inconclusive",
+          "skipping": "inconclusive",
+          "quarantine": "inconclusive",
+          "disabled": "inconclusive",
+          "attempt-to-fix": "inconclusive"
+        }
+      },
+      "suite_runs": [
+        {
+          "role": "baseline",
+          "native_command": "mvn -B test",
+          "exit_code": 1,
+          "test_counts": {
+            "passed": 305,
+            "failed": 1,
+            "skipped": 0,
+            "other": 0
+          },
+          "test_event_count": 0
+        },
+        {
+          "role": "reporting-only",
+          "native_command": "mvn -B test",
+          "exit_code": 1,
+          "test_counts": {
+            "passed": 305,
+            "failed": 1,
+            "skipped": 0,
+            "other": 0
+          },
+          "test_event_count": 306
+        }
+      ],
+      "maven_coverage": {
+        "workflow_discovery": "observed (static only)",
+        "scope": "selected Maven command",
+        "modules": [
+          {
+            "directory": ".",
+            "artifact": "failsafe-parent",
+            "status": "aggregator (no native results)",
+            "reactor_status": "success",
+            "native_results": 0
+          },
+          {
+            "directory": "core",
+            "artifact": "failsafe",
+            "status": "observed",
+            "reactor_status": "failure",
+            "native_results": 306
+          },
+          {
+            "directory": "modules/okhttp",
+            "artifact": "failsafe-okhttp",
+            "status": "not reached",
+            "reactor_status": "skipped",
+            "native_results": 0
+          },
+          {
+            "directory": "modules/retrofit",
+            "artifact": "failsafe-retrofit",
+            "status": "not reached",
+            "reactor_status": "skipped",
+            "native_results": 0
+          }
+        ],
+        "ci_workflows": [
+          {
+            "path": ".github/workflows/maven.yml",
+            "instrumentation": "present (static only)",
+            "execution": "not exercised"
+          }
+        ],
+        "reason": "Declared modules include profile candidates. Native results establish execution only for the selected command. Static action presence does not certify CI Java/tracer versions, other commands or remote execution."
+      },
+      "previous_failed_comparison": null,
+      "changed_paths": [
+        ".github/workflows/maven.yml",
+        ".gitignore"
+      ],
+      "dependency_changes": [],
+      "testng_dependency_versions_in_final_root_pom": [
+        "6.9.10"
+      ],
+      "test_source_changes": [],
+      "raw_automated_reporting": {
+        "status": "review",
+        "reason": "Missing canonical handoff needs independent review.",
+        "canonical_handoff": false,
+        "checks": [],
+        "differences": [],
+        "missing": [
+          "unchanged summary.final_response"
+        ],
+        "unsupported": []
+      },
+      "independent_criteria": {
+        "ci_configuration": {
+          "status": "pass",
+          "scope": "static presence only; no CI Java/tracer certification",
+          "evidence": "Java action before unchanged mvn -B test, original JDK/vendor matrix, no POM or test-source changes. Core observed; okhttp/retrofit not reached. Actual CI/tracer/JDK agreement remains unverified."
+        },
+        "compatibility": {
+          "status": "blocked",
+          "evidence": {
+            "status": "inconclusive",
+            "code": "java_test_name_missing",
+            "reason": "305 Java test executions have an empty test.name. Native names cannot be reconciled with unnamed telemetry; equal totals and matching existing failures do not establish compatibility. Feature probes were not run.",
+            "difference_count": 10,
+            "differences": [
+              "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"shouldThrowOnRetryWhenAlreadyComplete\" status=\"pass\": native=1, telemetry=0",
+              "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 1178155903504646966\" status=\"pass\": native=0, telemetry=1",
+              "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 1837834236769876127\" status=\"pass\": native=0, telemetry=1",
+              "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 5348466586312330283\" status=\"pass\": native=0, telemetry=1",
+              "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 6097138686333066312\" status=\"pass\": native=0, telemetry=1",
+              "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 6232446266133128050\" status=\"pass\": native=0, telemetry=1",
+              "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 7620226774864643432\" status=\"pass\": native=0, telemetry=1",
+              "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 7926724829088040103\" status=\"pass\": native=0, telemetry=1",
+              "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"testCompleteForNoResult\" status=\"pass\": native=1, telemetry=0",
+              "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"testCompleteOrRetry\" status=\"pass\": native=1, telemetry=0"
+            ]
+          }
+        },
+        "feature_controls": {
+          "status": "blocked",
+          "evidence": [
+            [
+              null,
+              "auto-retries",
+              "inconclusive"
+            ],
+            [
+              null,
+              "early-flake-detection",
+              "inconclusive"
+            ],
+            [
+              null,
+              "skipping",
+              "inconclusive"
+            ],
+            [
+              null,
+              "quarantine",
+              "inconclusive"
+            ],
+            [
+              null,
+              "disabled",
+              "inconclusive"
+            ],
+            [
+              null,
+              "attempt-to-fix",
+              "inconclusive"
+            ]
+          ]
+        },
+        "reporting": {
+          "status": "pass",
+          "evidence": "Starts CI edits prepared / onboarding INCOMPLETE. Correctly distinguishes matching 305 pass / 1 fail native outcomes from 305 telemetry events missing test.name; says probes did not run and later reactor modules were not reached. It preserves the original TestNG 6.9.10 and full Maven command and makes no claim that equal counts or a future CI run certifies this local report."
+        },
+        "source_preservation": {
+          "status": "pass",
+          "evidence": [
+            ".github/workflows/maven.yml",
+            ".gitignore"
+          ]
+        },
+        "ddtest_cleanup": {
+          "status": "pass",
+          "evidence": {
+            "status": "passed",
+            "reason": "Owned Maven copies, probes and tracer installation removed."
+          }
+        },
+        "agent_artifacts": {
+          "status": "not exercised",
+          "evidence": "Tracked status and retained configurations reviewed. No complete independent inventory of ignored build artifacts at agent exit; no scratch-cleanup pass inferred."
+        },
+        "evaluator_teardown": {
+          "status": "pass",
+          "evidence": "Container removed and descendants stopped. Owned scratch is removed separately after preservation."
+        },
+        "ci_execution": {
+          "status": "not exercised"
+        },
+        "datadog_backend": {
+          "status": "not exercised"
+        }
+      },
+      "binary_integrity": {
+        "sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+        "matches_input": true
+      },
+      "report_artifact_hashes": {
+        ".testoptimization/testdrive.json": {
+          "sha256": "b79d567d2b4a2d1b557846fa866ce73a7121ca821c74fd1ac9cddb28c0416a75",
+          "bytes": 18213
+        },
+        ".testoptimization/report.html": {
+          "sha256": "a09400714f760d03bc8bca13a77ae64c0eb1301a73109a3021372cf2235a1e26",
+          "bytes": 3506810
+        }
+      },
+      "scratch_cleanup": "removed"
+    }
+  ],
+  "teardown": {
+    "owned_trial_roots_checked": [
+      "javapoet-claude-final",
+      "sdk-missing-name-smoke",
+      "live-framework-fixtures-v2",
+      "failsafe-codex-final",
+      "history-cli-smoke-v2",
+      "javapoet-codex-final",
+      "java-otp-codex-final",
+      "java-otp-claude-final",
+      "failsafe-claude-final",
+      "resource-fixed/failsafe-claude-retry-final",
+      "resource-fixed/failsafe-codex-final",
+      "resource-fixed/failsafe-claude-final"
+    ],
+    "owned_trial_roots_removed": true,
+    "containers_empty_before_vm_deletion": true,
+    "dedicated_vm": "ddtest-java-eval",
+    "dedicated_vm_and_container_data_removed": true,
+    "unrelated_default_profile": "not operated on",
+    "ddtest_session_cleanup": "per-trial report",
+    "agent_ignored_artifact_inventory": "not exercised"
+  },
+  "observation_scope": "Observed report results retain session identity. SDK-version attribution uses public command activity and final patches; live POM observations were not atomic with report writes.",
+  "product_checks": {
+    "framework_fixtures": {
+      "source_commit": "6587518f1e9bd2d174e23eee9882c01f09b835e5",
+      "test_binary_sha256": "4c4c8e7114d606f2abd18ff20e4ff18c62173ed6d280e885339d86a2d184076e",
+      "image": "sha256:50efcf83f300839ad3555bf41caac5bc5d32de89f12da759ef41207b83d48ed9",
+      "tracer": "1.67.1",
+      "frameworks": [
+        "junit4",
+        "junit5",
+        "testng",
+        "spock",
+        "cucumber-java",
+        "karate",
+        "scalatest",
+        "munit"
+      ],
+      "exit_code": 0,
+      "kind": "evaluator-owned fixture validation; no model calls",
+      "linux_mocha_control_exit_code": 0
+    },
+    "supported_controls_passed": 46,
+    "explicitly_unsupported_controls": {
+      "munit": [
+        "skipping",
+        "disabled"
+      ]
+    },
+    "public_cli_history_smoke": {
+      "source_commit": "6587518f1e9bd2d174e23eee9882c01f09b835e5",
+      "binary_sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+      "image": "sha256:50efcf83f300839ad3555bf41caac5bc5d32de89f12da759ef41207b83d48ed9",
+      "tracer": "1.67.1",
+      "kind": "evaluator-owned public CLI fixture; no model calls",
+      "exit_code": 0,
+      "stages": [
+        {
+          "stage": "01-instrumented-failure",
+          "exit_code": 1,
+          "summary": "FAILED",
+          "compatibility": {
+            "status": "suspected regression",
+            "code": "native_outcome_mismatch",
+            "reason": "Native Maven identities, outcomes, exception details or exit code differ. These differences remain unexplained; an uninstrumented subset rerun cannot clear them.",
+            "difference_count": 4,
+            "differences": [
+              ". / example.ExampleTest \u203a works: failed\njava.lang.AssertionError: intentional instrumented-only failure\n: baseline=0, reporting-only=1",
+              ". / example.ExampleTest \u203a works: passed\n: baseline=1, reporting-only=0",
+              "exit=0: baseline=1, reporting-only=0",
+              "exit=1: baseline=0, reporting-only=1"
+            ]
+          },
+          "previous_failed_comparison": null
+        },
+        {
+          "stage": "02-restored-suite",
+          "exit_code": 1,
+          "summary": "PASSED",
+          "compatibility": {
+            "status": "compatible",
+            "code": "java_identities_match",
+            "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+          },
+          "previous_failed_comparison": {
+            "kind": "ddtest-maven-failed-comparison",
+            "session": "ddtest-testdrive-2026-10-26-140735-A55NJEFJLI4NEYM2FCDTYLPQNW",
+            "framework": "junit5",
+            "completed_at": "2026-10-26T14:07:54.645952852Z",
+            "status": "historical; not resolved by a later matching run",
+            "json_report": "maven-previous-failure.json",
+            "html_report": "maven-previous-failure.html",
+            "html_sha256": "e53edb8c86f39d34fdd97cbd27ebf08c5ed7503569472f5a85f18c50e5955d40"
+          }
+        },
+        {
+          "stage": "03-check-only",
+          "exit_code": 1,
+          "summary": "PASSED EARLIER; NOT RERUN",
+          "compatibility": {
+            "status": "not exercised",
+            "reason": "Configuration checks only; paired execution was not exercised."
+          },
+          "previous_failed_comparison": {
+            "kind": "ddtest-maven-failed-comparison",
+            "session": "ddtest-testdrive-2026-10-26-140735-A55NJEFJLI4NEYM2FCDTYLPQNW",
+            "framework": "junit5",
+            "completed_at": "2026-10-26T14:07:54.645952852Z",
+            "status": "historical; not resolved by a later matching run",
+            "json_report": "maven-previous-failure.json",
+            "html_report": "maven-previous-failure.html",
+            "html_sha256": "e53edb8c86f39d34fdd97cbd27ebf08c5ed7503569472f5a85f18c50e5955d40"
+          }
+        }
+      ]
+    },
+    "actual_sdk_missing_name_diagnostic_subset": {
+      "source_commit": "6587518f1e9bd2d174e23eee9882c01f09b835e5",
+      "binary_sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+      "exit_code": 0,
+      "kind": "evaluator-owned actual SDK diagnostic subset; not full-suite or agent evidence",
+      "native_command": "mvn -q -pl core test -Dtest=AsyncExecutionTest",
+      "native_comparison": {
+        "status": "compatible",
+        "code": "native_outcomes_match",
+        "reason": "Native Maven identities, outcomes, exception details and exit code match. Matching existing failures are acceptable and do not block compatibility."
+      },
+      "telemetry_comparison": {
+        "status": "inconclusive",
+        "code": "java_test_name_missing",
+        "reason": "7 Java test executions have an empty test.name. Native names cannot be reconciled with unnamed telemetry; equal totals and matching existing failures do not establish compatibility. Feature probes were not run.",
+        "difference_count": 14,
+        "differences": [
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"shouldThrowOnRetryWhenAlreadyComplete\" status=\"pass\": native=1, telemetry=0",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 1685994086793755692\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 39216349986471609\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 4699762601393136045\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 5571880460695087347\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 7581718125508175042\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 8704713504642878613\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"test 8860589549714649143\" status=\"pass\": native=0, telemetry=1",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"testCompleteForNoResult\" status=\"pass\": native=1, telemetry=0",
+          "module=\"core\" suite=\"dev.failsafe.AsyncExecutionTest\" test=\"testCompleteOrRetry\" status=\"pass\": native=1, telemetry=0"
+        ]
+      }
+    }
+  },
+  "automated_checks": {
+    "make_lint": "passed; pinned 2.14.0",
+    "make_test": "inherited macOS Mocha parent-PID test failure only; current Linux control passes; other executed tests pass",
+    "eval_offline": {
+      "total": 93,
+      "passed": 84,
+      "skipped": 9
+    }
+  },
+  "preliminary_evidence": {
+    "source_99bfe4c": "8 framework fixtures and public CLI history smoke passed",
+    "source_04fccc2": "8 fixtures/history passed; 2 completed Claude trials and 1 interrupted Claude Failsafe trial retained; no Codex model trial started",
+    "lessons": [
+      "False completion preface despite later qualified handoff",
+      "java-otp/Claude instrumented both detected workflows",
+      "Intake generated display names hid missing raw names and merged unrelated unnamed spans"
+    ]
+  },
+  "initial_final_source_attempts": [
+    {
+      "evidence_directory": "failsafe-claude-final",
+      "agent": "claude",
+      "status": "completed",
+      "onboarding_session_started": true,
+      "error": null,
+      "source_commit": "6587518f1e9bd2d174e23eee9882c01f09b835e5",
+      "binary_sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+      "commit": "ed3f92739669769274cf5c9567fd422929c20ad2",
+      "container_removed": true,
+      "scratch_removed": true,
+      "assessment": "# failsafe-claude-final\n\nRepository: https://github.com/failsafe-lib/failsafe.git at `ed3f92739669769274cf5c9567fd422929c20ad2`.\nClean product source: `6587518f1e9bd2d174e23eee9882c01f09b835e5`. Binary SHA-256: `1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c`.\nAgent: claude, 2.1.220 (Claude Code); CLI default model, no override. Image: `sha256:50efcf83f300839ad3555bf41caac5bc5d32de89f12da759ef41207b83d48ed9`.\nPrompt: Use ddtest in /trial/bin and onboard this repository to test-optimization for testng only.\nRunner status: completed; product local: PASSED; overall: INCOMPLETE.\n\n- **ci_configuration: pass.** Java action added before unchanged mvn -B test, preserving six-way JDK matrix. Root TestNG dependency upgraded to 6.14.3; core only observed, okhttp/retrofit not reached. Actual CI/JDK compatibility not exercised.\n- **compatibility: pass.** {'status': 'compatible', 'code': 'java_identities_match', 'reason': 'Java test identities, outcomes and multiplicities reconcile with native Maven results.'}\n- **feature_controls: pass.** [('core', 'auto-retries', 'not supported'), ('core', 'early-flake-detection', 'not supported'), ('core', 'skipping', 'passed'), ('core', 'quarantine', 'not supported'), ('core', 'disabled', 'passed'), ('core', 'attempt-to-fix', 'not supported')]\n- **reporting: fail.** Correctly keeps overall INCOMPLETE, qualifies TestNG 6.9.10 to 6.14.3 upgrade, names unreached modules, preserves the unexplained instrumented-only failure and states actual CI cannot update this report. However, it generalizes four missing capabilities to the TestNG integration and says not a version problem after trying 7.4.0. The report only says this selected integration did not advertise them; final-source modern TestNG fixtures independently pass all six. Do not turn this SDK-specific observation into a framework-wide unsupported claim.\n- **source_preservation: blocked.** ['.github/workflows/maven.yml', '.gitignore', 'pom.xml']\n- **ddtest_cleanup: pass.** {'status': 'passed', 'reason': 'Owned Maven copies, probes and tracer installation removed.'}\n- **agent_artifacts: not exercised.** Tracked status and retained configurations reviewed. No complete independent inventory of ignored build artifacts at agent exit; no scratch-cleanup pass inferred.\n- **evaluator_teardown: pass.** Container removed and descendants stopped. Owned scratch is removed separately after preservation.\n- **ci_execution: not exercised.** \n- **datadog_backend: not exercised.** \n\nPublic activity, full commands, actual workflow/POM snapshots, patch/status, final answer and both report artifacts were independently read. Generated probe classes are excluded from the real-suite HTML. Binary integrity was verified after the agent exited. Local/CI/backend scopes and preliminary attempts remain separate.\n",
+      "last_report": {
+        "local_validation": "PASSED",
+        "compatibility": {
+          "status": "compatible",
+          "code": "java_identities_match",
+          "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+        },
+        "native_comparison": {
+          "status": "compatible",
+          "code": "native_outcomes_match",
+          "reason": "Native Maven identities, outcomes, exception details and exit code match. Matching existing failures are acceptable and do not block compatibility."
+        },
+        "telemetry_comparison": {
+          "status": "compatible",
+          "code": "java_identities_match",
+          "reason": "Java test identities, outcomes and multiplicities reconcile with native Maven results."
+        },
+        "maven_coverage": {
+          "workflow_discovery": "observed (static only)",
+          "scope": "selected Maven command",
+          "modules": [
+            {
+              "directory": ".",
+              "artifact": "failsafe-parent",
+              "status": "aggregator (no native results)",
+              "reactor_status": "success",
+              "native_results": 0
+            },
+            {
+              "directory": "core",
+              "artifact": "failsafe",
+              "status": "observed",
+              "reactor_status": "failure",
+              "native_results": 306
+            },
+            {
+              "directory": "modules/okhttp",
+              "artifact": "failsafe-okhttp",
+              "status": "not reached",
+              "reactor_status": "skipped",
+              "native_results": 0
+            },
+            {
+              "directory": "modules/retrofit",
+              "artifact": "failsafe-retrofit",
+              "status": "not reached",
+              "reactor_status": "skipped",
+              "native_results": 0
+            }
+          ],
+          "ci_workflows": [
+            {
+              "path": ".github/workflows/maven.yml",
+              "instrumentation": "present (static only)",
+              "execution": "not exercised"
+            }
+          ],
+          "reason": "Declared modules include profile candidates. Native results establish execution only for the selected command. Static action presence does not certify CI Java/tracer versions, other commands or remote execution."
+        },
+        "previous_failed_comparison": {
+          "kind": "ddtest-maven-failed-comparison",
+          "session": "ddtest-testdrive-2026-10-26-144546-Z55UZSZB2EJW5EARKYIA52XC3T",
+          "framework": "testng",
+          "completed_at": "2026-10-26T14:47:08.102225839Z",
+          "status": "historical; not resolved by a later matching run",
+          "json_report": "maven-previous-failure.json",
+          "html_report": "maven-previous-failure.html",
+          "html_sha256": "d6ed7bfa15521b6de517d3e3f81fff82718002d168bf2389ef1a55fefbc6c4a8"
+        },
+        "features": [
+          {
+            "project": "core",
+            "name": "auto-retries",
+            "status": "not supported",
+            "reason": "The selected Java test integration did not advertise this feature in its controlled test event; it was not executed or counted as passed."
+          },
+          {
+            "project": "core",
+            "name": "early-flake-detection",
+            "status": "not supported",
+            "reason": "The selected Java test integration did not advertise this feature in its controlled test event; it was not executed or counted as passed."
+          },
+          {
+            "project": "core",
+            "name": "skipping",
+            "status": "passed",
+            "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+          },
+          {
+            "project": "core",
+            "name": "quarantine",
+            "status": "not supported",
+            "reason": "The selected Java test integration did not advertise this feature in its controlled test event; it was not executed or counted as passed."
+          },
+          {
+            "project": "core",
+            "name": "disabled",
+            "status": "passed",
+            "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+          },
+          {
+            "project": "core",
+            "name": "attempt-to-fix",
+            "status": "not supported",
+            "reason": "The selected Java test integration did not advertise this feature in its controlled test event; it was not executed or counted as passed."
+          }
+        ],
+        "suite_runs": [
+          {
+            "role": "baseline",
+            "native_command": "mvn -B test",
+            "exit_code": 1,
+            "test_counts": {
+              "passed": 305,
+              "failed": 1,
+              "skipped": 0,
+              "other": 0
+            },
+            "test_event_count": 0
+          },
+          {
+            "role": "reporting-only",
+            "native_command": "mvn -B test",
+            "exit_code": 1,
+            "test_counts": {
+              "passed": 305,
+              "failed": 1,
+              "skipped": 0,
+              "other": 0
+            },
+            "test_event_count": 306
+          }
+        ]
+      },
+      "dependency_change": "TestNG 6.9.10 to 6.14.3",
+      "reporting": {
+        "status": "fail",
+        "evidence": "Correctly keeps overall INCOMPLETE, qualifies TestNG 6.9.10 to 6.14.3 upgrade, names unreached modules, preserves the unexplained instrumented-only failure and states actual CI cannot update this report. However, it generalizes four missing capabilities to the TestNG integration and says not a version problem after trying 7.4.0. The report only says this selected integration did not advertise them; final-source modern TestNG fixtures independently pass all six. Do not turn this SDK-specific observation into a framework-wide unsupported claim."
+      }
+    },
+    {
+      "evidence_directory": "failsafe-codex-final",
+      "agent": "codex",
+      "status": "failed",
+      "onboarding_session_started": false,
+      "error": "Command exited 1: mvn -q -DskipTests test-compile",
+      "source_commit": "6587518f1e9bd2d174e23eee9882c01f09b835e5",
+      "binary_sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+      "commit": "ed3f92739669769274cf5c9567fd422929c20ad2",
+      "container_removed": true,
+      "scratch_removed": true,
+      "assessment": "# Failsafe/Codex initial final-source setup failure\n\nProduct source `6587518f1e9bd2d174e23eee9882c01f09b835e5`; same pinned Failsafe commit and Java 17 image. Model authentication preflight passed. Dependency test-compilation then failed with \"Too many open files in system\", before the onboarding model session began. This is an evaluator-environment failure, not a product compatibility result or completed agent trial. The original run record, logs, clean tracked diff and pinned POM remain retained. The environment is being changed explicitly for a fresh matched Failsafe pair; no unchanged-input retry or completed model outcome is claimed.\n\nContainer removal confirmed. No complete ignored-artifact inventory at CLI exit; evaluator scratch removal is recorded separately. No CI/backend validation.\n"
+    },
+    {
+      "evidence_directory": "resource-fixed/failsafe-claude-final",
+      "agent": "claude",
+      "status": "failed",
+      "onboarding_session_started": false,
+      "error": "Command exited 1: mvn -q -DskipTests test-compile",
+      "source_commit": "6587518f1e9bd2d174e23eee9882c01f09b835e5",
+      "binary_sha256": "1ccf8b37d579ee84234a0b637e8b81f88a9fd3df63ca989025201cd58a190b0c",
+      "commit": "ed3f92739669769274cf5c9567fd422929c20ad2",
+      "container_removed": true,
+      "scratch_removed": true,
+      "assessment": "# Failsafe/Claude resource-fixed setup transport failure\n\nThe immutable product binary, pinned Failsafe source, Java 17 image, prompt and model login were unchanged from the intended resource-fixed comparison. The trusted setup installed the Maven file-limit wrapper and private container dependency repository. Maven Central then returned HTTP 502 for wagon-provider-api during test compilation. Authentication preflight succeeded; no onboarding model session started. This is an independently classified dependency-transport failure, not a product failure or completed agent trial. The original runner did not set failure_kind, which remains unchanged in run.json.\n\nThe human authorized one fresh unchanged-input retry. The failed run, exact setup, output excerpts, clean source diff and pinned POM remain retained. Container removed; owned scratch is removed separately after preservation. No CI/backend validation.\n"
+    }
+  ],
+  "claude_transport_retry_authorization": {
+    "authorized_by": "human user in this chat",
+    "authorization": "Retry once (Recommended)",
+    "initial_attempt": "failsafe-claude-final",
+    "reason": "Maven Central HTTP 502 before onboarding model session",
+    "unchanged_inputs": true,
+    "max_retries": 1
+  },
+  "limitations": [
+    "Four completed unchanged-environment JavaPoet/java-otp trials plus a matched Failsafe pair after an explicit resource change; not a statistical success-rate estimate",
+    "Local selected Maven commands only; CI matrices/profiles and backend remain unverified",
+    "Diagnostic subsets and dependency changes cannot count as unchanged full-project passes",
+    "Ignored agent-build-artifact inventory at CLI exit not complete; no agent scratch-cleanup pass inferred"
+  ]
+}
