@@ -310,6 +310,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			return fail("needs_input", "scope_unresolved", reason, "Resolve the named CI entry point. Facts can add prerequisites to discovered commands; they cannot erase unresolved CI or shrink scope. Use --instructions only for this unsupported integration.")
 		}
 		for _, entry := range scope.Commands {
+			if ciInstrumentationDisabled(entry) {
+				continue
+			}
 			if len(entry.UnvalidatedSetup) > 0 || missingPrerequisiteFacts(entry) {
 				result.Location = strings.Join(entry.Locations, ", ")
 				result.RequiredInput = []string{"repository-local working directory and supported setup for this exact CI command"}
@@ -520,6 +523,20 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	logs := io.Discard
 	if options.Format == "verbose" {
 		logs = output
+	}
+	if t.framework.Name() == "cypress" {
+		// Each browser launch is expensive. Stop before the next one when an
+		// external edit invalidates the original checkout snapshot.
+		t.workflowSourceCheck = func(ctx context.Context) error {
+			after, err := InputFingerprint(ctx, t.repositoryRoot)
+			if err != nil {
+				return fmt.Errorf("verify repository snapshot before Cypress execution: %w", err)
+			}
+			if after != before {
+				return errors.New("repository inputs changed during Cypress validation; remaining browser runs stopped. Finish all edits, including documentation and formatting, then rerun the full validation command")
+			}
+			return nil
+		}
 	}
 	run := t.Run
 	if t.workflowRun != nil {

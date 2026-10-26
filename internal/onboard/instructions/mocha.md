@@ -46,7 +46,12 @@ CI changes, then validate them locally. `onboard` itself only prints guidance.
    report missing real-suite coverage as incomplete.
    Do not install dd-trace permanently just for validation: testdrive installs
    the selected version in temporary storage and removes it afterwards.
-5. Exclude `.testoptimization/` from Git and published packages, respecting the existing `files`/`.npmignore` convention. After all edits, run `ddtest testdrive --all --tracer-version <exact-release> --yes`.
+5. Exclude `.testoptimization/` from Git and published packages, respecting the existing `files`/`.npmignore` convention. After all edits, run `ddtest testdrive --agent --all --tracer-version <exact-release> --yes`.
+   Keep structured agent mode for this full run and subsequent retries. It skips
+   setup required only by explicitly instrumentation-excluded CI rows, while
+   preserving those rows in the report. If it returns a blocker, follow its
+   named next_action and required_input; do not switch to plain output to bypass
+   that check. Wait for the command to exit before making any further edits.
    It compares native Mocha results with and without tracing for each CI command,
    reconciles telemetry, and runs pass/fail controls plus retries, early flake
    detection, skipping, quarantine, disabled tests, and attempt-to-fix. The

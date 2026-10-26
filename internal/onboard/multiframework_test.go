@@ -59,7 +59,7 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			switch name {
 			case "cucumber":
 				require.Contains(t, output.String(), "`js-tracer-version`")
-			case "vitest", "playwright", "cypress":
+			case "vitest", "playwright":
 				require.Contains(t, output.String(), "DD_TRACE_ESM_IMPORT")
 			}
 			if name == "cypress" {

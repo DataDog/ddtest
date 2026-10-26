@@ -243,6 +243,11 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 		run.NativeCommand = onboard.RedactCypressCommand(run.NativeCommand)
 		run.commandOutput = onboard.RedactCypressCommand(run.commandOutput)
 	}()
+	if t.workflowSourceCheck != nil {
+		if err := t.workflowSourceCheck(ctx); err != nil {
+			return run, err
+		}
+	}
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	run.Name, run.Instrumented, run.ProbeMode = name, instrumented, probeMode

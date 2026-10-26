@@ -125,9 +125,6 @@ func instructions(language, name string) string {
 	case "javascript":
 		actionLanguage = "js"
 		bootstrap = javascriptBootstrap
-		if name == "cypress" {
-			bootstrap += "\n\n" + cypressBootstrap
-		}
 		if name == "cucumber" {
 			bootstrap += "\n\nFor Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false on the test step. This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected."
 		}
@@ -151,15 +148,6 @@ const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set 
 const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtrace for pytest. Preserve these variables on the existing test step; do not replace its current arguments. Activate the same Python environment used for the tests before the action. If CI uses tox or nox, pass DD_*, PYTHONPATH, and PYTEST_ADDOPTS into the test environment."
 
 const rubyBootstrap = "The action installs datadog-ci into the CI bundle and exports RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument. Preserve RUBYOPT on the RSpec or Minitest step and merge any existing Ruby options. Keep the existing bundle exec or binstub entry point."
-
-const cypressBootstrap = `Cypress also needs browser-side instrumentation; NODE_OPTIONS alone is insufficient:
-
-1. In the existing Cypress config, resolve the tracer root from the action's DD_TRACE_PACKAGE value: path.dirname(path.dirname(process.env.DD_TRACE_PACKAGE)). Only enable this configuration when that variable is present. Use import syntax in an ESM config and require in a CommonJS config.
-2. Set pluginPath to path.join(tracerRoot, 'ci/cypress/plugin.js'). In ESM, import { pathToFileURL } from 'node:url' and load the plugin with (await import(pathToFileURL(pluginPath).href)).default; in CommonJS, use require(pluginPath). Compose it with the existing setupNodeEvents callback. Preserve existing event handlers, including after:run and after:spec; do not replace them.
-3. In setupNodeEvents, generate a support wrapper under RUNNER_TEMP. Write a literal require of path.join(tracerRoot, 'ci/cypress/support'), followed by a literal require of the existing resolved supportFile (unless it is false). Set the returned config.supportFile to that wrapper. Generating literal absolute imports lets Cypress's browser bundler resolve the isolated tracer without adding it to package.json.
-4. Keep the project's existing application startup, browser installation, and cypress run command. Do not use cypress open.
-
-Use the same pattern for e2e or component configuration, whichever the selected job runs. The local testdrive creates equivalent wrappers inside its session automatically. See https://docs.datadoghq.com/tests/setup/javascript/ for the Cypress plugin contract.`
 
 var gitHubInstructionsTemplate = template.Must(template.New("github").Delims("[[", "]]").Parse(gitHubInstructions))
 

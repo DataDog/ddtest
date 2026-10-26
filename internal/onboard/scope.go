@@ -159,7 +159,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				installerActive, installerSkipped := false, false
 				var pendingSetup []string
 				var preparation []BuildCommand
-				var unresolved, review []scopeDiagnostic
+				var unresolved, setupUnresolved, review []scopeDiagnostic
 				var commands []TestCommand
 				for i, step := range job.Steps {
 					if framework == "cypress" && strings.Split(strings.ToLower(step.Uses), "@")[0] == githubAction && step.Run == "" && step.ResolutionError == "" {
@@ -215,7 +215,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						}
 					}
 					for _, setup := range resolution.Setup {
-						unresolved = append(unresolved, scopeDiagnostic{location, setup})
+						setupUnresolved = append(setupUnresolved, scopeDiagnostic{location, setup})
 					}
 					if conditionErr != nil && resolved.Run != "" && resolution.Reason == "" && !resolution.Matched && len(resolution.Builds) == 0 {
 						resolution.Review, resolution.Reason = true, "Condition affects only a recognized non-test command; review separately: "+conditionErr.Error()
@@ -295,6 +295,19 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						if !attached {
 							scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": local Node command has no following test configuration; review explicitly: "+build.Command)
 						}
+					}
+				}
+
+				// An explicit instrumentation opt-out never claims local validation
+				// of its setup. Keep that setup visible without blocking other rows.
+				// Unknown commands remain in unresolved, even on excluded rows.
+				onlyExcluded := len(commands) > 0 && !slices.ContainsFunc(commands, func(command TestCommand) bool { return !command.CIInstrumentationExcluded })
+				for _, diagnostic := range setupUnresolved {
+					if onlyExcluded {
+						diagnostic.Reason = "Unvalidated setup for instrumentation-excluded CI tests: " + diagnostic.Reason
+						review = append(review, diagnostic)
+					} else {
+						unresolved = append(unresolved, diagnostic)
 					}
 				}
 

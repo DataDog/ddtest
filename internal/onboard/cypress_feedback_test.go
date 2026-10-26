@@ -131,10 +131,18 @@ func TestCypressMetadataCachesFailuresWithinOneInvocation(t *testing.T) {
 }
 
 func TestCypressGuardedPreloadsResolveWithoutPrematureDiagnostics(t *testing.T) {
-	root := newJestRepository(t, `on: push
-jobs:
+	for _, tc := range []struct {
+		name, workflowEnv, jobOptions, options, want string
+	}{
+		{name: "empty inheritance", options: "${{ steps.dd.outcome == 'success' && format('-r {0}', env.DD_TRACE_PACKAGE) || env.NODE_OPTIONS }}"},
+		{name: "overridden unknown workflow", workflowEnv: "env: {NODE_OPTIONS: '${{ vars.DEFAULT_NODE_OPTIONS }}'}\n", options: "${{ steps.dd.outcome == 'success' && format('-r {0}', env.DD_TRACE_PACKAGE) || '' }}"},
+		{name: "job overrides unknown workflow", workflowEnv: "env: {NODE_OPTIONS: '${{ vars.DEFAULT_NODE_OPTIONS }}'}\n", jobOptions: ", NODE_OPTIONS: '--trace-warnings'", options: "${{ steps.dd.outcome == 'success' && format('{0} -r {1}', env.NODE_OPTIONS, env.DD_TRACE_PACKAGE) || env.NODE_OPTIONS }}", want: "--trace-warnings"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := newJestRepository(t, `on: push
+`+tc.workflowEnv+`jobs:
   tests:
-    env: {DD_API_KEY: '${{ secrets.DD_API_KEY }}'}
+    env: {DD_API_KEY: '${{ secrets.DD_API_KEY }}'`+tc.jobOptions+`}
     steps:
       - uses: actions/setup-node@v4
         with: {node-version: '24'}
@@ -144,20 +152,22 @@ jobs:
         with: {languages: js, js-tracer-version: '6.20.1'}
       - run: npx cypress run
         env:
-          NODE_OPTIONS: ${{ steps.dd.outcome == 'success' && format('-r {0}', env.DD_TRACE_PACKAGE) || env.NODE_OPTIONS }}
+          NODE_OPTIONS: `+tc.options+`
 `)
-	initializeCypressContextRepository(t, root)
-	scope, err := DiscoverValidationScope(root, "cypress")
-	require.NoError(t, err)
-	require.Empty(t, scope.Unresolved)
-	require.Equal(t, "", scope.Commands[0].Environment["NODE_OPTIONS"])
-	check := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
-		return tracerRequirement{Version: "6.20.1", Node: ">=22"}, nil
-	}, "cypress")
-	require.Equal(t, StatusCompatible, check.Status, check.Jobs)
-	require.Len(t, check.Jobs, 2)
-	for _, finding := range check.Jobs {
-		require.NotContains(t, finding.Reason, "unresolved NODE_OPTIONS expression")
+			initializeCypressContextRepository(t, root)
+			scope, err := DiscoverValidationScope(root, "cypress")
+			require.NoError(t, err)
+			require.Empty(t, scope.Unresolved)
+			require.Equal(t, tc.want, scope.Commands[0].Environment["NODE_OPTIONS"])
+			check := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+				return tracerRequirement{Version: "6.20.1", Node: ">=22"}, nil
+			}, "cypress")
+			require.Equal(t, StatusCompatible, check.Status, check.Jobs)
+			require.Len(t, check.Jobs, 2)
+			for _, finding := range check.Jobs {
+				require.NotContains(t, finding.Reason, "unresolved NODE_OPTIONS expression")
+			}
+		})
 	}
 }
 

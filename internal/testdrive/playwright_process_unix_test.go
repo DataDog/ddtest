@@ -378,7 +378,8 @@ func TestSynchronousLaunchesAreSupervised(t *testing.T) {
 			require.NoError(t, err)
 			pidFile := filepath.Join(t.TempDir(), "pid")
 			command := exec.CommandContext(t.Context(), node, "-e", fmt.Sprintf(launch, fmt.Sprintf(background, pidFile)))
-			command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+			command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
 			output, err := command.CombinedOutput()
 			require.NoError(t, err, string(output))
 			var pid int
@@ -418,7 +419,8 @@ const timedOut = cp.spawnSync('/bin/sh', ['-c', 'sleep 5'], {timeout: 300})
 assert.equal(timedOut.error.message, 'spawnSync /bin/sh ETIMEDOUT'); assert.equal(timedOut.error.path, '/bin/sh')
 assert.deepEqual(timedOut.error.spawnargs, ['-c', 'sleep 5']); assert.equal(timedOut.signal, 'SIGTERM')`
 	command := exec.CommandContext(t.Context(), node, "-e", script)
-	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
 }
@@ -426,25 +428,37 @@ assert.deepEqual(timedOut.error.spawnargs, ['-c', 'sleep 5']); assert.equal(time
 func TestSupervisorPreservesWebServerGroupTeardown(t *testing.T) {
 	node, err := exec.LookPath("node")
 	require.NoError(t, err)
-	directory := t.TempDir()
-	env := map[string]string{}
-	owner, err := startProcessOwner(directory, env)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, owner.Close()) })
-	// Playwright stops its detached server's whole group and then awaits pipe
-	// closure. Ordinary grandchildren must stay in that group for this to work.
-	grandchild := `process.stdout.write('ready\n');setInterval(()=>{},1000)`
-	child := fmt.Sprintf(`require('node:child_process').spawn(process.execPath,['-e',%q],{stdio:'inherit'});setInterval(()=>{},1000)`, grandchild)
-	script := fmt.Sprintf(`const cp=require('node:child_process');const c=cp.spawn(process.execPath,['-e',%q],{detached:true,stdio:['ignore','pipe','pipe']});c.stdout.once('data',()=>process.kill(-c.pid,'SIGTERM'));c.on('close',()=>{console.log('server group closed');process.exit(0)});`, child)
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, node, "-e", script)
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.WaitDelay = time.Second
-	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"])
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, string(output))
-	require.Contains(t, string(output), "server group closed")
+	for name, launch := range map[string]string{
+		"spawn":        `require('node:child_process').spawn(process.execPath,['-e',%q],{stdio:'inherit'});setInterval(()=>{},1000)`,
+		"spawnSync":    `require('node:child_process').spawnSync(process.execPath,['-e',%q],{stdio:'inherit'})`,
+		"execFileSync": `require('node:child_process').execFileSync(process.execPath,['-e',%q],{stdio:'inherit'})`,
+		"execSync":     `require('node:child_process').execSync(%q,{stdio:'inherit'})`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			directory := t.TempDir()
+			env := map[string]string{}
+			owner, err := startProcessOwner(directory, env)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, owner.Close()) })
+			// Playwright kills its server group and awaits pipe closure. A
+			// synchronous launcher, like Turbo's, must keep that same group.
+			grandchild := `process.stdout.write('ready\n');setInterval(()=>{},1000)`
+			if name == "execSync" {
+				grandchild = shellquote.Join(node, "-e", grandchild)
+			}
+			child := fmt.Sprintf(launch, grandchild)
+			script := fmt.Sprintf(`const cp=require('node:child_process');const c=cp.spawn(process.execPath,['-e',%q],{detached:true,stdio:['ignore','pipe','pipe']});c.stdout.once('data',()=>process.kill(-c.pid,'SIGTERM'));c.on('close',()=>{console.log('server group closed');process.exit(0)});`, child)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, node, "-e", script)
+			command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			command.WaitDelay = time.Second
+			command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_SUPERVISOR_PID="+env["DDTEST_PROCESS_SUPERVISOR_PID"])
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, string(output))
+			require.Contains(t, string(output), "server group closed")
+		})
+	}
 }
 
 func TestSupervisorRefusesGroupSharedWithItsGoOwner(t *testing.T) {

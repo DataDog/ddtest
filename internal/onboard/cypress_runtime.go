@@ -181,11 +181,49 @@ func cypressContainerNode(container any) string {
 func cypressLocalNodeOptions(value string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (string, error) {
 	var ordinary string
 	for index, outcome := range []string{"success", "skipped"} {
-		known := conditionEnvironment(workflow, job, step, row)
+		// These hypothetical inputs only resolve local ordinary flags. The CI
+		// validator separately checks whether installation and preload agree.
+		child := job
+		child.Context = maps.Clone(job.Context)
+		if child.Context == nil {
+			child.Context = map[string]string{}
+		}
+		child.Context["secrets.DD_API_KEY"] = ""
+		if outcome == "success" {
+			child.Context["secrets.DD_API_KEY"] = "present"
+		}
+		known := conditionEnvironment(workflow, child, step, row)
 		known["NODE_OPTIONS"] = ""
 		for _, candidate := range job.Steps {
 			if strings.HasPrefix(strings.ToLower(candidate.Uses), githubAction+"@") && candidate.ID != "" {
 				known["\x00steps."+candidate.ID+".outcome"] = outcome
+			}
+		}
+		// env.NODE_OPTIONS in the step expression refers to its inherited
+		// options, not to that same expression. Preserve the preceding layers.
+		layers := []map[string]string{workflow.Env, job.Env, step.Env}
+		last := 0
+		for i, env := range layers {
+			if _, exists := env["NODE_OPTIONS"]; exists {
+				last = i
+			}
+		}
+		// A replacing layer cuts the inheritance chain. Earlier expressions
+		// need resolution only when the effective value consumes them.
+		first := last
+		for options := value; first > 0 && strings.Contains(options, "env.NODE_OPTIONS"); {
+			first--
+			if inherited, exists := layers[first]["NODE_OPTIONS"]; exists {
+				options = inherited
+			}
+		}
+		for _, env := range layers[first:last] {
+			if options, exists := env["NODE_OPTIONS"]; exists {
+				inherited, err := resolveNodeOptions(options, row, known)
+				if err != nil {
+					return "", err
+				}
+				known["NODE_OPTIONS"] = inherited
 			}
 		}
 		resolved, err := resolveNodeOptions(value, row, known)

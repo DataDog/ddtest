@@ -61,6 +61,18 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			step.With[key] = resolved
 		}
 	}
+	// Only Bash conditions with fully known operands may remove an inactive
+	// branch. Leave opaque shell control flow and all other shells unchanged.
+	shell := workflow.Defaults.Run.Shell
+	for _, candidate := range []string{job.Defaults.Run.Shell, step.Shell} {
+		if candidate != "" {
+			shell = candidate
+		}
+	}
+	shellWords, _ := shellquote.Split(shell)
+	if supportedCIShell(shell) && (shell == "" || len(shellWords) > 0 && shellWords[0] == "bash") {
+		step.Run = resolveStaticShellBranches(step.Run)
+	}
 	env := map[string]string{}
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
