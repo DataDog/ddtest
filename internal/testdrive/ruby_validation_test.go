@@ -141,12 +141,16 @@ func TestRubyRunRetainsCommandAndSeparatesBaselineInstrumentation(t *testing.T) 
 		t.Cleanup(func() { require.NoError(t, session.Close()) })
 		executor := &rubyRecordingExecutor{}
 		drive := &Testdrive{language: "ruby", framework: framework.NewMinitest(platform.NewRuby("")), repositoryRoot: t.TempDir(), command: "bundle", args: []string{"exec", "rake", "test", "TESTOPTS=-v"}, executor: executor,
-			startIntake: func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{}, nil }}
+			rubyTracerEnv: map[string]string{"BUNDLE_PATH": filepath.Join(session.Directory(), "bundle"), "BUNDLE_APP_CONFIG": filepath.Join(session.Directory(), "bundle-config")},
+			startIntake:   func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{}, nil }}
 		run, err := drive.runRuby(t.Context(), io.Discard, session, "", "reporting-only", instrumented, intake.Scenario{}, "", "")
 		require.NoError(t, err)
 		require.Empty(t, run.ResultError)
 		require.Equal(t, "bundle", executor.command)
 		require.Equal(t, drive.args, executor.args)
+		for key, value := range drive.rubyTracerEnv {
+			require.Equal(t, value, executor.env[key], "fallback bundle must reach every native and instrumented subprocess")
+		}
 		require.Contains(t, executor.env["RUBYOPT"], "-W0 -rcustomer")
 		require.Contains(t, executor.env["RUBYOPT"], "ruby_observer.rb")
 		if instrumented {

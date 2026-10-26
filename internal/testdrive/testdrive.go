@@ -1256,6 +1256,7 @@ func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]st
 		maps.Copy(env, pythonEnvironment(path))
 	case "ruby":
 		maps.Copy(env, rubyEnvironment(path))
+		maps.Copy(env, t.rubyTracerEnv)
 	}
 	return env
 }

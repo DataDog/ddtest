@@ -1,3 +1,4 @@
+import base64
 """No model calls: real Docker boundary, fake CLIs, and a local signed Git tree."""
 
 import contextlib
@@ -32,6 +33,36 @@ class FixtureContainer(isolation.Container):
         if argv[:3]==['git','clone','--']:
             argv=[*argv[:3],str(self.trial/'source'),argv[-1]]
         return super().execute(argv,*args)
+
+
+class EnvironmentForwardingTests(unittest.TestCase):
+    def test_multiline_model_headers_do_not_enter_argv_or_env_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            trial = Path(temporary)
+            container = isolation.Container(trial, "sha256:" + "0" * 64)
+            headers = "source: fixture\norganization: private-canary"
+            seen = []
+            def executor(argv, cwd, env, *args):
+                seen.append(argv)
+                self.assertNotIn(headers, " ".join(argv))
+                self.assertIn("ANTHROPIC_CUSTOM_HEADERS", " ".join(argv))
+                path = Path(argv[argv.index("--env-file") + 1])
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                entries = dict(line.split("=", 1) for line in path.read_text().splitlines())
+                self.assertEqual(entries["CANARY"], "ordinary-value")
+                self.assertNotIn(headers, path.read_text())
+                self.assertEqual(base64.b64decode(entries["DDTEST_EVAL_B64_ANTHROPIC_CUSTOM_HEADERS"]).decode(), headers)
+                return 0
+            self.assertEqual(container.execute(["claude", "--version"], trial,
+                {"CANARY": "ordinary-value", "ANTHROPIC_CUSTOM_HEADERS": headers},
+                10, lambda _: None, None, executor), 0)
+            self.assertFalse(Path(seen[0][seen[0].index("--env-file") + 1]).exists())
+
+    def test_invalid_environment_cannot_reach_docker(self):
+        container = isolation.Container(Path("/tmp"), "sha256:" + "0" * 64)
+        for env in ({"INVALID=KEY": "value"}, {"HEADER": "value\0invalid"}):
+            with self.assertRaisesRegex(ValueError, "cannot be forwarded"):
+                container.execute(["claude"], Path("/tmp"), env, 10, None, None, None)
 
 
 @unittest.skipUnless(IMAGE,'Set DDTEST_EVAL_TEST_IMAGE to the Dockerfile offline target image ID')

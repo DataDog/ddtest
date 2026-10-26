@@ -67,7 +67,7 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 			require.Contains(t, onboard, "native baseline/reporting-only")
 			output := integrationCommand(t, ctx, root, env, binary, "testdrive", "--framework", framework, "--all", "--yes")
 			require.Contains(t, output, "Local validation: PASSED")
-			var result struct {
+			type rubyReport struct {
 				Success       bool
 				Preflight     struct{ Ruby string }
 				Compatibility struct{ Status string }
@@ -82,9 +82,11 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 					FinalResponse string `json:"final_response"`
 				}
 			}
+			var result rubyReport
 			path := filepath.Join(root, ".testoptimization/testdrive.json")
 			data, err := os.ReadFile(path)
 			require.NoError(t, err)
+			result = rubyReport{}
 			require.NoError(t, json.Unmarshal(data, &result))
 			require.True(t, result.Success, string(data))
 			require.Equal(t, gems.Ruby, result.Preflight.Ruby)
@@ -106,6 +108,7 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 			require.Contains(t, output, "Validation verdict: PASSED")
 			data, err = os.ReadFile(path)
 			require.NoError(t, err)
+			result = rubyReport{}
 			require.NoError(t, json.Unmarshal(data, &result))
 			require.Contains(t, result.Summary.FinalResponse, "Ruby versions 1 instrumented, 1 excluded, 0 unverified")
 			// Excluding every consumer must never manufacture completed onboarding.
@@ -119,6 +122,7 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 			integrationCommand(t, ctx, root, env, binary, "testdrive", "--framework", framework, "--all", "--check-only", "--yes")
 			data, err = os.ReadFile(path)
 			require.NoError(t, err)
+			result = rubyReport{}
 			require.NoError(t, json.Unmarshal(data, &result))
 			require.False(t, result.Success)
 			require.NotNil(t, result.Retained)
