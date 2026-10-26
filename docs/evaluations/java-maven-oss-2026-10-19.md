@@ -70,6 +70,9 @@ ddtest session cleanup is checked separately from agent scratch cleanup and eval
 
 ## Reproduce
 
+The invocation below records the October 19 host-based runner. For current
+reproduction, use the [October 26 container procedure](java-maven-oss-2026-10-26.md#reproduce-with-the-current-runner); the current runner requires `--image` and no longer accepts `--java-home`.
+
 Build this PR, select the pinned repository/ref and matching JDK above, and invoke the evaluator from the ddtest workspace with authenticated CLIs. Put Maven on PATH. Use a new output directory per agent and trial:
 
 ```sh

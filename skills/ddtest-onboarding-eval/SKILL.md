@@ -50,8 +50,11 @@ path limits. Record emulation and resource limits when interpreting timings. Rec
 the target checkout.
 
 Build the trusted image (add project-specific OS/browser dependencies to a
-reviewed derived image if needed). Never bake personal configuration or secrets
-into an image. The supplied image pins Node, pnpm, Codex and Claude; unexpected
+reviewed derived image if needed). For Maven JVM suites, use the `java8` or `java17`
+target to match the project's required JDK; both include image-owned Maven.
+See the [Java OSS evaluation](../../docs/evaluations/java-maven-oss-2026-10-26.md)
+for pinned project inputs and a container invocation. Never bake personal
+configuration or secrets into an image. The supplied image pins Node, pnpm, Codex and Claude; unexpected
 CLI versions fail before cloning. The binary must also start inside the image;
 its version and hash are recorded before a model session begins.
 
