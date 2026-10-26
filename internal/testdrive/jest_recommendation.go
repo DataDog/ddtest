@@ -86,8 +86,12 @@ func recommendJavaScriptTracer(ctx context.Context, check jestPreflight, ci *onb
 		if framework == "mocha" {
 			support = checkMochaSupport
 		}
-		if verdict := support(check, selected); verdict.Status != onboard.StatusCompatible {
-			continue
+		// Without a resolved framework (before any edit or preflight), only CI's
+		// Node runtimes constrain the candidate.
+		if framework != "" {
+			if verdict := support(check, selected); verdict.Status != onboard.StatusCompatible {
+				continue
+			}
 		}
 		candidate := &tracerRecommendation{Selection: selected}
 		if ci != nil {
@@ -179,4 +183,21 @@ func (t *Testdrive) recommendTracer(ctx context.Context, output io.Writer, resul
 	for _, note := range check.RecommendationNotes {
 		_, _ = fmt.Fprintln(output, "Tracer recommendation: "+note)
 	}
+}
+
+// ciRuntimeTracer names the newest verified release every known CI Node runtime
+// can load, so a CI edit made before validation never pins a release CI can't run.
+func (t *Testdrive) ciRuntimeTracer(ctx context.Context) string {
+	if t.resolveJSTracer == nil || t.resolveJSTags == nil {
+		return ""
+	}
+	ci := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
+	if len(ci.Jobs) == 0 {
+		return ""
+	}
+	rec, _ := recommendJavaScriptTracer(ctx, jestPreflight{}, &ci, t.resolveJSTracer, t.resolveJSTags, "")
+	if rec == nil || len(rec.Unsupported) > 0 || len(rec.Compatible) == 0 {
+		return ""
+	}
+	return rec.Selection.Version
 }

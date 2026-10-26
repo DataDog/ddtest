@@ -77,6 +77,8 @@ Cucumber edits add NYC coverage and set
 `DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false` in the selected scripts.
 These changes also affect developers running those scripts locally, including
 local `npm test`; the variable disables impacted-test detection on those runs.
+Manual setup (`onboard --instructions`) may set the variable on the CI test step
+instead; either place disables impacted-test detection in CI.
 Other feature controls and testdrive's isolated probes remain separate.
 
 Cucumber ESM coverage also needs `@istanbuljs/esm-loader-hook`. Missing coverage

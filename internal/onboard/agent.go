@@ -67,6 +67,7 @@ type AgentResult struct {
 // PlanSummary keeps routine handoffs independent of CI matrix size.
 type PlanSummary struct {
 	UnsupportedFeatures map[string]string `json:"unsupported_features,omitempty"`
+	KnownLimitations    map[string]string `json:"known_limitations,omitempty"`
 	Features            []string          `json:"feature_scenarios,omitempty"`
 	Framework           string            `json:"framework"`
 	Tracer              string            `json:"tracer,omitempty"`
@@ -94,7 +95,7 @@ func WriteAgentResult(output io.Writer, result AgentResult) error {
 func RenderAgentResult(output io.Writer, result AgentResult, format string) error {
 	if result.Plan != nil {
 		plan := result.Plan
-		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, UnsupportedFeatures: plan.UnsupportedFeatures}
+		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, UnsupportedFeatures: plan.UnsupportedFeatures, KnownLimitations: plan.KnownLimitations}
 		result.DetailsCommand = DDTestCommand("testdrive", "--report", "--detail", "plan")
 		if format == "json" && len(result.DetailsCommand) > 0 {
 			result.DetailsCommand = append(result.DetailsCommand, "--format", "json")
@@ -107,6 +108,9 @@ func RenderAgentResult(output io.Writer, result AgentResult, format string) erro
 
 	if result.FinalResponse != "" && !strings.Contains(result.Instruction, FinalResponseInstruction) {
 		result.Instruction = strings.TrimSpace(result.Instruction + " " + FinalResponseInstruction)
+	}
+	if !strings.Contains(result.Instruction, ReadWholeInstruction) && !strings.Contains(result.Reason, ReadWholeInstruction) {
+		result.Instruction = strings.TrimSpace(result.Instruction + " " + ReadWholeInstruction)
 	}
 	if format == "verbose" {
 		return writeAgentText(output, result)
@@ -247,7 +251,11 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 
 // AgentScope bounds what a coding agent changes during onboarding. Trials
 // showed agents editing builds, manifests and test names to satisfy checks.
-const AgentScope = "Edit only CI workflow and ignore files, and only where a result asks for it. ddtest returns any other change it needs (coverage instrumentation, loaders, dependencies) as an exact edit for the user to approve. Never rename tests or rewrite CI or package scripts so ddtest can parse them; report the blocker instead. Do not inspect the ddtest binary. Each result is one bounded JSON document: read it whole, without head or tail."
+const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. Any other change ddtest prescribes, in a result or in onboard --instructions (coverage instrumentation, loaders, package scripts, dependencies, lockfiles, coverage config), is an exact edit you must show the user and get approval for before making it. Never rename tests or rewrite CI or package scripts so ddtest can parse them; report the blocker instead. Do not inspect the ddtest binary. " + ReadWholeInstruction
+
+// ReadWholeInstruction repeats in every result: trials truncated results with
+// head/tail and missed the next step.
+const ReadWholeInstruction = "Each result is one bounded JSON document: read it whole, without head, tail or other truncation."
 
 // FinalResponseInstruction keeps the agent's answer factual: trials showed
 // paraphrases turning an incomplete verdict into a completion claim.

@@ -27,7 +27,12 @@ type validationSummary struct {
 	OnboardingResponse      string          `json:"onboarding_response"`
 	CIExecution             string          `json:"ci_execution"`
 	RealCredentialsRequired bool            `json:"real_credentials_required"`
+	// Steps only the repository owner can take; local validation cannot do them.
+	HumanActions []string `json:"human_actions,omitempty"`
 }
+
+// apiKeyAction is the one step CI needs that no local run can perform.
+const apiKeyAction = "Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step fails without failing the job and tests run untraced."
 
 func summarizeValidation(result validationResult) validationSummary {
 	summary := validationSummary{Status: "INCOMPLETE", LocalValidation: "INCOMPLETE", CIConfiguration: "not exercised", CIExecution: "not exercised"}
@@ -105,11 +110,9 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.BlockingChecks = append(summary.BlockingChecks, "CI preservation: "+result.CIPreservation.Status+" — "+result.CIPreservation.Reason)
 	}
 	if result.Scope != nil {
-		for _, reason := range result.Scope.Unresolved {
-			summary.BlockingChecks = append(summary.BlockingChecks, "unresolved CI scope: "+reason)
-		}
+		summary.BlockingChecks = append(summary.BlockingChecks, scopeBlockers(result.Scope.Unresolved)...)
 		for _, configuration := range result.Configurations {
-			if configuration.Status != "passed" && !configurationExcluded(configuration) {
+			if configuration.Status != "passed" && !configurationExcluded(configuration) && !alreadyExplained(summary.BlockingChecks, configuration.Error) {
 				summary.BlockingChecks = append(summary.BlockingChecks, "configuration "+configuration.Command+": "+configuration.Status)
 			}
 		}
@@ -140,6 +143,9 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.LocalNode = result.Preflight.Node
 	}
 	summary.CIScope = summarizeCIScope(result.CIRuntime)
+	if summary.CIScope != nil && len(summary.CIScope.Instrumented) > 0 {
+		summary.HumanActions = append(summary.HumanActions, apiKeyAction)
+	}
 	summary.OnboardingResponse = fmt.Sprintf("Onboarding validation: %s. Local validation: %s. CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.", summary.Status, summary.LocalValidation, summary.CIConfiguration)
 	if summary.LocalNode != "" {
 		summary.OnboardingResponse += " Local execution runtime: Node " + summary.LocalNode + "."
@@ -270,6 +276,9 @@ func validationHandoff(result validationResult) string {
 		block.WriteString(".\n")
 	}
 	fmt.Fprintf(&block, "CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.\n", summary.CIConfiguration)
+	for _, action := range summary.HumanActions {
+		block.WriteString("Human action: " + action + "\n")
+	}
 	if scope := summary.CIScope; scope != nil {
 		// The scope groups CI jobs by Node version, so these count versions, not jobs.
 		fmt.Fprintf(&block, "CI runtime scope (static): Node versions %d instrumented, %d excluded, %d unverified; versions in Results JSON.\n", len(scope.Instrumented), len(scope.Excluded), len(scope.Unverified))
@@ -530,4 +539,42 @@ func configurationLabel(command string) string {
 		return ""
 	}
 	return command + " / "
+}
+
+// scopeBlockers reports unresolved CI scope once per cause: steps that share
+// a cause (for example one unsupported shell) are listed on one line.
+func scopeBlockers(unresolved []string) []string {
+	var causes []string
+	locations := map[string][]string{}
+	for _, reason := range unresolved {
+		location, cause, found := strings.Cut(reason, "): ")
+		if !found {
+			location, cause = "", reason
+		} else {
+			location += ")"
+		}
+		if _, seen := locations[cause]; !seen {
+			causes = append(causes, cause)
+		}
+		locations[cause] = append(locations[cause], location)
+	}
+	var blockers []string
+	for _, cause := range causes {
+		switch places := locations[cause]; {
+		case len(places) == 1 && places[0] == "":
+			blockers = append(blockers, "unresolved CI scope: "+cause)
+		case len(places) == 1:
+			blockers = append(blockers, "unresolved CI scope: "+places[0]+": "+cause)
+		default:
+			blockers = append(blockers, fmt.Sprintf("unresolved CI scope (%d steps: %s): %s", len(places), strings.Join(places, "; "), cause))
+		}
+	}
+	return blockers
+}
+
+// alreadyExplained reports whether a configuration's error is already listed,
+// so its derived "configuration ...: blocked" line would only repeat it.
+func alreadyExplained(blockers []string, err string) bool {
+	err = strings.TrimSpace(err)
+	return err != "" && slices.ContainsFunc(blockers, func(blocker string) bool { return strings.Contains(blocker, err) })
 }

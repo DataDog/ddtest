@@ -52,6 +52,8 @@ feature paths, profiles, support imports and test commands.
 
    The impacted-test workaround is separate from Test Impact Analysis skipping.
    Keep it disabled for Cucumber while validating the existing tracer integration.
+   `ddtest onboard --apply` sets it in the selected package scripts instead of the
+   step; either place disables it for CI, and the scripts also cover local runs.
 3. Finish CI and Git/package report exclusions, then run
    `ddtest testdrive --all --tracer-version <exact-release> --check-only --yes`.
    Fix concrete runtime, missing initialization and mixed-framework scope errors.

@@ -17,6 +17,7 @@ Flags:
 {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}
 
 Scope: --framework <name>, --platform <name>, --command '<actual test command>'.
+Read each result whole, without head, tail or other truncation.
 Other global options: ddtest --help.
 `)
 }

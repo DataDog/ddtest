@@ -22,6 +22,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/kballard/go-shellquote"
 )
 
 type WorkflowOptions struct {
@@ -257,6 +258,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		}
 	}
 
+	plan.KnownLimitations = installedFeatureLimitations(t.repositoryRoot, name)
 	if plan.Site == "" {
 		plan.Site = "datadoghq.com"
 	}
@@ -325,7 +327,16 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			if len(scope.Commands) == 0 && len(scope.Unresolved) == 0 {
 				reason = "No " + displayName(name) + " test command was found in GitHub Actions workflows or package scripts."
 			}
-			return fail("needs_input", "scope_unresolved", reason, "Facts can add prerequisites to discovered commands; they cannot erase unresolved CI or shrink scope. Do not rewrite CI or package scripts only so ddtest can parse them; report the unresolved entry as a blocker instead. Use --instructions only for this unsupported integration.")
+			needs := "Facts can add prerequisites to discovered commands; they cannot erase unresolved CI or shrink scope. Do not rewrite CI or package scripts only so ddtest can parse them; report the unresolved entry as a blocker instead. Use --instructions only for this unsupported integration."
+			// Manual CI edits follow; name the release CI's Node can run so agents
+			// don't pin a newer major themselves.
+			if !options.ExplicitVersion && t.projectTracer == "" {
+				if version := t.ciRuntimeTracer(ctx); version != "" {
+					plan.Tracer = version
+					needs += " For manual CI edits use js-tracer-version: " + version + " (every detected CI Node runtime supports it) and pass --tracer-version " + version + " to validation."
+				}
+			}
+			return fail("needs_input", "scope_unresolved", reason, needs)
 		}
 		for _, entry := range scope.Commands {
 			if t.setupStaysReported(entry, partial) {
@@ -703,16 +714,26 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			return fail("needs_input", "substitute_runtime_unaccepted", sub.blocker(), "Every check passed on a compatible substitute runtime. Ask the user which option to take; do not accept it yourself, download a runtime, or change CI, the tracer or the test scope.")
 		}
 		reportOnly, actionable := splitTracerOnlyBlockers(validation)
+		decision := ""
+		if sub := validation.RuntimeSubstitution; sub != nil && !sub.Accepted {
+			// The substitute is still the user's decision when other blockers remain;
+			// it must not be lost among them or accepted by the agent.
+			actionable = slices.DeleteFunc(actionable, func(check string) bool { return check == sub.blocker() })
+			accept := append(append([]string{}, result.ResumeCommand...), AcceptSubstituteRuntimeFlag)
+			decision = " Separately, ask the user whether to accept the evidence from substitute Node " + sub.Local + " in place of CI's Node " + sub.CI + ": once they approve, use `" + shellquote.Join(accept...) + "` instead of resume_command; otherwise put an existing Node " + sub.CI + " first on PATH. Do not accept it yourself or download a runtime."
+		}
 		if len(actionable) == 0 && len(reportOnly) > 0 {
 			result.RequiredInput = reportOnly
-			return fail("validation_failed", "validation_incomplete", strings.Join(reportOnly, "; "), "Report these blockers to the user as they are: the tracer did not apply these controls for this framework setup, and no customer change is expected to fix them. Do not change the suite, CI, configuration or tracer to work around them, and do not rerun.")
+			return fail("validation_failed", "validation_incomplete", strings.Join(reportOnly, "; "), "Report these blockers to the user as they are: the tracer did not apply these controls for this framework setup, and no customer change is expected to fix them. Do not change the suite, CI, configuration or tracer to work around them, and do not rerun."+decision)
 		}
-		result.RequiredInput = actionable[:min(3, len(actionable))]
+		// Every actionable blocker is listed: a capped list hid real checks behind
+		// lines that only restate them.
+		result.RequiredInput = actionable
 		needs := "Address only these current blockers, then rerun full validation. A failed feature or exclusion check remains failed."
 		if len(reportOnly) > 0 {
 			needs += " Report, without trying to fix, these tracer limitations: " + strings.Join(reportOnly, "; ") + "."
 		}
-		return fail("validation_failed", "validation_incomplete", strings.Join(result.RequiredInput, "; "), needs)
+		return fail("validation_failed", "validation_incomplete", strings.Join(result.RequiredInput, "; "), needs+decision)
 	}
 	if err := checkpoint.remove(); err != nil {
 		return fail("blocked_environment", "checkpoint_cleanup_failed", err.Error(), "Restore access to private checkpoint storage.")

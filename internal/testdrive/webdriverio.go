@@ -494,3 +494,43 @@ func webdriverIOCapabilityNumber(index string) string {
 	}
 	return index
 }
+
+// installedFeatureLimitations reads the installed packages, before any edit or
+// run, for features the tracer is known not to apply, so the plan names them
+// up front. Only WebdriverIO with jasmine-core <6 is known today.
+func installedFeatureLimitations(root, frameworkName string) map[string]string {
+	if frameworkName != "webdriverio" {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(root, "node_modules", "@wdio", "jasmine-framework", "package.json")); err != nil {
+		return nil
+	}
+	version := ""
+	for _, candidate := range []string{
+		filepath.Join(root, "node_modules", "@wdio", "jasmine-framework", "node_modules", "jasmine-core", "package.json"),
+		filepath.Join(root, "node_modules", "jasmine-core", "package.json"),
+	} {
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			continue
+		}
+		var manifest struct {
+			Version string `json:"version"`
+		}
+		if json.Unmarshal(data, &manifest) == nil && manifest.Version != "" {
+			version = manifest.Version
+			break
+		}
+	}
+	config := &framework.WebdriverIOConfig{Framework: "jasmine", JasmineCore: version}
+	limitations := map[string]string{}
+	for _, feature := range webdriverIOJasmineLimitedFeatures {
+		if reason := webdriverIOJasmineLimitation(config, feature); reason != "" {
+			limitations[feature] = reason
+		}
+	}
+	if len(limitations) == 0 {
+		return nil
+	}
+	return limitations
+}
