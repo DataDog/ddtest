@@ -156,7 +156,11 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	t.repositoryRoot = directory
 	// Resolve bare framework tools from this package, but never replace an explicit runtime.
-	t.command = t.configurationExecutable(t.command)
+	if t.framework.Name() == "pytest" {
+		t.pytestEnvironment = maps.Clone(t.configurationEnvironment)
+	} else {
+		t.command = t.configurationExecutable(t.command)
+	}
 	if t.framework != nil {
 		policy := frameworkFeaturePolicies[t.framework.Name()]
 		if err := validateConfigurationFiles(t.checkoutRoot(), t.repositoryRoot, t.args, policy.ConfigurationFiles, policy.configurationOptions()); err != nil {

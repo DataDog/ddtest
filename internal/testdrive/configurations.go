@@ -279,6 +279,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		child.command = words[0]
 		if t.framework.Name() == "pytest" {
 			child.pytestEnvironment = maps.Clone(entry.Environment)
+			if (words[0] == "python" || words[0] == "python.exe") && t.environmentInfo.Executable != "" {
+				child.command = t.environmentInfo.Executable
+			}
 			child.environmentInfo = environmentInfo{Runtime: "Python", Source: "Discovered CI command"}
 			child.environmentFailure = nil
 		}
@@ -303,7 +306,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if result.Preflight == nil {
 			result.Preflight = execution.Preflight
 		}
-		if result.Selection == nil && result.PythonSelection == nil {
+		if result.Selection == nil && result.PythonSelection == nil && (execution.Selection != nil || execution.PythonSelection != nil) {
 			result.Selection = execution.Selection
 			result.PythonSelection = execution.PythonSelection
 			result.Tracer = execution.Tracer

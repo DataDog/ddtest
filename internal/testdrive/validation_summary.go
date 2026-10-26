@@ -326,9 +326,13 @@ func validationHandoff(result validationResult) string {
 	}
 	block.WriteString(repositoryChangesHandoff(result.RepositoryChanges))
 	if scope := summary.CIScope; scope != nil {
-		// The scope groups CI jobs by Node version, so these count versions, not jobs.
+		// The scope groups CI jobs by runtime version, not by job.
+		runtime := "Node"
+		if result.Framework == "pytest" {
+			runtime = "Python"
+		}
 		instrumented, excluded, unverified := scope.counts()
-		fmt.Fprintf(&block, "CI runtime scope (static): Node versions %d instrumented, %d excluded, %d unverified (each version counted once; per-job findings in Results JSON).\n", instrumented, excluded, unverified)
+		fmt.Fprintf(&block, "CI runtime scope (static): %s versions %d instrumented, %d excluded, %d unverified (each version counted once; per-job findings in Results JSON).\n", runtime, instrumented, excluded, unverified)
 		for _, job := range scope.NotTried {
 			fmt.Fprintf(&block, "Not tried: %s (below Node 18, the oldest dd-trace major ddtest supports; ddtest skipped them on its own, no approval needed).\n", job)
 		}

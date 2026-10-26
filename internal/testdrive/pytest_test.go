@@ -168,7 +168,7 @@ func TestPytestPreviewDescribesControlledValidation(t *testing.T) {
 	drive := &Testdrive{repositoryRoot: t.TempDir(), language: "python", framework: framework.NewPytest(nil), command: "test", session: planSession()}
 	var output bytes.Buffer
 	drive.Preview(&output)
-	for _, expected := range []string{"Python runtimes", "compare native JSON results", "temporary probe test", "EFD, skipping", "disable coverage thresholds only for isolated probes"} {
+	for _, expected := range []string{"Python runtimes", "without instrumentation", "temporary probe", "early-flake-detection, skipping", "disable coverage thresholds only for isolated probes"} {
 		require.Contains(t, output.String(), expected)
 	}
 	require.NotContains(t, output.String(), "Node runtimes")
@@ -187,7 +187,7 @@ func TestPytestAllRetainsUnsupportedPackageDirectory(t *testing.T) {
 	var result validationResult
 	require.NoError(t, json.Unmarshal(data, &result))
 	require.Len(t, result.Configurations, 1)
-	require.Equal(t, "not exercised", result.Configurations[0].Status)
+	require.Equal(t, "blocked", result.Configurations[0].Status)
 	require.Empty(t, result.Runs)
 }
 

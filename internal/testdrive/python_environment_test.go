@@ -155,8 +155,7 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 				require.Contains(t, string(data), drive.environmentFailure.Title)
 				require.Contains(t, string(data), "Troubleshooting")
 			}
-			require.DirExists(t, drive.session.Directory())
-			require.FileExists(t, filepath.Join(drive.session.Directory(), testOutputFilename))
+			require.NoDirExists(t, drive.session.Directory())
 
 		})
 	}

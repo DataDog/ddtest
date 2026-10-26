@@ -140,6 +140,10 @@ func handleKnownTests(w http.ResponseWriter, _ *http.Request, scenario Scenario)
 	if scenario.Module != "" {
 		tests[scenario.Module] = map[string]any{}
 	}
+	if scenario.Framework == "pytest" {
+		// Python requires a nonempty history before enabling new-test retries.
+		tests["pytest"] = map[string]any{"ddtest_known_test.py": []string{"ddtest_existing_test"}}
+	}
 	writeJSON(w, map[string]any{
 		"data": map[string]any{
 			"attributes": map[string]any{

@@ -492,6 +492,10 @@ func (t *Testdrive) Preview(output io.Writer) {
 			_, _ = fmt.Fprintln(output, "  - TIA skipping/per-test coverage: "+policy.Status+"; "+policy.Reason)
 		}
 		_, _ = fmt.Fprintln(output, "  - keep .testoptimization/testdrive.json and .testoptimization/report.html; remove owned probes, temporary tracer and run files")
+		if t.framework.Name() == "pytest" {
+			_, _ = fmt.Fprintln(output, "  - check GitHub Actions Python runtimes and tracer release agreement using action and PyPI metadata")
+			_, _ = fmt.Fprintln(output, "  - disable coverage thresholds only for isolated probes, preserving coverage collection and the original full-suite thresholds")
+		}
 	}
 	if supportsValidationFramework(t.framework.Name()) {
 		_, _ = fmt.Fprintf(output, "  - use private temporary scratch storage: %s (removed after the run)\n", directory)

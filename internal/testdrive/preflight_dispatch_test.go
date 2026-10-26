@@ -20,6 +20,7 @@ import (
 func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 	javascript := platform.NewJavaScript()
 	frameworks := map[string]framework.Framework{
+		"pytest":      framework.NewPytest(platform.NewPython()),
 		"jest":        framework.NewJest(javascript),
 		"vitest":      framework.NewVitest(javascript),
 		"mocha":       framework.NewMocha(javascript),
@@ -37,9 +38,13 @@ func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 		preflight := (&Testdrive{framework: runner}).frameworkPreflight()
 		require.NotNil(t, preflight, name)
 		function := runtime.FuncForPC(reflect.ValueOf(preflight).Pointer()).Name()
-		require.Contains(t, function, ".check"+displayName(name)+"Preflight", name)
+		display := displayName(name)
+		if name == "pytest" {
+			display = "Pytest"
+		}
+		require.Contains(t, function, ".check"+display+"Preflight", name)
 	}
-	require.Nil(t, (&Testdrive{framework: framework.NewPytest(platform.NewPython())}).frameworkPreflight())
+	require.Nil(t, (&Testdrive{framework: framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest))}).frameworkPreflight())
 }
 
 func TestPlainCheckOnlyRunsTheSelectedFrameworkPreflight(t *testing.T) {

@@ -92,7 +92,7 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 					output, err := command.CombinedOutput()
 					require.NoError(t, err, "%s", output)
 					if fixture.name == "pytest" {
-						require.Contains(t, string(output), "COMPLETE LOCALLY")
+						require.Contains(t, string(output), "Validation verdict: PASSED")
 					} else {
 						require.Contains(t, string(output), "Test events received.")
 						require.NotContains(t, string(output), "INCOMPLETE")
@@ -121,7 +121,7 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 					reportingIndex := 0
 					if fixture.name == "pytest" {
 						require.NotContains(t, fields, "telemetry_only")
-						require.Equal(t, "COMPLETE LOCALLY", report.Summary.Status)
+						require.Equal(t, "PASSED", report.Summary.Status)
 						require.Equal(t, "compatible", report.Compatibility.Status)
 						require.Len(t, report.Features, 6)
 						for _, feature := range report.Features {
@@ -159,7 +159,9 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 						require.Len(t, entries, 3)
 						require.DirExists(t, filepath.Join(root, ".testoptimization/testdrive"))
 					}
-					require.Contains(t, string(output), "Saved diagnostics")
+					if fixture.name != "pytest" {
+						require.Contains(t, string(output), "Saved diagnostics")
+					}
 					require.FileExists(t, filepath.Join(root, ".testoptimization/report.html"))
 				})
 			}

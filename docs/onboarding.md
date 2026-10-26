@@ -16,8 +16,9 @@ ddtest onboard --framework vitest --apply --yes
 ```
 
 Use the selected framework name for Jest, Mocha, Playwright, Cucumber or
-WebdriverIO. Cypress hooks still require explicit setup. Python and Ruby retain
-their existing instructions and testdrive behavior; automatic apply is JavaScript
+WebdriverIO. Cypress hooks still require explicit setup. Python/pytest has
+[manual onboarding and controlled validation](running.md#python-with-pytest-testdrive).
+Ruby retains its existing instructions and testdrive behavior; automatic apply is JavaScript
 only.
 
 The editor preserves existing project and CI tracer selections, including tracers

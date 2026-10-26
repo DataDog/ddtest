@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,6 +98,18 @@ func pythonJobCandidate(root string, workflow ciWorkflow, job runtimeJob) bool {
 // Restrict static checks to numeric minimum/maximum constraints. Other PEP 440
 // expressions remain inconclusive rather than silently dropping a constraint.
 func ComparePythonRequirement(python, requirement string) (string, string) {
+	if strings.ContainsAny(requirement, "*~") {
+		return "inconclusive", "The Python version requirement needs manual review."
+	}
+	version := strings.Split(python, ".")
+	if len(version) < 2 || len(version) > 3 {
+		return "inconclusive", "The Python runtime must select a numeric major.minor or major.minor.patch version."
+	}
+	for _, part := range version {
+		if _, err := strconv.Atoi(part); err != nil {
+			return "inconclusive", "The Python runtime must select a numeric major.minor or major.minor.patch version."
+		}
+	}
 	parts := strings.Split(requirement, ",")
 	slices.SortFunc(parts, func(a, b string) int { return -strings.Compare(strings.TrimSpace(a), strings.TrimSpace(b)) })
 	status, reason := CompareNodeRequirement(python, strings.Join(parts, " "))
