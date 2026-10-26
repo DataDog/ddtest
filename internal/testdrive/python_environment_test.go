@@ -77,6 +77,9 @@ func TestPythonProbePreservesEnvironmentSelectors(t *testing.T) {
 		{"uv", []string{"run", "--project", "project space", "--python", "python3.13", "--package=member", "pytest", "-k", "example"}, []string{"run", "--no-sync", "--project", "project space", "--python", "python3.13", "--package=member", "python"}},
 		{"uv", []string{"run", "--locked", "--", "python", "-m", "pytest"}, []string{"run", "--no-sync", "--locked", "--", "python"}},
 		{"python3.13", []string{"-W", "error", "-m", "pytest"}, []string{"-W", "error"}},
+		{"python3.13", []string{"-X", "dev", "-Wignore", "-m", "pytest"}, []string{"-X", "dev", "-Wignore"}},
+		{"python", []string{"wrapper.py", "-m", "pytest"}, nil},
+		{"python", []string{"-c", "print('wrapper')", "-m", "pytest"}, nil},
 		{"poetry", []string{"run", "python", "-m", "pytest"}, []string{"run", "python"}},
 	} {
 		command, prefix, err := pythonProbeCommand(tc.command, tc.args)

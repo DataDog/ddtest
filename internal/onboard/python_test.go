@@ -35,6 +35,40 @@ func TestPythonRuntimeRequirement(t *testing.T) {
 	}
 }
 
+func TestPythonInvocationStopsAtTheExecutionTarget(t *testing.T) {
+	for _, tc := range []struct {
+		words []string
+		match bool
+	}{
+		{[]string{"python", "-m", "pytest", "tests"}, true},
+		{[]string{"python3.12", "-I", "-W", "error", "-Xdev", "-m", "pytest"}, true},
+		{[]string{"python", "--check-hash-based-pycs", "always", "-m", "pytest"}, true},
+		{[]string{"python", "wrapper.py", "-m", "pytest"}, false},
+		{[]string{"python", "-c", "print('wrapper')", "-m", "pytest"}, false},
+		{[]string{"python", "-", "-m", "pytest"}, false},
+		{[]string{"python", "--", "-m", "pytest"}, false},
+		{[]string{"python", "-W", "-m", "pytest"}, false},
+		{[]string{"python", "-X"}, false},
+		{[]string{"python", "--version", "-m", "pytest"}, false},
+		{[]string{"uv", "run", "--locked", "python", "wrapper.py", "-m", "pytest"}, false},
+	} {
+		require.Equal(t, tc.match, pythonInvocation(tc.words), "%v", tc.words)
+	}
+	root := pythonReviewWorkflow(t, `jobs:
+  tests:
+    steps:
+      - run: python -m pytest
+      - run: python wrapper.py -m pytest
+`)
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "Unresolved Python entry point: python wrapper.py -m pytest")
+	check := pythonReviewRuntime(t, root)
+	require.Len(t, check.Jobs, 2)
+	require.Equal(t, "inconclusive", check.Jobs[1].Status)
+}
+
 func TestPythonScopeRetainsCommandsAndUnresolvedWrappers(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))

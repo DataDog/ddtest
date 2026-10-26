@@ -130,6 +130,32 @@ func pythonInvocation(words []string) bool {
 	return ok
 }
 
+// PythonModuleIndex identifies -m only among interpreter options. Python stops
+// parsing those options at a script, -c, stdin or --; later -m belongs to it.
+// Unknown interpreter options remain unresolved rather than being skipped.
+func PythonModuleIndex(args []string) int {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-m":
+			if i+1 < len(args) {
+				return i
+			}
+			return -1
+		case arg == "-W" || arg == "-X" || arg == "--check-hash-based-pycs":
+			i++
+			if i >= len(args) {
+				return -1
+			}
+		case strings.HasPrefix(arg, "-W") || strings.HasPrefix(arg, "-X"):
+		case len(arg) > 1 && arg[0] == '-' && strings.Trim(arg[1:], "bBdEiIOPqRsSuvx") == "":
+		default:
+			return -1
+		}
+	}
+	return -1
+}
+
 func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
 	if len(words) == 0 {
 		return nil, false
@@ -139,9 +165,9 @@ func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
 		return words[1:], true
 	}
 	if strings.HasPrefix(base, "python") {
-		index := slices.Index(words, "-m")
-		if index > 0 && index+1 < len(words) && words[index+1] == runner {
-			return words[index+2:], true
+		index := PythonModuleIndex(words[1:])
+		if index >= 0 && words[index+2] == runner {
+			return words[index+3:], true
 		}
 		return nil, false
 	}
