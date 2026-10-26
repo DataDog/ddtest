@@ -39,8 +39,14 @@ instrumentation. Keep wrapper commands and the test matrix intact.
 Prepare and activate the same environment used by CI. uv projects use
 `uv run --no-sync python -m pytest` by default; testdrive does not synchronize
 project dependencies. Explicit commands can select Python, pytest, uv, or poetry.
-For tox/nox or other wrappers, enter the selected test environment and validate
-its actual Python/pytest command; unresolved wrappers remain unvalidated.
+CI inventory resolves static matrix expressions such as
+`${{ matrix.tox || format('py{0}', matrix.python) }}` and explicit single tox
+environments defined in native `pyproject.toml` configuration. It checks inherited
+pytest commands, tracer environment forwarding and selected Python versions.
+Unknown replacements, custom inheritance and other tox configuration formats
+remain unvalidated. Discovery preserves the original tox invocation; it does not
+provision or execute tox environments. For tox/nox or other wrappers, enter the
+selected test environment and validate its actual Python/pytest command.
 
 1. Run `ddtest testdrive --framework pytest --all --check-only --yes` to inspect
    discovered commands, CI Python requirements, and tracer release agreement.

@@ -87,8 +87,17 @@ func pythonJobCandidate(root string, workflow ciWorkflow, job runtimeJob) bool {
 	for _, row := range rows {
 		for _, step := range job.Steps {
 			resolved, _, _ := resolveVariantStep(workflow, job, step, row, "pytest")
-			if resolvePythonStep(root, workflow, job, resolved).Matched || environment.LooksLikeTestCommand(root, resolved.Run, "python", "pytest") {
+			resolution := resolvePythonStep(root, workflow, job, resolved)
+			if resolution.Matched || environment.LooksLikeTestCommand(root, resolved.Run, "python", "pytest") {
 				return true
+			}
+			if !resolution.Review && resolution.Reason != "" {
+				commands, _ := staticCommands(resolved.Run)
+				for _, words := range commands {
+					if _, ok := pythonRunnerArguments(words, "tox"); ok {
+						return true // Unknown tox configuration must not disappear as a typing/lint job.
+					}
+				}
 			}
 		}
 	}
@@ -117,22 +126,30 @@ func ComparePythonRequirement(python, requirement string) (string, string) {
 }
 
 func pythonInvocation(words []string) bool {
+	_, ok := pythonRunnerArguments(words, "pytest")
+	return ok
+}
+
+func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
 	if len(words) == 0 {
-		return false
+		return nil, false
 	}
 	base := strings.TrimSuffix(filepath.Base(words[0]), ".exe")
-	if base == "pytest" {
-		return true
+	if base == runner {
+		return words[1:], true
 	}
 	if strings.HasPrefix(base, "python") {
 		index := slices.Index(words, "-m")
-		return index > 0 && index+1 < len(words) && words[index+1] == "pytest"
+		if index > 0 && index+1 < len(words) && words[index+1] == runner {
+			return words[index+2:], true
+		}
+		return nil, false
 	}
 	if (base == "uv" || base == "poetry") && len(words) > 2 && words[1] == "run" {
 		for i := 2; i < len(words); i++ {
 			arg := words[i]
-			if pythonInvocation(words[i:]) {
-				return true
+			if args, ok := pythonRunnerArguments(words[i:], runner); ok {
+				return args, true
 			}
 			option, _, assigned := strings.Cut(arg, "=")
 			switch option {
@@ -142,11 +159,11 @@ func pythonInvocation(words []string) bool {
 					i++
 				}
 			default:
-				return false
+				return nil, false
 			}
 		}
 	}
-	return false
+	return nil, false
 }
 
 func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) commandResolution {
@@ -174,7 +191,10 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 	if step.Shell != "" {
 		shell = step.Shell
 	}
-	if !supportedCIShell(shell) {
+	// A literal invocation has the same argument boundaries in PowerShell.
+	// Quoting, expansions and shell operators still require separate review.
+	literalPowerShell := shell == "pwsh" && len(commands) == 1 && shellMatrixScalar.MatchString(step.Run)
+	if !supportedCIShell(shell) && !literalPowerShell {
 		return unresolvedCommand("Unsupported Python CI shell: " + shell)
 	}
 	result := commandResolution{}
@@ -185,6 +205,19 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		if pythonInvocation(words) {
 			result.Matched = true
 			result.Tests = append(result.Tests, TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...)})
+			continue
+		}
+		if args, ok := pythonRunnerArguments(words, "tox"); ok {
+			tox, err := readPythonTox(filepath.Join(root, directory), args)
+			if err != nil {
+				return unresolvedCommand("Cannot resolve tox pytest environment: " + err.Error())
+			}
+			if len(tox.Commands) == 0 {
+				result.ReviewReason = joinDiagnostic(result.ReviewReason, "Selected tox environment does not run pytest.")
+				continue
+			}
+			result.Matched = true
+			result.Tests = append(result.Tests, TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...), Resolution: "Native tox pytest environment " + tox.Name})
 			continue
 		}
 		base := filepath.Base(words[0])
@@ -306,7 +339,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 					}
 					resolved, _, envErr := resolveVariantStep(workflow, job, step, row, "pytest")
 					r := resolvePythonStep(root, workflow, job, resolved)
-					if !r.Matched && r.Reason == "" {
+					if !r.Matched && (r.Review || r.Reason == "") {
 						continue
 					}
 					finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Python: python, Action: action, Status: "inconclusive"}
@@ -341,7 +374,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 							if value, ok := step.Env["PYTHONPATH"]; ok && !strings.Contains(value, "${{ env.PYTHONPATH }}") {
 								finding.Status, finding.Reason = "incompatible", "The test step replaces the action's PYTHONPATH; preserve the injected tracer package path."
 							}
-							if status, reason := pythonInstrumentationOptions(workflow, job, resolved, row); status != "" {
+							if status, reason := pythonInstrumentationOptions(root, workflow, job, resolved, row, python); status != "" {
 								finding.Status, finding.Reason = status, reason
 							}
 						}
@@ -367,7 +400,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 	return result
 }
 
-func pythonInstrumentationOptions(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (string, string) {
+func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, python string) (string, string) {
 	env := map[string]string{}
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
@@ -387,9 +420,34 @@ func pythonInstrumentationOptions(workflow ciWorkflow, job runtimeJob, step runt
 		return "inconclusive", "Cannot parse CI PYTEST_ADDOPTS: " + err.Error()
 	}
 	commands, _ := staticCommands(step.Run)
+	directory := stepDirectory(workflow, job, step)
 	for _, words := range commands {
+		if len(words) == 2 && words[0] == "cd" && filepath.IsLocal(words[1]) {
+			directory = filepath.Join(directory, words[1])
+		}
 		if pythonInvocation(words) {
 			options = append(options, words...)
+		}
+		if args, ok := pythonRunnerArguments(words, "tox"); ok {
+			if _, overridden := env["TOX_OVERRIDE"]; overridden {
+				return "inconclusive", "TOX_OVERRIDE changes the effective tox configuration; inspect it inside the selected environment."
+			}
+			tox, err := readPythonTox(filepath.Join(root, directory), args)
+			if err != nil {
+				return "inconclusive", err.Error()
+			}
+			if len(tox.Commands) == 0 {
+				continue
+			}
+			if status, reason := tox.runtime(python); status != "" {
+				return status, reason
+			}
+			if status, reason := tox.instrumentation(); status != "" {
+				return status, reason
+			}
+			for _, command := range tox.Commands {
+				options = append(options, command...)
+			}
 		}
 	}
 	if slices.Contains(options, "--no-ddtrace") {

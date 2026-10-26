@@ -16,7 +16,6 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-var embeddedMatrix = regexp.MustCompile(`\$\{\{\s*matrix\.([a-zA-Z0-9_-]+)\s*\}\}`)
 var shellMatrixScalar = regexp.MustCompile(`^[a-zA-Z0-9_./@:+ -]*$`)
 
 // Substitute only known scalar matrix data, never evaluate workflow or shell
@@ -25,16 +24,39 @@ func interpolateMatrix(command string, row map[string]any) (string, error) {
 	if row == nil {
 		return command, nil
 	}
-	var err error
-	result := embeddedMatrix.ReplaceAllStringFunc(command, func(reference string) string {
-		value, e := runtimeValue(reference, row)
-		if e != nil || !shellMatrixScalar.MatchString(value) {
-			err = fmt.Errorf("matrix substitution requires shell quoting review: %s", reference)
-			return reference
+	if len(command) > 16384 {
+		return command, fmt.Errorf("CI command exceeds 16384 characters")
+	}
+	original := command
+	var result strings.Builder
+	for {
+		literal, expression, found := strings.Cut(command, "${{")
+		result.WriteString(literal)
+		if result.Len() > 16384 {
+			return original, fmt.Errorf("resolved CI command exceeds 16384 characters")
 		}
-		return value
-	})
-	return result, err
+		if !found {
+			return result.String(), nil
+		}
+		p := conditionParser{rest: expression, row: row}
+		value, err := p.expression(0)
+		if err != nil || !p.take("}}") {
+			return original, fmt.Errorf("unresolved CI workflow expression requires review: %s", workflowExpression.FindString("${{"+expression))
+		}
+		switch value.(type) {
+		case string, bool, int, float64:
+		default:
+			return original, fmt.Errorf("CI expression must resolve to a scalar")
+		}
+		if !shellMatrixScalar.MatchString(fmt.Sprint(value)) {
+			return original, fmt.Errorf("matrix substitution requires shell quoting review")
+		}
+		_, _ = fmt.Fprint(&result, value)
+		if result.Len() > 16384 {
+			return original, fmt.Errorf("resolved CI command exceeds 16384 characters")
+		}
+		command = p.rest
+	}
 }
 
 func conditionEnvironment(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) map[string]string {
