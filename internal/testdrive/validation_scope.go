@@ -2,10 +2,17 @@ package testdrive
 
 import "fmt"
 
-// An explicit local command validates its own execution. CI inventory remains
+// A selected local command validates its own execution. CI inventory remains
 // advisory; --all, check-only and the onboarding coordinator keep CI gates.
 func (result validationResult) focusedLocalCommand() bool {
 	return result.FocusedCommand && !result.CheckOnly && result.Workflow == nil
+}
+
+func (result validationResult) ciPreservationBlocking() bool {
+	// An unreadable initial inventory cannot certify CI, but is advisory for a
+	// local command. Once a baseline exists, inability to verify it blocks too.
+	return result.CIPreservation != nil && result.CIPreservation.Status != "passed" &&
+		(!result.focusedLocalCommand() || result.CIPreservation.Status != "inconclusive" || result.CIBaseline != nil)
 }
 
 func hasValidationPair(result validationResult) bool {

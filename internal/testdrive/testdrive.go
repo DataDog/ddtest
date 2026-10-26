@@ -183,13 +183,6 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if all && !frameworkFeaturePolicies[runner.Name()].Configurations {
 		return nil, fmt.Errorf("--all currently validates %s only", frameworkNamesWith(func(policy frameworkPolicy) bool { return policy.Configurations }))
 	}
-	if runner.Name() == "pytest" && strings.TrimSpace(settings.GetCommand()) == "" {
-		if scope, err := onboard.DiscoverValidationScope(repositoryRoot, "pytest"); err != nil {
-			return nil, err
-		} else if len(scope.Commands) > 0 {
-			all = true
-		}
-	}
 
 	var discoveryError error
 	var selectedPlan onboard.TestCommand
@@ -625,7 +618,7 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr err
 		result, runErr = t.run(ctx, output)
 	}
 	result.Framework = t.framework.Name()
-	result.FocusedCommand = frameworkFeaturePolicies[t.framework.Name()].Configurations && strings.TrimSpace(settings.GetCommand()) != ""
+	result.FocusedCommand = frameworkFeaturePolicies[t.framework.Name()].Configurations && (strings.TrimSpace(settings.GetCommand()) != "" || t.framework.Name() == "pytest")
 	result.CommandEnvironment = reportedEnvironment(t.commandAssignments)
 	if frameworkFeaturePolicies[t.framework.Name()].Configurations {
 		prepareValidationResult(t.repositoryRoot, &result)
@@ -637,7 +630,10 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr err
 			scope, err = onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		}
 		if err != nil {
-			runErr = errors.Join(runErr, err)
+			result.Scope = &onboard.ValidationScope{Unresolved: []string{err.Error()}}
+			if !result.focusedLocalCommand() {
+				runErr = errors.Join(runErr, err)
+			}
 		} else {
 			t.setConfigurationScope(&result, scope)
 			if prepared != nil {

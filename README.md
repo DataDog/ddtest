@@ -50,6 +50,9 @@ A standalone `testdrive --command '<test command>'` reports success for that
 command's local comparison, coverage, feature checks and cleanup. Missing CI
 instrumentation and other unexecuted configurations appear as advisories; they
 do not require editing the repository's workflows to complete the local run.
+This applies to supported JavaScript frameworks as well as pytest. Pytest's
+default invocation also validates one local command; use `--all` explicitly for
+its discovered CI configurations.
 `--all`, `--check-only` and guided onboarding retain their broader CI checks.
 
 Testdrive reuses a detected project tracer; otherwise it installs the release

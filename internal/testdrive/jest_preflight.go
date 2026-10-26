@@ -293,6 +293,7 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 	scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 	if err != nil {
 		result.Error = err.Error()
+		result.Scope = &onboard.ValidationScope{Unresolved: []string{err.Error()}}
 		return err
 	}
 	result.Scope = &scope

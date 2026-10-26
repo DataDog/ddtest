@@ -135,7 +135,12 @@ func summarizeValidation(result validationResult) validationSummary {
 		ciFindings = append(ciFindings, "CI runtime: "+result.CIRuntime.Status)
 	}
 	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
-		summary.BlockingChecks = append(summary.BlockingChecks, "CI preservation: "+result.CIPreservation.Status+" — "+result.CIPreservation.Reason)
+		finding := "CI preservation: " + result.CIPreservation.Status + " — " + result.CIPreservation.Reason
+		if result.ciPreservationBlocking() {
+			summary.BlockingChecks = append(summary.BlockingChecks, finding)
+		} else {
+			ciFindings = append(ciFindings, finding)
+		}
 	}
 	caveats, fidelityBlockers := ciFidelity(&result)
 	summary.Caveats = caveats

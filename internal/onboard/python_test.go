@@ -225,7 +225,11 @@ func TestPythonReviewRetainsApplicationPathAroundManagedTracer(t *testing.T) {
 func TestPythonReviewEffectiveInstrumentationOptions(t *testing.T) {
 	for _, tc := range []struct{ name, parent, stepEnv, command, status string }{
 		{"step overrides parent", "  PYTEST_ADDOPTS: '-q'\n", "          PYTEST_ADDOPTS: '--ddtrace -q'\n", "python -m pytest", "compatible"},
+		{"step replaces unknown parent", "  PYTEST_ADDOPTS: '${{ secrets.OPTIONS }}'\n", "          PYTEST_ADDOPTS: '--ddtrace -q'\n", "python -m pytest", "compatible"},
 		{"action options extended", "", "          PYTEST_ADDOPTS: '${{ env.PYTEST_ADDOPTS }} -q'\n", "python -m pytest", "compatible"},
+		{"inherited disable flag", "  PYTEST_ADDOPTS: '--no-ddtrace'\n", "          PYTEST_ADDOPTS: '${{ env.PYTEST_ADDOPTS }} -q'\n", "python -m pytest", "incompatible"},
+		{"inherited blocked plugin", "  PYTEST_ADDOPTS: '--ddtrace -p no:ddtrace'\n", "          PYTEST_ADDOPTS: '${{env.PYTEST_ADDOPTS}} -q'\n", "python -m pytest", "incompatible"},
+		{"unknown inherited options", "  PYTEST_ADDOPTS: '${{ secrets.OPTIONS }}'\n", "          PYTEST_ADDOPTS: '${{ env.PYTEST_ADDOPTS }} -q'\n", "python -m pytest", "inconclusive"},
 		{"environment disables tracing", "", "          PYTEST_ADDOPTS: '--ddtrace --no-ddtrace'\n", "python -m pytest", "incompatible"},
 		{"autoload disabled without plugin", "  PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'\n", "          PYTEST_ADDOPTS: '--ddtrace'\n", "python -m pytest", "incompatible"},
 		{"autoload disabled explicit command plugin", "  PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'\n", "          PYTEST_ADDOPTS: '--ddtrace'\n", "python -m pytest -p ddtrace", "compatible"},
@@ -261,4 +265,16 @@ func TestPythonReviewMatrixPreservationExcludesUnrelatedJobs(t *testing.T) {
 	for _, row := range rows {
 		require.Contains(t, row, " / tests / ")
 	}
+}
+
+func TestPythonAddoptsPreservesParentOptionsLocallyAndInCIChecks(t *testing.T) {
+	workflow := ciWorkflow{Env: map[string]string{"PYTEST_ADDOPTS": "--ddtrace -k selected"}}
+	job := runtimeJob{Env: map[string]string{"PYTEST_ADDOPTS": "${{env.PYTEST_ADDOPTS}} --cov=app"}}
+	step := runtimeStep{Run: "python -m pytest", Env: map[string]string{"PYTEST_ADDOPTS": "${{ env.PYTEST_ADDOPTS }} -p ddtrace -q"}}
+	value, err := pythonAddopts(workflow, job, step, nil)
+	require.NoError(t, err)
+	require.Equal(t, "--ddtrace -k selected --cov=app -p ddtrace -q", value)
+	_, environment, err := resolveVariantStep(workflow, job, step, nil, "pytest")
+	require.NoError(t, err)
+	require.Equal(t, value, environment["PYTEST_ADDOPTS"])
 }

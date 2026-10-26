@@ -584,9 +584,6 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	if supportsValidationFramework(result.Framework) {
 		result.Success = result.Success && result.HTMLReportCurrent && result.Cleanup != nil && result.Cleanup.Status == "passed"
 	}
-	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
-		result.Success = false
-	}
 	result.ChecksPassed = workflowChecksPassed(result.Workflow) && result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
 	if result.Scope != nil && !result.focusedLocalCommand() {
 		_, fidelityBlockers := ciFidelity(result)
@@ -598,7 +595,7 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0 && (!result.CheckOnly || len(command.Prerequisites) == 0 || len(result.Configurations) > 0)
 		}
 	}
-	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
+	if result.ciPreservationBlocking() {
 		result.Success, result.ChecksPassed = false, false
 	}
 	if result.CISelection != nil && !result.focusedLocalCommand() {

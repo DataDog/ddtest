@@ -119,8 +119,8 @@ func TestRubyAndCypressPreviewsDoNotPromiseUnsupportedChecks(t *testing.T) {
 	}
 }
 
-func TestPythonRubyReportsDoNotEnterAgentValidation(t *testing.T) {
-	for _, name := range []string{"pytest", "rspec", "minitest"} {
+func TestRubyReportsDoNotEnterAgentValidation(t *testing.T) {
+	for _, name := range []string{"rspec", "minitest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)

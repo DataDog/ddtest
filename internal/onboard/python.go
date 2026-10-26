@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -119,9 +120,7 @@ func ComparePythonRequirement(python, requirement string) (string, string) {
 			return "inconclusive", "The Python runtime must select a numeric major.minor or major.minor.patch version."
 		}
 	}
-	parts := strings.Split(requirement, ",")
-	slices.SortFunc(parts, func(a, b string) int { return -strings.Compare(strings.TrimSpace(a), strings.TrimSpace(b)) })
-	status, reason := CompareNodeRequirement(python, strings.Join(parts, " "))
+	status, reason := CompareNodeRequirement(python, strings.ReplaceAll(requirement, ",", " "))
 	return status, strings.NewReplacer("Node", "Python", "setup-node", "setup-python").Replace(reason)
 }
 
@@ -311,7 +310,7 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 			continue
 		}
 		base := filepath.Base(words[0])
-		if len(words) == 2 && base == "cd" && filepath.IsLocal(words[1]) {
+		if len(words) == 2 && words[0] == "cd" && filepath.IsLocal(words[1]) {
 			directory = filepath.Join(directory, words[1])
 			continue
 		}
@@ -498,13 +497,7 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
 	}
-	// The action supplies --ddtrace unless declared options replace its value.
-	value, declared := env["PYTEST_ADDOPTS"]
-	if !declared {
-		value = "--ddtrace"
-	}
-	value = strings.ReplaceAll(value, "${{ env.PYTEST_ADDOPTS }}", "--ddtrace")
-	value, err := runtimeValue(value, row)
+	value, err := pythonAddopts(workflow, job, step, row)
 	if err != nil {
 		return "inconclusive", err.Error()
 	}
@@ -557,7 +550,7 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 		} else if !strings.HasPrefix(option, "-p") {
 			continue
 		}
-		if slices.Contains([]string{"ddtrace", "ddtrace.contrib.pytest.plugin", "ddtrace.contrib.internal.pytest.plugin"}, strings.TrimPrefix(plugin, "no:")) {
+		if slices.Contains([]string{"ddtrace", "ddtrace.contrib.pytest.plugin", "ddtrace.contrib.internal.pytest.plugin", "ddtrace.testing.internal.pytest.entry_point"}, strings.TrimPrefix(plugin, "no:")) {
 			if strings.HasPrefix(plugin, "no:") {
 				return "incompatible", "The pytest options explicitly block the Datadog plugin."
 			}
@@ -572,4 +565,21 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 		return "incompatible", "pytest plugin autoload is disabled; explicitly load the Datadog plugin with -p ddtrace in CI. Local plugin loading does not validate CI setup."
 	}
 	return "", ""
+}
+
+var pythonAddoptsReference = regexp.MustCompile(`\$\{\{\s*env\.PYTEST_ADDOPTS\s*\}\}`)
+
+// Resolve each declaration against its parent, keeping application selection
+// and plugin options identical in CI checks and local command discovery.
+func pythonAddopts(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (string, error) {
+	value := "--ddtrace" // Supplied by the Datadog action when not overridden.
+	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		declared, ok := layer["PYTEST_ADDOPTS"]
+		if !ok {
+			continue
+		}
+		parent := value
+		value = pythonAddoptsReference.ReplaceAllStringFunc(declared, func(string) string { return parent })
+	}
+	return runtimeValue(value, row)
 }

@@ -8,6 +8,7 @@ import pytest
 _tests = {}
 _errors = []
 _coverage_threshold_disabled = False
+_rootpath = Path.cwd()
 
 
 def pytest_addoption(pluginmanager):
@@ -34,7 +35,8 @@ def pytest_addoption(pluginmanager):
 
 
 def pytest_configure(config):
-    global _coverage_threshold_disabled
+    global _coverage_threshold_disabled, _rootpath
+    _rootpath = config.rootpath
     probe = os.environ.get("DDTEST_PYTEST_PROBE")
     if probe:
         # Keep the original config, conftests, plugins and selection options.
@@ -63,7 +65,7 @@ def pytest_runtest_logreport(report):
     if report.when == "teardown" and report.skipped and previous:
         return
     _tests[report.nodeid] = {
-        "file": str(Path(file).resolve()),
+        "file": str((_rootpath / file).resolve()),
         "name": name,
         "status": report.outcome,
         "failure": str(report.longrepr) if report.failed else "",

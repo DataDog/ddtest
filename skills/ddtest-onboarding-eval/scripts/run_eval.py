@@ -484,7 +484,7 @@ def run(args):
         env[key] = str(directory)
     for key, name in (("PIP_CACHE_DIR", "pip"), ("UV_CACHE_DIR", "uv")):
         directory = trial / "caches" / name
-        directory.mkdir()
+        directory.mkdir(parents=True, exist_ok=True)
         env[key] = str(directory)
     # pnpm's own configuration is not inherited by npm commands in test scripts.
     pnpm_config = Path(env["XDG_CONFIG_HOME"]) / "pnpm" / "rc"

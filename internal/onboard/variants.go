@@ -80,7 +80,10 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
 		if len(frameworks) > 0 && frameworks[0] == "pytest" && key == "PYTEST_ADDOPTS" {
-			value = strings.ReplaceAll(value, "${{ env.PYTEST_ADDOPTS }}", "")
+			value, err = pythonAddopts(workflow, job, step, row)
+			if err != nil {
+				return step, nil, err
+			}
 			env[key] = value
 		}
 		if len(frameworks) > 0 && frameworks[0] == "pytest" && key == "PYTHONPATH" {

@@ -55,7 +55,8 @@ selected test environment and validate its actual Python/pytest command.
    Use `--command '<existing pytest command>'` for a focused configuration.
    A standalone `--command` run reports PASSED when that command's local checks
    pass, even if the repository has no Datadog CI action. CI findings and other
-   unexecuted configurations remain advisories in the report. `--all`,
+   unexecuted configurations remain advisories in the report. The default pytest
+   invocation also validates one local command; it does not imply `--all`. `--all`,
    `--check-only` and guided onboarding still check their broader CI scope.
 3. Inspect the baseline/reporting-only comparison and the separate retry,
    early-flake-detection, skipping, quarantine, disabled, and attempt-to-fix
@@ -70,3 +71,8 @@ retains previous execution only as historical evidence. Copy the final verdict
 and absolute Markdown report links printed by testdrive. Local validation uses
 a mock endpoint and needs no Datadog credentials; remote CI and the real Datadog
 backend are not exercised.
+
+`testdrive --report` reads saved pytest evidence as `historical_report` with
+`freshness_unverified`; it does not rerun tests or certify current source,
+dependencies or Python. Rerun testdrive before claiming current success. The
+structured `--agent` onboarding coordinator remains JavaScript-only.

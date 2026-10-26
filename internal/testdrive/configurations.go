@@ -197,6 +197,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		err = fmt.Errorf("no explicit %s CI invocations discovered; review discovery and use --command for local validation", t.framework.Name())
 	}
 	if err != nil {
+		scope.Unresolved = append(scope.Unresolved, err.Error())
 		result := validationResult{Session: planSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Scope: &scope, Error: err.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Discovery failed; no test commands were executed."}}
 		return errors.Join(err, finishValidation(output, t.repositoryRoot, result))
 	}

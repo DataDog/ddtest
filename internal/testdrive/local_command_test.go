@@ -85,3 +85,31 @@ func TestLocalCommandStillRequiresAllExecutionEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalCommandCIPreservationRemainsBlockingAfterBaseline(t *testing.T) {
+	for _, tc := range []struct {
+		name, status string
+		baseline     []string
+		passed       bool
+	}{
+		{name: "initial inventory unavailable", status: "inconclusive", passed: true},
+		{name: "baseline cannot be checked", status: "inconclusive", baseline: []string{"original row"}},
+		{name: "matrix was removed", status: "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := completeValidationFixture("pytest")
+			result.FocusedCommand = true
+			result.CIBaseline = tc.baseline
+			result.CIPreservation = &verdict{Status: tc.status, Reason: "CI inventory unavailable"}
+			prepareValidationResult(t.TempDir(), &result)
+			summary := summarizeValidation(result)
+			require.Equal(t, tc.passed, result.Success)
+			if tc.passed {
+				require.Empty(t, summary.BlockingChecks)
+				require.Contains(t, strings.Join(summary.CIAdvisories, "\n"), "CI preservation: inconclusive")
+			} else {
+				require.Contains(t, strings.Join(summary.BlockingChecks, "\n"), "CI preservation: "+tc.status)
+			}
+		})
+	}
+}

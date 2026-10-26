@@ -38,6 +38,14 @@ def test_ddtest_validation_probe():
 func (t *Testdrive) checkPytestPreflight(ctx context.Context, output io.Writer, result *validationResult) error {
 	check := &jestPreflight{Python: t.environmentInfo.Version, Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "Python tracer selection was not resolved."}}
 	result.Preflight = check
+	addopts := os.Getenv("PYTEST_ADDOPTS")
+	if configured, ok := t.pytestEnvironment["PYTEST_ADDOPTS"]; ok {
+		addopts = configured
+	}
+	if err := checkPytestPluginOptions(addopts, t.args); err != nil {
+		check.Verdict = verdict{Status: "incompatible", Reason: err.Error()}
+		return fmt.Errorf("pytest preflight: %w", err)
+	}
 	command, prefix, err := pythonProbeCommand(t.command, t.args)
 	if err != nil {
 		return err
@@ -95,6 +103,26 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 	return nil
 }
 
+func checkPytestPluginOptions(addopts string, args []string) error {
+	options, err := shellquote.Split(addopts)
+	if err != nil {
+		return fmt.Errorf("cannot parse PYTEST_ADDOPTS: %w", err)
+	}
+	options = append(options, args...)
+	for i, option := range options {
+		plugin := strings.TrimPrefix(option, "-p")
+		if option == "-p" && i+1 < len(options) {
+			plugin = options[i+1]
+		} else if !strings.HasPrefix(option, "-p") {
+			continue
+		}
+		if slices.Contains([]string{"no:ddtrace", "no:ddtrace.contrib.pytest.plugin", "no:ddtrace.contrib.internal.pytest.plugin", "no:ddtrace.testing.internal.pytest.entry_point"}, plugin) {
+			return fmt.Errorf("pytest options block the Datadog plugin (-p %s). Remove that blocker from PYTEST_ADDOPTS or the selected command before controlled validation; preserve other test options", plugin)
+		}
+	}
+	return nil
+}
+
 func (t *Testdrive) verifyPytestTracer(ctx context.Context, path, expected string) error {
 	command, prefix, err := pythonProbeCommand(t.command, t.args)
 	if err != nil {
@@ -141,9 +169,12 @@ func stripPytestInstrumentation(value string) (string, error) {
 
 func (t *Testdrive) runPytest(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
-	run = validationRun{Role: spec.Role, Name: name, Instrumented: instrumented, ProbeMode: probeMode, framework: "pytest", root: t.repositoryRoot}
+	run = validationRun{Role: spec.Role, Name: name, Instrumented: instrumented, ProbeMode: probeMode, framework: "pytest", root: t.repositoryRoot, checkoutRoot: t.checkoutRoot()}
 	if root, err := filepath.EvalSymlinks(run.root); err == nil {
 		run.root = root
+	}
+	if root, err := filepath.EvalSymlinks(run.checkoutRoot); err == nil {
+		run.checkoutRoot = root
 	}
 	directory := filepath.Join(session.Directory(), name)
 	if err := os.MkdirAll(directory, 0700); err != nil {

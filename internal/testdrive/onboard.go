@@ -1074,12 +1074,27 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 	if validation == nil {
 		return renderReportFailure(output, format, fmt.Errorf("no saved validation report"))
 	}
-	if !supportsValidationFramework(validation.Framework) || validation.Framework == "pytest" {
+	if !supportsValidationFramework(validation.Framework) {
 		result := onboard.AgentResult{Status: "unsupported", Phase: "report", Code: "framework_unsupported", Reason: "Controlled validation is not available for this framework.", NextAction: "report_result"}
 		return errors.Join(fmt.Errorf("%s", result.Reason), onboard.RenderAgentResult(output, result, format))
 	}
 	if validation.CheckOnly && validation.Retained != nil && validation.Retained.Result != nil {
 		validation = validation.Retained.Result
+	}
+	if validation.Framework == "pytest" {
+		// Python runs do not have the coordinator's source/runtime receipt.
+		// Expose saved evidence without certifying the current checkout.
+		if !hasValidationExecution(*validation) && validation.Retained != nil && validation.Retained.Result != nil {
+			validation = validation.Retained.Result
+		}
+		result := onboard.AgentResult{Status: "historical_report", Phase: "report", Code: "freshness_unverified",
+			Reason:     "Saved pytest evidence is historical. Source, dependencies and the Python runtime have not been revalidated; rerun testdrive before claiming current success.",
+			NextAction: "run_command", NextCommand: onboard.DDTestCommand("testdrive", "--framework", "pytest", "--yes"), JSONReport: validationPath(root),
+			FinalResponse: fmt.Sprintf("Historical pytest evidence: saved execution %s; %d recorded runs. No tests or configuration checks were rerun.", executionStatus(validation), len(validation.Runs))}
+		if info, err := os.Stat(htmlReportPath(root)); validation.HTMLReportCurrent && err == nil && info.Mode().IsRegular() {
+			result.HTMLReport = htmlReportPath(root)
+		}
+		return onboard.RenderAgentResult(output, result, format)
 	}
 	result := onboard.AgentResult{Status: "validation_failed", Phase: "report", NextAction: "report_result", JSONReport: validationPath(root)}
 	current, err := InputFingerprint(ctx, root)

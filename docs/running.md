@@ -894,11 +894,23 @@ fallback version; CI must select the same release and a compatible Python.
 
 Discovered direct pytest, Python, uv, and poetry commands retain their options
 and CI environments. `uv run` uses `--no-sync`; install test dependencies first.
-Without `--command`, discovered CI configurations are validated together.
+Without `--command`, pytest validates the selected local environment's default
+command. Use `--all` explicitly to validate discovered CI configurations together.
 Use `--command 'python -m pytest tests -c pytest.ini'` for a focused command.
 Tox/nox wrappers, dynamic setup, and commands in other working directories remain
 unvalidated; enter the selected test environment and validate its actual pytest
 command. Local execution does not certify other Python/OS environments or run CI.
 After edits, rerun full validation: `--check-only` preserves prior execution only
 as historical evidence. Keep both HTML and JSON reports after cleanup.
+
+`testdrive --report` reads saved pytest evidence without running Python or
+changing the reports. It returns `historical_report` with `freshness_unverified`:
+source, dependencies and runtime are not verified against the saved run. Rerun
+testdrive before claiming current success. Python onboarding provides guidance;
+the structured `--agent` onboarding coordinator remains JavaScript-only.
+
+For all supported controlled-validation frameworks, including JavaScript, an
+explicit standalone `--command` can pass independently of CI readiness. CI
+findings and other unexecuted configurations remain advisories. `--all`,
+configuration-only checks and the onboarding coordinator retain their CI gates.
 
