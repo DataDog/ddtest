@@ -117,3 +117,65 @@ func TestRunUsesOuterValidationStatusInsteadOfBuildExitCode(t *testing.T) {
 		t.Fatalf("validation exit=%d, want1 despite nested tool exit7", code)
 	}
 }
+
+// TestDispatchHandsInstrumentToDdto runs ddtest instrument in a helper
+// process: ddto handles it, before ddtest sets anything, and exits.
+func TestDispatchHandsInstrumentToDdto(t *testing.T) {
+	stdout, _, code := dispatchHelper(t, "instrument", "--version")
+	if code != 0 || !strings.HasPrefix(stdout, "ddto v") {
+		t.Fatalf("instrument --version: exit %d, stdout %q", code, stdout)
+	}
+	_, stderr, code := dispatchHelper(t, "instrument")
+	if code != 2 || !strings.Contains(stderr, " instrument [go | orchestrion go") {
+		t.Fatalf("instrument without a command: exit %d, stderr %q", code, stderr)
+	}
+}
+
+// TestDispatchKeepsCallerEnvironment checks that ddtest's own commands keep
+// the environment that the process received: the SDK that ddto incorporates
+// sets its root session variable when it starts.
+func TestDispatchKeepsCallerEnvironment(t *testing.T) {
+	stdout, stderr, code := dispatchHelper(t, "plan")
+	if code != 0 || stdout != "root session unset\n" {
+		t.Fatalf("plan: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+func TestDispatchHelper(t *testing.T) {
+	arguments, ok := os.LookupEnv("DDTEST_DISPATCH_HELPER")
+	if !ok {
+		t.Skip("runs only as dispatchHelper's process")
+	}
+	dispatch(append([]string{os.Args[0]}, strings.Split(arguments, "\x1f")...))
+	if _, set := os.LookupEnv("_DD_ROOT_GO_SESSION_ID"); set {
+		fmt.Println("root session set")
+	} else {
+		fmt.Println("root session unset")
+	}
+	os.Exit(0)
+}
+
+// dispatchHelper runs dispatch with args in a process of this test binary,
+// with the environment of a caller that started no root session.
+func dispatchHelper(t *testing.T, args ...string) (string, string, int) {
+	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(executable, "-test.run=^TestDispatchHelper$")
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "_DD_ROOT_GO_SESSION_ID=") {
+			command.Env = append(command.Env, entry)
+		}
+	}
+	command.Env = append(command.Env, "DDTEST_DISPATCH_HELPER="+strings.Join(args, "\x1f"))
+	var stdout, stderr strings.Builder
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err = command.Run()
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
+		t.Fatal(err)
+	}
+	return stdout.String(), stderr.String(), command.ProcessState.ExitCode()
+}
