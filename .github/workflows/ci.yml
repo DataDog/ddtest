@@ -56,11 +56,14 @@ jobs:
       - name: Install Python test dependencies
         run: python -m pip install "ddtrace>=4.11.0" pytest
 
+      # ddto is its own module, checked by its own workflow; its benchmark
+      # fixtures are deliberately compact.
       - name: Format check
         run: |
-          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          unformatted="$(git ls-files -z '*.go' ':!:ddto/**' | xargs -0 gofmt -s -l)"
+          if [ -n "$unformatted" ]; then
             echo "The following files are not formatted correctly:"
-            gofmt -s -l .
+            echo "$unformatted"
             exit 1
           fi
 

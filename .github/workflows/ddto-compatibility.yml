@@ -29,9 +29,6 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-defaults:
-  run:
-    working-directory: ddto
 # A new push to a pull request replaces its running matrix. Other events never
 # share a group, so main and scheduled runs always finish.
 concurrency:
@@ -44,6 +41,10 @@ jobs:
   plan:
     name: Test groups
     runs-on: ubuntu-latest
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
     timeout-minutes: 5
     permissions:
       contents: read
@@ -102,6 +103,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-latest
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -139,6 +144,10 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.differential) }}
     runs-on: ${{ matrix.os }}
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 35 }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -320,6 +329,10 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.mini) }}
     runs-on: ubuntu-latest
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -399,6 +412,10 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.tip) }}
     runs-on: ubuntu-latest
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -448,10 +465,15 @@ jobs:
     if: ${{ !cancelled() }}
     needs: [plan, lint, differential, mini, go-tip, tip]
     runs-on: ubuntu-latest
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
     timeout-minutes: 10
     steps:
       - name: Reuse the verification of this tree
         if: needs.plan.outputs.skip == 'true'
+        working-directory: ${{ github.workspace }}
         shell: bash
         env:
           RUN: ${{ needs.plan.outputs.verified-run }}
@@ -459,6 +481,7 @@ jobs:
           echo "This tree passed every group in run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN." >> "$GITHUB_STEP_SUMMARY"
       - name: Require the source audit
         if: needs.plan.outputs.skip != 'true' && needs.lint.result != 'success'
+        working-directory: ${{ github.workspace }}
         run: exit 1
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         if: needs.plan.outputs.skip != 'true'

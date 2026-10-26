@@ -50,7 +50,10 @@ func sharedDriver(t *testing.T, root string) string {
 		}
 		bin := filepath.Join(dir, executableName("ddtest"))
 		// Like a user's build, ddtest keeps the checkout's VCS information.
-		out, stderr, code, _, err := runCommand(filepath.Dir(root), testEnv("GOFLAGS="), "go", "build", "-o", bin, ".")
+		// ddtest needs a newer Go than the oldest that ddto supports, which
+		// some jobs pin with GOTOOLCHAIN=local: users run a release
+		// executable, so only the driver's build switches toolchains.
+		out, stderr, code, _, err := runCommand(filepath.Dir(root), testEnv("GOFLAGS=", "GOTOOLCHAIN=auto"), "go", "build", "-o", bin, ".")
 		switch {
 		case err != nil:
 			sharedDriverBuild.err = err.Error()

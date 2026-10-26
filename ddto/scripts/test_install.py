@@ -13,7 +13,8 @@ import threading
 import unittest
 
 SCRIPTS = Path(__file__).resolve().parent
-MODULE = "github.com/DataDog/ddtest/ddto"
+# The installers still install the standalone releases of DataDog/ddto.
+MODULE = "github.com/DataDog/ddto"
 OS = {"Linux": "linux", "Darwin": "darwin"}.get(platform.system())
 ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower())
 

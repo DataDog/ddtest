@@ -311,8 +311,10 @@ class Runner:
             for key in ("sdk_version", "sdk_commit", "orchestrion_version", "cases", "cpus", "repetitions"):
                 self.config[key] = previous[key]
             input_head = previous.get("input_source_head", previous["source_head"])
+            # ROOT can be a directory of its repository, such as ddtest's ddto.
+            prefix = subprocess.check_output(["git", "rev-parse", "--show-prefix"], cwd=ROOT, text=True).strip()
             original = json.loads(subprocess.check_output(
-                ["git", "show", input_head + ":scripts/build-benchmark.json"], cwd=ROOT, text=True))
+                ["git", "show", input_head + ":" + prefix + "scripts/build-benchmark.json"], cwd=ROOT, text=True))
             self.config["subjects"] = original["subjects"]
         self.output = args.output.resolve()
         if self.output.exists() or self.output == Path("/tmp") or Path("/tmp") in self.output.parents:

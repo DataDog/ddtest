@@ -57,7 +57,7 @@ Add that directory to `PATH`. To build from a local checkout:
 
 ```sh
 git clone https://github.com/DataDog/ddtest.git
-cd ddto
+cd ddtest/ddto
 go build -o bin/ddto ./cmd/ddto
 ```
 
