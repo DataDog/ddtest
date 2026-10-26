@@ -24,12 +24,16 @@ type mavenProbe struct {
 }
 
 func (p mavenProbe) write(root string) error {
+	directory, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = directory.Close() }()
 	for path, content := range p.files {
-		path = filepath.Join(root, path)
-		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		if err := directory.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			return err
 		}
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		file, err := directory.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
 			return fmt.Errorf("create owned Maven probe: %w", err)
 		}
@@ -59,7 +63,9 @@ const javaProbeBody = `
 `
 
 func newMavenProbe(project maven.Project, framework string) mavenProbe {
-	p := mavenProbe{files: map[string]string{}, args: []string{"-Dtest=ddtest.DdtestValidationTest", "-Dit.test=ddtest.DdtestValidationTest", "-Dsurefire.failIfNoSpecifiedTests=false", "-Dfailsafe.failIfNoSpecifiedTests=false"}}
+	// A verify lifecycle may bind both plugins. Select Surefire for controls
+	// and skip Failsafe so the same probe body is never executed twice.
+	p := mavenProbe{files: map[string]string{}, args: []string{"-Dtest=ddtest.DdtestValidationTest", "-DskipITs=true", "-Dsurefire.failIfNoSpecifiedTests=false"}}
 	java := "package ddtest;\npublic class DdtestValidationTest {\n" + javaProbeBody
 	annotation := map[string]string{"junit4": "org.junit.Test", "junit5": "org.junit.jupiter.api.Test", "testng": "org.testng.annotations.Test"}[framework]
 	if annotation != "" {
@@ -125,7 +131,8 @@ func (t *Testdrive) mavenFeatures(ctx context.Context, output io.Writer, agent s
 	selected := t.framework.Name()
 	checked := false
 	for _, project := range projects {
-		if !slices.Contains(project.Frameworks(), selected) {
+		frameworks := project.Frameworks()
+		if len(frameworks) > 0 && !slices.Contains(frameworks, selected) {
 			continue
 		}
 		// A profile/aggregator dependency is not an executed module. Check only
@@ -138,11 +145,14 @@ func (t *Testdrive) mavenFeatures(ctx context.Context, output io.Writer, agent s
 			continue
 		}
 		checked = true
-		probe := newMavenProbe(project, selected)
+		probe := mavenProbe{}
+		if slices.Contains(frameworks, selected) {
+			probe = newMavenProbe(project, selected)
+		}
 		if len(probe.files) == 0 {
 			for _, policy := range featurePolicies(t.framework.Name()) {
 				feature := policy.Name
-				result.Features = append(result.Features, featureResult{Project: project.Directory, Name: feature, Status: "inconclusive", Reason: "Cannot identify the selected framework's probe runner from the declared Maven dependencies."})
+				result.Features = append(result.Features, featureResult{Project: project.Directory, Name: feature, Status: "inconclusive", Reason: "Cannot identify the selected framework's probe runner from declared Maven dependencies; remote parents/BOM/profile dependencies remain unresolved."})
 			}
 			continue
 		}

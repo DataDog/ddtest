@@ -175,14 +175,13 @@ class ReviewTests(unittest.TestCase):
             self.assertNotIn("private-one", " ".join(arguments))
             forwarded = dict(line.split("=", 1) for line in path.read_text().splitlines())
             program = arguments[arguments.index("/usr/bin/env") + 1:]
-            program[0] = sys.executable
             observed.append(subprocess.check_output(program, env=forwarded, text=True))
             return 0
         command = [sys.executable, "-c", "import json,os; print(json.dumps(dict(os.environ)))"]
         container.execute(command, trial, {"ANTHROPIC_CUSTOM_HEADERS": headers}, 5, lambda _: None, None, executor)
         restored = json.loads(observed[0])
         self.assertEqual(restored["ANTHROPIC_CUSTOM_HEADERS"], headers)
-        self.assertNotIn("DDTEST_EVAL_MODEL_ENV", restored)
+        self.assertNotIn("DDTEST_EVAL_B64_ANTHROPIC_CUSTOM_HEADERS", restored)
 
     def test_low_storage_stops_before_clone_or_model(self):
         from types import SimpleNamespace

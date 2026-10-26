@@ -3,6 +3,7 @@ package maven
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -88,8 +89,16 @@ func TestIsTestCommand(t *testing.T) {
 }
 
 func TestValidationCannotPublishOrSelectOutsideCopy(t *testing.T) {
-	for _, args := range [][]string{{"deploy"}, {"test", "deploy"}, {"test", "-f", "../pom.xml"}, {"verify", "--file=/outside/pom.xml"}} {
-		require.Error(t, ValidateTestdriveCommand("mvn", args))
+	for _, args := range [][]string{
+		{"deploy"}, {"test", "deploy"}, {"package", "deploy:deploy-file"},
+		{"test", "org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file"},
+		{"test", "-f", "../pom.xml"}, {"verify", "--file=/outside/pom.xml"},
+		{"test", "-f=/outside/pom.xml"}, {"test", "-f=../pom.xml"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			require.Error(t, ValidateTestdriveCommand("mvn", args))
+		})
 	}
 	require.NoError(t, ValidateTestdriveCommand("./mvnw", []string{"-f", "module/pom.xml", "-Pci", "verify"}))
+	require.NoError(t, ValidateTestdriveCommand("mvn", []string{"test", "-f=module/pom.xml"}))
 }

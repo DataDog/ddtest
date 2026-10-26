@@ -41,9 +41,14 @@ type testSuite struct {
 }
 
 // ReadReports accepts Surefire/Failsafe and framework-produced JUnit XML. Reports
-// must come from a fresh isolated run, never from the customer's previous build.
-func ReadReports(root string) ([]Test, error) {
+// must come from fresh declared reactor outputs, never from a saved fixture or
+// the customer's previous build.
+func ReadReports(root string, projects []Project) ([]Test, error) {
 	byDirectory, testNG := map[string][]Test{}, map[string][]Test{}
+	modules := map[string]bool{}
+	for _, project := range projects {
+		modules[filepath.ToSlash(project.Directory)] = true
+	}
 	reports := 0
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -68,6 +73,13 @@ func ReadReports(root string) ([]Test, error) {
 		if !found {
 			return nil
 		}
+		module := strings.Trim(before, "/")
+		if module == "" {
+			module = "."
+		}
+		if !modules[module] {
+			return nil
+		}
 		// TestNG also writes junitreports/TEST-*.xml underneath Surefire's
 		// directory. Its native testng-results.xml supplies those identities.
 		if !strings.Contains(after, "/") || !slices.Contains([]string{"surefire-reports", "failsafe-reports", "scalatest-reports", "karate-reports"}, pathpkg.Dir(after)) {
@@ -85,10 +97,6 @@ func ReadReports(root string) ([]Test, error) {
 			return err
 		}
 		reports++
-		module := strings.Trim(before, "/")
-		if module == "" {
-			module = "."
-		}
 		directory := filepath.Dir(path)
 		if isTestNG {
 			items, err := readTestNG(data, module)

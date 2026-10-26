@@ -225,7 +225,7 @@ func ValidateTestdriveCommand(command string, args []string) error {
 		return fmt.Errorf("select a literal mvn/mvnw test or verify command; shell wrappers and other build systems require separate validation")
 	}
 	for i, arg := range args {
-		if arg == "deploy" || strings.HasSuffix(arg, ":deploy") || arg == "site-deploy" {
+		if arg == "deploy" || strings.HasSuffix(arg, ":deploy") || strings.HasSuffix(arg, ":deploy-file") || arg == "site-deploy" {
 			return fmt.Errorf("maven publishing goals are not supported by local testdrive; select the test/verify portion of the CI command")
 		}
 		file := ""
@@ -239,7 +239,7 @@ func ValidateTestdriveCommand(command string, args []string) error {
 			file = value
 		}
 		if strings.HasPrefix(arg, "-f") && len(arg) > 2 && !strings.HasPrefix(arg, "--") {
-			file = arg[2:]
+			file = strings.TrimPrefix(arg[2:], "=")
 		}
 		if file != "" && !filepath.IsLocal(file) {
 			return fmt.Errorf("maven POM must stay inside the disposable repository: %s", file)

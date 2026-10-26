@@ -136,7 +136,7 @@ func (j *Java) InstallTestdriveTracer(ctx context.Context, options TracerOptions
 	if err != nil {
 		return TracerInstallation{}, err
 	}
-	if output, err := j.executor.CombinedOutput(ctx, command, args, nil); err != nil {
+	if output, err := boundedExecutor(j.executor, options.Timeout).CombinedOutput(ctx, command, args, nil); err != nil {
 		return TracerInstallation{}, runtimeTagProbeError("download Java tracer", output, err)
 	}
 	path := filepath.Join(options.Directory, "dd-java-agent.jar")

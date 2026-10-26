@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -95,7 +94,7 @@ func (t *Testdrive) runMaven(ctx context.Context, output io.Writer) (runErr erro
 	agent := t.projectTracer
 	result.TracerSource = "project DD_TRACER_FOLDER"
 	if agent == "" {
-		installation, err := t.platform.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: t.session.Directory(), Version: t.tracerVersion})
+		installation, err := t.platform.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: t.session.Directory(), Version: t.tracerVersion, Timeout: t.commandTimeout})
 		if err != nil {
 			return err
 		}
@@ -192,26 +191,26 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 	if err != nil {
 		return run, err
 	}
+	run.temporaryRoot = directory
 	workspace := filepath.Join(directory, "repository")
 	if err := copyConfiguration(ctx, t.repositoryRoot, workspace, true); err != nil {
 		return run, err
 	}
-	if err := filepath.WalkDir(workspace, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() && entry.Name() == "target" {
-			if err := os.RemoveAll(path); err != nil {
-				return err
-			}
-			return filepath.SkipDir
-		}
-		if entry.IsDir() && entry.Name() == ".git" {
-			return filepath.SkipDir
-		}
-		return nil
-	}); err != nil {
+	projects, err := maven.Projects(workspace)
+	if err != nil {
 		return run, err
+	}
+	// Only declared reactor outputs are disposable. A directory named target
+	// under sources, resources or a nested fixture remains a customer input.
+	buildRoot, err := os.OpenRoot(workspace)
+	if err != nil {
+		return run, err
+	}
+	defer func() { _ = buildRoot.Close() }()
+	for _, project := range projects {
+		if err := buildRoot.RemoveAll(filepath.Join(project.Directory, "target")); err != nil {
+			return run, err
+		}
 	}
 	command, args := t.command, slices.Clone(t.args)
 	if filepath.IsAbs(command) {
@@ -282,7 +281,7 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 	if err != nil {
 		return run, err
 	}
-	tests, err := maven.ReadReports(workspace)
+	tests, err := maven.ReadReports(workspace, projects)
 	if errors.Is(err, maven.ErrNoTestCases) && (scenario.Feature == "skipping" || scenario.Feature == "disabled") {
 		err = nil
 	}
@@ -291,10 +290,6 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 	}
 	for _, test := range tests {
 		run.Tests = append(run.Tests, jestTest{File: test.Module + " / " + test.Suite, Name: test.Name, Status: test.Status, Failure: test.Failure})
-	}
-	projects, projectErr := maven.Projects(workspace)
-	if projectErr != nil {
-		return run, projectErr
 	}
 	run.mavenModules = mavenModuleDirectories(projects)
 	if probe == nil {

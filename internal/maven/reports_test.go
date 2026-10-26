@@ -15,7 +15,7 @@ func TestReadReportsPreservesModulesOutcomesAndDuplicateCases(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dir, 0700))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "TEST-example.xml"), []byte(`<testsuite name="example.Tests"><testcase name="passes" classname="example.Tests"/><testcase name="parameters[1]" classname="example.Tests"/><testcase name="parameters[2]" classname="example.Tests"/><testcase name="fails" classname="example.Tests"><failure type="AssertionError" message="expected 2"/></testcase><testcase name="ignored" classname="example.Tests"><skipped/></testcase><testcase name="broken" classname="example.Tests"><error type="IllegalStateException" message="fixture"/></testcase></testsuite>`), 0600))
 	}
-	tests, err := ReadReports(root)
+	tests, err := ReadReports(root, []Project{{Directory: "one"}, {Directory: "two"}})
 	require.NoError(t, err)
 	require.Len(t, tests, 12)
 	require.Equal(t, "one", tests[0].Module)
@@ -33,13 +33,13 @@ func TestReadReportsRequiresValidFreshNativeResults(t *testing.T) {
 			dir := filepath.Join(root, "target/failsafe-reports")
 			require.NoError(t, os.MkdirAll(dir, 0700))
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "TEST-example.xml"), []byte(data), 0600))
-			_, err := ReadReports(root)
+			_, err := ReadReports(root, []Project{{Directory: "."}})
 			require.Error(t, err)
 		})
 	}
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "TEST-old.xml"), []byte(`<testsuite><testcase name="stale"/></testsuite>`), 0600))
-	_, err := ReadReports(root)
+	_, err := ReadReports(root, []Project{{Directory: "."}})
 	require.Error(t, err)
 }
 
@@ -50,7 +50,7 @@ func TestReadReportsIgnoresTestNGDuplicateReporter(t *testing.T) {
 	data := []byte(`<testsuite><testcase name="one" classname="example.Test"/></testsuite>`)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "TEST-example.xml"), data, 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "junitreports/TEST-example.xml"), data, 0600))
-	tests, err := ReadReports(root)
+	tests, err := ReadReports(root, []Project{{Directory: "."}})
 	require.NoError(t, err)
 	require.Len(t, tests, 1)
 }
@@ -62,7 +62,7 @@ func TestTestNGNativeMethodsReplaceLossySurefireNames(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "TEST-TestSuite.xml"), []byte(`<testsuite><testcase name="(example.Test)" classname="example.Test"/><testcase name="(example.Test)" classname="example.Test"/><testcase name="(example.Test)" classname="example.Test"><failure type="AssertionError"/></testcase></testsuite>`), 0600))
 	data := `<testng-results><suite><test><class name="example.Test"><test-method name="setup" status="PASS" is-config="true"/><test-method name="parameters" status="PASS"/><test-method name="parameters" status="PASS"/><test-method name="fails" status="FAIL"><exception class="AssertionError"><message>ddtest intentional failure</message></exception></test-method></class></test></suite></testng-results>`
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "testng-results.xml"), []byte(data), 0600))
-	tests, err := ReadReports(root)
+	tests, err := ReadReports(root, []Project{{Directory: "core"}})
 	require.NoError(t, err)
 	require.Len(t, tests, 3, "retain parameterized multiplicity without duplicate reporters")
 	require.Equal(t, "core", tests[0].Module)
@@ -71,7 +71,7 @@ func TestTestNGNativeMethodsReplaceLossySurefireNames(t *testing.T) {
 	require.Equal(t, "failed", tests[2].Status)
 	require.Contains(t, tests[2].Failure, "ddtest intentional failure")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "TEST-Other.xml"), []byte(`<testsuite><testcase name="other" classname="Other"/></testsuite>`), 0600))
-	_, err = ReadReports(root)
+	_, err = ReadReports(root, []Project{{Directory: "core"}})
 	require.ErrorContains(t, err, "outcomes disagree", "mixed providers must not silently lose tests")
 }
 

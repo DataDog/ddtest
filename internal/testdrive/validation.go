@@ -248,11 +248,11 @@ type validationResult struct {
 	AmbientDatadogEnvironment map[string]string `json:"ambient_datadog_environment,omitempty"`
 	// Uncommitted changes outside CI workflows and ignore files, such as the
 	// dependencies and coverage config ddtest prescribes for validation.
-	RepositoryChanges []repositoryChange `json:"repository_changes,omitempty"`
-	NativeComparison    *verdict       `json:"native_comparison,omitempty"`
-	TelemetryComparison *verdict       `json:"telemetry_comparison,omitempty"`
-	MavenCoverage       *mavenCoverage `json:"maven_coverage,omitempty"`
-	PreviousFailure     *mavenFailure  `json:"previous_failed_comparison,omitempty"`
+	RepositoryChanges   []repositoryChange `json:"repository_changes,omitempty"`
+	NativeComparison    *verdict           `json:"native_comparison,omitempty"`
+	TelemetryComparison *verdict           `json:"telemetry_comparison,omitempty"`
+	MavenCoverage       *mavenCoverage     `json:"maven_coverage,omitempty"`
+	PreviousFailure     *mavenFailure      `json:"previous_failed_comparison,omitempty"`
 	// Leading VAR=value assignments of --command, with secret-like values masked.
 	CommandEnvironment map[string]string        `json:"command_environment,omitempty"`
 	CIPreservation     *verdict                 `json:"ci_preservation,omitempty"`
