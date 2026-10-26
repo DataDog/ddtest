@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -218,6 +219,72 @@ func setupGuardedPreload(options string) string {
 }
 
 const setupActionV3 = "datadog/test-visibility-github-action@7ce545f228901e4ac4ef0b45d946120f1c4124e0" // v3.3.0
+
+// pinSetupAction replaces the floating v3 reference in manual guidance with
+// the verified commit setup writes, so both paths install the same action.
+func pinSetupAction(text string) string {
+	return strings.NewReplacer(
+		"uses: datadog/test-visibility-github-action@v3\n", "uses: "+setupActionV3+" # v3.3.0\n",
+		"`datadog/test-visibility-github-action@v3`", "`"+setupActionV3+"` (v3.3.0)",
+	).Replace(text)
+}
+
+// simpleStepCondition reports whether a test step's if: reads only matrix and
+// env values through comparisons and logical operators. Setup copies such a
+// guard onto the action, so the tracer installs exactly where those tests run;
+// job status functions and other contexts keep the step outside the applier.
+func simpleStepCondition(condition string) bool {
+	expression := strings.TrimSpace(condition)
+	if strings.HasPrefix(expression, "${{") {
+		if !strings.HasSuffix(expression, "}}") {
+			return false
+		}
+		expression = strings.TrimSpace(expression[3 : len(expression)-2])
+	}
+	if expression == "" || strings.Contains(expression, "${{") {
+		return false
+	}
+	reference := false
+	for i := 0; i < len(expression); {
+		c := expression[i]
+		switch {
+		case c == ' ' || c == '(' || c == ')':
+			i++
+		case strings.HasPrefix(expression[i:], "&&") || strings.HasPrefix(expression[i:], "||") || strings.HasPrefix(expression[i:], "==") ||
+			strings.HasPrefix(expression[i:], "!=") || strings.HasPrefix(expression[i:], "<=") || strings.HasPrefix(expression[i:], ">="):
+			i += 2
+		case c == '!' || c == '<' || c == '>':
+			i++
+		case c == '\'':
+			end := strings.IndexByte(expression[i+1:], '\'')
+			if end < 0 {
+				return false
+			}
+			i += end + 2
+		default:
+			j := i
+			for j < len(expression) && (expression[j] == '.' || expression[j] == '_' || expression[j] == '-' ||
+				'a' <= expression[j] && expression[j] <= 'z' || 'A' <= expression[j] && expression[j] <= 'Z' || '0' <= expression[j] && expression[j] <= '9') {
+				j++
+			}
+			word := expression[i:j]
+			if word == "" || j < len(expression) && expression[j] == '(' {
+				return false // function calls such as success() or contains()
+			}
+			switch {
+			case strings.HasPrefix(word, "matrix.") || strings.HasPrefix(word, "env."):
+				reference = true
+			case word == "true" || word == "false" || word == "null":
+			default:
+				if _, err := strconv.ParseFloat(word, 64); err != nil {
+					return false
+				}
+			}
+			i = j
+		}
+	}
+	return reference
+}
 
 // These immutable releases were verified against the action's published v3 tags.
 func setupActionSupported(action string) bool {

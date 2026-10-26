@@ -311,7 +311,14 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	plan.Scope = scope
 	if options.Apply || t.allConfigurations {
-		if len(scope.Unresolved) > 0 || len(scope.Commands) == 0 {
+		// Unresolved CI never blocks the configurations that are ready: setup
+		// edits and validates those, and the unresolved entries stay report
+		// blockers. With nothing ready, there is nothing to set up or validate.
+		partial := len(scope.Unresolved) > 0 && slices.ContainsFunc(scope.Commands, func(entry onboard.TestCommand) bool { return t.readyConfiguration(entry) })
+		if partial {
+			result.Checks = append(result.Checks, onboard.WorkflowCheck{Name: "ci_scope", Status: onboard.StatusInconclusive, Reason: "Ready configurations proceed; unresolved CI stays unedited, unvalidated and reported: " + strings.Join(scope.Unresolved, "; ")})
+		}
+		if len(scope.Commands) == 0 || len(scope.Unresolved) > 0 && !partial {
 			result.Location = strings.Join(scope.Unresolved[:min(1, len(scope.Unresolved))], "")
 			result.RequiredInput = []string{"literal CI test entry point and any unresolved setup relationship"}
 			reason := fmt.Sprintf("Discovered %d commands. %s", len(scope.Commands), strings.Join(scope.Unresolved, "; "))
@@ -321,7 +328,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			return fail("needs_input", "scope_unresolved", reason, "Facts can add prerequisites to discovered commands; they cannot erase unresolved CI or shrink scope. Do not rewrite CI or package scripts only so ddtest can parse them; report the unresolved entry as a blocker instead. Use --instructions only for this unsupported integration.")
 		}
 		for _, entry := range scope.Commands {
-			if ciInstrumentationDisabled(entry) {
+			if t.setupStaysReported(entry, partial) {
 				continue
 			}
 			if len(entry.UnvalidatedSetup) > 0 || missingPrerequisiteFacts(entry) {
@@ -397,8 +404,13 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.Capabilities = []string{capability}
 				return fail("blocked_environment", "metadata_network", problem.Error(), "Restore only the named metadata network capability, then run resume_command. Do not change runtime, tracer or test scope to work around a network failure.")
 			}
+			var majors *ciTracerMajors
+			if errors.As(problem, &majors) && len(majors.Exclusions) > 0 {
+				result.RequiredInput = []string{"the user's choice: one --tracer-version every instrumented CI row supports, or approval to opt these rows out: " + strings.Join(majors.Exclusions, "; ")}
+				return fail("needs_input", "preflight_unresolved", problem.Error(), "Ask the user before excluding any CI row. If they approve, make exactly the listed DD_CIVISIBILITY_ENABLED edits and run resume_command; otherwise rerun with one --tracer-version every instrumented row supports. Never weaken feature checks.")
+			}
 			result.RequiredInput = []string{"the named runtime/configuration incompatibility"}
-			return fail("needs_input", "preflight_unresolved", problem.Error(), "Resolve this exact mismatch without excluding CI entries or weakening feature checks.")
+			return fail("needs_input", "preflight_unresolved", problem.Error(), "Resolve this exact mismatch without weakening feature checks; exclude a CI row only as an explicit opt-out the user approves.")
 		}
 		result.Checks = append(result.Checks, onboard.WorkflowCheck{Name: "preflight_preparation", Status: "passed", Reason: fmt.Sprintf("Verified preflight reused: %t. Test execution is always fresh.", reused)})
 		plan.Tracer = selected

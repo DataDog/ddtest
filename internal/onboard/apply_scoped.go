@@ -101,9 +101,18 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 		}
 		loaders := ""
 		if framework == "cucumber" {
-			// Keep in-script source loaders after the inherited options instead of
-			// letting their NODE_OPTIONS replace the tracer preload.
-			if rest, found, ok := cucumberLoaderOverride(script); ok {
+			// An earlier apply already wrote the scoped prefix, possibly with the
+			// loaders it kept; adding another would hide them from probes.
+			if found, scoped := cucumberScopedLoaders(script); scoped {
+				if strings.Contains(script, cucumberImpactedWorkaround) {
+					continue
+				}
+				if match := cucumberScopedPrefix.FindString(strings.TrimSpace(script)); match != "" {
+					script, loaders = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(script), match)), found
+				}
+			} else if rest, found, ok := cucumberLoaderOverride(script); ok {
+				// Keep in-script source loaders after the inherited options instead
+				// of letting their NODE_OPTIONS replace the tracer preload.
 				script, loaders = rest, found
 			}
 		}

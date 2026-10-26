@@ -29,7 +29,15 @@ an `.npmignore` that would change npm's `.gitignore` fallback.
 
 Every workflow is parsed and checked again before writing. Unsupported YAML,
 custom initialization, conflicting versions, Windows runners and unknown
-commands produce review gaps instead of guessed edits. A reusable
+commands produce review gaps instead of guessed edits. CI that discovery can't
+resolve never blocks the configurations that are ready: `--apply` edits and
+validates those, and leaves the unresolved entries unedited and reported as
+blockers, so the result stays incomplete until they are reviewed. A test step
+guarded only by matrix or env values (`if: matrix.node != '20'`) gets the same
+guard on the inserted action. When CI rows need an older tracer major than the
+rest, `--apply` stops and, for Mocha steps whose every row is affected, names the
+exact `DD_CIVISIBILITY_ENABLED: 'false'` opt-out for the user to approve; it
+never excludes rows itself. A reusable
 (`workflow_call`) workflow is edited only when it declares
 `on.workflow_call.secrets.DD_API_KEY` and every caller in the repository passes
 it (`secrets: inherit` or `secrets: {DD_API_KEY: ...}`); callers in other
@@ -79,8 +87,11 @@ run that command separately, then rerun onboarding. For example:
 npm install --save-dev --no-audit --no-fund nyc@17.1.0
 ```
 
-Windows runner jobs are never edited: the action's tracer installation and the
-preload are unverified there, so they need manual initialization. Scoped
+Windows runners are never instrumented: the action's tracer installation and
+the preload are unverified there, so they need manual initialization. In a job
+whose runner is one matrix value, the inserted action skips the Windows rows by
+that value, so the other rows are instrumented and the Windows rows keep running
+without the tracer. Scoped
 Cucumber/WebdriverIO package preambles also use POSIX shell syntax; Windows
 developers using `cmd.exe` need portable hooks before using these edited scripts.
 

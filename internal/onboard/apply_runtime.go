@@ -16,7 +16,7 @@ func setupRuntimeCondition(root string, workflow ciWorkflow, job runtimeJob, req
 	if requirement == "" {
 		return "", nil
 	}
-	rows, err := runtimeMatrix(job.Strategy.Matrix)
+	rows, _, err := jobMatrix(job)
 	if err != nil {
 		return "", err
 	}

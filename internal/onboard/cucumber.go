@@ -132,7 +132,7 @@ func cucumberLoaderOverride(script string) (rest, loaders string, ok bool) {
 
 // cucumberLoaderReason explains why an unscoped loader override blocks a run.
 func cucumberLoaderReason(script, loaders, rest string) string {
-	return fmt.Sprintf("Cucumber script sets NODE_OPTIONS=%q, replacing inherited tracer preloads, so dd-trace cannot load: %s. `ddtest onboard --framework cucumber --apply` rewrites it to %s, keeping the loader", loaders, script, cucumberScopedReplacement(loaders, rest))
+	return fmt.Sprintf("Cucumber script sets NODE_OPTIONS=%q, replacing inherited tracer preloads, so dd-trace cannot load: %s. Rewrite it to %s, keeping the loader; `ddtest onboard --framework cucumber --apply` makes this edit when it can edit the job's CI", loaders, script, cucumberScopedReplacement(loaders, rest))
 }
 
 func cucumberScopedReplacement(loaders, rest string) string {

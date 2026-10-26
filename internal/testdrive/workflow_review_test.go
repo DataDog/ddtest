@@ -314,28 +314,39 @@ EXTRA      - run: npm test
 			drive.workflowRun = func(_ context.Context, out io.Writer) error {
 				executions++
 				require.Len(t, drive.workflowScope.Commands, 2, "excluded configurations remain in the evidence scope")
-				template := scopeFactsTemplate("snapshot", *drive.workflowScope)
-				require.Len(t, template.Configurations, 1, "excluded configurations must not request setup facts")
-				return finishValidation(out, root, completeValidationFixture("mocha"))
+				if scenario == "excluded legacy setup" {
+					template := scopeFactsTemplate("snapshot", *drive.workflowScope)
+					require.Len(t, template.Configurations, 1, "excluded configurations must not request setup facts")
+				}
+				// As --all does: unresolved scope keeps the run incomplete.
+				fixture := completeValidationFixture("mocha")
+				fixture.Scope = drive.workflowScope
+				applyScopeVerdict(&fixture)
+				fixture.Summary = summarizeValidation(fixture)
+				return finishValidation(out, root, fixture)
 			}
 			var output bytes.Buffer
 			err := drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json", ExplicitVersion: true})
 			var result onboard.AgentResult
 			require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+			scopeCheck := ""
+			for _, check := range result.Checks {
+				if check.Name == "ci_scope" {
+					scopeCheck = check.Reason
+				}
+			}
 			switch scenario {
 			case "excluded legacy setup":
 				require.NoError(t, err)
 				require.Equal(t, "complete_locally", result.Status)
 				require.Equal(t, 1, executions)
-			case "active legacy setup":
+			case "active legacy setup", "unknown excluded consumer":
+				// The ready Node 24 row runs; the legacy setup or the unknown
+				// consumer stays an unvalidated blocker and never completes.
 				require.Error(t, err)
-				require.Equal(t, "scope_unresolved", result.Code)
-				require.Contains(t, result.Reason, "xargs")
-				require.Zero(t, executions)
-			case "unknown excluded consumer":
-				require.Error(t, err)
-				require.Equal(t, "scope_unresolved", result.Code)
-				require.Zero(t, executions)
+				require.Equal(t, 1, executions)
+				require.NotEqual(t, "complete_locally", result.Status)
+				require.Contains(t, scopeCheck, map[string]string{"active legacy setup": "xargs", "unknown excluded consumer": "unknown-test-wrapper"}[scenario])
 			}
 			require.Equal(t, workflow, readApplyFile(t, root, ".github/workflows/test.yml"), "testdrive must preserve the legacy matrix and setup")
 		})

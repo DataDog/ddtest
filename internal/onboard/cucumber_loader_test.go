@@ -63,6 +63,26 @@ func TestApplyCucumberKeepsAnInScriptSourceLoader(t *testing.T) {
 	commands := ValidationCommands(root, "npm run test:bdd", "cucumber")
 	require.Len(t, commands, 1)
 	require.True(t, commands[0].cucumberScoped)
+
+	// A second apply recognizes its own scoped form and leaves it unchanged,
+	// so probes still read the loaders from the only prefix.
+	rewritten := pkg.Scripts["test:bdd"]
+	_, err = ApplyJavaScriptSetup(root, "cucumber", "6.20.1", "datadoghq.com", ">=22")
+	require.NoError(t, err)
+	data, err = os.ReadFile(filepath.Join(root, "package.json"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &pkg))
+	require.Equal(t, rewritten, pkg.Scripts["test:bdd"])
+	require.Equal(t, "--import tsx", CucumberProbeLoaders(root, "npm run test:bdd"))
+
+	// A scoped script with loaders but without the workaround keeps its loaders.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"test:bdd":"NODE_OPTIONS=\"${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-} --import tsx\" npx --no-install nyc -- cucumber-js"},"devDependencies":{"nyc":"17.1.0","tsx":"4.23.15"}}`), 0600))
+	_, err = ApplyJavaScriptSetup(root, "cucumber", "6.20.1", "datadoghq.com", ">=22")
+	require.NoError(t, err)
+	data, err = os.ReadFile(filepath.Join(root, "package.json"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &pkg))
+	require.Equal(t, rewritten, pkg.Scripts["test:bdd"])
 }
 
 // Modeled on astrologyjs: Cucumber 13 needs Node 22+, so the step skips the

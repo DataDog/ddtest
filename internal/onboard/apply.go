@@ -12,6 +12,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -181,15 +182,18 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 			}
 			gap := func(reason string) error { return &SetupGap{location, reason} }
 			// The action's tracer install and the preload are unverified on
-			// Windows runners, so no framework edits them automatically.
-			windows, err := setupWindowsRunner(job)
+			// Windows runners, so no framework edits them automatically. A job
+			// whose runner is one matrix value keeps its Windows rows
+			// uninstrumented with a guard on that value: the action skips them
+			// and the guarded preload falls back to the original options.
+			windows, windowsGuard, err := setupWindowsRunner(job)
 			if err != nil {
 				return nil, gap(err.Error())
 			}
 			if windows && (framework == "cucumber" || framework == "webdriverio") {
 				return nil, gap("Windows npm scripts require portable scoped initialization; the automatic recipe uses POSIX shell syntax. Preserve these scripts and integrate their hooks explicitly.")
 			}
-			if windows {
+			if windows && windowsGuard == "" {
 				return nil, gap("Windows runners are not supported by automatic setup: the Datadog action's tracer installation and the NODE_OPTIONS preload are unverified on Windows. Configure this job manually and validate it on a Windows runner.")
 			}
 			if reference := setupYAMLReference(&document); reference != nil {
@@ -264,10 +268,24 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 					insertions = append(insertions, lineInsertion{line: start, remove: end - start, text: indentSetup(text, padding)})
 				}
 			}
+			// Test steps sharing one guard on matrix/env values get the same guard
+			// on the inserted action, so the tracer installs exactly where they run.
+			stepGuard := ""
+			if actionIndex < 0 && condition == "" {
+				stepGuard = job.Steps[selected[0]].If
+				for _, i := range selected {
+					if job.Steps[i].If != stepGuard {
+						stepGuard = ""
+					}
+				}
+				if !simpleStepCondition(stepGuard) {
+					stepGuard = ""
+				}
+			}
 			for _, i := range selected {
 				step, node := job.Steps[i], steps.Content[i]
 				run := setupMember(node, "run")
-				if (step.If != "" && (actionIndex < 0 || step.If != condition)) || len(step.Parents) != 0 || node.Kind != yaml.MappingNode || node.Style != 0 || node.Anchor != "" ||
+				if (step.If != "" && step.If != stepGuard && (actionIndex < 0 || step.If != condition)) || len(step.Parents) != 0 || node.Kind != yaml.MappingNode || node.Style != 0 || node.Anchor != "" ||
 					run == nil || run.Kind != yaml.ScalarNode || (framework != "mocha" && (run.Style == yaml.LiteralStyle || run.Style == yaml.FoldedStyle || strings.Contains(run.Value, "\n"))) {
 					return nil, gap(fmt.Sprintf("Step %d needs explicit loader placement: conditional, composite or multiline commands are outside this applier.", i+1))
 				}
@@ -342,8 +360,24 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 				if i == selected[0] && actionIndex < 0 {
 					padding := strings.Repeat(" ", indent)
 					guard := ""
-					if condition != "" {
+					var guards []string
+					for _, value := range []string{condition, stepGuard, windowsGuard} {
+						if value = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(value), "${{"), "}}")); value != "" {
+							guards = append(guards, value)
+						}
+					}
+					if len(guards) == 1 && guards[0] == condition {
 						guard = padding + strings.Repeat(" ", width) + "if: " + condition + "\n"
+					} else if len(guards) > 0 {
+						expression := guards[0]
+						if len(guards) > 1 {
+							expression = "(" + strings.Join(guards, ") && (") + ")"
+						}
+						encoded, err := yaml.Marshal(expression)
+						if err != nil {
+							return nil, err
+						}
+						guard = padding + strings.Repeat(" ", width) + "if: " + strings.TrimSuffix(string(encoded), "\n") + "\n"
 					}
 					action := padding + "-" + strings.Repeat(" ", width-1) + "name: Configure Datadog Test Optimization\n" + guard + padding + strings.Repeat(" ", width) + "uses: " + setupActionV3 + " # v3.3.0\n" + padding + strings.Repeat(" ", width) + "continue-on-error: true # keep tests runnable when credentials are unavailable\n" + padding + strings.Repeat(" ", width) + "with:\n" + padding + strings.Repeat(" ", width+nested) + "languages: js\n" + padding + strings.Repeat(" ", width+nested) + "api_key: ${{ secrets.DD_API_KEY }}\n" + padding + strings.Repeat(" ", width+nested) + "site: " + site + "\n" + padding + strings.Repeat(" ", width+nested) + "js-tracer-version: " + version + "\n"
 					insertions = append(insertions, lineInsertion{line: start, text: action})
@@ -533,24 +567,89 @@ func existingActionDifference(step runtimeStep, duplicate, afterTests bool, cond
 	return ""
 }
 
-// setupWindowsRunner reports whether any matrix row of the job runs on Windows.
-func setupWindowsRunner(job runtimeJob) (bool, error) {
-	rows, err := runtimeMatrix(job.Strategy.Matrix)
+// setupWindowsRunner reports whether any row of job runs on Windows. When the
+// runner comes from one matrix value and other rows don't run on Windows,
+// guard is a condition on that value that skips only the Windows rows, so the
+// other rows can still be instrumented.
+func setupWindowsRunner(job runtimeJob) (windows bool, guard string, err error) {
+	rows, _, err := jobMatrix(job)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	for _, row := range rows {
-		for _, label := range runnerLabels(job.RunsOn) {
-			runner, err := runtimeValue(label, row)
-			if err != nil {
-				return false, err
-			}
-			if strings.HasPrefix(strings.ToLower(runner), "windows") {
-				return true, nil
-			}
+	labels := runnerLabels(job.RunsOn)
+	key := ""
+	if len(labels) == 1 {
+		if match := matrixRunnerLabel.FindStringSubmatch(labels[0]); match != nil {
+			key = match[1]
 		}
 	}
-	return false, nil
+	var skipped []string
+	other := false
+	for _, row := range rows {
+		rowWindows := false
+		for _, label := range labels {
+			runner, err := runtimeValue(label, row)
+			if err != nil {
+				return false, "", err
+			}
+			rowWindows = rowWindows || strings.HasPrefix(strings.ToLower(runner), "windows")
+		}
+		if !rowWindows {
+			other = true
+			continue
+		}
+		windows = true
+		value, ok := row[key].(string)
+		if key == "" || !ok || strings.ContainsAny(value, "'\n") {
+			key = ""
+			continue
+		}
+		if !slices.Contains(skipped, value) {
+			skipped = append(skipped, value)
+		}
+	}
+	if !windows || !other || key == "" {
+		return windows, "", nil
+	}
+	conditions := make([]string, 0, len(skipped))
+	for _, value := range skipped {
+		conditions = append(conditions, "matrix."+key+" != '"+value+"'")
+	}
+	return true, strings.Join(conditions, " && "), nil
+}
+
+var matrixRunnerLabel = regexp.MustCompile(`^\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}$`)
+
+// WindowsOnlyConfiguration reports whether every CI location of entry runs on
+// a Windows runner. Automatic setup never edits Windows rows and this host
+// can't replay their setup, so it stays a report blocker instead of stopping
+// setup of the other configurations.
+func WindowsOnlyConfiguration(root string, entry TestCommand) bool {
+	if len(entry.locations) == 0 {
+		return false
+	}
+	workflows, err := readWorkflows(root)
+	if err != nil {
+		return false
+	}
+	for _, location := range entry.locations {
+		windows := false
+		for _, workflow := range workflows {
+			job, ok := workflow.Jobs[location.Job]
+			if workflow.Path != location.Workflow || !ok {
+				continue
+			}
+			for _, label := range runnerLabels(job.RunsOn) {
+				if runner, err := runtimeValue(label, location.Matrix); err == nil && strings.HasPrefix(strings.ToLower(runner), "windows") {
+					windows = true
+				}
+			}
+		}
+		if !windows {
+			return false
+		}
+	}
+	return true
 }
 
 // reusableSecretForwarded reports whether a workflow_call workflow declares
