@@ -218,10 +218,6 @@ func (t *Testdrive) runPytest(ctx context.Context, output io.Writer, session *Se
 	if instrumented {
 		flag = "--ddtrace"
 	}
-	if env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] != "" || os.Getenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD") != "" {
-		options += " -p ddtrace"
-		env["PYTEST_ADDOPTS"] = strings.TrimSpace(options)
-	}
 	args = framework.WithFrameworkOptions(t.command, args, "pytest", flag)
 	run.Command = shellquote.Join(append([]string{t.command}, args...)...)
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)

@@ -64,6 +64,57 @@ func TestPytestBaselinePreservesCustomerOptions(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestPytestObserverHandlesDisabledAutoload(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python required")
+	}
+	check := exec.CommandContext(t.Context(), python, "-c", "import pytest, ddtrace; assert pytest.version_tuple >= (8, 4)")
+	if output, err := check.CombinedOutput(); err != nil {
+		if os.Getenv("DDTEST_REQUIRE_PROJECT_RUNTIMES") == "1" {
+			t.Fatalf("pytest >=8.4 and ddtrace required: %s: %v", output, err)
+		}
+		t.Skip("pytest >=8.4 and ddtrace required")
+	}
+	for _, tc := range []struct {
+		name, environment, config string
+		args                      []string
+	}{
+		{name: "environment", environment: "1"},
+		{name: "command", args: []string{"--disable-plugin-autoload"}},
+		{name: "config", config: "[pytest]\naddopts=--disable-plugin-autoload\n"},
+		{name: "explicit plugin", environment: "1", args: []string{"-p", "ddtrace.contrib.internal.pytest.plugin"}},
+		{name: "explicit entry point", environment: "1", args: []string{"-p", "ddtrace.testing.internal.pytest.entry_point"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			requireWriteFile(t, "ddtest_pytest_observer.py", pytestObserver)
+			requireWriteFile(t, "ddtest_hook_order.py", "import pytest\n@pytest.hookimpl(tryfirst=True)\ndef pytest_load_initial_conftests(early_config):\n    assert hasattr(early_config.option, 'ddtrace'), 'tracer registered too late'\n")
+			requireWriteFile(t, "test_app.py", "def test_app():\n    assert True\n")
+			if tc.config != "" {
+				requireWriteFile(t, "pytest.ini", tc.config)
+			}
+			resultPath := filepath.Join(root, "results.json")
+			t.Setenv("PYTHONPATH", root)
+			t.Setenv("PYTEST_ADDOPTS", "")
+			t.Setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", tc.environment)
+			t.Setenv("DD_TRACE_ENABLED", "false")
+			t.Setenv("DD_CIVISIBILITY_ENABLED", "false")
+			t.Setenv("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "false")
+			t.Setenv("DDTEST_PYTEST_RESULTS", resultPath)
+			args := append([]string{"-m", "pytest", "-p", "ddtest_pytest_observer", "-p", "ddtest_hook_order", "--no-ddtrace", "-q"}, tc.args...)
+			output, err := exec.CommandContext(t.Context(), python, args...).CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			run := validationRun{}
+			readPytestResults(resultPath, &run)
+			require.Empty(t, run.ResultError)
+			require.Len(t, run.Tests, 1)
+			require.Equal(t, "passed", run.Tests[0].Status)
+		})
+	}
+}
+
 func TestPythonReviewAllSelectsEachCommandEnvironment(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX executable fixtures")

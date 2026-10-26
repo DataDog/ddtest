@@ -10,6 +10,29 @@ _errors = []
 _coverage_threshold_disabled = False
 
 
+def pytest_addoption(pluginmanager):
+    config = pluginmanager.get_plugin("pytestconfig")
+    options = getattr(config, "known_args_namespace", None)
+    disabled = os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD") or getattr(
+        options, "disable_plugin_autoload", False
+    )
+    if not disabled:
+        return
+    names = (
+        "ddtrace", "ddtrace.contrib.pytest.plugin", "ddtrace.contrib.internal.pytest.plugin",
+        "ddtrace.testing.internal.pytest.entry_point",
+    )
+    explicit = list(getattr(options, "plugins", None) or [])
+    explicit.extend(os.environ.get("PYTEST_PLUGINS", "").split(","))
+    if any(
+        pluginmanager.has_plugin(name) or pluginmanager.is_blocked(name)
+        or name in explicit or "no:" + name in explicit
+        for name in names
+    ):
+        return
+    pluginmanager.import_plugin("ddtrace", consider_entry_points=True)
+
+
 def pytest_configure(config):
     global _coverage_threshold_disabled
     probe = os.environ.get("DDTEST_PYTEST_PROBE")
