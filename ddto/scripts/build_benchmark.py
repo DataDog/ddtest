@@ -423,7 +423,8 @@ class Runner:
             for name in files:
                 target = inputs / name.removeprefix(prefix)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                content = subprocess.check_output(["git", "show", input_head + ":" + name], cwd=ROOT)
+                # ls-tree names are relative to ROOT, a directory of ddtest.
+                content = subprocess.check_output(["git", "show", input_head + ":./" + name], cwd=ROOT)
                 target.write_bytes(content)
             if not files:
                 raise ValueError("baseline input sources unavailable")
