@@ -148,8 +148,17 @@ class ReviewTests(unittest.TestCase):
         self.assertFalse(seen['file'].exists())
         arguments=seen['arguments']
         self.assertEqual(arguments[arguments.index('/usr/bin/env')+1:],['-u','NODE_VERSION','-u','HOSTNAME','node','--version'])
+        # Multi-line values (managed model headers) travel base64-encoded in the
+        # env file and are restored by a shell wrapper inside the container.
+        container.execute(['true'],trial,{'HEADERS':'a: 1\nb: 2'},5,lambda _:None,None,executor)
+        self.assertEqual(seen['content'],'DDTEST_EVAL_B64_HEADERS=YTogMQpiOiAy\n')
+        arguments=seen['arguments']
+        wrapped=arguments[arguments.index('/bin/sh'):]
+        self.assertEqual(wrapped[1],'-c')
+        self.assertEqual(wrapped[3:],['sh','true'])
+        self.assertNotIn('a: 1',' '.join(arguments))
         with self.assertRaises(ValueError):
-            container.execute(['true'],trial,{'BAD':'line\nbreak'},5,lambda _:None,None,executor)
+            container.execute(['true'],trial,{'BAD':'nul\0byte'},5,lambda _:None,None,executor)
 
     def test_low_storage_stops_before_clone_or_model(self):
         from types import SimpleNamespace

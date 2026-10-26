@@ -60,7 +60,7 @@ if prompt.startswith("Reply AUTH_OK only"):
     sys.exit(0)
 pathlib.Path("observed.json").write_text(json.dumps({
     "prompt": prompt, "argv": sys.argv[1:], "environment":dict(os.environ),
-    "agent_environment": {key: os.environ.get(key) for key in ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS")},
+    "agent_environment": {key: os.environ.get(key) for key in ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS")},
     "dd_env": [key for key in os.environ if key.startswith(("DD_", "DATADOG_"))],
     "cache_environment": {key: os.environ.get(key) for key in ("npm_config_cache", "YARN_CACHE_FOLDER", "XDG_CONFIG_HOME", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR")},
     "npm_unknown_config": [key for key in os.environ if key.lower() in ("npm_config_store_dir", "npm_config_cache_dir")],
@@ -120,6 +120,10 @@ if os.environ.get("FAKE_REPORT_JSON"):
             event["item"]["text"] = os.environ.get("FAKE_RESPONSE", "Done")
         elif event["type"] == "result":
             event["result"] = os.environ.get("FAKE_RESPONSE", "Done")
+if os.environ.get("FAKE_MEMORY"):
+    memory = pathlib.Path(os.environ["HOME"], ".claude", "projects", "-trial-repo", "memory")
+    memory.mkdir(parents=True)
+    (memory / "note.md").write_text("remembered")
 if os.environ.get("FAKE_INITIAL_RUNTIME"):
     events.insert(-1, {"type":"item.completed", "item":{"type":"command_execution", "command":"ddtest testdrive --check-only", "exit_code":0,
                    "aggregated_output":"Local runtime: Node " + os.environ["FAKE_INITIAL_RUNTIME"] + "."}})
@@ -432,6 +436,40 @@ class RunnerTests(unittest.TestCase):
                          f"Use ddtest in {checkout.parent / 'bin'} and onboard this repository to test-optimization for playwright only.")
         self.assertEqual(manifest["framework_scope"], "playwright")
 
+    def test_refused_agent_command_exits_nonzero(self):
+        execute = FakeContainer.execute
+        def refusing(container, argv, *rest):
+            if argv and argv[0] in ("codex", "claude") and "--version" not in argv:
+                raise ValueError("Environment entry 'X' cannot be forwarded to the container")
+            return execute(container, argv, *rest)
+        with patch.object(FakeContainer, "execute", refusing):
+            code, manifest = self.trial()
+        self.assertEqual(code, 1)
+        self.assertEqual(manifest["status"], "failed")
+        self.assertIn("cannot be forwarded", manifest["error"])
+
+    def test_requested_pnpm_is_private_and_verified(self):
+        npm = self.root / "npm"
+        npm.write_text("#!/bin/sh\nprefix=$3\nmkdir -p \"$prefix/node_modules/.bin\"\n"
+                       "printf '#!/bin/sh\\necho %s\\n' \"$FAKE_PNPM\" > \"$prefix/node_modules/.bin/pnpm\"\n"
+                       "chmod +x \"$prefix/node_modules/.bin/pnpm\"\n")
+        npm.chmod(0o755)
+        self.args.pnpm = "10"
+        code, manifest = self.trial({"FAKE_PNPM": "10.33.4"})
+        self.assertEqual(code, 0)
+        self.assertEqual(manifest["package_manager"], {"pnpm": "10.33.4", "requested": "10"})
+        self.args.output = self.root / "mismatch"
+        code, manifest = self.trial({"FAKE_PNPM": "12.14.0"})
+        self.assertEqual(code, 1)
+        self.assertEqual(manifest["failure_kind"], "evaluator_environment")
+        self.assertNotIn("observed.json", os.listdir(manifest["checkout"]))
+
+    def test_agent_memory_is_disabled_and_any_notes_are_recorded(self):
+        self.assertEqual(run_eval.agent_environment("claude", 60)["CLAUDE_CODE_DISABLE_AUTO_MEMORY"], "1")
+        code, manifest = self.trial({"FAKE_MEMORY": "1"})
+        self.assertEqual(code, 0)
+        self.assertEqual(manifest["agent_artifacts"], {"memory_files": [".claude/projects/-trial-repo/memory/note.md"]})
+
     def test_setup_failure_is_recorded_without_launching_agent(self):
         self.args.setup_command = [f"{shlex.quote(sys.executable)} -c 'import sys; sys.exit(7)'"]
         code, manifest = self.trial()
@@ -635,6 +673,12 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(run_eval.reporting_verdict(self.compact_answer() + "\nOnboarding is complete on my end.", self.compact_report())["status"], "fail")
         for text in ("Onboarding validation: INCOMPLETE.", "Onboarding is not complete. INCOMPLETE", "Workflow edits are complete. INCOMPLETE"):
             self.assertEqual(run_eval.reporting_verdict(text, report)["status"], "review")
+
+    def test_completion_claim_keeps_the_agents_wording(self):
+        result = run_eval.reporting_verdict("Onboarding is complete.", {"summary": {"status": "INCOMPLETE"}})
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["differences"], ["onboarding verdict: stated COMPLETE (a completion claim), report says INCOMPLETE."])
+        self.assertEqual(run_eval.reporting_verdict("Onboarding is complete.", {"summary": {"status": "COMPLETE LOCALLY"}})["differences"], [])
 
     def test_negated_reported_status_and_other_verdicts_contradict_incomplete(self):
         for claim in ("Status is not incomplete.", "Onboarding isn't incomplete.", "Onboarding validation: PASSED.",

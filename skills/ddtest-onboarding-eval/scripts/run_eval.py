@@ -179,9 +179,21 @@ def agent_environment(agent, timeout, framework=None):
     # synchronous and allow long paired runs without the default 120s handoff.
     maximum = 3600000 if framework == "cypress" else 600000
     bash_timeout = str(min(maximum, int(timeout * 1000)))
+    # Auto-memory would persist trial conclusions in the disposable home and
+    # mix agent notes into the evidence; trials must stay independent.
     return {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
+            "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
             "BASH_DEFAULT_TIMEOUT_MS": bash_timeout,
             "BASH_MAX_TIMEOUT_MS": bash_timeout}
+
+
+def agent_memory_files(home):
+    """Names only: the trial home is writable by untrusted code, so never follow links."""
+    found = []
+    for root, directories, files in os.walk(home / ".claude" / "projects"):
+        if os.path.basename(root) == "memory":
+            found.extend(str(Path(root, name).relative_to(home)) for name in files)
+    return sorted(found)
 
 
 def failure_kind(messages, timed_out=False):
@@ -229,12 +241,18 @@ def reporting_verdict(text, report):
         if negated(plain, match.start()):
             continue
         stated = match[2].upper()
+        # Plain completion words claim the product's complete verdict, but the
+        # difference keeps the agent's own wording.
+        wording = stated
         if stated in ("COMPLETE", "COMPLETED", "DONE", "SUCCESSFUL") or stated == "PASSED" and summary.get("status") == "COMPLETE LOCALLY":
             stated = "COMPLETE LOCALLY"
         if match[1]:
             # "Status is not incomplete" denies the reported status.
             if summary.get("status") == stated:
-                differences.append(f"onboarding verdict: stated not {stated}, report says {stated}.")
+                differences.append(f"onboarding verdict: stated not {wording}, report says {stated}.")
+            continue
+        if summary.get("status") is not None and summary.get("status") != stated and wording != stated:
+            differences.append(f"onboarding verdict: stated {wording} (a completion claim), report says {summary.get('status')}.")
             continue
         compare("onboarding verdict", summary.get("status"), stated)
     if summary.get("status") != "COMPLETE LOCALLY":
@@ -468,6 +486,12 @@ def run(args):
         zdotdir.mkdir(exist_ok=True)
         env["ZDOTDIR"] = str(zdotdir)
         env["PATH"] = str(node.parent) + os.pathsep + env.get("PATH", "")
+    pnpm = getattr(args, "pnpm", None)
+    tools = trial / "tools"
+    if pnpm is not None:
+        # The project's pnpm, private to this trial, precedes the image's pnpm
+        # for setup and the agent alike, so lockfiles keep their format.
+        env["PATH"] = str(tools / "node_modules" / ".bin") + os.pathsep + env.get("PATH", "")
     env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
     agent_argv = agent_command(args.agent, args.model)
     if node is not None:
@@ -634,6 +658,14 @@ def run(args):
         if getattr(args,"submodules",False):
             command(["git", "submodule", "update", "--init", "--recursive"], cwd=checkout)
         manifest["commit"] = command(["git", "rev-parse", "HEAD"], cwd=checkout)
+        if pnpm is not None:
+            manifest["failure_stage"] = "package_manager"
+            command(["npm", "install", "--prefix", str(tools), "--no-save", "--no-audit", "--no-fund", "pnpm@" + pnpm])
+            selected = command(["pnpm", "--version"], cwd=checkout, timeout=CLI_STARTUP_TIMEOUT)
+            if selected != pnpm and not selected.startswith(pnpm + "."):
+                raise RuntimeError(f"Requested pnpm {pnpm}; pnpm {selected} runs in the checkout")
+            manifest["package_manager"] = {"pnpm": selected, "requested": pnpm}
+            manifest.pop("failure_stage", None)
         for setup in setup_commands:
             command(setup, cwd=checkout)
         status = command(["git", "status", "--porcelain"], cwd=checkout)
@@ -673,7 +705,7 @@ def run(args):
         if manifest.get("failure_stage")=="model_authentication":
             manifest["failure_kind"]="authentication"
             manifest["retry_recommended"]=False
-        elif manifest.get("failure_stage") in ("runtime_readiness","storage_readiness"):
+        elif manifest.get("failure_stage") in ("runtime_readiness","storage_readiness","package_manager"):
             manifest["failure_kind"]="evaluator_environment"
             manifest["retry_recommended"]=False
         if manifest.get("status")=="preparing" and not manifest.get("failure_kind"):
@@ -770,6 +802,11 @@ def run(args):
             manifest["error"] = "Final ddtest runtime differs from --node; the setup probe does not validate the agent's command environment."
             manifest["retry_recommended"] = False
             code = 1
+        memory = agent_memory_files(home)
+        if memory:
+            # Auto-memory is disabled for Claude; any remaining notes are agent
+            # artifacts that later trials and graders must not rely on.
+            manifest["agent_artifacts"] = {"memory_files": memory}
         activity.close()
         if final_response:
             (output / "final-response.md").write_text(redact(final_response) + "\n")
@@ -808,6 +845,7 @@ def main():
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--readiness-command", action="append", default=[], help="Repeatable native runtime/browser readiness checks before the uncoached agent")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")
+    parser.add_argument("--pnpm", help="Install this pnpm version privately for setup and the agent (e.g. the version the project's CI pins)")
     parser.add_argument("--output", type=Path, help="New directory for evaluator evidence")
     parser.add_argument("--model", help="Optional requested model; default is the CLI's configured model")
     parser.add_argument("--timeout", type=float, default=1800, help="Seconds allowed per command")
@@ -820,6 +858,8 @@ def main():
             parser.error(str(error))
     if not all((args.repo,args.ref,args.ddtest,args.agent,args.output,args.image)):
         parser.error("Trials require --repo, --ref, --ddtest, --agent, --output and --image")
+    if args.pnpm is not None and not re.fullmatch(r"\d+(?:\.\d+){0,2}", args.pnpm):
+        parser.error("--pnpm must be a version such as 10 or 10.33.4")
     try:
         with interrupted():
             return run(args)
