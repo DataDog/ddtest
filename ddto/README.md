@@ -12,53 +12,52 @@ versions.
 
 ## Install
 
+`ddto` ships in [ddtest](../README.md) as `ddtest instrument`: wherever these
+docs run `ddto <arguments>`, ddtest runs `ddtest instrument <arguments>`, with
+the same behavior.
+
 Shell examples use POSIX syntax. On Windows, use Git Bash or set environment
 variables with PowerShell; locally built executables can use a `.exe` suffix.
 
-Tests need an installed Go 1.25 or newer toolchain. Install `ddto` from the
-[latest release](https://github.com/DataDog/ddto/releases/latest):
+Tests need an installed Go 1.25 or newer toolchain. Install ddtest from its
+[latest release](https://github.com/DataDog/ddtest/releases/latest):
 
 ```sh
-curl -fsSL https://github.com/DataDog/ddto/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/install.sh | bash
 ```
 
 In PowerShell, on Windows or elsewhere:
 
 ```powershell
-irm https://github.com/DataDog/ddto/releases/latest/download/install.ps1 | iex
+irm https://github.com/DataDog/ddtest/releases/latest/download/install.ps1 | iex
 ```
 
 The scripts download the executable for your platform into `~/.local/bin`
 and check it against the release's `SHA256SUMS`. `--version v1.2.3` picks a
-release and `--dir` another directory; in PowerShell, set `$env:DDTO_VERSION`
-and `$env:DDTO_INSTALL_DIR` first, or run
+release and `--dir` another directory; in PowerShell, set
+`$env:DDTEST_INSTALL_VERSION` and `$env:DDTEST_INSTALL_DIR` first, or run
 `& ([scriptblock]::Create((irm <url>/install.ps1))) -Version v1.2.3 -Dir C:\tools`.
 They keep an installed executable of the same version, so a persistent runner
 downloads nothing for a requested version and only `SHA256SUMS` for the latest.
-Without an executable for the platform, they build `ddto` with `go install`.
-In GitHub Actions they add the directory to `PATH` for later steps;
-`install.ps1` also adds it to the current session. `ddto --version` prints the
-installed version.
+Without an executable for the platform, or when its checksum differs, they
+stop. In GitHub Actions they add the directory to `PATH` for later steps;
+`install.ps1` also adds it to the current session. `ddtest instrument
+--version` prints the installed version.
 
-Releases have `ddto-<os>-<arch>` for Linux, macOS (`darwin`) and Windows on
+Releases have `ddtest-<os>-<arch>` for Linux, macOS (`darwin`) and Windows on
 `amd64` and `arm64`, with `.exe` on Windows. Each executable carries the Mini
-runtime's sources and its tool wrapper, so a CI job builds neither `ddto` nor
-its wrapper and downloads no runtime module; it compiles only what goes into
+runtime's sources and its tool wrapper, so a CI job builds neither ddtest nor
+the wrapper and downloads no runtime module; it compiles only what goes into
 the test binaries.
 
-To build `ddto` from source instead:
-
-```sh
-go install github.com/DataDog/ddtest/ddto/cmd/ddto@main
-```
-
-Go places `ddto` in `GOBIN`, or `$(go env GOPATH)/bin` when `GOBIN` is unset.
-Add that directory to `PATH`. To build from a local checkout:
+To build from a checkout of ddtest instead:
 
 ```sh
 git clone https://github.com/DataDog/ddtest.git
-cd ddtest/ddto
-go build -o bin/ddto ./cmd/ddto
+cd ddtest
+make install                  # ddtest, in GOBIN or the first GOPATH entry's bin
+cd ddto
+go build -o bin/ddto ./cmd/ddto   # or ddto alone, for this module's own development
 ```
 
 Coding agents can follow [AGENTS.md](AGENTS.md), which covers installation,

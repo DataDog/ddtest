@@ -17,40 +17,41 @@ commit. `DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=false` and
 
 ## Install
 
-`ddto` needs a Go 1.25 or newer toolchain on `PATH`. The project under test
-keeps its own language version; Go 1.21 and newer are tested.
+`ddto` ships in ddtest as `ddtest instrument`: wherever this file runs
+`ddto <arguments>`, ddtest runs `ddtest instrument <arguments>`, with the same
+behavior. It needs a Go 1.25 or newer toolchain on `PATH`. The project under
+test keeps its own language version; Go 1.21 and newer are tested.
 
-Prefer the release executable for the host. It carries the runtime's sources
-and its tool wrapper, so nothing of `ddto` is compiled or downloaded later.
-The install script puts it in `~/.local/bin`, outside the project, after
-checking it against the release's checksums:
+Prefer ddtest's release executable for the host. It carries the runtime's
+sources and its tool wrapper, so nothing of the instrumentation is compiled or
+downloaded later. The install script puts it in `~/.local/bin`, outside the
+project, after checking it against the release's checksums:
 
 ```sh
 go version                    # go1.25 or newer
-curl -fsSL https://github.com/DataDog/ddto/releases/latest/download/install.sh | bash
-ddto --version                # prints the installed version
+curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/install.sh | bash
+ddtest instrument --version   # prints the installed version
 ```
 
 In PowerShell, including Windows runners, use `install.ps1`, which behaves the
 same and also adds the directory to the current session's `PATH`:
 
 ```powershell
-irm https://github.com/DataDog/ddto/releases/latest/download/install.ps1 | iex
-ddto --version
+irm https://github.com/DataDog/ddtest/releases/latest/download/install.ps1 | iex
+ddtest instrument --version
 ```
 
 Pass options after `bash -s --`: `--version v1.2.3` for a release, `--dir` for
-another directory on `PATH`. In PowerShell, set `$env:DDTO_VERSION` and
-`$env:DDTO_INSTALL_DIR` before `iex`. In GitHub Actions the script adds the directory to
-`PATH` for later steps. An installed executable of the same version stays.
-Without an executable for the platform, it builds `ddto` with `go install`; a
-checksum mismatch stops it. To use another
-revision, build it with
-`go install github.com/DataDog/ddtest/ddto/cmd/ddto@main`. Go puts
-the binary in `$(go env GOBIN)`, or in `$(go env GOPATH)/bin` when `GOBIN` is
-empty; add that directory to `PATH` if `ddto --version` is not found. Do not add
-this module to the project's `go.mod`: each run supplies the runtime through
-temporary module files.
+another directory on `PATH`. In PowerShell, set `$env:DDTEST_INSTALL_VERSION`
+and `$env:DDTEST_INSTALL_DIR` before `iex`. In GitHub Actions the script adds
+the directory to `PATH` for later steps. An installed executable of the same
+version stays. Without an executable for the platform, or when its checksum
+differs, it stops. To use another revision, build ddtest from a checkout with
+`make install`, which puts it in `$(go env GOBIN)`, or in
+`$(go env GOPATH)/bin` when `GOBIN` is empty; add that directory to `PATH` if
+`ddtest instrument --version` is not found. Do not add this module to the
+project's `go.mod`: each run supplies the runtime through temporary module
+files.
 
 ## Instrument a project
 

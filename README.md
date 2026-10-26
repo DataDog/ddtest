@@ -15,6 +15,9 @@ Currently supported:
 - Python with pytest.
 - JavaScript with Cucumber, Cypress, Jest, Mocha, Playwright, or Vitest.
 
+For Go, `ddtest instrument` reports a project's tests to Test Optimization
+directly; see [Go tests with ddtest instrument](#go-tests-with-ddtest-instrument).
+
 ## Try Test Optimization locally
 
 With your project's test dependencies and any required browsers/services ready:
@@ -51,6 +54,38 @@ every instrumented CI job pins, or the latest release (`--tracer-version`
 selects a fallback release or `git:<ref>`).
 JavaScript/Python installs are isolated. Ruby runs `bundle add datadog-ci`,
 updating the project's Gemfile and lockfile.
+
+## Go tests with ddtest instrument
+
+`ddtest instrument` reports a Go project's tests to Datadog Test Optimization
+with nothing added to the project: no SDK, no Orchestrion and no change to its
+code or `go.mod`. Put it in front of the command that runs the tests:
+
+```sh
+ddtest instrument go test ./...                  # as go test, and the tests report
+ddtest instrument go tool gotestsum -- ./...     # gotestsum's go test reports too
+ddtest instrument --go-shim make test            # the go test that a command runs
+ddtest instrument go build ./...                 # any other command runs unchanged
+```
+
+The command keeps go test's output, environment and exit status, and Go's test
+cache: a package whose result comes from the cache reports nothing, as with
+plain `go test`. It needs Go 1.25 or newer, while the project keeps its own
+language version, and runs on Linux, macOS and Windows. Results go through a
+Datadog Agent (`localhost:8126`, or `DD_TRACE_AGENT_URL`), or without one with
+`DD_CIVISIBILITY_AGENTLESS_ENABLED=true`, `DD_API_KEY` and `DD_SITE`:
+
+```sh
+DD_SERVICE=my-service DD_ENV=ci ddtest instrument go test ./...
+```
+
+It supports automatic retries, early flake detection, intelligent test
+skipping, impacted tests and test management, according to the backend's
+settings, plus per-test coverage, subtests, fuzz seeds, examples and Testify
+suites. The release executable carries the runtime that it adds to the test
+binaries, so a CI job downloads and builds nothing else. See the
+[Go instrumentation documentation](ddto/README.md) for its settings and
+limits, and [ddto/AGENTS.md](ddto/AGENTS.md) for coding agents that set it up.
 
 ## Prerequisites
 
@@ -269,6 +304,29 @@ For all flags, environment variables, and defaults, see
 
 ## Installation
 
+Install the release executable for your platform, checked against the
+release's `SHA256SUMS`, into `~/.local/bin`:
+
+```bash
+curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/install.sh | bash
+```
+
+In PowerShell, on Windows or elsewhere:
+
+```powershell
+irm https://github.com/DataDog/ddtest/releases/latest/download/install.ps1 | iex
+```
+
+`--version v1.2.3` picks a release and `--dir` another directory (`-Version`
+and `-Dir` in PowerShell, or `DDTEST_INSTALL_VERSION` and `DDTEST_INSTALL_DIR`
+for both). An installed executable of the same version stays, and in GitHub
+Actions the scripts add the directory to `PATH` for the next steps:
+
+```yaml
+- name: Install ddtest
+  run: curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/install.sh | bash
+```
+
 To install from a checkout:
 
 ```sh
@@ -276,30 +334,9 @@ make install                          # GOBIN, or the first GOPATH entry's bin
 make install GOBIN="$HOME/.local/bin"  # Custom destination; add it to PATH
 ```
 
-This project uses GitHub Releases for distribution.
-
-Use `gh` command line tool to download the latest release in GitHub actions:
-
-```yaml
-- name: Download ddtest binary
-  run: |
-    mkdir -p bin
-    gh release download --repo DataDog/ddtest --pattern "ddtest-linux-amd64" --dir bin
-    mv bin/ddtest-linux-amd64 bin/ddtest
-    chmod +x bin/ddtest
-  env:
-    GH_TOKEN: ${{ github.token }}
-```
-
-...or use `curl`:
-
-```bash
-mkdir -p bin
-curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/ddtest-linux-amd64 -o bin/ddtest
-chmod +x bin/ddtest
-```
-
-The list of available precompiled artifacts is on [release page](https://github.com/DataDog/ddtest/releases/latest).
+Each release lists its executables, `ddtest-<os>-<arch>` for Linux, macOS and
+Windows on `amd64` and `arm64`, with the install scripts and `SHA256SUMS`, on
+the [release page](https://github.com/DataDog/ddtest/releases/latest).
 
 ## CI configuration examples
 
@@ -309,6 +346,7 @@ The list of available precompiled artifacts is on [release page](https://github.
 ## More documentation
 
 - [Running DDTest](docs/running.md)
+- [Go tests with ddtest instrument](ddto/README.md)
 - [Settings](docs/settings.md)
 - [Plan file layout](docs/layout.md)
 - [Third party test runners](docs/third-party-runners.md)
