@@ -489,9 +489,9 @@
       "source": "internal/civisibility/integrations/manual_api_sourcepath_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go",
       "source_sha256": "51f8df98c5891dd6c6ef4e64525e5aba3da0f5017d876737185ffb9a4902b1b7",
-      "adapted_sha256": "fe4c1c0a33a557b436edc702b3176f75bdcbb978bbee86283ed0c3b4fc266d3d",
+      "adapted_sha256": "75e43e0f5b5f9b06db7f650c87f5ff0426883bd6439757086034980ddd6301ec",
       "kind": "full",
-      "adaptation": "Runtime self-path and repository URL are relocated; source parsing and trimpath assertions remain intact; standard-library assertion helpers"
+      "adaptation": "Runtime self-path, repository URL and the module's ddto directory in that repository are relocated; source parsing and trimpath assertions remain intact; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/instrumentation_selector_test.go",

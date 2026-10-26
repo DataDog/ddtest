@@ -35,7 +35,7 @@
     },
     {
       "path": "TESTS.json",
-      "sha256": "5bb6eab55c9ace16eacb023412cb3cf8f03e8429285a46cce190bec72a9f72ef",
+      "sha256": "453b7c8543fba7eaf0c135301ac58b41d50f285981fe9072d2db8d05d7067c97",
       "role": "local"
     },
     {
@@ -1029,7 +1029,7 @@
     },
     {
       "path": "civisibility/integrations/manual_api_sourcepath_test.go",
-      "sha256": "fe4c1c0a33a557b436edc702b3176f75bdcbb978bbee86283ed0c3b4fc266d3d",
+      "sha256": "75e43e0f5b5f9b06db7f650c87f5ff0426883bd6439757086034980ddd6301ec",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/manual_api_sourcepath_test.go",
       "source_sha256": "51f8df98c5891dd6c6ef4e64525e5aba3da0f5017d876737185ffb9a4902b1b7"

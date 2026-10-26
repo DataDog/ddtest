@@ -105,7 +105,8 @@ func TestResolveTestSourcePathCanParseTrimpathModulePath(t *testing.T) {
 	workspacePath := t.TempDir()
 	configureSourcePathTestState(t, workspacePath)
 
-	relativePath := filepath.Join("internal", "thirdparty", "dd-trace-go", "civisibility", "integrations", "manual_api_sourcepath_test.go")
+	// The module is the ddto directory of ddtest's repository.
+	relativePath := filepath.Join("ddto", "internal", "thirdparty", "dd-trace-go", "civisibility", "integrations", "manual_api_sourcepath_test.go")
 	sourceFilePath := filepath.Join(workspacePath, relativePath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(sourceFilePath), 0o700))
 	require.NoError(t, os.WriteFile(sourceFilePath, []byte("package integrations\n\nfunc sourcePathTemporaryFixture() {\n}\n"), 0o600))
@@ -113,7 +114,7 @@ func TestResolveTestSourcePathCanParseTrimpathModulePath(t *testing.T) {
 	sourcePath := resolveTestSourcePath("github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go")
 	metadata := loadSourceFileMetadata(sourcePath.FilesystemPath)
 
-	assert.Equal(t, "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go", sourcePath.RelativePath)
+	assert.Equal(t, "ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go", sourcePath.RelativePath)
 	assert.Equal(t, sourceFilePath, sourcePath.FilesystemPath)
 	assert.True(t, sourcePath.FilesystemKnown)
 	require.True(t, metadata.parseOK, "expected %q to parse: %v", sourcePath.FilesystemPath, metadata.parseErr)
@@ -144,7 +145,7 @@ func TestSetTestFuncUnderTrimpathUsesRepositoryRelativeTagsAndParsesSource(t *te
 
 	testSourceFile, ok := test.GetTag(constants.TestSourceFile)
 	require.True(t, ok)
-	assert.Equal(t, "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go", testSourceFile)
+	assert.Equal(t, "ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go", testSourceFile)
 	assert.NotContains(t, testSourceFile, "github.com/DataDog/ddtest/ddto")
 	assert.NotContains(t, testSourceFile, "v2/internal")
 	assertSourceRangeTags(t, test)
