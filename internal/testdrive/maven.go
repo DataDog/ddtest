@@ -415,7 +415,7 @@ func verifyMavenTelemetry(run validationRun) verdict {
 		}
 	}
 	difference := mavenDifferences(expected, observed, "native", "telemetry")
-	if len(expected) == 0 || difference.DifferenceCount > 0 {
+	if missingNames > 0 || len(expected) == 0 || difference.DifferenceCount > 0 {
 		difference.Status, difference.Code = "inconclusive", "java_identity_mismatch"
 		difference.Reason = "Native and telemetry source-test identities or outcome multiplicities do not reconcile. Equal aggregate totals are insufficient. Inspect the bounded differences; feature probes were not run."
 		if missingNames > 0 {

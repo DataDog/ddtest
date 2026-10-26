@@ -119,3 +119,13 @@ func TestMavenUnresolvedWorkflowDiscoveryDoesNotClaimZeroCoverage(t *testing.T) 
 	require.Contains(t, coverage.Reason, "discovery is unresolved")
 	require.Contains(t, coverage.Reason, "selected command")
 }
+
+func TestMavenCannotSubstituteParameterIndexForMissingMethodName(t *testing.T) {
+	run := validationRun{mavenModules: map[string]string{"module": "."}, Tests: []jestTest{{File: ". / ExampleTest", Name: "[1]", Status: "passed"}},
+		Facts: intake.Facts{Tests: []intake.Test{{Module: "module", Suite: "ExampleTest", Parameters: `{"metadata":{"test_name":"[1]"}}`, Attempts: []intake.TestRun{{Status: "pass"}}}}}}
+	// Aggregate counts and the derived index agree, but the actual method is unknown.
+	result := verifyMavenTelemetry(run)
+	require.Equal(t, "inconclusive", result.Status)
+	require.Equal(t, "java_test_name_missing", result.Code)
+	require.Contains(t, result.Reason, "empty test.name")
+}
