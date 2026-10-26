@@ -23,11 +23,8 @@ install:
 	@echo "Installed ddtest to $(GOBIN)/ddtest"
 run:
 	go run main.go
+# ddto's release builder links ddtest with the runtime sources and the tool
+# wrapper that ddtest instrument provides to the projects it instruments.
 release:
 	mkdir -p dist
-	GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-linux-amd64 main.go
-	GOOS=linux GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-linux-arm64 main.go
-	GOOS=darwin GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-darwin-amd64 main.go
-	GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-darwin-arm64 main.go
-	GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-windows-amd64.exe main.go
-	GOOS=windows GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-windows-arm64.exe main.go
+	go -C ddto run ./scripts/release -main .. -name ddtest -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)" -o ../dist

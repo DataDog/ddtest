@@ -5,6 +5,11 @@
 //
 //	go run ./scripts/release [-version v1.2.3] [-o dist] [-target linux/amd64,darwin/arm64]
 //	go run ./scripts/release -version v1.2.3 -stamp
+//	go run ./scripts/release -main .. -name ddtest -ldflags "-X …" -o ../dist
+//
+// -main builds another program that runs ddto, such as ddtest, whose main
+// package is in that directory: it carries the same runtime and wrapper, and
+// its executables are named -name-GOOS-GOARCH, linked with -ldflags too.
 //
 // -version sets internal/version's Number for the build, through -overlay:
 // the executables, their wrapper and the runtime they carry all report it,
@@ -52,12 +57,15 @@ func main() {
 	list := flag.String("target", strings.Join(targets, ","), "comma-separated GOOS/GOARCH platforms")
 	tag := flag.String("version", "", "version that the executables report, such as v1.2.3; empty keeps internal/version")
 	stamp := flag.Bool("stamp", false, "write -version into internal/version in the checkout and build nothing")
+	program := flag.String("main", "", "directory of the main package to build; empty builds ./cmd/ddto")
+	name := flag.String("name", "ddto", "name of the executables, before -GOOS-GOARCH")
+	ldflags := flag.String("ldflags", "", "linker flags added to -s -w")
 	flag.Parse()
 	var err error
 	if *stamp {
 		err = stampCheckout(*tag)
 	} else {
-		err = release(*out, strings.Split(*list, ","), *tag)
+		err = release(*out, strings.Split(*list, ","), *tag, executable{dir: *program, name: *name, ldflags: *ldflags})
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "release:", err)
@@ -87,9 +95,20 @@ func stampCheckout(tag string) error {
 	return os.WriteFile(path, stamped, 0644)
 }
 
-func release(out string, platforms []string, tag string) error {
+// executable is the program that a release builds: its main package's
+// directory, ddto's own by default, the name of its executables and the
+// linker flags added to -s -w.
+type executable struct{ dir, name, ldflags string }
+
+func release(out string, platforms []string, tag string, program executable) error {
 	root, err := moduleRoot()
 	if err != nil {
+		return err
+	}
+	if program.dir == "" {
+		program.dir = filepath.Join(root, "cmd", "ddto")
+	}
+	if program.dir, err = filepath.Abs(program.dir); err != nil {
 		return err
 	}
 	if err := absoluteTemporaryDirectories(); err != nil {
@@ -141,7 +160,7 @@ func release(out string, platforms []string, tag string) error {
 		if !ok {
 			return fmt.Errorf("target %q is not GOOS/GOARCH", target)
 		}
-		path, err := build(root, temp, out, goos, goarch, prefix, overlay)
+		path, err := build(root, temp, out, goos, goarch, prefix, overlay, program)
 		if err != nil {
 			return err
 		}
@@ -292,7 +311,7 @@ func runtimeArchive(root string, overrides map[string][]byte) ([]byte, error) {
 // build writes ddto-GOOS-GOARCH to out. The wrapper comes from the sources
 // that ddto would build with prefix, so its key matches; -overlay supplies it,
 // the runtime archive and any stamped version without writing to the checkout.
-func build(root, temp, out, goos, goarch, prefix string, overlay map[string]string) (string, error) {
+func build(root, temp, out, goos, goarch, prefix string, overlay map[string]string, program executable) (string, error) {
 	suffix := ""
 	if goos == "windows" {
 		suffix = ".exe"
@@ -328,11 +347,11 @@ func build(root, temp, out, goos, goarch, prefix string, overlay map[string]stri
 	if err := os.WriteFile(overlayFile, data, 0600); err != nil {
 		return "", err
 	}
-	path, err := filepath.Abs(filepath.Join(out, "ddto-"+goos+"-"+goarch+suffix))
+	path, err := filepath.Abs(filepath.Join(out, program.name+"-"+goos+"-"+goarch+suffix))
 	if err != nil {
 		return "", err
 	}
-	err = run(root, env, "go", "build", "-trimpath", "-tags=ddto_release", "-ldflags=-s -w", "-overlay="+overlayFile, "-o", path, "./cmd/ddto")
+	err = run(program.dir, env, "go", "build", "-trimpath", "-tags=ddto_release", "-ldflags="+strings.TrimSpace("-s -w "+program.ldflags), "-overlay="+overlayFile, "-o", path, ".")
 	return path, err
 }
 
