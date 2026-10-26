@@ -515,6 +515,8 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		reason := ""
 		if len(frameworks) > 0 && frameworks[0] == "cucumber" {
 			reason = checkCucumberBootstrap(root, workflow, job, step, row, resolution.Tests)
+		} else if len(frameworks) > 0 && frameworks[0] == "webdriverio" {
+			reason = checkWebdriverIOBootstrap(root, workflow, job, step, row)
 		} else {
 			reason = checkTestBootstrap(workflow, job, step, row, resolution.Tests, frameworks...)
 		}

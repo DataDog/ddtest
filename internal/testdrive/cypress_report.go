@@ -9,10 +9,11 @@ import (
 )
 
 // Redact only the published copy. Execution still receives the original command.
+// Cypress recording keys and WebdriverIO grid keys share the --key/-k form.
 func (result validationResult) MarshalJSON() ([]byte, error) {
 	type plain validationResult
 	data, err := json.Marshal(plain(result))
-	if err != nil || result.Framework != "cypress" {
+	if err != nil || !onboard.RedactsCommandKeys(result.Framework) {
 		return data, err
 	}
 	var fields any
