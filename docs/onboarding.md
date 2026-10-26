@@ -122,8 +122,8 @@ and plain `testdrive` print text only; the agent's final response is in `summary
 `onboard --apply --yes` applies recognized setup and runs the shared coordinator.
 For existing setup, use `testdrive --framework vitest --all --agent --yes`.
 Plain testdrive keeps its earlier execution behavior; explicit `--agent` or
-`--format json` selects coordination. Supplying `--facts` also selects the coordinator. Structured execution requires `--yes` and never opens an interactive prompt. Structured validation is unsupported for Python/Ruby and returns no next command.
-Use plain Ruby testdrive for the RSpec/Minitest validation described below.
+`--format json` selects coordination. Supplying `--facts` also selects the coordinator. Structured execution requires `--yes` and never opens an interactive prompt. Structured validation is unsupported for Python. RSpec and Minitest use the shared
+coordinator after the manual Ruby CI setup described below.
 
 The coordinator owns one resolved execution plan: actual commands, directories,
 environments, builds, runtime/tracer selection, initialization and feature policy.
@@ -251,8 +251,26 @@ preserves the original Gemfile and lockfile, including fallback tracer installs.
 Numeric CI Ruby selections are checked against the resolved tracer's RubyGems
 requirements. Other engines and floating selections require separate validation
 or explicit instrumentation exclusions that preserve their original test steps.
-Ruby agent/JSON coordination and automatic CI edits remain unsupported.
+Ruby supports `testdrive --all --agent --yes` and `--format json`, including source/runtime-bound
+receipts, dependency-readiness handoffs, and the final `testdrive --report` response.
+Automatic Ruby CI edits remain unsupported; `onboard` supplies the manual action
+setup and exact resume command.
 Run `ddtest onboard --framework rspec` (or `minitest`) for the manual setup
 steps, then retain both reports and the final response from plain testdrive.
-Successful plain Ruby validation reports `PASSED`; `COMPLETE LOCALLY` belongs to
-the structured coordinator and is not claimed for Ruby.
+Successful plain Ruby validation reports `PASSED`. The structured coordinator
+reports `COMPLETE LOCALLY` only after every selected configuration, supported
+feature, source-preservation check and Git/gem report-exclusion check passes.
+Finish with its exact `next_command` and render `final_response` unchanged.
+Ruby version, bundle-related environment and ignored Gemfile lockfiles bind the
+report to current inputs; subsequent edits require fresh execution.
+
+Literal one-target Rake default aliases retain their original bare `rake` command.
+Dynamic/default enhancements and custom tasks stay unresolved. Numeric matrix
+comparisons follow GitHub expression coercions; existing matrix types need no
+quoting workaround. A locally selected tracer dependency that excludes a target
+Ruby leaves CI compatibility inconclusive until that target resolution is checked;
+only the tracer release's own incompatible requirement is a definite rejection.
+
+For reports with 500 or more results, repeated source excerpts and covered-file
+lists are stored once in the standalone HTML and materialized when expanded.
+Search and coverage pagination retain access to this evidence.

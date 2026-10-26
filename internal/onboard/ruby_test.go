@@ -163,3 +163,56 @@ func TestRubyInstructionsDescribeNativeValidationAndPreserveBothReports(t *testi
 		require.NotContains(t, text, "__FRAMEWORK__")
 	}
 }
+
+func TestRubyDefaultAliasKeepsOriginalCICommand(t *testing.T) {
+	for _, alias := range []string{"task :default => [:test]", "task default: :test", "task default: [:test] # original entry point"} {
+		root := rubyWorkflowFixture(t, "jobs:\n  test:\n    steps:\n      - run: bundle exec rake\n")
+		require.NoError(t, os.WriteFile(filepath.Join(root, "Rakefile"), []byte("require 'rake/testtask'\n"+alias+"\nRake::TestTask.new(:test)\n"), 0600))
+		scope, err := DiscoverValidationScope(root, "minitest")
+		require.NoError(t, err)
+		require.Empty(t, scope.Unresolved)
+		require.Len(t, scope.Commands, 1)
+		require.Equal(t, "bundle exec rake", scope.Commands[0].Command)
+	}
+	for _, alias := range []string{"task default: [:test, :lint]", "task default: :custom", "task default: :test\ntask default: :lint", "task default: :test\nRake::Task[:default].enhance [:lint]"} {
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "Rakefile"), []byte(alias), 0600))
+		require.False(t, rubyDefaultTask(root, ".", "test"), alias)
+	}
+}
+
+func TestI18nOriginalRakeAndNumericMatrixNeedOnlyInstrumentation(t *testing.T) {
+	data, err := os.ReadFile("testdata/i18n-ruby.yml")
+	require.NoError(t, err)
+	workflow := strings.Replace(string(data), "      - name: Build and test with Rake", `      - uses: datadog/test-visibility-github-action@v3
+        if: matrix.ruby_version != 'head' && !contains(matrix.ruby_version, 'jruby')
+        with: {languages: ruby, ruby-tracer-version: '1.42.0'}
+      - name: Build and test with Rake`, 1)
+	root := rubyWorkflowFixture(t, workflow)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "gemfiles"), 0700))
+	for _, name := range []string{"Gemfile.rails-7.0.x", "Gemfile.rails-7.1.x", "Gemfile.rails-7.2.x", "Gemfile.rails-8.0.x", "Gemfile.rails-main"} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, "gemfiles", name), []byte("source 'https://rubygems.org'\n"), 0600))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Rakefile"), []byte("require 'rake/testtask'\ntask :default => [:test]\nRake::TestTask.new(:test) do |t|\n t.pattern = 'test/**/*_test.rb'\nend\n"), 0600))
+	scope, err := DiscoverValidationScope(root, "minitest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 6)
+	for _, entry := range scope.Commands {
+		require.Equal(t, "bundle exec rake", entry.Command)
+	}
+	ci := RubyCIConfiguration(root, "minitest")
+	require.Len(t, ci.Jobs, 31)
+	excluded := 0
+	for _, job := range ci.Jobs {
+		if job.Status == "excluded" {
+			excluded++
+		} else {
+			require.Equal(t, "not checked", job.Status, job.Reason)
+		}
+	}
+	require.Equal(t, 9, excluded)
+	after, err := os.ReadFile(filepath.Join(root, ".github/workflows/test.yml"))
+	require.NoError(t, err)
+	require.Equal(t, workflow, string(after))
+}

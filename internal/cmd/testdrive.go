@@ -90,7 +90,7 @@ func newTestdriveCommand() *cobra.Command {
 			return fail("invalid_options", fmt.Errorf("--facts requires --all; facts cannot replace or narrow the discovered scope"))
 		}
 		if structured {
-			if detected, err := platform.DetectPlatform(); err == nil && detected.Name() != "javascript" {
+			if detected, err := platform.DetectPlatform(); err == nil && detected.Name() != "javascript" && detected.Name() != "ruby" {
 				return fail("framework_unsupported", fmt.Errorf("controlled validation is not available for %s", detected.Name()))
 			}
 		}

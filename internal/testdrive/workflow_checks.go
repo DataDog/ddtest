@@ -28,6 +28,7 @@ type WorkflowEvidence struct {
 	ValidationCommand []string                `json:"validation_command,omitempty"`
 	Plan              *onboard.ExecutionPlan  `json:"plan,omitempty"`
 	Fingerprint       string                  `json:"input_fingerprint"`
+	Ruby              string                  `json:"ruby,omitempty"`
 	Node              string                  `json:"node"`
 	FactsSHA256       string                  `json:"facts_sha256,omitempty"`
 	Changes           []onboard.SetupChange   `json:"changes,omitempty"`
@@ -50,6 +51,9 @@ func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.Workfl
 	if trackErr != nil || len(strings.TrimSpace(string(tracked))) > 0 {
 		git.Status = "failed"
 		git.Reason = "Report tracking could not be ruled out. Review git ls-files -- .testoptimization; existing tracked reports require an explicit untracking decision."
+	}
+	if t.language == "ruby" {
+		return []onboard.WorkflowCheck{git, t.rubyPackageExclusions(ctx)}
 	}
 	pack := onboard.WorkflowCheck{Name: "package_report_exclusions", Status: "passed"}
 	// Reports live at the root. A private root is not a publish target, and

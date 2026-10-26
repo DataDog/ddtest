@@ -261,7 +261,7 @@ func TestRubyWorkflowPreservesNativeValidationPath(t *testing.T) {
 	}
 }
 
-func TestRubyWorkflowAgentModesPreserveEvidence(t *testing.T) {
+func TestRubyWorkflowAgentModesReportMissingBundles(t *testing.T) {
 	for _, runner := range []framework.Framework{framework.NewRSpec(platform.NewRuby("")), framework.NewMinitest(platform.NewRuby(""))} {
 		for _, format := range []string{"agent", "json"} {
 			t.Run(runner.Name()+"/"+format, func(t *testing.T) {
@@ -269,17 +269,19 @@ func TestRubyWorkflowAgentModesPreserveEvidence(t *testing.T) {
 				previous := []byte(`{"success":false}`)
 				require.NoError(t, writeValidation(validationPath(root), previous))
 				executor := &fakeTestdriveExecutor{}
-				drive := &Testdrive{repositoryRoot: root, framework: runner, language: "ruby", executor: executor}
+				drive := &Testdrive{repositoryRoot: root, framework: runner, language: "ruby", executor: executor, rubyVersion: func() string { return "ruby 3.3.11 arm64" }}
 				var output bytes.Buffer
-				require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: format}), "framework_unsupported")
+				require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: format}), "ruby_dependencies_missing")
 				var result onboard.AgentResult
 				require.NoError(t, json.Unmarshal(output.Bytes(), &result))
-				require.Equal(t, "unsupported", result.Status)
-				require.Empty(t, result.NextCommand)
+				require.Equal(t, "needs_input", result.Status)
+				require.Equal(t, []string{"bundle", "install", "--gemfile", "Gemfile"}, result.NextCommand)
+				require.Len(t, result.SetupCommands, 1)
 				require.Empty(t, executor.command)
 				current, err := os.ReadFile(validationPath(root))
 				require.NoError(t, err)
-				require.Equal(t, previous, current)
+				require.NotEmpty(t, current)
+				require.NotContains(t, string(current), "COMPLETE LOCALLY")
 			})
 		}
 	}

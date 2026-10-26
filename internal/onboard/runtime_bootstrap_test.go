@@ -114,6 +114,7 @@ func TestBootstrapFormatEscapesAndBounds(t *testing.T) {
 		{"${{format('{0}', '{1}')}}", "{1}"},
 		{"${{format('{01}/{0}/{1}', 'a', 'b')}}", "b/a/b"},
 		{"${{format('literal')}}", "literal"},
+		{"${{format('{0}',42)}}", "42"},
 	} {
 		got, err := bootstrapOptions(tc.expression, nil, nil)
 		require.NoError(t, err, tc.expression)
@@ -121,7 +122,7 @@ func TestBootstrapFormatEscapesAndBounds(t *testing.T) {
 	}
 	for _, expression := range []string{
 		"format()", "format('{')", "format('}')", "format('{0}')", "format('{256}', 'x')",
-		"format('{-1}', 'x')", "format('{0:foo}', 'x')", "format('{0}', 42)",
+		"format('{-1}', 'x')", "format('{0:foo}', 'x')",
 		"format('{0}{0}', matrix.large)", strings.Repeat("format('{0}', ", 33) + "'x'" + strings.Repeat(")", 33),
 	} {
 		_, err := bootstrapOptions("${{"+expression+"}}", map[string]any{"large": strings.Repeat("x", 3000)}, nil)

@@ -476,7 +476,19 @@ func verifyJestTelemetry(run validationRun) verdict {
 	}
 	if len(differences) > 0 {
 		slices.Sort(differences)
-		return verdict{Status: "inconclusive", Reason: "Reported telemetry does not match the executed tests.", Differences: differences}
+		result := verdict{Status: "inconclusive", Reason: "Reported telemetry does not match the executed tests.", Differences: differences}
+		if run.framework == "minitest" || run.framework == "rspec" {
+			native, reported := 0, 0
+			for _, count := range expected {
+				native += count
+			}
+			for _, count := range observed {
+				reported += count
+			}
+			result.Code = "ruby_telemetry_mismatch"
+			result.Reason = fmt.Sprintf("Ruby telemetry mismatch: %d native executions, %d reporting executions. Inspect the missing/unexpected identities below. If affected tests use fork/exit! isolation, check child-process tracer flushing; feature probe success cannot replace missing real-suite telemetry.", native, reported)
+		}
+		return result
 	}
 	return verdict{}
 }

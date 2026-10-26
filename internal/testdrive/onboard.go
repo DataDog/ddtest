@@ -142,7 +142,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.NextCommand = []string{recoveryCommand[0], "onboard", "--framework", name, "--instructions"}
 				result.ResumeCommand, result.RequiredInput = nil, nil
 				result.Needs = "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it; do not rewrite CI or package scripts only so ddtest can parse them. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
-			case "setup_dependencies_missing":
+			case "setup_dependencies_missing", "ruby_dependencies_missing":
 				result.NextAction = "run_command"
 			default:
 				result.NextAction = "supply_input"
@@ -182,9 +182,12 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		}
 		return errors.Join(fmt.Errorf("%s: %s", code, result.Reason), onboard.RenderAgentResult(output, result, options.Format))
 	}
-	if !supportsValidationFramework(name) || t.language != "javascript" {
+	if !supportsValidationFramework(name) || (t.language != "javascript" && t.language != "ruby") {
 		result.NextCommand = nil
 		return fail("unsupported", "framework_unsupported", "Controlled validation is not available for this framework.", "Preserve its unsupported status; do not substitute a different framework.")
+	}
+	if t.language == "ruby" && options.Apply {
+		return fail("unsupported", "ci_edit_unsupported", "Ruby CI setup requires the onboard instructions before structured validation.", "Preserve the CI command and matrix; then use testdrive --all --agent --yes.")
 	}
 	t.repositoryRoot = canonicalWorkflowRoot(t.repositoryRoot)
 	lock, err := acquireWorkflowLock(t.repositoryRoot)
@@ -274,6 +277,13 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		plan.Site = "datadoghq.com"
 	}
 	plan.PackageManager = workflowPackageManager(t.repositoryRoot)
+	if t.language == "ruby" {
+		plan.PackageManager = "bundler"
+		plan.Runtime = t.workflowRubyVersion()
+		if plan.Runtime == "" {
+			return fail("blocked_environment", "ruby_runtime_unavailable", "Ruby runtime could not be inspected", "Restore the selected Ruby executable before validation.")
+		}
+	}
 	result.Plan = plan
 	if options.FactsFile != "" {
 		factsFingerprint := fingerprint
@@ -369,11 +379,14 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		t.workflowScope = &scope
 	}
 	if !options.Apply && !options.ExplicitVersion && t.projectTracer == "" {
-		ci := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, name)
+		ci := checkConfigurationCIRuntimes(ctx, t.repositoryRoot, name)
 		pin := ""
 		for _, job := range ci.Jobs {
+			if t.language == "ruby" && job.Status != "excluded" && job.TracerRequested != "" {
+				job.Tracer = "datadog-ci@" + job.TracerRequested
+			}
 			if job.Tracer != "" {
-				candidate := strings.TrimPrefix(job.Tracer, "dd-trace@")
+				candidate := strings.TrimPrefix(strings.TrimPrefix(job.Tracer, "dd-trace@"), "datadog-ci@")
 				if pin != "" && pin != candidate {
 					result.Location = job.Workflow + " / " + job.Job
 					result.RequiredInput = []string{"one intended CI tracer release, or separate explicitly scoped runs"}
@@ -581,6 +594,23 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if !options.Apply {
 		checkpoint.Tracer = ""
 	}
+	if t.language == "ruby" {
+		readinessScope := scope
+		if !t.allConfigurations {
+			readinessScope.Commands = []onboard.TestCommand{{Directory: ".", Command: t.command}}
+		}
+		missing, err := t.rubyBundleReadiness(ctx, readinessScope)
+		if err != nil {
+			return fail("blocked_environment", "ruby_readiness_unavailable", err.Error(), "Restore the named local bundle check capability.")
+		}
+		if len(missing) > 0 {
+			result.SetupCommands = missing
+			result.NextCommand = missing[0]
+			result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--resume", checkpoint.RunID)
+			result.RequiredInput = []string{"Run every setup_commands entry from the repository root, then resume_command."}
+			return fail("needs_input", "ruby_dependencies_missing", fmt.Sprintf("%d selected Ruby bundles need dependency setup", len(missing)), "Run each required_input command from the repository root, then resume. No tests or dependency installation were performed by this readiness check.")
+		}
+	}
 	progress("validation")
 	before := fingerprint
 	if options.Apply {
@@ -626,6 +656,8 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	plan.CIRuntime = validation.CIRuntime
 	if validation.Selection != nil {
 		t.setPlanTracer(plan, validation.Selection.Version)
+	} else if t.language == "ruby" {
+		t.setPlanTracer(plan, strings.TrimPrefix(validation.Tracer, "datadog-ci@"))
 	}
 	var runtimeMetadata *platform.MetadataError
 	if errors.As(runErr, &runtimeMetadata) {
@@ -657,6 +689,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	progress("verification")
 	workflow := &WorkflowEvidence{ValidationCommand: recoveryCommand, Plan: plan, Fingerprint: before, Node: t.workflowNodeVersion(), FactsSHA256: factsHash, Changes: result.Changes}
+	if t.language == "ruby" {
+		workflow.Ruby = t.workflowRubyVersion()
+	}
 	if checkpoint != nil {
 		workflow.EarlierAttempts = slices.Clone(checkpoint.Failures)
 	}
@@ -706,6 +741,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	if workflowVerdict(validation) != "complete_locally" {
 		result.Instruction = ""
+		if t.language == "ruby" {
+			result.FinalResponse = validation.Summary.FinalResponse
+		}
 		result.NextCommand = nil
 		// Results that end the agent's turn carry the current report's canonical
 		// text, so the agent can relay it verbatim (see fail).
@@ -1086,7 +1124,7 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 		return renderReportFailure(output, format, err)
 	}
 	receiptValid := verifyWorkflowReceipt(root, *validation) == nil
-	if validation.CheckOnly || validation.Workflow == nil || validation.Workflow.Fingerprint != current || validation.Workflow.Node != currentNodeVersion() || !receiptValid {
+	if validation.CheckOnly || validation.Workflow == nil || validation.Workflow.Fingerprint != current || validation.Workflow.Node != currentNodeVersion() || ((validation.Framework == "rspec" || validation.Framework == "minitest") && (validation.Workflow.Ruby == "" || validation.Workflow.Ruby != currentRubyVersion(root))) || !receiptValid {
 		result.Code = "stale_report"
 		plain := !validation.CheckOnly && validation.Workflow == nil
 		result.NextAction = "run_command"

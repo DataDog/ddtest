@@ -70,6 +70,7 @@ Gem.loaded_specs["trace-dependency"] = Gem::Specification.new { |s| s.name = "tr
 	jobs, err := json.Marshal([]onboard.RuntimeFinding{
 		{Ruby: "3.4", Status: "not checked", TracerRequested: "1.42.0"},
 		{Ruby: "2.7", Status: "not checked", TracerRequested: "1.42.0"},
+		{Ruby: "2.6", Status: "not checked", TracerRequested: "1.42.0"},
 		{Ruby: "3.4", Status: "not checked", TracerRequested: "latest"},
 		{Ruby: "head", Status: "excluded"},
 	})
@@ -78,7 +79,7 @@ Gem.loaded_specs["trace-dependency"] = Gem::Specification.new { |s| s.name = "tr
 	require.NoError(t, err, string(data))
 	var info struct{ Jobs []onboard.RuntimeFinding }
 	require.NoError(t, json.Unmarshal(data, &info))
-	for i, status := range []string{"compatible", "incompatible", "inconclusive", "excluded"} {
+	for i, status := range []string{"compatible", "inconclusive", "incompatible", "inconclusive", "excluded"} {
 		require.Equal(t, status, info.Jobs[i].Status)
 	}
 	require.NotContains(t, info.Jobs[0].Requirement, "99")
@@ -264,4 +265,20 @@ func TestRubyCoverageRequiresExistingApplicationSource(t *testing.T) {
 	require.Equal(t, "observed", rubySourceCoverage(root, facts, native).Status)
 	facts.Tests[0].CoveredFiles = append(facts.Tests[0].CoveredFiles, "missing.rb")
 	require.Equal(t, "invalid", rubySourceCoverage(root, facts, native).Status)
+}
+
+func TestRubyTelemetryMismatchReportsExecutionCounts(t *testing.T) {
+	run := validationRun{framework: "minitest", root: "/repo", Tests: []jestTest{{File: "/repo/test/one_test.rb", Name: "test_one", Status: "passed"}, {File: "/repo/test/one_test.rb", Name: "test_two", Status: "passed"}}, Facts: intake.Facts{TestEventCount: 1, Tests: []intake.Test{{Name: "test_one", SourceFile: "test/one_test.rb", Attempts: []intake.TestRun{{Status: "pass"}}}}}}
+	result := verifyJestTelemetry(run)
+	require.Equal(t, "inconclusive", result.Status)
+	require.Equal(t, "ruby_telemetry_mismatch", result.Code)
+	require.Contains(t, result.Reason, "2 native executions, 1 reporting executions")
+	require.Contains(t, strings.Join(result.Differences, " "), "test_two")
+}
+
+func TestRubyHandoffKeepsExistingFailuresVisible(t *testing.T) {
+	result := completeValidationFixture("minitest")
+	result.Runs[1].TestCounts = testCounts{Passed: 174, Failed: 1}
+	result.Summary = summarizeValidation(result)
+	require.Contains(t, validationHandoff(result), "174 passed, 1 failed, 0 skipped")
 }

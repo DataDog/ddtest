@@ -3,7 +3,9 @@ package onboard
 import (
 	"fmt"
 	"maps"
+	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -59,7 +61,7 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			if framework == "minitest" {
 				task = "test"
 			}
-			known := false
+			known := len(words) == 1 && rubyDefaultTask(root, directory, task)
 			for _, word := range words[1:] {
 				known = known || word == task || strings.HasPrefix(word, task+":")
 			}
@@ -82,6 +84,36 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return unresolvedCommand("Ruby test entry point requires a single explicit command; preserve shell setup and validate with --command from the prepared environment: " + step.Run)
 	}
 	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(parts[0]...)}}}
+}
+
+// Recognize a literal single-target default alias without loading Ruby code.
+// Multiple/default enhancements and custom targets remain unresolved. Execution
+// still uses the original bare rake command and verifies its native results.
+var rubyDefaultAlias = regexp.MustCompile(`^task\s+(?::default\s*=>|default:)\s*(?:\[\s*:(test|spec)\s*\]|:(test|spec))\s*(?:#.*)?$`)
+
+func rubyDefaultTask(root, directory, task string) bool {
+	path := filepath.Join(root, directory, "Rakefile")
+	info, valid := repositoryFile(root, filepath.Dir(path), "Rakefile")
+	if !valid || info.Size() > 256*1024 {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") || !strings.Contains(line, "default") {
+			continue
+		}
+		match := rubyDefaultAlias.FindStringSubmatch(line)
+		if found || len(match) != 3 || match[1]+match[2] != task {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 // RubyValidationCommand retains the CI entry point when there is one choice.

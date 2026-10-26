@@ -105,6 +105,7 @@ type Testdrive struct {
 	installArgs                           []string
 	executor                              commandExecutor
 	startIntake                           func(string, intake.Scenario) (localIntake, error)
+	rubyVersion                           func() string
 	nodeVersion                           func() string
 	environmentInfo                       environmentInfo
 	environmentFailure                    *reportCard

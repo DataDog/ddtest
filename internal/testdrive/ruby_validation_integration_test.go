@@ -24,7 +24,7 @@ func TestRubyValidationIntegration(t *testing.T) {
 
 func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	metadata := integrationCommand(t, ctx, ".", nil, "ruby", "-rjson", "-e", `puts JSON.generate(ruby: RUBY_VERSION, rspec: Gem::Specification.find_by_name("rspec-core").version.to_s, minitest: Gem::Specification.find_by_name("minitest").version.to_s, tracer: Gem::Specification.find_by_name("datadog-ci").version.to_s, rake: Gem::Specification.find_by_name("rake").version.to_s)`)
 	var gems struct{ Ruby, Rspec, Minitest, Tracer, Rake string }
@@ -159,6 +159,38 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 				require.NoError(t, err)
 				require.Empty(t, probes)
 			}
+			integrationFile(t, root, ".gitignore", "/.testoptimization/\nGemfile.lock\n")
+			protocol := rubyProtocolCommand(t, ctx, root, env, binary, "testdrive", "--framework", framework, "--all", "--agent", "--tracer-version", gems.Tracer, "--yes")
+			var state struct {
+				Status        string
+				NextCommand   []string `json:"next_command"`
+				FinalResponse string   `json:"final_response"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(protocol), &state), protocol)
+			require.Equal(t, "complete_locally", state.Status, protocol)
+			require.Contains(t, state.NextCommand, "--report")
+			saved := rubyProtocolCommand(t, ctx, root, env, binary, "testdrive", "--report", "--format", "json")
+			require.NoError(t, json.Unmarshal([]byte(saved), &state), saved)
+			require.Equal(t, "complete_locally", state.Status, saved)
+			require.Contains(t, state.FinalResponse, "COMPLETE LOCALLY")
+			integrationFile(t, root, "Gemfile.lock", before["Gemfile.lock"]+"\n")
+			stale := exec.CommandContext(ctx, binary, "testdrive", "--report", "--format", "json")
+			stale.Dir = root
+			stale.Env = append(os.Environ(), env...)
+			staleOutput, staleErr := stale.CombinedOutput()
+			require.Error(t, staleErr, string(staleOutput))
+			require.Contains(t, string(staleOutput), "stale_report")
+
 		})
 	}
+}
+
+func rubyProtocolCommand(t *testing.T, ctx context.Context, root string, env []string, name string, args ...string) string {
+	t.Helper()
+	command := exec.CommandContext(ctx, name, args...)
+	command.Dir = root
+	command.Env = append(os.Environ(), env...)
+	data, err := command.Output()
+	require.NoError(t, err, string(data))
+	return string(data)
 }

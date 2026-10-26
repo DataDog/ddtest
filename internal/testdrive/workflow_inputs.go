@@ -166,7 +166,13 @@ func inputFingerprint(ctx context.Context, root string, depth int) (string, erro
 	// Include ignored installed manifests at the root and discovered workspace
 	// packages. Lockfiles alone do not identify a manually replaced installation.
 	packages := []string{"."}
+	files = append(files, "Gemfile.lock")
 	for _, name := range append(slices.Clone(files), indexedNames...) {
+		base := filepath.Base(name)
+		if (strings.HasPrefix(base, "Gemfile") || strings.HasSuffix(base, ".gemfile")) && !strings.HasSuffix(base, ".lock") {
+			files = append(files, name+".lock")
+		}
+
 		if filepath.Base(name) == "package.json" && !strings.Contains(filepath.ToSlash(name), "node_modules/") {
 			packages = append(packages, filepath.Dir(name))
 		}
@@ -248,7 +254,7 @@ func inputFingerprint(ctx context.Context, root string, depth int) (string, erro
 		}
 		_, _ = hash.Write([]byte{0})
 	}
-	for _, key := range []string{"NODE_OPTIONS", "NODE_ENV", "CI", "TZ"} {
+	for _, key := range []string{"NODE_OPTIONS", "NODE_ENV", "CI", "TZ", "RUBYOPT", "BUNDLE_GEMFILE", "BUNDLE_PATH", "BUNDLE_WITHOUT", "GEM_HOME", "GEM_PATH"} {
 		_, _ = fmt.Fprintf(hash, "%s=%s\x00", key, os.Getenv(key))
 	}
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil

@@ -72,6 +72,12 @@ until pending.empty?
   spec.runtime_dependencies.each { |d| pending << Gem.loaded_specs.fetch(d.name) }
 end
 requirements = specs.values.map(&:required_ruby_version)
+def ruby_ci_requirement_status(selector, tracer, requirements)
+  direct = ruby_requirement_status(selector, [tracer.required_ruby_version])
+  return direct unless direct == "compatible"
+  ruby_requirement_status(selector, requirements) == "compatible" ? "compatible" : "inconclusive"
+end
+
 jobs = JSON.parse(ARGV.fetch(1))
 jobs.each do |job|
   next unless job["status"] == "not checked"
@@ -81,14 +87,14 @@ jobs.each do |job|
   if !tracer || job["tracer_requested"] != tracer.version.to_s
     job["status"], job["reason"] = "inconclusive", "Pin an exact datadog-ci release matching local validation; floating, different or missing tracer releases require separate validation."
   else
-    job["status"] = ruby_requirement_status(ruby, requirements)
+    job["status"] = ruby_ci_requirement_status(ruby, tracer, requirements)
     job["reason"] = case job["status"]
     when "compatible"
       "Every stable release selected by this Ruby version satisfies the locally resolved tracer and its runtime dependencies. The exact tracer release matches; CI bundle resolution, platform/engine support and framework execution remain untested."
     when "incompatible"
-      "Selected CI Ruby does not satisfy the resolved tracer's RubyGems requirements. Preserve its tests; choose a compatible tracer or explicitly exclude only its instrumentation."
+      "Selected CI Ruby does not satisfy this exact tracer release's own RubyGems requirement. Preserve its tests and select a compatible tracer release."
     else
-      "Ruby selector is floating, selects another engine, or spans the tracer's requirement boundary. Pin a compatible numeric Ruby release, validate that runtime separately, or explicitly guard the Datadog action while preserving its tests."
+      "This local dependency resolution does not certify the target Ruby selector/platform, or the selector spans a requirement boundary. Resolve the exact tracer on that CI Ruby/architecture before changing instrumentation scope; a different dependency/platform gem may be compatible."
     end
   end
 end

@@ -179,7 +179,7 @@ func (p *conditionParser) format() (any, error) {
 	var args []string
 	for {
 		value, err := p.expression(0)
-		text, ok := value.(string)
+		text, ok := conditionString(value)
 		if err != nil || !ok {
 			return nil, fmt.Errorf("unsupported format argument")
 		}

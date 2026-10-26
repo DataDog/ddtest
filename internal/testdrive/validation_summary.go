@@ -257,6 +257,20 @@ func validationHandoff(result validationResult) string {
 		}
 	}
 	current := !result.CheckOnly && (result.LastExecution == nil || result.LastExecution.Current)
+	if current && (result.Framework == "rspec" || result.Framework == "minitest") {
+		passed, failed, skipped := 0, 0, 0
+		for _, run := range result.Runs {
+			if run.Role == roleReporting {
+				passed += run.TestCounts.Passed
+				failed += run.TestCounts.Failed
+				skipped += run.TestCounts.Skipped
+			}
+		}
+		if passed+failed+skipped > 0 {
+			fmt.Fprintf(&block, "Reporting-only native outcomes across configurations: %d passed, %d failed, %d skipped.\n", passed, failed, skipped)
+		}
+	}
+
 	if counts := result.ReportingCounts; counts != nil {
 		label := "Reporting"
 		if !current {

@@ -52,6 +52,7 @@ type AgentResult struct {
 	RequiredInput  []string       `json:"required_input,omitempty"`
 	NextAction     string         `json:"next_action,omitempty"`
 	NextCommand    []string       `json:"next_command,omitempty"`
+	SetupCommands  [][]string     `json:"setup_commands,omitempty"`
 	ResumeCommand  []string       `json:"resume_command,omitempty"`
 	// AcceptResumeCommand is resume_command plus a decision only the user may
 	// make, such as accepting a substitute runtime.
@@ -204,6 +205,30 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	runner, err := detected.DetectFramework()
 	if err != nil {
 		return fail("framework_unresolved", err)
+	}
+	if detected.Name() == "ruby" && (runner.Name() == "rspec" || runner.Name() == "minitest") {
+		if options.Human && options.Format == "" {
+			return Run(output)
+		}
+		var instructions strings.Builder
+		if err := Run(&instructions); err != nil {
+			return fail("scope_unresolved", err)
+		}
+		command := DDTestCommand("testdrive", "--framework", runner.Name(), "--all", "--agent", "--yes")
+		if len(command) == 0 {
+			return fail("transient_executable", fmt.Errorf("%s", TransientExecutableReason))
+		}
+		if options.Tracer != "" {
+			command = append(command, "--tracer-version", options.Tracer)
+		}
+		if options.Timeout != "" {
+			command = append(command, "--timeout", options.Timeout)
+		}
+		if options.Format == "json" {
+			command = append(command, "--format", "json")
+		}
+		return RenderAgentResult(output, AgentResult{Status: "needs_input", Phase: "onboarding", Code: "ruby_ci_setup_required", NextAction: "apply_source_edit", ResumeCommand: command,
+			Reason: "Apply only the Ruby CI instrumentation and report exclusions below; preserve test commands and matrix values. Then run resume_command once in the foreground and follow its exact next action. Do not use background jobs, sleeps or process polling. Render the final saved response instead of composing a completion claim.", Instruction: instructions.String()}, options.Format)
 	}
 	if detected.Name() != "javascript" {
 		if options.Format != "" {
