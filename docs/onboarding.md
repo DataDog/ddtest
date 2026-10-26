@@ -116,6 +116,18 @@ Checks and source-edit hashes stay in the bounded JSON; full output stays in HTM
 
 `onboard --apply` selects a tracer every CI row it instruments can run: when the default release needs a newer Node than a CI job provides, it picks the verified release that supports all of them, or stops and names the rows that need different majors. When a CI path, such as the Cypress action API, runs on a Node major the local host lacks, the result is `blocked_environment` (`local_runtime_mismatch`) naming that runtime. Put an existing installation first on PATH and run the resume command; ddtest never downloads a runtime.
 
+Only CI that can reach a selected test is in scope. Jobs whose steps can't start
+one (system packages, coverage merging, linting, publishing, another framework)
+are listed as not a test consumer, and unresolved steps after a job's last
+possible test are listed as outside the test path; unknown executables, actions,
+package scripts and repository files still block. A job guard that reads only
+runtime context (`github.actor`, `github.event_name`, `needs.<job>.outputs`) is
+validated as a possible CI path and reported as unverified. A matrix axis computed
+at runtime (`fromJson(...)`) that only step commands read becomes one unverified
+value, so the job's tests run with the locally installed dependencies. Plain argv
+commands under `shell: pwsh`, including the Windows default, are read as POSIX
+commands; PowerShell syntax and multi-line test steps remain unresolved.
+
 Automatic Mocha tracer recommendations use the verified major-5 and major-6 bootstrap contracts. Exact releases still come from registry tags; obsolete Node tags cannot win by covering more legacy CI rows. An explicitly selected or installed unverified major remains unvalidated instead of being silently replaced.
 
 Agents edit only CI workflow and ignore files, where a result asks for it. Any other

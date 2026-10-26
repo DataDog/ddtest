@@ -198,19 +198,25 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 			job := workflow.Jobs[name]
 
 			resolutions := make([]commandResolution, len(job.Steps))
-			candidate := false
+			consumer := false
 			for i, step := range job.Steps {
 				resolutions[i] = resolveTestStep(root, workflow, job, step, "javascript", framework)
 				if resolutions[i].Review {
 					result.Review = append(result.Review, RuntimeFinding{Workflow: path, Job: name, Step: stepNumber(step, i), Command: step.Run, Status: StatusNotExercised, Code: CodeUnresolvedCommand, Reason: resolutions[i].Reason})
 					resolutions[i] = commandResolution{}
 				}
-				candidate = candidate || resolutions[i].Matched || resolutions[i].Reason != ""
+				consumer = consumer || resolutions[i].Matched || resolutions[i].Reason != "" && mayStartTests(step, framework)
 			}
-			if !candidate {
+			if !consumer {
+				// No step can start a selected test, so no instrumented runtime runs here.
+				for i, step := range job.Steps {
+					if resolutions[i].Reason != "" {
+						result.Review = append(result.Review, RuntimeFinding{Workflow: path, Job: name, Step: stepNumber(step, i), Command: step.Run, Status: StatusNotExercised, Code: CodeUnresolvedCommand, Reason: "Not a " + framework + " test consumer: " + resolutions[i].Reason})
+					}
+				}
 				continue
 			}
-			rows, err := runtimeMatrix(job.Strategy.Matrix)
+			rows, _, err := jobMatrix(job)
 			if err != nil {
 				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: path, Job: name, Status: StatusInconclusive, Code: CodeInvalidMatrix, Reason: err.Error()})
 				continue
@@ -376,7 +382,8 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 	for i, step := range job.Steps {
 		uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 		resolution := resolutions[i]
-		test := resolution.Matched || resolution.Reason != ""
+		// An unresolved step that can't start a test is setup, not a test entry.
+		test := resolution.Matched || resolution.Reason != "" && mayStartTests(step, frameworkName(frameworks))
 		if uses != "actions/setup-node" && uses != githubAction && !changesNodeRuntime(step.Run) && !test {
 			continue
 		}
@@ -643,4 +650,11 @@ func mochaInstrumentationDisabled(workflow ciWorkflow, job runtimeJob, step runt
 		return err == nil && resolved == "false"
 	}
 	return value == "false"
+}
+
+func frameworkName(frameworks []string) string {
+	if len(frameworks) == 0 {
+		return "jest"
+	}
+	return frameworks[0]
 }

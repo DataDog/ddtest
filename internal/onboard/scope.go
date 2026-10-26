@@ -5,7 +5,9 @@ import (
 	"maps"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/kballard/go-shellquote"
@@ -121,23 +123,44 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			lastTest := -1
 			{
-				candidate := false
-				for _, step := range job.Steps {
+				consumer, hidden := false, false
+				var outside []string
+				for i, step := range job.Steps {
 					resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
-					candidate = candidate || !resolution.Review && (resolution.Matched || resolution.Reason != "")
+					switch {
+					case resolution.Review:
+					case resolution.Matched:
+						consumer, lastTest = true, i
+					case resolution.Reason != "" && mayStartTests(step, framework):
+						hidden, lastTest = true, i
+					case resolution.Reason != "":
+						outside = append(outside, commandLocation{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: step.Run}.String()+": "+resolution.Reason)
+					}
 				}
-				if !candidate {
-					scope.Review = append(scope.Review, workflow.Path+" / "+name+": no "+framework+" invocation identified; action implementations and job conditions are outside this local validation scope.")
+				if !consumer && !hidden {
+					if len(outside) == 0 {
+						scope.Review = append(scope.Review, workflow.Path+" / "+name+": no "+framework+" invocation identified; action implementations and job conditions are outside this local validation scope.")
+					}
+					// No step here can start a selected test, so its unresolved
+					// steps can't affect local validation; keep them visible only.
+					for _, reason := range outside {
+						scope.Review = append(scope.Review, "Not a "+framework+" test consumer: "+reason)
+					}
 					continue
 				}
 			}
 
-			rows, err := runtimeMatrix(job.Strategy.Matrix)
+			rows, computed, err := jobMatrix(job)
 			if err != nil {
 				scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": "+err.Error())
 				continue
 			}
+			for _, axis := range computed {
+				scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": matrix axis "+axis+" is computed at runtime; its tests are validated with the locally installed dependencies, and other "+axis+" values remain unverified")
+			}
+			conditionNoted := false
 			for _, row := range rows {
 				job := job // Resolve this row without mutating the next row's runner.
 				if framework == "cypress" {
@@ -148,13 +171,17 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						}
 					}
 				}
-				active, err := possibleJobCondition(job.If, row)
+				active, assumed, err := possibleJobConditionPath(job.If, row)
 				if err != nil {
 					scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": "+err.Error())
 					continue
 				}
 				if !active {
 					continue
+				}
+				if assumed && !conditionNoted {
+					conditionNoted = true
+					scope.Review = append(scope.Review, workflow.Path+" / "+name+": job condition "+strconv.Quote(strings.TrimSpace(job.If))+" depends on runtime context; validated as a possible CI path, the condition itself is not verified statically.")
 				}
 				installerActive, installerSkipped := false, false
 				var pendingSetup []string
@@ -185,6 +212,12 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
 					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+					if readsComputedAxis(step.Run, computed, row) && !resolution.Matched && !mayStartTests(step, framework) {
+						// Setup that installs a computed variant is the unverified
+						// axis itself; the tests run with the installed dependencies.
+						review = append(review, scopeDiagnostic{location, "Setup reads a matrix axis computed at runtime; not replayed locally"})
+						continue
+					}
 					if allowSetupFacts && conditionErr == nil && envErr == nil {
 						directory, dirErr := repositoryDirectory(root, root, stepDirectory(workflow, job, resolved))
 						if dirErr == nil {
@@ -242,6 +275,11 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						preparation = append(preparation, resolution.Builds...)
 						pendingSetup = append(pendingSetup, resolution.Setup...)
 						review = append(review, scopeDiagnostic{location, resolution.Reason})
+						continue
+					}
+					if resolution.Reason != "" && i > lastTest && !resolution.Matched && !mayStartTests(step, framework) {
+						// Nothing after the job's last possible test can change that test.
+						review = append(review, scopeDiagnostic{location, "After the job's last " + framework + " test step; outside the test path: " + resolution.Reason})
 						continue
 					}
 					if resolution.Reason != "" {
@@ -412,4 +450,10 @@ func changesDependencies(words []string) bool {
 		}
 	}
 	return false
+}
+
+func readsComputedAxis(command string, axes []string, row map[string]any) bool {
+	return slices.ContainsFunc(axes, func(axis string) bool {
+		return row[axis] == computedAxisValue(axis) && regexp.MustCompile(`\bmatrix\.`+regexp.QuoteMeta(axis)+`\b`).MatchString(command)
+	})
 }

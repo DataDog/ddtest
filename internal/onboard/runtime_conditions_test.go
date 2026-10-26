@@ -42,6 +42,8 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		{"'bad' < matrix.number", false}, {"'bad' >= matrix.number", false},
 		{"'' < matrix.number", true}, {"'2.2e1' >= matrix.number", true},
 		{"'022' >= matrix.number", false}, {"'null' <= matrix.number", false},
+		// GitHub converts a plain decimal string compared with a number.
+		{"matrix.number == '22'", true}, {"matrix.number != '20'", true}, {"'22.0' == matrix.number", true},
 	} {
 		t.Run(tc.expression, func(t *testing.T) {
 			got, err := runtimeCondition(tc.expression, row)
@@ -49,7 +51,7 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 			require.Equal(t, tc.want, got)
 		})
 	}
-	for _, expression := range []string{"matrix.enabled == 'false'", "matrix.number == '22'", "false && github.event_name == 'push'", "matrix.node == '20.x' ||", "(true", "true garbage"} {
+	for _, expression := range []string{"matrix.enabled == 'false'", "matrix.number == 'twenty-two'", "false && github.event_name == 'push'", "matrix.node == '20.x' ||", "(true", "true garbage"} {
 		_, err := runtimeCondition(expression, row)
 		require.Error(t, err, expression)
 	}

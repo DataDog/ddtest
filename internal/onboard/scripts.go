@@ -92,7 +92,18 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		shell = runnerDefaultShell(job, nil)
 	}
 	if !supportedCIShell(shell) {
-		return unresolvedCommand("Unsupported CI shell: " + shell)
+		if !powershellArgvOnly(shell, step.Run) {
+			return unresolvedCommand("Unsupported CI shell: " + shell)
+		}
+		// These commands mean the same under pwsh and bash. pwsh runs every line
+		// and reports only the last exit code, so a multi-line test step differs.
+		posix := step
+		posix.Shell = "bash"
+		result := resolveTestStep(root, workflow, job, posix, language, framework)
+		if result.Matched && strings.Contains(strings.TrimSpace(step.Run), "\n") {
+			return unresolvedCommand("Unsupported CI shell: " + shell + " (a multi-line test step continues after a failing line)")
+		}
+		return result
 	}
 
 	if strings.ContainsAny(directory, "$`~") || (directory != "" && !filepath.IsLocal(directory)) {
@@ -489,6 +500,11 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		if slices.Equal(words, []string{"npm", "config", "get", "cache"}) {
 			return commandResolution{}
 		}
+		// npm configuration (loglevel, registry, cache) is runner setup; like
+		// dependency installation, it is never replayed locally.
+		if words[0] == "npm" && len(words) > 2 && words[1] == "config" && slices.Contains([]string{"set", "get", "list", "ls"}, words[2]) {
+			return commandResolution{ReviewReason: "npm configuration setup is outside " + framework + " validation; CI setup itself is not executed locally: " + command}
+		}
 		// These are setup/metadata commands, not explicit test entry points.
 		if (words[0] == "npm" && slices.Contains([]string{"ci", "clean-install"}, words[1])) || slices.Contains([]string{"install", "i", "--version", "--help"}, words[1]) {
 			return commandResolution{}
@@ -877,4 +893,20 @@ func lifecycleRunner(frameworks []string) (string, string) {
 		return "Playwright", "playwright"
 	}
 	return "", ""
+}
+
+// powershellArgvOnly reports whether a pwsh step is plain argv commands whose
+// meaning doesn't depend on the shell: no PowerShell variables, operators,
+// script blocks, splatting, escapes, arrays or backslash paths. Command
+// substitution $(...) is the same in both shells.
+func powershellArgvOnly(shell, run string) bool {
+	if shell != "pwsh" && shell != "powershell" || strings.TrimSpace(run) == "" || strings.Contains(run, "--%") {
+		return false
+	}
+	for i, r := range run {
+		if strings.ContainsRune("`@;|&<>{},\\", r) || r == '$' && !strings.HasPrefix(run[i:], "$(") {
+			return false
+		}
+	}
+	return true
 }

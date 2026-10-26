@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -308,7 +309,7 @@ func (p *conditionParser) atom() (any, error) {
 	if p.ifCondition && strings.HasPrefix(token, "secrets.") {
 		return nil, fmt.Errorf("GitHub does not allow the secrets context in if; set a job-level environment variable from the secret and test env.<name> instead")
 	}
-	if strings.HasPrefix(token, "inputs.") || strings.HasPrefix(token, "github.") || strings.HasPrefix(token, "steps.") || strings.HasPrefix(token, "secrets.") {
+	if strings.HasPrefix(token, "inputs.") || strings.HasPrefix(token, "github.") || strings.HasPrefix(token, "steps.") || strings.HasPrefix(token, "secrets.") || strings.HasPrefix(token, "needs.") || strings.HasPrefix(token, "vars.") {
 		if value, exists := p.env["\x00"+token]; exists {
 			return value, nil
 		}
@@ -377,13 +378,32 @@ func conditionEqual(left, right any) (bool, error) {
 		}
 		return 0, false
 	}
+	// GitHub converts a string compared with a number to a number. A plain
+	// decimal such as matrix.node != '20' has one obvious value; others stay
+	// unverified.
+	decimal := func(v any) (float64, bool) {
+		if text, ok := v.(string); ok && plainDecimal.MatchString(text) {
+			n, err := strconv.ParseFloat(text, 64)
+			return n, err == nil
+		}
+		return number(v)
+	}
 	a, aok := number(left)
 	b, bok := number(right)
 	if aok && bok {
 		return a == b, nil
 	}
+	if aok || bok {
+		if a, aok = decimal(left); aok {
+			if b, bok = decimal(right); bok {
+				return a == b, nil
+			}
+		}
+	}
 	return false, fmt.Errorf("mixed-type comparison requires review")
 }
+
+var plainDecimal = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
 
 // A job-level branch guard applies equally to installation and all consumers.
 // Enumerate that job as a possible CI path; do not assume the current branch.
@@ -394,6 +414,60 @@ var branchJobGuard = regexp.MustCompile(`^github\.ref\s*(?:==|!=)\s*'refs/(?:hea
 var forkJobOwner = regexp.MustCompile("^[A-Za-z0-9-]+$")
 
 func possibleJobCondition(value string, row map[string]any) (bool, error) {
+	active, _, err := possibleJobConditionPath(value, row)
+	return active, err
+}
+
+// Event, job-output, input and repository-variable values are unknown statically.
+var runtimeContextOperand = regexp.MustCompile(`\b(?:github|needs|inputs|vars)\.[A-Za-z0-9_.-]+`)
+
+var conditionLiteral = regexp.MustCompile(`'((?:[^']|'')*)'`)
+
+// possibleJobConditionPath reports whether some CI path can run the job. A job
+// guard that reads only runtime context (actor, event, other jobs' outputs) gates
+// the whole job, never which command runs or how it is instrumented. It is a
+// possible path when some value of that context passes; assumed reports that the
+// guard itself remains unverified.
+func possibleJobConditionPath(value string, row map[string]any) (active, assumed bool, err error) {
+	active, err = knownJobCondition(value, row)
+	if err == nil {
+		return active, false, nil
+	}
+	operands := runtimeContextOperand.FindAllString(value, -1)
+	slices.Sort(operands)
+	operands = slices.Compact(operands)
+	candidates := []string{"", "true", "false"}
+	for _, match := range conditionLiteral.FindAllStringSubmatch(value, -1) {
+		candidates = append(candidates, strings.ReplaceAll(match[1], "''", "'"))
+	}
+	slices.Sort(candidates)
+	candidates = slices.Compact(candidates)
+	if len(operands) == 0 || len(operands) > 3 || len(candidates) > 8 {
+		return false, false, err
+	}
+	env := map[string]string{}
+	var try func(int) (bool, error)
+	try = func(i int) (bool, error) {
+		if i == len(operands) {
+			return runtimeCondition(value, row, env)
+		}
+		for _, candidate := range candidates {
+			env["\x00"+operands[i]] = candidate
+			passed, err := try(i + 1)
+			if err != nil || passed {
+				return passed, err
+			}
+		}
+		return false, nil
+	}
+	passed, tryErr := try(0)
+	if tryErr != nil {
+		return false, false, err
+	}
+	return passed, passed, nil
+}
+
+func knownJobCondition(value string, row map[string]any) (bool, error) {
 	condition := strings.TrimSpace(value)
 	if strings.HasPrefix(condition, "${{") && strings.HasSuffix(condition, "}}") {
 		condition = strings.TrimSpace(condition[3 : len(condition)-2])
