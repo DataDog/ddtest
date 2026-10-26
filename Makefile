@@ -27,6 +27,12 @@ run:
 # wrapper that ddtest instrument provides to the projects it instruments, and
 # gives them ddtest's version. It takes SemVer, so a version such as
 # pre-release-<sha> becomes v0.0.0-pre-release-<sha>.
+RELEASE_BUILD = go -C ddto run ./scripts/release -main .. -name ddtest -version $(if $(filter v%,$(VERSION)),$(VERSION),v0.0.0-$(VERSION)) -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)" -o ../dist
 release:
 	mkdir -p dist
-	go -C ddto run ./scripts/release -main .. -name ddtest -version $(if $(filter v%,$(VERSION)),$(VERSION),v0.0.0-$(VERSION)) -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)" -o ../dist
+	$(RELEASE_BUILD) -target linux/amd64
+	$(RELEASE_BUILD) -target linux/arm64
+	$(RELEASE_BUILD) -target darwin/amd64
+	$(RELEASE_BUILD) -target darwin/arm64
+	$(RELEASE_BUILD) -target windows/amd64
+	$(RELEASE_BUILD) -target windows/arm64
