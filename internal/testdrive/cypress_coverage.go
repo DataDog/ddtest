@@ -30,8 +30,8 @@ type cypressTestCode struct {
 
 // cypressSourceCoverage checks that the real suite's coverage, read by the
 // tracer from the tested page's window.__coverage__, names application files.
-// Files in the Cypress folder, the support file, specs and dependencies are
-// not application code.
+// Files in the Cypress folder, support files and their helpers, specs and
+// dependencies are not application code.
 func cypressSourceCoverage(root string, code cypressTestCode, facts intake.Facts, native []jestTest) *coverageSummary {
 	if canonical, err := filepath.EvalSymlinks(root); err == nil {
 		root = canonical
@@ -45,7 +45,7 @@ func cypressSourceCoverage(root string, code cypressTestCode, facts intake.Facts
 			}
 		}
 	}
-	support, _ := cucumberCoverageFile(root, code.SupportFile)
+	isSupport, _ := cucumberSupportClassifier(root, &cucumberSupport{RequirePaths: []string{code.SupportFile}})
 	specs := map[string]bool{}
 	for _, test := range native {
 		if local, ok := cucumberCoverageFile(root, test.File); ok {
@@ -68,7 +68,7 @@ func cypressSourceCoverage(root string, code cypressTestCode, facts intake.Facts
 				if invalidExample == "" {
 					invalidExample = reportText(file)
 				}
-			case specs[local] || local == support || strings.HasPrefix(local, testFolder) || strings.HasPrefix(local, "node_modules/") || strings.Contains(local, "/node_modules/"):
+			case specs[local] || isSupport(local) || strings.HasPrefix(local, testFolder) || strings.HasPrefix(local, "node_modules/") || strings.Contains(local, "/node_modules/"):
 				testOnly = true
 			default:
 				covered = true

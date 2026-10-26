@@ -288,6 +288,46 @@ func TestCypressSourceCoverageCountsOnlyApplicationFiles(t *testing.T) {
 	require.Equal(t, "observed", cypressSourceCoverage(root, cypressTestCode{Project: root, SupportFile: filepath.Join(root, "test/support.js")}, facts("test/support.js", "src/app.js"), native).Status)
 }
 
+func TestCypressSourceCoverageExcludesCustomSupportHelpers(t *testing.T) {
+	for _, tc := range []struct {
+		name, support, covered, packageRoot, want string
+	}{
+		{"support helper", "test/support/e2e.js", "test/support/commands.js", "", "not observed"},
+		{"nested support helper", "test/support/e2e.js", "test/support/helpers/commands.js", "", "not observed"},
+		{"adjacent directory", "test/support/e2e.js", "test/support-extra/app.js", "", "observed"},
+		{"repository root support", "support.js", "app.js", "", "observed"},
+		{"package root support", "packages/web/support.js", "packages/web/app.js", "packages/web", "observed"},
+	} {
+		for _, suiteLevel := range []bool{false, true} {
+			t.Run(tc.name+map[bool]string{false: "/test", true: "/suite"}[suiteLevel], func(t *testing.T) {
+				root := t.TempDir()
+				for _, file := range []string{tc.support, tc.covered} {
+					require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, file)), 0755))
+					requireWriteFile(t, filepath.Join(root, file), "")
+				}
+				if tc.packageRoot != "" {
+					requireWriteFile(t, filepath.Join(root, tc.packageRoot, "package.json"), "{}")
+				}
+				files := []string{filepath.Join(root, tc.covered)}
+				facts := intake.Facts{TestCount: 1, CoverageLevel: "test", Tests: []intake.Test{{Module: "cypress", Suite: "spec.cy.js", Name: "runs", CoveredFiles: files}}}
+				if suiteLevel {
+					facts.CoverageLevel = "suite"
+					facts.Tests[0].CoveredFiles = nil
+					facts.SuiteCoverages = []intake.SuiteCoverage{{Module: "cypress", Suite: "spec.cy.js", Files: files}}
+				}
+				coverage := cypressSourceCoverage(root, cypressTestCode{SupportFile: filepath.Join(root, tc.support)}, facts, nil)
+				require.Equal(t, tc.want, coverage.Status)
+				if tc.want == "not observed" {
+					require.Zero(t, coverage.CoveredTests)
+					require.Contains(t, coverage.Reason, "only Cypress specs, support code or dependencies")
+				} else {
+					require.Equal(t, 1, coverage.CoveredTests)
+				}
+			})
+		}
+	}
+}
+
 func TestCypressSourceCoverageRebasesPrebuiltPathsIntoTheIsolatedCopy(t *testing.T) {
 	source, copied := t.TempDir(), t.TempDir()
 	for _, root := range []string{source, copied} {
