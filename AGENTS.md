@@ -6,6 +6,8 @@ This file provides guidance to AI agents when working with code in this reposito
 
 This is the DDTest (`ddtest`), a command-line tool that implements Datadog Test Optimization to automatically identify and skip tests that are unlikely to fail based on code changes. The tool integrates with Datadog's CI Visibility to provide Test Impact Analysis.
 
+For Go, `ddtest instrument` reports a project's tests itself. It comes from the Go module in `ddto/` (`github.com/DataDog/ddtest/ddto`), with its own tests, workflow and [agent guide](ddto/AGENTS.md); work on it follows that guide's "Changing this repository" section.
+
 ## Dev Commands
 
 ### Build
@@ -42,6 +44,7 @@ go run main.go plan   # Run plan command directly
 ```bash
 go test ./internal/runner/  # Test specific package
 go test -v ./...           # Verbose testing
+cd ddto && go test ./...   # The Go instrumentation's module, which make test does not run
 ```
 
 ## Development
@@ -73,7 +76,9 @@ documentation-only changes, describe the manual documentation/usage review.
 
 ### Core Components
 
-- **main.go**: Entry point using cobra CLI framework
+- **main.go**: Entry point using cobra CLI framework; hands `ddtest instrument`, and the modes in which the Go instrumentation starts ddtest again, to `ddto/cli` before cobra runs
+- **ddto/**: The Go instrumentation's own module, behind `ddtest instrument`
+- **scripts/**: The install scripts that each release carries, and their tests
 - **internal/ciprovider/**: Integrations with CI providers (GitHub Actions for example)
 - **internal/cmd/**: Command definitions and CLI setup
 - **internal/ext/**: Tools for interfacing with external world (OS)

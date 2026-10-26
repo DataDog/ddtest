@@ -90,8 +90,10 @@ creating or pushing a tag locally:
 2. Select **Run workflow**, leave the branch set to `main`, and enter an unused
    version such as `v1.8.0` (`vMAJOR.MINOR.PATCH`, without leading zeroes).
 3. Run the workflow. It checks the initiator's permissions, checks out the latest
-   `main`, builds all six binaries, creates the tag at that exact checkout commit,
-   and creates a draft release with generated notes and the binaries attached.
+   `main`, builds all six binaries with `make release`, checks that the install
+   scripts install the Linux binary from those files, creates the tag at that
+   exact checkout commit, and creates a draft release with generated notes and
+   the binaries, `install.sh`, `install.ps1` and `SHA256SUMS` attached.
 4. Follow the link in the workflow summary, review the notes and assets, and
    publish the draft.
 
