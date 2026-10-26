@@ -77,7 +77,7 @@ func TestFinalResponseCarriesVerbatimRelayInstruction(t *testing.T) {
 	require.NoError(t, RenderAgentResult(&out, result, "agent"))
 	var state AgentResult
 	require.NoError(t, json.Unmarshal(out.Bytes(), &state))
-	require.Equal(t, "Run next_command. "+FinalResponseInstruction+" "+ReadWholeInstruction, state.Instruction)
+	require.Equal(t, FinalResponseInstruction+" Run next_command. "+ReadWholeInstruction, state.Instruction, "the relay rule comes first")
 	out.Reset()
 	require.NoError(t, RenderAgentResult(&out, AgentResult{Status: "ready", Phase: "onboarding"}, "agent"))
 	state = AgentResult{}
