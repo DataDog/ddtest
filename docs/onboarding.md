@@ -256,7 +256,7 @@ receipts, dependency-readiness handoffs, and the final `testdrive --report` resp
 Automatic Ruby CI edits remain unsupported; `onboard` supplies the manual action
 setup and exact resume command.
 Run `ddtest onboard --framework rspec` (or `minitest`) for the manual setup
-steps, then retain both reports and the final response from plain testdrive.
+steps, then run the supplied validation command and retain both reports and its saved final response.
 Successful plain Ruby validation reports `PASSED`. The structured coordinator
 reports `COMPLETE LOCALLY` only after every selected configuration, supported
 feature, source-preservation check and Git/gem report-exclusion check passes.
