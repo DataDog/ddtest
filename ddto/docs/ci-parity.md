@@ -283,8 +283,8 @@ starts from its executable write their counters; `ci_shards.py coverage` merges
 both into one profile with paths relative to ddtest's repository. Datadog
 merges the reports of a commit, and
 [`code-coverage.datadog.yml`](../../code-coverage.datadog.yml) leaves the
-incorporated upstream sources, tools, test helpers and fixtures out of the
-totals. The Mini runtime's code that runs inside the fixtures' test processes
+incorporated upstream sources, the code that msgp generates, tools, test
+helpers and fixtures out of the totals. The Mini runtime's code that runs inside the fixtures' test processes
 counts only through its unit tests.
 
 The normal and deferred `testing` matrices share one covered set of SDK, Mini
