@@ -34,9 +34,12 @@ var (
 	}
 )
 
-// sharedDriver builds ddto once per test process. The driver is an
-// immutable build of this checkout that tests only execute, so every fixture
-// can share it instead of linking it again. TestMain owns its directory.
+// sharedDriver builds ddtest, which runs ddto as ddtest instrument, once per
+// test process: ddto's module is the ddto directory of ddtest's checkout.
+// The driver is an immutable build of this checkout that tests only execute,
+// so every fixture can share it instead of linking it again. TestMain owns
+// its directory. Commands of the driver run as ddtest instrument; see
+// driverArgs.
 func sharedDriver(t *testing.T, root string) string {
 	t.Helper()
 	sharedDriverBuild.once.Do(func() {
@@ -45,9 +48,9 @@ func sharedDriver(t *testing.T, root string) string {
 			sharedDriverBuild.err = err.Error()
 			return
 		}
-		bin := filepath.Join(dir, executableName("ddto"))
-		// Like a user's build, ddto keeps the checkout's VCS information.
-		out, stderr, code, _, err := runCommand(root, testEnv("GOFLAGS="), "go", "build", "-o", bin, "./cmd/ddto")
+		bin := filepath.Join(dir, executableName("ddtest"))
+		// Like a user's build, ddtest keeps the checkout's VCS information.
+		out, stderr, code, _, err := runCommand(filepath.Dir(root), testEnv("GOFLAGS="), "go", "build", "-o", bin, ".")
 		switch {
 		case err != nil:
 			sharedDriverBuild.err = err.Error()

@@ -186,8 +186,25 @@ func runsOrchestrionReference(name string, args []string) bool {
 	return false
 }
 
+// driverArgs returns the arguments of a command of name: the driver, ddtest,
+// runs ddto as ddtest instrument. The modes in which ddto starts its own
+// executable stay as they are, as ddto runs them.
+func driverArgs(name string, args []string) []string {
+	if name == "" || name != sharedDriverBuild.path {
+		return args
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "test-exec", "go-shim-exec", "ci-git-worker", "tool-overlay":
+			return args
+		}
+	}
+	return append([]string{"instrument"}, args...)
+}
+
 // runCommandWithin is runCommand with another bound for the command.
 func runCommandWithin(timeout time.Duration, dir string, env []string, name string, args ...string) (string, string, int, time.Duration, error) {
+	args = driverArgs(name, args)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)

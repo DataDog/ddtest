@@ -288,7 +288,8 @@ func TestMiniTestSessionSpansTheCommand(t *testing.T) {
 		if code != 1 || !reflect.DeepEqual(got.tests, []string{"TestAlpha pass", "TestBeta fail"}) || !reflect.DeepEqual(got.sessions, []string{"fail"}) || got.modules != 2 || len(got.sessionIDs) != 1 {
 			t.Fatalf("exit %d, tests %v, sessions %v, modules %d, session IDs %v\n%s", code, got.tests, got.sessions, got.modules, got.sessionIDs, output)
 		}
-		want := filepath.Base(driver) + " test --runtime=mini -count=1 -ldflags=-X=main.private=private-flag-value ./alpha ./beta"
+		// The session's command is the driver's own, ddtest instrument.
+		want := filepath.Base(driver) + " instrument test --runtime=mini -count=1 -ldflags=-X=main.private=private-flag-value ./alpha ./beta"
 		if len(got.commands) != 1 || !got.commands[want] {
 			t.Fatalf("commands %v, want %q", got.commands, want)
 		}

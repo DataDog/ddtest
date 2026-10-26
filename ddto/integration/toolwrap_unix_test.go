@@ -53,7 +53,7 @@ func TestToolWrapperWaitStopsOnSignal(t *testing.T) {
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_SH); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(driver, args...)
+	cmd := exec.Command(driver, driverArgs(driver, args)...)
 	cmd.Dir, cmd.Env = dir, env
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout

@@ -136,7 +136,7 @@ func TestMiniSignalDuringWorkerWaitEndsDDTO(t *testing.T) {
 	defer server.Close()
 	writeBuildFixture(t, dir, map[string]string{"upload_wait_test.go": uploadWaitTest})
 	temp := t.TempDir()
-	cmd := exec.Command(driver, "test", "--runtime=mini", "--git-upload-timeout=5m", "-count=1", "-run=^(TestPass|TestWaitForUpload)$", ".")
+	cmd := exec.Command(driver, driverArgs(driver, []string{"test", "--runtime=mini", "--git-upload-timeout=5m", "-count=1", "-run=^(TestPass|TestWaitForUpload)$", "."})...)
 	cmd.Dir = dir
 	cmd.Env = append(testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL,
 		"DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", "DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=true", "DD_GIT_REPOSITORY_URL=", "DD_GIT_COMMIT_SHA=",

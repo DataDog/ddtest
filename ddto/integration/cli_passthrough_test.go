@@ -52,7 +52,7 @@ func TestCLIPassesOtherCommandsThrough(t *testing.T) {
 	// An invalid DD_LOGGING_RATE made ddto's initialization warn.
 	env := testEnv("PASSTHROUGH_MARK=kept", "DD_LOGGING_RATE=bad")
 
-	cmd := exec.Command(driver, program, "7", "a b")
+	cmd := exec.Command(driver, driverArgs(driver, []string{program, "7", "a b"})...)
 	cmd.Dir, cmd.Env, cmd.Stdin = dir, env, strings.NewReader("input")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -117,7 +117,7 @@ func TestCLIPassesOtherCommandsThrough(t *testing.T) {
 			r.Close()
 			cmd := exec.Command(name)
 			if name == driver {
-				cmd.Args = append(cmd.Args, "true")
+				cmd.Args = append(cmd.Args, driverArgs(driver, []string{"true"})...)
 			}
 			cmd.Dir, cmd.Env, cmd.Stderr = dir, debugEnv, w
 			err = cmd.Run()
@@ -163,7 +163,7 @@ func TestCLIPassesOtherCommandsThrough(t *testing.T) {
 		}
 		lookupThroughPath(t, env, driver, program, filepath.Dir(notExecutable))
 	}
-	if _, stderr, code := command(t, dir, env, driver); code != 2 || !strings.Contains(stderr, "usage: ddto") {
+	if _, stderr, code := command(t, dir, env, driver); code != 2 || !strings.Contains(stderr, "usage: ddtest instrument") {
 		t.Fatalf("no command: %d %q; want the usage and 2", code, stderr)
 	}
 }
@@ -351,7 +351,7 @@ func main() {
 		os.Exit(3)
 	}
 	os.Setenv("GO_SHIM_DEPTH", strconv.Itoa(depth+1))
-	cmd := exec.Command(os.Getenv("GO_SHIM_DDTO"), append([]string{"go"}, os.Args[1:]...)...)
+	cmd := exec.Command(os.Getenv("GO_SHIM_DDTO"), append([]string{"instrument", "go"}, os.Args[1:]...)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	var exit *exec.ExitError
 	if err := cmd.Run(); errors.As(err, &exit) {

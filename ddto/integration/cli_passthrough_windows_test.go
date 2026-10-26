@@ -47,7 +47,7 @@ func TestCLIPassesWindowsCommandLineThrough(t *testing.T) {
 	// through ddto.
 	for _, arguments := range []string{script + ` "one&echo.INJECTED"`, `"` + script + `" "one&echo.INJECTED"`} {
 		want, wantCode := run(script, arguments)
-		got, code := run(driver, `"`+driver+`"  `+arguments)
+		got, code := run(driver, `"`+driver+`" instrument  `+arguments)
 		if got != want || code != wantCode {
 			t.Fatalf("%s through ddto: %q %d; directly: %q %d", arguments, got, code, want, wantCode)
 		}
@@ -98,7 +98,7 @@ func TestCLIPassesWindowsEnvironmentThrough(t *testing.T) {
 	if !strings.Contains(want, `SYSTEMROOT="" set=false`) {
 		t.Fatalf("directly: %q; want no SYSTEMROOT", want)
 	}
-	if got := run(driver, driver, program, "0"); got != want {
+	if got := run(driver, driver, "instrument", program, "0"); got != want {
 		t.Fatalf("through ddto: %q; directly: %q", got, want)
 	}
 }

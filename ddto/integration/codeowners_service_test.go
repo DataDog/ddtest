@@ -216,7 +216,7 @@ func TestMiniCodeOwnersCompiledServices(t *testing.T) {
 				{name: "default-format", pkg: "alpha", service: "service-alpha-team"},
 				{name: "custom-format", pkg: "alpha", service: "dd-go-alpha-team", env: []string{"DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS_FORMAT=dd-go-$(owner)"}},
 				{name: "explicit-service", pkg: "alpha", service: "explicit", env: []string{"DD_SERVICE=explicit"}},
-				{name: "disabled", pkg: "alpha", service: "ddto", env: []string{"DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS=false"}},
+				{name: "disabled", pkg: "alpha", service: "ddtest", env: []string{"DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS=false"}},
 				{name: "external", pkg: "beta", service: "service-beta-team", args: []string{"-test.run=^TestExternal$"}},
 				{name: "unowned", pkg: "unowned", service: "service-not-owned"},
 				{name: "other-working-directory", pkg: "alpha", service: "service-alpha-team", runDirectory: "beta"},
