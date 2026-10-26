@@ -51,7 +51,7 @@ func TestRubyGemPackagingUsesCopyAndChecksReportMembership(t *testing.T) {
 	if _, err := exec.LookPath("ruby"); err != nil {
 		t.Skip("Ruby is required")
 	}
-	for _, glob := range []string{"lib/**/*", "{lib,.testoptimization}/**/*"} {
+	for _, glob := range []string{"lib/**/*", "{lib,.testoptimization}/**/*", "git-index"} {
 		t.Run(glob, func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0700))
@@ -59,17 +59,37 @@ func TestRubyGemPackagingUsesCopyAndChecksReportMembership(t *testing.T) {
 			command := exec.CommandContext(t.Context(), "git", "init", "--quiet", root)
 			data, err := command.CombinedOutput()
 			require.NoError(t, err, string(data))
-			requireWriteFile(t, filepath.Join(root, "fixture.gemspec"), "Gem::Specification.new do |s|\n s.name='fixture';s.version='1.0';s.files=Dir['"+glob+"'];File.write('gemspec-loaded.txt',Dir.pwd)\nend\n")
+			filesExpression := "Dir['" + glob + "']"
+			if glob == "git-index" {
+				filesExpression = "`git ls-files -z`.split(\"\\x00\")"
+			}
+			requireWriteFile(t, filepath.Join(root, "fixture.gemspec"), "Gem::Specification.new do |s|\n s.name='fixture';s.version='1.0';s.files="+filesExpression+";File.write('gemspec-loaded.txt',Dir.pwd)\nend\n")
+			// Real clones have an index; a brand-new git init alone misses this case.
+			data, err = exec.CommandContext(t.Context(), "git", "-C", root, "add", "lib/fixture.rb", "fixture.gemspec").CombinedOutput()
+			require.NoError(t, err, string(data))
+			indexPath := filepath.Join(root, ".git/index")
+			if glob == "git-index" {
+				// Linked worktrees copy a .git file pointing outside the checkout.
+				metadata := filepath.Join(t.TempDir(), "metadata")
+				require.NoError(t, os.Rename(filepath.Join(root, ".git"), metadata))
+				requireWriteFile(t, filepath.Join(root, ".git"), "gitdir: "+metadata+"\n")
+				indexPath = filepath.Join(metadata, "index")
+			}
+			indexBefore, err := os.ReadFile(indexPath)
+			require.NoError(t, err)
 			drive := &Testdrive{repositoryRoot: root, language: "ruby", executor: &ext.DefaultCommandExecutor{}}
 			// The real executor uses the command's explicit owned working directory.
 			t.Chdir(root)
 			result := drive.rubyPackageExclusions(t.Context())
-			if glob == "lib/**/*" {
+			if glob != "{lib,.testoptimization}/**/*" {
 				require.Equal(t, "passed", result.Status, result.Reason)
 			} else {
 				require.Equal(t, "failed", result.Status, result.Reason)
 				require.Contains(t, result.Reason, "includes local validation reports")
 			}
+			indexAfter, err := os.ReadFile(indexPath)
+			require.NoError(t, err)
+			require.Equal(t, indexBefore, indexAfter, "the original Git index must be unchanged")
 			require.NoFileExists(t, filepath.Join(root, "gemspec-loaded.txt"))
 			require.NoDirExists(t, filepath.Join(root, ".testoptimization"))
 		})

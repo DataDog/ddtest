@@ -130,7 +130,11 @@ func (t *Testdrive) rubyPackageExclusions(ctx context.Context) onboard.WorkflowC
 			if !ok {
 				return errors.New("gemspec inspection requires a working-directory executor")
 			}
-			// Git-based gemspecs read only the copied index, never the original index.
+			// Replace copied metadata (including worktree pointers) with an owned
+			// repository. Git-based gemspecs need only the original file index.
+			if err := os.RemoveAll(filepath.Join(root, ".git")); err != nil {
+				return err
+			}
 			if _, err := executor.CombinedOutputInDirectory(ctx, root, "git", []string{"init", "--quiet"}, map[string]string{"GIT_DIR": filepath.Join(root, ".git"), "GIT_WORK_TREE": root}); err != nil {
 				return err
 			}
