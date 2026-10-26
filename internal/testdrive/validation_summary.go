@@ -3,6 +3,7 @@ package testdrive
 import (
 	"fmt"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,7 +37,7 @@ func summarizeValidation(result validationResult) validationSummary {
 	if result.CheckOnly {
 		summary.LocalValidation = "NOT EXERCISED"
 	}
-	if result.CheckOnly && result.Retained != nil && result.Retained.Result != nil {
+	if (result.CheckOnly || result.StoppedBeforeExecution) && result.Retained != nil && result.Retained.Result != nil {
 		summary.LocalValidation = strings.ToUpper(executionStatus(result.Retained.Result)) + " EARLIER; NOT RERUN"
 	}
 	if result.Compatibility.Status == "suspected regression" && !result.CheckOnly {
@@ -149,6 +150,30 @@ func summarizeValidation(result validationResult) validationSummary {
 	return summary
 }
 
+// A focused command can execute and pass without matching any discovered CI
+// configuration exactly. Say so next to the zero configuration counts.
+func uncreditedExecution(result validationResult) string {
+	command := ""
+	for _, run := range result.Runs {
+		if run.Role == roleBaseline {
+			command = run.Command
+			break
+		}
+	}
+	text := "This run's command executed and was paired"
+	if command != "" {
+		text = fmt.Sprintf("This run's command (%s) executed and was paired", command)
+	}
+	text += ", but matches no discovered CI configuration exactly, so no CI configuration is credited"
+	for _, item := range result.Configurations {
+		if len(item.EnvironmentDifferences) > 0 {
+			text += " (" + strings.TrimSuffix(item.Compatibility.Reason, ".") + ")"
+			break
+		}
+	}
+	return text + ".\n"
+}
+
 // One copyable response, built from the same facts as the compact report. Only
 // link retained files, and never present an earlier HTML report as a new run.
 func validationHandoff(result validationResult) string {
@@ -165,6 +190,9 @@ func validationHandoff(result validationResult) string {
 		fmt.Fprintf(&block, "Configurations: %d/%d validated; %d executed, %d paired; %d blocked, %d not exercised, %d incomplete.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete)
 		if coverage.Excluded > 0 {
 			fmt.Fprintf(&block, "CI opt-outs: %d excluded from instrumentation; not executed or validated locally. Original CI tests are preserved.\n", coverage.Excluded)
+		}
+		if coverage.Executed == 0 && !result.CheckOnly && hasValidationPair(result) {
+			block.WriteString(uncreditedExecution(result))
 		}
 	}
 	current := !result.CheckOnly && (result.LastExecution == nil || result.LastExecution.Current)
@@ -199,6 +227,9 @@ func validationHandoff(result validationResult) string {
 		fmt.Fprintf(&block, " %s not supported.", strings.Join(unsupported, ", "))
 	}
 	block.WriteByte('\n')
+	for _, hint := range result.Compatibility.Hints {
+		block.WriteString(hint + "\n")
+	}
 	coverageRuns, coveredRuns, coveredTests, totalTests := 0, 0, 0, 0
 	var levels []string
 	for _, run := range result.Runs {
@@ -237,6 +268,13 @@ func validationHandoff(result validationResult) string {
 	if summary.LocalNode != "" {
 		fmt.Fprintf(&block, "Local runtime: Node %s.\n", summary.LocalNode)
 	}
+	if len(result.AmbientDatadogEnvironment) > 0 {
+		var settings []string
+		for _, key := range slices.Sorted(maps.Keys(result.AmbientDatadogEnvironment)) {
+			settings = append(settings, key+"="+result.AmbientDatadogEnvironment[key])
+		}
+		fmt.Fprintf(&block, "Ambient Datadog settings (not from CI) reached local runs: %s. CI runs without them unless the workflow sets them.\n", strings.Join(settings, ", "))
+	}
 	if result.CheckOnly {
 		block.WriteString("Evidence: check-only; paired execution and feature controls were not rerun.\n")
 	}
@@ -244,6 +282,8 @@ func validationHandoff(result validationResult) string {
 		if result.CheckOnly {
 			// Check-only keeps the last full run as history; it isn't stale, only not rerun.
 			fmt.Fprintf(&block, "Evidence: check-only kept the earlier full execution (%s) as history without rerunning it; testdrive --report reports that execution.\n", result.LastExecution.Status)
+		} else if result.StoppedBeforeExecution {
+			fmt.Fprintf(&block, "Evidence: this attempt stopped before running tests; the earlier full execution (%s) is kept as history, not rerun. Resolve the blocker, then rerun full validation.\n", result.LastExecution.Status)
 		} else {
 			block.WriteString("Evidence: earlier execution is stale; rerun full validation after configuration checks or edits.\n")
 		}
@@ -288,6 +328,9 @@ func validationHandoff(result validationResult) string {
 			block.WriteString(" — " + briefValidationText(result.Cleanup.Reason))
 		}
 		block.WriteString(".")
+		if len(result.Cleanup.Leftovers) > 0 {
+			fmt.Fprintf(&block, " Left in the checkout: %s; remove them unless they belong there.", strings.Join(result.Cleanup.Leftovers, ", "))
+		}
 	} else {
 		block.WriteString("\nCleanup: not recorded.")
 	}

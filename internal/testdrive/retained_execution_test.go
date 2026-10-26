@@ -3,6 +3,7 @@ package testdrive
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
@@ -83,6 +84,28 @@ func TestFailedFullRunNeverReusesEarlierPass(t *testing.T) {
 	require.False(t, got.LastExecution.Current)
 	require.False(t, got.Success)
 	require.Equal(t, "INCOMPLETE", got.Summary.LocalValidation)
+}
+
+func TestStoppedWorkflowAttemptKeepsEarlierExecutionAndFindings(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, finishValidation(&bytes.Buffer{}, root, pairedReport("earlier pass", "passed")))
+	requireWriteFile(t, htmlReportPath(root), "earlier findings")
+	invalidatePriorWorkflow(root, "jest", onboard.AgentResult{Code: "scope_unresolved", Reason: "Cannot statically resolve command: sudo apt-get -y install lcov"})
+	got := readValidationReport(t, root)
+	html, err := os.ReadFile(htmlReportPath(root))
+	require.NoError(t, err)
+	require.Equal(t, "earlier findings", string(html))
+	require.True(t, got.StoppedBeforeExecution)
+	require.False(t, got.Success)
+	require.NotNil(t, got.Retained)
+	require.Equal(t, "earlier pass", got.Retained.Result.Session)
+	require.NotNil(t, got.LastExecution)
+	require.False(t, got.LastExecution.Current)
+	require.Equal(t, "INCOMPLETE", got.Summary.Status)
+	require.Equal(t, "PASSED EARLIER; NOT RERUN", got.Summary.LocalValidation)
+	require.Contains(t, got.Summary.FinalResponse, "this attempt stopped before running tests; the earlier full execution (passed) is kept as history")
+	require.Contains(t, got.Summary.FinalResponse, "Previous HTML report (not regenerated)")
+	require.NotContains(t, got.Summary.FinalResponse, "stale")
 }
 
 func TestReportsCanReplaceExistingDestinationTwice(t *testing.T) {

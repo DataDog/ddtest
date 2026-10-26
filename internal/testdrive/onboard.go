@@ -903,7 +903,7 @@ func invalidatePriorWorkflow(root, framework string, state onboard.AgentResult) 
 	if err != nil || previous == nil || previous.Framework != framework {
 		return
 	}
-	result := validationResult{Session: planSession().ID(), Framework: framework, Error: state.Code + ": " + state.Reason,
+	result := validationResult{Session: planSession().ID(), Framework: framework, Error: state.Code + ": " + state.Reason, StoppedBeforeExecution: true,
 		Compatibility: verdict{Status: "not exercised", Reason: "This workflow attempt stopped before a current full execution."},
 		Workflow:      &WorkflowEvidence{Fingerprint: state.Fingerprint, Node: currentNodeVersion(), Checks: []onboard.WorkflowCheck{{Name: state.Code, Status: "failed", Reason: state.Reason}}}}
 	_ = finishValidation(io.Discard, root, result) // A successfully written INCOMPLETE report also returns an error.

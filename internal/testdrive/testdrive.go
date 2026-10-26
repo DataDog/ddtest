@@ -662,6 +662,29 @@ func (t *Testdrive) setConfigurationScope(result *validationResult, scope onboar
 	setSingleConfigurationScope(t.repositoryRoot, result, scope, command, t.configurationEnvironment)
 }
 
+// ambientDatadogEnvironment lists inherited DD_* values that test commands see
+// because neither ddtest nor the CI configuration sets them. A local workaround
+// like disabling an instrumentation must show up in the report.
+func ambientDatadogEnvironment(configured map[string]string) map[string]string {
+	managed := testEnvironment("", "")
+	maps.Copy(managed, reportingEnvironment("", ""))
+	ambient := map[string]string{}
+	for _, entry := range os.Environ() {
+		key, value, _ := strings.Cut(entry, "=")
+		if !strings.HasPrefix(key, "DD_") && !strings.HasPrefix(key, "DATADOG_") {
+			continue
+		}
+		if _, ok := managed[key]; ok {
+			continue
+		}
+		if _, ok := configured[key]; ok {
+			continue
+		}
+		ambient[key] = value
+	}
+	return ambient
+}
+
 // Startup recovery runs under the repository lock, before any new work.
 func (t *Testdrive) recoverStartup(output io.Writer) error {
 	if err := recoverSessions(t.repositoryRoot, output); err != nil {
@@ -693,6 +716,14 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	t.session = session
 	result = validationResult{CheckOnly: t.checkOnly, Session: session.ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel,
 		Compatibility: verdict{Status: "inconclusive", Reason: "Validation did not complete."}}
+	if !t.checkOnly {
+		result.AmbientDatadogEnvironment = reportedEnvironment(ambientDatadogEnvironment(t.configurationEnvironment))
+	}
+	// Isolated configurations run in a disposable copy; anything else runs in the checkout.
+	var entriesBefore map[string]bool
+	if !t.isolated {
+		entriesBefore = checkoutEntries(t.repositoryRoot)
+	}
 	defer func() {
 		cleanupErr := session.Close()
 		var supervision *processSupervisionError
@@ -709,6 +740,13 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		}
 		if cleanupErr != nil {
 			result.Cleanup = &verdict{Status: "failed", Reason: reportText(cleanupErr.Error())}
+		}
+		if entriesBefore != nil {
+			// The test command's own outputs are not ddtest's to delete; name them instead of passing silently.
+			if leftovers := checkoutLeftovers(entriesBefore, checkoutEntries(t.repositoryRoot)); len(leftovers) > 0 {
+				result.Cleanup.Leftovers = leftovers
+				result.Cleanup.Reason += " Left in the checkout by commands run there: " + strings.Join(leftovers, ", ") + "."
+			}
 		}
 		runErr = errors.Join(runErr, cleanupErr)
 		if runErr != nil {

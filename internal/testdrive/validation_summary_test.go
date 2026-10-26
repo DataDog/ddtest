@@ -362,3 +362,18 @@ func TestFeatureCountsDoNotHideUnexpectedUnsupportedChecks(t *testing.T) {
 		})
 	}
 }
+
+func TestHandoffExplainsAnUncreditedFocusedExecution(t *testing.T) {
+	result := pairedReport("focused", "passed")
+	result.FocusedCommand = true
+	result.Configurations = []configurationResult{{
+		TestCommand:            onboard.TestCommand{Command: "npm run test-ci", Environment: map[string]string{"npm_config_loglevel": "silent"}},
+		Status:                 "not exercised",
+		EnvironmentDifferences: []string{"npm_config_loglevel"},
+		Compatibility:          verdict{Status: "not exercised", Reason: "CI environment differs for: npm_config_loglevel; run --all to validate those values."},
+	}}
+	result.Summary = summarizeValidation(result)
+	response := validationHandoff(result)
+	require.Contains(t, response, "Configurations: 0/1 validated; 0 executed, 0 paired")
+	require.Contains(t, response, "This run's command (pnpm exec jest --config original.js) executed and was paired, but matches no discovered CI configuration exactly, so no CI configuration is credited (CI environment differs for: npm_config_loglevel; run --all to validate those values).")
+}

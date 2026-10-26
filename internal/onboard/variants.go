@@ -120,7 +120,9 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			continue
 		}
 		applicationCoverage := len(frameworks) > 0 && frameworks[0] == "cypress" && key == "DD_TEST_COVERAGE"
-		if strings.HasPrefix(key, "DD_") && !applicationCoverage {
+		// Other DD_* settings configure CI's agent, intake or session, which local
+		// validation replaces. Plugin settings change test behavior and are kept.
+		if strings.HasPrefix(key, "DD_") && !applicationCoverage && !TracerPluginSetting(key) {
 			delete(env, key)
 			continue
 		}
@@ -330,4 +332,18 @@ func npmDependencyPreparation(words []string) bool {
 		}
 	}
 	return true
+}
+
+// TracerPluginSetting reports whether a DD_* variable selects which tracer
+// integrations load, such as disabling a plugin that conflicts with the
+// project. These are customer behavior, not intake or session configuration.
+func TracerPluginSetting(key string) bool {
+	switch key {
+	case "DD_TRACE_DISABLED_INSTRUMENTATIONS", "DD_TRACE_DISABLED_PLUGINS":
+		return true
+	}
+	name, ok := strings.CutPrefix(key, "DD_TRACE_")
+	plugin, enabled := strings.CutSuffix(name, "_ENABLED")
+	// DD_TRACE_ENABLED itself switches the whole tracer; local runs control it.
+	return ok && enabled && plugin != ""
 }

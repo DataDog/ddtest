@@ -32,6 +32,10 @@ type verdict struct {
 	Reason          string   `json:"reason"`
 	DifferenceCount int      `json:"difference_count,omitempty"`
 	Differences     []string `json:"differences,omitempty"`
+	// Untracked or ignored checkout entries a run in the checkout left behind.
+	Leftovers []string `json:"leftovers,omitempty"`
+	// Known causes worth checking first; they never change the status.
+	Hints []string `json:"hints,omitempty"`
 }
 
 type featureResult struct {
@@ -205,6 +209,12 @@ type validationResult struct {
 	TelemetryOnly  bool `json:"telemetry_only,omitempty"`
 	SchemaVersion  int  `json:"schema_version"`
 	FocusedCommand bool `json:"focused_command,omitempty"`
+	// A workflow gate stopped this attempt before any test command. The earlier
+	// execution and its HTML findings stay as history; the handoff is still invalidated.
+	StoppedBeforeExecution bool `json:"stopped_before_execution,omitempty"`
+	// DD_* values inherited from ddtest's own environment that reached the test
+	// commands without coming from CI or ddtest, with secret-like values masked.
+	AmbientDatadogEnvironment map[string]string `json:"ambient_datadog_environment,omitempty"`
 	// Leading VAR=value assignments of --command, with secret-like values masked.
 	CommandEnvironment map[string]string        `json:"command_environment,omitempty"`
 	CIPreservation     *verdict                 `json:"ci_preservation,omitempty"`
@@ -280,7 +290,7 @@ func validationPath(repositoryRoot string) string {
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
 	result.SchemaVersion = 1
-	if !result.CheckOnly && !result.HTMLReportCurrent {
+	if !result.CheckOnly && !result.StoppedBeforeExecution && !result.HTMLReportCurrent {
 		if info, err := os.Lstat(htmlReportPath(repositoryRoot)); err == nil && (info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
 			if err := os.Remove(htmlReportPath(repositoryRoot)); err != nil {
 				return err
@@ -309,6 +319,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	}
 	if !result.CheckOnly && result.ReportingCounts == nil {
 		result.ReportingCounts = reportingExecutionCounts(result.Runs)
+	}
+	if result.Compatibility.Status == "suspected regression" {
+		result.Compatibility.Hints = knownConflictHints(repositoryRoot)
 	}
 	prepareValidationResult(repositoryRoot, &result)
 	if err := retainExecution(repositoryRoot, &result); err != nil {

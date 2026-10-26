@@ -642,8 +642,14 @@ repository lock on the next invocation. On macOS and Linux the lock lives in
 `/tmp`, like process-ownership storage, whatever `TMPDIR` is, so two invocations
 of one checkout with different `TMPDIR` values still exclude each other.
 Unmarked files and other repositories' storage are preserved. Failed full attempts replace old JSON evidence and remove
-stale HTML; check-only can retain one explicitly historical execution and leaves
-its HTML unchanged. HTML keeps every instrumented reporting snapshot, including
+stale HTML; check-only, and an agent workflow attempt that stops before running
+tests, retain one explicitly historical execution and leave its HTML unchanged.
+Untracked or ignored files that a run in the checkout leaves behind are listed in
+`cleanup.leftovers`. Inherited `DD_*` values that reach test commands without
+coming from CI or ddtest are recorded in `ambient_datadog_environment`. CI step
+settings that select tracer integrations (`DD_TRACE_DISABLED_INSTRUMENTATIONS`,
+`DD_TRACE_DISABLED_PLUGINS`, `DD_TRACE_<INTEGRATION>_ENABLED`) apply to local runs;
+other step `DD_*` values configure CI's intake and are replaced locally. HTML keeps every instrumented reporting snapshot, including
 repeat pairs, while aggregate execution counts include each primary run once.
 Configuration runs remain sequential while platform detection uses a scoped
 process working directory; changing all adapters to explicit working directories

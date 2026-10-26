@@ -605,7 +605,7 @@ jobs:
         env:
           DDTEST_PLAYWRIGHT_NODE_MODULES: ${{ runner.temp }}/playwright-testdrive/node_modules
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
-        run: go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects)$' -count=1 -timeout=12m
+        run: go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects|TestPlaywrightDiscoveryKeepsConfiguredReportsOutOfTheCheckout)$' -count=1 -timeout=12m
 
   testdrive-cypress-workflow:
     runs-on: ubuntu-latest
