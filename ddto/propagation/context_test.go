@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -55,7 +57,7 @@ func TestMalformedRemoteContexts(t *testing.T) {
 			}
 		})
 	}
-	for _, changes := range []MapCarrier{{"x-datadog-trace-id": "0"}, {"x-datadog-trace-id": "-1"}, {"x-datadog-parent-id": "18446744073709551616"}, {"x-datadog-sampling-priority": "3"}, {"x-datadog-tags": "_dd.p.tid=bad"}, {"x-datadog-tags": "_dd.p.tid=0000000000000001,_dd.p.tid=0000000000000002"}} {
+	for _, changes := range []MapCarrier{{"x-datadog-trace-id": "0"}, {"x-datadog-trace-id": "-1"}, {"x-datadog-parent-id": "18446744073709551616"}, {"x-datadog-sampling-priority": "3"}, {"x-datadog-tags": "_dd.p.tid=bad"}, {"x-datadog-tags": "_dd.p.tid=0000000000000001,_dd.p.tid=0000000000000002"}, {"x-datadog-trace-id": ""}, {"x-datadog-origin": "ci\napp"}} {
 		c := MapCarrier{"x-datadog-trace-id": "1", "x-datadog-parent-id": "2"}
 		for k, v := range changes {
 			c[k] = v
@@ -100,7 +102,13 @@ func TestContextLifetimeAndChildren(t *testing.T) {
 	}
 }
 func TestInvalidStateDoesNotDiscardValidParent(t *testing.T) {
-	for _, state := range []string{"dd=s:2,dd=s:1", "bad key=value", "vendor=bad=value", "vendor="} {
+	many := make([]string, 33)
+	for i := range many {
+		many[i] = fmt.Sprintf("k%d=v", i)
+	}
+	for _, state := range []string{"dd=s:2,dd=s:1", "bad key=value", "vendor=bad=value", "vendor=",
+		"vendor=" + strings.Repeat("v", 506), strings.Join(many, ","), "vendor=\x7f", "a@b@c=v", "a@=v", "Vendor=v",
+		"a@" + strings.Repeat("t", 15) + "=v"} {
 		c, err := Extract(MapCarrier{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", "tracestate": state}, W3C)
 		if err != nil || !c.Valid() || c.TraceState != "" {
 			t.Fatalf("invalid state broke parent: %+v %v", c, err)
@@ -255,5 +263,21 @@ func TestFromCarrier(t *testing.T) {
 	}
 	if _, ok := FromContext(&propctx.Carrier[Context]{Context: context.Background()}); ok {
 		t.Fatal("an invalid carried identity was accepted")
+	}
+}
+
+// An unsampled W3C parent has priority 0, Datadog's tracestate fields without
+// a value and unrelated Datadog tags are skipped, and an unknown format fails.
+func TestExtractEdgeCases(t *testing.T) {
+	c, err := Extract(MapCarrier{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00", "tracestate": "dd=o:ci;flag"}, W3C)
+	if err != nil || c.Sampled || c.Priority != 0 || c.Origin != "ci" {
+		t.Fatalf("unsampled parent: %+v %v", c, err)
+	}
+	c, err = Extract(MapCarrier{"x-datadog-trace-id": "1", "x-datadog-parent-id": "2", "x-datadog-tags": "_dd.p.dm=-4,_dd.p.tid=0000000000000003"}, Datadog)
+	if err != nil || c.TraceID[7] != 3 || c.TraceID[15] != 1 {
+		t.Fatalf("Datadog tags: %+v %v", c, err)
+	}
+	if _, err := Extract(MapCarrier{}, Format(255)); err == nil {
+		t.Fatal("unknown format extracted")
 	}
 }
