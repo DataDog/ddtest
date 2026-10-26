@@ -119,17 +119,26 @@ Checks and source-edit hashes stay in the bounded JSON; full output stays in HTM
 Only CI that can reach a selected test is in scope. Jobs whose steps can't start
 one (system packages, coverage merging, linting, publishing, another framework)
 are listed as not a test consumer, and unresolved steps after a job's last
-possible test are listed as outside the test path; unknown executables, actions,
-package scripts and repository files still block, and so do interpreter
-invocations (`bash -c`, `node -e`, a script file) and npm settings that change
-how scripts execute (`ignore-scripts`, `script-shell`). A job guard that reads only
+possible test are listed as outside the test path. Before the test, a
+check-only step (it only reads or prints, or upgrades the package manager
+itself with `npm install -g npm@latest`) is listed rather than blocking, since
+each step's shell ends with it. Unknown executables, actions, repository files
+and package scripts whose body could start a test still block, and so do
+`source`/`eval`, interpreter invocations (`bash -c`, a script file, `node -e`
+code that spawns processes or loads a repository module) and npm settings that
+change how scripts execute (`ignore-scripts`, `script-shell`). A Cucumber alias
+chain such as `pnpm test:unit && pnpm test:bdd` resolves to its Cucumber leaf
+when that leaf is the chain's only and last link. CI files of other providers
+(`circle.yml`, `.gitlab-ci.yml` and the like) that mention the framework are
+listed for review; they are not analyzed. A job guard that reads only
 runtime context (`github.actor`, `github.event_name`, `github.run_number`,
 `needs.<job>.outputs`) is validated as a possible CI path and reported as
 unverified; only a guard that is false for every outcome excludes the job. A matrix axis computed
 at runtime (`fromJson(...)`) that only step commands read becomes one unverified
 value, so the job's tests run with the locally installed dependencies. Plain argv
 commands under `shell: pwsh`, including the Windows default, are read as POSIX
-commands; PowerShell syntax and multi-line test steps remain unresolved.
+commands, including npm package specs such as `@scope/name@version`; PowerShell
+syntax, doubled quotes and multi-line test steps remain unresolved.
 
 Automatic Mocha tracer recommendations use the verified major-5 and major-6 bootstrap contracts. Exact releases still come from registry tags; obsolete Node tags cannot win by covering more legacy CI rows. An explicitly selected or installed unverified major remains unvalidated instead of being silently replaced.
 

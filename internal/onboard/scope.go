@@ -3,6 +3,7 @@ package onboard
 import (
 	"fmt"
 	"maps"
+	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -122,6 +123,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 	if err != nil {
 		return scope, err
 	}
+	scope.Review = append(scope.Review, otherCIReview(root, framework)...)
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
@@ -135,7 +137,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					case resolution.Review:
 					case resolution.Matched:
 						consumer, lastTest = true, i
-					case resolution.Reason != "" && mayStartTests(step, framework):
+					case resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, framework):
 						hidden, lastTest = true, i
 					case resolution.Reason != "":
 						outside = append(outside, commandLocation{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: step.Run}.String()+": "+resolution.Reason)
@@ -214,7 +216,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
 					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
-					if readsComputedAxis(step.Run, computed, row) && !resolution.Matched && !mayStartTests(step, framework) {
+					if readsComputedAxis(step.Run, computed, row) && !resolution.Matched && !stepMayStartTests(root, workflow, job, step, framework) {
 						// Setup that installs a computed variant is the unverified
 						// axis itself; the tests run with the installed dependencies.
 						review = append(review, scopeDiagnostic{location, "Setup reads a matrix axis computed at runtime; not replayed locally"})
@@ -279,10 +281,17 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						review = append(review, scopeDiagnostic{location, resolution.Reason})
 						continue
 					}
-					if resolution.Reason != "" && i > lastTest && !resolution.Matched && !mayStartTests(step, framework) {
+					if resolution.Reason != "" && !resolution.Matched && !stepMayStartTests(root, workflow, job, step, framework) {
 						// Nothing after the job's last possible test can change that test.
-						review = append(review, scopeDiagnostic{location, "After the job's last " + framework + " test step; outside the test path: " + resolution.Reason})
-						continue
+						if i > lastTest {
+							review = append(review, scopeDiagnostic{location, "After the job's last " + framework + " test step; outside the test path: " + resolution.Reason})
+							continue
+						}
+						// A step that only reads or prints can't prepare a later test.
+						if checkOnlyStep(resolved.Run) {
+							review = append(review, scopeDiagnostic{location, "Check-only step before the job's " + framework + " test; it neither starts nor prepares a test: " + resolution.Reason})
+							continue
+						}
 					}
 					if resolution.Reason != "" {
 						unresolved = append(unresolved, scopeDiagnostic{location, resolution.Reason})
@@ -446,16 +455,43 @@ func changesDependencies(words []string) bool {
 	if args[0] != "install" && args[0] != "i" {
 		return false
 	}
+	// A global install of only the package manager itself (npm install -g
+	// npm@latest) upgrades the CI toolchain; it changes no project dependency.
+	global := len(args) < len(words)-1 || slices.Contains(args, "-g") || slices.Contains(args, "--global")
+	toolchain := global
+	installs := false
 	for _, arg := range args[1:] {
 		if !strings.HasPrefix(arg, "-") {
-			return true
+			installs = true
+			name, _, _ := strings.Cut(arg, "@")
+			toolchain = toolchain && slices.Contains(packageManagerPackages, name)
 		}
 	}
-	return false
+	return installs && !toolchain
 }
 
 func readsComputedAxis(command string, axes []string, row map[string]any) bool {
 	return slices.ContainsFunc(axes, func(axis string) bool {
 		return row[axis] == computedAxisValue(axis) && regexp.MustCompile(`\bmatrix\.`+regexp.QuoteMeta(axis)+`\b`).MatchString(command)
 	})
+}
+
+// CI configuration of providers other than GitHub Actions, by conventional path.
+var otherCIFiles = []string{".circleci/config.yml", "circle.yml", ".gitlab-ci.yml", "azure-pipelines.yml", ".travis.yml", "Jenkinsfile", "bitbucket-pipelines.yml", ".buildkite/pipeline.yml", "appveyor.yml", ".drone.yml"}
+
+// otherCIReview names other providers' CI files that mention the framework.
+// They are not parsed, so their tests stay visible instead of silently outside.
+func otherCIReview(root, framework string) []string {
+	var review []string
+	for _, path := range otherCIFiles {
+		data, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			continue
+		}
+		text := strings.ToLower(string(data))
+		if strings.Contains(text, framework) || namesFramework(text, framework, true) {
+			review = append(review, path+": not a GitHub Actions workflow; ddtest does not analyze it, so "+framework+" tests it runs are outside this validation and need their own Datadog setup.")
+		}
+	}
+	return review
 }

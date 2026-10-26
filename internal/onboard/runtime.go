@@ -205,7 +205,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 					result.Review = append(result.Review, RuntimeFinding{Workflow: path, Job: name, Step: stepNumber(step, i), Command: step.Run, Status: StatusNotExercised, Code: CodeUnresolvedCommand, Reason: resolutions[i].Reason})
 					resolutions[i] = commandResolution{}
 				}
-				consumer = consumer || resolutions[i].Matched || resolutions[i].Reason != "" && mayStartTests(step, framework)
+				consumer = consumer || resolutions[i].Matched || resolutions[i].Reason != "" && stepMayStartTests(root, workflow, job, step, framework)
 			}
 			if !consumer {
 				// No step can start a selected test, so no instrumented runtime runs here.
@@ -287,8 +287,17 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 					}
 				}
 
+				// Context expansions of one row (such as a guarded action's
+				// branches) can repeat a step's finding; report each once.
+				seen := map[string]bool{}
 				for _, contextJob := range jobs {
-					result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, root, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
+					for _, finding := range checkRuntimeJob(ctx, root, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework) {
+						key, _ := json.Marshal(finding)
+						if !seen[string(key)] {
+							seen[string(key)] = true
+							result.Jobs = append(result.Jobs, finding)
+						}
+					}
 				}
 
 			}
@@ -384,7 +393,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 		resolution := resolutions[i]
 		// An unresolved step that can't start a test is setup, not a test entry.
-		test := resolution.Matched || resolution.Reason != "" && mayStartTests(step, frameworkName(frameworks))
+		test := resolution.Matched || resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, frameworkName(frameworks))
 		if uses != "actions/setup-node" && uses != githubAction && !changesNodeRuntime(step.Run) && !test {
 			continue
 		}

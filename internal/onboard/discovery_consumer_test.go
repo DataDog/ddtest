@@ -7,6 +7,9 @@ package onboard
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -285,5 +288,126 @@ func TestNpmConfigSettingsThatChangeExecutionStayUnresolved(t *testing.T) {
 		} else {
 			require.Contains(t, result.Reason, "can change how test scripts execute", run)
 		}
+	}
+}
+
+func TestShellEvaluatorsMayStartTests(t *testing.T) {
+	for _, run := range []string{"source ./ci/tests.sh", ". ./ci/tests.sh", "eval \"$TEST_COMMAND\""} {
+		require.True(t, mayStartTests(runtimeStep{Run: run}, "cucumber"), run)
+	}
+}
+
+func TestInlineNodeCodeStartsTestsOnlyWhenItCanLaunch(t *testing.T) {
+	for run, want := range map[string]bool{
+		"node --input-type=module -e \"import { x } from 'pkg'; console.log(x)\"":                false,
+		"node -e \"require('fs').rmSync('dist',{recursive:true})\"":                              false,
+		"node -e \"require('child_process').execSync('npm test')\"":                              true,
+		"node -e \"require('./scripts/test')\"":                                                  true,
+		"node --input-type=module -e \"import run from './scripts/run.js'; run()\"":              true,
+		"node -e \"const { spawnSync } = require('node:child_process'); spawnSync('cucumber')\"": true,
+	} {
+		require.Equal(t, want, mayStartTests(runtimeStep{Run: run}, "cucumber"), run)
+	}
+}
+
+func TestKnownPackageScriptsStartTestsOnlyThroughTheirBody(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{
+		"build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup && tsc -p tsconfig.build.json",
+		"test":  "pnpm test:unit && pnpm test:bdd", "test:unit": "vitest run", "test:bdd": "cucumber-js",
+		"docs": "npm --prefix ./website run build", "smoke": "node scripts/smoke.js",
+	})
+	for run, want := range map[string]bool{"pnpm build": false, "npm run build": false, "pnpm test": true, "pnpm docs": true, "pnpm smoke": true, "pnpm missing": true} {
+		require.Equal(t, want, mayStartTestsIn(root, runtimeStep{Run: run}, "cucumber", 0), run)
+	}
+	require.True(t, mayStartTests(runtimeStep{Run: "pnpm build"}, "cucumber"), "without the package, a script stays a possible wrapper")
+}
+
+func TestCheckOnlyStepsCannotPrepareTests(t *testing.T) {
+	for run, want := range map[string]bool{
+		"set -euo pipefail\nVERSION=\"$(node -p \"require('./package.json').version\")\"\nif OUTPUT=\"$(npm view \"pkg@$VERSION\" version 2>&1)\"; then\n  echo exists\n  exit 1\nelif ! grep -qi \"E404\" <<< \"$OUTPUT\"; then\n  exit 1\nfi": true,
+		"npm install -g npm@latest\necho \"npm $(npm --version)\"": true,
+		"echo summary >> \"$GITHUB_STEP_SUMMARY\"":                 true,
+		"echo NODE_ENV=test >> \"$GITHUB_ENV\"":                    false,
+		"echo built > dist/marker":                                 false,
+		"npm install -g typescript":                                false,
+		"npm ci":                                                   false,
+		"node scripts/check.js":                                    false,
+	} {
+		require.Equal(t, want, checkOnlyStep(run), run)
+	}
+	require.False(t, changesDependencies([]string{"npm", "install", "-g", "npm@latest"}), "upgrading the package manager is toolchain setup")
+	require.True(t, changesDependencies([]string{"npm", "install", "-g", "typescript"}))
+	require.True(t, changesDependencies([]string{"npm", "install", "npm@latest"}), "a local install changes project dependencies")
+}
+
+func TestPublishJobSetupDoesNotBlockItsCucumberTest(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - run: |
+          npm install -g npm@latest
+          echo "npm $(npm --version)"
+      - run: |
+          set -euo pipefail
+          if OUTPUT="$(npm view "pkg@1.0.0" version 2>&1)"; then
+            exit 1
+          fi
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - run: |
+          set -euo pipefail
+          npm pack --dry-run
+`)
+	writeScripts(t, root, map[string]string{
+		"test": "pnpm test:unit && pnpm test:bdd", "test:unit": "vitest run", "test:bdd": "cucumber-js",
+		"build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup && tsc -p tsconfig.build.json",
+	})
+	scope, err := DiscoverValidationScope(root, "cucumber")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	// The Cucumber leaf is validated; the chain's Vitest link stays outside it.
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "pnpm test:bdd", scope.Commands[0].Command)
+	require.True(t, slices.ContainsFunc(scope.Review, func(review string) bool {
+		return strings.Contains(review, "Other test framework is outside cucumber validation: vitest run")
+	}), scope.Review)
+	require.True(t, slices.ContainsFunc(scope.Review, func(review string) bool {
+		return strings.Contains(review, "Check-only step before the job's cucumber test")
+	}), scope.Review)
+}
+
+func TestOtherCIProvidersAreListedForReview(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - run: npx cypress run\n")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "circle.yml"), []byte("workflows:\n  build:\n    jobs:\n      - cypress/run\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".gitlab-ci.yml"), []byte("lint:\n  script: npm run lint\n"), 0644))
+	scope, err := DiscoverValidationScope(root, "cypress")
+	require.NoError(t, err)
+	var listed []string
+	for _, review := range scope.Review {
+		if strings.Contains(review, "not a GitHub Actions workflow") {
+			listed = append(listed, review)
+		}
+	}
+	require.Len(t, listed, 1, "only CI files that mention the framework are listed")
+	require.Contains(t, listed[0], "circle.yml")
+}
+
+func TestPowerShellScopedPackagesAndQuoting(t *testing.T) {
+	for run, want := range map[string]bool{
+		"npm install @playwright/test@latest":        true,
+		"npm install @playwright/test@1.44 lodash@4": true,
+		"npm install @playwright/test":               true,
+		"npx mocha --grep 'can''t'":                  false,
+		"npx mocha --grep \"say \"\"hi\"\"\"":        false,
+		"npm test @args":                             false,
+		"npm test @(1,2)":                            false,
+		"npm test -- --grep a@{b}":                   false,
+	} {
+		require.Equal(t, want, powershellArgvOnly("pwsh", run), run)
 	}
 }

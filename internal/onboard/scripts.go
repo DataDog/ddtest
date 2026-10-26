@@ -11,8 +11,10 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/kballard/go-shellquote"
@@ -671,7 +673,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		if variable := shellVariable.FindStringSubmatch(script); err != nil && variable != nil {
 			return unresolvedCommand("Cucumber alias uses unresolved environment variable $" + variable[1] + "; select the command with its value expanded: " + command)
 		}
-		if err != nil || len(parts) != 1 {
+		if err != nil || len(parts) != 1 && !cucumberChainResolvable(root, directory, script, append(slices.Clone(stack), key), *remaining) {
 			return unresolvedCommand("Cucumber aliases must forward formatter options to one invocation; compound scripts require explicit setup review: " + command)
 		}
 	}
@@ -896,6 +898,33 @@ func playwrightInteractiveMode(args []string) bool {
 	return false
 }
 
+// cucumberChainResolvable reports whether a compound Cucumber alias can be
+// resolved like any other sequence: either no link reaches cucumber-js (a
+// build or another framework), or exactly one does and it is the last link of
+// a single && chain, so forwarded options and its exit status stay its own.
+// Links that can't be resolved are left to the sequence's own diagnostics.
+func cucumberChainResolvable(root, directory, script string, stack []string, budget int) bool {
+	fragments, err := discoverCommands(script)
+	if err != nil || len(fragments) == 0 {
+		return false
+	}
+	leaves := []int{}
+	for i, fragment := range fragments {
+		if fragment.Reason != "" || len(fragment.Words) == 0 || fragment.Words[0] == "cd" {
+			continue
+		}
+		part := resolveJestWords(root, directory, fragment.Words, stack, &budget, "cucumber")
+		if part.Matched || len(part.Tests) > 0 {
+			leaves = append(leaves, i)
+		}
+	}
+	if len(leaves) == 0 {
+		return true
+	}
+	last := len(fragments) - 1
+	return len(leaves) == 1 && leaves[0] == last && !slices.ContainsFunc(fragments, func(fragment commandFragment) bool { return fragment.Chain != fragments[last].Chain })
+}
+
 // lifecycleRunner names frameworks whose npm pre/post hooks are not followed
 // during discovery; Mocha, Cucumber, Cypress and WebdriverIO resolve them.
 func lifecycleRunner(frameworks []string) (string, string) {
@@ -919,15 +948,34 @@ func lifecycleRunner(frameworks []string) (string, string) {
 // script blocks, splatting, escapes, arrays or backslash paths. Command
 // substitution $(...) is the same in both shells.
 func powershellArgvOnly(shell, run string) bool {
-	if shell != "pwsh" && shell != "powershell" || strings.TrimSpace(run) == "" || strings.Contains(run, "--%") {
+	// Doubled quotes are a literal quote in PowerShell but concatenation in bash.
+	if shell != "pwsh" && shell != "powershell" || strings.TrimSpace(run) == "" || strings.Contains(run, "--%") || strings.Contains(run, "''") || strings.Contains(run, `""`) {
 		return false
 	}
 	for i, r := range run {
+		if r == '@' && npmPackageAt(run, i) {
+			continue
+		}
 		if strings.ContainsRune("`@;|&<>{},\\", r) || r == '$' && !strings.HasPrefix(run[i:], "$(") {
 			return false
 		}
 	}
 	return true
+}
+
+var npmScopedPackage = regexp.MustCompile(`^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*(@[a-zA-Z0-9._^~-]+)?(\s|$)`)
+
+// npmPackageAt reports whether the @ at i is part of an npm package spec:
+// @scope/name[@version] starting a word, or name@version inside one. Neither
+// is splatting, an array or a hashtable in PowerShell.
+func npmPackageAt(run string, i int) bool {
+	if i == 0 || unicode.IsSpace(rune(run[i-1])) {
+		return npmScopedPackage.MatchString(run[i:])
+	}
+	if i+1 >= len(run) || strings.ContainsRune("({\"'", rune(run[i+1])) {
+		return false
+	}
+	return !strings.ContainsRune("\"'", rune(run[i-1]))
 }
 
 // npm settings that cannot change which scripts run or how they execute.
