@@ -130,7 +130,7 @@ context-associated spans while retaining their APM behavior.
 
 The AST transformer validates hook presence, ambiguity and selected shape
 constraints, but future Go source or ABI changes still require a new
-compatibility run. The [compatibility workflow](../../.github/workflows/ddto-compatibility.yml)
+compatibility run. The [compatibility workflow](../../.github/workflows/go-instrumentation.yml)
 defines the supported test matrix, and adding a Go or SDK version requires
 exercising its private hooks and runtime behavior. Long-running campaigns and
 arbitrary downstream modules need separate validation;
@@ -197,7 +197,7 @@ The transparency and safety regressions cover these contracts:
 
 ## Compatibility workflow
 
-The [workflow](../../.github/workflows/ddto-compatibility.yml) checks three stable Go
+The [workflow](../../.github/workflows/go-instrumentation.yml) checks three stable Go
 families and tip:
 
 | Platform | Go | Suite |

@@ -255,7 +255,7 @@ owners retry transient Windows locks for up to two seconds. Compilation and
 persistent cleanup errors still fail, and event comparisons and the SDK
 reference are unchanged.
 
-[`ddto-compatibility.yml`](../../.github/workflows/ddto-compatibility.yml) runs the suite on
+[`go-instrumentation.yml`](../../.github/workflows/go-instrumentation.yml) runs the suite on
 Linux Go 1.26/1.27 and macOS/Windows Go 1.27. The Linux Go 1.27 race suite runs
 Mini first; the normal suites run the SDK first. Each differential configuration
 runs the complete suite once, split into test groups. Go 1.25 runs native Mini

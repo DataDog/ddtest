@@ -1,7 +1,7 @@
-name: ddto compatibility
-# ddto, which ddtest instrument runs, is its own module in ddto/. Its suite runs
-# from there, with ddtest's executable as the driver, when ddto or what runs
-# it changes. Changes limited to ddto's docs do not run it.
+name: Go instrumentation
+# The Go instrumentation that ddtest instrument runs is its own module in ddto/.
+# Its suite runs from there, with ddtest's executable as the driver, when ddto
+# or what runs it changes. Changes limited to ddto's docs do not run it.
 on:
   push:
     branches: [main]
@@ -13,7 +13,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'internal/cmd/instrument.go'
-      - '.github/workflows/ddto-compatibility.yml'
+      - '.github/workflows/go-instrumentation.yml'
   pull_request:
     paths:
       - 'ddto/**'
@@ -23,7 +23,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'internal/cmd/instrument.go'
-      - '.github/workflows/ddto-compatibility.yml'
+      - '.github/workflows/go-instrumentation.yml'
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
