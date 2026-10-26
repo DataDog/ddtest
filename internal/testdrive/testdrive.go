@@ -673,6 +673,13 @@ func (t *Testdrive) setConfigurationScope(result *validationResult, scope onboar
 // ambientDatadogEnvironment lists inherited DD_* values that test commands see
 // because neither ddtest nor the CI configuration sets them. A local workaround
 // like disabling an instrumentation must show up in the report.
+// ddtestProcessSettings are the variables main sets on ddtest's own process
+// before any command runs (main.go); they are not the user's settings.
+var ddtestProcessSettings = map[string]string{
+	"DD_CIVISIBILITY_ENABLED":                    "1",
+	"DD_TELEMETRY_DEPENDENCY_COLLECTION_ENABLED": "0",
+}
+
 func ambientDatadogEnvironment(configured map[string]string) map[string]string {
 	managed := testEnvironment("", "")
 	maps.Copy(managed, reportingEnvironment("", ""))
@@ -683,6 +690,9 @@ func ambientDatadogEnvironment(configured map[string]string) map[string]string {
 			continue
 		}
 		if _, ok := managed[key]; ok {
+			continue
+		}
+		if own, ok := ddtestProcessSettings[key]; ok && own == value {
 			continue
 		}
 		if _, ok := configured[key]; ok {

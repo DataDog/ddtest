@@ -267,7 +267,12 @@ func TestWorkflowReturnsSetupRepairsWithoutWeakeningFeatureFailures(t *testing.T
 			}
 			require.Contains(t, result.ResumeCommand, "--format")
 			require.Contains(t, result.ResumeCommand, "json")
-			require.Empty(t, result.FinalResponse)
+			if result.Code == "validation_incomplete" {
+				// A report ends the turn: it carries the text to relay verbatim.
+				require.True(t, strings.HasPrefix(result.FinalResponse, "NOT COMPLETE"), result.FinalResponse)
+			} else {
+				require.Empty(t, result.FinalResponse, "a setup repair continues the workflow")
+			}
 		})
 	}
 }

@@ -34,8 +34,25 @@ type validationSummary struct {
 	Caveats []string `json:"caveats,omitempty"`
 }
 
-// apiKeyAction is the one step CI needs that no local run can perform.
-const apiKeyAction = "Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step fails without failing the job and tests run untraced."
+// apiKeyAction is the one step CI needs that no local run can perform. What
+// happens until it exists depends on how the workflow guards the Datadog step.
+const (
+	apiKeyAction        = "Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step fails without failing the job and tests run untraced."
+	apiKeySkippedAction = "Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step is skipped and tests run untraced."
+)
+
+// apiKeyHumanAction picks the wording for a step skipped by an
+// env.DD_API_KEY guard (the Cypress setup) or kept with continue-on-error.
+func apiKeyHumanAction(check *onboard.RuntimeCheck) string {
+	if check != nil {
+		for _, job := range check.Jobs {
+			if job.Reason == onboard.GuardedActionBranch {
+				return apiKeySkippedAction
+			}
+		}
+	}
+	return apiKeyAction
+}
 
 func summarizeValidation(result validationResult) validationSummary {
 	summary := validationSummary{Status: "INCOMPLETE", LocalValidation: "INCOMPLETE", CIConfiguration: "not exercised", CIExecution: "not exercised"}
@@ -155,7 +172,7 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	summary.CIScope = summarizeCIScope(result.CIRuntime)
 	if summary.CIScope != nil && len(summary.CIScope.Instrumented) > 0 {
-		summary.HumanActions = append(summary.HumanActions, apiKeyAction)
+		summary.HumanActions = append(summary.HumanActions, apiKeyHumanAction(result.CIRuntime))
 	}
 	summary.OnboardingResponse = fmt.Sprintf("Onboarding validation: %s. Local validation: %s. CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.", summary.Status, summary.LocalValidation, summary.CIConfiguration)
 	if summary.LocalNode != "" {
@@ -302,13 +319,20 @@ func validationHandoff(result validationResult) string {
 	block.WriteString(repositoryChangesHandoff(result.RepositoryChanges))
 	if scope := summary.CIScope; scope != nil {
 		// The scope groups CI jobs by Node version, so these count versions, not jobs.
-		fmt.Fprintf(&block, "CI runtime scope (static): Node versions %d instrumented, %d excluded, %d unverified; versions in Results JSON.\n", len(scope.Instrumented), len(scope.Excluded), len(scope.Unverified))
+		instrumented, excluded, unverified := scope.counts()
+		fmt.Fprintf(&block, "CI runtime scope (static): Node versions %d instrumented, %d excluded, %d unverified (each version counted once; per-job findings in Results JSON).\n", instrumented, excluded, unverified)
 		for _, job := range scope.NotTried {
-			fmt.Fprintf(&block, "Not tried: %s (no dd-trace release supports them; ddtest skipped them on its own, no approval needed).\n", job)
+			fmt.Fprintf(&block, "Not tried: %s (below Node 18, the oldest dd-trace major ddtest supports; ddtest skipped them on its own, no approval needed).\n", job)
 		}
 	}
 	for _, caveat := range summary.Caveats {
 		block.WriteString("Caveat (not a blocker): " + caveat + "\n")
+	}
+	if result.Workflow != nil && len(result.Workflow.EarlierAttempts) > 0 {
+		fmt.Fprintf(&block, "Earlier attempts for this workflow stopped before this run: %s. This run's results stand on their own; the earlier stops are listed so retries stay visible.\n", strings.Join(result.Workflow.EarlierAttempts, ", "))
+	}
+	for _, disabled := range disabledInstrumentations(result) {
+		block.WriteString("Disabled instrumentation: " + disabled + "\n")
 	}
 	if supportsValidationFramework(result.Framework) && summary.CIConfiguration != "compatible" && summary.CIConfiguration != "not applicable" {
 		block.WriteString("CI edits require a full local rerun; an actual CI run does not update this local report.\n")
@@ -580,6 +604,27 @@ func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
 	return scope
 }
 
+// counts returns each Node version once: instrumented on any job wins over
+// excluded, and excluded over unverified. The lists keep every finding; only
+// the summary line must not add a version to two totals.
+func (scope *ciRuntimeScope) counts() (instrumented, excluded, unverified int) {
+	seen := map[string]bool{}
+	count := func(labels []string) int {
+		n := 0
+		for _, label := range labels {
+			if !seen[label] {
+				seen[label] = true
+				n++
+			}
+		}
+		return n
+	}
+	instrumented = count(scope.Instrumented)
+	excluded = count(scope.Excluded)
+	unverified = count(scope.Unverified)
+	return instrumented, excluded, unverified
+}
+
 func configurationLabel(command string) string {
 	if command == "" {
 		return ""
@@ -623,4 +668,27 @@ func scopeBlockers(unresolved []string) []string {
 func alreadyExplained(blockers []string, err string) bool {
 	err = strings.TrimSpace(err)
 	return err != "" && slices.ContainsFunc(blockers, func(blocker string) bool { return strings.Contains(blocker, err) })
+}
+
+// disabledInstrumentations names the CI step settings that turn tracer
+// integrations off, with the configuration they apply to: the coverage CI
+// loses must be visible in the handoff, not only in the JSON environment.
+func disabledInstrumentations(result validationResult) []string {
+	var disabled []string
+	for _, configuration := range result.Configurations {
+		for _, key := range slices.Sorted(maps.Keys(configuration.Environment)) {
+			value := configuration.Environment[key]
+			if !onboard.TracerPluginSetting(key) || value == "" {
+				continue
+			}
+			if strings.HasSuffix(key, "_ENABLED") && value != "false" && value != "0" {
+				continue
+			}
+			line := fmt.Sprintf("%s=%s on the CI test step of %s (spans from it are not reported in CI)", key, value, configuration.Command)
+			if !slices.Contains(disabled, line) {
+				disabled = append(disabled, line)
+			}
+		}
+	}
+	return disabled
 }

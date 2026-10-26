@@ -420,7 +420,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						notTried = append(notTried, finalNode)
 					}
 					for _, diagnostic := range unresolved {
-						diagnostic.Reason = "Not tried (no dd-trace release supports this Node): " + diagnostic.Reason
+						diagnostic.Reason = "Not tried (below Node 18, the oldest dd-trace major ddtest supports): " + diagnostic.Reason
 						review = append(review, diagnostic)
 					}
 					unresolved = nil

@@ -485,7 +485,7 @@ func ciInstrumentationDisabled(entry onboard.TestCommand) bool {
 func excludedConfiguration(entry onboard.TestCommand) configurationResult {
 	reason := "CI explicitly excludes Datadog instrumentation for this entry (disabled flags or a skipped conditional installer). Its original CI tests are preserved; no local paired execution or features are claimed."
 	if entry.UnsupportedNode {
-		reason = "Not tried: no dd-trace release supports this entry's CI Node, so ddtest left it uninstrumented on its own. Its original CI tests are preserved; no local paired execution or features are claimed."
+		reason = "Not tried: this entry's CI Node is below Node 18, the oldest dd-trace major ddtest supports, so ddtest left it uninstrumented on its own. Its original CI tests are preserved; no local paired execution or features are claimed."
 	}
 	if entry.WindowsRunner {
 		reason = "Windows runner: ddtest doesn't set up or validate Windows runners locally, so this entry stays uninstrumented. Add manual initialization to instrument it. Its original CI tests are preserved; no local paired execution or features are claimed."

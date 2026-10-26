@@ -258,9 +258,6 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 			actionIndex := -1
 			for i, step := range job.Steps {
 				if strings.HasPrefix(strings.ToLower(step.Uses), "datadog/test-visibility-github-action@") {
-					if reason := existingActionDifference(step, actionIndex >= 0, i >= selected[0], condition, version); reason != "" {
-						return nil, gap("Existing Datadog setup differs: " + step.Uses + ": " + reason + "; align it, or review manually without adding a second action.")
-					}
 					actionIndex = i
 				}
 			}
@@ -285,7 +282,7 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 			// Test steps sharing one guard on matrix/env values get the same guard
 			// on the inserted action, so the tracer installs exactly where they run.
 			stepGuard := ""
-			if actionIndex < 0 && condition == "" {
+			if condition == "" {
 				stepGuard = job.Steps[selected[0]].If
 				for _, i := range selected {
 					if job.Steps[i].If != stepGuard {
@@ -295,6 +292,17 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 				if !simpleStepCondition(stepGuard) {
 					stepGuard = ""
 				}
+			}
+			expectedGuard := setupActionGuard(condition, stepGuard, windowsGuard)
+			seen := false
+			for i, step := range job.Steps {
+				if !strings.HasPrefix(strings.ToLower(step.Uses), "datadog/test-visibility-github-action@") {
+					continue
+				}
+				if reason := existingActionDifference(step, seen, i >= selected[0], condition, expectedGuard, version); reason != "" {
+					return nil, gap("Existing Datadog setup differs: " + step.Uses + ": " + reason + "; otherwise review it manually without adding a second action.")
+				}
+				seen = true
 			}
 			for _, i := range selected {
 				step, node := job.Steps[i], steps.Content[i]
@@ -374,20 +382,10 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 				if i == selected[0] && actionIndex < 0 {
 					padding := strings.Repeat(" ", indent)
 					guard := ""
-					var guards []string
-					for _, value := range []string{condition, stepGuard, windowsGuard} {
-						if value = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(value), "${{"), "}}")); value != "" {
-							guards = append(guards, value)
-						}
-					}
-					if len(guards) == 1 && guards[0] == condition {
+					if expectedGuard == condition && condition != "" {
 						guard = padding + strings.Repeat(" ", width) + "if: " + condition + "\n"
-					} else if len(guards) > 0 {
-						expression := guards[0]
-						if len(guards) > 1 {
-							expression = "(" + strings.Join(guards, ") && (") + ")"
-						}
-						encoded, err := yaml.Marshal(expression)
+					} else if expectedGuard != "" {
+						encoded, err := yaml.Marshal(expectedGuard)
 						if err != nil {
 							return nil, err
 						}
@@ -557,7 +555,7 @@ func SupportsAutomaticSetup(framework string) bool {
 
 // existingActionDifference names the first way an existing Datadog action
 // differs from the setup this applier would write.
-func existingActionDifference(step runtimeStep, duplicate, afterTests bool, condition, version string) string {
+func existingActionDifference(step runtimeStep, duplicate, afterTests bool, condition, guard, version string) string {
 	// Its optional site input defaults to datadoghq.com; --site only applies to
 	// a new action, so an existing one keeps its own.
 	switch {
@@ -567,8 +565,12 @@ func existingActionDifference(step runtimeStep, duplicate, afterTests bool, cond
 		return "it runs after the test step"
 	case !setupActionSupported(step.Uses):
 		return "use a recognized v3 release or SHA"
-	case step.If != condition:
-		return fmt.Sprintf("its if condition %q differs from the runtime guard %q", step.If, condition)
+	case !setupGuardMatches(step.If, guard) && !setupGuardMatches(step.If, condition):
+		// The exact line keeps every Windows, unsupported-Node and runtime guard.
+		if guard == "" {
+			return fmt.Sprintf("its if condition %q would skip instrumented test rows; remove that if: line", step.If)
+		}
+		return fmt.Sprintf("its if condition %q differs from the guard ddtest writes; replace it with `if: %s`", step.If, guard)
 	case step.With["languages"] != "js":
 		return fmt.Sprintf("languages is %q, not js", step.With["languages"])
 	case step.With["js-tracer-version"] == "":
@@ -579,6 +581,39 @@ func existingActionDifference(step runtimeStep, duplicate, afterTests bool, cond
 		return "api_key is missing"
 	}
 	return ""
+}
+
+// setupActionGuard is the if: expression of the inserted Datadog action: the
+// runtime partition, the test steps' own guard and the Windows guard, in that
+// order. The inserter and the re-apply check share it, so ddtest accepts its
+// own output.
+func setupActionGuard(condition, stepGuard, windowsGuard string) string {
+	var guards []string
+	for _, value := range []string{condition, stepGuard, windowsGuard} {
+		if value = unwrapSetupExpression(value); value != "" {
+			guards = append(guards, value)
+		}
+	}
+	switch len(guards) {
+	case 0:
+		return ""
+	case 1:
+		return guards[0]
+	}
+	return "(" + strings.Join(guards, ") && (") + ")"
+}
+
+func unwrapSetupExpression(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "${{") && strings.HasSuffix(value, "}}") {
+		value = strings.TrimSpace(value[3 : len(value)-2])
+	}
+	return value
+}
+
+// setupGuardMatches compares if: expressions with or without ${{ }}.
+func setupGuardMatches(existing, expected string) bool {
+	return unwrapSetupExpression(existing) == unwrapSetupExpression(expected)
 }
 
 // setupWindowsRunner reports whether any row of job runs on Windows. When the

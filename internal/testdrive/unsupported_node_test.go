@@ -32,6 +32,6 @@ func TestUnsupportedNodeRowsAreReportedAsNotTried(t *testing.T) {
 		require.Equal(t, []string{".github/workflows/legacy.yml / test on Node 16, 17"}, report.Summary.CIScope.NotTried)
 		require.ElementsMatch(t, []string{"16", "17"}, report.Summary.CIScope.Excluded)
 		require.Empty(t, report.Summary.CIScope.Unverified)
-		require.Contains(t, report.Summary.FinalResponse, "Not tried: .github/workflows/legacy.yml / test on Node 16, 17 (no dd-trace release supports them; ddtest skipped them on its own, no approval needed).")
+		require.Contains(t, report.Summary.FinalResponse, "Not tried: .github/workflows/legacy.yml / test on Node 16, 17 (below Node 18, the oldest dd-trace major ddtest supports; ddtest skipped them on its own, no approval needed).")
 	}
 }

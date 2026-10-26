@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/onboard"
@@ -320,8 +321,25 @@ func copyConfiguration(ctx context.Context, source, target string, keepIgnored b
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("cannot isolate special file %s", relative)
 		}
-		return copyConfigurationFile(path, destination, info)
+		return copyWithDescriptorRetry(func() error { return copyConfigurationFile(path, destination, info) })
 	})
+}
+
+// descriptorRetryDelays spaces the retries of one file copy after the host
+// runs out of open files. Every trial hit this once at a few hundred open
+// descriptors: the pressure was host-wide and transient.
+var descriptorRetryDelays = []time.Duration{250 * time.Millisecond, time.Second}
+
+func copyWithDescriptorRetry(copyFile func() error) error {
+	err := copyFile()
+	for _, delay := range descriptorRetryDelays {
+		if !fileDescriptorsExhausted(err) {
+			return err
+		}
+		time.Sleep(delay)
+		err = copyFile()
+	}
+	return err
 }
 func copyConfigurationFile(source, target string, info fs.FileInfo) error {
 	cloned, err := cloneConfigurationFile(source, target)

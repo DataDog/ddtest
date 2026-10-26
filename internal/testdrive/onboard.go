@@ -93,6 +93,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	// acceptFlag, when set, is appended to the final resume command after the
 	// checkpoint rewrites --resume, so the offered command never goes stale.
 	acceptFlag := ""
+	turnFinalResponse := ""
 	fail := func(status, code, reason, needs string) error {
 		result.Status, result.Code, result.Reason, result.Needs = status, code, reportText(reason), needs
 		if options.Format == "verbose" && result.UndoInstructions != "" {
@@ -173,6 +174,11 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			result.NextAction = "report_result"
 			result.NextCommand, result.ResumeCommand = nil, nil
 			result.Needs += " Three identical attempts made no progress; stop and report this blocker."
+		}
+		// A setup repair continues the workflow; a report or a user decision ends
+		// the turn and must carry the text to relay.
+		if turnFinalResponse != "" && (result.NextAction == "report_result" || code == "substitute_runtime_unaccepted") {
+			result.FinalResponse = turnFinalResponse
 		}
 		return errors.Join(fmt.Errorf("%s: %s", code, result.Reason), onboard.RenderAgentResult(output, result, options.Format))
 	}
@@ -634,7 +640,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	if fileDescriptorsExhausted(runErr) {
 		result.JSONReport = validationPath(t.repositoryRoot)
-		return fail("blocked_environment", fileDescriptorsExhaustedCode, runErr.Error(), "The host ran out of open file descriptors while isolating the checkout, often because other heavy processes share it. Wait for or stop those processes, or raise the open-file limit, then run next_command unchanged. This says nothing about the tests or the tracer; do not change CI, the tracer or test scope.")
+		return fail("blocked_environment", fileDescriptorsExhaustedCode, runErr.Error(), "The host ran out of open file descriptors while isolating the checkout, often because other heavy processes share it. Wait for or stop those processes, or raise the open-file limit, then run next_command unchanged. If ddtest already edited CI, next_command recognizes those edits and makes no further change before validating again; do not edit or align them by hand. This says nothing about the tests or the tracer; do not change CI, the tracer or test scope.")
 	}
 	var supervision *processSupervisionError
 	if errors.As(runErr, &supervision) {
@@ -650,6 +656,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	progress("verification")
 	workflow := &WorkflowEvidence{ValidationCommand: recoveryCommand, Plan: plan, Fingerprint: before, Node: t.workflowNodeVersion(), FactsSHA256: factsHash, Changes: result.Changes}
+	if checkpoint != nil {
+		workflow.EarlierAttempts = slices.Clone(checkpoint.Failures)
+	}
 	workflow.Checks = append(refreshScopeCheck(result.Checks, validation.Scope), t.verifyReportExclusions(ctx)...)
 	after, snapshotErr := InputFingerprint(ctx, t.repositoryRoot)
 	sourceCheck := onboard.WorkflowCheck{Name: "source_preservation", Status: "passed", Reason: "Original checkout inputs unchanged by validation; builds/probes ran in owned storage."}
@@ -697,6 +706,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if workflowVerdict(validation) != "complete_locally" {
 		result.Instruction = ""
 		result.NextCommand = nil
+		// Results that end the agent's turn carry the current report's canonical
+		// text, so the agent can relay it verbatim (see fail).
+		turnFinalResponse = validation.Summary.FinalResponse
 		result.ResumeCommand = append(append([]string{}, resume...), "--resume", checkpoint.RunID)
 		result.Phase = "validation"
 		if !workflowChecksPassed(workflow) {

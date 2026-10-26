@@ -34,8 +34,9 @@ resolve never blocks the configurations that are ready: `--apply` edits and
 validates those, and leaves the unresolved entries unedited and reported as
 blockers, so the result stays incomplete until they are reviewed. A test step
 guarded only by matrix or env values (`if: matrix.node != '20'`) gets the same
-guard on the inserted action. CI rows on a Node no dd-trace release supports
-(below Node 18, such as 16 or 17) are ddtest's own decision, not the user's:
+guard on the inserted action. CI rows below Node 18 (such as 16 or 17), the
+oldest Node any dd-trace major ddtest supports runs on, are ddtest's own
+decision, not the user's:
 they keep running uninstrumented, `--apply` guards them out of the inserted
 action with a matrix condition or leaves a job that only runs them unedited,
 validation counts them as excluded, and the result names them as "Not tried".
@@ -163,7 +164,12 @@ configuration whose CI step reads a remote browser grid's credentials from CI
 secrets (Sauce Labs, BrowserStack, LambdaTest, TestingBot): setup instruments it
 like any other step, and it is reported as running only in CI once a local
 configuration of the same suite passed its paired comparison; without one, it
-blocks. Caveats never prevent COMPLETE LOCALLY. Plain argv
+blocks. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
+settings that disable a tracer integration (such as
+`DD_TRACE_DISABLED_INSTRUMENTATIONS=router`) and lists earlier attempts of the
+same workflow that stopped before the final run. Re-running `--apply` on its own
+output makes no change: the guard it writes on the Datadog action (runtime
+partition, the test steps' guard, Windows rows) is the guard it expects. Plain argv
 commands under `shell: pwsh`, including the Windows default, are read as POSIX
 commands, including npm package specs such as `@scope/name@version`; PowerShell
 syntax, doubled quotes and multi-line test steps remain unresolved.

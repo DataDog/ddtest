@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -102,6 +103,9 @@ func setupStepText(node *yaml.Node, indent, nested int, comments setupComments, 
 		return "", err
 	}
 	step := document.Content[0]
+	// The round trip quotes values the encoder escapes; keep the source styles
+	// so restoreEscapedScalars can write those values back as they were.
+	copyScalarStyles(step, node)
 	setupMember(step, "run").Value = command
 	if condition != "" {
 		if setupMember(step, "env") != nil {
@@ -150,9 +154,10 @@ func encodeSetupStep(step *yaml.Node, indent, nested int, comments setupComments
 	if err := encoder.Close(); err != nil {
 		return "", err
 	}
+	encoded := restoreEscapedScalars(out.String(), step)
 	var result strings.Builder
 	first := true
-	for _, line := range strings.SplitAfter(out.String(), "\n") {
+	for _, line := range strings.SplitAfter(encoded, "\n") {
 		if line == "" {
 			continue
 		}
@@ -294,4 +299,59 @@ func setupActionSupported(action string) bool {
 		return true
 	}
 	return false
+}
+
+// escapedScalar matches a double-quoted scalar the encoder wrote with \u or \U
+// escapes, as it does for emoji and other characters outside its printable set.
+var escapedScalar = regexp.MustCompile(`"(?:[^"\\]|\\.)*\\[uU][0-9A-Fa-f]{4,8}(?:[^"\\]|\\.)*"`)
+
+// restoreEscapedScalars writes back, in their original style, the scalars the
+// encoder escaped only because of their characters (a step named "🧪 Test"
+// became "\U0001F9EA Test"). ddtest re-encodes a step to insert its own keys;
+// the customer's other values must stay as they were written.
+func restoreEscapedScalars(encoded string, step *yaml.Node) string {
+	styles := map[string]yaml.Style{}
+	var walk func(*yaml.Node)
+	walk = func(node *yaml.Node) {
+		if node.Kind == yaml.ScalarNode {
+			if _, seen := styles[node.Value]; !seen {
+				styles[node.Value] = node.Style
+			}
+		}
+		for _, child := range node.Content {
+			walk(child)
+		}
+	}
+	walk(step)
+	return escapedScalar.ReplaceAllStringFunc(encoded, func(token string) string {
+		value, err := strconv.Unquote(token)
+		if err != nil {
+			return token
+		}
+		style, ok := styles[value]
+		if !ok {
+			return token
+		}
+		switch style {
+		case 0:
+			return value
+		case yaml.SingleQuotedStyle:
+			return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+		}
+		return token
+	})
+}
+
+// copyScalarStyles copies scalar styles from src onto the same scalars of its
+// re-parsed copy dst.
+func copyScalarStyles(dst, src *yaml.Node) {
+	if dst.Kind != src.Kind || len(dst.Content) != len(src.Content) {
+		return
+	}
+	if dst.Kind == yaml.ScalarNode && dst.Value == src.Value {
+		dst.Style = src.Style
+	}
+	for i := range dst.Content {
+		copyScalarStyles(dst.Content[i], src.Content[i])
+	}
 }

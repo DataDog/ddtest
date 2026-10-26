@@ -158,5 +158,5 @@ func UnsupportedNodeReason(node string) string {
 // NotTriedNote names the CI job ddtest skips because no dd-trace release
 // supports its Node versions.
 func NotTriedNote(location string, nodes []string) string {
-	return "Not tried: " + location + " on Node " + strings.Join(nodes, ", ") + " (no dd-trace release supports them; ddtest skips them without instrumenting, no approval needed)"
+	return "Not tried: " + location + " on Node " + strings.Join(nodes, ", ") + " (below Node 18, the oldest dd-trace major ddtest supports; ddtest skips them without instrumenting, no approval needed)"
 }

@@ -12,6 +12,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -67,4 +68,7 @@ func TestWorkflowAsksTheUserToAcceptASubstituteRuntime(t *testing.T) {
 	require.True(t, slices.Contains(result.ResumeCommand, AcceptSubstituteRuntimeFlag), result.ResumeCommand)
 	require.Contains(t, result.Needs, "Ask the user")
 	require.NotEqual(t, "complete_locally", result.Status)
+	// The turn ends here, so the canonical text travels with the result.
+	require.True(t, strings.HasPrefix(result.FinalResponse, "NOT COMPLETE"), result.FinalResponse)
+	require.Contains(t, result.Instruction, onboard.FinalResponseInstruction)
 }

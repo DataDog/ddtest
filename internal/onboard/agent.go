@@ -255,7 +255,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 // AgentScope bounds what a coding agent changes during onboarding. Trials
 // showed agents editing builds, manifests and test names to satisfy checks,
 // and stopping a whole run to ask before an install ddtest itself prescribed.
-const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. " + PrescribedEditInstruction + " Any edit ddtest did not prescribe needs the user's approval first. Never rename tests, rewrite CI or package scripts so ddtest can parse them, disable an instrumentation ddtest did not prescribe disabling, or download a runtime; report the blocker instead. CI rows on a Node no dd-trace release supports are skipped by ddtest itself and reported as not tried; that needs no user approval. Do not inspect the ddtest binary. " + ReadWholeInstruction
+const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. " + PrescribedEditInstruction + " Any edit ddtest did not prescribe needs the user's approval first. Never rename tests, rewrite CI or package scripts so ddtest can parse them, disable an instrumentation ddtest did not prescribe disabling, or download a runtime; report the blocker instead. CI rows below Node 18, the oldest dd-trace major ddtest supports, are skipped by ddtest itself and reported as not tried; that needs no user approval. Do not inspect the ddtest binary. " + ReadWholeInstruction
 
 // PrescribedEditInstruction lets the agent make the exact non-CI edits ddtest
 // needs for validation (dev dependencies, package scripts, coverage config)

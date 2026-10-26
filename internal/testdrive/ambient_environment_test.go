@@ -17,6 +17,12 @@ func TestAmbientDatadogSettingsAreRecorded(t *testing.T) {
 	require.NotContains(t, ambient, "DD_SERVICE", "the CI configuration sets it")
 	require.NotContains(t, ambient, "DD_CIVISIBILITY_ENABLED", "ddtest sets it for every run")
 
+	// main sets this on ddtest's own process; it is not the user's setting.
+	t.Setenv("DD_TELEMETRY_DEPENDENCY_COLLECTION_ENABLED", "0")
+	require.NotContains(t, ambientDatadogEnvironment(nil), "DD_TELEMETRY_DEPENDENCY_COLLECTION_ENABLED")
+	t.Setenv("DD_TELEMETRY_DEPENDENCY_COLLECTION_ENABLED", "1")
+	require.Contains(t, ambientDatadogEnvironment(nil), "DD_TELEMETRY_DEPENDENCY_COLLECTION_ENABLED", "a different value is the user's")
+
 	result := pairedReport("ambient", "passed")
 	result.AmbientDatadogEnvironment = map[string]string{"DD_TRACE_DISABLED_INSTRUMENTATIONS": "router"}
 	require.Contains(t, validationHandoff(result), "Ambient Datadog settings (not from CI) reached local runs: DD_TRACE_DISABLED_INSTRUMENTATIONS=router.")

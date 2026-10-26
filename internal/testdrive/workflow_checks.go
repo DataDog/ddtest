@@ -32,6 +32,9 @@ type WorkflowEvidence struct {
 	FactsSHA256       string                  `json:"facts_sha256,omitempty"`
 	Changes           []onboard.SetupChange   `json:"changes,omitempty"`
 	Checks            []onboard.WorkflowCheck `json:"checks"`
+	// EarlierAttempts lists the codes of attempts that stopped before this
+	// run on the same resumed workflow, oldest first.
+	EarlierAttempts []string `json:"earlier_attempts,omitempty"`
 }
 
 func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.WorkflowCheck {
