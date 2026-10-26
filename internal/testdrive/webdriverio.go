@@ -157,7 +157,7 @@ func checkWebdriverIOSupport(check jestPreflight, selection platform.JSSelection
 		return verdict{Status: status, Reason: reason}
 	}
 	reason = "Runtime and tracer requirements match. Paired execution and supported feature controls are still required; TIA skipping/coverage are not supported."
-	if limitation := webdriverIOJasmineLimitation(check.WebdriverIO, "auto-retries"); limitation != "" {
+	if limitation := webdriverIOJasmineLimitation(check.WebdriverIO, "auto-retries", selection.Version); limitation != "" {
 		reason += " " + limitation
 	}
 	return verdict{Status: "compatible", Reason: reason}
@@ -168,11 +168,22 @@ func checkWebdriverIOSupport(check jestPreflight, selection platform.JSSelection
 // controls never engage there.
 var webdriverIOJasmineLimitedFeatures = []string{"auto-retries", "early-flake-detection", "disabled", "attempt-to-fix"}
 
+// webdriverIOJasmineFixedMinor maps a dd-trace major to its first release
+// that sees jasmine-core 5 specs at execution start (DataDog/dd-trace-js#10929).
+// Add each release line once it ships; until then every tracer is limited.
+var webdriverIOJasmineFixedMinor = map[int]int{}
+
 // webdriverIOJasmineLimitation explains a feature the tracer is known not to
-// apply for this WDIO Jasmine installation, or returns "".
-func webdriverIOJasmineLimitation(config *framework.WebdriverIOConfig, feature string) string {
+// apply for this WDIO Jasmine installation, or returns "". An empty tracer
+// (not selected yet) is treated as limited.
+func webdriverIOJasmineLimitation(config *framework.WebdriverIOConfig, feature, tracer string) string {
 	if config == nil || config.Framework != "jasmine" || !slices.Contains(webdriverIOJasmineLimitedFeatures, feature) {
 		return ""
+	}
+	if tracerMajor, tracerMinor, known := releaseParts(strings.TrimPrefix(tracer, "dd-trace@")); known {
+		if fixed, ok := webdriverIOJasmineFixedMinor[tracerMajor]; ok && tracerMinor >= fixed {
+			return ""
+		}
 	}
 	major, _, known := releaseParts(config.JasmineCore)
 	if !known || major >= 6 {
@@ -525,7 +536,7 @@ func installedFeatureLimitations(root, frameworkName string) map[string]string {
 	config := &framework.WebdriverIOConfig{Framework: "jasmine", JasmineCore: version}
 	limitations := map[string]string{}
 	for _, feature := range webdriverIOJasmineLimitedFeatures {
-		if reason := webdriverIOJasmineLimitation(config, feature); reason != "" {
+		if reason := webdriverIOJasmineLimitation(config, feature, ""); reason != "" {
 			limitations[feature] = reason
 		}
 	}

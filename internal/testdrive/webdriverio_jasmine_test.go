@@ -121,3 +121,16 @@ func TestSummaryDropsLinesThatOnlyRestateTracerOnlyFailures(t *testing.T) {
 	require.Contains(t, summary.BlockingChecks, featureCoverageBlocker)
 	require.Contains(t, summary.BlockingChecks, "configuration npm run test:local: incomplete")
 }
+
+func TestJasmineCoreLimitationLiftsForFixedTracers(t *testing.T) {
+	config := &framework.WebdriverIOConfig{Framework: "jasmine", JasmineCore: "5.9.0"}
+	require.NotEmpty(t, webdriverIOJasmineLimitation(config, "auto-retries", "dd-trace@6.21.0"), "no released fix yet")
+
+	t.Cleanup(func() { webdriverIOJasmineFixedMinor = map[int]int{} })
+	webdriverIOJasmineFixedMinor = map[int]int{6: 22}
+	require.Empty(t, webdriverIOJasmineLimitation(config, "auto-retries", "dd-trace@6.22.0"))
+	require.Empty(t, webdriverIOJasmineLimitation(config, "auto-retries", "6.23.1"))
+	require.NotEmpty(t, webdriverIOJasmineLimitation(config, "auto-retries", "dd-trace@6.21.0"))
+	require.NotEmpty(t, webdriverIOJasmineLimitation(config, "auto-retries", "dd-trace@5.132.0"), "v5 has no fixed release listed")
+	require.NotEmpty(t, webdriverIOJasmineLimitation(config, "auto-retries", ""), "unselected tracer stays limited")
+}
