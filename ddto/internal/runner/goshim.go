@@ -207,6 +207,10 @@ func IsGotestsum(args []string) bool {
 
 // isProgram reports whether path names the program name, with or without
 // Windows' .exe.
+// RunsAsGoShim reports whether a process whose argv[0] is arg0 runs as the go
+// shim, which is ddto's executable named go.
+func RunsAsGoShim(arg0 string) bool { return isProgram(arg0, "go") }
+
 func isProgram(path, name string) bool {
 	base := filepath.Base(path)
 	if runtime.GOOS == "windows" {
