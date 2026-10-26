@@ -71,6 +71,9 @@ function createObservedConfig (project, requested, directory, probe, component) 
       const observe = (event, handler) => event === 'after:run' ? handlers.push(handler) : on(event, handler)
       const returned = setup ? await setup.call(this, observe, effective) : effective
       const resolved = returned || effective
+      // Coverage of the code Cypress itself loads is not application coverage.
+      const projectRoot = resolved.projectRoot || effective.projectRoot
+      const supportFile = resolved.supportFile === undefined ? effective.supportFile : resolved.supportFile
       // A customer setupNodeEvents has the final word on config. Only the
       // auto-retries probe lets the tracer apply a native retry budget.
       if (options.probe && options.probeMode !== 'fail-once') resolved.retries = 0
@@ -86,6 +89,7 @@ function createObservedConfig (project, requested, directory, probe, component) 
           fs.writeFileSync(options.directory + '/results.json', JSON.stringify({
             ...results, complete: true, configNode: process.versions.node,
             componentConfigured: !!original.component,
+            projectRoot, supportFile: typeof supportFile === 'string' ? supportFile : undefined,
             probeExecutions: options.probe ? probeExecutions : undefined
           }))
         }

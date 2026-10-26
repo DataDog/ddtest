@@ -248,13 +248,13 @@ func TestHandoffSummarizesUnexecutedCypressConsumer(t *testing.T) {
 }
 
 func TestMissingRealCoverageNamesSelectedFramework(t *testing.T) {
-	for _, name := range []string{"mocha", "cucumber"} {
+	for _, name := range []string{"mocha", "cucumber", "cypress"} {
 		t.Run(name, func(t *testing.T) {
 			result := validationResult{Framework: name, Compatibility: verdict{Status: "compatible"},
 				Runs: []runSummary{{Name: "reporting-only", Instrumented: true, Coverage: &coverageSummary{Status: "not observed"}}}}
 			blockers := strings.Join(summarizeValidation(result).BlockingChecks, "\n")
 			require.Contains(t, blockers, displayName(name)+" real-suite coverage was not observed")
-			if name == "cucumber" {
+			if name != "mocha" {
 				require.NotContains(t, blockers, "Mocha")
 			}
 		})
@@ -283,18 +283,13 @@ func TestCompactHandoffKeepsExecutedScopeCountsAndRepositoryBlockersSeparate(t *
 	for _, status := range []string{"blocked", "blocked", "not exercised"} {
 		result.Configurations = append(result.Configurations, configurationResult{TestCommand: onboard.TestCommand{Command: strings.Repeat("long browser command ", 100)}, Status: status, Error: "unavailable browser or OS"})
 	}
-	for i := range result.Features {
-		if result.Features[i].Name == "skipping" {
-			result.Features[i].Status = "deferred"
-		}
-	}
 	result.Summary = summarizeValidation(result)
 	response := validationHandoff(result)
 	require.Contains(t, response, "Executed Cypress validations: PASSED (5/5).")
 	require.Contains(t, response, "Onboarding validation: INCOMPLETE.")
 	require.Contains(t, response, "Configurations: 5/8 validated; 5 executed, 5 paired; 2 blocked, 1 not exercised, 0 incomplete.")
 	require.Contains(t, response, "Reporting: 610 test executions; 122 source-test identities.")
-	require.Contains(t, response, "Features: 25/25 supported checks passed.")
+	require.Contains(t, response, "Features: 30/30 supported checks passed.")
 	require.Contains(t, response, "Real-suite coverage: observed in 5/5 reporting runs; 610/610 results linked to source.")
 	require.Contains(t, response, "Blockers: 3. Full blockers and commands are in Results JSON.")
 	require.Contains(t, response, "CI execution and Datadog backend processing: not exercised.")

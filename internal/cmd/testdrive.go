@@ -44,7 +44,7 @@ func newTestdriveCommand() *cobra.Command {
 	command.Flags().BoolVar(&allowReviewedBuilds, "allow-reviewed-builds", false, "Allow reviewed bundlers, package build lifecycle scripts and dependency changes in isolated copies (may use the network)")
 	command.Flags().BoolVar(&all, "all", false, "Validate every discovered "+testdrive.ValidationFrameworkNames()+" CI configuration, preserving environment and known build prerequisites")
 	command.Flags().BoolVar(&checkOnly, "check-only", false, "Check "+testdrive.ValidationFrameworkNames()+" configuration, tracer selection and static CI runtimes without installing a tracer or running tests")
-	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
+	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer; defaults to the release every instrumented CI job pins, else latest")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
 	command.Flags().BoolVar(&agent, "agent", false, "Use the shared coordinator and compact agent result protocol")
 	command.Flags().BoolVar(&report, "report", false, "Render the saved result directly, verifying its source/runtime fingerprint; run no tests")
@@ -101,7 +101,7 @@ func newTestdriveCommand() *cobra.Command {
 			}
 		}
 
-		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, CheckOnly: checkOnly, All: all, Timeout: timeout, AllowReviewedBuilds: allowReviewedBuilds})
+		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, DefaultTracerVersion: !cmd.Flags().Changed("tracer-version"), CheckOnly: checkOnly, All: all, Timeout: timeout, AllowReviewedBuilds: allowReviewedBuilds})
 		if err != nil {
 			return fail("validation_preparation", err)
 		}

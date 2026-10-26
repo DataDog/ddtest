@@ -377,6 +377,8 @@ func (t *Testdrive) runPreparedChecksOrTests(ctx context.Context, output io.Writ
 		check = onboard.CheckCIRuntimes(ctx, root, t.framework.Name())
 	}
 	result.CIRuntime = &check
+	t.defaultToCITracer(check)
+	result.Tracer = t.tracerLabel
 	if t.preflight != nil {
 		runErr = t.preflight(ctx, output, &result)
 	}

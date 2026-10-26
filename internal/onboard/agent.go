@@ -68,7 +68,6 @@ type AgentResult struct {
 type PlanSummary struct {
 	UnsupportedFeatures map[string]string `json:"unsupported_features,omitempty"`
 	Features            []string          `json:"feature_scenarios,omitempty"`
-	DeferredFeatures    map[string]string `json:"deferred_features,omitempty"`
 	Framework           string            `json:"framework"`
 	Tracer              string            `json:"tracer,omitempty"`
 	Site                string            `json:"site"`
@@ -95,7 +94,7 @@ func WriteAgentResult(output io.Writer, result AgentResult) error {
 func RenderAgentResult(output io.Writer, result AgentResult, format string) error {
 	if result.Plan != nil {
 		plan := result.Plan
-		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, DeferredFeatures: plan.DeferredFeatures, UnsupportedFeatures: plan.UnsupportedFeatures}
+		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, UnsupportedFeatures: plan.UnsupportedFeatures}
 		result.DetailsCommand = DDTestCommand("testdrive", "--report", "--detail", "plan")
 		if format == "json" && len(result.DetailsCommand) > 0 {
 			result.DetailsCommand = append(result.DetailsCommand, "--format", "json")

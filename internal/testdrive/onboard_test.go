@@ -79,7 +79,7 @@ func TestOnboardMissingScopePreservesFramework(t *testing.T) {
 	require.NotContains(t, result.NextCommand, "vitest")
 }
 
-func TestCypressPlanDisclosesDeferredTIA(t *testing.T) {
+func TestCypressPlanRequiresTIA(t *testing.T) {
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"cypress run"},"devDependencies":{"cypress":"15.1.0"}}`)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
@@ -90,9 +90,9 @@ func TestCypressPlanDisclosesDeferredTIA(t *testing.T) {
 	var result onboard.AgentResult
 	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
 	require.NotNil(t, result.PlanSummary)
-	require.Len(t, result.PlanSummary.Features, 5)
-	require.NotContains(t, result.PlanSummary.Features, "skipping")
-	require.Equal(t, cypressTIADeferredReason, result.PlanSummary.DeferredFeatures["skipping"])
+	require.Len(t, result.PlanSummary.Features, 6)
+	require.Contains(t, result.PlanSummary.Features, "skipping")
+	require.Empty(t, result.PlanSummary.UnsupportedFeatures)
 }
 
 func TestUnsupportedWorkflowDoesNotRecommendItself(t *testing.T) {
