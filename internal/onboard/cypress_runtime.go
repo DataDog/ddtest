@@ -208,7 +208,16 @@ func cypressLocalNodeOptions(value string, workflow ciWorkflow, job runtimeJob, 
 				last = i
 			}
 		}
-		for _, env := range layers[:last] {
+		// A replacing layer cuts the inheritance chain. Earlier expressions
+		// need resolution only when the effective value consumes them.
+		first := last
+		for options := value; first > 0 && strings.Contains(options, "env.NODE_OPTIONS"); {
+			first--
+			if inherited, exists := layers[first]["NODE_OPTIONS"]; exists {
+				options = inherited
+			}
+		}
+		for _, env := range layers[first:last] {
 			if options, exists := env["NODE_OPTIONS"]; exists {
 				inherited, err := resolveNodeOptions(options, row, known)
 				if err != nil {

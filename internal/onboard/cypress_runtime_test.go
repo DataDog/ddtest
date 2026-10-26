@@ -267,3 +267,40 @@ func TestCypressCredentialGuardValidatesBothCIPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestCypressGuardResolvesOnlyConsumedNodeOptionsLayers(t *testing.T) {
+	const unknown = "${{ vars.DEFAULT_NODE_OPTIONS }}"
+	const replace = "${{ steps.dd.outcome == 'success' && format('-r {0}', env.DD_TRACE_PACKAGE) || '' }}"
+	const inherit = "${{ steps.dd.outcome == 'success' && format('{0} -r {1}', env.NODE_OPTIONS, env.DD_TRACE_PACKAGE) || env.NODE_OPTIONS }}"
+	for _, tc := range []struct {
+		name, workflow, job, step, want string
+		unresolved                      bool
+	}{
+		{name: "step replaces unresolved workflow", workflow: unknown, step: replace},
+		{name: "step replaces unresolved job", job: unknown, step: replace},
+		{name: "job replaces unresolved workflow", workflow: unknown, job: replace},
+		{name: "step inherits literal job override", workflow: unknown, job: "--trace-warnings", step: inherit, want: "--trace-warnings"},
+		{name: "step inherits unresolved workflow", workflow: unknown, step: inherit, unresolved: true},
+		{name: "step inherits unresolved job", workflow: "--trace-warnings", job: unknown, step: inherit, unresolved: true},
+		{name: "transitive unresolved inheritance", workflow: unknown, job: "${{ env.NODE_OPTIONS }} --trace-warnings", step: inherit, unresolved: true},
+		{name: "transitive ordinary flags preserved", workflow: "--max-old-space-size=2048", job: "${{ env.NODE_OPTIONS }} --trace-warnings", step: inherit, want: "--max-old-space-size=2048 --trace-warnings"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workflow := ciWorkflow{Env: map[string]string{}}
+			job := runtimeJob{Env: map[string]string{}, Steps: []runtimeStep{{ID: "dd", Uses: "datadog/test-visibility-github-action@v3"}}}
+			step := runtimeStep{Run: "npx cypress run", Env: map[string]string{}}
+			for i, value := range []string{tc.workflow, tc.job, tc.step} {
+				if value != "" {
+					[]map[string]string{workflow.Env, job.Env, step.Env}[i]["NODE_OPTIONS"] = value
+				}
+			}
+			_, env, err := resolveVariantStep(workflow, job, step, nil, "cypress")
+			if tc.unresolved {
+				require.ErrorContains(t, err, "unresolved NODE_OPTIONS expression")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, env["NODE_OPTIONS"])
+		})
+	}
+}
