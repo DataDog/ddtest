@@ -202,3 +202,8 @@ func TestAllKeepsASuspectedRegressionFailedLikeASingleRun(t *testing.T) {
 	require.Equal(t, "FAILED", report.Summary.Status)
 	require.Equal(t, "FAILED", report.Summary.LocalValidation)
 }
+
+func TestTracerMismatchNamesBothConfigurations(t *testing.T) {
+	err := tracerMismatchError("npm run test:local", "dd-trace@5.132.0", "npm run test:sauce", "dd-trace@6.21.0")
+	require.EqualError(t, err, "tracer selection differs between configurations: npm run test:local uses dd-trace@5.132.0, npm run test:sauce uses dd-trace@6.21.0; rerun with an exact --tracer-version that both support")
+}

@@ -204,6 +204,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		Compatibility: verdict{Status: "compatible", Reason: "Every discovered configuration passed its own paired comparison; configurations were not compared against each other."}, Cleanup: &verdict{Status: "passed", Reason: "Temporary sessions removed for all configurations."}}
 	var models []reportModel
 	var runErrors []error
+	var tracerConfiguration string
 	var leftovers []string
 	ambient := map[string]string{}
 	for _, entry := range scope.Commands {
@@ -298,9 +299,10 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			result.Selection = execution.Selection
 			result.Tracer = execution.Tracer
 			result.TracerSource = execution.TracerSource
+			tracerConfiguration = displayed
 		}
 		if execution.Tracer != "" && result.Tracer != execution.Tracer {
-			runErrors = append(runErrors, fmt.Errorf("tracer selection changed between configurations; select an exact --tracer-version"))
+			runErrors = append(runErrors, tracerMismatchError(tracerConfiguration, result.Tracer, displayed, execution.Tracer))
 		}
 		if execution.CIRuntime != nil {
 			result.CIRuntime = execution.CIRuntime
@@ -533,4 +535,10 @@ func discloseConfigurationSideEffects(result *validationResult, leftovers []stri
 		cleanup.Reason += " Left in the checkout by commands run there: " + strings.Join(cleanup.Leftovers, ", ") + "."
 	}
 	result.Cleanup = &cleanup
+}
+
+// tracerMismatchError names the configurations whose tracer selections differ,
+// so one release covering both can be selected.
+func tracerMismatchError(firstCommand, firstTracer, command, tracer string) error {
+	return fmt.Errorf("tracer selection differs between configurations: %s uses %s, %s uses %s; rerun with an exact --tracer-version that both support", firstCommand, firstTracer, command, tracer)
 }
