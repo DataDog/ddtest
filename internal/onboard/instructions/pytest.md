@@ -53,6 +53,10 @@ selected test environment and validate its actual Python/pytest command.
 2. Finish setup edits, then run
    `ddtest testdrive --framework pytest --all --tracer-version <resolved-release> --yes`.
    Use `--command '<existing pytest command>'` for a focused configuration.
+   A standalone `--command` run reports PASSED when that command's local checks
+   pass, even if the repository has no Datadog CI action. CI findings and other
+   unexecuted configurations remain advisories in the report. `--all`,
+   `--check-only` and guided onboarding still check their broader CI scope.
 3. Inspect the baseline/reporting-only comparison and the separate retry,
    early-flake-detection, skipping, quarantine, disabled, and attempt-to-fix
    experiments. Matching pre-existing failures are acceptable. Missing results,

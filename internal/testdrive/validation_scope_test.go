@@ -67,12 +67,13 @@ func TestFocusedJestValidationKeepsUnvalidatedRepositoryScope(t *testing.T) {
 			require.NoError(t, finishValidation(&output, root, result))
 			report := readValidationReport(t, root)
 			require.True(t, report.Success)
-			require.Equal(t, "INCOMPLETE", report.Summary.Status)
+			require.Equal(t, "PASSED", report.Summary.Status)
 			require.Equal(t, "PASSED", report.Summary.SelectedValidation.Status)
 			require.Equal(t, "PASSED", report.Summary.ExecutedValidation.Status)
 			require.Equal(t, 2, report.Summary.ConfigurationCoverage.Discovered)
 			require.Equal(t, 1, report.Summary.ConfigurationCoverage.NotExercised)
-			require.Contains(t, strings.Join(report.Summary.BlockingChecks, "\n"), "configuration npm run other: not exercised")
+			require.Empty(t, report.Summary.BlockingChecks)
+			require.Contains(t, strings.Join(report.Summary.CIAdvisories, "\n"), "configuration npm run other: not exercised")
 		})
 	}
 }

@@ -21,6 +21,7 @@ type validationSummary struct {
 	LocalValidation       string                 `json:"local_validation"`
 	CIConfiguration       string                 `json:"ci_configuration"`
 	BlockingChecks        []string               `json:"blocking_checks"`
+	CIAdvisories          []string               `json:"ci_advisories,omitempty"`
 	// Disclosed limits of the local evidence; they do not block success.
 	NotExercised            []string        `json:"not_exercised,omitempty"`
 	LocalNode               string          `json:"local_node,omitempty"`
@@ -126,11 +127,12 @@ func summarizeValidation(result validationResult) validationSummary {
 			summary.BlockingChecks = append(summary.BlockingChecks, sub.blocker())
 		}
 	}
+	var ciFindings []string
 	if result.CISelection != nil && result.CISelection.Status != "compatible" {
-		summary.BlockingChecks = append(summary.BlockingChecks, "CI tracer agreement: "+result.CISelection.Status)
+		ciFindings = append(ciFindings, "CI tracer agreement: "+result.CISelection.Status)
 	}
 	if result.CIRuntime != nil && result.CIRuntime.Status != "compatible" && result.CIRuntime.Status != "not applicable" {
-		summary.BlockingChecks = append(summary.BlockingChecks, "CI runtime: "+result.CIRuntime.Status)
+		ciFindings = append(ciFindings, "CI runtime: "+result.CIRuntime.Status)
 	}
 	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
 		summary.BlockingChecks = append(summary.BlockingChecks, "CI preservation: "+result.CIPreservation.Status+" — "+result.CIPreservation.Reason)
@@ -138,19 +140,24 @@ func summarizeValidation(result validationResult) validationSummary {
 	caveats, fidelityBlockers := ciFidelity(&result)
 	summary.Caveats = caveats
 	if result.Scope != nil {
-		summary.BlockingChecks = append(summary.BlockingChecks, scopeBlockers(append(slices.Clone(result.Scope.Unresolved), fidelityBlockers...))...)
+		ciFindings = append(ciFindings, scopeBlockers(append(slices.Clone(result.Scope.Unresolved), fidelityBlockers...))...)
 		for _, configuration := range result.Configurations {
-			if configuration.RemoteGrid == "" && !configurationSettled(result, configuration) && !alreadyExplained(summary.BlockingChecks, configuration.Error) {
-				summary.BlockingChecks = append(summary.BlockingChecks, "configuration "+configuration.Command+": "+configuration.Status)
+			if configuration.RemoteGrid == "" && !configurationSettled(result, configuration) && !alreadyExplained(ciFindings, configuration.Error) {
+				ciFindings = append(ciFindings, "configuration "+configuration.Command+": "+configuration.Status)
 			}
 		}
+	}
+	if result.focusedLocalCommand() {
+		summary.CIAdvisories = ciFindings
+	} else {
+		summary.BlockingChecks = append(summary.BlockingChecks, ciFindings...)
 	}
 	// Lines that only restate tracer-only feature failures add nothing to the
 	// failures themselves.
 	summary.BlockingChecks = slices.DeleteFunc(summary.BlockingChecks, func(check string) bool { return restatesTracerOnlyFailures(result, check) })
 	// Success is scoped to an explicitly selected command; the overall summary
 	// continues to expose every unvalidated repository configuration.
-	if result.Scope != nil && (len(result.Scope.Unresolved)+len(fidelityBlockers) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return !configurationSettled(result, c) })) && summary.Status != "FAILED" {
+	if !result.focusedLocalCommand() && result.Scope != nil && (len(result.Scope.Unresolved)+len(fidelityBlockers) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return !configurationSettled(result, c) })) && summary.Status != "FAILED" {
 		summary.Status = "INCOMPLETE"
 	}
 	summary.ConfigurationCoverage, summary.ExecutedValidation = summarizeConfigurationCoverage(result)
@@ -183,6 +190,9 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.HumanActions = append(summary.HumanActions, apiKeyHumanAction(result.CIRuntime))
 	}
 	summary.OnboardingResponse = fmt.Sprintf("Onboarding validation: %s. Local validation: %s. CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.", summary.Status, summary.LocalValidation, summary.CIConfiguration)
+	if result.focusedLocalCommand() {
+		summary.OnboardingResponse = fmt.Sprintf("Selected command validation: %s. Local validation: %s. CI configuration: %s (advisory). Other repository configurations, CI execution and Datadog backend processing remain unvalidated.", summary.Status, summary.LocalValidation, summary.CIConfiguration)
+	}
 	if summary.LocalNode != "" {
 		summary.OnboardingResponse += " Local execution runtime: Node " + summary.LocalNode + "."
 	}
@@ -235,7 +245,11 @@ func validationHandoff(result validationResult) string {
 	if executed := summary.ExecutedValidation; executed != nil {
 		fmt.Fprintf(&block, "Executed %s validations: %s (%d/%d).\n", displayName(result.Framework), executed.Status, executed.Passed, executed.Configurations)
 	}
-	fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s.\n", summary.Status, summary.LocalValidation)
+	if result.focusedLocalCommand() {
+		fmt.Fprintf(&block, "Local testdrive: %s (selected command). Other repository configurations remain unvalidated.\n", summary.Status)
+	} else {
+		fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s.\n", summary.Status, summary.LocalValidation)
+	}
 	if coverage := summary.ConfigurationCoverage; coverage != nil && coverage.Discovered > 0 {
 		fmt.Fprintf(&block, "Configurations: %d/%d validated; %d executed, %d paired; %d blocked, %d not exercised, %d incomplete%s.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete, remoteOnlyCount(coverage))
 		windows := 0
@@ -346,7 +360,7 @@ func validationHandoff(result validationResult) string {
 	for _, disabled := range disabledInstrumentations(result) {
 		block.WriteString("Disabled instrumentation: " + disabled + "\n")
 	}
-	if supportsValidationFramework(result.Framework) && summary.CIConfiguration != "compatible" && summary.CIConfiguration != "not applicable" {
+	if !result.focusedLocalCommand() && supportsValidationFramework(result.Framework) && summary.CIConfiguration != "compatible" && summary.CIConfiguration != "not applicable" {
 		block.WriteString("CI edits require a full local rerun; an actual CI run does not update this local report.\n")
 	}
 	if summary.LocalNode != "" {
@@ -390,6 +404,9 @@ func validationHandoff(result validationResult) string {
 			}
 		}
 		block.WriteString(". Full blockers and commands are in Results JSON.\n")
+	}
+	if len(summary.CIAdvisories) > 0 {
+		fmt.Fprintf(&block, "Repository CI advisories: %d (outside the selected command). See ci_advisories and configurations in Results JSON.\n", len(summary.CIAdvisories))
 	}
 	link := func(label, path string) string {
 		if absolute, err := filepath.Abs(path); err == nil {

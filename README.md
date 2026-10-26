@@ -46,6 +46,12 @@ For Jest, start with [testdrive configuration checks](docs/running.md#testdrive-
 
 For repositories with several Jest configurations, use `ddtest testdrive --framework jest --all --yes` to validate discovered CI commands and their prerequisites. Unknown setup stays explicitly unvalidated; `--command` selects a focused command. See [configuration validation](docs/running.md#validate-all-discovered-jest-configurations).
 
+A standalone `testdrive --command '<test command>'` reports success for that
+command's local comparison, coverage, feature checks and cleanup. Missing CI
+instrumentation and other unexecuted configurations appear as advisories; they
+do not require editing the repository's workflows to complete the local run.
+`--all`, `--check-only` and guided onboarding retain their broader CI checks.
+
 Testdrive reuses a detected project tracer; otherwise it installs the release
 every instrumented CI job pins, or the latest release (`--tracer-version`
 selects a fallback release or `git:<ref>`).
