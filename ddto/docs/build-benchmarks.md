@@ -4,9 +4,32 @@ The comparison uses Native, Orchestrion and POC Mini. POC SDK is no longer a
 benchmark variant. Runtime includes normal and deferred Mini; memory and CPU
 are recorded for every measured command.
 
-The [comparison tables](benchmarks.md) link to the complete matrix and raw data.
-Each variant has its own measured revision and date. Refreshing Mini reuses the
+The [comparison tables](benchmarks.md) link to the complete matrix. Each
+variant has its own measured revision and date. Refreshing Mini reuses the
 recorded Native and Orchestrion observations without changing their values.
+
+This repository keeps each dataset's reports. The raw data of
+`20261016-linux-go1.27.1`, its CSV, compressed JSON, manifests and the copies of
+the scripts that produced them, stays in the POC's repository, at the commit
+that last recorded it; its `archive.json`, kept here, lists the SHA-256 of each
+file. Fetch it before you regenerate or refresh from it:
+
+```sh
+git clone --filter=blob:none https://github.com/tonyredondo/dd-ci-testing-poc.git /var/tmp/dd-ci-testing-poc
+git -C /var/tmp/dd-ci-testing-poc checkout 8cc70ca41bdf7f2f5ed276a691ea582f6f15250e
+```
+
+To regenerate this repository's reports from it, copy it in without replacing
+the files kept here:
+
+```sh
+cp -Rn /var/tmp/dd-ci-testing-poc/docs/results/20261016-linux-go1.27.1/. \
+  docs/results/20261016-linux-go1.27.1/
+```
+
+That dataset was recorded in the POC's repository, so its input revisions are
+commits there: refresh Mini from it in that checkout, or record a new baseline
+of every variant here.
 
 ## Refresh only Mini
 
@@ -131,7 +154,8 @@ python3 scripts/build_benchmark.py report \
 python3 scripts/benchmark_report.py --input docs/results/new-run --check
 ```
 
-The scripts check file hashes, complete rounds and validation outcomes. The
+For `20261016-linux-go1.27.1`, copy its data in first, as above. The scripts
+check file hashes, complete rounds and validation outcomes. The
 merger also verifies that every Native and Orchestrion build observation is
 unchanged. Regeneration changes only the presentation and refreshes no
 measurement.
