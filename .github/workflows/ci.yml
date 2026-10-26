@@ -686,7 +686,7 @@ jobs:
           node-version: '24'
       - name: Install Cucumber testdrive fixture dependencies
         run: |
-          npm install --prefix "$RUNNER_TEMP/cucumber-testdrive" "@cucumber/cucumber@${{ matrix.cucumber }}" nyc@17.1.0 c8@12.0.0 dd-trace@6.20.1 @istanbuljs/esm-loader-hook@0.3.0 --save-exact --no-audit --no-fund
+          npm install --prefix "$RUNNER_TEMP/cucumber-testdrive" "@cucumber/cucumber@${{ matrix.cucumber }}" nyc@17.1.0 c8@12.0.0 dd-trace@6.20.1 @istanbuljs/esm-loader-hook@0.3.0 tsx@4.23.15 --save-exact --no-audit --no-fund
           npm ls --prefix "$RUNNER_TEMP/cucumber-testdrive" --depth=0
       - name: Validate native scenarios, matching failures and source coverage
         env:

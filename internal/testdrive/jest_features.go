@@ -480,6 +480,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 
 func probeControlDiagnostic(runs ...validationRun) string {
 	for _, run := range runs {
+		if run.missingSourceLoader != "" {
+			return reportText(run.missingSourceLoader)
+		}
 		if len(run.SuiteErrors) > 0 {
 			return reportText(run.SuiteErrors[0])
 		}

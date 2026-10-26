@@ -27,6 +27,8 @@ func TestCucumberSourceLoadersAreRecognizedInScripts(t *testing.T) {
 		`cross-env NODE_OPTIONS="-r dd-trace/ci/init" cucumber-js`,       // a tracer preload is not a source loader
 		`cross-env NODE_OPTIONS="--max-old-space-size=4096" cucumber-js`, // ordinary options keep their existing review
 		`cucumber-js`,
+		`NODE_OPTIONS="--import tsx" cucumber-js && echo done`,       // a compound script would be re-quoted into literal arguments
+		`NODE_OPTIONS="--import tsx" cucumber-js --profile $PROFILE`, // an expansion would become literal
 	} {
 		_, _, ok := cucumberLoaderOverride(script)
 		require.False(t, ok, script)
@@ -91,4 +93,24 @@ func TestApplyKeepsInheritedNodeOptionsWithAndWithoutTheTracer(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(root, ".github/workflows/test.yml"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), `format('--conditions=customer -r {0}', env.DD_TRACE_PACKAGE) || '--conditions=customer'`)
+}
+
+// Probes call cucumber-js directly, so they need the loaders the scoped
+// script keeps after the inherited options, in their original order.
+func TestCucumberProbeLoadersKeepTheScriptsSourceLoaders(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{
+		"test:bdd":"NODE_OPTIONS=\"${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-} --import tsx --experimental-loader @istanbuljs/esm-loader-hook\" nyc -- cucumber-js",
+		"bdd":"npm run test:bdd",
+		"plain":"NODE_OPTIONS=\"${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}\" cucumber-js"}}`), 0600))
+	for _, command := range []string{"npm run test:bdd", "npm run bdd"} {
+		require.Equal(t, "--import tsx --experimental-loader @istanbuljs/esm-loader-hook", CucumberProbeLoaders(root, command), command)
+	}
+	require.Empty(t, CucumberProbeLoaders(root, "npm run plain"))
+	require.Empty(t, CucumberProbeLoaders(root, "cucumber-js"))
+
+	require.True(t, CucumberSourceLoaderActive("-r dd-trace/ci/init --import tsx"))
+	require.True(t, CucumberSourceLoaderActive("--require=ts-node/register"))
+	require.False(t, CucumberSourceLoaderActive("-r dd-trace/ci/init --experimental-loader @istanbuljs/esm-loader-hook"))
+	require.False(t, CucumberSourceLoaderActive(""))
 }

@@ -66,6 +66,7 @@ type runSpec struct {
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
 	webdriverIOAttempts []jestTest
+	missingSourceLoader string // Explains a .js import that only exists as TypeScript.
 	ReplacedReporters   []string
 	Role                runRole
 	cucumberParallel    bool

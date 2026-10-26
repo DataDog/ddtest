@@ -93,6 +93,11 @@ func cucumberScopedScript(script string) bool {
 // It replaces inherited preloads, so it is never run as is: setup rewrites it to
 // the scoped prefix, keeping the loaders. rest is the script without it.
 func cucumberLoaderOverride(script string) (rest, loaders string, ok bool) {
+	// Rewriting re-quotes words, so operators and expansions would become
+	// literal arguments; only a single static invocation is rewritten.
+	if commands, err := staticCommands(script); err != nil || len(commands) != 1 || strings.ContainsAny(script, "$`") {
+		return "", "", false
+	}
 	words, err := shellquote.Split(strings.TrimSpace(script))
 	if err != nil || len(words) == 0 {
 		return "", "", false
@@ -182,6 +187,40 @@ func CucumberProbeCommand(root, command string) (string, error) {
 		return "", fmt.Errorf("cucumber probe command could not be resolved: %s", result.Reason)
 	}
 	return result.Tests[0].cucumberProbeCommand, nil
+}
+
+// CucumberProbeLoaders returns the source loaders a scoped Cucumber script
+// keeps after the inherited options, such as `--import tsx`, in their original
+// order. Probes call the runner directly, so they must add them back.
+func CucumberProbeLoaders(root, command string) string {
+	remaining := 256
+	result := resolveJestSequence(root, root, command, nil, &remaining, "cucumber")
+	if result.Reason != "" || len(result.Tests) != 1 {
+		return ""
+	}
+	return result.Tests[0].cucumberLoaders
+}
+
+// CucumberSourceLoaderActive reports whether options load a well-known source
+// loader, such as tsx, that lets `.js` imports resolve to TypeScript sources.
+func CucumberSourceLoaderActive(options string) bool {
+	words, err := environment.SplitNodeOptions(options)
+	if err != nil {
+		return false
+	}
+	for i, word := range words {
+		key, value, equals := strings.Cut(word, "=")
+		if !slices.Contains([]string{"--import", "--require", "-r", "--loader", "--experimental-loader"}, key) {
+			continue
+		}
+		if !equals && i+1 < len(words) {
+			value = words[i+1]
+		}
+		if value != "@istanbuljs/esm-loader-hook" && slices.Contains(cucumberSourceLoaders, value) {
+			return true
+		}
+	}
+	return false
 }
 
 // LifecycleScript is a package lifecycle hook that npm runs around an alias.

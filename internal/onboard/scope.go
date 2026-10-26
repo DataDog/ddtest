@@ -62,6 +62,7 @@ type TestCommand struct {
 	cucumberCoverageWrapper string
 	cucumberScoped          bool
 	cucumberInlineIstanbul  bool
+	cucumberLoaders         string // Source loaders the scoped script keeps after the inherited options.
 	cucumberLoaderReason    string // Set when an in-script NODE_OPTIONS loader still replaces preloads.
 }
 

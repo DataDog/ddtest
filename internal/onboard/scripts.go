@@ -659,6 +659,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	cucumber := len(frameworks) > 0 && frameworks[0] == "cucumber"
 	cucumberScoped := cucumber && cucumberScopedScript(script)
 	cucumberInlineIstanbul := cucumber && cucumberInlineIstanbulScript(script)
+	cucumberLoaders, _ := cucumberScopedLoaders(script)
 	loaderReason := ""
 	if cucumber {
 		script = cucumberDiscoveryScript(script)
@@ -690,6 +691,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 			}
 			scoped := false
 			inlineIstanbul := cucumberInlineIstanbulScript(part)
+			loaders, _ := cucumberScopedLoaders(part)
 			if cucumber {
 				scoped = cucumberScopedScript(part)
 				part = cucumberDiscoveryScript(part)
@@ -708,6 +710,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 						if cucumber {
 							resolved.Tests[i].cucumberScoped = true
 							resolved.Tests[i].cucumberInlineIstanbul = inlineIstanbul
+							resolved.Tests[i].cucumberLoaders = loaders
 						} else {
 							resolved.Tests[i].webdriverIOScoped = true
 						}
@@ -765,6 +768,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	if cucumberScoped && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
 		result.Tests[0].cucumberScoped = true
 		result.Tests[0].cucumberInlineIstanbul = result.Tests[0].cucumberInlineIstanbul || cucumberInlineIstanbul
+		if result.Tests[0].cucumberLoaders == "" {
+			result.Tests[0].cucumberLoaders = cucumberLoaders
+		}
 	}
 	if mocha && lifecycle == "" && result.Reason == "" && !result.Matched && result.MochaAuxiliary && name == "build" {
 		return commandResolution{Builds: []BuildCommand{{Directory: repositoryPath(root, directory), Command: command, Kind: "package-build"}}}
