@@ -21,10 +21,12 @@ import (
 
 // Recognize only the documented scoped preload during discovery. Execution
 // keeps the original alias; arbitrary instrumentation overrides remain unresolved.
+const cucumberImpactedWorkaround = "DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false"
+
 const cucumberScopedOptions = `NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}"`
 
 func cucumberDiscoveryScript(script string) string {
-	return strings.ReplaceAll(script, cucumberScopedOptions, "")
+	return strings.NewReplacer(cucumberScopedOptions, "", cucumberImpactedWorkaround, "").Replace(script)
 }
 
 func CucumberValidationCommand(root, command string) (string, error) {
@@ -147,6 +149,17 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 			if value, ok := env["NODE_OPTIONS"]; ok {
 				options = scoped + " " + value
 			}
+		}
+		// Generated setup writes scoped options as a GitHub expression; check the
+		// value it resolves to on an instrumented step.
+		resolvedStep := step
+		resolvedStep.Env = maps.Clone(step.Env)
+		if resolvedStep.Env == nil {
+			resolvedStep.Env = map[string]string{}
+		}
+		resolvedStep.Env["NODE_OPTIONS"] = options
+		if resolved, err := effectiveBootstrapOptions(workflow, job, resolvedStep, row, true); err == nil {
+			options = resolved
 		}
 		if !nodeOptionsLoad(options, "@istanbuljs/esm-loader-hook") {
 			return "Cannot verify Istanbul instrumentation for native ESM Cucumber CI code. Include --experimental-loader @istanbuljs/esm-loader-hook in the scoped Cucumber Node options, or review custom/pre-instrumented source coverage separately."

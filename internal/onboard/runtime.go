@@ -89,7 +89,10 @@ type runtimeJob struct {
 	Defaults  ciDefaults        `yaml:"defaults"`
 	Env       map[string]string `yaml:"env"`
 	If        string            `yaml:"if"`
-	Strategy  struct {
+	// A job that calls a reusable workflow, and the secrets it passes.
+	Uses     string `yaml:"uses"`
+	Secrets  any    `yaml:"secrets"`
+	Strategy struct {
 		Matrix any `yaml:"matrix"`
 	} `yaml:"strategy"`
 	Steps []runtimeStep `yaml:"steps"`
@@ -522,6 +525,11 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		}
 		if reason != "" {
 			finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedInitialization, reason
+			if reason == unverifiedPreloadReason && stepSetsNoNodeOptions(workflow, job, step) {
+				// Nothing custom to preserve: the step only lacks the action's preload.
+				finding.Code = CodeMissingInitialization
+				finding.Reason = "The Datadog action runs, but this test step sets no NODE_OPTIONS to load its preload. Add NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} (with --import ${{ env.DD_TRACE_ESM_IMPORT }} for ESM) to the step; ddtest onboard --apply can add it."
+			}
 		}
 	}
 	return finding

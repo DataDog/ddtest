@@ -482,6 +482,17 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return unresolvedCommand("Dependency-changing setup requires separate validation: " + command)
 		}
 		args := words[1:]
+		var options npmScriptOptions
+		if words[0] == "npm" {
+			var err error
+			if args, options, err = npmScriptArguments(args); err != nil {
+				return unresolvedCommand(err.Error() + ": " + command)
+			}
+			if len(args) == 0 {
+				return unresolvedCommand("Missing package-manager subcommand: " + command)
+			}
+		}
+		subcommand := args[0]
 		if words[0] == "bun" && args[0] == "test" {
 			// bun test invokes Bun's own runner, not the package's Jest script.
 			return commandResolution{}
@@ -495,7 +506,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return unresolvedCommand("Unsupported package script selection: " + command)
 		}
 		name := args[0]
-		if words[0] == "npm" && words[1] == "t" {
+		if words[0] == "npm" && subcommand == "t" {
 			name = "test"
 		}
 		forwarded := args[1:]
@@ -504,8 +515,39 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		} else if words[0] == "npm" && len(forwarded) > 0 {
 			return unresolvedCommand("npm script arguments without -- require review: " + command)
 		}
-		result := resolvePackageScript(root, directory, name, forwarded, stack, shellCommand(words), remaining, frameworks...)
-
+		scriptDirectory := directory
+		if options.directory != "" {
+			resolve := repositoryDirectory
+			if options.workspace {
+				resolve = npmWorkspaceDirectory
+			}
+			target, err := resolve(root, directory, options.directory)
+			if err != nil {
+				return unresolvedCommand(repositoryError(root, err))
+			}
+			scriptDirectory = target
+		}
+		if options.ifPresent && !packageScriptExists(scriptDirectory, name) {
+			// npm exits successfully without running anything.
+			return commandResolution{}
+		}
+		result := resolvePackageScript(root, scriptDirectory, name, forwarded, stack, shellCommand(words), remaining, frameworks...)
+		if scriptDirectory != directory {
+			if result.Evidence != "" {
+				result.Evidence = command + " (in " + repositoryPath(root, scriptDirectory) + ") -> " + result.Evidence
+			}
+			// Local flag forwarding from the caller is not validated for a
+			// test runner in a different package directory.
+			original, _ := filepath.EvalSymlinks(directory)
+			result.SingleJest = result.SingleJest && scriptDirectory == original
+			// A retained alias still carries its package selection, so it
+			// replays from the caller; npm would apply the selection twice.
+			for i := range result.Tests {
+				if result.Tests[i].Command == shellCommand(words) {
+					result.Tests[i].Directory = repositoryPath(root, directory)
+				}
+			}
+		}
 		return result
 	default:
 		return commandResolution{Reason: "Cannot statically resolve command: " + command, UnknownExecutable: true}
@@ -566,7 +608,11 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	var lifecycle string
 	for _, hook := range []string{"pre" + name, "post" + name} {
 		if manifest.Scripts[hook] != "" {
-			lifecycle = joinDiagnostic(lifecycle, "Package lifecycle script "+hook+" requires review alongside "+command)
+			reason := "Package lifecycle script " + hook + " requires review alongside " + command
+			if label, binary := lifecycleRunner(frameworks); binary != "" && slices.ContainsFunc(strings.Fields(manifest.Scripts[hook]), func(word string) bool { return filepath.Base(word) == binary }) {
+				reason = "Package lifecycle script " + hook + " runs " + label + "; " + label + " validation only follows the main script, not npm pre/post hooks. Move it into " + name + " or select its command with --command"
+			}
+			lifecycle = joinDiagnostic(lifecycle, reason)
 		}
 	}
 	if len(args) > 0 {
@@ -596,16 +642,39 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		// Resolve them independently so an inner cd/export cannot affect the next hook.
 		singleInvocation := true
 		leaf := -1
-		for i, part := range []string{manifest.Scripts["pre"+name], script, manifest.Scripts["post"+name]} {
+		for phase, part := range []string{manifest.Scripts["pre"+name], script, manifest.Scripts["post"+name]} {
 			if part == "" {
 				continue
 			}
+			scoped := false
+			if cucumber {
+				scoped = strings.HasPrefix(part, cucumberScopedOptions+" ")
+				part = cucumberDiscoveryScript(part)
+			}
+			wdio := len(frameworks) > 0 && frameworks[0] == "webdriverio"
+			if wdio {
+				scoped = strings.HasPrefix(part, webdriverIOScopedOptions+" ")
+				part = webdriverIODiscoveryScript(part)
+			}
 			resolved := resolveJestSequence(root, directory, part, append(slices.Clone(stack), key), remaining, frameworks...)
+			if cucumber || wdio {
+				owner := []string{"pre" + name, name, "post" + name}[phase]
+				for i := range resolved.Tests {
+					resolved.Tests[i].packageScripts = append(resolved.Tests[i].packageScripts, packageScript{Directory: repositoryPath(root, directory), Name: owner, Leaf: len(resolved.Tests[i].packageScripts) == 0})
+					if scoped && resolved.Reason == "" && !resolved.OtherFramework && len(resolved.Tests) == 1 {
+						if cucumber {
+							resolved.Tests[i].cucumberScoped = true
+						} else {
+							resolved.Tests[i].webdriverIOScoped = true
+						}
+					}
+				}
+			}
 			if resolved.Matched {
 				singleInvocation = singleInvocation && resolved.SingleJest
 			}
 			if len(resolved.Tests) > 0 {
-				leaf = i
+				leaf = phase
 			}
 			result.Tests = append(result.Tests, resolved.Tests...)
 			result.Builds = append(result.Builds, resolved.Builds...)
@@ -637,6 +706,12 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	if webdriverIOScoped && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
 		result.Tests[0].webdriverIOScoped = true
 	}
+	if len(frameworks) > 0 && (frameworks[0] == "cucumber" || frameworks[0] == "webdriverio") {
+		for i := range result.Tests {
+			result.Tests[i].packageScripts = append(result.Tests[i].packageScripts, packageScript{Directory: repositoryPath(root, directory), Name: name, Leaf: len(result.Tests[i].packageScripts) == 0})
+		}
+	}
+
 	if cucumberScoped && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
 		result.Tests[0].cucumberScoped = true
 	}
@@ -764,4 +839,22 @@ func playwrightInteractiveMode(args []string) bool {
 		}
 	}
 	return false
+}
+
+// lifecycleRunner names frameworks whose npm pre/post hooks are not followed
+// during discovery; Mocha, Cucumber, Cypress and WebdriverIO resolve them.
+func lifecycleRunner(frameworks []string) (string, string) {
+	framework := "jest"
+	if len(frameworks) > 0 {
+		framework = frameworks[0]
+	}
+	switch framework {
+	case "jest":
+		return "Jest", "jest"
+	case "vitest":
+		return "Vitest", "vitest"
+	case "playwright":
+		return "Playwright", "playwright"
+	}
+	return "", ""
 }

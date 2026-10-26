@@ -13,8 +13,14 @@ import (
 
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
+type packageScript struct {
+	Directory, Name string
+	Leaf            bool
+}
+
 type TestCommand struct {
 	webdriverIOScoped               bool
+	packageScripts                  []packageScript
 	cucumberProbeCommand            string
 	cucumberProbeBefore             []LifecycleScript
 	cucumberProbeAfter              []LifecycleScript
@@ -230,6 +236,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 						scope.Commands = append(scope.Commands, entry)
 					} else {
 						scope.Commands[index].locations = append(scope.Commands[index].locations, entry.locations...)
+						scope.Commands[index].packageScripts = append(scope.Commands[index].packageScripts, entry.packageScripts...)
 					}
 				}
 			}

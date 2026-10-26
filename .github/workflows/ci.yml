@@ -523,6 +523,32 @@ jobs:
           DDTEST_VITEST_TRACER_VERSION: ${{ matrix.tracer }}
         run: go test -v ./internal/testdrive -run '^TestPublicVitestRunnerTestdrive$' -count=1 -timeout=15m
 
+  onboard-apply-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Validate generated workflow edits with actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" go test -v ./internal/onboard -run '^TestGeneratedSetupWorkflow.*Actionlint$' -count=1
+      - name: Install apply fixture dependencies
+        run: npm install --prefix "$RUNNER_TEMP/apply-testdrive" vitest@4.1.11 mocha@11.7.6 nyc@17.1.0 dd-trace@6.20.1 @cucumber/cucumber@12.2.0 @wdio/cli@9.20.0 @wdio/local-runner@9.20.0 @wdio/mocha-framework@9.20.0 --no-audit --no-fund
+      - name: Apply setup and validate against local intake
+        env:
+          DDTEST_MOCHA_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
+          DDTEST_VITEST_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
+          DDTEST_WEBDRIVERIO_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
+          DDTEST_CUCUMBER_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
+          DDTEST_CHROME_BINARY: /usr/bin/google-chrome
+        run: DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" go test -v ./internal/testdrive -run '^TestPublic(OnboardApply|MochaApply|WebdriverIOApply|CucumberApply)$' -count=1 -timeout=8m
+
   testdrive-mocha-workflow:
     runs-on: ubuntu-latest
     timeout-minutes: 12
