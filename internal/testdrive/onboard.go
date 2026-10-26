@@ -421,12 +421,32 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				return fail("blocked_environment", "metadata_network", problem.Error(), "Restore only the named metadata network capability, then run resume_command. Do not change runtime, tracer or test scope to work around a network failure.")
 			}
 			var majors *ciTracerMajors
-			if errors.As(problem, &majors) && len(majors.Exclusions) > 0 {
-				result.RequiredInput = []string{"the user's choice: one --tracer-version every instrumented CI row supports, or approval to opt these rows out: " + strings.Join(majors.Exclusions, "; ")}
-				return fail("needs_input", "preflight_unresolved", problem.Error(), "Ask the user before excluding any CI row. If they approve, make exactly the listed DD_CIVISIBILITY_ENABLED edits and run resume_command; otherwise rerun with one --tracer-version every instrumented row supports. Never weaken feature checks.")
+			if errors.As(problem, &majors) {
+				// Resume with the release ddtest recommends rather than the default.
+				if majors.Recommended != "" && !options.ExplicitVersion && checkpoint != nil {
+					result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--tracer-version", majors.Recommended, "--resume", checkpoint.RunID)
+				}
+				if len(majors.Exclusions) > 0 {
+					result.RequiredInput = []string{"the user's choice: one --tracer-version every instrumented CI row supports, or approval to opt these rows out: " + strings.Join(majors.Exclusions, "; ")}
+					return fail("needs_input", "preflight_unresolved", problem.Error(), "Ask the user before excluding any CI row. If they approve, make exactly the listed DD_CIVISIBILITY_ENABLED edits and run resume_command; otherwise rerun with one --tracer-version every instrumented row supports. Never weaken feature checks.")
+				}
+				result.RequiredInput = []string{"one --tracer-version every instrumented CI row supports"}
+				needs := "No opt-out edit applies to these CI rows; do not exclude or rewrite them. Report them as unvalidated blockers unless one --tracer-version supports every instrumented row."
+				if majors.Recommended != "" {
+					needs = "Run resume_command, which selects dd-trace@" + majors.Recommended + ". Rows it cannot run stay unvalidated blockers to report; do not exclude or rewrite CI rows."
+				}
+				return fail("needs_input", "preflight_unresolved", problem.Error(), needs)
 			}
 			result.RequiredInput = []string{"the named runtime/configuration incompatibility"}
-			return fail("needs_input", "preflight_unresolved", problem.Error(), "Resolve this exact mismatch without weakening feature checks; exclude a CI row only as an explicit opt-out the user approves.")
+			return fail("needs_input", "preflight_unresolved", problem.Error(), "Resolve this exact mismatch without weakening feature checks. Do not exclude or rewrite CI rows to get past it; if it can't be resolved, report it as a blocker.")
+		}
+		if len(t.workflowReportOnly) > 0 {
+			reason := "Not set up or validated locally; reported as blockers: " + strings.Join(t.workflowReportOnly, "; ")
+			if i := slices.IndexFunc(result.Checks, func(check onboard.WorkflowCheck) bool { return check.Name == "ci_scope" }); i >= 0 {
+				result.Checks[i].Reason += "; " + reason
+			} else {
+				result.Checks = append(result.Checks, onboard.WorkflowCheck{Name: "ci_scope", Status: onboard.StatusInconclusive, Reason: reason})
+			}
 		}
 		result.Checks = append(result.Checks, onboard.WorkflowCheck{Name: "preflight_preparation", Status: "passed", Reason: fmt.Sprintf("Verified preflight reused: %t. Test execution is always fresh.", reused)})
 		plan.Tracer = selected
@@ -874,17 +894,32 @@ func (t *Testdrive) selectWorkflowTracer(ctx context.Context, scope onboard.Vali
 		t.workflowPlan.CIRuntime = &ci
 	}
 	var selected platform.JSSelection
+	t.workflowReportOnly = nil
 	for _, entry := range scope.Commands {
-		if ciInstrumentationDisabled(entry) {
+		// Entries partial apply leaves unedited are reported, never preflighted.
+		if t.setupStaysReported(entry, true) {
 			continue
 		}
+		// One tracer serves every configuration: later entries check the release
+		// the first one selected instead of recommending their own.
+		probe, pinned := t, explicit
+		if selected.Version != "" {
+			pinnedDrive := *t
+			pinnedDrive.tracerVersion = selected.Version
+			probe, pinned = &pinnedDrive, true
+		}
 		var candidate platform.JSSelection
+		var reportOnly []string
 		err := workflowPreflight(ctx, func() (err error) {
-			candidate, err = t.selectSetupTracer(ctx, onboard.ValidationScope{Commands: []onboard.TestCommand{entry}}, explicit)
+			candidate, reportOnly, err = probe.selectSetupTracerReporting(ctx, onboard.ValidationScope{Commands: []onboard.TestCommand{entry}}, pinned)
 			return err
 		})
 		if err != nil {
 			return selected.Version, err
+		}
+		t.workflowReportOnly = append(t.workflowReportOnly, reportOnly...)
+		if candidate.Version == "" {
+			continue
 		}
 		if selected.Version != "" && selected.Version != candidate.Version {
 			return selected.Version, fmt.Errorf("tracer selection changed across configurations")
@@ -896,6 +931,9 @@ func (t *Testdrive) selectWorkflowTracer(ctx context.Context, scope onboard.Vali
 		}
 	}
 	if selected.Version == "" {
+		if len(t.workflowReportOnly) > 0 {
+			return "", noRunnableConfiguration(t.workflowReportOnly)
+		}
 		return "", fmt.Errorf("no configurations enabled for instrumentation; explicit CI opt-outs are not validations")
 	}
 	return selected.Version, nil

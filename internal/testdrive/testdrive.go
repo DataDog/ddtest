@@ -52,6 +52,7 @@ type Testdrive struct {
 	cucumberCoverage         map[string]string
 	workflowSelect           func(context.Context, onboard.ValidationScope, bool) (string, error)
 	workflowPlan             *onboard.ExecutionPlan
+	workflowReportOnly       []string // Configurations tracer selection left unedited and reported.
 	workflowScope            *onboard.ValidationScope
 	workflowRun              func(context.Context, io.Writer) error
 	workflowSourceCheck      func(context.Context) error

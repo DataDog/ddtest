@@ -66,15 +66,27 @@ func mayStartTestsIn(directory string, step runtimeStep, framework string, depth
 	}
 	var lines []string
 	terminator := ""
+	type heredoc struct{ command, body string }
+	var heredocs []heredoc
 	for line := range strings.SplitSeq(step.Run, "\n") {
 		if terminator != "" {
 			if strings.TrimSpace(line) == terminator {
 				terminator = ""
+			} else {
+				heredocs[len(heredocs)-1].body += line + "\n"
 			}
 			continue // An inline script body is data for its interpreter.
 		}
 		if match := heredocStart.FindStringSubmatch(line); match != nil {
 			terminator = match[1]
+			command := ""
+			for _, word := range strings.Fields(line) {
+				if !strings.Contains(word, "=") {
+					command = filepath.Base(word)
+					break
+				}
+			}
+			heredocs = append(heredocs, heredoc{command: command})
 		}
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
@@ -87,7 +99,18 @@ func mayStartTestsIn(directory string, step runtimeStep, framework string, depth
 	}
 	text = shellCommandText(text)
 	scripts := packageScripts(directory)
-	inlineCodeSafe := inlineEvalsCannotLaunch(step.Run)
+	inlineCodeSafe := inlineEvalsCannotLaunch(step.Run, directory, framework, depth)
+	// A heredoc feeds its body to the interpreter on stdin: JavaScript is read
+	// like -e code, and a shell body like any other step.
+	heredocsSafe := true
+	for _, doc := range heredocs {
+		switch {
+		case slices.Contains(javaScriptInterpreters, doc.command):
+			heredocsSafe = heredocsSafe && inlineCodeCannotLaunch(doc.body, directory, framework, depth)
+		case slices.Contains(interpreters, doc.command):
+			heredocsSafe = heredocsSafe && depth < 8 && !mayStartTestsIn(directory, runtimeStep{Run: doc.body}, framework, depth+1)
+		}
+	}
 	for _, segment := range commandSeparator.Split(text, -1) {
 		words := strings.Fields(segment)
 		for len(words) > 0 && (strings.Contains(words[0], "=") || slices.Contains([]string{"sudo", "env", "time", "exec", "xargs", "command", "if", "while", "until", "!", "{", "("}, words[0])) {
@@ -123,7 +146,7 @@ func mayStartTestsIn(directory string, step runtimeStep, framework string, depth
 			}
 			// Inline code that can't spawn a process or load a repository file
 			// can't start a test launcher.
-			if inlineCodeSafe && evaluatesInlineCode(words[1:]) {
+			if inlineCodeSafe && evaluatesInlineCode(words[1:]) || heredocsSafe && readsHeredoc(words[1:]) {
 				continue
 			}
 			return true
@@ -222,9 +245,85 @@ func scriptBody(scripts map[string]string, manager string, words []string) (stri
 	return strings.Join([]string{scripts["pre"+name], body, scripts["post"+name]}, "\n"), true
 }
 
-// Inline code that spawns processes, uses a shell helper or loads a
-// repository-relative module could start a test launcher.
-var inlineLauncher = regexp.MustCompile(`(?i)child_process|\bspawn|\bexec(file|sync|a)?\b|\bfork\s*\(|\bzx\b|shelljs|worker_threads|(require|import)\s*\(?\s*['"]\.{1,2}/|\bfrom\s+['"]\.{1,2}/`)
+// Inline code loading a repository module, a shell helper library or another
+// runtime's process API could start a test launcher.
+var inlineModuleLauncher = regexp.MustCompile(`(?i)\bzx\b|shelljs|\bexeca\b|worker_threads|\bcluster\b|Bun\.spawn|Deno\.(?:Command|run)|(require|import)\s*\(?\s*['"]\.{1,2}/|\bfrom\s+['"]\.{1,2}/`)
+
+const childProcessModule = `['"](?:node:)?child_process['"]`
+
+var childProcessUse = regexp.MustCompile(childProcessModule)
+var childProcessAlias = regexp.MustCompile(`(?:const|let|var)\s+(\w+)\s*=\s*require\s*\(\s*` + childProcessModule + `\s*\)|import\s+(?:\*\s+as\s+)?(\w+)\s+from\s+` + childProcessModule)
+
+const childProcessMethods = `execFileSync|execFile|spawnSync|spawn|execSync|exec|fork`
+
+var argvProcessCall = regexp.MustCompile(`^(?:execFileSync|execFile|spawnSync|spawn)\s*\(\s*(['"])([^'"]+)['"]\s*(?:,\s*\[([^\]]*)\])?`)
+var shellProcessCall = regexp.MustCompile("^(?:execSync|exec)\\s*\\(\\s*['\"`]([^'\"`$]*)['\"`]")
+var literalArgument = regexp.MustCompile(`^\s*['"]([^'"]*)['"]\s*$`)
+
+// javaScriptInterpreters read code from -e or stdin.
+var javaScriptInterpreters = []string{"node", "deno", "tsx", "ts-node"}
+
+// inlineCodeCannotLaunch reports whether inline JavaScript can't start a test:
+// it loads no repository module or shell helper, and every child_process call
+// names a literal command that can't start one either. A call whose command
+// isn't literal could run anything.
+func inlineCodeCannotLaunch(code, directory, framework string, depth int) bool {
+	if inlineModuleLauncher.MatchString(code) || depth >= 8 {
+		return false
+	}
+	if !childProcessUse.MatchString(code) {
+		return true
+	}
+	receivers := []string{`require\s*\(\s*` + childProcessModule + `\s*\)`}
+	for _, alias := range childProcessAlias.FindAllStringSubmatch(code, -1) {
+		receivers = append(receivers, regexp.QuoteMeta(alias[1]+alias[2]))
+	}
+	calls := regexp.MustCompile(`(?:^|[^.\w$])(` + childProcessMethods + `)\s*\(|(?:` + strings.Join(receivers, "|") + `)\s*\.\s*(` + childProcessMethods + `)\s*\(`)
+	for _, match := range calls.FindAllStringSubmatchIndex(code, -1) {
+		start := match[2]
+		if start < 0 {
+			start = match[4]
+		}
+		call := code[start:]
+		var command string
+		if argv := argvProcessCall.FindStringSubmatch(call); argv != nil {
+			words := []string{argv[2]}
+			for _, argument := range strings.Split(argv[3], ",") {
+				if strings.TrimSpace(argument) == "" {
+					continue
+				}
+				if literal := literalArgument.FindStringSubmatch(argument); literal != nil {
+					words = append(words, literal[1])
+				} else {
+					words = append(words, "_") // A computed argument names no script or test.
+				}
+			}
+			command = strings.Join(words, " ")
+		} else if shell := shellProcessCall.FindStringSubmatch(call); shell != nil {
+			command = shell[1]
+		} else {
+			return false
+		}
+		if mayStartTestsIn(directory, runtimeStep{Run: command}, framework, depth+1) {
+			return false
+		}
+	}
+	return true
+}
+
+// readsHeredoc reports whether interpreter arguments read a heredoc on stdin
+// rather than a script file.
+func readsHeredoc(args []string) bool {
+	for _, arg := range args {
+		switch {
+		case strings.HasPrefix(arg, "<<"):
+			return true
+		case !strings.HasPrefix(arg, "-"):
+			return false
+		}
+	}
+	return false
+}
 
 // evaluatesInlineCode reports whether interpreter arguments pass code with -e/--eval.
 func evaluatesInlineCode(args []string) bool {
@@ -239,9 +338,9 @@ func evaluatesInlineCode(args []string) bool {
 	return false
 }
 
-// inlineEvalsCannotLaunch reports whether every interpreter -e/--eval body in a
-// script is plain code: no process spawning and no repository module loads.
-func inlineEvalsCannotLaunch(run string) bool {
+// inlineEvalsCannotLaunch reports whether no interpreter -e/--eval body in a
+// script can start a test (see inlineCodeCannotLaunch).
+func inlineEvalsCannotLaunch(run, directory, framework string, depth int) bool {
 	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(run), "")
 	if err != nil {
 		return false
@@ -272,7 +371,7 @@ func inlineEvalsCannotLaunch(run string) bool {
 			case strings.HasPrefix(word, "--eval="):
 				code, eval = strings.TrimPrefix(word, "--eval="), true
 			}
-			if eval && inlineLauncher.MatchString(code) {
+			if eval && !inlineCodeCannotLaunch(code, directory, framework, depth) {
 				safe = false
 			}
 		}

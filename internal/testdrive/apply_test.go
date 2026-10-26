@@ -233,7 +233,10 @@ func TestSetupSelectionRefusesTracerThatAnUninstrumentedCIRowCannotRun(t *testin
 	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '20.18.2'}\n      - run: jest\n")
 	_, err := drive.selectSetupTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest"}}}, false)
 	require.ErrorContains(t, err, "dd-trace@6.16.0 requires Node >=22, which these CI rows do not provide: .github/workflows/test.yml / test / step 2 (Node 20.18.2)")
-	require.ErrorContains(t, err, "CI rows need different dd-trace majors")
+	// One release supports the Node 20 row, so the error names it instead of
+	// claiming the rows need different majors.
+	require.ErrorContains(t, err, "dd-trace@5.128.0 supports every instrumented CI row whose Node is known (20.18.2); rerun with --tracer-version 5.128.0")
+	require.NotContains(t, err.Error(), "different dd-trace majors")
 }
 
 func TestSetupSelectionSkipsCIRowsNoReleaseSupports(t *testing.T) {

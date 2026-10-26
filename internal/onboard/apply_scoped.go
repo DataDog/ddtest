@@ -245,7 +245,24 @@ func cucumberCoverageEdit(script string) (int, int, string, error) {
 
 var localWDIORunner = regexp.MustCompile(`(?m)^\s*runner:\s*['"]local['"]\s*,`)
 var browserWDIORunner = regexp.MustCompile(`(?m)^\s*runner:\s*(?:\[\s*)?['"]browser['"]`)
-var wdioBaseConfig = regexp.MustCompile(`(?m)^import\s+\{\s*config\s+as\s+baseConfig\s*\}\s+from\s+['"]([^'"]+)['"]`)
+var wdioBaseConfig = regexp.MustCompile(`(?m)^import\s+\{\s*config(?:\s+as\s+\w+)?\s*\}\s+from\s+['"]([^'"]+)['"]`)
+
+// wdioConfigSource returns the file a config import names. TypeScript ESM
+// imports name the emitted .js file while the repository holds the .ts source.
+func wdioConfigSource(root, config string) string {
+	if _, err := os.Stat(filepath.Join(root, config)); err == nil {
+		return config
+	}
+	for _, from := range []string{".js", ".mjs", ".cjs"} {
+		if stem, ok := strings.CutSuffix(config, from); ok {
+			source := stem + strings.Replace(from, "j", "t", 1)
+			if _, err := os.Stat(filepath.Join(root, source)); err == nil {
+				return source
+			}
+		}
+	}
+	return config
+}
 
 func localWDIOLeaf(root, script string) (bool, error) {
 	parts, err := staticCommands(script)
@@ -276,7 +293,7 @@ func localWDIOLeaf(root, script string) (bool, error) {
 			if len(base) != 2 {
 				break
 			}
-			config = filepath.Join(filepath.Dir(config), string(base[1]))
+			config = wdioConfigSource(root, filepath.Join(filepath.Dir(config), string(base[1])))
 		}
 		return false, fmt.Errorf("cannot identify a literal local/browser runner in %s; review its scoped worker initialization", words[i+2])
 	}
