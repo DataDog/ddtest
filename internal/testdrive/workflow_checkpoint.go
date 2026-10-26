@@ -38,6 +38,10 @@ type workflowCheckpoint struct {
 	Plan                   *onboard.ExecutionPlan `json:"plan,omitempty"`
 	Failure                string                 `json:"failure,omitempty"`
 	Attempts               int                    `json:"attempts,omitempty"`
+
+	// The dev dependencies a setup_dependencies_missing handoff prescribed; their
+	// manifest and lockfile changes may be extended without --allow-dirty.
+	DependencyPackages []string `json:"dependency_packages,omitempty"`
 }
 
 func checkpointPath(id string) (string, error) {

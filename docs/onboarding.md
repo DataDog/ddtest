@@ -160,13 +160,19 @@ syntax, doubled quotes and multi-line test steps remain unresolved.
 
 Automatic Mocha tracer recommendations use the verified major-5 and major-6 bootstrap contracts. Exact releases still come from registry tags; obsolete Node tags cannot win by covering more legacy CI rows. An explicitly selected or installed unverified major remains unvalidated instead of being silently replaced.
 
-Agents edit only CI workflow and ignore files, where a result asks for it. Any other
-change ddtest needs, such as coverage instrumentation, loaders or dependencies, is
-returned as an exact edit for the user to approve. For Cypress without application
-coverage, a recognized browserify, Vite or webpack build gets that edit in the run's
-`coverage.edit` (install command, files and how to serve the instrumented build);
-other builds get the instrumentation guidance. Agents never rename tests or
-rewrite CI or package scripts so ddtest can parse them; they report the blocker.
+Agents edit CI workflow and ignore files where a result asks for it. They also
+make the other edits ddtest prescribes for validation, exactly as given and without
+stopping to ask: dev dependencies through the exact install command, package
+scripts and coverage config. For Cypress without application coverage, a
+recognized browserify, Vite or webpack build gets a test-only edit in the run's
+`coverage.edit` (install command, files and how to serve the instrumented build),
+gated by an environment variable so other builds stay uninstrumented; other builds
+get instrumentation guidance, which needs the user's approval like any edit ddtest
+did not prescribe. The final response lists every uncommitted change outside CI and
+ignore files in `repository_changes`, with the commands that revert it, including
+the reinstall a reverted lockfile needs. Agents never rename tests, rewrite CI or
+package scripts so ddtest can parse them, disable an instrumentation ddtest did not
+prescribe disabling, or download a runtime; they report the blocker.
 A final result tells the agent to relay `final_response` verbatim. An incomplete or
 failed verdict starts with `NOT COMPLETE:`, so a paraphrase cannot turn it into a
 completion claim.

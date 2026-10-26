@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -292,6 +293,40 @@ func setupPinnedDependencies(packages []string) []string {
 		}
 	}
 	return result
+}
+
+// OnlyPrescribedDependencyChanges reports whether every dirty file is a package
+// manifest or lockfile, and every dirty manifest declares all the dev
+// dependencies a setup handoff prescribed. Applying ddtest's own setup edits on
+// top of that install needs no approval; any other uncommitted change still does.
+func OnlyPrescribedDependencyChanges(root string, dirty, packages []string) bool {
+	if len(dirty) == 0 || len(packages) == 0 {
+		return false
+	}
+	for _, name := range dirty {
+		switch filepath.Base(name) {
+		case "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock":
+		case "package.json":
+			data, err := os.ReadFile(filepath.Join(root, name))
+			if err != nil {
+				return false
+			}
+			var manifest struct {
+				DevDependencies map[string]string `json:"devDependencies"`
+			}
+			if json.Unmarshal(data, &manifest) != nil {
+				return false
+			}
+			for _, pkg := range packages {
+				if _, ok := manifest.DevDependencies[pkg]; !ok {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func setupDependencyGap(root string, packages []string) error {

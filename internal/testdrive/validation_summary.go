@@ -279,6 +279,7 @@ func validationHandoff(result validationResult) string {
 	for _, action := range summary.HumanActions {
 		block.WriteString("Human action: " + action + "\n")
 	}
+	block.WriteString(repositoryChangesHandoff(result.RepositoryChanges))
 	if scope := summary.CIScope; scope != nil {
 		// The scope groups CI jobs by Node version, so these count versions, not jobs.
 		fmt.Fprintf(&block, "CI runtime scope (static): Node versions %d instrumented, %d excluded, %d unverified; versions in Results JSON.\n", len(scope.Instrumented), len(scope.Excluded), len(scope.Unverified))

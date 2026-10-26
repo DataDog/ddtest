@@ -445,6 +445,12 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			}
 			if err == nil {
 				result.Changes, err = sourcePlan.Apply(options.AllowDirty)
+				// The manifest and lockfile changed only through the install ddtest
+				// prescribed: extend them without asking for --allow-dirty.
+				var dirty *onboard.DirtyWorkflowGap
+				if errors.As(err, &dirty) && checkpoint != nil && onboard.OnlyPrescribedDependencyChanges(t.repositoryRoot, dirty.Files, checkpoint.DependencyPackages) {
+					result.Changes, err = sourcePlan.Apply(true)
+				}
 			}
 			if len(result.Changes) > 0 {
 				names := make([]string, 0, len(result.Changes))
@@ -458,14 +464,16 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			var dependencies *onboard.SetupDependencyGap
 			if errors.As(err, &dependencies) {
 				checkpoint.FactsDependencyHandoff = true
+				checkpoint.DependencyPackages = dependencies.Packages
 				checkpoint.Engine = engineIdentity()
 				checkpoint.FactsSHA256 = factsHash
 				checkpoint.Fingerprint = fingerprint
 				result.Location = "package.json / devDependencies"
 				result.NextCommand = dependencies.Command
 				result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--resume", checkpoint.RunID)
-				result.RequiredInput = []string{"Run next_command once to update the manifest and lockfile, then resume_command. Preserve the selected framework and CI test commands."}
-				return fail("needs_input", "setup_dependencies_missing", err.Error(), "The recognized coverage recipe needs only these dependencies; no CI edits have been made.")
+				result.RequiredInput = []string{"Run next_command once, as given and without asking, to update the manifest and lockfile, then resume_command. Preserve the selected framework and CI test commands."}
+				result.Instruction = onboard.PrescribedEditInstruction
+				return fail("needs_input", "setup_dependencies_missing", err.Error(), "The recognized coverage recipe needs only these dependencies; installing them is a ddtest-prescribed edit, listed with its revert in the final report. No CI edits have been made.")
 			}
 			var dirty *onboard.DirtyWorkflowGap
 			if errors.As(err, &dirty) {

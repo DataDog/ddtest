@@ -16,9 +16,11 @@ import (
 	"strings"
 )
 
-// coverageEdit is the exact, approval-gated change that makes a recognized
-// application build expose Istanbul's window.__coverage__ to Cypress. It is
-// never applied by ddtest: it changes the customer's build and dependencies.
+// coverageEdit is the exact change that makes a recognized application build
+// expose Istanbul's window.__coverage__ to Cypress. ddtest never applies it
+// itself. It is prescribed: a dev-dependency install plus test-only coverage
+// config, gated by an environment variable so other builds stay uninstrumented,
+// so the agent applies it as given and the final report lists it with a revert.
 type coverageEdit struct {
 	Build            string     `json:"build"`
 	Install          string     `json:"install"`
@@ -91,7 +93,7 @@ func cypressCoverageEdit(root string) *coverageEdit {
 			Files: []fileEdit{{Path: config, Action: "edit", Where: "add the import at the top and the plugin to the plugins array of the exported config",
 				Content: "import istanbul from 'vite-plugin-istanbul'\n\nistanbul({ include: 'src/*', exclude: ['node_modules', 'cypress/'], extension: ['.js', '.jsx', '.ts', '.tsx', '.vue'], requireEnv: true })\n"}},
 			Serve:            "Start the application served to Cypress with VITE_COVERAGE=true; other builds stay uninstrumented.",
-			RequiresApproval: true,
+			RequiresApproval: false,
 		}
 	}
 	if config := firstExisting(root, "webpack.config.js", "webpack.config.cjs", "webpack.config.mjs", "webpack.config.ts"); config != "" && depends("webpack") {
@@ -104,7 +106,7 @@ func cypressCoverageEdit(root string) *coverageEdit {
 					Content: "{ test: /\\.[cm]?[jt]sx?$/, exclude: /node_modules/, use: 'babel-loader' },\n"},
 			},
 			Serve:            "Build the application served to Cypress with BABEL_ENV=test; other builds stay uninstrumented.",
-			RequiresApproval: true,
+			RequiresApproval: false,
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(manifest.Scripts)) {
@@ -129,7 +131,7 @@ func cypressCoverageEdit(root string) *coverageEdit {
 				{Path: "package.json", Action: "edit", Where: "add to scripts", Content: fmt.Sprintf("%q: %q\n", coverage, instrumented)},
 			},
 			Serve:            fmt.Sprintf("Serve the bundle from `npm run %s` in the job that runs Cypress, instead of `npm run %s`; other builds stay uninstrumented.", coverage, name),
-			RequiresApproval: true,
+			RequiresApproval: false,
 		}
 	}
 	return nil
@@ -150,5 +152,5 @@ func coverageFileExists(path string) bool {
 }
 
 func cypressCoverageEditReason(edit *coverageEdit) string {
-	return fmt.Sprintf("No application source coverage observed, so Test Impact Analysis cannot be validated. ddtest recognized the %s build served to Cypress; coverage.edit in the JSON report holds the exact change: install (%s), %d file edit(s), and how to serve the instrumented build. It changes the application build and its dependencies, so present it to the user and apply it only with their approval.", edit.Build, edit.Install, len(edit.Files))
+	return fmt.Sprintf("No application source coverage observed, so Test Impact Analysis cannot be validated. ddtest recognized the %s build served to Cypress; coverage.edit in the JSON report holds the exact change: install (%s), %d file edit(s), and how to serve the instrumented build. It is a ddtest-prescribed, test-only change: apply it exactly as given, without modifying or extending it, then rerun; the final report lists it with its revert.", edit.Build, edit.Install, len(edit.Files))
 }

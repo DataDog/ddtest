@@ -17,7 +17,7 @@ func TestCypressCoverageEditForABrowserifyBuild(t *testing.T) {
 	edit := cypressCoverageEdit(root)
 	require.NotNil(t, edit)
 	require.Equal(t, "browserify", edit.Build)
-	require.True(t, edit.RequiresApproval)
+	require.False(t, edit.RequiresApproval, "a recognized, test-only coverage edit is prescribed")
 	require.Equal(t, "npm install --save-dev babelify @babel/core babel-plugin-istanbul", edit.Install)
 	require.Equal(t, fileEdit{Path: "babel.config.json", Action: "create", Content: babelTestCoverage}, edit.Files[0])
 	require.Equal(t, "package.json", edit.Files[1].Path)
@@ -69,5 +69,6 @@ func TestMissingCypressCoverageCarriesTheExactEdit(t *testing.T) {
 	require.Equal(t, "not observed", coverage.Status)
 	require.NotNil(t, coverage.Edit)
 	require.Contains(t, coverage.Reason, "recognized the browserify build")
-	require.Contains(t, coverage.Reason, "apply it only with their approval")
+	require.Contains(t, coverage.Reason, "ddtest-prescribed, test-only change: apply it exactly as given")
+	require.NotContains(t, coverage.Reason, "approval")
 }

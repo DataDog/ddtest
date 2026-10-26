@@ -250,8 +250,14 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 }
 
 // AgentScope bounds what a coding agent changes during onboarding. Trials
-// showed agents editing builds, manifests and test names to satisfy checks.
-const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. Any other change ddtest prescribes, in a result or in onboard --instructions (coverage instrumentation, loaders, package scripts, dependencies, lockfiles, coverage config), is an exact edit you must show the user and get approval for before making it. Never rename tests or rewrite CI or package scripts so ddtest can parse them; report the blocker instead. CI rows on a Node no dd-trace release supports are skipped by ddtest itself and reported as not tried; that needs no user approval. Do not inspect the ddtest binary. " + ReadWholeInstruction
+// showed agents editing builds, manifests and test names to satisfy checks,
+// and stopping a whole run to ask before an install ddtest itself prescribed.
+const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. " + PrescribedEditInstruction + " Any edit ddtest did not prescribe needs the user's approval first. Never rename tests, rewrite CI or package scripts so ddtest can parse them, disable an instrumentation ddtest did not prescribe disabling, or download a runtime; report the blocker instead. CI rows on a Node no dd-trace release supports are skipped by ddtest itself and reported as not tried; that needs no user approval. Do not inspect the ddtest binary. " + ReadWholeInstruction
+
+// PrescribedEditInstruction lets the agent make the exact non-CI edits ddtest
+// needs for validation (dev dependencies, package scripts, coverage config)
+// without stopping to ask: the final report lists them with a revert.
+const PrescribedEditInstruction = "Make the edits ddtest prescribes for validation, in a result or in onboard --instructions (dev dependencies through the exact install command, package scripts, coverage config and coverage.edit), exactly as given and without asking: do not modify or extend them. The final report lists every change outside CI and ignore files with a revert command."
 
 // ReadWholeInstruction repeats in every result: trials truncated results with
 // head/tail and missed the next step.

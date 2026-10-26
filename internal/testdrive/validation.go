@@ -240,6 +240,9 @@ type validationResult struct {
 	// DD_* values inherited from ddtest's own environment that reached the test
 	// commands without coming from CI or ddtest, with secret-like values masked.
 	AmbientDatadogEnvironment map[string]string `json:"ambient_datadog_environment,omitempty"`
+	// Uncommitted changes outside CI workflows and ignore files, such as the
+	// dependencies and coverage config ddtest prescribes for validation.
+	RepositoryChanges []repositoryChange `json:"repository_changes,omitempty"`
 	// Leading VAR=value assignments of --command, with secret-like values masked.
 	CommandEnvironment map[string]string        `json:"command_environment,omitempty"`
 	CIPreservation     *verdict                 `json:"ci_preservation,omitempty"`
@@ -349,6 +352,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		result.Compatibility.Hints = knownConflictHints(repositoryRoot)
 	}
 	prepareValidationResult(repositoryRoot, &result)
+	result.RepositoryChanges = nonCIChanges(repositoryRoot)
 	if err := retainExecution(repositoryRoot, &result); err != nil {
 		_, _ = fmt.Fprintf(output, "Warning: earlier execution evidence could not be retained: %s. Writing current results.\n", reportText(err.Error()))
 	}

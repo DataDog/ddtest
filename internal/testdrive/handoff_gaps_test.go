@@ -141,5 +141,6 @@ func TestEveryAgentResultSaysToReadItWhole(t *testing.T) {
 	var result onboard.AgentResult
 	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
 	require.Contains(t, result.Instruction, onboard.ReadWholeInstruction)
-	require.Contains(t, onboard.AgentScope, "show the user and get approval")
+	require.Contains(t, onboard.AgentScope, onboard.PrescribedEditInstruction)
+	require.Contains(t, onboard.AgentScope, "Any edit ddtest did not prescribe needs the user's approval first.")
 }

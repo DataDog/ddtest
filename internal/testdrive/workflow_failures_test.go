@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -96,6 +97,10 @@ func TestOnboardNamedSetupBlockersReturnExecutableRecovery(t *testing.T) {
 				require.Equal(t, "setup_dependencies_missing", result.Code)
 				require.Contains(t, result.NextCommand, "nyc@17.1.0")
 				require.Equal(t, "run_command", result.NextAction)
+				// A prescribed install: run it as given, never stop to ask.
+				require.Contains(t, result.Instruction, onboard.PrescribedEditInstruction)
+				require.Contains(t, result.RequiredInput[0], "as given and without asking")
+				require.NotContains(t, result.Needs+strings.Join(result.RequiredInput, " "), "approval")
 			case "custom environment":
 				require.Equal(t, "ci_edit_unsupported", result.Code)
 				require.Equal(t, "apply_source_edit", result.NextAction)
