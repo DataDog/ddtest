@@ -305,8 +305,8 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if execution.CIRuntime != nil {
 			result.CIRuntime = execution.CIRuntime
 		}
-		if result.RuntimeSubstitution == nil {
-			result.RuntimeSubstitution = execution.RuntimeSubstitution
+		for _, sub := range execution.substitutions() {
+			result.addSubstitution(sub)
 		}
 		if result.CISelection == nil || execution.CISelection != nil && execution.CISelection.Status != "compatible" {
 			result.CISelection = execution.CISelection

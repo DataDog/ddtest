@@ -739,21 +739,29 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			return fail("needs_input", "configuration_setup_failed", reason, "Tests were not compared for this configuration. Correct only its declared setup; preserve scope and assertions.")
 		}
 		// Evidence that passed on a compatible substitute runtime is the user's to accept.
-		if sub := validation.RuntimeSubstitution; sub != nil && !sub.Accepted && slices.Equal(validation.Summary.BlockingChecks, []string{sub.blocker()}) {
+		var subBlockers, subLocal, subCI []string
+		for _, sub := range validation.substitutions() {
+			if !sub.Accepted {
+				subBlockers = append(subBlockers, sub.blocker())
+				subLocal = append(subLocal, "Node "+sub.Local+" in place of CI's Node "+sub.CI)
+				subCI = append(subCI, "Node "+sub.CI)
+			}
+		}
+		if len(subBlockers) > 0 && slices.Equal(validation.Summary.BlockingChecks, subBlockers) {
 			if !slices.Contains(result.ResumeCommand, AcceptSubstituteRuntimeFlag) {
 				result.ResumeCommand = append(result.ResumeCommand, AcceptSubstituteRuntimeFlag)
 			}
-			result.RequiredInput = []string{"User decision: accept the evidence from Node " + sub.Local + " in place of CI's Node " + sub.CI + " by running resume_command, or put an existing Node " + sub.CI + " first on PATH and rerun resume_command without " + AcceptSubstituteRuntimeFlag + "."}
-			return fail("needs_input", "substitute_runtime_unaccepted", sub.blocker(), "Every check passed on a compatible substitute runtime. Ask the user which option to take; do not accept it yourself, download a runtime, or change CI, the tracer or the test scope.")
+			result.RequiredInput = []string{"User decision: accept the evidence from " + strings.Join(subLocal, " and ") + " by running resume_command, or put an existing " + strings.Join(subCI, " and ") + " first on PATH and rerun resume_command without " + AcceptSubstituteRuntimeFlag + "."}
+			return fail("needs_input", "substitute_runtime_unaccepted", strings.Join(subBlockers, "; "), "Every check passed on a compatible substitute runtime. Ask the user which option to take; do not accept it yourself, download a runtime, or change CI, the tracer or the test scope.")
 		}
 		reportOnly, actionable := splitTracerOnlyBlockers(validation)
 		decision := ""
-		if sub := validation.RuntimeSubstitution; sub != nil && !sub.Accepted {
+		if len(subBlockers) > 0 {
 			// The substitute is still the user's decision when other blockers remain;
 			// it must not be lost among them or accepted by the agent.
-			actionable = slices.DeleteFunc(actionable, func(check string) bool { return check == sub.blocker() })
+			actionable = slices.DeleteFunc(actionable, func(check string) bool { return slices.Contains(subBlockers, check) })
 			acceptFlag = AcceptSubstituteRuntimeFlag
-			decision = " Separately, ask the user whether to accept the evidence from substitute Node " + sub.Local + " in place of CI's Node " + sub.CI + ": once they approve, run accept_resume_command instead of resume_command; otherwise put an existing Node " + sub.CI + " first on PATH. Do not accept it yourself or download a runtime."
+			decision = " Separately, ask the user whether to accept the evidence from substitute " + strings.Join(subLocal, " and ") + ": once they approve, run accept_resume_command instead of resume_command; otherwise put an existing " + strings.Join(subCI, " and ") + " first on PATH. Do not accept it yourself or download a runtime."
 		}
 		if len(actionable) == 0 && len(reportOnly) > 0 {
 			result.RequiredInput = reportOnly

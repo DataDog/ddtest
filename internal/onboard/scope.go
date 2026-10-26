@@ -215,16 +215,22 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					conditionNoted = true
 					scope.Review = append(scope.Review, workflow.Path+" / "+name+": job condition "+strconv.Quote(strings.TrimSpace(job.If))+" depends on runtime context; validated as a possible CI path, the condition itself is not verified statically.")
 				}
-				// No dd-trace release runs on this row's Node, so its tests are
-				// excluded like an explicit opt-out and its steps never block.
-				// ddtest decides this without asking.
-				unsupportedNode := false
-				if node, err := rowSetupNode(root, workflow, job, row); err == nil && UnsupportedNode(node) {
-					unsupportedNode = true
+				// No dd-trace release runs on the Node a test step runs on, so its
+				// tests are excluded like an explicit opt-out. ddtest decides this
+				// without asking. The Node is the one active at that step: a job
+				// may switch runtimes between test steps.
+				unsupportedAt := func(step int) bool {
+					node, err := rowSetupNodeBefore(root, workflow, job, row, step)
+					if err != nil || !UnsupportedNode(node) {
+						return false
+					}
 					if !slices.Contains(notTried, node) {
 						notTried = append(notTried, node)
 					}
+					return true
 				}
+				finalNode, finalErr := rowSetupNode(root, workflow, job, row)
+				unsupportedRow := finalErr == nil && UnsupportedNode(finalNode)
 				installerActive, installerSkipped := false, false
 				var pendingSetup []string
 				var preparation []BuildCommand
@@ -347,7 +353,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					}
 					for _, entry := range resolution.Tests {
 						entry.CIInstrumentationExcluded = ((installerSkipped && !installerActive) || mochaInstrumentationDisabled(workflow, job, resolved, row)) && checkExcludedJestBootstrap(workflow, job, resolved, row) == ""
-						if unsupportedNode {
+						if unsupportedAt(i) {
 							entry.CIInstrumentationExcluded, entry.UnsupportedNode = true, true
 						}
 						entry.WindowsRunner = entry.CIInstrumentationExcluded && installerSkipped && windowsRow(job, row)
@@ -362,7 +368,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						for j := range entry.Prerequisites {
 							entry.Prerequisites[j].Environment = mergeEnvironment(env, entry.Prerequisites[j].Environment)
 						}
-						entry.Prerequisites = append(consumedPreparation(root, preparation, location, &review), entry.Prerequisites...)
+						entry.Prerequisites = append(consumedPreparation(root, preparation, entry, location, &review), entry.Prerequisites...)
 						entry.UnvalidatedSetup = append(slices.Clone(pendingSetup), entry.UnvalidatedSetup...)
 						entry.Environment = mergeEnvironment(env, entry.Environment)
 						entry.Directory = filepath.ToSlash(filepath.Clean(entry.Directory))
@@ -408,7 +414,11 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					}
 				}
 
-				if unsupportedNode {
+				// Unresolved steps don't block a row only no supported test runs on.
+				if unsupportedRow && !slices.ContainsFunc(commands, func(command TestCommand) bool { return !command.UnsupportedNode }) {
+					if !slices.Contains(notTried, finalNode) {
+						notTried = append(notTried, finalNode)
+					}
 					for _, diagnostic := range unresolved {
 						diagnostic.Reason = "Not tried (no dd-trace release supports this Node): " + diagnostic.Reason
 						review = append(review, diagnostic)

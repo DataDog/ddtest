@@ -35,7 +35,7 @@ var bundlerConfigPrefixes = []string{"build.config.", "tsup.config.", "rollup.co
 var (
 	specifierPattern    = regexp.MustCompile(`(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire(?:\.resolve)?\s*\(\s*|\b(?:jest|vi)\.(?:mock|doMock|requireActual|importActual)\s*\(\s*)["'\x60]([^"'\x60\n]+)["'\x60]`)
 	pathStringPattern   = regexp.MustCompile(`["'\x60]((?:<rootDir>/|\./|\.\./)?[^"'\x60\s]+)["'\x60]`)
-	pathCallPattern     = regexp.MustCompile(`\b(?:path\.(?:join|resolve)|resolve|join|__dirname|import\.meta\.(?:url|dirname))\b`)
+	pathCallPattern     = regexp.MustCompile(`\b(?:path\.(?:join|resolve)|resolve|join|__dirname|import\.meta\.(?:url|dirname)|process\.cwd)\b`)
 	literalOutDirConfig = regexp.MustCompile(`\boutDir\s*:\s*["'\x60]([^"'\x60]+)["'\x60]`)
 	anyOutDirConfig     = regexp.MustCompile(`\boutDir\b`)
 	rollupOutputConfig  = regexp.MustCompile(`\b(?:dir|file)\s*:\s*["'\x60]([^"'\x60]+)["'\x60]`)
@@ -44,10 +44,10 @@ var (
 
 // consumedPreparation keeps the CI preparation a test configuration replays,
 // dropping builds whose outputs the tests cannot reach and noting each one.
-func consumedPreparation(root string, preparation []BuildCommand, location commandLocation, review *[]scopeDiagnostic) []BuildCommand {
+func consumedPreparation(root string, preparation []BuildCommand, test TestCommand, location commandLocation, review *[]scopeDiagnostic) []BuildCommand {
 	var kept []BuildCommand
 	for _, build := range preparation {
-		if consumed, outputs := buildConsumedByTests(root, build); !consumed {
+		if consumed, outputs := buildConsumedByTests(root, build, test); !consumed {
 			reason := "CI build is not replayed: no test, test configuration or self-reference reaches its outputs (" + strings.Join(outputs, ", ") + "): " + build.Command
 			if !slices.ContainsFunc(*review, func(existing scopeDiagnostic) bool {
 				return existing.Reason == reason && existing.Location.String() == location.String()
@@ -63,7 +63,8 @@ func consumedPreparation(root string, preparation []BuildCommand, location comma
 
 // buildConsumedByTests reports whether the tests may consume build's outputs.
 // It returns false only when consumption is ruled out, with the outputs found.
-func buildConsumedByTests(root string, build BuildCommand) (bool, []string) {
+// The test invocation counts too: `mocha dist/test` names the output itself.
+func buildConsumedByTests(root string, build BuildCommand, test TestCommand) (bool, []string) {
 	relative := filepath.FromSlash(build.Directory)
 	if build.Kind != "" || (relative != "." && !filepath.IsLocal(relative)) {
 		return true, nil
@@ -88,7 +89,7 @@ func buildConsumedByTests(root string, build BuildCommand) (bool, []string) {
 	}
 	slices.Sort(absolute)
 	absolute = slices.Compact(absolute)
-	if consumersFound(root, absolute, packageName(directory)) {
+	if invocationReachesOutput(root, test, absolute) || consumersFound(root, absolute, packageName(directory)) {
 		return true, nil
 	}
 	var names []string
@@ -424,7 +425,7 @@ func consumersFound(root string, outputs []string, name string) bool {
 		if manifest {
 			content = testRunnerManifestFields(content)
 		}
-		if reachesOutput(filepath.Dir(path), string(content), outputs, name, inside) {
+		if reachesOutput(root, filepath.Dir(path), string(content), outputs, name, inside) {
 			found = true
 			return filepath.SkipAll
 		}
@@ -447,13 +448,16 @@ func testRunnerManifestFields(content []byte) []byte {
 	return out
 }
 
-func reachesOutput(directory, content string, outputs []string, name string, inside func(string) bool) bool {
+func reachesOutput(root, directory, content string, outputs []string, name string, inside func(string) bool) bool {
 	resolve := func(value string) bool {
 		if rooted, ok := strings.CutPrefix(value, "<rootDir>/"); ok {
 			return inside(filepath.Clean(filepath.Join(directory, filepath.FromSlash(rooted))))
 		}
 		if strings.HasPrefix(value, "./") || strings.HasPrefix(value, "../") || strings.Contains(value, "/") {
-			return inside(filepath.Clean(filepath.Join(directory, filepath.FromSlash(value))))
+			// A test may resolve the string from its own directory or from the
+			// working directory (process.cwd(), the repository root).
+			return inside(filepath.Clean(filepath.Join(directory, filepath.FromSlash(value)))) ||
+				!strings.HasPrefix(value, ".") && inside(filepath.Clean(filepath.Join(root, filepath.FromSlash(value))))
 		}
 		return false
 	}
@@ -462,7 +466,7 @@ func reachesOutput(directory, content string, outputs []string, name string, ins
 		if name != "" && (specifier == name || strings.HasPrefix(specifier, name+"/")) {
 			return true
 		}
-		if resolve(specifier) {
+		if resolve(specifier) || packageDirectoryReachesOutput(directory, specifier, inside) {
 			return true
 		}
 	}
@@ -479,6 +483,72 @@ func reachesOutput(directory, content string, outputs []string, name string, ins
 						return true
 					}
 				}
+			}
+		}
+	}
+	return false
+}
+
+// packageDirectoryReachesOutput resolves an import of a directory, such as
+// require(".."), through the package.json entry points it loads. A directory
+// whose entry points can't be read is treated as reaching the output.
+func packageDirectoryReachesOutput(directory, specifier string, inside func(string) bool) bool {
+	if specifier != "." && specifier != ".." && !strings.HasPrefix(specifier, "./") && !strings.HasPrefix(specifier, "../") {
+		return false
+	}
+	target := filepath.Clean(filepath.Join(directory, filepath.FromSlash(specifier)))
+	if info, err := os.Stat(target); err != nil || !info.IsDir() {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(target, "package.json")); err != nil {
+		return false
+	}
+	targets, known := packageTargets(target)
+	if !known {
+		return true
+	}
+	for _, entry := range targets {
+		if inside(filepath.Join(target, entry)) {
+			return true
+		}
+	}
+	return false
+}
+
+// invocationReachesOutput reports whether the test command, or a package
+// script it runs, names an output path: `mocha dist/test` consumes dist.
+func invocationReachesOutput(root string, test TestCommand, outputs []string) bool {
+	inside := func(path string) bool {
+		for _, output := range outputs {
+			if path == output || strings.HasPrefix(path, output+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
+	type text struct{ directory, command string }
+	texts := []text{{filepath.Join(root, filepath.FromSlash(test.Directory)), test.Command}}
+	for _, script := range test.packageScripts {
+		directory := filepath.Join(root, filepath.FromSlash(script.Directory))
+		if body, ok := packageScripts(directory)[strings.ToLower(script.Name)]; ok {
+			texts = append(texts, text{directory, body})
+		}
+	}
+	for _, text := range texts {
+		words, err := shellquote.Split(text.command)
+		if err != nil {
+			return true
+		}
+		for _, word := range words {
+			// Flag and assignment values name paths too: --spec=dist/test.
+			if _, value, ok := strings.Cut(word, "="); ok {
+				word = value
+			}
+			if word == "" || strings.HasPrefix(word, "-") {
+				continue
+			}
+			if inside(filepath.Clean(filepath.Join(text.directory, filepath.FromSlash(word)))) {
+				return true
 			}
 		}
 	}

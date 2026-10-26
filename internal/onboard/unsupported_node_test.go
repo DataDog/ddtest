@@ -62,3 +62,18 @@ func TestUnsupportedNodeRowsAreNotTriedWithoutApproval(t *testing.T) {
 	}
 	require.Equal(t, StatusCompatible, check.Status, check.Jobs)
 }
+
+// The Node a test runs on is the one active at its step: a job that tests on
+// Node 24 and then switches to Node 16 keeps its Node 24 test validated.
+func TestUnsupportedNodeIsDecidedAtEachTestStep(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '24'}\n      - run: npx jest --ci\n      - uses: actions/setup-node@v4\n        with: {node-version: '16'}\n      - run: npm test\n")
+	scope, err := DiscoverWorkflowScope(root, "jest")
+	require.NoError(t, err)
+	require.True(t, slices.ContainsFunc(scope.Commands, func(entry TestCommand) bool {
+		return entry.Command == "jest --ci" && !entry.CIInstrumentationExcluded && !entry.UnsupportedNode
+	}), "%+v", scope.Commands)
+	require.True(t, slices.ContainsFunc(scope.Commands, func(entry TestCommand) bool {
+		return entry.UnsupportedNode && entry.CIInstrumentationExcluded
+	}), "%+v", scope.Commands)
+	require.Contains(t, scope.Review, NotTriedNote(".github/workflows/test.yml / test", []string{"16"}))
+}

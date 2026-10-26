@@ -102,8 +102,14 @@ func setupRuntimeCondition(root string, workflow ciWorkflow, job runtimeJob, req
 // rowSetupNode returns the Node version the job's active setup steps select on
 // row, or "" when no step selects one statically.
 func rowSetupNode(root string, workflow ciWorkflow, job runtimeJob, row map[string]any) (string, error) {
+	return rowSetupNodeBefore(root, workflow, job, row, len(job.Steps))
+}
+
+// rowSetupNodeBefore is the Node a row's steps select before step limit: the
+// runtime active when that step runs, since a later setup-node can switch it.
+func rowSetupNodeBefore(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, limit int) (string, error) {
 	node := ""
-	for _, step := range job.Steps {
+	for _, step := range job.Steps[:min(limit, len(job.Steps))] {
 		if !strings.HasPrefix(strings.ToLower(step.Uses), "actions/setup-node@") && !strings.Contains(step.Run, "nvm") {
 			continue
 		}

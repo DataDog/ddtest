@@ -5,7 +5,10 @@
 
 package testdrive
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // localRuntimeError reports that a CI path runs on a Node major this host does
 // not provide, so the path cannot be validated here. ddtest never installs a
@@ -36,6 +39,30 @@ type runtimeSubstitution struct {
 	Local    string `json:"local_node"`
 	Reason   string `json:"reason"`
 	Accepted bool   `json:"accepted"`
+}
+
+// substitutions lists every distinct substitute runtime the run validated on:
+// --all keeps one per CI runtime its configurations use.
+func (r *validationResult) substitutions() []runtimeSubstitution {
+	if len(r.RuntimeSubstitutions) > 0 {
+		return r.RuntimeSubstitutions
+	}
+	if r.RuntimeSubstitution != nil {
+		return []runtimeSubstitution{*r.RuntimeSubstitution}
+	}
+	return nil
+}
+
+// addSubstitution records a substitution unless an equal one is recorded.
+func (r *validationResult) addSubstitution(sub runtimeSubstitution) {
+	if r.RuntimeSubstitution == nil {
+		r.RuntimeSubstitution = &sub
+	}
+	if !slices.ContainsFunc(r.RuntimeSubstitutions, func(existing runtimeSubstitution) bool {
+		return existing.Source == sub.Source && existing.CI == sub.CI && existing.Local == sub.Local
+	}) {
+		r.RuntimeSubstitutions = append(r.RuntimeSubstitutions, sub)
+	}
 }
 
 func (s *runtimeSubstitution) blocker() string {

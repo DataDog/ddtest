@@ -89,6 +89,8 @@ func cypressCoverageEdit(root string) *coverageEdit {
 			return "pnpm add --save-dev " + strings.Join(packages, " ")
 		case coverageFileExists(filepath.Join(root, "yarn.lock")):
 			return "yarn add --dev " + strings.Join(packages, " ")
+		case coverageFileExists(filepath.Join(root, "bun.lock")) || coverageFileExists(filepath.Join(root, "bun.lockb")):
+			return "bun add --dev " + strings.Join(packages, " ")
 		}
 		return "npm install --save-dev " + strings.Join(packages, " ")
 	}
@@ -103,7 +105,7 @@ func cypressCoverageEdit(root string) *coverageEdit {
 			Build:   "vite",
 			Install: install("vite-plugin-istanbul"),
 			Files: []fileEdit{{Path: config, Action: "edit", Where: "add the import at the top and the plugin to the plugins array of the exported config",
-				Content: "import istanbul from 'vite-plugin-istanbul'\n\nistanbul({ include: 'src/*', exclude: ['node_modules', 'cypress/'], extension: ['.js', '.jsx', '.ts', '.tsx', '.vue'], requireEnv: true })\n"}},
+				Content: "import istanbul from 'vite-plugin-istanbul'\n\nistanbul({ include: 'src/**/*', exclude: ['node_modules', 'cypress/'], extension: ['.js', '.jsx', '.ts', '.tsx', '.vue'], requireEnv: true })\n"}},
 			Serve:            "Start the application served to Cypress with VITE_COVERAGE=true; other builds stay uninstrumented.",
 			RequiresApproval: false,
 		}

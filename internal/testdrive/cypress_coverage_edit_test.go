@@ -67,6 +67,7 @@ func TestCypressCoverageEditForViteAndWebpack(t *testing.T) {
 	require.Equal(t, "npm install --save-dev vite-plugin-istanbul", edit.Install)
 	require.Equal(t, "vite.config.ts", edit.Files[0].Path)
 	require.Contains(t, edit.Files[0].Content, "requireEnv: true")
+	require.Contains(t, edit.Files[0].Content, "include: 'src/**/*'", "modules under src/components are instrumented too")
 
 	webpack := t.TempDir()
 	requireWriteFile(t, filepath.Join(webpack, "package.json"), `{"devDependencies":{"webpack":"^5.0.0"}}`)
@@ -103,4 +104,14 @@ func TestMissingCypressCoverageCarriesTheExactEdit(t *testing.T) {
 	require.Contains(t, coverage.Reason, `runs[].coverage.edit of the run whose role is "reporting-only"`)
 	require.Contains(t, coverage.Reason, "ddtest-prescribed, test-only change: apply it exactly as given")
 	require.NotContains(t, coverage.Reason, "approval")
+}
+
+func TestCypressCoverageEditUsesBunInBunRepositories(t *testing.T) {
+	for _, lockfile := range []string{"bun.lock", "bun.lockb"} {
+		root := t.TempDir()
+		requireWriteFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vite":"^7.0.0"}}`)
+		requireWriteFile(t, filepath.Join(root, "vite.config.ts"), "export default {}")
+		requireWriteFile(t, filepath.Join(root, lockfile), "")
+		require.Equal(t, "bun add --dev vite-plugin-istanbul", cypressCoverageEdit(root).Install, lockfile)
+	}
 }

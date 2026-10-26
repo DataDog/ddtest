@@ -20,8 +20,10 @@ import (
 // configuration that runs only on a remote browser grid with CI secrets, once
 // a local configuration of the same suite passed its paired comparison.
 func ciFidelity(result *validationResult) (caveats, blockers []string) {
-	if sub := result.RuntimeSubstitution; sub != nil && sub.Accepted {
-		caveats = append(caveats, fmt.Sprintf("runtime fidelity: validated on substitute Node %s; %s runs on Node %s (accepted).", sub.Local, sub.Source, sub.CI))
+	for _, sub := range result.substitutions() {
+		if sub.Accepted {
+			caveats = append(caveats, fmt.Sprintf("runtime fidelity: validated on substitute Node %s; %s runs on Node %s (accepted).", sub.Local, sub.Source, sub.CI))
+		}
 	}
 	for _, configuration := range result.Configurations {
 		if configuration.RemoteGrid == "" {

@@ -102,3 +102,43 @@ func TestBuildConsumptionNeedsSourceToInspect(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"name":"pkg"}`), 0600))
 	require.True(t, consumersFound(root, []string{filepath.Join(root, "dist")}, "pkg"), "nothing inspected rules nothing out")
 }
+
+func TestBuildConsumptionResolvesWorkingDirectoryAndPackageImports(t *testing.T) {
+	for name, test := range map[string]string{
+		"cwd-rooted output path": "import { resolve } from \"node:path\"\nconst cli = resolve(process.cwd(), \"dist/pkg.mjs\")\n",
+		"cwd-rooted output dir":  "const out = require(\"node:path\").resolve(process.cwd(), \"dist\")\n",
+		"package directory":      "const pkg = require(\"..\")\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := newBuildRepository(t, "unbuild", map[string]string{"test/pkg.test.ts": test})
+			prerequisites, _ := vitestPrerequisites(t, root)
+			require.Equal(t, []string{"unbuild"}, prerequisites)
+		})
+	}
+	t.Run("directory without its own manifest", func(t *testing.T) {
+		root := newBuildRepository(t, "unbuild", map[string]string{"test/pkg.test.ts": "import { value } from \"../src\"\n", "src/index.ts": "export * from './pkg'\n"})
+		prerequisites, _ := vitestPrerequisites(t, root)
+		require.Empty(t, prerequisites, "../src resolves to sources, not to the package entry points")
+	})
+}
+
+func TestBuildConsumptionIncludesTheTestInvocation(t *testing.T) {
+	root := newBuildRepository(t, "tsc", map[string]string{
+		"test/pkg.test.ts": "import { value } from \"../src/pkg\"\n",
+		"tsconfig.json":    "{\"compilerOptions\": {\"outDir\": \"out\"}}\n",
+	})
+	build := BuildCommand{Directory: ".", Command: "tsc"}
+	consumed, outputs := buildConsumedByTests(root, build, TestCommand{Directory: ".", Command: "mocha test"})
+	require.False(t, consumed)
+	require.Equal(t, []string{"out"}, outputs)
+
+	consumed, _ = buildConsumedByTests(root, build, TestCommand{Directory: ".", Command: "mocha out/test"})
+	require.True(t, consumed, "the test command runs the compiled tests")
+	consumed, _ = buildConsumedByTests(root, build, TestCommand{Directory: ".", Command: "mocha --spec=out/test/**/*.js"})
+	require.True(t, consumed, "a flag value names the output")
+
+	manifest := `{"name":"pkg","scripts":{"test":"mocha out/test"}}`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(manifest), 0600))
+	consumed, _ = buildConsumedByTests(root, build, TestCommand{Directory: ".", Command: "npm test", packageScripts: []packageScript{{Directory: ".", Name: "test", Leaf: true}}})
+	require.True(t, consumed, "the package script the command runs names the output")
+}
