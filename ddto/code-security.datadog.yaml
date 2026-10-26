@@ -1,7 +1,0 @@
-schema-version: v1.7
-sast:
-  global-config:
-    # Archived benchmark records, scripts included: generated, hash-locked and
-    # never edited (see docs/build-benchmarks.md).
-    ignore-paths:
-      - "docs/results/**"
