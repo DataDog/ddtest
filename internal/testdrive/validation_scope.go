@@ -9,10 +9,10 @@ func (result validationResult) focusedLocalCommand() bool {
 }
 
 func (result validationResult) ciPreservationBlocking() bool {
-	// An unreadable initial inventory cannot certify CI, but is advisory for a
-	// local command. Once a baseline exists, inability to verify it blocks too.
+	// Unknown CI inventory is advisory for local execution. Keep the saved
+	// baseline so actual matrix removal still blocks when CI can be compared.
 	return result.CIPreservation != nil && result.CIPreservation.Status != "passed" &&
-		(!result.focusedLocalCommand() || result.CIPreservation.Status != "inconclusive" || result.CIBaseline != nil)
+		(!result.focusedLocalCommand() || result.CIPreservation.Status != "inconclusive")
 }
 
 func hasValidationPair(result validationResult) bool {

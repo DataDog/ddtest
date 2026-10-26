@@ -2,6 +2,9 @@ package testdrive
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -86,14 +89,14 @@ func TestLocalCommandStillRequiresAllExecutionEvidence(t *testing.T) {
 	}
 }
 
-func TestLocalCommandCIPreservationRemainsBlockingAfterBaseline(t *testing.T) {
+func TestLocalCommandCIPreservationSeparatesUnknownInventoryFromRemoval(t *testing.T) {
 	for _, tc := range []struct {
 		name, status string
 		baseline     []string
 		passed       bool
 	}{
 		{name: "initial inventory unavailable", status: "inconclusive", passed: true},
-		{name: "baseline cannot be checked", status: "inconclusive", baseline: []string{"original row"}},
+		{name: "baseline cannot be checked", status: "inconclusive", baseline: []string{"original row"}, passed: true},
 		{name: "matrix was removed", status: "failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -111,5 +114,66 @@ func TestLocalCommandCIPreservationRemainsBlockingAfterBaseline(t *testing.T) {
 				require.Contains(t, strings.Join(summary.BlockingChecks, "\n"), "CI preservation: "+tc.status)
 			}
 		})
+	}
+}
+
+func TestPytestObjectMatrixPreservationScope(t *testing.T) {
+	const workflow = "jobs:\n  test:\n    strategy:\n      matrix:\n%s    steps:\n      - run: python -m pytest\n"
+	for _, baseline := range []bool{false, true} {
+		for _, mode := range []string{"focused", "all", "check-only", "onboarding"} {
+			t.Run(fmt.Sprintf("%s/baseline=%t", mode, baseline), func(t *testing.T) {
+				root := t.TempDir()
+				path := filepath.Join(root, ".github/workflows/test.yml")
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0755))
+				var original []string
+				if baseline {
+					requireWriteFile(t, path, fmt.Sprintf(workflow, "        python: ['3.12', '3.11']\n"))
+					seed := completeValidationFixture("pytest")
+					seed.FocusedCommand = true
+					require.NoError(t, finishValidation(&bytes.Buffer{}, root, seed))
+					original = readValidationReport(t, root).CIBaseline
+					require.Len(t, original, 2)
+				}
+				requireWriteFile(t, path, fmt.Sprintf(workflow, "        config:\n          - {python: '3.12'}\n"))
+				scope, err := onboard.DiscoverValidationScope(root, "pytest")
+				require.NoError(t, err)
+				require.Contains(t, strings.Join(scope.Unresolved, "\n"), "non-scalar value")
+				result := completeValidationFixture("pytest")
+				result.Scope = &scope
+				result.FocusedCommand = mode != "all"
+				result.CheckOnly = mode == "check-only"
+				if mode == "onboarding" {
+					result.Workflow = &WorkflowEvidence{}
+				}
+				err = finishValidation(&bytes.Buffer{}, root, result)
+				report := readValidationReport(t, root)
+				require.Equal(t, "inconclusive", report.CIPreservation.Status)
+				require.Contains(t, report.CIPreservation.Reason, "non-scalar value")
+				require.Equal(t, original, report.CIBaseline, "an inconclusive check must retain the original baseline")
+				if mode != "focused" {
+					require.Error(t, err)
+					require.False(t, report.Success)
+					require.Contains(t, strings.Join(report.Summary.BlockingChecks, "\n"), "CI preservation: inconclusive")
+					return
+				}
+				require.NoError(t, err)
+				require.True(t, report.Success)
+				require.Equal(t, "PASSED", report.Summary.SelectedValidation.Status)
+				require.Empty(t, report.Summary.BlockingChecks)
+				require.Contains(t, strings.Join(report.Summary.CIAdvisories, "\n"), "CI preservation: inconclusive")
+				if baseline {
+					// Once CI is readable, a removed row must still fail against
+					// the baseline retained through the inconclusive local run.
+					requireWriteFile(t, path, fmt.Sprintf(workflow, "        python: ['3.12']\n"))
+					result.Scope = nil
+					require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
+					report = readValidationReport(t, root)
+					require.Equal(t, "failed", report.CIPreservation.Status)
+					require.Equal(t, 1, report.CIPreservation.DifferenceCount)
+					require.False(t, report.Success)
+					require.Contains(t, strings.Join(report.Summary.BlockingChecks, "\n"), "CI preservation: failed")
+				}
+			})
+		}
 	}
 }
