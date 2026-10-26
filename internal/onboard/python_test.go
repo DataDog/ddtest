@@ -166,6 +166,15 @@ func TestPythonReviewExpandsCommandMatrixBeforeFiltering(t *testing.T) {
 	require.Len(t, check.Jobs, 2)
 }
 
+func TestPythonReviewDoesNotCertifyCommandRuntimeOverrides(t *testing.T) {
+	for _, command := range []string{"uv run --python 3.8 python -m pytest", "uv run --python=3.8 pytest", "python3.8 -m pytest", "poetry run python3.8 -m pytest", ".venv/bin/python -m pytest"} {
+		root := pythonReviewWorkflow(t, "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-python@v6\n        with: {python-version: '3.12'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: python, python-tracer-version: '4.16.0'}\n      - run: "+command+"\n")
+		check := pythonReviewRuntime(t, root)
+		require.Equal(t, "inconclusive", check.Status, "%s: %+v", command, check)
+		require.Contains(t, check.Jobs[0].Reason, "selects its own Python interpreter")
+	}
+}
+
 func TestPythonReviewRetainsApplicationEnvironment(t *testing.T) {
 	root := pythonReviewWorkflow(t, `env:
   DD_ENV: ci

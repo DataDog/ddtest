@@ -225,6 +225,37 @@ func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
 	return nil, false
 }
 
+// A setup-python version does not prove the interpreter chosen by a wrapper or
+// a different versioned executable. Keep those commands unverified in static CI
+// analysis; local preflight inspects the environment that actually executes.
+func pythonRuntimeOverride(words []string, python string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	base := strings.TrimSuffix(filepath.Base(words[0]), ".exe")
+	if strings.HasPrefix(base, "python") {
+		return strings.ContainsAny(words[0], "/\\") || base != "python" && base != "python3" && base != "python"+python
+	}
+	if (base == "uv" || base == "poetry") && len(words) > 2 && words[1] == "run" {
+		for i := 2; i < len(words); i++ {
+			if pythonInvocation(words[i:]) {
+				return pythonRuntimeOverride(words[i:], python)
+			}
+			if _, ok := pythonRunnerArguments(words[i:], "tox"); ok {
+				return false
+			}
+			option, _, assigned := strings.Cut(words[i], "=")
+			if option == "--python" || option == "-p" {
+				return true
+			}
+			if !assigned && slices.Contains([]string{"--project", "--directory", "--package", "--group", "--extra"}, option) {
+				i++
+			}
+		}
+	}
+	return false
+}
+
 func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) commandResolution {
 	if step.ResolutionError != "" {
 		return unresolvedCommand(step.ResolutionError)
@@ -402,6 +433,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 						continue
 					}
 					finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Python: python, Action: action, Status: "inconclusive"}
+					commands, _ := staticCommands(resolved.Run)
 					switch {
 					case conditionErr != nil:
 						finding.Reason = conditionErr.Error()
@@ -413,6 +445,8 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 						finding.Reason = r.Reason
 					case action == "":
 						finding.Status, finding.Code, finding.Reason = "incompatible", "missing_instrumentation", "No Datadog Python action runs before this pytest step. Preserve the test command and add instrumentation."
+					case slices.ContainsFunc(commands, func(words []string) bool { return pythonRuntimeOverride(words, python) }):
+						finding.Reason = "The CI command selects its own Python interpreter; setup-python does not establish that runtime's compatibility. Validate the selected environment separately."
 					default:
 						selection, ok := cache[requested]
 						if !ok {
