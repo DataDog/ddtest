@@ -98,7 +98,7 @@ func StartScenario(sessionDirectory string, scenario Scenario) (*Server, error) 
 	}
 
 	server := &Server{
-		collectEvents: scenario.Feature != "" && scenario.Feature != "reporting-only",
+		collectEvents: scenario.CollectEvents || scenario.Feature != "" && scenario.Feature != "reporting-only",
 		url:           "http://" + listener.Addr().String(),
 		done:          make(chan error, 1),
 		directory:     intakeDirectory,

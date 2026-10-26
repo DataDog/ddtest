@@ -210,6 +210,7 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 		}
 		args = append(args, probe.args...)
 	}
+	scenario.CollectEvents = probe != nil
 	server, err := t.startIntake(directory, scenario)
 	if err != nil {
 		return run, err

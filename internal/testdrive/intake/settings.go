@@ -25,10 +25,12 @@ const (
 
 // Scenario configures exactly one local feature experiment. The zero value preserves ordinary testdrive settings.
 type Scenario struct {
-	Feature string
-	Module  string
-	Suite   string
-	Test    string
+	// CollectEvents retains feature tags for reporting-only capability controls.
+	CollectEvents bool
+	Feature       string
+	Module        string
+	Suite         string
+	Test          string
 	// TestLevel supplies the protocol default for Java, which omits test_level.
 	TestLevel string
 	// SourceFile is the repository-relative path used by Jest suite skipping.
