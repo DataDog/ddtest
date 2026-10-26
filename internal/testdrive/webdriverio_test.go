@@ -147,6 +147,65 @@ func TestWebdriverIONativeSpecRetriesCompleteSelectionOnce(t *testing.T) {
 	require.Equal(t, "failed", run.webdriverIOAttempts[0].Status)
 }
 
+func TestWebdriverIONativeSpecRetryNumberingIsReleaseIndependent(t *testing.T) {
+	// WebdriverIO 9.20 numbers attempts 0..specFileRetries; 9.32 and 10.x
+	// report the first attempt as specFileRetries+1, then 1, 2, ...
+	for name, numbering := range map[string][]int{"9.20": {0, 1, 2}, "9.32": {3, 1, 2}} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			directory := filepath.Join(root, "native")
+			require.NoError(t, os.Mkdir(directory, 0700))
+			requireWriteFile(t, filepath.Join(root, "metadata.json"), `{"selections":[{"capability":"0","browser":"chrome","files":["spec.js"]}]}`)
+			for i, status := range []string{"failed", "failed", "passed"} {
+				body := fmt.Sprintf(`{"complete":true,"retry":%d,"specFileRetries":2,"specs":["spec.js"],"browser":"chrome","capability":"0","tests":[{"id":"test-0","file":"spec.js","name":"suite case","status":%q}]}`, numbering[i], status)
+				requireWriteFile(t, filepath.Join(directory, fmt.Sprintf("attempt-%d.json", i)), body)
+			}
+			run := validationRun{root: root}
+			readWebdriverIOResults(directory, &run)
+			require.Empty(t, run.ResultError)
+			require.Len(t, run.Tests, 1)
+			require.Equal(t, []string{"failed", "failed", "passed"}, run.Tests[0].WebdriverIOAttempts)
+		})
+	}
+	t.Run("single first attempt", func(t *testing.T) {
+		root := t.TempDir()
+		directory := filepath.Join(root, "native")
+		require.NoError(t, os.Mkdir(directory, 0700))
+		requireWriteFile(t, filepath.Join(root, "metadata.json"), `{"selections":[{"capability":"0","browser":"chrome","files":["spec.js"]}]}`)
+		requireWriteFile(t, filepath.Join(directory, "attempt.json"), `{"complete":true,"retry":1,"specFileRetries":0,"specs":["spec.js"],"browser":"chrome","capability":"0","tests":[{"id":"test-0","file":"spec.js","name":"suite case","status":"passed"}]}`)
+		run := validationRun{root: root}
+		readWebdriverIOResults(directory, &run)
+		require.Empty(t, run.ResultError)
+		require.Len(t, run.Tests, 1)
+	})
+	t.Run("duplicate attempts stay invalid", func(t *testing.T) {
+		root := t.TempDir()
+		directory := filepath.Join(root, "native")
+		require.NoError(t, os.Mkdir(directory, 0700))
+		requireWriteFile(t, filepath.Join(root, "metadata.json"), `{"selections":[{"capability":"0","browser":"chrome","files":["spec.js"]}]}`)
+		for i, retry := range []int{3, 0} {
+			requireWriteFile(t, filepath.Join(directory, fmt.Sprintf("attempt-%d.json", i)), fmt.Sprintf(`{"complete":true,"retry":%d,"specFileRetries":2,"specs":["spec.js"],"browser":"chrome","capability":"0","tests":[{"id":"test-0","file":"spec.js","name":"suite case","status":"passed"}]}`, retry))
+		}
+		run := validationRun{root: root}
+		readWebdriverIOResults(directory, &run)
+		require.Equal(t, "WebdriverIO native spec retry sequence is incomplete or duplicated (attempts 0, 0)", run.ResultError)
+	})
+}
+
+func TestSuccessfulSuiteWithUnreadableResultsIsNotAStartupFailure(t *testing.T) {
+	compatibility, feature, ok := missingNativeResults(validationRun{ResultError: "WebdriverIO native spec retry sequence is incomplete or duplicated (attempts 1)"})
+	require.True(t, ok)
+	require.Equal(t, "native_results_unreadable", compatibility.Code)
+	require.True(t, strings.HasPrefix(compatibility.Reason, "WebdriverIO native spec retry sequence"), "the underlying error comes first")
+	require.Contains(t, compatibility.Reason, "not a suite failure")
+	require.Contains(t, feature, "could not read")
+	compatibility, _, ok = missingNativeResults(validationRun{ExitCode: 1, Diagnostic: "Cannot find module"})
+	require.True(t, ok)
+	require.Equal(t, "native_startup_failed", compatibility.Code)
+	_, _, ok = missingNativeResults(validationRun{Tests: []jestTest{{Name: "case"}}, ExitCode: 1})
+	require.False(t, ok)
+}
+
 func TestWebdriverIOEqualBrowserNamesRetainCapabilityAndTestIdentity(t *testing.T) {
 	baseline := []jestTest{{File: "spec.js", Name: "duplicate", Status: "passed", WebdriverIOBrowser: "chrome", WebdriverIOCapability: "0", WebdriverIOTestID: "test-0"}, {File: "spec.js", Name: "duplicate", Status: "failed", WebdriverIOBrowser: "chrome", WebdriverIOCapability: "1", WebdriverIOTestID: "test-0"}}
 	changed := slices.Clone(baseline)

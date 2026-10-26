@@ -160,8 +160,10 @@ func checkWebdriverIOSupport(check jestPreflight, selection platform.JSSelection
 }
 
 type webdriverIOWorkerReport struct {
-	Complete                 bool
-	Retry                    int
+	Complete bool
+	Retry    int
+	// The worker's specFileRetries, when the reporter could read it.
+	SpecFileRetries          *int
 	Specs                    []string
 	Browser, Capability, CID string
 	Tests                    []struct {
@@ -217,6 +219,12 @@ func readWebdriverIOResults(directory string, run *validationRun) {
 			pending[key] = false
 		}
 		slices.Sort(report.Specs)
+		// WebdriverIO 9.20 numbers spec-file attempts 0..specFileRetries.
+		// Later releases start a spec with -1 remaining retries, so its first
+		// attempt reports specFileRetries+1 and the retries that follow 1, 2, ...
+		if report.SpecFileRetries != nil && report.Retry > *report.SpecFileRetries {
+			report.Retry = 0
+		}
 		key := report.Capability + "\x00" + report.CID + "\x00" + strings.Join(report.Specs, "\x00")
 		groups[key] = append(groups[key], report)
 	}
@@ -237,7 +245,11 @@ func readWebdriverIOResults(directory string, run *validationRun) {
 		history := map[string][]string{}
 		for i, report := range reports {
 			if report.Retry != i {
-				run.ResultError = "WebdriverIO native spec retry sequence is incomplete or duplicated"
+				attempts := make([]string, len(reports))
+				for j, report := range reports {
+					attempts[j] = strconv.Itoa(report.Retry)
+				}
+				run.ResultError = fmt.Sprintf("WebdriverIO native spec retry sequence is incomplete or duplicated (attempts %s)", strings.Join(attempts, ", "))
 				return
 			}
 			final := i == len(reports)-1
