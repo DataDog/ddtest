@@ -11,12 +11,25 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"text/template"
 
 	"github.com/DataDog/ddtest/internal/environment"
 )
 
+//go:embed instructions/webdriverio.md
+var webdriverIOInstructions string
+
+//go:embed instructions/cucumber.md
+var cucumberInstructions string
+
 //go:embed instructions/mocha.md
 var mochaInstructions string
+
+//go:embed instructions/cypress.md
+var cypressInstructions string
+
+//go:embed instructions/playwright.md
+var playwrightInstructions string
 
 //go:embed instructions/vitest.md
 var vitestInstructions string
@@ -30,7 +43,7 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		return err
 	}
 	var scope *ValidationScope
-	if language == "javascript" && name == "mocha" {
+	if language == "javascript" && (name == "mocha" || name == "playwright" || name == "cypress" || name == "cucumber" || name == "webdriverio") {
 		discovered, err := DiscoverValidationScope(repositoryRoot, name)
 		if err != nil {
 			return err
@@ -46,7 +59,12 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		slices.Sort(workflows)
 	}
 	if len(workflows) == 0 {
-		return fmt.Errorf("onboard could not find a GitHub Actions workflow that runs %s", name)
+		if language != "javascript" {
+			return fmt.Errorf("onboard could not find a GitHub Actions workflow that runs %s", name)
+		}
+		_, _ = fmt.Fprintf(output, "CI discovery is incomplete: no GitHub Actions test workflow was resolved for %s. The guidance below is manual; it does not certify CI. Run ddtest testdrive --framework %s --command <your-test-command> --check-only --yes to inspect the local setup.\n\n", name, name)
+		_, _ = fmt.Fprintln(output, strings.TrimSpace(instructions(language, name)))
+		return nil
 	}
 
 	_, _ = fmt.Fprintf(output, "DDTest found %s, %s, and GitHub Actions.\n", language, name)
@@ -66,11 +84,15 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		}
 		_, _ = fmt.Fprintf(output, "Run `%s` to check the setup locally.\n", command)
 		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
-		return nil
+		if name != "webdriverio" && name != "cypress" && name != "cucumber" {
+			return nil
+		}
 	}
 
 	_, _ = fmt.Fprintln(output)
-	if scope != nil {
+	if scope != nil && RedactsCommandKeys(name) {
+		WriteValidationScope(output, RedactCypressScope(*scope))
+	} else if scope != nil {
 		WriteValidationScope(output, *scope)
 	}
 	_, _ = fmt.Fprintln(output, strings.TrimSpace(instructions(language, name)))
@@ -78,11 +100,24 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 }
 
 func instructions(language, name string) string {
+	if language == "javascript" && name == "webdriverio" {
+		return strings.ReplaceAll(webdriverIOInstructions, "ddtest testdrive", "ddtest testdrive --framework webdriverio")
+	}
+	if language == "javascript" && name == "cucumber" {
+		return strings.ReplaceAll(cucumberInstructions, "ddtest testdrive", "ddtest testdrive --framework cucumber")
+	}
+	if language == "javascript" && name == "cypress" {
+		return strings.ReplaceAll(cypressInstructions, "ddtest testdrive", "ddtest testdrive --framework cypress")
+	}
+	if language == "javascript" && name == "playwright" {
+		return strings.ReplaceAll(playwrightInstructions, "ddtest testdrive", "ddtest testdrive --framework playwright")
+	}
 	if language == "javascript" && name == "mocha" {
 		return strings.ReplaceAll(mochaInstructions, "ddtest testdrive", "ddtest testdrive --framework mocha")
 	}
 	if language == "javascript" && name == "vitest" {
-		return strings.ReplaceAll(vitestInstructions, "ddtest testdrive", "ddtest testdrive --framework vitest")
+		heading, rest, _ := strings.Cut(vitestInstructions, "\n\n")
+		return strings.ReplaceAll(heading+"\n\n"+javascriptAutomaticSetup+"\n\n"+rest, "ddtest testdrive", "ddtest testdrive --framework vitest")
 	}
 	actionLanguage := language
 	var bootstrap string
@@ -90,9 +125,6 @@ func instructions(language, name string) string {
 	case "javascript":
 		actionLanguage = "js"
 		bootstrap = javascriptBootstrap
-		if name == "cypress" {
-			bootstrap += "\n\n" + cypressBootstrap
-		}
 		if name == "cucumber" {
 			bootstrap += "\n\nFor Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false on the test step. This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected."
 		}
@@ -103,9 +135,13 @@ func instructions(language, name string) string {
 	}
 	// Empty inputs override the action's pinned defaults and request the latest release.
 	tracerSetting := actionLanguage + "-tracer-version: '' # Latest release"
-	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap, "__TRACER_SETTING__", tracerSetting).Replace(gitHubInstructions)
+	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap, "__TRACER_SETTING__", tracerSetting, "__AUTOMATIC_SETUP__", javascriptAutomaticSetup).Replace(renderGitHubInstructions(language))
 	return strings.ReplaceAll(text, "ddtest testdrive", "ddtest testdrive --framework "+name)
 }
+
+// javascriptAutomaticSetup is the agent paragraph shared by the generic and
+// Vitest instructions. It points at the preview before the applying command.
+const javascriptAutomaticSetup = "For automatic setup, preview the recognized edits with `ddtest onboard --apply`, which writes nothing, then apply them with `ddtest onboard --apply --yes`. ddtest resolves the actual CI commands, tracer and supported runtime scope, applies recognized edits, then validates locally. Follow its structured next action for unsupported setup. Run validation in the foreground and wait for its exit; never use nohup, shell background jobs, sleep loops or process-name polling. If the host returns a task/session ID, wait using that host tool. Do not run parallel validation or change the selected framework/command to bypass a blocker. Use `ddtest testdrive --agent --all --yes` to validate existing setup. Preserve the generated final verdict and report links; after any source/configuration edits or configuration-only checks, run full validation again. `--instructions` prints this manual fallback."
 
 const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set NODE_OPTIONS for later steps, so merge this into the existing test step, preserving any current Node options:\n\n```yaml\nenv:\n  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\n```\n\nThe --import loader is required for Vitest and other ESM tests."
 
@@ -113,11 +149,12 @@ const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtr
 
 const rubyBootstrap = "The action installs datadog-ci into the CI bundle and exports RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument. Preserve RUBYOPT on the RSpec or Minitest step and merge any existing Ruby options. Keep the existing bundle exec or binstub entry point."
 
-const cypressBootstrap = `Cypress also needs browser-side instrumentation; NODE_OPTIONS alone is insufficient:
+var gitHubInstructionsTemplate = template.Must(template.New("github").Delims("[[", "]]").Parse(gitHubInstructions))
 
-1. In the existing Cypress config, resolve the tracer root from the action's DD_TRACE_PACKAGE value: path.dirname(path.dirname(process.env.DD_TRACE_PACKAGE)). Only enable this configuration when that variable is present. Use import syntax in an ESM config and require in a CommonJS config.
-2. Set pluginPath to path.join(tracerRoot, 'ci/cypress/plugin.js'). In ESM, import { pathToFileURL } from 'node:url' and load the plugin with (await import(pathToFileURL(pluginPath).href)).default; in CommonJS, use require(pluginPath). Compose it with the existing setupNodeEvents callback. Preserve existing event handlers, including after:run and after:spec; do not replace them.
-3. In setupNodeEvents, generate a support wrapper under RUNNER_TEMP. Write a literal require of path.join(tracerRoot, 'ci/cypress/support'), followed by a literal require of the existing resolved supportFile (unless it is false). Set the returned config.supportFile to that wrapper. Generating literal absolute imports lets Cypress's browser bundler resolve the isolated tracer without adding it to package.json.
-4. Keep the project's existing application startup, browser installation, and cypress run command. Do not use cypress open.
-
-Use the same pattern for e2e or component configuration, whichever the selected job runs. The local testdrive creates equivalent wrappers inside its session automatically. See https://docs.datadoghq.com/tests/setup/javascript/ for the Cypress plugin contract.`
+func renderGitHubInstructions(language string) string {
+	var output strings.Builder
+	if err := gitHubInstructionsTemplate.Execute(&output, language); err != nil {
+		panic(err)
+	}
+	return output.String()
+}

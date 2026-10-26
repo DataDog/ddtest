@@ -18,7 +18,8 @@ import (
 func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) (runtimeStep, map[string]string, error) {
 	// An action's environment is not inherited by subsequent run steps. Keep
 	// opaque actions outside local validation; do not demand their CI secrets.
-	if step.Run == "" && step.Uses != "" && step.ResolutionError == "" {
+	cypressAction := len(frameworks) > 0 && frameworks[0] == "cypress" && strings.HasPrefix(strings.ToLower(step.Uses), "cypress-io/github-action@")
+	if step.Run == "" && step.Uses != "" && step.ResolutionError == "" && !cypressAction {
 		return step, nil, nil
 	}
 	var err error
@@ -41,12 +42,51 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		step.Shell = runnerDefaultShell(job, row)
 	}
 
+	if len(frameworks) > 0 && frameworks[0] == "webdriverio" {
+		step.WorkingDirectory, err = runtimeValue(stepDirectory(workflow, job, step), row)
+		if err != nil {
+			return step, nil, err
+		}
+	}
+	if len(frameworks) > 0 && frameworks[0] == "cypress" && strings.HasPrefix(strings.ToLower(step.Uses), "cypress-io/github-action@") {
+		step.With = maps.Clone(step.With)
+		for key, value := range step.With {
+			if !slices.Contains(cypressResolvedInputs, key) {
+				continue
+			}
+			resolved, e := runtimeValue(value, row)
+			if e != nil {
+				return step, nil, e
+			}
+			step.With[key] = resolved
+		}
+	}
+	// Only Bash conditions with fully known operands may remove an inactive
+	// branch. Leave opaque shell control flow and all other shells unchanged.
+	shell := workflow.Defaults.Run.Shell
+	for _, candidate := range []string{job.Defaults.Run.Shell, step.Shell} {
+		if candidate != "" {
+			shell = candidate
+		}
+	}
+	shellWords, _ := shellquote.Split(shell)
+	if supportedCIShell(shell) && (shell == "" || len(shellWords) > 0 && shellWords[0] == "bash") {
+		step.Run = resolveStaticShellBranches(step.Run)
+	}
 	env := map[string]string{}
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
 	}
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
+		// Local Cypress validation disables Cloud recording and uses the
+		// evaluator's private binary cache. Never resolve or forward CI keys
+		// and runner-specific cache paths for these managed settings.
+		if len(frameworks) > 0 && frameworks[0] == "cypress" &&
+			slices.Contains([]string{"CYPRESS_RECORD_KEY", "CYPRESS_CLOUD_TOKEN", "CYPRESS_RECORD", "CYPRESS_PARALLEL", "CYPRESS_CACHE_FOLDER"}, key) {
+			delete(env, key)
+			continue
+		}
 		if len(frameworks) > 0 && frameworks[0] == "vitest" && strings.HasPrefix(key, "DD_TEST_OPTIMIZATION_RUNNER_") {
 			if _, ok := VitestRunnerEnvironmentFlag(key); !ok {
 				return step, nil, fmt.Errorf("CI ddtest runner setting requires explicit command-based validation; not forwarded or silently dropped: %s", key)
@@ -62,8 +102,16 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		if key == "PATH" || key == "NODE_PATH" {
 			return step, nil, fmt.Errorf("CI environment overrides executable/module selection: %s", key)
 		}
-		if key == "NODE_OPTIONS" {
-			ordinary, err := resolveNodeOptions(value, row, conditionEnvironment(workflow, job, step, row))
+		cucumber := len(frameworks) > 0 && frameworks[0] == "cucumber"
+		if key == "NODE_OPTIONS" || (cucumber && key == "DD_CUCUMBER_NODE_OPTIONS") {
+			var modules []string
+			if cucumber {
+				modules = []string{"@istanbuljs/esm-loader-hook"}
+			}
+			ordinary, err := resolveNodeOptions(value, row, conditionEnvironment(workflow, job, step, row), modules...)
+			if err != nil && len(frameworks) > 0 && frameworks[0] == "cypress" {
+				ordinary, err = cypressLocalNodeOptions(value, workflow, job, step, row)
+			}
 			if err != nil {
 				return step, nil, err
 			}
@@ -71,11 +119,23 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			env[key] = ordinary
 			continue
 		}
-		if strings.HasPrefix(key, "DD_") {
+		applicationCoverage := len(frameworks) > 0 && frameworks[0] == "cypress" && key == "DD_TEST_COVERAGE"
+		if strings.HasPrefix(key, "DD_") && !applicationCoverage {
 			delete(env, key)
 			continue
 		}
 		resolved, err := runtimeValue(value, row)
+		if err != nil && len(frameworks) > 0 && frameworks[0] == "cypress" {
+			// Local comparison installs its own tracer and uses the same app
+			// coverage flag in both modes. CI installation/preload conditions
+			// are checked separately; action paths must never become local env.
+			known := conditionEnvironment(workflow, job, step, row)
+			known["DD_TRACE_PACKAGE"], known["DD_TRACE_ESM_IMPORT"] = actionPreload, "\x00DD_ACTION_IMPORT\x00"
+			resolved, err = bootstrapOptions(value, row, known)
+			if err == nil && strings.ContainsRune(resolved, 0) {
+				err = fmt.Errorf("cypress application environment %s forwards a CI-only action path", key)
+			}
+		}
 
 		if err != nil {
 			return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
@@ -175,6 +235,9 @@ func localPreparation(root, directory string, words []string) (BuildCommand, boo
 		}
 		kind = "dependencies"
 	}
+	if npmDependencyPreparation(words) {
+		kind = PreparationDependencies
+	}
 	if len(words) == 4 && words[0] == "sed" && strings.HasPrefix(words[1], "-i") && !strings.ContainsAny(words[1], "/\\") {
 		script := strings.TrimPrefix(words[2], "1")
 		if literalSedSubstitution(script) && filepath.IsLocal(words[3]) && !strings.HasPrefix(words[3], "-") && !strings.ContainsAny(words[3], "$`\n:") {
@@ -239,4 +302,32 @@ func orchestratedBuild(root, directory, script string, scripts map[string]string
 // EqualPreparation compares executable preparation, including its step-local environment.
 func EqualPreparation(a, b BuildCommand) bool {
 	return a.Kind == b.Kind && a.Directory == b.Directory && a.Command == b.Command && maps.Equal(a.Environment, b.Environment)
+}
+
+var npmDependencyName = regexp.MustCompile(`^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$`)
+var npmPinnedDependency = regexp.MustCompile(`^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// Record literal matrix dependency variants as reviewed preparation. They run
+// only in isolated per-configuration workspaces; never mutate the source tree.
+func npmDependencyPreparation(words []string) bool {
+	if len(words) < 3 || words[0] != "npm" || (!slices.Contains(words, "--save-dev") && !slices.Contains(words, "-D")) || !slices.Contains([]string{"install", "i", "rm", "remove", "uninstall"}, words[1]) {
+		return false
+	}
+	args := words[2:]
+	for len(args) > 0 && slices.Contains([]string{"--silent", "--save-dev", "-D"}, args[0]) {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return false
+	}
+	for _, arg := range args {
+		if words[1] == "install" || words[1] == "i" {
+			if !npmPinnedDependency.MatchString(arg) {
+				return false
+			}
+		} else if !npmDependencyName.MatchString(arg) {
+			return false
+		}
+	}
+	return true
 }

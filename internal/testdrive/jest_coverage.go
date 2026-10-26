@@ -32,8 +32,13 @@ if (main && /(?:^|\/)(?:jest|jest-cli)\/bin\/jest\.js$/.test(main.replace(/\\/g,
   const probeSelection = Boolean(request.probe || request.probeDiscovery);
   const requireCLI = require('module').createRequire(main);
   const root = path.dirname(requireCLI.resolve('jest-cli/package.json'));
-  const legacy = path.join(root, 'build/cli/args.js');
-  const options = fs.existsSync(legacy) ? require(legacy).options : requireCLI('jest-cli').yargsOptions;
+  // Jest 27/28, early 29, and later releases expose their schema differently.
+  let options;
+  for (const relative of ['build/cli/args.js', 'build/args.js']) {
+    const file = path.join(root, relative);
+    if (fs.existsSync(file)) { options = require(file).options; if (options) break; }
+  }
+  if (!options) options = requireCLI('jest-cli').yargsOptions;
   if (!options) throw new Error('ddtest could not inspect Jest option definitions; probe selection remains unvalidated');
   const definitions = new Map();
   for (const [name, option] of Object.entries(options)) {

@@ -66,6 +66,7 @@ type runtimeConditionScope struct {
 }
 
 type runtimeStep struct {
+	ActionNode       string                  `yaml:"-"`
 	Inputs           map[string]string       `yaml:"-"`
 	ID               string                  `yaml:"id"`
 	Number           int                     `yaml:"-"`
@@ -82,11 +83,15 @@ type runtimeStep struct {
 }
 
 type runtimeJob struct {
-	Context  map[string]string `yaml:"-"`
-	RunsOn   any               `yaml:"runs-on"`
-	Defaults ciDefaults        `yaml:"defaults"`
-	Env      map[string]string `yaml:"env"`
-	If       string            `yaml:"if"`
+	Container any               `yaml:"container"`
+	Context   map[string]string `yaml:"-"`
+	RunsOn    any               `yaml:"runs-on"`
+	Defaults  ciDefaults        `yaml:"defaults"`
+	Env       map[string]string `yaml:"env"`
+	If        string            `yaml:"if"`
+	// A job that calls a reusable workflow, and the secrets it passes.
+	Uses     string `yaml:"uses"`
+	Secrets  any    `yaml:"secrets"`
 	Strategy struct {
 		Matrix any `yaml:"matrix"`
 	} `yaml:"strategy"`
@@ -159,6 +164,7 @@ func installedTracerRequirement(root, version string) (tracerRequirement, bool) 
 }
 
 func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) RuntimeCheck {
+	ctx = WithCypressMetadataCache(ctx)
 	framework := "jest"
 	if len(frameworks) > 0 {
 		framework = frameworks[0]
@@ -212,6 +218,14 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 			for _, row := range rows {
 				rowResolutions := slices.Clone(resolutions)
 				rowJob := job
+				if framework == "cypress" {
+					if label, ok := job.RunsOn.(string); ok {
+						resolved, err := runtimeValue(label, row)
+						if err == nil {
+							rowJob.RunsOn = resolved
+						}
+					}
+				}
 				rowJob.Steps = slices.Clone(job.Steps)
 				rowCandidate := false
 				for i, step := range job.Steps {
@@ -228,7 +242,8 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 						}
 					}
 					rowJob.Steps[i] = resolved
-					rowResolutions[i] = resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+					rowResolutions[i] = resolveTestStep(root, workflow, rowJob, resolved, "javascript", framework)
+					rowResolutions[i] = resolveFactBackedRuntime(ctx, root, workflow, rowJob, resolved, framework, rowResolutions[i])
 					if rowResolutions[i].Review {
 						rowResolutions[i] = commandResolution{}
 					} else if resolveErr != nil && (rowResolutions[i].Matched || rowResolutions[i].Reason != "") {
@@ -241,7 +256,30 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 				if !rowCandidate {
 					continue
 				}
-				result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, rowJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
+				jobs := []runtimeJob{rowJob}
+				if framework == "cypress" {
+					for i, step := range rowJob.Steps {
+						uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+
+						if uses == "cypress-io/github-action" && step.With["command"] == "" && cypressInputBool(step.With["runTests"], true) {
+							node, metadataErr := CypressActionNode(ctx, step.Uses)
+							rowJob.Steps[i].ActionNode = node
+							if metadataErr != nil {
+								rowResolutions[i].Reason = "Cannot resolve Cypress action Node runtime: " + metadataErr.Error()
+							}
+						}
+					}
+					var contextErr error
+					jobs, contextErr = cypressContextJobs(root, workflow, rowJob)
+					if contextErr != nil {
+						result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: contextErr.Error()})
+						continue
+					}
+				}
+
+				for _, contextJob := range jobs {
+					result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, root, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
+				}
 
 			}
 		}
@@ -282,6 +320,9 @@ func (state *runtimeState) trackNode(job runtimeJob, step runtimeStep, row map[s
 		state.node = step.With["node-version"]
 		state.source = step.Source
 		state.platform = nodeDistributionPlatform(job.RunsOn, step.With["architecture"], row)
+	} else if node := persistedNVMRuntime(step.Run); node != "" {
+		state.node, state.source = node, step.Source
+		state.platform = nodeDistributionPlatform(job.RunsOn, "", row)
 	} else if changesNodeRuntime(step.Run) {
 		state.node = "" // A run step cannot establish later shells' PATH without verified persistence.
 		state.source = step.Source
@@ -303,7 +344,7 @@ func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) err
 	return err
 }
 
-func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
+func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
 	finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Status: StatusInconclusive}
 	var findings []RuntimeFinding
 	fail := func(code, reason string) []RuntimeFinding {
@@ -311,6 +352,9 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		return append(findings, finding)
 	}
 	active, err := possibleJobCondition(job.If, row)
+	if job.Context != nil {
+		active, err = runtimeCondition(job.If, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
+	}
 	if err != nil {
 		return fail(CodeUnresolvedCondition, err.Error())
 	}
@@ -319,6 +363,12 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		return []RuntimeFinding{finding}
 	}
 	state := runtimeState{}
+	if len(frameworks) > 0 && frameworks[0] == "cypress" {
+		state.node = cypressContainerNode(job.Container)
+		if state.node != "" {
+			state.source = "container image"
+		}
+	}
 	for i, step := range job.Steps {
 		uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 		resolution := resolutions[i]
@@ -331,6 +381,9 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 			finding.Action = step.Uses
 		}
 		active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
+		if job.Context != nil && len(step.Parents) == 0 {
+			active, err = runtimeCondition(step.If, row, conditionEnvironment(workflow, job, step, row))
+		}
 		if err != nil {
 			if uses == "actions/setup-node" || changesNodeRuntime(step.Run) {
 				finding.Node = ""
@@ -339,6 +392,9 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 			return fail(CodeUnresolvedCondition, err.Error())
 		}
 		if !active {
+			if job.Context != nil && step.ID != "" {
+				job.Context["steps."+step.ID+".outcome"] = "skipped"
+			}
 			if uses == githubAction {
 				selected, err := actionSelectsJavaScript(step, row)
 				if err != nil && state.action == "" {
@@ -347,6 +403,13 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 				state.skippedAction = state.skippedAction || selected
 			}
 			continue
+		}
+		if job.Context != nil && step.ID != "" {
+			job.Context["steps."+step.ID+".outcome"] = "success"
+		}
+		if uses == githubAction && strings.HasPrefix(job.Context["scenario"], "fork_pull_request") && (strings.Contains(step.With["api_key"], "secrets.") || strings.Contains(step.With["api-key"], "secrets.")) {
+			finding.Status, finding.Code, finding.Reason = StatusIncompatible, "missing_fork_guard", "Datadog installation still runs on a fork pull request without credentials. Guard installation and its preload together."
+			return append(findings, finding)
 		}
 		if step.ResolutionError != "" {
 			if uses == "actions/setup-node" || changesNodeRuntime(step.Run) {
@@ -372,7 +435,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 				continue
 			}
 		}
-		findings = append(findings, evaluateRuntimeTest(ctx, workflow, job, step, row, resolution, state, finding, resolveNode, resolve, frameworks...))
+		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, step, row, resolution, state, finding, resolveNode, resolve, frameworks...))
 	}
 	if len(findings) == 0 {
 		return fail(CodeUnresolvedCommand, "No active test step could be checked.")
@@ -380,8 +443,11 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 	return findings
 }
 
-func evaluateRuntimeTest(ctx context.Context, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, resolution commandResolution, state runtimeState, finding RuntimeFinding, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) RuntimeFinding {
+func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, resolution commandResolution, state runtimeState, finding RuntimeFinding, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) RuntimeFinding {
 	finding.Code = ""
+	if len(resolution.Tests) > 0 && resolution.Tests[0].Cypress != nil && resolution.Tests[0].Cypress.Action != "" {
+		finding.Node, finding.NodeSource = step.ActionNode, step.Uses+" / runs.using"
+	}
 	if len(frameworks) > 0 && frameworks[0] == "mocha" && mochaInstrumentationDisabled(workflow, job, step, row) {
 		finding.Status, finding.Code = StatusExcluded, CodeExcludedRuntime
 		finding.Reason = "Mocha tests still run, but DD_CIVISIBILITY_ENABLED=false excludes this entry from instrumentation. This runtime was not validated with the tracer."
@@ -393,6 +459,12 @@ func evaluateRuntimeTest(ctx context.Context, workflow ciWorkflow, job runtimeJo
 	if state.action == "" {
 		finding.Status, finding.Code = StatusIncompatible, CodeMissingInstrumentation
 		if state.skippedAction {
+			if len(frameworks) > 0 && frameworks[0] == "cypress" {
+				if reason := cypressExcludedBootstrap(workflow, job, step, row); reason != "" {
+					finding.Reason = reason
+					return finding
+				}
+			}
 			finding.Status, finding.Code = StatusExcluded, CodeExcludedRuntime
 			if reason := checkExcludedJestBootstrap(workflow, job, step, row); reason != "" {
 				finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedExclusion, reason
@@ -423,11 +495,16 @@ func evaluateRuntimeTest(ctx context.Context, workflow ciWorkflow, job runtimeJo
 		}
 	}
 	node := state.node
+	actionAPI := len(resolution.Tests) > 0 && resolution.Tests[0].Cypress != nil && resolution.Tests[0].Cypress.Action != ""
+	if actionAPI {
+		node = step.ActionNode
+		finding.Node, finding.NodeSource = node, step.Uses+" / runs.using"
+	}
 	if node == "" {
 		finding.Code, finding.Reason = CodeRuntimeUnknown, "The CI Node runtime is unknown after setup; preserve the workflow and resolve it before claiming compatibility."
 		return finding
 	}
-	if resolveNode != nil {
+	if resolveNode != nil && !actionAPI {
 		resolved, err := resolveNode(ctx, node, state.platform)
 		if err != nil {
 			finding.Node = ""
@@ -442,8 +519,21 @@ func evaluateRuntimeTest(ctx context.Context, workflow ciWorkflow, job runtimeJo
 		finding.Code = CodeRuntimeUnknown
 	}
 	if finding.Status == StatusCompatible {
-		if reason := checkTestBootstrap(workflow, job, step, row, resolution.Tests, frameworks...); reason != "" {
+		reason := ""
+		if len(frameworks) > 0 && frameworks[0] == "cucumber" {
+			reason = checkCucumberBootstrap(root, workflow, job, step, row, resolution.Tests)
+		} else if len(frameworks) > 0 && frameworks[0] == "webdriverio" {
+			reason = checkWebdriverIOBootstrap(root, workflow, job, step, row)
+		} else {
+			reason = checkTestBootstrap(workflow, job, step, row, resolution.Tests, frameworks...)
+		}
+		if reason != "" {
 			finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedInitialization, reason
+			if reason == unverifiedPreloadReason && stepSetsNoNodeOptions(workflow, job, step) {
+				// Nothing custom to preserve: the step only lacks the action's preload.
+				finding.Code = CodeMissingInitialization
+				finding.Reason = "The Datadog action runs, but this test step sets no NODE_OPTIONS to load its preload. Add NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} (with --import ${{ env.DD_TRACE_ESM_IMPORT }} for ESM) to the step; ddtest onboard --apply can add it."
+			}
 		}
 	}
 	return finding

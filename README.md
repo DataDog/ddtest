@@ -21,10 +21,21 @@ With your project's test dependencies and any required browsers/services ready:
 
 ```sh
 ddtest onboard    # GitHub Actions setup instructions
+ddtest onboard --framework vitest --apply       # Preview exact setup edits
+ddtest onboard --framework vitest --apply --yes # Apply reviewed setup and validate
 ddtest testdrive  # Preview, confirm, and run tests locally
 ```
 
-For Jest, Vitest and Mocha, testdrive compares the original test suite without and with instrumentation, then validates six advanced features using temporary probes. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
+For agent-driven execution, use `ddtest onboard --framework vitest --apply --yes`
+or `ddtest testdrive --framework vitest --all --agent --yes`. The shared coordinator
+returns a resolved plan, precise blockers and bounded resume commands; it checks
+source preservation, report exclusions and cleanup. Finish with
+`ddtest testdrive --report` to verify freshness and render the factual verdict.
+`--format json` is available to hosts. Plain testdrive retains its existing
+execution behavior; `onboard --instructions` prints manual guidance. See
+[agent onboarding](docs/onboarding.md#agent-coordination-and-fresh-results).
+
+For Jest, Vitest, Mocha, Playwright and Cypress, testdrive compares the original test suite without and with instrumentation, then validates supported advanced features using temporary probes. Playwright reports TIA skipping and per-test coverage as unsupported. Cypress TIA requires application coverage from the tested page (Istanbul `window.__coverage__`) and a test-level skip of the probe. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
 
 No Datadog account or Agent is needed. Testdrive links to an HTML report under
 `.testoptimization/report.html` with a compact `.testoptimization/testdrive.json`. Use `--yes` after reviewing the preview in
@@ -35,8 +46,9 @@ For Jest, start with [testdrive configuration checks](docs/running.md#testdrive-
 
 For repositories with several Jest configurations, use `ddtest testdrive --framework jest --all --yes` to validate discovered CI commands and their prerequisites. Unknown setup stays explicitly unvalidated; `--command` selects a focused command. See [configuration validation](docs/running.md#validate-all-discovered-jest-configurations).
 
-Testdrive reuses a detected project tracer; otherwise it installs the latest
-release (`--tracer-version` selects a fallback release or `git:<ref>`).
+Testdrive reuses a detected project tracer; otherwise it installs the release
+every instrumented CI job pins, or the latest release (`--tracer-version`
+selects a fallback release or `git:<ref>`).
 JavaScript/Python installs are isolated. Ruby runs `bundle add datadog-ci`,
 updating the project's Gemfile and lockfile.
 
@@ -241,7 +253,7 @@ parallelism details, see [Running DDTest](docs/running.md).
 | CLI flag | What it does |
 | --- | --- |
 | `--platform` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
-| `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`. |
+| `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`, `webdriverio` (`wdio`). |
 | `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, and Playwright run/discovery. Vitest `plan`/`run` reject this option; testdrive accepts an explicit Vitest CLI or supported `ddtest run` command. |
 | `--vitest-config` | Vitest config file used by both planning and execution; defaults to Vitest config discovery. See [migration instructions](docs/running.md#vitest-integration). |
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
@@ -317,3 +329,35 @@ their own `--command`. See [Vitest validation](docs/running.md#vitest-testdrive-
 ### Mocha testdrive validation
 
 See [Mocha validation](docs/running.md#mocha-testdrive-validation) for commands, coverage requirements and limitations.
+
+Cucumber testdrive also compares native scenario outcomes and exercises all six
+controls, requiring real application source coverage through the project's NYC
+setup. See [Cucumber validation](docs/running.md#cucumber-validation).
+
+### WebdriverIO validation
+
+Use `ddtest onboard --framework webdriverio` for setup instructions, then
+`ddtest testdrive --framework webdriverio --all --check-only --yes` for the
+configuration inventory. Execute a focused command with `--command 'npm test'`
+without `--check-only`. The local runner with Mocha or Jasmine is supported;
+standalone automation, custom adapters and browser runners remain unvalidated.
+Five controlled features are required; TIA skipping and coverage are unsupported.
+See [WebdriverIO validation](docs/running.md#webdriverio-validation).
+
+### Developer onboarding experiments
+
+The [ddtest onboarding evaluation skill](skills/ddtest-onboarding-eval/SKILL.md)
+compares uncoached Codex/Claude onboarding in fresh repositories. It is maintainer
+tooling, separate from customer onboarding and the ddtest binary.
+
+**Use the container runner with a clean trusted image, no cloud/GitHub/npm
+credentials or MCP servers, and an explicitly selected throwaway agent login.**
+Repository install scripts and auto-approved agents must not run on the host with
+personal credentials. CLI permission modes alone do not isolate a trial.
+
+The evaluator reads the skill; the tested agent receives only a simple prompt
+pointing to the binary. Evidence includes redacted public tool activity, current
+product report verdicts and owned cleanup. The runner pins/checks CLI versions,
+isolates configuration and removes the container on interruption or timeout.
+See the skill for setup, independent grading and marker-verified cleanup. CI uses
+fake CLIs and offline fixtures, never real model sessions.

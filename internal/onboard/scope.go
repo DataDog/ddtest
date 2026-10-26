@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -12,30 +13,53 @@ import (
 
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
+type packageScript struct {
+	Directory, Name string
+	Leaf            bool
+}
+
 type TestCommand struct {
-	ProbeCoverageThresholdsDisabled bool `json:"-"`
+	CIInstrumentationExcluded       bool              `json:"ci_instrumentation_excluded,omitempty"`
+	LocalOverrides                  []string          `json:"local_overrides,omitempty"`
+	ID                              string            `json:"id,omitempty"`
+	Services                        []ServiceCommand  `json:"services,omitempty"`
+	PortOverride                    *PortOverrideFact `json:"port_override,omitempty"`
+	webdriverIOScoped               bool
+	packageScripts                  []packageScript
+	cucumberProbeCommand            string
+	cucumberProbeBefore             []LifecycleScript
+	cucumberProbeAfter              []LifecycleScript
+	CypressPackage                  string          `json:"cypress_package_directory,omitempty"`
+	Cypress                         *CypressCommand `json:"cypress,omitempty"`
+	Platform                        string          `json:"platform,omitempty"` // GOOS of the resolved hosted CI runner, when known.
+	ProbeCoverageThresholdsDisabled bool            `json:"-"`
 	mochaIstanbul                   bool
-	LifecycleHooks                  []string `json:"lifecycle_hooks,omitempty"`
+	LifecyclePrerequisites          []BuildCommand `json:"lifecycle_prerequisites,omitempty"`
+	LifecycleHooks                  []string       `json:"lifecycle_hooks,omitempty"`
 	mochaRunnerArgs                 []string
 	mochaLookupDirectory            string
 	mochaProbeDirectory             string
 	mochaProbeEnvironment           map[string]string
 
-	ScopeCommand      string            `json:"-"` // Original invocation before adding a forwarding wrapper.
-	ProbeLintSkipped  bool              `json:"probe_lint_skipped,omitempty"`
-	ReviewReason      string            `json:"review_reason,omitempty"`
-	Resolution        string            `json:"resolution,omitempty"`
-	Directory         string            `json:"directory"`
-	Command           string            `json:"command"`
-	Environment       map[string]string `json:"environment,omitempty"`
-	locations         []commandLocation
-	Locations         []string       `json:"locations,omitempty"`
-	Prerequisites     []BuildCommand `json:"prerequisites,omitempty"`
-	UnvalidatedSetup  []string       `json:"unvalidated_setup,omitempty"`
-	CICoverageCommand string         `json:"ci_coverage_command,omitempty"`
-	mochaESM          bool
-	mochaProbeCommand string
-	usesNYC           bool
+	ScopeCommand            string            `json:"-"` // Original invocation before adding a forwarding wrapper.
+	ProbeLintSkipped        bool              `json:"probe_lint_skipped,omitempty"`
+	ReviewReason            string            `json:"review_reason,omitempty"`
+	ExitOnFailure           bool              `json:"exit_on_failure,omitempty"`
+	Resolution              string            `json:"resolution,omitempty"`
+	Directory               string            `json:"directory"`
+	Command                 string            `json:"command"`
+	Environment             map[string]string `json:"environment,omitempty"`
+	locations               []commandLocation
+	Locations               []string       `json:"locations,omitempty"`
+	Prerequisites           []BuildCommand `json:"prerequisites,omitempty"`
+	UnvalidatedSetup        []string       `json:"unvalidated_setup,omitempty"`
+	CICoverageCommand       string         `json:"ci_coverage_command,omitempty"`
+	mochaESM                bool
+	mochaProbeCommand       string
+	usesNYC                 bool
+	cucumberCoverageWrapper string
+	cucumberScoped          bool
+	cucumberInlineIstanbul  bool
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same
@@ -49,6 +73,10 @@ const (
 )
 
 type BuildCommand struct {
+	FactSource    string   `json:"fact_source,omitempty"`
+	ExpectedFiles []string `json:"expected_files,omitempty"`
+	Argv          []string `json:"argv,omitempty"`
+
 	Environment map[string]string `json:"environment,omitempty"`
 	Kind        PreparationKind   `json:"kind,omitempty"`
 	Directory   string            `json:"directory"`
@@ -76,9 +104,13 @@ func yarnImplicitInstall(words []string) bool {
 // DiscoverValidationScope reads CI and package aliases without running them.
 // Unknown fragments stay visible alongside known test invocations.
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
+	return discoverValidationScope(root, framework, false)
+}
+
+func discoverValidationScope(root, framework string, allowSetupFacts bool) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" && framework != "mocha" {
+	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
@@ -89,6 +121,17 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			{
+				candidate := false
+				for _, step := range job.Steps {
+					resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
+					candidate = candidate || !resolution.Review && (resolution.Matched || resolution.Reason != "")
+				}
+				if !candidate {
+					scope.Review = append(scope.Review, workflow.Path+" / "+name+": no "+framework+" invocation identified; action implementations and job conditions are outside this local validation scope.")
+					continue
+				}
+			}
 
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
@@ -96,6 +139,15 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				continue
 			}
 			for _, row := range rows {
+				job := job // Resolve this row without mutating the next row's runner.
+				if framework == "cypress" {
+					if label, ok := job.RunsOn.(string); ok {
+						resolved, err := runtimeValue(label, row)
+						if err == nil {
+							job.RunsOn = resolved
+						}
+					}
+				}
 				active, err := possibleJobCondition(job.If, row)
 				if err != nil {
 					scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": "+err.Error())
@@ -104,21 +156,66 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				if !active {
 					continue
 				}
+				installerActive, installerSkipped := false, false
 				var pendingSetup []string
 				var preparation []BuildCommand
-				var unresolved, review []scopeDiagnostic
+				var unresolved, setupUnresolved, review []scopeDiagnostic
 				var commands []TestCommand
 				for i, step := range job.Steps {
-
+					if framework == "cypress" && strings.Split(strings.ToLower(step.Uses), "@")[0] == githubAction && step.Run == "" && step.ResolutionError == "" {
+						step.If = ""
+					}
 					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
+					if strings.EqualFold(strings.Split(step.Uses, "@")[0], githubAction) && conditionErr == nil {
+						if selected, err := actionSelectsJavaScript(step, row); err == nil && selected {
+							if active {
+								installerActive = true
+							} else {
+								installerSkipped = true
+							}
+						}
+					}
 					if conditionErr == nil && !active {
 						continue
 					}
 					location := commandLocation{Workflow: workflow.Path, Job: name, Matrix: maps.Clone(row), Step: stepNumber(step, i), Command: step.Run}
+					if (framework == "playwright" || framework == "cypress") && strings.Split(step.Uses, "@")[0] == "actions/upload-artifact" && step.Run == "" && step.ResolutionError == "" {
+						review = append(review, scopeDiagnostic{location, "artifact upload is outside local " + map[string]string{"playwright": "Playwright", "cypress": "Cypress"}[framework] + " execution"})
+						continue
+					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
 					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+					if allowSetupFacts && conditionErr == nil && envErr == nil {
+						directory, dirErr := repositoryDirectory(root, root, stepDirectory(workflow, job, resolved))
+						if dirErr == nil {
+							resolution = classifyFactPrerequisites(root, directory, resolved.Run, framework, resolution)
+						}
+					}
+					// Known non-test output mutations after the last selected test cannot
+					// prepare that test. Unknown commands still remain unresolved.
+					laterTest := false
+					if len(resolution.Setup)+len(resolution.Builds) > 0 && len(commands) > 0 && !resolution.Matched && (resolution.Reason == "" || resolution.Review) && !slices.ContainsFunc(resolution.Builds, func(build BuildCommand) bool { return build.Kind == PreparationNeedsFacts }) {
+						for _, later := range job.Steps[i+1:] {
+							if active, err := stepCondition(later, row, conditionEnvironment(workflow, job, runtimeStep{}, row)); err == nil && !active {
+								continue
+							}
+							// Resolve like the main scan so matrix-selected tests are recognized.
+							resolvedLater, _, _ := resolveVariantStep(workflow, job, later, row, framework)
+							laterTest = laterTest || resolveTestStep(root, workflow, job, resolvedLater, "javascript", framework).Matched
+						}
+						if !laterTest {
+							for _, setup := range resolution.Setup {
+								review = append(review, scopeDiagnostic{location, "Post-test output/setup requires separate review: " + setup})
+							}
+							for _, build := range resolution.Builds {
+								review = append(review, scopeDiagnostic{location, "Post-test preparation requires separate review: " + build.Command})
+							}
+							resolution.Builds = nil
+							resolution.Setup = nil
+						}
+					}
 					for _, setup := range resolution.Setup {
-						unresolved = append(unresolved, scopeDiagnostic{location, setup})
+						setupUnresolved = append(setupUnresolved, scopeDiagnostic{location, setup})
 					}
 					if conditionErr != nil && resolved.Run != "" && resolution.Reason == "" && !resolution.Matched && len(resolution.Builds) == 0 {
 						resolution.Review, resolution.Reason = true, "Condition affects only a recognized non-test command; review separately: "+conditionErr.Error()
@@ -157,6 +254,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 						resolution.Builds[j].Environment = mergeEnvironment(env, resolution.Builds[j].Environment)
 					}
 					for _, entry := range resolution.Tests {
+						entry.CIInstrumentationExcluded = ((installerSkipped && !installerActive) || mochaInstrumentationDisabled(workflow, job, resolved, row)) && checkExcludedJestBootstrap(workflow, job, resolved, row) == ""
 						if framework == "mocha" && !entry.usesNYC && !entry.mochaIstanbul {
 							parts, err := staticCommands(entry.Command)
 							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {
@@ -172,6 +270,9 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 						entry.Environment = mergeEnvironment(env, entry.Environment)
 						entry.Directory = filepath.ToSlash(filepath.Clean(entry.Directory))
 						entry.locations = []commandLocation{location}
+						if framework == "cypress" {
+							entry.Platform = cypressRunnerPlatform(job.RunsOn)
+						}
 						commands = append(commands, entry)
 					}
 					if resolution.Reason != "" {
@@ -180,16 +281,47 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 					preparation = append(preparation, resolution.Builds...)
 					pendingSetup = append(pendingSetup, resolution.Setup...)
 				}
+				if allowSetupFacts {
+					for _, build := range preparation {
+						if build.Kind != PreparationNeedsFacts {
+							continue
+						}
+						attached := false
+						for _, entry := range commands {
+							for _, candidate := range entry.Prerequisites {
+								attached = attached || (candidate.Command == build.Command && candidate.Directory == build.Directory)
+							}
+						}
+						if !attached {
+							scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": local Node command has no following test configuration; review explicitly: "+build.Command)
+						}
+					}
+				}
+
+				// An explicit instrumentation opt-out never claims local validation
+				// of its setup. Keep that setup visible without blocking other rows.
+				// Unknown commands remain in unresolved, even on excluded rows.
+				onlyExcluded := len(commands) > 0 && !slices.ContainsFunc(commands, func(command TestCommand) bool { return !command.CIInstrumentationExcluded })
+				for _, diagnostic := range setupUnresolved {
+					if onlyExcluded {
+						diagnostic.Reason = "Unvalidated setup for instrumentation-excluded CI tests: " + diagnostic.Reason
+						review = append(review, diagnostic)
+					} else {
+						unresolved = append(unresolved, diagnostic)
+					}
+				}
+
 				allUnresolved = append(allUnresolved, unresolved...)
 				allReview = append(allReview, review...)
 				for _, entry := range commands {
 					index := slices.IndexFunc(scope.Commands, func(previous TestCommand) bool {
-						return previous.Directory == entry.Directory && previous.Command == entry.Command && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
+						return previous.CIInstrumentationExcluded == entry.CIInstrumentationExcluded && reflect.DeepEqual(previous.Cypress, entry.Cypress) && previous.Platform == entry.Platform && previous.Directory == entry.Directory && previous.Command == entry.Command && previous.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
 					})
 					if index < 0 {
 						scope.Commands = append(scope.Commands, entry)
 					} else {
 						scope.Commands[index].locations = append(scope.Commands[index].locations, entry.locations...)
+						scope.Commands[index].packageScripts = append(scope.Commands[index].packageScripts, entry.packageScripts...)
 					}
 				}
 			}

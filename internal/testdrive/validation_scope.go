@@ -19,6 +19,7 @@ func hasValidationPair(result validationResult) bool {
 
 type configurationCoverage struct {
 	Discovered   int `json:"discovered"`
+	Excluded     int `json:"excluded"`
 	Executed     int `json:"executed"`
 	Paired       int `json:"paired"`
 	Validated    int `json:"validated"`
@@ -62,6 +63,11 @@ func selectedValidation(result validationResult) verdict {
 	}
 	check.Status = "PASSED"
 	check.Reason = "The selected command's paired comparison, all supported features, static CI checks and cleanup passed. Other configurations and actual CI execution remain unvalidated."
+	for _, policy := range featurePolicies(result.Framework) {
+		if policy.Status != "required" {
+			check.Reason += " Policy exception: " + policy.Name + " (" + policy.Status + ")."
+		}
+	}
 	return check
 }
 
@@ -74,7 +80,13 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 	// count them the same way a full run does.
 	if len(result.Configurations) == 0 && result.Scope != nil {
 		coverage.Discovered = len(result.Scope.Commands)
-		coverage.NotExercised = len(result.Scope.Commands)
+		for _, command := range result.Scope.Commands {
+			if ciInstrumentationDisabled(command) {
+				coverage.Excluded++
+			} else {
+				coverage.NotExercised++
+			}
+		}
 	}
 	executed := &executedValidation{Status: "NOT EXERCISED", Reason: "No current paired execution was completed. Earlier results do not validate this invocation."}
 	for _, configuration := range result.Configurations {
@@ -87,6 +99,10 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 			if configuration.Status == "passed" && configuration.PairedExecution {
 				executed.Passed++
 			}
+		}
+		if configurationExcluded(configuration) {
+			coverage.Excluded++
+			continue
 		}
 		switch configuration.Status {
 		case "passed":

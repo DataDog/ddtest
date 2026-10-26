@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,13 +44,15 @@ func TestJestPrerequisitesCoverFrameworkRunnerAndTracerBoundaries(t *testing.T) 
 }
 
 type preflightExecutor struct {
-	calls  int
-	args   []string
-	config string
-	node   string
+	environment map[string]string
+	name        string
+	calls       int
+	args        []string
+	config      string
+	node        string
 }
 
-func (e *preflightExecutor) CombinedOutput(_ context.Context, _ string, args []string, env map[string]string) ([]byte, error) {
+func (e *preflightExecutor) CombinedOutput(_ context.Context, name string, args []string, env map[string]string) ([]byte, error) {
 	if path := env["DDTEST_JEST_PREFLIGHT"]; path != "" {
 		node := e.node
 		if node == "" {
@@ -60,6 +63,8 @@ func (e *preflightExecutor) CombinedOutput(_ context.Context, _ string, args []s
 			return nil, err
 		}
 	}
+	e.environment = maps.Clone(env)
+	e.name = name
 	e.calls++
 	e.args = args
 	return []byte("package script banner\n" + e.config), nil

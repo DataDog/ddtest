@@ -43,6 +43,11 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	runner := *t
 	t = &runner
 	t.configurationEnvironment = onboard.WithGitHubActionsDefaults(item.Environment)
+	if !t.checkOnly && item.PortOverride == nil {
+		if err := checkCypressStartupPorts(t.cypress, t.configurationEnvironment); err != nil {
+			return result, err
+		}
+	}
 	if item.Directory == "" {
 		item.Directory = "."
 	}
@@ -54,15 +59,18 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 			return result, err
 		}
 	}
+	if len(item.UnvalidatedSetup) > 0 {
+		return result, fmt.Errorf("configuration setup requires review before tests: %s; use the resolved --all plan or supply the requested setup facts", strings.Join(item.UnvalidatedSetup, "; "))
+	}
 	original, workspace := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
-	if !t.checkOnly && (len(item.Prerequisites) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha") {
+	if !t.checkOnly && (len(item.Prerequisites) > 0 || len(item.Services) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {
 		parent, err := os.MkdirTemp("", "ddtest-configuration-")
 		if err != nil {
 			return result, err
 		}
 		defer func() {
-			err := os.RemoveAll(parent)
+			err := removeMarkedStorage(parent)
 			if err != nil {
 				result.Cleanup = &verdict{Status: "failed", Reason: "Could not remove configuration workspace: " + parent}
 			}
@@ -115,6 +123,26 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration preparation failed; tests were not started."}
 		return result, err
 	}
+
+	if item.PortOverride != nil && !t.checkOnly {
+		if err := configurePortFact(t.repositoryRoot, &item.TestCommand, *item.PortOverride, true); err != nil {
+			return result, fmt.Errorf("application port override unavailable immediately before startup: %w", err)
+		}
+		t.cypress = item.Cypress
+		if err := checkCypressStartupPorts(t.cypress, item.Environment); err != nil {
+			return result, fmt.Errorf("application port was taken before startup; retry full validation without stopping the other listener: %w", err)
+		}
+	}
+	ctx, stop, err := t.startSetupServices(ctx, output, item)
+	defer func() {
+		if err := stop(); err != nil {
+			result.Cleanup = &verdict{Status: "failed", Reason: err.Error()}
+			runErr = errors.Join(runErr, err)
+		}
+	}()
+	if err != nil {
+		return result, err
+	}
 	t.configurationEnvironment = isolatedCIEnvironment(onboard.WithGitHubActionsDefaults(item.Environment), original, checkout)
 	t.executor = configurationExecutor{executor, t.configurationEnvironment}
 	directory, err := localSetupDirectory(workspace, item.Directory)
@@ -128,19 +156,14 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	// Resolve bare framework tools from this package, but never replace an explicit runtime.
 	t.command = t.configurationExecutable(t.command)
 	if t.framework != nil {
-		if err := validateConfigurationFiles(t.checkoutRoot(), t.repositoryRoot, t.args, frameworkFeaturePolicies[t.framework.Name()].ConfigurationFiles); err != nil {
+		policy := frameworkFeaturePolicies[t.framework.Name()]
+		if err := validateConfigurationFiles(t.checkoutRoot(), t.repositoryRoot, t.args, policy.ConfigurationFiles, policy.configurationOptions()); err != nil {
 			return result, err
 		}
 	}
 	t.refreshConfigurationTracer(ctx)
 	if t.preflight != nil {
-		if t.framework.Name() == "vitest" {
-			t.preflight = t.checkVitestPreflight
-		} else if t.framework.Name() == "mocha" {
-			t.preflight = t.checkMochaPreflight
-		} else {
-			t.preflight = t.checkJestPreflight
-		}
+		t.preflight = t.frameworkPreflight()
 	}
 	return t.runPreparedChecksOrTests(ctx, output)
 }
@@ -354,6 +377,8 @@ func (t *Testdrive) runPreparedChecksOrTests(ctx context.Context, output io.Writ
 		check = onboard.CheckCIRuntimes(ctx, root, t.framework.Name())
 	}
 	result.CIRuntime = &check
+	t.defaultToCITracer(check)
+	result.Tracer = t.tracerLabel
 	if t.preflight != nil {
 		runErr = t.preflight(ctx, output, &result)
 	}

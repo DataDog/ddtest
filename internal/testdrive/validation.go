@@ -13,11 +13,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 
@@ -59,15 +61,24 @@ type runSpec struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
-	ReplacedReporters []string
-	Role              runRole
-	temporaryRoot     string
-	commandOutput     string
-	commandError      error
-	Project           string
-	Skipping          *skippingDiagnostic
-	root              string
-	checkoutRoot      string
+	webdriverIOAttempts []jestTest
+	ReplacedReporters   []string
+	Role                runRole
+	cucumberParallel    bool
+	cucumberSupport     *cucumberSupport
+	FrameworkNode       string
+	NativeCommand       string
+	ProbeExecutions     *int
+	Coverage            *coverageSummary
+	ExecutionContext    string `json:"execution_context,omitempty"`
+	temporaryRoot       string
+	commandOutput       string
+	cypressCode         cypressTestCode
+	commandError        error
+	Project             string
+	Skipping            *skippingDiagnostic
+	root                string
+	checkoutRoot        string
 	// Why a real-suite Mocha run may report no per-test coverage.
 	coverageCause                   string
 	framework                       string
@@ -83,10 +94,14 @@ type validationRun struct {
 	Diagnostic                      string
 	ExitCode                        int
 	ResultError                     string
-	Tests                           []jestTest
-	SuiteErrors                     []string
-	SuiteFailures                   []string
-	Facts                           intake.Facts
+	// Set when testdrive's --timeout stopped the command; replaces ResultError.
+	Timeout       string
+	Tests         []jestTest
+	SuiteErrors   []string
+	SuiteFailures []string
+	Facts         intake.Facts
+	// Parts of the customer's suite that this run could not exercise.
+	NotExercised []string
 }
 
 type testCounts struct {
@@ -108,6 +123,11 @@ type coverageSummary struct {
 type runSummary struct {
 	ReplacedReporters               []string            `json:"replaced_reporters,omitempty"`
 	Role                            runRole             `json:"role"`
+	NativeResults                   string              `json:"native_results,omitempty"`
+	FrameworkNode                   string              `json:"framework_node,omitempty"`
+	NativeCommand                   string              `json:"native_command,omitempty"`
+	ProbeExecutions                 *int                `json:"probe_executions,omitempty"`
+	ExecutionContext                string              `json:"execution_context,omitempty"`
 	Coverage                        *coverageSummary    `json:"coverage,omitempty"`
 	ExecutionPath                   string              `json:"execution_path,omitempty"`
 	Workers                         int                 `json:"workers,omitempty"`
@@ -123,16 +143,24 @@ type runSummary struct {
 	ProbeMode                       string              `json:"probe_mode,omitempty"`
 	ProbeCoverageThresholdsDisabled bool                `json:"probe_coverage_thresholds_disabled,omitempty"`
 	Diagnostic                      string              `json:"diagnostic,omitempty"`
+	NotExercised                    []string            `json:"not_exercised,omitempty"`
 	ExitCode                        *int                `json:"exit_code"`
 	ResultError                     string              `json:"result_error,omitempty"`
+	Timeout                         string              `json:"timeout,omitempty"`
 	TestCounts                      testCounts          `json:"test_counts"`
 	SuiteErrorCount                 int                 `json:"suite_error_count"`
 	TestEventCount                  int                 `json:"test_event_count"`
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
-		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
+	summary := runSummary{Coverage: r.Coverage, FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), Timeout: r.Timeout, ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), NotExercised: r.NotExercised, SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
+	if r.framework == "cucumber" || r.framework == "webdriverio" {
+		summary.NativeResults = "observed"
+		if r.ResultError != "" {
+			summary.NativeResults = "unavailable"
+		}
+	}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)
 	}
@@ -174,9 +202,14 @@ func (r validationRun) summary() runSummary {
 }
 
 type validationResult struct {
-	TelemetryOnly      bool                     `json:"telemetry_only,omitempty"`
-	SchemaVersion      int                      `json:"schema_version"`
-	FocusedCommand     bool                     `json:"focused_command,omitempty"`
+	TelemetryOnly  bool `json:"telemetry_only,omitempty"`
+	SchemaVersion  int  `json:"schema_version"`
+	FocusedCommand bool `json:"focused_command,omitempty"`
+	// Leading VAR=value assignments of --command, with secret-like values masked.
+	CommandEnvironment map[string]string        `json:"command_environment,omitempty"`
+	CIPreservation     *verdict                 `json:"ci_preservation,omitempty"`
+	CIBaseline         []string                 `json:"ci_baseline,omitempty"`
+	Workflow           *WorkflowEvidence        `json:"workflow,omitempty"`
 	Configurations     []configurationResult    `json:"configurations,omitempty"`
 	ReportingCounts    *executionCounts         `json:"reporting_counts,omitempty"`
 	Scope              *onboard.ValidationScope `json:"scope,omitempty"`
@@ -271,6 +304,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		_, _ = fmt.Fprintf(output, "\nResults JSON: %s\n", validationPath(""))
 		return nil
 	}
+	if err := checkCIPreservation(repositoryRoot, &result); err != nil {
+		return err
+	}
 	if !result.CheckOnly && result.ReportingCounts == nil {
 		result.ReportingCounts = reportingExecutionCounts(result.Runs)
 	}
@@ -280,6 +316,8 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	}
 	setValidationEvidence(&result)
 	result.Summary = summarizeValidation(result)
+	result.Summary.Facts = validationFacts(result)
+	result.Summary.FinalResponse = validationHandoff(result)
 	data, err := marshalValidation(result)
 	if err != nil {
 		return fmt.Errorf("encode validation results: %w", err)
@@ -287,6 +325,12 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	path := validationPath(repositoryRoot)
 	if err := writeValidation(path, append(data, '\n')); err != nil {
 		return err
+	}
+
+	if !result.CheckOnly && result.Workflow != nil {
+		if err := saveWorkflowReceipt(repositoryRoot, result); err != nil {
+			return fmt.Errorf("save private validation receipt: %w", err)
+		}
 	}
 
 	if result.CIRuntime != nil {
@@ -312,7 +356,11 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 			_, _ = fmt.Fprintln(output)
 		}
 		for _, entry := range result.CIRuntime.Review {
-			_, _ = fmt.Fprintf(output, "  - Review separately: %s / %s / step %d (%s): %s\n", entry.Workflow, entry.Job, entry.Step, entry.Command, entry.Reason)
+			command := entry.Command
+			if onboard.RedactsCommandKeys(result.Framework) {
+				command = onboard.RedactCypressCommand(command)
+			}
+			_, _ = fmt.Fprintf(output, "  - Review separately: %s / %s / step %d (%s): %s\n", entry.Workflow, entry.Job, entry.Step, command, entry.Reason)
 		}
 	}
 	if result.CISelection != nil {
@@ -352,10 +400,13 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	if len(result.Summary.BlockingChecks) > 0 {
 		_, _ = fmt.Fprintf(output, "Blocking checks: %s\n", strings.Join(result.Summary.BlockingChecks, "; "))
 	}
+	for _, reason := range result.Summary.NotExercised {
+		_, _ = fmt.Fprintf(output, "Not exercised: %s\n", reason)
+	}
 	_, _ = fmt.Fprintf(output, "CI configuration: %s\nCI execution: not exercised\nReal Datadog credentials required for these local checks: no\nPreserve this verdict in the onboarding response. A failed local feature check is not explained by missing real Datadog credentials.\n", result.Summary.CIConfiguration)
 	if retained := result.Retained; retained != nil {
 		previous := retained.Result
-		_, _ = fmt.Fprintf(output, "\nLast full execution: %s / %s\nLocal execution: %s earlier; not rerun\n%s\n", previous.Session, previous.CompletedAt.Format(time.RFC3339), result.LastExecution.Status, retained.Reason)
+		_, _ = fmt.Fprintf(output, "\nEarlier execution attempt: %s / %s\nLocal execution: %s earlier; not rerun\n%s\n", previous.Session, previous.CompletedAt.Format(time.RFC3339), result.LastExecution.Status, retained.Reason)
 		for _, feature := range previous.Features {
 			if feature.Status != "passed" {
 				_, _ = fmt.Fprintf(output, "Earlier feature check: %s/%s %s\n", feature.Project, feature.Name, feature.Status)
@@ -372,6 +423,28 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		return fmt.Errorf("validation is incomplete or found an unexpected difference; see %s", path)
 	}
 	return nil
+}
+
+// markTimeout names testdrive's own --timeout when it stopped the run, in
+// place of the partial results or internal context error it leaves behind.
+func markTimeout(run validationRun) validationRun {
+	var timeout *ext.CommandTimeoutError
+	if errors.As(run.commandError, &timeout) {
+		run.Timeout = fmt.Sprintf("%s exceeded --timeout %s; raise --timeout or fix the hanging step", run.Name, timeout.Timeout)
+		run.ResultError = run.Timeout
+	}
+	return run
+}
+
+// timedOutRuns lists the timeout of every run that testdrive's --timeout stopped.
+func timedOutRuns(result validationResult) []string {
+	var timeouts []string
+	for _, run := range result.Runs {
+		if run.Timeout != "" {
+			timeouts = append(timeouts, run.Timeout)
+		}
+	}
+	return timeouts
 }
 
 func commandExitCode(err error) int {
@@ -455,16 +528,25 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	if supportsValidationFramework(result.Framework) {
 		result.LocalSuccess = result.LocalSuccess && hasValidationPair(*result)
 	}
-	result.Success = result.LocalSuccess
+	result.Success = result.LocalSuccess && workflowChecksPassed(result.Workflow)
 	if supportsValidationFramework(result.Framework) {
 		result.Success = result.Success && result.HTMLReportCurrent && result.Cleanup != nil && result.Cleanup.Status == "passed"
 	}
-	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
+	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
+		result.Success = false
+	}
+	result.ChecksPassed = workflowChecksPassed(result.Workflow) && result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
 	if result.Scope != nil {
 		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved) == 0
 		for _, command := range result.Scope.Commands {
+			if ciInstrumentationDisabled(command) {
+				continue
+			}
 			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0 && (!result.CheckOnly || len(command.Prerequisites) == 0 || len(result.Configurations) > 0)
 		}
+	}
+	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
+		result.Success, result.ChecksPassed = false, false
 	}
 	if result.CISelection != nil {
 		result.Success = result.Success && result.CISelection.Status == "compatible"
@@ -511,10 +593,13 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 
 }
 
-// Runs that stop before a tracer is selected have no source to show.
+// Runs that stop before a tracer is selected show the request, marked as such.
 func tracerDescription(result validationResult) string {
 	if result.TracerSource == "" {
-		return result.Tracer
+		if result.Tracer == "" || result.Tracer == "not selected" {
+			return result.Tracer
+		}
+		return result.Tracer + " · not resolved"
 	}
 	return result.Tracer + " · " + result.TracerSource
 }
@@ -530,10 +615,30 @@ func missingRealCoverageReason(result validationResult) string {
 }
 
 func missingRealCoverage(result validationResult) bool {
+	if skippingPolicy(result.Framework).Status != "required" {
+		return false
+	}
 	for _, run := range result.Runs {
 		if run.Coverage != nil && run.Coverage.Status != "observed" {
 			return true
 		}
 	}
 	return false
+}
+
+var secretEnvironmentName = regexp.MustCompile(`(?i)(key|token|secret|password|passwd|auth|credential)`)
+
+// Report what a focused command set, without copying credentials into the report.
+func reportedEnvironment(environment map[string]string) map[string]string {
+	if len(environment) == 0 {
+		return nil
+	}
+	reported := make(map[string]string, len(environment))
+	for key, value := range environment {
+		if secretEnvironmentName.MatchString(key) {
+			value = "[REDACTED]"
+		}
+		reported[key] = value
+	}
+	return reported
 }

@@ -2,6 +2,7 @@ package onboard
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -108,10 +109,24 @@ func literalShellWord(word *syntax.Word) (string, error) {
 	return fields[0], nil
 }
 
+var scriptSelectorGlob = regexp.MustCompile(`^[A-Za-z0-9_:-]+:\*$`)
+
 func literalCall(stmt *syntax.Stmt) ([]string, error) {
 	call, ok := stmt.Cmd.(*syntax.CallExpr)
-	if !ok || len(stmt.Redirs) != 0 {
+	if !ok {
 		return nil, fmt.Errorf("shell control flow or redirection requires review")
+	}
+	// Discarding stdout/stderr changes presentation, not the selected command.
+	// File writes, input redirects, descriptor duplication and substitutions stay
+	// unresolved; the original npm alias is still executed without rewriting.
+	if len(stmt.Redirs) > 0 && (len(call.Args) < 2 || call.Args[0].Lit() != "npm" || !slices.Contains([]string{"ls", "list"}, call.Args[1].Lit())) {
+		return nil, fmt.Errorf("shell redirection requires review")
+	}
+	for _, redirect := range stmt.Redirs {
+		target, err := literalShellWord(redirect.Word)
+		if err != nil || target != "/dev/null" || redirect.Op != syntax.RdrOut || (redirect.N != nil && redirect.N.Value != "1" && redirect.N.Value != "2") {
+			return nil, fmt.Errorf("shell redirection requires review")
+		}
 	}
 	var words []string
 	for _, assignment := range call.Assigns {
@@ -130,6 +145,9 @@ func literalCall(stmt *syntax.Stmt) ([]string, error) {
 	}
 	for _, arg := range call.Args {
 		value, err := literalShellWord(arg)
+		if err != nil && slices.Contains([]string{"npm-run-all", "npm-run-all2", "run-s", "run-p"}, call.Args[0].Lit()) && scriptSelectorGlob.MatchString(arg.Lit()) {
+			value, err = arg.Lit(), nil
+		}
 		if err != nil {
 			return nil, err
 		}

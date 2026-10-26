@@ -69,7 +69,7 @@ func TestReportShowsCucumberCoverageTroubleshootingWithFinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Coverage not reported", "Cucumber needs nyc for coverage", "npm install --save-dev nyc"} {
+	for _, expected := range []string{"Coverage not reported", "Run the Cucumber command under nyc", "npm install --save-dev nyc"} {
 		if !strings.Contains(string(data), expected) {
 			t.Fatalf("report does not show %q", expected)
 		}
@@ -80,7 +80,7 @@ func TestReportShowsCucumberCoverageTroubleshootingWithFinding(t *testing.T) {
 		t.Fatal("missing finding card")
 	}
 	card, _, found = strings.Cut(card, "</article>")
-	if !found || !strings.Contains(card, `class="finding-advice"`) || !strings.Contains(card, "Cucumber needs nyc for coverage") {
+	if !found || !strings.Contains(card, `class="finding-advice"`) || !strings.Contains(card, "Run the Cucumber command under nyc") {
 		t.Fatal("troubleshooting must be visible inside the finding card")
 	}
 	if strings.Contains(card, `class="card-count"`) {
@@ -525,21 +525,6 @@ func TestReportRuntimeFacts(t *testing.T) {
 	}
 }
 
-func TestAbsoluteFileURL(t *testing.T) {
-	for path, want := range map[string]string{
-		`C:\repo\report.html`:                "file:///C:/repo/report.html",
-		`C:\project space\report.html`:       "file:///C:/project%20space/report.html",
-		`\\server\share\report.html`:         "file://server/share/report.html",
-		`\\server\share space\report#1.html`: "file://server/share%20space/report%231.html",
-		`/repo space/report#1.html`:          "file:///repo%20space/report%231.html",
-		`/repo\name/report.html`:             "file:///repo%5Cname/report.html",
-	} {
-		if got := absoluteFileURL(path); got != want {
-			t.Errorf("absoluteFileURL(%q) = %q, want %q", path, got, want)
-		}
-	}
-}
-
 func TestReportExplorerKeepsIdentitiesEscapedAndDetailsDistinct(t *testing.T) {
 	tests := []intake.Test{
 		{Name: `same <script>alert(1)</script>`, Module: "one", Suite: "shared", Parameters: `{"case":1}`, Status: "pass"},
@@ -691,23 +676,14 @@ func TestReportExplainsBrowserCoverageBesideTheCount(t *testing.T) {
 		name, framework, explanation string
 		facts                        intake.Facts
 	}{
-		{
-			name: "partial Cypress coverage", framework: "Cypress",
-			facts:       intake.Facts{TestCount: 111, CoveredTestCount: 60, CoverageLevel: "test"},
-			explanation: "API-only tests that do not load that code may have no coverage.",
-		},
-		{
-			name: "missing Cypress coverage", framework: "Cypress",
-			facts:       intake.Facts{TestCount: 1, MissingCoverage: true},
-			explanation: "Cypress collects Test Impact Analysis coverage from instrumented code in the browser.",
-		},
+		// Cypress coverage gaps are real findings, not a browser limitation.
+		{name: "partial Cypress coverage", framework: "Cypress", facts: intake.Facts{TestCount: 111, CoveredTestCount: 60, CoverageLevel: "test"}},
+		{name: "missing Cypress coverage", framework: "Cypress", facts: intake.Facts{TestCount: 1, MissingCoverage: true}},
 		{
 			name: "confirmed Vitest browser limitation", framework: "Vitest",
 			facts:       intake.Facts{TestCount: 2, CoveredTestCount: 1, BrowserCoverageUnavailable: true},
 			explanation: intake.BrowserCoverageContext,
 		},
-		{name: "fully covered Cypress", framework: "Cypress", facts: intake.Facts{TestCount: 1, CoveredTestCount: 1}},
-		{name: "Cypress without test events", framework: "Cypress"},
 		{name: "Vitest without browser evidence", framework: "Vitest", facts: intake.Facts{TestCount: 2, CoveredTestCount: 1}},
 		{name: "other framework", framework: "Jest", facts: intake.Facts{TestCount: 2, CoveredTestCount: 1}},
 	} {

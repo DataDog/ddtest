@@ -90,6 +90,7 @@ func (t *Testdrive) discoverJestTests(ctx context.Context, probe string) ([]stri
 	if probe != "" {
 		env["DDTEST_JEST_PROBE"] = "1"
 	}
+	useTemporaryDirectory(env, directory)
 	if err := redirectJestArguments(directory, jestArgumentRequest{Output: resultPath, Probe: probe, Project: t.jestProject.DisplayName.Name, ProbeDiscovery: true}, env); err != nil {
 		return nil, command, err
 	}

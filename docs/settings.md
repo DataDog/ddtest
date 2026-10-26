@@ -9,8 +9,8 @@ platforms or frameworks require explicit selection.
 | CLI flag | Environment variable | Env alias | Default | What it does |
 | --- | --- | --- | ---: | --- |
 | `--platform` | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM` | | auto-detected | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
-| `--framework` | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK` | | auto-detected | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`. |
-| `--command` | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND` | | `""` | Override the default base test command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, and Playwright run/discovery. DDTest appends selected tests and framework-specific flags. Vitest rejects this option; use `--vitest-config` and configure options in Vitest. |
+| `--framework` | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK` | | auto-detected | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`, `webdriverio` (`wdio`). |
+| `--command` | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND` | | `""` | Override the default base test command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, Playwright, and WebdriverIO run/discovery. DDTest appends selected tests and framework-specific flags. Vitest rejects this option; use `--vitest-config` and configure options in Vitest. |
 | `--vitest-config` | `DD_TEST_OPTIMIZATION_RUNNER_VITEST_CONFIG` | | `""` | Vitest config file used by both planning and execution; defaults to Vitest config discovery. See [migration instructions](running.md#vitest-integration). |
 | `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | | physical CPU count | Minimum count DDTest considers when planning. Interpret it as CI nodes in CI-node mode, or workers in a single-node run. |
 | `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | | physical CPU count | Maximum count DDTest considers when planning. Interpret it as CI nodes in CI-node mode, or workers in a single-node run. |
@@ -117,3 +117,17 @@ the corresponding selected-command option; an explicit command config wins. See
 ### Mocha testdrive validation
 
 See [Mocha validation](running.md#mocha-testdrive-validation) for commands, coverage requirements and limitations.
+
+Playwright testdrive accepts a simple original CLI command through `--command`, or discovers CI commands through `--all`. The supported controls and browser supervision are described in [Playwright validation](running.md#playwright-validation). No browser or project options are guessed.
+
+Cypress `testdrive --all` preserves discovered CLI and action-API selections. Use `--command` for an explicit original headless alias, including its server setup. Cloud recording/grouping is disabled locally, and TIA/application coverage validation is deferred. See [Cypress validation](running.md#cypress-validation).
+
+### Agent workflow inputs
+
+`onboard --instructions` prints manual guidance; plain JavaScript `onboard`
+returns its next action. `onboard --apply --yes` and `testdrive --agent --yes`
+coordinate local validation. `--format json` returns structured results.
+`testdrive --report` renders saved evidence after checking freshness; `--detail`
+selects the plan or a configuration. `--resume` continues preparation, never a
+cached test verdict. `--facts` supplies fingerprint-bound setup JSON outside the
+checkout and requires complete discovered scope (`--all` for testdrive).

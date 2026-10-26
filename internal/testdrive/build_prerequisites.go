@@ -41,7 +41,9 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 				return fmt.Errorf("build prerequisite needs glob/watch review: %s", build.Command)
 			}
 		}
-		if strings.Contains(words[0], "=") || filepath.Base(words[0]) != words[0] {
+		// Fact-backed prerequisites may run a repository script directly.
+		localScript := build.Kind != "" && strings.HasPrefix(words[0], "./") && filepath.IsLocal(words[0])
+		if strings.Contains(words[0], "=") || (filepath.Base(words[0]) != words[0] && !localScript) {
 			return fmt.Errorf("build prerequisite needs environment/executable review: %s", build.Command)
 		}
 		commands[i] = words
@@ -94,7 +96,9 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 		if info, err := os.Stat(localCompiler); err == nil && !info.IsDir() {
 			executable = localCompiler
 		}
-		if build.Kind != "" {
+		if build.Kind != "" && strings.HasPrefix(words[0], "./") {
+			executable = filepath.Join(directory, words[0])
+		} else if build.Kind != "" {
 			executable, err = exec.LookPath(words[0])
 			if err != nil {
 				build.Status, build.Code = "blocked", "tool_not_installed"
@@ -125,6 +129,16 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 			return fmt.Errorf("build prerequisite %s: %w", build.Command, err)
 		}
 
+		for _, file := range build.ExpectedFiles {
+			path, err := filepath.EvalSymlinks(filepath.Join(t.repositoryRoot, file))
+			relative, relErr := filepath.Rel(canonicalWorkflowRoot(t.repositoryRoot), path)
+			info, statErr := os.Stat(path)
+			if err != nil || relErr != nil || !filepath.IsLocal(relative) || statErr != nil || !info.Mode().IsRegular() {
+				build.Status = "failed"
+				build.Diagnostic = "Declared build output was not produced as a repository-local regular file: " + file
+				return fmt.Errorf("%s", build.Diagnostic)
+			}
+		}
 	}
 	return nil
 }

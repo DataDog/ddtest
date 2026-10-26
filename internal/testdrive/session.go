@@ -8,8 +8,10 @@ package testdrive
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,8 @@ import (
 )
 
 const sessionTimeFormat = "2006-01-02-150405"
+
+const sessionOwnerMarker = ".ddtest-owner.json"
 
 // Session owns the files produced by one testdrive run.
 type Session struct {
@@ -69,7 +73,7 @@ func (s *Session) Close() error {
 	if s.persistent {
 		return nil
 	}
-	if err := os.RemoveAll(s.directory); err != nil {
+	if err := removeMarkedStorage(s.directory); err != nil {
 		return fmt.Errorf("clean up testdrive session %s: %w", s.directory, err)
 	}
 	return nil
@@ -90,7 +94,29 @@ func markSessionStorage(directory, root string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(directory, ".ddtest-owner.json"), data, 0600)
+	return os.WriteFile(filepath.Join(directory, sessionOwnerMarker), data, 0600)
+}
+
+// removeMarkedStorage deletes the owner marker only after the rest of the
+// directory, so storage that cannot be fully removed is reclaimed by a later run.
+func removeMarkedStorage(directory string) error {
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var removeErr error
+	for _, entry := range entries {
+		if entry.Name() != sessionOwnerMarker {
+			removeErr = errors.Join(removeErr, os.RemoveAll(filepath.Join(directory, entry.Name())))
+		}
+	}
+	if removeErr != nil {
+		return removeErr
+	}
+	return os.RemoveAll(directory)
 }
 
 type sessionOwner struct {
@@ -113,7 +139,7 @@ func recoverSessions(root string, output io.Writer) error {
 		if err != nil || !privateOwnedDirectory(info) {
 			continue
 		}
-		marker := filepath.Join(path, ".ddtest-owner.json")
+		marker := filepath.Join(path, sessionOwnerMarker)
 		info, err = os.Lstat(marker)
 		if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 || !ownedByCurrentUser(info) {
 			continue
@@ -126,7 +152,7 @@ func recoverSessions(root string, output io.Writer) error {
 		if json.Unmarshal(data, &owner) != nil || owner.Root != canonicalWorkflowRoot(root) || owner.User != os.Getuid() {
 			continue
 		}
-		if err := os.RemoveAll(path); err != nil {
+		if err := removeMarkedStorage(path); err != nil {
 			return fmt.Errorf("recover owned session: %w", err)
 		}
 		_, _ = fmt.Fprintf(output, "Recovered abandoned testdrive session: %s\n", entry.Name())

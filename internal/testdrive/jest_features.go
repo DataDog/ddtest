@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -275,14 +276,20 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 	// Verify the probe in the actual project configuration before claiming anything
 	// about feature behavior. Never fall back to a clean, unrelated Jest config.
 	passControl, err := run("probe-pass-control", intake.Scenario{}, "pass")
+	passControl = markTimeout(passControl)
 	result.Runs = append(result.Runs, passControl.summary())
 	if err != nil {
 		return err
 	}
 	failControl, err := run("probe-fail-control", intake.Scenario{}, "fail")
+	failControl = markTimeout(failControl)
 	result.Runs = append(result.Runs, failControl.summary())
 	if err != nil {
 		return err
+	}
+	if reason := cmp.Or(passControl.Timeout, failControl.Timeout); reason != "" {
+		unavailableFeatures(result, reason+".")
+		return nil
 	}
 	if !validProbeControl(passControl, "passed") || !validProbeControl(failControl, "failed") {
 		unavailableFeatures(result, "The temporary probe did not produce its expected passing and failing control results under this framework configuration. "+probeControlDiagnostic(passControl, failControl))
@@ -308,6 +315,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 		}
 		scenario := intake.Scenario{Feature: feature, Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile}
 		value, err := run(feature, scenario, mode)
+		value = markTimeout(value)
 		result.Runs = append(result.Runs, value.summary())
 		if err != nil {
 			return err
@@ -318,6 +326,9 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 }
 
 func validProbeControl(run validationRun, status string) bool {
+	if frameworkFeaturePolicies[run.framework].ProbeBodyCounts && (run.ProbeExecutions == nil || *run.ProbeExecutions != 1) {
+		return false
+	}
 	expectedExit := (status == "passed" && run.ExitCode == 0) || (status == "failed" && run.ExitCode > 0)
 	if !expectedExit || run.ResultError != "" || executedTests(run) != 1 || len(run.SuiteErrors) != 0 || len(run.Facts.Tests) != 1 || verifyJestTelemetry(run).Status != "" {
 		return false
@@ -335,6 +346,10 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	if feature == "skipping" && identity.SourceFile == "" {
 		result.Status = "inconclusive"
 		result.Reason = "The control did not report test.source.file; a repository-relative file is required to request suite skipping."
+		return result
+	}
+	if run.Timeout != "" {
+		result.Status, result.Reason = "inconclusive", run.Timeout+"."
 		return result
 	}
 	if run.ResultError != "" || len(run.SuiteErrors) > 0 || len(run.Facts.ConfigurationErrors) > 0 {
@@ -358,15 +373,27 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	}
 	passed, failed, retries := 0, 0, 0
 	quarantined, disabled, attemptToFix, skipped := false, false, false, false
+	omittedPlaywrightIdentity := false
+	// Test-level skipping (Cypress) reports the skipped test itself.
+	skippedTestEvents := 0
 	for _, event := range run.Facts.Events {
 		tags := event.Tags
+
 		if isSkippedJestProbe(event, identity.Module, identity.Suite, identity.SourceFile) {
 			skipped = true
+		}
+		if isSkippedProbeTest(event, identity) {
+			skipped = true
+			skippedTestEvents++
 		}
 		if tags["test.suite"] != identity.Suite {
 			continue
 		}
 		moduleMatches := tags["test.module"] == identity.Module
+		if feature == "disabled" && run.framework == "playwright" && !moduleMatches && playwrightDisabledProbe(tags, identity, run) {
+			moduleMatches = true
+			omittedPlaywrightIdentity = true
+		}
 		if event.Type != "test" || tags["test.name"] != identity.Name || !moduleMatches {
 			continue
 		}
@@ -400,7 +427,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 			nativeSkip++
 		}
 	}
-	nativeRepeated := nativePass >= 2 || (run.framework == "vitest" && nativePass == 1)
+	nativeRepeated := (frameworkFeaturePolicies[run.framework].ProbeBodyCounts && nativePass == 1 && run.ProbeExecutions != nil && *run.ProbeExecutions >= 2) || nativePass >= 2 || ((run.framework == "vitest" || run.framework == "playwright") && nativePass == 1)
 	success := false
 	switch feature {
 	case "auto-retries":
@@ -408,7 +435,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	case "early-flake-detection":
 		success = passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
 	case "skipping":
-		success = skipped && executedTests(run) == 0 && run.Facts.TestEventCount == 0
+		success = skipped && executedTests(run) == 0 && passed+failed == 0 && run.Facts.TestEventCount == skippedTestEvents
 	case "quarantine":
 		// Quarantine changes the command outcome, not necessarily the native
 		// assertion status. Some Jest versions retain the failing assertion.
@@ -417,6 +444,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		success = disabled && executedTests(run) == 0 && nativeSkip == 1
 	case "attempt-to-fix":
 		success = attemptToFix && passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
+	}
+	if frameworkFeaturePolicies[run.framework].ProbeBodyCounts {
+		success = success && run.ProbeExecutions != nil && *run.ProbeExecutions == passed+failed
 	}
 	if !success {
 		result.Reason = fmt.Sprintf("Controlled %s did not show the expected behavior: matching telemetry has %d passed, %d failed and %d retries with the expected reason (%d total test events); runner has %d passed, %d failed and %d skipped; exit %d.",
@@ -433,11 +463,14 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		result.Reason = map[string]string{
 			"auto-retries":          "The fail-once probe failed, retried with auto_test_retry evidence, and recovered to a successful command.",
 			"early-flake-detection": "The new passing probe ran repeatedly with early_flake_detection retry evidence.",
-			"skipping":              "The normally failing probe suite was skipped by ITR; no test body executed and the command succeeded.",
+			"skipping":              "The normally failing probe was skipped by ITR; no test body executed and the command succeeded.",
 			"quarantine":            "The normally failing probe still reported its failure and quarantine tag, while the command succeeded.",
 			"disabled":              "The normally failing probe was reported disabled/skipped, with no executed test body and a successful command.",
 			"attempt-to-fix":        "The marked passing probe ran repeatedly with attempt_to_fix retry evidence and a successful command.",
 		}[feature]
+		if omittedPlaywrightIdentity {
+			result.Reason += " The tracer omitted module/browser identity on the disabled event; the unique probe source, suite and name were matched to its single native project/browser."
+		}
 		if feature == "skipping" && run.Skipping != nil && run.Skipping.SuiteNameChanged {
 			result.Reason += " The tracer reported a different test.suite for the skipped suite; both names are retained in the skipping diagnostics."
 		}

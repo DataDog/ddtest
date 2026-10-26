@@ -65,26 +65,13 @@ func conditionEnvironment(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 
 var workflowExpression = regexp.MustCompile(`\$\{\{.*?\}\}`)
 
+// A shell parameter reference such as $FEATURES or ${FEATURES}.
+var shellVariable = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
+
 // Without an explicit shell, GitHub runs Windows steps with PowerShell. Only a
 // statically known Windows label changes the default; Bash is used elsewhere.
 func runnerDefaultShell(job runtimeJob, row map[string]any) string {
-	var labels []string
-	var collect func(any)
-	collect = func(value any) {
-		switch value := value.(type) {
-		case string:
-			labels = append(labels, value)
-		case []any:
-			for _, item := range value {
-				collect(item)
-			}
-		case map[string]any:
-			collect(value["labels"])
-			collect(value["group"])
-		}
-	}
-	collect(job.RunsOn)
-	for _, label := range labels {
+	for _, label := range runnerLabels(job.RunsOn) {
 		resolved, err := interpolateMatrix(label, row)
 		if err == nil && strings.Contains(strings.ToLower(resolved), "windows") {
 			return "pwsh"
@@ -186,7 +173,7 @@ func resolveCIShell(root string, workflow ciWorkflow, job runtimeJob, step runti
 			}
 			if redirect, ok := node.(*syntax.Redirect); ok && redirect.Op == syntax.AppOut {
 				target := strings.Trim(shellText(redirect.Word), `"`)
-				if target == "$GITHUB_PATH" || target == "${GITHUB_PATH}" {
+				if (target == "$GITHUB_PATH" || target == "${GITHUB_PATH}") && persistedNVMRuntime(step.Run) == "" {
 					setup = append(setup, "CI PATH changes require separate validation: "+step.Run)
 				}
 			}
@@ -333,6 +320,60 @@ func nvmRuntime(command string) string {
 		return true
 	})
 	if valid {
+		return node
+	}
+	return ""
+}
+
+// runnerLabels lists runs-on labels in scalar, list and {group, labels} forms.
+func runnerLabels(runsOn any) []string {
+	var labels []string
+	var collect func(any)
+	collect = func(value any) {
+		switch value := value.(type) {
+		case string:
+			labels = append(labels, value)
+		case []any:
+			for _, item := range value {
+				collect(item)
+			}
+		case map[string]any:
+			collect(value["labels"])
+			collect(value["group"])
+		}
+	}
+	collect(runsOn)
+	return labels
+}
+
+// A shell-local nvm use does not affect later steps. This exact append persists
+// the selected installation directory for GitHub's next shell. Extra PATH writes
+// or conflicting runtime selections remain unresolved.
+func persistedNVMRuntime(command string) string {
+	node := nvmRuntime(command)
+	if node == "" {
+		return ""
+	}
+	file, _ := parseCIShell(command)
+	writes := 0
+	valid := true
+	syntax.Walk(file, func(n syntax.Node) bool {
+		stmt, ok := n.(*syntax.Stmt)
+		if !ok {
+			return true
+		}
+		for _, redirect := range stmt.Redirs {
+			target := strings.Trim(shellText(redirect.Word), `"`)
+			if target != "$GITHUB_PATH" && target != "${GITHUB_PATH}" {
+				continue
+			}
+			writes++
+			call, ok := stmt.Cmd.(*syntax.CallExpr)
+			valid = valid && ok && redirect.Op == syntax.AppOut && redirect.N == nil && len(stmt.Redirs) == 1 && len(call.Assigns) == 0 && shellText(call) == `dirname "$(nvm which `+node+`)"`
+		}
+		return true
+	})
+	if valid && writes == 1 && len(file.Stmts) > 1 && len(file.Stmts[len(file.Stmts)-1].Redirs) == 1 {
 		return node
 	}
 	return ""

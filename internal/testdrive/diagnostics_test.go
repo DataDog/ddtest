@@ -42,7 +42,7 @@ func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T)
 	}{
 		{name: "missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true},
 		{name: "Mocha missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true},
-		{name: "Cypress missing coverage", wantAdvice: true, facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, cypress: true},
+		{name: "Cypress missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, cypress: true},
 		{name: "Cypress with coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1, CoverageLevel: "test", Tests: []intake.Test{passed}}, cypress: true},
 		{name: "Mocha with installed nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true, nycInstalled: true},
 		{name: "Cucumber with declared nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, nycDeclared: true},
@@ -125,7 +125,7 @@ func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T)
 			if strings.Contains(output.String(), "1 finding.") {
 				t.Fatal("console must print the finding instead of a standalone total")
 			}
-			if tc.facts.MissingCoverage && !tc.cypress && !strings.Contains(output.String(), intake.MissingCoverageContext+"\n  Fix:") {
+			if tc.facts.MissingCoverage && !strings.Contains(output.String(), intake.MissingCoverageContext+"\n  Fix:") {
 				t.Fatalf("coverage guidance must immediately follow the concise finding:\n%s", output.String())
 			}
 			report, err := os.ReadFile(filepath.Join(session, reportFilename))
@@ -151,6 +151,9 @@ func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T)
 					t.Fatal("console must identify the informational finding")
 				}
 			}
+			if tc.cypress && tc.facts.MissingCoverage && (len(diagnostics.Troubleshooting) != 1 || !strings.Contains(diagnostics.Troubleshooting[0].Text, "window.__coverage__")) {
+				t.Fatalf("Cypress missing coverage must advise Istanbul instrumentation of the tested page: %+v", diagnostics.Troubleshooting)
+			}
 			if tc.wantAdvice {
 				if len(diagnostics.Troubleshooting) != 1 {
 					t.Fatalf("missing troubleshooting: %+v", diagnostics)
@@ -159,7 +162,7 @@ func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T)
 				if tc.nycInstalled && (advice.Title != "Check NYC coverage configuration" || !strings.Contains(advice.Text, "include/exclude") || strings.Contains(advice.Text, "./node_modules/.bin/nyc ddtest")) {
 					t.Fatalf("installed NYC still needs actionable coverage guidance: %+v", advice)
 				}
-				if tc.nycDeclared && advice.Title != "Install the declared nyc dependency" {
+				if tc.nycDeclared && (advice.Title != "Run the Cucumber command under nyc" || !strings.Contains(advice.Text, "Install the project's dependencies")) {
 					t.Fatalf("declared NYC executable is missing: %+v", advice)
 				}
 				for _, text := range []string{advice.Title, advice.Text, advice.URL} {

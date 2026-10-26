@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const reportFilename = "report.html"
@@ -143,6 +143,10 @@ type reportRuntime struct {
 	Framework, Tracer, Command, Output, Error string
 	Environment                               environmentInfo
 	SetupFailure                              *reportCard
+	NotExercised                              []string
+	// Why the suite reported no coverage, and the coverage setup it ran with.
+	CoverageReason string
+	CoverageSetup  intake.CoverageSetup
 	// Validation runs delete captured traffic after the run.
 	TrafficDeleted bool
 }
@@ -228,8 +232,9 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	coverageTooltip := ""
 	if findings.BrowserCoverageUnavailable {
 		coverageTooltip = intake.BrowserCoverageContext
-	} else if strings.EqualFold(info.Framework, "cypress") && covered < total {
-		coverageTooltip = "Cypress collects Test Impact Analysis coverage from instrumented code in the browser. API-only tests that do not load that code may have no coverage."
+	}
+	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "not supported" && covered == 0 {
+		coverageValue, coverageTone = "Not supported ("+info.Framework+")", "info"
 	}
 	model := reportModel{
 		Summary:       "No findings.",
@@ -269,10 +274,16 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			Context:  fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. %s", findings.EmptyCoverageEntryCount, inspectionHint(!info.TrafficDeleted, "Inspect the captured traffic.")),
 		})
 	}
-	if findings.MissingCoverage {
+	if policy := skippingPolicy(strings.ToLower(info.Framework)); policy.Status == "not supported" && findings.TestEventCount > 0 {
+		model.Cards = append(model.Cards, reportCard{Kind: strings.ToLower(info.Framework) + "-coverage-unavailable", Severity: "info", Title: info.Framework + " coverage and skipping are not supported", Count: 1, Context: policy.Reason})
+	}
+	for _, reason := range info.NotExercised {
+		model.Cards = append(model.Cards, reportCard{Kind: "not-exercised", Severity: "info", Title: "Not exercised by this validation", Count: 1, Context: reason})
+	}
+	if findings.MissingCoverage && skippingPolicy(strings.ToLower(info.Framework)).Status == "required" {
 		model.Cards = append(model.Cards, reportCard{
 			Kind: intake.MissingCoverageFinding, Scope: coverageFindingScope, Severity: "warning", Title: "Coverage not reported", Count: 1,
-			Context: intake.MissingCoverageContext,
+			Context: strings.TrimSpace(intake.MissingCoverageContext + " " + info.CoverageReason),
 		})
 	}
 	if findings.BrowserCoverageUnavailable {
@@ -330,7 +341,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	if len(findings.ConfigurationErrors) > 0 {
 		model.Summary += " Tracer configuration errors: " + strings.Join(findings.ConfigurationErrors, ", ") + ". " + inspectionHint(!info.TrafficDeleted, "Inspect the captured traffic and test output.")
 	}
-	for _, advice := range intake.Troubleshoot(repositoryRoot, info.Framework, findings) {
+	for _, advice := range intake.Troubleshoot(repositoryRoot, info.Framework, findings, info.CoverageSetup) {
 		for i := range model.Cards {
 			if model.Cards[i].Kind == advice.Finding {
 				model.Cards[i].Advices = append(model.Cards[i].Advices, advice)
@@ -740,24 +751,7 @@ func fileURL(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return absoluteFileURL(absolutePath), nil
-}
-
-func absoluteFileURL(absolutePath string) string {
-	slashPath := absolutePath
-	// A backslash is a valid filename character in an absolute Unix path.
-	if !strings.HasPrefix(absolutePath, "/") {
-		slashPath = strings.ReplaceAll(absolutePath, `\`, "/")
-	}
-	if strings.HasPrefix(absolutePath, `\\`) {
-		hostAndPath := strings.TrimPrefix(slashPath, "//")
-		host, path, _ := strings.Cut(hostAndPath, "/")
-		return (&url.URL{Scheme: "file", Host: host, Path: "/" + path}).String()
-	}
-	if len(slashPath) >= 2 && slashPath[1] == ':' {
-		slashPath = "/" + slashPath
-	}
-	return (&url.URL{Scheme: "file", Path: slashPath}).String()
+	return utils.FileURL(absolutePath), nil
 }
 
 func terminalLink(target, label string) string {
