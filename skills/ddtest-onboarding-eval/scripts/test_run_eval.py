@@ -289,9 +289,11 @@ class RunnerTests(unittest.TestCase):
 
     def test_ruby_runtime_checks_every_configuration(self):
         self.assertEqual(run_eval.report_ruby_runtime({}, "3.3.11")["status"], "not observed")
-        self.assertEqual(run_eval.report_ruby_runtime({"preflight": {"ruby": "3.3.11"}}, "3.3.11")["status"], "matched")
-        report = {"preflight": {"ruby": "3.3.11"}, "configurations": [{"preflight": {"ruby": "3.4.9"}}]}
+        self.assertEqual(run_eval.report_ruby_runtime({"preflight": {"runtime": "3.3.11"}}, "3.3.11")["status"], "matched")
+        report = {"preflight": {"runtime": "3.3.11"}, "configurations": [{"preflight": {"runtime": "3.4.9"}}, {"preflight": None}]}
         self.assertEqual(run_eval.report_ruby_runtime(report, "3.3.11")["status"], "mismatch")
+        # The legacy key was never written by ddtest; it must not count.
+        self.assertEqual(run_eval.report_ruby_runtime({"preflight": {"ruby": "3.3.11"}}, "3.3.11")["status"], "not observed")
 
     def test_short_owned_state_path_accepts_real_watchman_socket(self):
         code, manifest = self.trial()

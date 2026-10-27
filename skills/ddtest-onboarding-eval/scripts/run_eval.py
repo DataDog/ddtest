@@ -348,9 +348,10 @@ def report_runtime(report, requested=None):
 
 
 def report_ruby_runtime(report, requested):
-    observed = sorted({preflight["ruby"] for preflight in [report.get("preflight") or {},
+    # Ruby reports serialize the selected interpreter as preflight.runtime.
+    observed = sorted({preflight["runtime"] for preflight in [report.get("preflight") or {},
         *[(configuration.get("preflight") or {}) for configuration in report.get("configurations") or []]]
-        if preflight.get("ruby")})
+        if isinstance(preflight, dict) and isinstance(preflight.get("runtime"), str) and preflight.get("runtime")})
     return {"requested_version": requested, "observed_versions": observed,
             "status": "not observed" if not observed else "matched" if observed == [requested] else "mismatch"}
 
