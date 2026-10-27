@@ -164,7 +164,7 @@ launcher such as Orchestrion finds the mirror's `go` first in `PATH`, so
 `ddtest instrument` passes it a `-exec` program by the path that `go test` would use. When
 no mirror is possible, for example because the user cache lies in
 `GOMODCACHE`, the toolchain, or the module or its checkout, `ddtest instrument test` warns
-and runs `go test` without CI Visibility.
+and runs `go test` without Test Optimization.
 
 ### The Git worker
 

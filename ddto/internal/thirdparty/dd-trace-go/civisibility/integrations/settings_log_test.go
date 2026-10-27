@@ -19,7 +19,7 @@ func TestLogSettingsFetchError(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"no repository", fmt.Errorf("civisibility.GetSettings: %w", net.ErrNoRepositoryOrCommit), "WARN: civisibility: no CI Visibility settings without a Git repository URL and commit SHA; run in a Git repository with a commit and a remote, or set DD_GIT_REPOSITORY_URL and DD_GIT_COMMIT_SHA."},
+		{"no repository", fmt.Errorf("civisibility.GetSettings: %w", net.ErrNoRepositoryOrCommit), "WARN: civisibility: no Test Optimization settings without a Git repository URL and commit SHA; run in a Git repository with a commit and a remote, or set DD_GIT_REPOSITORY_URL and DD_GIT_COMMIT_SHA."},
 		{"request failure", errors.New("civisibility.GetSettings: 500 Internal Server Error"), "ERROR: civisibility: error getting CI visibility settings: civisibility.GetSettings: 500 Internal Server Error"},
 		{"empty response", nil, "ERROR: civisibility: error getting CI visibility settings: empty response"},
 	} {

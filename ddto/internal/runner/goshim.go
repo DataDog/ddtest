@@ -257,7 +257,7 @@ func RunWithGoShim(command []string, reason string) int {
 	goShimReason = reason
 	run, tool, err := goShimSetup(command)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" WARN:", err, "- running", command[0], "without CI Visibility")
+		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" WARN:", err, "- running", command[0], "without Test Optimization")
 		return ExecCommand(command)
 	}
 	if tool != nil {

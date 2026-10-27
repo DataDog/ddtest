@@ -170,7 +170,7 @@
     },
     {
       "path": "civisibility/integrations/civisibility_features.go",
-      "sha256": "0a5a3342faada93f7bd492ff5bd86d99fe664b2b911a8bf687aa899718e58c9b",
+      "sha256": "8fe8caf46faa003e07f1ad7db69738a6d5eea924844bda25a76b8c57a317d82d",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/civisibility_features.go",
       "source_sha256": "08c2f82bfc944754d4c7870cfd0c0fc5c4d257edcdea844f00a89bd9cc88f5d8"
@@ -1060,7 +1060,7 @@
     },
     {
       "path": "civisibility/integrations/settings_log_test.go",
-      "sha256": "c36a9924d137e8d35ff244711cb12116baec1fbc48ae6a01fef99e7896e51bcd",
+      "sha256": "de709fe48eba416f9353e2e679a91a8382732bf3b6fe4e195acdb9c8aac103b7",
       "role": "local"
     },
     {

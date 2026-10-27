@@ -789,7 +789,7 @@ func TestWrapExecProgram(t *testing.T) {
 
 // After go rejected the command while ddto prepared it, go test runs
 // natively and keeps its own status. Only when go test passes, the failure
-// was ddto's own, and ddto warns that the tests ran without CI Visibility.
+// was ddto's own, and ddto warns that the tests ran without Test Optimization.
 func TestRunGoAfterError(t *testing.T) {
 	t.Setenv(fakeToolEnv, "1")
 	ctx := context.WithValue(context.Background(), goLauncherKey{}, goLauncher{command: []string{os.Args[0]}})
@@ -801,7 +801,7 @@ func TestRunGoAfterError(t *testing.T) {
 		if code != status || stdout.String() != "test\n-p=0\n./...\n" {
 			t.Fatalf("exit %d, want %d; stdout %q", code, status, stdout.String())
 		}
-		warned := strings.Contains(stderr.String(), "WARN: resolve packages: exit status 1 - go test ran without CI Visibility")
+		warned := strings.Contains(stderr.String(), "WARN: resolve packages: exit status 1 - go test ran without Test Optimization")
 		if warned != (status == 0) || strings.Contains(stderr.String(), "positive integer") {
 			t.Fatalf("exit %d: stderr %q", status, stderr.String())
 		}

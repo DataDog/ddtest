@@ -163,7 +163,7 @@ func sameStartFailure(t *testing.T, dir string, env, ciEnv []string, goCommand, 
 		t.Fatalf("native %v: exit %d\n%s%s", args, code, nativeOut, nativeErr)
 	}
 	out, stderr, code := command(t, dir, ciEnv, driver, args...)
-	if code != 1 || startFailure.FindString(out+stderr) != want || strings.Contains(stderr, "running go test without CI Visibility") {
+	if code != 1 || startFailure.FindString(out+stderr) != want || strings.Contains(stderr, "running go test without Test Optimization") {
 		t.Fatalf("ddto %v: exit %d, want %q\n%s%s", args, code, want, out, stderr)
 	}
 }
@@ -179,7 +179,7 @@ func sameExecFailure(t *testing.T, dir string, env, ciEnv, native, ddto []string
 		t.Fatalf("native %v: exit %d\n%s%s", native, code, nativeOut, nativeErr)
 	}
 	out, stderr, code := command(t, dir, ciEnv, ddto[0], ddto[1:]...)
-	if code != 1 || execFailure.FindString(out+stderr) != want || !strings.Contains(stderr, "running go test without CI Visibility") {
+	if code != 1 || execFailure.FindString(out+stderr) != want || !strings.Contains(stderr, "running go test without Test Optimization") {
 		t.Fatalf("ddto %v: exit %d, want %q\n%s%s", ddto, code, want, out, stderr)
 	}
 }
@@ -493,7 +493,7 @@ func TestMiniGOROOTMirrorDirectToolchain(t *testing.T) {
 	}
 	// With -c, go test runs no test binary, and the helper does not matter.
 	out, stderr, code = command(t, dir, append(relativeEnv, "DD_CIVISIBILITY_ENABLED=false"), sharedDriver(t, ".."), "test", "-c", "-o", filepath.Join(t.TempDir(), executableName("mirror.test")), ".")
-	if code != 0 || strings.Contains(stderr, "running go test without CI Visibility") {
+	if code != 0 || strings.Contains(stderr, "running go test without Test Optimization") {
 		t.Fatalf("-c with a relative helper: exit %d\n%s%s", code, out, stderr)
 	}
 	// An -exec program missing from the caller's PATH stays missing, although
@@ -567,7 +567,7 @@ func TestMiniGOROOTMirrorLaterToolchainRunsGoTest(t *testing.T) {
 		"GOMODCACHE="+modcache, "GOTOOLCHAIN=local", "GOPROXY=off", "DDTO_TEST_SWITCH_GOROOT="+goroot, "DDTO_TEST_REAL_GO="+realGo)...)
 	dir := gorootMirrorFixtureDir(t)
 	out, stderr, code := command(t, dir, env, sharedDriver(t, ".."), "test", "-count=1", "-v", "./...")
-	if code != 0 || !strings.Contains(out, "TOOLCHAIN goroot_env=") || !strings.Contains(stderr, "outside a usable GOROOT - running go test without CI Visibility") {
+	if code != 0 || !strings.Contains(out, "TOOLCHAIN goroot_env=") || !strings.Contains(stderr, "outside a usable GOROOT - running go test without Test Optimization") {
 		t.Fatalf("exit %d:\n%s%s", code, out, stderr)
 	}
 }
@@ -596,7 +596,7 @@ func TestMiniGOROOTMirrorUnavailableRunsGoTest(t *testing.T) {
 			t.Fatalf("native fail=%t: exit %d:\n%s%s", tc.fail, native, nativeOut, nativeErr)
 		}
 		out, stderr, code := command(t, dir, env, driver, "test", "-count=1", "-v", "./...")
-		if code != tc.status || !strings.Contains(out, tc.output) || !strings.Contains(stderr, "running go test without CI Visibility") {
+		if code != tc.status || !strings.Contains(out, tc.output) || !strings.Contains(stderr, "running go test without Test Optimization") {
 			t.Fatalf("fail=%t: exit %d, native %d:\n%s%s", tc.fail, code, native, out, stderr)
 		}
 	}

@@ -120,7 +120,7 @@ DD_TRACE_DEBUG=true ddtest instrument test -count=1 -v ./path/to/pkg 2>&1 |
   or the intake.
 - `TestOptimization.run ... ERROR` lines report failed requests, such as
   `connection refused` when no Agent listens.
-- `TestOptimization.build ... WARN: ... running go test without CI Visibility`
+- `TestOptimization.build ... WARN: ... running go test without Test Optimization`
   means the CLI ran plain `go test` and reported nothing; the line gives the
   reason.
 

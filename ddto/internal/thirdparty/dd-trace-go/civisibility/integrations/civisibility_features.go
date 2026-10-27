@@ -439,7 +439,7 @@ func applyEarlyFlakeDetectionEnabledEnvironmentOverride(ciSettings *net.Settings
 // request was made: a warning says what the settings need.
 func logSettingsFetchError(err error) {
 	if errors.Is(err, net.ErrNoRepositoryOrCommit) {
-		log.Warn("civisibility: no CI Visibility settings without a Git repository URL and commit SHA; run in a Git repository with a commit and a remote, or set DD_GIT_REPOSITORY_URL and DD_GIT_COMMIT_SHA. The features that the settings enable stay off.")
+		log.Warn("civisibility: no Test Optimization settings without a Git repository URL and commit SHA; run in a Git repository with a commit and a remote, or set DD_GIT_REPOSITORY_URL and DD_GIT_COMMIT_SHA. The features that the settings enable stay off.")
 		return
 	}
 	if err != nil {

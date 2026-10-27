@@ -71,7 +71,7 @@ def check_mode(command, stderr):
     warns and builds another coverage mode, or runs go test without CI
     Visibility."""
     for line in stderr.splitlines():
-        if 'WARN: --experimental-file-coverage' in line or 'running go test without CI Visibility' in line:
+        if 'WARN: --experimental-file-coverage' in line or 'running go test without Test Optimization' in line or 'running go test without CI Visibility' in line:
             raise SystemExit(f'{" ".join(command)} did not install the requested mode: {line}')
 
 

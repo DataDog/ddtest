@@ -962,7 +962,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	debug.printf("working_directory=%q package_patterns=%d build_flags=%d", dir, len(opts.packages), len(opts.buildFlags))
 	if opts.help || explicitFiles(dir, opts.packages) {
 		if !opts.help {
-			fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: explicit Go files run without CI Visibility instrumentation")
+			fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: explicit Go files run without Test Optimization")
 		}
 		debug.printf("instrumentation bypass help=%t explicit_files=%t", opts.help, !opts.help)
 		// Native go test handles -C, help and file mode itself.
@@ -992,7 +992,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	var native *nativeGoError
 	if errors.As(err, &native) && fallsBackToNativeGo(ctx, err) {
 		// The toolchain is supported; only ddto's instrumentation is not.
-		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN:", err, "- running go test without CI Visibility")
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN:", err, "- running go test without Test Optimization")
 		debug.printf("instrumentation bypass %s", native.bypass)
 		return runGo(ctx, cwd, append([]string{"test"}, args...), nil, signals, stdin, stdout, stderr)
 	}
@@ -1195,7 +1195,7 @@ func goRejected(err error) error {
 // flags, rejected the command, its environment or its input while ddto
 // prepared it: go test then reports the error itself, with its own output and
 // exit status. If go test passes instead, ddto had added the cause, and it
-// warns that the tests ran without CI Visibility.
+// warns that the tests ran without Test Optimization.
 func runGoAfterError(ctx context.Context, cwd string, args []string, cause error, signals <-chan os.Signal, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := ctx.Err(); err != nil {
 		// Cancellation stops instead.
@@ -1208,7 +1208,7 @@ func runGoAfterError(ctx context.Context, cwd string, args []string, cause error
 	}
 	code := runGo(ctx, cwd, append([]string{"test"}, args...), nil, signals, stdin, stdout, stderr)
 	if code == 0 {
-		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN:", reason, "- go test ran without CI Visibility")
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN:", reason, "- go test ran without Test Optimization")
 	}
 	return code
 }
