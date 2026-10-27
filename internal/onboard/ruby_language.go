@@ -9,6 +9,7 @@ import (
 	_ "embed"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -47,15 +48,16 @@ func (rubyDiscovery) coordinated() bool { return true }
 
 func (rubyDiscovery) automaticCISetup() bool { return false }
 
-// Every discovered test step runs after the Datadog action or explicitly
-// skips it; at least one stays instrumented.
-func (rubyDiscovery) ciSetupConfigured(root, framework string) bool {
+// Every discovered test step runs after a complete Datadog action or
+// explicitly skips it; at least one stays instrumented. A complete action has
+// an API key, an exact tracer release and the selected site.
+func (rubyDiscovery) ciSetupConfigured(root, framework, site string) bool {
 	instrumented := false
 	for _, job := range RubyCIConfiguration(root, framework).Jobs {
 		if job.Status == "excluded" {
 			continue
 		}
-		if job.Action == "" {
+		if job.Action == "" || !rubyActionComplete(job, site) {
 			return false
 		}
 		instrumented = true
@@ -63,8 +65,29 @@ func (rubyDiscovery) ciSetupConfigured(root, framework string) bool {
 	return instrumented
 }
 
-func (rubyDiscovery) agentInstructions(framework string) string {
-	return withMinitestForkSetup(strings.ReplaceAll(rubyAgentInstructions, "__FRAMEWORK__", framework), framework)
+// exactRubyRelease is a single RubyGems release, never a requirement or "latest".
+var exactRubyRelease = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9A-Za-z]+)*$`)
+
+func rubyActionComplete(job RuntimeFinding, site string) bool {
+	if strings.TrimSpace(job.setupInputs["api_key"]) == "" || !exactRubyRelease.MatchString(job.TracerRequested) {
+		return false
+	}
+	configured := job.setupInputs["site"]
+	if configured == "" {
+		configured = defaultDatadogSite
+	}
+	return site == "" || configured == site
+}
+
+const defaultDatadogSite = "datadoghq.com"
+
+func (rubyDiscovery) agentInstructions(framework, site string) string {
+	siteInput := ""
+	if site != "" && site != defaultDatadogSite {
+		siteInput = ", `site: " + site + "` (the selected Datadog site)"
+	}
+	text := strings.NewReplacer("__FRAMEWORK__", framework, "__SITE_INPUT__", siteInput).Replace(rubyAgentInstructions)
+	return withMinitestForkSetup(text, framework)
 }
 
 func (rubyDiscovery) frameworks() []string { return []string{"rspec", "minitest"} }

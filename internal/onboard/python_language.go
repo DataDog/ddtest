@@ -20,9 +20,9 @@ func (pythonDiscovery) coordinated() bool { return false }
 
 func (pythonDiscovery) automaticCISetup() bool { return false }
 
-func (pythonDiscovery) ciSetupConfigured(string, string) bool { return false }
+func (pythonDiscovery) ciSetupConfigured(string, string, string) bool { return false }
 
-func (pythonDiscovery) agentInstructions(string) string { return "" }
+func (pythonDiscovery) agentInstructions(string, string) string { return "" }
 
 func (pythonDiscovery) frameworks() []string { return []string{"pytest"} }
 

@@ -16,11 +16,18 @@ import (
 )
 
 // Run detects the first supported onboarding path and prints its instructions.
-func Run(output io.Writer) error { return run(output, false) }
+func Run(output io.Writer) error { return run(output, nil) }
 
-// run prints the onboarding guidance. agent selects the setup instructions
-// for a coding agent whose validation ddtest hands off separately.
-func run(output io.Writer, agent bool) error {
+// agentHandoff selects the setup instructions for a coding agent whose
+// validation ddtest hands off separately.
+type agentHandoff struct {
+	// site is the selected Datadog site; empty selects the default.
+	site string
+}
+
+// run prints the onboarding guidance; a non-nil agent selects the agent's
+// setup instructions.
+func run(output io.Writer, agent *agentHandoff) error {
 	repositoryRoot, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("find repository root: %w", err)

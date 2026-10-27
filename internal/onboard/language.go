@@ -49,12 +49,14 @@ type discoveryLanguage interface {
 	// hands off to coordinated validation.
 	automaticCISetup() bool
 	// ciSetupConfigured reports whether every discovered CI test step of
-	// framework already runs the Datadog setup action or is explicitly
+	// framework already runs the Datadog setup action, with its mandatory
+	// inputs and the selected site (empty: not selected), or is explicitly
 	// excluded from it, with at least one instrumented step.
-	ciSetupConfigured(root, framework string) bool
+	ciSetupConfigured(root, framework, site string) bool
 	// agentInstructions are framework's setup instructions for a coding agent
-	// whose validation ddtest runs separately; empty uses instructions.
-	agentInstructions(framework string) string
+	// whose validation ddtest runs separately, for the selected Datadog site
+	// (empty: the default); empty uses instructions.
+	agentInstructions(framework, site string) string
 }
 
 // discoveryLanguageFor returns the language that discovers framework's CI, or nil.

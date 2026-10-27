@@ -52,7 +52,7 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 				integrationFile(t, root, "Rakefile", "require 'rake/testtask'\n3.times { |i| Rake::TestTask.new(\"test_#{i}\") { |t| t.pattern = 'test/**/*_test.rb' } }\ntask test: [:test_0, :test_1, :test_2]\n")
 				integrationFile(t, root, "test/one_test.rb", "require 'minitest/autorun'\nrequire_relative '../lib/customer'\nclass CustomerTest < Minitest::Test\n define_method('test_passes [1, 2]') { assert_equal 2, Customer.add }\n def test_existing_failure; Customer.add; flunk 'customer expected failure'; end\nend\n")
 			}
-			workflow := "jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '" + gems.Ruby + "'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, ruby-tracer-version: '" + gems.Tracer + "'}\n      - run: " + command + "\n"
+			workflow := "jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '" + gems.Ruby + "'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '" + gems.Tracer + "'}\n      - run: " + command + "\n"
 			integrationFile(t, root, ".github/workflows/test.yml", workflow)
 			integrationCommand(t, ctx, root, nil, "bundle", "lock", "--local")
 			before := map[string]string{}

@@ -281,7 +281,7 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 	if err != nil {
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "blocked_environment", Phase: "discovery", Code: "repository_unavailable", Reason: err.Error(), NextAction: "request_capability"}))
 	}
-	if registered := discoveryLanguageNamed(language); registered != nil && registered.ciSetupConfigured(root, framework) {
+	if registered := discoveryLanguageNamed(language); registered != nil && registered.ciSetupConfigured(root, framework, options.Site) {
 		return WriteAgentResult(output, AgentResult{
 			Status: "ready", Phase: "onboarding", NextAction: "run_command", NextCommand: command,
 			Capabilities: validationCapabilities,
@@ -289,7 +289,7 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 		})
 	}
 	var guidance strings.Builder
-	if err := run(&guidance, true); err != nil {
+	if err := run(&guidance, &agentHandoff{site: options.Site}); err != nil {
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "scope_unresolved", Reason: err.Error(), NextAction: "supply_input"}))
 	}
 	reason := "CI does not yet run the Datadog setup action before every discovered " + framework + " test step. Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. " + AgentScope + " " + notice

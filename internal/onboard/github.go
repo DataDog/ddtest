@@ -37,7 +37,7 @@ var vitestInstructions string
 //go:embed instructions/github.md
 var gitHubInstructions string
 
-func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoot, language, name string, agent bool) error {
+func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoot, language, name string, agent *agentHandoff) error {
 	workflows, configured, err := provider.FindTestWorkflows(repositoryRoot, language, name)
 	if err != nil {
 		return err
@@ -79,7 +79,7 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
 	}
 
-	if len(configured) == len(workflows) && !agent {
+	if len(configured) == len(workflows) && agent == nil {
 		_, _ = fmt.Fprintln(output)
 		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
 		command := "ddtest testdrive --framework " + name
@@ -102,8 +102,8 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		WriteValidationScope(output, *scope)
 	}
 	text := instructions(language, name)
-	if registered := discoveryLanguageNamed(language); agent && registered != nil && registered.agentInstructions(name) != "" {
-		text = registered.agentInstructions(name)
+	if registered := discoveryLanguageNamed(language); agent != nil && registered != nil && registered.agentInstructions(name, agent.site) != "" {
+		text = registered.agentInstructions(name, agent.site)
 	}
 	_, _ = fmt.Fprintln(output, strings.TrimSpace(text))
 	return nil

@@ -77,6 +77,7 @@ func TestRubyAgentOnboardingRequiresCISetupBeforeValidation(t *testing.T) {
 	require.NotEmpty(t, state.Capabilities)
 	require.Contains(t, state.Instruction, "datadog/test-visibility-github-action@v3")
 	require.Contains(t, state.Instruction, ".github/workflows/test.yml")
+	require.Contains(t, state.Instruction, "`site: datadoghq.eu`", "the action reports to the selected site")
 	// The handoff runs validation once; the instructions must not add runs.
 	for _, extra := range []string{"--all --check-only", "ddtest testdrive", "PASSED"} {
 		require.NotContains(t, state.Instruction, extra)
@@ -84,11 +85,11 @@ func TestRubyAgentOnboardingRequiresCISetupBeforeValidation(t *testing.T) {
 }
 
 func TestRubyAgentOnboardingIsReadyOnceTheActionIsConfigured(t *testing.T) {
-	rubyAgentFixture(t, "rspec", rubyAgentAction)
+	rubyAgentFixture(t, "rspec", strings.Replace(rubyAgentAction, "languages: ruby,", "languages: ruby, site: datadoghq.eu,", 1))
 	var outputs []string
 	for range 2 {
 		var out bytes.Buffer
-		require.NoError(t, StartWithOptions(&out, StartOptions{Format: "agent", Site: "datadoghq.eu"}))
+		require.NoError(t, StartWithOptions(&out, StartOptions{Format: "agent", Site: "datadoghq.eu"}), out.String())
 		outputs = append(outputs, out.String())
 	}
 	require.Equal(t, outputs[0], outputs[1], "repeated onboarding returns the same handoff")
@@ -138,12 +139,30 @@ func TestRubyCISetupConfiguredNeedsAnInstrumentedStep(t *testing.T) {
 		{"every row excluded", strings.Replace(rubyAgentAction, "matrix.ruby != 'head'", "false", 1), false},
 		{"head excluded", rubyAgentAction, true},
 		{"other language", strings.Replace(rubyAgentAction, "languages: ruby", "languages: js", 1), false},
+		{"no API key", strings.Replace(rubyAgentAction, "api_key: '${{ secrets.DD_API_KEY }}', ", "", 1), false},
+		{"no tracer version", strings.Replace(rubyAgentAction, ", ruby-tracer-version: '1.42.0'", "", 1), false},
+		{"tracer requirement", strings.Replace(rubyAgentAction, "'1.42.0'", "'~> 1.42'", 1), false},
+		{"tracer latest", strings.Replace(rubyAgentAction, "'1.42.0'", "latest", 1), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rubyAgentFixture(t, "rspec", tc.action)
 			root, err := os.Getwd()
 			require.NoError(t, err)
-			require.Equal(t, tc.configured, rubyDiscovery{}.ciSetupConfigured(root, "rspec"))
+			require.Equal(t, tc.configured, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
 		})
 	}
+}
+
+func TestRubyCISetupConfiguredNeedsTheSelectedSite(t *testing.T) {
+	rubyAgentFixture(t, "rspec", rubyAgentAction)
+	root, err := os.Getwd()
+	require.NoError(t, err)
+	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", "datadoghq.com"))
+	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", "datadoghq.eu"), "the action would report to the default site")
+	state, err := rubyAgentStart(t, StartOptions{Format: "json", Site: "datadoghq.eu"})
+	require.Error(t, err)
+	require.Equal(t, "ci_setup_required", state.Code)
+	require.Contains(t, state.Instruction, "`site: datadoghq.eu`")
+	require.NotContains(t, rubyDiscovery{}.agentInstructions("rspec", ""), "site:")
+	require.NotContains(t, rubyDiscovery{}.agentInstructions("rspec", "datadoghq.com"), "__SITE_INPUT__")
 }

@@ -29,9 +29,9 @@ func (javascriptDiscovery) coordinated() bool { return true }
 
 func (javascriptDiscovery) automaticCISetup() bool { return true }
 
-func (javascriptDiscovery) ciSetupConfigured(string, string) bool { return false }
+func (javascriptDiscovery) ciSetupConfigured(string, string, string) bool { return false }
 
-func (javascriptDiscovery) agentInstructions(string) string { return "" }
+func (javascriptDiscovery) agentInstructions(string, string) string { return "" }
 
 func (javascriptDiscovery) frameworks() []string {
 	return []string{"jest", "vitest", "mocha", "playwright", "cypress", "cucumber", "webdriverio"}

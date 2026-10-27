@@ -193,6 +193,7 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 					continue
 				}
 				ruby, tracer, action := "", "", ""
+				var inputs map[string]string
 				skippedAction := false
 				var actionErr error
 				for i, step := range job.Steps {
@@ -205,11 +206,11 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 						continue
 					}
 					if uses == "ruby/setup-ruby" {
-						ruby, tracer, action, actionErr = "", "", "", nil
+						ruby, tracer, action, actionErr, inputs = "", "", "", nil, nil
 						skippedAction = false
 					}
 					if uses == githubAction {
-						tracer, action, actionErr = "", "", nil
+						tracer, action, actionErr, inputs = "", "", nil, nil
 					}
 					if conditionErr == nil && stepErr == nil {
 						if uses == "ruby/setup-ruby" && hasVersion {
@@ -223,6 +224,15 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 							if err == nil && selected {
 								action = step.Uses
 								tracer, _ = runtimeValue(step.With["ruby-tracer-version"], row)
+								inputs = map[string]string{}
+								for key, value := range step.With {
+									inputs[key], _ = runtimeValue(value, row)
+									if inputs[key] == "" && strings.Contains(value, "${{") {
+										// A secret or other expression is set even
+										// though its value is unknown statically.
+										inputs[key] = value
+									}
+								}
 							}
 						}
 					}
@@ -235,7 +245,7 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 					if !resolution.Matched && resolution.Reason == "" {
 						continue
 					}
-					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: ruby, Action: action, TracerRequested: tracer, Status: "inconclusive", Reason: "Select a static Ruby version and exact ruby-tracer-version in a Datadog action before this test step; validate other installs separately."}
+					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: ruby, Action: action, TracerRequested: tracer, setupInputs: inputs, Status: "inconclusive", Reason: "Select a static Ruby version and exact ruby-tracer-version in a Datadog action before this test step; validate other installs separately."}
 					if conditionErr != nil || stepErr != nil || resolveErr != nil || actionErr != nil || resolution.Reason != "" {
 						reasons := []string{resolution.Reason}
 						for _, err := range []error{conditionErr, stepErr, resolveErr, actionErr} {
