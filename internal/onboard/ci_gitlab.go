@@ -190,7 +190,16 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 			if rules == nil {
 				continue
 			}
+			if rules.Tag == "!reference" {
+				job.Gaps = append(job.Gaps, "GitLab rules !reference requires its expanded rules before validation or editing")
+				continue
+			}
 			for _, rule := range rules.Content {
+				rule = ciUnalias(rule)
+				if rule.Tag == "!reference" {
+					job.Gaps = append(job.Gaps, "GitLab rules !reference requires its expanded rules before validation or editing")
+					continue
+				}
 				if ciMembers(rule)["variables"] != nil {
 					job.Gaps = append(job.Gaps, "GitLab rules change environment values; provide the resolved per-rule configuration")
 				}

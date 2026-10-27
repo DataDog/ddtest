@@ -419,6 +419,7 @@ func TestPublishJobSetupDoesNotBlockItsCucumberTest(t *testing.T) {
 
 func TestOtherCIProvidersAreListedForReview(t *testing.T) {
 	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - run: npx cypress run\n")
+	writeScripts(t, root, map[string]string{"test": "jest", "lint": "eslint ."})
 	require.NoError(t, os.WriteFile(filepath.Join(root, "circle.yml"), []byte("workflows:\n  build:\n    jobs:\n      - cypress/run\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".gitlab-ci.yml"), []byte("lint:\n  script: npm run lint\n"), 0644))
 	scope, err := DiscoverValidationScope(root, "cypress")

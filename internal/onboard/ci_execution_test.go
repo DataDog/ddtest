@@ -36,7 +36,7 @@ func TestNativeExecutionStandaloneAssignments(t *testing.T) {
 			selectProviderForTest(t, provider)
 			path, text := ".gitlab-ci.yml", "test:\n image: node:24.1.0\n before_script: [TEST_SCRIPT=test]\n script: npm run $TEST_SCRIPT\n"
 			if provider == "buildkite" {
-				path, text = ".buildkite/pipeline.yml", "image: node:24.1.0\nsteps:\n - commands:\n    - TEST_SCRIPT=test\n    - npm run $TEST_SCRIPT\n"
+				path, text = ".buildkite/pipeline.yml", "image: node:24.1.0\nsteps:\n - commands:\n    - TEST_SCRIPT=test\n    - npm run $$TEST_SCRIPT\n"
 			}
 			root := providerFixture(t, map[string]string{path: text})
 			scope, err := DiscoverValidationScope(root, "jest")

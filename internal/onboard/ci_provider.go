@@ -180,7 +180,7 @@ func workflowHasTests(root string, workflow ciWorkflow) bool {
 						probe.ResolutionError = ""
 						probe = recognitionStep(workflow, job, probe, row, framework)
 						r := resolveTestStep(root, workflow, job, probe, language.name(), framework)
-						if r.Matched || namesFramework(step.Run, framework, true) {
+						if r.Matched || (!r.Review && r.Reason != "" && stepMayStartTests(root, workflow, job, probe, framework)) || namesFramework(step.Run, framework, true) {
 							return true
 						}
 					}
@@ -289,6 +289,7 @@ func ciEnvironment(node *yaml.Node) map[string]string {
 		return env
 	}
 	for k, v := range ciMembers(node) {
+		v = ciUnalias(v)
 		if v.Kind == yaml.ScalarNode {
 			env[k] = v.Value
 		} else if value := ciMembers(v)["value"]; value != nil {
@@ -335,10 +336,12 @@ func nativeSteps(path string, node *yaml.Node, provider string) []runtimeStep {
 		native.Framework, native.Tracer, native.Site, native.ESM = setup.Framework, setup.Version, setup.Site, setup.ESM
 		command = original
 	}
+	resolutionError := ""
 	if provider == "buildkite" {
+		resolutionError = buildkiteUploadGap(command)
 		command = strings.ReplaceAll(command, "$$", "$")
 	}
-	return []runtimeStep{{Run: command, Source: fmt.Sprintf("%s:%d", path, node.Line), Number: node.Line, Native: native}}
+	return []runtimeStep{{Run: command, ResolutionError: resolutionError, Source: fmt.Sprintf("%s:%d", path, node.Line), Number: node.Line, Native: native}}
 }
 
 func ciImageNode(image string, env map[string]string) string {

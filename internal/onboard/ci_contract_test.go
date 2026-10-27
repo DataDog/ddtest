@@ -21,7 +21,7 @@ func TestNativeContractVariableTargetsAndInlineOptOut(t *testing.T) {
 				selectProviderForTest(t, provider)
 				path, source := ".gitlab-ci.yml", "test:\n image: node:24.1.0\n variables: {TEST_SCRIPT: test}\n script: npm run $TEST_SCRIPT\ndisabled:\n image: node:24.1.0\n script: DD_CIVISIBILITY_ENABLED=false npm test\n"
 				if provider == "buildkite" {
-					path, source = ".buildkite/pipeline.yml", "image: node:24.1.0\nsteps:\n - key: test\n   env: {TEST_SCRIPT: test}\n   command: npm run $TEST_SCRIPT\n - key: disabled\n   command: DD_CIVISIBILITY_ENABLED=false npm test\n"
+					path, source = ".buildkite/pipeline.yml", "image: node:24.1.0\nsteps:\n - key: test\n   env: {TEST_SCRIPT: test}\n   command: npm run $$TEST_SCRIPT\n - key: disabled\n   command: DD_CIVISIBILITY_ENABLED=false npm test\n"
 				}
 				files := map[string]string{path: source}
 				if framework == "mocha" {
@@ -35,7 +35,11 @@ func TestNativeContractVariableTargetsAndInlineOptOut(t *testing.T) {
 				w, err := readWorkflows(root)
 				require.NoError(t, err)
 				require.Equal(t, "6.20.1", w[0].Jobs["test"].Steps[0].Native.Tracer)
-				require.Contains(t, w[0].Jobs["test"].Steps[0].Native.Original, "npm run $TEST_SCRIPT")
+				reference := "$TEST_SCRIPT"
+				if provider == "buildkite" {
+					reference = "$$TEST_SCRIPT"
+				}
+				require.Contains(t, w[0].Jobs["test"].Steps[0].Native.Original, "npm run "+reference)
 				require.Empty(t, w[0].Jobs["disabled"].Steps[0].Native.Tracer)
 				check := nativeFollowupCheck(t, root, framework)
 				require.Len(t, check.Jobs, 2, "the disabled consumer must remain visible")

@@ -25,8 +25,8 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 		return w, err
 	}
 	fields := ciMembers(document)
-	var walk func(*yaml.Node, string, int)
-	walk = func(list *yaml.Node, group string, depth int) {
+	var walk func(*yaml.Node, string, int, bool)
+	walk = func(list *yaml.Node, group string, depth int, excluded bool) {
 		if list == nil {
 			return
 		}
@@ -49,8 +49,12 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 			if name == "" {
 				name = "step " + strconv.Itoa(index+1)
 			}
+			disabled := excluded || ciScalar(step["if"]) == "false"
 			if nested := step["steps"]; nested != nil {
-				walk(nested, group+name+" / ", depth+1)
+				if !disabled && ciScalar(step["if"]) != "" {
+					w.Review = append(w.Review, path+" / "+group+name+": Buildkite group condition is a possible CI path; event/branch eligibility is not validated")
+				}
+				walk(nested, group+name+" / ", depth+1, disabled)
 				continue
 			}
 			node := step["command"]
@@ -62,9 +66,9 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 				steps = nativeSteps(path, node, "buildkite")
 			}
 			if len(steps) == 0 {
-				if step["trigger"] != nil {
+				if !disabled && step["trigger"] != nil {
 					w.Unresolved = append(w.Unresolved, path+" / "+group+name+": triggered pipeline requires its resolved test configuration")
-				} else if step["plugins"] != nil && ciScalar(step["if"]) != "false" {
+				} else if !disabled && step["plugins"] != nil {
 					w.Unresolved = append(w.Unresolved, path+" / "+group+name+": commandless plugin step requires its resolved command and environment")
 				}
 				continue
@@ -76,12 +80,10 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 					job.Gaps = append(job.Gaps, step.Native.Blocked)
 				}
 			}
-			if condition := ciScalar(step["if"]); condition != "" {
-				if condition == "false" {
-					job.If = "false"
-				} else {
-					w.Review = append(w.Review, path+" / "+group+name+": Buildkite condition is a possible CI path; event/branch eligibility is not validated")
-				}
+			if disabled {
+				job.If = "false"
+			} else if condition := ciScalar(step["if"]); condition != "" {
+				w.Review = append(w.Review, path+" / "+group+name+": Buildkite condition is a possible CI path; event/branch eligibility is not validated")
 			}
 			plugins := step["plugins"]
 			if plugins != nil {
@@ -200,7 +202,7 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 				w.Review = append(w.Review, path+" / "+group+name+": cross-step dependencies require available artifacts or explicit local preparation")
 			}
 			for _, command := range job.Steps {
-				if strings.Contains(command.Run, "buildkite-agent pipeline upload") {
+				if !disabled && strings.Contains(command.Run, "buildkite-agent pipeline upload") {
 					w.Unresolved = append(w.Unresolved, path+" / "+group+name+": dynamically uploaded pipeline must be supplied as configuration; discovery never executes generators")
 				}
 			}
@@ -211,7 +213,7 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 			w.Jobs[key] = nativeShellState(root, job)
 		}
 	}
-	walk(fields["steps"], "", 0)
+	walk(fields["steps"], "", 0, false)
 	// Keep a stable ordering when multiple files/steps expose identical commands.
 	for name, job := range w.Jobs {
 		job.Gaps = slices.Compact(job.Gaps)
@@ -243,12 +245,32 @@ func buildkitePluginCommands(path string, plugins *yaml.Node, hasStepCommand boo
 				reason = "Buildkite docker-compose plugin command conflicts with the step command; choose one explicitly before validation or editing"
 			}
 			steps = append(steps, runtimeStep{
-				Run:    strings.ReplaceAll(run, "$$", "$"),
-				Source: fmt.Sprintf("%s:%d", path, command.Line),
-				Number: command.Line,
-				Native: &nativeCommand{Path: path, Original: run, Blocked: reason},
+				Run:             strings.ReplaceAll(run, "$$", "$"),
+				ResolutionError: buildkiteUploadGap(run),
+				Source:          fmt.Sprintf("%s:%d", path, command.Line),
+				Number:          command.Line,
+				Native:          &nativeCommand{Path: path, Original: run, Blocked: reason},
 			})
 		}
 	}
 	return steps
+}
+
+// Buildkite interpolates unescaped variables before step environments exist.
+// Only doubled dollars preserve a reference for the runtime shell.
+func buildkiteUploadGap(command string) string {
+	for i := 0; i+1 < len(command); i++ {
+		if command[i] != '$' {
+			continue
+		}
+		next := command[i+1]
+		if next == '$' {
+			i++
+			continue
+		}
+		if next == '{' || next == '_' || next >= 'A' && next <= 'Z' || next >= 'a' && next <= 'z' {
+			return "Buildkite upload-time variables require resolved pipeline values before validation or editing; step env is runtime-only (use $$VAR if runtime expansion is intended)"
+		}
+	}
+	return ""
 }

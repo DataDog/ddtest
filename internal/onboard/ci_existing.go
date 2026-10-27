@@ -143,11 +143,9 @@ func nativePackageInstalledBefore(root, provider string, job runtimeJob, index i
 				// pin, even if an earlier command installed that manifest.
 				return false
 			}
-			if preload {
-				continue
-			}
+			prune := len(words) > 1 && slices.Contains([]string{"npm", "pnpm"}, words[0]) && words[1] == "prune"
 			bareYarn := words[0] == "yarn" && len(words) == 1
-			if !bareYarn && (len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) || !slices.Contains([]string{"ci", "install", "i"}, words[1])) {
+			if !prune && !bareYarn && (len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) || !slices.Contains([]string{"ci", "install", "i"}, words[1])) {
 				continue
 			}
 			omitsDev := nodeEnv == "production"
@@ -162,7 +160,7 @@ func nativePackageInstalledBefore(root, provider string, job runtimeJob, index i
 				installed = false
 				continue
 			}
-			if noInstall || slices.Contains(words, "--prefix") || slices.Contains(words, "-g") {
+			if prune || preload || noInstall || slices.Contains(words, "--prefix") || slices.Contains(words, "-g") {
 				continue
 			}
 			installed = true

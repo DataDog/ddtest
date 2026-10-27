@@ -314,7 +314,10 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 					job.Gaps = append(job.Gaps, step.Source+": "+blocked)
 				}
 				job.Steps = append(job.Steps, step)
-				i = literal
+				i = limit - 1
+				if parenthesized {
+					i = limit
+				}
 				continue
 			}
 			open := i + 1
@@ -323,11 +326,15 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 			}
 			if open >= end || tokens[open].value != "{" {
 				call := i+1 < end && (tokens[i+1].value == "(" || tokens[i+1].quote != "" || i+2 < end && tokens[i+2].value == ":")
-				if call && !slices.Contains([]string{"echo", "input", "checkout", "junit", "archiveArtifacts", "timestamps", "timeout", "image", "label", "reuseNode", "customWorkspace", "registryUrl", "registryCredentialsId"}, token.value) {
-					job.Gaps = append(job.Gaps, "Jenkins call "+token.value+" needs its resolved setup; no Groovy or library code was executed")
-				}
+				reason := ""
 				if token.value == "load" || token.value == "library" {
-					job.Gaps = append(job.Gaps, "Jenkins shared library/load requires its resolved commands")
+					reason = "Jenkins shared library/load requires its resolved commands"
+				} else if call && !slices.Contains([]string{"echo", "input", "checkout", "junit", "archiveArtifacts", "timestamps", "timeout", "image", "args", "label", "reuseNode", "customWorkspace", "registryUrl", "registryCredentialsId"}, token.value) {
+					reason = "Jenkins call " + token.value + " needs its resolved setup; no Groovy or library code was executed"
+				}
+				if reason != "" {
+					job.Gaps = append(job.Gaps, reason)
+					w.Unresolved = append(w.Unresolved, path+": "+reason)
 				}
 				continue
 			}

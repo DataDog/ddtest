@@ -71,6 +71,9 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 		}
 	}
 	for _, inv := range invocations {
+		if inv.parameters["type"] == "approval" {
+			continue // Approval gates do not execute a job or require an orb definition.
+		}
 		definition, ok := jobs[inv.name]
 		if !ok {
 			w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": external orb job "+inv.name+" requires its pinned expanded configuration")

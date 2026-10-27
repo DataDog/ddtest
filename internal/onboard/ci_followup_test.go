@@ -173,7 +173,7 @@ func TestNativeFollowupLiteralExportsStayLiteral(t *testing.T) {
 			selectProviderForTest(t, provider)
 			path, text := ".gitlab-ci.yml", "test:\n image: node:24.1.0\n before_script:\n  - export TOKEN=blue\n  - export PATTERN='$TOKEN'\n script: npm test\n"
 			if provider == "buildkite" {
-				path, text = ".buildkite/pipeline.yml", "image: node:24.1.0\nsteps:\n - commands:\n    - export TOKEN=blue\n    - export PATTERN='$TOKEN'\n    - npm test\n"
+				path, text = ".buildkite/pipeline.yml", "image: node:24.1.0\nsteps:\n - commands:\n    - export TOKEN=blue\n    - export PATTERN='$$TOKEN'\n    - npm test\n"
 			}
 			root := providerFixture(t, map[string]string{path: text})
 			scope, err := DiscoverValidationScope(root, "jest")
