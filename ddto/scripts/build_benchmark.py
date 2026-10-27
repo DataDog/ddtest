@@ -435,9 +435,12 @@ class Runner:
                                           SDK_MODULE + "@" + self.config["sdk_version"]], ROOT))
         yaml = Path(sdk["Dir"]) / "internal/civisibility/integrations/gotesting/orchestrion.yml"
         # ddtest's executable runs ddto. Its module can need a newer Go than the
-        # one measured, which the commands it runs use.
+        # one measured, which the commands it runs use. Go switches to that one
+        # only after checking it against the checksum database, which the
+        # module cache's records answer without --download.
         self.ddto = self.output / "ddtest"
-        self.setup([str(self.go), "build", "-mod=readonly", "-o", str(self.ddto), "."], ROOT.parent, GOTOOLCHAIN="auto")
+        self.setup([str(self.go), "build", "-mod=readonly", "-o", str(self.ddto), "."], ROOT.parent,
+                   GOTOOLCHAIN="auto", GOSUMDB="sum.golang.org")
         for name in dict.fromkeys(case["subject"] for case in self.cases):
             spec = self.config["subjects"][name]
             target = self.output / "subjects" / name
