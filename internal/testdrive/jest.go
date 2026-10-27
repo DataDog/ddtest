@@ -319,6 +319,12 @@ func pairTimeout(baseline, instrumented validationRun) string {
 }
 
 func compareJest(baseline, instrumented validationRun) verdict {
+	return compareRuns(baseline, instrumented, verifyJestTelemetry)
+}
+
+// compareRuns compares an uninstrumented and a reporting-only run of the same
+// suite, then matches the reporting run's telemetry with telemetry.
+func compareRuns(baseline, instrumented validationRun, telemetry func(validationRun) verdict) verdict {
 	if reason := pairTimeout(baseline, instrumented); reason != "" {
 		return verdict{Status: "inconclusive", Code: "command_timeout", Reason: reason}
 	}
@@ -355,7 +361,7 @@ func compareJest(baseline, instrumented validationRun) verdict {
 		slices.Sort(differences)
 		return verdict{Status: "suspected regression", Reason: "Uninstrumented and reporting-only results differ.", Differences: differences}
 	}
-	if telemetry := verifyJestTelemetry(instrumented); telemetry.Status != "" {
+	if telemetry := telemetry(instrumented); telemetry.Status != "" {
 		return telemetry
 	}
 	return verdict{Status: "compatible", Reason: "No observed behavioral regression: test identities, outcomes, failure details, and exit code match. Existing test failures are acceptable; reporting telemetry was verified."}
@@ -463,24 +469,12 @@ func verifyJestTelemetry(run validationRun) verdict {
 }
 
 func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *workspace.Session, preload string, result *validationResult) error {
-	run := t.runJest
-	if t.framework.Name() == "webdriverio" {
-		run = t.runWebdriverIO
+	adapter, ok := pairedFrameworkNamed(t.framework.Name())
+	if !ok {
+		return fmt.Errorf("paired validation is not supported for %s", t.framework.Name())
 	}
-	if t.framework.Name() == "cucumber" {
-		run = t.runCucumber
-	}
-	if t.framework.Name() == "cypress" {
-		run = t.runCypress
-	}
-	if t.framework.Name() == "playwright" {
-		run = t.runPlaywright
-	}
-	if t.framework.Name() == "mocha" {
-		run = t.runMocha
-	}
-	if t.framework.Name() == "vitest" {
-		run = t.runVitest
+	run := func(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (validationRun, error) {
+		return adapter.run(t, ctx, output, session, preload, spec)
 	}
 	runFramework := run
 	run = func(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (validationRun, error) {
@@ -500,7 +494,11 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	if err := t.writeHTMLReport(output, result, instrumented); err != nil {
 		return err
 	}
-	result.Compatibility = compareJest(baseline, instrumented)
+	telemetry := adapter.telemetry
+	if telemetry == nil {
+		telemetry = verifyJestTelemetry
+	}
+	result.Compatibility = compareRuns(baseline, instrumented, telemetry)
 	if result.Compatibility.Status == "suspected regression" {
 		baselineAgain, err := run(ctx, output, session, preload, runSpec{Name: "baseline-repeat", Role: roleRepeat, Instrumented: false})
 		result.Runs = append(result.Runs, baselineAgain.summary())
@@ -515,7 +513,7 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 		if err := t.writeHTMLReport(output, result, instrumentedAgain); err != nil {
 			return err
 		}
-		result.Compatibility = compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrumentedAgain)
+		result.Compatibility = compareRepeatedRuns(baseline, instrumented, baselineAgain, instrumentedAgain, telemetry)
 	}
 	// Probes would only repeat the hang; name the timeout once instead.
 	if reason := pairTimeout(baseline, instrumented); reason != "" {
@@ -527,28 +525,7 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 		result.Compatibility = compatibility
 		return nil
 	}
-	if t.framework.Name() == "webdriverio" {
-		return t.runWebdriverIOFeatures(ctx, output, session, preload, baseline, result)
-	}
-	if t.framework.Name() == "cucumber" {
-		return t.runCucumberFeatures(ctx, output, session, preload, baseline, result)
-	}
-	if t.framework.Name() == "vitest" {
-		return t.runVitestFeatures(ctx, output, session, preload, baseline, result)
-	}
-	if t.framework.Name() == "cypress" {
-		return t.runCypressFeatures(ctx, output, session, preload, baseline, result)
-	}
-	if t.framework.Name() == "playwright" {
-		return t.runPlaywrightFeatures(ctx, output, session, preload, baseline, result)
-	}
-	if t.framework.Name() == "mocha" {
-		return t.runMochaFeatures(ctx, output, session, preload, baseline, result)
-	}
-	if err := t.runJestFeatures(ctx, output, session, preload, result); err != nil {
-		return err
-	}
-	return nil
+	return adapter.features(t, ctx, output, session, preload, baseline, result)
 }
 
 // Only the temporary directory created for this run is interchangeable. Keep

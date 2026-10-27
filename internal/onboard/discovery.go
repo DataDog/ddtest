@@ -73,10 +73,7 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 	if err != nil {
 		return result, err
 	}
-	actionLanguage := language
-	if language == "javascript" {
-		actionLanguage = "js"
-	}
+	actionLanguage := setupActionLanguage(language)
 	for _, workflow := range workflows {
 		found, configured := false, true
 		for _, jobName := range slices.Sorted(maps.Keys(workflow.Jobs)) {

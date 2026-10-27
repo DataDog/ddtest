@@ -127,19 +127,10 @@ func frameworkInstructions(language, name string) string {
 		heading, rest, _ := strings.Cut(vitestInstructions, "\n\n")
 		return strings.ReplaceAll(heading+"\n\n"+javascriptAutomaticSetup+"\n\n"+rest, "ddtest testdrive", "ddtest testdrive --framework vitest")
 	}
-	actionLanguage := language
+	actionLanguage := setupActionLanguage(language)
 	var bootstrap string
-	switch language {
-	case "javascript":
-		actionLanguage = "js"
-		bootstrap = javascriptBootstrap
-		if name == "cucumber" {
-			bootstrap += "\n\nFor Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false on the test step. This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected."
-		}
-	case "python":
-		bootstrap = pythonBootstrap
-	case "ruby":
-		bootstrap = rubyBootstrap
+	if registered := discoveryLanguageNamed(language); registered != nil {
+		bootstrap = registered.bootstrap(name)
 	}
 	// Empty inputs override the action's pinned defaults and request the latest release.
 	tracerSetting := actionLanguage + "-tracer-version: '' # Latest release"
@@ -150,12 +141,6 @@ func frameworkInstructions(language, name string) string {
 // javascriptAutomaticSetup is the agent paragraph shared by the generic and
 // Vitest instructions. It points at the preview before the applying command.
 const javascriptAutomaticSetup = "For automatic setup, preview the recognized edits with `ddtest onboard --apply`, which writes nothing, then apply them with `ddtest onboard --apply --yes`. ddtest resolves the actual CI commands, tracer and supported runtime scope, applies recognized edits, then validates locally. Follow its structured next action for unsupported setup. Run validation in the foreground and wait for its exit; never use nohup, shell background jobs, sleep loops or process-name polling. If the host returns a task/session ID, wait using that host tool. Do not run parallel validation or change the selected framework/command to bypass a blocker. Use `ddtest testdrive --agent --all --yes` to validate existing setup. Preserve the generated final verdict and report links; after any source/configuration edits or configuration-only checks, run full validation again. `--instructions` prints this manual fallback."
-
-const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set NODE_OPTIONS for later steps, so merge this into the existing test step, preserving any current Node options:\n\n```yaml\nenv:\n  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\n```\n\nThe --import loader is required for Vitest and other ESM tests."
-
-const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtrace for pytest. Preserve these variables on the existing test step; do not replace its current arguments. Activate the same Python environment used for the tests before the action. If CI uses tox or nox, pass DD_*, PYTHONPATH, and PYTEST_ADDOPTS into the test environment."
-
-const rubyBootstrap = "The action installs datadog-ci into the CI bundle and exports RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument. Preserve RUBYOPT on the RSpec or Minitest step and merge any existing Ruby options. Keep the existing bundle exec or binstub entry point."
 
 var gitHubInstructionsTemplate = template.Must(template.New("github").Delims("[[", "]]").Parse(gitHubInstructions))
 

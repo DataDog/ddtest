@@ -167,12 +167,12 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		return nil, err
 	}
 	language := detectedPlatform.Name()
-	// Jest checks keep npm metadata, preflight probes and reports there; an
-	// unusable folder would otherwise surface later as registry failures.
-	if language == "javascript" {
-		if err := checkTemporaryStorage(); err != nil {
-			return nil, err
-		}
+	selectedLanguage := languageNamed(language)
+	if selectedLanguage == nil {
+		selectedLanguage = unsupportedLanguage{}
+	}
+	if err := selectedLanguage.prepareStorage(); err != nil {
+		return nil, err
 	}
 	command, args := runner.Command()
 	configurationOnly := configuration.CheckOnly
@@ -302,7 +302,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			}
 		}
 	}
-	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
+	label := selectedLanguage.tracerPackage() + "@" + version
 
 	session := workspace.PlanSession()
 	if !supportsValidationFramework(runner.Name()) {
@@ -325,7 +325,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		originalCommand = selectedPlan.Command
 	}
 	var commandAssignments map[string]string
-	if language == "javascript" && !all && selectedPlan.Cypress == nil {
+	if selectedLanguage.parsesCommandAssignments() && !all && selectedPlan.Cypress == nil {
 		parsed, arguments, assignments, parseErr := onboard.ParseValidationCommand(originalCommand)
 		if parseErr != nil {
 			discoveryError = parseErr
@@ -336,20 +336,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	var environment environmentInfo
-	var preflight *reportCard
-	switch language {
-	case "python":
-		var source string
-		command, args, source = pythonTestdriveCommand(repositoryRoot, command, args, strings.TrimSpace(settings.GetCommand()) != "")
-		environment, preflight = pythonEnvironmentInfo(ctx, command, args, source)
-	case "javascript":
-		if !configurationOnly && discoveryError == nil {
-			environment = nodeEnvironmentInfo(ctx, command)
-		}
-	case "ruby":
-		environment = rubyEnvironmentInfo(ctx)
-	}
+	command, args, environment, preflight := selectedLanguage.inspectEnvironment(ctx, environmentRequest{root: repositoryRoot, command: command, args: args, explicit: strings.TrimSpace(settings.GetCommand()) != "", checkOnly: configurationOnly, discoveryError: discoveryError})
 	scopeCommand := selectedPlan.ScopeCommand
 	if scopeCommand == "" {
 		scopeCommand = originalCommand
@@ -367,9 +354,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, commandAssignments)
 	}
 	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args, Environment: configurationEnvironment}
-	if language == "python" && environment.Executable != "" {
-		options.Command, options.Args = environment.Executable, nil
-	}
+	options.Command, options.Args = selectedLanguage.tracerCommand(environment, options.Command, options.Args)
 	var projectTracer string
 	if preflight == nil && !configurationOnly && discoveryError == nil {
 		projectTracer, _ = detectedPlatform.DetectTracer(ctx, options)
@@ -419,9 +404,10 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 }
 
 func displayName(name string) string {
-	names := map[string]string{"javascript": "JavaScript", "webdriverio": "WebdriverIO", "python": "Python", "ruby": "Ruby", "jest": "Jest", "mocha": "Mocha", "cypress": "Cypress", "playwright": "Playwright", "cucumber": "Cucumber", "vitest": "Vitest", "pytest": "pytest", "rspec": "RSpec", "minitest": "Minitest"}
-	if label := names[name]; label != "" {
-		return label
+	for _, language := range validationLanguages {
+		if label := language.displayNames()[name]; label != "" {
+			return label
+		}
 	}
 	return name
 }
@@ -494,8 +480,8 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintf(output, "  - save findings and troubleshooting; tests will not run: %s\n", t.environmentFailure.Title)
 	} else if t.projectTracer != "" {
 		_, _ = fmt.Fprintf(output, "  - reuse installed %s; no installation is needed\n", t.installedTracerLabel(t.projectTracer))
-	} else if t.language == "python" {
-		_, _ = fmt.Fprintf(output, "  - install %s in a temporary Python environment; remove it after the run\n", t.tracerLabel)
+	} else if preview := t.lang().installPreview(t.tracerLabel); preview != "" {
+		_, _ = fmt.Fprintf(output, "  - %s\n", preview)
 	} else {
 		install := append([]string{t.installCommand}, t.installArgs...)
 		for i, arg := range install {
@@ -515,15 +501,11 @@ func (t *Testdrive) Preview(output io.Writer) {
 		}
 	}
 	_, _ = fmt.Fprintln(output)
-	if t.language == "ruby" && t.projectTracer == "" {
-		_, _ = fmt.Fprintln(output, "Bundler updates Gemfile and Gemfile.lock.")
+	patterns, note := t.lang().dependencyChanges(t.projectTracer)
+	if note != "" {
+		_, _ = fmt.Fprintln(output, note)
 		return
 	}
-	patterns := map[string][]string{
-		"javascript": {"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"},
-		"python":     {"pyproject.toml", "setup.py", "setup.cfg", "requirements*.txt", "requirements*.in", "Pipfile", "Pipfile.lock", "poetry.lock", "uv.lock", "pdm.lock", "pylock.toml"},
-		"ruby":       {"Gemfile", "Gemfile.lock", "gems.rb", "gems.locked"},
-	}[t.language]
 	entries, _ := os.ReadDir(t.repositoryRoot)
 	var files []string
 	for _, pattern := range patterns {
@@ -826,37 +808,21 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	if result.Selection != nil && result.Selection.Version != "" {
 		version = result.Selection.Version
 	}
-	installation := platform.TracerInstallation{Project: t.projectTracer != ""}
-	if t.language == "javascript" {
-		installation.Path = t.projectTracer
-	}
+	installation := platform.TracerInstallation{Project: t.projectTracer != "", Path: t.lang().projectTracerPath(t.projectTracer)}
 	if t.projectTracer == "" {
-		var err error
-		directory := session.Directory()
-		if t.language == "python" {
-			// The owner marker lets startup recovery remove this folder after a
-			// hard kill; the environment itself stays in an empty subfolder.
-			owned, err := os.MkdirTemp("", "ddtest-python-*")
-			if err != nil {
-				return result, err
-			}
+		directory, cleanup, err := t.lang().installDirectory(session.Directory(), t.repositoryRoot)
+		if cleanup != nil {
 			defer func() {
-				if err := workspace.RemoveMarkedStorage(owned); err != nil {
+				if err := cleanup(); err != nil {
 					runErr = errors.Join(runErr, err)
 				}
 			}()
-			if err := workspace.MarkStorage(owned, t.repositoryRoot); err != nil {
-				return result, err
-			}
-			directory = filepath.Join(owned, "environment")
-			if err := os.Mkdir(directory, 0700); err != nil {
-				return result, err
-			}
+		}
+		if err != nil {
+			return result, err
 		}
 		options := platform.TracerOptions{Directory: directory, Version: version, Command: t.command, Args: t.args, Environment: t.configurationEnvironment}
-		if t.language == "python" && t.environmentInfo.Executable != "" {
-			options.Command, options.Args = t.environmentInfo.Executable, nil
-		}
+		options.Command, options.Args = t.lang().tracerCommand(t.environmentInfo, options.Command, options.Args)
 		if supportsValidationFramework(t.framework.Name()) {
 			// The same --timeout bound as every other validation subprocess.
 			options.Timeout = t.commandTimeout
@@ -867,10 +833,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		}
 	}
 
-	result.TracerSource = "temporary installation"
-	if t.language == "ruby" {
-		result.TracerSource = "project bundle installation"
-	}
+	result.TracerSource = t.lang().temporaryTracerSource()
 	if installation.Project {
 		result.Tracer = t.installedTracerLabel(t.projectTracer)
 		result.TracerSource = "project installation · reused"
@@ -1225,30 +1188,13 @@ func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]st
 	if t.framework != nil && supportsValidationFramework(t.framework.Name()) {
 		env = reportingEnvironment(intakeURL, sessionID)
 	}
-	switch t.language {
-	case "javascript":
-		maps.Copy(env, t.javascriptEnvironment(path))
-	case "python":
-		maps.Copy(env, pythonEnvironment(path))
-	case "ruby":
-		maps.Copy(env, rubyEnvironment(path))
-	}
+	maps.Copy(env, t.lang().runEnvironment(t, path))
 	return env
 }
 
 func (t *Testdrive) installedTracerLabel(detected string) string {
-	name := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[t.language]
-	version := ""
-	switch t.language {
-	case "javascript":
-		version = javascriptTracerVersion(detected)
-	case "python":
-		version = detected
-	case "ruby":
-		if info, ok := strings.CutPrefix(strings.TrimSpace(detected), "* datadog-ci ("); ok {
-			version, _, _ = strings.Cut(info, ")")
-		}
-	}
+	name := t.lang().tracerPackage()
+	version := t.lang().installedTracerVersion(detected)
 	if version != "" {
 		return name + "@" + version
 	}
@@ -1258,7 +1204,7 @@ func (t *Testdrive) installedTracerLabel(detected string) string {
 // defaultToCITracer validates the tracer every instrumented CI job selects
 // when --tracer-version was not given. A project-installed tracer still wins.
 func (t *Testdrive) defaultToCITracer(check onboard.RuntimeCheck) {
-	if !t.tracerVersionDefaulted || t.language != "javascript" {
+	if !t.tracerVersionDefaulted || !t.lang().defaultsToCITracer() {
 		return
 	}
 	pinned := ""

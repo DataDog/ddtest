@@ -205,7 +205,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	if err != nil {
 		return fail("framework_unresolved", err)
 	}
-	if detected.Name() != "javascript" {
+	if !coordinatedLanguage(detected.Name()) {
 		if options.Format != "" {
 			err := fmt.Errorf("controlled validation is not available for %s", detected.Name())
 			return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "unsupported", Phase: "onboarding", Code: "framework_unsupported", Reason: err.Error(), NextAction: "report_result"}))

@@ -28,7 +28,7 @@ type ApplyOptions struct {
 }
 
 func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOptions) (runErr error) {
-	if t.language != "javascript" || !onboard.SupportsAutomaticSetup(t.framework.Name()) {
+	if !t.lang().coordinated() || !onboard.SupportsAutomaticSetup(t.framework.Name()) {
 		return fmt.Errorf("automatic setup is unavailable for %s; preserve its hooks and use onboard instructions followed by testdrive", t.framework.Name())
 	}
 	// A preview or a refusal must not leave an empty report folder behind.
