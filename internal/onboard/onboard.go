@@ -16,7 +16,11 @@ import (
 )
 
 // Run detects the first supported onboarding path and prints its instructions.
-func Run(output io.Writer) error {
+func Run(output io.Writer) error { return run(output, false) }
+
+// run prints the onboarding guidance. agent selects the setup instructions
+// for a coding agent whose validation ddtest hands off separately.
+func run(output io.Writer, agent bool) error {
 	repositoryRoot, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("find repository root: %w", err)
@@ -35,7 +39,7 @@ func Run(output io.Writer) error {
 	}
 	switch provider := provider.(type) {
 	case *environment.GitHub:
-		return onboardGitHub(output, provider, repositoryRoot, detectedPlatform.Name(), runner.Name())
+		return onboardGitHub(output, provider, repositoryRoot, detectedPlatform.Name(), runner.Name(), agent)
 	default:
 		return fmt.Errorf("onboard does not support CI provider %s", provider.Name())
 	}

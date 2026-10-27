@@ -84,6 +84,8 @@ def ruby_ci_requirement_status(selector, tracer, specs)
   # A precompiled native gem can require a newer Ruby than the same release's
   # portable source gem. Resolve that exact platform variant, without changing
   # the application bundle or assuming another dependency version is available.
+  # The lookup goes to rubygems.org directly (proxy variables apply; Bundler
+  # mirrors and private sources do not); a failed lookup stays inconclusive.
   portable = []
   resolved = specs.map do |spec|
     next spec if ruby_requirement_status(selector, [spec.required_ruby_version]) == "compatible" || spec.platform.to_s == "ruby"

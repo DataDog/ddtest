@@ -285,3 +285,13 @@ func mergeConfigurationEnvironment(layers ...map[string]string) map[string]strin
 	}
 	return result
 }
+
+// releaseCheckCopy removes the owned copy a coordinated validation shared
+// across its checks. Startup recovery reclaims it if removal fails.
+func (t *Testdrive) releaseCheckCopy() {
+	if t.checkCopy != "" {
+		_ = workspace.RemoveMarkedStorage(t.checkCopy)
+		t.checkCopy = ""
+	}
+	t.reuseCheckCopy = false
+}

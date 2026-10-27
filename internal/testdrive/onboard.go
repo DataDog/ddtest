@@ -143,7 +143,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.NextCommand = []string{recoveryCommand[0], "onboard", "--framework", name, "--instructions"}
 				result.ResumeCommand, result.RequiredInput = nil, nil
 				result.Needs = "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it; do not rewrite CI or package scripts only so ddtest can parse them. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
-			case "setup_dependencies_missing":
+			case "setup_dependencies_missing", "project_dependencies_missing":
 				result.NextAction = "run_command"
 			default:
 				result.NextAction = "supply_input"
@@ -243,7 +243,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		return onboard.RenderAgentResult(output, result, options.Format)
 	}
 	progress("discovery")
-	fingerprint, err := InputFingerprint(ctx, t.repositoryRoot)
+	fingerprint, err := workflowFingerprint(ctx, t.repositoryRoot, name)
 	if err != nil {
 		return fail("blocked_environment", "input_snapshot_unavailable", err.Error(), "Restore access to the named source input; no tests or edits were attempted.")
 	}
@@ -274,7 +274,14 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if plan.Site == "" {
 		plan.Site = "datadoghq.com"
 	}
-	plan.PackageManager = workflowPackageManager(t.repositoryRoot)
+	plan.PackageManager = t.lang().packageManager(t.repositoryRoot)
+	languageRuntime, err := t.lang().workflowRuntime(t)
+	if err != nil {
+		return fail("blocked_environment", "runtime_unavailable", err.Error(), "Restore the runtime that runs the selected commands first on PATH, then rerun next_command. No tests ran.")
+	}
+	if languageRuntime != "" {
+		plan.Runtime = languageRuntime
+	}
 	result.Plan = plan
 	if options.FactsFile != "" {
 		factsFingerprint := fingerprint
@@ -370,11 +377,10 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		t.workflowScope = &scope
 	}
 	if !options.Apply && !options.ExplicitVersion && t.projectTracer == "" {
-		ci := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, name)
+		ci := t.lang().ciRuntimes(ctx, t.repositoryRoot, name)
 		pin := ""
 		for _, job := range ci.Jobs {
-			if job.Tracer != "" {
-				candidate := strings.TrimPrefix(job.Tracer, "dd-trace@")
+			if candidate := t.lang().ciPinnedTracer(job); candidate != "" {
 				if pin != "" && pin != candidate {
 					result.Location = job.Workflow + " / " + job.Job
 					result.RequiredInput = []string{"one intended CI tracer release, or separate explicitly scoped runs"}
@@ -535,7 +541,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		}
 		// Bind the accepted plan and facts to the snapshot this owned edit produced
 		// at once, so a later failure resumes with them instead of a dead end.
-		applied, err := InputFingerprint(ctx, t.repositoryRoot)
+		applied, err := workflowFingerprint(ctx, t.repositoryRoot, name)
 		if err != nil {
 			return fail("blocked_environment", "input_snapshot_unavailable", err.Error(), "Restore source input access. Completed source edits are listed in changes.")
 		}
@@ -582,10 +588,26 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if !options.Apply {
 		checkpoint.Tracer = ""
 	}
+	// Inventory dependencies before anything runs; the checks share one owned
+	// copy for this invocation.
+	t.reuseCheckCopy = true
+	defer func() { t.releaseCheckCopy() }()
+	setup, err := t.lang().dependencyReadiness(t, ctx, scope)
+	if err != nil {
+		return fail("blocked_environment", "dependency_readiness_unavailable", err.Error(), "Restore the named local dependency check capability, then rerun next_command. No tests ran.")
+	}
+	if len(setup) > 0 {
+		result.SetupCommands = setup
+		result.NextCommand = setup[0]
+		result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--resume", checkpoint.RunID)
+		result.RequiredInput = []string{"Run every setup_commands entry once, in order, from the repository root, then run resume_command."}
+		result.Instruction = onboard.PrescribedEditInstruction
+		return fail("needs_input", "project_dependencies_missing", fmt.Sprintf("dependency setup is missing for %d of the selected configurations", len(setup)), "Run every setup_commands entry (next_command is the first) from the repository root, then run resume_command. This readiness check installed nothing and ran no tests. Preserve the selected framework, CI test commands and scope.")
+	}
 	progress("validation")
 	before := fingerprint
 	if options.Apply {
-		before, err = InputFingerprint(ctx, t.repositoryRoot)
+		before, err = workflowFingerprint(ctx, t.repositoryRoot, name)
 	}
 	if err != nil {
 		return fail("blocked_environment", "input_snapshot_unavailable", err.Error(), "Restore source input access.")
@@ -604,7 +626,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		// Each browser launch is expensive. Stop before the next one when an
 		// external edit invalidates the original checkout snapshot.
 		t.workflowSourceCheck = func(ctx context.Context) error {
-			after, err := InputFingerprint(ctx, t.repositoryRoot)
+			after, err := workflowFingerprint(ctx, t.repositoryRoot, name)
 			if err != nil {
 				return fmt.Errorf("verify repository snapshot before Cypress execution: %w", err)
 			}
@@ -627,6 +649,8 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	plan.CIRuntime = validation.CIRuntime
 	if validation.Selection != nil {
 		t.setPlanTracer(plan, validation.Selection.Version)
+	} else if t.lang().labelsTracerWithoutSelection() {
+		t.setPlanTracer(plan, strings.TrimPrefix(validation.Tracer, t.lang().tracerPackage()+"@"))
 	}
 	var runtimeMetadata *platform.MetadataError
 	if errors.As(runErr, &runtimeMetadata) {
@@ -657,12 +681,12 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		return fail("validation_failed", "execution_result_conflict", runErr.Error(), "Resolve the execution/report discrepancy before claiming completion.")
 	}
 	progress("verification")
-	workflow := &WorkflowEvidence{ValidationCommand: recoveryCommand, Plan: plan, Fingerprint: before, Node: t.workflowNodeVersion(), FactsSHA256: factsHash, Changes: result.Changes}
+	workflow := &WorkflowEvidence{ValidationCommand: recoveryCommand, Plan: plan, Fingerprint: before, Node: t.workflowNodeVersion(), Runtime: languageRuntime, FactsSHA256: factsHash, Changes: result.Changes}
 	if checkpoint != nil {
 		workflow.EarlierAttempts = slices.Clone(checkpoint.Failures)
 	}
 	workflow.Checks = append(refreshScopeCheck(result.Checks, validation.Scope), t.verifyReportExclusions(ctx)...)
-	after, snapshotErr := InputFingerprint(ctx, t.repositoryRoot)
+	after, snapshotErr := workflowFingerprint(ctx, t.repositoryRoot, name)
 	sourceCheck := onboard.WorkflowCheck{Name: "source_preservation", Status: "passed", Reason: "Original checkout inputs unchanged by validation; builds/probes ran in owned storage."}
 	if snapshotErr != nil || after != before {
 		sourceCheck.Status = "failed"
@@ -1082,12 +1106,12 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 		validation = validation.Retained.Result
 	}
 	result := onboard.AgentResult{Status: "validation_failed", Phase: "report", NextAction: "report_result", JSONReport: validationPath(root)}
-	current, err := InputFingerprint(ctx, root)
+	current, err := workflowFingerprint(ctx, root, validation.Framework)
 	if err != nil {
 		return renderReportFailure(output, format, err)
 	}
 	receiptValid := verifyWorkflowReceipt(root, *validation) == nil
-	if validation.CheckOnly || validation.Workflow == nil || validation.Workflow.Fingerprint != current || validation.Workflow.Node != currentNodeVersion() || !receiptValid {
+	if validation.CheckOnly || validation.Workflow == nil || validation.Workflow.Fingerprint != current || !languageOrUnsupported(validation.Framework).reportRuntimeCurrent(root, *validation.Workflow) || !receiptValid {
 		result.Code = "stale_report"
 		plain := !validation.CheckOnly && validation.Workflow == nil
 		result.NextAction = "run_command"

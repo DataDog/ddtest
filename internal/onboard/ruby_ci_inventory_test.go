@@ -130,6 +130,6 @@ func TestConfiguredRubyWorkflowRecommendsAll(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, scope.Commands, 2)
 	var output strings.Builder
-	require.NoError(t, onboardGitHub(&output, &environment.GitHub{}, root, "ruby", "rspec"))
+	require.NoError(t, onboardGitHub(&output, &environment.GitHub{}, root, "ruby", "rspec", false))
 	require.Contains(t, output.String(), "Run `ddtest testdrive --framework rspec --all` to check the setup locally.")
 }

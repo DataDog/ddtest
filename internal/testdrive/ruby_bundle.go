@@ -14,8 +14,13 @@ import (
 )
 
 // Loading project Ruby can run its code, so checks use the same owned-copy
-// boundary as tests.
+// boundary as tests. Within one coordinated validation (t.reuseCheckCopy),
+// the readiness and packaging checks share one copy; releaseCheckCopy removes
+// it when the invocation ends.
 func (t *Testdrive) inRubyWorkflowCopy(ctx context.Context, check func(string) error) (runErr error) {
+	if t.checkCopy != "" {
+		return check(filepath.Join(t.checkCopy, "checkout"))
+	}
 	parent, err := os.MkdirTemp("", "ddtest-ruby-check-")
 	if err != nil {
 		return err
@@ -24,7 +29,12 @@ func (t *Testdrive) inRubyWorkflowCopy(ctx context.Context, check func(string) e
 		_ = os.Remove(parent)
 		return err
 	}
-	defer func() { runErr = errors.Join(runErr, workspace.RemoveMarkedStorage(parent)) }()
+	keep := false
+	defer func() {
+		if !keep {
+			runErr = errors.Join(runErr, workspace.RemoveMarkedStorage(parent))
+		}
+	}()
 	size, err := configurationCopyEstimate(ctx, t.repositoryRoot, nil)
 	if err != nil {
 		return err
@@ -35,6 +45,9 @@ func (t *Testdrive) inRubyWorkflowCopy(ctx context.Context, check func(string) e
 	root := filepath.Join(parent, "checkout")
 	if err := workspace.Copy(ctx, t.repositoryRoot, root, nil); err != nil {
 		return err
+	}
+	if t.reuseCheckCopy {
+		t.checkCopy, keep = parent, true
 	}
 	return check(root)
 }

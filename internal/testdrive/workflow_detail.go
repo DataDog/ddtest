@@ -62,7 +62,7 @@ func RenderWorkflowDetail(ctx context.Context, output io.Writer, runID, detail s
 	if plan == nil {
 		return fmt.Errorf("no saved workflow plan")
 	}
-	fingerprint, err := InputFingerprint(ctx, root)
+	fingerprint, err := workflowFingerprint(ctx, root, plan.Framework)
 	if err != nil {
 		return err
 	}

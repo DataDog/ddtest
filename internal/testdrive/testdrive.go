@@ -47,7 +47,14 @@ type Testdrive struct {
 	// configurationLocations are the CI locations of the configuration being run.
 	configurationLocations []string
 	// tracerEnvironment is what a temporary tracer installation adds to every run.
-	tracerEnvironment        map[string]string
+	tracerEnvironment map[string]string
+	// runtimeVersion overrides the language runtime identity a coordinated
+	// report is bound to; tests set it, everything else asks the runtime.
+	runtimeVersion func() string
+	// reuseCheckCopy lets one coordinated validation share a single owned
+	// repository copy (checkCopy) across its read-only language checks.
+	reuseCheckCopy           bool
+	checkCopy                string
 	selectedPlan             onboard.TestCommand
 	cypressPackage           string
 	cypressSelected          onboard.TestCommand

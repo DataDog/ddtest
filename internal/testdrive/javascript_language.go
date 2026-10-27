@@ -11,7 +11,7 @@ import (
 )
 
 // javascriptLanguage validates Node.js test frameworks with dd-trace.
-type javascriptLanguage struct{}
+type javascriptLanguage struct{ sharedWorkflowHooks }
 
 func (javascriptLanguage) name() string { return "javascript" }
 

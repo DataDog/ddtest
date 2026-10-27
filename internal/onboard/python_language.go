@@ -18,6 +18,12 @@ func (pythonDiscovery) resolvesTestSteps(string) bool { return false }
 
 func (pythonDiscovery) coordinated() bool { return false }
 
+func (pythonDiscovery) automaticCISetup() bool { return false }
+
+func (pythonDiscovery) ciSetupConfigured(string, string) bool { return false }
+
+func (pythonDiscovery) agentInstructions(string) string { return "" }
+
 func (pythonDiscovery) frameworks() []string { return []string{"pytest"} }
 
 func (pythonDiscovery) resolveStep(string, ciWorkflow, runtimeJob, runtimeStep, string) (commandResolution, bool) {

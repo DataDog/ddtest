@@ -24,6 +24,12 @@ var RubyMinitestForkSetup string
 //go:embed instructions/ruby_minitest_fork.md
 var rubyMinitestForkInstructions string
 
+// rubyAgentInstructions are the CI setup steps for a coding agent; ddtest
+// hands off the validation command separately.
+//
+//go:embed instructions/ruby_agent.md
+var rubyAgentInstructions string
+
 // rubyDiscovery onboards RSpec and Minitest with datadog-ci.
 type rubyDiscovery struct{}
 
@@ -35,7 +41,31 @@ func (rubyDiscovery) bootstrap(string) string { return rubyBootstrap }
 
 func (rubyDiscovery) resolvesTestSteps(string) bool { return true }
 
-func (rubyDiscovery) coordinated() bool { return false }
+// Agents apply Ruby CI setup by hand; validation then runs through the
+// coordinator.
+func (rubyDiscovery) coordinated() bool { return true }
+
+func (rubyDiscovery) automaticCISetup() bool { return false }
+
+// Every discovered test step runs after the Datadog action or explicitly
+// skips it; at least one stays instrumented.
+func (rubyDiscovery) ciSetupConfigured(root, framework string) bool {
+	instrumented := false
+	for _, job := range RubyCIConfiguration(root, framework).Jobs {
+		if job.Status == "excluded" {
+			continue
+		}
+		if job.Action == "" {
+			return false
+		}
+		instrumented = true
+	}
+	return instrumented
+}
+
+func (rubyDiscovery) agentInstructions(framework string) string {
+	return withMinitestForkSetup(strings.ReplaceAll(rubyAgentInstructions, "__FRAMEWORK__", framework), framework)
+}
 
 func (rubyDiscovery) frameworks() []string { return []string{"rspec", "minitest"} }
 
@@ -89,13 +119,18 @@ func (rubyDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step runt
 func (rubyDiscovery) skipsUnsupportedNode() bool { return false }
 
 func (rubyDiscovery) instructions(framework string) string {
-	text := strings.ReplaceAll(rubyInstructions, "__FRAMEWORK__", framework)
-	if framework == "minitest" {
-		heading, rest, _ := strings.Cut(text, "\n\n")
-		forkSetup := strings.ReplaceAll(rubyMinitestForkInstructions, "__FORK_SETUP__", strings.TrimSpace(RubyMinitestForkSetup))
-		text = heading + "\n\n" + forkSetup + "\n\n" + rest
+	return withMinitestForkSetup(strings.ReplaceAll(rubyInstructions, "__FRAMEWORK__", framework), framework)
+}
+
+// withMinitestForkSetup inserts the forked-test transport setup after the
+// heading of Minitest instructions.
+func withMinitestForkSetup(text, framework string) string {
+	if framework != "minitest" {
+		return text
 	}
-	return text
+	heading, rest, _ := strings.Cut(text, "\n\n")
+	forkSetup := strings.ReplaceAll(rubyMinitestForkInstructions, "__FORK_SETUP__", strings.TrimSpace(RubyMinitestForkSetup))
+	return heading + "\n\n" + forkSetup + "\n\n" + rest
 }
 
 func (rubyDiscovery) onboardingScope(string) (discover, instructionsWhenConfigured bool) {

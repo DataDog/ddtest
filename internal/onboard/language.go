@@ -44,6 +44,17 @@ type discoveryLanguage interface {
 	// CI scope, and whether it still prints instructions once every workflow
 	// already runs the Datadog action.
 	onboardingScope(framework string) (discover, instructionsWhenConfigured bool)
+	// automaticCISetup reports whether onboard --apply writes the language's
+	// CI setup. Otherwise a coding agent applies the setup instructions and
+	// hands off to coordinated validation.
+	automaticCISetup() bool
+	// ciSetupConfigured reports whether every discovered CI test step of
+	// framework already runs the Datadog setup action or is explicitly
+	// excluded from it, with at least one instrumented step.
+	ciSetupConfigured(root, framework string) bool
+	// agentInstructions are framework's setup instructions for a coding agent
+	// whose validation ddtest runs separately; empty uses instructions.
+	agentInstructions(framework string) string
 }
 
 // discoveryLanguageFor returns the language that discovers framework's CI, or nil.
@@ -87,6 +98,13 @@ func setupActionLanguage(language string) string {
 func resolvesTestSteps(language, framework string) bool {
 	registered := discoveryLanguageNamed(language)
 	return registered != nil && registered.resolvesTestSteps(framework)
+}
+
+// discoveryLanguageAutomaticSetup reports whether onboard --apply writes
+// language's CI setup.
+func discoveryLanguageAutomaticSetup(language string) bool {
+	registered := discoveryLanguageNamed(language)
+	return registered == nil || registered.automaticCISetup()
 }
 
 // coordinatedLanguage reports whether agent onboarding supports language.

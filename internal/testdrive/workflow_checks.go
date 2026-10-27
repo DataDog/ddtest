@@ -25,13 +25,15 @@ type separateOutputExecutor interface {
 // WorkflowEvidence stays in the existing bounded JSON; full test output stays
 // in the upstream HTML. No new report or raw-event archive is created.
 type WorkflowEvidence struct {
-	ValidationCommand []string                `json:"validation_command,omitempty"`
-	Plan              *onboard.ExecutionPlan  `json:"plan,omitempty"`
-	Fingerprint       string                  `json:"input_fingerprint"`
-	Node              string                  `json:"node"`
-	FactsSHA256       string                  `json:"facts_sha256,omitempty"`
-	Changes           []onboard.SetupChange   `json:"changes,omitempty"`
-	Checks            []onboard.WorkflowCheck `json:"checks"`
+	ValidationCommand []string               `json:"validation_command,omitempty"`
+	Plan              *onboard.ExecutionPlan `json:"plan,omitempty"`
+	Fingerprint       string                 `json:"input_fingerprint"`
+	Node              string                 `json:"node"`
+	// Runtime is the language runtime, besides Node, the evidence is bound to.
+	Runtime     string                  `json:"runtime,omitempty"`
+	FactsSHA256 string                  `json:"facts_sha256,omitempty"`
+	Changes     []onboard.SetupChange   `json:"changes,omitempty"`
+	Checks      []onboard.WorkflowCheck `json:"checks"`
 	// EarlierAttempts lists the codes of attempts that stopped before this
 	// run on the same resumed workflow, oldest first.
 	EarlierAttempts []string `json:"earlier_attempts,omitempty"`
@@ -50,6 +52,9 @@ func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.Workfl
 	if trackErr != nil || len(strings.TrimSpace(string(tracked))) > 0 {
 		git.Status = "failed"
 		git.Reason = "Report tracking could not be ruled out. Review git ls-files -- .testoptimization; existing tracked reports require an explicit untracking decision."
+	}
+	if pack, handled := t.lang().packageExclusions(t, ctx); handled {
+		return []onboard.WorkflowCheck{git, pack}
 	}
 	pack := onboard.WorkflowCheck{Name: "package_report_exclusions", Status: "passed"}
 	// Reports live at the root. A private root is not a publish target, and

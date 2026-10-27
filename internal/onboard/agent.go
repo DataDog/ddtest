@@ -52,7 +52,11 @@ type AgentResult struct {
 	RequiredInput  []string       `json:"required_input,omitempty"`
 	NextAction     string         `json:"next_action,omitempty"`
 	NextCommand    []string       `json:"next_command,omitempty"`
-	ResumeCommand  []string       `json:"resume_command,omitempty"`
+	// SetupCommands are the argv commands, run in order from the repository
+	// root, that prepare dependencies before resume_command; next_command is
+	// the first of them.
+	SetupCommands [][]string `json:"setup_commands,omitempty"`
+	ResumeCommand []string   `json:"resume_command,omitempty"`
 	// AcceptResumeCommand is resume_command plus a decision only the user may
 	// make, such as accepting a substitute runtime.
 	AcceptResumeCommand []string        `json:"accept_resume_command,omitempty"`
@@ -139,6 +143,9 @@ func writeAgentText(output io.Writer, result AgentResult) error {
 	for _, input := range result.RequiredInput {
 		_, _ = fmt.Fprintf(&text, "Required input: %s\n", input)
 	}
+	for _, command := range result.SetupCommands {
+		_, _ = fmt.Fprintf(&text, "Setup: %s\n", shellquote.Join(command...))
+	}
 	for _, change := range result.Changes {
 		_, _ = fmt.Fprintf(&text, "Changed: %s\n", change.Path)
 	}
@@ -218,7 +225,12 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		err := fmt.Errorf("--command selects one suite, but onboarding applies and validates every discovered CI configuration")
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input", RequiredInput: []string{"Omit --command to onboard every discovered configuration, or validate one suite with testdrive --framework " + runner.Name() + " --command <command>."}}))
 	}
+	automatic := discoveryLanguageAutomaticSetup(detected.Name())
 	command := OnboardingCommand(runner.Name())
+	if !automatic {
+		// The agent applies CI setup by hand; validation runs through the coordinator.
+		command = DDTestCommand("testdrive", "--framework", runner.Name(), "--all", "--agent", "--yes")
+	}
 	if len(command) == 0 {
 		return errors.Join(fmt.Errorf("%s", TransientExecutableReason), WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "onboarding", Code: "transient_executable", Reason: TransientExecutableReason, NextAction: "supply_input"}))
 	}
@@ -227,7 +239,8 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		handoffFormat = "agent"
 	}
 	for _, flag := range []struct{ name, value string }{{"format", handoffFormat}, {"site", options.Site}, {"tracer-version", options.Tracer}, {"facts", options.Facts}, {"platform", options.Platform}, {"command", options.Command}, {"timeout", options.Timeout}} {
-		if flag.value != "" {
+		// --agent already selects the agent format of the validation command.
+		if flag.value != "" && (automatic || flag.name != "format" || flag.value != "agent") {
 			command = append(command, "--"+flag.name, flag.value)
 		}
 	}
@@ -238,6 +251,9 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		command = append(command, "--accept-substitute-runtime")
 	}
 	notice := ExecutableFallbackNotice()
+	if !automatic {
+		return manualSetupHandoff(output, options, detected.Name(), runner.Name(), command, notice)
+	}
 	if options.Human {
 		text := humanOnboardingHandoff(runner.Name(), command)
 		if notice != "" {
@@ -248,10 +264,50 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	}
 	return WriteAgentResult(output, AgentResult{
 		Status: "ready", Phase: "onboarding", NextAction: "run_command", NextCommand: command,
-		Capabilities: []string{"registry metadata and package download network access", "local process execution and loopback listeners", "private temporary storage"},
-		Reason:       strings.TrimSpace("Run next_command once in the foreground with the listed capabilities, then wait for its exit. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. " + AgentScope + " Finish any edits a result asks for before launching validation. While it runs, only wait: do not edit repository files or run parallel cleanup/checks. Edits invalidate the snapshot and require another full run. ddtest owns tracer selection, recognized CI edits, testdrive, package exclusions and cleanup. It returns exact blockers for unsupported setup. No Datadog key is required locally. Do not write CI or launch a parallel preflight first. " + notice),
+		Capabilities: validationCapabilities,
+		Reason:       strings.TrimSpace(foregroundRunInstruction + " " + AgentScope + " " + validationWaitInstruction + " ddtest owns tracer selection, recognized CI edits, testdrive, package exclusions and cleanup. It returns exact blockers for unsupported setup. No Datadog key is required locally. Do not write CI or launch a parallel preflight first. " + notice),
 	})
 }
+
+// manualSetupHandoff starts onboarding for a language whose CI setup the
+// agent writes by hand. Once every discovered test step runs the Datadog
+// action, it hands off validation; until then it returns the setup
+// instructions with validation as resume_command. People get the guidance.
+func manualSetupHandoff(output io.Writer, options StartOptions, language, framework string, command []string, notice string) error {
+	if options.Human {
+		return Run(output)
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "blocked_environment", Phase: "discovery", Code: "repository_unavailable", Reason: err.Error(), NextAction: "request_capability"}))
+	}
+	if registered := discoveryLanguageNamed(language); registered != nil && registered.ciSetupConfigured(root, framework) {
+		return WriteAgentResult(output, AgentResult{
+			Status: "ready", Phase: "onboarding", NextAction: "run_command", NextCommand: command,
+			Capabilities: validationCapabilities,
+			Reason:       strings.TrimSpace("CI already runs the Datadog setup action for every discovered " + framework + " test step. " + foregroundRunInstruction + " " + AgentScope + " " + validationWaitInstruction + " ddtest owns testdrive, report-exclusion checks and cleanup, and returns exact blockers for unsupported setup. No Datadog key is required locally. Do not launch a parallel preflight first. " + notice),
+		})
+	}
+	var guidance strings.Builder
+	if err := run(&guidance, true); err != nil {
+		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "scope_unresolved", Reason: err.Error(), NextAction: "supply_input"}))
+	}
+	reason := "CI does not yet run the Datadog setup action before every discovered " + framework + " test step. Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. " + AgentScope + " " + notice
+	err = fmt.Errorf("CI setup is required before validation")
+	return errors.Join(err, WriteAgentResult(output, AgentResult{
+		Status: "needs_input", Phase: "onboarding", Code: "ci_setup_required", NextAction: "apply_source_edit", ResumeCommand: command,
+		Capabilities: validationCapabilities, Instruction: strings.TrimSpace(guidance.String()), Reason: strings.TrimSpace(reason),
+	}))
+}
+
+// validationCapabilities are what a local validation run needs from the host.
+var validationCapabilities = []string{"registry metadata and package download network access", "local process execution and loopback listeners", "private temporary storage"}
+
+// foregroundRunInstruction keeps validation a single foreground process.
+const foregroundRunInstruction = "Run next_command once in the foreground with the listed capabilities, then wait for its exit. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool."
+
+// validationWaitInstruction keeps the checkout unchanged while validation runs.
+const validationWaitInstruction = "Finish any edits a result asks for before launching validation. While it runs, only wait: do not edit repository files or run parallel cleanup/checks. Edits invalidate the snapshot and require another full run."
 
 // AgentScope bounds what a coding agent changes during onboarding. Trials
 // showed agents editing builds, manifests and test names to satisfy checks,

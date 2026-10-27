@@ -166,6 +166,21 @@ func (rubyLanguage) pairedFrameworks() map[string]pairedFramework {
 	return map[string]pairedFramework{"rspec": adapter, "minitest": adapter}
 }
 
+// rubyLocalCommand reports whether a configuration is a local command, which
+// alone inherits the shell's BUNDLE_GEMFILE: it has no CI locations and is not
+// the sole CI command a plain run selects.
+func rubyLocalCommand(root, framework string, locations []string) bool {
+	if len(locations) > 0 {
+		return false
+	}
+	if strings.TrimSpace(settings.GetCommand()) == "" {
+		if selected, err := onboard.RubyValidationCommand(root, framework, ""); err == nil && selected != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // Bundler can execute Gemfiles and gemspecs even with a frozen lockfile, so
 // every configuration, including configuration-only checks, runs in a copy.
 func (rubyLanguage) isolatesConfigurations() bool { return true }
@@ -174,13 +189,7 @@ func (rubyLanguage) isolatesConfigurations() bool { return true }
 // command inherits BUNDLE_GEMFILE from the shell; CI never sees it, including
 // the sole CI command a plain run selects.
 func (rubyLanguage) prepareConfiguration(t *Testdrive, item *configurationResult, original, workspace string) error {
-	local := len(item.Locations) == 0
-	if local && strings.TrimSpace(settings.GetCommand()) == "" {
-		if selected, err := onboard.RubyValidationCommand(original, t.framework.Name(), ""); err == nil && selected != "" {
-			local = false
-		}
-	}
-	gemfile, err := rubyConfigurationGemfile(original, item.Directory, t.configurationEnvironment, local)
+	gemfile, err := rubyConfigurationGemfile(original, item.Directory, t.configurationEnvironment, rubyLocalCommand(original, t.framework.Name(), item.Locations))
 	if err != nil {
 		return err
 	}
@@ -188,7 +197,9 @@ func (rubyLanguage) prepareConfiguration(t *Testdrive, item *configurationResult
 	return nil
 }
 
-func (rubyLanguage) coordinated() bool        { return false }
+// The agent coordinator validates manually set up Ruby CI; only automatic
+// CI edits remain JavaScript-only.
+func (rubyLanguage) coordinated() bool        { return true }
 func (rubyLanguage) defaultsToCITracer() bool { return false }
 
 // RubyGems requirements are checked against the installed bundle, so CI
@@ -218,6 +229,55 @@ func (rubyLanguage) mergeCIRuntime(current, next *onboard.RuntimeCheck) *onboard
 // The preflight labels the bundled datadog-ci release; there is no registry
 // selection.
 func (rubyLanguage) labelsTracerWithoutSelection() bool { return true }
+
+// Reports are bound to the Ruby that runs the selected commands, not to Node.
+func (rubyLanguage) workflowRuntime(t *Testdrive) (string, error) {
+	version := t.workflowRubyVersion()
+	if version == "" {
+		return "", errors.New("the Ruby runtime on PATH could not be inspected; restore the selected Ruby executable before validation")
+	}
+	return version, nil
+}
+
+func (rubyLanguage) reportRuntimeCurrent(root string, evidence WorkflowEvidence) bool {
+	return evidence.Runtime != "" && evidence.Runtime == currentRubyVersion(root)
+}
+
+func (rubyLanguage) packageManager(string) string { return "bundler" }
+
+// Ruby CI pins the release in the action's ruby-tracer-version; an excluded
+// row installs nothing.
+func (rubyLanguage) ciPinnedTracer(job onboard.RuntimeFinding) string {
+	if job.Status == "excluded" {
+		return ""
+	}
+	return job.TracerRequested
+}
+
+// Without --all, only the selected command's bundle is checked, with the
+// same Gemfile selection its run uses.
+func (rubyLanguage) dependencyReadiness(t *Testdrive, ctx context.Context, scope onboard.ValidationScope) ([][]string, error) {
+	if !t.allConfigurations {
+		entry := onboard.TestCommand{Directory: ".", Command: t.command, Environment: t.configurationEnvironment, Locations: t.configurationLocations}
+		if len(entry.Locations) == 0 && !rubyLocalCommand(t.repositoryRoot, t.framework.Name(), nil) {
+			entry.Locations = []string{"the sole CI command"}
+		}
+		scope.Commands = []onboard.TestCommand{entry}
+	}
+	return t.rubyBundleReadiness(ctx, scope)
+}
+
+func (rubyLanguage) extraInputFingerprint(ctx context.Context, root string) (string, error) {
+	return fingerprintRubyBundles(ctx, root)
+}
+
+func (rubyLanguage) packageExclusions(t *Testdrive, ctx context.Context) (onboard.WorkflowCheck, bool) {
+	return t.rubyPackageExclusions(ctx), true
+}
+
+func (rubyLanguage) initialization(string) string {
+	return "Install the pinned datadog-ci using the Ruby CI action after bundle setup; preserve RUBYOPT and the original test command. Keep both reports excluded from Git and gem packaging."
+}
 
 func init() {
 	features := []featurePolicy{
