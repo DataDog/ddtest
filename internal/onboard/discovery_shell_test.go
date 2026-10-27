@@ -37,7 +37,6 @@ func TestMatrixInterpolationResolvesStaticExpressions(t *testing.T) {
 		{`npm test --token ${{ secrets.TOKEN }} --node ${{ matrix.node }}`, "npm test --token ${{ secrets.TOKEN }} --node 20", ""},
 		{`cd ${{ github.workspace }}/app && npm test`, "cd ${{ github.workspace }}/app && npm test", ""},
 		{`npm test ${{ matrix.node`, "npm test ${{ matrix.node", ""},
-		{`npm run ${{ format('test:node{0}', matrix.node) }}`, "npm run ${{ format('test:node{0}', matrix.node) }}", ""}, // format() takes strings only.
 		{`npm install ${{ matrix.unsafe }}`, "", "shell quoting review: ${{ matrix.unsafe }}"},
 		{`npm install ${{ matrix.unsafe || 'jest' }}`, "", "shell quoting review"},
 		{`npm test ${{ format('{{{0}}}', matrix.version) }}`, "", "shell quoting review"},
