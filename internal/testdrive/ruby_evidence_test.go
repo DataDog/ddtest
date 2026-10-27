@@ -202,9 +202,10 @@ func TestRubyMinitestClassChangesCannotPassComparison(t *testing.T) {
 	require.Equal(t, "inconclusive", compareJest(baseline, reporting).Status, "telemetry from a different class cannot match by method name alone")
 }
 
+// Helpers and gems installed in the repository are not application code.
 func TestRubyHelpersCannotCountAsApplicationCoverage(t *testing.T) {
 	root := t.TempDir()
-	for _, name := range []string{"test/support/assertions.rb", "spec/support/setup.rb", "packages/app/test/test_helper.rb", "spec_helper.rb", "lib/customer.rb"} {
+	for _, name := range []string{"test/support/assertions.rb", "spec/support/setup.rb", "packages/app/test/test_helper.rb", "spec_helper.rb", "vendor/bundle/ruby/3.4.0/gems/example-1.0/lib/example.rb", ".bundle/gems/example-1.0/lib/example.rb", "lib/customer.rb"} {
 		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
 		requireWriteFile(t, filepath.Join(root, name), "# source\n")
 		facts := intake.Facts{TestCount: 1, Tests: []intake.Test{{CoveredFiles: []string{name}}}}

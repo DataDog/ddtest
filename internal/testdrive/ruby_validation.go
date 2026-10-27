@@ -443,14 +443,16 @@ func rubySourceCoverage(root string, facts intake.Facts, native []nativeTest) *c
 		}
 	}
 
-	// Keep test helpers/support out of application evidence without discarding
-	// their actual coverage from the retained intake/report.
+	// Keep test helpers/support and gems installed inside the repository out of
+	// application evidence without discarding their actual coverage from the
+	// retained intake/report.
 	applicationFiles := func(files []string) []string {
 		var kept []string
 		for _, file := range files {
 			local, _ := repositoryCoverageFile(root, file)
 			parts := strings.Split(filepath.ToSlash(local), "/")
-			if slices.Contains(parts, "test") || slices.Contains(parts, "tests") || slices.Contains(parts, "spec") ||
+			if slices.Contains(parts, "vendor") || slices.Contains(parts, ".bundle") || slices.ContainsFunc(parts[:len(parts)-1], installedGemDirectory) ||
+				slices.Contains(parts, "test") || slices.Contains(parts, "tests") || slices.Contains(parts, "spec") ||
 				slices.Contains([]string{"test_helper.rb", "spec_helper.rb", "rails_helper.rb"}, filepath.Base(local)) ||
 				strings.HasSuffix(local, "_test.rb") || strings.HasSuffix(local, "_spec.rb") {
 				continue
