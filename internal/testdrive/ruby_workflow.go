@@ -102,16 +102,31 @@ func (t *Testdrive) rubyBundleReadiness(ctx context.Context, scope onboard.Valid
 
 // Return a checkout-relative manifest while preserving Bundler's cwd semantics.
 func rubyConfigurationGemfile(root, directory string, env map[string]string) (string, error) {
+	root = canonicalWorkflowRoot(root)
 	gemfile, explicit := env["BUNDLE_GEMFILE"]
 	if !explicit {
 		gemfile = os.Getenv("BUNDLE_GEMFILE")
 	}
 	if gemfile == "" {
-		gemfile = "Gemfile"
-		if _, err := os.Stat(filepath.Join(root, directory, gemfile)); os.IsNotExist(err) {
-			if _, err := os.Stat(filepath.Join(root, directory, "gems.rb")); err == nil {
-				gemfile = "gems.rb"
+		for current := canonicalWorkflowRoot(filepath.Join(root, directory)); ; current = filepath.Dir(current) {
+			relative, err := filepath.Rel(root, current)
+			if err != nil || !filepath.IsLocal(relative) {
+				return "", fmt.Errorf("BUNDLE_GEMFILE is outside the repository; use a repository-local Gemfile for isolated Ruby validation")
 			}
+			// Bundler checks both names at each level before searching parents.
+			for _, name := range []string{"gems.rb", "Gemfile"} {
+				candidate := filepath.Join(current, name)
+				if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
+					gemfile = candidate
+					break
+				}
+			}
+			if gemfile != "" || current == root {
+				break
+			}
+		}
+		if gemfile == "" {
+			gemfile = "Gemfile"
 		}
 	}
 	if !filepath.IsAbs(gemfile) {

@@ -136,17 +136,15 @@ func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, re
 	check := &jestPreflight{Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "The Ruby bundle has not been inspected."}}
 	result.Preflight = check
 	if t.checkOnly {
-		gemfile := os.Getenv("BUNDLE_GEMFILE")
-		if executor, ok := t.executor.(configurationExecutor); ok && executor.environment["BUNDLE_GEMFILE"] != "" {
-			gemfile = executor.environment["BUNDLE_GEMFILE"]
+		directory, err := filepath.Rel(t.checkoutRoot(), t.repositoryRoot)
+		if err != nil {
+			return err
 		}
-		if gemfile == "" {
-			gemfile = "Gemfile"
+		gemfile, err := rubyConfigurationGemfile(t.checkoutRoot(), directory, t.configurationEnvironment)
+		if err != nil {
+			return err
 		}
-		lockfile := rubyLockfile(gemfile)
-		if !filepath.IsAbs(lockfile) {
-			lockfile = filepath.Join(t.repositoryRoot, lockfile)
-		}
+		lockfile := filepath.Join(t.checkoutRoot(), rubyLockfile(gemfile))
 		if _, err := os.Stat(lockfile); err != nil {
 			check.Verdict.Reason = "Run bundle install for the selected Gemfile before configuration-only validation; its lockfile is unavailable."
 			return errors.New(check.Verdict.Reason)
@@ -353,7 +351,16 @@ func (t *Testdrive) runRuby(ctx context.Context, output io.Writer, session *Sess
 	if !instrumented {
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
-	env["RUBYOPT"] += " -r" + shellquote.Join(observer)
+	libraryPath := os.Getenv("RUBYLIB")
+	if value, ok := t.configurationEnvironment["RUBYLIB"]; ok {
+		libraryPath = value
+	}
+	env["RUBYLIB"] = directory
+	if libraryPath != "" {
+		env["RUBYLIB"] += string(os.PathListSeparator) + libraryPath
+	}
+	// RUBYOPT splits on whitespace; it does not interpret shell quoting.
+	env["RUBYOPT"] += " -rruby_observer.rb"
 	env["DDTEST_RUBY_FRAMEWORK"], env["DDTEST_RUBY_RESULTS"] = run.framework, filepath.Join(directory, "native-results")
 	env["DDTEST_RUBY_PROBE"], env["DDTEST_PROBE_MODE"] = probe, mode
 	env["DDTEST_PROBE_STATE"] = filepath.Join(directory, "probe-count")

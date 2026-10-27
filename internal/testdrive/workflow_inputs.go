@@ -254,7 +254,10 @@ func inputFingerprint(ctx context.Context, root string, depth int) (string, erro
 		}
 		_, _ = hash.Write([]byte{0})
 	}
-	for _, key := range []string{"NODE_OPTIONS", "NODE_ENV", "CI", "TZ", "RUBYOPT", "BUNDLE_GEMFILE", "BUNDLE_PATH", "BUNDLE_WITHOUT", "GEM_HOME", "GEM_PATH"} {
+	if err := fingerprintRubyBundles(ctx, root, hash); err != nil {
+		return "", err
+	}
+	for _, key := range []string{"NODE_OPTIONS", "NODE_ENV", "CI", "TZ", "RUBYOPT", "RUBYLIB", "BUNDLE_GEMFILE", "BUNDLE_PATH", "BUNDLE_WITHOUT", "GEM_HOME", "GEM_PATH"} {
 		_, _ = fmt.Fprintf(hash, "%s=%s\x00", key, os.Getenv(key))
 	}
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil

@@ -597,7 +597,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if t.language == "ruby" {
 		readinessScope := scope
 		if !t.allConfigurations {
-			readinessScope.Commands = []onboard.TestCommand{{Directory: ".", Command: t.command}}
+			readinessScope.Commands = []onboard.TestCommand{{Directory: ".", Command: t.command, Environment: t.configurationEnvironment}}
 		}
 		missing, err := t.rubyBundleReadiness(ctx, readinessScope)
 		if err != nil {
