@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 //go:embed scripts/service_launcher.cjs
@@ -24,7 +26,7 @@ func (t *Testdrive) ownSetupService(env map[string]string, argv []string) (strin
 	if err != nil {
 		return "", nil, nil, err
 	}
-	if err := markSessionStorage(directory, t.ownershipRoot()); err != nil {
+	if err := workspace.MarkStorage(directory, t.ownershipRoot()); err != nil {
 		return "", nil, nil, errors.Join(err, os.RemoveAll(directory))
 	}
 	owner, err := t.ownProcesses(directory, env)

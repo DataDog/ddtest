@@ -23,6 +23,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -287,7 +288,7 @@ func cucumberSharedExampleNames(root string, tests []jestTest) string {
 	return "Cucumber outline examples that share a name (" + strings.Join(shared, "; ") + ") are matched to telemetry by name and count: dd-trace reports no per-example identity, so a swap between those examples can't be detected. Give each example a distinct name with a <placeholder> in the outline title to verify them one by one."
 }
 
-func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (run validationRun, runErr error) {
 	// A replaced NODE_OPTIONS drops the tracer preload, so no run would report.
 	if reason := onboard.CucumberLoaderOverride(t.repositoryRoot, shellquote.Join(append([]string{t.command}, t.args...)...)); reason != "" {
 		return run, errors.New(reason)

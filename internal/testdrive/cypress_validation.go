@@ -17,6 +17,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -263,7 +264,7 @@ func checkCypressSupport(check jestPreflight, selection platform.JSSelection) ve
 	return verdict{Status: "compatible", Reason: "No known tracer/runtime incompatibility blocks Cypress. Browser instrumentation, paired execution and controlled features still require execution."}
 }
 
-func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (run validationRun, runErr error) {
 	defer func() {
 		run.Command = onboard.RedactCypressCommand(run.Command)
 		run.NativeCommand = onboard.RedactCypressCommand(run.NativeCommand)
@@ -466,7 +467,7 @@ func cypressOutcome(test jestTest) string {
 	return "\nattempts=" + strings.Join(test.CypressAttempts, ",")
 }
 
-func (t *Testdrive) runCypressFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
+func (t *Testdrive) runCypressFeatures(ctx context.Context, output io.Writer, session *workspace.Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
 	probe, err := createProbe(t.checkoutRoot(), baseline, cypressProbeSource)
 	if err != nil {
 		unavailableFeatures(result, err.Error())

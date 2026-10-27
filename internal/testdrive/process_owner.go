@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 //go:embed scripts/process_children.cjs
@@ -169,7 +171,7 @@ func (t *Testdrive) ownProcesses(directory string, env map[string]string) (*proc
 	if err != nil {
 		return nil, err
 	}
-	if err := markSessionStorage(owner.directory, t.ownershipRoot()); err != nil {
+	if err := workspace.MarkStorage(owner.directory, t.ownershipRoot()); err != nil {
 		return nil, errors.Join(err, owner.Close())
 	}
 	return owner, nil
@@ -202,23 +204,23 @@ func recoverProcessOwners(root string, output io.Writer) error {
 
 	for _, path := range paths {
 		info, err := os.Lstat(path)
-		if err != nil || !privateOwnedDirectory(info) {
+		if err != nil || !workspace.PrivateOwnedDirectory(info) {
 			continue
 		}
-		marker := filepath.Join(path, sessionOwnerMarker)
+		marker := filepath.Join(path, workspace.OwnerMarker)
 		info, err = os.Lstat(marker)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > processErrorLimit || !ownedByCurrentUser(info) {
+		if err != nil || !info.Mode().IsRegular() || info.Size() > processErrorLimit || !workspace.OwnedByCurrentUser(info) {
 			continue
 		}
 		data, err := os.ReadFile(marker)
 		if err != nil {
 			continue
 		}
-		var owner sessionOwner
-		if json.Unmarshal(data, &owner) != nil || owner.Root != canonicalWorkflowRoot(root) || owner.User != os.Getuid() {
+		var owner workspace.Owner
+		if json.Unmarshal(data, &owner) != nil || owner.Root != workspace.CanonicalRoot(root) || owner.User != os.Getuid() {
 			continue
 		}
-		if err := removeMarkedStorage(path); err != nil {
+		if err := workspace.RemoveMarkedStorage(path); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintln(output, "Recovered abandoned process ownership storage:", filepath.Base(path))

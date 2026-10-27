@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 // Override only a simple action-owned local application. Its startup command
@@ -44,7 +45,7 @@ func configurePortFact(root string, entry *onboard.TestCommand, fact onboard.Por
 	if err != nil {
 		return err
 	}
-	relative, err := filepath.Rel(canonicalWorkflowRoot(root), path)
+	relative, err := filepath.Rel(workspace.CanonicalRoot(root), path)
 	if err != nil || !filepath.IsLocal(relative) {
 		return fmt.Errorf("port_override source_file escapes repository")
 	}

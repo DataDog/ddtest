@@ -10,6 +10,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +24,7 @@ func TestSetupUnresolvedNamesThePendingPrerequisite(t *testing.T) {
 }
 
 func TestPrerequisiteFactErrorsNameWhatIsWrong(t *testing.T) {
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"build":"node build.js"}}`)
 	for _, tc := range []struct {
 		argv, files []string
@@ -64,7 +65,7 @@ func TestUnreadableReportAndFinishedResumeHaveCodes(t *testing.T) {
 	require.NotContains(t, result.Reason, "invalid character", "no raw parser error")
 
 	t.Setenv("TMPDIR", t.TempDir())
-	drive := &Testdrive{repositoryRoot: canonicalWorkflowRoot(t.TempDir()), framework: &framework.Vitest{}, language: "javascript"}
+	drive := &Testdrive{repositoryRoot: workspace.CanonicalRoot(t.TempDir()), framework: &framework.Vitest{}, language: "javascript"}
 	output.Reset()
 	require.Error(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json", Resume: strings.Repeat("a", 32)}))
 	result = onboard.AgentResult{}
@@ -92,7 +93,7 @@ func TestJestPreflightKeepsHelperTemporaryFilesInOwnedStorage(t *testing.T) {
 }
 
 func TestPrerequisiteFactsAcceptTheShellScriptsDiscoveryOffers(t *testing.T) {
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts"), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts/build.sh"), []byte("#!/bin/sh\necho built\n"), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts/plain.sh"), []byte("echo plain\n"), 0600))
@@ -118,7 +119,7 @@ func TestUnreadableReportDoesNotBlockCIPreservation(t *testing.T) {
 
 func TestCheckOnlyWorkflowRejectsFactsWithoutReplacingTheReport(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0700))
 	requireWriteFile(t, validationPath(root), `{"schema_version":1}`)
 	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript", checkOnly: true}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,7 +72,7 @@ func TestFactResolvedGeneratorRunsAfterItsCompiler(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("Node unavailable")
 	}
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	for _, directory := range []string{"scripts", "node_modules/.bin", ".github/workflows"} {
 		require.NoError(t, os.MkdirAll(filepath.Join(root, directory), 0700))
 	}

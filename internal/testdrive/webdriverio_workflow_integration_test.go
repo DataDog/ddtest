@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,7 +88,7 @@ func TestPublicWebdriverIOTestdrive(t *testing.T) {
 			}
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
-			require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root, false))
+			require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), root, skipIgnoredOutput))
 			write := func(name, value string) {
 				require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
 				requireWriteFile(t, filepath.Join(root, name), value)
@@ -339,9 +340,9 @@ func TestPublicWebdriverIOTestdrive(t *testing.T) {
 					if existingProcessFolders[folder] {
 						continue
 					}
-					var owner sessionOwner
-					data, err := os.ReadFile(filepath.Join(folder, sessionOwnerMarker))
-					if err != nil || json.Unmarshal(data, &owner) != nil || owner.Root == canonicalWorkflowRoot(root) {
+					var owner workspace.Owner
+					data, err := os.ReadFile(filepath.Join(folder, workspace.OwnerMarker))
+					if err != nil || json.Unmarshal(data, &owner) != nil || owner.Root == workspace.CanonicalRoot(root) {
 						t.Errorf("process ownership storage remained: %s", folder)
 					}
 				}

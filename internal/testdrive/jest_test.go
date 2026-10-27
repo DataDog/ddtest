@@ -18,6 +18,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 )
@@ -295,7 +296,7 @@ func TestUnknownFrameworkCannotPassFromSuiteExitAlone(t *testing.T) {
 
 func TestJestRunClosesIntakeOnWriteFailure(t *testing.T) {
 	run := preparedTestdrive(t)
-	session, err := NewSession()
+	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	server := &fakeIntake{url: "http://127.0.0.1:1234"}
@@ -349,7 +350,7 @@ func TestJestRejectsMissingStructuredResults(t *testing.T) {
 func TestProbeThresholdOverridePreservesFullSuiteAndRecordsAdjustment(t *testing.T) {
 	run := preparedTestdrive(t)
 	run.command, run.args = "npm", []string{"test", "--", "--coverage", `--coverageThreshold={"global":{"lines":90}}`}
-	session, err := NewSession()
+	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	run.startIntake = func(string, intake.Scenario) (localIntake, error) {

@@ -20,6 +20,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 )
@@ -161,7 +162,7 @@ func TestMochaChildScratchIsOwnedBySession(t *testing.T) {
 		}
 		drive.executor = executor
 		drive.startIntake = func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{}, nil }
-		session, err := NewSession()
+		session, err := workspace.NewSession()
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, session.Close()) })
 		_, err = drive.runMocha(t.Context(), io.Discard, session, "/trace/ci/init.js", runSpec{Name: "reporting-only", Role: roleReporting, Instrumented: true})
@@ -325,7 +326,7 @@ func TestMochaRunsKeepCIPathAndScriptAssignments(t *testing.T) {
 	require.NotEmpty(t, executor.envs)
 	require.Equal(t, "unit", executor.envs[0]["MODE"], "preflight loads .mocharc with the script's assignments")
 
-	session, err := NewSession()
+	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	_, err = drive.runMocha(t.Context(), io.Discard, session, "/trace/ci/init.js", runSpec{Name: "reporting-only", Role: roleReporting, Instrumented: true})

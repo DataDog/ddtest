@@ -15,6 +15,7 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -79,10 +80,10 @@ func TestCopySkipsIgnoredOutputsPreservesDependenciesAndTimes(t *testing.T) {
 	stamp := time.Unix(1700000000, 0)
 	require.NoError(t, os.Chtimes(file, stamp, stamp))
 	require.NoError(t, os.Symlink("missing", filepath.Join(source, "node_modules", "dangling")))
-	size, err := configurationCopyEstimate(t.Context(), source, false)
+	size, err := configurationCopyEstimate(t.Context(), source, skipIgnoredOutput)
 	require.NoError(t, err)
 	require.Greater(t, size, int64(0))
-	require.NoError(t, copyConfiguration(t.Context(), source, target, false))
+	require.NoError(t, workspace.Copy(t.Context(), source, target, skipIgnoredOutput))
 	require.NoDirExists(t, filepath.Join(target, "cache"))
 	require.FileExists(t, filepath.Join(target, "node_modules", ".bin", "tsc"))
 	link, err := os.Readlink(filepath.Join(target, "node_modules", "dangling"))

@@ -15,6 +15,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -142,7 +143,7 @@ func TestCypressReportsExecutableStartFailureWithoutOutput(t *testing.T) {
 	drive := &Testdrive{repositoryRoot: t.TempDir(), language: "javascript", command: "COVERAGE=true", args: []string{"npm", "run", "test:ci"},
 		executor: &fakeTestdriveExecutor{err: &exec.Error{Name: "COVERAGE=true", Err: exec.ErrNotFound}}, nodeVersion: func() string { return "v22.23.1" },
 		startIntake: func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{}, nil }}
-	session := planSession()
+	session := workspace.PlanSession()
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	run, err := drive.runCypress(t.Context(), &bytes.Buffer{}, session, "", runSpec{Name: "baseline", Role: roleBaseline})
 	require.NoError(t, err)
@@ -167,7 +168,7 @@ func TestCypressDefaultExecutesTheUniqueCIConfiguration(t *testing.T) {
 }
 
 func TestCypressRejectsSetupFailureDespitePassingNativeResults(t *testing.T) {
-	session := planSession()
+	session := workspace.PlanSession()
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	directory := filepath.Join(session.Directory(), "baseline")
 	require.NoError(t, os.MkdirAll(directory, 0700))

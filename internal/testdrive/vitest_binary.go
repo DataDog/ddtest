@@ -15,6 +15,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/buildinfo"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 type runnerBinary struct {
@@ -45,7 +46,7 @@ func resolveVitestRunnerBinary(root, directory, command string) (string, error) 
 func (t *Testdrive) inspectVitestRunnerBinary(ctx context.Context) runnerBinary {
 	info := runnerBinary{Path: t.command, Version: "unverified"}
 	current, err := os.Executable()
-	if err == nil && canonicalWorkflowRoot(current) == canonicalWorkflowRoot(t.command) {
+	if err == nil && workspace.CanonicalRoot(current) == workspace.CanonicalRoot(t.command) {
 		info.Version = buildinfo.CurrentVersion()
 	} else {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)

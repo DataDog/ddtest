@@ -1,55 +1,22 @@
 package testdrive
 
 import (
-	"context"
-	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/stretchr/testify/require"
 )
 
-func TestConfigurationCopyIsIndependentAndPreservesLinks(t *testing.T) {
-	source, target := t.TempDir(), t.TempDir()
-	requireWriteFile(t, filepath.Join(source, "package.json"), "original")
-	require.NoError(t, os.MkdirAll(filepath.Join(source, "node_modules/pkg"), 0755))
-	requireWriteFile(t, filepath.Join(source, "node_modules/pkg/index.js"), "original dependency")
-	require.NoError(t, os.Symlink("pkg", filepath.Join(source, "node_modules/link")))
-	require.NoError(t, os.Mkdir(filepath.Join(source, ".testoptimization"), 0755))
-	requireWriteFile(t, filepath.Join(source, ".testoptimization/testdrive.json"), "old evidence")
-	require.NoError(t, copyConfiguration(t.Context(), source, target, false))
-	requireWriteFile(t, filepath.Join(target, "package.json"), "changed")
-	requireWriteFile(t, filepath.Join(target, "node_modules/link/index.js"), "changed dependency")
-	for path, expected := range map[string]string{"package.json": "original", "node_modules/pkg/index.js": "original dependency"} {
-		data, err := os.ReadFile(filepath.Join(source, path))
-		require.NoError(t, err)
-		require.Equal(t, expected, string(data))
-	}
-	require.NoFileExists(t, filepath.Join(target, ".testoptimization/testdrive.json"))
-	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(source, "outside")))
-	outsideCopy := t.TempDir()
-	require.NoError(t, copyConfiguration(t.Context(), source, outsideCopy, false))
-	link, err := os.Readlink(filepath.Join(outsideCopy, "outside"))
-	require.NoError(t, err)
-	require.NotEmpty(t, link)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	require.ErrorIs(t, copyConfiguration(ctx, source, t.TempDir(), false), context.Canceled)
-}
-
 func TestIsolatedCIEnvironmentUsesCopiedCheckout(t *testing.T) {
 	t.Setenv("GITHUB_WORKSPACE", "/original/checkout")
 	t.Setenv("CI_PROJECT_DIR", "/original/gitlab")
 	t.Setenv("GITHUB_SHA", "unchanged-commit")
 	environment := map[string]string{"CIRCLE_WORKING_DIRECTORY": "/original/circle", "CI_PROJECT_DIR": "", "CUSTOM_SETTING": "preserved"}
-	workspace := t.TempDir()
-	result := isolatedCIEnvironment(environment, "/original/circle", workspace)
-	require.Equal(t, workspace, result["GITHUB_WORKSPACE"])
-	require.Equal(t, workspace, result["CIRCLE_WORKING_DIRECTORY"])
+	copyRoot := t.TempDir()
+	result := isolatedCIEnvironment(environment, "/original/circle", copyRoot)
+	require.Equal(t, copyRoot, result["GITHUB_WORKSPACE"])
+	require.Equal(t, copyRoot, result["CIRCLE_WORKING_DIRECTORY"])
 	require.Empty(t, result["CI_PROJECT_DIR"], "an explicit empty override remains empty")
 	require.Equal(t, "preserved", result["CUSTOM_SETTING"])
 	require.NotContains(t, result, "GITHUB_SHA", "commit/provider metadata must remain inherited")
@@ -62,12 +29,12 @@ func TestIsolatedCIEnvironmentRebasesEveryProviderCheckout(t *testing.T) {
 	for _, name := range names {
 		t.Setenv(name, "/original/checkout")
 	}
-	workspace := t.TempDir()
-	result := isolatedCIEnvironment(nil, "/original/checkout", workspace)
+	copyRoot := t.TempDir()
+	result := isolatedCIEnvironment(nil, "/original/checkout", copyRoot)
 	for _, name := range names {
-		require.Equal(t, workspace, result[name], name)
+		require.Equal(t, copyRoot, result[name], name)
 		overrides := map[string]string{name: ""}
-		require.Empty(t, isolatedCIEnvironment(overrides, "/original/checkout", workspace)[name], "explicit empty override for %s", name)
+		require.Empty(t, isolatedCIEnvironment(overrides, "/original/checkout", copyRoot)[name], "explicit empty override for %s", name)
 		require.Equal(t, "/original/checkout", os.Getenv(name))
 	}
 }
@@ -85,42 +52,4 @@ func TestConfigurationNodeOptionsOverrideInheritedShellFlags(t *testing.T) {
 	}
 	drive := Testdrive{}
 	require.Equal(t, "--max-old-space-size=4096", drive.nodeOptions(), "a focused local command retains its actual shell settings")
-}
-
-func TestConfigurationCopyClosesEachFile(t *testing.T) {
-	if os.Getenv("DDTEST_COPY_LOW_FD_CHILD") != "1" {
-		if runtime.GOOS == "windows" {
-			t.Skip("requires POSIX descriptor limit")
-		}
-		shell, err := exec.LookPath("sh")
-		require.NoError(t, err)
-		cmd := exec.Command(shell, "-c", `ulimit -n 64; exec "$@"`, "copy-test", os.Args[0], "-test.run=^TestConfigurationCopyClosesEachFile$")
-		cmd.Env = append(os.Environ(), "DDTEST_COPY_LOW_FD_CHILD=1")
-		output, err := cmd.CombinedOutput()
-		require.NoError(t, err, string(output))
-		return
-	}
-	source, target := t.TempDir(), t.TempDir()
-	for i := range 256 {
-		requireWriteFile(t, filepath.Join(source, fmt.Sprintf("file-%d", i)), "contents")
-	}
-	require.NoError(t, copyConfiguration(t.Context(), source, target, false))
-	entries, err := os.ReadDir(target)
-	require.NoError(t, err)
-	require.Len(t, entries, 256)
-}
-
-func TestConfigurationCopyRejectsDestinationInsideRepository(t *testing.T) {
-	source := t.TempDir()
-	scratch := filepath.Join(source, "tmp", "ddtest-configuration")
-	require.NoError(t, os.MkdirAll(scratch, 0700))
-	t.Setenv("TMPDIR", filepath.Join(source, "tmp"))
-	requireWriteFile(t, filepath.Join(source, "source.js"), "original")
-	for _, target := range []string{source, scratch, filepath.Join(scratch, "checkout")} {
-		require.ErrorContains(t, copyConfiguration(t.Context(), source, target, false), "set TMPDIR outside the repository")
-	}
-	require.NoDirExists(t, filepath.Join(scratch, "checkout"))
-	alias := filepath.Join(t.TempDir(), "linked")
-	require.NoError(t, os.Symlink(source, alias))
-	require.ErrorContains(t, copyConfiguration(t.Context(), source, filepath.Join(alias, "tmp"), false), "inside the repository")
 }

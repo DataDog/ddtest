@@ -23,6 +23,7 @@ import (
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
@@ -116,7 +117,7 @@ func TestVitestRunnerResolvesRelativePackageBinary(t *testing.T) {
 	require.NoError(t, os.WriteFile(binary, []byte("#!/bin/sh\n"), 0700))
 	actual, err := resolveVitestRunnerBinary(root, "packages/app", "../../bin/ddtest")
 	require.NoError(t, err)
-	require.Equal(t, canonicalWorkflowRoot(binary), canonicalWorkflowRoot(actual))
+	require.Equal(t, workspace.CanonicalRoot(binary), workspace.CanonicalRoot(actual))
 	drive := preparedTestdrive(t)
 	drive.command, err = os.Executable()
 	require.NoError(t, err)
@@ -296,7 +297,7 @@ func TestVitestUnhandledRegressionTriggersRepeatedPair(t *testing.T) {
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
 	}
-	session, err := NewSession()
+	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	var result validationResult

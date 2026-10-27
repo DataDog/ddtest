@@ -18,6 +18,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -250,8 +251,8 @@ func (t *Testdrive) checkPlaywrightPreflight(ctx context.Context, output io.Writ
 	if err != nil {
 		return err
 	}
-	defer func() { _ = removeMarkedStorage(directory) }()
-	if err := markSessionStorage(directory, t.ownershipRoot()); err != nil {
+	defer func() { _ = workspace.RemoveMarkedStorage(directory) }()
+	if err := workspace.MarkStorage(directory, t.ownershipRoot()); err != nil {
 		return err
 	}
 	discovered, err := t.inspectPlaywright(ctx, directory, "", "")
@@ -314,7 +315,7 @@ func checkPlaywrightSupport(check jestPreflight, selection platform.JSSelection)
 	return verdict{Status: "compatible", Reason: "Runtime requirements match; paired execution and supported feature controls are still required."}
 }
 
-func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (run validationRun, runErr error) {
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	run.Name, run.Instrumented, run.ProbeMode, run.root, run.framework = name, instrumented, probeMode, t.checkoutRoot(), "playwright"
@@ -532,7 +533,7 @@ test('ddtest validation probe', async ({}, testInfo) => {
 });
 `
 
-func (t *Testdrive) runPlaywrightFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
+func (t *Testdrive) runPlaywrightFeatures(ctx context.Context, output io.Writer, session *workspace.Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
 	projects := map[string]validationRun{}
 	for _, test := range baseline.Tests {
 		if test.Playwright != nil {

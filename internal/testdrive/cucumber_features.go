@@ -20,6 +20,7 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -66,7 +67,7 @@ Given('the ddtest controlled scenario executes', function () {
 });
 `
 
-func (t *Testdrive) runCucumberFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
+func (t *Testdrive) runCucumberFeatures(ctx context.Context, output io.Writer, session *workspace.Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
 	token := rand.Text()
 	probe, err := createProbe(t.checkoutRoot(), baseline, "Feature: ddtest\n  Scenario: "+probeName+"\n    Given the ddtest controlled scenario executes "+token+"\n")
 	if err != nil {
@@ -152,7 +153,7 @@ func cucumberProbeConfig(support *cucumberSupport) ([]byte, error) {
 // npm runs an alias's pre and post scripts around its runner, but probes call
 // the runner directly. Replay those scripts once around all probes, without
 // the tracer. Processes they start stay owned until the post scripts finish.
-func (t *Testdrive) startCucumberProbeLifecycle(ctx context.Context, output io.Writer, session *Session, before []onboard.LifecycleScript) (func([]onboard.LifecycleScript) error, error) {
+func (t *Testdrive) startCucumberProbeLifecycle(ctx context.Context, output io.Writer, session *workspace.Session, before []onboard.LifecycleScript) (func([]onboard.LifecycleScript) error, error) {
 	directory := filepath.Join(session.Directory(), "probe-lifecycle")
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return nil, err

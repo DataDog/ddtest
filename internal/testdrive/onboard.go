@@ -22,6 +22,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 type WorkflowOptions struct {
@@ -186,10 +187,10 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		result.NextCommand = nil
 		return fail("unsupported", "framework_unsupported", "Controlled validation is not available for this framework.", "Preserve its unsupported status; do not substitute a different framework.")
 	}
-	t.repositoryRoot = canonicalWorkflowRoot(t.repositoryRoot)
-	lock, err := acquireWorkflowLock(t.repositoryRoot)
+	t.repositoryRoot = workspace.CanonicalRoot(t.repositoryRoot)
+	lock, err := workspace.AcquireLock(t.repositoryRoot)
 	if err != nil {
-		if errors.Is(err, errWorkflowBusy) {
+		if errors.Is(err, workspace.ErrBusy) {
 			return fail("blocked_environment", "workflow_busy", err.Error(), "Wait for the running validation; do not start another one or delete lock files.")
 		}
 		result.Capabilities = []string{"writable private temporary coordination storage"}
@@ -201,7 +202,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if err := cleanupExpiredCheckpoints(); err != nil {
 		return fail("blocked_environment", "checkpoint_cleanup_failed", err.Error(), "Restore private checkpoint storage.")
 	}
-	if err := recoverSessions(t.repositoryRoot, io.Discard); err != nil {
+	if err := workspace.RecoverSessions(t.repositoryRoot, io.Discard); err != nil {
 		return fail("blocked_environment", "session_recovery_failed", err.Error(), "Review the named owned storage; customer files are preserved.")
 	}
 	if err := recoverProcessOwners(t.repositoryRoot, io.Discard); err != nil {
@@ -639,7 +640,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		result.JSONReport = validationPath(t.repositoryRoot)
 		return fail("blocked_environment", "local_runtime_mismatch", runErr.Error(), "Provide only the named runtime: put an existing installation first on PATH (a version manager or a user-provided install), then run resume_command unchanged. Ask the user before downloading a runtime and never install one inside the repository. Do not change CI, the tracer or test scope to avoid this path.")
 	}
-	if fileDescriptorsExhausted(runErr) {
+	if workspace.FileDescriptorsExhausted(runErr) {
 		result.JSONReport = validationPath(t.repositoryRoot)
 		return fail("blocked_environment", fileDescriptorsExhaustedCode, runErr.Error(), "The host ran out of open file descriptors while isolating the checkout, often because other heavy processes share it. Wait for or stop those processes, or raise the open-file limit, then run next_command unchanged. If ddtest already edited CI, next_command recognizes those edits and makes no further change before validating again; do not edit or align them by hand. This says nothing about the tests or the tracer; do not change CI, the tracer or test scope.")
 	}
@@ -1054,11 +1055,11 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 	if err != nil {
 		return renderReportFailure(output, format, err)
 	}
-	root = canonicalWorkflowRoot(root)
-	lock, err := acquireWorkflowLock(root)
+	root = workspace.CanonicalRoot(root)
+	lock, err := workspace.AcquireLock(root)
 	if err != nil {
 		result := onboard.AgentResult{Status: "blocked_environment", Phase: "report", Code: "coordination_unavailable", Reason: "A validation is active or coordination storage is unavailable; wait before rendering saved evidence.", NextAction: "wait"}
-		if errors.Is(err, errWorkflowBusy) {
+		if errors.Is(err, workspace.ErrBusy) {
 			result.Code = "workflow_busy"
 		} else {
 			result.NextAction = "request_capability"
@@ -1144,7 +1145,7 @@ func invalidatePriorWorkflow(root, framework string, state onboard.AgentResult) 
 	if err != nil || previous == nil || previous.Framework != framework {
 		return
 	}
-	result := validationResult{Session: planSession().ID(), Framework: framework, Error: state.Code + ": " + state.Reason, StoppedBeforeExecution: true,
+	result := validationResult{Session: workspace.PlanSession().ID(), Framework: framework, Error: state.Code + ": " + state.Reason, StoppedBeforeExecution: true,
 		Compatibility: verdict{Status: "not exercised", Reason: "This workflow attempt stopped before a current full execution."},
 		Workflow:      &WorkflowEvidence{Fingerprint: state.Fingerprint, Node: currentNodeVersion(), Checks: []onboard.WorkflowCheck{{Name: state.Code, Status: "failed", Reason: state.Reason}}}}
 	_ = finishValidation(io.Discard, root, result) // A successfully written INCOMPLETE report also returns an error.

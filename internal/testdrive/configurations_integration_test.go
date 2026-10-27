@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +45,7 @@ func TestPublicJestConfigurations(t *testing.T) {
 	require.NoError(t, err, string(data))
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root, false))
+	require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), root, skipIgnoredOutput))
 	tracerVersion := integrationTracerVersion(t, modules)
 	data, err = command(root, "git", "init", "-q")
 	require.NoError(t, err, string(data))

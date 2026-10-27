@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 const maxWorkflowAttempts = 3
@@ -72,7 +74,7 @@ func cleanupExpiredCheckpoints() error {
 	if err != nil {
 		return err
 	}
-	if !privateOwnedDirectory(info) {
+	if !workspace.PrivateOwnedDirectory(info) {
 		return fmt.Errorf("workflow storage must be a private directory owned by the current user")
 	}
 	entries, err := os.ReadDir(directory)
@@ -93,7 +95,7 @@ func cleanupExpiredCheckpoints() error {
 			}
 			return err
 		}
-		if !info.Mode().IsRegular() || !ownedByCurrentUser(info) || !privateFilePermissions(info) || info.Size() > 1<<20 {
+		if !info.Mode().IsRegular() || !workspace.OwnedByCurrentUser(info) || !privateFilePermissions(info) || info.Size() > 1<<20 {
 			continue
 		}
 		expired := partial && time.Since(info.ModTime()) > workflowCheckpointLifetime

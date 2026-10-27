@@ -11,6 +11,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -79,13 +80,13 @@ func TestCheckpointStartupCleanupPreservesLiveAndUnrecognizedFiles(t *testing.T)
 
 func TestWorkflowReclaimsAbandonedSessionBeforeDiscovery(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
-	root := canonicalWorkflowRoot(t.TempDir())
-	owned := planSession()
-	owned.root = root
-	require.NoError(t, owned.create())
-	other := planSession()
-	other.root = canonicalWorkflowRoot(t.TempDir())
-	require.NoError(t, other.create())
+	root := workspace.CanonicalRoot(t.TempDir())
+	owned := workspace.PlanSession()
+	owned.SetOwnerRoot(root)
+	require.NoError(t, owned.Create())
+	other := workspace.PlanSession()
+	other.SetOwnerRoot(t.TempDir())
+	require.NoError(t, other.Create())
 	t.Cleanup(func() { require.NoError(t, other.Close()) })
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"vitest run"}}`)
 	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript"}

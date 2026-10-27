@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
 func TestReportDetailReadsBoundedCheckpointAndRejectsChangedSource(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	t.Chdir(root)
 	requireWriteFile(t, filepath.Join(root, "source.js"), "initial\n")
 	fingerprint, err := InputFingerprint(t.Context(), root)

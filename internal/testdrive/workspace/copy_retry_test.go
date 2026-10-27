@@ -1,4 +1,4 @@
-package testdrive
+package workspace
 
 import (
 	"fmt"
@@ -26,7 +26,7 @@ func TestCopyRetriesWhenTheHostRunsOutOfFiles(t *testing.T) {
 
 	calls = 0
 	err := copyWithDescriptorRetry(func() error { calls++; return fmt.Errorf("open x: %w", syscall.EMFILE) })
-	require.True(t, fileDescriptorsExhausted(err))
+	require.True(t, FileDescriptorsExhausted(err))
 	require.Equal(t, 3, calls, "persistent exhaustion still surfaces after the retries")
 
 	calls = 0

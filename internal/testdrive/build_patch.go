@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 // Apply only literal substitutions. Sed regexes/backreferences need separate
@@ -74,7 +76,7 @@ func applyLiteralPatch(root, directory string, words []string) error {
 		if err != nil {
 			return err
 		}
-		relative, err := filepath.Rel(canonicalWorkflowRoot(root), resolved)
+		relative, err := filepath.Rel(workspace.CanonicalRoot(root), resolved)
 		if err != nil || !filepath.IsLocal(relative) {
 			return fmt.Errorf("patch target escapes configuration copy: %s", words[3])
 		}

@@ -20,6 +20,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -112,7 +113,7 @@ func checkMochaSupport(check jestPreflight, selection platform.JSSelection) verd
 	return verdict{Status: "compatible", Reason: "No known tracer/runtime incompatibility blocks Mocha. Paired execution and feature probes are still required."}
 }
 
-func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (run validationRun, runErr error) {
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	run.framework, run.root = "mocha", t.checkoutRoot()
@@ -269,7 +270,7 @@ func readMochaResults(directory string, run *validationRun) {
 	}
 }
 
-func (t *Testdrive) runMochaFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
+func (t *Testdrive) runMochaFeatures(ctx context.Context, output io.Writer, session *workspace.Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
 	source := mochaProbeSource
 	probe, err := createProbe(t.repositoryRoot, baseline, source)
 	if err != nil {

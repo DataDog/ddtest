@@ -18,6 +18,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
@@ -232,13 +233,30 @@ func TestUnpreparedConfigurationCopyKeepsIgnoredInputs(t *testing.T) {
 	requireWriteFile(t, filepath.Join(source, "lib.test.js"), "require('./dist/lib.js')")
 
 	kept := filepath.Join(t.TempDir(), "kept")
-	require.NoError(t, copyConfiguration(t.Context(), source, kept, true))
+	require.NoError(t, workspace.Copy(t.Context(), source, kept, nil))
 	require.FileExists(t, filepath.Join(kept, "dist", "lib.js"), "a locally compiled input imported by tests")
 	require.NoDirExists(t, filepath.Join(kept, ".testoptimization"))
 
 	rebuilt := filepath.Join(t.TempDir(), "rebuilt")
-	require.NoError(t, copyConfiguration(t.Context(), source, rebuilt, false))
+	require.NoError(t, workspace.Copy(t.Context(), source, rebuilt, skipIgnoredOutput))
 	require.NoDirExists(t, filepath.Join(rebuilt, "dist"), "preparation rebuilds ignored outputs")
+}
+
+func TestPreparedConfigurationCopyKeepsIgnoredDependencies(t *testing.T) {
+	source := t.TempDir()
+	require.NoError(t, exec.Command("git", "init", "-q", source).Run())
+	requireWriteFile(t, filepath.Join(source, ".gitignore"), "node_modules/\n.yarn/\n.pnp.cjs\n.env.local\n")
+	inputs := []string{"node_modules/pkg/index.js", ".yarn/install-state.gz", ".pnp.cjs", ".env.local"}
+	for _, path := range inputs {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(source, path)), 0700))
+		requireWriteFile(t, filepath.Join(source, path), path)
+	}
+
+	target := filepath.Join(t.TempDir(), "rebuilt")
+	require.NoError(t, workspace.Copy(t.Context(), source, target, skipIgnoredOutput))
+	for _, path := range inputs {
+		require.FileExists(t, filepath.Join(target, path), "ignored install state is a test input")
+	}
 }
 
 func TestFocusedVitestRunnerCopyKeepsPreparedInputs(t *testing.T) {

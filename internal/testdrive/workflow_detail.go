@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 // RenderWorkflowDetail inspects preparation evidence without claiming a verdict.
@@ -22,8 +23,8 @@ func RenderWorkflowDetail(ctx context.Context, output io.Writer, runID, detail s
 	if err != nil {
 		return err
 	}
-	root = canonicalWorkflowRoot(root)
-	lock, err := acquireWorkflowLock(root)
+	root = workspace.CanonicalRoot(root)
+	lock, err := workspace.AcquireLock(root)
 	if err != nil {
 		return err
 	}

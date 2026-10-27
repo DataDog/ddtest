@@ -10,6 +10,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,7 +32,7 @@ func certifiedWorkflowReport(t *testing.T, root, name string) *validationResult 
 
 func TestPlanDetailFromTheReportRequiresItsReceipt(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	t.Chdir(root)
 	requireWriteFile(t, filepath.Join(root, "source.js"), "original")
 	public := certifiedWorkflowReport(t, root, "jest")
@@ -59,7 +60,7 @@ func TestPlanDetailFromTheReportRequiresItsReceipt(t *testing.T) {
 
 func TestAlternatingFailureCodesShareOneAttemptBound(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	checkpoint, err := openCheckpoint("", root, "jest", "", true, true)
 	require.NoError(t, err)
 	for attempt, code := range []string{"metadata_network", "validation_preparation", "metadata_network"} {
@@ -77,7 +78,7 @@ func TestAlternatingFailureCodesShareOneAttemptBound(t *testing.T) {
 
 func TestRejectedWorkflowInputsKeepTheSavedReport(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	t.Chdir(root)
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"vitest run"},"devDependencies":{"vitest":"4.1.6"}}`)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
@@ -107,7 +108,7 @@ func TestRejectedWorkflowInputsKeepTheSavedReport(t *testing.T) {
 
 func TestReportOfAPlainRunSaysTheWorkflowDidNotProduceIt(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	t.Chdir(root)
 	requireWriteFile(t, filepath.Join(root, "source.js"), "original")
 	require.NoError(t, finishValidation(io.Discard, root, completeValidationFixture("jest")))

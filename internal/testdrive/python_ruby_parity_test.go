@@ -13,6 +13,7 @@ import (
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,7 +105,7 @@ func TestPythonRubyAndCypressPreviewsDoNotPromiseUnsupportedChecks(t *testing.T)
 		{"python", framework.NewPytest(nil)}, {"ruby", framework.NewRSpec(nil)}, {"ruby", framework.NewMinitest(nil)}, {"javascript", framework.NewCypress(nil)},
 	} {
 		t.Run(fixture.runner.Name(), func(t *testing.T) {
-			drive := &Testdrive{repositoryRoot: t.TempDir(), language: fixture.language, framework: fixture.runner, command: "test", session: planSession()}
+			drive := &Testdrive{repositoryRoot: t.TempDir(), language: fixture.language, framework: fixture.runner, command: "test", session: workspace.PlanSession()}
 			var output bytes.Buffer
 			drive.Preview(&output)
 			require.NotContains(t, output.String(), "disable coverage thresholds")

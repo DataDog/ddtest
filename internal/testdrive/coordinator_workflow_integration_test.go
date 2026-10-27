@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,8 +33,8 @@ func TestPublicCoordinatorJestFactsAndFreshReport(t *testing.T) {
 	build.Dir = "../.."
 	data, err := build.CombinedOutput()
 	require.NoError(t, err, string(data))
-	root := canonicalWorkflowRoot(t.TempDir())
-	require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root, false))
+	root := workspace.CanonicalRoot(t.TempDir())
+	require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), root, skipIgnoredOutput))
 	write := func(name, body string) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
 		requireWriteFile(t, filepath.Join(root, name), body)

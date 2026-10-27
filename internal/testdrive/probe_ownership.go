@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 type probeOwnership struct {
@@ -23,7 +25,7 @@ type probeOwnership struct {
 // Recovery is called only after the repository workflow lock is acquired.
 // No PID or filename prefix is evidence that an abandoned file belongs to us.
 func probeOwnershipDirectory(root string) (string, error) {
-	root = canonicalWorkflowRoot(root)
+	root = workspace.CanonicalRoot(root)
 	reports := filepath.Join(root, ".testoptimization")
 	if err := os.MkdirAll(reports, 0700); err != nil {
 		return "", err
@@ -154,7 +156,7 @@ func removeProbeWithOutput(root, probe string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if record.Root != canonicalWorkflowRoot(root) || record.Path != probe {
+	if record.Root != workspace.CanonicalRoot(root) || record.Path != probe {
 		return fmt.Errorf("probe ownership does not match this repository: %s", path)
 	}
 	_, err = ownedProbeContents(record)
@@ -213,7 +215,7 @@ func createOwnedProbe(root, probe string, contents []byte) error {
 	if err != nil {
 		return err
 	}
-	record := probeOwnership{Root: canonicalWorkflowRoot(root), Path: probe, Hash: fmt.Sprintf("%x", sha256.Sum256(contents)), Peer: temporary}
+	record := probeOwnership{Root: workspace.CanonicalRoot(root), Path: probe, Hash: fmt.Sprintf("%x", sha256.Sum256(contents)), Peer: temporary}
 	if err := writeProbeRecord(record); err != nil {
 		_ = os.Remove(temporary)
 		return err
@@ -235,7 +237,7 @@ func recoverProbes(root string) error { return recoverProbesWithOutput(root, io.
 func recoverProbesWithOutput(root string, output io.Writer) error {
 	// Nothing to recover until a probe was written. Repositories that never ran
 	// a probe, such as Python or Ruby ones, may keep .testoptimization symlinked.
-	if _, err := os.Lstat(filepath.Join(canonicalWorkflowRoot(root), ".testoptimization", ".probes")); os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(workspace.CanonicalRoot(root), ".testoptimization", ".probes")); os.IsNotExist(err) {
 		return nil
 	}
 	directory, err := probeOwnershipDirectory(root)
@@ -258,7 +260,7 @@ func recoverProbesWithOutput(root string, output io.Writer) error {
 			continue
 		}
 		expected, err := probeOwnershipPath(root, record.Path)
-		if err != nil || expected != path || record.Root != canonicalWorkflowRoot(root) {
+		if err != nil || expected != path || record.Root != workspace.CanonicalRoot(root) {
 			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("invalid probe ownership record: %s", entry.Name()))
 			continue
 		}
@@ -310,11 +312,4 @@ func probePublicationError(err error) error {
 		return fmt.Errorf("%w: validation probes require hard-link support and a test directory on the same filesystem as .testoptimization/.probes: %w", errProbePublicationUnsupported, err)
 	}
 	return fmt.Errorf("publish validation probe without replacing existing files: %w", err)
-}
-
-func canonicalWorkflowRoot(root string) string {
-	if value, err := filepath.EvalSymlinks(root); err == nil {
-		return value
-	}
-	return root
 }

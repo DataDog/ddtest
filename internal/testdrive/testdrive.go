@@ -27,6 +27,7 @@ import (
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 const testOutputFilename = "test-output.txt"
@@ -99,7 +100,7 @@ type Testdrive struct {
 	tracerVersion                         string
 	tracerVersionDefaulted                bool // --tracer-version was not given.
 	projectTracer                         string
-	session                               *Session
+	session                               *workspace.Session
 	installCommand                        string
 	installArgs                           []string
 	executor                              commandExecutor
@@ -303,10 +304,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
-	session := planSession()
+	session := workspace.PlanSession()
 	if !supportsValidationFramework(runner.Name()) {
-		session.directory = filepath.Join(repositoryRoot, ".testoptimization", "testdrive", session.ID())
-		session.persistent = true
+		session.Persist(filepath.Join(repositoryRoot, ".testoptimization", "testdrive", session.ID()))
 	}
 	if runner.Name() == "vitest" && !all {
 		selectedPlan, discoveryError = onboard.VitestValidationCommandInScope(repositoryRoot, strings.TrimSpace(settings.GetCommand()), scope, scopeErr)
@@ -445,7 +445,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 		if !t.checkOnly {
 			needsCopy := slices.ContainsFunc(scope.Commands, func(c onboard.TestCommand) bool { return len(c.Prerequisites) > 0 })
 			if needsCopy {
-				if size, err := configurationCopyEstimate(context.Background(), t.repositoryRoot, false); err == nil {
+				if size, err := configurationCopyEstimate(context.Background(), t.repositoryRoot, skipIgnoredOutput); err == nil {
 					_, _ = fmt.Fprintf(output, "Estimated copy per prepared configuration: up to %d bytes; ignored outputs excluded, dependencies and Git metadata retained. Copy-on-write when available.\n", size)
 				} else {
 					_, _ = fmt.Fprintf(output, "Copy estimate unavailable: %s\n", err)
@@ -546,6 +546,9 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 }
 
+// workflowLockKey marks a context whose caller already holds the checkout lock.
+type workflowLockKey struct{}
+
 func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if t.framework.Name() == "cypress" {
 		ctx = onboard.WithCypressMetadataCache(ctx)
@@ -556,10 +559,10 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		}
 	}()
 
-	if ctx.Value(workflowLockKey{}) == canonicalWorkflowRoot(t.repositoryRoot) {
+	if ctx.Value(workflowLockKey{}) == workspace.CanonicalRoot(t.repositoryRoot) {
 		return t.runLocked(ctx, output)
 	}
-	lock, err := acquireWorkflowLock(t.repositoryRoot)
+	lock, err := workspace.AcquireLock(t.repositoryRoot)
 	if err != nil {
 		return err
 	}
@@ -705,7 +708,7 @@ func ambientDatadogEnvironment(configured map[string]string) map[string]string {
 
 // Startup recovery runs under the repository lock, before any new work.
 func (t *Testdrive) recoverStartup(output io.Writer) error {
-	if err := recoverSessions(t.repositoryRoot, output); err != nil {
+	if err := workspace.RecoverSessions(t.repositoryRoot, output); err != nil {
 		return err
 	}
 	if err := recoverProcessOwners(t.repositoryRoot, output); err != nil {
@@ -720,14 +723,13 @@ func (t *Testdrive) recoverStartup(output io.Writer) error {
 func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validationResult, runErr error) {
 	session := t.session
 	if session == nil {
-		session = planSession()
+		session = workspace.PlanSession()
 	}
 	if !supportsValidationFramework(t.framework.Name()) {
-		session.directory = filepath.Join(t.repositoryRoot, ".testoptimization", "testdrive", session.ID())
-		session.persistent = true
+		session.Persist(filepath.Join(t.repositoryRoot, ".testoptimization", "testdrive", session.ID()))
 	}
-	session.root = canonicalWorkflowRoot(t.ownershipRoot())
-	if err := session.create(); err != nil {
+	session.SetOwnerRoot(t.ownershipRoot())
+	if err := session.Create(); err != nil {
 		return result, err
 	}
 
@@ -753,7 +755,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			cleanupErr = errors.Join(cleanupErr, processCleanup)
 		}
 		result.Cleanup = &verdict{Status: "passed", Reason: "Owned session storage removed."}
-		if session.persistent {
+		if session.Persistent() {
 			result.Cleanup = &verdict{Status: "not exercised", Reason: "Legacy diagnostics retained."}
 		}
 		if cleanupErr != nil {
@@ -839,11 +841,11 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 				return result, err
 			}
 			defer func() {
-				if err := removeMarkedStorage(owned); err != nil {
+				if err := workspace.RemoveMarkedStorage(owned); err != nil {
 					runErr = errors.Join(runErr, err)
 				}
 			}()
-			if err := markSessionStorage(owned, t.repositoryRoot); err != nil {
+			if err := workspace.MarkStorage(owned, t.repositoryRoot); err != nil {
 				return result, err
 			}
 			directory = filepath.Join(owned, "environment")

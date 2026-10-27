@@ -21,6 +21,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/Masterminds/semver/v3"
 	"github.com/kballard/go-shellquote"
 )
@@ -266,7 +267,7 @@ func checkVitestSupport(check jestPreflight, selection platform.JSSelection) ver
 	return verdict{Status: "compatible", Reason: "No known tracer/runtime incompatibility blocks this configuration. Paired execution and feature checks are still required."}
 }
 
-func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (run validationRun, runErr error) {
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	run.framework = "vitest"
@@ -410,7 +411,7 @@ test('ddtest validation probe', () => {
 });
 `
 
-func (t *Testdrive) runVitestFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
+func (t *Testdrive) runVitestFeatures(ctx context.Context, output io.Writer, session *workspace.Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
 	probePath, err := createProbe(t.repositoryRoot, baseline, vitestProbeSource)
 	if err != nil {
 		unavailableFeatures(result, err.Error())
