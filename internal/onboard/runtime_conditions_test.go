@@ -35,7 +35,7 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		{"matrix.enabled == false", true}, {"matrix.number == 22", true},
 		{"matrix.number == '22'", true}, {"matrix.enabled == 'false'", false},
 		{"matrix.enabled < 22", true}, {"matrix.enabled == ''", true},
-		{"matrix.number != 'lts'", true}, {"matrix.number == '022'", false},
+		{"matrix.number != 'lts'", true}, {"matrix.number == '022'", true},
 		{"22.1 != 'lts' && 22.1 != 'beta'", true},
 		{"22.1 == '22.1'", true}, {"true == 1", true},
 		{"startsWith(matrix.node, '20') && matrix.text != 'FALSE'", false},
@@ -48,7 +48,7 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		{"'22' >= matrix.number", true}, {"'9' > '22'", true},
 		{"'bad' < matrix.number", false}, {"'bad' >= matrix.number", false},
 		{"'' < matrix.number", true}, {"'2.2e1' >= matrix.number", true},
-		{"'022' >= matrix.number", false}, {"'null' <= matrix.number", false},
+		{"'022' >= matrix.number", true}, {"'null' <= matrix.number", false},
 		// GitHub converts a plain decimal string compared with a number.
 		{"matrix.number == '22'", true}, {"matrix.number != '20'", true}, {"'22.0' == matrix.number", true},
 	} {
@@ -62,7 +62,7 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		_, err := runtimeCondition(expression, row)
 		require.Error(t, err, expression)
 	}
-	for _, expression := range []string{"matrix.number >=", "matrix.number >= 22 || github.event_name == 'push'", "matrix.number >= 22 garbage", `contains(fromJSON('[1]'), matrix.node)`, `fromJSON('{}')`, `fromJSON('null')`, `fromJSON('false')`, `fromJSON('oops')`, `contains(fromJSON(env.NODES), matrix.node)`, `contains(fromJSON('["20.x"]'), github.event_name)`} {
+	for _, expression := range []string{"matrix.number >=", "matrix.number >= 22 || github.event_name == 'push'", "matrix.number >= 22 garbage", `contains(fromJSON('[[1]]'), matrix.node)`, `fromJSON('{}')`, `fromJSON('null')`, `fromJSON('false')`, `fromJSON('oops')`, `contains(fromJSON(env.NODES), matrix.node)`, `contains(fromJSON('["20.x"]'), github.event_name)`} {
 		_, err := runtimeCondition(expression, row)
 		require.Error(t, err, expression)
 	}
@@ -182,4 +182,41 @@ func TestJavaScriptMatrixGuardsCompareLooselyTypedValues(t *testing.T) {
 	require.Empty(t, scope.Unresolved)
 	require.Len(t, scope.Commands, 1)
 	require.Equal(t, "jest", scope.Commands[0].Command, "the coverage step never runs: true == 'true' compares 1 with NaN")
+}
+
+// The runner formats numbers with G15, parses strings with
+// ExpressionUtility.ParseNumber and searches arrays with loose equality.
+func TestConditionsFollowTheRunnersNumberRules(t *testing.T) {
+	row := map[string]any{"big": 1000000, "number": 22, "node": "20"}
+	for _, test := range []struct {
+		condition string
+		want      bool
+	}{
+		{"format('{0}', matrix.big) == '1000000'", true},
+		{"contains(matrix.big, '1000000')", true},
+		{"startsWith(matrix.big, '1e')", false},
+		{"format('{0}', 0.1) == '0.1'", true},
+		{"matrix.number == ' 22 '", true},
+		{"matrix.number == '+22'", true},
+		{"matrix.number == '22.'", true},
+		{"matrix.number == '2.2e1'", true},
+		{"matrix.number == '0x16'", true},
+		{"matrix.number == '0o26'", true},
+		{"matrix.number == '0x'", false},
+		{"matrix.number == '22px'", false},
+		{"matrix.number == '1_000'", false},
+		{"'Infinity' > matrix.number", true},
+		{"'-Infinity' < matrix.number", true},
+		{"'inf' > matrix.number", false},
+		{`contains(fromJSON('["20.0"]'), 20)`, true},
+		{`contains(fromJSON('[20]'), matrix.node)`, true},
+		{`contains(fromJSON('["022", "lts"]'), matrix.number)`, true},
+		{`contains(fromJSON('[1]'), matrix.node)`, false},
+		{`contains(fromJSON('["lts"]'), matrix.number)`, false},
+		{`contains(fromJSON('["20.x"]'), matrix.node)`, false},
+	} {
+		got, err := runtimeCondition(test.condition, row)
+		require.NoError(t, err, test.condition)
+		require.Equal(t, test.want, got, test.condition)
+	}
 }

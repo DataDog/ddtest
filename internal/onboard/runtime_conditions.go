@@ -211,17 +211,26 @@ func (p *conditionParser) atom() (any, error) {
 		}
 		var values []any
 		if json.Unmarshal([]byte(text), &values) != nil || values == nil || len(values) > 128 {
-			return nil, fmt.Errorf("only JSON arrays of at most 128 strings are supported")
+			return nil, fmt.Errorf("only JSON arrays of at most 128 scalars are supported")
 		}
-		result := make([]string, len(values))
-		for i, value := range values {
-			text, ok := value.(string)
-			if !ok || strings.ContainsRune(text, 0) {
-				return nil, fmt.Errorf("only JSON string array entries are supported")
+		strs := make([]string, 0, len(values))
+		for _, value := range values {
+			switch value := value.(type) {
+			case string:
+				if strings.ContainsRune(value, 0) {
+					return nil, fmt.Errorf("JSON array entries must not contain NUL bytes")
+				}
+				strs = append(strs, value)
+			case float64, bool, nil:
+			default:
+				return nil, fmt.Errorf("only JSON scalar array entries are supported")
 			}
-			result[i] = text
 		}
-		return result, nil
+		if len(strs) == len(values) {
+			return strs, nil
+		}
+		// Mixed scalars keep their types for contains()'s loose equality.
+		return values, nil
 	case "contains":
 		if !p.take("(") {
 			return nil, fmt.Errorf("missing contains arguments")
@@ -234,24 +243,37 @@ func (p *conditionParser) atom() (any, error) {
 		if err != nil || !p.take(")") {
 			return nil, fmt.Errorf("unclosed contains arguments")
 		}
-		item, ok := conditionString(value)
-		if !ok || symbolicConditionValue(item) || symbolicConditionValue(search) {
-			return nil, fmt.Errorf("contains requires known string operands")
+		if symbolicConditionValue(value) || symbolicConditionValue(search) {
+			return nil, fmt.Errorf("contains requires known operands")
 		}
-		if values, ok := conditionString(search); ok {
-			return strings.Contains(strings.ToLower(values), strings.ToLower(item)), nil
-		}
+		// GitHub searches an array with loose equality against the original
+		// item, and a scalar as a case-insensitive substring of strings.
+		var elements []any
 		switch values := search.(type) {
 		case []string:
-			for _, value := range values {
-				if strings.EqualFold(value, item) {
-					return true, nil
-				}
+			for _, element := range values {
+				elements = append(elements, element)
 			}
-			return false, nil
+		case []any:
+			elements = values
 		default:
-			return nil, fmt.Errorf("contains requires a string or string array")
+			text, textOK := conditionString(search)
+			item, itemOK := conditionString(value)
+			if !textOK || !itemOK {
+				return nil, fmt.Errorf("contains requires a string or array")
+			}
+			return strings.Contains(strings.ToLower(text), strings.ToLower(item)), nil
 		}
+		for _, element := range elements {
+			equal, err := conditionEqual(value, element)
+			if err != nil {
+				return nil, err
+			}
+			if equal {
+				return true, nil
+			}
+		}
+		return false, nil
 	case "startsWith":
 		if !p.take("(") {
 			return nil, fmt.Errorf("missing argument list")
@@ -350,8 +372,8 @@ func conditionEqual(left, right any) (bool, error) {
 	return a == b, err
 }
 
-// GitHub coerces unlike scalar types to numbers for equality and ordering.
-// JSON numeric strings are accepted; invalid strings and arrays compare as NaN.
+// GitHub coerces unlike scalar types to numbers for equality and ordering;
+// strings follow the runner's ParseNumber and arrays compare as NaN.
 func conditionNumber(value any) (float64, error) {
 	switch v := value.(type) {
 	case nil:
@@ -366,21 +388,45 @@ func conditionNumber(value any) (float64, error) {
 	case float64:
 		return v, nil
 	case string:
-		if v == "" {
-			return 0, nil
-		}
-		var n any
-		if json.Unmarshal([]byte(v), &n) == nil {
-			if f, ok := n.(float64); ok {
-				return f, nil
-			}
-		}
-		return math.NaN(), nil
+		return conditionParseNumber(v), nil
 	case []string, []any, map[string]any:
 		return math.NaN(), nil
 	default:
 		return 0, fmt.Errorf("unsupported comparison operand requires review")
 	}
+}
+
+var (
+	conditionDecimal = regexp.MustCompile(`^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$`)
+	conditionHex     = regexp.MustCompile(`^0x[0-9a-fA-F]+$`)
+	conditionOctal   = regexp.MustCompile(`^0o[0-7]+$`)
+)
+
+// conditionParseNumber follows the runner's ExpressionUtility.ParseNumber:
+// trimmed, empty is zero, decimals allow a sign, point and exponent (so
+// "022" is 22), 0x and 0o prefixes are 32-bit integers, then Infinity.
+func conditionParseNumber(text string) float64 {
+	text = strings.TrimSpace(text)
+	switch {
+	case text == "":
+		return 0
+	case conditionDecimal.MatchString(text):
+		value, _ := strconv.ParseFloat(text, 64) // out of range parses as ±Inf, as in .NET
+		return value
+	case conditionHex.MatchString(text):
+		if value, err := strconv.ParseInt(text[2:], 16, 32); err == nil {
+			return float64(value)
+		}
+	case conditionOctal.MatchString(text):
+		if value, err := strconv.ParseInt(text[2:], 8, 32); err == nil {
+			return float64(value)
+		}
+	case text == "Infinity":
+		return math.Inf(1)
+	case text == "-Infinity":
+		return math.Inf(-1)
+	}
+	return math.NaN()
 }
 
 // A job-level branch guard applies equally to installation and all consumers.
@@ -524,12 +570,18 @@ func conditionString(value any) (string, bool) {
 	case bool:
 		return strconv.FormatBool(v), true
 	case int:
-		return strconv.Itoa(v), true
+		return conditionString(float64(v))
 	case float64:
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return "", false
+		// The runner formats numbers with .NET's "G15".
+		switch {
+		case math.IsNaN(v):
+			return "NaN", true
+		case math.IsInf(v, 1):
+			return "Infinity", true
+		case math.IsInf(v, -1):
+			return "-Infinity", true
 		}
-		return strconv.FormatFloat(v, 'g', -1, 64), true
+		return strconv.FormatFloat(v, 'G', 15, 64), true
 	default:
 		return "", false
 	}
