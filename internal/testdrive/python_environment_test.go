@@ -75,6 +75,7 @@ func TestPythonProbePreservesEnvironmentSelectors(t *testing.T) {
 		{"uv", []string{"run", "--no-sync", "python", "-m", "pytest"}, []string{"run", "--no-sync", "python"}},
 		{"uv", []string{"run", "--project", "project space", "--python", "python3.13", "--package=member", "pytest", "-k", "example"}, []string{"run", "--no-sync", "--project", "project space", "--python", "python3.13", "--package=member", "python"}},
 		{"uv", []string{"run", "--locked", "--", "python", "-m", "pytest"}, []string{"run", "--no-sync", "--locked", "--", "python"}},
+		{"uv", []string{"run", "--no-default-groups", "--group", "dev", "python", "-m", "pytest"}, []string{"run", "--no-sync", "--no-default-groups", "--group", "dev", "python"}},
 		{"python3.13", []string{"-W", "error", "-m", "pytest"}, []string{"-W", "error"}},
 		{"poetry", []string{"run", "python", "-m", "pytest"}, []string{"run", "python"}},
 	} {
@@ -85,6 +86,10 @@ func TestPythonProbePreservesEnvironmentSelectors(t *testing.T) {
 	}
 	_, _, err := pythonProbeCommand("uv", []string{"run", "--with", "pytest", "pytest"})
 	require.ErrorContains(t, err, "--with")
+	_, _, err = pythonProbeCommand("python-wrapper", []string{"-m", "pytest"})
+	require.ErrorContains(t, err, "cannot identify a Python interpreter")
+	_, _, err = pythonProbeCommand("uv", []string{"run", "python-wrapper", "-m", "pytest"})
+	require.ErrorContains(t, err, "python-wrapper")
 }
 
 func TestUVPreflightReportsBeforeInstallation(t *testing.T) {

@@ -185,8 +185,23 @@ func looksLikeTestJob(root, commands, language, name string, depth int) bool {
 				args = args[2:]
 			case "uv run":
 				args = args[2:]
-				for len(args) > 0 && slices.Contains([]string{"--locked", "--frozen", "--no-sync"}, args[0]) {
-					args = args[1:]
+			uvOptions:
+				for len(args) > 0 {
+					option, _, assigned := strings.Cut(args[0], "=")
+					switch option {
+					case "--locked", "--frozen", "--no-sync", "--no-default-groups", "--":
+						args = args[1:]
+					case "--group":
+						if !assigned {
+							if len(args) < 2 {
+								break uvOptions
+							}
+							args = args[1:]
+						}
+						args = args[1:]
+					default:
+						break uvOptions
+					}
 				}
 			default:
 				break unwrap

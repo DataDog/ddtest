@@ -6,8 +6,10 @@
 package onboard
 
 import (
-	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestShellSetupRejectsOpaqueCommands(t *testing.T) {
@@ -22,6 +24,40 @@ func TestShellSetupRejectsOpaqueCommands(t *testing.T) {
 	}
 	_, err := interpolateMatrix(`npm install ${{ matrix.package }}`, map[string]any{"package": "x; npm test"})
 	require.Error(t, err)
+}
+
+func TestMatrixInterpolationResolvesStaticExpressions(t *testing.T) {
+	row := map[string]any{"node": 20, "version": "20", "shard": "1", "os": "windows-latest", "unsafe": "x; npm test"}
+	for _, tc := range []struct{ command, expected, err string }{
+		{`npm test -- --shard=${{ matrix.shard }}/${{ matrix.node }}`, "npm test -- --shard=1/20", ""},
+		{`npm run ${{ matrix.script || format('test:node{0}', matrix.version) }}`, "npm run test:node20", ""},
+		{`npm run ${{ matrix.os == 'windows-latest' && 'test:win' || 'test' }}`, "npm run test:win", ""},
+		{`npm test${{ matrix.missing }}`, "npm test", ""},
+		// Unresolvable expressions stay in place for the caller to report.
+		{`npm test --token ${{ secrets.TOKEN }} --node ${{ matrix.node }}`, "npm test --token ${{ secrets.TOKEN }} --node 20", ""},
+		{`cd ${{ github.workspace }}/app && npm test`, "cd ${{ github.workspace }}/app && npm test", ""},
+		{`npm test ${{ matrix.node`, "npm test ${{ matrix.node", ""},
+		{`npm run ${{ format('test:node{0}', matrix.node) }}`, "npm run ${{ format('test:node{0}', matrix.node) }}", ""}, // format() takes strings only.
+		{`npm install ${{ matrix.unsafe }}`, "", "shell quoting review: ${{ matrix.unsafe }}"},
+		{`npm install ${{ matrix.unsafe || 'jest' }}`, "", "shell quoting review"},
+		{`npm test ${{ format('{{{0}}}', matrix.version) }}`, "", "shell quoting review"},
+		{`npm test ${{ fromJSON('["a"]') }}`, "", "must resolve to a scalar"},
+		{"npm test " + strings.Repeat("x", maxInterpolatedCommand), "", "exceeds"},
+	} {
+		t.Run(tc.command[:min(len(tc.command), 80)], func(t *testing.T) {
+			actual, err := interpolateMatrix(tc.command, row)
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, actual)
+		})
+	}
+	// Without a matrix row, commands are left for the caller to report.
+	actual, err := interpolateMatrix(`npm test ${{ matrix.node }}`, nil)
+	require.NoError(t, err)
+	require.Equal(t, `npm test ${{ matrix.node }}`, actual)
 }
 
 func TestMatrixDiagnosticsRetainCausesAndScope(t *testing.T) {

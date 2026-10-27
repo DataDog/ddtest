@@ -81,6 +81,12 @@ func TestGitHubFindTestWorkflowsCommandKinds(t *testing.T) {
 		{"ruby", "minitest", "bundle exec rake test", true},
 		{"ruby", "minitest", "bundle exec rake test:unit", true},
 		{"ruby", "minitest", "bundle exec rake default", true},
+		{"python", "pytest", "uv run --locked pytest", true},
+		{"python", "pytest", "uv run --no-default-groups --group dev pytest", true},
+		{"python", "pytest", "uv run --group=dev --frozen python -m pytest", true},
+		{"python", "pytest", "uv run --no-sync -- pytest", true},
+		{"python", "pytest", "uv run --group dev ruff check", false},
+		{"python", "pytest", "uv run --group", false},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			root := t.TempDir()
