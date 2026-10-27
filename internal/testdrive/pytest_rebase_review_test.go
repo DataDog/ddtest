@@ -40,7 +40,7 @@ func TestPytestInlineAddoptsFailsBeforeExecution(t *testing.T) {
 	} {
 		words, err := shellquote.Split(command)
 		require.NoError(t, err)
-		require.NoError(t, checkPytestPluginOptions("", words), command)
+		require.NoError(t, checkPytestPluginOptions("", words, nil), command)
 	}
 }
 

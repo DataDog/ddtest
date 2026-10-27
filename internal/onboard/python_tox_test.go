@@ -107,6 +107,9 @@ commands = [["pytest"]]
 base = ["custom"]`,
 		`[tool.tox.env_run_base]
 commands = [["make", "test"]]`,
+		`[tool.tox.env_run_base]
+commands = [["pytest"]]
+change_dir = "other"`,
 	} {
 		root := pythonReviewWorkflow(t, "jobs:\n  tests:\n    steps:\n      - run: tox -e py312\n")
 		require.NoError(t, os.WriteFile(filepath.Join(root, "pyproject.toml"), []byte(config), 0644))

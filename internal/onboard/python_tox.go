@@ -91,7 +91,7 @@ func readPythonTox(root string, args []string) (pythonTox, error) {
 		result.Settings = map[string]any{}
 	}
 	maps.Copy(result.Settings, project.Tool.Tox.Env[result.Name])
-	for _, key := range []string{"base", "base_python", "commands_pre", "commands_post"} {
+	for _, key := range []string{"base", "base_python", "change_dir", "changedir", "commands_pre", "commands_post"} {
 		if _, exists := result.Settings[key]; exists {
 			return result, fmt.Errorf("tox environment %s uses %s; runtime/setup requires review", result.Name, key)
 		}

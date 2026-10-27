@@ -887,10 +887,18 @@ Pytest validation compares native results with and without instrumentation,
 including parametrized tests, class methods, skipped tests, failure details, and
 exit codes. It then checks retries, early flake detection, test skipping,
 quarantine, disabled tests, and attempt-to-fix using temporary probes under the
-existing pytest configuration. Full-suite coverage thresholds remain enabled;
-isolated probes disable pytest-cov's threshold only. This workflow requires
+existing pytest configuration. Paired runs preserve keyword/marker filters and
+coverage thresholds. Isolated probes clear those filters and disable pytest-cov's
+threshold. This workflow requires
 pytest >=7 and ddtrace >=4.11. An installed tracer takes precedence over the
 fallback version; CI must select the same release and a compatible Python.
+
+Static CI checks inspect `addopts` in standard INI files and
+`pyproject.toml`'s `[tool.pytest.ini_options]`, respecting explicit `-c` selection
+and `-o` overrides. Ambiguous collection paths and version-dependent config
+formats remain inconclusive; use explicit `-c` selection for ambiguous paths.
+CI interpreter selection through uv/poetry remains unverified by `setup-python`;
+local preflight inspects the environment that actually executes.
 
 Discovered direct pytest, Python, uv, and poetry commands retain their options
 and CI environments. `uv run` uses `--no-sync`; install test dependencies first.

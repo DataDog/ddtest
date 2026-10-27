@@ -39,8 +39,10 @@ def pytest_configure(config):
     _rootpath = config.rootpath
     probe = os.environ.get("DDTEST_PYTEST_PROBE")
     if probe:
-        # Keep the original config, conftests, plugins and selection options.
+        # Keep the original config, conftests and plugins for isolated probes.
         config.args[:] = [probe]
+        config.option.keyword = ""
+        config.option.markexpr = ""
         if hasattr(config.option, "cov_fail_under"):
             config.option.cov_fail_under = 0
             _coverage_threshold_disabled = True

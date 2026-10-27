@@ -28,12 +28,12 @@ func TestPythonFeedbackUVEnvironmentSelectsRuntime(t *testing.T) {
 		{name: "workflow selector", workflowEnv: "env: {UV_PYTHON: '3.8'}\n", command: "uv run python -m pytest", status: "inconclusive"},
 		{name: "job selector", jobEnv: "    env: {UV_PYTHON: '3.8'}\n", command: "uv run pytest", status: "inconclusive"},
 		{name: "step selector", stepEnv: "        env: {UV_PYTHON: '3.8'}\n", command: "uv run python -m pytest", status: "inconclusive"},
-		{name: "cleared selector", workflowEnv: "env: {UV_PYTHON: '3.8'}\n", stepEnv: "        env: {UV_PYTHON: ''}\n", command: "uv run python -m pytest", status: "compatible"},
+		{name: "cleared selector", workflowEnv: "env: {UV_PYTHON: '3.8'}\n", stepEnv: "        env: {UV_PYTHON: ''}\n", command: "uv run python -m pytest", status: "inconclusive"},
 		{name: "direct Python unaffected", workflowEnv: "env: {UV_PYTHON: '3.8'}\n", command: "python -m pytest", status: "compatible"},
 		{name: "workflow project environment", workflowEnv: "env: {UV_PROJECT_ENVIRONMENT: '.venv38'}\n", command: "uv run python -m pytest", status: "inconclusive"},
 		{name: "job project environment", jobEnv: "    env: {UV_PROJECT_ENVIRONMENT: '.venv38'}\n", command: "uv run pytest", status: "inconclusive"},
 		{name: "step project environment", stepEnv: "        env: {UV_PROJECT_ENVIRONMENT: '.venv38'}\n", command: "uv run python -m pytest", status: "inconclusive"},
-		{name: "cleared project environment", workflowEnv: "env: {UV_PROJECT_ENVIRONMENT: '.venv38'}\n", stepEnv: "        env: {UV_PROJECT_ENVIRONMENT: ''}\n", command: "uv run python -m pytest", status: "compatible"},
+		{name: "cleared project environment", workflowEnv: "env: {UV_PROJECT_ENVIRONMENT: '.venv38'}\n", stepEnv: "        env: {UV_PROJECT_ENVIRONMENT: ''}\n", command: "uv run python -m pytest", status: "inconclusive"},
 		{name: "direct Python ignores project environment", workflowEnv: "env: {UV_PROJECT_ENVIRONMENT: '.venv38'}\n", command: "python -m pytest", status: "compatible"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -277,11 +277,12 @@ func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
 }
 
 // PytestCommandOptions inspects environment and command options, including the
-// last inline addopts override (pytest's -o/--override-ini precedence). Wrapper
-// separators and interpreter options are not pytest arguments. iniAddopts is
+// last inline addopts override (pytest's -o/--override-ini precedence). defaults
+// contains the selected config file's addopts. Wrapper separators and interpreter
+// options are not pytest arguments. iniAddopts is
 // returned separately so controlled local runs can reject nested disable flags
 // while still replacing direct tracer flags in their paired executions.
-func PytestCommandOptions(addopts string, words []string) (options, iniAddopts []string, err error) {
+func PytestCommandOptions(addopts string, words, defaults []string) (options, iniAddopts []string, err error) {
 	args, ok := pythonRunnerArguments(words, "pytest")
 	if !ok {
 		return nil, nil, fmt.Errorf("cannot identify pytest arguments in %q", words)
@@ -292,6 +293,7 @@ func PytestCommandOptions(addopts string, words []string) (options, iniAddopts [
 	}
 	options = append(options, args...)
 	var override string
+	overridden := false
 	for i := 0; i < len(options); i++ {
 		option := options[i]
 		if option == "--" {
@@ -315,12 +317,15 @@ func PytestCommandOptions(addopts string, words []string) (options, iniAddopts [
 		}
 		key, value, _ := strings.Cut(value, "=")
 		if key == "addopts" {
-			override = value
+			override, overridden = value, true
 		}
 	}
-	iniAddopts, err = shellquote.Split(override)
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot parse inline pytest addopts: %w", err)
+	iniAddopts = defaults
+	if overridden {
+		iniAddopts, err = shellquote.Split(override)
+		if err != nil {
+			return nil, nil, fmt.Errorf("cannot parse inline pytest addopts: %w", err)
+		}
 	}
 	return append(slices.Clone(iniAddopts), options...), iniAddopts, nil
 }
@@ -342,16 +347,16 @@ func pythonRuntimeOverride(words []string, python string, environment map[string
 		}
 		for i := 2; i < len(words); i++ {
 			if pythonInvocation(words[i:]) {
-				return pythonRuntimeOverride(words[i:], python, environment)
+				return true
 			}
 			if _, ok := pythonRunnerArguments(words[i:], "tox"); ok {
 				return false
 			}
 			option, _, assigned := strings.Cut(words[i], "=")
-			if option == "--python" || option == "-p" {
+			if option == "--python" || option == "-p" || option == "--project" || option == "--directory" {
 				return true
 			}
-			if !assigned && slices.Contains([]string{"--project", "--directory", "--package", "--group", "--extra"}, option) {
+			if !assigned && slices.Contains([]string{"--package", "--group", "--extra"}, option) {
 				i++
 			}
 		}
@@ -425,6 +430,9 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		}
 		if setup {
 			result.ReviewReason = "Prepare the same Python dependencies as CI before local validation; dependency installation is not replayed."
+			continue
+		}
+		if checkOnlyStep(shellquote.Join(words...)) {
 			continue
 		}
 		if !environment.LooksLikeTestCommand(root, shellquote.Join(words...), "python", "pytest") && (slices.Contains(words, "tox") || slices.Contains(words, "nox")) {
@@ -533,7 +541,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 					}
 					resolved, environment, envErr := resolveVariantStep(workflow, job, step, row, "pytest")
 					r := resolvePythonStep(root, workflow, job, resolved)
-					if !r.Matched && (r.Review || r.Reason == "") {
+					if !r.Matched && (r.Review || r.Reason == "" || checkOnlyStep(resolved.Run)) {
 						continue
 					}
 					finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Python: python, Action: action, Status: "inconclusive"}
@@ -614,7 +622,11 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 			directory = filepath.Join(directory, words[1])
 		}
 		if pythonInvocation(words) {
-			commandOptions, _, err := PytestCommandOptions(value, words)
+			defaults, err := PytestConfigOptions(root, filepath.Join(root, directory), value, words)
+			if err != nil {
+				return "inconclusive", err.Error()
+			}
+			commandOptions, _, err := PytestCommandOptions(value, words, defaults)
 			if err != nil {
 				return "inconclusive", err.Error()
 			}
@@ -638,7 +650,11 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 				return status, reason
 			}
 			for _, command := range tox.Commands {
-				commandOptions, _, err := PytestCommandOptions(value, command)
+				defaults, err := PytestConfigOptions(root, filepath.Join(root, directory), value, command)
+				if err != nil {
+					return "inconclusive", err.Error()
+				}
+				commandOptions, _, err := PytestCommandOptions(value, command, defaults)
 				if err != nil {
 					return "inconclusive", err.Error()
 				}

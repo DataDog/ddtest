@@ -13,7 +13,7 @@ func TestPythonInlineAddoptsInstrumentation(t *testing.T) {
 		{`pytest -oaddopts=--no-ddtrace`, "incompatible", "disables"},
 		{`pytest -o=addopts=--no-ddtrace`, "incompatible", "disables"},
 		{`pytest --override-ini addopts=--no-ddtrace`, "incompatible", "disables"},
-		{`uv run -- python -m pytest --override-ini=addopts=--no-ddtrace`, "incompatible", "disables"},
+		{`uv run -- python -m pytest --override-ini=addopts=--no-ddtrace`, "inconclusive", "selects its own Python interpreter"},
 		{`pytest -o 'addopts=-p no:ddtrace'`, "incompatible", "block"},
 		{`pytest -o addopts=--disable-plugin-autoload`, "incompatible", "autoload"},
 		{`pytest -o 'addopts=--disable-plugin-autoload -p ddtrace'`, "compatible", "satisfies"},

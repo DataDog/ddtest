@@ -42,7 +42,8 @@ func (t *Testdrive) checkPytestPreflight(ctx context.Context, output io.Writer, 
 	if configured, ok := t.pytestEnvironment["PYTEST_ADDOPTS"]; ok {
 		addopts = configured
 	}
-	if err := checkPytestPluginOptions(addopts, append([]string{t.command}, t.args...)); err != nil {
+	words := append([]string{t.command}, t.args...)
+	if err := checkPytestPluginOptions(addopts, words, nil); err != nil {
 		check.Verdict = verdict{Status: "incompatible", Reason: err.Error()}
 		return fmt.Errorf("pytest preflight: %w", err)
 	}
@@ -50,9 +51,9 @@ func (t *Testdrive) checkPytestPreflight(ctx context.Context, output io.Writer, 
 	if err != nil {
 		return err
 	}
-	var metadata struct{ Pytest, Python, Tracer, RequiresPython, Executable string }
-	const script = `import importlib.metadata as m, json, pathlib, platform, sys
-result = {"pytest": m.version("pytest"), "python": platform.python_version(), "executable": sys.executable}
+	var metadata struct{ Pytest, Python, Tracer, RequiresPython, Executable, Directory string }
+	const script = `import importlib.metadata as m, json, os, pathlib, platform, sys
+result = {"pytest": m.version("pytest"), "python": platform.python_version(), "executable": sys.executable, "directory": os.getcwd()}
 try:
     result.update(tracer=m.version("ddtrace"), requiresPython=m.metadata("ddtrace").get("Requires-Python", ""))
 except m.PackageNotFoundError:
@@ -68,6 +69,21 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 		return fmt.Errorf("inspect pytest: %w", err)
 	}
 	check.Version, check.Python = metadata.Pytest, metadata.Python
+	directory := metadata.Directory
+	if directory == "" {
+		directory = t.repositoryRoot
+	}
+	defaults, configErr := onboard.PytestConfigOptions(t.checkoutRoot(), directory, addopts, words)
+	if configErr != nil && t.checkOnly {
+		check.Verdict = verdict{Status: "inconclusive", Reason: configErr.Error()}
+		return fmt.Errorf("pytest configuration: %w", configErr)
+	}
+	// Full execution resolves ambiguous configuration through pytest itself.
+	// Static discovery limitations must not block a selected local comparison.
+	if err := checkPytestPluginOptions(addopts, words, defaults); err != nil {
+		check.Verdict = verdict{Status: "incompatible", Reason: err.Error()}
+		return fmt.Errorf("pytest preflight: %w", err)
+	}
 	t.projectTracer = metadata.Tracer
 	t.environmentInfo.Executable, t.environmentInfo.Version = metadata.Executable, metadata.Python
 	selection := onboard.PythonRelease{Version: metadata.Tracer, RequiresPython: metadata.RequiresPython}
@@ -109,13 +125,13 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 	return nil
 }
 
-func checkPytestPluginOptions(addopts string, words []string) error {
-	options, iniAddopts, err := onboard.PytestCommandOptions(addopts, words)
+func checkPytestPluginOptions(addopts string, words, defaults []string) error {
+	options, iniAddopts, err := onboard.PytestCommandOptions(addopts, words, defaults)
 	if err != nil {
 		return err
 	}
 	if slices.Contains(iniAddopts, "--no-ddtrace") {
-		return fmt.Errorf("inline pytest addopts disables Datadog instrumentation; remove --no-ddtrace from the effective -o/--override-ini addopts before controlled validation")
+		return fmt.Errorf("pytest addopts disables Datadog instrumentation; remove --no-ddtrace from the configuration or effective -o/--override-ini addopts before controlled validation")
 	}
 	for i, option := range options {
 		plugin := strings.TrimPrefix(option, "-p")

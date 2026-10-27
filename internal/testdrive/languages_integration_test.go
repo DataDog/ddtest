@@ -32,7 +32,7 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 		name, command string
 		files         map[string]string
 	}{
-		{"pytest", "python -m pytest", map[string]string{"requirements.txt": "pytest==8.4.2\nddtrace==4.16.0\n", "pytest.ini": "[pytest]\n", "app.py": "def add(a, b):\n    return a + b\n", "test_one.py": "from app import add\ndef test_adds():\n    assert add(1, 1) == 2\n"}},
+		{"pytest", "python -m pytest", map[string]string{"requirements.txt": "pytest==8.4.2\nddtrace==4.16.0\n", "pytest.ini": "[pytest]\nmarkers = slow\naddopts = -k test_adds\n", "app.py": "def add(a, b):\n    return a + b\n", "test_one.py": "import pytest\nfrom app import add\n@pytest.mark.slow\ndef test_adds():\n    assert add(1, 1) == 2\n"}},
 		{"rspec", "bundle exec rspec", map[string]string{"Gemfile": "source 'https://rubygems.org'\ngem 'rspec', '3.13.1'\n", "spec/one_spec.rb": "RSpec.describe 'addition' do\n  it('adds') { expect(1 + 1).to eq(2) }\nend\n"}},
 		{"minitest", "bundle exec rake test", map[string]string{"Gemfile": "source 'https://rubygems.org'\ngem 'rake', '13.3.0'\ngem 'minitest', '5.25.5'\n", "Rakefile": "require 'rake/testtask'\nRake::TestTask.new(:test) { |t| t.pattern = 'test/**/*_test.rb' }\n", "test/one_test.rb": "require 'minitest/autorun'\nclass AdditionTest < Minitest::Test\n  def test_adds\n    assert_equal 2, 1 + 1\n  end\nend\n"}},
 	} {
@@ -87,7 +87,12 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 				args []string
 			}{
 				{"plain", nil},
+				{"keyword selection", []string{"--command", "python -m pytest -k test_adds"}},
+				{"marker selection", []string{"--command", "python -m pytest -m slow"}},
 			} {
+				if fixture.name != "pytest" && mode.name != "plain" {
+					continue
+				}
 				t.Run(mode.name, func(t *testing.T) {
 					retainIntegrationReports(t, root, fixture.name+"-"+mode.name)
 					args := []string{"testdrive", "--framework", fixture.name, "--command", fixture.command, "--yes"}
