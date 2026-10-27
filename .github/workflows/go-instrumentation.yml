@@ -593,6 +593,26 @@ jobs:
           python scripts/ci_shards.py aggregate --input shards --output reports "${flags[@]}"
           cat reports/summary.md >> "$GITHUB_STEP_SUMMARY"
           for report in reports/*/parity.md; do cat "$report" >> "$GITHUB_STEP_SUMMARY"; done
+      # A group's manifest records its tests before the job reports and keeps
+      # its coverage, so every job of the matrix must also succeed.
+      - name: Require every job of the matrix
+        if: needs.plan.outputs.skip != 'true'
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        env:
+          RESULTS: ${{ needs.differential.result }} ${{ needs.mini.result }}
+          TIP: ${{ needs.plan.outputs.tip-enabled }}
+          TIP_RESULTS: ${{ needs.go-tip.result }} ${{ needs.tip.result }}
+        run: |
+          if [[ "$TIP" == true ]]; then
+            RESULTS="$RESULTS $TIP_RESULTS"
+          fi
+          for result in $RESULTS; do
+            if [[ "$result" != success ]]; then
+              echo "A job of the matrix did not succeed: $RESULTS" >&2
+              exit 1
+            fi
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always() && needs.plan.outputs.skip != 'true'
         with:
