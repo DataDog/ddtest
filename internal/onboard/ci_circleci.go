@@ -163,7 +163,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 						if value.Kind == yaml.MappingNode {
 							run = properties["command"]
 						}
-						steps := nativeSteps(path, run)
+						steps := nativeSteps(path, run, "circleci")
 						for i := range steps {
 							steps[i].Run = replace(steps[i].Run)
 							steps[i].Env = ciEnvironment(properties["environment"])

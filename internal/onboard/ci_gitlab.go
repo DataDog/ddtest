@@ -183,7 +183,7 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 			if file == "" {
 				file = path
 			}
-			job.Steps = append(job.Steps, nativeSteps(file, node)...)
+			job.Steps = append(job.Steps, nativeSteps(file, node, "gitlab")...)
 		}
 		if fields["services"] != nil {
 			w.Unresolved = append(w.Unresolved, path+" / "+name+": GitLab service containers require explicit local service facts")

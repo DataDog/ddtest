@@ -296,14 +296,14 @@ func ciStrings(node *yaml.Node) []string {
 	return []string{ciScalar(node)}
 }
 
-func nativeSteps(path string, node *yaml.Node) []runtimeStep {
+func nativeSteps(path string, node *yaml.Node, provider string) []runtimeStep {
 	if node == nil {
 		return nil
 	}
 	if node.Kind == yaml.SequenceNode && node.Tag != "!reference" {
 		var out []runtimeStep
 		for _, child := range node.Content {
-			out = append(out, nativeSteps(path, child)...)
+			out = append(out, nativeSteps(path, child, provider)...)
 		}
 		return out
 	}
@@ -312,8 +312,8 @@ func nativeSteps(path string, node *yaml.Node) []runtimeStep {
 	}
 	command := node.Value
 	native := &nativeCommand{Path: path, Node: node, Original: command}
-	if framework, version, site, original, ok := unwrapNativeInstrumentation(command); ok {
-		native.Framework, native.Tracer, native.Site = framework, version, site
+	if setup, original, ok := unwrapNativeInstrumentation(command, provider); ok {
+		native.Framework, native.Tracer, native.Site, native.ESM = setup.Framework, setup.Version, setup.Site, setup.ESM
 		command = original
 	}
 	return []runtimeStep{{Run: command, Source: fmt.Sprintf("%s:%d", path, node.Line), Number: node.Line, Native: native}}

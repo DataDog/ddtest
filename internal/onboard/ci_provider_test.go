@@ -166,7 +166,7 @@ func TestNativeInitializationRunsOriginalCommandWithoutCredentials(t *testing.T)
 		t.Skip("POSIX shell unavailable")
 	}
 	root := t.TempDir()
-	command := exec.Command("sh", "-c", wrapNativeCommand("jest", "6.20.1", "datadoghq.com", "printf original"))
+	command := exec.Command("sh", "-c", wrapNativeCommand(nativeSetup{Framework: "jest", Version: "6.20.1", Site: "datadoghq.com"}, "printf original", "gitlab"))
 	command.Dir = root
 	command.Env = append(os.Environ(), "DD_API_KEY=")
 	output, err := command.CombinedOutput()
@@ -188,7 +188,7 @@ func TestNativeInitializationPreservesExitStatusAndCleansPrivateInstall(t *testi
 			require.NoError(t, os.MkdirAll(cache, 0700))
 			require.NoError(t, os.WriteFile(filepath.Join(tools, "npm"), []byte("#!/bin/sh\nexit "+install+"\n"), 0700))
 			original := `printf '%s\n' "$NODE_OPTIONS"; exit 7`
-			cmd := exec.Command("sh", "-c", wrapNativeCommand("jest", "6.20.1", "datadoghq.com", original))
+			cmd := exec.Command("sh", "-c", wrapNativeCommand(nativeSetup{Framework: "jest", Version: "6.20.1", Site: "datadoghq.com", ESM: true}, original, "gitlab"))
 			cmd.Dir = root
 			cmd.Env = append(os.Environ(), "PATH="+tools+string(os.PathListSeparator)+os.Getenv("PATH"), "TMPDIR="+cache, "DD_API_KEY=synthetic", "NODE_OPTIONS=--conditions=customer")
 			output, err := cmd.CombinedOutput()
@@ -326,7 +326,7 @@ printf 'global.__ciImport = true;' > "$prefix/node_modules/dd-trace/register.js"
 `
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "npm"), []byte(installer), 0700))
 	original := `"` + node + `" -e 'console.log(global.__ciRequire, global.__ciImport)'`
-	cmd := exec.Command("sh", "-c", wrapNativeCommand("jest", "6.20.1", "datadoghq.com", original))
+	cmd := exec.Command("sh", "-c", wrapNativeCommand(nativeSetup{Framework: "jest", Version: "6.20.1", Site: "datadoghq.com", ESM: true}, original, "gitlab"))
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "PATH="+tools+string(os.PathListSeparator)+os.Getenv("PATH"), "TMPDIR="+cache, "DD_API_KEY=synthetic", "NODE_OPTIONS=")
 	output, err := cmd.CombinedOutput()

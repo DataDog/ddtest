@@ -142,11 +142,11 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 		env                                     map[string]string
 		directory, stage, node, source, blocked string
 	}
-	var walk func(int, int, state, int)
-	walk = func(start, end int, current state, depth int) {
+	var walk func(int, int, state, int) state
+	walk = func(start, end int, current state, depth int) state {
 		if depth > 32 {
 			job.Gaps = append(job.Gaps, "Jenkins nesting exceeds 32 levels")
-			return
+			return current
 		}
 		for i := start; i < end; i++ {
 			token := tokens[i]
@@ -173,27 +173,25 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 				version := tokens[i+1].value
 				if current.blocked != "" {
 					job.Gaps = append(job.Gaps, "Node tools are selected inside unresolved Groovy control flow")
-					job.Node = ""
+					current.node, current.source = "", "unresolved Jenkins tools"
 					i++
 					continue
 				}
-				if version != "" && version[0] >= '0' && version[0] <= '9' {
-					current.node, current.source = version, "Jenkins tools.nodejs "+version
-					job.Node, job.NodeSource = current.node, current.source
+				current.node, current.source = "", "Jenkins tools.nodejs "+version
+				if numericNode.MatchString(version) {
+					current.node = version
 				}
 				i++
 				continue
 			}
 			if token.value == "image" && i+1 < end && tokens[i+1].quote != "" {
-				if node := ciImageNode(tokens[i+1].value, current.env); node != "" {
-					current.node, current.source = node, "Jenkins Docker image "+tokens[i+1].value
-					job.Node, job.NodeSource = current.node, current.source
-				}
+				current.node, current.source = ciImageNode(tokens[i+1].value, current.env), "Jenkins Docker image "+tokens[i+1].value
 			}
 			if token.value == "sh" {
 				j := i + 1
 				limit := end
-				if j < end && tokens[j].value == "(" {
+				parenthesized := j < end && tokens[j].value == "("
+				if parenthesized {
 					limit = pairs[j]
 					j++
 				}
@@ -215,6 +213,19 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 				text := tokens[literal]
 				command := text.value
 				blocked := current.blocked
+				// The complete argument must be literal: replacing just the first
+				// string of a concatenation changes the executed shell program.
+				if literal+1 < limit {
+					next := tokens[literal+1]
+					boundary := next.value == "," || next.value == ";" || next.value == "}"
+					computed := !boundary && !strings.Contains(string(data[text.end:next.start]), "\n") || strings.ContainsAny(next.value, "+-*/%?.[<>=!&|^") || next.value == "as"
+					if parenthesized {
+						computed = literal == j || next.value != ","
+					}
+					if computed {
+						blocked = "Jenkins sh script argument is computed; supply its complete literal command"
+					}
+				}
 				if strings.HasPrefix(text.quote, "\"") {
 					for key, value := range current.env {
 						command = strings.ReplaceAll(command, "${env."+key+"}", value)
@@ -223,9 +234,9 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 						blocked = "Groovy string interpolation requires explicit values"
 					}
 				}
-				native := &nativeCommand{Path: path, Start: text.start, End: text.end, Quote: text.quote, Original: text.value, Blocked: blocked, NodeVersion: job.Node, NodeSource: job.NodeSource}
-				if framework, version, site, original, ok := unwrapNativeInstrumentation(command); ok {
-					native.Framework, native.Tracer, native.Site = framework, version, site
+				native := &nativeCommand{Path: path, Start: text.start, End: text.end, Quote: text.quote, Original: command, Blocked: blocked, NodeVersion: current.node, NodeSource: current.source}
+				if setup, original, ok := unwrapNativeInstrumentation(command, "jenkins"); ok {
+					native.Framework, native.Tracer, native.Site, native.ESM = setup.Framework, setup.Version, setup.Site, setup.ESM
 					command = original
 				}
 				step := runtimeStep{Run: command, Env: maps.Clone(current.env), WorkingDirectory: current.directory, Source: fmt.Sprintf("%s / %s / byte %d", path, current.stage, text.start), Native: native}
@@ -284,9 +295,15 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 			default:
 				child.blocked = "Groovy control flow/function " + token.value + " requires a resolved execution path"
 			}
-			walk(open+1, stop, child, depth+1)
+			selected := walk(open+1, stop, child, depth+1)
+			// Declarative agent/tools configure their containing scope. A
+			// stage's selection must never leak to a subsequent sibling stage.
+			if slices.Contains([]string{"agent", "docker", "tools"}, token.value) {
+				current.node, current.source = selected.node, selected.source
+			}
 			i = stop
 		}
+		return current
 	}
 	walk(0, len(tokens), state{env: job.Env, directory: ".", stage: "pipeline"}, 0)
 	job.Gaps = slices.Compact(job.Gaps)

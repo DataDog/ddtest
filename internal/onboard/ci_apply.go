@@ -10,49 +10,67 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 type nativeSetup struct {
 	Framework string `json:"framework"`
 	Version   string `json:"version"`
 	Site      string `json:"site"`
+	ESM       bool   `json:"esm,omitempty"`
+	Coverage  string `json:"coverage,omitempty"`
 }
 
-func nativeInstrumentationPrefix(framework, version, site string) string {
-	metadata, _ := json.Marshal(nativeSetup{framework, version, site})
-	variable := scopedEnvironment(framework)
-	options := ` -r \"${DD_TRACE_PACKAGE}\" --import \"${DD_TRACE_ESM_IMPORT}\"`
-	return "# ddtest-ci " + string(metadata) + "\n(\n" +
+func nativeInstrumentationPrefix(setup nativeSetup, provider string) string {
+	metadata, _ := json.Marshal(setup)
+	variable := scopedEnvironment(setup.Framework)
+	options := ` -r \"${DD_TRACE_PACKAGE}\"`
+	if setup.ESM {
+		options += ` --import \"${DD_TRACE_ESM_IMPORT}\"`
+	}
+	if setup.Coverage != "" {
+		options += " " + setup.Coverage
+	}
+	prefix := "# ddtest-ci " + string(metadata) + "\n(\n" +
 		"_ddtest_tracer_dir=\n" +
 		"trap 'if [ -n \"$_ddtest_tracer_dir\" ]; then rm -rf -- \"$_ddtest_tracer_dir\"; fi' EXIT\n" +
-		"if [ -n \"${DD_API_KEY:-}\" ] && _ddtest_tracer_dir=$(mktemp -d \"${TMPDIR:-/tmp}/ddtest-ci.XXXXXXXX\") && npm install --prefix \"$_ddtest_tracer_dir\" --no-save --package-lock=false --no-audit --no-fund dd-trace@" + version + "; then\n" +
+		"if [ \"${DD_CIVISIBILITY_ENABLED:-}\" != false ] && [ -n \"${DD_API_KEY:-}\" ] && _ddtest_tracer_dir=$(mktemp -d \"${TMPDIR:-/tmp}/ddtest-ci.XXXXXXXX\") && npm install --prefix \"$_ddtest_tracer_dir\" --no-save --package-lock=false --no-audit --no-fund dd-trace@" + setup.Version + "; then\n" +
 		"  readonly _ddtest_tracer_dir\n" +
 		"  export DD_TRACE_PACKAGE=\"$_ddtest_tracer_dir/node_modules/dd-trace/ci/init\"\n" +
 		"  export DD_TRACE_ESM_IMPORT=\"$_ddtest_tracer_dir/node_modules/dd-trace/register.js\"\n" +
 		"  export " + variable + "=\"${" + variable + ":-}" + options + "\"\n" +
 		"  export DD_CIVISIBILITY_ENABLED=true\n" +
-		"  export DD_SITE=" + site + "\nfi\n"
+		"  export DD_SITE=" + setup.Site + "\nfi\n"
+	if provider == "buildkite" {
+		// Upload expands variables even inside shell quotes. Escape generated
+		// references only; the original user's command retains its semantics.
+		prefix = strings.ReplaceAll(prefix, "$", "$$")
+	}
+	return prefix
 }
 
-func unwrapNativeInstrumentation(command string) (framework, version, site, original string, ok bool) {
+func unwrapNativeInstrumentation(command, provider string) (setup nativeSetup, original string, ok bool) {
 	header, _, found := strings.Cut(command, "\n")
 	if !found || !strings.HasPrefix(header, "# ddtest-ci ") {
 		return
 	}
-	var setup nativeSetup
 	if json.Unmarshal([]byte(strings.TrimPrefix(header, "# ddtest-ci ")), &setup) != nil || !SupportsAutomaticSetup(setup.Framework) || !exactRelease(setup.Version) {
 		return
 	}
-	prefix := nativeInstrumentationPrefix(setup.Framework, setup.Version, setup.Site)
+	if setup.Coverage != "" && (setup.Framework != "cucumber" || setup.Coverage != "--experimental-loader @istanbuljs/esm-loader-hook") {
+		return
+	}
+	prefix := nativeInstrumentationPrefix(setup, provider)
 	if !strings.HasPrefix(command, prefix) || !strings.HasSuffix(command, "\n)") {
 		return
 	}
-	return setup.Framework, setup.Version, setup.Site, strings.TrimSuffix(strings.TrimPrefix(command, prefix), "\n)"), true
+	return setup, strings.TrimSuffix(strings.TrimPrefix(command, prefix), "\n)"), true
 }
 
 type nativeReplacement struct {
@@ -61,7 +79,7 @@ type nativeReplacement struct {
 }
 
 func planNativeSetup(root, framework, version, site, requirement string, workflows []ciWorkflow) (*SetupPlan, error) {
-	edits, _, err := scopedSetupEdits(root, framework)
+	edits, scopedOptions, err := scopedSetupEdits(root, framework)
 	if err != nil {
 		return nil, err
 	}
@@ -75,16 +93,16 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 			if job.If == "false" {
 				continue
 			}
-			for _, step := range job.Steps {
+			for i, step := range job.Steps {
 				r := resolveTestStep(root, workflow, job, step, "javascript", framework)
 				if !r.Matched {
 					continue
 				}
-				location := workflow.Path + " / " + name
-				node := job.Node
-				if workflow.Provider == "jenkins" && step.Native != nil {
-					node = step.Native.NodeVersion
+				if mochaInstrumentationDisabled(workflow, job, step) {
+					continue
 				}
+				location := workflow.Path + " / " + name
+				node, _ := nativeStepRuntime(workflow, job, i)
 				if UnsupportedNode(node) {
 					continue
 				}
@@ -95,18 +113,20 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 					return nil, &SetupGap{location, "The test command is unresolved or also runs another framework; preserve it and supply scoped initialization"}
 				}
 				if requirement != "" {
-					node := job.Node
-					if workflow.Provider == "jenkins" && step.Native != nil {
-						node = step.Native.NodeVersion
-					}
 					status, reason := CompareNodeRequirement(node, requirement)
 					if status != StatusCompatible {
 						return nil, &SetupGap{location, "CI Node runtime: " + reason + "; identify its runtime or select a compatible tracer"}
 					}
 				}
+				esm := setupNeedsESM(root, framework, workflow, job, step)
+				if esm {
+					if status, reason := CompareNodeRequirement(node, ">=18.19 <19 || >=20.6"); status != StatusCompatible {
+						return nil, &SetupGap{location, "CI ESM import runtime: " + reason}
+					}
+				}
 				native := step.Native
-				if native != nil && sharedNativeSource(root, workflows, framework, native) {
-					return nil, &SetupGap{location, "This source command is shared with an unresolved or unselected framework consumer; configure that consumer explicitly"}
+				if native != nil && sharedNativeSource(root, workflows, framework, requirement, native) {
+					return nil, &SetupGap{location, "This source command is shared with an excluded, incompatible, unresolved or unselected consumer; configure that consumer explicitly"}
 				}
 				if native == nil || native.Blocked != "" {
 					return nil, &SetupGap{location, "The test command is generated, inherited or computed; edit its owning source explicitly"}
@@ -129,7 +149,16 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 				if strings.Contains(mergeEnvironment(job.Env, step.Env)["NODE_OPTIONS"], "dd-trace") {
 					return nil, &SetupGap{location, "Existing custom tracer initialization is preserved; resolve its exact installation/version instead of adding a second tracer"}
 				}
-				value := wrapNativeCommand(framework, version, site, native.Original)
+				if (workflow.Provider == "gitlab" || workflow.Provider == "buildkite") && nativeChangesShellState(native.Original) {
+					return nil, &SetupGap{location, "This test entry changes persistent shell state; preserve it and place initialization explicitly around its test invocation"}
+				}
+				covered, err := setupMochaCoverage(root, filepath.Join(root, stepDirectory(workflow, job, step)), framework, native.Original)
+				if err != nil {
+					return nil, err
+				}
+				coverageAdded = coverageAdded || covered != native.Original
+				coverage := strings.TrimSpace(strings.TrimPrefix(scopedOptions, strings.TrimPrefix(setupPreload(framework), "${{ env.NODE_OPTIONS }} ")))
+				value := wrapNativeCommand(nativeSetup{Framework: framework, Version: version, Site: site, ESM: esm, Coverage: coverage}, covered, workflow.Provider)
 				var replacement nativeReplacement
 				if native.Node != nil {
 					replacement, err = yamlCommandReplacement(edit.before, native.Node, value)
@@ -282,14 +311,14 @@ func yamlCommandReplacement(data []byte, node *yaml.Node, value string) (nativeR
 	return nativeReplacement{start, end, encoded + newline}, nil
 }
 
-func wrapNativeCommand(framework, version, site, original string) string {
-	return nativeInstrumentationPrefix(framework, version, site) + original + "\n)"
+func wrapNativeCommand(setup nativeSetup, original, provider string) string {
+	return nativeInstrumentationPrefix(setup, provider) + original + "\n)"
 }
 
-func sharedNativeSource(root string, workflows []ciWorkflow, framework string, source *nativeCommand) bool {
+func sharedNativeSource(root string, workflows []ciWorkflow, framework, requirement string, source *nativeCommand) bool {
 	for _, workflow := range workflows {
 		for _, job := range workflow.Jobs {
-			for _, step := range job.Steps {
+			for i, step := range job.Steps {
 				other := step.Native
 				if other == nil || other.Path != source.Path {
 					continue
@@ -302,11 +331,46 @@ func sharedNativeSource(root string, workflows []ciWorkflow, framework string, s
 					continue
 				}
 				resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
-				if !resolution.Matched || resolution.OtherFramework || resolution.Reason != "" {
+				node, _ := nativeStepRuntime(workflow, job, i)
+				if job.If == "false" || mochaInstrumentationDisabled(workflow, job, step) || UnsupportedNode(node) || len(job.Gaps) > 0 || !resolution.Matched || resolution.OtherFramework || resolution.Reason != "" {
 					return true
+				}
+				if requirement != "" {
+					if status, _ := CompareNodeRequirement(node, requirement); status != StatusCompatible {
+						return true
+					}
+				}
+				if setupNeedsESM(root, framework, workflow, job, step) {
+					if status, _ := CompareNodeRequirement(node, ">=18.19 <19 || >=20.6"); status != StatusCompatible {
+						return true
+					}
 				}
 			}
 		}
 	}
 	return false
+}
+
+func nativeChangesShellState(command string) bool {
+	file, ok := parseCIShell(command)
+	if !ok {
+		return true
+	}
+	changes := false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		switch n := node.(type) {
+		case *syntax.Subshell:
+			return false // These effects were already isolated by the author.
+		case *syntax.DeclClause, *syntax.FuncDecl:
+			changes = true
+		case *syntax.CallExpr:
+			if len(n.Args) == 0 {
+				changes = changes || len(n.Assigns) > 0
+			} else if slices.Contains([]string{"cd", "export", "unset", "set", "trap", ".", "source", "eval", "exec", "alias", "unalias", "read", "umask", "ulimit", "shift"}, n.Args[0].Lit()) {
+				changes = true
+			}
+		}
+		return !changes
+	})
+	return changes
 }

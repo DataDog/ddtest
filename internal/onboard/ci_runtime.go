@@ -12,6 +12,31 @@ import (
 	"strings"
 )
 
+// GitLab and Buildkite entries share a shell; CircleCI run and Jenkins sh do
+// not. Resolve runtime switches at the same test step for discovery and edits.
+func nativeStepRuntime(w ciWorkflow, job runtimeJob, index int) (string, string) {
+	node, source := job.Node, job.NodeSource
+	if len(job.Steps) == 0 {
+		return node, source
+	}
+	index = min(index, len(job.Steps)-1)
+	if w.Provider == "jenkins" && job.Steps[index].Native != nil {
+		node, source = job.Steps[index].Native.NodeVersion, job.Steps[index].Native.NodeSource
+	}
+	start := index
+	if w.Provider == "gitlab" || w.Provider == "buildkite" {
+		start = 0
+	}
+	for _, step := range job.Steps[start : index+1] {
+		if selected := nvmRuntime(step.Run); selected != "" {
+			node, source = selected, step.Source
+		} else if changesNodeRuntime(step.Run) {
+			node, source = "", step.Source
+		}
+	}
+	return node, source
+}
+
 func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framework string, resolve requirementResolver) []RuntimeFinding {
 	var findings []RuntimeFinding
 	for _, reason := range w.Unresolved {
@@ -28,11 +53,13 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 			if !r.Matched {
 				continue
 			}
-			node, nodeSource := job.Node, job.NodeSource
-			if w.Provider == "jenkins" && step.Native != nil {
-				node, nodeSource = step.Native.NodeVersion, step.Native.NodeSource
-			}
+			node, nodeSource := nativeStepRuntime(w, job, i)
 			finding := RuntimeFinding{Workflow: w.Path, Job: name, Step: stepNumber(step, i), Source: step.Source, Command: step.Run, Resolution: r.Evidence, Node: node, NodeSource: nodeSource, Status: StatusInconclusive}
+			if mochaInstrumentationDisabled(w, job, step) {
+				finding.Status, finding.Code, finding.Reason = StatusExcluded, CodeExcludedRuntime, "DD_CIVISIBILITY_ENABLED=false leaves this CI entry uninstrumented; its runtime was not validated with the tracer."
+				findings = append(findings, finding)
+				continue
+			}
 			if envErr != nil {
 				finding.Code, finding.Reason = CodeUnresolvedCommand, envErr.Error()
 				findings = append(findings, finding)
@@ -63,7 +90,7 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 				findings = append(findings, finding)
 				continue
 			}
-			if step.Native.Manual && setupNeedsESM(root, framework, w, job, step) && !step.Native.ESM {
+			if setupNeedsESM(root, framework, w, job, step) && !step.Native.ESM {
 				finding.Code, finding.Reason = CodeMissingInitialization, "ESM tests require --import dd-trace/register.js alongside the CI preload"
 				findings = append(findings, finding)
 				continue
@@ -80,7 +107,7 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 			} else {
 				finding.Status, finding.Reason = CompareNodeRequirement(node, requirement.Node)
 			}
-			if finding.Status == StatusCompatible && (!step.Native.Manual || step.Native.ESM) {
+			if finding.Status == StatusCompatible && step.Native.ESM {
 				finding.Status, finding.Reason = CompareNodeRequirement(node, ">=18.19 <19 || >=20.6")
 			}
 			findings = append(findings, finding)

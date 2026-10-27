@@ -63,7 +63,7 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 				continue
 			}
 			job := runtimeJob{Env: providerEnvironment("buildkite", mergeEnvironment(ciEnvironment(fields["env"]), ciEnvironment(step["env"])))}
-			job.Steps = nativeSteps(path, node)
+			job.Steps = nativeSteps(path, node, "buildkite")
 			if condition := ciScalar(step["if"]); condition != "" {
 				if condition == "false" {
 					job.If = "false"

@@ -26,6 +26,12 @@ must create the secret and expose it as `DD_API_KEY` in the test job; Jenkins
 needs a credentials binding, and Buildkite needs a secret/environment binding.
 No secret is needed for local validation.
 
+Explicit `DD_CIVISIBILITY_ENABLED=false` opt-outs remain uninstrumented. The
+editor refuses a shared source edit if any consumer has an excluded,
+incompatible or unresolved runtime. GitLab/Buildkite test entries that change
+persistent shell state (for example, `cd package && npm test` followed by another
+entry) need explicit initialization placement rather than a subshell wrapper.
+
 GitLab local includes, inherited jobs, variables and literal matrices;
 CircleCI jobs, local reusable commands/executors and pinned official Node orb
 setup; literal Jenkins Pipeline `sh`, `dir`, environment and Node tools; and
