@@ -482,7 +482,13 @@ func possibleJobConditionPath(value string, row map[string]any) (active, assumed
 	}
 	slices.Sort(candidates)
 	candidates = slices.Compact(candidates)
-	if len(operands) == 0 || len(operands) > 3 || len(candidates) > 8 {
+	// Bound the combinations tried, not the candidates, so one operand can
+	// sample a long membership array (8 candidates for each of 3 operands).
+	combinations := 1
+	for range operands {
+		combinations *= len(candidates)
+	}
+	if len(operands) == 0 || len(operands) > 3 || combinations > 512 {
 		return false, false, err
 	}
 	env := map[string]string{}
@@ -567,27 +573,64 @@ func possibleRuntimeOutcome(value string, row map[string]any) (bool, error) {
 
 // conditionOperandPosition reports whether text[start:end] is used as a whole
 // condition: bounded by the expression edges, !, &&, || or grouping
-// parentheses, never by a function call, comma or comparison.
+// parentheses, and every enclosing group is itself used that way. A function
+// call, comma or comparison anywhere around it makes it a value instead.
 func conditionOperandPosition(text string, start, end int) bool {
-	before := strings.TrimRight(text[:start], " \t")
-	after := strings.TrimLeft(text[end:], " \t")
-	before = strings.TrimSuffix(strings.TrimSuffix(before, "${{"), " ")
+	open, close := conditionEnclosingGroup(text, start)
+	before := strings.TrimRightFunc(text[:start], unicode.IsSpace)
+	after := strings.TrimLeftFunc(text[end:], unicode.IsSpace)
+	before = strings.TrimRightFunc(strings.TrimSuffix(before, "${{"), unicode.IsSpace)
 	switch {
-	case before == "", strings.HasSuffix(before, "!") && !strings.HasSuffix(before, "!="),
-		strings.HasSuffix(before, "&&"), strings.HasSuffix(before, "||"):
-	case strings.HasSuffix(before, "("):
-		// A parenthesis after an identifier opens a function call.
-		head := strings.TrimRight(strings.TrimSuffix(before, "("), " \t")
-		if head != "" {
-			last := head[len(head)-1]
-			if last == '_' || last == '.' || last >= '0' && last <= '9' || last >= 'a' && last <= 'z' || last >= 'A' && last <= 'Z' {
-				return false
-			}
-		}
+	case before == "", strings.HasSuffix(before, "&&"), strings.HasSuffix(before, "||"),
+		strings.HasSuffix(before, "!") && !strings.HasSuffix(before, "!="),
+		strings.HasSuffix(before, "(") && open == len(before)-1:
 	default:
 		return false
 	}
-	return after == "" || after == "}}" || strings.HasPrefix(after, "&&") || strings.HasPrefix(after, "||") || strings.HasPrefix(after, ")")
+	switch {
+	case after == "", after == "}}", strings.HasPrefix(after, "&&"), strings.HasPrefix(after, "||"),
+		strings.HasPrefix(after, ")") && close == len(text)-len(after):
+	default:
+		return false
+	}
+	if open < 0 {
+		return true
+	}
+	// A parenthesis after an identifier opens a function call.
+	head := strings.TrimRightFunc(text[:open], unicode.IsSpace)
+	if head != "" {
+		if last := head[len(head)-1]; last == '_' || last == '.' || last >= '0' && last <= '9' || last >= 'a' && last <= 'z' || last >= 'A' && last <= 'Z' {
+			return false
+		}
+	}
+	if close < 0 {
+		return false
+	}
+	return conditionOperandPosition(text, open, close+1)
+}
+
+// conditionEnclosingGroup returns the parentheses that most closely enclose
+// position, skipping quoted literals, or -1 when there are none.
+func conditionEnclosingGroup(text string, position int) (open, close int) {
+	var stack []int
+	open, close = -1, -1
+	quoted := false
+	for i := 0; i < len(text); i++ {
+		switch {
+		case text[i] == '\'':
+			quoted = !quoted
+		case quoted:
+		case text[i] == '(':
+			stack = append(stack, i)
+		case text[i] == ')' && len(stack) > 0:
+			at := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if at < position && i >= position && at > open {
+				open, close = at, i
+			}
+		}
+	}
+	return open, close
 }
 
 func knownJobCondition(value string, row map[string]any) (bool, error) {
