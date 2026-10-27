@@ -214,6 +214,14 @@ func TestConditionsFollowTheRunnersNumberRules(t *testing.T) {
 		{`contains(fromJSON('[1]'), matrix.node)`, false},
 		{`contains(fromJSON('["lts"]'), matrix.number)`, false},
 		{`contains(fromJSON('["20.x"]'), matrix.node)`, false},
+		{"-1 == '0xffffffff'", true},
+		{"-1 == '0o37777777777'", true},
+		{"matrix.number == '0x100000000'", false},
+		{"fromJSON('[1]')", true},
+		{"fromJSON('[1, \"a\"]') && true", true},
+		{"!fromJSON('[]')", false},
+		{"!('bad' == 1)", true},
+		{"matrix.missing || 'fallback'", true},
 	} {
 		got, err := runtimeCondition(test.condition, row)
 		require.NoError(t, err, test.condition)

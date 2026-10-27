@@ -327,6 +327,8 @@ func (p *conditionParser) atom() (any, error) {
 	return nil, fmt.Errorf("unsupported operand %q", token)
 }
 
+// conditionTruthy follows the runner's EvaluationResult.IsFalsy: null, false,
+// 0, NaN and the empty string are falsy; arrays and objects are truthy.
 func conditionTruthy(value any) bool {
 	switch v := value.(type) {
 	case bool:
@@ -336,8 +338,8 @@ func conditionTruthy(value any) bool {
 	case int:
 		return v != 0
 	case float64:
-		return v != 0
-	case []string:
+		return v != 0 && !math.IsNaN(v)
+	case []string, []any, map[string]any:
 		return true
 	default:
 		return false
@@ -404,7 +406,7 @@ var (
 
 // conditionParseNumber follows the runner's ExpressionUtility.ParseNumber:
 // trimmed, empty is zero, decimals allow a sign, point and exponent (so
-// "022" is 22), 0x and 0o prefixes are 32-bit integers, then Infinity.
+// "022" is 22), 0x and 0o prefixes are signed 32-bit patterns, then Infinity.
 func conditionParseNumber(text string) float64 {
 	text = strings.TrimSpace(text)
 	switch {
@@ -414,12 +416,15 @@ func conditionParseNumber(text string) float64 {
 		value, _ := strconv.ParseFloat(text, 64) // out of range parses as ±Inf, as in .NET
 		return value
 	case conditionHex.MatchString(text):
-		if value, err := strconv.ParseInt(text[2:], 16, 32); err == nil {
-			return float64(value)
+		// Int32.TryParse with AllowHexSpecifier reads a 32-bit pattern, so
+		// 0xffffffff is -1.
+		if value, err := strconv.ParseUint(text[2:], 16, 32); err == nil {
+			return float64(int32(uint32(value)))
 		}
 	case conditionOctal.MatchString(text):
-		if value, err := strconv.ParseInt(text[2:], 8, 32); err == nil {
-			return float64(value)
+		// Convert.ToInt32(text, 8) also reads a 32-bit pattern.
+		if value, err := strconv.ParseUint(text[2:], 8, 32); err == nil {
+			return float64(int32(uint32(value)))
 		}
 	case text == "Infinity":
 		return math.Inf(1)
