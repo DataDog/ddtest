@@ -79,7 +79,7 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		}
 		// Dynamic shell syntax hides what a repository script runs or which
 		// bundle and Ruby options later steps inherit, so keep it visible.
-		if parseErr != nil && (strings.Contains(step.Run, "./") || strings.HasPrefix(strings.TrimSpace(step.Run), "bin/") || strings.Contains(step.Run, "BUNDLE_GEMFILE") || strings.Contains(step.Run, "RUBYOPT")) {
+		if parseErr != nil && (strings.Contains(step.Run, "./") || strings.HasPrefix(strings.TrimSpace(step.Run), "bin/") || strings.Contains(step.Run, "BUNDLE_GEMFILE") || strings.Contains(step.Run, "RUBYOPT") || strings.Contains(step.Run, "bundle exec")) {
 			return unresolvedCommand("Repository script or Ruby setup could not be resolved statically; validate it explicitly with --command: " + step.Run)
 		}
 		if parseErr == nil && slices.ContainsFunc(parts, rubyRepositoryScript) {
@@ -106,10 +106,13 @@ func rubyRepositoryScript(words []string) bool {
 	if len(words) > 2 && filepath.Base(words[0]) == "bundle" && words[1] == "exec" {
 		words = words[2:]
 	}
-	if len(words) > 1 && slices.Contains([]string{"sh", "bash", "ruby"}, words[0]) && !strings.HasPrefix(words[1], "-") {
+	// An interpreter's script argument is a repository file even without a
+	// directory, as in bash ci.sh.
+	interpreter := len(words) > 1 && slices.Contains([]string{"sh", "bash", "ruby"}, words[0]) && !strings.HasPrefix(words[1], "-")
+	if interpreter {
 		words = words[1:]
 	}
-	if len(words) == 0 || !strings.Contains(words[0], "/") || filepath.IsAbs(words[0]) || strings.HasPrefix(words[0], "~") {
+	if len(words) == 0 || !interpreter && !strings.Contains(words[0], "/") || filepath.IsAbs(words[0]) || strings.HasPrefix(words[0], "~") {
 		return false
 	}
 	return !slices.Contains(rubyMaintenanceBinstubs, strings.TrimSuffix(filepath.Base(words[0]), ".rb"))

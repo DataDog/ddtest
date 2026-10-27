@@ -11,7 +11,7 @@ import (
 )
 
 func TestRubyRepositoryScriptsStayInRequiredScope(t *testing.T) {
-	for _, command := range []string{"./ci/run", "sh ci/run.sh", "bash ./script/cibuild", "ruby ci/run.rb", "bundle exec ruby ci/run.rb", "bin/ci", "./bin/ci", `./ci/run "$(nproc)"`} {
+	for _, command := range []string{"./ci/run", "sh ci/run.sh", "bash ./script/cibuild", "ruby ci/run.rb", "bundle exec ruby ci/run.rb", "bin/ci", "./bin/ci", `./ci/run "$(nproc)"`, "ruby ci.rb", "bash ci.sh", "bundle exec $RUNNER"} {
 		root := rubyWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: bundle exec rspec spec/unit\n      - run: "+command+"\n")
 		scope, err := DiscoverValidationScope(root, "rspec")
 		require.NoError(t, err)
