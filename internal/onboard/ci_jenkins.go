@@ -295,7 +295,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 					child.stage = tokens[i+2].value
 				}
 			case "dir":
-				if i+2 < open && tokens[i+2].quote != "" {
+				if i+4 == open && tokens[i+1].value == "(" && tokens[i+2].quote != "" {
 					directory, e := literalCIPath(tokens[i+2].value)
 					if e != nil {
 						child.blocked = e.Error()
@@ -306,13 +306,30 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 					child.blocked = "Jenkins dir is computed"
 				}
 			case "withEnv":
-				for j := i + 1; j < open; j++ {
-					if tokens[j].quote != "" {
-						key, value, ok := strings.Cut(tokens[j].value, "=")
-						if ok {
-							child.env[key] = value
+				bindings := map[string]string{}
+				literal := i+3 < open && tokens[i+1].value == "(" && tokens[i+2].value == "[" && pairs[i+2] == open-2
+				if literal {
+					for j := i + 3; j < open-2; j++ {
+						text := tokens[j]
+						key, value, ok := strings.Cut(text.value, "=")
+						if text.quote == "" || strings.HasPrefix(text.quote, "\"") && strings.Contains(text.value, "$") || !ok || key == "" || strings.Contains(key, "+") {
+							literal = false
+							break
+						}
+						bindings[key] = value
+						if j+1 < open-2 {
+							j++
+							if tokens[j].value != "," {
+								literal = false
+								break
+							}
 						}
 					}
+				}
+				if !literal {
+					child.blocked = "Jenkins withEnv bindings are computed or use unresolved interpolation/expansion"
+				} else {
+					maps.Copy(child.env, bindings)
 				}
 			case "pipeline", "stages", "steps", "node", "script", "docker", "tools":
 			case "post", "success", "always", "failure", "cleanup":

@@ -38,6 +38,12 @@ Existing tracer setup must include its required hooks and a recognized install
 that includes the tracer under the install step's environment. Dry-run and
 lockfile-only commands do not establish installation. Unexpanded CircleCI
 matrices and conditional paths block shared-source edits until resolved.
+Native editing resolves known command variables for analysis while preserving
+their original source text, and honors literal inline instrumentation opt-outs.
+CircleCI invocation pre/post steps are included in discovery. Customized Node
+orb installs and GitLab `expand: false` definitions require explicit review;
+computed Jenkins directory/environment bindings and Dockerfile runtime changes
+cannot be silently treated as resolved configuration.
 
 GitLab local includes, inherited jobs, variables and literal matrices;
 CircleCI jobs, local reusable commands/executors and pinned official Node orb

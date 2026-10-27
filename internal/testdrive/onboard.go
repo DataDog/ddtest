@@ -140,7 +140,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			switch code {
 			case "scope_unresolved":
 				result.NextAction = "run_command"
-				result.NextCommand = []string{recoveryCommand[0], "onboard", "--framework", name, "--instructions"}
+				result.NextCommand = onboard.DDTestCommand("onboard", "--framework", name, "--instructions")
 				result.ResumeCommand, result.RequiredInput = nil, nil
 				result.Needs = "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it; do not rewrite CI or package scripts only so ddtest can parse them. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
 			case "setup_dependencies_missing", "project_dependencies_missing":

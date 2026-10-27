@@ -16,6 +16,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,6 +78,22 @@ func TestOnboardMissingScopePreservesFramework(t *testing.T) {
 	require.Equal(t, "needs_input", result.Status)
 	require.NotContains(t, result.NextCommand, "vitest")
 	require.NotContains(t, result.NextCommand, "vitest")
+}
+
+func TestOnboardMissingScopePreservesCIProvider(t *testing.T) {
+	t.Chdir(t.TempDir())
+	config := settings.Get()
+	before := config.CIProvider
+	config.CIProvider = "gitlab"
+	t.Cleanup(func() { config.CIProvider = before })
+	drive := &Testdrive{framework: &framework.Jest{}, language: "javascript", tracerVersion: "latest"}
+	var output bytes.Buffer
+	require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Apply: true, Format: "json"}), "scope_unresolved")
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Contains(t, result.NextCommand, "--ci-provider")
+	require.Contains(t, result.NextCommand, "gitlab")
+	require.Contains(t, result.NextCommand, "--instructions")
 }
 
 func TestCypressPlanRequiresTIA(t *testing.T) {

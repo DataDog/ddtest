@@ -16,6 +16,43 @@ import (
 	"github.com/kballard/go-shellquote"
 )
 
+func resolveNativeTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) (runtimeStep, commandResolution, error) {
+	resolved, _, err := resolveVariantStep(workflow, job, step, nil, framework)
+	probe := resolved
+	probe.ResolutionError = ""
+	r := resolveTestStep(root, workflow, job, probe, "javascript", framework)
+	if resolved.ResolutionError != "" {
+		r.Reason = resolved.ResolutionError
+	}
+	if err != nil {
+		r.Reason = err.Error()
+	}
+	return resolved, r, err
+}
+
+func nativeInlineControls(step runtimeStep, env map[string]string, provider string) (runtimeStep, map[string]string, error) {
+	if provider == "" || provider == "github" {
+		return step, env, nil
+	}
+	commands, err := staticCommands(step.Run)
+	if err != nil {
+		return step, env, nil // The command resolver reports unsupported syntax.
+	}
+	for _, words := range commands {
+		_, values, err := commandEnvironment(words)
+		if err != nil {
+			continue
+		}
+		if value, ok := values["DD_CIVISIBILITY_ENABLED"]; ok {
+			if len(commands) != 1 || value != "false" && value != "true" {
+				return step, env, fmt.Errorf("native inline instrumentation controls require one literal command and boolean value")
+			}
+			step.Env = mergeEnvironment(step.Env, map[string]string{"DD_CIVISIBILITY_ENABLED": value})
+		}
+	}
+	return step, env, nil
+}
+
 func compareNativeNode(node, requirement string) (string, string) {
 	if numericNode.MatchString(node) && (strings.Count(node, ".") != 2 || strings.ContainsAny(node, "x*")) {
 		return StatusInconclusive, fmt.Sprintf("CI Node selector %q is unresolved; supply the actual runtime version before checking compatibility.", node)
@@ -70,14 +107,13 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 			continue
 		}
 		for i, step := range job.Steps {
-			resolved, _, envErr := resolveVariantStep(w, job, step, nil, framework)
-			r := resolveTestStep(root, w, job, resolved, "javascript", framework)
+			resolved, r, envErr := resolveNativeTestStep(root, w, job, step, framework)
 			if !r.Matched {
 				continue
 			}
 			node, nodeSource := nativeTestRuntime(w, job, i, r)
 			finding := RuntimeFinding{Workflow: w.Path, Job: name, Step: stepNumber(step, i), Source: step.Source, Command: step.Run, Resolution: r.Evidence, Node: node, NodeSource: nodeSource, Status: StatusInconclusive}
-			if mochaInstrumentationDisabled(w, job, step) {
+			if mochaInstrumentationDisabled(w, job, resolved) {
 				finding.Status, finding.Code, finding.Reason = StatusExcluded, CodeExcludedRuntime, "DD_CIVISIBILITY_ENABLED=false leaves this CI entry uninstrumented; its runtime was not validated with the tracer."
 				findings = append(findings, finding)
 				continue
@@ -122,8 +158,13 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 				findings = append(findings, finding)
 				continue
 			}
-			if setupNeedsESM(root, framework, w, job, step) && !step.Native.ESM {
+			if setupNeedsESM(root, framework, w, job, resolved) && !step.Native.ESM {
 				finding.Code, finding.Reason = CodeMissingInitialization, "ESM tests require --import dd-trace/register.js alongside the CI preload"
+				findings = append(findings, finding)
+				continue
+			}
+			if framework == "cucumber" && !step.Native.Manual && slices.ContainsFunc(r.Tests, func(test TestCommand) bool { return !test.cucumberScoped }) {
+				finding.Code, finding.Reason = CodeUnverifiedInitialization, "Selected Cucumber leaf does not consume scoped DD_CUCUMBER_NODE_OPTIONS while preserving existing NODE_OPTIONS"
 				findings = append(findings, finding)
 				continue
 			}

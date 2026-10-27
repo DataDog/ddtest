@@ -30,8 +30,9 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 		w.Unresolved = append(w.Unresolved, path+": dynamic continuation configuration must be supplied before its test jobs can be discovered")
 	}
 	type invocation struct {
-		name, label string
-		parameters  map[string]string
+		name, label   string
+		parameters    map[string]string
+		before, after *yaml.Node
 	}
 	var invocations []invocation
 	for _, workflowName := range slices.Sorted(maps.Keys(ciMembers(fields["workflows"]))) {
@@ -44,10 +45,14 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 			name := ciScalar(entry)
 			parameters := map[string]string{}
 			label := ""
+			var before, after *yaml.Node
 			if entry.Kind == yaml.MappingNode {
 				for key, node := range ciMembers(entry) {
 					name = key
 					parameters = ciEnvironment(node)
+					before, after = ciMembers(node)["pre-steps"], ciMembers(node)["post-steps"]
+					delete(parameters, "pre-steps")
+					delete(parameters, "post-steps")
 					if ciMembers(node)["matrix"] != nil {
 						w.Unresolved = append(w.Unresolved, path+" / "+workflowName+" / "+key+": CircleCI matrix requires expanded job parameters")
 					}
@@ -57,19 +62,22 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 			if label == "" {
 				label = name
 			}
-			invocations = append(invocations, invocation{name, workflowName + " / " + label + " [" + strconv.Itoa(index+1) + "]", parameters})
+			invocations = append(invocations, invocation{name: name, label: workflowName + " / " + label + " [" + strconv.Itoa(index+1) + "]", parameters: parameters, before: before, after: after})
 		}
 	}
 	if len(invocations) == 0 {
 		for _, name := range slices.Sorted(maps.Keys(jobs)) {
-			invocations = append(invocations, invocation{name, name, nil})
+			invocations = append(invocations, invocation{name: name, label: name})
 		}
 	}
 	for _, inv := range invocations {
 		definition, ok := jobs[inv.name]
 		if !ok {
 			w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": external orb job "+inv.name+" requires its pinned expanded configuration")
-			continue
+			if inv.before == nil && inv.after == nil {
+				continue
+			}
+			definition = &yaml.Node{Kind: yaml.MappingNode}
 		}
 		jobFields := ciMembers(definition)
 		params := map[string]string{}
@@ -121,6 +129,9 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 			return literalCIPath(value)
 		}
 		job := runtimeJob{}
+		if !ok {
+			job.Gaps = append(job.Gaps, "CircleCI external orb job requires expanded setup before validation or editing")
+		}
 		if _, matrix := inv.parameters["matrix"]; matrix {
 			job.Gaps = append(job.Gaps, "CircleCI matrix requires expanded job parameters before editing its shared source")
 		}
@@ -212,6 +223,11 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 							w.Unresolved = append(w.Unresolved, path+": "+key+" is not bound to an exact official circleci/node orb")
 							continue
 						}
+						installOptions := ciMembers(value)
+						if installOptions["override-ci-command"] != nil || installOptions["app-dir"] != nil {
+							job.Gaps = append(job.Gaps, "CircleCI node/install-packages command/directory overrides require resolved installation setup")
+							continue
+						}
 						manager := ciScalar(ciMembers(value)["pkg-manager"])
 						command := map[string]string{"npm": "npm ci", "yarn": "yarn install --frozen-lockfile", "pnpm": "pnpm install --frozen-lockfile"}[manager]
 						if command == "" {
@@ -239,7 +255,13 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 				}
 			}
 		}
-		expand(jobFields["steps"], 0)
+		for _, list := range []*yaml.Node{inv.before, jobFields["steps"], inv.after} {
+			if list != nil && list.Kind != yaml.SequenceNode {
+				job.Gaps = append(job.Gaps, "CircleCI invocation steps require a literal step list")
+				continue
+			}
+			expand(list, 0)
+		}
 		if strings.Contains(fmt.Sprint(params), "<<") {
 			w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": pipeline/matrix parameters require explicit values")
 		}

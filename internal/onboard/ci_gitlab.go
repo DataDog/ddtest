@@ -101,12 +101,19 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 				return nil, err
 			}
 			maps.Copy(merged, base)
+			if gitlabNull(base["variables"]) {
+				variables = nil
+				continue
+			}
 			if variables == nil {
 				variables = map[string]*yaml.Node{}
 			}
 			maps.Copy(variables, ciMembers(base["variables"]))
 		}
 		maps.Copy(merged, own)
+		if gitlabNull(own["variables"]) {
+			variables = nil
+		}
 		if len(variables) > 0 {
 			maps.Copy(variables, ciMembers(own["variables"]))
 			combined := &yaml.Node{Kind: yaml.MappingNode}
@@ -161,6 +168,20 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 			image = ciScalar(ciMembers(fields["image"])["name"])
 		}
 		job := runtimeJob{Env: providerEnvironment("gitlab", env), Node: ciImageNode(image, env), NodeSource: "GitLab image " + image}
+		variableDefinitions := ciMembers(definitions["variables"])
+		for key := range variableDefinitions {
+			if _, inherited := inheritedEnv[key]; !inherited {
+				delete(variableDefinitions, key)
+			}
+		}
+		maps.Copy(variableDefinitions, ciMembers(fields["variables"]))
+		var expansionGaps []string
+		for _, key := range slices.Sorted(maps.Keys(variableDefinitions)) {
+			if strings.EqualFold(ciScalar(ciMembers(variableDefinitions[key])["expand"]), "false") {
+				expansionGaps = append(expansionGaps, "GitLab variable "+key+" uses expand: false; supply explicitly resolved variable definitions before validation")
+			}
+		}
+		job.Gaps = append(job.Gaps, expansionGaps...)
 		for _, rules := range []*yaml.Node{fields["rules"], ciMembers(definitions["workflow"])["rules"]} {
 			if rules == nil {
 				continue
@@ -187,6 +208,11 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 				file = path
 			}
 			job.Steps = append(job.Steps, nativeSteps(file, node, "gitlab")...)
+		}
+		if len(expansionGaps) > 0 {
+			for i := range job.Steps {
+				job.Steps[i].ResolutionError = strings.Join(append([]string{job.Steps[i].ResolutionError}, expansionGaps...), "; ")
+			}
 		}
 		if fields["services"] != nil {
 			w.Unresolved = append(w.Unresolved, path+" / "+name+": GitLab service containers require explicit local service facts")
@@ -227,4 +253,11 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 		}
 	}
 	return w, nil
+}
+
+func gitlabNull(node *yaml.Node) bool {
+	for node != nil && node.Kind == yaml.AliasNode {
+		node = node.Alias
+	}
+	return node != nil && node.Tag == "!!null"
 }

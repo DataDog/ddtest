@@ -94,7 +94,8 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 				continue
 			}
 			for i, step := range job.Steps {
-				r := resolveTestStep(root, workflow, job, step, "javascript", framework)
+				resolved, r, _ := resolveNativeTestStep(root, workflow, job, step, framework)
+				step = resolved
 				if !r.Matched {
 					continue
 				}
@@ -116,7 +117,7 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 					return nil, &SetupGap{location, strings.Join(job.Gaps, "; ")}
 				}
 				if r.Reason != "" || r.OtherFramework {
-					return nil, &SetupGap{location, "The test command is unresolved or also runs another framework; preserve it and supply scoped initialization"}
+					return nil, &SetupGap{location, "The test command is unresolved or also runs another framework; preserve it and supply scoped initialization: " + r.Reason}
 				}
 				if requirement != "" {
 					status, reason := compareNativeNode(node, requirement)
@@ -155,6 +156,26 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 				covered, err := setupMochaCoverage(root, filepath.Join(root, stepDirectory(workflow, job, step)), framework, original)
 				if err != nil {
 					return nil, err
+				}
+				if framework == "mocha" && covered == original && slices.ContainsFunc(r.Tests, func(test TestCommand) bool { return !test.usesNYC && !test.mochaIstanbul }) {
+					// Known variables can identify a test without becoming literal
+					// source. Insert coverage at the original executable position.
+					file, ok := parseCIShell(original)
+					if !ok || len(file.Stmts) != 1 || len(r.Tests) != 1 {
+						return nil, &SetupGap{location, "Variable-based Mocha commands require explicit coverage placement for compound invocations"}
+					}
+					call, ok := file.Stmts[0].Cmd.(*syntax.CallExpr)
+					if !ok || len(call.Args) == 0 {
+						return nil, &SetupGap{location, "Mocha coverage needs a literal command position"}
+					}
+					if r.Tests[0].mochaESM {
+						return nil, &SetupGap{location, mochaESMCoverageGap}
+					}
+					if !declaresNYC(root) && !declaresNYC(filepath.Join(root, stepDirectory(workflow, job, step))) {
+						return nil, setupDependencyGap(root, []string{"nyc"})
+					}
+					offset := int(call.Args[0].Pos().Offset())
+					covered = original[:offset] + "npx --no-install nyc -- " + original[offset:]
 				}
 				coverageAdded = coverageAdded || covered != original
 				if native.Tracer != "" && covered == original {
@@ -358,7 +379,8 @@ func sharedNativeSource(root string, workflows []ciWorkflow, framework, requirem
 				if !same {
 					continue
 				}
-				resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
+				resolved, resolution, _ := resolveNativeTestStep(root, workflow, job, step, framework)
+				step = resolved
 				node, nodeSource := nativeTestRuntime(workflow, job, i, resolution)
 				if strings.HasPrefix(nodeSource, "explicit Node executable ") {
 					return true

@@ -121,6 +121,7 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 									continue
 								}
 								from := ""
+								changedRuntime := false
 								for _, line := range strings.Split(string(contents), "\n") {
 									words := strings.Fields(line)
 									if len(words) > 1 && strings.EqualFold(words[0], "FROM") {
@@ -129,8 +130,19 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 										}
 										from = words[1]
 									}
+									if len(words) > 1 && strings.EqualFold(words[0], "RUN") {
+										command := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), words[0]))
+										changedRuntime = changedRuntime || changesNodeRuntime(command) || strings.HasSuffix(command, "\\") || strings.HasPrefix(command, "[")
+									}
+									if len(words) > 1 && strings.EqualFold(words[0], "ENV") && (strings.Contains(" "+strings.Join(words[1:], " "), " PATH=") || words[1] == "PATH") {
+										changedRuntime = true
+									}
 								}
 								job.Node, job.NodeSource = ciImageNode(from, job.Env), file+" / FROM "+from
+								if changedRuntime {
+									job.Node = ""
+									job.Gaps = append(job.Gaps, file+": Dockerfile changes or obscures the Node runtime after FROM; supply its actual runtime")
+								}
 							}
 							job.Env = mergeEnvironment(job.Env, ciEnvironment(serviceFields["environment"]))
 							if serviceFields["volumes"] != nil || serviceFields["depends_on"] != nil || serviceFields["entrypoint"] != nil {
@@ -144,7 +156,7 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 					}
 				}
 			}
-			if job.Node == "" && fields["image"] != nil {
+			if job.Node == "" && job.NodeSource == "" && fields["image"] != nil {
 				image := ciScalar(fields["image"])
 				job.Node, job.NodeSource = ciImageNode(image, job.Env), "Buildkite image "+image
 			}

@@ -121,7 +121,7 @@ func nativePackageInstalledBefore(root, provider string, job runtimeJob, index i
 				omitsDev = omitsDev || slices.Contains([]string{"--prod", "--prod=true", "--production", "--production=true", "--only=production", "--omit=dev"}, word) ||
 					(word == "--omit" && i+1 < len(words) && words[i+1] == "dev")
 				flag, value, _ := strings.Cut(word, "=")
-				noInstall = noInstall || slices.Contains([]string{"--package-lock-only", "--lockfile-only", "--dry-run"}, flag) && value != "false"
+				noInstall = noInstall || flag == "--prefix" || slices.Contains([]string{"--package-lock-only", "--lockfile-only", "--dry-run", "-g", "--global"}, flag) && value != "false"
 			}
 			if development && omitsDev || noInstall || slices.Contains(words, "--prefix") || slices.Contains(words, "-g") {
 				continue
