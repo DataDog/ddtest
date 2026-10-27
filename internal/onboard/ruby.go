@@ -72,6 +72,11 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		if strings.Contains(step.Run, "test") || strings.Contains(step.Run, "spec") {
 			return unresolvedCommand("Ruby test wrapper was not resolved; validate its actual entry point with --command: " + step.Run)
 		}
+		// An expression such as bundle exec ${{ matrix.command }} may select the
+		// tests, so it stays in the required scope.
+		if workflowExpression.MatchString(step.Run) {
+			return unresolvedCommand("Ruby command expression was not resolved; validate its actual entry point with --command: " + step.Run)
+		}
 		if strings.Contains(step.Run, "bundle exec") || strings.Contains(step.Run, "bin/") {
 			return commandResolution{Review: true, Reason: "Ruby task or wrapper was not identified as " + framework + "; inspect it separately if it runs tests."}
 		}

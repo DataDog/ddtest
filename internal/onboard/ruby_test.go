@@ -53,7 +53,7 @@ func TestRubyScopeKeepsFrameworkCommandsAndMatrixEnvironment(t *testing.T) {
 }
 
 func TestRubyScopeDoesNotExecuteUnresolvedSetupOrDefaultRake(t *testing.T) {
-	for _, command := range []string{"bundle exec rake", "bundle exec rake custom", "bundle exec rspec && echo setup", "bundle exec rspec $(find spec -name '*.rb')"} {
+	for _, command := range []string{"bundle exec rake", "bundle exec rake custom", "bundle exec rspec && echo setup", "bundle exec rspec $(find spec -name '*.rb')", "bundle exec ${{ matrix.command }}"} {
 		resolution := resolveRubyStep(t.TempDir(), ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command}, "rspec")
 		require.NotEmpty(t, resolution.Reason, command)
 		require.Empty(t, resolution.Tests, command)
@@ -138,6 +138,13 @@ func TestRubyBootstrapOverridesRemainVisible(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "bundle exec rspec", resolved.Run)
 	require.Equal(t, "-W0", env["RUBYOPT"])
+	// Inherited workflow or job options are not dropped silently.
+	for _, job := range []runtimeJob{{Env: map[string]string{"RUBYOPT": "-r./ci/boot.rb"}}} {
+		_, _, err = resolveVariantStep(ciWorkflow{}, job, runtimeStep{Run: "bundle exec rspec", Env: map[string]string{"RUBYOPT": "${{ env.RUBYOPT }} -W0"}}, nil, "rspec")
+		require.ErrorContains(t, err, "workflow or job Ruby options")
+	}
+	_, _, err = resolveVariantStep(ciWorkflow{Env: map[string]string{"RUBYOPT": "-r./ci/boot.rb"}}, runtimeJob{}, runtimeStep{Run: "bundle exec rspec", Env: map[string]string{"RUBYOPT": "${{ env.RUBYOPT }} -W0"}}, nil, "rspec")
+	require.ErrorContains(t, err, "workflow or job Ruby options")
 	require.Empty(t, rubyBootstrapProblem(ciWorkflow{}, runtimeJob{}, runtimeStep{Env: map[string]string{"DD_TRACE_MINITEST_ENABLED": "false"}}, nil, "rspec"))
 	require.NotEmpty(t, rubyBootstrapProblem(ciWorkflow{}, runtimeJob{}, runtimeStep{Env: map[string]string{"DD_TRACE_RSPEC_ENABLED": "false"}}, nil, "rspec"))
 }

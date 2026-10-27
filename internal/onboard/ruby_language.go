@@ -63,7 +63,11 @@ func (rubyDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step runt
 		return value, true, nil
 	case "RUBYOPT":
 		// Local validation owns the tracer preload; preserve companion Ruby options.
-		value = strings.NewReplacer("${{ env.RUBYOPT }}", "", "${{env.RUBYOPT}}", "").Replace(value)
+		inherited := strings.NewReplacer("${{ env.RUBYOPT }}", "", "${{env.RUBYOPT}}", "").Replace(value)
+		if inherited != value && (job.Env["RUBYOPT"] != "" || workflow.Env["RUBYOPT"] != "") {
+			return "", false, fmt.Errorf("RUBYOPT extends workflow or job Ruby options; validate with those options explicitly")
+		}
+		value = inherited
 		return strings.TrimSpace(value), true, nil
 	}
 	return value, false, nil
