@@ -65,7 +65,7 @@ func (t *Testdrive) runMaven(ctx context.Context, output io.Writer) (runErr erro
 	if err := maven.ValidateTestdriveCommand(t.repositoryRoot, t.command, t.args); err != nil {
 		return err
 	}
-	projects, err := maven.Projects(t.repositoryRoot)
+	projects, err := maven.TestdriveProjects(t.repositoryRoot, t.command, t.args)
 	if err != nil {
 		return err
 	}
@@ -200,7 +200,7 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 	if err := maven.ValidateTestdriveCommand(workspace, t.command, t.args); err != nil {
 		return run, err
 	}
-	projects, err := maven.Projects(workspace)
+	projects, err := maven.TestdriveProjects(workspace, t.command, t.args)
 	if err != nil {
 		return run, err
 	}
@@ -245,6 +245,7 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 		return run, err
 	}
 	maps.Copy(env, jvm)
+	env["MAVEN_SKIP_RC"] = "true"
 	if agent != "" && t.framework.Name() == "scalatest" {
 		// Maven's agent auto-configuration targets Surefire/Failsafe/Tycho,
 		// not scalatest-maven-plugin's fork. Let every JVM inherit the agent.
@@ -293,7 +294,7 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 		run.ResultError = err.Error()
 	}
 	for _, test := range tests {
-		run.Tests = append(run.Tests, jestTest{File: test.Module + " / " + test.Suite, Name: test.Name, Status: test.Status, Failure: test.Failure})
+		run.Tests = append(run.Tests, jestTest{File: test.Module + " / " + test.Suite, Name: test.Name, MavenParameters: test.Parameters, MavenAmbiguous: test.Ambiguous, Status: test.Status, Failure: test.Failure})
 	}
 	run.mavenModules = mavenModuleDirectories(projects)
 	if probe == nil {
@@ -330,6 +331,9 @@ func compareMavenNative(baseline, reporting validationRun) verdict {
 	}
 	if baseline.ResultError != "" || executedTests(baseline) == 0 {
 		return verdict{Status: "inconclusive", Code: "native_results_unavailable", Reason: reportText("The baseline needs fresh native results for executed tests. " + baseline.ResultError)}
+	}
+	if ambiguousMavenInvocations(baseline) {
+		return verdict{Status: "inconclusive", Code: "native_identity_ambiguous", Reason: "Repeated native TestNG invocations have indistinguishable identities and parameters; outcome totals cannot establish compatibility."}
 	}
 	if baseline.Facts.TestEventCount != 0 {
 		return verdict{Status: "inconclusive", Code: "baseline_instrumented", Reason: "The baseline emitted test events; disable existing instrumentation before comparison."}
@@ -373,18 +377,30 @@ func mavenDifferences(expected, observed map[string]int, left, right string) ver
 	return result
 }
 
+func ambiguousMavenInvocations(run validationRun) bool {
+	return slices.ContainsFunc(run.Tests, func(test jestTest) bool { return test.MavenAmbiguous })
+}
+
 func verifyMavenTelemetry(run validationRun) verdict {
+	if ambiguousMavenInvocations(run) {
+		return verdict{Status: "inconclusive", Code: "native_identity_ambiguous", Reason: "Repeated native TestNG invocations have indistinguishable identities and parameters; telemetry cannot reconcile them uniquely."}
+	}
 	if len(run.Facts.ConfigurationErrors) > 0 {
 		return verdict{Status: "inconclusive", Code: "java_configuration_error", Reason: reportText("Java tracer configuration errors: " + strings.Join(run.Facts.ConfigurationErrors, "; "))}
 	}
 	expected, observed := map[string]int{}, map[string]int{}
-	identity := func(module, suite, name, status string) string {
-		return fmt.Sprintf("module=%q suite=%q test=%q status=%q", module, suite, name, status)
+	identity := func(module, suite, name, parameters, status string) string {
+		return fmt.Sprintf("module=%q suite=%q test=%q parameters=%q status=%q", module, suite, name, parameters, status)
 	}
+	parameterized := map[[3]string]bool{}
 	for _, test := range run.Tests {
 		module, suite, _ := strings.Cut(test.File, " / ")
 		status := map[string]string{"passed": "pass", "failed": "fail", "skipped": "skip"}[test.Status]
-		expected[identity(module, suite, mavenTestName(test.Name), status)]++
+		name := mavenTestName(test.Name)
+		if test.MavenParameters != "" {
+			parameterized[[3]string{module, suite, name}] = true
+		}
+		expected[identity(module, suite, name, test.MavenParameters, status)]++
 	}
 	missingNames := 0
 	for _, test := range run.Facts.Tests {
@@ -410,7 +426,18 @@ func verifyMavenTelemetry(run validationRun) verdict {
 			if test.NameMissing || test.Name == "" {
 				missingNames++
 			}
-			observed[identity(module, suite, mavenEventTestName(test), attempt.Status)]++
+			name := mavenEventTestName(test)
+			parameters := ""
+			if parameterized[[3]string{module, suite, name}] || run.framework == "testng" {
+				var parsed struct {
+					Arguments map[string]string `json:"arguments"`
+				}
+				if test.Parameters != "" && json.Unmarshal([]byte(test.Parameters), &parsed) != nil {
+					return verdict{Status: "inconclusive", Code: "java_identity_mismatch", Reason: "TestNG telemetry parameter identities cannot be decoded."}
+				}
+				parameters = maven.TestNGParameters(parsed.Arguments)
+			}
+			observed[identity(module, suite, name, parameters, attempt.Status)]++
 		}
 	}
 	difference := mavenDifferences(expected, observed, "native", "telemetry")
@@ -445,7 +472,7 @@ func mavenModuleDirectories(projects []maven.Project) map[string]string {
 	return modules
 }
 
-var mavenParameterizedName = regexp.MustCompile(`^([\pL_$][\pL\pN_$]*)\([^)]*\)(\[[0-9]+\])$`)
+var mavenParameterizedName = regexp.MustCompile(`^([\pL_$][\pL\pN_$]*)\([^)]*\)(\[[0-9]+\])?$`)
 var mavenInvocationIndex = regexp.MustCompile(`^\[[0-9]+\]`)
 
 func mavenTestName(name string) string {
@@ -471,4 +498,11 @@ func mavenEventTestName(test intake.Test) string {
 		}
 	}
 	return name
+}
+
+func mavenParameterLabel(parameters string) string {
+	if parameters == "" {
+		return ""
+	}
+	return " parameters=" + parameters
 }

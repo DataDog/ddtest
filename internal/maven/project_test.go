@@ -134,3 +134,65 @@ func TestProjectsRejectSymlinkedRootAndModulePOMs(t *testing.T) {
 		})
 	}
 }
+
+func TestProjectsAllowUnavailableProfileCandidates(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project><profiles><profile><id>optional</id><modules><module>missing</module><module>empty</module></modules></profile></profiles></project>`), 0600))
+	require.NoError(t, os.Mkdir(filepath.Join(root, "empty"), 0700))
+	projects, err := Projects(root)
+	require.NoError(t, err)
+	require.Len(t, projects, 1)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project><modules><module>missing</module></modules></project>`), 0600))
+	_, err = Projects(root)
+	require.Error(t, err, "unconditional modules remain required")
+}
+
+func TestValidationRejectsImplicitMavenArguments(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project/>`), 0600))
+	for _, args := range []string{"deploy", "-f /outside/pom.xml", "-B -Pci"} {
+		t.Run(args, func(t *testing.T) {
+			t.Setenv("MAVEN_ARGS", args)
+			require.ErrorContains(t, ValidateTestdriveCommand(root, "mvn", []string{"test"}), "MAVEN_ARGS")
+		})
+	}
+	t.Setenv("MAVEN_ARGS", "")
+	require.NoError(t, os.Mkdir(filepath.Join(root, ".mvn"), 0700))
+	config := filepath.Join(root, ".mvn/maven.config")
+	for _, args := range []string{"-f\n/outside/pom.xml", "-f../pom.xml", "-B\n-Pci"} {
+		require.NoError(t, os.WriteFile(config, []byte(args), 0600))
+		require.ErrorContains(t, ValidateTestdriveCommand(root, "mvn", []string{"test"}), "maven.config")
+	}
+	require.NoError(t, os.WriteFile(config, []byte("# comment only\n\n"), 0600))
+	require.NoError(t, ValidateTestdriveCommand(root, "mvn", []string{"test"}))
+	// A selected subproject can inherit configuration from its own .mvn directory.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "child/.mvn"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "child/pom.xml"), []byte(`<project/>`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "child/.mvn/maven.config"), []byte("-f\n/outside/pom.xml"), 0600))
+	require.ErrorContains(t, ValidateTestdriveCommand(root, "mvn", []string{"-f", "child", "test"}), "maven.config")
+}
+
+func TestValidationChecksPOMAliasAndInheritedConfiguration(t *testing.T) {
+	root := t.TempDir()
+	for _, directory := range []string{"real", "aliases/.mvn"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, directory), 0700))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "real/pom.xml"), []byte(`<project/>`), 0600))
+	require.NoError(t, os.Symlink("../real/pom.xml", filepath.Join(root, "aliases/pom.xml")))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "aliases/.mvn/maven.config"), []byte("--file=/outside/pom.xml"), 0600))
+	require.ErrorContains(t, ValidateTestdriveCommand(root, "mvn", []string{"-f", "aliases/pom.xml", "test"}), "maven.config")
+	require.NoError(t, os.Remove(filepath.Join(root, "aliases/.mvn/maven.config")))
+	for _, key := range []string{"MAVEN_BASEDIR", "MAVEN_PROJECTBASEDIR"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "/outside")
+			require.ErrorContains(t, ValidateTestdriveCommand(root, "mvn", []string{"-f", "real", "test"}), key)
+		})
+	}
+	parent := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(parent, ".mvn"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(parent, ".mvn/maven.config"), []byte("--file=/outside/pom.xml"), 0600))
+	child := filepath.Join(parent, "child")
+	require.NoError(t, os.Mkdir(child, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(child, "pom.xml"), []byte(`<project/>`), 0600))
+	require.ErrorContains(t, ValidateTestdriveCommand(child, "mvn", []string{"test"}), "maven.config")
+}

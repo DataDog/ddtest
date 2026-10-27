@@ -372,3 +372,87 @@ func TestMavenFeaturePoliciesRequireEveryObservedControl(t *testing.T) {
 		})
 	}
 }
+
+func TestMavenTelemetryReconcilesInjectedJUnit5Parameters(t *testing.T) {
+	run := validationRun{mavenModules: map[string]string{"module": "."}, Tests: []jestTest{{File: ". / ExampleTest", Name: "check(TestInfo)", Status: "passed"}}, Facts: intake.Facts{Tests: []intake.Test{{Module: "module", Suite: "ExampleTest", Name: "check", Attempts: []intake.TestRun{{Status: "pass"}}}}}}
+	require.Equal(t, "compatible", verifyMavenTelemetry(run).Status)
+	require.Equal(t, "parameters[2]", mavenTestName("parameters(String)[2]"), "injection normalization must preserve invocation index")
+}
+
+func TestMavenRunUsesTheSelectedReactor(t *testing.T) {
+	for _, pom := range []string{"selected/build.xml", "selected"} {
+		t.Run(pom, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project/>`), 0600))
+			require.NoError(t, os.MkdirAll(filepath.Join(root, "selected/child/target/surefire-reports"), 0700))
+			filename := "build.xml"
+			if pom == "selected" {
+				filename = "pom.xml"
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(root, "selected", filename), []byte(`<project><artifactId>selected</artifactId><modules><module>child</module></modules></project>`), 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "selected/child/pom.xml"), []byte(`<project><artifactId>child</artifactId></project>`), 0600))
+			stale := filepath.Join(root, "selected/child/target/surefire-reports/TEST-stale.xml")
+			require.NoError(t, os.WriteFile(stale, []byte(`<bad-xml`), 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "mvnw"), []byte(`#!/bin/sh
+set -eu
+test ! -f selected/child/target/surefire-reports/TEST-stale.xml
+mkdir -p selected/child/target/surefire-reports
+printf '%s' '<testsuite><testcase classname="ChildTest" name="works"/></testsuite>' > selected/child/target/surefire-reports/TEST-Child.xml
+`), 0700))
+			session, err := NewSession()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, session.Close()) })
+			drive := &Testdrive{repositoryRoot: root, framework: framework.NewMaven("junit5", nil), command: "./mvnw", args: []string{"-f", pom, "test"}, session: session, startIntake: func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{url: "http://127.0.0.1:1"}, nil }}
+			run, err := drive.mavenRun(t.Context(), io.Discard, "baseline", "", intake.Scenario{}, "", nil)
+			require.NoError(t, err)
+			require.Zero(t, run.ExitCode, run.commandOutput)
+			require.Empty(t, run.ResultError)
+			require.Len(t, run.Tests, 1)
+			require.Equal(t, "selected/child / ChildTest", run.Tests[0].File)
+			require.Equal(t, "selected/child", run.mavenModules["child"])
+			require.FileExists(t, stale, "original reports must remain untouched")
+			require.NoDirExists(t, run.temporaryRoot)
+			// The same selected reactor must be checked before Maven follows a module symlink.
+			outside := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(outside, "pom.xml"), []byte(`<project/>`), 0600))
+			require.NoError(t, os.Symlink(outside, filepath.Join(root, "selected/external")))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "selected", filename), []byte(`<project><modules><module>external</module></modules></project>`), 0600))
+			_, err = drive.mavenRun(t.Context(), io.Discard, "baseline", "", intake.Scenario{}, "", nil)
+			require.ErrorContains(t, err, "POM must stay inside")
+		})
+	}
+}
+
+func TestMavenTestNGCannotSwapProviderOutcomes(t *testing.T) {
+	baseline := validationRun{framework: "testng", ExitCode: 1, Tests: []jestTest{
+		{File: ". / ExampleTest", Name: "row", MavenParameters: `{"0":"A"}`, Status: "passed"},
+		{File: ". / ExampleTest", Name: "row", MavenParameters: `{"0":"B"}`, Status: "failed", Failure: "same assertion"},
+	}}
+	reporting := baseline
+	reporting.mavenModules = map[string]string{"module": "."}
+	reporting.Facts = intake.Facts{TestEventCount: 2, Tests: []intake.Test{
+		{Module: "module", Suite: "ExampleTest", Name: "row", Parameters: `{"arguments":{"0":"A"}}`, Attempts: []intake.TestRun{{Status: "pass"}}},
+		{Module: "module", Suite: "ExampleTest", Name: "row", Parameters: `{"arguments":{"0":"B"}}`, Attempts: []intake.TestRun{{Status: "fail"}}},
+	}}
+	require.Equal(t, "compatible", compareMaven(baseline, reporting).Status)
+	reporting.Tests = []jestTest{
+		{File: ". / ExampleTest", Name: "row", MavenParameters: `{"0":"B"}`, Status: "passed"},
+		{File: ". / ExampleTest", Name: "row", MavenParameters: `{"0":"A"}`, Status: "failed", Failure: "same assertion"},
+	}
+	require.Equal(t, "suspected regression", compareMavenNative(baseline, reporting).Status)
+	reporting.Tests = baseline.Tests
+	reporting.Facts.Tests[0].Parameters = `{"arguments":{"0":"B"}}`
+	reporting.Facts.Tests[1].Parameters = `{"arguments":{"0":"A"}}`
+	require.Equal(t, "inconclusive", verifyMavenTelemetry(reporting).Status, "equal outcome totals cannot hide exchanged data-provider arguments")
+	reporting.Facts.Tests[0].Parameters = `{"arguments":`
+	require.Equal(t, "inconclusive", verifyMavenTelemetry(reporting).Status)
+}
+
+func TestMavenAmbiguousTestNGInvocationsCannotCertifyComparisons(t *testing.T) {
+	run := validationRun{framework: "testng", Tests: []jestTest{
+		{File: ". / ExampleTest", Name: "row", Status: "passed"},
+		{File: ". / ExampleTest", Name: "row", Status: "failed", MavenAmbiguous: true},
+	}}
+	require.Equal(t, "native_identity_ambiguous", compareMavenNative(run, run).Code)
+	require.Equal(t, "native_identity_ambiguous", verifyMavenTelemetry(run).Code)
+}

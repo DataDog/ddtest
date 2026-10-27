@@ -261,13 +261,22 @@ to supported JavaScript frameworks.
 Use the project's actual Maven command, profiles and modules. The default is
 `./mvnw test`, or `mvn test` without a wrapper. Framework selection labels the
 validation and chooses probes; it does not filter a mixed-framework Maven suite.
+Alternate `-f`/`--file` POMs must resolve inside the repository; their reactor
+controls cleanup, report collection and probes. Missing inactive-profile modules
+are optional candidates. Local testdrive requires explicit Maven arguments:
+unset `MAVEN_ARGS`, `MAVEN_BASEDIR` and `MAVEN_PROJECTBASEDIR`; move non-comment `.mvn/maven.config` options into
+`--command`, disabling that file in the disposable input. Maven startup RC files
+are disabled during validation.
+
 The adapter compares fresh native `TEST-*.xml` results under `target` (TestNG
 uses its method-preserving XML when consistent with Surefire; Karate uses its
 native scenario JSON) against a
 reporting-only Java-agent run, including identities, outcomes, exception
 type/message and exit code, then reconciles test events. Full stack traces and
 command output remain in the HTML report. Existing failures are acceptable when
-both executions agree.
+both executions agree. TestNG data-provider argument values remain part of each
+invocation identity; repeated invocations with indistinguishable native identities
+remain inconclusive.
 
 The JSON separates `native_comparison` from `telemetry_comparison`, with stable
 reason codes and at most ten identity/outcome differences. Empty tracer test

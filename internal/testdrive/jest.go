@@ -23,6 +23,8 @@ import (
 )
 
 type jestTest struct {
+	MavenAmbiguous        bool                `json:"maven_ambiguous,omitempty"`
+	MavenParameters       string              `json:"maven_parameters,omitempty"`
 	WebdriverIOCapability string              `json:"webdriverio_capability,omitempty"`
 	WebdriverIOTestID     string              `json:"webdriverio_test_id,omitempty"`
 	WebdriverIOBrowser    string              `json:"webdriverio_browser,omitempty"`
@@ -297,7 +299,7 @@ func outcomeKeys(run validationRun) []string {
 	keys = append(keys, run.SuiteErrors...)
 	keys = append(keys, run.SuiteFailures...)
 	for _, test := range run.Tests {
-		keys = append(keys, repositoryTestFile(run, test.File)+" › "+test.Name+cucumberLocation(test)+playwrightLabel(test)+webdriverIOOutcome(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test)+webdriverIOAttemptOutcome(test))
+		keys = append(keys, repositoryTestFile(run, test.File)+" › "+test.Name+mavenParameterLabel(test.MavenParameters)+cucumberLocation(test)+playwrightLabel(test)+webdriverIOOutcome(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test)+webdriverIOAttemptOutcome(test))
 	}
 	for i := range keys {
 		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])

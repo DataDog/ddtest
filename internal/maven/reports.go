@@ -16,10 +16,14 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 )
 
-type Test struct{ Module, Suite, Name, Status, Failure string }
+type Test struct {
+	Module, Suite, Name, Parameters, Status, Failure string
+	Ambiguous                                        bool
+}
 
 var ErrNoTestCases = errors.New("native reports contain no test cases")
 
@@ -209,7 +213,14 @@ func readTestNG(data []byte, module string) ([]Test, error) {
 				Name          string `xml:"name,attr"`
 				Status        string `xml:"status,attr"`
 				Configuration bool   `xml:"is-config,attr"`
-				Exception     struct {
+				Parameters    []struct {
+					Index string `xml:"index,attr"`
+					Value *struct {
+						Text string `xml:",chardata"`
+						XML  string `xml:",innerxml"`
+					} `xml:"value"`
+				} `xml:"params>param"`
+				Exception struct {
 					Class   string `xml:"class,attr"`
 					Message string `xml:"message"`
 				} `xml:"exception"`
@@ -220,6 +231,7 @@ func readTestNG(data []byte, module string) ([]Test, error) {
 		return nil, err
 	}
 	var tests []Test
+	seen := map[[3]string]bool{}
 	for _, class := range report.Classes {
 		for _, method := range class.Methods {
 			if method.Configuration {
@@ -234,7 +246,36 @@ func readTestNG(data []byte, module string) ([]Test, error) {
 			if class.Name == "" || method.Name == "" || status == "" {
 				return nil, fmt.Errorf("missing TestNG test identity or unsupported status %q", method.Status)
 			}
-			test := Test{Module: module, Suite: class.Name, Name: method.Name, Status: status}
+			arguments := map[string]string{}
+			for _, parameter := range method.Parameters {
+				index, err := strconv.Atoi(parameter.Index)
+				if err != nil || index < 0 || index >= len(method.Parameters) || strconv.Itoa(index) != parameter.Index || parameter.Value == nil {
+					return nil, fmt.Errorf("unresolved TestNG parameter identity: %s.%s", class.Name, method.Name)
+				}
+				if _, duplicate := arguments[parameter.Index]; duplicate {
+					return nil, fmt.Errorf("duplicate TestNG parameter index: %s.%s", class.Name, method.Name)
+				}
+				value := parameter.Value.Text
+				// XMLReporter adds indentation outside CDATA. Strip only that
+				// formatting; spaces and newlines inside a parameter remain identity.
+				inner := strings.TrimSpace(parameter.Value.XML)
+				if strings.HasPrefix(inner, "<![CDATA[") {
+					var content struct {
+						Text string `xml:",chardata"`
+					}
+					if err := xml.Unmarshal([]byte("<value>"+inner+"</value>"), &content); err != nil {
+						return nil, err
+					}
+					value = content.Text
+				}
+				arguments[parameter.Index] = value
+			}
+			parameters := TestNGParameters(arguments)
+			identity := [3]string{class.Name, method.Name, parameters}
+			// Keep repeated results for controlled retry probes. Ordinary paired
+			// comparisons cannot certify invocations that share an identity.
+			test := Test{Module: module, Suite: class.Name, Name: method.Name, Parameters: parameters, Status: status, Ambiguous: seen[identity]}
+			seen[identity] = true
 			if status == "failed" {
 				test.Failure = method.Exception.Class + ": " + strings.TrimSpace(method.Exception.Message)
 			}
@@ -242,6 +283,16 @@ func readTestNG(data []byte, module string) ([]Test, error) {
 		}
 	}
 	return tests, nil
+}
+
+// TestNGParameters uses the tracer's indexed String.valueOf arguments. Map
+// serialization orders keys so JSON formatting cannot alter invocation identity.
+func TestNGParameters(arguments map[string]string) string {
+	if len(arguments) == 0 {
+		return ""
+	}
+	data, _ := json.Marshal(arguments)
+	return string(data)
 }
 
 // Karate's JUnit test factory can leave Surefire's suite XML empty. Its native

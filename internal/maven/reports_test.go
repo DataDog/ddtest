@@ -3,6 +3,7 @@ package maven
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -60,7 +61,7 @@ func TestTestNGNativeMethodsReplaceLossySurefireNames(t *testing.T) {
 	dir := filepath.Join(root, "core/target/surefire-reports")
 	require.NoError(t, os.MkdirAll(dir, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "TEST-TestSuite.xml"), []byte(`<testsuite><testcase name="(example.Test)" classname="example.Test"/><testcase name="(example.Test)" classname="example.Test"/><testcase name="(example.Test)" classname="example.Test"><failure type="AssertionError"/></testcase></testsuite>`), 0600))
-	data := `<testng-results><suite><test><class name="example.Test"><test-method name="setup" status="PASS" is-config="true"/><test-method name="parameters" status="PASS"/><test-method name="parameters" status="PASS"/><test-method name="fails" status="FAIL"><exception class="AssertionError"><message>ddtest intentional failure</message></exception></test-method></class></test></suite></testng-results>`
+	data := `<testng-results><suite><test><class name="example.Test"><test-method name="setup" status="PASS" is-config="true"/><test-method name="parameters" status="PASS"><params><param index="0"><value>A</value></param></params></test-method><test-method name="parameters" status="PASS"><params><param index="0"><value>B</value></param></params></test-method><test-method name="fails" status="FAIL"><exception class="AssertionError"><message>ddtest intentional failure</message></exception></test-method></class></test></suite></testng-results>`
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "testng-results.xml"), []byte(data), 0600))
 	tests, err := ReadReports(root, []Project{{Directory: "core"}})
 	require.NoError(t, err)
@@ -99,4 +100,37 @@ func TestKarateNativeScenariosAndErrors(t *testing.T) {
 	require.Contains(t, tests[1].Failure, "ddtest intentional failure")
 	_, err = readKarate([]byte(`{}`), ".")
 	require.Error(t, err)
+}
+
+func TestTestNGPreservesProviderIdentityAndRejectsAmbiguity(t *testing.T) {
+	data := `<testng-results><suite><test><class name="ExampleTest"><test-method name="row" status="PASS"><params><param index="0"><value><![CDATA[A]]></value></param></params></test-method><test-method name="row" status="PASS"><params><param index="0"><value><![CDATA[B]]></value></param></params></test-method></class></test></suite></testng-results>`
+	tests, err := readTestNG([]byte(data), ".")
+	require.NoError(t, err)
+	require.Len(t, tests, 2)
+	require.NotEqual(t, tests[0], tests[1], "data-provider rows must keep their argument identity")
+	for _, methods := range []string{
+		`<test-method name="row" status="PASS"/><test-method name="row" status="FAIL"/>`,
+		`<test-method name="row" status="PASS"><params><param index="0"><value>A</value></param></params></test-method><test-method name="row" status="FAIL"><params><param index="0"><value>A</value></param></params></test-method>`,
+	} {
+		tests, err := readTestNG([]byte(`<testng-results><suite><test><class name="ExampleTest">`+methods+`</class></test></suite></testng-results>`), ".")
+		require.NoError(t, err, "controlled retry probes still need their native results")
+		require.True(t, slices.ContainsFunc(tests, func(test Test) bool { return test.Ambiguous }), "ordinary comparisons must remain inconclusive")
+	}
+}
+
+func TestTestNGCDATAFormattingPreservesArgumentWhitespace(t *testing.T) {
+	for _, value := range []string{"A", " A ", "\nA\n", "<&", ""} {
+		data := `<testng-results><suite><test><class name="ExampleTest"><test-method name="row" status="PASS"><params><param index="0"><value>
+                <![CDATA[` + value + `]]>
+              </value></param></params></test-method></class></test></suite></testng-results>`
+		tests, err := readTestNG([]byte(data), ".")
+		require.NoError(t, err)
+		require.Len(t, tests, 1)
+		require.Equal(t, TestNGParameters(map[string]string{"0": value}), tests[0].Parameters)
+	}
+}
+
+func TestTestNGRejectsUnresolvedParameterIndex(t *testing.T) {
+	_, err := readTestNG([]byte(`<testng-results><suite><test><class name="ExampleTest"><test-method name="row" status="PASS"><params><param index="1"><value>A</value></param></params></test-method></class></test></suite></testng-results>`), ".")
+	require.ErrorContains(t, err, "unresolved TestNG parameter identity")
 }

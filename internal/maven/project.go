@@ -8,6 +8,7 @@ package maven
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ type Dependency struct {
 type Project struct {
 	XMLName   xml.Name `xml:"project"`
 	Directory string
+	POM       string
 	Name      string `xml:"name"`
 	Group     string `xml:"groupId"`
 	Artifact  string `xml:"artifactId"`
@@ -46,60 +48,80 @@ type Project struct {
 	} `xml:"profiles>profile"`
 }
 
-// Projects reads the declared reactor, including profile modules. Profile-only
-// dependencies are candidates, not proof that a profile is active locally.
+// Projects reads the default reactor and existing profile module candidates.
+// Missing profile-only modules are optional; Maven determines active profiles.
 func Projects(root string) ([]Project, error) {
-	canonical, err := filepath.EvalSymlinks(root)
+	return projectsFromPOM(root, "pom.xml")
+}
+
+// TestdriveProjects inspects the same POM that the validated command executes.
+func TestdriveProjects(root, command string, args []string) ([]Project, error) {
+	pom, err := testdrivePOM(root, command, args)
+	if err != nil {
+		return nil, err
+	}
+	return projectsFromPOM(root, pom)
+}
+
+func projectsFromPOM(root, pom string) ([]Project, error) {
+	canonical, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	canonical, err = filepath.EvalSymlinks(canonical)
 	if err != nil {
 		return nil, err
 	}
 	var projects []Project
 	seen := map[string]bool{}
 	var visit func(string) error
-	visit = func(directory string) error {
-		directory, err := filepath.EvalSymlinks(directory)
+	visit = func(pom string) error {
+		resolved, err := resolvePOM(canonical, pom)
 		if err != nil {
 			return err
 		}
-		relative, err := filepath.Rel(canonical, directory)
-		if err != nil || (relative != "." && !filepath.IsLocal(relative)) {
-			return fmt.Errorf("maven module escapes repository: %s", directory)
-		}
-		if seen[directory] {
+		if seen[resolved] {
 			return nil
 		}
 		if len(seen) >= 256 {
 			return fmt.Errorf("maven reactor exceeds 256 modules")
 		}
-		seen[directory] = true
-		if err := validatePOM(canonical, filepath.Join(relative, "pom.xml")); err != nil {
-			return err
-		}
-		data, err := os.ReadFile(filepath.Join(directory, "pom.xml"))
+		seen[resolved] = true
+		data, err := os.ReadFile(filepath.Join(canonical, resolved))
 		if err != nil {
 			return err
 		}
 		var project Project
 		if err := xml.Unmarshal(data, &project); err != nil {
-			return fmt.Errorf("parse %s: %w", filepath.Join(relative, "pom.xml"), err)
+			return fmt.Errorf("parse %s: %w", resolved, err)
 		}
-		project.Directory = relative
+		project.POM, project.Directory = resolved, filepath.Dir(resolved)
 		projects = append(projects, project)
-		modules := slices.Clone(project.Modules)
-		for _, profile := range project.Profiles {
-			modules = append(modules, profile.Modules...)
-		}
-		for _, module := range modules {
+		visitModule := func(module string, optional bool) error {
 			if strings.Contains(module, "${") || !filepath.IsLocal(module) {
 				return fmt.Errorf("cannot statically resolve Maven module %q", module)
 			}
-			if err := visit(filepath.Join(directory, module)); err != nil {
+			err := visit(filepath.Join(project.Directory, module))
+			if optional && errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		for _, module := range project.Modules {
+			if err := visitModule(module, false); err != nil {
 				return err
+			}
+		}
+		for _, profile := range project.Profiles {
+			for _, module := range profile.Modules {
+				if err := visitModule(module, true); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
 	}
-	if err := visit(canonical); err != nil {
+	if err := visit(pom); err != nil {
 		return nil, err
 	}
 	return inheritDependencies(projects)
@@ -112,7 +134,7 @@ func Projects(root string) ([]Project, error) {
 func inheritDependencies(projects []Project) ([]Project, error) {
 	byPOM := map[string]int{}
 	for i, project := range projects {
-		byPOM[filepath.Clean(filepath.Join(project.Directory, "pom.xml"))] = i
+		byPOM[project.POM] = i
 		if parent := project.Parent; parent != nil {
 			if project.Group == "" {
 				projects[i].Group = parent.Group
@@ -224,20 +246,28 @@ func IsTestCommand(command string, args []string) bool {
 // ValidateTestdriveCommand keeps project selection inside the disposable copy
 // and prevents publishing artifacts as a side effect of local validation.
 func ValidateTestdriveCommand(root, command string, args []string) error {
+	_, err := testdrivePOM(root, command, args)
+	return err
+}
+
+func testdrivePOM(root, command string, args []string) (string, error) {
 	if !IsTestCommand(command, args) {
-		return fmt.Errorf("select a literal mvn/mvnw test or verify command; shell wrappers and other build systems require separate validation")
+		return "", fmt.Errorf("select a literal mvn/mvnw test or verify command; shell wrappers and other build systems require separate validation")
 	}
 	pom := "pom.xml"
-	for i, arg := range args {
+	selected := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "deploy" || strings.HasSuffix(arg, ":deploy") || strings.HasSuffix(arg, ":deploy-file") || arg == "site-deploy" {
-			return fmt.Errorf("maven publishing goals are not supported by local testdrive; select the test/verify portion of the CI command")
+			return "", fmt.Errorf("maven publishing goals are not supported by local testdrive; select the test/verify portion of the CI command")
 		}
 		file := ""
 		if arg == "-f" || arg == "--file" {
 			if i+1 >= len(args) {
-				return fmt.Errorf("maven file option needs a repository-relative path")
+				return "", fmt.Errorf("maven file option needs a repository-relative path")
 			}
 			file = args[i+1]
+			i++
 		}
 		if value, ok := strings.CutPrefix(arg, "--file="); ok {
 			file = value
@@ -246,41 +276,96 @@ func ValidateTestdriveCommand(root, command string, args []string) error {
 			file = strings.TrimPrefix(arg[2:], "=")
 		}
 		if file != "" {
+			if selected {
+				return "", fmt.Errorf("select only one Maven POM with -f/--file")
+			}
+			selected = true
 			if !filepath.IsLocal(file) {
-				return fmt.Errorf("maven POM must stay inside the disposable repository: %s", file)
+				return "", fmt.Errorf("maven POM must stay inside the disposable repository: %s", file)
 			}
 			pom = file
 		}
 	}
-	return validatePOM(root, pom)
+	resolved, err := resolvePOM(root, pom)
+	if err != nil {
+		return "", err
+	}
+	if err := validateImplicitArguments(root, pom, resolved); err != nil {
+		return "", err
+	}
+	return resolved, nil
 }
 
-// Maven accepts either a POM file or its directory. Check the resolved file,
-// including the default and reactor POMs, before any build can follow a symlink.
-func validatePOM(root, pom string) error {
+// Implicit arguments have version-dependent parsing and precedence. Require
+// explicit command inputs rather than certifying a different reactor or goals.
+func validateImplicitArguments(root, pom, resolved string) error {
+	for _, key := range []string{"MAVEN_ARGS", "MAVEN_BASEDIR", "MAVEN_PROJECTBASEDIR"} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return fmt.Errorf("%s supplies implicit Maven configuration; unset it and select the POM and arguments explicitly in --command for local testdrive", key)
+		}
+	}
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return err
 	}
+	selected := filepath.Join(root, pom)
+	if info, err := os.Stat(selected); err != nil {
+		return err
+	} else if !info.IsDir() {
+		selected = filepath.Dir(selected)
+	}
+	// Check both lexical and canonical locations: an internal POM alias can
+	// have a different ancestor .mvn directory from the file it points to.
+	for _, start := range []string{root, selected, filepath.Dir(filepath.Join(root, resolved))} {
+		for directory := start; ; directory = filepath.Dir(directory) {
+			config := filepath.Join(directory, ".mvn", "maven.config")
+			data, err := os.ReadFile(config)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" && !strings.HasPrefix(line, "#") {
+					return fmt.Errorf("%s supplies implicit Maven arguments; move them into --command and disable this configuration in the disposable input before local testdrive", config)
+				}
+			}
+			if info, err := os.Stat(filepath.Join(directory, ".mvn")); err == nil && info.IsDir() {
+				break
+			}
+			if filepath.Dir(directory) == directory {
+				break
+			}
+		}
+	}
+	return nil
+}
+
+// Maven accepts either a POM file or its directory. Check the resolved file,
+// including the default and reactor POMs, before any build can follow a symlink.
+func resolvePOM(root, pom string) (string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
-		return err
+		return "", err
 	}
 	path := filepath.Join(root, pom)
 	info, err := os.Stat(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if info.IsDir() {
 		path = filepath.Join(path, "pom.xml")
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	relative, err := filepath.Rel(root, resolved)
 	if err != nil || !filepath.IsLocal(relative) {
-		return fmt.Errorf("maven POM must stay inside the disposable repository: %s", pom)
+		return "", fmt.Errorf("maven POM must stay inside the disposable repository: %s", pom)
 	}
-	return nil
+	return relative, nil
 }
