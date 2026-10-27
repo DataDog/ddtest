@@ -34,6 +34,10 @@ entry) need explicit initialization placement rather than a subshell wrapper.
 Jenkins scripts with a shebang and computed environment assignments also need
 explicit setup. Floating Node selectors such as `node:18` remain unresolved
 until the actual runtime version is supplied; they are not treated as `18.0.0`.
+Existing tracer setup must include its required hooks and a recognized install
+that includes the tracer under the install step's environment. Dry-run and
+lockfile-only commands do not establish installation. Unexpanded CircleCI
+matrices and conditional paths block shared-source edits until resolved.
 
 GitLab local includes, inherited jobs, variables and literal matrices;
 CircleCI jobs, local reusable commands/executors and pinned official Node orb

@@ -112,7 +112,7 @@ func readSelectedWorkflows(root, requested string) ([]ciWorkflow, error) {
 			if adapter.name != "github" {
 				for name, job := range workflows[i].Jobs {
 					for n := range job.Steps {
-						job.Steps[n].Native = nativeExistingSetup(root, job, n)
+						job.Steps[n].Native = nativeExistingSetup(root, adapter.name, job, n)
 					}
 					workflows[i].Jobs[name] = job
 				}
@@ -170,6 +170,11 @@ func workflowHasTests(root string, workflow ciWorkflow) bool {
 				// Native blockers must not conceal a recognizable test consumer.
 				probe := step
 				probe.ResolutionError = ""
+				if workflow.Provider != "" && workflow.Provider != "github" {
+					if resolved, _, err := resolveVariantStep(workflow, job, probe, nil, framework); err == nil {
+						probe = resolved
+					}
+				}
 				r := resolveTestStep(root, workflow, job, probe, language, framework)
 				if r.Matched || namesFramework(step.Run, framework, true) {
 					return true

@@ -121,6 +121,9 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 			return literalCIPath(value)
 		}
 		job := runtimeJob{}
+		if _, matrix := inv.parameters["matrix"]; matrix {
+			job.Gaps = append(job.Gaps, "CircleCI matrix requires expanded job parameters before editing its shared source")
+		}
 		parameterEnvironment := func(node *yaml.Node) map[string]string {
 			env := ciEnvironment(node)
 			for key, value := range env {
@@ -131,7 +134,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 			}
 			return env
 		}
-		job.Env = providerEnvironment("circleci", parameterEnvironment(jobFields["environment"]))
+		environment := parameterEnvironment(jobFields["environment"])
 		job.Defaults.Run.WorkingDirectory = directory
 		if dirErr != nil {
 			w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": "+dirErr.Error())
@@ -139,10 +142,12 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 		image := ""
 		if docker := jobFields["docker"]; docker != nil && len(docker.Content) > 0 {
 			image = replace(ciScalar(ciMembers(docker.Content[0])["image"]))
+			environment = mergeEnvironment(parameterEnvironment(ciMembers(docker.Content[0])["environment"]), environment)
 			if len(docker.Content) > 1 {
 				w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": additional CircleCI service containers require local service facts")
 			}
 		}
+		job.Env = providerEnvironment("circleci", environment)
 		job.Node, job.NodeSource = ciImageNode(image, job.Env), "CircleCI executor image "+image
 		var expand func(*yaml.Node, int)
 		expand = func(list *yaml.Node, depth int) {
@@ -193,6 +198,13 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 							}
 						}
 						job.Steps = append(job.Steps, steps...)
+					case "when", "unless":
+						// Retain recognizable consumers without evaluating conditions.
+						// The gap also blocks edits of their possibly shared source.
+						reason := path + " / " + inv.label + ": CircleCI conditional step " + key + " requires a resolved execution path"
+						job.Gaps = append(job.Gaps, reason)
+						w.Unresolved = append(w.Unresolved, reason)
+						expand(ciMembers(value)["steps"], depth+1)
 					case "restore_cache", "save_cache", "store_artifacts", "store_test_results", "persist_to_workspace", "attach_workspace":
 						w.Review = append(w.Review, path+" / "+inv.label+": "+key+" is CI storage; local prerequisites must exist or be prepared explicitly")
 					case "node/install-packages":

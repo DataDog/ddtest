@@ -17,7 +17,7 @@ import (
 
 // Recognize ordinary package-based CI initialization as well as ddtest's own
 // recipe. A literal preload alone does not prove that CI installs that package.
-func nativeExistingSetup(root string, job runtimeJob, index int) *nativeCommand {
+func nativeExistingSetup(root, provider string, job runtimeJob, index int) *nativeCommand {
 	step := job.Steps[index]
 	if step.Native == nil || step.Native.Tracer != "" {
 		return step.Native
@@ -47,7 +47,7 @@ func nativeExistingSetup(root string, job runtimeJob, index int) *nativeCommand 
 	if version == "" {
 		version = pkg.DevDependencies["dd-trace"]
 	}
-	if !exactRelease(version) || !nativePackageInstalledBefore(root, job, index, directory) || (pkg.Dependencies["dd-trace"] == "" && mergeEnvironment(job.Env, step.Env)["NODE_ENV"] == "production") {
+	if !exactRelease(version) || !nativePackageInstalledBefore(root, provider, job, index, directory, pkg.Dependencies["dd-trace"] == "") {
 		return step.Native
 	}
 	verified := *step.Native
@@ -85,7 +85,7 @@ func nativePreloads(options string) (bool, bool) {
 	return preload, esm
 }
 
-func nativePackageInstalledBefore(root string, job runtimeJob, index int, directory string) bool {
+func nativePackageInstalledBefore(root, provider string, job runtimeJob, index int, directory string, development bool) bool {
 	for _, step := range job.Steps[:index] {
 		if preload, _ := nativePreloads(mergeEnvironment(job.Env, step.Env)["NODE_OPTIONS"]); preload {
 			continue
@@ -98,22 +98,32 @@ func nativePackageInstalledBefore(root string, job runtimeJob, index int, direct
 		if err != nil {
 			continue
 		}
+		installEnv := mergeEnvironment(job.Env, step.Env)
+		nodeEnv := installEnv["NODE_ENV"]
+		if provider == "gitlab" || provider == "buildkite" {
+			if literal, ok := step.LiteralEnv["NODE_ENV"]; !ok || literal != nodeEnv {
+				if nodeEnv, err = nativeEnvironmentValue(nodeEnv, installEnv); err != nil && development {
+					continue
+				}
+			}
+		}
 		for _, words := range commands {
 			if len(words) == 0 {
 				continue
 			}
-			if words[0] == "yarn" && len(words) == 1 {
-				return true
-			}
-			if len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) || !slices.Contains([]string{"ci", "install", "i"}, words[1]) {
+			bareYarn := words[0] == "yarn" && len(words) == 1
+			if !bareYarn && (len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) || !slices.Contains([]string{"ci", "install", "i"}, words[1])) {
 				continue
 			}
-			omitsDev := false
+			omitsDev := nodeEnv == "production"
+			noInstall := false
 			for i, word := range words {
 				omitsDev = omitsDev || slices.Contains([]string{"--prod", "--prod=true", "--production", "--production=true", "--only=production", "--omit=dev"}, word) ||
 					(word == "--omit" && i+1 < len(words) && words[i+1] == "dev")
+				flag, value, _ := strings.Cut(word, "=")
+				noInstall = noInstall || slices.Contains([]string{"--package-lock-only", "--lockfile-only", "--dry-run"}, flag) && value != "false"
 			}
-			if omitsDev || slices.Contains(words, "--prefix") || slices.Contains(words, "-g") {
+			if development && omitsDev || noInstall || slices.Contains(words, "--prefix") || slices.Contains(words, "-g") {
 				continue
 			}
 			return true

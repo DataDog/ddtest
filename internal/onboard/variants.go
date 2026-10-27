@@ -147,7 +147,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			delete(env, key)
 			continue
 		}
-		if workflow.Provider != "" && workflow.Provider != "github" {
+		if workflow.Provider == "gitlab" || workflow.Provider == "buildkite" {
 			if literal, ok := step.LiteralEnv[key]; ok && literal == value {
 				// Quoted shell exports are values, not another CI expression.
 				env[key] = literal

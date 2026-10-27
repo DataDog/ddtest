@@ -141,6 +141,9 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 					if native.Tracer != version || (native.Framework != "" && native.Framework != framework) {
 						return nil, &SetupGap{location, "Existing CI tracer/framework selection differs; preserve it and resolve the conflict"}
 					}
+					if esm && !native.ESM {
+						return nil, &SetupGap{location, "ESM tests require --import dd-trace/register.js alongside the existing preload; preserve the tracer and configure its missing hook explicitly"}
+					}
 				}
 				// A verified tracer doesn't establish per-test source coverage.
 				// Existing bootstraps retain their installation and initialization;
@@ -209,8 +212,11 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 		slices.SortFunc(items, func(a, b nativeReplacement) int { return b.start - a.start })
 		previous := len(edit.before) + 1
 		edit.after = slices.Clone(edit.before)
-		for _, item := range items {
+		for index, item := range items {
 			if item.start == previous {
+				if item.end != items[index-1].end || item.text != items[index-1].text {
+					return nil, &SetupGap{path, "Shared command consumers require different instrumentation; configure them explicitly"}
+				}
 				continue
 			} // Multiple consumers of the same literal share one edit.
 			if item.end > previous {

@@ -138,9 +138,11 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 		return w, fmt.Errorf("unbalanced Groovy delimiters")
 	}
 	job := runtimeJob{Env: providerEnvironment("jenkins", nil)}
+	assignments := map[string]string{}
 	type state struct {
 		env                                     map[string]string
 		directory, stage, node, source, blocked string
+		docker                                  bool
 	}
 	var walk func(int, int, state, int) state
 	walk = func(start, end int, current state, depth int) state {
@@ -153,18 +155,25 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 			if token.quote != "" {
 				continue
 			}
+			if strings.HasPrefix(token.value, "env.") && i+2 < end && tokens[i+1].value == "=" {
+				key := strings.TrimPrefix(token.value, "env.")
+				value := tokens[i+2].value
+				_, scoped := current.env[key]
+				if current.blocked != "" || strings.Contains(key, ".") || !literalJenkinsAssignment(tokens, data, i+2, end) || (scoped && current.env[key] != value) {
+					delete(assignments, key)
+					job.Gaps = append(job.Gaps, "Jenkins imperative environment "+key+" requires a resolved value/path or conflicts with a scoped environment binding")
+				} else {
+					assignments[key] = value
+				}
+				i += 2
+				continue
+			}
 			if token.value == "environment" && i+1 < end && tokens[i+1].value == "{" {
 				stop := pairs[i+1]
 				current.env = maps.Clone(current.env)
 				for j := i + 2; j+2 < stop; j++ {
 					if tokens[j+1].value == "=" {
-						value := tokens[j+2]
-						literal := value.quote != "" && (!strings.HasPrefix(value.quote, "\"") || !strings.Contains(value.value, "$"))
-						if j+3 < stop {
-							next := tokens[j+3]
-							literal = literal && (next.value == ";" || strings.Contains(string(data[value.end:next.start]), "\n")) && !strings.ContainsAny(next.value, "+-*/%?.[<>=!&|^") && next.value != "as"
-						}
-						if literal {
+						if literalJenkinsAssignment(tokens, data, j+2, stop) {
 							current.env[tokens[j].value] = tokens[j+2].value
 						} else {
 							delete(current.env, tokens[j].value)
@@ -185,6 +194,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 					continue
 				}
 				current.node, current.source = "", "Jenkins tools.nodejs "+version
+				current.docker = false
 				if numericNode.MatchString(version) {
 					current.node = version
 				}
@@ -193,6 +203,10 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 			}
 			if token.value == "image" && i+1 < end && tokens[i+1].quote != "" {
 				current.node, current.source = ciImageNode(tokens[i+1].value, current.env), "Jenkins Docker image "+tokens[i+1].value
+				current.docker = true
+			}
+			if token.value == "agent" && i+1 < end && slices.Contains([]string{"any", "none"}, tokens[i+1].value) && current.docker {
+				current.node, current.source, current.docker = "", "Jenkins agent override", false
 			}
 			if token.value == "sh" {
 				j := i + 1
@@ -219,6 +233,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 				}
 				text := tokens[literal]
 				command := text.value
+				env := mergeEnvironment(assignments, current.env)
 				blocked := current.blocked
 				// The complete argument must be literal: replacing just the first
 				// string of a concatenation changes the executed shell program.
@@ -234,7 +249,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 					}
 				}
 				if strings.HasPrefix(text.quote, "\"") {
-					for key, value := range current.env {
+					for key, value := range env {
 						command = strings.ReplaceAll(command, "${env."+key+"}", value)
 					}
 					if strings.Contains(command, "$") {
@@ -246,7 +261,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 					native.Framework, native.Tracer, native.Site, native.ESM = setup.Framework, setup.Version, setup.Site, setup.ESM
 					command = original
 				}
-				step := runtimeStep{Run: command, Env: maps.Clone(current.env), WorkingDirectory: current.directory, Source: fmt.Sprintf("%s / %s / byte %d", path, current.stage, text.start), Native: native}
+				step := runtimeStep{Run: command, Env: env, WorkingDirectory: current.directory, Source: fmt.Sprintf("%s / %s / byte %d", path, current.stage, text.start), Native: native}
 				if blocked != "" {
 					job.Gaps = append(job.Gaps, step.Source+": "+blocked)
 				}
@@ -271,6 +286,10 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 			child := current
 			child.env = maps.Clone(current.env)
 			switch token.value {
+			case "agent":
+				if child.docker {
+					child.node, child.source, child.docker = "", "Jenkins agent override", false
+				}
 			case "stage":
 				if i+2 < open && tokens[i+2].quote != "" {
 					child.stage = tokens[i+2].value
@@ -295,7 +314,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 						}
 					}
 				}
-			case "pipeline", "stages", "steps", "node", "script", "agent", "docker", "tools":
+			case "pipeline", "stages", "steps", "node", "script", "docker", "tools":
 			case "post", "success", "always", "failure", "cleanup":
 				i = stop
 				continue
@@ -306,7 +325,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 			// Declarative agent/tools configure their containing scope. A
 			// stage's selection must never leak to a subsequent sibling stage.
 			if slices.Contains([]string{"agent", "docker", "tools"}, token.value) {
-				current.node, current.source = selected.node, selected.source
+				current.node, current.source, current.docker = selected.node, selected.source, selected.docker
 			}
 			i = stop
 		}
@@ -319,4 +338,16 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 	}
 	w.Jobs["pipeline"] = job
 	return w, nil
+}
+
+func literalJenkinsAssignment(tokens []groovyToken, source []byte, valueIndex, end int) bool {
+	value := tokens[valueIndex]
+	if value.quote == "" || strings.HasPrefix(value.quote, "\"") && strings.Contains(value.value, "$") {
+		return false
+	}
+	if valueIndex+1 == end {
+		return true
+	}
+	next := tokens[valueIndex+1]
+	return (next.value == ";" || strings.Contains(string(source[value.end:next.start]), "\n")) && !strings.ContainsAny(next.value, "+-*/%?.[<>=!&|^") && next.value != "as"
 }
