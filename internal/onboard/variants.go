@@ -79,6 +79,17 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	}
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
+		if len(frameworks) > 0 {
+			if language := discoveryLanguageFor(frameworks[0]); language != nil {
+				rewritten, handled, err := language.variantValue(workflow, job, step, row, key, value)
+				if err != nil {
+					return step, nil, err
+				}
+				if handled {
+					value = rewritten
+				}
+			}
+		}
 		// Local Cypress validation disables Cloud recording and uses the
 		// evaluator's private binary cache. Never resolve or forward CI keys
 		// and runner-specific cache paths for these managed settings.

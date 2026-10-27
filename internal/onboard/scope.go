@@ -142,7 +142,8 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 func discoverValidationScope(root, framework string, allowSetupFacts bool) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio" {
+	language := discoveryLanguageName(framework)
+	if !resolvesTestSteps(language, framework) {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
@@ -159,7 +160,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				consumer, hidden := false, false
 				var outside []string
 				for i, step := range job.Steps {
-					resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
+					resolution := resolveTestStep(root, workflow, job, step, language, framework)
 					switch {
 					case resolution.Review:
 					case resolution.Matched:
@@ -219,7 +220,11 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				// tests are excluded like an explicit opt-out. ddtest decides this
 				// without asking. The Node is the one active at that step: a job
 				// may switch runtimes between test steps.
+				skipsNode := discoveryLanguageNamed(language).skipsUnsupportedNode()
 				unsupportedAt := func(step int) bool {
+					if !skipsNode {
+						return false
+					}
 					node, err := rowSetupNodeBefore(root, workflow, job, row, step)
 					if err != nil || !UnsupportedNode(node) {
 						return false
@@ -230,7 +235,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					return true
 				}
 				finalNode, finalErr := rowSetupNode(root, workflow, job, row)
-				unsupportedRow := finalErr == nil && UnsupportedNode(finalNode)
+				unsupportedRow := skipsNode && finalErr == nil && UnsupportedNode(finalNode)
 				installerActive, installerSkipped := false, false
 				var pendingSetup []string
 				var preparation []BuildCommand
@@ -242,7 +247,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					}
 					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 					if strings.EqualFold(strings.Split(step.Uses, "@")[0], githubAction) && conditionErr == nil {
-						if selected, err := actionSelectsJavaScript(step, row); err == nil && selected {
+						if selected, err := actionSelectsLanguage(step, row, setupActionLanguage(language)); err == nil && selected {
 							if active {
 								installerActive = true
 							} else {
@@ -259,7 +264,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						continue
 					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
-					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+					resolution := resolveTestStep(root, workflow, job, resolved, language, framework)
 					if readsComputedAxis(step.Run, computed, row) && !resolution.Matched && !stepMayStartTests(root, workflow, job, step, framework) {
 						// A dependency install of a computed variant is the axis
 						// itself; the tests run with the installed dependencies.
@@ -287,7 +292,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 							}
 							// Resolve like the main scan so matrix-selected tests are recognized.
 							resolvedLater, _, _ := resolveVariantStep(workflow, job, later, row, framework)
-							laterTest = laterTest || resolveTestStep(root, workflow, job, resolvedLater, "javascript", framework).Matched
+							laterTest = laterTest || resolveTestStep(root, workflow, job, resolvedLater, language, framework).Matched
 						}
 						if !laterTest {
 							for _, setup := range resolution.Setup {
@@ -456,6 +461,11 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 
 // ValidationCommands also resolves a selected local alias, for scope accounting.
 func ValidationCommands(root, command, framework string) []TestCommand {
+	if language := discoveryLanguageFor(framework); language != nil {
+		if commands, ok := language.localCommands(root, command, framework); ok {
+			return commands
+		}
+	}
 	remaining := packageScriptExpansionLimit
 	return resolveJestSequence(root, root, command, nil, &remaining, framework).Tests
 }

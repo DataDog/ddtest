@@ -5,6 +5,8 @@
 
 package onboard
 
+import "slices"
+
 // discoveryLanguage is everything onboarding needs from one language. Shared
 // discovery and instructions call only these hooks; each language keeps its
 // specifics in its own files and registers in languages.go.
@@ -20,6 +22,47 @@ type discoveryLanguage interface {
 	// coordinated reports whether agent onboarding hands off to controlled
 	// validation and automatic CI setup.
 	coordinated() bool
+
+	// frameworks lists the test frameworks whose CI the language discovers.
+	frameworks() []string
+	// resolveStep resolves one CI step for framework with the language's own
+	// rules. ok is false when the shared resolver applies.
+	resolveStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) (resolution commandResolution, ok bool)
+	// localCommands resolves a selected local command for scope accounting.
+	// ok is false when the shared resolver applies.
+	localCommands(root, command, framework string) (commands []TestCommand, ok bool)
+	// variantValue rewrites one inherited CI environment value for local
+	// replay. handled is false when the shared handling applies.
+	variantValue(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, key, value string) (rewritten string, handled bool, err error)
+	// skipsUnsupportedNode reports whether CI rows on a Node no tracer release
+	// supports are left out of validation.
+	skipsUnsupportedNode() bool
+	// instructions returns the language's own onboarding instructions for
+	// framework; empty uses the shared GitHub template.
+	instructions(framework string) string
+	// onboardingScope reports whether onboarding prints framework's discovered
+	// CI scope, and whether it still prints instructions once every workflow
+	// already runs the Datadog action.
+	onboardingScope(framework string) (discover, instructionsWhenConfigured bool)
+}
+
+// discoveryLanguageFor returns the language that discovers framework's CI, or nil.
+func discoveryLanguageFor(framework string) discoveryLanguage {
+	for _, language := range discoveryLanguages {
+		if slices.Contains(language.frameworks(), framework) {
+			return language
+		}
+	}
+	return nil
+}
+
+// discoveryLanguageName names the language that discovers framework's CI.
+// Frameworks no language claims are discovered as JavaScript, as before.
+func discoveryLanguageName(framework string) string {
+	if language := discoveryLanguageFor(framework); language != nil {
+		return language.name()
+	}
+	return "javascript"
 }
 
 // discoveryLanguageNamed returns a registered language, or nil.
