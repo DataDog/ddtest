@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"io"
@@ -135,6 +136,27 @@ func TestCheckOnlyDefaultsToTheCIPinnedTracer(t *testing.T) {
 	drive = newDrive()
 	require.Error(t, drive.runConfigurationChecks(t.Context(), &bytes.Buffer{}))
 	require.Equal(t, "6.16.0", drive.tracerVersion)
+}
+
+// A configuration's CI check uses its own language even when the language's
+// preflight fails before replacing it.
+func TestConfigurationCheckOnlyUsesTheFrameworkLanguage(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+	requireWriteFile(t, filepath.Join(root, "Gemfile"), "gem 'rspec'\n")
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/ci.yml"), "jobs:\n  test:\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '3.4'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, ruby-tracer-version: '1.40.0'}\n      - run: bundle exec rspec\n")
+	drive := &Testdrive{repositoryRoot: root, workflowRoot: root, framework: framework.NewRSpec(platform.NewRuby("")), language: "ruby", checkOnly: true}
+	drive.preflight = func(context.Context, io.Writer, *validationResult) error {
+		return fmt.Errorf("inspect Ruby bundle failed")
+	}
+	result, err := drive.runPreparedChecksOrTests(t.Context(), &bytes.Buffer{})
+	require.Error(t, err)
+	require.NotNil(t, result.CIRuntime)
+	for _, finding := range append(result.CIRuntime.Jobs, result.CIRuntime.Review...) {
+		require.NotContains(t, finding.Reason, "JavaScript")
+	}
+	require.NotEmpty(t, result.CIRuntime.Jobs)
+	require.Equal(t, "1.40.0", result.CIRuntime.Jobs[0].TracerRequested)
 }
 
 func TestDirectCheckOnlyUsesSelectedFramework(t *testing.T) {

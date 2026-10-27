@@ -264,7 +264,7 @@ func (t *Testdrive) runPreparedChecksOrTests(ctx context.Context, output io.Writ
 	}
 	check := checkConfigurationCIRuntimes(ctx, root, t.framework.Name())
 	if t.workflowRoot != "" {
-		check = onboard.CheckCIRuntimes(ctx, root, t.framework.Name())
+		check = frameworkCIRuntimes(ctx, root, t.framework.Name())
 	}
 	result.CIRuntime = &check
 	t.defaultToCITracer(check)
