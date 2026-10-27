@@ -49,6 +49,7 @@ type nativeCommand struct {
 	Original                string
 	Tracer, Framework, Site string
 	NodeVersion, NodeSource string
+	Workspace               string // Jenkins agent/node allocation owning this shell.
 	Manual, ESM             bool
 	Blocked                 string
 }
@@ -159,25 +160,20 @@ func workflowHasTests(root string, workflow ciWorkflow) bool {
 			if step.If == "false" {
 				continue
 			}
-			for _, framework := range []string{"jest", "vitest", "mocha", "playwright", "cypress", "cucumber", "webdriverio", "pytest", "rspec", "minitest"} {
-				language := "javascript"
-				if framework == "pytest" {
-					language = "python"
-				}
-				if framework == "rspec" || framework == "minitest" {
-					language = "ruby"
-				}
-				// Native blockers must not conceal a recognizable test consumer.
-				probe := step
-				probe.ResolutionError = ""
-				if workflow.Provider != "" && workflow.Provider != "github" {
-					if resolved, _, err := resolveVariantStep(workflow, job, probe, nil, framework); err == nil {
-						probe = resolved
+			for _, language := range discoveryLanguages {
+				for _, framework := range language.frameworks() {
+					// Native blockers must not conceal a recognizable test consumer.
+					probe := step
+					probe.ResolutionError = ""
+					if workflow.Provider != "" && workflow.Provider != "github" {
+						if resolved, _, err := resolveVariantStep(workflow, job, probe, nil, framework); err == nil {
+							probe = resolved
+						}
 					}
-				}
-				r := resolveTestStep(root, workflow, job, probe, language, framework)
-				if r.Matched || namesFramework(step.Run, framework, true) {
-					return true
+					r := resolveTestStep(root, workflow, job, probe, language.name(), framework)
+					if r.Matched || namesFramework(step.Run, framework, true) {
+						return true
+					}
 				}
 			}
 		}
@@ -309,6 +305,7 @@ func ciStrings(node *yaml.Node) []string {
 }
 
 func nativeSteps(path string, node *yaml.Node, provider string) []runtimeStep {
+	node = ciUnalias(node)
 	if node == nil {
 		return nil
 	}

@@ -175,6 +175,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 		var expand func(*yaml.Node, map[string]string, int)
 		expand = func(list *yaml.Node, scope map[string]string, depth int) {
 			replace := func(value string) string { return circleParameterText(value, scope) }
+			list = ciUnalias(list)
 			if list == nil {
 				return
 			}
@@ -183,6 +184,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 				return
 			}
 			for _, entry := range list.Content {
+				entry = ciUnalias(entry)
 				if entry.Kind == yaml.ScalarNode {
 					switch entry.Value {
 					case "checkout", "setup_remote_docker":
@@ -217,6 +219,12 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 								}
 							}
 							steps[i].Shell = circleCIShell(replace(ciScalar(properties["shell"])))
+							if steps[i].Shell == "" {
+								steps[i].Shell = circleCIShell(circleParameterText(ciScalar(jobFields["shell"]), params))
+							}
+							if !supportedCIShell(steps[i].Shell) {
+								steps[i].ResolutionError = "Unsupported CircleCI shell: " + steps[i].Shell
+							}
 							if properties["background"] != nil && ciScalar(properties["background"]) != "false" {
 								steps[i].ResolutionError = "CircleCI background command requires explicit local service/readiness facts"
 							}
@@ -269,6 +277,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 			}
 		}
 		for _, list := range []*yaml.Node{inv.before, jobFields["steps"], inv.after} {
+			list = ciUnalias(list)
 			if list != nil && list.Kind != yaml.SequenceNode {
 				job.Gaps = append(job.Gaps, "CircleCI invocation steps require a literal step list")
 				continue

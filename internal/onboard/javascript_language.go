@@ -12,6 +12,10 @@ type javascriptDiscovery struct{}
 
 func (javascriptDiscovery) name() string { return "javascript" }
 
+func (javascriptDiscovery) frameworks() []string {
+	return []string{"jest", "vitest", "mocha", "playwright", "cypress", "cucumber", "webdriverio"}
+}
+
 func (javascriptDiscovery) actionLanguage() string { return "js" }
 
 func (javascriptDiscovery) bootstrap(framework string) string {
@@ -21,8 +25,8 @@ func (javascriptDiscovery) bootstrap(framework string) string {
 	return javascriptBootstrap
 }
 
-func (javascriptDiscovery) resolvesTestSteps(framework string) bool {
-	return slices.Contains([]string{"jest", "vitest", "mocha", "playwright", "cypress", "cucumber", "webdriverio"}, framework)
+func (language javascriptDiscovery) resolvesTestSteps(framework string) bool {
+	return slices.Contains(language.frameworks(), framework)
 }
 
 func (javascriptDiscovery) coordinated() bool { return true }

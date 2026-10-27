@@ -142,6 +142,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 	type state struct {
 		env                                     map[string]string
 		directory, stage, node, source, blocked string
+		workspace                               string
 		docker                                  bool
 	}
 	var walk func(int, int, state, int, bool) state
@@ -234,8 +235,14 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 				current.node, current.source = ciImageNode(tokens[i+1].value, current.env), "Jenkins Docker image "+tokens[i+1].value
 				current.docker = true
 			}
-			if token.value == "agent" && i+1 < end && slices.Contains([]string{"any", "none"}, tokens[i+1].value) && current.docker {
-				current.node, current.source, current.docker = "", "Jenkins agent override", false
+			if token.value == "agent" && i+1 < end && slices.Contains([]string{"any", "none"}, tokens[i+1].value) {
+				if current.docker {
+					current.node, current.source, current.docker = "", "Jenkins agent override", false
+				}
+				current.workspace = ""
+				if tokens[i+1].value == "any" {
+					current.workspace = fmt.Sprintf("%s:agent:%d", path, token.start)
+				}
 			}
 			if token.value == "sh" {
 				j := i + 1
@@ -285,7 +292,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 						blocked = "Groovy string interpolation requires explicit values"
 					}
 				}
-				native := &nativeCommand{Path: path, Start: text.start, End: text.end, Quote: text.quote, Original: command, Blocked: blocked, NodeVersion: current.node, NodeSource: current.source}
+				native := &nativeCommand{Path: path, Start: text.start, End: text.end, Quote: text.quote, Original: command, Blocked: blocked, NodeVersion: current.node, NodeSource: current.source, Workspace: current.workspace}
 				if setup, original, ok := unwrapNativeInstrumentation(command, "jenkins"); ok {
 					native.Framework, native.Tracer, native.Site, native.ESM = setup.Framework, setup.Version, setup.Site, setup.ESM
 					command = original
@@ -316,6 +323,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 			child.env = maps.Clone(current.env)
 			switch token.value {
 			case "agent":
+				child.workspace = fmt.Sprintf("%s:agent:%d", path, token.start)
 				if child.docker {
 					child.node, child.source, child.docker = "", "Jenkins agent override", false
 				}
@@ -368,7 +376,9 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 						break
 					}
 				}
-			case "pipeline", "stages", "steps", "node", "script", "tools":
+			case "node":
+				child.workspace = fmt.Sprintf("%s:node:%d", path, token.start)
+			case "pipeline", "stages", "steps", "script", "tools":
 			case "post", "success", "always", "failure", "cleanup":
 				child.blocked = "Jenkins post conditions require a resolved execution path"
 			default:
@@ -379,12 +389,13 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 			// stage's selection must never leak to a subsequent sibling stage.
 			if slices.Contains([]string{"agent", "docker", "tools"}, token.value) {
 				current.node, current.source, current.docker = selected.node, selected.source, selected.docker
+				current.workspace = selected.workspace
 			}
 			i = stop
 		}
 		return current
 	}
-	walk(0, len(tokens), state{env: job.Env, directory: ".", stage: "pipeline"}, 0, false)
+	walk(0, len(tokens), state{env: job.Env, directory: ".", stage: "pipeline", workspace: path + ":implicit"}, 0, false)
 	job.Gaps = slices.Compact(job.Gaps)
 	if len(job.Steps) == 0 {
 		w.Unresolved = append(w.Unresolved, path+": no literal shell steps found; shared libraries or dynamically generated Pipeline need resolved commands")

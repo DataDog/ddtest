@@ -54,6 +54,16 @@ a resolved repository mapping before local validation can claim the same suite.
 Dockerfile working directories and mapping-form Compose builds also require
 resolved setup. Jenkins declarative directives apply to their entire stage or
 pipeline regardless of source order; custom Docker arguments require review.
+GitLab `!reference` matrices require explicitly expanded rows. Buildkite Docker
+plugin-level command arrays remain visible in provider selection but require
+explicit initialization placement; disabled or unresolved checkout mounts need
+an image-to-repository mapping before validation or editing.
+Aliased GitLab scripts and CircleCI steps remain test consumers, including
+shared-source safety checks. CircleCI run steps inherit their job/executor
+shell. Jenkins installation evidence cannot cross agent/workspace allocations.
+GitLab configuration variables expand before shell exports. Native Cucumber
+assessment checks NYC and ESM source instrumentation as well as tracer hooks;
+incomplete initialization still retains the known tracer pin for repair.
 
 GitLab local includes, inherited jobs, variables and literal matrices;
 CircleCI jobs, local reusable commands/executors and pinned official Node orb

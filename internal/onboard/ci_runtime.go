@@ -123,7 +123,11 @@ func nativeControlEnvironment(workflow ciWorkflow, job runtimeJob, step runtimeS
 	}
 	if literal, known := step.LiteralEnv["DD_CIVISIBILITY_ENABLED"]; !known || literal != value {
 		var err error
-		value, err = nativeEnvironmentValue(value, env)
+		expansionEnv := env
+		if workflow.Provider == "gitlab" {
+			expansionEnv = job.Env
+		}
+		value, err = nativeEnvironmentValue(value, expansionEnv)
 		if err != nil {
 			return step, fmt.Errorf("native instrumentation control requires review: %w", err)
 		}
@@ -230,6 +234,7 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 				findings = append(findings, finding)
 				continue
 			}
+			finding.Tracer, finding.TracerRequested = "dd-trace@"+step.Native.Tracer, step.Native.Tracer
 			if step.Native.Framework != "" && step.Native.Framework != framework {
 				finding.Code, finding.Reason = CodeUnverifiedInitialization, "Existing initialization targets another framework"
 				findings = append(findings, finding)
@@ -255,6 +260,18 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 				finding.Code, finding.Reason = CodeUnverifiedInitialization, "Selected Cucumber leaf does not consume scoped DD_CUCUMBER_NODE_OPTIONS while preserving existing NODE_OPTIONS"
 				findings = append(findings, finding)
 				continue
+			}
+			if framework == "cucumber" {
+				env := mergeEnvironment(w.Env, mergeEnvironment(job.Env, step.Env))
+				options := env["DD_CUCUMBER_NODE_OPTIONS"] + " " + env["NODE_OPTIONS"]
+				if setup, _, ok := unwrapNativeInstrumentation(step.Native.Original, w.Provider); ok {
+					options += " " + setup.Coverage
+				}
+				if reason := checkCucumberCoverage(root, filepath.Join(root, stepDirectory(w, job, step)), r.Tests, options); reason != "" {
+					finding.Code, finding.Reason = CodeUnverifiedInitialization, reason
+					findings = append(findings, finding)
+					continue
+				}
 			}
 			if framework == "webdriverio" && !step.Native.Manual && slices.ContainsFunc(r.Tests, func(test TestCommand) bool { return !test.webdriverIOScoped }) {
 				finding.Code, finding.Reason = CodeUnverifiedInitialization, "Selected WDIO leaf does not consume scoped DD_WDIO_NODE_OPTIONS while preserving existing NODE_OPTIONS"

@@ -162,7 +162,11 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 				continue
 			}
 			var err error
-			value, err = nativeEnvironmentValue(value, env)
+			expansionEnv := env
+			if workflow.Provider == "gitlab" {
+				expansionEnv = job.Env // Configuration expansion precedes shell exports.
+			}
+			value, err = nativeEnvironmentValue(value, expansionEnv)
 			if err != nil {
 				return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
 			}

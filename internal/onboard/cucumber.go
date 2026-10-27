@@ -278,17 +278,6 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 	if resolution.OtherFramework && (scoped == "" || checkJestBootstrap(workflow, job, step, row, false) == "") {
 		return "Cucumber-only scope is not preserved: this command also runs another framework. Keep the original command and pass DD_CUCUMBER_NODE_OPTIONS only to the Cucumber leaf."
 	}
-	directory := filepath.Join(root, stepDirectory(workflow, job, step))
-	if len(commands) == 1 && filepath.IsLocal(commands[0].Directory) {
-		directory = filepath.Join(root, commands[0].Directory)
-	}
-	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
-	var pkg struct {
-		Type string
-	}
-	if err != nil || json.Unmarshal(data, &pkg) != nil {
-		return "Cannot inspect Cucumber package scripts"
-	}
 	if scoped != "" {
 		if len(commands) == 0 {
 			return "Cannot identify a Cucumber leaf consuming DD_CUCUMBER_NODE_OPTIONS"
@@ -310,24 +299,35 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 	} else if reason := checkJestBootstrap(workflow, job, step, row, true); reason != "" {
 		return reason
 	}
+	options := scoped
+	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		if value, ok := env["NODE_OPTIONS"]; ok {
+			options = scoped + " " + value
+		}
+	}
+	// Resolve generated GitHub expressions before checking source loaders.
+	resolvedStep := step
+	resolvedStep.Env = mergeEnvironment(step.Env, map[string]string{"NODE_OPTIONS": options})
+	if resolved, err := effectiveBootstrapOptions(workflow, job, resolvedStep, row, true); err == nil {
+		options = resolved
+	}
+	return checkCucumberCoverage(root, filepath.Join(root, stepDirectory(workflow, job, step)), commands, options)
+}
+
+// Coverage requirements are the same for native providers and GitHub Actions;
+// tracer transport/bootstrap checks remain provider-specific.
+func checkCucumberCoverage(root, directory string, commands []TestCommand, options string) string {
+	if len(commands) == 1 && filepath.IsLocal(commands[0].Directory) {
+		directory = filepath.Join(root, commands[0].Directory)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
+	var pkg struct {
+		Type string
+	}
+	if err != nil || json.Unmarshal(data, &pkg) != nil {
+		return "Cannot inspect Cucumber package scripts"
+	}
 	if pkg.Type == "module" || CucumberESMInputs(root, commands) {
-		options := scoped
-		for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
-			if value, ok := env["NODE_OPTIONS"]; ok {
-				options = scoped + " " + value
-			}
-		}
-		// Generated setup writes scoped options as a GitHub expression; check the
-		// value it resolves to on an instrumented step.
-		resolvedStep := step
-		resolvedStep.Env = maps.Clone(step.Env)
-		if resolvedStep.Env == nil {
-			resolvedStep.Env = map[string]string{}
-		}
-		resolvedStep.Env["NODE_OPTIONS"] = options
-		if resolved, err := effectiveBootstrapOptions(workflow, job, resolvedStep, row, true); err == nil {
-			options = resolved
-		}
 		inline := len(commands) > 0
 		for _, command := range commands {
 			inline = inline && command.cucumberInlineIstanbul

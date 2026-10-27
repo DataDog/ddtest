@@ -221,6 +221,15 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 		}
 		afterSteps := nativeSteps(afterPath, fields["after_script"], "gitlab")
 		finish := func(variant runtimeJob) runtimeJob {
+			// GitLab expands configuration variables before starting the job
+			// shell. Later exports cannot change another variable's resolved value.
+			configured := variant.Env
+			variant.Env = maps.Clone(configured)
+			for key, value := range configured {
+				if resolved, err := nativeEnvironmentValue(value, configured); err == nil {
+					variant.Env[key] = resolved
+				}
+			}
 			variant = nativeShellState(root, variant)
 			if len(afterSteps) == 0 {
 				return variant
@@ -244,7 +253,12 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 		if fields["services"] != nil {
 			w.Unresolved = append(w.Unresolved, path+" / "+name+": GitLab service containers require explicit local service facts")
 		}
-		matrix := ciUnalias(ciMembers(fields["parallel"])["matrix"])
+		parallel := ciUnalias(fields["parallel"])
+		matrix := ciUnalias(ciMembers(parallel)["matrix"])
+		if parallel != nil && parallel.Tag == "!reference" || matrix != nil && matrix.Tag == "!reference" {
+			job.Gaps = append(job.Gaps, "GitLab parallel/matrix !reference requires its expanded rows before validation or editing")
+			matrix = nil // Retain one explicitly unresolved consumer, not invented rows.
+		}
 		if matrix != nil {
 			var rows []map[string]any
 			for _, entry := range matrix.Content {

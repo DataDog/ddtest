@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kballard/go-shellquote"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -56,14 +57,23 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 			if node == nil {
 				node = step["commands"]
 			}
+			steps := nativeSteps(path, node, "buildkite")
 			if node == nil {
+				steps = buildkitePluginCommands(path, step["plugins"])
+			}
+			if len(steps) == 0 {
 				if step["trigger"] != nil {
 					w.Unresolved = append(w.Unresolved, path+" / "+group+name+": triggered pipeline requires its resolved test configuration")
 				}
 				continue
 			}
 			job := runtimeJob{Env: providerEnvironment("buildkite", mergeEnvironment(ciEnvironment(fields["env"]), ciEnvironment(step["env"])))}
-			job.Steps = nativeSteps(path, node, "buildkite")
+			job.Steps = steps
+			for _, step := range steps {
+				if step.Native != nil && step.Native.Blocked != "" {
+					job.Gaps = append(job.Gaps, step.Native.Blocked)
+				}
+			}
 			if condition := ciScalar(step["if"]); condition != "" {
 				if condition == "false" {
 					job.If = "false"
@@ -84,6 +94,9 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 						case "docker":
 							image := ciScalar(ciMembers(config)["image"])
 							job.Node, job.NodeSource = ciImageNode(image, job.Env), "Buildkite Docker image "+image
+							if mount := ciMembers(config)["mount-checkout"]; mount != nil && ciScalar(mount) != "true" {
+								job.Gaps = append(job.Gaps, "Docker plugin checkout mount is disabled or unresolved; supply an image-to-repository mapping before validation or editing")
+							}
 							if ciMembers(config)["environment"] != nil || ciMembers(config)["volumes"] != nil {
 								job.Gaps = append(job.Gaps, "Docker plugin environment/volume forwarding needs review")
 							}
@@ -193,4 +206,32 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 		w.Jobs[name] = job
 	}
 	return w, nil
+}
+
+// Plugin command arrays are container argv, not a shell script. Keep literal
+// test consumers visible for provider choice, but require explicit placement
+// instead of rewriting argv into a shell wrapper with different semantics.
+func buildkitePluginCommands(path string, plugins *yaml.Node) []runtimeStep {
+	plugins = ciUnalias(plugins)
+	if plugins == nil {
+		return nil
+	}
+	var steps []runtimeStep
+	for _, plugin := range plugins.Content {
+		for name, config := range ciMembers(plugin) {
+			kind, _, _ := strings.Cut(name, "#")
+			command := ciUnalias(ciMembers(config)["command"])
+			if kind != "docker" || command == nil {
+				continue
+			}
+			run := shellquote.Join(ciStrings(command)...)
+			steps = append(steps, runtimeStep{
+				Run:    run,
+				Source: fmt.Sprintf("%s:%d", path, command.Line),
+				Number: command.Line,
+				Native: &nativeCommand{Path: path, Original: run, Blocked: "Buildkite Docker plugin command uses container argv; supply explicitly resolved initialization and execution before validation or editing"},
+			})
+		}
+	}
+	return steps
 }
