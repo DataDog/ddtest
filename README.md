@@ -330,8 +330,10 @@ irm https://github.com/DataDog/ddtest/releases/latest/download/install.ps1 | iex
 
 `--version v1.2.3` picks a release and `--dir` another directory (`-Version`
 and `-Dir` in PowerShell, or `DDTEST_INSTALL_VERSION` and `DDTEST_INSTALL_DIR`
-for both). An installed executable of the same version stays, and in GitHub
-Actions the scripts add the directory to `PATH` for the next steps:
+for both). An installed executable of the same version stays. Outside GitHub
+Actions, the scripts say when another `ddtest`, such as an older one from
+`go install`, comes first on `PATH`; in GitHub Actions they add the directory
+to `PATH` for the next steps:
 
 ```yaml
 - name: Install ddtest

@@ -2810,6 +2810,19 @@ miss once and are stored again. Check: `TestSettingsApiRequest`, from the PR,
 which fails without the port. The pinned SDK that parity compares with
 predates the PR; parity compares events, not request bodies.
 
+## Settings without a Git repository
+
+Without a repository URL or a commit SHA, as when tests run outside a Git
+repository, `utils/net/settings_api.go` makes no settings request and returns
+`ErrNoRepositoryOrCommit`, with the SDK's message. The SDK logs that as an
+error; `logSettingsFetchError` in `integrations/civisibility_features.go`
+logs a warning instead, which names what the settings need: a Git repository
+with a commit and a remote, or `DD_GIT_REPOSITORY_URL` and
+`DD_GIT_COMMIT_SHA`. The features that the settings enable stay off, as with
+the SDK. Other failures and empty responses stay errors. Checks:
+`TestGetSettingsWithoutRepositoryOrCommit` and `TestLogSettingsFetchError`,
+both local.
+
 ## Fuzz and executable Examples
 
 SDK PR #5442 is integrated in the recorded `main` base. `feature_ports` keeps

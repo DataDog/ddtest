@@ -162,7 +162,19 @@ param(
         # would otherwise write the system's code page.
         Add-Content -LiteralPath $env:GITHUB_PATH -Value $Dir -Encoding UTF8
         Say "added $Dir to PATH for this session and the next steps"
-    } elseif (-not $listed) {
-        Say "added $Dir to PATH for this session; add it to your profile to keep it"
+    } else {
+        if (-not $listed) {
+            Say "added $Dir to PATH for this session; add it to your profile to keep it"
+        }
+        # This session runs the first ddtest on PATH, which can be another one,
+        # such as an older executable that go install left in another directory.
+        $first = Get-Command -Name ddtest -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($first) {
+            $found = [IO.Path]::GetFullPath($first.Source)
+            $same = if ($os -eq 'windows') { $found -eq $target } else { $found -ceq $target }
+            if (-not $same) {
+                Say "another ddtest comes first on PATH, ${found}: remove it, or put $Dir before its directory"
+            }
+        }
     }
 } $Version $Dir

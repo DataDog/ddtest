@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "2dbadb21a13607eae16eee9d1fd1f105e3cb1f770f79ed97530f9926f193fcfa",
+      "sha256": "233fe6b10d7f8934e6b82e8a9e355db74176d6c57c9df37c9690a94e5f614ad8",
       "role": "local"
     },
     {
@@ -170,7 +170,7 @@
     },
     {
       "path": "civisibility/integrations/civisibility_features.go",
-      "sha256": "edc81fa0a99c4c1a87292113bcfefb579480ec605bf769d7412aa29935b4c717",
+      "sha256": "0a5a3342faada93f7bd492ff5bd86d99fe664b2b911a8bf687aa899718e58c9b",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/civisibility_features.go",
       "source_sha256": "08c2f82bfc944754d4c7870cfd0c0fc5c4d257edcdea844f00a89bd9cc88f5d8"
@@ -1059,6 +1059,11 @@
       "source_sha256": "f0107fabe9bca860074ae2f65cd7877e2c4472604a22521dc16b89562f84438a"
     },
     {
+      "path": "civisibility/integrations/settings_log_test.go",
+      "sha256": "c36a9924d137e8d35ff244711cb12116baec1fbc48ae6a01fef99e7896e51bcd",
+      "role": "local"
+    },
+    {
       "path": "civisibility/integrations/testing_helpers_test.go",
       "sha256": "7db8b3af20cc6f9043aa509228707bc713dbd45c951bd8389df18aa8daf57324",
       "role": "adapted",
@@ -1626,7 +1631,7 @@
     },
     {
       "path": "civisibility/utils/net/settings_api.go",
-      "sha256": "7f1f2c1825ca5f68d823b2e8f8c203cfb1406f826ffdb78fee87cef8b4cb4227",
+      "sha256": "a946d7477f2b43d90e69ec4f45e59507933b683ad6695d14f111815e3ad1d1df",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/net/settings_api.go",
       "source_sha256": "debc40c863dd7eae8e4ab894cdb88aa17f56244bdb2b6f09ab6c5a5ed5ac5a04"
@@ -1637,6 +1642,11 @@
       "role": "adapted",
       "source_path": "internal/civisibility/utils/net/settings_api_test.go",
       "source_sha256": "58dfcb6b753e6f7105a66a6ec574b3ca964cadacd9d1248d528087954adf5261"
+    },
+    {
+      "path": "civisibility/utils/net/settings_repository_test.go",
+      "sha256": "35e1bb69f17584fb7d88c4d458a5c211b8965274c093a0830d055e1079880c29",
+      "role": "local"
     },
     {
       "path": "civisibility/utils/net/skippable.go",

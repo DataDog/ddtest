@@ -6,6 +6,7 @@
 package integrations
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -434,7 +435,13 @@ func applyEarlyFlakeDetectionEnabledEnvironmentOverride(ciSettings *net.Settings
 }
 
 // logSettingsFetchError reports a failed or empty CI Visibility settings response.
+// Without a repository URL or a commit SHA, as outside a Git repository, no
+// request was made: a warning says what the settings need.
 func logSettingsFetchError(err error) {
+	if errors.Is(err, net.ErrNoRepositoryOrCommit) {
+		log.Warn("civisibility: no CI Visibility settings without a Git repository URL and commit SHA; run in a Git repository with a commit and a remote, or set DD_GIT_REPOSITORY_URL and DD_GIT_COMMIT_SHA. The features that the settings enable stay off.")
+		return
+	}
 	if err != nil {
 		log.Error("civisibility: error getting CI visibility settings: %s", err.Error())
 		return

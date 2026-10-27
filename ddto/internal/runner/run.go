@@ -459,6 +459,9 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			// The module does not require the runtime: provide it through a
 			// temporary go.mod instead of failing or editing the module.
 			if plan.Modfile, e = provideRuntime(ctx, dir, opts, runtime, temp, replacements, progress); e != nil {
+				if errors.Is(e, errNoModule) {
+					return plan, e
+				}
 				return plan, fmt.Errorf("%s: %s\nthe CLI could not provide it: %w", p.ImportPath, p.Error.Err, e)
 			}
 			opts.buildFlags = append(opts.buildFlags, "-modfile="+plan.Modfile)
