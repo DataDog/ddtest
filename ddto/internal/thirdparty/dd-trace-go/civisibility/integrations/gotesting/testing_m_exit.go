@@ -10,6 +10,6 @@ func isAbnormalTestingMExit(exitCode int) bool {
 	if exitCode != testingMAbnormalExitCode {
 		return false
 	}
-	log.Debug("instrumentTestingM: a panic leaves testing.M.Run and will end the process; closing CI Visibility first")
+	log.Debug("instrumentTestingM: a panic leaves testing.M.Run and will end the process; closing Test Optimization first")
 	return true
 }

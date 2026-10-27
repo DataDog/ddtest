@@ -78,6 +78,10 @@ type (
 	}
 )
 
+// ErrNoRepositoryOrCommit is why GetSettings makes no request without a
+// repository URL or a commit SHA, as outside a Git repository.
+var ErrNoRepositoryOrCommit = errors.New("repository URL and commit SHA are required")
+
 // GetSettings loads settings from the Bazel manifest cache when present and otherwise falls back to the live settings endpoint.
 func (c *client) GetSettings() (*SettingsResponseData, error) {
 	if bazel.IsManifestModeEnabled() {
@@ -90,7 +94,7 @@ func (c *client) GetSettings() (*SettingsResponseData, error) {
 	}
 
 	if c.repositoryURL == "" || c.commitSha == "" {
-		return nil, errors.New("civisibility.GetSettings: repository URL and commit SHA are required")
+		return nil, fmt.Errorf("civisibility.GetSettings: %w", ErrNoRepositoryOrCommit)
 	}
 
 	body := settingsRequest{

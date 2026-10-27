@@ -493,7 +493,7 @@ func upload(ctx context.Context, cli *cliInput, c client, uploadEnabled bool, se
 		return utils.CLIGitUpload{Error: "repository upload disabled"}
 	}
 	if c == nil {
-		return utils.CLIGitUpload{Error: errors.New("no CI Visibility client").Error()}
+		return utils.CLIGitUpload{Error: errors.New("no Test Optimization client").Error()}
 	}
 	hooks := gitupload.ClientHooks(c)
 	repeat := hooks.GetSearchCommits
@@ -530,7 +530,7 @@ func stopTag(reason string) string {
 // then need the history that the upload may have fetched.
 func impacted(ctx context.Context, c client, uploaded utils.CLIGitUpload, settings <-chan settingsResult) impactedtests.CLIState {
 	if c == nil {
-		return impactedtests.CLIState{Reason: "no CI Visibility client"}
+		return impactedtests.CLIState{Reason: "no Test Optimization client"}
 	}
 	if ctx.Err() != nil {
 		return impactedtests.CLIState{Reason: "the CLI stopped the worker"}

@@ -217,15 +217,15 @@ func (handler *ciVisibilitySignalHandler) run() {
 		select {
 		case n := <-handler.observed:
 			if log.DebugEnabled() {
-				log.Debug("civisibility: signal %q arrived while a channel of the test is registered for it; the signal does not end the process, and CI Visibility keeps running", syscall.Signal(n).String())
+				log.Debug("civisibility: signal %q arrived while a channel of the test is registered for it; the signal does not end the process, and Test Optimization keeps running", syscall.Signal(n).String())
 			}
 		case sig := <-handler.signals:
 			if handler.stopping.Load() {
-				log.Debug("civisibility: signal %q arrived while CI Visibility was closing; the process ends with it after the shutdown", sig)
+				log.Debug("civisibility: signal %q arrived while Test Optimization was closing; the process ends with it after the shutdown", sig)
 				handler.pending.Store(&sig)
 				return
 			}
-			log.Debug("civisibility: received signal %q, which no channel of the test handles and which ends the process: closing CI Visibility", sig)
+			log.Debug("civisibility: received signal %q, which no channel of the test handles and which ends the process: closing Test Optimization", sig)
 			exitCiVisibility(false)
 			if handler.stopping.Load() {
 				log.Debug("civisibility: a normal shutdown started during the shutdown for signal %q; the process ends with the signal after it", sig)
@@ -288,7 +288,7 @@ func startCIVisibilitySignalHandler() {
 				ignored = append(ignored, sig) // ignored before CI Visibility started
 			}
 		}
-		log.Debug("civisibility: signal handler registered for %v, which reach CI Visibility only when no channel of the test is registered for them; ignored by the process: %v", registered, ignored)
+		log.Debug("civisibility: signal handler registered for %v, which reach Test Optimization only when no channel of the test is registered for them; ignored by the process: %v", registered, ignored)
 	}
 	go handler.run()
 }
@@ -416,18 +416,18 @@ func forcedExit() {
 		if log.DebugEnabled() {
 			// The goroutine that called os.Exit runs the hook: its stack names
 			// the call, such as a test's log.Fatal, that ended the process.
-			log.Debug("civisibility: os.Exit before CI Visibility closed; closing it. os.Exit was called from:\n%s", debug.Stack())
+			log.Debug("civisibility: os.Exit before Test Optimization closed; closing it. os.Exit was called from:\n%s", debug.Stack())
 		}
 	case civisibility.StateExiting:
-		log.Debug("civisibility: os.Exit while CI Visibility closes; waiting for that shutdown")
+		log.Debug("civisibility: os.Exit while Test Optimization closes; waiting for that shutdown")
 	default:
 		return
 	}
 	started := time.Now()
 	if closeWithinTimeout("in os.Exit", nil) {
-		log.Debug("civisibility: closed CI Visibility for os.Exit duration=%s", time.Since(started))
+		log.Debug("civisibility: closed Test Optimization for os.Exit duration=%s", time.Since(started))
 	} else {
-		log.Error("civisibility: closing CI Visibility in os.Exit did not finish within %s; exiting without it", forcedExitTimeout)
+		log.Error("civisibility: closing Test Optimization in os.Exit did not finish within %s; exiting without it", forcedExitTimeout)
 	}
 	// Errors are otherwise printed once a minute; the process ends now.
 	log.Flush()
@@ -445,7 +445,7 @@ func closeWithinTimeout(what string, before func()) bool {
 		defer close(done)
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error("civisibility: closing CI Visibility %s panicked: %v", what, r)
+				log.Error("civisibility: closing Test Optimization %s panicked: %v", what, r)
 			}
 		}()
 		if before != nil {

@@ -2156,7 +2156,7 @@ coverage covers only its own run, so the session takes it only when that
 process is the only one that joined, and otherwise the statement total of the
 command's `-coverprofile`, which counts a block once and reads file names
 with spaces as Go does (`profileCoverage`). For a
-process that ended without closing CI Visibility, it recreates, failed, the
+process that ended without closing Test Optimization, it recreates, failed, the
 modules and suites that the record shows open, with their IDs and services,
 so the events that the process sent earlier keep their containers, and the
 test that the crash output's crashed goroutine names: the
@@ -2809,6 +2809,31 @@ processes share for up to an hour: entries that a ddto without the port stored
 miss once and are stored again. Check: `TestSettingsApiRequest`, from the PR,
 which fails without the port. The pinned SDK that parity compares with
 predates the PR; parity compares events, not request bodies.
+
+## Settings without a Git repository
+
+Without a repository URL or a commit SHA, as when tests run outside a Git
+repository, `utils/net/settings_api.go` makes no settings request and returns
+`ErrNoRepositoryOrCommit`, with the SDK's message. The SDK logs that as an
+error; `logSettingsFetchError` in `integrations/civisibility_features.go`
+logs a warning instead, which names what the settings need: a Git repository
+with a commit and a remote, or `DD_GIT_REPOSITORY_URL` and
+`DD_GIT_COMMIT_SHA`. The features that the settings enable stay off, as with
+the SDK. Other failures and empty responses stay errors. Checks:
+`TestGetSettingsWithoutRepositoryOrCommit` and `TestLogSettingsFetchError`,
+both local.
+
+## Test Optimization in ddto's messages
+
+The messages that ddto's own code in this port logs or returns call the
+product Test Optimization, as the CLI's do: the shutdowns for `os.Exit`,
+signals, panics and crashes, the CLI session's recreated events and its crash
+reason, and the Git worker's `no Test Optimization client`. The SDK's own
+messages keep their wording, such as `instrumentTestingM: initializing CI
+Visibility for testing.M`, and so do the `civisibility:` prefixes and the
+identifiers. Checks: the integration tests that read these lines, such as
+`TestMiniForcedExitKeepsEvents`, `TestMiniSignalsKeepGoTestBehavior` and
+`TestMiniCrashKeepsEvents`.
 
 ## Fuzz and executable Examples
 

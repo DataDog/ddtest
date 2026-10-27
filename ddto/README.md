@@ -226,7 +226,7 @@ first on their program's `PATH`, so the CLI runs gotestsum through its own
 Each `go test` that gotestsum runs reports its own session, such as each
 `--rerun-fails` run. The CLI's options, such as `--runtime`, do not apply
 there, so a test flag named `--runtime` stays the test's. If the CLI cannot
-set up its `go`, it warns and runs gotestsum without CI Visibility.
+set up its `go`, it warns and runs gotestsum without Test Optimization.
 
 ## Other test wrappers
 
@@ -243,7 +243,7 @@ ddtest instrument --go-shim go run ./tools/testrunner
 Each `go test` that the command runs reports its own session, and other go
 commands run unchanged. Only a `go` found on `PATH` reports: a command that
 runs `$GOROOT/bin/go` by its path or sets its own `PATH` runs `go test`
-without CI Visibility, as do commands that `go generate` starts, which find
+without Test Optimization, as do commands that `go generate` starts, which find
 `$GOROOT/bin` first. A `go run` or `go tool` that the command starts keeps
 the CLI's `go` for its program, unless `go run` has its own `-exec` or builds
 for another platform; then the CLI warns and runs it without its `go`.

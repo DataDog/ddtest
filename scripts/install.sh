@@ -159,4 +159,11 @@ else
     *":$dir:"*) ;;
     *) say "add $dir to PATH" ;;
   esac
+  # A shell runs the first ddtest on PATH, which can be another one, such as
+  # an older executable that go install left in another directory. Git Bash
+  # can name it without .exe.
+  first=$(command -v ddtest || true)
+  if [ -n "$first" ] && ! [ "$first" -ef "$target" ] && ! [ "$first$exe" -ef "$target" ]; then
+    say "another ddtest comes first on PATH, $first: remove it, or put $dir before its directory"
+  fi
 fi

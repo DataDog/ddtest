@@ -175,6 +175,29 @@ class InstallTests(unittest.TestCase):
         self.assertNotIn("secret", result.stderr)
         self.assertNotIn("sensitive", result.stderr)
 
+    def other_ddtest(self):
+        # An older executable in another directory, as go install can leave one.
+        other = self.root / "other"
+        other.mkdir()
+        executable = other / "ddtest"
+        executable.write_text(fake_ddtest("v0.0.1"))
+        executable.chmod(0o755)
+        return other
+
+    def test_warns_when_another_ddtest_comes_first_on_path(self):
+        other = self.other_ddtest()
+        self.release()
+        result = self.install(path=f"{other}{os.pathsep}{self.dir}{os.pathsep}{os.environ['PATH']}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"another ddtest comes first on PATH, {other / 'ddtest'}: remove it, or put {self.dir} before its directory", result.stderr)
+
+    def test_does_not_warn_when_it_comes_first_on_path(self):
+        other = self.other_ddtest()
+        self.release()
+        result = self.install(path=f"{self.dir}{os.pathsep}{other}{os.pathsep}{os.environ['PATH']}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("another ddtest", result.stderr)
+
     def test_adds_the_directory_to_github_path(self):
         self.release()
         github_path = self.root / "github_path"

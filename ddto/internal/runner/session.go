@@ -57,7 +57,7 @@ func startTestSession(cli CLIOptions, opts options, plan Plan, dir string, start
 		return nil, "CODEOWNERS services give each package its own session"
 	}
 	if mode, _ := envconfig.FromEnv(); !envconfig.Enabled(mode) {
-		return nil, "CI Visibility is not enabled"
+		return nil, "Test Optimization is not enabled"
 	}
 	if mode := bazel.CurrentMode(); mode.ManifestEnabled || mode.PayloadFilesEnabled {
 		return nil, "Bazel's offline mode"

@@ -463,7 +463,7 @@ func recreateCLIProcess(session *tslvTestSession, p *cliProcess, fallback time.T
 	for _, m := range created {
 		m.Close(WithTestModuleFinishTime(finish))
 	}
-	log.Debug("civisibility: test process %s ended without closing CI Visibility (%s); recreated %d events", filepath.Base(p.stem), message, recreated)
+	log.Debug("civisibility: test process %s ended without closing Test Optimization (%s); recreated %d events", filepath.Base(p.stem), message, recreated)
 	return recreated
 }
 
@@ -480,7 +480,7 @@ func failRecreated(event ddTslvEvent, errType, message, stack string) {
 // or the race detector with GORACE=halt_on_error=1.
 func processEndError(p *cliProcess) (errType, message, stack string) {
 	if p.crash == "" {
-		return "crash", "the test process ended before it closed CI Visibility, without Go crash output: it was killed, or a sanitizer such as the race detector with GORACE=halt_on_error=1 stopped it", ""
+		return "crash", "the test process ended before it closed Test Optimization, without Go crash output: it was killed, or a sanitizer such as the race detector with GORACE=halt_on_error=1 stopped it", ""
 	}
 	return "crash", crashMessage(p.crash), p.crash
 }

@@ -97,17 +97,17 @@ func failOpenTests(errType, message, stack string) int {
 // without Mini. Other goroutines keep running meanwhile.
 func CloseForCrash(errType, message, stack string) {
 	if !crashing.CompareAndSwap(false, true) {
-		log.Debug("civisibility: another crash (%s) while CI Visibility closes for the first; waiting for that close", errType)
+		log.Debug("civisibility: another crash (%s) while Test Optimization closes for the first; waiting for that close", errType)
 		waitForCrashClose()
 		return
 	}
 	defer close(crashClosed)
 	state := civisibility.GetState()
 	if state != civisibility.StateInitialized && state != civisibility.StateExiting {
-		log.Debug("civisibility: the process crashes (%s) with CI Visibility %s; nothing to close: %s", errType, stateName(state), firstLine(message))
+		log.Debug("civisibility: the process crashes (%s) with Test Optimization %s; nothing to close: %s", errType, stateName(state), firstLine(message))
 		return
 	}
-	log.Debug("civisibility: the process crashes (%s); failing the running tests and closing CI Visibility first: %s\n%s", errType, message, stack)
+	log.Debug("civisibility: the process crashes (%s); failing the running tests and closing Test Optimization first: %s\n%s", errType, message, stack)
 	started := time.Now()
 	finished := closeWithinTimeout("before a crash", func() {
 		if civisibility.GetState() == civisibility.StateInitialized {
@@ -115,9 +115,9 @@ func CloseForCrash(errType, message, stack string) {
 		}
 	})
 	if finished {
-		log.Debug("civisibility: closed CI Visibility before the crash duration=%s", time.Since(started))
+		log.Debug("civisibility: closed Test Optimization before the crash duration=%s", time.Since(started))
 	} else {
-		log.Error("civisibility: closing CI Visibility before a crash did not finish within %s; crashing without it", forcedExitTimeout)
+		log.Error("civisibility: closing Test Optimization before a crash did not finish within %s; crashing without it", forcedExitTimeout)
 	}
 	// Errors are otherwise printed once a minute; the process ends now.
 	log.Flush()

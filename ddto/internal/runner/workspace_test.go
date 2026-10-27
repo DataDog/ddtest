@@ -401,19 +401,29 @@ func TestMiniStandardLibraryTestsRunNatively(t *testing.T) {
 	}
 }
 
-// Outside a module, go test runs natively, as for go test errors.
+// Outside a module, without a go.mod or in GOPATH mode, go test runs
+// natively, as for go test errors, and the warning gives that reason alone,
+// without go list's search of GOPATH for the runtime package.
 func TestMiniOutsideAModuleRunsNatively(t *testing.T) {
 	t.Setenv("GOWORK", "off")
 	t.Setenv("GOFLAGS", "")
-	t.Setenv("GO111MODULE", "")
-	plan, err := PrepareRuntime(t.Context(), t.TempDir(), []string{"errors"}, Mini)
-	if plan.Dir != "" {
-		plan.Release()
-		_ = os.RemoveAll(plan.Dir)
-	}
-	var native *nativeGoError
-	if !errors.As(err, &native) || native.bypass != "no_module" {
-		t.Fatalf("%v; want the no_module bypass", err)
+	for _, mode := range []string{"", "off"} {
+		t.Setenv("GO111MODULE", mode)
+		dir := t.TempDir()
+		if mode == "off" {
+			if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/gopath\n\ngo 1.25\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		plan, err := PrepareRuntime(t.Context(), dir, []string{"errors"}, Mini)
+		if plan.Dir != "" {
+			plan.Release()
+			_ = os.RemoveAll(plan.Dir)
+		}
+		var native *nativeGoError
+		if !errors.As(err, &native) || native.bypass != "no_module" || err.Error() != errNoModule.Error() {
+			t.Fatalf("GO111MODULE=%q: %v; want the no_module bypass with %q", mode, err, errNoModule)
+		}
 	}
 }
 

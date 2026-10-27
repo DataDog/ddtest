@@ -85,6 +85,11 @@ func mayMentionMini(data []byte) bool {
 	return bytes.Contains(data, []byte(miniModule)) || bytes.ContainsRune(data, '\\')
 }
 
+// errNoModule is the whole reason when go test runs outside a module: go
+// list's error for the runtime package there only lists the GOPATH
+// directories that it searched.
+var errNoModule = errors.New("not in a Go module (no go.mod in this directory or its parents, or GO111MODULE=off): the CLI provides its runtime only inside one")
+
 // provideRuntime makes the selected runtime resolvable when the module does not
 // require it, for example after go mod tidy removed an unused requirement. Go
 // then reads a temporary copy of go.mod and go.sum through -modfile; the
@@ -106,7 +111,7 @@ func provideRuntime(ctx context.Context, dir string, opts options, selected Runt
 		if source == "" || source == os.DevNull {
 			// go test runs outside a module, as for go test errors, and
 			// reports what it cannot run there.
-			return "", &nativeGoError{"no_module", errors.New("the CLI provides its runtime only inside a Go module")}
+			return "", &nativeGoError{"no_module", errNoModule}
 		}
 	} else if !filepath.IsAbs(source) {
 		source = filepath.Join(dir, source)
