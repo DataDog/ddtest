@@ -66,6 +66,15 @@ func (m *mockRailsCommandExecutor) CombinedOutput(ctx context.Context, name stri
 	return []byte("Finished in 0.12345 seconds"), nil
 }
 
+func TestMinitestCommandSelectionPreservesCustomerLockfile(t *testing.T) {
+	executor := &mockRailsCommandExecutor{isRails: false}
+	runner := &Minitest{executor: executor}
+	runner.Command()
+	if executor.capturedEnvMap["BUNDLE_FROZEN"] != "true" {
+		t.Fatal("command selection must freeze the bundle", executor.capturedEnvMap)
+	}
+}
+
 func (m *mockRailsCommandExecutor) Run(ctx context.Context, name string, args []string, envMap map[string]string) error {
 	// Capture the envMap for test assertions
 	m.capturedEnvMap = envMap

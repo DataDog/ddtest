@@ -122,14 +122,14 @@ func mustRead(t *testing.T, root string) string {
 	return string(data)
 }
 
-// Ruby testdrive cannot validate configurations yet, so a configured workflow
-// with several Ruby commands is not pointed at --all.
-func TestConfiguredRubyWorkflowDoesNotRecommendAll(t *testing.T) {
+// Ruby testdrive validates configurations, so a configured workflow with
+// several Ruby commands is pointed at --all.
+func TestConfiguredRubyWorkflowRecommendsAll(t *testing.T) {
 	root := rubyWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby}\n      - run: bundle exec rspec spec/a\n      - run: bundle exec rspec spec/b\n")
 	scope, err := DiscoverValidationScope(root, "rspec")
 	require.NoError(t, err)
 	require.Len(t, scope.Commands, 2)
 	var output strings.Builder
 	require.NoError(t, onboardGitHub(&output, &environment.GitHub{}, root, "ruby", "rspec"))
-	require.Contains(t, output.String(), "Run `ddtest testdrive --framework rspec` to check the setup locally.")
+	require.Contains(t, output.String(), "Run `ddtest testdrive --framework rspec --all` to check the setup locally.")
 }

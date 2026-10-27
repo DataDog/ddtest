@@ -44,6 +44,10 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	// configurationLocations are the CI locations of the configuration being run.
+	configurationLocations []string
+	// tracerEnvironment is what a temporary tracer installation adds to every run.
+	tracerEnvironment        map[string]string
 	selectedPlan             onboard.TestCommand
 	cypressPackage           string
 	cypressSelected          onboard.TestCommand
@@ -174,7 +178,6 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if err := selectedLanguage.prepareStorage(); err != nil {
 		return nil, err
 	}
-	command, args := runner.Command()
 	configurationOnly := configuration.CheckOnly
 	all := configuration.All
 	if all && strings.TrimSpace(settings.GetCommand()) != "" {
@@ -184,7 +187,10 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		return nil, fmt.Errorf("--all currently validates %s only", frameworkNamesWith(func(policy frameworkPolicy) bool { return policy.Configurations }))
 	}
 
-	var discoveryError error
+	command, args, selected, discoveryError := selectedLanguage.selectCommand(commandRequest{root: repositoryRoot, runner: runner, override: strings.TrimSpace(settings.GetCommand()), all: all})
+	if !selected {
+		command, args = runner.Command()
+	}
 	var selectedPlan onboard.TestCommand
 	var preflightEnvironment map[string]string
 	if configurationOnly && !frameworkFeaturePolicies[runner.Name()].CheckOnly {
@@ -356,7 +362,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args, Environment: configurationEnvironment}
 	options.Command, options.Args = selectedLanguage.tracerCommand(environment, options.Command, options.Args)
 	var projectTracer string
-	if preflight == nil && !configurationOnly && discoveryError == nil {
+	if preflight == nil && !configurationOnly && discoveryError == nil && selectedLanguage.detectsTracerInPreparation() {
 		projectTracer, _ = detectedPlatform.DetectTracer(ctx, options)
 	}
 	var installCommand string
@@ -489,6 +495,9 @@ func (t *Testdrive) Preview(output io.Writer) {
 		}
 		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(install...))
 	}
+	for _, note := range t.lang().previewNotes() {
+		_, _ = fmt.Fprintf(output, "  - %s\n", note)
+	}
 
 	preview := shellquote.Join(append([]string{command}, args...)...)
 	if onboard.RedactsCommandKeys(t.framework.Name()) {
@@ -575,7 +584,7 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr err
 	var prepared *configurationResult
 	if t.discoveryError != nil {
 		result, runErr = t.run(ctx, output)
-	} else if t.framework.Name() == "webdriverio" || t.framework.Name() == "cucumber" || t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
+	} else if t.lang().isolatesConfigurations() || t.framework.Name() == "webdriverio" || t.framework.Name() == "cucumber" || t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
 		child := *t
 		child.workflowRoot = t.repositoryRoot
 		child.preflight = child.frameworkPreflight()
@@ -788,7 +797,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		}
 		check := checkConfigurationCIRuntimes(ctx, ciRoot, t.framework.Name())
 		if t.workflowRoot != "" {
-			check = onboard.CheckCIRuntimes(ctx, ciRoot, t.framework.Name())
+			check = frameworkCIRuntimes(ctx, ciRoot, t.framework.Name())
 		}
 		result.CIRuntime = &check
 		t.defaultToCITracer(check)
@@ -827,7 +836,11 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			// The same --timeout bound as every other validation subprocess.
 			options.Timeout = t.commandTimeout
 		}
-		installation, err = t.platform.InstallTestdriveTracer(ctx, options)
+		var handled bool
+		installation, handled, err = t.lang().installTracer(t, ctx, options)
+		if !handled && err == nil {
+			installation, err = t.platform.InstallTestdriveTracer(ctx, options)
+		}
 		if err != nil {
 			return result, err
 		}
@@ -839,6 +852,11 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		result.TracerSource = "project installation · reused"
 	}
 	if supportsValidationFramework(t.framework.Name()) {
+		if adapter, ok := pairedFrameworkNamed(t.framework.Name()); ok && adapter.preflightAfterInstall && t.preflight != nil {
+			if err := t.preflight(ctx, output, &result); err != nil {
+				return result, err
+			}
+		}
 		if result.Selection != nil {
 			if err := t.verifyInstalledSelection(ctx, installation.Path, &result); err != nil {
 				return result, err
@@ -862,7 +880,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 				return result, fmt.Errorf("%s preflight: %s", t.framework.Name(), result.Preflight.Verdict.Reason)
 			}
 		}
-		runErr = t.runJavaScriptValidation(ctx, output, session, installation.Path, &result)
+		runErr = t.runFrameworkValidation(ctx, output, session, installation.Path, &result)
 		return
 	}
 	server, err := t.startIntake(session.Directory(), intake.Scenario{})

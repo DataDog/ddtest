@@ -2,10 +2,21 @@ package testdrive
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/kballard/go-shellquote"
 )
 
 // rubyLanguage observes RSpec and Minitest suites with datadog-ci.
@@ -29,6 +40,64 @@ func (rubyLanguage) installedTracerVersion(detected string) string {
 
 func (rubyLanguage) prepareStorage() error { return nil }
 
+// A selected CI or user command runs as given. Without one, Minitest's default
+// probes Rails through Bundler, which may load the Gemfile; that probe runs
+// only in an owned copy.
+func (rubyLanguage) selectCommand(request commandRequest) (string, []string, bool, error) {
+	var command string
+	var args []string
+	handled := false
+	if request.runner.Name() == "minitest" {
+		command, args, handled = "bundle", []string{"exec", "rake", "test"}, true
+	}
+	if request.all {
+		return command, args, handled, nil
+	}
+	selected, err := onboard.RubyValidationCommand(request.root, request.runner.Name(), request.override)
+	if err != nil {
+		return command, args, handled, err
+	}
+	if selected == "" {
+		if request.runner.Name() != "minitest" {
+			return command, args, handled, nil
+		}
+		isolator := Testdrive{repositoryRoot: request.root}
+		err = isolator.inRubyWorkflowCopy(context.Background(), func(root string) (probeErr error) {
+			if err := os.Chdir(root); err != nil {
+				return err
+			}
+			defer func() { probeErr = errors.Join(probeErr, os.Chdir(request.root)) }()
+			command, args = request.runner.Command()
+			return nil
+		})
+		return command, args, true, err
+	}
+	words, err := shellquote.Split(selected)
+	if err != nil || len(words) == 0 {
+		return command, args, handled, fmt.Errorf("invalid Ruby command: %s", selected)
+	}
+	return words[0], words[1:], true, nil
+}
+
+// Bundler resolves the project tracer, which may evaluate the Gemfile; the
+// preflight does it inside the copy instead.
+func (rubyLanguage) detectsTracerInPreparation() bool { return false }
+
+// Each configuration may select its own Gemfile and bundle.
+func (rubyLanguage) refreshProjectTracer(t *Testdrive, ctx context.Context) {
+	if installer, ok := t.platform.(*platform.Ruby); ok {
+		// Bundler may evaluate a blocking Gemfile; keep the subprocess bound.
+		if t.commandTimeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, t.commandTimeout)
+			defer cancel()
+		}
+		t.projectTracer, _ = installer.DetectTracer(ctx, platform.TracerOptions{Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
+	}
+}
+
+func (rubyLanguage) usesPackageBinaries() bool { return false }
+
 func (rubyLanguage) inspectEnvironment(ctx context.Context, request environmentRequest) (string, []string, environmentInfo, *reportCard) {
 	return request.command, request.args, rubyEnvironmentInfo(ctx), nil
 }
@@ -41,10 +110,22 @@ func (rubyLanguage) tracerCommand(_ environmentInfo, command string, args []stri
 
 func (rubyLanguage) installPreview(string) string { return "" }
 
+func (rubyLanguage) previewNotes() []string {
+	return []string{
+		"compare native baseline/reporting-only results and feature controls in a disposable copy; preserve the original Gemfile and lockfile",
+		"check numeric CI Ruby selectors against the resolved tracer; other engines/floating selectors require separate validation or explicit instrumentation exclusions",
+	}
+}
+
+func (rubyLanguage) installTracer(t *Testdrive, ctx context.Context, options platform.TracerOptions) (platform.TracerInstallation, bool, error) {
+	installation, err := t.installRubyTracer(ctx, options)
+	return installation, true, err
+}
+
 // A temporary installation goes through Bundler, which edits the Gemfile.
 func (rubyLanguage) dependencyChanges(projectTracer string) ([]string, string) {
 	if projectTracer == "" {
-		return nil, "Bundler updates Gemfile and Gemfile.lock."
+		return nil, "Bundler updates only the disposable copy of Gemfile and Gemfile.lock; the original bundle is preserved."
 	}
 	return []string{"Gemfile", "Gemfile.lock", "gems.rb", "gems.locked"}, ""
 }
@@ -56,18 +137,57 @@ func (rubyLanguage) installDirectory(sessionDirectory, _ string) (string, func()
 func (rubyLanguage) projectTracerPath(string) string { return "" }
 func (rubyLanguage) temporaryTracerSource() string   { return "project bundle installation" }
 
-func (rubyLanguage) runEnvironment(_ *Testdrive, path string) map[string]string {
-	return rubyEnvironment(path)
+func (rubyLanguage) runEnvironment(t *Testdrive, path string) map[string]string {
+	env := rubyEnvironment(path)
+	maps.Copy(env, t.tracerEnvironment)
+	return env
 }
 
 func (rubyLanguage) noResultsFinding(reportRuntime, bool, bool, *reportCard, *intake.Advice) {}
 
-func (rubyLanguage) pairedFrameworks() map[string]pairedFramework { return nil }
-func (rubyLanguage) isolatesConfigurations() bool                 { return false }
+func (rubyLanguage) pairedFrameworks() map[string]pairedFramework {
+	adapter := pairedFramework{
+		run: func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (validationRun, error) {
+			value, err := t.runRuby(ctx, output, session, preload, spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode)
+			value.Role = spec.Role
+			return value, err
+		},
+		features: func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, _ string, baseline validationRun, result *validationResult) error {
+			return t.runRubyFeatures(ctx, output, session, baseline, result)
+		},
+		preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
+			return t.checkRubyPreflight
+		},
+		telemetry:             verifyRubyTelemetry,
+		preflightAfterInstall: true,
+		missingCoverage:       "Ruby application coverage was not observed. Inspect the selected Gemfile/runtime and native suite output; setup failures before tests start cannot validate compatibility or features. Check datadog-ci coverage settings after the native suite runs.",
+		outcomeTotals:         true,
+	}
+	return map[string]pairedFramework{"rspec": adapter, "minitest": adapter}
+}
 
-func (rubyLanguage) prepareConfiguration(*Testdrive, *configurationResult, string, string) error {
+// Bundler can execute Gemfiles and gemspecs even with a frozen lockfile, so
+// every configuration, including configuration-only checks, runs in a copy.
+func (rubyLanguage) isolatesConfigurations() bool { return true }
+
+// Point Bundler at the configuration's Gemfile inside the copy. Only a local
+// command inherits BUNDLE_GEMFILE from the shell; CI never sees it, including
+// the sole CI command a plain run selects.
+func (rubyLanguage) prepareConfiguration(t *Testdrive, item *configurationResult, original, workspace string) error {
+	local := len(item.Locations) == 0
+	if local && strings.TrimSpace(settings.GetCommand()) == "" {
+		if selected, err := onboard.RubyValidationCommand(original, t.framework.Name(), ""); err == nil && selected != "" {
+			local = false
+		}
+	}
+	gemfile, err := rubyConfigurationGemfile(original, item.Directory, t.configurationEnvironment, local)
+	if err != nil {
+		return err
+	}
+	t.configurationEnvironment["BUNDLE_GEMFILE"] = filepath.Join(workspace, gemfile)
 	return nil
 }
+
 func (rubyLanguage) coordinated() bool        { return false }
 func (rubyLanguage) defaultsToCITracer() bool { return false }
 
@@ -75,4 +195,35 @@ func (rubyLanguage) defaultsToCITracer() bool { return false }
 // inspection only inventories the static Ruby and tracer selections.
 func (rubyLanguage) ciRuntimes(_ context.Context, root, framework string) onboard.RuntimeCheck {
 	return onboard.RubyCIConfiguration(root, framework)
+}
+
+func (rubyLanguage) ciRuntimeName() string { return "Ruby" }
+
+func (rubyLanguage) configurationsCIRuntime(t *Testdrive, scope onboard.ValidationScope) *onboard.RuntimeCheck {
+	ci := onboard.RubyCIConfiguration(t.checkoutRoot(), t.framework.Name())
+	instrumented := false
+	for _, entry := range scope.Commands {
+		instrumented = instrumented || !ciInstrumentationDisabled(entry)
+	}
+	if !instrumented {
+		ci.Status, ci.Reason = "inconclusive", "Every CI entry excludes instrumentation; at least one compatible instrumented CI consumer is required."
+	}
+	return &ci
+}
+
+func (rubyLanguage) mergeCIRuntime(current, next *onboard.RuntimeCheck) *onboard.RuntimeCheck {
+	return mergeRubyRuntimeChecks(current, next)
+}
+
+// The preflight labels the bundled datadog-ci release; there is no registry
+// selection.
+func (rubyLanguage) labelsTracerWithoutSelection() bool { return true }
+
+func init() {
+	features := []featurePolicy{
+		{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "required"}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
+	}
+	for _, name := range (rubyLanguage{}).frameworks() {
+		frameworkFeaturePolicies[name] = frameworkPolicy{SourceCoverage: true, ProbeBodyCounts: true, Paired: true, CheckOnly: true, Preflight: true, Configurations: true, Features: slices.Clone(features)}
+	}
 }

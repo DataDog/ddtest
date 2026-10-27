@@ -314,7 +314,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 		case "skipping", "quarantine", "disabled":
 			mode = "fail"
 		}
-		scenario := intake.Scenario{Feature: feature, Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile}
+		scenario := intake.Scenario{Feature: feature, Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile, Parameters: identity.Parameters}
 		value, err := run(feature, scenario, mode)
 		value = markTimeout(value)
 		result.Runs = append(result.Runs, value.summary())
@@ -345,7 +345,7 @@ func validProbeControl(run validationRun, status string) bool {
 		return false
 	}
 	for _, test := range run.Tests {
-		if test.Name == probeName && test.Status == status {
+		if (test.Name == probeName || test.probe) && test.Status == status {
 			return status != "failed" || strings.Contains(test.Failure, "ddtest intentional failure")
 		}
 	}
@@ -418,7 +418,11 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	}
 	nativePass, nativeFail, nativeSkip := 0, 0, 0
 	for _, test := range run.Tests {
-		if test.Name != identity.Name {
+		name := test.Name
+		if test.probe && test.telemetryName != nil {
+			name = *test.telemetryName
+		}
+		if name != identity.Name {
 			result.Status = "inconclusive"
 			result.Reason = "The scenario selected tests beyond the controlled probe."
 			return result

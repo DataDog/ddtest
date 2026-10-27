@@ -14,7 +14,6 @@ import (
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/onboard"
-	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
@@ -51,6 +50,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if item.Directory == "" {
 		item.Directory = "."
 	}
+	t.configurationLocations = slices.Clone(item.Locations)
 	if t.framework != nil && t.framework.Name() == "vitest" && t.usesVitestRunner() {
 		t.vitestRunner = true
 		var err error
@@ -167,7 +167,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 			return result, err
 		}
 	}
-	t.refreshConfigurationTracer(ctx)
+	t.lang().refreshProjectTracer(t, ctx)
 	if t.preflight != nil {
 		t.preflight = t.frameworkPreflight()
 	}
@@ -253,14 +253,6 @@ func (t *Testdrive) checkoutRoot() string {
 	return t.repositoryRoot
 }
 
-func (t *Testdrive) refreshConfigurationTracer(ctx context.Context) {
-	if installer, ok := t.platform.(*platform.JavaScript); ok {
-		// Missing project dependencies select the normal temporary fallback.
-		// Never retain a path resolved in another package or outside this copy.
-		t.projectTracer, _ = installer.DetectTracer(ctx, platform.TracerOptions{Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
-	}
-}
-
 func (t *Testdrive) runPreparedChecksOrTests(ctx context.Context, output io.Writer) (result validationResult, runErr error) {
 	if !t.checkOnly {
 		return t.run(ctx, output)
@@ -272,7 +264,7 @@ func (t *Testdrive) runPreparedChecksOrTests(ctx context.Context, output io.Writ
 	}
 	check := checkConfigurationCIRuntimes(ctx, root, t.framework.Name())
 	if t.workflowRoot != "" {
-		check = onboard.CheckCIRuntimes(ctx, root, t.framework.Name())
+		check = frameworkCIRuntimes(ctx, root, t.framework.Name())
 	}
 	result.CIRuntime = &check
 	t.defaultToCITracer(check)

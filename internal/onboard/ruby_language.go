@@ -6,10 +6,23 @@
 package onboard
 
 import (
+	_ "embed"
 	"fmt"
 	"path/filepath"
 	"strings"
 )
+
+//go:embed instructions/ruby.md
+var rubyInstructions string
+
+// RubyMinitestForkSetup configures the same synchronous transport in CI and
+// local validation for test runners that terminate forked children with exit!.
+//
+//go:embed instructions/ruby_minitest_fork.rb
+var RubyMinitestForkSetup string
+
+//go:embed instructions/ruby_minitest_fork.md
+var rubyMinitestForkInstructions string
 
 // rubyDiscovery onboards RSpec and Minitest with datadog-ci.
 type rubyDiscovery struct{}
@@ -75,11 +88,18 @@ func (rubyDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step runt
 
 func (rubyDiscovery) skipsUnsupportedNode() bool { return false }
 
-// Ruby keeps the shared instructions until testdrive validates its frameworks.
-func (rubyDiscovery) instructions(string) string { return "" }
+func (rubyDiscovery) instructions(framework string) string {
+	text := strings.ReplaceAll(rubyInstructions, "__FRAMEWORK__", framework)
+	if framework == "minitest" {
+		heading, rest, _ := strings.Cut(text, "\n\n")
+		forkSetup := strings.ReplaceAll(rubyMinitestForkInstructions, "__FORK_SETUP__", strings.TrimSpace(RubyMinitestForkSetup))
+		text = heading + "\n\n" + forkSetup + "\n\n" + rest
+	}
+	return text
+}
 
 func (rubyDiscovery) onboardingScope(string) (discover, instructionsWhenConfigured bool) {
-	return false, false
+	return true, true
 }
 
 const rubyBootstrap = "The action installs datadog-ci into the CI bundle and exports RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument. Preserve RUBYOPT on the RSpec or Minitest step and merge any existing Ruby options. Keep the existing bundle exec or binstub entry point."

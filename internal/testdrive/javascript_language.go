@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
@@ -32,6 +33,21 @@ func (javascriptLanguage) installedTracerVersion(detected string) string {
 // storage; an unusable folder would otherwise surface later as registry failures.
 func (javascriptLanguage) prepareStorage() error { return checkTemporaryStorage() }
 
+// Jest and the other runners select their commands in Prepare itself.
+func (javascriptLanguage) selectCommand(commandRequest) (string, []string, bool, error) {
+	return "", nil, false, nil
+}
+
+func (javascriptLanguage) detectsTracerInPreparation() bool { return true }
+
+func (javascriptLanguage) refreshProjectTracer(t *Testdrive, ctx context.Context) {
+	if installer, ok := t.platform.(*platform.JavaScript); ok {
+		t.projectTracer, _ = installer.DetectTracer(ctx, platform.TracerOptions{Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
+	}
+}
+
+func (javascriptLanguage) usesPackageBinaries() bool { return true }
+
 func (javascriptLanguage) inspectEnvironment(ctx context.Context, request environmentRequest) (string, []string, environmentInfo, *reportCard) {
 	var info environmentInfo
 	if !request.checkOnly && request.discoveryError == nil {
@@ -47,6 +63,12 @@ func (javascriptLanguage) tracerCommand(_ environmentInfo, command string, args 
 }
 
 func (javascriptLanguage) installPreview(string) string { return "" }
+
+func (javascriptLanguage) previewNotes() []string { return nil }
+
+func (javascriptLanguage) installTracer(*Testdrive, context.Context, platform.TracerOptions) (platform.TracerInstallation, bool, error) {
+	return platform.TracerInstallation{}, false, nil
+}
 
 func (javascriptLanguage) dependencyChanges(string) ([]string, string) {
 	return []string{"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"}, ""
@@ -135,3 +157,15 @@ func (javascriptLanguage) defaultsToCITracer() bool { return true }
 func (javascriptLanguage) ciRuntimes(ctx context.Context, root, framework string) onboard.RuntimeCheck {
 	return onboard.CheckCIRuntimes(ctx, root, framework)
 }
+
+func (javascriptLanguage) ciRuntimeName() string { return "Node" }
+
+func (javascriptLanguage) configurationsCIRuntime(*Testdrive, onboard.ValidationScope) *onboard.RuntimeCheck {
+	return nil
+}
+
+func (javascriptLanguage) mergeCIRuntime(_, next *onboard.RuntimeCheck) *onboard.RuntimeCheck {
+	return next
+}
+
+func (javascriptLanguage) labelsTracerWithoutSelection() bool { return false }

@@ -40,6 +40,8 @@ type jestProject struct {
 }
 
 type jestPreflight struct {
+	// Runtime is the local runtime version, for languages other than Node.
+	Runtime             string                       `json:"runtime,omitempty"`
 	WebdriverIO         *framework.WebdriverIOConfig `json:"webdriverio,omitempty"`
 	RunnerBinary        *runnerBinary                `json:"runner_binary,omitempty"`
 	PlaywrightProjects  []playwrightProject          `json:"playwright_projects,omitempty"`
@@ -289,6 +291,19 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 	if preflight == nil {
 		err := fmt.Errorf("configuration checks are not supported for %s", t.framework.Name())
 		result.Error = err.Error()
+		return err
+	}
+	if t.lang().isolatesConfigurations() && !t.isolated {
+		// Loading the project's dependencies can run project code even when
+		// nothing is installed; focused checks get the same copy as --all.
+		runner := *t
+		runner.preflight = preflight
+		item := configurationResult{TestCommand: onboard.TestCommand{Directory: ".", Environment: t.configurationEnvironment}}
+		checked, err := runner.runPreparedConfiguration(ctx, output, &item)
+		result.Preflight, result.CIRuntime, result.Tracer = checked.Preflight, checked.CIRuntime, checked.Tracer
+		if err != nil {
+			result.Error = err.Error()
+		}
 		return err
 	}
 	if err := preflight(ctx, output, &result); err != nil {
