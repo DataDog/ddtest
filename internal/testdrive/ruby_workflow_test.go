@@ -91,6 +91,57 @@ func TestRubyReadinessUsesWorkingDirectoryAndGemsLocked(t *testing.T) {
 	}
 }
 
+func TestRubyReadinessHonorsBundleLockfile(t *testing.T) {
+	for _, lock := range []string{"locks/ci.lock", "ABSOLUTE"} {
+		root := t.TempDir()
+		requireWriteFile(t, filepath.Join(root, "Gemfile"), "source 'https://rubygems.org'\n")
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "locks"), 0700))
+		requireWriteFile(t, filepath.Join(root, "locks/ci.lock"), "installed bundle\n")
+		if lock == "ABSOLUTE" {
+			lock = filepath.Join(root, "locks/ci.lock")
+		}
+		executor := &rubyReadinessExecutor{}
+		drive := Testdrive{repositoryRoot: root, executor: executor}
+		scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "bundle exec rake test", Environment: map[string]string{"BUNDLE_LOCKFILE": lock}, Locations: []string{".github/workflows/test.yml / tests"}}}}
+		missing, err := drive.rubyBundleReadiness(t.Context(), scope)
+		require.NoError(t, err)
+		require.Empty(t, missing, "the configured lockfile exists; the default Gemfile.lock does not")
+		require.Len(t, executor.environments, 1)
+		selected := executor.environments[0]["BUNDLE_LOCKFILE"]
+		require.Equal(t, filepath.Join(executor.directories[0], "locks/ci.lock"), selected, "the check reads the copy's lockfile")
+	}
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "Gemfile"), "source 'https://rubygems.org'\n")
+	drive := Testdrive{repositoryRoot: root, executor: &rubyReadinessExecutor{}}
+	_, err := drive.rubyBundleReadiness(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Environment: map[string]string{"BUNDLE_LOCKFILE": "../elsewhere.lock"}, Locations: []string{"ci"}}}})
+	require.ErrorContains(t, err, "BUNDLE_LOCKFILE is outside the repository")
+}
+
+func TestRubyReadinessAndSetupUseGitHubActionsDefaults(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "Gemfile"), "source 'https://rubygems.org'\n")
+	requireWriteFile(t, filepath.Join(root, "Gemfile.lock"), "installed bundle\n")
+	executor := &rubyReadinessExecutor{}
+	drive := Testdrive{repositoryRoot: root, executor: executor}
+	ci := onboard.TestCommand{Directory: ".", Command: "bundle exec rake test", Locations: []string{".github/workflows/test.yml / tests"}}
+	_, err := drive.rubyBundleReadiness(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{ci}})
+	require.NoError(t, err)
+	require.Len(t, executor.environments, 1)
+	require.Equal(t, "true", executor.environments[0]["CI"])
+	require.Equal(t, "true", executor.environments[0]["GITHUB_ACTIONS"])
+	command, err := rubyBundleSetupCommand(ci, "Gemfile")
+	require.NoError(t, err)
+	require.Contains(t, command, "CI=true")
+	require.Contains(t, command, "GITHUB_ACTIONS=true")
+	ci.Environment = map[string]string{"CI": "spec"}
+	command, err = rubyBundleSetupCommand(ci, "Gemfile")
+	require.NoError(t, err)
+	require.Contains(t, command, "CI=spec", "an explicit CI value wins")
+	command, err = rubyBundleSetupCommand(onboard.TestCommand{Directory: "."}, "Gemfile")
+	require.NoError(t, err)
+	require.Equal(t, []string{"bundle", "install", "--gemfile", "Gemfile"}, command, "a local command keeps the shell environment")
+}
+
 func TestRubyReadinessIgnoresTheShellGemfileForCIConsumers(t *testing.T) {
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "Gemfile"), "# CI bundle\n")

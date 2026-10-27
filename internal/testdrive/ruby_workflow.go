@@ -61,15 +61,25 @@ func (t *Testdrive) rubyBundleReadiness(ctx context.Context, scope onboard.Valid
 			if ciInstrumentationDisabled(entry) {
 				continue
 			}
-			env := isolatedCIEnvironment(entry.Environment, t.repositoryRoot, root)
+			// The check sees the same environment as the consumer's execution,
+			// including the variables every GitHub Actions step has.
+			env := isolatedCIEnvironment(rubyBundleEnvironment(entry), t.repositoryRoot, root)
 			// Only a focused local command inherits the shell's BUNDLE_GEMFILE.
-			gemfile, err := rubyConfigurationGemfile(t.repositoryRoot, entry.Directory, env, len(entry.Locations) == 0)
+			local := len(entry.Locations) == 0
+			gemfile, err := rubyConfigurationGemfile(t.repositoryRoot, entry.Directory, env, local)
 			if err != nil {
 				return err
 			}
 			env["BUNDLE_GEMFILE"] = filepath.Join(root, gemfile)
 			env["RUBYOPT"] = ""
-			_, lockErr := os.Stat(filepath.Join(root, rubyLockfile(gemfile)))
+			lockfile, err := rubySelectedLockfile(t.repositoryRoot, root, entry.Directory, gemfile, env, local)
+			if err != nil {
+				return err
+			}
+			if _, configured := env["BUNDLE_LOCKFILE"]; configured {
+				env["BUNDLE_LOCKFILE"] = lockfile
+			}
+			_, lockErr := os.Stat(lockfile)
 			var checkErr error
 			if lockErr == nil {
 				executor, ok := t.executor.(directoryExecutor)
@@ -94,16 +104,43 @@ func (t *Testdrive) rubyBundleReadiness(ctx context.Context, scope onboard.Valid
 }
 
 // rubyBundleEnvironment is a discovered consumer's own bundle environment. A
-// CI consumer selects only its declared manifest, never the shell's.
+// CI consumer selects only its declared manifest, never the shell's, and sees
+// the variables every GitHub Actions step has, as its execution does.
 func rubyBundleEnvironment(entry onboard.TestCommand) map[string]string {
 	env := map[string]string{}
-	maps.Copy(env, entry.Environment)
 	if len(entry.Locations) > 0 {
+		env = onboard.WithGitHubActionsDefaults(entry.Environment)
 		if _, configured := env["BUNDLE_GEMFILE"]; !configured {
 			env["BUNDLE_GEMFILE"] = ""
 		}
+		return env
 	}
+	maps.Copy(env, entry.Environment)
 	return env
+}
+
+// rubySelectedLockfile is the lockfile Bundler uses for gemfile inside the
+// copy at root: BUNDLE_LOCKFILE when set (relative paths start at the
+// consumer's working directory, Bundler's cwd), otherwise the manifest's own.
+// Only a focused local command inherits the shell's BUNDLE_LOCKFILE.
+func rubySelectedLockfile(original, root, directory, gemfile string, env map[string]string, inheritShell bool) (string, error) {
+	lock, configured := env["BUNDLE_LOCKFILE"]
+	if !configured && inheritShell {
+		lock = os.Getenv("BUNDLE_LOCKFILE")
+	}
+	if lock == "" {
+		return filepath.Join(root, rubyLockfile(gemfile)), nil
+	}
+	if !filepath.IsAbs(lock) {
+		lock = filepath.Join(root, directory, lock)
+	} else if relative, err := filepath.Rel(workspace.CanonicalRoot(original), workspace.CanonicalRoot(lock)); err == nil && filepath.IsLocal(relative) {
+		lock = filepath.Join(root, relative)
+	}
+	relative, err := filepath.Rel(root, lock)
+	if err != nil || !filepath.IsLocal(relative) {
+		return "", fmt.Errorf("BUNDLE_LOCKFILE is outside the repository; use a repository-local lockfile for isolated Ruby validation")
+	}
+	return lock, nil
 }
 
 // rubyBundleSetupCommand installs one selected bundle from the repository
@@ -111,7 +148,7 @@ func rubyBundleEnvironment(entry onboard.TestCommand) map[string]string {
 // locations such as BUNDLE_PATH and BUNDLE_APP_CONFIG match its CI step.
 func rubyBundleSetupCommand(entry onboard.TestCommand, gemfile string) ([]string, error) {
 	directory := filepath.Clean(entry.Directory)
-	onlyGemfile := true
+	onlyGemfile := len(entry.Locations) == 0
 	for key := range entry.Environment {
 		onlyGemfile = onlyGemfile && key == "BUNDLE_GEMFILE"
 	}
