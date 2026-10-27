@@ -125,32 +125,11 @@ func conditionOrder(left, right any, op string) (bool, error) {
 			return compareConditionNumbers(a, 0, op), nil
 		}
 	}
-	number := func(value any) (float64, error) {
-		switch v := value.(type) {
-		case int:
-			return float64(v), nil
-		case float64:
-			return v, nil
-		case string:
-			if v == "" {
-				return 0, nil
-			}
-			var n any
-			if json.Unmarshal([]byte(v), &n) == nil {
-				if f, ok := n.(float64); ok {
-					return f, nil
-				}
-			}
-			return math.NaN(), nil
-		default:
-			return 0, fmt.Errorf("unsupported relational operand requires review")
-		}
-	}
-	a, err := number(left)
+	a, err := conditionNumber(left)
 	if err != nil {
 		return false, err
 	}
-	b, err = number(right)
+	b, err = conditionNumber(right)
 	if err != nil {
 		return false, err
 	}
@@ -255,13 +234,14 @@ func (p *conditionParser) atom() (any, error) {
 		if err != nil || !p.take(")") {
 			return nil, fmt.Errorf("unclosed contains arguments")
 		}
-		item, ok := value.(string)
+		item, ok := conditionString(value)
 		if !ok || symbolicConditionValue(item) || symbolicConditionValue(search) {
 			return nil, fmt.Errorf("contains requires known string operands")
 		}
-		switch values := search.(type) {
-		case string:
+		if values, ok := conditionString(search); ok {
 			return strings.Contains(strings.ToLower(values), strings.ToLower(item)), nil
+		}
+		switch values := search.(type) {
 		case []string:
 			for _, value := range values {
 				if strings.EqualFold(value, item) {
@@ -287,7 +267,12 @@ func (p *conditionParser) atom() (any, error) {
 		if symbolicConditionValue(left) || symbolicConditionValue(right) {
 			return nil, fmt.Errorf("action path contents require runtime resolution")
 		}
-		return strings.HasPrefix(strings.ToLower(fmt.Sprint(left)), strings.ToLower(fmt.Sprint(right))), nil
+		a, aok := conditionString(left)
+		b, bok := conditionString(right)
+		if !aok || !bok {
+			return nil, fmt.Errorf("prefix comparison requires scalar operands")
+		}
+		return strings.HasPrefix(strings.ToLower(a), strings.ToLower(b)), nil
 	}
 	if key, ok := strings.CutPrefix(token, "matrix."); ok {
 		value, exists := p.row[key]
@@ -350,60 +335,53 @@ func conditionEqual(left, right any) (bool, error) {
 			return strings.EqualFold(a, b), nil
 		}
 	}
-	// A missing property in a known matrix is the empty string. GitHub's
-	// equality coercion maps that to zero and booleans to zero/one.
-	if left == "" {
-		if b, ok := right.(bool); ok {
-			return !b, nil
+	switch left.(type) {
+	case []string, []any, map[string]any:
+		switch right.(type) {
+		case []string, []any, map[string]any:
+			return false, fmt.Errorf("composite equality requires runtime identity resolution")
 		}
 	}
-	if right == "" {
-		if a, ok := left.(bool); ok {
-			return !a, nil
-		}
+	a, err := conditionNumber(left)
+	if err != nil {
+		return false, err
 	}
-	if a, ok := left.(bool); ok {
-		if b, ok := right.(bool); ok {
-			return a == b, nil
-		}
-	}
-	// Avoid approximating GitHub's loose cross-type coercions. A mixed comparison
-	// remains unverified rather than selecting the wrong runtime silently.
-	number := func(v any) (float64, bool) {
-		switch n := v.(type) {
-		case int:
-			return float64(n), true
-		case float64:
-			return n, true
-		}
-		return 0, false
-	}
-	// GitHub converts a string compared with a number to a number. A plain
-	// decimal such as matrix.node != '20' has one obvious value; others stay
-	// unverified.
-	decimal := func(v any) (float64, bool) {
-		if text, ok := v.(string); ok && plainDecimal.MatchString(text) {
-			n, err := strconv.ParseFloat(text, 64)
-			return n, err == nil
-		}
-		return number(v)
-	}
-	a, aok := number(left)
-	b, bok := number(right)
-	if aok && bok {
-		return a == b, nil
-	}
-	if aok || bok {
-		if a, aok = decimal(left); aok {
-			if b, bok = decimal(right); bok {
-				return a == b, nil
-			}
-		}
-	}
-	return false, fmt.Errorf("mixed-type comparison requires review")
+	b, err := conditionNumber(right)
+	return a == b, err
 }
 
-var plainDecimal = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
+// GitHub coerces unlike scalar types to numbers for equality and ordering.
+// JSON numeric strings are accepted; invalid strings and arrays compare as NaN.
+func conditionNumber(value any) (float64, error) {
+	switch v := value.(type) {
+	case nil:
+		return 0, nil
+	case bool:
+		if v {
+			return 1, nil
+		}
+		return 0, nil
+	case int:
+		return float64(v), nil
+	case float64:
+		return v, nil
+	case string:
+		if v == "" {
+			return 0, nil
+		}
+		var n any
+		if json.Unmarshal([]byte(v), &n) == nil {
+			if f, ok := n.(float64); ok {
+				return f, nil
+			}
+		}
+		return math.NaN(), nil
+	case []string, []any, map[string]any:
+		return math.NaN(), nil
+	default:
+		return 0, fmt.Errorf("unsupported comparison operand requires review")
+	}
+}
 
 // A job-level branch guard applies equally to installation and all consumers.
 // Enumerate that job as a possible CI path; do not assume the current branch.
@@ -535,4 +513,24 @@ func knownJobCondition(value string, row map[string]any) (bool, error) {
 		}
 	}
 	return runtimeCondition(value, row)
+}
+
+func conditionString(value any) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return v, true
+	case nil:
+		return "", true
+	case bool:
+		return strconv.FormatBool(v), true
+	case int:
+		return strconv.Itoa(v), true
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return "", false
+		}
+		return strconv.FormatFloat(v, 'g', -1, 64), true
+	default:
+		return "", false
+	}
 }

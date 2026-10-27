@@ -24,6 +24,8 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		{"false || true && false", false},
 		{"(false || true) && false", false},
 		{"contains(matrix.node, '20')", true},
+		{"contains(matrix.node,20)", true}, {"contains(22.1,'beta')", false},
+		{"format('{0}',22.1) == '22.1'", true}, {"startsWith(22.1,'22.')", true},
 		{`contains(fromJSON('["18.x", "20.x", "22.x"]'), matrix.node)`, true},
 		{`contains(fromJSON('["18.x", "22.x"]'), matrix.node)`, false},
 		{`contains(fromJSON('["20.X"]'), matrix.node)`, true},
@@ -31,6 +33,11 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		{"matrix.missing", false}, {"matrix.missing < 22", true}, {"matrix.missing != ''", false},
 		{"matrix.enabled", false}, {"matrix.text", true},
 		{"matrix.enabled == false", true}, {"matrix.number == 22", true},
+		{"matrix.number == '22'", true}, {"matrix.enabled == 'false'", false},
+		{"matrix.enabled < 22", true}, {"matrix.enabled == ''", true},
+		{"matrix.number != 'lts'", true}, {"matrix.number == '022'", false},
+		{"22.1 != 'lts' && 22.1 != 'beta'", true},
+		{"22.1 == '22.1'", true}, {"true == 1", true},
 		{"startsWith(matrix.node, '20') && matrix.text != 'FALSE'", false},
 		{"'it''s true' == 'IT''S TRUE'", true},
 		{"matrix.number >= 22", true}, {"matrix.number > 22", false},
@@ -51,14 +58,22 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 			require.Equal(t, tc.want, got)
 		})
 	}
-	for _, expression := range []string{"matrix.enabled == 'false'", "matrix.number == 'twenty-two'", "false && github.event_name == 'push'", "matrix.node == '20.x' ||", "(true", "true garbage"} {
+	for _, expression := range []string{"false && github.event_name == 'push'", "matrix.node == '20.x' ||", "(true", "true garbage"} {
 		_, err := runtimeCondition(expression, row)
 		require.Error(t, err, expression)
 	}
-	for _, expression := range []string{"matrix.enabled < 22", "matrix.number >=", "matrix.number >= 22 || github.event_name == 'push'", "matrix.number >= 22 garbage", `contains(fromJSON('[1]'), matrix.node)`, `fromJSON('{}')`, `fromJSON('null')`, `fromJSON('false')`, `fromJSON('oops')`, `contains(fromJSON(env.NODES), matrix.node)`, `contains(fromJSON('["20.x"]'), github.event_name)`, `contains(matrix.node, 20)`} {
+	for _, expression := range []string{"matrix.number >=", "matrix.number >= 22 || github.event_name == 'push'", "matrix.number >= 22 garbage", `contains(fromJSON('[1]'), matrix.node)`, `fromJSON('{}')`, `fromJSON('null')`, `fromJSON('false')`, `fromJSON('oops')`, `contains(fromJSON(env.NODES), matrix.node)`, `contains(fromJSON('["20.x"]'), github.event_name)`} {
 		_, err := runtimeCondition(expression, row)
 		require.Error(t, err, expression)
 	}
+}
+
+func TestCompositeEqualityRequiresRuntimeIdentity(t *testing.T) {
+	_, err := conditionEqual([]string{"22"}, []string{"22"})
+	require.ErrorContains(t, err, "runtime identity")
+	equal, err := conditionEqual([]string{"22"}, 22)
+	require.NoError(t, err)
+	require.False(t, equal)
 }
 
 func TestStaticMatrixIncludesFollowOriginalCombinations(t *testing.T) {
@@ -139,4 +154,32 @@ func TestEmptyMatrixDoesNotMasqueradeAsNoCI(t *testing.T) {
 	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, nil)
 	require.Equal(t, "inconclusive", result.Status)
 	require.Equal(t, CodeInvalidMatrix, result.Jobs[0].Code)
+}
+
+// A JavaScript matrix mixing numeric Node versions with an alias is compared
+// the way GitHub does: numbers against a non-numeric string are unequal, and a
+// boolean against the string 'true' compares 1 with NaN.
+func TestJavaScriptMatrixGuardsCompareLooselyTypedValues(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22, 'lts/*']
+        include:
+          - {node-version: 22, coverage: true}
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '${{ matrix.node-version }}'}
+      - run: npm ci
+      - if: matrix.node-version != 'lts/*' && contains(matrix.node-version, 2)
+        run: npx jest
+      - if: matrix.coverage == 'true'
+        run: npx jest --coverage
+`)
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "jest", scope.Commands[0].Command, "the coverage step never runs: true == 'true' compares 1 with NaN")
 }

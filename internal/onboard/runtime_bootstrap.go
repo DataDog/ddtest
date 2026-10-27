@@ -170,8 +170,8 @@ func bootstrapOptions(value string, row map[string]any, env map[string]string) (
 }
 
 // GitHub format() replaces numbered placeholders and escapes doubled braces.
-// Only string arguments are needed for bootstrap paths; other types and format
-// specifiers stay inconclusive. Replacement values are never parsed again.
+// Scalar arguments are cast to strings as GitHub does; arrays, objects and
+// format specifiers stay inconclusive. Replacement values are never parsed again.
 func (p *conditionParser) format() (any, error) {
 	if !p.take("(") {
 		return nil, fmt.Errorf("missing format arguments")
@@ -179,7 +179,7 @@ func (p *conditionParser) format() (any, error) {
 	var args []string
 	for {
 		value, err := p.expression(0)
-		text, ok := value.(string)
+		text, ok := conditionString(value)
 		if err != nil || !ok {
 			return nil, fmt.Errorf("unsupported format argument")
 		}
