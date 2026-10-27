@@ -62,7 +62,7 @@ pathlib.Path("observed.json").write_text(json.dumps({
     "prompt": prompt, "argv": sys.argv[1:], "environment":dict(os.environ),
     "agent_environment": {key: os.environ.get(key) for key in ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS")},
     "dd_env": [key for key in os.environ if key.startswith(("DD_", "DATADOG_"))],
-    "cache_environment": {key: os.environ.get(key) for key in ("npm_config_cache", "YARN_CACHE_FOLDER", "XDG_CONFIG_HOME", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR")},
+    "cache_environment": {key: os.environ.get(key) for key in ("npm_config_cache", "YARN_CACHE_FOLDER", "XDG_CONFIG_HOME", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR", "TMPDIR")},
     "npm_unknown_config": [key for key in os.environ if key.lower() in ("npm_config_store_dir", "npm_config_cache_dir")],
     "zdotdir": os.environ.get("ZDOTDIR"),
     "login": {name: json.loads(pathlib.Path(name).read_text()) for name in (
@@ -287,6 +287,12 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(observed["prompt"], f"Use ddtest in {checkout.parent / 'bin'} and onboard this repository to test-optimization.")
         self.assertNotIn("--model", observed["argv"])
 
+    def test_ruby_runtime_checks_every_configuration(self):
+        self.assertEqual(run_eval.report_ruby_runtime({}, "3.3.11")["status"], "not observed")
+        self.assertEqual(run_eval.report_ruby_runtime({"preflight": {"ruby": "3.3.11"}}, "3.3.11")["status"], "matched")
+        report = {"preflight": {"ruby": "3.3.11"}, "configurations": [{"preflight": {"ruby": "3.4.9"}}]}
+        self.assertEqual(run_eval.report_ruby_runtime(report, "3.3.11")["status"], "mismatch")
+
     def test_short_owned_state_path_accepts_real_watchman_socket(self):
         code, manifest = self.trial()
         self.assertEqual(code, 0)
@@ -426,6 +432,19 @@ class RunnerTests(unittest.TestCase):
         for key in ("store-dir", "cache-dir"):
             self.assertNotIn(f'Unknown env config "{key}"', nested.stderr)
 
+    def test_ruby_scratch_uses_container_tmpfs_and_keeps_reports_in_checkout(self):
+        ruby = self.root / "ruby"
+        ruby.write_text("#!/usr/bin/env python3\nimport json\nprint(json.dumps({'executable':'/usr/local/bin/ruby','version':'3.3.11'}))\n")
+        ruby.chmod(0o755)
+        self.args.framework = "minitest"
+        code, manifest = self.trial()
+        self.assertEqual(code, 0)
+        self.assertEqual(manifest["private_caches"]["TMPDIR"], "/tmp")
+        observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())
+        self.assertEqual(observed["cache_environment"]["TMPDIR"], "/tmp")
+        self.assertTrue((self.args.output / "changes.patch").is_file())
+        self.assertEqual(manifest["isolation"]["cleanup"], "removed")
+
     def test_framework_scope_reaches_agent_without_extra_instructions(self):
         self.args.framework = "playwright"
         code, manifest = self.trial()
@@ -557,10 +576,12 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(result["output"].startswith("[truncated]"))
 
 
-class CypressEnvironmentTests(unittest.TestCase):
+class FrameworkEnvironmentTests(unittest.TestCase):
     def test_long_matrix_timeout_is_scoped_and_bounded(self):
-        self.assertEqual(run_eval.agent_environment("claude", 7200, "cypress")["BASH_MAX_TIMEOUT_MS"], "3600000")
-        self.assertEqual(run_eval.agent_environment("claude", 30, "cypress")["BASH_MAX_TIMEOUT_MS"], "30000")
+        for framework in ("cypress", "rspec", "minitest"):
+            self.assertEqual(run_eval.agent_environment("claude", 7200, framework)["BASH_MAX_TIMEOUT_MS"], "3600000")
+            self.assertEqual(run_eval.agent_environment("claude", 1800, framework)["BASH_MAX_TIMEOUT_MS"], "1800000")
+            self.assertEqual(run_eval.agent_environment("claude", 30, framework)["BASH_MAX_TIMEOUT_MS"], "30000")
         self.assertEqual(run_eval.agent_environment("claude", 7200, "jest")["BASH_MAX_TIMEOUT_MS"], "600000")
         self.assertEqual(run_eval.agent_environment("codex", 7200, "cypress"), {})
 
