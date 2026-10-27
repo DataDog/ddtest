@@ -99,7 +99,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 func pythonProbeCommand(command string, args []string) (string, []string, error) {
 	base := strings.TrimSuffix(filepath.Base(command), ".exe")
 	if platform.IsPythonExecutable(command) {
-		if index := onboard.PythonModuleIndex(args); index >= 0 {
+		if index, _ := onboard.PythonModule(args); index >= 0 {
 			return command, slices.Clone(args[:index]), nil
 		}
 		return command, nil, nil

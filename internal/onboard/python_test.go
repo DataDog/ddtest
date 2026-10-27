@@ -41,9 +41,18 @@ func TestPythonInvocationStopsAtTheExecutionTarget(t *testing.T) {
 		match bool
 	}{
 		{[]string{"python", "-m", "pytest", "tests"}, true},
+		{[]string{"python", "-mpytest", "tests"}, true},
+		{[]string{"python3.12", "-W", "error", "-mpytest"}, true},
+		{[]string{"uv", "run", "--", "python", "-mpytest"}, true},
+		{[]string{"poetry", "run", "python", "-mpytest"}, true},
 		{[]string{"python3.12", "-I", "-W", "error", "-Xdev", "-m", "pytest"}, true},
 		{[]string{"python", "--check-hash-based-pycs", "always", "-m", "pytest"}, true},
 		{[]string{"python", "wrapper.py", "-m", "pytest"}, false},
+		{[]string{"python", "wrapper.py", "-mpytest"}, false},
+		{[]string{"python", "-c", "print('wrapper')", "-mpytest"}, false},
+		{[]string{"python", "--", "-mpytest"}, false},
+		{[]string{"python", "-W", "-mpytest"}, false},
+		{[]string{"python", "-mpip", "pytest"}, false},
 		{[]string{"python", "-c", "print('wrapper')", "-m", "pytest"}, false},
 		{[]string{"python", "-", "-m", "pytest"}, false},
 		{[]string{"python", "--", "-m", "pytest"}, false},
@@ -67,6 +76,41 @@ func TestPythonInvocationStopsAtTheExecutionTarget(t *testing.T) {
 	check := pythonReviewRuntime(t, root)
 	require.Len(t, check.Jobs, 2)
 	require.Equal(t, "inconclusive", check.Jobs[1].Status)
+}
+
+func TestPythonAttachedModulesPreserveCIScopeAndOptions(t *testing.T) {
+	root := pythonReviewWorkflow(t, `jobs:
+  tests:
+    steps:
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: python, python-tracer-version: '4.16.0'}
+      - run: python -mpip install pytest
+      - run: python -W error -mpytest -k selected
+      - run: python -mtox -e py312
+`)
+	config := "[tool.tox.env_run_base]\npass_env = ['DD_*', 'PYTHONPATH', 'PYTEST_ADDOPTS']\ncommands = [['python', '-mpytest', '-q']]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pyproject.toml"), []byte(config), 0644))
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Len(t, scope.Unresolved, 1)
+	require.Contains(t, scope.Unresolved[0], "Local tox execution is not supported")
+	require.Len(t, scope.Commands, 2)
+	require.Equal(t, "python -W error -mpytest -k selected", scope.Commands[0].Command)
+	require.Equal(t, "python -mtox -e py312", scope.Commands[1].Command)
+	check := pythonReviewRuntime(t, root)
+	require.Equal(t, "compatible", check.Status, "%+v", check)
+	require.Len(t, check.Jobs, 2)
+	options, _, err := PytestCommandOptions("--ddtrace", []string{"python", "-W", "error", "-mpytest", "-k", "selected"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"--ddtrace", "-k", "selected"}, options)
+
+	unknown := pythonReviewWorkflow(t, "jobs:\n  tests:\n    steps:\n      - run: python-helper -mpytest\n")
+	check = pythonReviewRuntime(t, unknown)
+	require.Equal(t, "inconclusive", check.Status)
+	require.Len(t, check.Jobs, 1)
+	require.Contains(t, check.Jobs[0].Reason, "Unresolved Python entry point")
 }
 
 func TestPythonScopeRetainsCommandsAndUnresolvedWrappers(t *testing.T) {

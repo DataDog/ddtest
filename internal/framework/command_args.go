@@ -12,7 +12,7 @@ func frameworkSeparator(command string, args []string, executable string) int {
 	start := 0
 	if frameworkExecutableName(command) != executable {
 		for i, arg := range args {
-			if frameworkExecutableName(arg) == executable {
+			if frameworkExecutableName(arg) == executable || executable == "pytest" && arg == "-mpytest" {
 				start = i + 1
 				break
 			}

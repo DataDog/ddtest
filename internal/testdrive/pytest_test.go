@@ -38,6 +38,17 @@ func TestPytestKeepsWrapperSeparatorsAndCIOptions(t *testing.T) {
 	require.Equal(t, "false", executor.env["DD_TRACE_ENABLED"])
 }
 
+func TestPytestAttachedModuleKeepsWrapperAndSuiteSeparators(t *testing.T) {
+	session := planSession()
+	require.NoError(t, session.create())
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
+	executor := &fakeTestdriveExecutor{}
+	drive := &Testdrive{repositoryRoot: t.TempDir(), command: "uv", args: []string{"run", "--", "python", "-mpytest", "--", "test_app.py"}, executor: executor, startIntake: func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{url: "http://127.0.0.1:1"}, nil }}
+	_, err := drive.runPytest(t.Context(), io.Discard, session, "", runSpec{Name: "baseline", Role: roleBaseline})
+	require.NoError(t, err)
+	require.Equal(t, []string{"run", "--no-sync", "--", "python", "-mpytest", "--no-ddtrace", "--", "test_app.py"}, executor.args)
+}
+
 func TestPytestResultsRequireCompleteNativeEvidence(t *testing.T) {
 	for _, contents := range []string{"", `{}`, `{"complete":false,"tests":[]}`, `{"complete":true,"tests":null}`} {
 		run := validationRun{}

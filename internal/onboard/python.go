@@ -127,7 +127,7 @@ func pythonStepCandidate(root string, workflow ciWorkflow, job runtimeJob, step 
 			if i != 0 && (len(words) < 2 || words[1] != "run" || !slices.Contains([]string{"uv", "poetry"}, filepath.Base(words[0]))) {
 				break
 			}
-			if index := PythonModuleIndex(words[i+1:]); strings.HasPrefix(filepath.Base(word), "python") && index >= 0 && slices.Contains([]string{"pytest", "tox"}, words[i+index+2]) {
+			if index, module := PythonModule(words[i+1:]); strings.HasPrefix(filepath.Base(word), "python") && index >= 0 && slices.Contains([]string{"pytest", "tox"}, module[0]) {
 				return true // Retain interpreter-like wrappers as unresolved, never native commands.
 			}
 		}
@@ -214,30 +214,33 @@ func pythonApplicationPath(workflow ciWorkflow, job runtimeJob, step runtimeStep
 	return result
 }
 
-// PythonModuleIndex identifies -m only among interpreter options. Python stops
-// parsing those options at a script, -c, stdin or --; later -m belongs to it.
+// PythonModule identifies -m among interpreter options, returning its index and
+// the module followed by its arguments. Attached -mmodule is normalized.
+// Parsing stops at a script, -c, stdin or --; later -m belongs to that target.
 // Unknown interpreter options remain unresolved rather than being skipped.
-func PythonModuleIndex(args []string) int {
+func PythonModule(args []string) (int, []string) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
 		case arg == "-m":
 			if i+1 < len(args) {
-				return i
+				return i, args[i+1:]
 			}
-			return -1
+			return -1, nil
+		case strings.HasPrefix(arg, "-m"):
+			return i, append([]string{arg[2:]}, args[i+1:]...)
 		case arg == "-W" || arg == "-X" || arg == "--check-hash-based-pycs":
 			i++
 			if i >= len(args) {
-				return -1
+				return -1, nil
 			}
 		case strings.HasPrefix(arg, "-W") || strings.HasPrefix(arg, "-X"):
 		case len(arg) > 1 && arg[0] == '-' && strings.Trim(arg[1:], "bBdEiIOPqRsSuvx") == "":
 		default:
-			return -1
+			return -1, nil
 		}
 	}
-	return -1
+	return -1, nil
 }
 
 func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
@@ -249,9 +252,9 @@ func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
 		return words[1:], true
 	}
 	if platform.IsPythonExecutable(words[0]) {
-		index := PythonModuleIndex(words[1:])
-		if index >= 0 && words[index+2] == runner {
-			return words[index+3:], true
+		index, module := PythonModule(words[1:])
+		if index >= 0 && module[0] == runner {
+			return module[1:], true
 		}
 		return nil, false
 	}
@@ -425,8 +428,10 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 			continue
 		}
 		setup := base == "pip" || base == "pip3" || (base == "uv" && len(words) > 1 && slices.Contains([]string{"sync", "pip"}, words[1]))
-		if platform.IsPythonExecutable(words[0]) && len(words) > 2 && words[1] == "-m" && slices.Contains([]string{"pip", "venv"}, words[2]) {
-			setup = true
+		if platform.IsPythonExecutable(words[0]) {
+			if index, module := PythonModule(words[1:]); index >= 0 && slices.Contains([]string{"pip", "venv"}, module[0]) {
+				setup = true
+			}
 		}
 		if setup {
 			result.ReviewReason = "Prepare the same Python dependencies as CI before local validation; dependency installation is not replayed."

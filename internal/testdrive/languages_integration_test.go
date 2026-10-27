@@ -89,6 +89,7 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 				{"plain", nil},
 				{"keyword selection", []string{"--command", "python -m pytest -k test_adds"}},
 				{"marker selection", []string{"--command", "python -m pytest -m slow"}},
+				{"attached module", []string{"--command", "python -mpytest -k test_adds"}},
 			} {
 				if fixture.name != "pytest" && mode.name != "plain" {
 					continue
