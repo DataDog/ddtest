@@ -103,7 +103,16 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 				executorGap = err.Error()
 			}
 			merged := ciMembers(metadata)
+			environmentFields := ciMembers(merged["environment"])
+			maps.Copy(environmentFields, ciMembers(jobFields["environment"]))
 			maps.Copy(merged, jobFields)
+			if len(environmentFields) > 0 {
+				environmentNode := &yaml.Node{Kind: yaml.MappingNode}
+				for _, key := range slices.Sorted(maps.Keys(environmentFields)) {
+					environmentNode.Content = append(environmentNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: key}, environmentFields[key])
+				}
+				merged["environment"] = environmentNode
+			}
 			jobFields = merged
 		}
 		ciDirectory := replace(ciScalar(jobFields["working_directory"]))

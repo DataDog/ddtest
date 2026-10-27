@@ -40,12 +40,13 @@ func nativeInstrumentationPrefix(setup nativeSetup, provider string) string {
 	prefix := "# ddtest-ci " + string(metadata) + "\n(\n" +
 		"_ddtest_tracer_dir=\n" +
 		"trap 'if [ -n \"$_ddtest_tracer_dir\" ]; then rm -rf -- \"$_ddtest_tracer_dir\"; fi' EXIT\n" +
-		"if [ \"${DD_CIVISIBILITY_ENABLED:-}\" != false ] && [ -n \"${DD_API_KEY:-}\" ] && _ddtest_tracer_dir=$(mktemp -d \"${TMPDIR:-/tmp}/ddtest-ci.XXXXXXXX\") && npm install --prefix \"$_ddtest_tracer_dir\" --no-save --package-lock=false --no-audit --no-fund dd-trace@" + setup.Version + "; then\n" +
+		"if [ \"${DD_CIVISIBILITY_ENABLED:-}\" != false ] && [ -n \"${DD_API_KEY:-}\" ] && _ddtest_tracer_dir=$(mktemp -d \"${TMPDIR:-/tmp}/ddtest-ci.XXXXXXXX\") && npm install --prefix \"$_ddtest_tracer_dir\" --no-save --package-lock=false --no-audit --no-fund dd-trace@" + setup.Version + " >&2; then\n" +
 		"  readonly _ddtest_tracer_dir\n" +
 		"  export DD_TRACE_PACKAGE=\"$_ddtest_tracer_dir/node_modules/dd-trace/ci/init\"\n" +
 		"  export DD_TRACE_ESM_IMPORT=\"$_ddtest_tracer_dir/node_modules/dd-trace/register.js\"\n" +
 		"  export " + variable + "=\"${" + variable + ":-}" + options + "\"\n" +
 		"  export DD_CIVISIBILITY_ENABLED=true\n" +
+		"  export DD_CIVISIBILITY_AGENTLESS_ENABLED=true\n" +
 		"  export DD_SITE=" + setup.Site + "\nfi\n"
 	if provider == "buildkite" {
 		// Upload expands variables even inside shell quotes. Escape generated

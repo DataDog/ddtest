@@ -33,6 +33,9 @@ func nativeShellState(root string, job runtimeJob) runtimeJob {
 		}
 		file, ok := parseCIShell(step.Run)
 		if !ok || len(file.Stmts) != 1 {
+			if ok && nativeChangesShellState(step.Run) {
+				job.Gaps = append(job.Gaps, step.Source+": compound shell setup requires explicitly resolved persistent state")
+			}
 			continue
 		}
 		stmt := file.Stmts[0]

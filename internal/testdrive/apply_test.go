@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/stretchr/testify/require"
 )
 
@@ -222,6 +223,30 @@ func TestSetupSelectionAcceptsMochaCoverageThatSetupWraps(t *testing.T) {
 		require.Equal(t, onboard.CodeUnverifiedInitialization, ci.Jobs[0].Code, command)
 		require.Equal(t, repairable, repairableSetupFinding("mocha", ci.Jobs[0]), "%s: %s", command, ci.Jobs[0].Reason)
 		require.False(t, repairableSetupFinding("jest", ci.Jobs[0]), "only Mocha setup adds the NYC wrapper")
+	}
+}
+
+func TestNativeSetupSelectionMochaCoverageRepairable(t *testing.T) {
+	config := settings.Get()
+	before := config.CIProvider
+	config.CIProvider = "gitlab"
+	t.Cleanup(func() { config.CIProvider = before })
+	for command, repairable := range map[string]bool{"npm test": true, "npx c8 mocha": false} {
+		root := t.TempDir()
+		requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"mocha"},"devDependencies":{"mocha":"11.7.6","nyc":"17.1.0","c8":"10.1.3","dd-trace":"6.20.1"}}`)
+		requireWriteFile(t, filepath.Join(root, ".gitlab-ci.yml"), "test:\n image: node:24.1.0\n before_script:\n  - npm ci\n  - export NODE_OPTIONS='-r dd-trace/ci/init'\n script: "+command+"\n")
+		ci := onboard.CheckCIRuntimes(t.Context(), root, "mocha")
+		require.Len(t, ci.Jobs, 1)
+		require.Equal(t, onboard.CodeUnverifiedInitialization, ci.Jobs[0].Code)
+		require.Equal(t, repairable, repairableSetupFinding("mocha", ci.Jobs[0]), ci.Jobs[0].Reason)
+		if repairable {
+			plan, err := onboard.PlanJavaScriptSetup(root, "mocha", "6.20.1", "datadoghq.com", ">=22")
+			require.NoError(t, err)
+			diff, err := plan.Diff()
+			require.NoError(t, err)
+			require.Contains(t, diff, "npx --no-install nyc -- npm test")
+			require.NotContains(t, diff, "npm install --prefix", "preserve the existing tracer installation")
+		}
 	}
 }
 

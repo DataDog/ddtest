@@ -144,13 +144,42 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 		directory, stage, node, source, blocked string
 		docker                                  bool
 	}
-	var walk func(int, int, state, int) state
-	walk = func(start, end int, current state, depth int) state {
+	var walk func(int, int, state, int, bool) state
+	walk = func(start, end int, current state, depth int, declarative bool) state {
 		if depth > 32 {
 			job.Gaps = append(job.Gaps, "Jenkins nesting exceeds 32 levels")
 			return current
 		}
+		// Declarative directives apply to their whole pipeline/stage regardless
+		// of source order. Resolve them before steps, without visiting sibling
+		// stages or treating imperative wrappers as declarative configuration.
+		directives := map[int]int{}
+		if declarative {
+			for _, kind := range []string{"environment", "agent", "tools"} {
+				for i := start; i < end; i++ {
+					if tokens[i].quote == "" && tokens[i].value == kind && i+1 < end {
+						stop := i
+						if tokens[i+1].value == "{" {
+							stop = pairs[i+1] + 1
+						} else if kind == "agent" && slices.Contains([]string{"any", "none"}, tokens[i+1].value) {
+							stop = i + 2
+						}
+						if stop > i {
+							current = walk(i, stop, current, depth+1, false)
+							directives[i] = stop
+						}
+					}
+					if stop, ok := pairs[i]; ok {
+						i = stop
+					}
+				}
+			}
+		}
 		for i := start; i < end; i++ {
+			if stop, done := directives[i]; done {
+				i = stop - 1
+				continue
+			}
 			token := tokens[i]
 			if token.quote != "" {
 				continue
@@ -331,13 +360,21 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 				} else {
 					maps.Copy(child.env, bindings)
 				}
-			case "pipeline", "stages", "steps", "node", "script", "docker", "tools":
+			case "docker":
+				for j := open + 1; j < stop; j++ {
+					if tokens[j].quote == "" && tokens[j].value == "args" {
+						child.blocked = "Jenkins Docker arguments require resolved runtime and mount configuration"
+						job.Gaps = append(job.Gaps, child.blocked)
+						break
+					}
+				}
+			case "pipeline", "stages", "steps", "node", "script", "tools":
 			case "post", "success", "always", "failure", "cleanup":
 				child.blocked = "Jenkins post conditions require a resolved execution path"
 			default:
 				child.blocked = "Groovy control flow/function " + token.value + " requires a resolved execution path"
 			}
-			selected := walk(open+1, stop, child, depth+1)
+			selected := walk(open+1, stop, child, depth+1, token.value == "pipeline" || token.value == "stage")
 			// Declarative agent/tools configure their containing scope. A
 			// stage's selection must never leak to a subsequent sibling stage.
 			if slices.Contains([]string{"agent", "docker", "tools"}, token.value) {
@@ -347,7 +384,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 		}
 		return current
 	}
-	walk(0, len(tokens), state{env: job.Env, directory: ".", stage: "pipeline"}, 0)
+	walk(0, len(tokens), state{env: job.Env, directory: ".", stage: "pipeline"}, 0, false)
 	job.Gaps = slices.Compact(job.Gaps)
 	if len(job.Steps) == 0 {
 		w.Unresolved = append(w.Unresolved, path+": no literal shell steps found; shared libraries or dynamically generated Pipeline need resolved commands")

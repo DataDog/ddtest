@@ -75,7 +75,7 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 		return w, err
 	}
 	defaults := ciMembers(definitions["default"])
-	for _, key := range []string{"image", "before_script", "after_script"} {
+	for _, key := range []string{"image", "before_script", "after_script", "services"} {
 		if defaults[key] == nil {
 			defaults[key] = definitions[key]
 		}
@@ -244,7 +244,7 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 		if fields["services"] != nil {
 			w.Unresolved = append(w.Unresolved, path+" / "+name+": GitLab service containers require explicit local service facts")
 		}
-		matrix := ciMembers(fields["parallel"])["matrix"]
+		matrix := ciUnalias(ciMembers(fields["parallel"])["matrix"])
 		if matrix != nil {
 			var rows []map[string]any
 			for _, entry := range matrix.Content {

@@ -236,7 +236,13 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 				continue
 			}
 			if framework == "mocha" && slices.ContainsFunc(r.Tests, func(test TestCommand) bool { return !test.usesNYC && !test.mochaIstanbul }) {
-				finding.Code, finding.Reason = CodeUnverifiedInitialization, "Mocha source coverage is missing: preserve the existing tracer and configure Istanbul/NYC instrumentation for this test command."
+				finding.Code, finding.Reason = CodeUnverifiedInitialization, MochaCoverageGap+step.Run+". Preserve the existing tracer and configure Istanbul/NYC instrumentation for this test command."
+				for _, test := range r.Tests {
+					if words, err := shellquote.Split(test.Command); err == nil && len(words) > 0 && filepath.Base(words[0]) == "c8" {
+						finding.Reason = "Mocha CI command uses c8: " + test.Command + ". c8's V8 coverage is not reported per test; wrap the Mocha command with npx --no-install nyc -- instead."
+						break
+					}
+				}
 				findings = append(findings, finding)
 				continue
 			}

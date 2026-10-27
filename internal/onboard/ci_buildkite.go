@@ -105,6 +105,10 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 							}
 							image := ciScalar(serviceFields["image"])
 							job.Node, job.NodeSource = ciImageNode(image, job.Env), composePath+" / "+service+" / image"
+							if build := ciUnalias(serviceFields["build"]); build != nil && build.Kind == yaml.MappingNode {
+								job.Node = ""
+								job.Gaps = append(job.Gaps, "Docker Compose build mapping requires its resolved context and Dockerfile")
+							}
 							if build := ciScalar(serviceFields["build"]); build != "" {
 								if !filepath.IsLocal(build) {
 									job.Gaps = append(job.Gaps, "Docker build context is not repository-relative")
@@ -124,6 +128,9 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 								changedRuntime := false
 								for _, line := range strings.Split(string(contents), "\n") {
 									words := strings.Fields(line)
+									if len(words) > 1 && strings.EqualFold(words[0], "WORKDIR") {
+										job.Gaps = append(job.Gaps, file+": Dockerfile working directory requires a resolved repository mapping before validation or editing")
+									}
 									if len(words) > 1 && strings.EqualFold(words[0], "FROM") {
 										if from != "" {
 											job.Gaps = append(job.Gaps, "Multi-stage Dockerfile requires explicit runtime selection")

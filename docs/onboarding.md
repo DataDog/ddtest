@@ -20,7 +20,9 @@ The same `onboard --apply` preview and `--apply --yes` execution apply to the
 other providers. Native CI commands receive an exact tracer installation and
 framework initialization in their own shell/container. The installation uses
 private temporary storage, is cleaned on exit, and preserves manifests,
-lockfiles and the original test exit status. Without `DD_API_KEY`, or if tracer
+lockfiles and the original test exit status. Successful setup enables agentless
+transport, so a Datadog Agent is not required. Installation diagnostics go to
+stderr to preserve captured test stdout. Without `DD_API_KEY`, or if tracer
 installation fails, the original tests run without instrumentation. A human
 must create the secret and expose it as `DD_API_KEY` in the test job; Jenkins
 needs a credentials binding, and Buildkite needs a secret/environment binding.
@@ -49,6 +51,9 @@ unvalidated paths. GitLab teardown starts with fresh shell state. CircleCI
 reusable commands/executors own their parameter defaults; job parameters cross
 those boundaries only as explicit arguments. Compose working directories need
 a resolved repository mapping before local validation can claim the same suite.
+Dockerfile working directories and mapping-form Compose builds also require
+resolved setup. Jenkins declarative directives apply to their entire stage or
+pipeline regardless of source order; custom Docker arguments require review.
 
 GitLab local includes, inherited jobs, variables and literal matrices;
 CircleCI jobs, local reusable commands/executors and pinned official Node orb
