@@ -35,7 +35,7 @@ func TestNativeEventsConcurrentFinishAndHierarchy(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		if envelope.Version != 1 || envelope.Metadata["*"]["language"] != "go" {
+		if envelope.Version != 1 || envelope.Metadata["*"]["language"] != "go" || envelope.Metadata["*"]["library_name"] != "ddtest" {
 			t.Error("invalid envelope")
 		}
 		mu.Lock()

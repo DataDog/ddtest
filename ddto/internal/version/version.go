@@ -7,6 +7,11 @@ package version
 // checkout, whose 0.0.0-dev development builds report.
 const Number = "0.0.0-dev"
 
+// LibraryName names, beside the version, the library that reports Mini's
+// events: ddtest, whose instrument command runs ddto. The SDK, which reports
+// only its version, sends no name.
+const LibraryName = "ddtest"
+
 // Tag is the version reported by the extracted diagnostics and telemetry.
 const Tag = "v" + Number
 

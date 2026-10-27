@@ -105,7 +105,7 @@ func New(c Config) (*Client, error) {
 	for k, v := range c.Tags {
 		tags[k] = v
 	}
-	metadata := map[string]map[string]string{"*": {"language": "go", "runtime-id": globalconfig.RuntimeID(), "library_version": Version}}
+	metadata := map[string]map[string]string{"*": {"language": "go", "runtime-id": globalconfig.RuntimeID(), "library_name": version.LibraryName, "library_version": Version}}
 	if c.Env != "" {
 		metadata["*"]["env"] = c.Env
 	}

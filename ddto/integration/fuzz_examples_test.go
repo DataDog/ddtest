@@ -377,14 +377,15 @@ func normalizeFuzzExampleEvents(events []map[string]any, fixture fuzzExampleFixt
 	for _, event := range result {
 		content := event["content"].(map[string]any)
 		meta, _ := content["meta"].(map[string]any)
-		wantVersion := "v2.12.0-dev.3"
+		wantVersion, wantName := "v2.12.0-dev.3", any(nil)
 		if fixture.runtime == "mini" {
-			wantVersion = minitracer.Version
+			wantVersion, wantName = minitracer.Version, "ddtest"
 		}
-		if meta["library_version"] != wantVersion {
-			panic(fmt.Sprintf("unexpected %s library_version: %v", fixture.runtime, meta["library_version"]))
+		if meta["library_version"] != wantVersion || meta["library_name"] != wantName {
+			panic(fmt.Sprintf("unexpected %s library: %v %v", fixture.runtime, meta["library_name"], meta["library_version"]))
 		}
 		delete(meta, "library_version")
+		delete(meta, "library_name")
 		if stack, ok := meta["error.stack"].(string); ok {
 			meta["error.stack"] = canonicalFuzzStack(stack)
 		}

@@ -129,6 +129,9 @@ Only declared differences are normalized:
 - APM sampling, profiling, process enrichment, runtime identity and redundant
   Git/hierarchy aliases are excluded. Aliases must agree with native CI fields
   when present. Unknown CI attributes and custom tags remain in the comparison.
+- Mini's envelope metadata names its library, `library_name: ddtest`, which
+  the SDK does not send. The comparator excludes it with the library versions,
+  which differ.
 - Shared CI, Git, OS and runtime strings can come from event-kind envelope
   metadata instead of each event, an accepted change from the SDK. The
   comparator expands only those declared keys, and raw-payload assertions check

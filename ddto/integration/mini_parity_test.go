@@ -443,7 +443,8 @@ func ciWireMetadata(t *testing.T, c *miniWireCapture) string {
 				if isSharedCIKind(kind) && isLiftedCIKey(key) {
 					continue // Compared after per-event inheritance, not discarded.
 				}
-				if kind == "*" && (key == "runtime-id" || key == "library_version") {
+				// Only Mini names its library.
+				if kind == "*" && (key == "runtime-id" || key == "library_version" || key == "library_name") {
 					if v == "" {
 						t.Fatalf("missing %s", key)
 					}

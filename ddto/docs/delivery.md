@@ -224,7 +224,8 @@ layout.
 ## Payload-level common metadata
 
 Mini writes test-cycle envelope metadata. The `"*"` entry contains
-`language`, `runtime-id`, `library_version` and, when configured, `env`.
+`language`, `runtime-id`, `library_name` (`ddtest`), `library_version` and,
+when configured, `env`. The SDK sends no `library_name`.
 Event-kind entries carry `test_session.name`. This applies defaults across a
 payload without copying those strings into every event.
 
