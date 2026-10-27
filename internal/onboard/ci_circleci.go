@@ -117,8 +117,9 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 		}
 		ciDirectory := replace(ciScalar(jobFields["working_directory"]))
 		checkoutAtRoot := false
-		if steps := jobFields["steps"]; steps != nil {
+		if steps := ciUnalias(jobFields["steps"]); steps != nil {
 			for _, step := range steps.Content {
+				step = ciUnalias(step)
 				checkoutAtRoot = checkoutAtRoot || (step.Kind == yaml.ScalarNode && step.Value == "checkout")
 			}
 		}

@@ -114,6 +114,9 @@ func readSelectedWorkflows(root, requested string) ([]ciWorkflow, error) {
 				for name, job := range workflows[i].Jobs {
 					for n := range job.Steps {
 						job.Steps[n].Native = nativeExistingSetup(root, adapter.name, job, n)
+						if job.If != "false" && job.Steps[n].If != "false" && job.Steps[n].Run == "" && job.Steps[n].ResolutionError != "" {
+							workflows[i].Unresolved = append(workflows[i].Unresolved, workflows[i].Path+" / "+name+": "+job.Steps[n].ResolutionError)
+						}
 					}
 					workflows[i].Jobs[name] = job
 				}
@@ -160,15 +163,16 @@ func workflowHasTests(root string, workflow ciWorkflow) bool {
 			if step.If == "false" {
 				continue
 			}
+			if workflow.Provider != "github" && step.Run == "" && step.ResolutionError != "" {
+				return true // An opaque native script can contain unenumerated tests.
+			}
 			for _, language := range discoveryLanguages {
 				for _, framework := range language.frameworks() {
 					// Native blockers must not conceal a recognizable test consumer.
 					probe := step
 					probe.ResolutionError = ""
 					if workflow.Provider != "" && workflow.Provider != "github" {
-						if resolved, _, err := resolveVariantStep(workflow, job, probe, nil, framework); err == nil {
-							probe = resolved
-						}
+						probe = nativeRecognitionStep(workflow, job, probe, framework)
 					}
 					r := resolveTestStep(root, workflow, job, probe, language.name(), framework)
 					if r.Matched || namesFramework(step.Run, framework, true) {
@@ -317,7 +321,7 @@ func nativeSteps(path string, node *yaml.Node, provider string) []runtimeStep {
 		return out
 	}
 	if node.Kind != yaml.ScalarNode || node.Tag == "!reference" {
-		return []runtimeStep{{ResolutionError: path + ": dynamic script/reference needs resolved configuration"}}
+		return []runtimeStep{{Source: fmt.Sprintf("%s:%d", path, node.Line), Number: node.Line, ResolutionError: path + ": dynamic script/reference needs resolved configuration"}}
 	}
 	command := node.Value
 	native := &nativeCommand{Path: path, Node: node, Original: command}

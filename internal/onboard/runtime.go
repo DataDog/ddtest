@@ -615,6 +615,13 @@ func changesNodeRuntime(command string) bool {
 			if name == "n" {
 				changed = true
 			}
+			if name == "npm" && slices.ContainsFunc(call.Args[1:], func(word *syntax.Word) bool {
+				return slices.Contains([]string{"install", "i", "add"}, word.Lit())
+			}) && slices.ContainsFunc(call.Args[1:], func(word *syntax.Word) bool {
+				return word.Lit() == "node" || strings.HasPrefix(word.Lit(), "node@")
+			}) {
+				changed = true
+			}
 			if (name == "nvm" || name == "fnm") && len(call.Args) > 1 && slices.Contains([]string{"use", "install", "exec", "env"}, call.Args[1].Lit()) {
 				changed = true
 			}

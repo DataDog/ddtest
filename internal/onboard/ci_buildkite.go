@@ -57,9 +57,9 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 			if node == nil {
 				node = step["commands"]
 			}
-			steps := nativeSteps(path, node, "buildkite")
-			if node == nil {
-				steps = buildkitePluginCommands(path, step["plugins"])
+			steps := buildkitePluginCommands(path, step["plugins"])
+			if len(steps) == 0 {
+				steps = nativeSteps(path, node, "buildkite")
 			}
 			if len(steps) == 0 {
 				if step["trigger"] != nil {
@@ -99,6 +99,9 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 							}
 							if ciMembers(config)["environment"] != nil || ciMembers(config)["volumes"] != nil {
 								job.Gaps = append(job.Gaps, "Docker plugin environment/volume forwarding needs review")
+							}
+							if ciMembers(config)["shell"] != nil || ciMembers(config)["entrypoint"] != nil {
+								job.Gaps = append(job.Gaps, "Docker plugin shell/entrypoint overrides require resolved execution semantics before validation or editing")
 							}
 						case "docker-compose":
 							service := ciScalar(ciMembers(config)["run"])

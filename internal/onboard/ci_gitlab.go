@@ -134,7 +134,7 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 			w.Unresolved = append(w.Unresolved, path+" / "+name+": "+err.Error())
 			continue
 		}
-		if fields["script"] == nil {
+		if fields["script"] == nil && fields["run"] == nil {
 			if fields["trigger"] != nil {
 				w.Unresolved = append(w.Unresolved, path+" / "+name+": child/trigger pipeline needs its resolved test configuration")
 			}
@@ -210,6 +210,22 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 			}
 			job.Steps = append(job.Steps, nativeSteps(file, node, "gitlab")...)
 		}
+		if run := ciUnalias(fields["run"]); run != nil {
+			reason := "GitLab run steps require explicitly resolved execution, inputs and environment before validation or editing"
+			job.Gaps = append(job.Gaps, reason)
+			file := sources[fields["run"]]
+			if file == "" {
+				file = path
+			}
+			for _, entry := range run.Content {
+				script := ciMembers(entry)["script"]
+				if script == nil {
+					job.Steps = append(job.Steps, runtimeStep{Source: file, ResolutionError: reason})
+				} else {
+					job.Steps = append(job.Steps, nativeSteps(file, script, "gitlab")...)
+				}
+			}
+		}
 		if len(expansionGaps) > 0 {
 			for i := range job.Steps {
 				job.Steps[i].ResolutionError = strings.Join(append([]string{job.Steps[i].ResolutionError}, expansionGaps...), "; ")
@@ -250,7 +266,7 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 			}
 			return variant
 		}
-		if fields["services"] != nil {
+		if services := ciUnalias(fields["services"]); services != nil && (services.Kind != yaml.SequenceNode || len(services.Content) > 0) {
 			w.Unresolved = append(w.Unresolved, path+" / "+name+": GitLab service containers require explicit local service facts")
 		}
 		parallel := ciUnalias(fields["parallel"])

@@ -20,6 +20,9 @@ import (
 func resolveNativeTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) (runtimeStep, commandResolution, error) {
 	resolved, _, err := resolveVariantStep(workflow, job, step, nil, framework)
 	probe := resolved
+	if err != nil {
+		probe = nativeRecognitionStep(workflow, job, step, framework)
+	}
 	probe.ResolutionError = ""
 	r := resolveTestStep(root, workflow, job, probe, "javascript", framework)
 	if resolved.ResolutionError != "" {
@@ -29,6 +32,29 @@ func resolveNativeTestStep(root string, workflow ciWorkflow, job runtimeJob, ste
 		r.Reason = err.Error()
 	}
 	return resolved, r, err
+}
+
+// Recognition must not lose a known test command just because an unrelated
+// environment value is unresolved. This fallback only classifies consumers;
+// execution and editing still retain the original resolution error.
+func nativeRecognitionStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) runtimeStep {
+	if resolved, _, err := resolveVariantStep(workflow, job, step, nil, framework); err == nil {
+		return resolved
+	}
+	env := mergeEnvironment(workflow.Env, mergeEnvironment(job.Env, step.Env))
+	known := map[string]string{}
+	for key, value := range env {
+		if literal, ok := step.LiteralEnv[key]; ok && literal == value {
+			known[key] = literal
+		} else if resolved, err := nativeEnvironmentValue(value, env); err == nil {
+			known[key] = resolved
+		}
+	}
+	workflow.Env, job.Env, step.Env = nil, known, nil
+	if resolved, _, err := resolveVariantStep(workflow, job, step, nil, framework); err == nil {
+		return resolved
+	}
+	return step
 }
 
 func nativeInlineControls(step runtimeStep, env map[string]string, provider string) (runtimeStep, map[string]string, error) {

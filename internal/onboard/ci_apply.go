@@ -89,6 +89,9 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 	replacements := map[string][]nativeReplacement{}
 	targets := 0
 	for _, workflow := range workflows {
+		if len(workflow.Unresolved) > 0 {
+			return nil, &SetupGap{workflow.Path, strings.Join(workflow.Unresolved, "; ")}
+		}
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
 			if job.If == "false" {

@@ -64,6 +64,10 @@ shell. Jenkins installation evidence cannot cross agent/workspace allocations.
 GitLab configuration variables expand before shell exports. Native Cucumber
 assessment checks NYC and ESM source instrumentation as well as tracer hooks;
 incomplete initialization still retains the known tracer pin for repair.
+Unrelated environment gaps cannot hide a provider's recognizable test commands.
+Opaque script references and GitLab `run` steps block completion until resolved;
+Docker command overrides take precedence, while custom shells/entrypoints need
+explicit setup. Workspace/filter installs do not establish root installation.
 
 GitLab local includes, inherited jobs, variables and literal matrices;
 CircleCI jobs, local reusable commands/executors and pinned official Node orb
