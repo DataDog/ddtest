@@ -1,33 +1,13 @@
 name: Go instrumentation
 # The Go instrumentation that ddtest instrument runs is its own module in ddto/.
-# Its suite runs from there, with ddtest's executable as the driver, when ddto
-# or what runs it changes. Changes limited to ddto's docs do not run it.
+# Its suite runs from there, with ddtest's executable as the driver. Every pull
+# request and push to main runs this workflow, so that its result can be a
+# required check: when a run already verified the files that the suite depends
+# on (see the plan job's inputs), the groups do not run again.
 on:
   push:
     branches: [main]
-    paths:
-      - 'ddto/**'
-      - '!ddto/docs/**'
-      - '!ddto/README.md'
-      - 'main.go'
-      - 'go.mod'
-      - 'go.sum'
-      - 'internal/cmd/instrument.go'
-      - 'scripts/install.sh'
-      - 'scripts/install.ps1'
-      - '.github/workflows/go-instrumentation.yml'
   pull_request:
-    paths:
-      - 'ddto/**'
-      - '!ddto/docs/**'
-      - '!ddto/README.md'
-      - 'main.go'
-      - 'go.mod'
-      - 'go.sum'
-      - 'internal/cmd/instrument.go'
-      - 'scripts/install.sh'
-      - 'scripts/install.ps1'
-      - '.github/workflows/go-instrumentation.yml'
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
@@ -59,6 +39,7 @@ jobs:
       tip: ${{ steps.matrix.outputs.tip }}
       tip-enabled: ${{ steps.matrix.outputs.tip-enabled }}
       go-versions: ${{ steps.matrix.outputs.go-versions }}
+      inputs: ${{ steps.verified.outputs.inputs }}
       skip: ${{ steps.verified.outputs.skip }}
       verified-run: ${{ steps.verified.outputs.run }}
     steps:
@@ -83,21 +64,30 @@ jobs:
           # Every job of the run installs the newest release, chosen here.
           curl -fsSL --retry 3 'https://go.dev/dl/?mode=json&include=all' |
             python scripts/ci_shards.py go-versions >> "$GITHUB_OUTPUT"
-      # Squash-merging an up-to-date pull request produces the tree that its
-      # last run verified. Only runs of branches in this repository count.
+      # The suite depends on ddto, except its docs, and on what builds and runs
+      # ddtest's executable. A pull request or a push to main reuses a run of a
+      # branch in this repository that passed every group with the same files,
+      # and uploads that run's coverage. Scheduled and manual runs always run.
       - id: verified
-        if: github.event_name == 'push'
+        working-directory: ${{ github.workspace }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
         run: |
-          tree="$(git rev-parse 'HEAD^{tree}')"
-          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=verified-tree-$tree&per_page=100" \
+          inputs="$(git ls-files -s -- ddto ':(exclude)ddto/docs' ':(exclude)ddto/README.md' \
+            main.go go.mod go.sum internal/cmd/instrument.go scripts/install.sh scripts/install.ps1 \
+            .github/workflows/go-instrumentation.yml | sha256sum | cut -d' ' -f1)"
+          echo "inputs=$inputs" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT" != push && "$EVENT" != pull_request ]]; then
+            exit 0
+          fi
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=verified-inputs-$inputs&per_page=100" \
             --jq '[.artifacts[] | select(.expired | not)
                    | select(.workflow_run.head_repository_id == .workflow_run.repository_id)
                    | .workflow_run.id] | first // empty')" || run=""
           if [[ -n "$run" ]]; then
-            echo "Tree $tree passed every group in run $run."
+            echo "These inputs passed every group in run $run."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "run=$run" >> "$GITHUB_OUTPUT"
           fi
@@ -280,6 +270,13 @@ jobs:
           files: ddto/coverage.out
           format: go-coverprofile
           version: v5.19.0
+      # A pull request or a push to main that reuses this run uploads it too.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        with:
+          name: coverage-differential-${{ matrix.os }}-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
+          path: ddto/coverage.out
+          retention-days: 7
       - name: Report Go cache sizes
         if: always()
         shell: bash
@@ -312,7 +309,7 @@ jobs:
   go-tip:
     name: Build shared Go tip
     needs: plan
-    if: needs.plan.outputs.tip-enabled == 'true'
+    if: needs.plan.outputs.tip-enabled == 'true' && needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -420,6 +417,13 @@ jobs:
           files: ddto/coverage.out
           format: go-coverprofile
           version: v5.19.0
+      # A pull request or a push to main that reuses this run uploads it too.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        with:
+          name: coverage-mini-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
+          path: ddto/coverage.out
+          retention-days: 7
       - name: Report Go cache sizes
         if: always()
         shell: bash
@@ -445,7 +449,7 @@ jobs:
   tip:
     name: mini (Linux, tip, normal)
     needs: [plan, go-tip]
-    if: needs.plan.outputs.tip-enabled == 'true'
+    if: needs.plan.outputs.tip-enabled == 'true' && needs.plan.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.tip) }}
@@ -509,6 +513,13 @@ jobs:
           files: ddto/coverage.out
           format: go-coverprofile
           version: v5.19.0
+      # A pull request or a push to main that reuses this run uploads it too.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        with:
+          name: coverage-tip-${{ matrix.job }}
+          path: ddto/coverage.out
+          retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -516,31 +527,55 @@ jobs:
           path: ddto/artifacts/
           retention-days: 7
 
+  # The workflow's required check: it fails unless every group passed, in this
+  # run or in the run that it reuses.
   evidence:
     name: Complete compatibility evidence
     if: ${{ !cancelled() }}
     needs: [plan, lint, differential, mini, go-tip, tip]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     # ddto's scripts and test groups live in ddto.
     defaults:
       run:
         working-directory: ddto
     timeout-minutes: 10
+    env:
+      DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
     steps:
-      - name: Reuse the verification of this tree
+      - name: Reuse the verification of these inputs
         if: needs.plan.outputs.skip == 'true'
         working-directory: ${{ github.workspace }}
         shell: bash
         env:
           RUN: ${{ needs.plan.outputs.verified-run }}
         run: |
-          echo "This tree passed every group in run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN." >> "$GITHUB_STEP_SUMMARY"
+          echo "These inputs passed every group in run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # Datadog reports a commit's coverage from its uploads: without ddto's,
+      # ddto's lines would count as uncovered.
+      - name: Download the reused run's coverage
+        if: needs.plan.outputs.skip == 'true' && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ needs.plan.outputs.verified-run }}
+        run: gh run download "$RUN" --repo "$GITHUB_REPOSITORY" --pattern 'coverage-*' --dir "$RUNNER_TEMP/coverage"
+      - name: Upload the reused run's coverage to Datadog
+        if: needs.plan.outputs.skip == 'true' && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        uses: DataDog/coverage-upload-github-action@d9548b1c3c4ab639d5d3ab29a1508af188975f77 # v1.0.5
+        with:
+          api_key: ${{ secrets.DATADOG_API_KEY }}
+          site: datadoghq.com
+          files: ${{ runner.temp }}/coverage
+          format: go-coverprofile
+          version: v5.19.0
       - name: Require the source audit
         if: needs.plan.outputs.skip != 'true' && needs.lint.result != 'success'
         working-directory: ${{ github.workspace }}
         run: exit 1
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        if: needs.plan.outputs.skip != 'true'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: needs.plan.outputs.skip != 'true'
         with:
@@ -558,17 +593,17 @@ jobs:
           python scripts/ci_shards.py aggregate --input shards --output reports "${flags[@]}"
           cat reports/summary.md >> "$GITHUB_STEP_SUMMARY"
           for report in reports/*/parity.md; do cat "$report" >> "$GITHUB_STEP_SUMMARY"; done
-          echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always() && needs.plan.outputs.skip != 'true'
         with:
           name: compatibility-evidence
           path: ddto/reports/
           retention-days: 7
-      # Lets a push of this exact tree to main reuse this run.
+      # Lets a pull request or a push to main with the same inputs reuse this
+      # run, which then carries the coverage that it uploads again.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: success() && needs.plan.outputs.skip != 'true'
+        if: success() && needs.plan.outputs.skip != 'true' && env.DATADOG_API_KEY_CONFIGURED == 'true'
         with:
-          name: verified-tree-${{ steps.aggregate.outputs.tree }}
+          name: verified-inputs-${{ needs.plan.outputs.inputs }}
           path: ddto/reports/summary.md
           retention-days: 7

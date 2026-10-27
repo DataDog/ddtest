@@ -229,14 +229,21 @@ report step requires the independent Orchestrion reference and exports feature
 outcomes, counts and timings. Logs and JSON reports are uploaded even when a
 test fails.
 
-Pull requests, pushes to `main`, a nightly schedule and manual dispatch start the
-workflow. Changes limited to `docs/` or `README.md` do not. A new push to a pull
-request cancels its previous run. A push to `main` whose tree already passed a
-complete run of a branch in this repository, typically the squash merge of an
-up-to-date pull request, reuses that run instead of repeating the matrix. Pull
-requests, nightly and manual runs also test Go tip, which changes independently
-of this repository: a pull request can fail on tip without causing it. A push to
-`main` that runs the matrix itself skips tip.
+Every pull request and push to `main`, a nightly schedule and manual dispatch
+start the workflow, so that its last job, Complete compatibility evidence, can
+be a required check. A new push to a pull request cancels its previous run. The
+suite depends on this directory, except `docs/` and `README.md`, and on what
+builds and runs ddtest's executable: ddtest's `main.go`, `go.mod`, `go.sum`,
+`internal/cmd/instrument.go`, install scripts and the workflow. A pull request
+or a push to `main` whose copies of those files already passed a complete run of
+a branch in this repository reuses that run instead of repeating the matrix:
+typically a pull request that changes none of them, or the squash merge of an
+up-to-date pull request. It uploads that run's coverage of ddto's packages to
+Datadog for its own commit, since Datadog counts lines without a report as
+uncovered. Nightly and manual runs always run the matrix. Pull requests, nightly
+and manual runs also test Go tip, which changes independently of this
+repository: a pull request can fail on tip without causing it. A push to `main`
+that runs the matrix itself skips tip.
 
 ### Parallel test groups
 
