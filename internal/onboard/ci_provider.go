@@ -217,6 +217,13 @@ func readCIYAML(root, path string) (*yaml.Node, error) {
 	return document.Content[0], nil
 }
 
+func ciUnalias(node *yaml.Node) *yaml.Node {
+	for node != nil && node.Kind == yaml.AliasNode {
+		node = node.Alias
+	}
+	return node
+}
+
 func ciScalar(node *yaml.Node) string {
 	if node == nil {
 		return ""

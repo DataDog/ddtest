@@ -145,8 +145,8 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 								}
 							}
 							job.Env = mergeEnvironment(job.Env, ciEnvironment(serviceFields["environment"]))
-							if serviceFields["volumes"] != nil || serviceFields["depends_on"] != nil || serviceFields["entrypoint"] != nil {
-								job.Gaps = append(job.Gaps, "Compose volumes, dependencies or entrypoint require local setup facts")
+							if serviceFields["working_dir"] != nil || serviceFields["volumes"] != nil || serviceFields["depends_on"] != nil || serviceFields["entrypoint"] != nil {
+								job.Gaps = append(job.Gaps, "Compose working directory, volumes, dependencies or entrypoint require local setup facts")
 							}
 						case "artifacts":
 							w.Review = append(w.Review, path+" / "+group+name+": artifact transfer is not exercised locally")

@@ -333,8 +333,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 				}
 			case "pipeline", "stages", "steps", "node", "script", "docker", "tools":
 			case "post", "success", "always", "failure", "cleanup":
-				i = stop
-				continue
+				child.blocked = "Jenkins post conditions require a resolved execution path"
 			default:
 				child.blocked = "Groovy control flow/function " + token.value + " requires a resolved execution path"
 			}

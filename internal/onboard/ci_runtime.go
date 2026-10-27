@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/kballard/go-shellquote"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 func resolveNativeTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) (runtimeStep, commandResolution, error) {
@@ -34,23 +35,101 @@ func nativeInlineControls(step runtimeStep, env map[string]string, provider stri
 	if provider == "" || provider == "github" {
 		return step, env, nil
 	}
-	commands, err := staticCommands(step.Run)
-	if err != nil {
+	file, ok := parseCIShell(step.Run)
+	if !ok {
 		return step, env, nil // The command resolver reports unsupported syntax.
 	}
-	for _, words := range commands {
-		_, values, err := commandEnvironment(words)
-		if err != nil {
-			continue
+	found := false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if a, ok := node.(*syntax.Assign); ok && a.Name != nil && a.Name.Value == "DD_CIVISIBILITY_ENABLED" {
+			found = true
 		}
-		if value, ok := values["DD_CIVISIBILITY_ENABLED"]; ok {
-			if len(commands) != 1 || value != "false" && value != "true" {
-				return step, env, fmt.Errorf("native inline instrumentation controls require one literal command and boolean value")
+		if call, ok := node.(*syntax.CallExpr); ok && len(call.Args) > 0 && slices.Contains([]string{"cross-env", "cross-env-shell"}, call.Args[0].Lit()) {
+			for _, arg := range call.Args[1:] {
+				value, _ := literalShellWord(arg)
+				if !shellAssignment(value) {
+					break
+				}
+				found = found || strings.HasPrefix(value, "DD_CIVISIBILITY_ENABLED=")
 			}
-			step.Env = mergeEnvironment(step.Env, map[string]string{"DD_CIVISIBILITY_ENABLED": value})
+		}
+		return true
+	})
+	if !found {
+		return step, env, nil
+	}
+	fail := fmt.Errorf("native inline instrumentation controls require one literal command and boolean value")
+	if len(file.Stmts) != 1 || file.Stmts[0].Background || file.Stmts[0].Negated || len(file.Stmts[0].Redirs) > 0 {
+		return step, env, fail
+	}
+	call, ok := file.Stmts[0].Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Args) == 0 {
+		return step, env, fail
+	}
+	set := func(word *syntax.Word) error {
+		if word == nil {
+			return fail
+		}
+		value, err := literalShellWord(word)
+		if err != nil || value != "false" && value != "true" {
+			return fail
+		}
+		step.Env = mergeEnvironment(step.Env, map[string]string{"DD_CIVISIBILITY_ENABLED": value})
+		return nil
+	}
+	assignments := call.Assigns[:0]
+	for _, assignment := range call.Assigns {
+		if assignment.Name != nil && assignment.Name.Value == "DD_CIVISIBILITY_ENABLED" {
+			if err := set(assignment.Value); err != nil {
+				return step, env, err
+			}
+		} else {
+			assignments = append(assignments, assignment)
 		}
 	}
+	call.Assigns = assignments
+	if slices.Contains([]string{"cross-env", "cross-env-shell"}, call.Args[0].Lit()) {
+		args := call.Args[:1]
+		prefix := true
+		for _, arg := range call.Args[1:] {
+			value, err := literalShellWord(arg)
+			if err != nil || !shellAssignment(value) {
+				prefix = false
+			}
+			if prefix && strings.HasPrefix(value, "DD_CIVISIBILITY_ENABLED=") {
+				_, value, _ = strings.Cut(value, "=")
+				if value != "false" && value != "true" {
+					return step, env, fail
+				}
+				step.Env = mergeEnvironment(step.Env, map[string]string{"DD_CIVISIBILITY_ENABLED": value})
+			} else {
+				args = append(args, arg)
+			}
+		}
+		call.Args = args
+	}
+	step.Run = strings.TrimSpace(shellText(file))
 	return step, env, nil
+}
+
+func nativeControlEnvironment(workflow ciWorkflow, job runtimeJob, step runtimeStep) (runtimeStep, error) {
+	if workflow.Provider != "gitlab" && workflow.Provider != "buildkite" || step.ResolutionError != "" {
+		return step, nil
+	}
+	env := mergeEnvironment(workflow.Env, mergeEnvironment(job.Env, step.Env))
+	value, ok := env["DD_CIVISIBILITY_ENABLED"]
+	if !ok {
+		return step, nil
+	}
+	if literal, known := step.LiteralEnv["DD_CIVISIBILITY_ENABLED"]; !known || literal != value {
+		var err error
+		value, err = nativeEnvironmentValue(value, env)
+		if err != nil {
+			return step, fmt.Errorf("native instrumentation control requires review: %w", err)
+		}
+	}
+	step.Env = mergeEnvironment(step.Env, map[string]string{"DD_CIVISIBILITY_ENABLED": value})
+	return step, nil
 }
 
 func compareNativeNode(node, requirement string) (string, string) {
@@ -87,6 +166,9 @@ func nativeStepRuntime(w ciWorkflow, job runtimeJob, index int) (string, string)
 		start = 0
 	}
 	for _, step := range job.Steps[start : index+1] {
+		if step.NewShell {
+			node, source = job.Node, job.NodeSource
+		}
 		if selected := nvmRuntime(step.Run); selected != "" {
 			node, source = selected, step.Source
 		} else if changesNodeRuntime(step.Run) {
@@ -165,6 +247,11 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 			}
 			if framework == "cucumber" && !step.Native.Manual && slices.ContainsFunc(r.Tests, func(test TestCommand) bool { return !test.cucumberScoped }) {
 				finding.Code, finding.Reason = CodeUnverifiedInitialization, "Selected Cucumber leaf does not consume scoped DD_CUCUMBER_NODE_OPTIONS while preserving existing NODE_OPTIONS"
+				findings = append(findings, finding)
+				continue
+			}
+			if framework == "webdriverio" && !step.Native.Manual && slices.ContainsFunc(r.Tests, func(test TestCommand) bool { return !test.webdriverIOScoped }) {
+				finding.Code, finding.Reason = CodeUnverifiedInitialization, "Selected WDIO leaf does not consume scoped DD_WDIO_NODE_OPTIONS while preserving existing NODE_OPTIONS"
 				findings = append(findings, finding)
 				continue
 			}

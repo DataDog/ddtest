@@ -75,7 +75,7 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 		return w, err
 	}
 	defaults := ciMembers(definitions["default"])
-	for _, key := range []string{"image", "before_script"} {
+	for _, key := range []string{"image", "before_script", "after_script"} {
 		if defaults[key] == nil {
 			defaults[key] = definitions[key]
 		}
@@ -183,6 +183,7 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 		}
 		job.Gaps = append(job.Gaps, expansionGaps...)
 		for _, rules := range []*yaml.Node{fields["rules"], ciMembers(definitions["workflow"])["rules"]} {
+			rules = ciUnalias(rules)
 			if rules == nil {
 				continue
 			}
@@ -194,7 +195,7 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 		}
 		if fields["rules"] != nil || fields["only"] != nil || fields["except"] != nil {
 			w.Review = append(w.Review, path+" / "+name+": GitLab rules/filters are possible CI paths; event and branch eligibility is not validated locally")
-			if rules := fields["rules"]; rules != nil && len(rules.Content) == 1 {
+			if rules := ciUnalias(fields["rules"]); rules != nil && len(rules.Content) == 1 {
 				r := ciMembers(rules.Content[0])
 				if r["if"] == nil && r["changes"] == nil && r["exists"] == nil && ciScalar(r["when"]) == "never" {
 					job.If = "false"
@@ -213,6 +214,32 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 			for i := range job.Steps {
 				job.Steps[i].ResolutionError = strings.Join(append([]string{job.Steps[i].ResolutionError}, expansionGaps...), "; ")
 			}
+		}
+		afterPath := sources[fields["after_script"]]
+		if afterPath == "" {
+			afterPath = path
+		}
+		afterSteps := nativeSteps(afterPath, fields["after_script"], "gitlab")
+		finish := func(variant runtimeJob) runtimeJob {
+			variant = nativeShellState(root, variant)
+			if len(afterSteps) == 0 {
+				return variant
+			}
+			after := variant
+			after.Steps = afterSteps
+			after = nativeShellState(root, after)
+			probe := ciWorkflow{Path: path, Provider: "gitlab", Jobs: map[string]runtimeJob{"after_script": after}}
+			unknown := slices.ContainsFunc(after.Steps, func(step runtimeStep) bool { return step.ResolutionError != "" })
+			if !workflowHasTests(root, probe) && !unknown {
+				w.Review = append(w.Review, path+" / "+name+": non-test after_script cleanup/reporting is outside local test execution")
+				return variant
+			}
+			for i, step := range after.Steps {
+				step.NewShell = i == 0
+				step.ResolutionError = joinDiagnostic(step.ResolutionError, "GitLab after_script tests run in a separate shell and require an explicitly resolved execution path")
+				variant.Steps = append(variant.Steps, step)
+			}
+			return variant
 		}
 		if fields["services"] != nil {
 			w.Unresolved = append(w.Unresolved, path+" / "+name+": GitLab service containers require explicit local service facts")
@@ -246,18 +273,16 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 					variant.Env[key] = fmt.Sprint(value)
 				}
 				variant.Node = ciImageNode(image, variant.Env)
-				w.Jobs[name+" ["+strconv.Itoa(i+1)+"]"] = nativeShellState(root, variant)
+				w.Jobs[name+" ["+strconv.Itoa(i+1)+"]"] = finish(variant)
 			}
 		} else {
-			w.Jobs[name] = nativeShellState(root, job)
+			w.Jobs[name] = finish(job)
 		}
 	}
 	return w, nil
 }
 
 func gitlabNull(node *yaml.Node) bool {
-	for node != nil && node.Kind == yaml.AliasNode {
-		node = node.Alias
-	}
+	node = ciUnalias(node)
 	return node != nil && node.Tag == "!!null"
 }

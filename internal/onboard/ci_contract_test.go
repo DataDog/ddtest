@@ -38,13 +38,17 @@ func TestNativeContractVariableTargetsAndInlineOptOut(t *testing.T) {
 				require.Contains(t, w[0].Jobs["test"].Steps[0].Native.Original, "npm run $TEST_SCRIPT")
 				require.Empty(t, w[0].Jobs["disabled"].Steps[0].Native.Tracer)
 				check := nativeFollowupCheck(t, root, framework)
+				require.Len(t, check.Jobs, 2, "the disabled consumer must remain visible")
+				seenDisabled := false
 				for _, f := range check.Jobs {
 					if f.Job == "disabled" {
+						seenDisabled = true
 						require.Equal(t, StatusExcluded, f.Status)
 					} else {
 						require.Equal(t, StatusCompatible, f.Status, "%+v", f)
 					}
 				}
+				require.True(t, seenDisabled)
 				second, err := PlanJavaScriptSetup(root, framework, "6.20.1", "datadoghq.com", ">=22")
 				require.NoError(t, err)
 				require.True(t, second.Configured())

@@ -82,6 +82,7 @@ type runtimeConditionScope struct {
 
 type runtimeStep struct {
 	Native           *nativeCommand          `yaml:"-"`
+	NewShell         bool                    `yaml:"-"`
 	ActionNode       string                  `yaml:"-"`
 	Inputs           map[string]string       `yaml:"-"`
 	ID               string                  `yaml:"id"`

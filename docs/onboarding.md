@@ -44,6 +44,11 @@ CircleCI invocation pre/post steps are included in discovery. Customized Node
 orb installs and GitLab `expand: false` definitions require explicit review;
 computed Jenkins directory/environment bindings and Dockerfile runtime changes
 cannot be silently treated as resolved configuration.
+GitLab `after_script` and Jenkins `post` test consumers are retained as explicit
+unvalidated paths. GitLab teardown starts with fresh shell state. CircleCI
+reusable commands/executors own their parameter defaults; job parameters cross
+those boundaries only as explicit arguments. Compose working directories need
+a resolved repository mapping before local validation can claim the same suite.
 
 GitLab local includes, inherited jobs, variables and literal matrices;
 CircleCI jobs, local reusable commands/executors and pinned official Node orb

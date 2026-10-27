@@ -23,6 +23,14 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		return step, nil, nil
 	}
 	var err error
+	step, err = nativeControlEnvironment(workflow, job, step)
+	if err != nil {
+		return step, nil, err
+	}
+	step, _, err = nativeInlineControls(step, nil, workflow.Provider)
+	if err != nil {
+		return step, nil, err
+	}
 	step.Run, err = interpolateMatrix(step.Run, row)
 	if err != nil {
 		return step, nil, err
@@ -181,7 +189,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		env = nil
 	}
 	if len(env) == 0 || !strings.Contains(step.Run, "$") {
-		return nativeInlineControls(step, env, workflow.Provider)
+		return step, env, nil
 	}
 	file, err := syntax.NewParser().Parse(strings.NewReader(step.Run), "")
 	if err != nil {
@@ -249,7 +257,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	// Independent statements must stay independent. Replacing ; or a newline
 	// with && changes whether later tests run after a failed preparation.
 	step.Run = strings.Join(statements, "\n")
-	return nativeInlineControls(step, env, workflow.Provider)
+	return step, env, nil
 }
 
 func localPreparation(root, directory string, words []string) (BuildCommand, bool) {

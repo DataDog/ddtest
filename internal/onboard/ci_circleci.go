@@ -80,29 +80,29 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 			definition = &yaml.Node{Kind: yaml.MappingNode}
 		}
 		jobFields := ciMembers(definition)
-		params := map[string]string{}
-		for key, node := range ciMembers(jobFields["parameters"]) {
-			if value := ciMembers(node)["default"]; value != nil {
-				params[key] = ciScalar(value)
-			}
-		}
-		maps.Copy(params, inv.parameters)
-		replace := func(value string) string {
-			for key, v := range params {
-				value = strings.ReplaceAll(value, "<< parameters."+key+" >>", v)
-			}
-			return value
-		}
+		params := circleParameterValues(definition, inv.parameters)
+		replace := func(value string) string { return circleParameterText(value, params) }
 		executorName := ciScalar(jobFields["executor"])
+		executorArgs := ciEnvironment(jobFields["executor"])
 		if executorName == "" {
 			executorName = ciScalar(ciMembers(jobFields["executor"])["name"])
 		}
+		executorName = replace(executorName)
+		var executorGap string
 		if executorName != "" {
-			base, ok := executors[executorName]
-			if !ok {
-				w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": external executor "+executorName+" requires resolved runtime metadata")
+			base, exists := executors[executorName]
+			if !exists {
+				executorGap = "external executor " + executorName + " requires resolved runtime metadata"
+				w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": "+executorGap)
 			}
-			merged := ciMembers(base)
+			for key, value := range executorArgs {
+				executorArgs[key] = replace(value)
+			}
+			metadata, err := circleExecutorMetadata(base, circleParameterValues(base, executorArgs), 0)
+			if err != nil {
+				executorGap = err.Error()
+			}
+			merged := ciMembers(metadata)
 			maps.Copy(merged, jobFields)
 			jobFields = merged
 		}
@@ -129,23 +129,26 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 			return literalCIPath(value)
 		}
 		job := runtimeJob{}
+		if executorGap != "" {
+			job.Gaps = append(job.Gaps, executorGap)
+		}
 		if !ok {
 			job.Gaps = append(job.Gaps, "CircleCI external orb job requires expanded setup before validation or editing")
 		}
 		if _, matrix := inv.parameters["matrix"]; matrix {
 			job.Gaps = append(job.Gaps, "CircleCI matrix requires expanded job parameters before editing its shared source")
 		}
-		parameterEnvironment := func(node *yaml.Node) map[string]string {
+		parameterEnvironment := func(node *yaml.Node, scope map[string]string) map[string]string {
 			env := ciEnvironment(node)
 			for key, value := range env {
-				env[key] = replace(value)
+				env[key] = circleParameterText(value, scope)
 				if strings.Contains(env[key], "<<") {
 					job.Gaps = append(job.Gaps, "CircleCI environment "+key+" requires resolved parameters")
 				}
 			}
 			return env
 		}
-		environment := parameterEnvironment(jobFields["environment"])
+		environment := parameterEnvironment(jobFields["environment"], params)
 		job.Defaults.Run.WorkingDirectory = directory
 		if dirErr != nil {
 			w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": "+dirErr.Error())
@@ -153,15 +156,16 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 		image := ""
 		if docker := jobFields["docker"]; docker != nil && len(docker.Content) > 0 {
 			image = replace(ciScalar(ciMembers(docker.Content[0])["image"]))
-			environment = mergeEnvironment(parameterEnvironment(ciMembers(docker.Content[0])["environment"]), environment)
+			environment = mergeEnvironment(parameterEnvironment(ciMembers(docker.Content[0])["environment"], params), environment)
 			if len(docker.Content) > 1 {
 				w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": additional CircleCI service containers require local service facts")
 			}
 		}
 		job.Env = providerEnvironment("circleci", environment)
 		job.Node, job.NodeSource = ciImageNode(image, job.Env), "CircleCI executor image "+image
-		var expand func(*yaml.Node, int)
-		expand = func(list *yaml.Node, depth int) {
+		var expand func(*yaml.Node, map[string]string, int)
+		expand = func(list *yaml.Node, scope map[string]string, depth int) {
+			replace := func(value string) string { return circleParameterText(value, scope) }
 			if list == nil {
 				return
 			}
@@ -176,7 +180,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 						continue
 					}
 					if command := commands[entry.Value]; command != nil {
-						expand(ciMembers(command)["steps"], depth+1)
+						expand(ciMembers(command)["steps"], circleParameterValues(command, nil), depth+1)
 						continue
 					}
 					w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": unresolved reusable command "+entry.Value)
@@ -194,7 +198,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 						steps := nativeSteps(path, run, "circleci")
 						for i := range steps {
 							steps[i].Run = replace(steps[i].Run)
-							steps[i].Env = parameterEnvironment(properties["environment"])
+							steps[i].Env = parameterEnvironment(properties["environment"], scope)
 							if properties["working_directory"] != nil {
 								working, e := mapDirectory(replace(ciScalar(properties["working_directory"])))
 								if e != nil {
@@ -215,7 +219,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 						reason := path + " / " + inv.label + ": CircleCI conditional step " + key + " requires a resolved execution path"
 						job.Gaps = append(job.Gaps, reason)
 						w.Unresolved = append(w.Unresolved, reason)
-						expand(ciMembers(value)["steps"], depth+1)
+						expand(ciMembers(value)["steps"], scope, depth+1)
 					case "restore_cache", "save_cache", "store_artifacts", "store_test_results", "persist_to_workspace", "attach_workspace":
 						w.Review = append(w.Review, path+" / "+inv.label+": "+key+" is CI storage; local prerequisites must exist or be prepared explicitly")
 					case "node/install-packages":
@@ -228,7 +232,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 							job.Gaps = append(job.Gaps, "CircleCI node/install-packages command/directory overrides require resolved installation setup")
 							continue
 						}
-						manager := ciScalar(ciMembers(value)["pkg-manager"])
+						manager := replace(ciScalar(ciMembers(value)["pkg-manager"]))
 						command := map[string]string{"npm": "npm ci", "yarn": "yarn install --frozen-lockfile", "pnpm": "pnpm install --frozen-lockfile"}[manager]
 						if command == "" {
 							w.Unresolved = append(w.Unresolved, path+": node/install-packages requires a literal supported pkg-manager")
@@ -243,11 +247,11 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 						w.Review = append(w.Review, path+" / "+inv.label+": pnpm setup version "+ciScalar(ciMembers(value)["version"])+" must match the local package manager")
 					default:
 						if command := commands[key]; command != nil {
-							if len(ciMembers(value)) > 0 {
-								w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": parameterized reusable command "+key+" needs expansion")
-							} else {
-								expand(ciMembers(command)["steps"], depth+1)
+							args := ciEnvironment(value)
+							for key, value := range args {
+								args[key] = replace(value)
 							}
+							expand(ciMembers(command)["steps"], circleParameterValues(command, args), depth+1)
 						} else {
 							w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": orb/conditional step "+key+" needs its resolved configuration")
 						}
@@ -260,7 +264,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 				job.Gaps = append(job.Gaps, "CircleCI invocation steps require a literal step list")
 				continue
 			}
-			expand(list, 0)
+			expand(list, params, 0)
 		}
 		if strings.Contains(fmt.Sprint(params), "<<") {
 			w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": pipeline/matrix parameters require explicit values")
@@ -288,4 +292,53 @@ func circleCIShell(shell string) string {
 		return candidate
 	}
 	return shell
+}
+
+// Reusable definitions own their defaults; caller values cross the boundary
+// only through explicit arguments resolved in the caller's parameter scope.
+func circleParameterValues(definition *yaml.Node, supplied map[string]string) map[string]string {
+	values := map[string]string{}
+	for key, node := range ciMembers(ciMembers(definition)["parameters"]) {
+		if value := ciMembers(node)["default"]; value != nil {
+			values[key] = ciScalar(value)
+		}
+		if value, ok := supplied[key]; ok {
+			values[key] = value
+		}
+	}
+	return values
+}
+
+func circleParameterText(value string, parameters map[string]string) string {
+	var replacements []string
+	for _, key := range slices.Sorted(maps.Keys(parameters)) {
+		replacements = append(replacements, "<< parameters."+key+" >>", parameters[key])
+	}
+	return strings.NewReplacer(replacements...).Replace(value)
+}
+
+// Executor metadata has no editable command spans. Resolve this copy in its
+// owning scope before combining it with job fields; preserve source nodes for
+// job/reusable-command steps so generated edits retain their original text.
+func circleExecutorMetadata(node *yaml.Node, parameters map[string]string, depth int) (*yaml.Node, error) {
+	if node == nil {
+		return nil, nil
+	}
+	if depth > 32 {
+		return nil, fmt.Errorf("CircleCI executor metadata exceeds 32 levels")
+	}
+	node = ciUnalias(node)
+	resolved := *node
+	resolved.Alias, resolved.Content = nil, nil
+	if node.Kind == yaml.ScalarNode {
+		resolved.Value = circleParameterText(node.Value, parameters)
+	}
+	for _, child := range node.Content {
+		value, err := circleExecutorMetadata(child, parameters, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		resolved.Content = append(resolved.Content, value)
+	}
+	return &resolved, nil
 }
