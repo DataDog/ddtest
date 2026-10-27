@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -75,7 +76,7 @@ func (t *Testdrive) rubyBundleReadiness(ctx context.Context, scope onboard.Valid
 			if ciInstrumentationDisabled(entry) {
 				continue
 			}
-			env := isolatedCIEnvironment(entry.Environment, t.repositoryRoot, root)
+			env := isolatedCIEnvironment(rubyBundleEnvironment(entry), t.repositoryRoot, root)
 			gemfile, err := rubyConfigurationGemfile(t.repositoryRoot, entry.Directory, env)
 			if err != nil {
 				return err
@@ -92,12 +93,53 @@ func (t *Testdrive) rubyBundleReadiness(ctx context.Context, scope onboard.Valid
 				_, checkErr = executor.CombinedOutputInDirectory(ctx, filepath.Join(root, entry.Directory), "bundle", []string{"check", "--dry-run"}, env)
 			}
 			if lockErr != nil || checkErr != nil {
-				missing = append(missing, []string{"bundle", "install", "--gemfile", filepath.ToSlash(gemfile)})
+				command, err := rubyBundleSetupCommand(entry, gemfile)
+				if err != nil {
+					return err
+				}
+				missing = append(missing, command)
 			}
 		}
 		return nil
 	})
 	return missing, err
+}
+
+// A discovered CI consumer selects only its declared manifest. A
+// focused local invocation can still use its caller's Appraisal selection.
+func rubyBundleEnvironment(entry onboard.TestCommand) map[string]string {
+	env := map[string]string{}
+	maps.Copy(env, entry.Environment)
+	if len(entry.Locations) > 0 {
+		if _, configured := env["BUNDLE_GEMFILE"]; !configured {
+			env["BUNDLE_GEMFILE"] = ""
+		}
+	}
+	return env
+}
+
+func rubyBundleSetupCommand(entry onboard.TestCommand, gemfile string) ([]string, error) {
+	directory := filepath.Clean(entry.Directory)
+	onlyGemfile := true
+	for key := range entry.Environment {
+		onlyGemfile = onlyGemfile && key == "BUNDLE_GEMFILE"
+	}
+	if onlyGemfile && directory == "." && os.Getenv("RUBYOPT") == "" && os.Getenv("BUNDLE_LOCKFILE") == "" {
+		return []string{"bundle", "install", "--gemfile", filepath.ToSlash(gemfile)}, nil
+	}
+	selected, err := filepath.Rel(directory, gemfile)
+	if err != nil {
+		return nil, err
+	}
+	env := rubyBundleEnvironment(entry)
+	// Application preloads must not run from native extension build directories.
+	env["RUBYOPT"] = ""
+	command := []string{"env"}
+	for _, key := range slices.Sorted(maps.Keys(env)) {
+		command = append(command, key+"="+env[key])
+	}
+	// Ruby's own -C keeps cwd semantics portable without constructing shell code.
+	return append(command, "ruby", "-C", directory, "-S", "bundle", "install", "--gemfile", filepath.ToSlash(selected)), nil
 }
 
 // Return a checkout-relative manifest while preserving Bundler's cwd semantics.
@@ -301,7 +343,7 @@ func (t *Testdrive) rubyRuntimeLocations() ([]string, error) {
 		if entry.Command != command || filepath.Clean(entry.Directory) != directory {
 			continue
 		}
-		selected, err := rubyConfigurationGemfile(root, entry.Directory, entry.Environment)
+		selected, err := rubyConfigurationGemfile(root, entry.Directory, rubyBundleEnvironment(entry))
 		if err != nil || selected != gemfile {
 			continue
 		}

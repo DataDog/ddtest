@@ -27,6 +27,7 @@ func fingerprintRubyBundles(ctx context.Context, root string, hash io.Writer) er
 	}
 	paths := map[string]bool{}
 	for i, command := range commands {
+		command.Environment = rubyBundleEnvironment(command)
 		gemfile, err := rubyConfigurationGemfile(root, command.Directory, command.Environment)
 		if err != nil {
 			// An unrelated ambient bundle must not block non-Ruby repositories.

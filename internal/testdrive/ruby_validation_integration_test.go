@@ -62,7 +62,9 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 				before[name] = string(data)
 			}
 			// Explicit synthetic Git metadata avoids creating unsigned fixture commits.
-			env := []string{"DD_GIT_REPOSITORY_URL=https://example.com/ddtest-ruby-fixture.git", "DD_GIT_COMMIT_SHA=" + strings.Repeat("1", 40), "RUBYOPT=-W0", "BUNDLE_GEMFILE=" + filepath.Join(root, "Gemfile")}
+			ambient := filepath.Join(t.TempDir(), "Gemfile")
+			integrationFile(t, filepath.Dir(ambient), "Gemfile", "raise 'ambient Appraisal bundle must not select a CI configuration'\n")
+			env := []string{"DD_GIT_REPOSITORY_URL=https://example.com/ddtest-ruby-fixture.git", "DD_GIT_COMMIT_SHA=" + strings.Repeat("1", 40), "RUBYOPT=-W0", "BUNDLE_GEMFILE=" + ambient}
 			onboard := integrationCommand(t, ctx, root, env, binary, "onboard", "--framework", framework)
 			require.Contains(t, onboard, "native baseline/reporting-only")
 			output := integrationCommand(t, ctx, root, env, binary, "testdrive", "--framework", framework, "--all", "--yes")
@@ -102,6 +104,8 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 			minor := strings.Join(strings.Split(gems.Ruby, ".")[:2], ".")
 			matrixWorkflow := strings.Replace(workflow, "    runs-on: ubuntu-latest", "    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        ruby: ['"+minor+"', 'head']", 1)
 			matrixWorkflow = strings.Replace(matrixWorkflow, "ruby-version: '"+gems.Ruby+"'", "ruby-version: '${{ matrix.ruby }}'", 1)
+			matrixWorkflow = strings.Replace(matrixWorkflow, "      matrix:\n", "      matrix:\n        language: [ruby]\n", 1)
+			matrixWorkflow = strings.Replace(matrixWorkflow, "languages: ruby", "languages: '${{ matrix.language }}'", 1)
 			matrixWorkflow = strings.Replace(matrixWorkflow, "      - uses: datadog/", "      - if: matrix.ruby != 'head'\n        uses: datadog/", 1)
 			integrationFile(t, root, ".github/workflows/test.yml", matrixWorkflow)
 			output = integrationCommand(t, ctx, root, env, binary, "testdrive", "--framework", framework, "--all", "--yes")
@@ -129,6 +133,8 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 			for _, modified := range []string{
 				strings.Replace(workflow, "ruby-tracer-version: '"+gems.Tracer+"'", "ruby-tracer-version: '99.0.0'", 1),
 				strings.Replace(workflow, "ruby-version: '"+gems.Ruby+"'", "ruby-version: '1.9.3'", 1),
+				strings.Replace(workflow, "  tests:\n", "  tests:\n    strategy:\n      matrix: {tracing: [false]}\n    env: {DD_TRACE_ENABLED: '${{ matrix.tracing }}'}\n", 1),
+				workflow + "      - run: ./ci/run\n",
 			} {
 				integrationFile(t, root, ".github/workflows/test.yml", modified)
 				check := exec.CommandContext(ctx, binary, "testdrive", "--framework", framework, "--all", "--check-only", "--yes")

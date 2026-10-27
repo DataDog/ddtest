@@ -73,8 +73,13 @@ func TestRubyMinitestForkValidationIntegration(t *testing.T) {
 	withoutTracer := strings.Replace(gemfile, "gem 'datadog-ci', '"+installed.Gems["datadog-ci"]+"'\n", "", 1)
 	integrationFile(t, root, "Gemfile", withoutTracer)
 	integrationCommand(t, ctx, root, nil, "bundle", "lock", "--local")
+	integrationCommand(t, ctx, root, nil, "bundle", "lock", "--add-checksums")
 	lockBefore, err := os.ReadFile(filepath.Join(root, "Gemfile.lock"))
 	require.NoError(t, err)
+	// CI can supply the tracer separately from a correctly frozen app bundle.
+	frozenConfig := "---\nBUNDLE_FROZEN: true\n"
+	integrationFile(t, root, ".bundle/config", frozenConfig)
+	env = append(env, "BUNDLE_FROZEN=true")
 	protocol = rubyProtocolCommand(t, ctx, root, env, binary, "testdrive", "--framework", "minitest", "--all", "--agent", "--yes", "--tracer-version", installed.Gems["datadog-ci"])
 	require.NoError(t, json.Unmarshal([]byte(protocol), &state))
 	require.Equal(t, "complete_locally", state.Status, protocol)
@@ -84,6 +89,9 @@ func TestRubyMinitestForkValidationIntegration(t *testing.T) {
 	manifestAfter, err := os.ReadFile(filepath.Join(root, "Gemfile"))
 	require.NoError(t, err)
 	require.Equal(t, withoutTracer, string(manifestAfter))
+	configAfter, err := os.ReadFile(filepath.Join(root, ".bundle/config"))
+	require.NoError(t, err)
+	require.Equal(t, frozenConfig, string(configAfter))
 	unchanged, err := os.ReadFile(filepath.Join(root, "test/isolation_test.rb"))
 	require.NoError(t, err)
 	require.Equal(t, tests, string(unchanged))

@@ -30,6 +30,9 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	matched := environment.LooksLikeTestCommand(filepath.Join(root, directory), step.Run, "ruby", framework)
 	if parseErr == nil && len(parts) == 1 {
 		words := parts[0]
+		if rubySetupOnly(words) {
+			return commandResolution{Review: true, Reason: "Recognized Ruby dependency, metadata or lint command; not a test entry point."}
+		}
 		if len(words) > 2 && filepath.Base(words[0]) == "bundle" && words[1] == "exec" {
 			words = words[2:]
 		}
@@ -70,11 +73,8 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		}
 	}
 	if !matched {
-		if strings.Contains(step.Run, "test") || strings.Contains(step.Run, "spec") {
+		if stepMayStartTests(root, workflow, job, step, framework) {
 			return unresolvedCommand("Ruby test wrapper was not resolved; validate its actual entry point with --command: " + step.Run)
-		}
-		if strings.Contains(step.Run, "bundle exec") || strings.Contains(step.Run, "bin/") {
-			return commandResolution{Review: true, Reason: "Ruby task or wrapper was not identified as " + framework + "; inspect it separately if it runs tests."}
 		}
 		return commandResolution{}
 	}
@@ -83,6 +83,28 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return unresolvedCommand("Ruby test entry point requires a single explicit command; preserve shell setup and validate with --command from the prepared environment: " + step.Run)
 	}
 	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(parts[0]...)}}}
+}
+
+func rubySetupOnly(words []string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	name := filepath.Base(words[0])
+	if name == "bundle" && len(words) > 1 {
+		if slices.Contains([]string{"install", "check", "config", "lock", "update", "add", "cache", "list", "info", "show", "version", "--version", "-v", "env", "platform", "clean", "package", "outdated"}, words[1]) {
+			return true
+		}
+		if words[1] == "exec" && len(words) > 2 {
+			words, name = words[2:], filepath.Base(words[2])
+		}
+	}
+	if name == "gem" && len(words) > 1 {
+		return slices.Contains([]string{"install", "update", "list", "query", "env", "--version", "-v"}, words[1])
+	}
+	if name == "ruby" {
+		return len(words) == 2 && slices.Contains([]string{"--version", "-v", "--help", "-h"}, words[1])
+	}
+	return slices.Contains([]string{"rubocop", "standardrb", "rufo", "yard", "rdoc"}, name)
 }
 
 // Recognize a literal single-target default alias without loading Ruby code.
@@ -162,10 +184,10 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 				skippedAction := false
 				for i, step := range job.Steps {
 					uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
+					languages, _ := runtimeValue(step.With["languages"], row)
 					active, stepErr := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
 					if stepErr == nil && !active {
-						languages := strings.Fields(step.With["languages"])
-						if uses == githubAction && hasVersion && (slices.Contains(languages, "ruby") || slices.Contains(languages, "all")) {
+						if uses == githubAction && hasVersion && (slices.Contains(strings.Fields(languages), "ruby") || slices.Contains(strings.Fields(languages), "all")) {
 							skippedAction = true
 						}
 						continue
@@ -184,8 +206,7 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 							// the runner's implicit defaults are not certified here.
 						}
 						if uses == githubAction && hasVersion {
-							languages := strings.Fields(step.With["languages"])
-							if slices.Contains(languages, "ruby") || slices.Contains(languages, "all") {
+							if slices.Contains(strings.Fields(languages), "ruby") || slices.Contains(strings.Fields(languages), "all") {
 								action = step.Uses
 								tracer, _ = runtimeValue(step.With["ruby-tracer-version"], row)
 							}
@@ -215,7 +236,15 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 						finding.Status, finding.Code = "excluded", "excluded_runtime"
 						finding.Reason = "The Datadog action is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."
 					}
-					if reason := rubyBootstrapProblem(workflow, job, step, framework); reason != "" {
+					bootstrapStep := step
+					bootstrapStep.Env = maps.Clone(step.Env)
+					if bootstrapStep.Env == nil {
+						bootstrapStep.Env = map[string]string{}
+					}
+					// Keep unresolved preload expressions, while overlaying all
+					// statically resolved workflow/job/step instrumentation flags.
+					maps.Copy(bootstrapStep.Env, conditionEnvironment(workflow, job, step, row))
+					if reason := rubyBootstrapProblem(workflow, job, bootstrapStep, framework); finding.Status != "excluded" && reason != "" {
 						finding.Status, finding.Reason = "inconclusive", reason
 					}
 					result.Jobs = append(result.Jobs, finding)
@@ -246,6 +275,9 @@ func rubyBootstrapProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 	for _, key := range keys {
 		if value := strings.ToLower(env[key]); value == "false" || value == "0" {
 			return "Ruby CI instrumentation is explicitly disabled by " + key
+		}
+		if strings.Contains(env[key], "${{") {
+			return "Ruby CI instrumentation setting requires explicit resolution: " + key
 		}
 	}
 	return ""

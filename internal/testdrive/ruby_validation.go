@@ -223,6 +223,8 @@ settings = Bundler::Settings.new(Pathname.new(ARGV.fetch(0)))
 settings.set_local("path.system", nil)
 settings.set_local("disable_shared_gems", nil)
 settings.set_local("path", ARGV.fetch(1))
+settings.set_local("frozen", false)
+settings.set_local("deployment", false)
 File.chmod(0600, target)
 `
 
@@ -246,6 +248,8 @@ func (t *Testdrive) installRubyTracer(ctx context.Context, options platform.Trac
 	t.rubyTracerEnv = map[string]string{
 		"BUNDLE_PATH":       filepath.Join(options.Directory, "bundle"),
 		"BUNDLE_APP_CONFIG": configuration,
+		"BUNDLE_FROZEN":     "false",
+		"BUNDLE_DEPLOYMENT": "false",
 	}
 	maps.Copy(env, t.rubyTracerEnv)
 	// Gem compilation changes directory and must not initialize the test app.
@@ -510,7 +514,7 @@ func (t *Testdrive) runRubyFeatures(ctx context.Context, output io.Writer, sessi
 		suffix = "*_test.rb"
 		source = "require 'minitest/autorun'\nclass DDTestValidationProbe < Minitest::Test\n  def test_ddtest_validation_probe\n" + rubyProbeBody + "  end\nend\n"
 	}
-	probe, err := os.CreateTemp(filepath.Dir(baseline.Tests[0].File), "ddtest_validation_"+suffix)
+	probe, err := os.CreateTemp(t.repositoryRoot, "ddtest_validation_"+suffix)
 	if err != nil {
 		return err
 	}
