@@ -12,6 +12,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -39,7 +40,7 @@ func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOp
 			removeEmptyDirectories(reports)
 		}
 	}()
-	lock, err := acquireWorkflowLock(t.repositoryRoot)
+	lock, err := workspace.AcquireLock(t.repositoryRoot)
 	if err != nil {
 		return err
 	}

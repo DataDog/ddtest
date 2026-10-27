@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +45,7 @@ func TestPublicPlaywrightTestdrive(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
-			require.NoError(t, copyConfiguration(ctx, modules, filepath.Join(root, "node_modules"), false))
+			require.NoError(t, workspace.Copy(ctx, modules, filepath.Join(root, "node_modules"), skipIgnoredOutput))
 			write := func(name, value string) {
 				require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
 				requireWriteFile(t, filepath.Join(root, name), value)

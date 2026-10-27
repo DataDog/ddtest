@@ -15,6 +15,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +35,7 @@ for (const [file, command, args] of [['node.pid', process.execPath, ['-e', 'setI
   child.unref()
 }`)
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"private":true,"scripts":{"pretest":"node helper.cjs"}}`)
-	session, err := NewSession()
+	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	drive := &Testdrive{repositoryRoot: root, executor: &ext.DefaultCommandExecutor{Timeout: 30 * time.Second}}

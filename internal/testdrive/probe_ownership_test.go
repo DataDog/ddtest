@@ -16,22 +16,23 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
 func TestProbeRecoveryAfterKilledProcess(t *testing.T) {
 	if root := os.Getenv("DDTEST_PROBE_CRASH_HELPER"); root != "" {
-		lock, err := acquireWorkflowLock(root)
+		lock, err := workspace.AcquireLock(root)
 		require.NoError(t, err)
 		defer func() { _ = lock.Close() }()
-		session := planSession()
-		session.root = canonicalWorkflowRoot(root)
-		require.NoError(t, session.create())
+		session := workspace.PlanSession()
+		session.SetOwnerRoot(root)
+		require.NoError(t, session.Create())
 		requireWriteFile(t, filepath.Join(root, "abandoned-session"), session.Directory())
 		configuration, err := os.MkdirTemp("", "ddtest-configuration-")
 		require.NoError(t, err)
-		require.NoError(t, markSessionStorage(configuration, root))
-		require.NoError(t, copyConfiguration(t.Context(), root, filepath.Join(configuration, "checkout"), false))
+		require.NoError(t, workspace.MarkStorage(configuration, root))
+		require.NoError(t, workspace.Copy(t.Context(), root, filepath.Join(configuration, "checkout"), skipIgnoredOutput))
 		requireWriteFile(t, filepath.Join(root, "abandoned-configuration"), configuration)
 		probe, err := createProbe(root, validationRun{Tests: []jestTest{{File: filepath.Join(root, "real.test.js"), Status: "passed"}}}, "owned test")
 		require.NoError(t, err)
@@ -52,17 +53,17 @@ func TestProbeRecoveryAfterKilledProcess(t *testing.T) {
 	require.NoError(t, err)
 	probe := strings.TrimSpace(line)
 	require.FileExists(t, probe)
-	_, err = acquireWorkflowLock(root)
-	require.ErrorIs(t, err, errWorkflowBusy, "an active owner must prevent startup recovery")
+	_, err = workspace.AcquireLock(root)
+	require.ErrorIs(t, err, workspace.ErrBusy, "an active owner must prevent startup recovery")
 	require.NoError(t, child.Process.Kill())
 	require.Error(t, child.Wait())
-	lock, err := acquireWorkflowLock(root)
+	lock, err := workspace.AcquireLock(root)
 	require.NoError(t, err, "the OS releases the killed owner's lock")
 	defer func() { require.NoError(t, lock.Close()) }()
 	session, err := os.ReadFile(filepath.Join(root, "abandoned-session"))
 	require.NoError(t, err)
 	require.DirExists(t, string(session))
-	require.NoError(t, recoverSessions(root, &bytes.Buffer{}))
+	require.NoError(t, workspace.RecoverSessions(root, &bytes.Buffer{}))
 	require.NoDirExists(t, string(session))
 	configuration, err := os.ReadFile(filepath.Join(root, "abandoned-configuration"))
 	require.NoError(t, err)
@@ -85,7 +86,7 @@ func TestProbeRecoveryRequiresExactOwnershipAndUnchangedContents(t *testing.T) {
 			if changed {
 				requireWriteFile(t, probe, "customer edited this file")
 			}
-			lock, err := acquireWorkflowLock(root)
+			lock, err := workspace.AcquireLock(root)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, lock.Close()) })
 			err = recoverProbes(root)
@@ -138,7 +139,7 @@ func TestUnpublishedProbeContentsAreRecovered(t *testing.T) {
 	contents := []byte("complete contents")
 	peer, err := probeContentsFile(root, contents)
 	require.NoError(t, err)
-	require.NoError(t, writeProbeRecord(probeOwnership{Root: canonicalWorkflowRoot(root), Path: probe, Hash: fmt.Sprintf("%x", sha256.Sum256(contents)), Peer: peer}))
+	require.NoError(t, writeProbeRecord(probeOwnership{Root: workspace.CanonicalRoot(root), Path: probe, Hash: fmt.Sprintf("%x", sha256.Sum256(contents)), Peer: peer}))
 	directory, err := probeOwnershipDirectory(root)
 	require.NoError(t, err)
 	requireWriteFile(t, filepath.Join(directory, "contents-interrupted"), "partial")
@@ -191,7 +192,7 @@ func TestUnpublishedProbeCannotClaimExistingSameContents(t *testing.T) {
 	requireWriteFile(t, probe, "same contents")
 	peer, err := probeContentsFile(root, []byte("same contents"))
 	require.NoError(t, err)
-	record := probeOwnership{Root: canonicalWorkflowRoot(root), Path: probe, Hash: fmt.Sprintf("%x", sha256.Sum256([]byte("same contents"))), Peer: peer}
+	record := probeOwnership{Root: workspace.CanonicalRoot(root), Path: probe, Hash: fmt.Sprintf("%x", sha256.Sum256([]byte("same contents"))), Peer: peer}
 	require.NoError(t, writeProbeRecord(record))
 	// Emulate death after recording ownership but before the exclusive link.
 	require.NoError(t, recoverProbes(root))

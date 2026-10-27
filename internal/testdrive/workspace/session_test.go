@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2026 Datadog, Inc.
 
-package testdrive
+package workspace
 
 import (
 	"bytes"
@@ -63,18 +63,18 @@ func TestNewSessionSupportsConcurrentRuns(t *testing.T) {
 func TestSessionRecoveryDeletesOnlyMarkedStorageForLockedRepository(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TMPDIR", t.TempDir())
-	owned := planSession()
-	owned.root = canonicalWorkflowRoot(root)
-	require.NoError(t, owned.create())
-	other := planSession()
-	other.root = canonicalWorkflowRoot(t.TempDir())
-	require.NoError(t, other.create())
+	owned := PlanSession()
+	owned.SetOwnerRoot(root)
+	require.NoError(t, owned.Create())
+	other := PlanSession()
+	other.SetOwnerRoot(t.TempDir())
+	require.NoError(t, other.Create())
 	t.Cleanup(func() { require.NoError(t, other.Close()) })
 	unmarked, err := os.MkdirTemp(os.TempDir(), "ddtest-customer-")
 	require.NoError(t, err)
-	requireWriteFile(t, filepath.Join(unmarked, "customer data"), "preserve")
+	writeFile(t, filepath.Join(unmarked, "customer data"), "preserve")
 	var output bytes.Buffer
-	require.NoError(t, recoverSessions(root, &output))
+	require.NoError(t, RecoverSessions(root, &output))
 	require.NoDirExists(t, owned.Directory())
 	require.DirExists(t, other.Directory())
 	require.FileExists(t, filepath.Join(unmarked, "customer data"))
@@ -89,21 +89,26 @@ func TestPartlyRemovedConfigurationCopyKeepsItsOwnerForLaterRecovery(t *testing.
 	t.Setenv("TMPDIR", t.TempDir())
 	parent, err := os.MkdirTemp("", "ddtest-configuration-")
 	require.NoError(t, err)
-	require.NoError(t, markSessionStorage(parent, root))
+	require.NoError(t, MarkStorage(parent, root))
 	locked := filepath.Join(parent, "checkout", "locked")
 	require.NoError(t, os.MkdirAll(locked, 0700))
-	requireWriteFile(t, filepath.Join(locked, "file"), "x")
+	writeFile(t, filepath.Join(locked, "file"), "x")
 	require.NoError(t, os.Chmod(locked, 0500))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0700) })
 
-	require.Error(t, removeMarkedStorage(parent))
-	require.FileExists(t, filepath.Join(parent, sessionOwnerMarker), "a partial removal must stay reclaimable")
-	require.Error(t, recoverSessions(root, &bytes.Buffer{}), "recovery must not report an unremovable copy as cleaned")
-	require.FileExists(t, filepath.Join(parent, sessionOwnerMarker))
+	require.Error(t, RemoveMarkedStorage(parent))
+	require.FileExists(t, filepath.Join(parent, OwnerMarker), "a partial removal must stay reclaimable")
+	require.Error(t, RecoverSessions(root, &bytes.Buffer{}), "recovery must not report an unremovable copy as cleaned")
+	require.FileExists(t, filepath.Join(parent, OwnerMarker))
 
 	require.NoError(t, os.Chmod(locked, 0700))
 	var output bytes.Buffer
-	require.NoError(t, recoverSessions(root, &output))
+	require.NoError(t, RecoverSessions(root, &output))
 	require.NoDirExists(t, parent)
 	require.Contains(t, output.String(), "Recovered abandoned testdrive session: "+filepath.Base(parent))
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(path, []byte(content), 0600))
 }

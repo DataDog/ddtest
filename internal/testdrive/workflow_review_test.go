@@ -14,6 +14,7 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -220,7 +221,7 @@ func TestWorkflowReturnsSetupRepairsWithoutWeakeningFeatureFailures(t *testing.T
 							t.Fatal("source changes must stop the next browser run before intake/process startup")
 							return nil, nil
 						}}
-					session := planSession()
+					session := workspace.PlanSession()
 					defer func() { require.NoError(t, session.Close()) }()
 					_, err := next.runCypress(t.Context(), out, session, "", runSpec{Name: "reporting-only", Role: roleReporting})
 					require.ErrorContains(t, err, "remaining browser runs stopped")

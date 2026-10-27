@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 type directoryExecutor interface {
@@ -17,7 +19,7 @@ func setupOutput(ctx context.Context, executor commandExecutor, root, relative, 
 	if err != nil {
 		return nil, err
 	}
-	if directory == canonicalWorkflowRoot(root) && directory == canonicalWorkflowRoot(currentDirectory()) {
+	if directory == workspace.CanonicalRoot(root) && directory == workspace.CanonicalRoot(currentDirectory()) {
 		return executor.CombinedOutput(ctx, name, args, env)
 	}
 	if e, ok := executor.(directoryExecutor); ok {
@@ -36,7 +38,7 @@ func localSetupDirectory(root, relative string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	local, err := filepath.Rel(canonicalWorkflowRoot(root), directory)
+	local, err := filepath.Rel(workspace.CanonicalRoot(root), directory)
 	if err != nil || !filepath.IsLocal(local) {
 		return "", fmt.Errorf("setup working directory escapes repository")
 	}
@@ -84,7 +86,7 @@ func validateConfigurationFiles(root, directory string, args, names, options []s
 		if err != nil {
 			return fmt.Errorf("configuration file unavailable; review %s: %w", path, err)
 		}
-		relative, err := filepath.Rel(canonicalWorkflowRoot(root), resolved)
+		relative, err := filepath.Rel(workspace.CanonicalRoot(root), resolved)
 		if err != nil || !filepath.IsLocal(relative) {
 			return fmt.Errorf("configuration file resolves outside checkout; review %s", path)
 		}

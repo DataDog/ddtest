@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,7 +26,7 @@ func TestPublicJestForwardedConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root, false))
+	require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), root, skipIgnoredOutput))
 	write := func(name, value string) {
 		path := filepath.Join(root, name)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))

@@ -2,6 +2,7 @@ package testdrive
 
 import (
 	"context"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
@@ -37,7 +38,7 @@ func TestPublicMochaTestdrive(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
-			require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root, false))
+			require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), root, skipIgnoredOutput))
 			write := func(name, value string) {
 				require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
 				requireWriteFile(t, filepath.Join(root, name), value)

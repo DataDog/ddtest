@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -145,7 +146,7 @@ func BenchmarkIndexedRepositoryFingerprint(b *testing.B) {
 }
 
 func TestServiceScriptShorthandsAndExactPortVariable(t *testing.T) {
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"start":"node server.js","dev":"node server.js"}}`)
 	requireWriteFile(t, filepath.Join(root, "server.js"), `const port=process.env.PORT_X || 8888`)
 	for _, words := range [][]string{{"npm", "start"}, {"yarn", "dev"}, {"pnpm", "start"}, {"pnpm", "dev"}, {"pnpm", "run", "dev"}} {
@@ -167,7 +168,7 @@ func TestPnpmServiceShorthandMapsOnlyScripts(t *testing.T) {
 }
 
 func TestDependencyHandoffReturnsFreshFactsTemplateInsteadOfDeadEnd(t *testing.T) {
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	t.Chdir(root)
 	requireWriteFile(t, "package.json", `{"private":true,"scripts":{"test":"cucumber-js features"}}`)
 	requireWriteFile(t, "build.js", `// repository setup`)

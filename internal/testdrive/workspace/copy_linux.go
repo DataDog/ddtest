@@ -1,4 +1,4 @@
-package testdrive
+package workspace
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-func cloneConfigurationFile(source, target string) (bool, error) {
+func cloneFile(source, target string) (bool, error) {
 	in, err := os.Open(source)
 	if err != nil {
 		return false, err
@@ -26,7 +26,9 @@ func cloneConfigurationFile(source, target string) (bool, error) {
 	}
 	return false, closeErr
 }
-func configurationFreeSpace(path string) (uint64, error) {
+
+// FreeSpace reports the bytes available to the current user at path.
+func FreeSpace(path string) (uint64, error) {
 	var stat unix.Statfs_t
 	if err := unix.Statfs(path, &stat); err != nil {
 		return 0, err

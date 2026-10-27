@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 )
@@ -303,7 +304,7 @@ func TestRecoverProcessOwnershipStorageIsRepositoryScoped(t *testing.T) {
 	unrelated, err := os.MkdirTemp(processSocketBase(), "ddtest-process-")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(unrelated)) })
-	require.NoError(t, markSessionStorage(unrelated, t.TempDir()))
+	require.NoError(t, workspace.MarkStorage(unrelated, t.TempDir()))
 	// Simulate kernel closing the owner's listener on a crash, then the next run.
 	require.NoError(t, owner.listener.Close())
 	<-owner.accepted
@@ -328,7 +329,7 @@ func TestRecoverOwnershipAlsoChecksConfiguredTemporaryRoot(t *testing.T) {
 	t.Setenv("TMPDIR", temporary)
 	abandoned, err := os.MkdirTemp(temporary, "ddtest-process-")
 	require.NoError(t, err)
-	require.NoError(t, markSessionStorage(abandoned, root))
+	require.NoError(t, workspace.MarkStorage(abandoned, root))
 	require.NoError(t, recoverProcessOwners(root, io.Discard))
 	require.NoDirExists(t, abandoned, "storage from the previous socket base must still be recovered")
 }

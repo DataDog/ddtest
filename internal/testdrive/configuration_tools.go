@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 // These are the Node tools classified as build prerequisites by discovery.
@@ -32,7 +33,7 @@ const metadata=JSON.parse(fs.readFileSync(manifest,'utf8'));
 const bin=typeof metadata.bin==='string'?metadata.bin:metadata.bin?.[process.argv[2]];
 if(!bin)throw new Error('Installed package has no matching bin');
 process.stdout.write('__DDTEST_PREPARATION_BIN__'+JSON.stringify(path.resolve(path.dirname(manifest),bin)));`
-	relative, err := filepath.Rel(canonicalWorkflowRoot(t.repositoryRoot), directory)
+	relative, err := filepath.Rel(workspace.CanonicalRoot(t.repositoryRoot), directory)
 	if err != nil {
 		return "", nil, err
 	}

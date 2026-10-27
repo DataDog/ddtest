@@ -18,6 +18,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/DataDog/ddtest/internal/utils"
 	"github.com/kballard/go-shellquote"
 )
@@ -341,7 +342,7 @@ func verifyWebdriverIOTelemetry(run validationRun) verdict {
 	return verifyJestTelemetry(run)
 }
 
-func (t *Testdrive) runWebdriverIO(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+func (t *Testdrive) runWebdriverIO(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (run validationRun, runErr error) {
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Name, run.Role, run.Instrumented, run.ProbeMode, run.root, run.framework = name, spec.Role, instrumented, probeMode, t.checkoutRoot(), "webdriverio"
 	run.ExecutionContext = "Both comparison modes use ddtest native-result observers and process supervision. Baseline disables dd-trace; it is not an unmodified shell invocation."
@@ -434,7 +435,7 @@ const webdriverIOProbeSource = `(typeof it === 'function' ? it : test)('ddtest v
 });
 `
 
-func (t *Testdrive) runWebdriverIOFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
+func (t *Testdrive) runWebdriverIOFeatures(ctx context.Context, output io.Writer, session *workspace.Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
 	probe, err := createProbe(t.repositoryRoot, baseline, webdriverIOProbeSource)
 	if err != nil {
 		unavailableFeatures(result, err.Error())

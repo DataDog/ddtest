@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 // The public report is evidence, never an authority to certify itself. Only the
@@ -19,7 +21,7 @@ type workflowReceipt struct {
 }
 
 func receiptID(root string) string {
-	return fmt.Sprintf("report_%x", sha256.Sum256([]byte(canonicalWorkflowRoot(root))))[:39]
+	return fmt.Sprintf("report_%x", sha256.Sum256([]byte(workspace.CanonicalRoot(root))))[:39]
 }
 func validationDigest(result validationResult) (string, error) {
 	data, err := json.Marshal(result)
@@ -34,7 +36,7 @@ func saveWorkflowReceipt(root string, result validationResult) error {
 	if engine == "" {
 		return fmt.Errorf("ddtest engine identity is unavailable")
 	}
-	receipt := workflowReceipt{RunID: receiptID(root), Root: canonicalWorkflowRoot(root), Engine: engine, Digest: digest, Expires: time.Now().Add(workflowCheckpointLifetime)}
+	receipt := workflowReceipt{RunID: receiptID(root), Root: workspace.CanonicalRoot(root), Engine: engine, Digest: digest, Expires: time.Now().Add(workflowCheckpointLifetime)}
 	path, err := checkpointPath(receipt.RunID)
 	if err != nil {
 		return err
@@ -67,7 +69,7 @@ func verifyWorkflowReceipt(root string, result validationResult) error {
 	if err != nil {
 		return err
 	}
-	if receipt.Root != canonicalWorkflowRoot(root) || receipt.Engine == "" || receipt.Engine != engineIdentity() || receipt.Digest != digest {
+	if receipt.Root != workspace.CanonicalRoot(root) || receipt.Engine == "" || receipt.Engine != engineIdentity() || receipt.Digest != digest {
 		return fmt.Errorf("saved report or ddtest engine differs from its private validation receipt")
 	}
 	return nil

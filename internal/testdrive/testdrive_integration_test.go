@@ -20,8 +20,8 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/platform"
-	"github.com/DataDog/ddtest/internal/testdrive"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,7 +31,7 @@ const (
 )
 
 type instrumentedJestFixture struct {
-	session          *testdrive.Session
+	session          *workspace.Session
 	server           *intake.Server
 	ciInitPath       string
 	jestPath         string
@@ -110,7 +110,7 @@ func requireNPMIntegration(t *testing.T) {
 }
 
 func prepareInstrumentedJestFixture(ctx context.Context, repositoryRoot, sessionName string) (*instrumentedJestFixture, error) {
-	session, err := testdrive.NewSession()
+	session, err := workspace.NewSession()
 	if err != nil {
 		return nil, err
 	}

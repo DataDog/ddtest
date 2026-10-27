@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -132,7 +133,7 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 
 		for _, file := range build.ExpectedFiles {
 			path, err := filepath.EvalSymlinks(filepath.Join(t.repositoryRoot, file))
-			relative, relErr := filepath.Rel(canonicalWorkflowRoot(t.repositoryRoot), path)
+			relative, relErr := filepath.Rel(workspace.CanonicalRoot(t.repositoryRoot), path)
 			info, statErr := os.Stat(path)
 			if err != nil || relErr != nil || !filepath.IsLocal(relative) || statErr != nil || !info.Mode().IsRegular() {
 				build.Status = "failed"

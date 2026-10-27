@@ -20,6 +20,7 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -108,11 +109,11 @@ func TestPreflightReceiptInvalidatesWhenAnyPreparationInputChanges(t *testing.T)
 
 func TestInvalidResumeReleasesWorkflowLock(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript"}
 	var output bytes.Buffer
 	require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json", Resume: "invalid"}), "resume_invalid")
-	lock, err := acquireWorkflowLock(root)
+	lock, err := workspace.AcquireLock(root)
 	require.NoError(t, err, "a rejected resume must not block the next workflow")
 	require.NoError(t, lock.Close())
 }
@@ -121,7 +122,7 @@ func TestBuildFactExecutesInDeclaredPackageAndRequiresItsOutput(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("Node unavailable")
 	}
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	t.Chdir(root)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "packages/app"), 0755))
 	requireWriteFile(t, filepath.Join(root, "packages/app/build.cjs"), `require('fs').writeFileSync('built.js','ok')`)
@@ -136,7 +137,7 @@ func TestBuildFactExecutesInDeclaredPackageAndRequiresItsOutput(t *testing.T) {
 }
 
 func TestBuildFactRunsARepositoryShellScriptDirectly(t *testing.T) {
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	t.Chdir(root)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "packages/app/scripts"), 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "packages/app/scripts/build.sh"), []byte("#!/bin/sh\necho ok > built.js\n"), 0700))
@@ -283,7 +284,7 @@ func TestCustomHookHandoffContainsResolvedTracerAndResumableScope(t *testing.T) 
 	require.Contains(t, result.ResumeCommand, "--tracer-version")
 	require.Contains(t, result.ResumeCommand, "5.132.0")
 	require.Contains(t, result.ResumeCommand, "--resume")
-	_, err := openCheckpoint(result.RunID, canonicalWorkflowRoot(root), "cypress", "", false, true)
+	_, err := openCheckpoint(result.RunID, workspace.CanonicalRoot(root), "cypress", "", false, true)
 	require.NoError(t, err)
 	require.NoFileExists(t, filepath.Join(root, ".gitignore"), "handoff does not guess unsupported CI hooks")
 }
@@ -324,7 +325,7 @@ func TestCypressManagedStartupRejectsOccupiedPortBeforeTests(t *testing.T) {
 }
 
 func TestCypressPortFactsPreserveCIAndActionOptions(t *testing.T) {
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"start":"node serve.js"}}`)
 	requireWriteFile(t, filepath.Join(root, "serve.js"), `const port=process.env.PORT || 8888`)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

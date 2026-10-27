@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 const probeName = "ddtest validation probe"
@@ -152,7 +153,7 @@ func createProbe(root string, baseline validationRun, sourceText string) (string
 	return "", errors.New("no writable test location inside this repository was found for the probe")
 }
 
-func (t *Testdrive) runJestFeatures(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) (runErr error) {
+func (t *Testdrive) runJestFeatures(ctx context.Context, output io.Writer, session *workspace.Session, preload string, result *validationResult) (runErr error) {
 	if result.Preflight == nil || len(result.Preflight.Projects) == 0 {
 		unavailableFeatures(result, "Effective Jest projects were not resolved; feature coverage is unvalidated.")
 		return nil
@@ -208,7 +209,7 @@ func (t *Testdrive) runJestFeatures(ctx context.Context, output io.Writer, sessi
 	return nil
 }
 
-func (t *Testdrive) runJestProjectFeatures(ctx context.Context, output io.Writer, session *Session, preload, prefix string, check *projectProbeCheck, result *validationResult) (runErr error) {
+func (t *Testdrive) runJestProjectFeatures(ctx context.Context, output io.Writer, session *workspace.Session, preload, prefix string, check *projectProbeCheck, result *validationResult) (runErr error) {
 	files, command, err := t.discoverJestTests(ctx, "")
 	check.DiscoveryCommand = command
 	if err != nil || len(files) == 0 {

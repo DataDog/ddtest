@@ -1,9 +1,11 @@
-package testdrive
+package workspace
 
 import "golang.org/x/sys/windows"
 
-func cloneConfigurationFile(_, _ string) (bool, error) { return false, nil }
-func configurationFreeSpace(path string) (uint64, error) {
+func cloneFile(_, _ string) (bool, error) { return false, nil }
+
+// FreeSpace reports the bytes available to the current user at path.
+func FreeSpace(path string) (uint64, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return 0, err

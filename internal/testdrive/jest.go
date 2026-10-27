@@ -19,6 +19,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -166,7 +167,7 @@ func probeJestArgs(command string, args []string) []string {
 	return appendJestArgs(command, result, "--coverageThreshold={}")
 }
 
-func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (run validationRun, runErr error) {
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	if scenario.Feature == "" {
@@ -461,7 +462,7 @@ func verifyJestTelemetry(run validationRun) verdict {
 	return verdict{}
 }
 
-func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
+func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *workspace.Session, preload string, result *validationResult) error {
 	run := t.runJest
 	if t.framework.Name() == "webdriverio" {
 		run = t.runWebdriverIO
@@ -482,7 +483,7 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 		run = t.runVitest
 	}
 	runFramework := run
-	run = func(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (validationRun, error) {
+	run = func(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (validationRun, error) {
 		value, err := runFramework(ctx, output, session, preload, spec)
 		return markTimeout(value), err
 	}

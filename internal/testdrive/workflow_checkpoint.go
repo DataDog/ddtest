@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 var workflowRunID = regexp.MustCompile(`^[A-Za-z0-9_-]{20,64}$`)
@@ -59,7 +60,7 @@ func checkpointPath(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !privateOwnedDirectory(info) {
+	if !workspace.PrivateOwnedDirectory(info) {
 		return "", fmt.Errorf("workflow storage must be a private real directory")
 	}
 	return filepath.Join(directory, id+".json"), nil
@@ -95,7 +96,7 @@ func readCheckpoint(id string) (*workflowCheckpoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || !ownedByCurrentUser(info) || !privateFilePermissions(info) || info.Size() > 1<<20 {
+	if !info.Mode().IsRegular() || !workspace.OwnedByCurrentUser(info) || !privateFilePermissions(info) || info.Size() > 1<<20 {
 		return nil, fmt.Errorf("invalid workflow checkpoint")
 	}
 	data, err := os.ReadFile(path)

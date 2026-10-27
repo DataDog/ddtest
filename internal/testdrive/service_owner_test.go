@@ -17,6 +17,7 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +31,7 @@ func TestDeclaredServiceStopsWhenCoordinatorIsKilled(t *testing.T) {
 		for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 			t.Setenv(key, os.Getenv("DDTEST_SERVICE_CRASH_TMP"))
 		}
-		lock, err := acquireWorkflowLock(root)
+		lock, err := workspace.AcquireLock(root)
 		require.NoError(t, err)
 		defer func() { _ = lock.Close() }()
 		drive := &Testdrive{repositoryRoot: root, executor: &ext.DefaultCommandExecutor{Timeout: 20 * time.Millisecond}}
@@ -60,7 +61,7 @@ func TestDeclaredServiceStopsWhenCoordinatorIsKilled(t *testing.T) {
 	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 		t.Setenv(key, temporary)
 	}
-	root := canonicalWorkflowRoot(t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"start":"node server.cjs","test":"vitest run"}}`)
 	requireWriteFile(t, filepath.Join(root, "server.cjs"), `process.on('SIGTERM',()=>{}); require('http').createServer((q,s)=>s.end('ready')).listen(Number(process.env.APP_PORT),'127.0.0.1')`)
 	canary, err := net.Listen("tcp", "127.0.0.1:0")

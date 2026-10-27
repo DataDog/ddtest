@@ -22,6 +22,7 @@ import (
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/Masterminds/semver/v3"
 	"github.com/kballard/go-shellquote"
 )
@@ -110,8 +111,8 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	if err != nil {
 		return err
 	}
-	defer func() { preflightErr = errors.Join(preflightErr, removeMarkedStorage(directory)) }()
-	if err := markSessionStorage(directory, t.ownershipRoot()); err != nil {
+	defer func() { preflightErr = errors.Join(preflightErr, workspace.RemoveMarkedStorage(directory)) }()
+	if err := workspace.MarkStorage(directory, t.ownershipRoot()); err != nil {
 		return err
 	}
 	env["DD_CIVISIBILITY_ENABLED"] = "false"

@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -283,7 +284,7 @@ func submoduleFingerprint(ctx context.Context, path string, depth int) (string, 
 }
 
 func readSetupFacts(root, path string) ([]byte, error) {
-	root = canonicalWorkflowRoot(root)
+	root = workspace.CanonicalRoot(root)
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -488,7 +489,7 @@ func repositoryScript(root, directory, name string) (os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	local, err := filepath.Rel(canonicalWorkflowRoot(root), resolved)
+	local, err := filepath.Rel(workspace.CanonicalRoot(root), resolved)
 	if err != nil || !filepath.IsLocal(local) {
 		return nil, fmt.Errorf("prerequisite script escapes the repository")
 	}

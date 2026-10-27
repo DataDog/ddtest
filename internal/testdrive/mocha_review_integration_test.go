@@ -15,6 +15,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,7 +43,7 @@ func TestMochaProbeCoverageThresholdControls(t *testing.T) {
 			probe := filepath.Join(root, "test/probe.cjs")
 			drive.framework = framework.NewMocha(platform.NewJavaScript())
 			drive.command, drive.args = "npm", []string{"test"}
-			session, err := NewSession()
+			session, err := workspace.NewSession()
 			require.NoError(t, err)
 			defer func() { require.NoError(t, session.Close()) }()
 			preload := filepath.Join(modules, "dd-trace/ci/init.js")
@@ -83,7 +84,7 @@ func TestMochaDelayedCommandUsesSharedTimeout(t *testing.T) {
 	drive.command = filepath.Join(drive.repositoryRoot, "node_modules/.bin/mocha")
 	drive.args = []string{"--delay", "one.cjs"}
 	drive.executor = &ext.DefaultCommandExecutor{Timeout: 500 * time.Millisecond}
-	session, err := NewSession()
+	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, session.Close()) }()
 	start := time.Now()

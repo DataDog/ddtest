@@ -21,6 +21,7 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -102,12 +103,12 @@ func TestSharedWorkflowAcrossFrameworksPreservesAssertionsAndPackagingFailures(t
 
 func TestWorkflowLocksRejectOverlapAndReleaseOnClose(t *testing.T) {
 	root := t.TempDir()
-	one, err := acquireWorkflowLock(root)
+	one, err := workspace.AcquireLock(root)
 	require.NoError(t, err)
-	_, err = acquireWorkflowLock(root)
-	require.ErrorIs(t, err, errWorkflowBusy)
+	_, err = workspace.AcquireLock(root)
+	require.ErrorIs(t, err, workspace.ErrBusy)
 	require.NoError(t, one.Close())
-	two, err := acquireWorkflowLock(root)
+	two, err := workspace.AcquireLock(root)
 	require.NoError(t, err)
 	require.NoError(t, two.Close())
 }

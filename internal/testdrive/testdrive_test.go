@@ -24,6 +24,7 @@ import (
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 type fakeTracer struct {
@@ -147,7 +148,7 @@ func TestPreviewNamesOnlyDiscoveredDependencyFiles(t *testing.T) {
 			if err := os.Mkdir(filepath.Join(root, "bun.lockb"), 0755); err != nil {
 				t.Fatal(err)
 			}
-			drive := &Testdrive{repositoryRoot: root, language: tc.language, framework: tc.framework, session: planSession(), projectTracer: "installed"}
+			drive := &Testdrive{repositoryRoot: root, language: tc.language, framework: tc.framework, session: workspace.PlanSession(), projectTracer: "installed"}
 			var output bytes.Buffer
 			drive.Preview(&output)
 			var notice string
@@ -485,7 +486,7 @@ func TestPythonTemporaryEnvironmentCleanup(t *testing.T) {
 			drive := &Testdrive{
 				repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()),
 				command: "python", args: []string{"-m", "pytest"}, platform: installer, executor: executor,
-				session: planSession(),
+				session: workspace.PlanSession(),
 			}
 			if outcome == "install failure" {
 				installer.err = errors.New("installation failed")
@@ -582,7 +583,7 @@ func TestStartupRecoveryRemovesMarkedPythonEnvironments(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	owned, err := os.MkdirTemp("", "ddtest-python-*")
 	require.NoError(t, err)
-	require.NoError(t, markSessionStorage(owned, root))
+	require.NoError(t, workspace.MarkStorage(owned, root))
 	require.NoError(t, os.Mkdir(filepath.Join(owned, "environment"), 0700))
 	unmarked, err := os.MkdirTemp("", "ddtest-python-*")
 	require.NoError(t, err)
