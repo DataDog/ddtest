@@ -393,7 +393,10 @@ class Runner:
         if remaining <= 0:
             raise RuntimeError("overall time limit reached during setup")
         result = subprocess.run(command, cwd=cwd, env=dict(self.env, **env), text=True, capture_output=True,
-                                timeout=min(self.args.command_seconds, remaining), check=True)
+                                timeout=min(self.args.command_seconds, remaining))
+        if result.returncode:
+            # The command's own diagnostic says why setup stopped.
+            raise RuntimeError(f"setup command {command} exited {result.returncode}: {result.stderr.strip()[-2000:]}")
         return result.stdout
 
     def snapshot(self, directory):
@@ -437,7 +440,8 @@ class Runner:
         # ddtest's executable runs ddto. Its module can need a newer Go than the
         # one measured, which the commands it runs use. Go switches to that one
         # only after checking it against the checksum database, which the
-        # module cache's records answer without --download.
+        # module cache's records answer when Go has used that toolchain before;
+        # otherwise Go asks the database itself.
         self.ddto = self.output / "ddtest"
         self.setup([str(self.go), "build", "-mod=readonly", "-o", str(self.ddto), "."], ROOT.parent,
                    GOTOOLCHAIN="auto", GOSUMDB="sum.golang.org")
