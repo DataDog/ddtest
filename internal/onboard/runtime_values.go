@@ -198,7 +198,11 @@ func runtimeValue(value string, row map[string]any) (string, error) {
 			}
 			return "", fmt.Errorf("unknown matrix reference %s", value)
 		}
-		return fmt.Sprint(resolved), nil
+		rendered, scalar := conditionString(resolved)
+		if !scalar {
+			return "", fmt.Errorf("matrix reference %s does not resolve to a scalar", value)
+		}
+		return rendered, nil
 	}
 	if strings.Contains(value, "${{") {
 		return "", fmt.Errorf("cannot statically resolve %s", value)

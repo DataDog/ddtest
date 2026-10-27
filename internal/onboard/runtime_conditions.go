@@ -54,8 +54,10 @@ type conditionParser struct {
 	ifCondition bool
 }
 
+// Skip only leading whitespace: the remainder may be the rest of a shell
+// command whose trailing whitespace is significant.
 func (p *conditionParser) take(token string) bool {
-	p.rest = strings.TrimSpace(p.rest)
+	p.rest = strings.TrimLeftFunc(p.rest, unicode.IsSpace)
 	if !strings.HasPrefix(p.rest, token) {
 		return false
 	}
@@ -194,7 +196,7 @@ func (p *conditionParser) atom() (any, error) {
 		}
 		return nil, fmt.Errorf("unclosed string")
 	}
-	p.rest = strings.TrimSpace(p.rest)
+	p.rest = strings.TrimLeftFunc(p.rest, unicode.IsSpace)
 	i := 0
 	for i < len(p.rest) && (unicode.IsLetter(rune(p.rest[i])) || unicode.IsDigit(rune(p.rest[i])) || strings.ContainsRune("._-", rune(p.rest[i]))) {
 		i++

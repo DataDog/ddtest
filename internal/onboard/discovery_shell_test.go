@@ -33,6 +33,12 @@ func TestMatrixInterpolationResolvesStaticExpressions(t *testing.T) {
 		{`npm run ${{ matrix.script || format('test:node{0}', matrix.version) }}`, "npm run test:node20", ""},
 		{`npm run ${{ matrix.os == 'windows-latest' && 'test:win' || 'test' }}`, "npm run test:win", ""},
 		{`npm test${{ matrix.missing }}`, "npm test", ""},
+		// Values render as the runner renders them, and format() casts scalars.
+		{`npm run ${{ format('test:node{0}', matrix.node) }}`, "npm run test:node20", ""},
+		{`npm test --testNamePattern=${{ matrix.name || 1000000 }}`, "npm test --testNamePattern=1000000", ""},
+		// The shell text after an expression keeps its trailing whitespace.
+		{"npm test --shard=${{ matrix.shard }} \\\n", "npm test --shard=1 \\\n", ""},
+		{"npm test ${{ matrix.shard }}  \n", "npm test 1  \n", ""},
 		// GitHub resolves matrix properties case-insensitively.
 		{`npm test -- --shard=${{ matrix.Shard }}`, "npm test -- --shard=1", ""},
 		{`npm run ${{ matrix.OS == 'windows-latest' && 'test:win' || 'test' }}`, "npm run test:win", ""},
@@ -88,6 +94,14 @@ func TestMatrixInterpolationResolvesStaticExpressions(t *testing.T) {
 	actual, err = interpolateMatrix(`npm test ${{ matrix.node }}`, nil)
 	require.NoError(t, err)
 	require.Equal(t, `npm test ${{ matrix.node }}`, actual)
+}
+
+func TestMatrixReferencesRenderLikeTheRunner(t *testing.T) {
+	value, err := runtimeValue("${{ matrix.size }}", map[string]any{"size": float64(1000000)})
+	require.NoError(t, err)
+	require.Equal(t, "1000000", value)
+	_, err = runtimeValue("${{ matrix.os }}", map[string]any{"os": []any{"linux"}})
+	require.ErrorContains(t, err, "scalar")
 }
 
 func TestMatrixPropertiesResolveCaseInsensitively(t *testing.T) {

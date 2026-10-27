@@ -70,15 +70,15 @@ func interpolateMatrix(command string, row map[string]any) (string, error) {
 			command = expression[len(reference)-len("${{"):]
 			continue
 		}
-		switch value.(type) {
-		case string, bool, int, float64:
-		default:
+		// Render values as the runner does, for example 1000000, not 1e+06.
+		rendered, scalar := conditionString(value)
+		if !scalar {
 			return original, fmt.Errorf("CI expression must resolve to a scalar: %s", reference)
 		}
-		if !shellMatrixScalar.MatchString(fmt.Sprint(value)) {
+		if !shellMatrixScalar.MatchString(rendered) {
 			return original, fmt.Errorf("matrix substitution requires shell quoting review: %s", reference)
 		}
-		_, _ = fmt.Fprint(&result, value)
+		result.WriteString(rendered)
 		if result.Len() > maxInterpolatedCommand {
 			return original, fmt.Errorf("resolved CI command exceeds %d characters", maxInterpolatedCommand)
 		}
