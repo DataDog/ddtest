@@ -23,6 +23,12 @@ func TestHandles(t *testing.T) {
 		{[]string{bin, "go-shim-exec", "program"}, true},
 		{[]string{bin, "ci-git-worker", "state"}, true},
 		{[]string{bin, "tool-overlay", "mode", "plan", "compile"}, true},
+		// Without the arguments of its mode, a name stays the program's.
+		{[]string{bin, "test-exec"}, false},
+		{[]string{bin, "go-shim-exec"}, false},
+		{[]string{bin, "ci-git-worker"}, false},
+		{[]string{bin, "ci-git-worker", "state", "id", "1m", "extra"}, false},
+		{[]string{bin, "tool-overlay", "mode", "plan"}, false},
 		{[]string{shim, "test", "-json", "./..."}, true},
 		{[]string{bin, "plan"}, false},
 		{[]string{bin, "run", "instrument"}, false},

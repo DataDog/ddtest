@@ -14,14 +14,12 @@ import (
 	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
-// selfModes are the modes in which ddto starts its own executable: go test's
-// -exec program, go run's -exec program with the go shim, the Git worker
-// and the -toolexec overlay.
-var selfModes = []string{"test-exec", runner.GoShimExecMode, "ci-git-worker", "tool-overlay"}
-
 // Handles reports whether args, a process's arguments, run ddto in a program
 // whose ddto command is name: that command, a mode in which ddto starts its
-// own executable, or the go shim, which is the executable named go.
+// own executable, with the arguments that Main requires of it, or the go shim,
+// which is the executable named go. The modes are go test's -exec program, go
+// run's -exec program with the go shim, the Git worker and the -toolexec
+// overlay; with other arguments, their names stay the program's.
 func Handles(args []string, name string) bool {
 	if len(args) == 0 {
 		return false
@@ -32,13 +30,15 @@ func Handles(args []string, name string) bool {
 	if len(args) < 2 {
 		return false
 	}
-	if args[1] == name {
+	switch args[1] {
+	case name:
 		return true
-	}
-	for _, mode := range selfModes {
-		if args[1] == mode {
-			return true
-		}
+	case "test-exec", runner.GoShimExecMode:
+		return len(args) >= 3
+	case "ci-git-worker":
+		return len(args) >= 3 && len(args) <= 5
+	case "tool-overlay":
+		return len(args) >= 5
 	}
 	return false
 }
