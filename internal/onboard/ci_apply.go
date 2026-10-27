@@ -200,7 +200,10 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 					}
 					files[native.Path] = edit
 				}
-				if native.Tracer == "" && strings.Contains(mergeEnvironment(job.Env, step.Env)["NODE_OPTIONS"], "dd-trace") {
+				env := mergeEnvironment(job.Env, step.Env)
+				if native.Tracer == "" && slices.ContainsFunc(nativeInitializationChannels, func(channel struct{ variable, framework string }) bool {
+					return strings.Contains(env[channel.variable], "dd-trace")
+				}) {
 					return nil, &SetupGap{location, "Existing custom tracer initialization is preserved; resolve its exact installation/version instead of adding a second tracer"}
 				}
 				if (workflow.Provider == "gitlab" || workflow.Provider == "buildkite") && nativeChangesShellState(native.Original) {

@@ -112,6 +112,9 @@ func readSelectedWorkflows(root, requested string) ([]ciWorkflow, error) {
 			workflows[i].Provider = adapter.name
 			if adapter.name != "github" {
 				for name, job := range workflows[i].Jobs {
+					if job.If != "false" && len(job.Gaps) > 0 {
+						candidate = true
+					}
 					for n := range job.Steps {
 						job.Steps[n].Native = nativeExistingSetup(root, adapter.name, job, n)
 						if job.If != "false" && job.Steps[n].If != "false" && job.Steps[n].Run == "" && job.Steps[n].ResolutionError != "" {
@@ -331,6 +334,9 @@ func nativeSteps(path string, node *yaml.Node, provider string) []runtimeStep {
 	if setup, original, ok := unwrapNativeInstrumentation(command, provider); ok {
 		native.Framework, native.Tracer, native.Site, native.ESM = setup.Framework, setup.Version, setup.Site, setup.ESM
 		command = original
+	}
+	if provider == "buildkite" {
+		command = strings.ReplaceAll(command, "$$", "$")
 	}
 	return []runtimeStep{{Run: command, Source: fmt.Sprintf("%s:%d", path, node.Line), Number: node.Line, Native: native}}
 }

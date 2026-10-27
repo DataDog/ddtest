@@ -76,6 +76,11 @@ Literal standalone assignments are available to shell expansion without being
 implicitly exported. GitLab inputs headers, commandless plugin steps and Compose
 config arrays require resolved configuration. Installation evidence respects
 inline environment assignments and excludes untracked directory changes.
+Computed/unsupported native calls remain provider candidates. Jenkins argument
+lookup stays within its call; shell `unset` and Compose environment overrides
+require resolved state. Scoped Cucumber/WDIO preloads preserve their known pin
+and must reach the selected leaf. Buildkite upload escapes are normalized only
+for analysis, and local CircleCI reusable commands can establish checkout paths.
 
 GitLab local includes, inherited jobs, variables and literal matrices;
 CircleCI jobs, local reusable commands/executors and pinned official Node orb

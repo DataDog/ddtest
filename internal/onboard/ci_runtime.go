@@ -298,7 +298,7 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 				findings = append(findings, finding)
 				continue
 			}
-			if framework == "cucumber" && !step.Native.Manual && slices.ContainsFunc(r.Tests, func(test TestCommand) bool { return !test.cucumberScoped }) {
+			if framework == "cucumber" && (!step.Native.Manual || step.Native.Framework == "cucumber") && slices.ContainsFunc(r.Tests, func(test TestCommand) bool { return !test.cucumberScoped }) {
 				finding.Code, finding.Reason = CodeUnverifiedInitialization, "Selected Cucumber leaf does not consume scoped DD_CUCUMBER_NODE_OPTIONS while preserving existing NODE_OPTIONS"
 				findings = append(findings, finding)
 				continue
@@ -315,7 +315,7 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 					continue
 				}
 			}
-			if framework == "webdriverio" && !step.Native.Manual && slices.ContainsFunc(r.Tests, func(test TestCommand) bool { return !test.webdriverIOScoped }) {
+			if framework == "webdriverio" && (!step.Native.Manual || step.Native.Framework == "webdriverio") && slices.ContainsFunc(r.Tests, func(test TestCommand) bool { return !test.webdriverIOScoped }) {
 				finding.Code, finding.Reason = CodeUnverifiedInitialization, "Selected WDIO leaf does not consume scoped DD_WDIO_NODE_OPTIONS while preserving existing NODE_OPTIONS"
 				findings = append(findings, finding)
 				continue

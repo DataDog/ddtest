@@ -102,6 +102,9 @@ func nativeShellState(root string, job runtimeJob) runtimeJob {
 			continue
 		}
 		words, err := shellquote.Split(step.Run)
+		if err == nil && len(words) > 0 && words[0] == "unset" {
+			job.Gaps = append(job.Gaps, step.Source+": shell unset requires explicitly resolved persistent state")
+		}
 		if err == nil && len(words) == 2 && words[0] == "cd" && !strings.ContainsAny(words[1], "$`~") {
 			next, err := repositoryDirectory(root, root, directory+"/"+words[1])
 			if err != nil {

@@ -116,13 +116,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 			jobFields = merged
 		}
 		ciDirectory := replace(ciScalar(jobFields["working_directory"]))
-		checkoutAtRoot := false
-		if steps := ciUnalias(jobFields["steps"]); steps != nil {
-			for _, step := range steps.Content {
-				step = ciUnalias(step)
-				checkoutAtRoot = checkoutAtRoot || (step.Kind == yaml.ScalarNode && step.Value == "checkout")
-			}
-		}
+		checkoutAtRoot := circleHasCheckout(inv.before, commands, 0) || circleHasCheckout(jobFields["steps"], commands, 0)
 		directory, dirErr := literalCIPath(ciDirectory)
 		if checkoutAtRoot && !strings.ContainsAny(ciDirectory, "$<>{}") {
 			directory, dirErr = ".", nil
@@ -311,6 +305,33 @@ func circleCIShell(shell string) string {
 		return candidate
 	}
 	return shell
+}
+
+// Only literal checkout steps in local reusable commands establish the default
+// checkout mapping. Conditional/external definitions retain their setup gaps.
+func circleHasCheckout(list *yaml.Node, commands map[string]*yaml.Node, depth int) bool {
+	list = ciUnalias(list)
+	if list == nil || depth > 16 {
+		return false
+	}
+	for _, entry := range list.Content {
+		entry = ciUnalias(entry)
+		if entry.Kind == yaml.ScalarNode {
+			if entry.Value == "checkout" {
+				return true
+			}
+			if circleHasCheckout(ciMembers(commands[entry.Value])["steps"], commands, depth+1) {
+				return true
+			}
+		} else {
+			for key := range ciMembers(entry) {
+				if circleHasCheckout(ciMembers(commands[key])["steps"], commands, depth+1) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // Reusable definitions own their defaults; caller values cross the boundary

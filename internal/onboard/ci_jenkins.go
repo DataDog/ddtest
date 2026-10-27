@@ -246,11 +246,22 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 			}
 			if token.value == "sh" {
 				j := i + 1
-				limit := end
+				var limit int
 				parenthesized := j < end && tokens[j].value == "("
 				if parenthesized {
 					limit = pairs[j]
 					j++
+				} else {
+					limit = j
+					for limit < end {
+						if tokens[limit].quote == "" && slices.Contains([]string{";", "{", "}"}, tokens[limit].value) {
+							break
+						}
+						if limit > j && strings.Contains(string(data[tokens[limit-1].end:tokens[limit].start]), "\n") && !slices.Contains([]string{",", ":"}, tokens[limit-1].value) && !strings.ContainsAny(tokens[limit].value, "+-*/%?.[<>=!&|^") && tokens[limit].value != "as" {
+							break
+						}
+						limit++
+					}
 				}
 				literal := -1
 				if j < limit && tokens[j].quote != "" {

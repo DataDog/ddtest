@@ -15,6 +15,12 @@ import (
 	"github.com/kballard/go-shellquote"
 )
 
+var nativeInitializationChannels = []struct{ variable, framework string }{
+	{"NODE_OPTIONS", ""},
+	{"DD_CUCUMBER_NODE_OPTIONS", "cucumber"},
+	{"DD_WDIO_NODE_OPTIONS", "webdriverio"},
+}
+
 // Recognize ordinary package-based CI initialization as well as ddtest's own
 // recipe. A literal preload alone does not prove that CI installs that package.
 func nativeExistingSetup(root, provider string, job runtimeJob, index int) *nativeCommand {
@@ -22,16 +28,22 @@ func nativeExistingSetup(root, provider string, job runtimeJob, index int) *nati
 	if step.Native == nil || step.Native.Tracer != "" {
 		return step.Native
 	}
-	options := mergeEnvironment(job.Env, step.Env)["NODE_OPTIONS"]
+	env := mergeEnvironment(job.Env, step.Env)
 	if words, err := shellquote.Split(step.Run); err == nil {
 		if _, assignments, err := commandEnvironment(words); err == nil {
 			if value, ok := assignments["NODE_OPTIONS"]; ok {
-				options = value
+				env["NODE_OPTIONS"] = value
 			}
 		}
 	}
-	preload, esm := nativePreloads(options)
-	if !preload {
+	count, framework, esm := 0, "", false
+	for _, channel := range nativeInitializationChannels {
+		if preload, imports := nativePreloads(env[channel.variable]); preload {
+			count++
+			framework, esm = channel.framework, imports
+		}
+	}
+	if count != 1 {
 		return step.Native
 	}
 	directory, err := repositoryDirectory(root, root, stepDirectory(ciWorkflow{}, job, step))
@@ -54,6 +66,7 @@ func nativeExistingSetup(root, provider string, job runtimeJob, index int) *nati
 	verified.Tracer = version
 	verified.Manual = true
 	verified.ESM = esm
+	verified.Framework = framework
 	return &verified
 }
 

@@ -175,6 +175,9 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 								}
 							}
 							job.Env = mergeEnvironment(job.Env, ciEnvironment(serviceFields["environment"]))
+							if ciMembers(config)["env"] != nil || ciMembers(config)["environment"] != nil {
+								job.Gaps = append(job.Gaps, "Docker Compose plugin environment overrides require resolved container values before validation or editing")
+							}
 							if serviceFields["working_dir"] != nil || serviceFields["volumes"] != nil || serviceFields["depends_on"] != nil || serviceFields["entrypoint"] != nil {
 								job.Gaps = append(job.Gaps, "Compose working directory, volumes, dependencies or entrypoint require local setup facts")
 							}
@@ -240,7 +243,7 @@ func buildkitePluginCommands(path string, plugins *yaml.Node, hasStepCommand boo
 				reason = "Buildkite docker-compose plugin command conflicts with the step command; choose one explicitly before validation or editing"
 			}
 			steps = append(steps, runtimeStep{
-				Run:    run,
+				Run:    strings.ReplaceAll(run, "$$", "$"),
 				Source: fmt.Sprintf("%s:%d", path, command.Line),
 				Number: command.Line,
 				Native: &nativeCommand{Path: path, Original: run, Blocked: reason},
