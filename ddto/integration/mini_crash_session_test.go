@@ -155,7 +155,7 @@ func FuzzSeeds(f *testing.F) {
 		// The panic hook's runtime also copies the fatal error's message to
 		// the crash output.
 		{"fatal error with panic hook", "map", []string{"--panic-hook"}, nil, []string{"TestCrash fail"}, "crash: fatal error: concurrent map writes", "fatal error: concurrent map writes", 1},
-		{"killed", "kill", nil, nil, nil, "", "the test process ended before it closed CI Visibility", 1},
+		{"killed", "kill", nil, nil, nil, "", "the test process ended before it closed Test Optimization", 1},
 		// A fuzz target that os.Exit ended while it ran is not passed.
 		{"fuzz target exit", "fuzz exit", nil, nil, []string{"TestCrash pass", "TestFirst pass"}, "", "", 1},
 		// A benchmark's panic, in its first run or a later one, closes it and

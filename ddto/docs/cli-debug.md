@@ -108,8 +108,8 @@ The log records:
   `civisibility: no signal handler: os/signal was built without the CLI's overlay`
   and handles no signal, as under go test. A test process that `os.Exit`
   ends during its tests logs
-  `civisibility: os.Exit before CI Visibility closed; closing it`, and
-  `ERROR: civisibility: closing CI Visibility in os.Exit did not finish within 1m0s; exiting without it`
+  `civisibility: os.Exit before Test Optimization closed; closing it`, and
+  `ERROR: civisibility: closing Test Optimization in os.Exit did not finish within 1m0s; exiting without it`
   when that shutdown cannot finish.
 - The hooks for [crashes](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#crashes):
   `timeout hook installed=true` when testing's `-timeout` alarm closes Mini's
@@ -147,7 +147,7 @@ The log records:
   ([empty test sessions](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#empty-test-sessions)).
   Then
   `test session sent=<bool> processes=<n> closed=<n> crashed=<n> recreated=<n> exit_code=<n>`
-  counts the test processes that joined it, those that closed CI Visibility,
+  counts the test processes that joined it, those that closed Test Optimization,
   those that left crash output, and the modules, suites and tests recreated
   for the processes that did not close.
 - Optional library discovery, including how many imports still need a query
@@ -291,22 +291,22 @@ with `-v` or when the package fails.
 | `civisibility: test started name=<name> suite=<suite>` | A test or subtest started. |
 | `gotesting: test finished name=<name> status=<pass/fail/skip> duration=<d>` | A test ended; `panic="<value>"` follows when it panicked. The last start without a finish names the test that ran when the process ended. |
 | `instrumentTestingM: finished with exit code: <n>` | testing.M.Run returned; the process exits normally with that status. |
-| `instrumentTestingM: a panic leaves testing.M.Run and will end the process; closing CI Visibility first` | A panic escaped the tests; it ends the process after CI Visibility closes. |
+| `instrumentTestingM: a panic leaves testing.M.Run and will end the process; closing Test Optimization first` | A panic escaped the tests; it ends the process after Test Optimization closes. |
 | `civisibility: signal handler registered for [<signals>], ...; ignored by the process: [<signals>]` | Which signals Mini watches, and those it leaves alone because the process ignores them. `civisibility: no signal handler: ...` says why it watches none. |
-| `civisibility: signal "<name>" arrived while a channel of the test is registered for it; the signal does not end the process, and CI Visibility keeps running` | The test registered for the signal itself, as a graceful-shutdown test does, so the signal does not end the process. Whether the test's channel took it depends on its buffer. |
-| `civisibility: received signal "<name>", which no channel of the test handles and which ends the process: closing CI Visibility` | A signal that ends the process, such as a CI job's cancellation. |
-| `civisibility: CI Visibility closed; ending the process with signal "<name>", as without CI Visibility` | Next, go test reports `signal: <name>`. On Windows the process exits with status 1 instead. |
-| `civisibility: os.Exit before CI Visibility closed; closing it. os.Exit was called from:` | Something called `os.Exit`, or `log.Fatal`, during the tests. The stack that follows shows the status, as in `os.Exit(0x3)`, and the frame below it names the caller. |
-| `civisibility: closed CI Visibility for os.Exit duration=<d>` | CI Visibility's shutdown finished before the process exited. The delivery lines and errors before it say whether the events reached the intake. |
-| `ERROR: civisibility: closing CI Visibility in os.Exit did not finish within 1m0s; exiting without it` | The shutdown blocked, and the process exited without it. |
+| `civisibility: signal "<name>" arrived while a channel of the test is registered for it; the signal does not end the process, and Test Optimization keeps running` | The test registered for the signal itself, as a graceful-shutdown test does, so the signal does not end the process. Whether the test's channel took it depends on its buffer. |
+| `civisibility: received signal "<name>", which no channel of the test handles and which ends the process: closing Test Optimization` | A signal that ends the process, such as a CI job's cancellation. |
+| `civisibility: Test Optimization closed; ending the process with signal "<name>", as without Test Optimization` | Next, go test reports `signal: <name>`. On Windows the process exits with status 1 instead. |
+| `civisibility: os.Exit before Test Optimization closed; closing it. os.Exit was called from:` | Something called `os.Exit`, or `log.Fatal`, during the tests. The stack that follows shows the status, as in `os.Exit(0x3)`, and the frame below it names the caller. |
+| `civisibility: closed Test Optimization for os.Exit duration=<d>` | Test Optimization's shutdown finished before the process exited. The delivery lines and errors before it say whether the events reached the intake. |
+| `ERROR: civisibility: closing Test Optimization in os.Exit did not finish within 1m0s; exiting without it` | The shutdown blocked, and the process exited without it. |
 | `test-cycle: delivery uses <transport> endpoint=<url> agentless=<bool>` | Which HTTP transport sends the events: Mini's own, a clone of the client's, or a client's custom RoundTripper. |
-| `civisibility: the process crashes (<timeout/panic>); failing the running tests and closing CI Visibility first: <message>` | testing's `-timeout` alarm, or an unrecovered panic with `--panic-hook`, is about to end the process. The stack follows for a panic. |
-| `civisibility: failed <n> running tests before the crash` and `civisibility: closed CI Visibility before the crash duration=<d>` | The tests that the crash interrupted were reported as failed, and the events were sent; the crash then ends the process as without Mini. |
+| `civisibility: the process crashes (<timeout/panic>); failing the running tests and closing Test Optimization first: <message>` | testing's `-timeout` alarm, or an unrecovered panic with `--panic-hook`, is about to end the process. The stack follows for a panic. |
+| `civisibility: failed <n> running tests before the crash` and `civisibility: closed Test Optimization before the crash duration=<d>` | The tests that the crash interrupted were reported as failed, and the events were sent; the crash then ends the process as without Mini. |
 | `civisibility: os.Exit while the process crashes; the crash ends the process` | The tests finished while Mini sent before a crash; the crash keeps its exit status. |
 | `civisibility: joined the CLI's test session id=<id> record=<file> crash_output=<file>` and `civisibility: reporting in the CLI's test session id=<id>` | The process reports in the session of the CLI's command, and where its record and crash output are; `WARN: civisibility: ... reports its own session` says why it could not. |
-| `civisibility: test session record lines=<n> failed=<n> first_error=<error>` | Once CI Visibility closes: how many module and suite starts and ends, and session closes, the process recorded for the CLI, which recreates the containers left open if the process crashes, and whether a write failed. |
+| `civisibility: test session record lines=<n> failed=<n> first_error=<error>` | Once Test Optimization closes: how many module and suite starts and ends, and session closes, the process recorded for the CLI, which recreates the containers left open if the process crashes, and whether a write failed. |
 | `civisibility: failed the test name=<name> suite=<suite> for the crash (<timeout/panic>) final_status=<status>` | A test that the crash interrupted, reported as failed. |
-| `civisibility: recorded the close of this process in the CLI's test session exit_code=<n> tags=<n> skip_if_empty=<bool> empty=<bool>` | The process closed CI Visibility and left its session tags for the CLI. `empty=true` means it ran no test and passed; see [Decisions in a test process](#decisions-in-a-test-process). |
+| `civisibility: recorded the close of this process in the CLI's test session exit_code=<n> tags=<n> skip_if_empty=<bool> empty=<bool>` | The process closed Test Optimization and left its session tags for the CLI. `empty=true` means it ran no test and passed; see [Decisions in a test process](#decisions-in-a-test-process). |
 
 A process that ends without any of these lines was ended by something that
 runs no Go code first: a fatal runtime error, an unrecovered panic in another
@@ -314,7 +314,7 @@ goroutine without `--panic-hook`, the race detector with
 `GORACE=halt_on_error=1`, or a signal that cannot be caught, such as SIGKILL.
 The test lines still show which test was running. In the CLI's test session, the CLI
 then logs, with `DD_TRACE_DEBUG=true`,
-`civisibility: test process process-<id> ended without closing CI Visibility (<reason>); recreated <n> events`
+`civisibility: test process process-<id> ended without closing Test Optimization (<reason>); recreated <n> events`
 and, when the crash output names the test,
 `civisibility: recreated the crashed test name=<name> suite=<suite> module=<module>`.
 

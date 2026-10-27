@@ -18,7 +18,7 @@ func exitBySignal(sig os.Signal) {
 	if !ok {
 		return
 	}
-	log.Debug("civisibility: CI Visibility closed; ending the process with signal %q, as without CI Visibility", sig)
+	log.Debug("civisibility: Test Optimization closed; ending the process with signal %q, as without Test Optimization", sig)
 	// The final flush printed nothing more; errors otherwise wait a minute.
 	log.Flush()
 	if err := syscall.Kill(syscall.Getpid(), s); err != nil {

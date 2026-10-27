@@ -89,7 +89,7 @@ func TestExit(t *testing.T) {
 			ran := tc.tests != nil
 			// The debug log names the call that ended the process.
 			if ran && tc.exit != "goroutine" {
-				for _, line := range []string{"os.Exit before CI Visibility closed; closing it. os.Exit was called from:", "sample_test.go:", "closed CI Visibility for os.Exit duration=", "gotesting: test finished name=TestFirst status=pass", "civisibility: test started name=TestExit"} {
+				for _, line := range []string{"os.Exit before Test Optimization closed; closing it. os.Exit was called from:", "sample_test.go:", "closed Test Optimization for os.Exit duration=", "gotesting: test finished name=TestFirst status=pass", "civisibility: test started name=TestExit"} {
 					if !strings.Contains(out+stderr, line) {
 						t.Errorf("the debug log lacks %q", line)
 					}

@@ -56,10 +56,10 @@ type Transport struct {
 func New(c Config) (*Transport, error) {
 	u, err := url.Parse(c.Endpoint)
 	if !bazel.IsPayloadFilesModeEnabled() && (err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil) {
-		return nil, errors.New("invalid CI Visibility endpoint")
+		return nil, errors.New("invalid Test Optimization endpoint")
 	}
 	if !bazel.IsPayloadFilesModeEnabled() && c.Agentless && c.APIKey == "" {
-		return nil, errors.New("agentless CI Visibility requires an API key")
+		return nil, errors.New("agentless Test Optimization requires an API key")
 	}
 	if c.Attempts == 0 {
 		c.Attempts = 3
@@ -262,7 +262,7 @@ func (t *Transport) Send(ctx context.Context, payload []byte) (sendErr error) {
 		retry := false
 		if err != nil {
 			telemetry.EndpointPayloadRequestsErrors(telemetry.TestCycleEndpointType, telemetry.NetworkErrorType)
-			last = fmt.Errorf("CI Visibility request failed: %w", safeRequestError(err))
+			last = fmt.Errorf("Test Optimization request failed: %w", safeRequestError(err))
 			retry = true
 		} else {
 			// Like the SDK, a failure reports up to 1000 bytes of the response.
@@ -316,9 +316,9 @@ func logTestCycleRequest(req *http.Request, resp *http.Response, networkError bo
 
 func statusError(code int, body []byte) error {
 	if text := strings.TrimSpace(string(body)); text != "" {
-		return fmt.Errorf("CI Visibility endpoint returned HTTP %d: %s (Status: %s)", code, text, http.StatusText(code))
+		return fmt.Errorf("Test Optimization endpoint returned HTTP %d: %s (Status: %s)", code, text, http.StatusText(code))
 	}
-	return fmt.Errorf("CI Visibility endpoint returned HTTP %d (Status: %s)", code, http.StatusText(code))
+	return fmt.Errorf("Test Optimization endpoint returned HTTP %d (Status: %s)", code, http.StatusText(code))
 }
 
 func wait(ctx context.Context, d time.Duration) error {

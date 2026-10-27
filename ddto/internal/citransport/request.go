@@ -16,7 +16,7 @@ import (
 func (t *Transport) newRequest(ctx context.Context, body []byte, owner *bodyOwner) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.config.Endpoint, owner.reader(body))
 	if err != nil {
-		return nil, errors.New("cannot create CI Visibility request")
+		return nil, errors.New("cannot create Test Optimization request")
 	}
 	req.ContentLength = int64(len(body))
 	if len(body) == 0 {
