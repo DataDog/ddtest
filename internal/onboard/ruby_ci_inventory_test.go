@@ -4,11 +4,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRubyRepositoryScriptsStayInRequiredScope(t *testing.T) {
-	for _, command := range []string{"./ci/run", "sh ci/run.sh", "bash ./script/cibuild"} {
+	for _, command := range []string{"./ci/run", "sh ci/run.sh", "bash ./script/cibuild", "ruby ci/run.rb", "bundle exec ruby ci/run.rb", "bin/ci", "./bin/ci"} {
 		root := rubyWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: bundle exec rspec spec/unit\n      - run: "+command+"\n")
 		scope, err := DiscoverValidationScope(root, "rspec")
 		require.NoError(t, err)
@@ -95,4 +96,16 @@ func TestRubyActionLanguagesResolveMatrixExpressions(t *testing.T) {
 		statuses[job.Runtime] = job.Status
 	}
 	require.Equal(t, map[string]string{"3.4": "not checked", "head": "excluded"}, statuses)
+}
+
+// Ruby testdrive cannot validate configurations yet, so a configured workflow
+// with several Ruby commands is not pointed at --all.
+func TestConfiguredRubyWorkflowDoesNotRecommendAll(t *testing.T) {
+	root := rubyWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby}\n      - run: bundle exec rspec spec/a\n      - run: bundle exec rspec spec/b\n")
+	scope, err := DiscoverValidationScope(root, "rspec")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 2)
+	var output strings.Builder
+	require.NoError(t, onboardGitHub(&output, &environment.GitHub{}, root, "ruby", "rspec"))
+	require.Contains(t, output.String(), "Run `ddtest testdrive --framework rspec` to check the setup locally.")
 }

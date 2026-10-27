@@ -43,9 +43,10 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		return err
 	}
 	var scope *ValidationScope
-	var discover, instructionsWhenConfigured bool
+	var discover, instructionsWhenConfigured, validatesConfigurations bool
 	if registered := discoveryLanguageNamed(language); registered != nil {
 		discover, instructionsWhenConfigured = registered.onboardingScope(name)
+		validatesConfigurations = discover || registered.coordinated()
 	}
 	if discover {
 		discovered, err := DiscoverValidationScope(repositoryRoot, name)
@@ -82,8 +83,9 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		_, _ = fmt.Fprintln(output)
 		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
 		command := "ddtest testdrive --framework " + name
-		// A plain run needs one CI command; with several, --all checks each.
-		if scope, err := DiscoverValidationScope(repositoryRoot, name); err == nil && len(scope.Commands) > 1 {
+		// A plain run needs one CI command; with several, --all checks each
+		// where testdrive validates configurations.
+		if scope, err := DiscoverValidationScope(repositoryRoot, name); validatesConfigurations && err == nil && len(scope.Commands) > 1 {
 			command += " --all"
 		}
 		_, _ = fmt.Fprintf(output, "Run `%s` to check the setup locally.\n", command)

@@ -77,11 +77,11 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		if workflowExpression.MatchString(step.Run) {
 			return unresolvedCommand("Ruby command expression was not resolved; validate its actual entry point with --command: " + step.Run)
 		}
-		if strings.Contains(step.Run, "bundle exec") || strings.Contains(step.Run, "bin/") {
-			return commandResolution{Review: true, Reason: "Ruby task or wrapper was not identified as " + framework + "; inspect it separately if it runs tests."}
-		}
 		if parseErr == nil && slices.ContainsFunc(parts, rubyRepositoryScript) {
 			return unresolvedCommand("Repository script may run " + framework + " tests; validate its actual entry point with --command: " + step.Run)
+		}
+		if strings.Contains(step.Run, "bundle exec") || strings.Contains(step.Run, "bin/") {
+			return commandResolution{Review: true, Reason: "Ruby task or wrapper was not identified as " + framework + "; inspect it separately if it runs tests."}
 		}
 		return commandResolution{}
 	}
@@ -92,13 +92,22 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(parts[0]...)}}}
 }
 
-// A repository script such as ./ci/run may wrap the tests, so it stays in the
-// required scope instead of disappearing from it.
+// rubyMaintenanceBinstubs are repository binstubs that never run tests.
+var rubyMaintenanceBinstubs = []string{"rubocop", "standardrb", "brakeman", "bundle-audit", "bundler-audit", "erb_lint", "erblint", "setup", "dev", "yarn", "webpack", "importmap"}
+
+// A repository script such as ./ci/run, bin/ci or ruby ci/run.rb may wrap the
+// tests, so it stays in the required scope instead of disappearing from it.
 func rubyRepositoryScript(words []string) bool {
-	if len(words) > 1 && (words[0] == "sh" || words[0] == "bash") && !strings.HasPrefix(words[1], "-") {
+	if len(words) > 2 && filepath.Base(words[0]) == "bundle" && words[1] == "exec" {
+		words = words[2:]
+	}
+	if len(words) > 1 && slices.Contains([]string{"sh", "bash", "ruby"}, words[0]) && !strings.HasPrefix(words[1], "-") {
 		words = words[1:]
 	}
-	return len(words) > 0 && strings.Contains(words[0], "/") && !filepath.IsAbs(words[0]) && !strings.HasPrefix(words[0], "~")
+	if len(words) == 0 || !strings.Contains(words[0], "/") || filepath.IsAbs(words[0]) || strings.HasPrefix(words[0], "~") {
+		return false
+	}
+	return !slices.Contains(rubyMaintenanceBinstubs, strings.TrimSuffix(filepath.Base(words[0]), ".rb"))
 }
 
 // Recognize a literal single-target default alias without loading Ruby code.
