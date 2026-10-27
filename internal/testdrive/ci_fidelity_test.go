@@ -127,3 +127,12 @@ func TestRemoteGridConfigurationBlocksWithoutALocalValidation(t *testing.T) {
 	require.False(t, result.Success)
 	require.NotEqual(t, "COMPLETE LOCALLY", summarizeValidation(result).Status)
 }
+
+func TestSharedCIStepWorkIsReportedNotCertified(t *testing.T) {
+	result := completeValidationFixture("playwright")
+	note := "This CI step also runs Rake task(s) features in the same process."
+	result.Configurations = append(result.Configurations, configurationResult{TestCommand: onboard.TestCommand{Command: "bundle exec rake spec", StepScopeNote: note}, Status: "passed"})
+	result.Summary = summarizeValidation(result)
+	require.Contains(t, result.Summary.Caveats, note)
+	require.Contains(t, validationHandoff(result), "Caveat (not a blocker): "+note)
+}

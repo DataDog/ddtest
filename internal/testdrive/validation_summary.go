@@ -139,6 +139,13 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.BlockingChecks = append(summary.BlockingChecks, "CI preservation: "+result.CIPreservation.Status+" — "+result.CIPreservation.Reason)
 	}
 	caveats, fidelityBlockers := ciFidelity(&result)
+	// Work a validated CI step runs besides the selected framework is reported,
+	// never certified.
+	for _, configuration := range result.Configurations {
+		if note := configuration.StepScopeNote; note != "" && !slices.Contains(caveats, note) {
+			caveats = append(caveats, note)
+		}
+	}
 	summary.Caveats = caveats
 	if result.Scope != nil {
 		summary.BlockingChecks = append(summary.BlockingChecks, scopeBlockers(append(slices.Clone(result.Scope.Unresolved), fidelityBlockers...))...)

@@ -288,11 +288,40 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 			Reason:       strings.TrimSpace("CI already runs the Datadog setup action for every discovered " + framework + " test step. " + foregroundRunInstruction + " " + AgentScope + " " + validationWaitInstruction + " ddtest owns testdrive, report-exclusion checks and cleanup, and returns exact blockers for unsupported setup. No Datadog key is required locally. Do not launch a parallel preflight first. " + notice),
 		})
 	}
+	scope, err := DiscoverValidationScope(root, framework)
+	if err != nil {
+		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "scope_unresolved", Reason: err.Error(), NextAction: "supply_input"}))
+	}
+	var unresolved []string
+	for _, item := range scope.Unresolved {
+		unresolved = append(unresolved, OneLineExcerpt(item))
+	}
+	if len(scope.Commands) == 0 && len(unresolved) > 0 {
+		// Nothing would be validated: a CI setup handoff would only end in
+		// blockers after a full run. The user decides the scope first.
+		err := fmt.Errorf("no %s CI configuration can be validated", framework)
+		return errors.Join(err, WriteAgentResult(output, AgentResult{
+			Status: "needs_input", Phase: "discovery", Code: "scope_decision_required", NextAction: "supply_input",
+			Location:      strings.Join(unresolved, "; "),
+			RequiredInput: []string{"User decision for the CI steps in location: approve an explicit " + framework + " entry point in CI (for example its own step that runs only " + framework + "), then rerun this onboard command; or stop and report these steps as not validated."},
+			Reason:        "ddtest cannot tell which " + framework + " tests these CI steps run, so it has no configuration to validate locally and will not prescribe CI setup for them. Ask the user and report their decision; do not edit CI before they approve it, and do not combine --command with --all: a single command cannot stand in for a CI step. " + AgentScope + " " + notice,
+		}))
+	}
 	var guidance strings.Builder
 	if err := run(&guidance, &agentHandoff{site: options.Site}); err != nil {
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "scope_unresolved", Reason: err.Error(), NextAction: "supply_input"}))
 	}
-	reason := "CI does not yet run the Datadog setup action before every discovered " + framework + " test step. Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. " + AgentScope + " " + notice
+	reason := "CI does not yet run the Datadog setup action before every discovered " + framework + " test step. Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
+	if len(unresolved) > 0 {
+		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers; tell the user now that they need a scope decision. ", len(unresolved))
+	}
+	for _, entry := range scope.Commands {
+		if entry.StepScopeNote != "" {
+			reason += "Shared CI step: " + entry.StepScopeNote + " "
+			break
+		}
+	}
+	reason += AgentScope + " " + notice
 	err = fmt.Errorf("CI setup is required before validation")
 	return errors.Join(err, WriteAgentResult(output, AgentResult{
 		Status: "needs_input", Phase: "onboarding", Code: "ci_setup_required", NextAction: "apply_source_edit", ResumeCommand: command,

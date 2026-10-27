@@ -166,3 +166,44 @@ func TestRubyCISetupConfiguredNeedsTheSelectedSite(t *testing.T) {
 	require.NotContains(t, rubyDiscovery{}.agentInstructions("rspec", ""), "site:")
 	require.NotContains(t, rubyDiscovery{}.agentInstructions("rspec", "datadoghq.com"), "__SITE_INPUT__")
 }
+
+func TestRubyAgentOnboardingAsksForAScopeDecisionWhenNothingResolves(t *testing.T) {
+	rubyAgentFixture(t, "rspec", "")
+	workflow, err := os.ReadFile(filepath.Join(".github", "workflows", "test.yml"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(".github", "workflows", "test.yml"), []byte(strings.Replace(string(workflow), "bundle exec rspec", "bundle exec rake", 1)), 0600))
+	require.NoError(t, os.WriteFile("Rakefile", []byte("task default: :ci\n"), 0600))
+	state, err := rubyAgentStart(t, StartOptions{Format: "json"})
+	require.Error(t, err)
+	require.Equal(t, "needs_input", state.Status)
+	require.Equal(t, "scope_decision_required", state.Code, "the first answer is the scope decision, not a CI setup handoff")
+	require.Equal(t, "supply_input", state.NextAction)
+	require.Empty(t, state.ResumeCommand, "no validation can run before the decision")
+	require.Empty(t, state.NextCommand)
+	require.Empty(t, state.Instruction, "no CI setup is prescribed for steps ddtest cannot validate")
+	require.Contains(t, state.Location, "bundle exec rake")
+	require.Contains(t, state.Reason, "do not combine --command with --all")
+	require.NotEmpty(t, state.RequiredInput)
+}
+
+func TestRubyAgentOnboardingNamesSharedStepsAndUnresolvedBlockers(t *testing.T) {
+	rubyAgentFixture(t, "rspec", "")
+	workflow, err := os.ReadFile(filepath.Join(".github", "workflows", "test.yml"))
+	require.NoError(t, err)
+	updated := strings.Replace(string(workflow), "      - run: bundle exec rspec\n", "      - run: bundle exec rake\n      - run: ./ci/integration-tests.sh\n", 1)
+	require.NoError(t, os.WriteFile(filepath.Join(".github", "workflows", "test.yml"), []byte(updated), 0600))
+	require.NoError(t, os.WriteFile("Rakefile", []byte("task default: [:spec, :features]\n"), 0600))
+	state, err := rubyAgentStart(t, StartOptions{Format: "json"})
+	require.Error(t, err)
+	require.Equal(t, "ci_setup_required", state.Code)
+	require.Contains(t, state.Reason, "Shared CI step: This CI step also runs Rake task(s) features")
+	require.Contains(t, state.Reason, "cannot be validated and will remain blockers")
+	require.Contains(t, state.Instruction, "[.] bundle exec rake spec — .github/workflows/test.yml")
+	require.Contains(t, state.Instruction, "(+1 more CI locations)", "the agent listing keeps one location per configuration")
+}
+
+func TestOneLineExcerptKeepsTheScriptHeadAndReason(t *testing.T) {
+	text := "ci.yml / docs / step 4 (gem install rack\ncd rack-3.2*\nbundle exec rdoc\n): Repository script could not be resolved: gem install rack\ncd rack-3.2*\n"
+	require.Equal(t, "ci.yml / docs / step 4 (gem install rack …): Repository script could not be resolved: gem install rack …", OneLineExcerpt(text))
+	require.Equal(t, "single line", OneLineExcerpt("single line"))
+}

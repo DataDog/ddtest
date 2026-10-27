@@ -3,6 +3,7 @@ package onboard
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
 func WriteValidationScope(output io.Writer, scope ValidationScope) {
@@ -22,6 +23,9 @@ func WriteValidationScope(output io.Writer, scope ValidationScope) {
 		for _, setup := range entry.UnvalidatedSetup {
 			_, _ = fmt.Fprintf(output, "      Unvalidated setup: %s\n", setup)
 		}
+		if entry.StepScopeNote != "" {
+			_, _ = fmt.Fprintf(output, "      Shared CI step: %s\n", entry.StepScopeNote)
+		}
 		for _, location := range entry.Locations {
 			_, _ = fmt.Fprintf(output, "      %s\n", location)
 		}
@@ -33,6 +37,51 @@ func WriteValidationScope(output io.Writer, scope ValidationScope) {
 	for _, reason := range scope.Review {
 		_, _ = fmt.Fprintf(output, "  - Review separately: %s\n", reason)
 	}
+}
+
+// writeAgentValidationScope is the scope a coding agent needs to apply CI
+// setup: every configuration with its first CI location and every unresolved
+// or review entry, each on one line. The full listing stays in
+// onboard --instructions and in the validation report.
+func writeAgentValidationScope(output io.Writer, scope ValidationScope) {
+	_, _ = fmt.Fprintln(output, "\nRequired local validation configurations (every CI consumer must also be instrumented):")
+	for _, entry := range scope.Commands {
+		_, _ = fmt.Fprintf(output, "  - [%s] %s", entry.Directory, entry.Command)
+		if len(entry.Locations) > 0 {
+			_, _ = fmt.Fprintf(output, " — %s", OneLineExcerpt(entry.Locations[0]))
+			if more := len(entry.Locations) - 1; more > 0 {
+				_, _ = fmt.Fprintf(output, " (+%d more CI locations)", more)
+			}
+		}
+		_, _ = fmt.Fprintln(output)
+		if entry.StepScopeNote != "" {
+			_, _ = fmt.Fprintf(output, "      Shared CI step: %s\n", entry.StepScopeNote)
+		}
+	}
+	for _, reason := range scope.Unresolved {
+		_, _ = fmt.Fprintf(output, "  - Unresolved scope: %s\n", OneLineExcerpt(reason))
+	}
+	for _, reason := range scope.Review {
+		_, _ = fmt.Fprintf(output, "  - Review separately: %s\n", OneLineExcerpt(reason))
+	}
+}
+
+// OneLineExcerpt shortens a diagnostic that embeds a multi-line CI script to
+// its first script line and the first line of the reason that follows it.
+func OneLineExcerpt(value string) string {
+	first, rest, multiline := strings.Cut(strings.TrimRight(value, "\n"), "\n")
+	if !multiline {
+		return value
+	}
+	excerpt := first + " …"
+	if _, reason, found := strings.Cut(rest, "): "); found {
+		line, _, more := strings.Cut(reason, "\n")
+		excerpt += "): " + line
+		if more {
+			excerpt += " …"
+		}
+	}
+	return excerpt
 }
 
 // Any hook may dispatch an uploader through an alias or JavaScript. Warn for

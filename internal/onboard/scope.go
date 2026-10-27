@@ -54,9 +54,12 @@ type TestCommand struct {
 	mochaProbeDirectory             string
 	mochaProbeEnvironment           map[string]string
 
-	ScopeCommand            string            `json:"-"` // Original invocation before adding a forwarding wrapper.
-	ProbeLintSkipped        bool              `json:"probe_lint_skipped,omitempty"`
-	ReviewReason            string            `json:"review_reason,omitempty"`
+	ScopeCommand     string `json:"-"` // Original invocation before adding a forwarding wrapper.
+	ProbeLintSkipped bool   `json:"probe_lint_skipped,omitempty"`
+	ReviewReason     string `json:"review_reason,omitempty"`
+	// StepScopeNote names other work the CI step runs in the same
+	// instrumented process, outside this configuration's validation.
+	StepScopeNote           string            `json:"step_scope_note,omitempty"`
 	ExitOnFailure           bool              `json:"exit_on_failure,omitempty"`
 	Resolution              string            `json:"resolution,omitempty"`
 	Directory               string            `json:"directory"`

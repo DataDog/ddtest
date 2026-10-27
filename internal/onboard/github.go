@@ -96,7 +96,9 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 	}
 
 	_, _ = fmt.Fprintln(output)
-	if scope != nil && RedactsCommandKeys(name) {
+	if scope != nil && agent != nil {
+		writeAgentValidationScope(output, *scope)
+	} else if scope != nil && RedactsCommandKeys(name) {
 		WriteValidationScope(output, RedactCypressScope(*scope))
 	} else if scope != nil {
 		WriteValidationScope(output, *scope)

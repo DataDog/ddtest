@@ -48,43 +48,27 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			if !environment.LooksLikeTestCommand(filepath.Join(root, directory), step.Run, "ruby", framework) {
 				return commandResolution{Review: true, Reason: "Ruby maintenance task is outside test validation."}
 			}
-			task, other := "spec", "test"
-			if framework == "minitest" {
-				task, other = "test", "spec"
-			}
-			for _, word := range words[1:] {
-				if word == other || strings.HasPrefix(word, other+":") {
-					if slices.ContainsFunc(words[1:], func(word string) bool { return word == task || strings.HasPrefix(word, task+":") }) {
-						return unresolvedCommand("Mixed Rake invocation runs both Ruby frameworks; validate each selected-framework entry point explicitly.")
-					}
-					return commandResolution{Review: true, Reason: "Rake " + other + " task belongs to the other Ruby framework; validate it separately."}
-				}
-			}
-			known := len(words) == 1 && rubyDefaultTask(root, directory, task)
-			for _, word := range words[1:] {
-				known = known || word == task || strings.HasPrefix(word, task+":")
-			}
-			if !known {
-				return unresolvedCommand("Default/custom Rake task needs explicit review; select the actual " + framework + " test entry point with --command.")
+			if resolution, done := resolveRubyRakeTargets(root, directory, step.Run, parts[0], words, framework); done {
+				return resolution
 			}
 		}
 	}
 	if !matched {
 		if strings.Contains(step.Run, "test") || strings.Contains(step.Run, "spec") {
-			return unresolvedCommand("Ruby test wrapper was not resolved; validate its actual entry point with --command: " + step.Run)
+			return unresolvedCommand("Ruby test wrapper was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
 		}
 		// An expression such as bundle exec ${{ matrix.command }} may select the
 		// tests, so it stays in the required scope.
 		if workflowExpression.MatchString(step.Run) {
-			return unresolvedCommand("Ruby command expression was not resolved; validate its actual entry point with --command: " + step.Run)
+			return unresolvedCommand("Ruby command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
 		}
 		// Dynamic shell syntax hides what a repository script runs or which
 		// bundle and Ruby options later steps inherit, so keep it visible.
 		if parseErr != nil && (strings.Contains(step.Run, "./") || strings.HasPrefix(strings.TrimSpace(step.Run), "bin/") || strings.Contains(step.Run, "BUNDLE_GEMFILE") || strings.Contains(step.Run, "RUBYOPT") || strings.Contains(step.Run, "bundle exec")) {
-			return unresolvedCommand("Repository script or Ruby setup could not be resolved statically; validate it explicitly with --command: " + step.Run)
+			return unresolvedCommand("Repository script or Ruby setup could not be resolved statically; ddtest cannot tell which tests it runs: " + step.Run)
 		}
 		if parseErr == nil && slices.ContainsFunc(parts, rubyRepositoryScript) {
-			return unresolvedCommand("Repository script may run " + framework + " tests; validate its actual entry point with --command: " + step.Run)
+			return unresolvedCommand("Repository script may run " + framework + " tests; ddtest cannot tell which ones: " + step.Run)
 		}
 		if strings.Contains(step.Run, "bundle exec") || strings.Contains(step.Run, "bin/") {
 			return commandResolution{Review: true, Reason: "Ruby task or wrapper was not identified as " + framework + "; inspect it separately if it runs tests."}
@@ -93,7 +77,7 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	}
 	parts, err := staticCommands(step.Run)
 	if err != nil || len(parts) != 1 || len(parts[0]) == 0 || strings.Contains(parts[0][0], "=") {
-		return unresolvedCommand("Ruby test entry point requires a single explicit command; preserve shell setup and validate with --command from the prepared environment: " + step.Run)
+		return unresolvedCommand("Ruby test entry point requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
 	}
 	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(parts[0]...)}}}
 }
@@ -119,34 +103,116 @@ func rubyRepositoryScript(words []string) bool {
 	return !slices.Contains(rubyMaintenanceBinstubs, strings.TrimSuffix(filepath.Base(words[0]), ".rb"))
 }
 
-// Recognize a literal single-target default alias without loading Ruby code.
-// Multiple/default enhancements and custom targets remain unresolved. Execution
-// still uses the original bare rake command and verifies its native results.
-var rubyDefaultAlias = regexp.MustCompile(`^task\s+(?::default\s*=>|default:)\s*(?:\[\s*:(test|spec)\s*\]|:(test|spec))\s*(?:#.*)?$`)
+// resolveRubyRakeTargets resolves the Rake targets one step runs: its explicit
+// targets, or for a bare rake the Rakefile's literal default task. done is
+// false when the step is an ordinary test command for the caller to resolve.
+//
+// When the targets include the framework's own task (spec for RSpec, test for
+// Minitest) next to other targets, local validation runs only the framework's
+// task, bound to this CI step, and the other targets are reported: they run in
+// the same instrumented step without being validated.
+func resolveRubyRakeTargets(root, directory, run string, command, words []string, framework string) (commandResolution, bool) {
+	task, other := "spec", "test"
+	if framework == "minitest" {
+		task, other = "test", "spec"
+	}
+	// Options and VAR=value arguments apply to the whole invocation.
+	isTarget := func(word string) bool { return !strings.HasPrefix(word, "-") && !strings.Contains(word, "=") }
+	targets := slices.DeleteFunc(slices.Clone(words[1:]), func(word string) bool { return !isTarget(word) })
+	flags := len(targets) < len(words)-1
+	explicit := len(targets) > 0
+	if !explicit {
+		targets = rubyDefaultTargets(root, directory)
+	}
+	ownTask := func(word string) bool { return word == task || strings.HasPrefix(word, task+":") }
+	otherTask := func(word string) bool { return word == other || strings.HasPrefix(word, other+":") }
+	own := slices.DeleteFunc(slices.Clone(targets), func(word string) bool { return !ownTask(word) })
+	if len(own) == 0 {
+		if slices.ContainsFunc(targets, otherTask) {
+			return commandResolution{Review: true, Reason: "Rake " + other + " task belongs to the other Ruby framework; validate it separately."}, true
+		}
+		if !explicit {
+			return unresolvedCommand("Rake default task could not be read statically or does not name the " + task + " task; ddtest cannot tell which " + framework + " tests this step runs."), true
+		}
+		return unresolvedCommand("Custom Rake task does not name the " + task + " task; ddtest cannot tell which " + framework + " tests this step runs."), true
+	}
+	others := slices.DeleteFunc(slices.Clone(targets), ownTask)
+	if len(others) == 0 {
+		// The step runs only the framework's tasks; execute it unchanged.
+		return commandResolution{}, false
+	}
+	// Keep options unresolved instead of guessing how they affect a narrower
+	// invocation.
+	if flags {
+		return unresolvedCommand("Rake invocation combines the " + task + " task and other targets with options ddtest cannot separate: " + shellquote.Join(words...)), true
+	}
+	selected := append(slices.Clone(command[:len(command)-len(words)+1]), own...)
+	otherFramework := ""
+	if slices.ContainsFunc(others, otherTask) {
+		otherFramework = " (including the other Ruby framework's " + other + " task)"
+	}
+	note := "This CI step also runs Rake task(s) " + strings.Join(others, ", ") + otherFramework + " in the same process. Local validation covers only " + shellquote.Join(selected...) + "; instrumenting this step also reports those tasks' tests to Datadog, and they are not validated. Report this to the user; running " + framework + " in its own step keeps the other tasks uninstrumented."
+	return commandResolution{Matched: true, ReviewReason: note, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(selected...), StepScopeNote: note}}}, true
+}
 
-func rubyDefaultTask(root, directory, task string) bool {
+// rubyDefaultTarget is one literal default task declaration, such as
+// task default: :spec, task :default => [:spec, :features] or
+// task default: %w[spec features].
+var rubyDefaultTarget = regexp.MustCompile(`^task\s+(?::default\s*=>|default:)\s*(.+?)\s*(?:#.*)?$`)
+
+// rubyDefaultTargetList is a literal list of symbols or strings.
+var rubyDefaultTargetName = regexp.MustCompile(`^(?::|"|')?([A-Za-z_][A-Za-z0-9_:]*)(?:"|')?$`)
+
+// rubyDefaultTargets reads the Rakefile's literal default task without loading
+// Ruby code. Several or computed declarations, or enhancements, are unknown
+// (nil). Execution of a single-framework default keeps the bare rake command.
+func rubyDefaultTargets(root, directory string) []string {
 	path := filepath.Join(root, directory, "Rakefile")
 	info, valid := repositoryFile(root, filepath.Dir(path), "Rakefile")
 	if !valid || info.Size() > 256*1024 {
-		return false
+		return nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false
+		return nil
 	}
+	var targets []string
 	found := false
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "#") || !strings.Contains(line, "default") {
 			continue
 		}
-		match := rubyDefaultAlias.FindStringSubmatch(line)
-		if found || len(match) != 3 || match[1]+match[2] != task {
-			return false
+		match := rubyDefaultTarget.FindStringSubmatch(line)
+		if found || match == nil {
+			return nil
 		}
 		found = true
+		value := match[1]
+		switch {
+		case strings.HasPrefix(value, "%w[") || strings.HasPrefix(value, "%i["):
+			if !strings.HasSuffix(value, "]") {
+				return nil
+			}
+			value = strings.Join(strings.Fields(value[3:len(value)-1]), ",")
+		case strings.HasPrefix(value, "["):
+			if !strings.HasSuffix(value, "]") {
+				return nil
+			}
+			value = value[1 : len(value)-1]
+		}
+		for _, item := range strings.Split(value, ",") {
+			name := rubyDefaultTargetName.FindStringSubmatch(strings.TrimSpace(item))
+			if name == nil {
+				return nil
+			}
+			targets = append(targets, name[1])
+		}
 	}
-	return found
+	if len(targets) == 0 {
+		return nil
+	}
+	return targets
 }
 
 // RubyValidationCommand retains the CI entry point when there is one choice.
