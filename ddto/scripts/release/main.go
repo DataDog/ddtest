@@ -1,18 +1,16 @@
-// Command release builds ddto's release executables, one per platform. Each
-// carries the Mini runtime's sources and the tool wrapper executable for its
-// platform (see internal/bundle), so that users need neither the module's
-// sources nor a build of ddto or its wrapper. Run it from the module root:
+// Command release builds the release executables of a program that runs ddto
+// as one of its commands, such as ddtest, one per platform. Each carries the
+// Mini runtime's sources and the tool wrapper executable for its platform (see
+// internal/bundle), so that users need neither the module's sources nor a
+// build of the wrapper. Run it from the module root:
 //
-//	go run ./scripts/release [-version v1.2.3] [-o dist] [-target linux/amd64,darwin/arm64]
+//	go run ./scripts/release -main .. -name ddtest -command instrument [-version v1.2.3] [-ldflags "-X …"] [-o ../dist] [-target linux/amd64,darwin/arm64]
 //	go run ./scripts/release -version v1.2.3 -stamp
-//	go run ./scripts/release -main .. -name ddtest -command instrument -ldflags "-X …" -o ../dist
 //
-// -main builds another program that runs ddto, such as ddtest, whose main
-// package is in that directory: it carries the same runtime and wrapper, and
-// its executables are named -name-GOOS-GOARCH, linked with -ldflags too.
-// -command names the program's command that runs ddto, such as instrument:
-// the tool wrapper that the executables carry runs ddto's tool-overlay as
-// that command.
+// -main is the directory of the program's main package, and its executables
+// are named -name-GOOS-GOARCH, linked with -ldflags. -command names the
+// program's command that runs ddto, such as instrument: the tool wrapper that
+// the executables carry runs ddto's tool-overlay as that command.
 //
 // -version sets internal/version's Number for the build, through -overlay:
 // the executables, their wrapper and the runtime they carry all report it,
@@ -46,7 +44,7 @@ const module = "github.com/DataDog/ddtest/ddto"
 var targets = []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64", "windows/arm64"}
 
 // runtimeDirs hold every package that the Mini runtime and ddto's
-// instrumentation import. cmd/ddto, tests, docs and scripts stay out.
+// instrumentation import. Tests, docs and scripts stay out.
 var runtimeDirs = []string{"internal", "propagation", "testopt"}
 
 // runtimeFiles are the module files that Go needs to compile those packages.
@@ -60,15 +58,18 @@ func main() {
 	list := flag.String("target", strings.Join(targets, ","), "comma-separated GOOS/GOARCH platforms")
 	tag := flag.String("version", "", "version that the executables report, such as v1.2.3; empty keeps internal/version")
 	stamp := flag.Bool("stamp", false, "write -version into internal/version in the checkout and build nothing")
-	program := flag.String("main", "", "directory of the main package to build; empty builds ./cmd/ddto")
-	name := flag.String("name", "ddto", "name of the executables, before -GOOS-GOARCH")
+	program := flag.String("main", "", "directory of the program's main package, such as ..")
+	name := flag.String("name", "", "name of the executables, before -GOOS-GOARCH, such as ddtest")
 	ldflags := flag.String("ldflags", "", "linker flags added to -s -w")
-	command := flag.String("command", "", "the -main program's command that runs ddto, such as instrument")
+	command := flag.String("command", "", "the program's command that runs ddto, such as instrument")
 	flag.Parse()
 	var err error
-	if *stamp {
+	switch {
+	case *stamp:
 		err = stampCheckout(*tag)
-	} else {
+	case *program == "" || *name == "" || *command == "":
+		err = fmt.Errorf("-main, -name and -command are required")
+	default:
 		err = release(*out, strings.Split(*list, ","), *tag, executable{dir: *program, name: *name, ldflags: *ldflags, command: *command})
 	}
 	if err != nil {
@@ -100,17 +101,14 @@ func stampCheckout(tag string) error {
 }
 
 // executable is the program that a release builds: its main package's
-// directory, ddto's own by default, the name of its executables and the
-// linker flags added to -s -w.
+// directory, the name of its executables, the linker flags added to -s -w and
+// its command that runs ddto.
 type executable struct{ dir, name, ldflags, command string }
 
 func release(out string, platforms []string, tag string, program executable) error {
 	root, err := moduleRoot()
 	if err != nil {
 		return err
-	}
-	if program.dir == "" {
-		program.dir = filepath.Join(root, "cmd", "ddto")
 	}
 	if program.dir, err = filepath.Abs(program.dir); err != nil {
 		return err

@@ -45,7 +45,7 @@ combined builds, Orchestrion owns the application instrumentation engine.
 
 | Code | Owns |
 | --- | --- |
-| [`cmd/ddto`](../cmd/ddto/main.go) | CLI entry point, runtime selection, activation and interrupt handling |
+| [`cli`](../cli/cli.go) | CLI entry point for `ddtest instrument`, runtime selection, activation and interrupt handling |
 | [`internal/runner`](../internal/runner/run.go) | Go flags, package discovery, overlay merging, temporary files and child exit status |
 | [`internal/instrument`](../internal/instrument/transform.go) | Validation and source edits for `testing`, Testify, goleak and SDK CI/span boundaries |
 | [Extracted `gotesting`](../internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting) | Test callbacks, parallel ownership, retries and CI policies |

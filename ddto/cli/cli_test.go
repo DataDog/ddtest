@@ -35,10 +35,6 @@ func TestHandles(t *testing.T) {
 			t.Errorf("Handles(%q) = %t, want %t", tc.args, got, tc.want)
 		}
 	}
-	// ddto's own executable has no command name: Main handles it directly.
-	if Handles([]string{"ddto", "ci-git-worker", "state"}, "") {
-		t.Error("ddto without a command name")
-	}
 
 	self, err := os.Executable()
 	if err != nil {

@@ -132,7 +132,8 @@ class Runner:
         cache = self.output / 'runtime-build-cache'
         with (self.args.build / 'observations.csv').open(newline='') as source:
             row = next(r for r in csv.DictReader(source) if r['variant'] == 'mini')
-        driver = Path(json.loads(row['command'])[0])
+        recorded = json.loads(row['command'])
+        driver = Path(recorded[0])
         if str(driver) not in self.manifest['source_and_tool_sha256'] or driver.parent != self.args.build:
             raise ValueError('recorded Mini driver is outside its qualified build')
         cases = [case for case in self.manifest['cases']
@@ -147,7 +148,7 @@ class Runner:
             for count in cpus:
                 destination = self.output / 'binaries' / f"{case['id']}-cpu{count}"
                 destination.mkdir(parents=True)
-                command = [str(driver), 'test', '--runtime=mini', f'-p={count}',
+                command = [str(driver), *recorded[1:recorded.index('test')], 'test', '--runtime=mini', f'-p={count}',
                            '-mod=readonly', '-c', '-o', str(destination)+os.sep,
                            '-ldflags=-w', *case['flags'], './...']
                 setup_env = dict(env, GOCACHE=str(cache), GOMAXPROCS=str(count),

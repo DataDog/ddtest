@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Compare ddto's preparation between executables on one project.
+"""Compare ddto's preparation between executables of ddtest on one project.
 
 usage: preparation_benchmark.py --subject DIR --output DIR [--runs N]
-           [--cpus N] [--report DIR] NAME=DDTO...
+           [--cpus N] [--report DIR] NAME=DDTEST...
 
-Each ddto first compiles the subject's test binaries once, into its own output
-directory, with its own Go build cache and user cache under --output. Then
---runs rounds run every ddto once, in rotating order, with DD_TRACE_DEBUG=true
-and everything cached: `ddto test --runtime=mini -c -o OUT/ -ldflags=-w ./...`
-under taskset. The report gives each executable's medians: the command's wall
-time, and from its debug log the preparation, `go test` and whole-command
-durations and how many packages are the CLI's own runtime sources. Build each
-ddto from the revision to measure, such as a release executable from
-scripts/release, which carries its runtime. --report copies results.json and
-README.md into DIR, such as a directory of docs/results; never edit those by
-hand.
+Each executable first compiles the subject's test binaries once, into its own
+output directory, with its own Go build cache and user cache under --output.
+Then --runs rounds run every executable once, in rotating order, with
+DD_TRACE_DEBUG=true and everything cached, under taskset: `ddtest instrument
+test --runtime=mini -c -o OUT/ -ldflags=-w ./...`. The report gives each
+executable's medians: the command's wall time, and from its debug log the
+preparation, `go test` and whole-command durations and how many packages are
+the CLI's own runtime sources. Build each executable from the revision to
+measure, such as a release executable from scripts/release, which carries its
+runtime. --report copies results.json and README.md into DIR, such as a
+directory of docs/results; never edit those by hand.
 """
 import argparse
 import json
@@ -55,7 +55,7 @@ def parse(stderr):
 
 
 def command(ddto, cpus, output):
-    return ['taskset', '-c', f'0-{cpus - 1}', str(ddto), 'test', '--runtime=mini', f'-p={cpus}', '-mod=readonly',
+    return ['taskset', '-c', f'0-{cpus - 1}', str(ddto), 'instrument', 'test', '--runtime=mini', f'-p={cpus}', '-mod=readonly',
             '-c', '-o', str(output) + os.sep, '-ldflags=-w', './...']
 
 
@@ -145,10 +145,10 @@ def main():
     parser.add_argument('--runs', type=int, default=10)
     parser.add_argument('--cpus', type=int, default=4)
     parser.add_argument('--report', type=Path)
-    parser.add_argument('ddto', nargs='+', metavar='NAME=DDTO')
+    parser.add_argument('ddto', nargs='+', metavar='NAME=DDTEST')
     args = parser.parse_args()
     if any('=' not in entry for entry in args.ddto):
-        parser.error('each executable is NAME=DDTO')
+        parser.error('each executable is NAME=DDTEST')
     results = run(normalize(args))
     args.output.joinpath('results.json').write_text(json.dumps(results, indent=1) + '\n')
     args.output.joinpath('README.md').write_text(report(results))

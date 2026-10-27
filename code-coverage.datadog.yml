@@ -9,7 +9,6 @@ ignore:
   - "ddto/**/*_msgp.go"
   # ddto's tools, test helpers, fixtures and archived records, which ddtest
   # does not ship.
-  - "ddto/cmd/"
   - "ddto/docs/"
   - "ddto/integration/"
   - "ddto/internal/testassert/"

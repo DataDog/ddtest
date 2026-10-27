@@ -388,11 +388,11 @@ class Runner:
         if total > self.manifest["limits"]["bytes"]:
             raise RuntimeError("artifact limit reached; evidence retained")
 
-    def setup(self, command, cwd):
+    def setup(self, command, cwd, **env):
         remaining = self.args.max_seconds - (time.monotonic() - self.started)
         if remaining <= 0:
             raise RuntimeError("overall time limit reached during setup")
-        result = subprocess.run(command, cwd=cwd, env=self.env, text=True, capture_output=True,
+        result = subprocess.run(command, cwd=cwd, env=dict(self.env, **env), text=True, capture_output=True,
                                 timeout=min(self.args.command_seconds, remaining), check=True)
         return result.stdout
 
@@ -434,8 +434,10 @@ class Runner:
         sdk = read_json_string(self.setup([str(self.go), "mod", "download", "-json",
                                           SDK_MODULE + "@" + self.config["sdk_version"]], ROOT))
         yaml = Path(sdk["Dir"]) / "internal/civisibility/integrations/gotesting/orchestrion.yml"
-        self.ddto = self.output / "ddto"
-        self.setup([str(self.go), "build", "-mod=readonly", "-o", str(self.ddto), "./cmd/ddto"], ROOT)
+        # ddtest's executable runs ddto. Its module can need a newer Go than the
+        # one measured, which the commands it runs use.
+        self.ddto = self.output / "ddtest"
+        self.setup([str(self.go), "build", "-mod=readonly", "-o", str(self.ddto), "."], ROOT.parent, GOTOOLCHAIN="auto")
         for name in dict.fromkeys(case["subject"] for case in self.cases):
             spec = self.config["subjects"][name]
             target = self.output / "subjects" / name
@@ -496,7 +498,7 @@ class Runner:
     def command(self, case, cpus, variant, extra):
         prefixes = {"native": [str(self.go), "test"],
                     "orchestrion": [str(self.go), "test", f"-toolexec={self.orchestrion} toolexec"],
-                    "mini": [str(self.ddto), "test", "--runtime=mini"]}
+                    "mini": [str(self.ddto), "instrument", "test", "--runtime=mini"]}
         ldflags = ["-w"] + [flag.removeprefix("-ldflags=") for flag in extra if flag.startswith("-ldflags=")]
         rest = [flag for flag in extra if not flag.startswith("-ldflags=")]
         return prefixes[variant] + [f"-p={cpus}", "-mod=readonly", "-c", "-o",

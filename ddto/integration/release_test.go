@@ -17,61 +17,50 @@ import (
 // releaseTag is the version of the release executable that these tests build.
 const releaseTag = "v9.8.7-test"
 
-type releaseBuildOnce struct {
+var releaseBuild struct {
 	once      sync.Once
 	path, err string
 }
 
-var releaseBuild, ddtestReleaseBuild releaseBuildOnce
-
-// releaseExecutable builds the host's release executable of ddto once per test
-// process, in TestMain's directory.
+// releaseExecutable builds the host's release executable of ddtest once per
+// test process, as ddtest's make release does: ddtest needs a newer Go than
+// some jobs pin, so its build switches toolchains, as the driver's does.
 func releaseExecutable(t *testing.T) string {
 	t.Helper()
-	return buildRelease(t, &releaseBuild, "ddto", testEnv("GOFLAGS="))
-}
-
-// ddtestReleaseExecutable builds the host's release executable of ddtest, as
-// ddtest's make release does: ddtest needs a newer Go than some jobs pin, so
-// its build switches toolchains, as the driver's does.
-func ddtestReleaseExecutable(t *testing.T) string {
-	t.Helper()
-	return buildRelease(t, &ddtestReleaseBuild, "ddtest", testEnv("GOFLAGS=", "GOTOOLCHAIN=auto"),
-		"-main", "..", "-name", "ddtest", "-command", "instrument", "-ldflags", "-X github.com/DataDog/ddtest/internal/buildinfo.Version="+releaseTag)
-}
-
-func buildRelease(t *testing.T, build *releaseBuildOnce, name string, env []string, flags ...string) string {
-	t.Helper()
-	build.once.Do(func() {
+	releaseBuild.once.Do(func() {
 		dist, err := os.MkdirTemp(sharedParityRoot, "release-")
 		if err != nil {
-			build.err = err.Error()
+			releaseBuild.err = err.Error()
 			return
 		}
-		args := append([]string{"run", "./scripts/release", "-version", releaseTag, "-o", dist, "-target", runtime.GOOS + "/" + runtime.GOARCH}, flags...)
-		out, stderr, code, _, err := runCommand("..", env, "go", args...)
+		out, stderr, code, _, err := runCommand("..", testEnv("GOFLAGS=", "GOTOOLCHAIN=auto"), "go", "run", "./scripts/release",
+			"-main", "..", "-name", "ddtest", "-command", "instrument", "-version", releaseTag,
+			"-ldflags", "-X github.com/DataDog/ddtest/internal/buildinfo.Version="+releaseTag,
+			"-o", dist, "-target", runtime.GOOS+"/"+runtime.GOARCH)
 		switch {
 		case err != nil:
-			build.err = err.Error()
+			releaseBuild.err = err.Error()
 		case code != 0:
-			build.err = out + "\n" + stderr
+			releaseBuild.err = out + "\n" + stderr
 		default:
-			build.path = filepath.Join(dist, name+"-"+runtime.GOOS+"-"+runtime.GOARCH)
+			releaseBuild.path = filepath.Join(dist, "ddtest-"+runtime.GOOS+"-"+runtime.GOARCH)
 			if runtime.GOOS == "windows" {
-				build.path += ".exe"
+				releaseBuild.path += ".exe"
 			}
 		}
 	})
-	if build.path == "" {
-		t.Fatalf("%s release build: %s", name, build.err)
+	if releaseBuild.path == "" {
+		t.Fatalf("ddtest release build: %s", releaseBuild.err)
 	}
-	return build.path
+	return releaseBuild.path
 }
 
-// A release executable carries the Mini runtime's sources and its tool
-// wrapper: it provisions Mini with no module proxy, no copy in GOMODCACHE and
-// no build of the wrapper, and reuses both on the next run. It reports the
-// release's version, which the wrapper's key includes.
+// ddtest's release executable carries the Mini runtime's sources and its
+// tool wrapper: ddtest instrument provisions Mini with no module proxy, no
+// copy in GOMODCACHE and no build of the wrapper, and reuses both on the next
+// run. The wrapper runs ddto's tool-overlay as ddtest instrument. ddtest and
+// ddtest instrument report the release's version, which the wrapper's key
+// includes.
 func TestReleaseExecutableIsSelfContained(t *testing.T) {
 	root, err := filepath.Abs("..")
 	if err != nil {
@@ -79,8 +68,11 @@ func TestReleaseExecutableIsSelfContained(t *testing.T) {
 	}
 	const tag = releaseTag
 	driver := releaseExecutable(t)
-	if out, stderr, code := command(t, root, testEnv(), driver, "--version"); code != 0 || out != "ddto "+tag+"\n" {
+	if out, stderr, code := command(t, root, testEnv(), driver, "--version"); code != 0 || out != tag+"\n" {
 		t.Fatalf("--version: %d %q %s", code, out, stderr)
+	}
+	if out, stderr, code := command(t, root, testEnv(), driver, "instrument", "--version"); code != 0 || out != strings.TrimSuffix(filepath.Base(driver), ".exe")+" instrument "+tag+"\n" {
+		t.Fatalf("instrument --version: %d %q %s", code, out, stderr)
 	}
 	var requests atomic.Int64
 	proxy := newServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +91,7 @@ func TestReleaseExecutableIsSelfContained(t *testing.T) {
 		"GOPROXY="+proxy.URL, "GONOPROXY=none", "GOMODCACHE="+t.TempDir(), "GOFLAGS=")...)
 	for _, state := range []string{"created", "reused"} {
 		// Covering testing runs go's compiles through the tool wrapper.
-		out, stderr, code := command(t, dir, env, driver, "test", "-count=1", "-coverpkg=testing,./...", "-covermode=atomic", ".")
+		out, stderr, code := command(t, dir, env, driver, "instrument", "test", "-count=1", "-coverpkg=testing,./...", "-covermode=atomic", ".")
 		if code != 0 || !strings.Contains(out, "ok ") {
 			t.Fatalf("%s run: %d\n%s\n%s", state, code, out, stderr)
 		}
@@ -146,7 +138,7 @@ func TestInstallScriptsInstallTheReleaseExecutable(t *testing.T) {
 	}
 	// The scripts are ddtest's, in the scripts directory of its repository.
 	scriptsDir := filepath.Join(root, "..", "scripts")
-	driver := ddtestReleaseExecutable(t)
+	driver := releaseExecutable(t)
 	data, err := os.ReadFile(driver)
 	if err != nil {
 		t.Fatal(err)

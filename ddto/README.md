@@ -56,9 +56,7 @@ To build from a checkout of ddtest instead:
 ```sh
 git clone https://github.com/DataDog/ddtest.git
 cd ddtest
-make install                      # ddtest, in GOBIN or the first GOPATH entry's bin
-cd ddto
-go build -o bin/ddto ./cmd/ddto   # the standalone ddto, for this module's own development
+make install   # ddtest, in GOBIN or the first GOPATH entry's bin
 ```
 
 Coding agents can follow [AGENTS.md](AGENTS.md), which covers installation,

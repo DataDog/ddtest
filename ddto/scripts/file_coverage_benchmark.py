@@ -1,14 +1,15 @@
 """Compare per-test coverage modes: Go's counters, which Test Impact Analysis
 uses today, against ddto's experimental file coverage.
 
-usage: file_coverage_benchmark.py --ddto DDTO --output DIR [--reps N]
+usage: file_coverage_benchmark.py --ddtest DDTEST --output DIR [--reps N]
            [--gomaxprocs N] [--bench NAME=REGEX]... [--report DIR]
            NAME=PROJECT[:PATTERN]...
 
 For each project, every mode runs go test once to warm the build cache, then
 --reps times in rotating order. The loopback receiver enables code coverage,
 and the coverage modes' per-test files are compared with Go's counters, the
-reference. --bench also times the benchmarks of project NAME that REGEX
+reference. DDTEST is ddtest's executable, which runs ddto as ddtest
+instrument. --bench also times the benchmarks of project NAME that REGEX
 matches. --report copies results.json and README.md into DIR, such as a
 directory of docs/results; never edit those by hand. Each test's files stay in
 the output's files.json.
@@ -54,7 +55,7 @@ def run_tests(args, project, pattern, mode, output):
                DD_SERVICE='file-coverage', DD_ENV='benchmark', DD_CIVISIBILITY_ENABLED='true',
                DD_CIVISIBILITY_AGENTLESS_ENABLED='false', DD_TRACE_AGENT_URL=receiver.url,
                DD_INSTRUMENTATION_TELEMETRY_ENABLED='false', DD_CIVISIBILITY_GIT_UPLOAD_ENABLED='false')
-    command = (['go', 'test'] if flags is None else [str(args.ddto), 'test', *flags]) + ['-count=1', pattern]
+    command = (['go', 'test'] if flags is None else [str(args.ddtest), 'instrument', 'test', *flags]) + ['-count=1', pattern]
     start = time.perf_counter()
     result = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True, timeout=3600)
     wall = time.perf_counter() - start
@@ -151,7 +152,7 @@ def run_benchmarks(args, project, regex, output):
                    DD_CIVISIBILITY_ENABLED='true', DD_TRACE_AGENT_URL=receiver.url,
                    DD_CIVISIBILITY_AGENTLESS_ENABLED='false', DD_INSTRUMENTATION_TELEMETRY_ENABLED='false',
                    DD_CIVISIBILITY_GIT_UPLOAD_ENABLED='false')
-        command = (['go', 'test'] if flags is None else [str(args.ddto), 'test', *flags]) + [
+        command = (['go', 'test'] if flags is None else [str(args.ddtest), 'instrument', 'test', *flags]) + [
             '-run=^$', '-bench=' + regex, '-benchtime=1s', '-count=5', '.']
         result = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True, timeout=3600)
         receiver.close()
@@ -218,7 +219,7 @@ def report(results):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--ddto', type=Path, required=True)
+    parser.add_argument('--ddtest', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--reps', type=int, default=3)
     parser.add_argument('--gomaxprocs', type=int, default=4)
@@ -231,7 +232,7 @@ def main():
     args.decoder = args.output / 'decode'
     subprocess.run(['go', 'build', '-o', str(args.decoder), './scripts/testdata/runtime-benchmark/decode.go'],
                    cwd=ROOT, check=True, env=dict(os.environ, GOWORK='off', GOFLAGS=''))
-    version = subprocess.run([str(args.ddto), '--version'], capture_output=True, text=True).stdout.strip()
+    version = subprocess.run([str(args.ddtest), 'instrument', '--version'], capture_output=True, text=True).stdout.strip()
     benches = dict(spec.partition('=')[::2] for spec in args.bench)
     every = {}
     results = {'ddto': {'commit': subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True, text=True).stdout.strip(),

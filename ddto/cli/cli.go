@@ -28,7 +28,7 @@ func Handles(args []string, name string) bool {
 	if len(args) < 2 {
 		return false
 	}
-	return name != "" && args[1] == name
+	return args[1] == name
 }
 
 // KeepCallerEnvironment restores the environment that this process received,
@@ -41,14 +41,15 @@ func KeepCallerEnvironment() { globalconfig.KeepCallerEnvironment() }
 // stays as the process received it, so a command that ddto runs unchanged
 // keeps the caller's exact command line on Windows.
 func Main(args []string, name string) {
-	argv, prog := args, "ddto"
-	if name != "" && len(args) > 1 && args[1] == name {
-		argv, prog = append([]string{args[0]}, args[2:]...), strings.TrimSuffix(filepath.Base(args[0]), ".exe")+" "+name
+	argv, prog := args, name
+	if len(args) > 0 {
+		prog = strings.TrimSuffix(filepath.Base(args[0]), ".exe") + " " + name
 	}
-	if name != "" {
-		// ddto's own modes run again as this command.
-		runner.SelfCommand = []string{name}
+	if len(args) > 1 && args[1] == name {
+		argv = append([]string{args[0]}, args[2:]...)
 	}
+	// ddto's own modes run again as this command.
+	runner.SelfCommand = []string{name}
 
 	// The SDK's process identity, which ddto links for its Git worker, hands
 	// its root session to child processes through the environment at

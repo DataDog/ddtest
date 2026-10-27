@@ -6,9 +6,9 @@ usage: minitracer_benchmark.py --base DIR --candidate DIR --output DIR
            [--gomaxprocs N] [--benchtime D] [--own-benchmarks]
            [--same-wire] [--report DIR]
 
---base and --candidate are worktrees of this repository, such as one detached
-at main and one at the change: ddto compiles Mini from the tree it was built
-from, so each needs its own. Their runs alternate, and every figure is the
+--base and --candidate are the ddto directories of two worktrees of ddtest,
+such as one detached at main and one at the change: ddto compiles Mini from
+the tree it was built from, so each needs its own ddtest executable. Their runs alternate, and every figure is the
 median of --reps runs.
 
 Microbenchmarks: the candidate's internal/minitracer/performance_test.go runs
@@ -18,7 +18,7 @@ for a candidate whose benchmarks use internals that the base lacks.
 
 Test binary: a generated module with --tests empty tests, in a Git checkout so
 that the CI tags are shared, is built with go test -c, and with each tree's
-ddto test -c. Each binary runs -test.count=--count against the loopback
+ddtest instrument test -c. Each binary runs -test.count=--count against the loopback
 receiver with --gomaxprocs. The report gives the test process's wall time, CPU
 time (user and system) and peak RSS, and what ddto adds per test over plain go
 test. The first run of each tree decodes every payload and checks that each
@@ -119,14 +119,15 @@ def describe(tree):
 
 
 def build(args, out):
-    """Builds each tree's ddto and minitracer test binary, and the fixture's
+    """Builds each tree's ddtest and minitracer test binary, and the fixture's
     test binaries, into out/<variant>."""
     overlay = out / 'overlay.json'
     overlay.write_text(json.dumps({'Replace': {str(args.base / PERFORMANCE_TEST): str(args.candidate / PERFORMANCE_TEST)}}))
     for tree in TREES:
         (out / tree).mkdir()
         source = getattr(args, tree)
-        run(['go', 'build', '-o', str(out / tree / 'ddto'), './cmd/ddto'], source)
+        # ddtest's executable runs ddto, from the tree's ddtest module.
+        run(['go', 'build', '-o', str(out / tree / 'ddtest'), '.'], Path(source).parent)
         shared = tree == 'base' and not args.own_benchmarks
         run(['go', 'test', '-c', '-o', str(out / tree / 'minitracer.test'),
              *(['-overlay', str(overlay)] if shared else []), './internal/minitracer'], source)
@@ -136,7 +137,7 @@ def build(args, out):
     env = go_env(DD_CIVISIBILITY_GIT_UPLOAD_ENABLED='false')
     run(['go', 'test', '-c', '-o', str(out / 'native' / 'fixture.test'), '.'], fixture, env)
     for tree in TREES:
-        run([str(out / tree / 'ddto'), 'test', '-c', '-o', str(out / tree / 'fixture.test'), '.'], fixture, env)
+        run([str(out / tree / 'ddtest'), 'instrument', 'test', '-c', '-o', str(out / tree / 'fixture.test'), '.'], fixture, env)
     return fixture
 
 
