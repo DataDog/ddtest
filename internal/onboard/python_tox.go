@@ -165,7 +165,9 @@ func (t pythonTox) instrumentation() (string, string) {
 			}
 			pattern = strings.ToUpper(pattern)
 			// Require the whole DD namespace, not just one sampled variable.
-			forwarded = forwarded || pattern == "*" || pattern == required
+			prefix, wildcard := strings.CutSuffix(pattern, "*")
+			forwarded = forwarded || pattern == required ||
+				wildcard && !strings.ContainsAny(prefix, "*?[") && strings.HasPrefix(required, prefix)
 		}
 		if !forwarded {
 			return "incompatible", fmt.Sprintf("tox environment %s does not forward %s; preserve the action's tracing variables with pass_env", t.Name, required)

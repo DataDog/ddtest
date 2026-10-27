@@ -76,6 +76,13 @@ func TestPythonToxChecksEffectiveInstrumentation(t *testing.T) {
 	for _, tc := range []struct{ name, settings, command, status, reason string }{
 		{"not forwarded", "", "tox run -e py3.12", "incompatible", "filters"},
 		{"forwarded", forwarded, "tox run -e py3.12", "compatible", "satisfies"},
+		{"covering prefixes", `pass_env = ["DD*", "PYTHON*", "PYTEST_ADDOPTS"]`, "tox run -e py3.12", "compatible", "satisfies"},
+		{"shared prefix", `pass_env = ["D*", "PY*"]`, "tox run -e py3.12", "compatible", "satisfies"},
+		{"case insensitive prefixes", `pass_env = ["dd*", "python*", "pytest_addopts"]`, "tox run -e py3.12", "compatible", "satisfies"},
+		{"all environment", `pass_env = ["*"]`, "tox run -e py3.12", "compatible", "satisfies"},
+		{"narrow DD prefix", `pass_env = ["DD_TRACE_*", "PYTHONPATH", "PYTEST_ADDOPTS"]`, "tox run -e py3.12", "incompatible", "DD_*"},
+		{"single DD variable", `pass_env = ["DD_TRACE_ENABLED", "PYTHONPATH", "PYTEST_ADDOPTS"]`, "tox run -e py3.12", "incompatible", "DD_*"},
+		{"missing pytest variable", `pass_env = ["DD*", "PYTHON*"]`, "tox run -e py3.12", "incompatible", "PYTEST_ADDOPTS"},
 		{"partial forwarding", `pass_env = ["DD_*", "PYTHONPATH"]`, "tox run -e py3.12", "incompatible", "PYTEST_ADDOPTS"},
 		{"overridden environment", forwarded + "\nset_env = { PYTEST_ADDOPTS = '--no-ddtrace' }", "tox run -e py3.12", "inconclusive", "set_env"},
 		{"excluded variable", forwarded + "\ndisallow_pass_env = ['PYTHONPATH']", "tox run -e py3.12", "inconclusive", "disallow_pass_env"},
