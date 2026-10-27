@@ -49,6 +49,10 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		{"'bad' < matrix.number", false}, {"'bad' >= matrix.number", false},
 		{"'' < matrix.number", true}, {"'2.2e1' >= matrix.number", true},
 		{"'022' >= matrix.number", true}, {"'null' <= matrix.number", false},
+		// The null literal is falsy and compares as zero with unlike types.
+		{"null", false}, {"!null", true}, {"null == null", true}, {"matrix.missing == null", true},
+		{"null == false", true}, {"null == 0", true}, {"null == ''", true}, {"null == 'x'", false},
+		{"matrix.number != null", true}, {"null < matrix.number", true},
 		// GitHub converts a plain decimal string compared with a number.
 		{"matrix.number == '22'", true}, {"matrix.number != '20'", true}, {"'22.0' == matrix.number", true},
 	} {

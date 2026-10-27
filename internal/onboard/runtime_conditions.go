@@ -195,6 +195,8 @@ func (p *conditionParser) atom() (any, error) {
 		return true, nil
 	case "false":
 		return false, nil
+	case "null":
+		return nil, nil
 	case "format":
 		return p.format()
 	case "fromJSON":
