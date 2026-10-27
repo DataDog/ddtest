@@ -46,17 +46,18 @@ type reportCard struct {
 }
 
 type reportTest struct {
-	Label         string
-	Name          string
-	Suite         string
-	SourceFile    string
-	Status        string
-	Duration      string
-	Attempts      []reportAttempt
-	CoverageLevel string
-	CoveredFiles  []string
-	Source        reportSource
-	DurationNanos int64
+	CoverageReference string
+	Label             string
+	Name              string
+	Suite             string
+	SourceFile        string
+	Status            string
+	Duration          string
+	Attempts          []reportAttempt
+	CoverageLevel     string
+	CoveredFiles      []string
+	Source            reportSource
+	DurationNanos     int64
 }
 
 type reportAttempt struct {
@@ -79,10 +80,11 @@ type reportCoverage struct {
 }
 
 type reportSource struct {
-	Start int
-	End   int
-	Lines []reportSourceLine
-	Error string
+	Reference string
+	Start     int
+	End       int
+	Lines     []reportSourceLine
+	Error     string
 }
 
 type reportSourceLine struct {
@@ -123,6 +125,8 @@ type reportArtifact struct {
 }
 
 type reportModel struct {
+	SharedSources   []reportSource
+	SharedCoverage  [][]string
 	EvidenceRole    runRole
 	EvidenceName    string
 	Configuration   string
