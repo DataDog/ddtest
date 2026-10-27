@@ -169,6 +169,18 @@ func TestDetectPlatformUnsupported(t *testing.T) {
 
 }
 
+func TestDetectPlatformReportsMissingProjectFiles(t *testing.T) {
+	resetDetectionSettings(t)
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("pom.xml", []byte("<project/>"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := DetectPlatform()
+	if !errors.Is(err, ErrNoPlatform) {
+		t.Fatalf("DetectPlatform() error = %v, want ErrNoPlatform", err)
+	}
+}
+
 func resetDetectionSettings(t *testing.T) {
 	t.Helper()
 	cfg := settings.Get()

@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/java"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -50,6 +51,11 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 			}
 			if apply && instructions {
 				return fail("invalid_options", fmt.Errorf("--apply and --instructions are mutually exclusive"))
+			}
+			if selected, err := java.Selected(); err != nil {
+				return fail("platform_unresolved", err)
+			} else if selected {
+				return onboardJava(cmd, apply, instructions, structured, fail)
 			}
 			if instructions {
 				if structured || facts != "" || site != "" || cmd.Flags().Changed("tracer-version") {
@@ -124,6 +130,27 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 	agentHelp(command)
 	configureProtocolErrors(command)
 	return command
+}
+
+// onboardJava serves Maven projects, which support manual CI setup only.
+func onboardJava(cmd *cobra.Command, apply, instructions, structured bool, fail func(string, error) error) error {
+	if apply {
+		return fail("framework_unsupported", fmt.Errorf("--apply supports JavaScript frameworks (%s); follow `ddtest onboard --instructions --platform java` to set up Maven projects", testdrive.AutomaticSetupFrameworkNames()))
+	}
+	if instructions && structured {
+		return fail("invalid_options", fmt.Errorf("--instructions cannot be combined with structured output"))
+	}
+	// These options configure automatic setup or local validation, which
+	// Maven projects do not support; reject them instead of ignoring them.
+	for _, name := range []string{"yes", "allow-dirty", "resume", "facts", "site", "tracer-version", "timeout", "allow-reviewed-builds", "accept-substitute-runtime", "command"} {
+		if flag := cmd.Flags().Lookup(name); flag != nil && flag.Changed {
+			return fail("invalid_options", fmt.Errorf("--%s does not apply to Maven projects, which support manual setup only", name))
+		}
+	}
+	if structured {
+		return java.Start(cmd.OutOrStdout(), ".")
+	}
+	return java.Instructions(cmd.OutOrStdout(), ".")
 }
 
 func isTerminalWriter(output io.Writer) bool {

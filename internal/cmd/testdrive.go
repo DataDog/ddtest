@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/java"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive"
 	"github.com/kballard/go-shellquote"
@@ -85,6 +86,11 @@ func newTestdriveCommand() *cobra.Command {
 				return testdrive.RenderWorkflowDetail(commandContext(cmd), cmd.OutOrStdout(), resume, detail)
 			}
 			return testdrive.RenderReport(commandContext(cmd), cmd.OutOrStdout(), format)
+		}
+		if selected, err := java.Selected(); err != nil {
+			return fail("platform_unresolved", err)
+		} else if selected {
+			return fail("framework_unsupported", fmt.Errorf("testdrive does not run Java tests; follow `ddtest onboard --instructions --platform java` to set up Maven projects in CI"))
 		}
 		if facts != "" && !all {
 			return fail("invalid_options", fmt.Errorf("--facts requires --all; facts cannot replace or narrow the discovered scope"))

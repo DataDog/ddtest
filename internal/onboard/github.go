@@ -37,6 +37,12 @@ var vitestInstructions string
 //go:embed instructions/github.md
 var gitHubInstructions string
 
+// ConnectDatadogInstructions asks a human to create the Datadog API key and
+// store it as the DD_API_KEY repository secret, for every language's guidance.
+//
+//go:embed instructions/connect_datadog.md
+var ConnectDatadogInstructions string
+
 func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoot, language, name string) error {
 	workflows, configured, err := provider.FindTestWorkflows(repositoryRoot, language, name)
 	if err != nil {
@@ -102,7 +108,7 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 func instructions(language, name string) string {
 	text := frameworkInstructions(language, name)
 	if language == "javascript" {
-		return pinSetupAction(text)
+		return PinSetupAction(text)
 	}
 	return text
 }
@@ -143,7 +149,7 @@ func frameworkInstructions(language, name string) string {
 	}
 	// Empty inputs override the action's pinned defaults and request the latest release.
 	tracerSetting := actionLanguage + "-tracer-version: '' # Latest release"
-	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap, "__TRACER_SETTING__", tracerSetting, "__AUTOMATIC_SETUP__", javascriptAutomaticSetup).Replace(renderGitHubInstructions(language))
+	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap, "__TRACER_SETTING__", tracerSetting, "__AUTOMATIC_SETUP__", javascriptAutomaticSetup, "__CONNECT_DATADOG__", strings.TrimSpace(ConnectDatadogInstructions)).Replace(renderGitHubInstructions(language))
 	return strings.ReplaceAll(text, "ddtest testdrive", "ddtest testdrive --framework "+name)
 }
 

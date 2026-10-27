@@ -15,6 +15,13 @@ Currently supported:
 - Python with pytest.
 - JavaScript with Cucumber, Cypress, Jest, Mocha, Playwright, or Vitest.
 
+For Java projects built with Maven, `ddtest onboard` prints manual GitHub Actions
+setup for JUnit 4/5, TestNG, Spock, Cucumber JVM, Karate, ScalaTest and Scala
+MUnit. `ddtest plan` and `ddtest run` do not support Java, because the Java agent
+performs Test Impact Analysis inside the Maven build, and `ddtest testdrive` does
+not run Java tests. In a repository that also contains another supported project, select Java with
+`--platform java` or a Maven framework such as `--framework junit5`.
+
 ## Try Test Optimization locally
 
 With your project's test dependencies and any required browsers/services ready:

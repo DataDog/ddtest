@@ -104,3 +104,32 @@ func TestGitHubFindTestWorkflowsCommandKinds(t *testing.T) {
 		})
 	}
 }
+
+func TestGitHubFindTestWorkflowsMatching(t *testing.T) {
+	matchesBuild := func(args []string) bool { return args[0] == "build" && len(args) > 1 && args[1] == "test" }
+	for _, tc := range []struct {
+		name, steps string
+		found       bool
+		configured  bool
+	}{
+		{"plain command", "      - run: build test\n", true, false},
+		{"assignment and list", "      - run: CI=1 build test && echo done\n", true, false},
+		{"multi-line script", "      - run: |\n          echo start\n          build test\n", true, false},
+		{"other command", "      - run: build compile\n", false, false},
+		{"quoted expression stays opaque", "      - run: sh -c 'build test; echo'\n", false, false},
+		{"action for the language first", "      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java}\n      - run: build test\n", true, true},
+		{"action for another language", "      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: js}\n      - run: build test\n", true, false},
+		{"action after the tests", "      - run: build test\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java}\n", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
+			workflow := "jobs:\n  tests:\n    steps:\n" + tc.steps
+			require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/test.yml"), []byte(workflow), 0644))
+			workflows, configured, err := NewGitHub().FindTestWorkflowsMatching(root, "java", matchesBuild)
+			require.NoError(t, err)
+			require.Equal(t, tc.found, len(workflows) == 1)
+			require.Equal(t, tc.configured, len(configured) == 1)
+		})
+	}
+}

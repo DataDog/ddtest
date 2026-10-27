@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,6 +49,9 @@ func runtimeTagProbeError(message string, output []byte, err error) error {
 	return fmt.Errorf("%s: %w", message, err)
 }
 
+// ErrNoPlatform reports that no supported platform's project files were found.
+var ErrNoPlatform = errors.New("could not detect a supported platform; inspect package.json, Python project configuration, or Gemfile, or specify --platform")
+
 // DetectPlatform selects a platform without running commands or checking installed
 // runtimes/tracers. Selection uses the current directory and settings.
 func DetectPlatform() (Platform, error) {
@@ -85,7 +89,7 @@ func DetectPlatform() (Platform, error) {
 		if frameworkHint != "" {
 			return nil, fmt.Errorf("unsupported framework: %s", frameworkHint)
 		}
-		return nil, fmt.Errorf("could not detect a supported platform; inspect package.json, Python project configuration, or Gemfile, or specify --platform")
+		return nil, ErrNoPlatform
 	}
 	if len(candidates) > 1 {
 		names := make([]string, len(candidates))

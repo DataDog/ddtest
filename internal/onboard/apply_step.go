@@ -225,9 +225,9 @@ func setupGuardedPreload(options string) string {
 
 const setupActionV3 = "datadog/test-visibility-github-action@7ce545f228901e4ac4ef0b45d946120f1c4124e0" // v3.3.0
 
-// pinSetupAction replaces the floating v3 reference in manual guidance with
-// the verified commit setup writes, so both paths install the same action.
-func pinSetupAction(text string) string {
+// PinSetupAction replaces the floating v3 reference in manual guidance with
+// the verified commit setup writes, so every guidance path installs the same action.
+func PinSetupAction(text string) string {
 	return strings.NewReplacer(
 		"uses: datadog/test-visibility-github-action@v3\n", "uses: "+setupActionV3+" # v3.3.0\n",
 		"`datadog/test-visibility-github-action@v3`", "`"+setupActionV3+"` (v3.3.0)",
