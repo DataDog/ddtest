@@ -34,13 +34,34 @@ func noteOwnRuntimeRoot(ctx context.Context, root string) {
 	roots.roots = append(roots.roots, filepath.Clean(root))
 }
 
-// cliModuleVersion returns the published version that built the CLI, such as
-// one that go install fetched, or "".
+// cliModuleVersion returns the published version of Mini's module that built
+// the CLI, such as one that go install fetched, or "".
 func cliModuleVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Path == miniModule && publishedVersion(info.Main.Version) {
-		return info.Main.Version
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
 	}
-	return ""
+	return buildMiniVersion(info)
+}
+
+// buildMiniVersion returns the published version of Mini's module in info: the
+// main module's, or the version that the main module requires, as go install
+// github.com/DataDog/ddtest@version builds it. A replaced module, as in
+// ddtest's checkout and release builds, has none.
+func buildMiniVersion(info *debug.BuildInfo) string {
+	version := ""
+	if info.Main.Path == miniModule {
+		version = info.Main.Version
+	}
+	for _, dep := range info.Deps {
+		if dep.Path == miniModule && dep.Replace == nil {
+			version = dep.Version
+		}
+	}
+	if !publishedVersion(version) {
+		return ""
+	}
+	return version
 }
 
 // cliMiniRoots returns the CLI's exact version in moduleCache, when it

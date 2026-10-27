@@ -4,7 +4,9 @@ package version
 // Number identifies this experimental CI runtime, independently of its source SDK.
 // It is ddtest's version: ddtest's make release sets the release's version
 // for the build, through scripts/release -version, without changing the
-// checkout, whose 0.0.0-dev development builds report.
+// checkout, whose 0.0.0-dev development builds report. The release commit
+// that the release tags, for go install, has it written here (see
+// .github/scripts/release-commit.sh).
 const Number = "0.0.0-dev"
 
 // LibraryName names, beside the version, the library that reports Mini's

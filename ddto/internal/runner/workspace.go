@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -382,10 +381,7 @@ func provideMiniWorkspace(ctx context.Context, dir, work, temp, moduleCache stri
 		}
 	}
 	if miniRoot == "" {
-		var cliVersion string
-		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Path == miniModule && publishedVersion(info.Main.Version) {
-			cliVersion = info.Main.Version
-		}
+		cliVersion := cliModuleVersion()
 		_, source, _, _ := runtime.Caller(0)
 		miniRoot = cliMiniRoot(ctx, source, moduleCache, cliVersion)
 		if miniRoot == "" && cliVersion != "" {

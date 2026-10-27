@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -238,5 +239,29 @@ func TestCheckSourcesSkipsOnlyUnreplacedOwnPackages(t *testing.T) {
 	elsewhere := map[string]string{filepath.Join(dir, "sub", "a.go"): ""}
 	if got := checkSources(&p, elsewhere, refuse); got != "" {
 		t.Fatalf("an overlay of another directory made the package checked: %q", got)
+	}
+}
+
+// The CLI's own version of Mini's module is the main module's, as in ddto's
+// go install, or the one that the main module requires, as in ddtest's; a
+// replaced module, as in a checkout or a release build, has none.
+func TestBuildMiniVersion(t *testing.T) {
+	dep := func(version string, replace *debug.Module) []*debug.Module {
+		return []*debug.Module{{Path: "github.com/spf13/cobra", Version: "v1.10.2"}, {Path: miniModule, Version: version, Replace: replace}}
+	}
+	for _, tc := range []struct {
+		name string
+		info debug.BuildInfo
+		want string
+	}{
+		{"main module", debug.BuildInfo{Main: debug.Module{Path: miniModule, Version: "v1.2.3"}}, "v1.2.3"},
+		{"required", debug.BuildInfo{Main: debug.Module{Path: "github.com/DataDog/ddtest", Version: "v1.2.3"}, Deps: dep("v1.2.3", nil)}, "v1.2.3"},
+		{"replaced", debug.BuildInfo{Main: debug.Module{Path: "github.com/DataDog/ddtest", Version: "(devel)"}, Deps: dep("v0.0.0-00010101000000-000000000000", &debug.Module{Path: "./ddto"})}, ""},
+		{"development", debug.BuildInfo{Main: debug.Module{Path: miniModule, Version: "(devel)"}}, ""},
+		{"absent", debug.BuildInfo{Main: debug.Module{Path: "example.com/other", Version: "v1.0.0"}}, ""},
+	} {
+		if got := buildMiniVersion(&tc.info); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

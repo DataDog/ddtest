@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"strings"
 
 	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
@@ -138,10 +137,7 @@ func provideRuntime(ctx context.Context, dir string, opts options, selected Runt
 		}
 		return modfile, nil
 	}
-	var version string
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Path == miniModule && publishedVersion(info.Main.Version) {
-		version = info.Main.Version
-	}
+	version := cliModuleVersion()
 	_, sourceFile, _, _ := runtime.Caller(0)
 	root := cliMiniRoot(ctx, sourceFile, environment.GOMODCACHE, version)
 	// Local replacements are relative to the module root, even when the user
