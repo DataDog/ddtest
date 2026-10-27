@@ -228,13 +228,22 @@ func TestPossibleJobConditionPath(t *testing.T) {
 		{"github.run_number > 10", true, true},
 		{"github.run_attempt > 1 && github.event_name != 'schedule'", true, true},
 		{"github.run_attempt > 1 && false", false, false},
+		// Array membership guards sample the array's elements.
+		{`contains(fromJSON('["push", "pull_request"]'), github.event_name)`, true, true},
+		{`!contains(fromJSON('["schedule"]'), github.event_name)`, true, true},
+		// A bare runtime operand as a whole condition is still abstracted.
+		{"github.event.pull_request.draft || github.event_name == 'push'", true, true},
+		{"(github.event.pull_request.draft) && false", false, false},
 	} {
 		active, assumed, err := possibleJobConditionPath(tc.condition, map[string]any{"os": "windows"})
 		require.NoError(t, err, tc.condition)
 		require.Equal(t, tc.active, active, tc.condition)
 		require.Equal(t, tc.assumed, assumed, tc.condition)
 	}
-	for _, condition := range []string{"hashFiles('package-lock.json') != ''", "github.a == 'x' && github.b == 'y' && github.c == 'z' && github.d == 'w'"} {
+	// An unknown runtime value used as a function argument is never replaced
+	// by a boolean, so these guards stay unresolved rather than impossible.
+	for _, condition := range []string{"hashFiles('package-lock.json') != ''", "github.a == 'x' && github.b == 'y' && github.c == 'z' && github.d == 'w'",
+		`contains(fromJSON('["release"]'), github.event_name) && github.run_number > 100000`} {
 		_, _, err := possibleJobConditionPath(condition, nil)
 		require.Error(t, err, condition)
 	}

@@ -467,7 +467,18 @@ func possibleJobConditionPath(value string, row map[string]any) (active, assumed
 	operands = slices.Compact(operands)
 	candidates := []string{"", "true", "false"}
 	for _, match := range conditionLiteral.FindAllStringSubmatch(value, -1) {
-		candidates = append(candidates, strings.ReplaceAll(match[1], "''", "'"))
+		literal := strings.ReplaceAll(match[1], "''", "'")
+		candidates = append(candidates, literal)
+		// contains(fromJSON('["push", …]'), github.event_name) passes for an
+		// element of the array, never for the JSON text itself.
+		var elements []any
+		if json.Unmarshal([]byte(literal), &elements) == nil {
+			for _, element := range elements {
+				if text, ok := element.(string); ok {
+					candidates = append(candidates, text)
+				}
+			}
+		}
 	}
 	slices.Sort(candidates)
 	candidates = slices.Compact(candidates)
@@ -514,10 +525,23 @@ func possibleRuntimeOutcome(value string, row map[string]any) (bool, error) {
 		atoms++
 		return fmt.Sprintf("\x00%d\x00", atoms-1)
 	})
-	abstract = runtimeContextOperand.ReplaceAllStringFunc(abstract, func(string) string {
+	// A bare operand can only stand for a true/false outcome where it is used as
+	// a condition on its own. As a function argument or comparison operand it is
+	// an unknown value, and substituting a boolean would misjudge the guard.
+	var misplaced bool
+	operands := runtimeContextOperand.FindAllStringIndex(abstract, -1)
+	for i := len(operands) - 1; i >= 0; i-- {
+		start, end := operands[i][0], operands[i][1]
+		if !conditionOperandPosition(abstract, start, end) {
+			misplaced = true
+			break
+		}
 		atoms++
-		return fmt.Sprintf("\x00%d\x00", atoms-1)
-	})
+		abstract = abstract[:start] + fmt.Sprintf("\x00%d\x00", atoms-1) + abstract[end:]
+	}
+	if misplaced {
+		return false, fmt.Errorf("runtime context value is used as an operand, not a condition")
+	}
 	if atoms == 0 || atoms > 6 {
 		return false, fmt.Errorf("runtime condition has %d context comparisons", atoms)
 	}
@@ -539,6 +563,31 @@ func possibleRuntimeOutcome(value string, row map[string]any) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// conditionOperandPosition reports whether text[start:end] is used as a whole
+// condition: bounded by the expression edges, !, &&, || or grouping
+// parentheses, never by a function call, comma or comparison.
+func conditionOperandPosition(text string, start, end int) bool {
+	before := strings.TrimRight(text[:start], " \t")
+	after := strings.TrimLeft(text[end:], " \t")
+	before = strings.TrimSuffix(strings.TrimSuffix(before, "${{"), " ")
+	switch {
+	case before == "", strings.HasSuffix(before, "!") && !strings.HasSuffix(before, "!="),
+		strings.HasSuffix(before, "&&"), strings.HasSuffix(before, "||"):
+	case strings.HasSuffix(before, "("):
+		// A parenthesis after an identifier opens a function call.
+		head := strings.TrimRight(strings.TrimSuffix(before, "("), " \t")
+		if head != "" {
+			last := head[len(head)-1]
+			if last == '_' || last == '.' || last >= '0' && last <= '9' || last >= 'a' && last <= 'z' || last >= 'A' && last <= 'Z' {
+				return false
+			}
+		}
+	default:
+		return false
+	}
+	return after == "" || after == "}}" || strings.HasPrefix(after, "&&") || strings.HasPrefix(after, "||") || strings.HasPrefix(after, ")")
 }
 
 func knownJobCondition(value string, row map[string]any) (bool, error) {
