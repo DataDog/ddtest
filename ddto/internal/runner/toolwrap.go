@@ -43,7 +43,7 @@ var toolWrapperBuildEnv []string
 // it. It builds a missing or unusable executable with the plan's go, under
 // the exclusive lock, which waits for runs still using the old one.
 func ensureToolWrapper(ctx context.Context, env *goEnvironment, dir string, debug *cliDebug) (path string, lock *os.File, err error) {
-	files, sum := toolwrap.Sources(version.BuildLogPrefix)
+	files, sum := toolwrap.Sources(version.BuildLogPrefix, strings.Join(SelfCommand, " "))
 	parent, err := ddtoCacheDir(env, dir, "toolwraps")
 	if err != nil {
 		return "", nil, err

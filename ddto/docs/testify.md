@@ -195,7 +195,7 @@ coverage denominator stay intact. This supports coverage patterns that include
 ```mermaid
 sequenceDiagram
     participant Go as go test
-    participant Tool as ddtest tool-overlay
+    participant Tool as ddtest instrument tool-overlay
     participant Cover as go tool cover
     participant Compile as go tool compile
     Go->>Cover: Original Testify sources, when selected for coverage

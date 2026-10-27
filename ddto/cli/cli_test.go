@@ -1,35 +1,31 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 )
 
 // TestHandles checks which process arguments a program that runs ddto as
-// its instrument command hands to Main: that command, the modes in which
-// ddto starts its own executable, and the go shim; not the program's other
-// commands.
+// its instrument command hands to Main: that command, also when ddto runs
+// its own modes again, and the go shim that ddto made of the executable;
+// not the program's other commands, the names of ddto's modes alone, or
+// another executable named go.
 func TestHandles(t *testing.T) {
 	bin := filepath.Join("bin", "ddtest")
-	shim := filepath.Join("cache", "ddtest", "instrument", "go-shim", "0123456789abcdef", "go")
 	for _, tc := range []struct {
 		args []string
 		want bool
 	}{
 		{[]string{bin, "instrument", "go", "test", "./..."}, true},
 		{[]string{bin, "instrument"}, true},
-		{[]string{bin, "test-exec", "program"}, true},
-		{[]string{bin, "go-shim-exec", "program"}, true},
-		{[]string{bin, "ci-git-worker", "state"}, true},
-		{[]string{bin, "tool-overlay", "mode", "plan", "compile"}, true},
-		// Without the arguments of its mode, a name stays the program's.
-		{[]string{bin, "test-exec"}, false},
-		{[]string{bin, "go-shim-exec"}, false},
-		{[]string{bin, "ci-git-worker"}, false},
-		{[]string{bin, "ci-git-worker", "state", "id", "1m", "extra"}, false},
-		{[]string{bin, "tool-overlay", "mode", "plan"}, false},
-		{[]string{shim, "test", "-json", "./..."}, true},
+		{[]string{bin, "instrument", "test-exec", "program"}, true},
+		{[]string{bin, "instrument", "tool-overlay", "mode", "plan", "compile"}, true},
+		{[]string{bin, "test-exec", "program"}, false},
+		{[]string{bin, "go-shim-exec", "program"}, false},
+		{[]string{bin, "ci-git-worker", "state"}, false},
+		{[]string{bin, "tool-overlay", "mode", "plan", "compile"}, false},
 		{[]string{bin, "plan"}, false},
 		{[]string{bin, "run", "instrument"}, false},
 		{[]string{bin}, false},
@@ -39,12 +35,49 @@ func TestHandles(t *testing.T) {
 			t.Errorf("Handles(%q) = %t, want %t", tc.args, got, tc.want)
 		}
 	}
-	if runtime.GOOS == "windows" && !Handles([]string{shim + ".exe", "test"}, "instrument") {
-		t.Error("the go shim's .exe is not handled")
-	}
-	// ddto's own executable has no command name: only its modes and the
-	// shim are distinct from the commands that it runs.
-	if !Handles([]string{"ddto", "ci-git-worker", "state"}, "") || Handles([]string{"ddto", "go", "test"}, "") {
+	// ddto's own executable has no command name: Main handles it directly.
+	if Handles([]string{"ddto", "ci-git-worker", "state"}, "") {
 		t.Error("ddto without a command name")
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := func(dir string) string {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		name := filepath.Join(dir, "go")
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+			err = os.Link(self, name)
+		} else {
+			err = os.Symlink(self, name)
+		}
+		if err != nil {
+			t.Skip("cannot link the test executable:", err)
+		}
+		return name
+	}
+	// The go shim that ddto makes of this executable, as gotestsum runs it.
+	shim := link(filepath.Join(t.TempDir(), "ddtest", "instrument", "go-shim", "0123456789abcdef"))
+	if !Handles([]string{shim, "test", "-json", "./..."}, "instrument") {
+		t.Error("the go shim is not handled")
+	}
+	// A link of the program named go elsewhere keeps the program's commands.
+	other := link(filepath.Join(t.TempDir(), "bin"))
+	if Handles([]string{other, "plan"}, "instrument") {
+		t.Error("an executable named go outside the go shim directories is handled")
+	}
+	// Run by name, go is the one that PATH finds first, as its caller found it.
+	t.Setenv("PATH", filepath.Dir(shim))
+	if !Handles([]string{"go", "test"}, "instrument") {
+		t.Error("the go shim that PATH finds is not handled")
+	}
+	t.Setenv("PATH", filepath.Dir(other))
+	if Handles([]string{"go", "plan"}, "instrument") {
+		t.Error("another go that PATH finds is handled")
 	}
 }

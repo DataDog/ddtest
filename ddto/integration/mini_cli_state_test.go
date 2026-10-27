@@ -216,7 +216,7 @@ func startWorker(t *testing.T, dir, driver string, env []string, state string, d
 	if err := os.WriteFile(filepath.Join(state, "tests.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	worker := exec.Command(driver, "ci-git-worker", state, "cli-runtime", "1m")
+	worker := exec.Command(driver, driverArgs(driver, []string{"ci-git-worker", state, "cli-runtime", "1m"})...)
 	worker.Dir = dir
 	worker.Env = append(env, "PWD="+dir)
 	input, err := worker.StdinPipe()

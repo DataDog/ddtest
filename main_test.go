@@ -135,7 +135,7 @@ func TestDispatchHandsInstrumentToDdto(t *testing.T) {
 // the environment that the process received: the SDK that ddto incorporates
 // sets its root session variable when it starts.
 func TestDispatchKeepsCallerEnvironment(t *testing.T) {
-	// The names of ddto's internal modes stay ddtest's without their arguments.
+	// The names of ddto's internal modes stay ddtest's: ddto runs them as ddtest instrument.
 	for _, command := range []string{"plan", "test-exec", "ci-git-worker", "tool-overlay", "go-shim-exec"} {
 		stdout, stderr, code := dispatchHelper(t, command)
 		if code != 0 || stdout != "root session unset\n" {

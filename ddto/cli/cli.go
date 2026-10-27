@@ -15,11 +15,9 @@ import (
 )
 
 // Handles reports whether args, a process's arguments, run ddto in a program
-// whose ddto command is name: that command, a mode in which ddto starts its
-// own executable, with the arguments that Main requires of it, or the go shim,
-// which is the executable named go. The modes are go test's -exec program, go
-// run's -exec program with the go shim, the Git worker and the -toolexec
-// overlay; with other arguments, their names stay the program's.
+// whose ddto command is name: that command, which also starts the modes in
+// which ddto runs its own executable again, or the go shim that ddto made of
+// this executable. The program's other arguments stay its own.
 func Handles(args []string, name string) bool {
 	if len(args) == 0 {
 		return false
@@ -30,17 +28,7 @@ func Handles(args []string, name string) bool {
 	if len(args) < 2 {
 		return false
 	}
-	switch args[1] {
-	case name:
-		return true
-	case "test-exec", runner.GoShimExecMode:
-		return len(args) >= 3
-	case "ci-git-worker":
-		return len(args) >= 3 && len(args) <= 5
-	case "tool-overlay":
-		return len(args) >= 5
-	}
-	return false
+	return name != "" && args[1] == name
 }
 
 // KeepCallerEnvironment restores the environment that this process received,
@@ -56,6 +44,10 @@ func Main(args []string, name string) {
 	argv, prog := args, "ddto"
 	if name != "" && len(args) > 1 && args[1] == name {
 		argv, prog = append([]string{args[0]}, args[2:]...), strings.TrimSuffix(filepath.Base(args[0]), ".exe")+" "+name
+	}
+	if name != "" {
+		// ddto's own modes run again as this command.
+		runner.SelfCommand = []string{name}
 	}
 
 	// The SDK's process identity, which ddto links for its Git worker, hands

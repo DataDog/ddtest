@@ -1256,7 +1256,7 @@ func wrapExecProgram(plan *Plan, opts options, dir string) error {
 	if err != nil {
 		return err
 	}
-	if plan.execWrapper, err = quoteToolWords(append([]string{executable, "test-exec", path}, words...)); err != nil {
+	if plan.execWrapper, err = quoteToolWords(selfCommand(executable, "test-exec", append([]string{path}, words...)...)); err != nil {
 		return &nativeGoError{"exec_program=unquotable", err}
 	}
 	return nil

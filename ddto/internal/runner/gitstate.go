@@ -30,6 +30,17 @@ import (
 // gitWorkerCommand is ddto's private entry point for the Git worker.
 const gitWorkerCommand = "ci-git-worker"
 
+// SelfCommand holds the words between this executable and ddto's private
+// modes, such as instrument when ddtest runs ddto as ddtest instrument, so
+// that the program hands its own modes back to ddto.
+var SelfCommand []string
+
+// selfCommand returns the command line that runs mode in this executable.
+func selfCommand(executable, mode string, args ...string) []string {
+	command := append(append([]string{executable}, SelfCommand...), mode)
+	return append(command, args...)
+}
+
 // gitRecordWait bounds how long go test waits for the worker's Git record
 // once preparation is done; test processes then read Git themselves.
 var gitRecordWait = time.Second
@@ -114,7 +125,8 @@ func startGitWorker(cli CLIOptions, opts options, dir string, debug *cliDebug, s
 	// and root session: the invocation is one application. The root session
 	// reaches only the worker; ddto passes its caller's environment to go
 	// test unchanged.
-	cmd := exec.Command(executable, gitWorkerCommand, state, globalconfig.RuntimeID(), cli.GitUploadTimeout.String())
+	worker := selfCommand(executable, gitWorkerCommand, state, globalconfig.RuntimeID(), cli.GitUploadTimeout.String())
+	cmd := exec.Command(worker[0], worker[1:]...)
 	// Test processes run in their package directories with PWD set; the
 	// worker runs in the invocation's directory, with the same environment.
 	cmd.Dir = dir

@@ -174,7 +174,7 @@ func TestTestifyContractInvalidatesOnlyTestingDependents(t *testing.T) {
 	}
 	// Stable output prevents -o changes from forcing a link on every invocation.
 	output := filepath.Join(t.TempDir(), executableName("fixture.test"))
-	args := []string{"test", "-mod=mod", "-overlay=" + plan.File, "-toolexec=" + quoteToolArgument(t, driver) + " tool-overlay testify " + quoteToolArgument(t, plan.File), "-c", "-x", "-o", output, "."}
+	args := []string{"test", "-mod=mod", "-overlay=" + plan.File, "-toolexec=" + quoteToolArgument(t, driver) + " " + strings.Join(driverArgs(driver, []string{"tool-overlay", "testify"}), " ") + " " + quoteToolArgument(t, plan.File), "-c", "-x", "-o", output, "."}
 	// The plan's overlay applies to its own toolchain, a mirror when go runs
 	// from GOMODCACHE.
 	goCommand, goEnv := plan.GoCommand()
@@ -257,7 +257,7 @@ func TestToolBypassProcessReplacement(t *testing.T) {
 	if code != 0 {
 		t.Fatal(out, stderr)
 	}
-	cmd := exec.Command(driver, "tool-overlay", "testify", "missing-plan", helper)
+	cmd := exec.Command(driver, driverArgs(driver, []string{"tool-overlay", "testify", "missing-plan", helper})...)
 	cmd.Dir, cmd.Env = dir, testEnv()
 	reader, err := cmd.StdoutPipe()
 	if err != nil {

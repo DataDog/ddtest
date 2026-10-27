@@ -76,7 +76,7 @@ documentation-only changes, describe the manual documentation/usage review.
 
 ### Core Components
 
-- **main.go**: Entry point using cobra CLI framework; hands `ddtest instrument`, and the modes in which the Go instrumentation starts ddtest again, to `ddto/cli` before cobra runs
+- **main.go**: Entry point using cobra CLI framework; hands `ddtest instrument`, which the Go instrumentation also uses to start ddtest again in its own modes, and the go shim that it makes of ddtest, to `ddto/cli` before cobra runs
 - **ddto/**: The Go instrumentation's own module, behind `ddtest instrument`
 - **scripts/**: The install scripts that each release carries, and their tests
 - **internal/ciprovider/**: Integrations with CI providers (GitHub Actions for example)

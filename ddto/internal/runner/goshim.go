@@ -205,12 +205,43 @@ func IsGotestsum(args []string) bool {
 	return len(args) > 0 && isProgram(args[0], "gotestsum")
 }
 
+// RunsAsGoShim reports whether a process whose argv[0] is arg0 runs as a go
+// shim that goShimDir made of this executable: named go, in a go shim
+// directory of a user cache, and this very executable. Another program that
+// runs ddto, such as ddtest, keeps its own commands under any other name,
+// including a copy or link of it named go elsewhere.
+func RunsAsGoShim(arg0 string) bool {
+	if !isProgram(arg0, "go") {
+		return false
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	// A Windows hard link or copy, and a macOS symbolic link, report the
+	// shim's own path.
+	if isGoShimEntry(filepath.Dir(self)) {
+		return true
+	}
+	// Linux reports the linked executable: the go that arg0 names, itself
+	// or the first on PATH, as its caller found it, must be this
+	// executable's shim. Any other executable named go is not one.
+	path := arg0
+	if !strings.ContainsRune(arg0, '/') && !strings.ContainsRune(arg0, filepath.Separator) {
+		if path, err = exec.LookPath(arg0); err != nil {
+			return false
+		}
+	}
+	if path, err = filepath.Abs(path); err != nil || !isGoShimEntry(filepath.Dir(path)) {
+		return false
+	}
+	shim, shimErr := os.Stat(path)
+	exe, exeErr := os.Stat(self)
+	return shimErr == nil && exeErr == nil && os.SameFile(shim, exe)
+}
+
 // isProgram reports whether path names the program name, with or without
 // Windows' .exe.
-// RunsAsGoShim reports whether a process whose argv[0] is arg0 runs as the go
-// shim, which is ddto's executable named go.
-func RunsAsGoShim(arg0 string) bool { return isProgram(arg0, "go") }
-
 func isProgram(path, name string) bool {
 	base := filepath.Base(path)
 	if runtime.GOOS == "windows" {
@@ -423,7 +454,7 @@ func goShimGoCommand(self, toolchain string, command []string) ([]string, *modul
 		if err := goRunExecutor(env, rest); err != nil {
 			return nil, nil, err
 		}
-		program, err := quoteToolWords([]string{self, GoShimExecMode})
+		program, err := quoteToolWords(selfCommand(self, GoShimExecMode))
 		if err != nil {
 			return nil, nil, err
 		}

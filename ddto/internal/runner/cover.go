@@ -137,7 +137,7 @@ func toolCommand(executable, wrapper, overlay, mode string) (string, error) {
 	if wrapper != "" {
 		return quoteToolWords([]string{wrapper, executable, mode, overlay})
 	}
-	return quoteToolWords([]string{executable, "tool-overlay", mode, overlay})
+	return quoteToolWords(selfCommand(executable, "tool-overlay", mode, overlay))
 }
 
 // Match only the packages whose regular sources changed. Test files are not

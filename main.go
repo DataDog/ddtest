@@ -19,11 +19,12 @@ func main() {
 	os.Exit(run(executeCommand))
 }
 
-// dispatch hands ddtest instrument to ddto, which instruments Go tests, as
-// well as the modes in which ddto starts this executable again. ddto runs
-// before ddtest sets anything and exits: it keeps go test's arguments,
-// output, environment and exit status. ddtest's own commands return, with
-// the environment that the process received.
+// dispatch hands ddtest instrument to ddto, which instruments Go tests and
+// also starts this executable again as ddtest instrument, and the go shim
+// that ddto makes of this executable. ddto runs before ddtest sets anything
+// and exits: it keeps go test's arguments, output, environment and exit
+// status. ddtest's own commands return, with the environment that the
+// process received.
 func dispatch(args []string) {
 	if ddto.Handles(args, "instrument") {
 		ddto.Main(args, "instrument")

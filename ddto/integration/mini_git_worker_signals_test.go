@@ -46,7 +46,7 @@ func TestMiniGitWorkerStopsOnInterrupt(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(state, "used"), nil, 0600); err != nil {
 				t.Fatal(err)
 			}
-			cmd := exec.Command(driver, "ci-git-worker", state, "cli-runtime", "1m")
+			cmd := exec.Command(driver, driverArgs(driver, []string{"ci-git-worker", state, "cli-runtime", "1m"})...)
 			cmd.Dir = dir
 			cmd.Env = append(testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL,
 				"DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", "DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=true", "DD_GIT_REPOSITORY_URL=", "DD_GIT_COMMIT_SHA=",

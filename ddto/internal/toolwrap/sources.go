@@ -22,8 +22,9 @@ const wrapperModule = "ddtesttoolexec"
 
 // Sources returns the wrapper executable's module, by file name, and its key:
 // a digest of every file that ddto would build. prefix starts ddto's error
-// messages and is part of the key, as is the version that it names.
-func Sources(prefix string) (files map[string][]byte, key string) {
+// messages and is part of the key, as is the version that it names; so is
+// command, the words before tool-overlay when the wrapper runs ddto.
+func Sources(prefix, command string) (files map[string][]byte, key string) {
 	files = map[string][]byte{
 		// The oldest language version that ddto supports.
 		"go.mod": []byte("module " + wrapperModule + "\n\ngo 1.25\n"),
@@ -49,9 +50,10 @@ func Sources(prefix string) (files map[string][]byte, key string) {
 		digest.Write([]byte(name + "\x00" + strconv.Itoa(len(files[name])) + "\x00"))
 		digest.Write(files[name])
 	}
-	digest.Write([]byte(mainSource + "\x00" + prefix))
+	digest.Write([]byte(mainSource + "\x00" + prefix + "\x00" + command))
 	key = hex.EncodeToString(digest.Sum(nil))
-	files["main.go"] = []byte(mainSource + "\nconst (\n\tkey    = " + strconv.Quote(key) + "\n\tprefix = " + strconv.Quote(prefix) + "\n)\n")
+	files["main.go"] = []byte(mainSource + "\nconst (\n\tkey     = " + strconv.Quote(key) + "\n\tprefix  = " + strconv.Quote(prefix) +
+		"\n\tcommand = " + strconv.Quote(command) + "\n)\n")
 	return files, key
 }
 
@@ -67,6 +69,6 @@ import (
 )
 
 func main() {
-	os.Exit(toolwrap.Main(os.Args[1:], key, prefix))
+	os.Exit(toolwrap.Main(os.Args[1:], key, prefix, command))
 }
 `

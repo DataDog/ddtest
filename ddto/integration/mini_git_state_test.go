@@ -48,7 +48,7 @@ func runGitWorker(t *testing.T, dir, driver, input string, env ...string) string
 			t.Fatal(err)
 		}
 	}
-	cmd := exec.Command(driver, "ci-git-worker", state)
+	cmd := exec.Command(driver, driverArgs(driver, []string{"ci-git-worker", state})...)
 	cmd.Dir = dir
 	cmd.Env = append(testEnv(env...), "PWD="+dir)
 	if input != "" {

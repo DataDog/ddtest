@@ -5,11 +5,14 @@
 //
 //	go run ./scripts/release [-version v1.2.3] [-o dist] [-target linux/amd64,darwin/arm64]
 //	go run ./scripts/release -version v1.2.3 -stamp
-//	go run ./scripts/release -main .. -name ddtest -ldflags "-X …" -o ../dist
+//	go run ./scripts/release -main .. -name ddtest -command instrument -ldflags "-X …" -o ../dist
 //
 // -main builds another program that runs ddto, such as ddtest, whose main
 // package is in that directory: it carries the same runtime and wrapper, and
 // its executables are named -name-GOOS-GOARCH, linked with -ldflags too.
+// -command names the program's command that runs ddto, such as instrument:
+// the tool wrapper that the executables carry runs ddto's tool-overlay as
+// that command.
 //
 // -version sets internal/version's Number for the build, through -overlay:
 // the executables, their wrapper and the runtime they carry all report it,
@@ -60,12 +63,13 @@ func main() {
 	program := flag.String("main", "", "directory of the main package to build; empty builds ./cmd/ddto")
 	name := flag.String("name", "ddto", "name of the executables, before -GOOS-GOARCH")
 	ldflags := flag.String("ldflags", "", "linker flags added to -s -w")
+	command := flag.String("command", "", "the -main program's command that runs ddto, such as instrument")
 	flag.Parse()
 	var err error
 	if *stamp {
 		err = stampCheckout(*tag)
 	} else {
-		err = release(*out, strings.Split(*list, ","), *tag, executable{dir: *program, name: *name, ldflags: *ldflags})
+		err = release(*out, strings.Split(*list, ","), *tag, executable{dir: *program, name: *name, ldflags: *ldflags, command: *command})
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "release:", err)
@@ -98,7 +102,7 @@ func stampCheckout(tag string) error {
 // executable is the program that a release builds: its main package's
 // directory, ddto's own by default, the name of its executables and the
 // linker flags added to -s -w.
-type executable struct{ dir, name, ldflags string }
+type executable struct{ dir, name, ldflags, command string }
 
 func release(out string, platforms []string, tag string, program executable) error {
 	root, err := moduleRoot()
@@ -320,7 +324,7 @@ func build(root, temp, out, goos, goarch, prefix string, overlay map[string]stri
 	if err := os.RemoveAll(src); err != nil {
 		return "", err
 	}
-	files, _ := toolwrap.Sources(prefix)
+	files, _ := toolwrap.Sources(prefix, program.command)
 	for name, data := range files {
 		path := filepath.Join(src, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {

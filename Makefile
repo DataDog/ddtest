@@ -28,7 +28,7 @@ run:
 # gives them ddtest's version. It takes SemVer, so a version such as
 # pre-release-<sha> becomes v0.0.0-pre-release-<sha>. The release also holds
 # the install scripts and the SHA256SUMS that they check the executables with.
-RELEASE_BUILD = go -C ddto run ./scripts/release -main .. -name ddtest -version $(if $(filter v%,$(VERSION)),$(VERSION),v0.0.0-$(VERSION)) -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)" -o ../dist
+RELEASE_BUILD = go -C ddto run ./scripts/release -main .. -name ddtest -command instrument -version $(if $(filter v%,$(VERSION)),$(VERSION),v0.0.0-$(VERSION)) -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)" -o ../dist
 SHA256SUM = $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
 release:
 	mkdir -p dist

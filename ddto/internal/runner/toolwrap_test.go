@@ -44,7 +44,7 @@ func testGoEnvironment(t *testing.T) *goEnvironment {
 }
 
 func toolWrapperKey() string {
-	_, key := toolwrap.Sources(version.BuildLogPrefix)
+	_, key := toolwrap.Sources(version.BuildLogPrefix, "")
 	return key
 }
 

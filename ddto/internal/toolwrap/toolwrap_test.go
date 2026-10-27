@@ -39,7 +39,7 @@ func TestConstantsMatchTheirOwners(t *testing.T) {
 // The wrapper's module holds every source file of this package but the one
 // that embeds them, as they are, and a main package with its key and prefix.
 func TestSources(t *testing.T) {
-	files, key := toolwrap.Sources("prefix")
+	files, key := toolwrap.Sources("prefix", "")
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,11 @@ func TestSources(t *testing.T) {
 	if main := string(files["main.go"]); !strings.Contains(main, strconv.Quote(key)) || !strings.Contains(main, strconv.Quote("prefix")) {
 		t.Errorf("main.go lacks the key or the prefix:\n%s", main)
 	}
-	if _, other := toolwrap.Sources("other prefix"); other == key || len(key) != 64 {
+	// The program's command that runs ddto changes the wrapper too.
+	if _, other := toolwrap.Sources("prefix", "instrument"); other == key {
+		t.Fatal("the command does not change the key")
+	}
+	if _, other := toolwrap.Sources("other prefix", ""); other == key || len(key) != 64 {
 		t.Errorf("key %q does not depend on the prefix", key)
 	}
 }

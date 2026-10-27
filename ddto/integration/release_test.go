@@ -37,7 +37,7 @@ func releaseExecutable(t *testing.T) string {
 func ddtestReleaseExecutable(t *testing.T) string {
 	t.Helper()
 	return buildRelease(t, &ddtestReleaseBuild, "ddtest", testEnv("GOFLAGS=", "GOTOOLCHAIN=auto"),
-		"-main", "..", "-name", "ddtest", "-ldflags", "-X github.com/DataDog/ddtest/internal/buildinfo.Version="+releaseTag)
+		"-main", "..", "-name", "ddtest", "-command", "instrument", "-ldflags", "-X github.com/DataDog/ddtest/internal/buildinfo.Version="+releaseTag)
 }
 
 func buildRelease(t *testing.T, build *releaseBuildOnce, name string, env []string, flags ...string) string {

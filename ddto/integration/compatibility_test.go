@@ -190,17 +190,11 @@ func runsOrchestrionReference(name string, args []string) bool {
 }
 
 // driverArgs returns the arguments of a command of name: the driver, ddtest,
-// runs ddto as ddtest instrument. The modes in which ddto starts its own
-// executable stay as they are, as ddto runs them.
+// runs ddto as ddtest instrument, which also runs the modes in which ddto
+// starts its own executable again, as ddto does.
 func driverArgs(name string, args []string) []string {
 	if name == "" || name != sharedDriverBuild.path {
 		return args
-	}
-	if len(args) > 0 {
-		switch args[0] {
-		case "test-exec", "go-shim-exec", "ci-git-worker", "tool-overlay":
-			return args
-		}
 	}
 	return append([]string{"instrument"}, args...)
 }

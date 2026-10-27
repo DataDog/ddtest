@@ -44,9 +44,10 @@ const (
 
 // Main runs the wrapper executable, given its arguments after its name: ddto's
 // executable, the tool mode, the plan and the tool's command line. Tool
-// invocations that need the plan run ddto's tool-overlay; the others run the
-// tool, as ddto would. prefix starts ddto's error messages.
-func Main(args []string, key, prefix string) int {
+// invocations that need the plan run ddto's tool-overlay, after command, the
+// words of the program's command that runs ddto, such as instrument; the
+// others run the tool, as ddto would. prefix starts ddto's error messages.
+func Main(args []string, key, prefix, command string) int {
 	if len(args) == 1 && args[0] == KeyFlag {
 		fmt.Println(key)
 		return 0
@@ -64,7 +65,7 @@ func Main(args []string, key, prefix string) int {
 	if !NeedsPlan(mode, tool, os.Getenv("TOOLEXEC_IMPORTPATH")) {
 		return ExecNative(tool, prefix)
 	}
-	return runDDTO(ddto, append([]string{"tool-overlay", mode, plan}, tool...))
+	return runDDTO(ddto, append(append(strings.Fields(command), "tool-overlay", mode, plan), tool...))
 }
 
 // ValidMode validates the private tool entrypoint's mode before dispatch.

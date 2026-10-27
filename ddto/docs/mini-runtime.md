@@ -109,7 +109,7 @@ and starts commands through `os/exec`, after the restore.
 
 A `go test -exec` program, or the `go_$GOOS_$GOARCH_exec` helper that Go uses
 when cross-compiling, starts before the test binary. `ddtest instrument` runs it through
-`ddtest test-exec`, which restores the caller's values first; Go already
+`ddtest instrument test-exec`, which restores the caller's values first; Go already
 disables result caching for such runs. `ddtest instrument` looks a program name up as Go
 does, on the caller's `PATH` from Go's working directory. For a program that Go
 could not run, or would run through a path relative to that directory, as
@@ -181,7 +181,7 @@ after preparation; each process then reads the files itself.
 
 Each test process also used to read the checkout's Git metadata, upload the
 repository's missing commits and, with impacted tests, discover the base branch
-and compute the diff. Now `ddtest instrument` starts a worker, `ddtest ci-git-worker`, in the
+and compute the diff. Now `ddtest instrument` starts a worker, `ddtest instrument ci-git-worker`, in the
 invocation's directory while it prepares the build. The worker reads the Git
 metadata before `go test` starts and hands it, through `DDTEST_INSTRUMENT_GIT_STATE`, to the
 test processes of the same checkout, which then run no Git command for it.
