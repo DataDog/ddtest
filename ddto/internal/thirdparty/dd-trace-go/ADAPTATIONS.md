@@ -2443,7 +2443,7 @@ Update the generated library list with upstream and retain
 
 ## Deferred delivery and goleak checkpoints
 
-The POC's `internal/cidelivery` owns the optional
+ddto's `internal/cidelivery` owns the optional
 `DD_CIVISIBILITY_DEFERRED_DELIVERY` coordinator. The port integrates with it in
 `integrations/civisibility.go`, `civisibility_features.go`, `gotesting/testing.go`,
 the coverage/log writers and the telemetry ticker. Test activity begins
@@ -2548,7 +2548,7 @@ counters synchronized when changing the sink; a data race invalidates the
 `wire-B/event` result. `TestCommonMetadataTransportCountsConcurrentSends`
 checks both totals during ordinary test runs, including `-race` runs.
 
-## POC-owned code outside this source subset
+## ddto's own code outside this source subset
 
 `internal/minitracer/span.go` encodes the high eight trace-ID bytes directly with
 `hex.EncodeToString`. This retains the same 16-character, zero-padded lowercase
@@ -2557,7 +2557,7 @@ checks both totals during ordinary test runs, including `-race` runs.
 The front-end also prunes known dependency queries, decodes package JSON from
 stdout, reserves rewritten-source buffer capacity and reuses the validated
 Testify AST within a preparation. See the
-[performance guide](../../../docs/performance.md) for those POC-owned paths and
+[performance guide](../../../docs/performance.md) for those paths of ddto's own and
 their separate build-time measurements.
 
 `internal/minitracer/batch.go` creates a timeout context only on a waiting or
@@ -2948,7 +2948,7 @@ and benchmarks bind their own event identity. Go retains cancellation ownership;
 isolated process-retry children retain their identity-free context contract.
 SDK-free binaries skip binding with zero allocations.
 
-The SDK compiler mirror lives in the POC's `internal/instrument/sdk_mirror.go`
+The SDK compiler mirror lives in ddto's `internal/instrument/sdk_mirror.go`
 and targets the original SDK module's inputs, leaving its APM parentage and
 delivery intact. Mini captures final fields under the SDK lock and enqueues a
 detached copy after unlock. State belongs to `SpanContext` to survive pooling.

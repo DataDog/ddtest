@@ -10,7 +10,7 @@ versions.
 Gin/Chi upstream versions and SHAs, expected binaries and edit signatures.
 Gin/Chi source is obtained from the matching Go module during setup; only their
 prepared `go.mod.template` and `go.sum` are stored here. The Testify fixtures are
-POC-owned sources and use the same comparison dependency versions.
+ddto's own sources and use the same comparison dependency versions.
 
 `@POC_ROOT@` is replaced with the current checkout's quoted absolute path.
 The external fixture's `example.com/testkit` replacement stays relative to that

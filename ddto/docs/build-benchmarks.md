@@ -10,7 +10,7 @@ recorded Native and Orchestrion observations without changing their values.
 
 This repository keeps each dataset's reports. The raw data of
 `20261016-linux-go1.27.1`, its CSV, compressed JSON, manifests and the copies of
-the scripts that produced them, stays in the POC's repository, at the commit
+the scripts that produced them, stays in ddto's original repository, at the commit
 that last recorded it; its `archive.json`, kept here, lists the SHA-256 of each
 file. Fetch it before you regenerate or refresh from it:
 
@@ -27,7 +27,7 @@ cp -Rn /var/tmp/dd-ci-testing-poc/docs/results/20261016-linux-go1.27.1/. \
   docs/results/20261016-linux-go1.27.1/
 ```
 
-That dataset was recorded in the POC's repository, so its input revisions are
+That dataset was recorded in ddto's original repository, so its input revisions are
 commits there: refresh Mini from it in that checkout, or record a new baseline
 of every variant here.
 
@@ -36,7 +36,7 @@ of every variant here.
 Use the baseline directory linked from the comparison tables. The runner checks
 its Go version and CPU affinity, and restores the original project sources and
 module templates. The original input revision must be available in local Git
-history. Keep the POC checkout unchanged until collection finishes.
+history. Keep the checkout unchanged until collection finishes.
 Use a new artifact directory on disk, outside the repository and `/tmp`.
 
 ```sh

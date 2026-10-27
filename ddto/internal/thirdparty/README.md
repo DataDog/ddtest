@@ -12,7 +12,7 @@ with upstream and local SHA-256 hashes.
 | philhofer/fwd | `fwd/` | v1.2.0 at `20a13a1f6b7cb47a126dcb75152e21e1383bbaba` |
 | golang/sys | `xsys/` | v0.47.0 at `9e7e939dcafac07e8ab4cffa6e5fc74908413f00` |
 
-The POC's implementation stays in `internal/minitracer`, `internal/citransport`,
+ddto's implementation stays in `internal/minitracer`, `internal/citransport`,
 `internal/instrument`, and `internal/runner`. Local extensions that need access
 to an upstream package's private state remain beside that package and are
 marked `local` in its manifest, so they are never mistaken for upstream files.

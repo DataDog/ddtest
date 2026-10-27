@@ -26,13 +26,13 @@ also the base of the incorporated CI source. The exact module version is owned
 by [`internal/version`](../internal/version/version.go). Orchestrion is pinned
 to `v1.13.2-0.20260917114356-5c24783fcd76`; the fixture loads
 `gotesting/orchestrion.yml` from that SDK checkout, including its Testify rule.
-Comparing only the POC's `sdk` and `mini` backends would hide a transformation
+Comparing only ddto's `sdk` and `mini` runtimes would hide a transformation
 missing from both.
 
 ```mermaid
 flowchart LR
     Fixture["Same fixture and<br/>policy responses"] --> SDK["Orchestrion + pinned<br/>SDK"]
-    Fixture --> Mini["POC + Mini"]
+    Fixture --> Mini["ddto + Mini"]
     SDK --> Capture["Loopback events and<br/>payloads"]
     Mini --> Capture
     Capture --> Compare["Counts, ancestry and<br/>CI attributes"]

@@ -38,7 +38,7 @@ flowchart TB
 ```
 
 Orchestrion is the reference instrumenter in differential tests and can also
-[share a build with Mini](orchestrion.md) to instrument application code. The POC
+[share a build with Mini](orchestrion.md) to instrument application code. ddto
 implements only the testing hooks: its front end prepares one overlay per
 invocation, and its compiler processes make only selected source edits. In
 combined builds, Orchestrion owns the application instrumentation engine.

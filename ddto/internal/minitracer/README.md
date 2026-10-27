@@ -1,6 +1,6 @@
 # Native CI event client
 
-This is POC-owned code, separate from the SDK extraction. The CI wire schema
+This is ddto's own code, separate from the SDK extraction. The CI wire schema
 is adapted from `ddtrace/tracer/civisibility_tslv.go` at the base recorded in
 [`../thirdparty/dd-trace-go/SOURCE.json`](../thirdparty/dd-trace-go/SOURCE.json).
 Its original Apache-2.0 license and notices are retained there.

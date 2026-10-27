@@ -215,7 +215,7 @@ startup.
 ## Compatibility checks
 
 `TestCIVisibilityTestifyParity` compares actual events against the unmodified
-SDK instrumented by Orchestrion, with a separate pass/skip control for the POC
+SDK instrumented by Orchestrion, with a separate pass/skip control for ddto
 SDK backend. Its child binaries use `-race -covermode=atomic -coverpkg=./...`.
 
 | Area | Cases |

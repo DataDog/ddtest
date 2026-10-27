@@ -23,7 +23,7 @@ directory and use forward slashes.
 | `source_path`, `source_sha256` | Original upstream path and bytes at the recorded base |
 | `role: upstream` | A copied file that matches upstream |
 | `role: adapted` | A derived file with local changes |
-| `role: local` | POC-owned code, test or documentation beside the upstream package |
+| `role: local` | ddto's own code, test or documentation beside the upstream package |
 | `licenses` | License files that must remain present and recorded |
 | `feature_ports` | Separately frozen feature PRs, original paths/hashes and local destinations; select their SHA with `--source-commit` |
 | `additional_sources` | Upstream inputs used for an extraction or schema outside a direct file copy |
@@ -99,7 +99,7 @@ so update `TESTS.json` first.
 
 ## Updating the SDK base
 
-Prepare an isolated POC worktree and an update directory outside it. The examples
+Prepare an isolated worktree and an update directory outside it. The examples
 below use a Unix shell, Git and tar. On Windows, use Git Bash or create equivalent
 archives with your Git client.
 
@@ -506,7 +506,7 @@ with a Testify version update. Add the version to
 `TestTestifySupportedVersionsAndNativeSemantics` and run the full Orchestrion
 comparison, including covered library/helpers, external callers, user overlays,
 GOFLAGS and both retry modes. Keep the SDK/Orchestrion reference independent of
-both POC backends. No Testify source is vendored into this repository.
+both of ddto's runtimes. No Testify source is vendored into this repository.
 
 `testifyContractVersion` in [`runner/testify.go`](../internal/runner/testify.go)
 versions compiler-side edits. Bump it when the transformation changes without

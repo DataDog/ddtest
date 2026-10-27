@@ -36,7 +36,7 @@ reporter and install span-copy hooks. Builds that need none of these features
 omit `-toolexec`, except for the Git worker's link signal when results may come
 from Go's test cache.
 
-The POC has no configuration engine or build daemon. Selecting a
+ddto has no configuration engine or build daemon. Selecting a
 module-declared Orchestrion tool lets Go build and cache that tool before the
 test build; Orchestrion owns any additional builds it needs for application
 weaving.
@@ -45,7 +45,7 @@ The ten SDK aspects are retained: M.Run, T.Run, F.Fuzz, B.Run, Fail, FailNow,
 formatted errors, formatted skips, SkipNow and Parallel. Formatting wraps the
 already formatted result, so String methods run once. The SDK's ownership
 marker keeps its existing name. Runtime retries, skip policies and finalization
-are owned by the selected runtime. The POC depends on its private hook ABI and
+are owned by the selected runtime. ddto depends on its private hook ABI and
 is intentionally version-pinned.
 
 Virtual test files anchor the runtime import without editing project
@@ -55,7 +55,7 @@ and, for a release executable, runtime sources described in
 [Mini runtime](mini-runtime.md#runtime-provisioning). Test-result
 caching remains Go's choice: explicitly select packages for result caching, and
 use `-count=1` when fresh CI events are required. `-work` preserves Go's own
-work directory, but the POC overlay is still removed, so overlays cannot be
+work directory, but ddto's overlay is still removed, so overlays cannot be
 kept for debugging.
 
 ## CI feature parity
@@ -69,7 +69,7 @@ reach the same original runner.
 
 ## Runtime checks
 
-The tests compile actual native, POC and Orchestrion binaries using the same
+The tests compile actual native, ddto and Orchestrion binaries using the same
 fixture and temporary module graph. Adding Orchestrion may upgrade transitive
 modules through Go MVS; that graph is used by both instrumented variants, and
 an assertion verifies the SDK remains the pinned release. The reference YAML is

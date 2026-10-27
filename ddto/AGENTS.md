@@ -5,7 +5,7 @@ project's tests to Datadog Test Optimization (CI Visibility), and choose its
 settings for that project. The last section is for agents changing this
 repository.
 
-`ddtest instrument` is an experimental proof of concept. It wraps `go test`: it prepares
+`ddtest instrument` is experimental. It wraps `go test`: it prepares
 temporary build overlays, lets Go compile and run the tests, and exits with
 Go's status. The CLI leaves no files of its own in the project, but, as with the
 SDK, the run can still change it. With `-mod=mod`, Go updates `go.mod` and

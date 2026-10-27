@@ -113,7 +113,7 @@ logical overlay entry still exists for every selected package, so metadata and
 conflict checks remain correct, and memory, overlay entries and package
 discovery still grow with package count.
 
-This sharing ends when the plan is removed. The POC relies on Go's caches and
+This sharing ends when the plan is removed. ddto relies on Go's caches and
 keeps no persistent cache of instrumented binaries or prepared overlays.
 
 Preparation uses one `go env -json` call to check the toolchain and obtain the
@@ -487,7 +487,7 @@ GOMAXPROCS=4 go test -p=4 -c -o ./out/orchestrion/ \
   -toolexec="/path/to/orchestrion toolexec" -ldflags=-w ./...
 ```
 
-For a controlled comparison, give the Mini fixture an explicit POC requirement
+For a controlled comparison, give the Mini fixture an explicit requirement of this module
 and the SDK fixtures the pinned SDK. This keeps provisioning out of the timed
 builds; ordinary CLI use can provide Mini automatically. Orchestrion must load
 the SDK's testing-only configuration. Match the native project's effective

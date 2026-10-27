@@ -497,7 +497,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		if p.ImportPath == runtimePackage {
 			selectedRuntime = p
 			if runtime == SDK && (p.Module == nil || p.Module.Version != SDKVersion || p.Module.Replace != nil) {
-				return plan, fmt.Errorf("POC requires unmodified dd-trace-go %s", SDKVersion)
+				return plan, fmt.Errorf("--runtime=sdk requires unmodified dd-trace-go %s", SDKVersion)
 			}
 			if debug != nil && p.Module != nil {
 				debug.printf("runtime module_version=%q replacement=%t", p.Module.Version, p.Module.Replace != nil)

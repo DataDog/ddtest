@@ -142,11 +142,11 @@ the corresponding compiler edits change.
 The SDK guard validates private API signatures. When changing the supported SDK,
 check the CI environment reader, both configuration getters, span mirror
 anchors and their consumers. Keep the cache transition tests. The guards belong
-to the POC's build driver; the runtime's native context binding is recorded in
+to ddto's build driver; the runtime's native context binding is recorded in
 the [SDK adaptation record](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md).
 
 Orchestrion retains its own configuration, pin checks and instrumentation
-behavior. Keep its configuration valid for the selected SDK. The POC leaves
+behavior. Keep its configuration valid for the selected SDK. ddto leaves
 the CI advice in `orchestrion.yml` and filters no individual application
 aspects.
 
