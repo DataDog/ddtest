@@ -509,7 +509,7 @@ func webdriverIOCapabilityNumber(index string) string {
 // installedFeatureLimitations reads the installed packages, before any edit or
 // run, for features the tracer is known not to apply, so the plan names them
 // up front. Only WebdriverIO with jasmine-core <6 is known today.
-func installedFeatureLimitations(root, frameworkName string) map[string]string {
+func installedFeatureLimitations(root, frameworkName, tracer string) map[string]string {
 	if frameworkName != "webdriverio" {
 		return nil
 	}
@@ -536,7 +536,7 @@ func installedFeatureLimitations(root, frameworkName string) map[string]string {
 	config := &framework.WebdriverIOConfig{Framework: "jasmine", JasmineCore: version}
 	limitations := map[string]string{}
 	for _, feature := range webdriverIOJasmineLimitedFeatures {
-		if reason := webdriverIOJasmineLimitation(config, feature, ""); reason != "" {
+		if reason := webdriverIOJasmineLimitation(config, feature, tracer); reason != "" {
 			limitations[feature] = reason
 		}
 	}

@@ -269,7 +269,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		}
 	}
 
-	plan.KnownLimitations = installedFeatureLimitations(t.repositoryRoot, name)
+	t.setPlanTracer(plan, plan.Tracer)
 	if plan.Site == "" {
 		plan.Site = "datadoghq.com"
 	}
@@ -343,7 +343,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			// don't pin a newer major themselves.
 			if !options.ExplicitVersion && t.projectTracer == "" {
 				if version := t.ciRuntimeTracer(ctx); version != "" {
-					plan.Tracer = version
+					t.setPlanTracer(plan, version)
 					needs += " For manual CI edits use js-tracer-version: " + version + " (every detected CI Node runtime supports it) and pass --tracer-version " + version + " to validation."
 				}
 			}
@@ -455,7 +455,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			}
 		}
 		result.Checks = append(result.Checks, onboard.WorkflowCheck{Name: "preflight_preparation", Status: "passed", Reason: fmt.Sprintf("Verified preflight reused: %t. Test execution is always fresh.", reused)})
-		plan.Tracer = selected
+		t.setPlanTracer(plan, selected)
 		if !onboard.SupportsAutomaticSetup(name) {
 			result.Location = "CI initialization"
 			result.RequiredInput = []string{"framework-specific CI loader/hook integration using the selected tracer release " + selected}
@@ -559,7 +559,8 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		onboard.AssignConfigurationIDs(&updated)
 		scope = updated
 		ctx = onboard.WithWorkflowSetupScope(ctx, t.repositoryRoot, scope)
-		plan.Scope, plan.Tracer = scope, selected
+		plan.Scope = scope
+		t.setPlanTracer(plan, selected)
 		t.workflowScope = &scope
 		t.tracerVersion = selected
 		// Prepare once more to bind installation commands to the exact release.
@@ -573,7 +574,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		prepared.workflowRun = t.workflowRun
 		t = prepared
 	}
-	plan.Tracer = t.tracerVersion
+	t.setPlanTracer(plan, t.tracerVersion)
 	checkpoint.Engine = engineIdentity()
 	checkpoint.Fingerprint, checkpoint.Node, checkpoint.FactsSHA256, checkpoint.Tracer, checkpoint.Plan = plan.Fingerprint, t.workflowNodeVersion(), factsHash, plan.Tracer, plan
 	// Cache only successful selection, not failed preflight or a test verdict.
@@ -624,7 +625,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	executed = true
 	plan.CIRuntime = validation.CIRuntime
 	if validation.Selection != nil {
-		plan.Tracer = validation.Selection.Version
+		t.setPlanTracer(plan, validation.Selection.Version)
 	}
 	var runtimeMetadata *platform.MetadataError
 	if errors.As(runErr, &runtimeMetadata) {
@@ -1208,4 +1209,11 @@ func refreshScopeCheck(checks []onboard.WorkflowCheck, scope *onboard.Validation
 		}
 	}
 	return checks
+}
+
+// setPlanTracer records the selected tracer and recomputes the known
+// limitations, which depend on it: a release with a tracer fix lifts them.
+func (t *Testdrive) setPlanTracer(plan *onboard.ExecutionPlan, tracer string) {
+	plan.Tracer = tracer
+	plan.KnownLimitations = installedFeatureLimitations(t.repositoryRoot, plan.Framework, tracer)
 }
