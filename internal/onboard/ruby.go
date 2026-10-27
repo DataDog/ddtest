@@ -77,6 +77,11 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		if workflowExpression.MatchString(step.Run) {
 			return unresolvedCommand("Ruby command expression was not resolved; validate its actual entry point with --command: " + step.Run)
 		}
+		// Dynamic shell syntax hides what a repository script runs or which
+		// bundle and Ruby options later steps inherit, so keep it visible.
+		if parseErr != nil && (strings.Contains(step.Run, "./") || strings.HasPrefix(strings.TrimSpace(step.Run), "bin/") || strings.Contains(step.Run, "BUNDLE_GEMFILE") || strings.Contains(step.Run, "RUBYOPT")) {
+			return unresolvedCommand("Repository script or Ruby setup could not be resolved statically; validate it explicitly with --command: " + step.Run)
+		}
 		if parseErr == nil && slices.ContainsFunc(parts, rubyRepositoryScript) {
 			return unresolvedCommand("Repository script may run " + framework + " tests; validate its actual entry point with --command: " + step.Run)
 		}
@@ -219,7 +224,8 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 						finding.Status, finding.Code = "excluded", "excluded_runtime"
 						finding.Reason = "The Datadog action is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."
 					}
-					if reason := rubyBootstrapProblem(workflow, job, step, row, framework); reason != "" {
+					// An explicitly uninstrumented row has no preload to lose.
+					if reason := rubyBootstrapProblem(workflow, job, step, row, framework); finding.Status != "excluded" && reason != "" {
 						finding.Status, finding.Reason = "inconclusive", reason
 					}
 					result.Jobs = append(result.Jobs, finding)

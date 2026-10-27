@@ -1,6 +1,8 @@
 package onboard
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,7 +11,7 @@ import (
 )
 
 func TestRubyRepositoryScriptsStayInRequiredScope(t *testing.T) {
-	for _, command := range []string{"./ci/run", "sh ci/run.sh", "bash ./script/cibuild", "ruby ci/run.rb", "bundle exec ruby ci/run.rb", "bin/ci", "./bin/ci"} {
+	for _, command := range []string{"./ci/run", "sh ci/run.sh", "bash ./script/cibuild", "ruby ci/run.rb", "bundle exec ruby ci/run.rb", "bin/ci", "./bin/ci", `./ci/run "$(nproc)"`} {
 		root := rubyWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: bundle exec rspec spec/unit\n      - run: "+command+"\n")
 		scope, err := DiscoverValidationScope(root, "rspec")
 		require.NoError(t, err)
@@ -21,8 +23,14 @@ func TestRubyRepositoryScriptsStayInRequiredScope(t *testing.T) {
 		require.Equal(t, "inconclusive", ci.Jobs[1].Status)
 		require.Contains(t, ci.Jobs[1].Reason, "Repository script")
 	}
-	root := rubyWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: bundle exec rspec\n      - run: echo done\n      - run: bin/rubocop\n")
+	// A dynamic setup step before the tests may choose their bundle.
+	root := rubyWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: echo \"BUNDLE_GEMFILE=gemfiles/$(cat .gemfile)\" >> \"$GITHUB_ENV\"\n      - run: bundle exec rspec\n")
 	scope, err := DiscoverValidationScope(root, "rspec")
+	require.NoError(t, err)
+	require.Len(t, scope.Unresolved, 1)
+	require.Contains(t, scope.Unresolved[0], "BUNDLE_GEMFILE")
+	root = rubyWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: bundle exec rspec\n      - run: echo done\n      - run: bin/rubocop\n")
+	scope, err = DiscoverValidationScope(root, "rspec")
 	require.NoError(t, err)
 	require.Empty(t, scope.Unresolved, "lint binstubs and plain commands are not test wrappers")
 }
@@ -96,6 +104,22 @@ func TestRubyActionLanguagesResolveMatrixExpressions(t *testing.T) {
 		statuses[job.Runtime] = job.Status
 	}
 	require.Equal(t, map[string]string{"3.4": "not checked", "head": "excluded"}, statuses)
+
+	// Step Ruby options still break the instrumented row, but the excluded row
+	// has no preload to lose.
+	withOptions := rubyWorkflowFixture(t, strings.Replace(mustRead(t, skipped), "      - run: bundle exec rspec\n", "      - run: bundle exec rspec\n        env: {RUBYOPT: -W0}\n", 1))
+	statuses = map[string]string{}
+	for _, job := range RubyCIConfiguration(withOptions, "rspec").Jobs {
+		statuses[job.Runtime] = job.Status
+	}
+	require.Equal(t, map[string]string{"3.4": "inconclusive", "head": "excluded"}, statuses)
+}
+
+func mustRead(t *testing.T, root string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".github/workflows/test.yml"))
+	require.NoError(t, err)
+	return string(data)
 }
 
 // Ruby testdrive cannot validate configurations yet, so a configured workflow
