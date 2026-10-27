@@ -162,25 +162,26 @@ func TestResumeAlwaysExecutesNewPairAndStopsIdenticalFailures(t *testing.T) {
 		return finishValidation(out, root, completeValidationFixture("vitest"))
 	}
 	resume := ""
-	for attempt := 1; attempt <= 3; attempt++ {
+	// The second identical failure with unchanged inputs stops the retries.
+	for attempt := 1; attempt <= 2; attempt++ {
 		var output bytes.Buffer
 		require.Error(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json", Resume: resume}))
 		var result onboard.AgentResult
 		require.NoError(t, json.Unmarshal(output.Bytes(), &result))
 		require.NotNil(t, result.PlanSummary)
 		resume = result.RunID
-		if attempt == 3 {
+		if attempt == 2 {
 			require.Equal(t, "report_result", result.NextAction)
 			require.Empty(t, result.ResumeCommand)
 		} else {
 			require.Contains(t, result.ResumeCommand, "--resume")
 		}
 	}
-	require.Equal(t, 3, calls, "no test verdict can be reused")
+	require.Equal(t, 2, calls, "no test verdict can be reused")
 	drive.executor = workflowCheckExecutor{}
 	var output bytes.Buffer
 	require.NoError(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json", Resume: resume}))
-	require.Equal(t, 4, calls)
+	require.Equal(t, 3, calls)
 	path, err := checkpointPath(resume)
 	require.NoError(t, err)
 	require.NoFileExists(t, path)

@@ -23,14 +23,16 @@ func TestRepeatedFreshWorkflowStopsWithoutPilingUpCheckpoints(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    steps:\n      - run: custom-setup && npx vitest run\n")
 	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript"}
 	var id string
-	for i := 0; i < maxWorkflowAttempts; i++ {
+	// The identical deterministic failure stops on its first unchanged retry.
+	const attempts = 2
+	for i := 0; i < attempts; i++ {
 		var out bytes.Buffer
 		require.Error(t, drive.Workflow(t.Context(), &out, WorkflowOptions{Apply: true, Format: "json"}))
 		var result onboard.AgentResult
 		require.NoError(t, json.Unmarshal(out.Bytes(), &result))
 		require.NotContains(t, result.NextCommand, "--apply", "unresolved scope cannot progress by repeating apply")
 		require.Empty(t, result.ResumeCommand)
-		if i < maxWorkflowAttempts-1 {
+		if i < attempts-1 {
 			require.Contains(t, result.NextCommand, "--instructions", "only the read-only fallback can progress")
 		} else {
 			require.Empty(t, result.NextCommand)
@@ -39,9 +41,10 @@ func TestRepeatedFreshWorkflowStopsWithoutPilingUpCheckpoints(t *testing.T) {
 			id = result.RunID
 		}
 		require.Equal(t, id, result.RunID)
-		if i == maxWorkflowAttempts-1 {
+		if i == attempts-1 {
 			require.Equal(t, "report_result", result.NextAction)
 			require.Empty(t, result.ResumeCommand)
+			require.Contains(t, result.Needs, "failed exactly like the previous one")
 		}
 	}
 	path, err := checkpointPath(id)
@@ -51,7 +54,22 @@ func TestRepeatedFreshWorkflowStopsWithoutPilingUpCheckpoints(t *testing.T) {
 	require.Len(t, entries, 1)
 	checkpoint, err := readCheckpoint(id)
 	require.NoError(t, err)
-	require.Equal(t, maxWorkflowAttempts, checkpoint.Attempts)
+	require.Equal(t, attempts, checkpoint.Attempts)
+}
+
+func TestOnlyIdenticalFailuresStopBeforeTheAttemptBound(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
+	checkpoint, err := openCheckpoint("", root, "rspec", "", false, true)
+	require.NoError(t, err)
+	require.NoError(t, checkpoint.recordFailure("fingerprint", "", "validation_incomplete", "blocker A"))
+	require.False(t, checkpoint.repeated, "a first failure is never a repeat")
+	require.NoError(t, checkpoint.recordFailure("fingerprint", "", "validation_incomplete", "blocker B"))
+	require.False(t, checkpoint.repeated, "a different blocker means the retry changed something")
+	require.NoError(t, checkpoint.recordFailure("fingerprint", "", "validation_incomplete", "blocker B"))
+	require.True(t, checkpoint.repeated)
+	require.True(t, transientWorkflowFailure("workflow_busy"), "waiting for a busy checkout repeats unchanged by design")
+	require.False(t, transientWorkflowFailure("validation_incomplete"))
 }
 
 func TestCheckpointStartupCleanupPreservesLiveAndUnrecognizedFiles(t *testing.T) {

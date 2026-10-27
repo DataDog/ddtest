@@ -104,7 +104,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			if checkpoint.FactsSHA256 == "" || (code != "facts_invalid" && code != "facts_refresh_required") {
 				checkpoint.Plan = result.Plan
 			}
-			if err := checkpoint.recordFailure(result.Fingerprint, factsHash, code); err != nil {
+			if err := checkpoint.recordFailure(result.Fingerprint, factsHash, code, result.Reason); err != nil {
 				result.Reason += "; checkpoint: " + err.Error()
 			}
 			result.RunID = checkpoint.RunID
@@ -171,10 +171,15 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.NextCommand = append([]string{}, recoveryCommand...)
 			}
 		}
-		if checkpoint != nil && checkpoint.Attempts >= maxWorkflowAttempts {
+		if checkpoint != nil && checkpoint.repeated && !transientWorkflowFailure(code) {
+			// A deterministic failure with unchanged inputs repeats on every rerun.
 			result.NextAction = "report_result"
 			result.NextCommand, result.ResumeCommand = nil, nil
-			result.Needs += " Three identical attempts made no progress; stop and report this blocker."
+			result.Needs += " This attempt failed exactly like the previous one with unchanged inputs, so rerunning cannot progress; stop and report this blocker."
+		} else if checkpoint != nil && checkpoint.Attempts >= maxWorkflowAttempts {
+			result.NextAction = "report_result"
+			result.NextCommand, result.ResumeCommand = nil, nil
+			result.Needs += " Three attempts with unchanged inputs made no progress; stop and report this blocker."
 		}
 		// A setup repair continues the workflow; a report or a user decision ends
 		// the turn and must carry the text to relay.

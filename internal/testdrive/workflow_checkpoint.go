@@ -42,6 +42,11 @@ type workflowCheckpoint struct {
 	// Failures keeps the codes of earlier stopped attempts for this input, so
 	// a later passing run still discloses that it took retries.
 	Failures []string `json:"failures,omitempty"`
+	// FailureSignature identifies the last failure's code and reason.
+	FailureSignature string `json:"failure_signature,omitempty"`
+	// repeated reports that this attempt failed exactly like the previous
+	// one for the same inputs.
+	repeated bool
 
 	// The dev dependencies a setup_dependencies_missing handoff prescribed; their
 	// manifest and lockfile changes may be extended without --allow-dirty.
