@@ -183,7 +183,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		}
 		return errors.Join(fmt.Errorf("%s: %s", code, result.Reason), onboard.RenderAgentResult(output, result, options.Format))
 	}
-	if !supportsValidationFramework(name) || t.language != "javascript" {
+	if !supportsValidationFramework(name) || !t.lang().coordinated() {
 		result.NextCommand = nil
 		return fail("unsupported", "framework_unsupported", "Controlled validation is not available for this framework.", "Preserve its unsupported status; do not substitute a different framework.")
 	}

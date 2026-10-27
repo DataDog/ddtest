@@ -260,21 +260,8 @@ func releaseParts(version string) (int, int, bool) {
 // frameworkPreflight returns the selected framework's own prerequisite checks,
 // bound to t. A framework without them gets nil, never another framework's.
 func (t *Testdrive) frameworkPreflight() func(context.Context, io.Writer, *validationResult) error {
-	switch t.framework.Name() {
-	case "jest":
-		return t.checkJestPreflight
-	case "vitest":
-		return t.checkVitestPreflight
-	case "mocha":
-		return t.checkMochaPreflight
-	case "playwright":
-		return t.checkPlaywrightPreflight
-	case "cypress":
-		return t.checkCypressPreflight
-	case "cucumber":
-		return t.checkCucumberPreflight
-	case "webdriverio":
-		return t.checkWebdriverIOPreflight
+	if adapter, ok := pairedFrameworkNamed(t.framework.Name()); ok && adapter.preflight != nil {
+		return adapter.preflight(t)
 	}
 	return nil
 }
@@ -314,7 +301,7 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 // Full package/checkout scope coordination belongs to the configuration PR.
 // Until then, nested invocation must not certify CI it did not inspect.
 func checkConfigurationCIRuntimes(ctx context.Context, packageRoot, frameworkName string) onboard.RuntimeCheck {
-	check := onboard.CheckCIRuntimes(ctx, packageRoot, frameworkName)
+	check := frameworkCIRuntimes(ctx, packageRoot, frameworkName)
 	checkout := git.GetSourceRoot()
 	if checkout == "" {
 		return check

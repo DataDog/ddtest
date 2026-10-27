@@ -64,7 +64,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	original, copyRoot := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
-	if !t.checkOnly && (len(item.Prerequisites) > 0 || len(item.Services) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {
+	if t.lang().isolatesConfigurations() || !t.checkOnly && (len(item.Prerequisites) > 0 || len(item.Services) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {
 		parent, err := os.MkdirTemp("", "ddtest-configuration-")
 		if err != nil {
 			return result, err
@@ -147,6 +147,9 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		return result, err
 	}
 	t.configurationEnvironment = isolatedCIEnvironment(onboard.WithGitHubActionsDefaults(item.Environment), original, checkout)
+	if err := t.lang().prepareConfiguration(t, item, original, copyRoot); err != nil {
+		return result, err
+	}
 	t.executor = configurationExecutor{executor, t.configurationEnvironment}
 	directory, err := localSetupDirectory(copyRoot, item.Directory)
 	if err != nil {

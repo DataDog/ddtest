@@ -11,7 +11,12 @@ import (
 // Retain recurring per-test differences even when other tests change between
 // repeats. Two pairs cannot rule out coincidental flakiness or establish a cause.
 func compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrumentedAgain validationRun) verdict {
-	result := compareJest(baseline, instrumented)
+	return compareRepeatedRuns(baseline, instrumented, baselineAgain, instrumentedAgain, verifyJestTelemetry)
+}
+
+// compareRepeatedRuns compares two repeated pairs with compareRuns.
+func compareRepeatedRuns(baseline, instrumented, baselineAgain, instrumentedAgain validationRun, telemetry func(validationRun) verdict) verdict {
+	result := compareRuns(baseline, instrumented, telemetry)
 	if reason := pairTimeout(baselineAgain, instrumentedAgain); reason != "" {
 		return verdict{Status: "inconclusive", Code: "command_timeout", Reason: reason}
 	}
