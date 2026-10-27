@@ -160,15 +160,16 @@ func TestRunRequiresGitHubJestWorkflow(t *testing.T) {
 	}
 }
 
-func TestRunRequiresRepositoryCIConfiguration(t *testing.T) {
+func TestRunSelectsRepositoryCIInsteadOfHostProvider(t *testing.T) {
 	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - run: npm test\n")
 	require.NoError(t, os.RemoveAll(filepath.Join(root, ".github")))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".gitlab-ci.yml"), []byte("test:\n  script: npm test\n"), 0644))
 	t.Setenv("GITHUB_ACTIONS", "true")
 	t.Chdir(root)
 	var output bytes.Buffer
-	require.ErrorContains(t, Run(&output), "no supported CI provider detected in repository")
-	require.Empty(t, output.String())
+	require.NoError(t, Run(&output))
+	require.Contains(t, output.String(), "and gitlab")
+	require.NotContains(t, output.String(), "GitHub Actions")
 }
 
 func TestRunChecksActionOrderAndCondition(t *testing.T) {

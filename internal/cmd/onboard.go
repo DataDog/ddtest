@@ -6,6 +6,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -34,6 +35,10 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 			cmd.SilenceUsage = true
 			structured := agent || cmd.Flags().Changed("format")
 			fail := func(code string, err error) error {
+				var choice *onboard.CIProviderChoice
+				if errors.As(err, &choice) {
+					return protocolFailure(cmd, "discovery", "ci_provider_required", err, nil)
+				}
 				if structured {
 					return protocolFailure(cmd, "preparation", code, err, nil)
 				}
@@ -50,6 +55,11 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 			}
 			if apply && instructions {
 				return fail("invalid_options", fmt.Errorf("--apply and --instructions are mutually exclusive"))
+			}
+			if run == nil {
+				if err := chooseCIProvider(cmd); err != nil {
+					return fail("ci_discovery", err)
+				}
 			}
 			if instructions {
 				if structured || facts != "" || site != "" || cmd.Flags().Changed("tracer-version") {

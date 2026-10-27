@@ -46,7 +46,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		return errors.Join(fmt.Errorf("%s", result.Reason), onboard.RenderAgentResult(output, result, options.Format))
 	}
 	if !options.Apply {
-		result.NextCommand = []string{result.NextCommand[0], "testdrive", "--framework", name, "--agent", "--yes"}
+		result.NextCommand = onboard.DDTestCommand("testdrive", "--framework", name, "--agent", "--yes")
 		if t.allConfigurations {
 			result.NextCommand = append(result.NextCommand, "--all")
 		}
@@ -267,7 +267,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if t.nodeVersion != nil {
 		runtimeVersion = t.workflowNodeVersion()
 	}
-	plan := &onboard.ExecutionPlan{SchemaVersion: 1, Fingerprint: fingerprint, Framework: name, Site: options.Site, Runtime: runtimeVersion, Initialization: workflowInitialization(name), Scope: scope}
+	plan := &onboard.ExecutionPlan{SchemaVersion: 1, CIProvider: scope.CIProvider, Fingerprint: fingerprint, Framework: name, Site: options.Site, Runtime: runtimeVersion, Initialization: workflowInitialization(name), Scope: scope}
 	for _, policy := range featurePolicies(name) {
 		switch policy.Status {
 		case "required":
@@ -727,7 +727,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	result.Instruction = "Validation finished for this source snapshot. Finish any source edits, then run next_command as the final check and report its factual response. Further source edits invalidate completion. ddtest has already checked its owned cleanup and report exclusions; do not repeat cache or package audits."
 	result.NextAction = "run_command"
 	resume := result.NextCommand
-	result.NextCommand = []string{resume[0], "testdrive", "--report"}
+	result.NextCommand = onboard.DDTestCommand("testdrive", "--report")
 	if options.Format == "json" {
 		result.NextCommand = append(result.NextCommand, "--format", "json")
 	}
@@ -1209,7 +1209,7 @@ func (t *Testdrive) workflowValidationResume(executable, name, selected string, 
 	if options.Format == "json" {
 		command = append(command, "--format", "json")
 	}
-	for _, flag := range []struct{ name, value string }{{"facts", options.FactsFile}, {"site", options.Site}, {"platform", settings.GetPlatform()}, {"command", settings.GetCommand()}} {
+	for _, flag := range []struct{ name, value string }{{"ci-provider", settings.GetCIProvider()}, {"facts", options.FactsFile}, {"site", options.Site}, {"platform", settings.GetPlatform()}, {"command", settings.GetCommand()}} {
 		if flag.value != "" {
 			command = append(command, "--"+flag.name, flag.value)
 		}

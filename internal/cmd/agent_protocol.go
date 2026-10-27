@@ -12,6 +12,10 @@ import (
 
 func protocolFailure(cmd *cobra.Command, phase, code string, err error, next []string) error {
 	cmd.SilenceErrors, cmd.SilenceUsage = true, true
+	var choice *onboard.CIProviderChoice
+	if errors.As(err, &choice) {
+		return errors.Join(err, onboard.WriteAgentResult(cmd.OutOrStdout(), onboard.ProviderChoiceResult(choice)))
+	}
 	action := "supply_input"
 	status := "needs_input"
 	if code == "framework_unsupported" {

@@ -10,6 +10,7 @@ import (
 // ExecutionPlan is the input to preparation, execution and reporting. An
 // unresolved plan is useful evidence, never permission to omit a configuration.
 type ExecutionPlan struct {
+	CIProvider          string            `json:"ci_provider,omitempty"`
 	UnsupportedFeatures map[string]string `json:"unsupported_features,omitempty"`
 	// Features the tracer is known not to apply for this installation; they
 	// are still checked and never count as passed.

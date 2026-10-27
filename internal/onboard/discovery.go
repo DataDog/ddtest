@@ -27,14 +27,16 @@ type ciDefaults struct {
 }
 
 type ciWorkflow struct {
-	On       any `yaml:"on"`
-	Path     string
-	Defaults ciDefaults            `yaml:"defaults"`
-	Env      map[string]string     `yaml:"env"`
-	Jobs     map[string]runtimeJob `yaml:"jobs"`
+	Provider           string
+	Review, Unresolved []string
+	On                 any `yaml:"on"`
+	Path               string
+	Defaults           ciDefaults            `yaml:"defaults"`
+	Env                map[string]string     `yaml:"env"`
+	Jobs               map[string]runtimeJob `yaml:"jobs"`
 }
 
-func readWorkflows(root string) ([]ciWorkflow, error) {
+func readGitHubWorkflows(root string) ([]ciWorkflow, error) {
 	var workflows []ciWorkflow
 	directory := filepath.Join(root, ".github", "workflows")
 	entries, err := os.ReadDir(directory)

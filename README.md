@@ -33,7 +33,7 @@ Then, with your project's test dependencies and any required browsers/services
 ready:
 
 ```sh
-ddtest onboard    # GitHub Actions setup instructions
+ddtest onboard    # CI setup and local validation
 ddtest onboard --framework vitest --apply       # Preview exact setup edits
 ddtest onboard --framework vitest --apply --yes # Apply reviewed setup and validate
 ddtest testdrive  # Preview, confirm, and run tests locally

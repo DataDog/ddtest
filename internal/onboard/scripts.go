@@ -295,6 +295,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		return unresolvedCommand(err.Error())
 	}
 	defer func() { applyCommandEnvironment(&result, assignments) }()
+	if result, ok := resolveRepositoryShell(root, directory, words, stack, remaining, frameworks...); ok {
+		return result
+	}
 	command := shellCommand(words)
 	if literalFileOperation(words) {
 		return commandResolution{}

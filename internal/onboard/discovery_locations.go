@@ -3,6 +3,7 @@ package onboard
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/DataDog/ddtest/internal/settings"
 	"maps"
 	"slices"
 	"strings"
@@ -100,4 +101,25 @@ func mergeEnvironment(outer, inner map[string]string) map[string]string {
 	}
 	maps.Copy(result, inner)
 	return result
+}
+
+// WithCIDefaults preserves the selected provider; native jobs never acquire
+// GITHUB_ACTIONS merely because the validation runs locally.
+func WithCIDefaults(env map[string]string, providers ...string) map[string]string {
+	provider := settings.GetCIProvider()
+	if len(providers) > 0 && providers[0] != "" {
+		provider = providers[0]
+	}
+	if provider == "" {
+		for name, key := range map[string]string{"gitlab": "GITLAB_CI", "circleci": "CIRCLECI", "buildkite": "BUILDKITE"} {
+			if env[key] == "true" {
+				provider = name
+				break
+			}
+		}
+	}
+	if provider == "" {
+		provider = "github"
+	}
+	return providerEnvironment(provider, env)
 }

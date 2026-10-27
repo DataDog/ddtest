@@ -1,5 +1,44 @@
 # Apply JavaScript CI setup
 
+Onboarding and testdrive read GitHub Actions, GitLab CI, Jenkins, CircleCI and
+Buildkite configuration. They share framework discovery and local validation;
+each provider supplies its jobs, commands, environment and source locations.
+If several providers contain test commands, ddtest asks which one to onboard.
+Agents receive `ci_provider_required` and must ask the user before continuing.
+Select it explicitly with `--ci-provider github|gitlab|jenkins|circleci|buildkite`.
+Only that provider is edited and assessed; the choice is retained in follow-up
+commands and bound to setup facts and saved-report fingerprints.
+
+For example, inspect a GitLab Mocha repository without executing tests:
+
+```sh
+ddtest onboard --framework mocha --ci-provider gitlab --instructions
+ddtest testdrive --framework mocha --ci-provider gitlab --all --check-only --yes
+```
+
+The same `onboard --apply` preview and `--apply --yes` execution apply to the
+other providers. Native CI commands receive an exact tracer installation and
+framework initialization in their own shell/container. The installation uses
+private temporary storage, is cleaned on exit, and preserves manifests,
+lockfiles and the original test exit status. Without `DD_API_KEY`, or if tracer
+installation fails, the original tests run without instrumentation. A human
+must create the secret and expose it as `DD_API_KEY` in the test job; Jenkins
+needs a credentials binding, and Buildkite needs a secret/environment binding.
+No secret is needed for local validation.
+
+GitLab local includes, inherited jobs, variables and literal matrices;
+CircleCI jobs, local reusable commands/executors and pinned official Node orb
+setup; literal Jenkins Pipeline `sh`, `dir`, environment and Node tools; and
+Buildkite command steps with Docker/Compose metadata are recognized. Remote
+includes, dynamic pipelines, arbitrary Groovy, opaque plugins, unknown runtimes
+and unsupported parameter expansion remain explicit review gaps. Configuration
+readers never execute pipeline generators or repository scripts. For other CI
+providers, onboarding requests the actual command/setup and testdrive can still
+validate an explicit local `--command`; their CI setup remains unvalidated.
+
+These checks do not execute remote CI jobs or verify Datadog backend processing,
+including when the provider is GitHub Actions.
+
 Plain `ddtest onboard` prints instructions without editing files. To review the
 exact proposed changes for a recognized GitHub Actions setup, run:
 

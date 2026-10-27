@@ -41,7 +41,7 @@ func (e configurationExecutor) CombinedOutput(ctx context.Context, name string, 
 func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writer, item *configurationResult) (result validationResult, runErr error) {
 	runner := *t
 	t = &runner
-	t.configurationEnvironment = onboard.WithGitHubActionsDefaults(item.Environment)
+	t.configurationEnvironment = onboard.WithCIDefaults(item.Environment, item.CIProvider)
 	if !t.checkOnly && item.PortOverride == nil {
 		if err := checkCypressStartupPorts(t.cypress, t.configurationEnvironment); err != nil {
 			return result, err
@@ -146,7 +146,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if err != nil {
 		return result, err
 	}
-	t.configurationEnvironment = isolatedCIEnvironment(onboard.WithGitHubActionsDefaults(item.Environment), original, checkout)
+	t.configurationEnvironment = isolatedCIEnvironment(onboard.WithCIDefaults(item.Environment, item.CIProvider), original, checkout)
 	if err := t.lang().prepareConfiguration(t, item, original, copyRoot); err != nil {
 		return result, err
 	}

@@ -185,6 +185,11 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if selectedLanguage == nil {
 		selectedLanguage = unsupportedLanguage{}
 	}
+	if selectedLanguage.coordinated() {
+		if _, err := onboard.SelectCIProvider(repositoryRoot, settings.GetCIProvider()); err != nil {
+			return nil, err
+		}
+	}
 	if err := selectedLanguage.prepareStorage(); err != nil {
 		return nil, err
 	}
@@ -363,7 +368,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		// including the variables GitHub sets on every step.
 		matched := matchingConfigurationEnvironment(scope, scopeErr, repositoryRoot, runner.Name(), scopeCommand)
 		if matched != nil {
-			matched = onboard.WithGitHubActionsDefaults(matched)
+			matched = onboard.WithCIDefaults(matched, scope.CIProvider)
 		}
 		configurationEnvironment = mergeConfigurationEnvironment(matched, preflightEnvironment)
 		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, selectedPlan.Environment)

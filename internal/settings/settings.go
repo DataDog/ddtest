@@ -114,6 +114,7 @@ func ceilDiv(numerator, denominator int) int {
 }
 
 type Config struct {
+	CIProvider             string            `mapstructure:"ci_provider"`
 	Platform               string            `mapstructure:"platform"`
 	Framework              string            `mapstructure:"framework"`
 	MinParallelism         int               `mapstructure:"min_parallelism"`
@@ -417,3 +418,6 @@ func GetWorkerEnvMap() map[string]string {
 	}
 	return workerEnvMap
 }
+
+// GetCIProvider selects onboarding/testdrive CI configuration, independently of the host CI environment.
+func GetCIProvider() string { return Get().CIProvider }

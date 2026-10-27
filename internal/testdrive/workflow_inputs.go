@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
@@ -50,6 +51,9 @@ func inputFingerprint(ctx context.Context, root string, depth int) (string, erro
 		return "", fmt.Errorf("repository nesting exceeds 16 levels")
 	}
 	hash := sha256.New()
+	if provider := settings.GetCIProvider(); provider != "" {
+		_, _ = fmt.Fprintf(hash, "ci-provider=%s\x00", provider)
+	}
 	var files, indexedNames []string
 	gitlinks := map[string]string{}
 	index, err := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "--stage", "-z").Output()

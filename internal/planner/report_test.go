@@ -560,6 +560,7 @@ func TestPrintPlanReport_DefaultSettings(t *testing.T) {
 
 func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config := defaultDDTestSettings()
+	config.CIProvider = "gitlab"
 	config.Platform = "python"
 	config.Framework = "pytest"
 	config.Command = "pytest -q"
@@ -599,6 +600,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	}
 
 	expectedNames := []string{
+		"CI provider",
 		"Platform",
 		"Framework",
 		"Min parallelism",

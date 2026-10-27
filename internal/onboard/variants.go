@@ -147,6 +147,13 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			delete(env, key)
 			continue
 		}
+		if workflow.Provider != "" && workflow.Provider != "github" {
+			var err error
+			value, err = nativeEnvironmentValue(value, env)
+			if err != nil {
+				return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
+			}
+		}
 		resolved, err := runtimeValue(value, row)
 		if err != nil && len(frameworks) > 0 && frameworks[0] == "cypress" {
 			// Local comparison installs its own tracer and uses the same app

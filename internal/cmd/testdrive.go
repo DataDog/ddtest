@@ -7,12 +7,14 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive"
 	"github.com/kballard/go-shellquote"
@@ -58,6 +60,10 @@ func newTestdriveCommand() *cobra.Command {
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
 		structured := agent || cmd.Flags().Changed("format")
 		fail := func(code string, err error) error {
+			var choice *onboard.CIProviderChoice
+			if errors.As(err, &choice) {
+				return protocolFailure(cmd, "discovery", "ci_provider_required", err, nil)
+			}
 			if structured {
 				return protocolFailure(cmd, "preparation", code, err, nil)
 			}
@@ -100,6 +106,10 @@ func newTestdriveCommand() *cobra.Command {
 			if !yes {
 				return protocolFailure(cmd, "consent", "consent_required", fmt.Errorf("--yes is required for declared local execution"), confirmedCommand(cmd))
 			}
+		}
+
+		if err := chooseCIProvider(cmd); err != nil {
+			return fail("ci_discovery", err)
 		}
 
 		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, DefaultTracerVersion: !cmd.Flags().Changed("tracer-version"), CheckOnly: checkOnly, All: all, Timeout: timeout, AllowReviewedBuilds: allowReviewedBuilds, AcceptSubstituteRuntime: acceptSubstituteRuntime})

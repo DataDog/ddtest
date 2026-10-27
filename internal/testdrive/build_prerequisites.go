@@ -82,7 +82,7 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 			continue
 		}
 		args := words[1:]
-		merged := mergeConfigurationEnvironment(onboard.WithGitHubActionsDefaults(build.Environment), env)
+		merged := mergeConfigurationEnvironment(onboard.WithCIDefaults(build.Environment, item.CIProvider), env)
 		nodeOptions := os.Getenv("NODE_OPTIONS")
 		if value, exists := build.Environment["NODE_OPTIONS"]; exists {
 			nodeOptions = value

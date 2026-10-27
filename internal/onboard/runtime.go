@@ -81,6 +81,7 @@ type runtimeConditionScope struct {
 }
 
 type runtimeStep struct {
+	Native           *nativeCommand          `yaml:"-"`
 	ActionNode       string                  `yaml:"-"`
 	Inputs           map[string]string       `yaml:"-"`
 	ID               string                  `yaml:"id"`
@@ -99,12 +100,14 @@ type runtimeStep struct {
 }
 
 type runtimeJob struct {
-	Container any               `yaml:"container"`
-	Context   map[string]string `yaml:"-"`
-	RunsOn    any               `yaml:"runs-on"`
-	Defaults  ciDefaults        `yaml:"defaults"`
-	Env       map[string]string `yaml:"env"`
-	If        string            `yaml:"if"`
+	Node, NodeSource string            `yaml:"-"`
+	Gaps             []string          `yaml:"-"`
+	Container        any               `yaml:"container"`
+	Context          map[string]string `yaml:"-"`
+	RunsOn           any               `yaml:"runs-on"`
+	Defaults         ciDefaults        `yaml:"defaults"`
+	Env              map[string]string `yaml:"env"`
+	If               string            `yaml:"if"`
 	// A job that calls a reusable workflow, and the secrets it passes.
 	Uses     string `yaml:"uses"`
 	Secrets  any    `yaml:"secrets"`
@@ -185,7 +188,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 	if len(frameworks) > 0 {
 		framework = frameworks[0]
 	}
-	result := RuntimeCheck{Status: StatusNotApplicable, Reason: "No candidate GitHub Actions " + framework + " test commands found; CI runtime compatibility was not checked."}
+	result := RuntimeCheck{Status: StatusNotApplicable, Reason: "No candidate CI " + framework + " test commands found; CI runtime compatibility was not checked."}
 	workflows, err := readWorkflows(root)
 	if err != nil {
 		return RuntimeCheck{Status: StatusInconclusive, Reason: err.Error()}
@@ -205,6 +208,10 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 		return value, err
 	}
 	for _, workflow := range workflows {
+		if workflow.Provider != "github" && workflow.Provider != "" {
+			result.Jobs = append(result.Jobs, checkNativeRuntimes(ctx, root, workflow, framework, cachedResolve)...)
+			continue
+		}
 		path := workflow.Path
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]

@@ -118,6 +118,7 @@ type persistentFlagBinding struct {
 }
 
 var rootPersistentFlagBindings = []persistentFlagBinding{
+	{configKey: "ci_provider", flagName: "ci-provider"},
 	{configKey: "platform", flagName: "platform"},
 	{configKey: "framework", flagName: "framework"},
 	{configKey: "min_parallelism", flagName: "min-parallelism"},
@@ -142,6 +143,7 @@ func init() {
 	rootCmd.SetVersionTemplate("{{ .Version }}\n")
 
 	rootCmd.PersistentFlags().String("platform", "", "Platform that runs tests (auto-detected when omitted)")
+	rootCmd.PersistentFlags().String("ci-provider", "", "CI provider for onboard/testdrive: github, gitlab, jenkins, circleci or buildkite; required when several contain tests")
 	rootCmd.PersistentFlags().String("framework", "", "Test framework to use (auto-detected when omitted)")
 	rootCmd.PersistentFlags().Int("min-parallelism", defaultParallelism, "Minimum number of parallel test processes (default: number of physical CPUs)")
 	rootCmd.PersistentFlags().Int("max-parallelism", defaultParallelism, "Maximum number of parallel test processes (default: number of physical CPUs)")

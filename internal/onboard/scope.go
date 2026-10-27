@@ -22,7 +22,8 @@ type packageScript struct {
 }
 
 type TestCommand struct {
-	CIInstrumentationExcluded bool `json:"ci_instrumentation_excluded,omitempty"`
+	CIProvider                string `json:"ci_provider,omitempty"`
+	CIInstrumentationExcluded bool   `json:"ci_instrumentation_excluded,omitempty"`
 	// UnsupportedNode marks an exclusion ddtest made itself: no dd-trace release
 	// runs on the entry's CI Node, so it is not tried.
 	UnsupportedNode bool `json:"unsupported_node,omitempty"`
@@ -102,6 +103,7 @@ type BuildCommand struct {
 }
 
 type ValidationScope struct {
+	CIProvider string        `json:"ci_provider,omitempty"`
 	Commands   []TestCommand `json:"commands"`
 	Unresolved []string      `json:"unresolved,omitempty"`
 	Review     []string      `json:"review,omitempty"`
@@ -155,7 +157,12 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 		return scope, err
 	}
 	scope.Review = append(scope.Review, otherCIReview(root, framework)...)
+	if len(workflows) > 0 {
+		scope.CIProvider = workflows[0].Provider
+	}
 	for _, workflow := range workflows {
+		scope.Review = append(scope.Review, workflow.Review...)
+		scope.Unresolved = append(scope.Unresolved, workflow.Unresolved...)
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
 			lastTest := -1
@@ -240,7 +247,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				finalNode, finalErr := rowSetupNode(root, workflow, job, row)
 				unsupportedRow := skipsNode && finalErr == nil && UnsupportedNode(finalNode)
 				installerActive, installerSkipped := false, false
-				var pendingSetup []string
+				pendingSetup := slices.Clone(job.Gaps)
 				var preparation []BuildCommand
 				var unresolved, setupUnresolved, review []scopeDiagnostic
 				var commands []TestCommand
@@ -360,6 +367,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						resolution.Builds[j].Environment = mergeEnvironment(env, resolution.Builds[j].Environment)
 					}
 					for _, entry := range resolution.Tests {
+						entry.CIProvider = workflow.Provider
 						entry.CIInstrumentationExcluded = ((installerSkipped && !installerActive) || mochaInstrumentationDisabled(workflow, job, resolved, row)) && checkExcludedJestBootstrap(workflow, job, resolved, row) == ""
 						if unsupportedAt(i) {
 							entry.CIInstrumentationExcluded, entry.UnsupportedNode = true, true
@@ -591,7 +599,7 @@ func readsComputedAxis(command string, axes []string, row map[string]any) bool {
 }
 
 // CI configuration of providers other than GitHub Actions, by conventional path.
-var otherCIFiles = []string{".circleci/config.yml", "circle.yml", ".gitlab-ci.yml", "azure-pipelines.yml", ".travis.yml", "Jenkinsfile", "bitbucket-pipelines.yml", ".buildkite/pipeline.yml", "appveyor.yml", ".drone.yml"}
+var otherCIFiles = []string{"circle.yml", "azure-pipelines.yml", ".travis.yml", "bitbucket-pipelines.yml", "appveyor.yml", ".drone.yml"}
 
 // otherCIReview names other providers' CI files that mention the framework.
 // They are not parsed, so their tests stay visible instead of silently outside.
@@ -608,4 +616,14 @@ func otherCIReview(root, framework string) []string {
 		}
 	}
 	return review
+}
+
+func unsupportedCIPaths(root string) []string {
+	var paths []string
+	for _, path := range otherCIFiles {
+		if info, ok := repositoryFile(root, root, path); ok && info.Size() <= 2<<20 {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }

@@ -109,21 +109,15 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 	if err != nil {
 		return nil, err
 	}
+	if len(workflows) > 0 && workflows[0].Provider != "github" {
+		return planNativeSetup(root, framework, version, site, nodeRequirement, workflows)
+	}
+
 	edits, scopedOptions, err := scopedSetupEdits(root, framework)
 	if err != nil {
 		return nil, err
 	}
-	var impact []string
-	coverageAdded := false
-	for _, edit := range edits {
-		coverageAdded = coverageAdded || bytes.Count(edit.after, []byte("nyc -- ")) > bytes.Count(edit.before, []byte("nyc -- "))
-	}
-	if len(edits) > 0 {
-		if framework == "cucumber" {
-			impact = append(impact, "Selected package scripts now use NYC coverage and set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false, including local npm test. Existing commands and unselected scripts are preserved.")
-		}
-		impact = append(impact, "The scripts' new NODE_OPTIONS=\"${NODE_OPTIONS:-} …\" prefix needs a POSIX shell, so these scripts no longer run locally from Windows cmd.")
-	}
+	impact, coverageAdded := scopedSetupImpact(edits, framework)
 	targets := 0
 	for _, workflow := range workflows {
 		edit, err := readSetupEdit(root, workflow.Path)
@@ -417,46 +411,11 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 	if targets == 0 {
 		return nil, &SetupGap{".github/workflows", "No literal " + framework + " CI step found. Identify its real CI entry point before applying onboarding."}
 	}
-	for _, path := range []string{".gitignore", ".npmignore"} {
-		edit, err := readSetupEdit(root, path)
-		if err != nil {
-			return nil, err
-		}
-		if path == ".npmignore" && edit.before == nil {
-			continue
-		} // Creating it would disable npm's .gitignore fallback.
-		// ddtest writes .testoptimization/ at the root only. NYC writes
-		// .nyc_output/ in each covered command's directory, so its entry is
-		// unanchored and a root-only pattern doesn't cover it.
-		entries := []string{"/.testoptimization/"}
-		if coverageAdded {
-			entries = append(entries, ".nyc_output/")
-		}
-		for _, line := range strings.Split(strings.ReplaceAll(string(edit.before), "\r\n", "\n"), "\n") {
-			line = strings.TrimSpace(line)
-			entries = slices.DeleteFunc(entries, func(entry string) bool {
-				if entry == ".nyc_output/" {
-					return strings.TrimSuffix(strings.TrimPrefix(line, "**/"), "/") == ".nyc_output"
-				}
-				return strings.Trim(line, "/") == ".testoptimization"
-			})
-		}
-		if len(entries) == 0 {
-			continue
-		}
-		newline := "\n"
-		if strings.Contains(string(edit.before), "\r\n") {
-			newline = "\r\n"
-		}
-		edit.after = slices.Clone(edit.before)
-		if len(edit.after) > 0 && !bytes.HasSuffix(edit.after, []byte("\n")) {
-			edit.after = append(edit.after, []byte(newline)...)
-		}
-		for _, entry := range entries {
-			edit.after = append(edit.after, []byte(entry+newline)...)
-		}
-		edits = append(edits, edit)
+	ignore, err := setupIgnoreEdits(root, coverageAdded)
+	if err != nil {
+		return nil, err
 	}
+	edits = append(edits, ignore...)
 	if coverageAdded {
 		impact = append(impact, "NYC coverage writes an untracked .nyc_output/ folder wherever the covered command runs, including local validation; it is added to .gitignore.")
 	}
@@ -742,4 +701,64 @@ func workflowCall(on any) bool {
 		return exists
 	}
 	return false
+}
+
+func setupIgnoreEdits(root string, coverageAdded bool) ([]setupEdit, error) {
+	var edits []setupEdit
+	for _, path := range []string{".gitignore", ".npmignore"} {
+		edit, err := readSetupEdit(root, path)
+		if err != nil {
+			return nil, err
+		}
+		if path == ".npmignore" && edit.before == nil {
+			continue
+		} // Creating it would disable npm's .gitignore fallback.
+		// ddtest writes .testoptimization/ at the root only. NYC writes
+		// .nyc_output/ in each covered command's directory, so its entry is
+		// unanchored and a root-only pattern doesn't cover it.
+		entries := []string{"/.testoptimization/"}
+		if coverageAdded {
+			entries = append(entries, ".nyc_output/")
+		}
+		for _, line := range strings.Split(strings.ReplaceAll(string(edit.before), "\r\n", "\n"), "\n") {
+			line = strings.TrimSpace(line)
+			entries = slices.DeleteFunc(entries, func(entry string) bool {
+				if entry == ".nyc_output/" {
+					return strings.TrimSuffix(strings.TrimPrefix(line, "**/"), "/") == ".nyc_output"
+				}
+				return strings.Trim(line, "/") == ".testoptimization"
+			})
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		newline := "\n"
+		if strings.Contains(string(edit.before), "\r\n") {
+			newline = "\r\n"
+		}
+		edit.after = slices.Clone(edit.before)
+		if len(edit.after) > 0 && !bytes.HasSuffix(edit.after, []byte("\n")) {
+			edit.after = append(edit.after, []byte(newline)...)
+		}
+		for _, entry := range entries {
+			edit.after = append(edit.after, []byte(entry+newline)...)
+		}
+		edits = append(edits, edit)
+	}
+	return edits, nil
+}
+
+func scopedSetupImpact(edits []setupEdit, framework string) ([]string, bool) {
+	var impact []string
+	coverageAdded := false
+	for _, edit := range edits {
+		coverageAdded = coverageAdded || bytes.Count(edit.after, []byte("nyc -- ")) > bytes.Count(edit.before, []byte("nyc -- "))
+	}
+	if len(edits) > 0 {
+		if framework == "cucumber" {
+			impact = append(impact, "Selected package scripts now use NYC coverage and set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false, including local npm test. Existing commands and unselected scripts are preserved.")
+		}
+		impact = append(impact, "The scripts' new NODE_OPTIONS=\"${NODE_OPTIONS:-} …\" prefix needs a POSIX shell, so these scripts no longer run locally from Windows cmd.")
+	}
+	return impact, coverageAdded
 }

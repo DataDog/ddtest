@@ -17,6 +17,7 @@ import (
 
 	"errors"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -73,6 +74,7 @@ type AgentResult struct {
 
 // PlanSummary keeps routine handoffs independent of CI matrix size.
 type PlanSummary struct {
+	CIProvider          string            `json:"ci_provider,omitempty"`
 	UnsupportedFeatures map[string]string `json:"unsupported_features,omitempty"`
 	KnownLimitations    map[string]string `json:"known_limitations,omitempty"`
 	Features            []string          `json:"feature_scenarios,omitempty"`
@@ -102,7 +104,7 @@ func WriteAgentResult(output io.Writer, result AgentResult) error {
 func RenderAgentResult(output io.Writer, result AgentResult, format string) error {
 	if result.Plan != nil {
 		plan := result.Plan
-		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, UnsupportedFeatures: plan.UnsupportedFeatures, KnownLimitations: plan.KnownLimitations}
+		result.PlanSummary = &PlanSummary{CIProvider: plan.CIProvider, Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, UnsupportedFeatures: plan.UnsupportedFeatures, KnownLimitations: plan.KnownLimitations}
 		result.DetailsCommand = DDTestCommand("testdrive", "--report", "--detail", "plan")
 		if format == "json" && len(result.DetailsCommand) > 0 {
 			result.DetailsCommand = append(result.DetailsCommand, "--format", "json")
@@ -234,6 +236,23 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	if !automatic && strings.Trim(options.Site, "abcdefghijklmnopqrstuvwxyz0123456789.-") != "" {
 		err := fmt.Errorf("site must be a literal Datadog hostname: %q", options.Site)
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input"}))
+	}
+	root, rootErr := os.Getwd()
+	if rootErr != nil {
+		return fail("ci_discovery", rootErr)
+	}
+	selectedProvider, selectionErr := SelectCIProvider(root, settings.GetCIProvider())
+	if err := selectionErr; err != nil {
+		var choice *CIProviderChoice
+		if errors.As(err, &choice) {
+			return errors.Join(err, WriteAgentResult(output, ProviderChoiceResult(choice)))
+		}
+		return fail("ci_discovery", err)
+	}
+	if selectedProvider == "" {
+		if paths := unsupportedCIPaths(root); len(paths) > 0 {
+			return WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "ci_provider_unrecognized", Location: strings.Join(paths, ", "), Reason: "CI configuration was found for a provider without an adapter. Local testdrive is available; automatic CI edits and CI compatibility remain unvalidated.", RequiredInput: []string{"The literal test command and its working directory", "Required setup/build/service commands"}, NextAction: "supply_input", Instruction: "Inspect the named CI files and preserve their existing commands. Use testdrive --framework " + runner.Name() + " --command <actual-command> --agent --yes for local validation. Do not replace this CI with GitHub Actions or claim its CI setup was validated."})
+		}
 	}
 	command := OnboardingCommand(runner.Name())
 	if !automatic {
@@ -396,7 +415,11 @@ func DDTestCommand(args ...string) []string {
 	if executable == "" {
 		return nil
 	}
-	return append([]string{executable}, args...)
+	command := append([]string{executable}, args...)
+	if len(args) > 0 && (args[0] == "onboard" || args[0] == "testdrive") && settings.GetCIProvider() != "" && !slices.Contains(args, "--ci-provider") {
+		command = append(command, "--ci-provider", settings.GetCIProvider())
+	}
+	return command
 }
 
 // ddtestExecutable prefers the running executable. Only a temporary go run
@@ -428,4 +451,8 @@ func OnboardingCommand(frameworks ...string) []string {
 		framework = frameworks[0]
 	}
 	return DDTestCommand("onboard", "--framework", framework, "--apply", "--yes")
+}
+
+func ProviderChoiceResult(choice *CIProviderChoice) AgentResult {
+	return AgentResult{Status: "needs_input", Phase: "discovery", Code: "ci_provider_required", Reason: choice.Error(), RequiredInput: choice.Providers, NextAction: "ask_user", Instruction: "Ask the user which CI provider should receive Test Optimization. Do not choose one or install on every provider. After their answer, rerun the original command with --ci-provider <provider>."}
 }
