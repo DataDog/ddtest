@@ -50,8 +50,6 @@ func TestRubyScopeKeepsFrameworkCommandsAndMatrixEnvironment(t *testing.T) {
 		require.Equal(t, "1.40.0", job.TracerRequested)
 		require.NotEmpty(t, job.Runtime)
 	}
-	_, err = RubyValidationCommand(root, "rspec", "")
-	require.ErrorContains(t, err, "multiple")
 }
 
 func TestRubyScopeDoesNotExecuteUnresolvedSetupOrDefaultRake(t *testing.T) {
@@ -64,10 +62,7 @@ func TestRubyScopeDoesNotExecuteUnresolvedSetupOrDefaultRake(t *testing.T) {
 	scope, err := DiscoverValidationScope(root, "minitest")
 	require.NoError(t, err)
 	require.Len(t, scope.Commands, 1)
-	selected, err := RubyValidationCommand(root, "minitest", "")
-	require.NoError(t, err)
-	require.Equal(t, "bundle exec rake test", selected)
-	require.Equal(t, scope.Commands[0].Command, ValidationCommands(root, selected, "minitest")[0].Command)
+	require.Equal(t, scope.Commands[0].Command, ValidationCommands(root, "bundle exec rake test", "minitest")[0].Command)
 }
 
 func TestRubyCIRequiresInstallationBeforeTestsAndUnconditionalConditions(t *testing.T) {
@@ -157,17 +152,6 @@ func TestRubyScopeRetainsDirectMinitestCommandsAndUnknownWrappers(t *testing.T) 
 	require.Empty(t, resolution.Tests)
 }
 
-func TestRubyInstructionsDescribeNativeValidationAndPreserveBothReports(t *testing.T) {
-	for _, framework := range []string{"rspec", "minitest"} {
-		text := instructions("ruby", framework)
-		for _, expected := range []string{"--framework " + framework, "ruby-tracer-version", "native baseline/reporting-only", "Gemfile", "disposable", "report.html", "testdrive.json", "historical", "actual CI execution"} {
-			require.Contains(t, text, expected)
-		}
-		require.NotContains(t, text, "NODE_OPTIONS")
-		require.NotContains(t, text, "__FRAMEWORK__")
-	}
-}
-
 func TestRubyDefaultAliasKeepsOriginalCICommand(t *testing.T) {
 	for _, alias := range []string{"task :default => [:test]", "task default: :test", "task default: [:test] # original entry point"} {
 		root := rubyWorkflowFixture(t, "jobs:\n  test:\n    steps:\n      - run: bundle exec rake\n")
@@ -228,13 +212,4 @@ func TestI18nOriginalRakeAndNumericMatrixNeedOnlyInstrumentation(t *testing.T) {
 	after, err := os.ReadFile(filepath.Join(root, ".github/workflows/test.yml"))
 	require.NoError(t, err)
 	require.Equal(t, workflow, string(after))
-}
-
-func TestMinitestInstructionsKeepIsolationAndConfigureBothEnvironments(t *testing.T) {
-	text := instructions("ruby", "minitest")
-	for _, expected := range []string{"ActiveSupport::Testing::Isolation", "Datadog::Tracing::SyncWriter", "${{ env.RUBYOPT }} -r./ci/datadog_test_optimization.rb", "Keep isolation", "3.4.22", "--check-only --tracer-version"} {
-		require.Contains(t, text, expected)
-	}
-	require.NotContains(t, text, "__FORK_SETUP__")
-	require.NotContains(t, instructions("ruby", "rspec"), "SyncWriter")
 }

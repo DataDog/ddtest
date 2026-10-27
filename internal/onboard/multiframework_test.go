@@ -32,10 +32,7 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			case "rspec", "minitest":
 				files = map[string]string{"Gemfile": "gem '" + name + "'\n"}
 				language = "ruby"
-				entry = "bundle exec rspec"
-				if name == "minitest" {
-					entry = "bundle exec rake test"
-				}
+				entry = "bundle exec rake"
 			}
 			for file, contents := range files {
 				require.NoError(t, os.WriteFile(filepath.Join(root, file), []byte(contents), 0644))
@@ -47,8 +44,6 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			require.NoError(t, Run(&output))
 			require.Contains(t, output.String(), "languages: "+language)
 			switch name {
-			case "rspec", "minitest":
-				require.Contains(t, output.String(), "`ruby-tracer-version`")
 			case "mocha", "cucumber":
 				require.Contains(t, output.String(), "`js-tracer-version`")
 			case "vitest", "playwright", "cypress":

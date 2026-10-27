@@ -1,7 +1,6 @@
 package onboard
 
 import (
-	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -125,28 +124,6 @@ func rubyDefaultTask(root, directory, task string) bool {
 		found = true
 	}
 	return found
-}
-
-// RubyValidationCommand retains the CI entry point when there is one choice.
-func RubyValidationCommand(root, framework, override string) (string, error) {
-	if strings.TrimSpace(override) != "" {
-		return override, nil
-	}
-	scope, err := DiscoverValidationScope(root, framework)
-	if err != nil {
-		return "", err
-	}
-	if len(scope.Commands) > 1 {
-		return "", fmt.Errorf("multiple %s CI configurations found; inspect --all --check-only or select one with --command", framework)
-	}
-	if len(scope.Commands) == 1 {
-		entry := scope.Commands[0]
-		if entry.Directory != "." || len(entry.Environment) > 0 || len(entry.UnvalidatedSetup) > 0 {
-			return "", fmt.Errorf("ruby CI command requires its working-directory/environment/setup; use --all or validate an explicit --command from that prepared environment")
-		}
-		return entry.Command, nil
-	}
-	return "", nil
 }
 
 // RubyCIConfiguration inventories static Ruby selections. The caller checks
