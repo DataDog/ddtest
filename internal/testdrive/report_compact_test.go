@@ -77,3 +77,12 @@ func TestLargeReportKeepsUniqueEvidenceInline(t *testing.T) {
 	require.NotContains(t, text, `<template id="shared-`, "unique excerpts gain nothing from sharing")
 	require.Contains(t, text, "unique-599")
 }
+
+func TestReportSearchMatchesSharedEvidenceEverywhere(t *testing.T) {
+	// Searching and suite-to-test navigation must agree on what matches;
+	// otherwise following a link clears a query that matches shared evidence.
+	require.Contains(t, reportHTML, "function matchesQuery(item) {")
+	require.Contains(t, reportHTML, "state.items.filter(matchesQuery)")
+	require.Contains(t, reportHTML, "if (!matchesQuery(target)) {")
+	require.NotContains(t, reportHTML, "target.text.includes(query)")
+}

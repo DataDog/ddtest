@@ -1795,11 +1795,14 @@ THE SOFTWARE.
           if (open) hydrateSharedDetails(detail);
           detail.hidden = !open;
         }
+        // Shared evidence lives in templates in large reports, so a test matches
+        // the query through its own text or through the evidence it shares.
+        function matchesQuery(item) {
+          return item.text.includes(query) || item.sharedText.some(function (text) { return text.includes(query); });
+        }
         function render() {
           var state = explorers[activeTab];
-          var searched = state.items.filter(function (item) {
-            return item.text.includes(query) || item.sharedText.some(function (text) { return text.includes(query); });
-          });
+          var searched = state.items.filter(matchesQuery);
           state.matched = searched.filter(function (item) {
             return status === "All" || item.status === status;
           });
@@ -1874,7 +1877,7 @@ THE SOFTWARE.
             });
             // Keep filters that include the target; clear only those hiding it.
             if (status !== "All" && status !== target.status) status = "All";
-            if (!target.text.includes(query)) {
+            if (!matchesQuery(target)) {
               query = "";
               search.value = "";
             }
