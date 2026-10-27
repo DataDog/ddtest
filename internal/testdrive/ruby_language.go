@@ -70,6 +70,9 @@ func (rubyLanguage) prepareConfiguration(*Testdrive, *configurationResult, strin
 }
 func (rubyLanguage) coordinated() bool        { return false }
 func (rubyLanguage) defaultsToCITracer() bool { return false }
-func (rubyLanguage) ciRuntimes(ctx context.Context, root, framework string) onboard.RuntimeCheck {
-	return onboard.CheckCIRuntimes(ctx, root, framework)
+
+// RubyGems requirements are checked against the installed bundle, so CI
+// inspection only inventories the static Ruby and tracer selections.
+func (rubyLanguage) ciRuntimes(_ context.Context, root, framework string) onboard.RuntimeCheck {
+	return onboard.RubyCIConfiguration(root, framework)
 }

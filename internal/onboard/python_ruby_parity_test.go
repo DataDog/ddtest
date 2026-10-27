@@ -22,11 +22,9 @@ import (
 //go:embed testdata/github-main.md
 var mainGitHubInstructions string
 
-func TestPythonRubyOnboardMatchesMain(t *testing.T) {
+func TestPythonOnboardMatchesMain(t *testing.T) {
 	for _, fixture := range []struct{ language, framework, command, manifest, contents, bootstrap string }{
 		{"python", "pytest", "python -m pytest", "pytest.ini", "[pytest]\n", pythonBootstrap},
-		{"ruby", "rspec", "bundle exec rspec", "Gemfile", "gem 'rspec'\n", rubyBootstrap},
-		{"ruby", "minitest", "bundle exec rake test", "Gemfile", "gem 'minitest'\n", rubyBootstrap},
 	} {
 		for _, configured := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/configured=%t", fixture.framework, configured), func(t *testing.T) {

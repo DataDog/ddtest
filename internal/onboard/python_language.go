@@ -18,4 +18,22 @@ func (pythonDiscovery) resolvesTestSteps(string) bool { return false }
 
 func (pythonDiscovery) coordinated() bool { return false }
 
+func (pythonDiscovery) frameworks() []string { return []string{"pytest"} }
+
+func (pythonDiscovery) resolveStep(string, ciWorkflow, runtimeJob, runtimeStep, string) (commandResolution, bool) {
+	return commandResolution{}, false
+}
+
+func (pythonDiscovery) localCommands(string, string, string) ([]TestCommand, bool) { return nil, false }
+
+func (pythonDiscovery) variantValue(ciWorkflow, runtimeJob, runtimeStep, map[string]any, string, string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (pythonDiscovery) skipsUnsupportedNode() bool { return false }
+
+func (pythonDiscovery) instructions(string) string { return "" }
+
+func (pythonDiscovery) onboardingScope(string) (bool, bool) { return false, false }
+
 const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtrace for pytest. Preserve these variables on the existing test step; do not replace its current arguments. Activate the same Python environment used for the tests before the action. If CI uses tox or nox, pass DD_*, PYTHONPATH, and PYTEST_ADDOPTS into the test environment."

@@ -44,6 +44,11 @@ func unresolvedCommand(reason string) commandResolution {
 }
 
 func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, language, framework string) commandResolution {
+	if registered := discoveryLanguageNamed(language); registered != nil {
+		if resolution, ok := registered.resolveStep(root, workflow, job, step, framework); ok {
+			return resolution
+		}
+	}
 
 	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 	if language == "javascript" && uses == "cypress-io/github-action" {

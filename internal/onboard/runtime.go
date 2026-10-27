@@ -46,6 +46,10 @@ const GuardedActionBranch = "The Datadog action's condition is false for this br
 const WindowsRunnerBranch = "Windows runner: the Datadog action is skipped here because ddtest doesn't set up or validate Windows runners locally. These tests run uninstrumented; add manual initialization to instrument them."
 
 type RuntimeFinding struct {
+	// Location names the CI entry, including its matrix values.
+	Location string `json:"location,omitempty"`
+	// Runtime is the version a non-Node runtime selects, such as Ruby's.
+	Runtime         string          `json:"runtime,omitempty"`
 	Workflow        string          `json:"workflow"`
 	Job             string          `json:"job"`
 	Step            int             `json:"step,omitempty"`
@@ -666,11 +670,17 @@ func fetchRuntimeMetadata(ctx context.Context, client *http.Client, address stri
 }
 
 func actionSelectsJavaScript(step runtimeStep, row map[string]any) (bool, error) {
+	return actionSelectsLanguage(step, row, "js")
+}
+
+// actionSelectsLanguage reports whether the setup action installs the tracer of
+// the language named by its languages input.
+func actionSelectsLanguage(step runtimeStep, row map[string]any, language string) (bool, error) {
 	languages, err := runtimeValue(step.With["languages"], row)
 	if err != nil {
 		return false, err
 	}
-	return languages == "all" || slices.Contains(strings.Fields(languages), "js"), nil
+	return languages == "all" || slices.Contains(strings.Fields(languages), language), nil
 }
 
 func mochaInstrumentationDisabled(workflow ciWorkflow, job runtimeJob, step runtimeStep, rows ...map[string]any) bool {
