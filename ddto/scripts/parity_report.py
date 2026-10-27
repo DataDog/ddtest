@@ -123,7 +123,7 @@ def render(path):
 
     totals = {key: sum(row["sdk"][key] for row in rows) for key in COUNT_FIELDS}
     lines = [
-        "# CI Visibility parity evidence", "",
+        "# Test Optimization parity evidence", "",
         ("Complete feature parity: **no**. The Testify instrumentation gap remains."
          if testify["status"] == "gap" else
          ("Testify parity passes for local and external-module callers. Complete product parity remains unverified."
