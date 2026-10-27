@@ -470,3 +470,53 @@ func TestRubyChecksShareOneOwnedCopyPerValidation(t *testing.T) {
 	require.NoDirExists(t, copies[2], "outside a coordinated validation, each check removes its own copy")
 	require.True(t, strings.HasSuffix(copies[2], "checkout"))
 }
+
+// installedBundleExecutor reports every bundle as installed and runs other
+// commands, such as the gemspec inspection, for real.
+type installedBundleExecutor struct{ ext.DefaultCommandExecutor }
+
+func (e *installedBundleExecutor) CombinedOutputInDirectory(ctx context.Context, directory, name string, args []string, env map[string]string) ([]byte, error) {
+	if name == "bundle" {
+		return []byte("The Gemfile's dependencies are satisfied"), nil
+	}
+	return e.DefaultCommandExecutor.CombinedOutputInDirectory(ctx, directory, name, args, env)
+}
+
+// The coordinated path shares one check copy between dependency readiness and
+// the packaging check; the validation run in between must not recover it as
+// abandoned storage.
+func TestRubyCoordinatedWorkflowKeepsTheSharedCheckCopyForGemspecs(t *testing.T) {
+	if _, err := exec.LookPath("ruby"); err != nil {
+		t.Skip("Ruby is required")
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, filepath.Join(root, "Gemfile"), "source 'https://rubygems.org'\n")
+	requireWriteFile(t, filepath.Join(root, "Gemfile.lock"), "installed bundle\n")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0700))
+	requireWriteFile(t, filepath.Join(root, "lib/fixture.rb"), "module Fixture;end\n")
+	requireWriteFile(t, filepath.Join(root, "fixture.gemspec"), "Gem::Specification.new do |s|\n s.name='fixture';s.version='1.0';s.files=Dir['lib/**/*']\nend\n")
+	gitInit(t, root)
+	drive := &Testdrive{repositoryRoot: root, language: "ruby", framework: framework.NewRSpec(platform.NewRuby("")), executor: &installedBundleExecutor{},
+		runtimeVersion: func() string { return "ruby 3.3.11 arm64" },
+		// Run's own startup still executes; it then stops before any test.
+		discoveryError: errors.New("stop after startup"),
+	}
+	drive.workflowRun = func(ctx context.Context, output io.Writer) error { return drive.Run(ctx, output) }
+	var output bytes.Buffer
+	_ = drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json", ExplicitVersion: true})
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result), output.String())
+	var packaging *onboard.WorkflowCheck
+	for i := range result.Checks {
+		if result.Checks[i].Name == "package_report_exclusions" {
+			packaging = &result.Checks[i]
+		}
+	}
+	require.NotNil(t, packaging, output.String())
+	require.Equal(t, "passed", packaging.Status, packaging.Reason)
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "ddtest-ruby-check-*"))
+	require.NoError(t, err)
+	require.Empty(t, matches, "the shared copy is removed when the validation ends")
+}

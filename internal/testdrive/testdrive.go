@@ -558,22 +558,27 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}()
 
 	if ctx.Value(workflowLockKey{}) == workspace.CanonicalRoot(t.repositoryRoot) {
-		return t.runLocked(ctx, output)
+		// The coordinator recovered abandoned storage when it took this lock,
+		// before creating live storage such as the shared check copy. A second
+		// recovery would delete that live storage.
+		return t.runLocked(ctx, output, false)
 	}
 	lock, err := workspace.AcquireLock(t.repositoryRoot)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = lock.Close() }()
-	return t.runLocked(ctx, output)
+	return t.runLocked(ctx, output, true)
 }
 
-func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr error) {
+func (t *Testdrive) runLocked(ctx context.Context, output io.Writer, recoverStorage bool) (runErr error) {
 	if err := cleanupExpiredCheckpoints(); err != nil {
 		return t.finishStartupFailure(output, err)
 	}
-	if err := t.recoverStartup(output); err != nil {
-		return t.finishStartupFailure(output, err)
+	if recoverStorage {
+		if err := t.recoverStartup(output); err != nil {
+			return t.finishStartupFailure(output, err)
+		}
 	}
 	if t.allConfigurations {
 		return t.runAllConfigurations(ctx, output)
