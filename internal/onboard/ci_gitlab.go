@@ -35,6 +35,9 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 			return err
 		}
 		members := ciMembers(document)
+		if members["spec"] != nil {
+			w.Unresolved = append(w.Unresolved, file+": GitLab spec headers require resolved multi-document configuration")
+		}
 		includes := members["include"]
 		if includes != nil {
 			entries := []*yaml.Node{includes}

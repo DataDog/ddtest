@@ -265,6 +265,7 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 				}
 				if literal < 0 {
 					job.Gaps = append(job.Gaps, "Jenkins sh command is computed; supply its literal command and environment")
+					w.Unresolved = append(w.Unresolved, path+": Jenkins sh command is computed; supply its literal command and environment")
 					continue
 				}
 				text := tokens[literal]

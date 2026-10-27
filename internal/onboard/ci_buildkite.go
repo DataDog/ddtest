@@ -57,13 +57,15 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 			if node == nil {
 				node = step["commands"]
 			}
-			steps := buildkitePluginCommands(path, step["plugins"])
+			steps := buildkitePluginCommands(path, step["plugins"], node != nil)
 			if len(steps) == 0 {
 				steps = nativeSteps(path, node, "buildkite")
 			}
 			if len(steps) == 0 {
 				if step["trigger"] != nil {
 					w.Unresolved = append(w.Unresolved, path+" / "+group+name+": triggered pipeline requires its resolved test configuration")
+				} else if step["plugins"] != nil && ciScalar(step["if"]) != "false" {
+					w.Unresolved = append(w.Unresolved, path+" / "+group+name+": commandless plugin step requires its resolved command and environment")
 				}
 				continue
 			}
@@ -106,6 +108,11 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 						case "docker-compose":
 							service := ciScalar(ciMembers(config)["run"])
 							composePath := "docker-compose.yml"
+							if files := ciUnalias(ciMembers(config)["config"]); files != nil && files.Kind != yaml.ScalarNode {
+								job.Node, job.NodeSource = "", "unmerged Docker Compose configuration files"
+								job.Gaps = append(job.Gaps, "Docker Compose config array requires its merged service configuration before validation or editing")
+								continue
+							}
 							if configured := ciScalar(ciMembers(config)["config"]); configured != "" {
 								composePath = configured
 							}
@@ -214,7 +221,7 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 // Plugin command arrays are container argv, not a shell script. Keep literal
 // test consumers visible for provider choice, but require explicit placement
 // instead of rewriting argv into a shell wrapper with different semantics.
-func buildkitePluginCommands(path string, plugins *yaml.Node) []runtimeStep {
+func buildkitePluginCommands(path string, plugins *yaml.Node, hasStepCommand bool) []runtimeStep {
 	plugins = ciUnalias(plugins)
 	if plugins == nil {
 		return nil
@@ -224,15 +231,19 @@ func buildkitePluginCommands(path string, plugins *yaml.Node) []runtimeStep {
 		for name, config := range ciMembers(plugin) {
 			kind, _, _ := strings.Cut(name, "#")
 			command := ciUnalias(ciMembers(config)["command"])
-			if kind != "docker" || command == nil {
+			if !slices.Contains([]string{"docker", "docker-compose"}, kind) || command == nil {
 				continue
 			}
 			run := shellquote.Join(ciStrings(command)...)
+			reason := "Buildkite " + kind + " plugin command uses container argv; supply explicitly resolved initialization and execution before validation or editing"
+			if kind == "docker-compose" && hasStepCommand {
+				reason = "Buildkite docker-compose plugin command conflicts with the step command; choose one explicitly before validation or editing"
+			}
 			steps = append(steps, runtimeStep{
 				Run:    run,
 				Source: fmt.Sprintf("%s:%d", path, command.Line),
 				Number: command.Line,
-				Native: &nativeCommand{Path: path, Original: run, Blocked: "Buildkite Docker plugin command uses container argv; supply explicitly resolved initialization and execution before validation or editing"},
+				Native: &nativeCommand{Path: path, Original: run, Blocked: reason},
 			})
 		}
 	}

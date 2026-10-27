@@ -19,13 +19,19 @@ import (
 func nativeShellState(root string, job runtimeJob) runtimeJob {
 	job.Steps = slices.Clone(job.Steps)
 	env := maps.Clone(job.Env)
+	if env == nil {
+		env = map[string]string{}
+	}
 	literals := map[string]string{}
+	variables := map[string]string{}
 	directory := "."
 	for i := range job.Steps {
 		step := &job.Steps[i]
+		step.ShellVariables = maps.Clone(variables)
 		step.LiteralEnv = maps.Clone(literals)
 		for key := range step.Env {
 			delete(step.LiteralEnv, key)
+			delete(step.ShellVariables, key)
 		}
 		step.Env = mergeEnvironment(env, step.Env)
 		if step.WorkingDirectory == "" {
@@ -42,10 +48,22 @@ func nativeShellState(root string, job runtimeJob) runtimeJob {
 		if stmt.Background || stmt.Negated || len(stmt.Redirs) > 0 {
 			continue
 		}
-		if declaration, ok := stmt.Cmd.(*syntax.DeclClause); ok && declaration.Variant.Value == "export" {
+		var assignments []*syntax.Assign
+		exported := false
+		switch command := stmt.Cmd.(type) {
+		case *syntax.DeclClause:
+			if command.Variant.Value == "export" {
+				assignments, exported = command.Args, true
+			}
+		case *syntax.CallExpr:
+			if len(command.Args) == 0 {
+				assignments = command.Assigns
+			}
+		}
+		if assignments != nil {
 			values := map[string]string{}
 			literal := true
-			for _, assignment := range declaration.Args {
+			for _, assignment := range assignments {
 				if assignment.Name == nil || assignment.Naked || assignment.Append || assignment.Index != nil || assignment.Array != nil {
 					literal = false
 					break
@@ -62,11 +80,24 @@ func nativeShellState(root string, job runtimeJob) runtimeJob {
 				values[assignment.Name.Value] = value
 			}
 			if literal {
-				maps.Copy(env, values)
-				maps.Copy(literals, values)
+				maps.Copy(variables, values)
+				for key, value := range values {
+					_, inherited := env[key]
+					if exported || inherited {
+						env[key], literals[key] = value, value
+					} else if strings.HasPrefix(key, "DD_") || key == "NODE_OPTIONS" || key == "PATH" {
+						job.Gaps = append(job.Gaps, step.Source+": standalone shell control "+key+" requires explicit initialization/environment placement")
+					}
+				}
 				step.Run = ""
 			} else {
-				job.Gaps = append(job.Gaps, step.Source+": shell export needs resolved values before it can be replayed locally")
+				kind := "assignment"
+				if exported {
+					kind = "export"
+				}
+				step.ResolutionError = step.Source + ": shell " + kind + " needs resolved values before it can be replayed locally"
+				job.Gaps = append(job.Gaps, step.ResolutionError)
+				step.Run = ""
 			}
 			continue
 		}

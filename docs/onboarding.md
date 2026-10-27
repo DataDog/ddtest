@@ -72,6 +72,10 @@ Provider choice also retains opaque pipelines and resolves GitHub command/matrix
 variables. Shared edits require matching initialization states. Explicit tracer
 package mutations invalidate manifest-based version evidence. Inline visibility
 opt-ins apply before installation; whole-tracer switches require review.
+Literal standalone assignments are available to shell expansion without being
+implicitly exported. GitLab inputs headers, commandless plugin steps and Compose
+config arrays require resolved configuration. Installation evidence respects
+inline environment assignments and excludes untracked directory changes.
 
 GitLab local includes, inherited jobs, variables and literal matrices;
 CircleCI jobs, local reusable commands/executors and pinned official Node orb

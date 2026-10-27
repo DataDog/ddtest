@@ -95,6 +95,7 @@ type runtimeStep struct {
 	Shell            string                  `yaml:"shell"`
 	Env              map[string]string       `yaml:"env"`
 	LiteralEnv       map[string]string       `yaml:"-"` // Values already resolved by the source shell.
+	ShellVariables   map[string]string       `yaml:"-"` // Available to shell expansion, not implicitly exported.
 	Uses             string                  `yaml:"uses"`
 	Run              string                  `yaml:"run"`
 	If               string                  `yaml:"if"`

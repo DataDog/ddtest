@@ -192,7 +192,8 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	if len(env) == 0 {
 		env = nil
 	}
-	if len(env) == 0 || !strings.Contains(step.Run, "$") {
+	shellEnv := mergeEnvironment(env, step.ShellVariables)
+	if len(shellEnv) == 0 || !strings.Contains(step.Run, "$") {
 		return step, env, nil
 	}
 	file, err := syntax.NewParser().Parse(strings.NewReader(step.Run), "")
@@ -212,7 +213,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			}
 		}
 		if parameter, ok := node.(*syntax.ParamExp); ok {
-			value, exists := env[parameter.Param.Value]
+			value, exists := shellEnv[parameter.Param.Value]
 			if !exists || parameter.Index != nil || parameter.Slice != nil || parameter.Repl != nil || parameter.Exp != nil || parameter.Excl || parameter.Length || strings.ContainsAny(value, " \t\n*?[") {
 				expansionErr = fmt.Errorf("CI parameter %s requires explicit environment review", parameter.Param.Value)
 			}
@@ -227,7 +228,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		return step, env, expansionErr
 	}
 	pairs := []string{}
-	for key, value := range env {
+	for key, value := range shellEnv {
 		pairs = append(pairs, key+"="+value)
 	}
 	var commands []string

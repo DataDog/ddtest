@@ -110,11 +110,18 @@ func nativePackageInstalledBefore(root, provider string, job runtimeJob, index i
 			}
 		}
 		for _, words := range commands {
-			if normalized, _, err := commandEnvironment(words); err == nil {
+			nodeEnv := nodeEnv
+			if normalized, assignments, err := commandEnvironment(words); err == nil {
 				words = normalized
+				if value, ok := assignments["NODE_ENV"]; ok {
+					nodeEnv = value
+				}
 			}
 			if len(words) == 0 {
 				continue
+			}
+			if words[0] == "cd" {
+				return false // Starting-directory evidence cannot follow this shell state.
 			}
 			if len(words) > 1 && slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) && slices.Contains([]string{"install", "i", "add", "update", "up", "upgrade", "remove", "rm", "uninstall"}, words[1]) && slices.ContainsFunc(words[2:], func(word string) bool {
 				return word == "dd-trace" || strings.HasPrefix(word, "dd-trace@")
