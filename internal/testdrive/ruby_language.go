@@ -13,6 +13,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
@@ -85,6 +86,12 @@ func (rubyLanguage) detectsTracerInPreparation() bool { return false }
 // Each configuration may select its own Gemfile and bundle.
 func (rubyLanguage) refreshProjectTracer(t *Testdrive, ctx context.Context) {
 	if installer, ok := t.platform.(*platform.Ruby); ok {
+		// Bundler may evaluate a blocking Gemfile; keep the subprocess bound.
+		if t.commandTimeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, t.commandTimeout)
+			defer cancel()
+		}
 		t.projectTracer, _ = installer.DetectTracer(ctx, platform.TracerOptions{Command: t.command, Args: t.args, Environment: t.configurationEnvironment})
 	}
 }
@@ -164,10 +171,16 @@ func (rubyLanguage) pairedFrameworks() map[string]pairedFramework {
 func (rubyLanguage) isolatesConfigurations() bool { return true }
 
 // Point Bundler at the configuration's Gemfile inside the copy. Only a local
-// command without CI locations inherits BUNDLE_GEMFILE from the shell; CI
-// never sees it.
+// command inherits BUNDLE_GEMFILE from the shell; CI never sees it, including
+// the sole CI command a plain run selects.
 func (rubyLanguage) prepareConfiguration(t *Testdrive, item *configurationResult, original, workspace string) error {
-	gemfile, err := rubyConfigurationGemfile(original, item.Directory, t.configurationEnvironment, len(item.Locations) == 0)
+	local := len(item.Locations) == 0
+	if local && strings.TrimSpace(settings.GetCommand()) == "" {
+		if selected, err := onboard.RubyValidationCommand(original, t.framework.Name(), ""); err == nil && selected != "" {
+			local = false
+		}
+	}
+	gemfile, err := rubyConfigurationGemfile(original, item.Directory, t.configurationEnvironment, local)
 	if err != nil {
 		return err
 	}

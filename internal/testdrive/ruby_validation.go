@@ -132,7 +132,8 @@ jobs.each do |job|
 end
 supported = framework.version >= Gem::Version.new(ARGV.fetch(0) == "rspec" ? "3.0.0" : "5.0.0")
 supported &&= !tracer || tracer.version >= Gem::Version.new("1.31.0")
-puts JSON.generate(version: framework.version.to_s, tracer: tracer&.version&.to_s, ruby: RUBY_VERSION, supported: supported, jobs: jobs)`
+metadata = JSON.generate(version: framework.version.to_s, tracer: tracer&.version&.to_s, ruby: RUBY_VERSION, supported: supported, jobs: jobs)
+ENV["DDTEST_RUBY_PREFLIGHT_RESULT"] ? File.write(ENV["DDTEST_RUBY_PREFLIGHT_RESULT"], metadata) : puts(metadata)`
 
 func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, result *validationResult) error {
 	check := &preflightCheck{Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "The Ruby bundle has not been inspected."}}
@@ -171,6 +172,17 @@ func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, re
 	maps.Copy(env, t.tracerEnvironment)
 	env["RUBYOPT"] = stripDatadogRubyOptions(t.rubyOptions())
 	env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
+	// Gems, the Gemfile and preserved Ruby options may print diagnostics, so
+	// the metadata goes through a private file rather than the output.
+	resultFile, err := os.CreateTemp("", "ddtest-ruby-preflight-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(resultFile.Name()) }()
+	if err := resultFile.Close(); err != nil {
+		return err
+	}
+	env["DDTEST_RUBY_PREFLIGHT_RESULT"] = resultFile.Name()
 	data, err := t.executor.CombinedOutput(ctx, "bundle", []string{"exec", "ruby", "-e", rubyPreflightScript, t.framework.Name(), string(jobs)}, env)
 	if err != nil {
 		check.Verdict.Reason = "Install the repository's Ruby dependencies first: " + commandDiagnostic(data)
@@ -181,7 +193,8 @@ func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, re
 		Supported             bool
 		Jobs                  []onboard.RuntimeFinding
 	}
-	if err := json.Unmarshal(data, &info); err != nil || info.Version == "" {
+	metadata, err := os.ReadFile(resultFile.Name())
+	if err != nil || json.Unmarshal(metadata, &info) != nil || info.Version == "" {
 		return fmt.Errorf("ruby bundle did not produce framework metadata: %s", commandDiagnostic(data))
 	}
 	check.Version = info.Version

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
@@ -97,6 +98,20 @@ func TestRubyRefreshesTracerForEachBundle(t *testing.T) {
 	require.Contains(t, drive.projectTracer, "1.42.0")
 }
 
+func TestRubyTracerDiscoveryHonorsTheSubprocessTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake bundle")
+	}
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "bundle"), []byte("#!/bin/sh\nexec sleep 30\n"), 0700))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	drive := Testdrive{platform: platform.NewRuby(""), language: "ruby", commandTimeout: 200 * time.Millisecond, configurationEnvironment: map[string]string{}}
+	started := time.Now()
+	drive.lang().refreshProjectTracer(&drive, t.Context())
+	require.Less(t, time.Since(started), 10*time.Second)
+	require.Empty(t, drive.projectTracer)
+}
+
 func TestRubyFocusedCheckOnlyLoadsOnlyOwnedCopy(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake bundle")
@@ -107,7 +122,8 @@ func TestRubyFocusedCheckOnlyLoadsOnlyOwnedCopy(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, "Gemfile.lock"), "installed bundle\n")
 	script := `#!/bin/sh
 printf loaded > gemfile-generated
-printf '%s' '{"version":"5.27.0","tracer":"1.42.0","runtime":"3.3.11","supported":true,"jobs":[]}'
+echo "bundle diagnostics"
+printf '%s' '{"version":"5.27.0","tracer":"1.42.0","runtime":"3.3.11","supported":true,"jobs":[]}' > "$DDTEST_RUBY_PREFLIGHT_RESULT"
 `
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "bundle"), []byte(script), 0700))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -183,12 +199,20 @@ func TestRubyCIConfigurationsIgnoreTheShellGemfile(t *testing.T) {
 		{[]string{".github/workflows/test.yml / tests / step 1 (bundle exec rspec)"}, "Gemfile"},
 		{nil, "gemfiles/local.gemfile"},
 	} {
-		drive := Testdrive{configurationEnvironment: map[string]string{}}
+		drive := Testdrive{framework: framework.NewRSpec(nil), configurationEnvironment: map[string]string{}}
 		item := configurationResult{TestCommand: onboard.TestCommand{Directory: ".", Locations: tc.locations}}
 		workspace := t.TempDir()
 		require.NoError(t, rubyLanguage{}.prepareConfiguration(&drive, &item, root, workspace))
 		require.Equal(t, filepath.Join(workspace, tc.want), drive.configurationEnvironment["BUNDLE_GEMFILE"])
 	}
+	// A plain run that selects the sole CI command is a CI configuration too.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  tests:\n    steps:\n      - run: bundle exec rspec\n")
+	drive := Testdrive{framework: framework.NewRSpec(nil), configurationEnvironment: map[string]string{}}
+	item := configurationResult{TestCommand: onboard.TestCommand{Directory: "."}}
+	workspace := t.TempDir()
+	require.NoError(t, rubyLanguage{}.prepareConfiguration(&drive, &item, root, workspace))
+	require.Equal(t, filepath.Join(workspace, "Gemfile"), drive.configurationEnvironment["BUNDLE_GEMFILE"])
 }
 
 func TestRubyProbeNeverLandsInAnInstalledGem(t *testing.T) {

@@ -84,6 +84,18 @@ Gem.loaded_specs["trace-dependency"] = Gem::Specification.new { |s| s.name = "tr
 		require.Equal(t, status, info.Jobs[i].Status)
 	}
 	require.NotContains(t, info.Jobs[0].Requirement, "99")
+
+	// Diagnostics printed while loading the bundle stay out of the metadata.
+	result := filepath.Join(t.TempDir(), "metadata.json")
+	command := exec.CommandContext(t.Context(), ruby, "-e", setup+`puts "Gemfile notice"; warn "deprecated"`+"\n"+rubyPreflightScript, "minitest", string(jobs))
+	command.Env = append(os.Environ(), "DDTEST_RUBY_PREFLIGHT_RESULT="+result)
+	data, err = command.CombinedOutput()
+	require.NoError(t, err, string(data))
+	require.Contains(t, string(data), "Gemfile notice")
+	metadata, err := os.ReadFile(result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(metadata, &info))
+	require.Equal(t, "compatible", info.Jobs[0].Status)
 }
 
 func TestRubyCIPreflightUsesOnlyMatchingPortablePlatformMetadata(t *testing.T) {

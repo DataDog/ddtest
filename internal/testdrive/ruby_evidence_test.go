@@ -63,7 +63,7 @@ func (e *rubyBundleRuntimeExecutor) CombinedOutput(_ context.Context, _ string, 
 			jobs[i].Reason = "metadata from another bundle"
 		}
 	}
-	return json.Marshal(map[string]any{"version": "5.27.0", "tracer": "1.42.0", "runtime": "3.3.11", "supported": true, "jobs": jobs})
+	return writeRubyPreflightResult(env, map[string]any{"version": "5.27.0", "tracer": "1.42.0", "runtime": "3.3.11", "supported": true, "jobs": jobs})
 }
 
 func TestRubyRuntimeChecksUseEachConfigurationsBundle(t *testing.T) {
@@ -131,7 +131,7 @@ func TestRubyRuntimeAggregationKeepsEarlierFailure(t *testing.T) {
 
 type rubyReviewPreflightExecutor struct{}
 
-func (rubyReviewPreflightExecutor) CombinedOutput(_ context.Context, _ string, args []string, _ map[string]string) ([]byte, error) {
+func (rubyReviewPreflightExecutor) CombinedOutput(_ context.Context, _ string, args []string, env map[string]string) ([]byte, error) {
 	var jobs []onboard.RuntimeFinding
 	if err := json.Unmarshal([]byte(args[len(args)-1]), &jobs); err != nil {
 		return nil, err
@@ -139,7 +139,7 @@ func (rubyReviewPreflightExecutor) CombinedOutput(_ context.Context, _ string, a
 	for i := range jobs {
 		jobs[i].Status = "incompatible"
 	}
-	return json.Marshal(map[string]any{"version": "5.27.0", "tracer": "1.42.0", "runtime": "3.3.11", "supported": true, "jobs": jobs})
+	return writeRubyPreflightResult(env, map[string]any{"version": "5.27.0", "tracer": "1.42.0", "runtime": "3.3.11", "supported": true, "jobs": jobs})
 }
 
 func TestRubyNestedPreflightInspectsCheckoutCI(t *testing.T) {
@@ -244,4 +244,14 @@ func TestRubyObserverLoadsFromQuotedTemporaryPath(t *testing.T) {
 	require.Zero(t, run.ExitCode, run.commandOutput)
 	require.Empty(t, run.ResultError)
 	require.Len(t, run.Tests, 1)
+}
+
+// writeRubyPreflightResult stands in for the preflight script: metadata goes
+// to the private result file and only diagnostics reach the output.
+func writeRubyPreflightResult(env map[string]string, metadata any) ([]byte, error) {
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+	return []byte("bundle diagnostics\n"), os.WriteFile(env["DDTEST_RUBY_PREFLIGHT_RESULT"], data, 0600)
 }
