@@ -102,7 +102,13 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 					continue
 				}
 				location := workflow.Path + " / " + name
-				node, _ := nativeStepRuntime(workflow, job, i)
+				if workflow.Provider == "jenkins" && step.Native != nil && strings.HasPrefix(step.Native.Original, "#!") && !step.Native.Manual {
+					return nil, &SetupGap{location, "This Jenkins script selects its interpreter with a shebang; preserve it and place initialization explicitly"}
+				}
+				node, nodeSource := nativeTestRuntime(workflow, job, i, r)
+				if strings.HasPrefix(nodeSource, "explicit Node executable ") {
+					return nil, &SetupGap{location, "The test command selects an explicit Node executable; identify its actual runtime before applying instrumentation"}
+				}
 				if UnsupportedNode(node) {
 					continue
 				}
@@ -113,14 +119,14 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 					return nil, &SetupGap{location, "The test command is unresolved or also runs another framework; preserve it and supply scoped initialization"}
 				}
 				if requirement != "" {
-					status, reason := CompareNodeRequirement(node, requirement)
+					status, reason := compareNativeNode(node, requirement)
 					if status != StatusCompatible {
 						return nil, &SetupGap{location, "CI Node runtime: " + reason + "; identify its runtime or select a compatible tracer"}
 					}
 				}
 				esm := setupNeedsESM(root, framework, workflow, job, step)
 				if esm {
-					if status, reason := CompareNodeRequirement(node, ">=18.19 <19 || >=20.6"); status != StatusCompatible {
+					if status, reason := compareNativeNode(node, ">=18.19 <19 || >=20.6"); status != StatusCompatible {
 						return nil, &SetupGap{location, "CI ESM import runtime: " + reason}
 					}
 				}
@@ -135,6 +141,20 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 					if native.Tracer != version || (native.Framework != "" && native.Framework != framework) {
 						return nil, &SetupGap{location, "Existing CI tracer/framework selection differs; preserve it and resolve the conflict"}
 					}
+				}
+				// A verified tracer doesn't establish per-test source coverage.
+				// Existing bootstraps retain their installation and initialization;
+				// only their test invocation may need the shared coverage recipe.
+				original := native.Original
+				if native.Tracer != "" && !native.Manual {
+					_, original, _ = unwrapNativeInstrumentation(native.Original, workflow.Provider)
+				}
+				covered, err := setupMochaCoverage(root, filepath.Join(root, stepDirectory(workflow, job, step)), framework, original)
+				if err != nil {
+					return nil, err
+				}
+				coverageAdded = coverageAdded || covered != original
+				if native.Tracer != "" && covered == original {
 					targets++
 					continue
 				}
@@ -146,19 +166,21 @@ func planNativeSetup(root, framework, version, site, requirement string, workflo
 					}
 					files[native.Path] = edit
 				}
-				if strings.Contains(mergeEnvironment(job.Env, step.Env)["NODE_OPTIONS"], "dd-trace") {
+				if native.Tracer == "" && strings.Contains(mergeEnvironment(job.Env, step.Env)["NODE_OPTIONS"], "dd-trace") {
 					return nil, &SetupGap{location, "Existing custom tracer initialization is preserved; resolve its exact installation/version instead of adding a second tracer"}
 				}
 				if (workflow.Provider == "gitlab" || workflow.Provider == "buildkite") && nativeChangesShellState(native.Original) {
 					return nil, &SetupGap{location, "This test entry changes persistent shell state; preserve it and place initialization explicitly around its test invocation"}
 				}
-				covered, err := setupMochaCoverage(root, filepath.Join(root, stepDirectory(workflow, job, step)), framework, native.Original)
-				if err != nil {
-					return nil, err
-				}
-				coverageAdded = coverageAdded || covered != native.Original
 				coverage := strings.TrimSpace(strings.TrimPrefix(scopedOptions, strings.TrimPrefix(setupPreload(framework), "${{ env.NODE_OPTIONS }} ")))
 				value := wrapNativeCommand(nativeSetup{Framework: framework, Version: version, Site: site, ESM: esm, Coverage: coverage}, covered, workflow.Provider)
+				if native.Manual {
+					value = covered
+				} else if native.Tracer != "" {
+					if setup, _, ok := unwrapNativeInstrumentation(native.Original, workflow.Provider); ok {
+						value = wrapNativeCommand(setup, covered, workflow.Provider)
+					}
+				}
 				var replacement nativeReplacement
 				if native.Node != nil {
 					replacement, err = yamlCommandReplacement(edit.before, native.Node, value)
@@ -331,17 +353,20 @@ func sharedNativeSource(root string, workflows []ciWorkflow, framework, requirem
 					continue
 				}
 				resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
-				node, _ := nativeStepRuntime(workflow, job, i)
+				node, nodeSource := nativeTestRuntime(workflow, job, i, resolution)
+				if strings.HasPrefix(nodeSource, "explicit Node executable ") {
+					return true
+				}
 				if job.If == "false" || mochaInstrumentationDisabled(workflow, job, step) || UnsupportedNode(node) || len(job.Gaps) > 0 || !resolution.Matched || resolution.OtherFramework || resolution.Reason != "" {
 					return true
 				}
 				if requirement != "" {
-					if status, _ := CompareNodeRequirement(node, requirement); status != StatusCompatible {
+					if status, _ := compareNativeNode(node, requirement); status != StatusCompatible {
 						return true
 					}
 				}
 				if setupNeedsESM(root, framework, workflow, job, step) {
-					if status, _ := CompareNodeRequirement(node, ">=18.19 <19 || >=20.6"); status != StatusCompatible {
+					if status, _ := compareNativeNode(node, ">=18.19 <19 || >=20.6"); status != StatusCompatible {
 						return true
 					}
 				}

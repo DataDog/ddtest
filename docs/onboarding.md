@@ -31,6 +31,9 @@ editor refuses a shared source edit if any consumer has an excluded,
 incompatible or unresolved runtime. GitLab/Buildkite test entries that change
 persistent shell state (for example, `cd package && npm test` followed by another
 entry) need explicit initialization placement rather than a subshell wrapper.
+Jenkins scripts with a shebang and computed environment assignments also need
+explicit setup. Floating Node selectors such as `node:18` remain unresolved
+until the actual runtime version is supplied; they are not treated as `18.0.0`.
 
 GitLab local includes, inherited jobs, variables and literal matrices;
 CircleCI jobs, local reusable commands/executors and pinned official Node orb

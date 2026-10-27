@@ -161,7 +161,10 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 			image = ciScalar(ciMembers(fields["image"])["name"])
 		}
 		job := runtimeJob{Env: providerEnvironment("gitlab", env), Node: ciImageNode(image, env), NodeSource: "GitLab image " + image}
-		if rules := fields["rules"]; rules != nil {
+		for _, rules := range []*yaml.Node{fields["rules"], ciMembers(definitions["workflow"])["rules"]} {
+			if rules == nil {
+				continue
+			}
 			for _, rule := range rules.Content {
 				if ciMembers(rule)["variables"] != nil {
 					job.Gaps = append(job.Gaps, "GitLab rules change environment values; provide the resolved per-rule configuration")

@@ -148,6 +148,11 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			continue
 		}
 		if workflow.Provider != "" && workflow.Provider != "github" {
+			if literal, ok := step.LiteralEnv[key]; ok && literal == value {
+				// Quoted shell exports are values, not another CI expression.
+				env[key] = literal
+				continue
+			}
 			var err error
 			value, err = nativeEnvironmentValue(value, env)
 			if err != nil {

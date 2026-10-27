@@ -108,7 +108,12 @@ func nativePackageInstalledBefore(root string, job runtimeJob, index int, direct
 			if len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) || !slices.Contains([]string{"ci", "install", "i"}, words[1]) {
 				continue
 			}
-			if slices.Contains(words, "--omit=dev") || slices.Contains(words, "--production") || slices.Contains(words, "--prefix") || slices.Contains(words, "-g") {
+			omitsDev := false
+			for i, word := range words {
+				omitsDev = omitsDev || slices.Contains([]string{"--prod", "--prod=true", "--production", "--production=true", "--only=production", "--omit=dev"}, word) ||
+					(word == "--omit" && i+1 < len(words) && words[i+1] == "dev")
+			}
+			if omitsDev || slices.Contains(words, "--prefix") || slices.Contains(words, "-g") {
 				continue
 			}
 			return true

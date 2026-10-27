@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kballard/go-shellquote"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -119,7 +120,18 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 			}
 			return literalCIPath(value)
 		}
-		job := runtimeJob{Env: providerEnvironment("circleci", ciEnvironment(jobFields["environment"]))}
+		job := runtimeJob{}
+		parameterEnvironment := func(node *yaml.Node) map[string]string {
+			env := ciEnvironment(node)
+			for key, value := range env {
+				env[key] = replace(value)
+				if strings.Contains(env[key], "<<") {
+					job.Gaps = append(job.Gaps, "CircleCI environment "+key+" requires resolved parameters")
+				}
+			}
+			return env
+		}
+		job.Env = providerEnvironment("circleci", parameterEnvironment(jobFields["environment"]))
 		job.Defaults.Run.WorkingDirectory = directory
 		if dirErr != nil {
 			w.Unresolved = append(w.Unresolved, path+" / "+inv.label+": "+dirErr.Error())
@@ -166,7 +178,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 						steps := nativeSteps(path, run, "circleci")
 						for i := range steps {
 							steps[i].Run = replace(steps[i].Run)
-							steps[i].Env = ciEnvironment(properties["environment"])
+							steps[i].Env = parameterEnvironment(properties["environment"])
 							if properties["working_directory"] != nil {
 								working, e := mapDirectory(replace(ciScalar(properties["working_directory"])))
 								if e != nil {
@@ -175,7 +187,7 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 									steps[i].WorkingDirectory = working
 								}
 							}
-							steps[i].Shell = ciScalar(properties["shell"])
+							steps[i].Shell = circleCIShell(replace(ciScalar(properties["shell"])))
 							if properties["background"] != nil && ciScalar(properties["background"]) != "false" {
 								steps[i].ResolutionError = "CircleCI background command requires explicit local service/readiness facts"
 							}
@@ -225,4 +237,21 @@ func readCircleCI(root, path string) (ciWorkflow, error) {
 		w.Jobs[inv.label] = job
 	}
 	return w, nil
+}
+
+func circleCIShell(shell string) string {
+	words, err := shellquote.Split(shell)
+	if err != nil || len(words) == 0 {
+		return shell
+	}
+	if slices.Contains([]string{"/bin/bash", "/usr/bin/bash", "/bin/sh", "/usr/bin/sh"}, words[0]) {
+		words[0] = strings.TrimPrefix(strings.TrimPrefix(words[0], "/usr"), "/bin/")
+	}
+	// CircleCI supplies a script file implicitly; the shared representation
+	// uses {0}. Keep unsupported interpreters and options as explicit gaps.
+	candidate := strings.Join(append(words, "{0}"), " ")
+	if supportedCIShell(candidate) {
+		return candidate
+	}
+	return shell
 }

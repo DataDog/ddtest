@@ -7,10 +7,32 @@ package onboard
 
 import (
 	"context"
+	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/kballard/go-shellquote"
 )
+
+func compareNativeNode(node, requirement string) (string, string) {
+	if numericNode.MatchString(node) && (strings.Count(node, ".") != 2 || strings.ContainsAny(node, "x*")) {
+		return StatusInconclusive, fmt.Sprintf("CI Node selector %q is unresolved; supply the actual runtime version before checking compatibility.", node)
+	}
+	return CompareNodeRequirement(node, requirement)
+}
+
+func nativeTestRuntime(w ciWorkflow, job runtimeJob, index int, resolution commandResolution) (string, string) {
+	node, source := nativeStepRuntime(w, job, index)
+	for _, test := range resolution.Tests {
+		words, _ := shellquote.Split(test.Command)
+		if len(words) > 0 && !slices.Contains([]string{"node", "node.exe"}, words[0]) && slices.Contains([]string{"node", "node.exe"}, filepath.Base(words[0])) {
+			return "", "explicit Node executable " + words[0]
+		}
+	}
+	return node, source
+}
 
 // GitLab and Buildkite entries share a shell; CircleCI run and Jenkins sh do
 // not. Resolve runtime switches at the same test step for discovery and edits.
@@ -53,7 +75,7 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 			if !r.Matched {
 				continue
 			}
-			node, nodeSource := nativeStepRuntime(w, job, i)
+			node, nodeSource := nativeTestRuntime(w, job, i, r)
 			finding := RuntimeFinding{Workflow: w.Path, Job: name, Step: stepNumber(step, i), Source: step.Source, Command: step.Run, Resolution: r.Evidence, Node: node, NodeSource: nodeSource, Status: StatusInconclusive}
 			if mochaInstrumentationDisabled(w, job, step) {
 				finding.Status, finding.Code, finding.Reason = StatusExcluded, CodeExcludedRuntime, "DD_CIVISIBILITY_ENABLED=false leaves this CI entry uninstrumented; its runtime was not validated with the tracer."
@@ -75,6 +97,11 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 				findings = append(findings, finding)
 				continue
 			}
+			if strings.HasPrefix(nodeSource, "explicit Node executable ") {
+				finding.Code, finding.Reason = CodeRuntimeUnknown, "The test command selects an explicit Node executable; its CI version cannot be inferred from the job image or tools."
+				findings = append(findings, finding)
+				continue
+			}
 			if UnsupportedNode(node) {
 				finding.Status, finding.Code, finding.Reason = StatusExcluded, CodeUnsupportedNode, UnsupportedNodeReason(node)
 				findings = append(findings, finding)
@@ -87,6 +114,11 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 			}
 			if step.Native.Framework != "" && step.Native.Framework != framework {
 				finding.Code, finding.Reason = CodeUnverifiedInitialization, "Existing initialization targets another framework"
+				findings = append(findings, finding)
+				continue
+			}
+			if framework == "mocha" && slices.ContainsFunc(r.Tests, func(test TestCommand) bool { return !test.usesNYC && !test.mochaIstanbul }) {
+				finding.Code, finding.Reason = CodeUnverifiedInitialization, "Mocha source coverage is missing: preserve the existing tracer and configure Istanbul/NYC instrumentation for this test command."
 				findings = append(findings, finding)
 				continue
 			}
@@ -105,10 +137,13 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 			if node == "" {
 				finding.Code, finding.Reason = CodeRuntimeUnknown, "CI Node runtime is not statically known from the image or tools; provide the actual runtime instead of guessing"
 			} else {
-				finding.Status, finding.Reason = CompareNodeRequirement(node, requirement.Node)
+				finding.Status, finding.Reason = compareNativeNode(node, requirement.Node)
+				if finding.Status == StatusInconclusive {
+					finding.Code = CodeRuntimeUnknown
+				}
 			}
 			if finding.Status == StatusCompatible && step.Native.ESM {
-				finding.Status, finding.Reason = CompareNodeRequirement(node, ">=18.19 <19 || >=20.6")
+				finding.Status, finding.Reason = compareNativeNode(node, ">=18.19 <19 || >=20.6")
 			}
 			findings = append(findings, finding)
 		}

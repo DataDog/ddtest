@@ -19,9 +19,14 @@ import (
 func nativeShellState(root string, job runtimeJob) runtimeJob {
 	job.Steps = slices.Clone(job.Steps)
 	env := maps.Clone(job.Env)
+	literals := map[string]string{}
 	directory := "."
 	for i := range job.Steps {
 		step := &job.Steps[i]
+		step.LiteralEnv = maps.Clone(literals)
+		for key := range step.Env {
+			delete(step.LiteralEnv, key)
+		}
 		step.Env = mergeEnvironment(env, step.Env)
 		if step.WorkingDirectory == "" {
 			step.WorkingDirectory = directory
@@ -55,6 +60,7 @@ func nativeShellState(root string, job runtimeJob) runtimeJob {
 			}
 			if literal {
 				maps.Copy(env, values)
+				maps.Copy(literals, values)
 				step.Run = ""
 			} else {
 				job.Gaps = append(job.Gaps, step.Source+": shell export needs resolved values before it can be replayed locally")

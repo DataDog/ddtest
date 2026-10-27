@@ -158,9 +158,16 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 				current.env = maps.Clone(current.env)
 				for j := i + 2; j+2 < stop; j++ {
 					if tokens[j+1].value == "=" {
-						if tokens[j+2].quote != "" {
+						value := tokens[j+2]
+						literal := value.quote != "" && (!strings.HasPrefix(value.quote, "\"") || !strings.Contains(value.value, "$"))
+						if j+3 < stop {
+							next := tokens[j+3]
+							literal = literal && (next.value == ";" || strings.Contains(string(data[value.end:next.start]), "\n")) && !strings.ContainsAny(next.value, "+-*/%?.[<>=!&|^") && next.value != "as"
+						}
+						if literal {
 							current.env[tokens[j].value] = tokens[j+2].value
 						} else {
+							delete(current.env, tokens[j].value)
 							job.Gaps = append(job.Gaps, "Jenkins environment "+tokens[j].value+" is computed or credential-backed")
 						}
 						j += 2
