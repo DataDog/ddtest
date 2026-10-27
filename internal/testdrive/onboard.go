@@ -806,8 +806,12 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			return fail("validation_failed", "validation_incomplete", strings.Join(reportOnly, "; "), "Report these blockers to the user as they are: the tracer did not apply these controls for this framework setup, and no customer change is expected to fix them. Do not change the suite, CI, configuration or tracer to work around them, and do not rerun."+decision)
 		}
 		// Every actionable blocker is listed: a capped list hid real checks behind
-		// lines that only restate them.
-		result.RequiredInput = actionable
+		// lines that only restate them. Multi-line CI scripts are shortened to one
+		// line; the report keeps them whole.
+		result.RequiredInput = nil
+		for _, check := range actionable {
+			result.RequiredInput = append(result.RequiredInput, onboard.OneLineExcerpt(check))
+		}
 		needs := "Address only these current blockers, then rerun full validation. A failed feature or exclusion check remains failed."
 		if len(reportOnly) > 0 {
 			needs += " Report, without trying to fix, these tracer limitations: " + strings.Join(reportOnly, "; ") + "."
