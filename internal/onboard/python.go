@@ -339,7 +339,7 @@ func pythonRuntimeOverride(words []string, python string, environment map[string
 	}
 	base := strings.TrimSuffix(filepath.Base(words[0]), ".exe")
 	if platform.IsPythonExecutable(words[0]) {
-		return strings.ContainsAny(words[0], "/\\") || base != "python" && base != "python3" && base != "python"+python
+		return strings.ContainsAny(words[0], "/\\") || base != "python" && base != "python3" && !strings.HasPrefix("python"+python+".", base+".")
 	}
 	if (base == "uv" || base == "poetry") && len(words) > 2 && words[1] == "run" {
 		if base == "uv" && (environment["UV_PYTHON"] != "" || environment["UV_PROJECT_ENVIRONMENT"] != "") {
@@ -614,7 +614,7 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 	if err != nil {
 		return "inconclusive", err.Error()
 	}
-	var options []string
+	var invocations [][]string
 	commands, _ := staticCommands(step.Run)
 	directory := stepDirectory(workflow, job, step)
 	for _, words := range commands {
@@ -630,7 +630,7 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 			if err != nil {
 				return "inconclusive", err.Error()
 			}
-			options = append(options, commandOptions...)
+			invocations = append(invocations, commandOptions)
 		}
 		if args, ok := pythonRunnerArguments(words, "tox"); ok {
 			if _, overridden := env["TOX_OVERRIDE"]; overridden {
@@ -658,37 +658,39 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 				if err != nil {
 					return "inconclusive", err.Error()
 				}
-				options = append(options, commandOptions...)
+				invocations = append(invocations, commandOptions)
 			}
-		}
-	}
-	if slices.Contains(options, "--no-ddtrace") {
-		return "incompatible", "The pytest command or effective PYTEST_ADDOPTS explicitly disables Datadog instrumentation."
-	}
-	if !slices.Contains(options, "--ddtrace") {
-		return "incompatible", "The test step replaces the action's PYTEST_ADDOPTS; preserve --ddtrace and existing options."
-	}
-	loaded := false
-	for index, option := range options {
-		plugin := strings.TrimPrefix(option, "-p")
-		if option == "-p" && index+1 < len(options) {
-			plugin = options[index+1]
-		} else if !strings.HasPrefix(option, "-p") {
-			continue
-		}
-		if slices.Contains([]string{"ddtrace", "ddtrace.contrib.pytest.plugin", "ddtrace.contrib.internal.pytest.plugin", "ddtrace.testing.internal.pytest.entry_point"}, strings.TrimPrefix(plugin, "no:")) {
-			if strings.HasPrefix(plugin, "no:") {
-				return "incompatible", "The pytest options explicitly block the Datadog plugin."
-			}
-			loaded = true
 		}
 	}
 	autoload, err := runtimeValue(env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"], row)
 	if err != nil {
 		return "inconclusive", err.Error()
 	}
-	if (autoload != "" || slices.Contains(options, "--disable-plugin-autoload")) && !loaded {
-		return "incompatible", "pytest plugin autoload is disabled; explicitly load the Datadog plugin with -p ddtrace in CI. Local plugin loading does not validate CI setup."
+	for _, options := range invocations {
+		if slices.Contains(options, "--no-ddtrace") {
+			return "incompatible", "The pytest command or effective PYTEST_ADDOPTS explicitly disables Datadog instrumentation."
+		}
+		if !slices.Contains(options, "--ddtrace") {
+			return "incompatible", "The test step replaces the action's PYTEST_ADDOPTS; preserve --ddtrace and existing options."
+		}
+		loaded := false
+		for index, option := range options {
+			plugin := strings.TrimPrefix(option, "-p")
+			if option == "-p" && index+1 < len(options) {
+				plugin = options[index+1]
+			} else if !strings.HasPrefix(option, "-p") {
+				continue
+			}
+			if slices.Contains([]string{"ddtrace", "ddtrace.contrib.pytest.plugin", "ddtrace.contrib.internal.pytest.plugin", "ddtrace.testing.internal.pytest.entry_point"}, strings.TrimPrefix(plugin, "no:")) {
+				if strings.HasPrefix(plugin, "no:") {
+					return "incompatible", "The pytest options explicitly block the Datadog plugin."
+				}
+				loaded = true
+			}
+		}
+		if (autoload != "" || slices.Contains(options, "--disable-plugin-autoload")) && !loaded {
+			return "incompatible", "pytest plugin autoload is disabled; explicitly load the Datadog plugin with -p ddtrace in CI. Local plugin loading does not validate CI setup."
+		}
 	}
 	return "", ""
 }

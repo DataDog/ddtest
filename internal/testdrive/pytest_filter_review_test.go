@@ -73,11 +73,21 @@ func TestPytestProbeClearsFiltersWithoutChangingSelectedSuite(t *testing.T) {
 }
 
 func TestPytestConfigPluginBlockerFailsBeforeExecution(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python required")
+	}
+	if err := exec.CommandContext(t.Context(), python, "-c", "import pytest").Run(); err != nil {
+		if os.Getenv("DDTEST_REQUIRE_PROJECT_RUNTIMES") == "1" {
+			t.Fatal("pytest required")
+		}
+		t.Skip("pytest required")
+	}
 	root := t.TempDir()
 	t.Chdir(root)
 	t.Setenv("PYTEST_ADDOPTS", "")
 	requireWriteFile(t, "pytest.ini", "[pytest]\naddopts = -p no:ddtrace\n")
-	drive := &Testdrive{repositoryRoot: root, command: "python", args: []string{"-m", "pytest"}}
+	drive := &Testdrive{repositoryRoot: root, command: python, args: []string{"-m", "pytest"}}
 	result := validationResult{}
 	require.ErrorContains(t, drive.checkPytestPreflight(t.Context(), &bytes.Buffer{}, &result), "block the Datadog plugin")
 	require.Equal(t, "incompatible", result.Preflight.Verdict.Status)
