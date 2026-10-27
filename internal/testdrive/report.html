@@ -324,6 +324,7 @@ THE SOFTWARE.
   </div>
 {{ end }}
 {{ define "source" }}
+  {{ if .Reference }}<div data-shared-detail="{{ .Reference }}"></div>{{ else }}
   <div class="source-block">
     <h3>
       {{ if .Lines }}
@@ -339,6 +340,7 @@ THE SOFTWARE.
       <p class="muted">{{ .Error }}</p>
     {{ end }}
   </div>
+  {{ end }}
 {{ end }}
 {{ define "covered-files" }}
   {{ if . }}
@@ -372,7 +374,7 @@ THE SOFTWARE.
           Test coverage · {{ len .CoveredFiles }}
           {{ plural (len .CoveredFiles) "file" "files" }}
         </summary>
-        {{ template "covered-files" .CoveredFiles }}
+        {{ if .CoverageReference }}<div data-shared-detail="{{ .CoverageReference }}"></div>{{ else }}{{ template "covered-files" .CoveredFiles }}{{ end }}
       </details>
     {{ end }}
   </div>
@@ -386,6 +388,7 @@ THE SOFTWARE.
     </div>
   </div>
 {{ end }}
+{{ with .Prepared }}
 <!doctype html>
 <html lang="en">
   <head>
@@ -1629,6 +1632,8 @@ THE SOFTWARE.
         {{ template "pager" }}
       </section>
     </main>
+    {{ range $i, $source := .SharedSources }}<template id="shared-source-{{ $i }}">{{ template "source" $source }}</template>{{ end }}
+    {{ range $i, $files := .SharedCoverage }}<template id="shared-coverage-{{ $i }}">{{ template "covered-files" $files }}</template>{{ end }}
     <script>
       (function () {
         "use strict";
@@ -1650,6 +1655,7 @@ THE SOFTWARE.
         var query = "";
         var explorers = {};
         var collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+        var sharedSearch = Object.create(null);
         document.querySelectorAll("[data-explorer]").forEach(function (table) {
           var panel = table.closest(".panel");
           var sortButtons = Array.from(table.querySelectorAll(":scope > thead [data-sort]"));
@@ -1679,6 +1685,14 @@ THE SOFTWARE.
               element: item,
               status: item.dataset.status,
               text: item.textContent.toLowerCase(),
+              sharedText: Array.from(item.querySelectorAll("[data-shared-detail]")).map(function (placeholder) {
+                var id = placeholder.dataset.sharedDetail;
+                if (!(id in sharedSearch)) {
+                  var template = document.getElementById(id);
+                  sharedSearch[id] = template ? template.content.textContent.toLowerCase() : "";
+                }
+                return sharedSearch[id];
+              }),
             };
           });
           explorers[panel.id] = {
@@ -1758,6 +1772,18 @@ THE SOFTWARE.
               });
             });
         });
+        function hydrateSharedDetails(container) {
+          container.querySelectorAll("[data-shared-detail]").forEach(function (placeholder) {
+            var template = document.getElementById(placeholder.dataset.sharedDetail);
+            if (!template) return;
+            placeholder.replaceChildren(template.content.cloneNode(true));
+            delete placeholder.dataset.sharedDetail;
+            initializeListPagers(placeholder);
+          });
+        }
+        document.addEventListener("toggle", function (event) {
+          if (event.target.tagName === "DETAILS" && event.target.open) hydrateSharedDetails(event.target);
+        }, true);
         function setDetailExpanded(button, open) {
           if (open && button.closest(".panel").id === "tests") {
             document.querySelectorAll('#tests .result-name[aria-expanded="true"]').forEach(function (other) {
@@ -1765,13 +1791,18 @@ THE SOFTWARE.
             });
           }
           button.setAttribute("aria-expanded", String(open));
-          document.getElementById(button.getAttribute("aria-controls")).hidden = !open;
+          var detail = document.getElementById(button.getAttribute("aria-controls"));
+          if (open) hydrateSharedDetails(detail);
+          detail.hidden = !open;
+        }
+        // Shared evidence lives in templates in large reports, so a test matches
+        // the query through its own text or through the evidence it shares.
+        function matchesQuery(item) {
+          return item.text.includes(query) || item.sharedText.some(function (text) { return text.includes(query); });
         }
         function render() {
           var state = explorers[activeTab];
-          var searched = state.items.filter(function (item) {
-            return item.text.includes(query);
-          });
+          var searched = state.items.filter(matchesQuery);
           state.matched = searched.filter(function (item) {
             return status === "All" || item.status === status;
           });
@@ -1846,7 +1877,7 @@ THE SOFTWARE.
             });
             // Keep filters that include the target; clear only those hiding it.
             if (status !== "All" && status !== target.status) status = "All";
-            if (!target.text.includes(query)) {
+            if (!matchesQuery(target)) {
               query = "";
               search.value = "";
             }
@@ -1890,9 +1921,10 @@ THE SOFTWARE.
           });
           render();
         });
-        document
-          .querySelectorAll("ul[data-paginated]")
-          .forEach(function (list) {
+        function initializeListPagers(container) {
+          container.querySelectorAll("ul[data-paginated]").forEach(function (list) {
+            if (list.dataset.pagerReady) return;
+            list.dataset.pagerReady = "true";
             var items = Array.from(list.children),
               size = Number(list.dataset.pageSize),
               page = 0,
@@ -1926,8 +1958,11 @@ THE SOFTWARE.
               });
             paginate();
           });
+        }
+        initializeListPagers(document);
         render();
       })();
     </script>
   </body>
 </html>
+{{ end }}
