@@ -190,6 +190,25 @@ func TestComputedAxisReadByTheTestCommandStaysUnresolved(t *testing.T) {
 	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "matrix.shard")
 }
 
+func TestComputedAxisDoesNotBlockLongerPropertyNames(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  test:
+    runs-on: ${{ matrix.version-name }}-latest
+    strategy:
+      matrix:
+        version: ${{ fromJson(needs.plan.outputs.versions) }}
+        version-name: [ubuntu]
+    steps:
+      - run: npm run test:${{ matrix.version-name }}
+`)
+	writeScripts(t, root, map[string]string{"test:ubuntu": "jest ubuntu"})
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "jest ubuntu", scope.Commands[0].Command)
+}
+
 func TestComputedAxisDoesNotSelectAnExpressionBranch(t *testing.T) {
 	for _, expression := range []string{
 		`matrix.suite == 'unit' && 'test:unit' || 'test:integration'`,

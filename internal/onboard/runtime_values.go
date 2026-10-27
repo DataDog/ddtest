@@ -258,7 +258,7 @@ func jobMatrix(job runtimeJob) (rows []map[string]any, computed []string, err er
 		return nil, nil, err
 	}
 	for _, axis := range computed {
-		if regexp.MustCompile(`(?i)\bmatrix\.` + regexp.QuoteMeta(axis) + `\b`).Match(encoded) {
+		if matrixPropertyReference(axis).Match(encoded) {
 			return nil, nil, err
 		}
 	}
@@ -277,6 +277,13 @@ func jobMatrix(job runtimeJob) (rows []map[string]any, computed []string, err er
 }
 
 const computedAxisSentinel = "\x00computed"
+
+// matrixPropertyReference matches a read of the matrix property axis by its
+// complete name, case-insensitively: matrix.version does not read
+// matrix.version-name, but matrix.version.name does read version.
+func matrixPropertyReference(axis string) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)\bmatrix\.` + regexp.QuoteMeta(axis) + `(?:[^a-zA-Z0-9_-]|$)`)
+}
 
 // The value stays a workflow expression, so any command that reads it remains
 // visibly unresolved instead of running with a guessed value.

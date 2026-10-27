@@ -72,6 +72,13 @@ func TestMatrixInterpolationResolvesStaticExpressions(t *testing.T) {
 	actual, err := interpolateMatrix(`npm test --node=${{ matrix.node }}`, computed)
 	require.NoError(t, err)
 	require.Equal(t, "npm test --node=20", actual)
+	// Only the complete property name reads the computed axis.
+	computed["suite-name"] = "unit"
+	actual, err = interpolateMatrix(`npm run test:${{ matrix.suite-name }}`, computed)
+	require.NoError(t, err)
+	require.Equal(t, "npm run test:unit", actual)
+	_, err = interpolateMatrix(`npm test ${{ matrix.suite.name || 'unit' }}`, computed)
+	require.ErrorContains(t, err, "computed at runtime")
 	// Keys that differ only by case are ambiguous and stay unresolved.
 	ambiguous := `npm run ${{ matrix.NODE || 'test' }}`
 	actual, err = interpolateMatrix(ambiguous, map[string]any{"node": 20, "Node": 22})
