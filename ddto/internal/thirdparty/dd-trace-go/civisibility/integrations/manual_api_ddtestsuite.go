@@ -1,0 +1,170 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
+
+package integrations
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	tracer "github.com/DataDog/ddtest/ddto/internal/minitracer"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/ddtrace/ext"
+)
+
+// Test Suite
+
+// Ensures that tslvTestSuite implements the TestSuite interface.
+var _ TestSuite = (*tslvTestSuite)(nil)
+
+// tslvTestSuite implements the DdTestSuite interface and represents a suite of tests within a module.
+type tslvTestSuite struct {
+	ciVisibilityCommon
+	module      *tslvTestModule
+	suiteID     uint64
+	suiteIDText string // suiteID formatted once for test events
+	name        string
+	// service is the service of a suite that ddto recreates for a crashed
+	// test process, which its tests take too; otherwise the tracer's.
+	service string
+}
+
+// createTestSuite initializes a new test suite within a given module.
+func createTestSuite(module *tslvTestModule, name string, defaults *tslvTestSuiteStartOptions) TestSuite {
+	if module == nil {
+		return nil
+	}
+	startTime := defaults.startTime
+
+	operationName := "test_suite"
+	if module.framework != "" {
+		operationName = fmt.Sprintf("%s.%s", strings.ToLower(module.framework), operationName)
+	}
+
+	resourceName := name
+
+	// Suite tags should include module and session tags so the backend can calculate the module and session fingerprint from the suite.
+	suiteTags := append(slices.Clone(module.tags), ciVisibilityTag(constants.TestSuite, name))
+	testOpts := append(fillCommonTags([]tracer.StartSpanOption{
+		tracer.ResourceName(resourceName),
+		tracer.SpanType(constants.SpanTypeTestSuite),
+		tracer.StartTime(startTime),
+	}), suiteTags...)
+	if defaults.service != "" {
+		testOpts = append(testOpts, tracer.Service(defaults.service))
+	}
+
+	span, ctx := tracer.StartSpanFromContext(context.Background(), operationName, testOpts...)
+	suiteID := span.Context().SpanID()
+	if defaults.id != 0 {
+		suiteID = defaults.id
+	}
+	if module.session != nil {
+		setCIVisibilitySpanTag(span, constants.TestSessionIDTag, strconv.FormatUint(module.session.sessionID, 10))
+	}
+	setCIVisibilitySpanTag(span, constants.TestModuleIDTag, strconv.FormatUint(module.moduleID, 10))
+	setCIVisibilitySpanTag(span, constants.TestSuiteIDTag, strconv.FormatUint(suiteID, 10))
+
+	suite := &tslvTestSuite{
+		module:      module,
+		suiteID:     suiteID,
+		suiteIDText: strconv.FormatUint(suiteID, 10),
+		name:        name,
+		service:     defaults.service,
+		ciVisibilityCommon: ciVisibilityCommon{
+			startTime: startTime,
+			tags:      suiteTags,
+			span:      span,
+			ctx:       ctx,
+		},
+	}
+
+	// Ensure to close everything before CI visibility exits. In CI visibility mode, we try to never lose data.
+	PushCiVisibilityCloseAction(func() { suite.Close() })
+	if module.session != nil {
+		module.session.cliRecord.Append(utils.CLISessionRecordLine{Kind: "suite", ID: suiteID, Module: module.moduleID, Name: name, Service: span.Service(), Start: startTime})
+	}
+
+	// Creating telemetry event created
+	telemetry.EventCreated(module.framework, telemetry.SuiteEventType)
+	return suite
+}
+
+// SuiteID returns the ID of the test suite.
+func (t *tslvTestSuite) SuiteID() uint64 {
+	return t.suiteID
+}
+
+// Name returns the name of the test suite.
+func (t *tslvTestSuite) Name() string { return t.name }
+
+// Module returns the module to which the test suite belongs.
+func (t *tslvTestSuite) Module() TestModule { return t.module }
+
+// Close closes the test suite with the given finish time.
+func (t *tslvTestSuite) Close(options ...TestSuiteCloseOption) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	if t.closed {
+		return
+	}
+
+	defaults := &tslvTestSuiteCloseOptions{}
+	for _, opt := range options {
+		opt(defaults)
+	}
+
+	if defaults.finishTime.IsZero() {
+		defaults.finishTime = time.Now()
+	}
+
+	t.span.Finish(tracer.FinishTime(defaults.finishTime))
+	t.closed = true
+	if t.module.session != nil {
+		t.module.session.cliRecord.Append(utils.CLISessionRecordLine{Kind: "suite_end", ID: t.suiteID})
+	}
+
+	// Creating telemetry event finished
+	telemetry.EventFinished(t.module.framework, telemetry.SuiteEventType)
+}
+
+// SetError sets an error on the test suite and marks the module as having an error.
+func (t *tslvTestSuite) SetError(options ...ErrorOption) {
+	t.ciVisibilityCommon.SetError(options...)
+	t.Module().SetTag(ext.Error, true)
+}
+
+// CreateTest creates a new test within the suite.
+func (t *tslvTestSuite) CreateTest(name string, options ...TestStartOption) Test {
+	// Options take the address of their configuration, which moves it to the
+	// heap: testStartOptions allocates it only when options are given, and
+	// tests start without any.
+	defaults := testStartOptions(options)
+
+	if defaults.startTime.IsZero() {
+		defaults.startTime = time.Now()
+	}
+
+	return createTest(t, name, defaults.startTime)
+}
+
+// testStartOptions applies options to a configuration that it allocates only
+// when there are options.
+func testStartOptions(options []TestStartOption) tslvTestStartOptions {
+	if len(options) == 0 {
+		return tslvTestStartOptions{}
+	}
+	defaults := &tslvTestStartOptions{}
+	for _, opt := range options {
+		opt(defaults)
+	}
+	return *defaults
+}

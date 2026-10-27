@@ -8,13 +8,28 @@ import (
 	"strings"
 	"syscall"
 
+	ddto "github.com/DataDog/ddtest/ddto/cli"
 	"github.com/DataDog/ddtest/internal/cmd"
 )
 
 var executeCommand = cmd.Execute
 
 func main() {
+	dispatch(os.Args)
 	os.Exit(run(executeCommand))
+}
+
+// dispatch hands ddtest instrument to ddto, which instruments Go tests and
+// also starts this executable again as ddtest instrument, and the go shim
+// that ddto makes of this executable. ddto runs before ddtest sets anything
+// and exits: it keeps go test's arguments, output, environment and exit
+// status. ddtest's own commands return, with the environment that the
+// process received.
+func dispatch(args []string) {
+	if ddto.Handles(args, "instrument") {
+		ddto.Main(args, "instrument")
+	}
+	ddto.KeepCallerEnvironment()
 }
 
 func run(execute func() error) int {

@@ -1,0 +1,321 @@
+{
+ "subject": "/var/tmp/dd-ci-own-runtime.duZRkU/subject-gin",
+ "subject_commit": "73726dc606796a025971fe451f0aa6f1b9b847f6",
+ "go": "go version go1.27.1 linux/amd64",
+ "cpus": 4,
+ "runs": 15,
+ "host": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+ "binaries": {
+  "release-main": "/var/tmp/dd-ci-own-runtime.duZRkU/rel-base/ddto-linux-amd64",
+  "release-candidate": "/var/tmp/dd-ci-own-runtime.duZRkU/rel-candidate/ddto-linux-amd64",
+  "checkout-candidate": "/var/tmp/dd-ci-own-runtime.duZRkU/dev-candidate-ddto"
+ },
+ "samples": {
+  "release-main": [
+   {
+    "prepare": 82.323,
+    "go_test": 104.201,
+    "ddto": 187.02,
+    "wall": 190.78061310574412
+   },
+   {
+    "prepare": 86.61,
+    "go_test": 109.098,
+    "ddto": 196.142,
+    "wall": 199.74549720063806
+   },
+   {
+    "prepare": 85.138,
+    "go_test": 107.737,
+    "ddto": 193.41,
+    "wall": 197.01190618798137
+   },
+   {
+    "prepare": 84.27,
+    "go_test": 105.255,
+    "ddto": 189.954,
+    "wall": 193.7146419659257
+   },
+   {
+    "prepare": 83.284,
+    "go_test": 105.142,
+    "ddto": 188.845,
+    "wall": 192.27822497487068
+   },
+   {
+    "prepare": 83.691,
+    "go_test": 109.315,
+    "ddto": 193.414,
+    "wall": 197.03499507158995
+   },
+   {
+    "prepare": 84.798,
+    "go_test": 107.182,
+    "ddto": 192.369,
+    "wall": 195.86076913401484
+   },
+   {
+    "prepare": 85.056,
+    "go_test": 105.317,
+    "ddto": 190.8,
+    "wall": 194.4043026305735
+   },
+   {
+    "prepare": 82.975,
+    "go_test": 103.321,
+    "ddto": 186.777,
+    "wall": 190.34239696338773
+   },
+   {
+    "prepare": 86.055,
+    "go_test": 105.793,
+    "ddto": 192.293,
+    "wall": 195.79583778977394
+   },
+   {
+    "prepare": 84.634,
+    "go_test": 108.812,
+    "ddto": 193.861,
+    "wall": 197.72344501689076
+   },
+   {
+    "prepare": 86.667,
+    "go_test": 106.685,
+    "ddto": 193.835,
+    "wall": 197.40936206653714
+   },
+   {
+    "prepare": 83.943,
+    "go_test": 106.115,
+    "ddto": 190.541,
+    "wall": 194.21079009771347
+   },
+   {
+    "prepare": 83.368,
+    "go_test": 103.93,
+    "ddto": 187.721,
+    "wall": 191.27527810633183
+   },
+   {
+    "prepare": 83.844,
+    "go_test": 106.78,
+    "ddto": 191.067,
+    "wall": 194.75781125947833
+   }
+  ],
+  "release-candidate": [
+   {
+    "own_packages": 51,
+    "prepare": 84.068,
+    "go_test": 105.906,
+    "ddto": 190.483,
+    "wall": 193.78396403044462
+   },
+   {
+    "own_packages": 51,
+    "prepare": 81.57,
+    "go_test": 106.385,
+    "ddto": 188.436,
+    "wall": 191.73613470047712
+   },
+   {
+    "own_packages": 51,
+    "prepare": 82.433,
+    "go_test": 104.105,
+    "ddto": 186.993,
+    "wall": 190.36887865513563
+   },
+   {
+    "own_packages": 51,
+    "prepare": 82.404,
+    "go_test": 103.981,
+    "ddto": 186.818,
+    "wall": 190.19691878929734
+   },
+   {
+    "own_packages": 51,
+    "prepare": 81.567,
+    "go_test": 107.551,
+    "ddto": 189.53,
+    "wall": 192.94464914128184
+   },
+   {
+    "own_packages": 51,
+    "prepare": 81.481,
+    "go_test": 104.102,
+    "ddto": 186.01,
+    "wall": 189.3652738071978
+   },
+   {
+    "own_packages": 51,
+    "prepare": 80.399,
+    "go_test": 107.531,
+    "ddto": 188.334,
+    "wall": 191.99012406170368
+   },
+   {
+    "own_packages": 51,
+    "prepare": 81.792,
+    "go_test": 106.838,
+    "ddto": 189.063,
+    "wall": 192.43965484201908
+   },
+   {
+    "own_packages": 51,
+    "prepare": 80.445,
+    "go_test": 109.33,
+    "ddto": 190.19,
+    "wall": 193.74215882271528
+   },
+   {
+    "own_packages": 51,
+    "prepare": 79.669,
+    "go_test": 104.335,
+    "ddto": 184.465,
+    "wall": 187.77232570573688
+   },
+   {
+    "own_packages": 51,
+    "prepare": 79.268,
+    "go_test": 104.51,
+    "ddto": 184.248,
+    "wall": 187.7709561958909
+   },
+   {
+    "own_packages": 51,
+    "prepare": 81.197,
+    "go_test": 105.322,
+    "ddto": 186.947,
+    "wall": 190.28092501685023
+   },
+   {
+    "own_packages": 51,
+    "prepare": 82.184,
+    "go_test": 105.348,
+    "ddto": 187.987,
+    "wall": 191.85189995914698
+   },
+   {
+    "own_packages": 51,
+    "prepare": 82.279,
+    "go_test": 120.606,
+    "ddto": 203.336,
+    "wall": 206.82264771312475
+   },
+   {
+    "own_packages": 51,
+    "prepare": 81.546,
+    "go_test": 108.492,
+    "ddto": 190.489,
+    "wall": 194.13092825561762
+   }
+  ],
+  "checkout-candidate": [
+   {
+    "own_packages": 0,
+    "prepare": 82.542,
+    "go_test": 105.958,
+    "ddto": 188.987,
+    "wall": 193.09896184131503
+   },
+   {
+    "own_packages": 0,
+    "prepare": 82.745,
+    "go_test": 107.472,
+    "ddto": 190.745,
+    "wall": 194.66184685006738
+   },
+   {
+    "own_packages": 0,
+    "prepare": 83.114,
+    "go_test": 105.626,
+    "ddto": 189.171,
+    "wall": 193.11492098495364
+   },
+   {
+    "own_packages": 0,
+    "prepare": 82.857,
+    "go_test": 107.138,
+    "ddto": 190.505,
+    "wall": 194.708535913378
+   },
+   {
+    "own_packages": 0,
+    "prepare": 82.591,
+    "go_test": 107.197,
+    "ddto": 190.328,
+    "wall": 194.53948503360152
+   },
+   {
+    "own_packages": 0,
+    "prepare": 84.08,
+    "go_test": 106.947,
+    "ddto": 191.535,
+    "wall": 195.4668490216136
+   },
+   {
+    "own_packages": 0,
+    "prepare": 83.079,
+    "go_test": 103.413,
+    "ddto": 187.011,
+    "wall": 191.00150000303984
+   },
+   {
+    "own_packages": 0,
+    "prepare": 80.521,
+    "go_test": 105.841,
+    "ddto": 186.802,
+    "wall": 190.62189757823944
+   },
+   {
+    "own_packages": 0,
+    "prepare": 82.679,
+    "go_test": 104.148,
+    "ddto": 187.287,
+    "wall": 191.54256116598845
+   },
+   {
+    "own_packages": 0,
+    "prepare": 84.526,
+    "go_test": 107.476,
+    "ddto": 192.557,
+    "wall": 196.63805002346635
+   },
+   {
+    "own_packages": 0,
+    "prepare": 84.332,
+    "go_test": 106.634,
+    "ddto": 191.503,
+    "wall": 195.46948513016105
+   },
+   {
+    "own_packages": 0,
+    "prepare": 83.353,
+    "go_test": 106.326,
+    "ddto": 190.074,
+    "wall": 194.3254810757935
+   },
+   {
+    "own_packages": 0,
+    "prepare": 84.804,
+    "go_test": 108.009,
+    "ddto": 193.209,
+    "wall": 197.46500300243497
+   },
+   {
+    "own_packages": 0,
+    "prepare": 85.906,
+    "go_test": 109.433,
+    "ddto": 195.811,
+    "wall": 200.0417122617364
+   },
+   {
+    "own_packages": 0,
+    "prepare": 84.541,
+    "go_test": 104.328,
+    "ddto": 189.315,
+    "wall": 193.35216516628861
+   }
+  ]
+ }
+}

@@ -1,0 +1,46 @@
+package gotesting
+
+import (
+	"sync"
+	_ "unsafe" // go:linkname
+)
+
+// testingParallelStop records the end of a parallel test in testing's own
+// accounting, as testing's tRunner does. ddto's testing overlay sets it through
+// a linknamed variable while testing initializes, before this package's
+// variables, so it has no initializer. Without the overlay, or when the
+// toolchain does not keep that accounting, it stays nil.
+var testingParallelStop func()
+
+// registerTestingParallelStop is what the testing overlay of ddto v0.1.0 and
+// v0.1.1 calls instead; it stays so that their test binaries still link when a
+// client selects this runtime.
+//
+//go:linkname registerTestingParallelStop
+func registerTestingParallelStop(stop func()) { testingParallelStop = stop }
+
+// sharedParallelLeaseAttempts holds attempts that went parallel after an
+// earlier attempt had moved the logical test's parallel lease to the original
+// test. Each entry is removed when its attempt publishes its result.
+var sharedParallelLeaseAttempts sync.Map // *retryAttemptRoot -> struct{}
+
+// releaseSharedParallelLease runs when an attempt goes parallel after the
+// original already holds the lease. It returns the scheduler slot the attempt
+// took, as before. testing also counted the attempt as a started parallel
+// test, but only the original's tRunner records an end, for the attempt that
+// moved the lease; this attempt records its own end when it publishes.
+func releaseSharedParallelLease(r *retryAttemptRoot) {
+	testingTestStateRelease(getTestState(r.test))
+	sharedParallelLeaseAttempts.Store(r, struct{}{})
+}
+
+// publishRetryAttemptResult hands an attempt's result to its caller, after
+// recording the end of a parallel attempt that shared the lease, as tRunner
+// does before releasing its caller. Otherwise testing.AllocsPerRun panics in
+// every later test of the binary.
+func publishRetryAttemptResult(attempt *retryAttemptRoot, resultCh chan<- retryAttemptResult, result retryAttemptResult) {
+	if _, shared := sharedParallelLeaseAttempts.LoadAndDelete(attempt); shared && testingParallelStop != nil {
+		testingParallelStop()
+	}
+	resultCh <- result
+}

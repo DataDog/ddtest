@@ -1,0 +1,166 @@
+package runner
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/DataDog/ddtest/ddto/internal/version"
+)
+
+// RunCoverTool handles Go's cover tool for ddto's private -toolexec
+// entrypoint. Unlike the compiler, cover opens logical source paths directly, so
+// overlay-backed inputs are translated to their backing files. Compiler and
+// linker identities stay native; cover's identity includes our contract.
+func RunCoverTool(ctx context.Context, overlay string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR: missing cover tool executable")
+		return 2
+	}
+	if len(args) == 2 && args[1] == "-V=full" {
+		return runCoverVersion(ctx, args, stdin, stdout, stderr)
+	}
+	args, err := translateCoverInputs(overlay, args)
+	if err == nil {
+		args, err = chainUserToolexec(args)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	if err := cmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			return exit.ExitCode()
+		}
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	return 0
+}
+
+// Bump this whenever cover translation semantics change without changing the
+// rewritten client sources. Otherwise Go could reuse stale coverage objects.
+const coverContractVersion = "ddto-cover-v1"
+
+func coverFingerprint() string {
+	hash := sha256.Sum256([]byte(coverContractVersion))
+	return fmt.Sprintf("%x", hash)
+}
+
+func appendCoverIdentity(native, fingerprint string) string {
+	native = strings.TrimSpace(native)
+	if strings.Contains(native, " buildID=") {
+		// Development toolchains use only the last buildID content component.
+		return native + "-ddto-cover-" + fingerprint + "\n"
+	}
+	return native + " ddto-cover=" + fingerprint + "\n"
+}
+
+func runCoverVersion(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	args, err := chainUserToolexec(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	var native bytes.Buffer
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, &native, stderr
+	if err := cmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			return exit.ExitCode()
+		}
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if _, err := io.WriteString(stdout, appendCoverIdentity(native.String(), coverFingerprint())); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	return 0
+}
+
+// translateCoverInputs replaces overlaid Go inputs with their backing files and
+// keeps every other argument, including cover's input/output ordering, intact.
+func translateCoverInputs(overlay string, args []string) ([]string, error) {
+	data, err := os.ReadFile(overlay)
+	if err != nil {
+		return nil, err
+	}
+	var plan Overlay
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return nil, err
+	}
+	result := append([]string(nil), args...)
+	for i := 1; i < len(result); i++ {
+		if strings.HasPrefix(result[i], "-") || !strings.HasSuffix(result[i], ".go") {
+			continue
+		}
+		logical, err := filepath.Abs(result[i])
+		if err != nil {
+			return nil, err
+		}
+		if actual := plan.Replace[logical]; actual != "" {
+			result[i] = actual
+		}
+	}
+	return result, nil
+}
+
+// selectToolCommand returns go's -toolexec value: the wrapper executable
+// when it can be quoted, whose lock the plan then keeps, or else ddto's
+// tool-overlay command.
+func selectToolCommand(plan *Plan, executable, wrapper string, lock *os.File, debug *cliDebug) (string, error) {
+	if wrapper != "" {
+		tool, err := toolCommand(executable, wrapper, plan.File, plan.toolMode())
+		if err == nil {
+			plan.toolWrapperLock = lock
+			return tool, nil
+		}
+		lock.Close()
+		debug.printf("tool wrapper state=unavailable error=%q", err.Error())
+	}
+	return toolCommand(executable, "", plan.File, plan.toolMode())
+}
+
+// toolCommand returns go's -toolexec value: the wrapper executable, given
+// ddto's executable, or else ddto's tool-overlay command.
+func toolCommand(executable, wrapper, overlay, mode string) (string, error) {
+	if wrapper != "" {
+		return quoteToolWords([]string{wrapper, executable, mode, overlay})
+	}
+	return quoteToolWords(selfCommand(executable, "tool-overlay", mode, overlay))
+}
+
+// Match only the packages whose regular sources changed. Test files are not
+// covered. Without -coverpkg, Go covers the requested test packages only.
+func needsCoverOverlay(dir string, opts options, targets, rewritten []goPackage) bool {
+	if !opts.coverage {
+		return false
+	}
+	for i := range rewritten {
+		p := &rewritten[i]
+		if len(opts.coverPatterns) == 0 {
+			for _, target := range targets {
+				if target.ImportPath == p.ImportPath && target.ImportPath != "testing" && target.ImportPath != sdkPackage && target.ImportPath != miniPackage {
+					return true
+				}
+			}
+			continue
+		}
+		for _, pattern := range opts.coverPatterns {
+			if matchPackagePattern(pattern, dir, p) {
+				return true
+			}
+		}
+	}
+	return false
+}

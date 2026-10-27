@@ -1,0 +1,7 @@
+schema-version: v1.7
+sast:
+  global-config:
+    # ddto's archived benchmark records, scripts included: generated,
+    # hash-locked and never edited (see ddto/docs/build-benchmarks.md).
+    ignore-paths:
+      - "ddto/docs/results/**"

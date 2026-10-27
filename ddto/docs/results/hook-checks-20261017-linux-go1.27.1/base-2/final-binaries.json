@@ -1,0 +1,62 @@
+[
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-base-2/outputs/gin-cpu4/mini/binding.test",
+    "sha256": "c5c714db7412ba53535a71f12ebc48633d8541faa63e1394b3e92622e04054ee",
+    "bytes": 28083643,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-base-2/outputs/gin-cpu4/mini/bytesconv.test",
+    "sha256": "99adb0662f9dcb7eab47f7e5edf36d415d90c601ffc9e4e6d9d659ee9a1aa7b4",
+    "bytes": 12530002,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-base-2/outputs/gin-cpu4/mini/fs.test",
+    "sha256": "590727b942be5427798e2f211aa227e6dbbaaae1419bf1e86c476446c6542d16",
+    "bytes": 12665511,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-base-2/outputs/gin-cpu4/mini/gin.test",
+    "sha256": "774ba5187d8ac1875c710d158d1700979962b8e09e0432755221cfae718308f8",
+    "bytes": 32024856,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-base-2/outputs/gin-cpu4/mini/ginS.test",
+    "sha256": "3708a0155dcbcf10e9fabe4930292fcd7b1d5316193a5cb2986e898fb210e977",
+    "bytes": 21055128,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-base-2/outputs/gin-cpu4/mini/render.test",
+    "sha256": "310b7aefedfa52c897afe78f942ede39fe6e210711e77be36593d443a599abf3",
+    "bytes": 27041351,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  }
+]

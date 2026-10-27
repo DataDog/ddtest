@@ -1,0 +1,574 @@
+// Package minitracer owns native CI events; it has no APM integrations.
+package minitracer
+
+import (
+	"context"
+	"encoding/binary"
+	"encoding/hex"
+	"fmt"
+	"reflect"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/DataDog/ddtest/ddto/internal/propctx"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/ddtrace/ext"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/stacktrace"
+	"github.com/DataDog/ddtest/ddto/propagation"
+)
+
+// Span is mutable until Finish seals its event in place for read-only
+// delivery: the client queues the span's own event.
+type Span struct {
+	mu           sync.Mutex
+	client       *Client
+	identity     propagation.Context
+	event        ciEvent
+	finished     bool
+	hierarchy    [3]string
+	hierarchySet uint8
+}
+type SpanContext struct{ identity propagation.Context }
+
+func (c *SpanContext) SpanID() uint64                { return c.identity.SpanID }
+func (c *SpanContext) TraceID() uint64               { return binary.BigEndian.Uint64(c.identity.TraceID[8:]) }
+func (c *SpanContext) Portable() propagation.Context { return c.identity }
+func (s *Span) Context() *SpanContext                { return &SpanContext{identity: s.identity} }
+
+// StartSpanOption sets a property of a new span. newSpan reserves a metadata
+// entry for each Tag option; options that set fields or shared defaults
+// reserve none.
+type StartSpanOption struct {
+	apply func(*Span)
+	tag   bool
+}
+
+// FinishOption sets the finish configuration. Options take its address, so
+// it moves to the heap; Finish creates it only when options are given.
+type FinishOption func(*finishConfig)
+type finishConfig struct{ end int64 } // Unix nanoseconds.
+
+func ResourceName(v string) StartSpanOption {
+	return StartSpanOption{apply: func(s *Span) { s.event.Content.Resource = v }}
+}
+func SpanType(v string) StartSpanOption {
+	return StartSpanOption{apply: func(s *Span) { s.event.Content.Type = v }}
+}
+func StartTime(v time.Time) StartSpanOption {
+	return StartSpanOption{apply: func(s *Span) { s.event.Content.Start = v.UnixNano() }}
+}
+
+func Tag(k string, v any) StartSpanOption {
+	return StartSpanOption{apply: func(s *Span) { s.SetTag(k, v) }, tag: true}
+}
+
+// Service sets the span's service instead of the client's.
+func Service(v string) StartSpanOption {
+	return StartSpanOption{apply: func(s *Span) { s.event.Content.Service = v }}
+}
+
+// FuncOption makes an option of a function, such as testopt's options. It
+// reserves a metadata entry, as Tag does.
+func FuncOption(apply func(*Span)) StartSpanOption {
+	return StartSpanOption{apply: apply, tag: true}
+}
+
+// Func returns the function that applies the option, for testopt, whose callers
+// can apply it to a span at any time. Options that set fields then take the
+// span's lock and leave a finished span, whose event the client may be
+// sending, unchanged; Tag options do so through SetTag.
+func (o StartSpanOption) Func() func(*Span) {
+	if o.tag {
+		return o.apply
+	}
+	return func(s *Span) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if !s.finished {
+			o.apply(s)
+		}
+	}
+}
+
+// Service returns the span's service.
+func (s *Span) Service() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.event.Content.Service
+}
+func FinishTime(v time.Time) FinishOption { return func(c *finishConfig) { c.end = v.UnixNano() } }
+
+// SetTag follows dd-trace-go's Span.SetTag for the values CI events carry:
+// pointers to basic values are dereferenced, numbers that fit a float64
+// exactly become metrics, and error tags set the error flag and details.
+func (s *Span) SetTag(key string, value any) {
+	s.mu.Lock()
+	if s.finished {
+		s.mu.Unlock()
+		return
+	}
+	value = dereference(value)
+	if s.setScalarTag(key, value) {
+		s.mu.Unlock()
+		return
+	}
+	// Formatting may call user code, including getters or Finish on this span.
+	// Keep ordinary scalar tags on the single-lock path, and apply formatted
+	// values only after checking ownership again.
+	s.mu.Unlock()
+	if key == ext.Error || key == ext.ErrorNoStackTrace {
+		s.setError(value.(error), key == ext.Error)
+		return
+	}
+	tags := prepareTextTags(key, value)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finished {
+		return
+	}
+	for _, tag := range tags {
+		if tag.numeric {
+			s.setMetric(tag.key, tag.number)
+		} else {
+			s.setTextTag(tag.key, tag.text)
+		}
+	}
+}
+
+// SetStringTag sets a text tag as SetTag does, without converting the value
+// to an interface, which allocates.
+func (s *Span) SetStringTag(key, value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finished {
+		return
+	}
+	switch key {
+	case ext.ManualKeep:
+	case ext.Error, ext.ErrorNoStackTrace:
+		s.event.Content.Error = 1
+	default:
+		s.setTextTag(key, value)
+	}
+}
+
+// SetMetric sets a numeric tag as SetTag does, without converting the value
+// to an interface.
+func (s *Span) SetMetric(key string, value float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finished {
+		return
+	}
+	switch key {
+	case ext.ManualKeep:
+	case ext.Error, ext.ErrorNoStackTrace:
+		s.event.Content.Error = 1
+	default:
+		s.setMetric(key, value)
+	}
+}
+
+// setScalarTag runs under mu and never invokes methods supplied by the caller.
+func (s *Span) setScalarTag(key string, value any) bool {
+	switch key {
+	case ext.ManualKeep:
+		return true // CI events are always recorded, without a sampler.
+	case ext.Error, ext.ErrorNoStackTrace:
+		if _, ok := value.(error); ok {
+			return false
+		}
+		s.event.Content.Error = 1
+		if value == nil || value == false {
+			s.event.Content.Error = 0
+		}
+		return true
+	}
+	switch v := value.(type) {
+	case bool:
+		s.setTextTag(key, strconv.FormatBool(v))
+		return true
+	case string:
+		s.setTextTag(key, v)
+		return true
+	}
+	if v, ok := toFloat64(value); ok {
+		s.setMetric(key, v)
+		return true
+	}
+	return false
+}
+
+type preparedTextTag struct {
+	key, text string
+	number    float64
+	numeric   bool
+}
+
+func prepareTextTags(key string, value any) []preparedTextTag {
+	if v, ok := value.(fmt.Stringer); ok {
+		return []preparedTextTag{{key: key, text: safeString(v, value)}}
+	}
+	if v, ok := value.([]byte); ok {
+		return []preparedTextTag{{key: key, text: string(v)}}
+	}
+	if value != nil && reflect.TypeOf(value).Kind() == reflect.Slice {
+		// Slices use the SDK's dot notation: key.0, key.1, ...
+		slice := reflect.ValueOf(value)
+		tags := make([]preparedTextTag, slice.Len())
+		for i := 0; i < slice.Len(); i++ {
+			element := slice.Index(i).Interface()
+			name := key + "." + strconv.Itoa(i)
+			if number, ok := toFloat64(element); ok {
+				tags[i] = preparedTextTag{key: name, number: number, numeric: true}
+			} else {
+				tags[i] = preparedTextTag{key: name, text: fmt.Sprintf("%v", element)}
+			}
+		}
+		return tags
+	}
+	return []preparedTextTag{{key: key, text: fmt.Sprint(value)}}
+}
+
+// setError mirrors the SDK: an error value records its message and type, a
+// formatted stack for fmt.Formatter errors, and the stack where it was handled.
+// Nil clears the flag; any other value sets it.
+func (s *Span) setError(value error, stack bool) {
+	message, kind := value.Error(), reflect.TypeOf(value).String()
+	var formatted, handling string
+	_, formatter := value.(fmt.Formatter)
+	if stack {
+		if formatter {
+			formatted = fmt.Sprintf("%+v", value)
+		}
+		// Skip setError and SetTag, like the SDK's own capture wrapper.
+		handling = stacktrace.Format(stacktrace.SkipAndCaptureWithInternalFrames(0, 2))
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finished {
+		return
+	}
+	s.event.Content.Error = 1
+	s.setTextTag(ext.ErrorMsg, message)
+	s.setTextTag(ext.ErrorType, kind)
+	if stack {
+		if formatter {
+			s.setTextTag(ext.ErrorStack, formatted)
+		}
+		s.setTextTag(ext.ErrorHandlingStack, handling)
+	}
+}
+
+// toFloat64 accepts the same numeric types as the SDK. 64-bit integers beyond
+// ±(2^53-1) are not exact as float64 and become strings instead.
+func toFloat64(value any) (float64, bool) {
+	const maxExact = 1<<53 - 1
+	switch v := value.(type) {
+	case byte:
+		return float64(v), true
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	case int:
+		return float64(v), true
+	case int8:
+		return float64(v), true
+	case int16:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		if v > maxExact || v < -maxExact {
+			return 0, false
+		}
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint16:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case uint64:
+		if v > maxExact {
+			return 0, false
+		}
+		return float64(v), true
+	}
+	return 0, false
+}
+
+// dereference reads the pointers to basic values that the SDK dereferences, so
+// a tag never records a memory address. A nil pointer yields the zero value.
+func dereference(value any) any {
+	switch v := value.(type) {
+	case *bool:
+		return derefOrZero(v)
+	case *string:
+		return derefOrZero(v)
+	case *byte:
+		return derefOrZero(v)
+	case *float32:
+		return derefOrZero(v)
+	case *float64:
+		return derefOrZero(v)
+	case *int:
+		return derefOrZero(v)
+	case *int8:
+		return derefOrZero(v)
+	case *int16:
+		return derefOrZero(v)
+	case *int32:
+		return derefOrZero(v)
+	case *int64:
+		return derefOrZero(v)
+	case *uint:
+		return derefOrZero(v)
+	case *uint16:
+		return derefOrZero(v)
+	case *uint32:
+		return derefOrZero(v)
+	case *uint64:
+		return derefOrZero(v)
+	}
+	return value
+}
+
+func derefOrZero[T any](value *T) T {
+	if value == nil {
+		var zero T
+		return zero
+	}
+	return *value
+}
+
+// safeString reports a nil pointer receiver as "<nil>", like the SDK, instead
+// of panicking inside the caller's instrumentation.
+func safeString(v fmt.Stringer, original any) (result string) {
+	defer func() {
+		if e := recover(); e != nil {
+			if rv := reflect.ValueOf(original); rv.Kind() == reflect.Pointer && rv.IsNil() {
+				result = "<nil>"
+				return
+			}
+			panic(e)
+		}
+	}()
+	return v.String()
+}
+
+// Text tags replace numeric metrics of the same name. Hierarchy IDs remain
+// outside the metadata map so serialization never mutates finished spans.
+func (s *Span) setTextTag(key, value string) {
+	s.setMeta(key, value)
+	s.event.Content.Metrics.delete(key)
+}
+
+var hierarchyKeys = [3]string{"test_session_id", "test_module_id", "test_suite_id"}
+
+func hierarchyIndex(key string) int {
+	switch key {
+	case hierarchyKeys[0]:
+		return 0
+	case hierarchyKeys[1]:
+		return 1
+	case hierarchyKeys[2]:
+		return 2
+	}
+	return -1
+}
+
+// sealHierarchy runs under mu while Finish seals the span. An unsigned decimal
+// ID becomes its native field. Any other value stays in meta, as dd-trace-go
+// leaves it, instead of leaving the wire while getters still return it. Unset
+// IDs are skipped, so they cost no parse error.
+func (s *Span) sealHierarchy(content *eventContent) {
+	ids := [3]*uint64{&content.SessionID, &content.ModuleID, &content.SuiteID}
+	for i, id := range ids {
+		if s.hierarchySet&(1<<i) == 0 {
+			continue
+		}
+		if value, err := strconv.ParseUint(s.hierarchy[i], 10, 64); err == nil {
+			*id = value
+			continue
+		}
+		// setMeta keeps hierarchy keys out of Meta, and getters read them from
+		// the hierarchy fields first, so adding one here changes no getter.
+		content.Meta.set(hierarchyKeys[i], s.hierarchy[i])
+	}
+}
+func (s *Span) setMeta(key, value string) {
+	switch key {
+	case ext.SpanName:
+		s.event.Content.Name = value
+		return
+	case ext.ServiceName:
+		s.event.Content.Service = value
+		return
+	case ext.ResourceName:
+		s.event.Content.Resource = value
+		return
+	case ext.SpanType:
+		s.event.Content.Type = value
+		return
+	}
+	if i := hierarchyIndex(key); i >= 0 {
+		s.hierarchy[i] = value
+		s.hierarchySet |= 1 << i
+		return
+	}
+	s.event.Content.Meta.set(key, value)
+}
+
+func (s *Span) setMetric(key string, value float64) {
+	s.event.Content.Metrics.set(key, value)
+	s.event.Content.Meta.delete(key)
+	if i := hierarchyIndex(key); i >= 0 {
+		s.hierarchySet &^= 1 << i
+		s.hierarchy[i] = ""
+	}
+}
+func (s *Span) Meta(key string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if i := hierarchyIndex(key); i >= 0 {
+		return s.hierarchy[i], s.hierarchySet&(1<<i) != 0
+	}
+	v, ok := s.event.Content.Meta.get(key)
+	if !ok && s.event.common != nil {
+		if _, numeric := s.event.Content.Metrics.get(key); !numeric {
+			v, ok = s.event.common.values[key]
+		}
+	}
+	return v, ok
+}
+func (s *Span) Metric(key string) (float64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.event.Content.Metrics.get(key)
+}
+
+// Finish seals the event and enqueues it exactly once. Hierarchy IDs are native
+// CI fields, separate from distributed trace parentage.
+func (s *Span) Finish(options ...FinishOption) { s.finish(nil, options...) }
+
+// FinishWithTags sets tags, whose values must be strings or booleans, and
+// finishes the span in one step: a SetTag from another goroutine lands before
+// them, and they replace it, or after the span finished, and is ignored.
+func (s *Span) FinishWithTags(tags map[string]any, options ...FinishOption) {
+	s.finish(tags, options...)
+}
+
+func (s *Span) finish(tags map[string]any, options ...FinishOption) {
+	end := time.Now().UnixNano()
+	if len(options) != 0 {
+		cfg := &finishConfig{end: end}
+		for _, option := range options {
+			option(cfg)
+		}
+		end = cfg.end
+	}
+	s.mu.Lock()
+	if s.finished {
+		s.mu.Unlock()
+		return
+	}
+	for key, value := range tags {
+		s.setScalarTag(key, value)
+	}
+	s.finished = true
+	// Getters read only the service, metadata and metrics of a finished span.
+	event := &s.event
+	event.Content.Duration = max(end-event.Content.Start, 0)
+	event.Type, event.Version = event.Content.Type, 1
+	s.sealHierarchy(&event.Content)
+	switch event.Type {
+	case "test":
+		// dd-trace-go copies meta before it moves the correlation to this
+		// field, so test events carry it in both places.
+		event.Content.CorrelationID, _ = event.Content.Meta.get("itr_correlation_id")
+		event.Version = 2
+		event.Content.ParentID = 0
+	case "test_session_end", "test_module_end", "test_suite_end":
+		event.Content.TraceID = 0
+		event.Content.SpanID = 0
+		event.Content.ParentID = 0
+	default:
+		event.Type = "span"
+	}
+	s.mu.Unlock()
+	if s.client != nil {
+		s.client.add(event)
+	}
+}
+
+// metadataCapacity bounds the entries that a span starts with: _dd.origin and
+// _dd.p.tid, the client's tags, env and version, one per Tag option in lists,
+// and tags more. A test event's 22 tags then reserve 25 entries for its 22.
+func metadataCapacity(client *Client, tags int, lists ...[]StartSpanOption) int {
+	capacity := 2 + tags
+	for _, options := range lists {
+		for _, option := range options {
+			if option.tag {
+				capacity++
+			}
+		}
+	}
+	if client != nil {
+		capacity += len(client.tags)
+		if client.env != "" {
+			capacity++
+		}
+		if client.serviceVersion != "" {
+			capacity++
+		}
+	}
+	return capacity
+}
+
+func newSpan(client *Client, ctx context.Context, name string, options ...StartSpanOption) (*Span, context.Context) {
+	s, spanCtx := startSpan(client, ctx, name, metadataCapacity(client, 0, options))
+	for _, option := range options {
+		option.apply(s)
+	}
+	return s, spanCtx
+}
+
+// startSpan creates a span with the entries that every span starts with,
+// before its options.
+func startSpan(client *Client, ctx context.Context, name string, capacity int) (*Span, context.Context) {
+	identity, ok := propagation.FromContext(ctx)
+	parent := uint64(0)
+	var err error
+	if ok {
+		parent = identity.SpanID
+		identity, err = identity.Child()
+	} else {
+		identity, err = propagation.New()
+	}
+	if err != nil {
+		panic("cannot generate CI trace identifiers")
+	}
+	if ctx == nil {
+		panic("cannot create context from nil parent") // As context.WithValue.
+	}
+	s := &Span{client: client, identity: identity, event: ciEvent{Content: eventContent{Name: name, Resource: name, Start: time.Now().UnixNano(), SpanID: identity.SpanID, TraceID: binary.BigEndian.Uint64(identity.TraceID[8:]), ParentID: parent, Meta: metaSet{newEntrySet[string](capacity)}}}}
+	if client != nil {
+		s.event.Content.Service = client.service
+		for k, v := range client.tags {
+			s.setMeta(k, v)
+		}
+		if client.env != "" {
+			s.event.Content.Meta.set("env", client.env)
+		}
+		if client.serviceVersion != "" {
+			s.event.Content.Meta.set("version", client.serviceVersion)
+		}
+	}
+	s.event.Content.Meta.set("_dd.origin", "ciapp-test")
+	s.event.Content.Meta.set("_dd.p.tid", hex.EncodeToString(identity.TraceID[:8]))
+	// A carrier boxes nothing, unlike context.WithValue. It is not part of the
+	// span, so a context kept after the span finishes does not retain its tags.
+	return s, &propctx.Carrier[propagation.Context]{Context: ctx, Carried: identity}
+}

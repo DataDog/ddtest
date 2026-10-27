@@ -1,0 +1,62 @@
+[
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-measure-1/outputs/gin-cpu4/mini/binding.test",
+    "sha256": "9ee58f1704525d04c1767a95901ac30751b06b843b16f698e58553df10de2a14",
+    "bytes": 28087739,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-measure-1/outputs/gin-cpu4/mini/bytesconv.test",
+    "sha256": "87229c0827d95b24c6c16f12a566ddc14202959ea34b7d02a9ded163812f3f14",
+    "bytes": 12534098,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-measure-1/outputs/gin-cpu4/mini/fs.test",
+    "sha256": "0caefeab01f40ec731318e49f352d27409e92107d19c9ef2d0f445a44d140f73",
+    "bytes": 12665511,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-measure-1/outputs/gin-cpu4/mini/gin.test",
+    "sha256": "cd04fda12f84c092a42ce761a5b07766b04fb54b3953995159cec4f222201ba4",
+    "bytes": 32024856,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-measure-1/outputs/gin-cpu4/mini/ginS.test",
+    "sha256": "db20d8e64c8d5f395ef8bf620d8590dac10f0b41343df9877b16ad72cd312bf4",
+    "bytes": 21055128,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-hook-checks.hmfhle/run-measure-1/outputs/gin-cpu4/mini/render.test",
+    "sha256": "8ed3b80a7c735fc437fbfb8332910c12e1abddd920d2ee22877ad42f8bf2e5d9",
+    "bytes": 27041351,
+    "instrumentation_verified": true,
+    "debug_sections_absent": true
+  }
+]

@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "source_head": "126bf4fdd4c861d12453def57e9e47a05d003120",
+  "completed_commands": 52,
+  "measured_observations": 48,
+  "controls_and_trace_checks": 4,
+  "bootstrap_resamples": 2000,
+  "bootstrap_seed": 20261003,
+  "statistics": {
+    "gin/4/cold": {
+      "mini": {
+        "wall_s": {
+          "n": 5,
+          "median": 21.229704039637,
+          "min": 21.119466718286276,
+          "max": 21.38918770616874,
+          "cv_pct": 0.4155052422501287,
+          "bootstrap95_median": [
+            21.119466718286276,
+            21.38918770616874
+          ]
+        },
+        "cpu_s_median": 77.463566,
+        "peak_bytes_median": 1855102976.0
+      }
+    },
+    "gin/4/cached": {
+      "mini": {
+        "wall_s": {
+          "n": 10,
+          "median": 0.1966800505761057,
+          "min": 0.19347338983789086,
+          "max": 0.6951775080524385,
+          "cv_pct": 60.92854722231913,
+          "bootstrap95_median": [
+            0.193993526045233,
+            0.19825488794595003
+          ]
+        },
+        "cpu_s_median": 0.47359249999999997,
+        "peak_bytes_median": 55779328.0
+      }
+    },
+    "gin/4/warm-link": {
+      "mini": {
+        "wall_s": {
+          "n": 20,
+          "median": 1.8452138693537563,
+          "min": 1.2131890249438584,
+          "max": 2.85168280499056,
+          "cv_pct": 20.759421403151578,
+          "bootstrap95_median": [
+            1.7281392361037433,
+            2.1159238561522216
+          ]
+        },
+        "cpu_s_median": 3.2334835,
+        "peak_bytes_median": 442329088.0
+      }
+    },
+    "gin/4/edited": {
+      "mini": {
+        "wall_s": {
+          "n": 3,
+          "median": 0.9554078388027847,
+          "min": 0.9318033391609788,
+          "max": 1.8863647961989045,
+          "cv_pct": 35.33985416595006,
+          "bootstrap95_median": [
+            0.9318033391609788,
+            1.8863647961989045
+          ]
+        },
+        "cpu_s_median": 2.054556,
+        "peak_bytes_median": 240795648.0
+      }
+    },
+    "gin/4/test-body-edit": {
+      "mini": {
+        "wall_s": {
+          "n": 10,
+          "median": 1.5046258859802037,
+          "min": 1.4071661341004074,
+          "max": 1.7006618189625442,
+          "cv_pct": 5.445639770532779,
+          "bootstrap95_median": [
+            1.46567479101941,
+            1.6032268577255309
+          ]
+        },
+        "cpu_s_median": 2.6554985,
+        "peak_bytes_median": 242053120.0
+      }
+    }
+  }
+}

@@ -1,0 +1,325 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
+
+package gotesting
+
+import (
+	"sync/atomic"
+	"time"
+
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	civisibilitynet "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+)
+
+type retryOutcomeAccumulator struct {
+	passed  int
+	skipped int
+	failed  int
+}
+
+func (o *retryOutcomeAccumulator) observe(failed, skipped bool) {
+	switch {
+	case failed:
+		o.failed++
+	case skipped:
+		o.skipped++
+	default:
+		o.passed++
+	}
+}
+
+func (o retryOutcomeAccumulator) anyPassed() bool {
+	return o.passed > 0
+}
+
+func (o retryOutcomeAccumulator) anyFailed() bool {
+	return o.failed > 0
+}
+
+func (o retryOutcomeAccumulator) allAttemptsPassed() bool {
+	return o.failed == 0 && o.skipped == 0
+}
+
+func (o retryOutcomeAccumulator) allRetriesFailed() bool {
+	return o.passed == 0 && o.skipped == 0
+}
+
+// calculateFinalStatus computes the test.final_status value based on the overall test outcome.
+// Priority order: quarantined/disabled -> ATF fail (any fail) -> pass (any pass wins) -> fail -> skip -> fail.
+func calculateFinalStatus(anyPassed, anyFailed, currentIsSkip, isQuarantined, isDisabled, isAttemptToFix bool) string {
+	if isQuarantined || isDisabled {
+		return constants.TestStatusSkip
+	}
+	// For ATF tests, if any execution failed, the test should be marked as failed
+	// (flaky test that's still flaky in attempt-to-fix should fail the build)
+	if isAttemptToFix && anyFailed {
+		return constants.TestStatusFail
+	}
+	if anyPassed {
+		return constants.TestStatusPass
+	}
+	if anyFailed {
+		return constants.TestStatusFail
+	}
+	if currentIsSkip {
+		return constants.TestStatusSkip
+	}
+	return constants.TestStatusFail
+}
+
+// computeAdjustedRetryCount selects and caches the retry count from the initial
+// execution so span finalization and retry scheduling use the same duration bucket.
+func computeAdjustedRetryCount(execMeta *testExecutionMetadata, duration time.Duration) int64 {
+	if execMeta.initialRetryCountSet {
+		return execMeta.initialRetryCount
+	}
+	retryCount := adjustedRetryCount(execMeta, duration)
+	execMeta.initialRetryCount = retryCount
+	execMeta.initialRetryCountSet = true
+	return retryCount
+}
+
+func adjustedRetryCount(execMeta *testExecutionMetadata, duration time.Duration) int64 {
+	settings := integrations.GetSettings()
+
+	// Attempt To Fix retries are always set to the configured value.
+	if execMeta.isAttemptToFix && execMeta.shouldOrchestrateAttemptToFix {
+		return int64(settings.TestManagement.AttemptToFixRetries)
+	}
+
+	// Early Flake Detection adjusts the retry count based on test duration.
+	if usesEfdRetrySemantics(execMeta) {
+		if retryCount, ok := efdRetryCountForDuration(settings, duration); ok {
+			return retryCount
+		}
+		if execMeta.isFlakyTestRetriesEnabled {
+			if log.DebugEnabled() {
+				log.Debug("civisibility: EFD has no retries for test=%q first_duration=%s, using automatic test retries", retryLogName(execMeta), duration)
+			}
+			execMeta.efdFellBackToFlakyRetries = true
+		}
+	}
+
+	// Automatic flaky tests retries are set to the configured value.
+	if execMeta.isFlakyTestRetriesEnabled {
+		return flakyRetryCountForDuration(execMeta, duration)
+	}
+
+	// No retries
+	return 0
+}
+
+func efdRetryCountForDuration(settings *civisibilitynet.SettingsResponseData, duration time.Duration) (int64, bool) {
+	slowTestRetries := settings.EarlyFlakeDetection.SlowTestRetries
+	// Exclusive upper bounds (bucketBoundFiveS and the others).
+	if duration < bucketBoundFiveS {
+		return int64(slowTestRetries.FiveS), true
+	} else if duration < bucketBoundTenS {
+		return int64(slowTestRetries.TenS), true
+	} else if duration < bucketBoundThirtyS {
+		return int64(slowTestRetries.ThirtyS), true
+	} else if duration < bucketBoundFiveM {
+		return int64(slowTestRetries.FiveM), true
+	}
+	return 0, false
+}
+
+func efdHasPossibleRetry(settings *civisibilitynet.SettingsResponseData) bool {
+	if settings == nil {
+		return false
+	}
+	retries := settings.EarlyFlakeDetection.SlowTestRetries
+	return retries.FiveS > 0 || retries.TenS > 0 || retries.ThirtyS > 0 || retries.FiveM > 0
+}
+
+// retryExecutionIsLast reports whether the current retry is the last one for
+// a recognized retry family. Callers retain their existing behavior when no
+// retry family is active by consulting the second return value.
+func retryExecutionIsLast(execMeta *testExecutionMetadata, remainingRetries, remainingBudget int64) (bool, bool) {
+	if execMeta == nil {
+		return false, false
+	}
+	if execMeta.isAttemptToFix && execMeta.shouldOrchestrateAttemptToFix {
+		return remainingRetries == 1, true
+	}
+	if usesEfdRetrySemantics(execMeta) {
+		return remainingRetries == 1, true
+	}
+	if execMeta.isFlakyTestRetriesEnabled {
+		return remainingRetries == 1 || remainingBudget == 0, true
+	}
+	return false, false
+}
+
+// willRetryAfterExecution mirrors postShouldRetry logic to determine if another retry
+// will happen after the current execution. The skipped state is needed because
+// clean skipped EFD executions are terminal even when retry budget remains.
+func willRetryAfterExecution(failed, skipped bool, execMeta *testExecutionMetadata, remainingRetries int64, remainingBudget int64) bool {
+	if execMeta.isAttemptToFix && execMeta.shouldOrchestrateAttemptToFix {
+		// For attempt-to-fix tests, retry if remaining retries > 0.
+		return remainingRetries > 0
+	}
+
+	if usesEfdRetrySemantics(execMeta) {
+		// For EFD, retry executions that are not clean skips.
+		cleanSkip := skipped && !failed
+		return !cleanSkip && remainingRetries >= 0
+	}
+
+	if execMeta.isFlakyTestRetriesEnabled {
+		// For flaky test retries, the per-test retry counter and global retry
+		// budget must both reserve a retry before another attempt can run.
+		return failed && remainingRetries >= 0 && remainingBudget > 0
+	}
+
+	// No retries for other cases.
+	return false
+}
+
+// isFinalExecution determines if the current execution is the final one (no more retries will happen).
+// This must be called after the test has completed and we know the result.
+func isFinalExecution(failed, skipped bool, execMeta *testExecutionMetadata, duration time.Duration) bool {
+	// If there's no additional feature wrapper, this is a single execution.
+	if !execMeta.hasAdditionalFeatureWrapper {
+		return true
+	}
+
+	// ATF takes precedence over parallel EFD - ATF tests should always compute final status
+	// even when parallel EFD is enabled, because ATF orchestrates its own retry loop.
+	isAtfExecution := execMeta.isAttemptToFix && execMeta.shouldOrchestrateAttemptToFix
+	var remainingRetries int64
+	if execMeta.isARetry {
+		// For retries, use the captured remaining retries minus 1 (the decrement happens after span close).
+		remainingRetries = execMeta.remainingRetries - 1
+	} else {
+		// For the initial execution, compute the retry count that would be set.
+		// Subtract 1 because the decrement happens before postShouldRetry is called.
+		remainingRetries = computeAdjustedRetryCount(execMeta, duration) - 1
+	}
+
+	// Parallel EFD: skip final status tagging.
+	// All parallel executions capture the same remainingRetries, making it impossible
+	// to determine which one is truly final. However, ATF tests are excluded from this
+	// because they have their own retry orchestration.
+	if execMeta.isEfdInParallel && !isAtfExecution {
+		return false
+	}
+	if execMeta.retryContinuationDecided {
+		return !execMeta.retryContinuationAdmitted
+	}
+
+	remainingBudget := int64(0)
+	if usesFlakyRetryBudget(execMeta) {
+		remainingBudget = atomic.LoadInt64(&integrations.GetFlakyRetriesSettings().RemainingTotalRetryCount)
+	}
+	// Legacy callers that do not own retry admission use a read-only projection.
+	willRetry := willRetryAfterExecution(failed, skipped, execMeta, remainingRetries, remainingBudget)
+	return !willRetry
+}
+
+func tryReserveFlakyRetryBudget() bool {
+	remaining := &integrations.GetFlakyRetriesSettings().RemainingTotalRetryCount
+	for {
+		current := atomic.LoadInt64(remaining)
+		if current <= 0 {
+			return false
+		}
+		if atomic.CompareAndSwapInt64(remaining, current, current-1) {
+			return true
+		}
+	}
+}
+
+func flakyRetryBudgetRemaining(settings *integrations.FlakyRetriesSetting) int64 {
+	if settings == nil {
+		return 0
+	}
+	return atomic.LoadInt64(&settings.RemainingTotalRetryCount)
+}
+
+// flakyRetryCountForDuration returns the automatic test retries count for a test whose first execution took
+// duration. Dynamic retry counts replace the flat DD_CIVISIBILITY_FLAKY_RETRY_COUNT value when configured.
+func flakyRetryCountForDuration(execMeta *testExecutionMetadata, duration time.Duration) int64 {
+	flakyRetries := integrations.GetFlakyRetriesSettings()
+	if counts := flakyRetries.DynamicRetryCounts; counts != nil {
+		bucket := dynamicRetryDurationBucket(duration)
+		// A disabled call would still box its arguments.
+		if log.DebugEnabled() {
+			log.Debug("civisibility: dynamic automatic test retries test=%q first_duration=%s bucket=%d retry_count=%d", retryLogName(execMeta), duration, bucket, counts[bucket])
+		}
+		return counts[bucket]
+	}
+	return flakyRetries.RetryCount
+}
+
+// flakyRetryCountAfterSuppressedEFD returns the retries left for a failing test whose EFD retries were suppressed
+// and that switches to automatic test retries. Its first execution counts as one of them.
+func flakyRetryCountAfterSuppressedEFD(execMeta *testExecutionMetadata, duration time.Duration) int64 {
+	if log.DebugEnabled() {
+		log.Debug("civisibility: EFD retries suppressed for failing test=%q, using automatic test retries", retryLogName(execMeta))
+	}
+	return flakyRetryCountForDuration(execMeta, duration) - 1
+}
+
+// flakyRetryCountBeforeFirstExecution returns the automatic test retries count that decides whether a test gets
+// the retry wrapper. The dynamic count depends on the duration of the first execution, which has not run yet, so
+// the largest bucket count is used.
+func flakyRetryCountBeforeFirstExecution(flakyRetries *integrations.FlakyRetriesSetting) int64 {
+	counts := flakyRetries.DynamicRetryCounts
+	if counts == nil {
+		return flakyRetries.RetryCount
+	}
+	largest := counts[0]
+	for _, count := range counts[1:] {
+		largest = max(largest, count)
+	}
+	return largest
+}
+
+// Upper bounds of the slow test retries duration buckets. EFD treats them as exclusive and dynamic automatic test
+// retries as inclusive.
+const (
+	bucketBoundFiveS   = 5 * time.Second
+	bucketBoundTenS    = 10 * time.Second
+	bucketBoundThirtyS = 30 * time.Second
+	bucketBoundFiveM   = 5 * time.Minute
+)
+
+// dynamicRetryDurationBucket returns the dynamic automatic test retries bucket for the duration of a test's first
+// execution. The buckets are the EFD ones in efdRetryCountForDuration, but with inclusive upper bounds, so a first
+// execution of exactly 5s is in the first bucket.
+func dynamicRetryDurationBucket(duration time.Duration) int {
+	switch {
+	case duration <= bucketBoundFiveS:
+		return 0
+	case duration <= bucketBoundTenS:
+		return 1
+	case duration <= bucketBoundThirtyS:
+		return 2
+	case duration <= bucketBoundFiveM:
+		return 3
+	default:
+		return 4
+	}
+}
+
+// recordFirstRetryAttemptDuration keeps the first execution's duration, which selects dynamic flaky retry counts,
+// and lets the caller adjust the retry count from it.
+func recordFirstRetryAttemptDuration(execOpts *executionOptions, execMeta *testExecutionMetadata, duration time.Duration) {
+	execOpts.initialDuration = duration
+	if execOpts.options.postAdjustRetryCount != nil {
+		execOpts.retryCount = execOpts.options.postAdjustRetryCount(execMeta, duration)
+	}
+}
+
+// retryLogName returns the test name for retry debug lines, or "" when the metadata has no identity.
+func retryLogName(execMeta *testExecutionMetadata) string {
+	if execMeta == nil || execMeta.identity == nil {
+		return ""
+	}
+	return execMeta.identity.FullName
+}

@@ -168,6 +168,7 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(onboardCmd)
 	rootCmd.AddCommand(testdriveCmd)
+	rootCmd.AddCommand(instrumentCmd)
 
 	cobra.OnInitialize(settings.Init)
 }

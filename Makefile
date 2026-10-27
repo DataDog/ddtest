@@ -23,11 +23,20 @@ install:
 	@echo "Installed ddtest to $(GOBIN)/ddtest"
 run:
 	go run main.go
+# ddto's release builder links ddtest with the runtime sources and the tool
+# wrapper that ddtest instrument provides to the projects it instruments, and
+# gives them ddtest's version. It takes SemVer, so a version such as
+# pre-release-<sha> becomes v0.0.0-pre-release-<sha>. The release also holds
+# the install scripts and the SHA256SUMS that they check the executables with.
+RELEASE_BUILD = go -C ddto run ./scripts/release -main .. -name ddtest -command instrument -version $(if $(filter v%,$(VERSION)),$(VERSION),v0.0.0-$(VERSION)) -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)" -o ../dist
+SHA256SUM = $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
 release:
 	mkdir -p dist
-	GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-linux-amd64 main.go
-	GOOS=linux GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-linux-arm64 main.go
-	GOOS=darwin GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-darwin-amd64 main.go
-	GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-darwin-arm64 main.go
-	GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-windows-amd64.exe main.go
-	GOOS=windows GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o dist/ddtest-windows-arm64.exe main.go
+	$(RELEASE_BUILD) -target linux/amd64
+	$(RELEASE_BUILD) -target linux/arm64
+	$(RELEASE_BUILD) -target darwin/amd64
+	$(RELEASE_BUILD) -target darwin/arm64
+	$(RELEASE_BUILD) -target windows/amd64
+	$(RELEASE_BUILD) -target windows/arm64
+	cp scripts/install.sh scripts/install.ps1 dist/
+	cd dist && $(SHA256SUM) ddtest-* install.sh install.ps1 > SHA256SUMS

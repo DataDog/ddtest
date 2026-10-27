@@ -1,0 +1,1488 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
+
+package gotesting
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"os"
+	"reflect"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+	"unsafe"
+
+	"github.com/DataDog/ddtest/ddto/internal/cidelivery"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/logs"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/ddtrace/ext"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/locking"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+)
+
+const (
+	// testFramework represents the name of the testing framework.
+	testFramework = "golang.org/pkg/testing"
+)
+
+var (
+	// session represents the CI visibility test session.
+	session integrations.TestSession
+
+	// testInfos holds information about the instrumented tests.
+	testInfos []*testingTInfo
+
+	// benchmarkInfos holds information about the instrumented benchmarks.
+	benchmarkInfos []*testingBInfo
+
+	// modulesCountersMutex is a mutex to protect access to the modulesCounters map.
+	modulesCountersMutex sync.Mutex
+
+	// modulesCounters keeps track of the number of tests per module.
+	modulesCounters = map[string]int{}
+
+	// suitesCountersMutex is a mutex to protect access to the suitesCounters map.
+	suitesCountersMutex sync.Mutex
+
+	// suitesCounters keeps track of the number of tests per module and suite.
+	suitesCounters = map[testSuiteCounterKey]int{}
+
+	// numOfTestsSkipped keeps track of the number of tests skipped by ITR.
+	numOfTestsSkipped atomic.Uint64
+
+	// chattyPrinterOnce ensures that the chatty printer is initialized only once.
+	chattyPrinterOnce sync.Once
+
+	// chatty is the global chatty printer used for debugging and verbose output.
+	chatty *chattyPrinter
+
+	testingMInstrumentationClaims = struct {
+		mu      locking.Mutex
+		claimed map[*testing.M]*testingMInstrumentationClaim
+	}{claimed: make(map[*testing.M]*testingMInstrumentationClaim)}
+
+	testingBuiltWithOrchestrion atomic.Bool
+	testingMRunEpochCounter     atomic.Uint64
+	testingMActiveHookEpoch     atomic.Pointer[testingMHookEpoch]
+)
+
+// testingMAbnormalExitCode is an internal-only sentinel passed to a finalizer
+// when testing.M.Run unwinds through a panic. Native test exit codes cannot
+// reach this negative value.
+const testingMAbnormalExitCode = -1 << 30
+
+type (
+	testingMFinalizer func(exitCode int) int
+
+	testingMHookEpoch struct {
+		id      uint64
+		active  atomic.Int64
+		closing atomic.Bool
+		drained chan struct{}
+		once    sync.Once
+	}
+
+	testingMInstrumentationClaim struct {
+		tests                map[string]func(*testing.T)
+		benchmarks           map[string]func(*testing.B)
+		fuzzTargets          map[string]func(*testing.F)
+		fuzzEvents           *fuzzEventQueue
+		examples             map[string]func()
+		testDescriptors      *[]testing.InternalTest
+		benchmarkDescriptors *[]testing.InternalBenchmark
+		fuzzDescriptors      *[]testing.InternalFuzzTarget
+		exampleDescriptors   *[]testing.InternalExample
+		retired              bool
+		stickyExitCode       int
+		deferredFailure      bool
+		failfastLatched      bool
+		// selection is the workloads M.Run will start; nil selects all.
+		selection *testingSelection
+	}
+
+	// testIdentity represents the fully-qualified identity of a Go test or subtest.
+	// It captures the module and suite where the test belongs, the base test name
+	// (top-level test), the full hierarchical name reported by Go (including subtests),
+	// and every individual path segment in order. This allows test management logic to
+	// resolve configuration at any depth while still falling back to parent segments.
+	testIdentity struct {
+		ModuleName string
+		SuiteName  string
+		BaseName   string
+		FullName   string
+		Segments   []string
+	}
+
+	// commonInfo holds common information about tests and benchmarks.
+	commonInfo struct {
+		moduleName string
+		suiteName  string
+		testName   string
+		identity   *testIdentity
+		sourceFunc *runtime.Func
+		// Known-test lookup, reused by later callers, and whether testing runs the instrumented test function directly. Set while instrumenting.
+		knownTestChecked, knownTest, knownTestData, directTestFunc bool
+	}
+
+	// testingTInfo holds information specific to tests.
+	testingTInfo struct {
+		commonInfo
+		originalFunc func(*testing.T)
+	}
+
+	// testingBInfo holds information specific to benchmarks.
+	testingBInfo struct {
+		commonInfo
+		originalFunc func(b *testing.B)
+	}
+
+	// M is a wrapper around testing.M to provide instrumentation.
+	M testing.M
+)
+
+// newTestIdentity builds a testIdentity instance for the provided module, suite,
+// and fully-qualified Go test name. The base name corresponds to the first path
+// segment (the top-level test declared via testing.T.Run). The Segments slice
+// always contains at least one entry so consumers can traverse parent levels.
+func newTestIdentity(moduleName, suiteName, fullName string) *testIdentity {
+	if fullName == "" {
+		fullName = "<unknown>"
+	}
+	baseName, _ := topLevelTestName(fullName)
+	segments := strings.Split(fullName, "/")
+	return &testIdentity{
+		ModuleName: moduleName,
+		SuiteName:  suiteName,
+		BaseName:   baseName,
+		FullName:   fullName,
+		Segments:   segments,
+	}
+}
+
+// topLevelTestName returns the top-level test name without allocating. The
+// boolean reports whether fullName itself identifies a top-level test.
+func topLevelTestName(fullName string) (string, bool) {
+	if topLevelName, _, found := strings.Cut(fullName, "/"); found {
+		return topLevelName, false
+	}
+	return fullName, true
+}
+
+type testManagementMatchKind int
+
+const (
+	testManagementMatchNone testManagementMatchKind = iota
+	testManagementMatchExact
+	testManagementMatchAncestor
+)
+
+type testingMClaimDisposition uint8
+
+const (
+	testingMClaimOwner testingMClaimDisposition = iota
+	testingMClaimActiveConflict
+	testingMClaimRetiredNative
+)
+
+func claimTestingMInstrumentation(m *testing.M) (*testingMInstrumentationClaim, testingMClaimDisposition) {
+	if m == nil {
+		return &testingMInstrumentationClaim{}, testingMClaimOwner
+	}
+	testingMInstrumentationClaims.mu.Lock()
+	defer testingMInstrumentationClaims.mu.Unlock()
+	if claim := testingMInstrumentationClaims.claimed[m]; claim != nil {
+		if claim.retired {
+			return claim, testingMClaimRetiredNative
+		}
+		return claim, testingMClaimActiveConflict
+	}
+	claim := &testingMInstrumentationClaim{}
+	testingMInstrumentationClaims.claimed[m] = claim
+	return claim, testingMClaimOwner
+}
+
+func markTestingBuiltWithOrchestrion() {
+	testingBuiltWithOrchestrion.Store(true)
+}
+
+func isTestingBuiltWithOrchestrion() bool {
+	return testingBuiltWithOrchestrion.Load()
+}
+
+func activateTestingMHookEpoch(epoch uint64) func() {
+	if epoch == 0 {
+		epoch = testingMRunEpochCounter.Add(1)
+	}
+	state := &testingMHookEpoch{id: epoch, drained: make(chan struct{})}
+	testingMActiveHookEpoch.Store(state)
+	return func() {
+		state.closing.Store(true)
+		testingMActiveHookEpoch.CompareAndSwap(state, nil)
+		state.signalDrained()
+		<-state.drained
+	}
+}
+
+func acquireOrchestrionTestingHook() (func(), bool) {
+	if !isTestingBuiltWithOrchestrion() {
+		return func() {}, true
+	}
+	state := testingMActiveHookEpoch.Load()
+	if state == nil {
+		return nil, false
+	}
+	release, ok := state.acquire()
+	if !ok {
+		return nil, false
+	}
+	if testingMActiveHookEpoch.Load() != state {
+		release()
+		return nil, false
+	}
+	return release, true
+}
+
+func (e *testingMHookEpoch) acquire() (func(), bool) {
+	if e.closing.Load() {
+		return nil, false
+	}
+	e.active.Add(1)
+	if e.closing.Load() {
+		e.release()
+		return nil, false
+	}
+	return e.release, true
+}
+
+func (e *testingMHookEpoch) release() {
+	if e.active.Add(-1) < 0 {
+		panic("negative Orchestrion testing hook lease count")
+	}
+	e.signalDrained()
+}
+
+func (e *testingMHookEpoch) signalDrained() {
+	if e.closing.Load() && e.active.Load() == 0 {
+		e.once.Do(func() { close(e.drained) })
+	}
+}
+
+func instrumentTestingMWithOptions(m *testing.M, wrapperOpts additionalFeatureWrapperOptions) (bool, testingMFinalizer) {
+	if isProcessRetryChild() {
+		cfg, err := bootstrapProcessRetryChild()
+		if err != nil {
+			reason := processRetryChildConfigErrorReason(err)
+			log.Debug("civisibility: process retry child config error: %s", reason)
+			writeInvalidProcessRetryChildConfigResult(cfg, reason)
+			if !disableProcessRetryChildExecution(m) {
+				hardStopInvalidProcessRetryChild("testing_m_reflection_drift")
+			}
+			return false, failureTestingMFinalizer
+		}
+		return instrumentProcessRetryChild(m, cfg)
+	}
+	if testingFuzzWorkerActive() {
+		// The coordinator owns the native fuzz event. Mutation workers must run
+		// the standard library workload without creating their own CI session.
+		return true, identityTestingMFinalizer
+	}
+	claim, disposition := claimTestingMInstrumentation(m)
+	switch disposition {
+	case testingMClaimActiveConflict:
+		return false, failureTestingMFinalizer
+	case testingMClaimRetiredNative:
+		return retiredTestingMDisposition(claim)
+	}
+
+	// Check if CI Visibility was disabled using the kill switch before trying to initialize it
+	atomic.StoreInt32(&ciVisibilityEnabledValue, -1)
+	if !isCiVisibilityEnabled() || !testing.Testing() {
+		retireTestingMInstrumentation(m, claim)
+		return true, identityTestingMFinalizer
+	}
+	if wrapperOpts.mRunEpoch == 0 {
+		wrapperOpts.mRunEpoch = testingMRunEpochCounter.Add(1)
+	}
+	releaseHookEpoch := activateTestingMHookEpoch(wrapperOpts.mRunEpoch)
+
+	log.Debug("instrumentTestingM: initializing CI Visibility for testing.M")
+
+	// Initialize CI Visibility
+	integrations.EnsureCiVisibilityInitialization()
+	wrapperOpts.retryAttemptObserveOutput = logs.IsEnabled()
+
+	// Create a new test session for CI visibility.
+	session = integrations.CreateTestSession(integrations.WithTestSessionFramework(testFramework, runtime.Version()))
+	if targets := getInternalFuzzTargetArray(m); targets != nil && len(*targets) > 0 {
+		claim.fuzzEvents = &fuzzEventQueue{}
+		if !integrations.TryPushCiVisibilityPreCloseAction(claim.fuzzEvents.finish) {
+			log.Debug("instrumentTestingM: fuzz event shutdown registration rejected; keeping immediate reporting")
+			claim.fuzzEvents = nil
+		}
+	}
+	processModeEnabled := snapshotProcessRetryWrapperOptions(&wrapperOpts)
+	if processModeEnabled && !registerProcessRetryShutdownAction() {
+		log.Debug("instrumentTestingM: process retry shutdown action registration failed; falling back to in-process retries")
+		wrapperOpts.processRetryAllowed = false
+	}
+	if processModeEnabled && wrapperOpts.processRetryAllowed {
+		wrapperOpts.processRetryLaunchTemplate = captureProcessRetryLaunchTemplate()
+		coordinator := newProcessRetryCoordinator(retryAttemptFailfastEnabled, runDeferredProcessRetryAttempt)
+		if registerProcessRetryCoordinator(coordinator) {
+			wrapperOpts.processRetryCoordinator = coordinator
+		} else {
+			log.Debug("instrumentTestingM: deferred process retry coordinator registration rejected")
+		}
+	}
+
+	coverageInitialized := false
+	settings := integrations.GetSettings()
+	var knownTests *net.KnownTestsResponseData
+	if settings != nil && settings.EarlyFlakeDetection.Enabled && settings.EarlyFlakeDetection.FaultySessionThreshold != nil {
+		threshold := *settings.EarlyFlakeDetection.FaultySessionThreshold
+		if threshold > 0 && threshold < 100 {
+			knownTests = integrations.GetKnownTests()
+		}
+	}
+	wrapperOpts.efdFaultySessionGuard = newEarlyFlakeDetectionFaultySession(settings, knownTests)
+	if settings != nil {
+		if settings.CodeCoverage {
+			// Initialize the runtime coverage if enabled.
+			coverage.InitializeCoverage(m, true)
+			coverageInitialized = true
+		}
+		if settings.TestManagement.Enabled && internal.BoolEnv(constants.CIVisibilityTestManagementEnabledEnvironmentVariable, true) {
+			// Set the test management tag if enabled.
+			session.SetTag(constants.TestManagementEnabled, "true")
+		}
+	}
+
+	// Check if the coverage was enabled by not initialized
+	if !coverageInitialized && testing.CoverMode() != "" {
+		coverage.InitializeCoverage(m, false)
+	}
+	if processModeEnabled && quarantinedRaceProcessSupported() &&
+		settings != nil && settings.TestManagement.Enabled && internal.BoolEnv(constants.CIVisibilityTestManagementEnabledEnvironmentVariable, true) {
+		// This context is deliberately narrower than the general retry backend:
+		// only explicitly opted-in quarantined tests in race binaries move their
+		// first execution out of process. The parent remains the sole owner of CI
+		// Visibility events and retries; children execute one selected subtree.
+		// Keep the context when process setup failed so an eligible test fails
+		// closed instead of silently running its body in the parent.
+		wrapperOpts.quarantinedRaceProcess = newQuarantinedRaceProcessContext(
+			wrapperOpts.processRetryLaunchTemplate,
+			wrapperOpts.mRunEpoch,
+			wrapperOpts.mRunInvocations,
+			settings.TestManagement.AttemptToFixRetries,
+		)
+	}
+
+	ddm := (*M)(m)
+	claim.selection = newTestingSelection(m)
+
+	// Instrument the internal tests for CI visibility.
+	ddm.instrumentInternalTests(getInternalTestArray(m), wrapperOpts, claim)
+	ddm.instrumentInternalFuzzTargets(getInternalFuzzTargetArray(m), claim)
+	ddm.instrumentInternalExamples(getInternalExampleArray(m), claim)
+
+	// Instrument the internal benchmarks for CI visibility.
+	for _, v := range benchmarkArgs(os.Args) {
+		// check if benchmarking is enabled to instrument
+		if strings.Contains(v, "-bench") || strings.Contains(v, "test.bench") {
+			ddm.instrumentInternalBenchmarks(getInternalBenchmarkArray(m), claim)
+			break
+		}
+	}
+
+	// Start-up requests have returned. One of them can take a connection that
+	// another released while its own dial still runs; net/http then pools that
+	// dial's connection from a goroutine of its own, reading time.Local while a
+	// test may change it. Closing the CI clients' connections cancels such dials
+	// and closes their late connections before the first test.
+	cidelivery.CloseConnections()
+	log.Debug("civisibility: start-up connections closed before the first test")
+
+	return true, func(exitCode int) int {
+		abnormalExit := isAbnormalTestingMExit(exitCode)
+		if abnormalExit {
+			exitCode = processRetryFailureExitCode
+		}
+		var deferredTerminalPanic any
+		if wrapperOpts.processRetryCoordinator != nil {
+			var summary processRetryCoordinatorSummary
+			if abnormalExit {
+				summary = wrapperOpts.processRetryCoordinator.abort()
+			} else {
+				summary = wrapperOpts.processRetryCoordinator.drain(exitCode)
+			}
+			exitCode = summary.exitCode
+			if !abnormalExit {
+				deferredTerminalPanic = summary.terminalPanic
+			}
+			recordTestingMDeferredDisposition(claim, summary)
+		}
+		markEFDSessionFaultyIfNeeded(wrapperOpts.efdFaultySessionGuard)
+		if claim.fuzzEvents != nil {
+			if abnormalExit {
+				claim.fuzzEvents.finish()
+			} else {
+				claim.fuzzEvents.finishAfterNativeRun()
+			}
+		}
+		retireTestingMInstrumentation(m, claim)
+		releaseHookEpoch()
+		log.Debug("instrumentTestingM: finished with exit code: %d", exitCode)
+		closeOptions := testingMSessionCloseOptions(claim)
+		// Check for code coverage if enabled.
+		if testing.CoverMode() != "" {
+			isolatedCoverageMerged, err := coverage.FinalizeProcessCoverageProfiles()
+			cov, corrected, publishCoverage := 0.0, false, true
+			if err != nil {
+				// A child profile that cannot be merged makes the parent report
+				// incomplete. Treat it as infrastructure failure, never as a
+				// quarantined test outcome.
+				log.Error("civisibility.cov: failed to merge isolated process coverage: %s", err.Error())
+				exitCode = processRetryFailureExitCode
+			} else {
+				cov, corrected, publishCoverage = finalizeITRCoverageBackfill()
+				uploadFinalCoverageReport(settings)
+			}
+			if err != nil || !publishCoverage {
+				session.Close(exitCode, closeOptions...)
+				coverage.CleanupRuntimeCoverageSnapshot()
+				integrations.ExitCiVisibility()
+				if deferredTerminalPanic != nil {
+					panic(deferredTerminalPanic)
+				}
+				return exitCode
+			}
+			if isolatedCoverageMerged || !corrected {
+				// let's try first with our coverage package
+				cov = coverage.GetCoverage()
+			}
+			if cov == 0 {
+				// if not we try we the default testing package
+				cov = testing.Coverage()
+			}
+
+			coveragePercentage := cov * 100
+			session.SetTag(constants.CodeCoveragePercentageOfTotalLines, coveragePercentage)
+		}
+
+		// Close the session and return the exit code.
+		session.Close(exitCode, closeOptions...)
+		coverage.CleanupRuntimeCoverageSnapshot()
+
+		// Finalize CI Visibility
+		integrations.ExitCiVisibility()
+		if deferredTerminalPanic != nil {
+			panic(deferredTerminalPanic)
+		}
+		return exitCode
+	}
+}
+
+func recordTestingMDeferredDisposition(claim *testingMInstrumentationClaim, summary processRetryCoordinatorSummary) {
+	if claim == nil || !summary.deferredFailed {
+		return
+	}
+	testingMInstrumentationClaims.mu.Lock()
+	defer testingMInstrumentationClaims.mu.Unlock()
+	claim.deferredFailure = true
+	claim.stickyExitCode = mergeDeferredProcessRetryExitCode(claim.stickyExitCode, true)
+	claim.failfastLatched = claim.failfastLatched || summary.failfast
+}
+
+func retiredTestingMDisposition(claim *testingMInstrumentationClaim) (bool, testingMFinalizer) {
+	failfastEnabled := retryAttemptFailfastEnabled()
+	testingMInstrumentationClaims.mu.Lock()
+	stickyExitCode := claim.stickyExitCode
+	if claim.deferredFailure && failfastEnabled {
+		claim.failfastLatched = true
+	}
+	latched := claim.failfastLatched
+	testingMInstrumentationClaims.mu.Unlock()
+	finalize := func(exitCode int) int {
+		if exitCode == 0 && stickyExitCode != 0 {
+			return stickyExitCode
+		}
+		return exitCode
+	}
+	return !latched, finalize
+}
+
+func identityTestingMFinalizer(exitCode int) int {
+	return exitCode
+}
+
+func failureTestingMFinalizer(int) int {
+	return processRetryFailureExitCode
+}
+
+func uploadFinalCoverageReport(settings *net.SettingsResponseData) {
+	if settings == nil {
+		log.Debug("instrumentTestingM: coverage report upload skipped because settings are unavailable")
+		return
+	}
+	if !settings.CoverageReportUploadEnabled {
+		log.Debug("instrumentTestingM: coverage report upload disabled by settings")
+		return
+	}
+
+	var report bytes.Buffer
+	if err := coverage.WriteLCOVReport(&report); err != nil {
+		log.Debug("instrumentTestingM: failed to create LCOV coverage report: %s", err.Error())
+		return
+	}
+	if report.Len() == 0 {
+		log.Debug("instrumentTestingM: LCOV coverage report is empty; skipping upload")
+		return
+	}
+	log.Debug("instrumentTestingM: uploading LCOV coverage report [report_bytes:%d]", report.Len())
+
+	client := net.NewClientForCoverageReportUpload()
+	if client == nil {
+		log.Debug("instrumentTestingM: coverage report upload client is unavailable")
+		return
+	}
+	if closer, ok := client.(interface{ CloseIdleConnections() }); ok {
+		defer closer.CloseIdleConnections()
+	}
+	if err := client.SendCoverageReport(&report, net.FormatLCOV); err != nil {
+		log.Debug("instrumentTestingM: failed to upload coverage report: %s", err.Error())
+	}
+}
+
+// Run initializes CI Visibility, instruments tests and benchmarks, and runs them.
+func (ddm *M) Run() (exitCode int) {
+	m := (*testing.M)(ddm)
+	if isTestingBuiltWithOrchestrion() {
+		// The woven testing.M.Run entry owns both parent instrumentation and the
+		// process-child admission gate. Claiming here as well would give one
+		// native invocation two competing owners.
+		return m.Run()
+	}
+	defer func() { setTestingMExitCode(m, exitCode) }() // for a TestMain without os.Exit
+	if isProcessRetryChild() {
+		return runProcessRetryChild(m)
+	}
+
+	proceed, exitFn := instrumentTestingMWithOptions(m, processRetryDeferredWrapperOptions())
+	if !proceed {
+		return exitFn(processRetryFailureExitCode)
+	}
+
+	// Finalization also restores the native workload descriptors if M.Run
+	// unwinds through a panic instead of returning normally.
+	defer func() {
+		if panicData := recover(); panicData != nil {
+			_ = exitFn(testingMAbnormalExitCode)
+			panic(panicData)
+		}
+		exitCode = exitFn(exitCode)
+	}()
+	exitCode = m.Run()
+	return
+}
+
+func processRetryLegacyWrapperOptions() additionalFeatureWrapperOptions {
+	return additionalFeatureWrapperOptions{}
+}
+
+func processRetryDeferredWrapperOptions() additionalFeatureWrapperOptions {
+	return additionalFeatureWrapperOptions{
+		processRetryAllowed: true,
+	}
+}
+
+func snapshotProcessRetryWrapperOptions(options *additionalFeatureWrapperOptions) bool {
+	if options == nil || !options.processRetryAllowed {
+		return false
+	}
+	options.parallelEFDAllowed = internal.BoolEnv(constants.CIVisibilityInternalParallelEarlyFlakeDetectionEnabled, false)
+	if !processRetryModeEnabledFromEnv() {
+		return false
+	}
+	if options.mRunEpoch == 0 {
+		options.mRunEpoch = testingMRunEpochCounter.Add(1)
+	}
+	if options.mRunInvocations == nil {
+		options.mRunInvocations = &atomic.Uint64{}
+	}
+	if options.processRetryFuzzGuard == nil {
+		options.processRetryFuzzGuard = &processRetryFuzzGuardSnapshot{evaluate: processRetryFuzzActive}
+	}
+	return true
+}
+
+// instrumentInternalTests instruments the internal tests for CI visibility.
+func (ddm *M) instrumentInternalTests(internalTests *[]testing.InternalTest, wrapperOpts additionalFeatureWrapperOptions, claim *testingMInstrumentationClaim) {
+	if internalTests == nil {
+		return
+	}
+	if claim != nil {
+		claim.testDescriptors = internalTests
+	}
+
+	// Get the settings response for this session
+	settings := integrations.GetSettings()
+	itrState := newITRState(settings)
+
+	// Extract info from internal tests
+	testInfos = make([]*testingTInfo, len(*internalTests))
+	for idx, test := range *internalTests {
+		moduleName, suiteName := utils.GetModuleAndSuiteName(reflect.Indirect(reflect.ValueOf(test.F)).Pointer())
+		identity := newTestIdentity(moduleName, suiteName, test.Name)
+		testInfo := &testingTInfo{
+			originalFunc: test.F,
+			commonInfo: commonInfo{
+				moduleName: moduleName,
+				suiteName:  suiteName,
+				testName:   test.Name,
+				identity:   identity,
+			},
+		}
+
+		// Count only the tests that -test.run and -test.skip let M.Run start: the
+		// suite and module close when their counts return to zero.
+		if claim.selectionOrAll().selects(test.Name) {
+			addModulesCounters(moduleName, 1)
+			addSuitesCounters(moduleName, suiteName, 1)
+		}
+
+		testInfos[idx] = testInfo
+	}
+	itrState.validateCoverageBackfillScope(testInfos)
+
+	// Check if the test is going to be skipped by ITR
+	if settings != nil && settings.ItrEnabled {
+		coverageEnabled := coverage.CanCollectPerTestCoverage() || coverage.FileCoverageActive()
+		session.SetTag(constants.CodeCoverageEnabled, strconv.FormatBool(coverageEnabled))
+		testsSkippingEnabled := strconv.FormatBool(itrState.testsSkippingEnabled())
+		session.SetTag(constants.ITRTestsSkippingEnabled, testsSkippingEnabled)
+		utils.AddCITagsMap(map[string]string{constants.ITRTestsSkippingEnabled: testsSkippingEnabled})
+
+		if itrState.testsSkippingEnabled() {
+			session.SetTag(constants.ITRTestsSkippingType, "test")
+
+			// Check if the test is going to be skipped by ITR
+			if itrState.hasSkippableTests() {
+				session.SetTag(constants.ITRTestsSkipped, "false")
+			}
+		}
+	}
+
+	// Create new instrumented internal tests
+	newTestArray := make([]testing.InternalTest, len(*internalTests))
+	for idx, testInfo := range testInfos {
+		instrumented := ddm.executeInternalTest(testInfo, wrapperOpts)
+		newTestArray[idx] = testing.InternalTest{
+			Name: testInfo.testName,
+			F:    instrumented,
+		}
+		if claim != nil {
+			if claim.tests == nil {
+				claim.tests = make(map[string]func(*testing.T), len(testInfos))
+			}
+			claim.tests[testInfo.testName] = testInfo.originalFunc
+		}
+	}
+	*internalTests = newTestArray
+}
+
+// executeInternalTest wraps the original test function to include CI visibility instrumentation.
+func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additionalFeatureWrapperOptions) func(*testing.T) {
+	originalFunc := runtime.FuncForPC(reflect.Indirect(reflect.ValueOf(testInfo.originalFunc)).Pointer())
+	testInfo.commonInfo.sourceFunc = originalFunc
+
+	// Get the settings response for this session
+	settings := integrations.GetSettings()
+	coverageEnabled := coverage.CanCollectPerTestCoverage() || coverage.FileCoverageActive()
+	testIsNew := true
+
+	// Check if the test is known
+	if settings.KnownTestsEnabled {
+		testIsKnown, testKnownDataOk := isKnownTest(&testInfo.commonInfo)
+		testIsNew = testKnownDataOk && !testIsKnown
+	} else {
+		// We don't mark any test as new if the feature is disabled
+		testIsNew = false
+	}
+
+	// Instrument the test function
+	instrumentedFunc := func(t *testing.T) {
+		if cidelivery.Enabled() {
+			// The first cleanup runs after user cleanups and parallel descendants.
+			// Keep the original instrumented function identity for hook recognition.
+			t.Cleanup(cidelivery.Begin())
+		}
+		if !testInfo.directTestFunc { // Set this func as a helper func of t, unless tRunner calls it: see directTestFunc
+			t.Helper()
+		}
+		// Get the metadata regarding the execution (in case is already created from the additional features)
+		execMeta := getTestMetadata(t)
+		if execMeta == nil {
+			// in case there's no additional features then we create the metadata for this execution and defer the disposal
+			execMeta = createTestMetadata(t, nil)
+			defer deleteTestMetadata(t)
+		}
+		execMeta.identity = testInfo.identity
+		execMeta.quarantinedRaceProcess = wrapperOpts.quarantinedRaceProcess
+
+		// Create or retrieve the module, suite, and test for CI visibility.
+		module := session.GetOrCreateModule(testInfo.moduleName)
+		suite := module.GetOrCreateSuite(testInfo.suiteName)
+		test := suite.CreateTest(testInfo.testName)
+		test.SetTestFunc(originalFunc)
+
+		// If the execution is for a new test we tag the test event as new
+		execMeta.isANewTest = execMeta.isANewTest || testIsNew
+
+		// Set some required tags from the execution metadata
+		cancelExecution := setTestTagsFromExecutionMetadata(test, execMeta)
+		if cancelExecution {
+			if !execMeta.hasAdditionalFeatureWrapper {
+				// Disabled fast-path executions close their test event before the normal defer is registered.
+				checkModuleAndSuite(module, suite)
+			}
+			return
+		}
+
+		// Check if the test needs to be skipped by ITR after all execution
+		// metadata has been attached, but before coverage and user code run.
+		itrDecision := currentITRState().decisionFor(testInfo, execMeta, test.Context().Value(constants.TestUnskippable) == true)
+		if itrDecision.skip {
+			test.SetTag(constants.TestSkippedByITR, "true")
+			// ITR skip is always a final execution, set the final status
+			test.SetTag(constants.TestFinalStatus, constants.TestStatusSkip)
+			test.Close(integrations.ResultStatusSkip, integrations.WithTestSkipReason(constants.SkippedByITRReason))
+			telemetry.ITRSkipped(telemetry.TestEventType)
+			currentITRState().markActualSkip()
+			session.SetTag(constants.ITRTestsSkipped, "true")
+			session.SetTag(constants.ITRTestsSkippingCount, numOfTestsSkipped.Add(1))
+			if !execMeta.hasAdditionalFeatureWrapper {
+				checkModuleAndSuite(module, suite)
+			}
+			t.Skip(constants.SkippedByITRReason)
+			return
+		}
+		if itrDecision.forcedRun {
+			execMeta.isItrForcedRun = true
+			test.SetTag(constants.TestForcedToRun, "true")
+			telemetry.ITRForcedRun(telemetry.TestEventType)
+		}
+
+		// Check if the coverage is enabled
+		var tCoverage coverage.TestCoverage
+		var tParentOldBarrier chan bool
+		if shouldCollectExecutionCoverage(coverageEnabled, execMeta) && (coverage.CanCollect() || coverage.FileCoverageActive()) {
+			// set the test coverage collector
+			testFile, _ := originalFunc.FileLine(originalFunc.Entry())
+			tCoverage = coverage.NewTestCoverage(
+				session.SessionID(),
+				module.ModuleID(),
+				suite.SuiteID(),
+				test.TestID(),
+				testFile)
+
+			// now we need to disable parallelism for the test in order to collect the test coverage, unless file coverage keeps it
+			tParent := getTestParentPrivateFields(t)
+			if tParent != nil && tParent.barrier != nil && !coverage.FileCoverageParallel() {
+				tParentOldBarrier = *tParent.barrier
+				*tParent.barrier = nil
+			}
+		}
+
+		if tCoverage != nil {
+			// Capture after user cleanup and descendants, before delivery resumes.
+			registerTestCoverageCleanup(t, tCoverage, tParentOldBarrier)
+		}
+
+		// Initialize the chatty printer if not already done.
+		instrumentChattyPrinter(t)
+
+		startTime := time.Now()
+		bodyReturned := false
+		defer func() {
+			r := recover()
+			bodyDuration := time.Since(startTime)
+
+			if execMeta.usesFreshRetryAttemptRuntime {
+				bodyTerminal := r
+				bodyStack := ""
+				if bodyTerminal != nil {
+					bodyStack = utils.GetStacktrace(1)
+				}
+				execMeta.retryAttemptFinalizer = func(result retryAttemptResult) {
+					terminal := bodyTerminal
+					terminalStack := bodyStack
+					if result.panicData != nil {
+						terminal = result.panicData
+						terminalStack = string(result.panicStack)
+					}
+					if result.cleanupPanicData != nil {
+						terminal = result.cleanupPanicData
+						terminalStack = string(result.cleanupPanicStack)
+					}
+					logFreshRetryAttemptState("finalize_runm", t, result)
+					finalizeInstrumentedTestExecution(t, execMeta, test, suite, module, result.duration, result.output, terminal, terminalStack, true)
+				}
+				if r != nil {
+					panic(r)
+				}
+				return
+			}
+
+			unexpectedTermination := r == nil && processRetryUnexpectedTestTermination(t, bodyReturned)
+			duration := runAndApplyTestCleanupWithDuration(t, execMeta, bodyDuration)
+			if unexpectedTermination {
+				r = unexpectedTestTerminationMessage
+			}
+			terminalStack := ""
+			if r != nil {
+				terminalStack = utils.GetStacktrace(1)
+			}
+			finalizeInstrumentedTestExecution(t, execMeta, test, suite, module, duration, nil, r, terminalStack, true)
+			if r != nil && !execMeta.hasAdditionalFeatureWrapper {
+				checkModuleAndSuite(module, suite)
+				if !requestCoverageShutdown(t) {
+					integrations.ExitCiVisibility()
+				}
+				panic(r)
+			}
+			if r == nil && !execMeta.hasAdditionalFeatureWrapper {
+				checkModuleAndSuite(module, suite)
+			}
+		}()
+
+		if tCoverage != nil {
+			// Collect coverage before test execution so we can register a baseline.
+			tCoverage.CollectCoverageBeforeTestExecution()
+		}
+
+		// A masking capability fallback still runs the instrumentation shell so
+		// the event is emitted, but it must not admit the irreversible user body.
+		if !execMeta.suppressUserTestBody {
+			bindNativeTestContext(t, test)
+			testInfo.originalFunc(t)
+		}
+		bodyReturned = true
+	}
+
+	// Register the instrumented func as an internal instrumented func (to avoid double instrumentation)
+	setInstrumentationMetadata(runtime.FuncForPC(reflect.Indirect(reflect.ValueOf(instrumentedFunc)).Pointer()), &instrumentationMetadata{IsInternal: true})
+
+	// Get the additional feature wrapper, if any
+	return directTestFunc(testInfo, instrumentedFunc, applyAdditionalFeaturesToTestFunc(instrumentedFunc, &testInfo.commonInfo, nil, wrapperOpts))
+}
+
+func shouldCollectExecutionCoverage(coverageEnabled bool, execMeta *testExecutionMetadata) bool {
+	return coverageEnabled && (execMeta == nil || !execMeta.isARetry && !execMeta.suppressCoverageCollection)
+}
+
+// instrumentInternalBenchmarks instruments the internal benchmarks for CI visibility.
+func (ddm *M) instrumentInternalBenchmarks(internalBenchmarks *[]testing.InternalBenchmark, claim *testingMInstrumentationClaim) {
+	if internalBenchmarks == nil {
+		return
+	}
+	if claim != nil {
+		claim.benchmarkDescriptors = internalBenchmarks
+	}
+
+	// Extract info from internal benchmarks
+	benchmarkInfos = make([]*testingBInfo, len(*internalBenchmarks))
+	for idx, benchmark := range *internalBenchmarks {
+		moduleName, suiteName := utils.GetModuleAndSuiteName(reflect.Indirect(reflect.ValueOf(benchmark.F)).Pointer())
+		identity := newTestIdentity(moduleName, suiteName, benchmark.Name)
+		benchmarkInfo := &testingBInfo{
+			originalFunc: benchmark.F,
+			commonInfo: commonInfo{
+				moduleName: moduleName,
+				suiteName:  suiteName,
+				testName:   benchmark.Name,
+				identity:   identity,
+			},
+		}
+
+		// Increment the test count in the module.
+		addModulesCounters(moduleName, 1)
+
+		// Increment the test count in the suite.
+		addSuitesCounters(moduleName, suiteName, 1)
+
+		benchmarkInfos[idx] = benchmarkInfo
+	}
+
+	// Create a new instrumented internal benchmarks
+	newBenchmarkArray := make([]testing.InternalBenchmark, len(*internalBenchmarks))
+	for idx, benchmarkInfo := range benchmarkInfos {
+		instrumented := ddm.executeInternalBenchmark(benchmarkInfo)
+		newBenchmarkArray[idx] = testing.InternalBenchmark{
+			Name: benchmarkInfo.testName,
+			F:    instrumented,
+		}
+		if claim != nil {
+			if claim.benchmarks == nil {
+				claim.benchmarks = make(map[string]func(*testing.B), len(benchmarkInfos))
+			}
+			claim.benchmarks[benchmarkInfo.testName] = benchmarkInfo.originalFunc
+		}
+	}
+
+	*internalBenchmarks = newBenchmarkArray
+}
+
+func restoreTestingMWorkloads(m *testing.M, claim *testingMInstrumentationClaim) {
+	if m == nil || claim == nil {
+		return
+	}
+	restoreTestingMTests(claim.testDescriptors, claim.tests)
+	restoreTestingMBenchmarks(claim.benchmarkDescriptors, claim.benchmarks)
+	restoreTestingMFuzzTargets(claim.fuzzDescriptors, claim.fuzzTargets)
+	restoreTestingMExamples(claim.exampleDescriptors, claim.examples)
+}
+
+func retireTestingMInstrumentation(m *testing.M, claim *testingMInstrumentationClaim) {
+	if claim == nil {
+		return
+	}
+	testingMInstrumentationClaims.mu.Lock()
+	defer testingMInstrumentationClaims.mu.Unlock()
+	if m != nil && testingMInstrumentationClaims.claimed[m] != claim {
+		return
+	}
+	if claim.retired {
+		return
+	}
+	restoreTestingMWorkloads(m, claim)
+	claim.retired = true
+}
+
+func restoreTestingMTests(tests *[]testing.InternalTest, originals map[string]func(*testing.T)) {
+	if tests == nil || len(originals) == 0 {
+		return
+	}
+	for idx := range *tests {
+		if original, ok := originals[(*tests)[idx].Name]; ok {
+			(*tests)[idx].F = original
+		}
+	}
+}
+
+func restoreTestingMBenchmarks(benchmarks *[]testing.InternalBenchmark, originals map[string]func(*testing.B)) {
+	if benchmarks == nil || len(originals) == 0 {
+		return
+	}
+	for idx := range *benchmarks {
+		if original, ok := originals[(*benchmarks)[idx].Name]; ok {
+			(*benchmarks)[idx].F = original
+		}
+	}
+}
+
+func restoreTestingMFuzzTargets(fuzzTargets *[]testing.InternalFuzzTarget, originals map[string]func(*testing.F)) {
+	if fuzzTargets == nil || len(originals) == 0 {
+		return
+	}
+	for idx := range *fuzzTargets {
+		if original, ok := originals[(*fuzzTargets)[idx].Name]; ok {
+			(*fuzzTargets)[idx].Fn = original
+		}
+	}
+}
+
+func restoreTestingMExamples(examples *[]testing.InternalExample, originals map[string]func()) {
+	if examples == nil || len(originals) == 0 {
+		return
+	}
+	for idx := range *examples {
+		if original, ok := originals[(*examples)[idx].Name]; ok {
+			(*examples)[idx].F = original
+		}
+	}
+}
+
+// executeInternalBenchmark wraps the original benchmark function to include CI visibility instrumentation.
+func (ddm *M) executeInternalBenchmark(benchmarkInfo *testingBInfo) func(*testing.B) {
+	originalFunc := runtime.FuncForPC(reflect.Indirect(reflect.ValueOf(benchmarkInfo.originalFunc)).Pointer())
+
+	settings := integrations.GetSettings()
+	testIsNew := true
+
+	// Check if the test is known
+	if settings.KnownTestsEnabled {
+		testIsKnown, testKnownDataOk := isKnownTest(&benchmarkInfo.commonInfo)
+		testIsNew = testKnownDataOk && !testIsKnown
+	} else {
+		// We don't mark any test as new if the feature is disabled
+		testIsNew = false
+	}
+
+	instrumentedInternalFunc := func(b *testing.B) {
+		if cidelivery.Enabled() {
+			b.Cleanup(cidelivery.Begin())
+		}
+
+		// decrement level
+		pBench := getBenchmarkPrivateFields(b)
+		if pBench != nil {
+			pBench.AddLevel(-1)
+		}
+
+		startTime := time.Now()
+		module := session.GetOrCreateModule(benchmarkInfo.moduleName, integrations.WithTestModuleStartTime(startTime))
+		suite := module.GetOrCreateSuite(benchmarkInfo.suiteName, integrations.WithTestSuiteStartTime(startTime))
+		test := suite.CreateTest(benchmarkInfo.testName, integrations.WithTestStartTime(startTime))
+		test.SetTestFunc(originalFunc)
+
+		// If the execution is for a new test we tag the test event as new
+		if testIsNew {
+			// Set the is new test tag
+			test.SetTag(constants.TestIsNew, "true")
+		}
+
+		// Define a function to handle panic during benchmark finalization.
+		// Defined before the benchmark runs: its first run, and each later
+		// one, recover a panic with it before panicking again.
+		panicFunc := func(r any) {
+			// Without results, the event is still a benchmark's.
+			test.SetBenchmarkData("duration", nil)
+			test.SetError(integrations.WithErrorInfo("panic", fmt.Sprint(r), utils.GetStacktrace(1)))
+			suite.SetTag(ext.Error, true)
+			module.SetTag(ext.Error, true)
+			test.Close(integrations.ResultStatusFail)
+			checkModuleAndSuite(module, suite)
+			integrations.ExitCiVisibility()
+		}
+		recoverFunc := &panicFunc
+
+		// Run the original benchmark function.
+		var iPfOfB *benchmarkPrivateFields
+		var benchmarkMeta *testExecutionMetadata // for the skip reason that the skip hooks record
+		instrumentedFunc := func(b *testing.B) {
+			// Stop the timer to perform initialization and replacements.
+			b.StopTimer()
+
+			defer func() {
+				if r := recover(); r != nil {
+					// Handle panic if it occurs during benchmark execution.
+					if recoverFunc != nil {
+						fn := *recoverFunc
+						fn(r)
+					}
+					panic(r)
+				}
+			}()
+
+			// Enable allocation reporting.
+			b.ReportAllocs()
+
+			// Retrieve the private fields of the inner testing.B.
+			iPfOfB = getBenchmarkPrivateFields(b)
+			if iPfOfB == nil {
+				panic("failed to get private fields of the inner testing.B")
+			}
+
+			// Replace the benchmark function with the original one (this must be executed only once - the first iteration[b.run1]).
+			if iPfOfB.benchFunc == nil {
+				panic("failed to get the original benchmark function")
+			}
+			*iPfOfB.benchFunc = recoveringBenchmarkFunc(benchmarkInfo.originalFunc, panicFunc)
+
+			// Get the metadata regarding the execution (in case is already created from the additional features)
+			execMeta := getTestMetadata(b)
+			if execMeta == nil {
+				// in case there's no additional features then we create the metadata for this execution and defer the disposal
+				execMeta = createTestMetadata(b, nil)
+				defer deleteTestMetadata(b)
+			}
+
+			// Sets the CI Visibility test
+			execMeta.test = test
+			benchmarkMeta = execMeta
+
+			// Bind the context, outside the measurement, then restart the timer
+			// and execute the original benchmark function.
+			bindNativeTestContext(b, test)
+			b.ResetTimer()
+			b.StartTimer()
+			benchmarkInfo.originalFunc(b)
+		}
+
+		setCiVisibilityBenchmarkFunc(runtime.FuncForPC(reflect.Indirect(reflect.ValueOf(instrumentedFunc)).Pointer()))
+		b.Run(b.Name(), instrumentedFunc)
+
+		endTime := time.Now()
+		results := iPfOfB.result
+
+		// Set benchmark data for CI visibility.
+		test.SetBenchmarkData("duration", map[string]any{
+			"run":  results.N,
+			"mean": results.NsPerOp(),
+		})
+		test.SetBenchmarkData("memory_total_operations", map[string]any{
+			"run":            results.N,
+			"mean":           results.AllocsPerOp(),
+			"statistics.max": results.MemAllocs,
+		})
+		test.SetBenchmarkData("mean_heap_allocations", map[string]any{
+			"run":  results.N,
+			"mean": results.AllocedBytesPerOp(),
+		})
+		test.SetBenchmarkData("total_heap_allocations", map[string]any{
+			"run":  results.N,
+			"mean": iPfOfB.result.MemBytes,
+		})
+		if len(results.Extra) > 0 {
+			mapConverted := map[string]any{}
+			for k, v := range results.Extra {
+				mapConverted[k] = v
+			}
+			test.SetBenchmarkData("extra", mapConverted)
+		}
+
+		// Normal finalization: determine the benchmark result based on its state.
+		if iPfOfB.B.Failed() {
+			test.SetTag(ext.Error, true)
+			suite.SetTag(ext.Error, true)
+			module.SetTag(ext.Error, true)
+			test.Close(integrations.ResultStatusFail, integrations.WithTestFinishTime(endTime))
+		} else if iPfOfB.B.Skipped() {
+			closeSkippedBenchmark(test, benchmarkMeta, endTime)
+		} else {
+			test.Close(integrations.ResultStatusPass, integrations.WithTestFinishTime(endTime))
+		}
+
+		checkModuleAndSuite(module, suite)
+	}
+	setCiVisibilityBenchmarkFunc(originalFunc)
+	setCiVisibilityBenchmarkFunc(runtime.FuncForPC(reflect.Indirect(reflect.ValueOf(instrumentedInternalFunc)).Pointer()))
+	return instrumentedInternalFunc
+}
+
+// RunM runs the tests and benchmarks using CI visibility.
+func RunM(m *testing.M) int {
+	return (*M)(m).Run()
+}
+
+// checkModuleAndSuite checks and closes the modules and suites if all tests are executed.
+func checkModuleAndSuite(module integrations.TestModule, suite integrations.TestSuite) {
+	// If all tests in a suite has been executed we can close the suite
+	if addSuitesCounters(module.Name(), suite.Name(), -1) <= 0 {
+		suite.Close()
+	}
+
+	// If all tests in a module has been executed we can close the module
+	if addModulesCounters(module.Name(), -1) <= 0 {
+		module.Close()
+	}
+}
+
+// testSuiteCounterKey identifies a suite within its module. Suite names are
+// file names, which several modules of one binary can share.
+type testSuiteCounterKey struct {
+	moduleName, suiteName string
+}
+
+// addSuitesCounters increments the counter of a module's suite.
+func addSuitesCounters(moduleName, suiteName string, delta int) int {
+	suitesCountersMutex.Lock()
+	defer suitesCountersMutex.Unlock()
+	key := testSuiteCounterKey{moduleName: moduleName, suiteName: suiteName}
+	nValue := suitesCounters[key] + delta
+	suitesCounters[key] = nValue
+	return nValue
+}
+
+// addModulesCounters increments the module counters for a given module name.
+func addModulesCounters(moduleName string, delta int) int {
+	modulesCountersMutex.Lock()
+	defer modulesCountersMutex.Unlock()
+	nValue := modulesCounters[moduleName] + delta
+	modulesCounters[moduleName] = nValue
+	return nValue
+}
+
+// isKnownTest checks if a test is a known test or a new one. The result is
+// kept in testInfo: wrapping a test asks once for the known-test tag and again
+// for Early Flake Detection.
+func isKnownTest(testInfo *commonInfo) (isKnown bool, hasKnownData bool) {
+	return testInfo.lookupKnownTest(integrations.GetKnownTests)
+}
+
+func (c *commonInfo) lookupKnownTest(knownTests func() *net.KnownTestsResponseData) (isKnown bool, hasKnownData bool) {
+	if !c.knownTestChecked {
+		c.knownTest, c.knownTestData = matchKnownTest(knownTests(), c.moduleName, c.suiteName, c.testName)
+		c.knownTestChecked = true
+	}
+	return c.knownTest, c.knownTestData
+}
+
+// matchKnownTest reports whether name is listed for its module and suite, and
+// whether there is any known-test data. The SDK scanned the suite's list for
+// every test; long lists are indexed once instead.
+func matchKnownTest(knownTestsData *net.KnownTestsResponseData, moduleName, suiteName, name string) (isKnown bool, hasKnownData bool) {
+	if knownTestsData != nil && len(knownTestsData.Tests) > 0 {
+		// Check if the test is a known test or a new one
+		if knownSuites, ok := knownTestsData.Tests[moduleName]; ok {
+			if knownTests, ok := knownSuites[suiteName]; ok {
+				if len(knownTests) <= knownTestScanLimit {
+					return slices.Contains(knownTests, name), true
+				}
+				_, isKnown = knownTestSet(knownTests)[name]
+				return isKnown, true
+			}
+		}
+
+		return false, true
+	}
+
+	return false, false
+}
+
+// knownTestScanLimit is the list length up to which a scan is cheaper than
+// building a set.
+const knownTestScanLimit = 32
+
+// knownTestSets indexes known-test lists by their backing array, which the
+// response never changes after decoding. A new response has new arrays.
+var knownTestSets sync.Map // knownTestListKey -> *knownTestNames
+
+type knownTestListKey struct {
+	first  *string
+	length int
+}
+
+type knownTestNames struct {
+	once  sync.Once
+	names map[string]struct{}
+}
+
+func knownTestSet(list []string) map[string]struct{} {
+	key := knownTestListKey{first: unsafe.SliceData(list), length: len(list)}
+	value, ok := knownTestSets.Load(key)
+	if !ok {
+		value, _ = knownTestSets.LoadOrStore(key, &knownTestNames{})
+	}
+	set := value.(*knownTestNames)
+	set.once.Do(func() {
+		set.names = make(map[string]struct{}, len(list))
+		for _, name := range list {
+			set.names[name] = struct{}{}
+		}
+	})
+	return set.names
+}
+
+// getTestManagementData retrieves the test management data for a test identity.
+// It returns the matched properties, the type of match, and a flag indicating whether
+// test-management data exists for the containing module/suite.
+func getTestManagementData(identity *testIdentity) (data *net.TestManagementTestsResponseDataTestPropertiesAttributes, matchKind testManagementMatchKind, hasTestManagementData bool) {
+	testManagementData := integrations.GetTestManagementTestsData()
+	return matchTestManagementData(identity, testManagementData)
+}
+
+// matchTestManagementData finds the best-matching test-management directive for a given identity within the provided dataset.
+func matchTestManagementData(identity *testIdentity, modules *net.TestManagementTestsResponseDataModules) (data *net.TestManagementTestsResponseDataTestPropertiesAttributes, matchKind testManagementMatchKind, hasTestManagementData bool) {
+	if identity == nil || modules == nil || len(modules.Modules) == 0 {
+		return nil, testManagementMatchNone, false
+	}
+
+	module, ok := modules.Modules[identity.ModuleName]
+	if !ok {
+		return nil, testManagementMatchNone, true
+	}
+
+	suite, ok := module.Suites[identity.SuiteName]
+	if !ok {
+		return nil, testManagementMatchNone, true
+	}
+
+	if len(suite.Tests) == 0 {
+		return nil, testManagementMatchNone, true
+	}
+
+	for i := len(identity.Segments); i > 0; i-- {
+		candidate := strings.Join(identity.Segments[:i], "/")
+		if test, ok := suite.Tests[candidate]; ok {
+			kind := testManagementMatchExact
+			if candidate != identity.FullName {
+				kind = testManagementMatchAncestor
+			}
+			return &test.Properties, kind, true
+		}
+	}
+
+	return nil, testManagementMatchNone, true
+}
+
+// setTestTagsFromExecutionMetadata sets the test tags from the execution metadata.
+func setTestTagsFromExecutionMetadata(test integrations.Test, execMeta *testExecutionMetadata) (cancelExecution bool) {
+	cancelExecution = setTestTagsFromExecutionMetadataNoClose(test, execMeta)
+	if cancelExecution {
+		test.Close(integrations.ResultStatusSkip, integrations.WithTestSkipReason(constants.TestDisabledSkipReason))
+	}
+	return cancelExecution
+}
+
+func setTestTagsFromExecutionMetadataNoClose(test integrations.Test, execMeta *testExecutionMetadata) (cancelExecution bool) {
+	settings := integrations.GetSettings()
+
+	// Set the Test Optimization test to the execution metadata
+	execMeta.test = test
+	if execMeta.identity != nil && len(execMeta.identity.Segments) > 1 {
+		if log.DebugEnabled() {
+			log.Debug("setTestTagsFromExecutionMetadata assigned test for %s", execMeta.identity.FullName)
+		}
+	}
+
+	// If the execution is for a new test we tag the test event as new
+	if execMeta.isANewTest {
+		// Set the is new test tag
+		test.SetTag(constants.TestIsNew, "true")
+	}
+
+	// If the execution is for a modified test
+	execMeta.isAModifiedTest = execMeta.isAModifiedTest || (settings.ImpactedTestsEnabled && test.Context().Value(constants.TestIsModified) == true)
+
+	// If the execution is a retry we tag the test event
+	if execMeta.isARetry {
+		// Set the retry tag
+		test.SetTag(constants.TestIsRetry, "true")
+
+		// let's set the retry reason
+		if execMeta.isAttemptToFix {
+			// Set attempt_to_fix as the retry reason
+			test.SetTag(constants.TestRetryReason, constants.AttemptToFixRetryReason)
+		} else if usesEfdRetrySemantics(execMeta) {
+			// Set early_flake_detection as the retry reason
+			test.SetTag(constants.TestRetryReason, constants.EarlyFlakeDetectionRetryReason)
+		} else if execMeta.isFlakyTestRetriesEnabled {
+			// Set auto_test_retry as the retry reason
+			test.SetTag(constants.TestRetryReason, constants.AutoTestRetriesRetryReason)
+		} else {
+			// Set the unknown reason
+			test.SetTag(constants.TestRetryReason, constants.ExternalRetryReason)
+		}
+	}
+
+	// If the test is an attempt to fix we tag the test event
+	if execMeta.isAttemptToFix {
+		test.SetTag(constants.TestIsAttempToFix, "true")
+	}
+
+	// If the test is quarantined we tag the test event
+	if execMeta.isQuarantined {
+		test.SetTag(constants.TestIsQuarantined, "true")
+	}
+
+	// If the test is disabled we tag the test event
+	if execMeta.isDisabled {
+		test.SetTag(constants.TestIsDisabled, "true")
+		if !execMeta.isAttemptToFix {
+			// Disabled test without ATF is always a final execution, set the final status
+			test.SetTag(constants.TestFinalStatus, constants.TestStatusSkip)
+			return true
+		}
+	}
+
+	return false
+}
+
+// instrumentChattyPrinter initializes the chatty printer for verbose output if logging is enabled.
+func instrumentChattyPrinter(t *testing.T) {
+	if !logs.IsEnabled() {
+		// If the logs integration is not enabled, we don't need to instrument the chatty printer.
+		return
+	}
+
+	// Initialize the chatty printer if not already done.
+	chattyPrinterOnce.Do(func() {
+		chatty = getTestChattyPrinter(t)
+		// If the chatty printer is enabled, we wrap the writer to capture output.
+		if chatty != nil && chatty.w != nil && *chatty.w != nil {
+			*chatty.w = &customWriter{chatty: chatty, writer: *chatty.w}
+		}
+	})
+}
+
+// collectAndWriteLogs collects logs from the chatty printer and the test output, and writes them to the test.
+func collectAndWriteLogs(t *testing.T, test integrations.Test, attemptOutput []byte) {
+	if !logs.IsEnabled() {
+		// If the logs integration is not enabled, we don't need to collect or write logs.
+		return
+	}
+
+	// Ensure any buffered partial line (Go 1.25+) is flushed before extracting the test output.
+	// This is a no-op on Go versions that don't have the output writer partial buffer.
+	// Only for logs: the flush ends a line that the test's cleanups can continue.
+	flushOutputWriterPartial(t)
+
+	if chatty != nil && chatty.w != nil && *chatty.w != nil {
+		if writer, ok := (*chatty.w).(*customWriter); ok {
+			chattyOutput := writer.TakeOutput(test.Name())
+			if len(attemptOutput) == 0 && len(chattyOutput) > 0 {
+				sc := bufio.NewScanner(bytes.NewReader(chattyOutput))
+				sc.Buffer(nil, len(chattyOutput)+1) // A longer line would end the scan.
+				for sc.Scan() {
+					test.Log(sc.Text(), "")
+				}
+
+				// if the chatty printer has output, we skip the test output extraction
+				return
+			}
+		}
+	}
+
+	if attemptOutput == nil {
+		if tCommon := getTestPrivateFields(t); tCommon != nil && tCommon.output != nil {
+			attemptOutput = tCommon.GetOutput()
+		}
+	}
+	if len(attemptOutput) > 0 {
+		sc := bufio.NewScanner(bytes.NewReader(attemptOutput))
+		sc.Buffer(nil, len(attemptOutput)+1) // A longer line would end the scan.
+		for sc.Scan() {
+			test.Log(sc.Text(), "")
+		}
+	}
+}
+
+// directTestFunc records whether testing runs instrumented itself, without an
+// additional feature wrapper, and returns test. tRunner then calls instrumented
+// directly, and its t.Helper call would allocate t's helper map for nothing:
+// testing reads helper marks only to find the frame to report, and when that
+// search reaches the function that tRunner calls in a top-level test, it
+// reports that function's frame whether it is marked or not. The exception is
+// a stack that testing's search cuts off right after that function: see
+// ADAPTATIONS.md. A wrapper keeps the call, since its frames lie between
+// instrumented and tRunner.
+func directTestFunc(testInfo *testingTInfo, instrumented, test func(*testing.T)) func(*testing.T) {
+	testInfo.directTestFunc = reflect.ValueOf(test).Pointer() == reflect.ValueOf(instrumented).Pointer()
+	return test
+}
+
+// setTestingMExitCode stores code in testing.M's exitCode, which M.Run sets
+// and Go's generated main returns after a TestMain that does not call
+// os.Exit, as testopt.RunM(m) alone: it then holds the result after retries.
+func setTestingMExitCode(m *testing.M, code int) {
+	field := reflect.ValueOf(m).Elem().FieldByName("exitCode")
+	if field.IsValid() && field.Kind() == reflect.Int && field.CanAddr() {
+		*(*int)(unsafe.Pointer(field.UnsafeAddr())) = code
+	}
+}

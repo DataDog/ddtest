@@ -1,0 +1,5 @@
+/bin/
+/artifacts/
+*.test
+/dist/
+__pycache__/

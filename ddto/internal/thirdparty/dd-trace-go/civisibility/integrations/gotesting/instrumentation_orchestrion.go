@@ -1,0 +1,906 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
+
+package gotesting
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+	"unsafe"
+
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/ddtrace/ext"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+)
+
+// instrumentCaptureFormattedError records the value already formatted by the
+// native testing method and returns it unchanged for testing.common.log.
+//
+//go:linkname instrumentCaptureFormattedError
+func instrumentCaptureFormattedError(tb testing.TB, errType, message string, skip int) string {
+	formatted := message
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return formatted
+	}
+	defer release()
+	if errType == "Error" || errType == "Fatal" {
+		message = strings.TrimSuffix(message, "\n")
+	}
+	if isProcessRetryChild() {
+		recordProcessRetryChildErrorInfo(tb, errType, message, 2+skip)
+		return formatted
+	}
+	if !isCiVisibilityEnabled() {
+		return formatted
+	}
+	if execMeta := getTestMetadata(tb); execMeta != nil && execMeta.processRetryError.Load() == nil { // only the first error is kept
+		execMeta.processRetryError.CompareAndSwap(nil, &processRetryErrorInfo{
+			Type:    errType,
+			Message: message,
+			Stack:   utils.GetStacktrace(2 + skip),
+		})
+	}
+	return formatted
+}
+
+// instrumentCaptureFormattedSkip records the value already formatted by the
+// native testing method and returns it unchanged for testing.common.log.
+//
+//go:linkname instrumentCaptureFormattedSkip
+func instrumentCaptureFormattedSkip(tb testing.TB, skipType, reason string) string {
+	formatted := reason
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return formatted
+	}
+	defer release()
+	if skipType == "Skip" {
+		reason = strings.TrimSuffix(reason, "\n")
+	}
+	if isProcessRetryChild() {
+		if execMeta := getTestMetadata(tb); execMeta != nil && processRetryChildOwnerMetadata(execMeta) == execMeta {
+			execMeta.processRetrySkipReason.CompareAndSwap(nil, &reason)
+		}
+		return formatted
+	}
+	if !isCiVisibilityEnabled() {
+		return formatted
+	}
+	if execMeta := getTestMetadata(tb); execMeta != nil {
+		execMeta.processRetrySkipReason.CompareAndSwap(nil, &reason)
+	}
+	return formatted
+}
+
+// ******************************************************************************************************************
+// WARNING: DO NOT CHANGE THE SIGNATURE OF THESE FUNCTIONS!
+//
+//  The following functions are being used by both the manual api and most importantly the Orchestrion automatic
+//  instrumentation integration.
+// ******************************************************************************************************************
+
+// instrumentTestingM preserves the finalizer-only ABI used by published v1
+// Orchestrion advice.
+//
+//go:linkname instrumentTestingM
+func instrumentTestingM(m *testing.M) func(exitCode int) {
+	_, finalize := instrumentTestingMWithOptions(m, processRetryLegacyWrapperOptions())
+	return func(exitCode int) {
+		_ = finalize(exitCode)
+	}
+}
+
+// instrumentTestingMWithControl instruments testing.M and tells current
+// Orchestrion advice whether the native M.Run body should execute.
+//
+//go:linkname instrumentTestingMWithControl
+func instrumentTestingMWithControl(m *testing.M) (bool, func(int) int) {
+	proceed, finalize := instrumentTestingMWithOptions(m, processRetryDeferredWrapperOptions())
+	return proceed, finalize
+}
+
+//go:linkname instrumentTestingMAbnormalExitCode
+func instrumentTestingMAbnormalExitCode() int {
+	return testingMAbnormalExitCode
+}
+
+// instrumentTestingBuiltWithOrchestrion records that testing.M.Run has woven ownership.
+//
+//go:linkname instrumentTestingBuiltWithOrchestrion
+func instrumentTestingBuiltWithOrchestrion() {
+	markTestingBuiltWithOrchestrion()
+}
+
+// instrumentTestingTFunc helper function to instrument a testing function func(*testing.T)
+//
+//go:linkname instrumentTestingTFunc
+func instrumentTestingTFunc(f func(*testing.T)) func(*testing.T) {
+	return instrumentTestingTFuncWithSourceOptions(f, nil, true, false)
+}
+
+// instrumentTestingFuzzFunc preserves the callback's exact concrete type,
+// which testing.F.Fuzz validates through reflection.
+//
+//go:linkname instrumentTestingFuzzFunc
+func instrumentTestingFuzzFunc(ff any) any {
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return ff
+	}
+	defer release()
+	if isProcessRetryChild() {
+		return ff
+	}
+	if testingFuzzWorkerActive() {
+		// Generated fuzzing mutations are not JUnit test cases. Coordinator
+		// processes still execute ordinary seeds for non-selected fuzz targets.
+		return ff
+	}
+	if !isCiVisibilityEnabled() || !testing.Testing() || ff == nil {
+		return ff
+	}
+
+	fn := reflect.ValueOf(ff)
+	fnType := fn.Type()
+	testingTPtr := reflect.TypeFor[*testing.T]()
+	if fn.Kind() != reflect.Func || fnType.NumIn() == 0 || fnType.In(0) != testingTPtr || fnType.NumOut() != 0 {
+		// Let testing.F.Fuzz produce its native validation error unchanged.
+		return ff
+	}
+
+	sourceFunc := runtime.FuncForPC(fn.Pointer())
+	return reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
+		t := args[0].Interface().(*testing.T)
+		seedBody := func(currentT *testing.T) {
+			args[0] = reflect.ValueOf(currentT)
+			fn.Call(args)
+		}
+		instrumentTestingTFuncWithSourceOptions(seedBody, sourceFunc, false, true)(t)
+		return nil
+	}).Interface()
+}
+
+func instrumentTestingTFuncWithSourceOptions(
+	f func(*testing.T),
+	sourceFunc *runtime.Func,
+	additionalFeatures bool,
+	drainNativeLifecycle bool,
+) func(*testing.T) {
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return f
+	}
+	defer release()
+	if isProcessRetryChild() && f != nil {
+		return instrumentProcessRetryChildSubtest(f)
+	}
+
+	// Without CI Visibility, or for a nil callback, which testing may skip, f stays
+	if !isCiVisibilityEnabled() || !testing.Testing() || f == nil {
+		return f
+	}
+
+	log.Debug("instrumentTestingTFunc: instrumenting test function")
+
+	if sourceFunc == nil {
+		fReflect := reflect.Indirect(reflect.ValueOf(f))
+		sourceFunc = runtime.FuncForPC(fReflect.Pointer())
+	}
+	moduleName, suiteName := utils.GetModuleAndSuiteName(sourceFunc.Entry())
+	originalFunc := sourceFunc
+
+	// Avoid instrumenting twice
+	metadata := getInstrumentationMetadata(originalFunc)
+	if metadata != nil && metadata.IsInternal {
+		// If is an internal test, we don't instrument because f is already the instrumented func by executeInternalTest
+		return f
+	}
+
+	instrumentedFn := func(t *testing.T) {
+		// Check if we have testify suite data related to this test
+		testifyData := getTestifyTest(t)
+		// Testify's suite data gives the module and suite. Names declared once and never reassigned
+		// are captured by value, so the closures do not move them to the heap for every test.
+		moduleName, suiteName := testifyData.moduleAndSuite(moduleName, suiteName)
+		subtestIdentity := newTestIdentity(moduleName, suiteName, t.Name())
+		isSubtest := len(subtestIdentity.Segments) > 1
+
+		var testPrivateFields *commonPrivateFields
+		var parentExecMeta *testExecutionMetadata
+
+		if isSubtest {
+			testPrivateFields = getTestPrivateFields(t)
+			if testPrivateFields != nil && testPrivateFields.parent != nil {
+				parentExecMeta = getTestMetadataFromPointer(*testPrivateFields.parent)
+			}
+			if testifyData == nil { // a helper in another package can create the subtest: see subtestModuleName
+				subtestIdentity.ModuleName = subtestModuleName(subtestIdentity.ModuleName, parentExecMeta)
+			}
+
+			settings := integrations.GetSettings()
+			shouldInstrument := settings != nil && settings.SubtestFeaturesEnabled
+			hasDirective := false
+			if log.DebugEnabled() {
+				log.Debug("subtest gating module=%s suite=%s identity=%s", subtestIdentity.ModuleName, suiteName, subtestIdentity.FullName)
+			}
+			if parentExecMeta != nil {
+				if parentExecMeta.isAttemptToFix || parentExecMeta.isDisabled || parentExecMeta.isQuarantined {
+					hasDirective = true
+					log.Debug("subtest gating parent directive for %s: attempt_to_fix=%t disabled=%t quarantined=%t",
+						subtestIdentity.FullName, parentExecMeta.isAttemptToFix, parentExecMeta.isDisabled, parentExecMeta.isQuarantined)
+				}
+			}
+
+			if !hasDirective && shouldInstrument {
+				if data, matchKind, hasData := getTestManagementData(subtestIdentity); hasData && matchKind == testManagementMatchExact && data != nil {
+					if data.Disabled || data.Quarantined || data.AttemptToFix {
+						hasDirective = true
+						log.Debug("subtest gating exact match for %s: disabled=%t quarantined=%t attempt_to_fix=%t",
+							subtestIdentity.FullName, data.Disabled, data.Quarantined, data.AttemptToFix)
+					}
+				} else if log.DebugEnabled() {
+					log.Debug("subtest gating no exact match for %s (hasData=%t matchKind=%d)", subtestIdentity.FullName, hasData, matchKind)
+				}
+			}
+		}
+
+		subtestInfo := &commonInfo{
+			moduleName: subtestIdentity.ModuleName,
+			suiteName:  suiteName,
+			testName:   subtestIdentity.FullName,
+			identity:   subtestIdentity,
+			sourceFunc: originalFunc,
+		}
+
+		runSubtest := func(currentT *testing.T) {
+			localIdentity := subtestIdentity
+			if currentT.Name() != subtestIdentity.FullName {
+				// Nested subtests have their own full identity path.
+				localIdentity = newTestIdentity(subtestIdentity.ModuleName, suiteName, currentT.Name())
+			}
+
+			addModulesCounters(subtestIdentity.ModuleName, 1)
+			addSuitesCounters(subtestIdentity.ModuleName, suiteName, 1)
+			if log.DebugEnabled() {
+				log.Debug("instrumentTestingTFunc: creating test span for %s", currentT.Name())
+			}
+			module := session.GetOrCreateModule(subtestIdentity.ModuleName)
+			suite := module.GetOrCreateSuite(suiteName)
+			test := suite.CreateTest(currentT.Name())
+			startTime := time.Now()
+
+			if testifyData != nil {
+				// Testify-based suites expose the original method so we should record that.
+				test.SetTestFunc(testifyData.methodFunc)
+			} else {
+				// Otherwise fall back to the standard testing function pointer.
+				test.SetTestFunc(originalFunc)
+			}
+
+			execMeta := getTestMetadata(currentT)
+			if execMeta == nil {
+				// Create fresh metadata when additional-feature wrappers were not executed above us.
+				execMeta = createTestMetadata(currentT, nil)
+				defer deleteTestMetadata(currentT)
+			}
+			execMeta.identity = localIdentity
+			if drainNativeLifecycle && parentExecMeta != nil {
+				execMeta.fuzzEvents = parentExecMeta.fuzzEvents
+			}
+			if drainNativeLifecycle && execMeta.cleanupResult == nil {
+				execMeta.cleanupResult = &testCleanupResult{}
+			}
+
+			currentPrivates := getTestPrivateFields(currentT)
+			if currentPrivates != nil && currentPrivates.parent != nil {
+				parentFromCurrent := getTestMetadataFromPointer(*currentPrivates.parent)
+				propagateTestExecutionMetadataFlags(execMeta, parentFromCurrent)
+				execMeta.isFreshRetryAttemptDescendant = parentFromCurrent != nil &&
+					(parentFromCurrent.usesFreshRetryAttemptRuntime || parentFromCurrent.isFreshRetryAttemptDescendant)
+			}
+
+			cancelExecution := setTestTagsFromExecutionMetadata(test, execMeta)
+			if cancelExecution {
+				if !execMeta.hasAdditionalFeatureWrapper {
+					// Disabled fast-path subtests close their test event before normal finalization is registered.
+					checkModuleAndSuite(module, suite)
+				}
+				return
+			}
+
+			bodyReturned := false
+			defer func() {
+				r := recover()
+				bodyDuration := time.Since(startTime)
+				terminalStack := ""
+				if r != nil && execMeta.fuzzEvents != nil {
+					terminalStack = utils.GetStacktrace(1)
+					recordFuzzPanic(execMeta, r, terminalStack)
+				}
+
+				if execMeta.usesFreshRetryAttemptRuntime {
+					bodyTerminal := r
+					bodyStack := terminalStack
+					if bodyTerminal != nil && bodyStack == "" {
+						bodyStack = utils.GetStacktrace(1)
+					}
+					execMeta.retryAttemptFinalizer = func(result retryAttemptResult) {
+						terminal := bodyTerminal
+						terminalStack := bodyStack
+						// Fuzz telemetry keeps the original body panic when cleanup
+						// also panics. Other retry attempts retain native precedence.
+						if execMeta.fuzzEvents == nil || bodyTerminal == nil {
+							if result.panicData != nil {
+								terminal = result.panicData
+								terminalStack = string(result.panicStack)
+							}
+							if result.cleanupPanicData != nil {
+								terminal = result.cleanupPanicData
+								terminalStack = string(result.cleanupPanicStack)
+							}
+						}
+						logFreshRetryAttemptState("finalize_orchestrion", currentT, result)
+						if execMeta.fuzzEvents != nil && terminal != nil {
+							// The fresh runner has already finalized this T's outcome.
+							// Preserve panic telemetry without calling Fail after done.
+							execMeta.panicData = terminal
+							execMeta.panicStacktrace = terminalStack
+							terminal = nil
+						}
+						finalizeInstrumentedTestExecution(currentT, execMeta, test, suite, module, result.duration, result.output, terminal, terminalStack, false)
+					}
+					if r != nil {
+						panic(r)
+					}
+					return
+				}
+
+				unexpectedTermination := r == nil && processRetryUnexpectedTestTermination(currentT, bodyReturned)
+				duration := runAndApplyTestCleanupWithDurationOptions(currentT, execMeta, bodyDuration, drainNativeLifecycle)
+				if unexpectedTermination {
+					r = unexpectedTestTerminationMessage
+				}
+				nativeTerminal := r
+				if execMeta.fuzzEvents != nil && execMeta.cleanupResult != nil && execMeta.cleanupResult.goexit {
+					// Cleanup Goexit replaces the body panic. Fatal/SkipNow keep
+					// their native outcome; bare Goexit still needs native exit 2.
+					nativeTerminal = nil
+					if !bodyReturned && !currentT.Skipped() && (currentPrivates == nil || !currentPrivates.GetFinished()) {
+						nativeTerminal = errTestingDidNotReturn
+						if r == nil {
+							r = nativeTerminal
+						}
+					}
+				}
+				if r != nil && terminalStack == "" {
+					terminalStack = utils.GetStacktrace(1)
+				}
+				if execMeta.fuzzEvents != nil {
+					collectAndWriteLogs(currentT, test, nil)
+					if r != nil {
+						if nativeTerminal != nil {
+							currentT.Fail()
+						}
+						execMeta.panicData = r
+						execMeta.panicStacktrace = terminalStack
+						if unexpectedTermination {
+							recordFuzzPanic(execMeta, r, terminalStack)
+						}
+					}
+					execMeta.fuzzEvents.add(fuzzTestEvent{native: t, metadata: execMeta, test: test, suite: suite, module: module, finishTime: time.Now(), failed: currentT.Failed(), skipped: currentT.Skipped(), closeContainers: !execMeta.hasAdditionalFeatureWrapper})
+				} else {
+					finalizeInstrumentedTestExecution(currentT, execMeta, test, suite, module, duration, nil, r, terminalStack, false)
+				}
+				if nativeTerminal == nil && execMeta.cleanupResult != nil {
+					nativeTerminal = execMeta.cleanupResult.panicData
+				}
+				maskedByTestManagement := execMeta.isDisabled || execMeta.isQuarantined
+				if nativeTerminal != nil && !execMeta.hasAdditionalFeatureWrapper && !maskedByTestManagement {
+					if execMeta.fuzzEvents != nil {
+						execMeta.fuzzEvents.finish()
+					} else {
+						checkModuleAndSuite(module, suite)
+					}
+					if !requestCoverageShutdown(currentT) {
+						integrations.ExitCiVisibility()
+					}
+					panic(nativeTerminal)
+				}
+				if !execMeta.hasAdditionalFeatureWrapper && execMeta.fuzzEvents == nil {
+					// Additional-feature wrappers own module and suite closure after all retry attempts finish.
+					checkModuleAndSuite(module, suite)
+				}
+			}()
+
+			if !execMeta.suppressUserTestBody {
+				bindNativeTestContext(currentT, test)
+				f(currentT)
+			}
+			bodyReturned = true
+		}
+
+		wrappedFunc := applyAdditionalFeaturesToTestFunc(runSubtest, subtestInfo, parentExecMeta, additionalFeatureWrapperOptions{testManagementOnly: !additionalFeatures})
+		wrappedFunc(t)
+	}
+
+	setInstrumentationMetadata(runtime.FuncForPC(reflect.Indirect(reflect.ValueOf(instrumentedFn)).Pointer()), &instrumentationMetadata{IsInternal: true})
+	return instrumentedFn
+}
+
+// instrumentSetErrorInfo helper function to set an error in the `*testing.T, *testing.B, *testing.common` CI Visibility span
+//
+//go:linkname instrumentSetErrorInfo
+func instrumentSetErrorInfo(tb testing.TB, errType string, errMessage string, skip int) {
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return
+	}
+	defer release()
+	if isProcessRetryChild() {
+		recordProcessRetryChildErrorInfo(tb, errType, errMessage, 2+skip)
+		markProcessRetryChildFailed(tb)
+		return
+	}
+
+	// Check if CI Visibility was disabled using the kill switch before
+	if !isCiVisibilityEnabled() {
+		return
+	}
+
+	// Get the CI Visibility span and check if we can set the error type, message and stack
+	ciTestItem := getTestMetadata(tb)
+	if ciTestItem != nil && ciTestItem.test != nil && ciTestItem.error.CompareAndSwap(0, 1) {
+		var stack string // a formatted error already recorded its caller's stack
+		if formatted := ciTestItem.processRetryError.Load(); formatted != nil {
+			errType, errMessage, stack = formatted.Type, formatted.Message, formatted.Stack
+		} else {
+			stack = utils.GetStacktrace(2 + skip)
+		}
+		log.Debug("instrumentSetErrorInfo: setting error info [name: %q, type: %q, message: %q]", ciTestItem.test.Name(), errType, errMessage)
+		ciTestItem.test.SetError(integrations.WithErrorInfo(errType, errMessage, stack))
+
+		// Ensure to close the test with error before CI visibility exits. In CI visibility mode, we try to never lose data.
+		// If the test gets closed sooner (perhaps with another status), then this will be a noop call
+		integrations.PushCiVisibilityCloseAction(func() {
+			ciTestItem.test.Close(integrations.ResultStatusFail)
+		})
+	}
+}
+
+// instrumentCloseAndSkip helper function to close and skip with a reason a `*testing.T, *testing.B, *testing.common` CI Visibility span
+//
+//go:linkname instrumentCloseAndSkip
+func instrumentCloseAndSkip(tb testing.TB, skipReason string) {
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return
+	}
+	defer release()
+	if isProcessRetryChild() {
+		if execMeta := getTestMetadata(tb); execMeta != nil && processRetryChildOwnerMetadata(execMeta) == execMeta {
+			reason := truncateProcessRetrySkipReason(skipReason)
+			execMeta.processRetrySkipReason.CompareAndSwap(nil, &reason)
+		}
+		return
+	}
+
+	// Check if CI Visibility was disabled using the kill switch before
+	if !isCiVisibilityEnabled() {
+		return
+	}
+
+	// Get the CI Visibility span and check if we can mark it as skipped and close it
+	ciTestItem := getTestMetadata(tb)
+	if ciTestItem != nil && ciTestItem.test != nil && !tb.Failed() && ciTestItem.skipped.CompareAndSwap(0, 1) {
+		log.Debug("instrumentCloseAndSkip: skipping test [name: %q, reason: %q]", ciTestItem.test.Name(), skipReason)
+		// The finalization of a test or benchmark, a retry wrapper or the
+		// deferred fuzz events close it, after the calls that it deferred,
+		// which can still fail it.
+		ciTestItem.skipReason = skipReason
+	}
+}
+
+// instrumentSkipNow helper function to close and skip a `*testing.T, *testing.B, *testing.common` CI Visibility span
+//
+//go:linkname instrumentSkipNow
+func instrumentSkipNow(tb testing.TB) {
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return
+	}
+	defer release()
+	if isProcessRetryChild() {
+		return
+	}
+
+	// Check if CI Visibility was disabled using the kill switch before
+	if !isCiVisibilityEnabled() {
+		return
+	}
+
+	// Get the CI Visibility span and check if we can mark it as skipped and close it
+	ciTestItem := getTestMetadata(tb)
+	if ciTestItem != nil && ciTestItem.test != nil && !tb.Failed() && ciTestItem.skipped.CompareAndSwap(0, 1) {
+		if formatted := ciTestItem.processRetrySkipReason.Load(); formatted != nil {
+			ciTestItem.skipReason = *formatted
+		}
+		log.Debug("instrumentSkipNow: skipping test [name: %q, reason: %q]", ciTestItem.test.Name(), ciTestItem.skipReason)
+		// The finalization of a test or benchmark, a retry wrapper or the
+		// deferred fuzz events close it, after the calls that it deferred,
+		// which can still fail it.
+	}
+}
+
+// instrumentTestingBFunc helper function to instrument a benchmark function func(*testing.B)
+//
+//go:linkname instrumentTestingBFunc
+func instrumentTestingBFunc(pb *testing.B, name string, f func(*testing.B)) (string, func(*testing.B)) {
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return name, f
+	}
+	defer release()
+	if isProcessRetryChild() {
+		return name, f
+	}
+
+	// Check if CI Visibility was disabled using the kill switch before instrumenting
+	if !isCiVisibilityEnabled() {
+		return name, f
+	}
+	// testing selects the renamed measuring level below, not name: a -bench or
+	// -skip pattern for sub-benchmark names would drop or keep the wrong one.
+	if subBenchmarkPatterns() {
+		return name, f
+	}
+
+	log.Debug("instrumentTestingBFunc: instrumenting benchmark function [name: %q]", name)
+
+	// Reflect the function to obtain its pointer.
+	fReflect := reflect.Indirect(reflect.ValueOf(f))
+	moduleName, suiteName := utils.GetModuleAndSuiteName(fReflect.Pointer())
+	originalFunc := runtime.FuncForPC(fReflect.Pointer())
+
+	// Avoid instrumenting twice
+	if hasCiVisibilityBenchmarkFunc(originalFunc) {
+		return name, f
+	}
+
+	instrumentedFunc := func(b *testing.B) {
+		// The sub-benchmark implementation relies on creating a dummy sub benchmark (called [DD:TestVisibility]) with
+		// a Run over the original sub benchmark function to get the child results without interfering measurements
+		// By doing this the name of the sub-benchmark are changed
+		// from:
+		// 		benchmark/child
+		// to:
+		//		benchmark/[DD:TestVisibility]/child
+		// We use regex and decrement the depth level of the benchmark to restore the original name
+
+		// Increment the test count in the module.
+		addModulesCounters(moduleName, 1)
+
+		// Increment the test count in the suite.
+		addSuitesCounters(moduleName, suiteName, 1)
+
+		// Decrement level.
+		bpf := getBenchmarkPrivateFields(b)
+		if bpf == nil {
+			panic("error getting private fields of the benchmark")
+		}
+		bpf.AddLevel(-1)
+
+		startTime := time.Now()
+		module := session.GetOrCreateModule(moduleName, integrations.WithTestModuleStartTime(startTime))
+		suite := module.GetOrCreateSuite(suiteName, integrations.WithTestSuiteStartTime(startTime))
+		// The event takes the name that testing gives the sub-benchmark, as
+		// case#01 for a repeated name or input_size=1 for "input size=1",
+		// which only the sub-benchmark's own B has.
+		var test integrations.Test
+		createTest := func(testName string) {
+			test = suite.CreateTest(testName, integrations.WithTestStartTime(startTime))
+			test.SetTestFunc(originalFunc)
+		}
+
+		// Restore the original name without the sub-benchmark auto name.
+		if bpf.name != nil {
+			*bpf.name = subBenchmarkAutoNameRegex.ReplaceAllString(*bpf.name, "")
+		}
+
+		// Define a function to handle panic during benchmark finalization.
+		// Defined before the benchmark runs: its first run, and each later
+		// one, recover a panic with it before panicking again.
+		panicFunc := func(r any) {
+			if test != nil {
+				// Without results, the event is still a benchmark's.
+				test.SetBenchmarkData("duration", nil)
+				test.SetError(integrations.WithErrorInfo("panic", fmt.Sprint(r), utils.GetStacktrace(1)))
+				test.Close(integrations.ResultStatusFail)
+			}
+			suite.SetTag(ext.Error, true)
+			module.SetTag(ext.Error, true)
+			checkModuleAndSuite(module, suite)
+			integrations.ExitCiVisibility()
+		}
+		recoverFunc := &panicFunc
+
+		// Run original benchmark.
+		var iPfOfB *benchmarkPrivateFields
+		var benchmarkMeta *testExecutionMetadata // for the skip reason that the skip hooks record
+		instrumentedFunc := func(b *testing.B) {
+			// Stop the timer to do the initialization and replacements.
+			b.StopTimer()
+
+			defer func() {
+				if r := recover(); r != nil {
+					if recoverFunc != nil {
+						fn := *recoverFunc
+						fn(r)
+					}
+					panic(r)
+				}
+			}()
+
+			// First time we get the private fields of the inner testing.B.
+			iPfOfB = getBenchmarkPrivateFields(b)
+			if iPfOfB == nil {
+				panic("error getting private fields of the benchmark")
+			}
+			createTest(b.Name())
+
+			// Replace this function with the original one (executed only once - the first iteration[b.run1]).
+			if iPfOfB.benchFunc == nil {
+				panic("error getting the benchmark function")
+			}
+			*iPfOfB.benchFunc = recoveringBenchmarkFunc(f, panicFunc)
+
+			// Get the metadata regarding the execution (in case is already created from the additional features)
+			execMeta := getTestMetadata(b)
+			if execMeta == nil {
+				// in case there's no additional features then we create the metadata for this execution and defer the disposal
+				execMeta = createTestMetadata(b, nil)
+				defer deleteTestMetadata(b)
+			}
+
+			// Set the CI visibility test.
+			execMeta.test = test
+			benchmarkMeta = execMeta
+
+			// Bind the context outside the measurement.
+			bindNativeTestContext(b, test)
+
+			// Enable the timer again and execute the original func.
+			b.ResetTimer()
+			b.StartTimer()
+			f(b)
+		}
+
+		setCiVisibilityBenchmarkFunc(runtime.FuncForPC(reflect.Indirect(reflect.ValueOf(instrumentedFunc)).Pointer()))
+		b.Run(name, instrumentedFunc)
+
+		endTime := time.Now()
+		if iPfOfB == nil {
+			// testing did not run the sub-benchmark, as for a duplicate name
+			// that a pattern no longer selects.
+			createTest(fmt.Sprintf("%s/%s", pb.Name(), name))
+			test.Close(integrations.ResultStatusSkip, integrations.WithTestFinishTime(endTime))
+			checkModuleAndSuite(module, suite)
+			return
+		}
+		results := iPfOfB.result
+
+		// Set benchmark data for CI visibility.
+		test.SetBenchmarkData("duration", map[string]any{
+			"run":  results.N,
+			"mean": results.NsPerOp(),
+		})
+		test.SetBenchmarkData("memory_total_operations", map[string]any{
+			"run":            results.N,
+			"mean":           results.AllocsPerOp(),
+			"statistics.max": results.MemAllocs,
+		})
+		test.SetBenchmarkData("mean_heap_allocations", map[string]any{
+			"run":  results.N,
+			"mean": results.AllocedBytesPerOp(),
+		})
+		test.SetBenchmarkData("total_heap_allocations", map[string]any{
+			"run":  results.N,
+			"mean": iPfOfB.result.MemBytes,
+		})
+		if len(results.Extra) > 0 {
+			mapConverted := map[string]any{}
+			for k, v := range results.Extra {
+				mapConverted[k] = v
+			}
+			test.SetBenchmarkData("extra", mapConverted)
+		}
+
+		// Normal finalization: determine the benchmark result based on its state.
+		if iPfOfB.B.Failed() {
+			test.SetTag(ext.Error, true)
+			suite.SetTag(ext.Error, true)
+			module.SetTag(ext.Error, true)
+			test.Close(integrations.ResultStatusFail, integrations.WithTestFinishTime(endTime))
+		} else if iPfOfB.B.Skipped() {
+			closeSkippedBenchmark(test, benchmarkMeta, endTime)
+		} else {
+			test.Close(integrations.ResultStatusPass, integrations.WithTestFinishTime(endTime))
+		}
+
+		checkModuleAndSuite(module, suite)
+	}
+	// Only the wrapper is marked: the same callback may run again as another
+	// sub-benchmark, as in a table or with -count, and needs its own event.
+	setCiVisibilityBenchmarkFunc(runtime.FuncForPC(reflect.Indirect(reflect.ValueOf(instrumentedFunc)).Pointer()))
+	return subBenchmarkAutoName, instrumentedFunc
+}
+
+// instrumentTestifySuiteRun helper function to instrument the testify Suite.Run function
+//
+//go:linkname instrumentTestifySuiteRun
+func instrumentTestifySuiteRun(t *testing.T, suite any) {
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return
+	}
+	defer release()
+	if isProcessRetryChild() {
+		execMeta := getTestMetadata(t)
+		if execMeta == nil || execMeta.quarantinedRaceChild == nil {
+			return
+		}
+		// The isolated subtree still needs the real Testify method for source,
+		// CODEOWNERS, impacted-test, and ITR metadata; it creates no child span.
+	}
+
+	log.Debug("instrumentTestifySuiteRun: instrumenting testify suite run")
+	registerTestifySuite(t, suite)
+}
+
+// instrumentTestifySuiteRunScoped is the Mini entry contract. The returned
+// callback restores the enclosing suite when suite.Run returns or panics.
+//
+//go:linkname instrumentTestifySuiteRunScoped
+func instrumentTestifySuiteRunScoped(t *testing.T, suite any) func() {
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return func() {}
+	}
+	defer release()
+	if isProcessRetryChild() {
+		metadata := getTestMetadata(t)
+		if metadata == nil || metadata.quarantinedRaceChild == nil {
+			return func() {}
+		}
+	}
+	return registerTestifySuiteScope(t, suite)
+}
+
+// getTestOptimizationContext helper function to get the context of the test
+//
+//go:linkname getTestOptimizationContext
+func getTestOptimizationContext(tb testing.TB) context.Context {
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return context.Background()
+	}
+	defer release()
+	if isProcessRetryChild() {
+		return context.Background()
+	}
+
+	if iTest := getTestOptimizationTest(tb); iTest != nil {
+		log.Debug("getTestOptimizationContext: returning context from test")
+		return iTest.Context()
+	}
+
+	return context.Background()
+}
+
+// getTestOptimizationTest helper function to get the test optimization test of the testing.TB
+//
+//go:linkname getTestOptimizationTest
+func getTestOptimizationTest(tb testing.TB) integrations.Test {
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return nil
+	}
+	defer release()
+	ciTestItem := getTestMetadata(tb)
+	if ciTestItem != nil && ciTestItem.test != nil {
+		log.Debug("getTestOptimizationTest: returning test from metadata")
+		return ciTestItem.test
+	}
+
+	return nil
+}
+
+// instrumentTestingParallel reports whether CI Visibility has replaced the
+// native Parallel implementation. Only an isolated quarantined race subtree
+// takes ownership; every other call keeps the existing native fast path.
+//
+//go:linkname instrumentTestingParallel
+func instrumentTestingParallel(t *testing.T) bool {
+	if !quarantinedRaceParallelHookActive {
+		return false
+	}
+	execMeta := getTestMetadata(t)
+	if execMeta == nil || execMeta.processRetryParallelPause == nil || execMeta.processRetryParallelPaused.Load() || !testingParallelWillSuspend(t) {
+		return false
+	}
+	if !execMeta.processRetryParallelPaused.CompareAndSwap(false, true) {
+		return false
+	}
+	defer execMeta.processRetryParallelPaused.Store(false)
+
+	if state := execMeta.quarantinedRaceChild; state != nil && state.cfg != nil && t.Name() == state.cfg.SelectedRoot {
+		state.startParallelBridge()
+	}
+	resume := execMeta.processRetryParallelPause()
+	if resume != nil {
+		defer resume()
+	}
+	// Parallel is already woven with this hook. The guard above makes that
+	// nested entry return false so exactly one native call suspends the test.
+	t.Parallel()
+	return true
+}
+
+func testingParallelWillSuspend(t *testing.T) bool {
+	layout := getTestingInternalsLayout()
+	if t == nil || layout == nil || layout.disabled || !allAvailable(
+		layout.common.isParallel, layout.common.parent.unsafeField, layout.common.barrier, layout.denyParallel,
+	) {
+		return false
+	}
+	base := commonBaseForTest(t, layout)
+	if base == nil {
+		return false
+	}
+	parent := pointerWord(base, layout.common.parent)
+	if parent == nil || *fieldPtr[bool](base, layout.common.isParallel) ||
+		layout.common.isSynctest.available && *fieldPtr[bool](base, layout.common.isSynctest) ||
+		*fieldPtr[chan bool](parent, layout.common.barrier) == nil {
+		return false
+	}
+	switch layout.denyParallel.typ {
+	case reflect.TypeFor[bool]():
+		return !*fieldPtr[bool](unsafe.Pointer(t), layout.denyParallel)
+	case reflect.TypeFor[string]():
+		return *fieldPtr[string](unsafe.Pointer(t), layout.denyParallel) == ""
+	default:
+		return false
+	}
+}
+
+// subtestModuleName keeps subtests in the module of the test binary that owns
+// them. The callback can live in an imported production helper package, while
+// the suite continues to identify the callback's source file. Ported from
+// dd-trace-go #5401: a subtest outside a Testify suite takes its parent's
+// module when the parent has one, and keeps the callback's module otherwise.
+func subtestModuleName(callbackModuleName string, parentExecMeta *testExecutionMetadata) string {
+	if parentExecMeta == nil || parentExecMeta.identity == nil || parentExecMeta.identity.ModuleName == "" {
+		return callbackModuleName
+	}
+	return parentExecMeta.identity.ModuleName
+}
+
+// closeSkippedBenchmark closes a skipped benchmark after its deferred calls,
+// with the reason that the skip hooks recorded in meta.
+func closeSkippedBenchmark(test integrations.Test, meta *testExecutionMetadata, endTime time.Time) {
+	test.SetTag(constants.TestFinalStatus, constants.TestStatusSkip)
+	if meta != nil && meta.skipReason != "" {
+		test.Close(integrations.ResultStatusSkip, integrations.WithTestFinishTime(endTime), integrations.WithTestSkipReason(meta.skipReason))
+		return
+	}
+	test.Close(integrations.ResultStatusSkip, integrations.WithTestFinishTime(endTime))
+}

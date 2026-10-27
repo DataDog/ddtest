@@ -1,0 +1,118 @@
+package runner
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"testing"
+	"time"
+
+	"github.com/DataDog/ddtest/ddto/internal/goenv"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/impactedtests"
+)
+
+func TestHandGitHubJobID(t *testing.T) {
+	diagnostics := t.TempDir()
+	original := gitHubDiagnosticsDirs
+	gitHubDiagnosticsDirs = func() []string { return []string{diagnostics} }
+	t.Cleanup(func() { gitHubDiagnosticsDirs = original })
+	t.Setenv("JOB_CHECK_RUN_ID", "")
+	t.Setenv("GITHUB_SHA", "0123456789abcdef")
+
+	if got := handGitHubJobID(Mini, nil)(); !reflect.DeepEqual(got, []string{goenv.GitHubJobIDHandoff + "="}) {
+		t.Fatalf("without Worker logs: %q", got)
+	}
+	log := `[2026-10-11 10:00:00Z INFO Worker] Job message:
+{"job":{"t":2,"d":[{"k":"check_run_id","v":4242.0}]}}
+`
+	if err := os.WriteFile(filepath.Join(diagnostics, "Worker_20261011.log"), []byte(log), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := handGitHubJobID(Mini, nil)(); !reflect.DeepEqual(got, []string{goenv.GitHubJobIDHandoff + "=4242"}) {
+		t.Fatalf("Worker log: %q", got)
+	}
+	// The SDK runtime, a numeric JOB_CHECK_RUN_ID and other CI providers need
+	// no scan.
+	if got := handGitHubJobID(SDK, nil)(); got != nil {
+		t.Fatalf("SDK: %q", got)
+	}
+	t.Setenv("JOB_CHECK_RUN_ID", "77")
+	if got := handGitHubJobID(Mini, nil)(); got != nil {
+		t.Fatalf("JOB_CHECK_RUN_ID: %q", got)
+	}
+	t.Setenv("JOB_CHECK_RUN_ID", "")
+	os.Unsetenv("GITHUB_SHA")
+	if got := handGitHubJobID(Mini, nil)(); got != nil {
+		t.Fatalf("outside GitHub Actions: %q", got)
+	}
+}
+
+// A scan that outlasts preparation does not hold up go test: the test
+// processes scan for themselves.
+func TestHandGitHubJobIDDoesNotWaitForAStalledScan(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	originalDirs, originalWait := gitHubDiagnosticsDirs, gitHubJobIDWait
+	gitHubDiagnosticsDirs = func() []string {
+		<-release
+		return nil
+	}
+	gitHubJobIDWait = 50 * time.Millisecond
+	t.Cleanup(func() { gitHubDiagnosticsDirs, gitHubJobIDWait = originalDirs, originalWait })
+	t.Setenv("JOB_CHECK_RUN_ID", "")
+	t.Setenv("GITHUB_SHA", "0123456789abcdef")
+
+	started := time.Now()
+	if got := handGitHubJobID(Mini, nil)(); got != nil {
+		t.Fatalf("stalled scan handed %q", got)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("waited %s", elapsed)
+	}
+}
+
+// A worker told to proceed that exits without an upload result leaves one
+// that ends the test processes' wait.
+func TestGitWorkerRecordsMissingResults(t *testing.T) {
+	state := t.TempDir()
+	w := &gitWorker{state: state}
+	w.recordMissingResults()
+	if _, err := os.Stat(filepath.Join(state, utils.CLIGitUploadFile)); !os.IsNotExist(err) {
+		t.Fatalf("result recorded for a worker that never proceeded: %v", err)
+	}
+	w.proceeded.Store(true)
+	w.recordMissingResults()
+	var upload utils.CLIGitUpload
+	if err := utils.ReadCLIGitStateFile(state, utils.CLIGitUploadFile, &upload); err != nil || upload.Error == "" {
+		t.Fatalf("upload %+v, %v", upload, err)
+	}
+	var impacted impactedtests.CLIState
+	if err := utils.ReadCLIGitStateFile(state, utils.CLIGitImpactedFile, &impacted); err != nil || impacted.Computed || impacted.Reason == "" {
+		t.Fatalf("impacted %+v, %v", impacted, err)
+	}
+	if err := utils.WriteCLIGitStateFile(state, utils.CLIGitUploadFile, utils.CLIGitUpload{Bytes: 7}); err != nil {
+		t.Fatal(err)
+	}
+	w.recordMissingResults()
+	if err := utils.ReadCLIGitStateFile(state, utils.CLIGitUploadFile, &upload); err != nil || upload.Bytes != 7 {
+		t.Fatalf("worker's result replaced: %+v, %v", upload, err)
+	}
+	// A result that exists but cannot be read at once, as when Windows lets
+	// another process hold it, is kept too.
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		return
+	}
+	path := filepath.Join(state, utils.CLIGitUploadFile)
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	w.recordMissingResults()
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := utils.ReadCLIGitStateFile(state, utils.CLIGitUploadFile, &upload); err != nil || upload.Bytes != 7 {
+		t.Fatalf("an unreadable result was replaced: %+v, %v", upload, err)
+	}
+}

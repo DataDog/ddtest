@@ -62,11 +62,18 @@ jobs:
       - name: Test onboarding evaluator
         run: python -m unittest discover -s skills/ddtest-onboarding-eval/scripts -p 'test_*.py'
 
+      # install.sh, and with the runner's pwsh install.ps1, against local release files.
+      - name: Test install scripts
+        run: python -m unittest discover -s scripts -p 'test_*.py'
+
+      # ddto is its own module, checked by its own workflow; its benchmark
+      # fixtures are deliberately compact.
       - name: Format check
         run: |
-          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          unformatted="$(git ls-files -z '*.go' ':!:ddto/**' | xargs -0 gofmt -s -l)"
+          if [ -n "$unformatted" ]; then
             echo "The following files are not formatted correctly:"
-            gofmt -s -l .
+            echo "$unformatted"
             exit 1
           fi
 

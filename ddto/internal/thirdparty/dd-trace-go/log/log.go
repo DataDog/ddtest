@@ -1,0 +1,328 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2016 Datadog, Inc.
+
+// Package log provides logging utilities for the tracer.
+//
+// # Constant message convention
+//
+// [Error] aggregates messages by their format string (used as the dedup key)
+// and flushes them periodically. For this aggregation to behave predictably,
+// the first argument to [Error] and [Warn] MUST be a compile-time constant
+// string — dynamic detail belongs in the variadic args, not the format string
+// itself. The `constantlogmsg` analyzer (internal/telemetry/log/analyzer)
+// enforces this.
+//
+// This package does not report to telemetry itself. SDK code that wants an
+// error or panic surfaced in Error Tracking should call
+// [github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/log.ReportError] or
+// [github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/log.ReportPanic]
+// explicitly at that call site. A call site that wants both a local log line
+// and a report, without duplicating the message, should use
+// [github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/log.LogAndReportError]
+// or [github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/log.LogAndReportPanic]
+// instead.
+package log
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/DataDog/ddtest/ddto/internal/version"
+)
+
+// Level specifies the logging level that the log package prints at.
+type Level int
+
+func (l Level) String() string {
+	switch l {
+	case LevelDebug:
+		return "DEBUG"
+	case LevelInfo:
+		return "INFO"
+	case LevelWarn:
+		return "WARN"
+	case LevelError:
+		return "ERROR"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+const (
+	// LevelDebug represents debug level messages.
+	LevelDebug Level = iota
+	// LevelInfo represents informational messages.
+	LevelInfo
+	// LevelWarn represents warning messages.
+	LevelWarn
+	// LevelError represents error messages.
+	LevelError
+)
+
+var prefixMsg = version.RunLogPrefix
+
+// Logger implementations are able to log given messages that the tracer might
+// output. This interface is duplicated here to avoid a cyclic dependency
+// between this package and ddtrace
+type Logger interface {
+	// Log prints the given message.
+	Log(msg string)
+}
+
+var (
+	levelThreshold atomic.Int32 // stores Level as int32; accessed atomically to avoid lock contention in hot paths
+	mu             sync.RWMutex // guards logger instance
+	logger         Logger       = &defaultLogger{l: log.New(os.Stderr, "", log.LstdFlags)}
+)
+
+func init() {
+	levelThreshold.Store(int32(LevelWarn))
+}
+
+// UseLogger sets l as the active logger and returns a function to restore the
+// previous logger. The return value is mostly useful when testing.
+func UseLogger(l Logger) (undo func()) {
+	Flush()
+	mu.Lock()
+	defer mu.Unlock()
+	old := logger
+	logger = l
+	return func() {
+		mu.Lock()
+		defer mu.Unlock()
+		logger = old
+	}
+}
+
+// SetLevel sets the given lvl as log threshold for logging.
+func SetLevel(lvl Level) {
+	levelThreshold.Store(int32(lvl))
+}
+
+// GetLevel returns the currrent log level.
+func GetLevel() Level {
+	return Level(levelThreshold.Load())
+}
+
+// DebugEnabled returns true if debug log messages are enabled. This can be used in extremely
+// hot code paths to avoid allocating the ...interface{} argument.
+func DebugEnabled() bool {
+	return GetLevel() == LevelDebug
+}
+
+// Debug prints the given message if the level is LevelDebug.
+func Debug(fmt string, a ...any) {
+	if !DebugEnabled() {
+		return
+	}
+	printMsg(LevelDebug, fmt, a...)
+}
+
+// Warn prints a warning message.
+func Warn(fmt string, a ...any) {
+	printMsg(LevelWarn, fmt, a...)
+}
+
+var (
+	errmu   sync.RWMutex                // guards below fields
+	erragg  = map[string]*errorReport{} // aggregated errors
+	errrate = time.Minute               // the rate at which errors are reported
+	erron   bool                        // true if errors are being aggregated
+
+	// loggingRateOnce applies DD_LOGGING_RATE when the first error is
+	// reported, rather than at initialization: ddto, which links this
+	// package, runs commands other than go test unchanged and prints nothing.
+	loggingRateOnce sync.Once
+)
+
+// applyLoggingRate applies DD_LOGGING_RATE once. It warns about an invalid
+// value after loggingRateOnce, as a logger may report errors itself.
+func applyLoggingRate() {
+	var warning string
+	loggingRateOnce.Do(func() {
+		// This cannot use env.Get because it would cause a cyclic import
+		if v := os.Getenv("DD_LOGGING_RATE"); v != "" {
+			warning = setLoggingRate(v)
+		}
+	})
+	if warning != "" {
+		Warn("%s", warning)
+	}
+}
+
+// setLoggingRate applies v, or returns a warning if it is invalid.
+func setLoggingRate(v string) string {
+	sec, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return "Invalid value for DD_LOGGING_RATE: " + err.Error()
+	}
+	if sec < 0 {
+		return "Invalid value for DD_LOGGING_RATE: negative value"
+	}
+	// DD_LOGGING_RATE = 0 allows to log errors immediately.
+	errrate = time.Duration(sec) * time.Second
+	return ""
+}
+
+type errorReport struct {
+	first time.Time // time when first error occurred
+	err   error
+	count uint64
+}
+
+// Error reports an error. Errors get aggregated and logged periodically. The
+// default is once per minute or once every DD_LOGGING_RATE number of seconds.
+func Error(format string, a ...any) {
+	applyLoggingRate()
+	key := format // format should 99.9% of the time be constant
+	if reachedLimit(key) {
+		// avoid too much lock contention on spammy errors
+		return
+	}
+	errmu.Lock()
+	defer errmu.Unlock()
+	report, ok := erragg[key]
+	if !ok {
+		erragg[key] = &errorReport{
+			err:   fmt.Errorf(format, a...),
+			first: time.Now(),
+		}
+		report = erragg[key]
+	}
+	report.count++
+	if errrate == 0 {
+		flushLocked()
+		return
+	}
+	if !erron {
+		erron = true
+		time.AfterFunc(errrate, Flush)
+	}
+}
+
+// defaultErrorLimit specifies the maximum number of errors gathered in a report.
+const defaultErrorLimit = 200
+
+// reachedLimit reports whether the maximum count has been reached for this key.
+func reachedLimit(key string) bool {
+	errmu.RLock()
+	e, ok := erragg[key]
+	confirm := ok && e.count > defaultErrorLimit
+	errmu.RUnlock()
+	return confirm
+}
+
+// Flush flushes and resets all aggregated errors to the logger.
+func Flush() {
+	errmu.Lock()
+	defer errmu.Unlock()
+	flushLocked()
+}
+
+func flushLocked() {
+	for _, report := range erragg {
+		var extra string
+		if report.count > defaultErrorLimit {
+			extra = fmt.Sprintf(", %d+ additional messages skipped (first occurrence: %s)", defaultErrorLimit, report.first.Format(time.RFC822))
+		} else if report.count > 1 {
+			extra = fmt.Sprintf(", %d additional messages skipped (first occurrence: %s)", report.count-1, report.first.Format(time.RFC822))
+		} else {
+			extra = fmt.Sprintf(" (occurred: %s)", report.first.Format(time.RFC822))
+		}
+		printMsg(LevelError, "%v%s", report.err, extra)
+	}
+	for k := range erragg {
+		// compiler-optimized map-clearing post go1.11 (golang/go#20138)
+		delete(erragg, k)
+	}
+	erron = false
+}
+
+func printMsg(lvl Level, format string, a ...any) {
+	var b strings.Builder
+	b.Grow(len(prefixMsg) + 1 + len(lvl.String()) + 2 + len(format))
+	b.WriteString(prefixMsg)
+	b.WriteString(" ")
+	b.WriteString(lvl.String())
+	b.WriteString(": ")
+	b.WriteString(fmt.Sprintf(format, a...))
+	mu.RLock()
+	// Deferred so a Logger that panics cannot leave mu held, which would
+	// block UseLogger, and then every log call, forever.
+	defer mu.RUnlock()
+	if ll, ok := logger.(interface {
+		LogL(lvl Level, msg string)
+	}); !ok {
+		logger.Log(b.String())
+	} else {
+		ll.LogL(lvl, b.String())
+	}
+}
+
+type defaultLogger struct{ l *log.Logger }
+
+var _ Logger = &defaultLogger{}
+
+func (p *defaultLogger) Log(msg string) { p.l.Print(msg) }
+
+// DiscardLogger discards every call to Log().
+type DiscardLogger struct{}
+
+var _ Logger = &DiscardLogger{}
+
+// Log implements Logger.
+func (d DiscardLogger) Log(_ string) {}
+
+// RecordLogger records every call to Log() and makes it available via Logs().
+type RecordLogger struct {
+	m      sync.Mutex
+	logs   []string
+	ignore []string // a log is ignored if it contains a string in ignored
+}
+
+var _ Logger = &RecordLogger{}
+
+// Ignore adds substrings to the ignore field of RecordLogger, allowing
+// the RecordLogger to ignore attempts to log strings with certain substrings.
+func (r *RecordLogger) Ignore(substrings ...string) {
+	r.m.Lock()
+	defer r.m.Unlock()
+	r.ignore = append(r.ignore, substrings...)
+}
+
+// Log implements Logger.
+func (r *RecordLogger) Log(msg string) {
+	r.m.Lock()
+	defer r.m.Unlock()
+	for _, ignored := range r.ignore {
+		if strings.Contains(msg, ignored) {
+			return
+		}
+	}
+	r.logs = append(r.logs, msg)
+}
+
+// Logs returns the ordered list of logs recorded by the logger.
+func (r *RecordLogger) Logs() []string {
+	r.m.Lock()
+	defer r.m.Unlock()
+	copied := make([]string, len(r.logs))
+	copy(copied, r.logs)
+	return copied
+}
+
+// Reset resets the logger's internal logs
+func (r *RecordLogger) Reset() {
+	r.m.Lock()
+	defer r.m.Unlock()
+	r.logs = r.logs[:0]
+	r.ignore = r.ignore[:0]
+}

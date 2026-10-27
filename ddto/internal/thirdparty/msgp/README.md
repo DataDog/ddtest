@@ -1,0 +1,36 @@
+# tinylib/msgp source subset
+
+- Repository: https://github.com/tinylib/msgp
+- Version: `v1.6.4`
+- Commit: `6f99c863451752e6aa9c7aacde4215a471a64242`
+- Original license: [LICENSE](LICENSE).
+- File/source hashes and local adaptations: [SOURCE.json](SOURCE.json).
+
+The runtime and tests keep the upstream `msgp/` subtree, except `msgp/setof`,
+which nothing imports; `scripts/vendor-msgpack` skips it. Its buffered I/O uses
+the adjacent internal `fwd` copy. Mini imports these sources without requiring
+either external runtime module.
+
+Serializers are generated with a pinned tool in an isolated module. Their
+generation directives use the repository's tool wrapper. Go-derived sources
+keep the BSD notice in `LICENSE-go`. Follow the
+[codec update steps](../../../docs/maintenance.md#codecs-and-generated-files)
+when changing sources or generation pins.
+
+Follow the [shared audit and update procedure](../README.md#audit-and-update).
+
+On 32-bit platforms, upstream converts a 32-bit length beyond `math.MaxInt` to a
+negative `int`, and wraps a size or element count beyond `uintptr`.
+`readBytesBytes`, `ReadStringZC`, `readExt` and `getSize` return
+`ErrShortBytes` instead, and `getNextSize` and `Raw`'s `appendNext` return
+`ErrLimitExceeded`. Keep these checks when recopying; `msgp/length32_test.go`
+tests them.
+
+`CopyToJSON` writes a NaN or infinite float as `null`: upstream writes `NaN`,
+`+Inf` or `-Inf`, which is not JSON, so one such benchmark metric made a whole
+Bazel payload file invalid. Keep the check in `rwFloat32` and `rwFloat64` when
+recopying; `msgp/json_nonfinite_test.go` tests it.
+
+This copy uses native Go 1.25 APIs. Follow the
+[source-language rules](../../../docs/maintenance.md#verification-before-publication)
+when updating this copy, then record its local hashes.
