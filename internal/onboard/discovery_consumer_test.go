@@ -232,6 +232,8 @@ func TestPossibleJobConditionPath(t *testing.T) {
 		{`contains(fromJSON('["push", "pull_request"]'), github.event_name)`, true, true},
 		{`!contains(fromJSON('["schedule"]'), github.event_name)`, true, true},
 		{`contains(fromJSON('["push", "pull_request", "schedule", "workflow_dispatch", "workflow_call"]'), github.event_name)`, true, true},
+		{`contains(fromJSON('[1, 2]'), github.run_number)`, true, true},
+		{`contains(fromJSON('["push", 2.5]'), github.run_attempt) && github.run_attempt > 2`, true, true},
 		// A bare runtime operand as a whole condition is still abstracted.
 		{"github.event.pull_request.draft || github.event_name == 'push'", true, true},
 		{"(github.event.pull_request.draft) && false", false, false},

@@ -470,11 +470,14 @@ func possibleJobConditionPath(value string, row map[string]any) (active, assumed
 		literal := strings.ReplaceAll(match[1], "''", "'")
 		candidates = append(candidates, literal)
 		// contains(fromJSON('["push", …]'), github.event_name) passes for an
-		// element of the array, never for the JSON text itself.
+		// element of the array, never for the JSON text itself. Numbers are
+		// sampled as their text, which loose equality matches against them.
 		var elements []any
 		if json.Unmarshal([]byte(literal), &elements) == nil {
 			for _, element := range elements {
-				if text, ok := element.(string); ok {
+				switch element.(type) {
+				case string, float64:
+					text, _ := conditionString(element)
 					candidates = append(candidates, text)
 				}
 			}
