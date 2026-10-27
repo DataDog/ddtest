@@ -68,6 +68,10 @@ Unrelated environment gaps cannot hide a provider's recognizable test commands.
 Opaque script references and GitLab `run` steps block completion until resolved;
 Docker command overrides take precedence, while custom shells/entrypoints need
 explicit setup. Workspace/filter installs do not establish root installation.
+Provider choice also retains opaque pipelines and resolves GitHub command/matrix
+variables. Shared edits require matching initialization states. Explicit tracer
+package mutations invalidate manifest-based version evidence. Inline visibility
+opt-ins apply before installation; whole-tracer switches require review.
 
 GitLab local includes, inherited jobs, variables and literal matrices;
 CircleCI jobs, local reusable commands/executors and pinned official Node orb

@@ -121,7 +121,7 @@ func readSelectedWorkflows(root, requested string) ([]ciWorkflow, error) {
 					workflows[i].Jobs[name] = job
 				}
 			}
-			candidate = candidate || workflowHasTests(root, workflows[i])
+			candidate = candidate || len(workflows[i].Unresolved) > 0 || workflowHasTests(root, workflows[i])
 		}
 		if candidate {
 			candidates = append(candidates, adapter.name)
@@ -159,24 +159,27 @@ func workflowHasTests(root string, workflow ciWorkflow) bool {
 		if job.If == "false" {
 			continue
 		}
-		for _, step := range job.Steps {
-			if step.If == "false" {
-				continue
-			}
-			if workflow.Provider != "github" && step.Run == "" && step.ResolutionError != "" {
-				return true // An opaque native script can contain unenumerated tests.
-			}
-			for _, language := range discoveryLanguages {
-				for _, framework := range language.frameworks() {
-					// Native blockers must not conceal a recognizable test consumer.
-					probe := step
-					probe.ResolutionError = ""
-					if workflow.Provider != "" && workflow.Provider != "github" {
-						probe = nativeRecognitionStep(workflow, job, probe, framework)
-					}
-					r := resolveTestStep(root, workflow, job, probe, language.name(), framework)
-					if r.Matched || namesFramework(step.Run, framework, true) {
-						return true
+		rows, _, err := jobMatrix(job)
+		if err != nil {
+			return true // Unresolved matrix jobs can contain additional tests.
+		}
+		for _, row := range rows {
+			for _, step := range job.Steps {
+				if step.If == "false" {
+					continue
+				}
+				if workflow.Provider != "github" && step.Run == "" && step.ResolutionError != "" {
+					return true
+				}
+				for _, language := range discoveryLanguages {
+					for _, framework := range language.frameworks() {
+						probe := step
+						probe.ResolutionError = ""
+						probe = recognitionStep(workflow, job, probe, row, framework)
+						r := resolveTestStep(root, workflow, job, probe, language.name(), framework)
+						if r.Matched || namesFramework(step.Run, framework, true) {
+							return true
+						}
 					}
 				}
 			}

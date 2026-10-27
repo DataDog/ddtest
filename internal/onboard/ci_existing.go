@@ -86,13 +86,12 @@ func nativePreloads(options string) (bool, bool) {
 }
 
 func nativePackageInstalledBefore(root, provider string, job runtimeJob, index int, directory string, development bool) bool {
+	installed := false
 	for _, step := range job.Steps[:index] {
 		if provider == "jenkins" && (step.Native == nil || job.Steps[index].Native == nil || step.Native.Workspace == "" || step.Native.Workspace != job.Steps[index].Native.Workspace) {
 			continue
 		}
-		if preload, _ := nativePreloads(mergeEnvironment(job.Env, step.Env)["NODE_OPTIONS"]); preload {
-			continue
-		}
+		preload, _ := nativePreloads(mergeEnvironment(job.Env, step.Env)["NODE_OPTIONS"])
 		source, err := repositoryDirectory(root, root, stepDirectory(ciWorkflow{}, job, step))
 		if err != nil || source != directory {
 			continue
@@ -111,7 +110,20 @@ func nativePackageInstalledBefore(root, provider string, job runtimeJob, index i
 			}
 		}
 		for _, words := range commands {
+			if normalized, _, err := commandEnvironment(words); err == nil {
+				words = normalized
+			}
 			if len(words) == 0 {
+				continue
+			}
+			if len(words) > 1 && slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) && slices.Contains([]string{"install", "i", "add", "update", "up", "upgrade", "remove", "rm", "uninstall"}, words[1]) && slices.ContainsFunc(words[2:], func(word string) bool {
+				return word == "dd-trace" || strings.HasPrefix(word, "dd-trace@")
+			}) {
+				// Package overrides or removals invalidate the static manifest's
+				// pin, even if an earlier command installed that manifest.
+				return false
+			}
+			if preload {
 				continue
 			}
 			bareYarn := words[0] == "yarn" && len(words) == 1
@@ -126,11 +138,15 @@ func nativePackageInstalledBefore(root, provider string, job runtimeJob, index i
 				flag, value, _ := strings.Cut(word, "=")
 				noInstall = noInstall || slices.Contains([]string{"--prefix", "--cwd", "--dir", "--workspace", "-w", "--workspaces", "--filter", "-F"}, flag) || slices.Contains([]string{"--package-lock-only", "--lockfile-only", "--dry-run", "-g", "--global"}, flag) && value != "false"
 			}
-			if development && omitsDev || noInstall || slices.Contains(words, "--prefix") || slices.Contains(words, "-g") {
+			if development && omitsDev && !noInstall {
+				installed = false
 				continue
 			}
-			return true
+			if noInstall || slices.Contains(words, "--prefix") || slices.Contains(words, "-g") {
+				continue
+			}
+			installed = true
 		}
 	}
-	return false
+	return installed
 }

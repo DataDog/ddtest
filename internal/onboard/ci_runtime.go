@@ -21,7 +21,7 @@ func resolveNativeTestStep(root string, workflow ciWorkflow, job runtimeJob, ste
 	resolved, _, err := resolveVariantStep(workflow, job, step, nil, framework)
 	probe := resolved
 	if err != nil {
-		probe = nativeRecognitionStep(workflow, job, step, framework)
+		probe = recognitionStep(workflow, job, step, nil, framework)
 	}
 	probe.ResolutionError = ""
 	r := resolveTestStep(root, workflow, job, probe, "javascript", framework)
@@ -37,13 +37,16 @@ func resolveNativeTestStep(root string, workflow ciWorkflow, job runtimeJob, ste
 // Recognition must not lose a known test command just because an unrelated
 // environment value is unresolved. This fallback only classifies consumers;
 // execution and editing still retain the original resolution error.
-func nativeRecognitionStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) runtimeStep {
-	if resolved, _, err := resolveVariantStep(workflow, job, step, nil, framework); err == nil {
+func recognitionStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, framework string) runtimeStep {
+	if resolved, _, err := resolveVariantStep(workflow, job, step, row, framework); err == nil {
 		return resolved
 	}
 	env := mergeEnvironment(workflow.Env, mergeEnvironment(job.Env, step.Env))
 	known := map[string]string{}
 	for key, value := range env {
+		if resolved, err := runtimeValue(value, row); err == nil {
+			value = resolved
+		}
 		if literal, ok := step.LiteralEnv[key]; ok && literal == value {
 			known[key] = literal
 		} else if resolved, err := nativeEnvironmentValue(value, env); err == nil {
@@ -51,7 +54,7 @@ func nativeRecognitionStep(workflow ciWorkflow, job runtimeJob, step runtimeStep
 		}
 	}
 	workflow.Env, job.Env, step.Env = nil, known, nil
-	if resolved, _, err := resolveVariantStep(workflow, job, step, nil, framework); err == nil {
+	if resolved, _, err := resolveVariantStep(workflow, job, step, row, framework); err == nil {
 		return resolved
 	}
 	return step
@@ -65,8 +68,11 @@ func nativeInlineControls(step runtimeStep, env map[string]string, provider stri
 	if !ok {
 		return step, env, nil // The command resolver reports unsupported syntax.
 	}
-	found := false
+	found, traceControl := false, false
 	syntax.Walk(file, func(node syntax.Node) bool {
+		if a, ok := node.(*syntax.Assign); ok && a.Name != nil && a.Name.Value == "DD_TRACE_ENABLED" {
+			traceControl = true
+		}
 		if a, ok := node.(*syntax.Assign); ok && a.Name != nil && a.Name.Value == "DD_CIVISIBILITY_ENABLED" {
 			found = true
 		}
@@ -77,10 +83,14 @@ func nativeInlineControls(step runtimeStep, env map[string]string, provider stri
 					break
 				}
 				found = found || strings.HasPrefix(value, "DD_CIVISIBILITY_ENABLED=")
+				traceControl = traceControl || strings.HasPrefix(value, "DD_TRACE_ENABLED=")
 			}
 		}
 		return true
 	})
+	if traceControl {
+		return step, env, fmt.Errorf("DD_TRACE_ENABLED overrides the whole tracer; review this control explicitly before CI setup or validation")
+	}
 	if !found {
 		return step, env, nil
 	}
@@ -139,10 +149,16 @@ func nativeInlineControls(step runtimeStep, env map[string]string, provider stri
 }
 
 func nativeControlEnvironment(workflow ciWorkflow, job runtimeJob, step runtimeStep) (runtimeStep, error) {
-	if workflow.Provider != "gitlab" && workflow.Provider != "buildkite" || step.ResolutionError != "" {
+	if workflow.Provider == "" || workflow.Provider == "github" {
 		return step, nil
 	}
 	env := mergeEnvironment(workflow.Env, mergeEnvironment(job.Env, step.Env))
+	if value, ok := env["DD_TRACE_ENABLED"]; ok && value != "true" {
+		return step, fmt.Errorf("DD_TRACE_ENABLED overrides the whole tracer; review this control explicitly before CI setup or validation")
+	}
+	if workflow.Provider != "gitlab" && workflow.Provider != "buildkite" || step.ResolutionError != "" {
+		return step, nil
+	}
 	value, ok := env["DD_CIVISIBILITY_ENABLED"]
 	if !ok {
 		return step, nil

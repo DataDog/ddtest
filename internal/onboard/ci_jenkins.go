@@ -310,7 +310,8 @@ func readJenkins(root, path string) (ciWorkflow, error) {
 				open = pairs[open] + 1
 			}
 			if open >= end || tokens[open].value != "{" {
-				if i+1 < end && tokens[i+1].value == "(" && !slices.Contains([]string{"echo", "input", "checkout", "junit", "archiveArtifacts", "timestamps", "timeout"}, token.value) {
+				call := i+1 < end && (tokens[i+1].value == "(" || tokens[i+1].quote != "" || i+2 < end && tokens[i+2].value == ":")
+				if call && !slices.Contains([]string{"echo", "input", "checkout", "junit", "archiveArtifacts", "timestamps", "timeout", "image", "label", "reuseNode", "customWorkspace", "registryUrl", "registryCredentialsId"}, token.value) {
 					job.Gaps = append(job.Gaps, "Jenkins call "+token.value+" needs its resolved setup; no Groovy or library code was executed")
 				}
 				if token.value == "load" || token.value == "library" {

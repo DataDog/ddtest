@@ -20,11 +20,12 @@ import (
 )
 
 type nativeSetup struct {
-	Framework string `json:"framework"`
-	Version   string `json:"version"`
-	Site      string `json:"site"`
-	ESM       bool   `json:"esm,omitempty"`
-	Coverage  string `json:"coverage,omitempty"`
+	Framework     string `json:"framework"`
+	Version       string `json:"version"`
+	Site          string `json:"site"`
+	ESM           bool   `json:"esm,omitempty"`
+	Coverage      string `json:"coverage,omitempty"`
+	InlineEnabled bool   `json:"inline_enabled,omitempty"`
 }
 
 func nativeInstrumentationPrefix(setup nativeSetup, provider string) string {
@@ -37,9 +38,14 @@ func nativeInstrumentationPrefix(setup nativeSetup, provider string) string {
 	if setup.Coverage != "" {
 		options += " " + setup.Coverage
 	}
+	control := ""
+	if setup.InlineEnabled {
+		control = "export DD_CIVISIBILITY_ENABLED=true\n"
+	}
 	prefix := "# ddtest-ci " + string(metadata) + "\n(\n" +
 		"_ddtest_tracer_dir=\n" +
 		"trap 'if [ -n \"$_ddtest_tracer_dir\" ]; then rm -rf -- \"$_ddtest_tracer_dir\"; fi' EXIT\n" +
+		control +
 		"if [ \"${DD_CIVISIBILITY_ENABLED:-}\" != false ] && [ -n \"${DD_API_KEY:-}\" ] && _ddtest_tracer_dir=$(mktemp -d \"${TMPDIR:-/tmp}/ddtest-ci.XXXXXXXX\") && npm install --prefix \"$_ddtest_tracer_dir\" --no-save --package-lock=false --no-audit --no-fund dd-trace@" + setup.Version + " >&2; then\n" +
 		"  readonly _ddtest_tracer_dir\n" +
 		"  export DD_TRACE_PACKAGE=\"$_ddtest_tracer_dir/node_modules/dd-trace/ci/init\"\n" +
@@ -365,6 +371,8 @@ func yamlCommandReplacement(data []byte, node *yaml.Node, value string) (nativeR
 }
 
 func wrapNativeCommand(setup nativeSetup, original, provider string) string {
+	step, _, err := nativeInlineControls(runtimeStep{Run: original}, nil, provider)
+	setup.InlineEnabled = err == nil && step.Env["DD_CIVISIBILITY_ENABLED"] == "true"
 	return nativeInstrumentationPrefix(setup, provider) + original + "\n)"
 }
 
@@ -389,7 +397,7 @@ func sharedNativeSource(root string, workflows []ciWorkflow, framework, requirem
 				if strings.HasPrefix(nodeSource, "explicit Node executable ") {
 					return true
 				}
-				if job.If == "false" || mochaInstrumentationDisabled(workflow, job, step) || UnsupportedNode(node) || len(job.Gaps) > 0 || !resolution.Matched || resolution.OtherFramework || resolution.Reason != "" {
+				if source.Manual != other.Manual || source.Tracer != other.Tracer || job.If == "false" || mochaInstrumentationDisabled(workflow, job, step) || UnsupportedNode(node) || len(job.Gaps) > 0 || !resolution.Matched || resolution.OtherFramework || resolution.Reason != "" {
 					return true
 				}
 				if requirement != "" {
