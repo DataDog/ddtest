@@ -53,6 +53,10 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		{"null", false}, {"!null", true}, {"null == null", true}, {"matrix.missing == null", true},
 		{"null == false", true}, {"null == 0", true}, {"null == ''", true}, {"null == 'x'", false},
 		{"matrix.number != null", true}, {"null < matrix.number", true},
+		// Relational operators coerce only unlike types; like booleans or nulls never order.
+		{"false < true", false}, {"false >= false", false}, {"null <= null", false},
+		{"null > null", false}, {"matrix.enabled < true", false},
+		{"null < true", true}, {"false < 1", true}, {"null <= false", true},
 		// GitHub converts a plain decimal string compared with a number.
 		{"matrix.number == '22'", true}, {"matrix.number != '20'", true}, {"'22.0' == matrix.number", true},
 	} {

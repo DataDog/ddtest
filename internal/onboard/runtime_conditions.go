@@ -114,9 +114,20 @@ func (p *conditionParser) expression(level int) (any, error) {
 // Support static numbers and strings using GitHub's ordering rules. Two
 // strings compare case-insensitively; mixed string/number operands coerce to
 // numbers. Invalid numeric strings become NaN, whose comparisons are false.
+// Only unlike types coerce, so two booleans or two nulls never order.
 func conditionOrder(left, right any, op string) (bool, error) {
 	if symbolicConditionValue(left) || symbolicConditionValue(right) {
 		return false, fmt.Errorf("action path contents require runtime resolution")
+	}
+	switch left.(type) {
+	case bool:
+		if _, ok := right.(bool); ok {
+			return false, nil
+		}
+	case nil:
+		if right == nil {
+			return false, nil
+		}
 	}
 	var a, b float64
 	if x, ok := left.(string); ok {
