@@ -571,3 +571,17 @@ func TestRubyCoordinatedWorkflowKeepsTheSharedCheckCopyForGemspecs(t *testing.T)
 	require.NoError(t, err)
 	require.Empty(t, matches, "the shared copy is removed when the validation ends")
 }
+
+func TestRubyCheckOnlyPreflightHonorsBundleLockfile(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "Gemfile"), "source 'https://rubygems.org'\n")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "locks"), 0700))
+	requireWriteFile(t, filepath.Join(root, "locks/ci.lock"), "installed bundle\n")
+	executor := &fakeTestdriveExecutor{err: errors.New("bundle inspected")}
+	drive := Testdrive{repositoryRoot: root, checkOnly: true, framework: framework.NewRSpec(platform.NewRuby("")), executor: executor,
+		command: "bundle", args: []string{"exec", "rspec"}, configurationEnvironment: map[string]string{"BUNDLE_LOCKFILE": "locks/ci.lock"}}
+	var result validationResult
+	err := drive.checkRubyPreflight(t.Context(), io.Discard, &result)
+	require.ErrorContains(t, err, "bundle inspected", "the configured lockfile exists, so the bundle is inspected")
+	require.NotContains(t, result.Preflight.Verdict.Reason, "lockfile is unavailable")
+}

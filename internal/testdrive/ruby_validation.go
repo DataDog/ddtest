@@ -145,11 +145,15 @@ func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, re
 		if err != nil {
 			return err
 		}
-		gemfile, err := rubyConfigurationGemfile(t.checkoutRoot(), directory, t.configurationEnvironment, len(t.configurationLocations) == 0)
+		local := len(t.configurationLocations) == 0
+		gemfile, err := rubyConfigurationGemfile(t.checkoutRoot(), directory, t.configurationEnvironment, local)
 		if err != nil {
 			return err
 		}
-		lockfile := filepath.Join(t.checkoutRoot(), rubyLockfile(gemfile))
+		lockfile, err := rubySelectedLockfile(t.checkoutRoot(), t.checkoutRoot(), directory, gemfile, t.configurationEnvironment, local)
+		if err != nil {
+			return err
+		}
 		if _, err := os.Stat(lockfile); err != nil {
 			check.Verdict.Reason = "Run bundle install for the selected Gemfile before configuration-only validation; its lockfile is unavailable."
 			return errors.New(check.Verdict.Reason)
