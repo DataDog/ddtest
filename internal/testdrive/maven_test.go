@@ -1,9 +1,11 @@
 package testdrive
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -249,6 +251,7 @@ func TestMavenRunNormalizesOnlyOwnedWorkspacePaths(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "mvnw"), []byte(`#!/bin/sh
 mkdir -p target/surefire-reports
 printf '<testsuite><testcase classname="PathTest" name="fails"><failure type="AssertionError" message="missing %s/src/test/data"/></testcase></testsuite>' "$PWD" > target/surefire-reports/TEST-PathTest.xml
+printf '%s\n' '[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.3:test (default-test) on project suite: There are test failures.'
 exit 1
 `), 0700))
 	session, err := NewSession()
@@ -310,7 +313,7 @@ func TestMavenJVMEnvironmentPreservesOtherOptions(t *testing.T) {
 	env, err = mavenJVMEnvironment("/tmp/a directory/dd-java-agent.jar")
 	require.NoError(t, err)
 	require.Contains(t, env["JAVA_TOOL_OPTIONS"], `"-javaagent:/tmp/a directory/dd-java-agent.jar"`)
-	t.Setenv("MAVEN_OPTS", `"unfinished`)
+	t.Setenv("JAVA_TOOL_OPTIONS", `"unfinished`)
 	_, err = mavenJVMEnvironment("")
 	require.Error(t, err)
 }
@@ -455,4 +458,90 @@ func TestMavenAmbiguousTestNGInvocationsCannotCertifyComparisons(t *testing.T) {
 	}}
 	require.Equal(t, "native_identity_ambiguous", compareMavenNative(run, run).Code)
 	require.Equal(t, "native_identity_ambiguous", verifyMavenTelemetry(run).Code)
+}
+
+func TestMavenJVMEnvironmentPreservesLiteralOptionText(t *testing.T) {
+	keys := []string{"MAVEN_OPTS", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"}
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			for _, other := range keys {
+				t.Setenv(other, "")
+			}
+			raw := "  -Dtest.regex=\\d+\t-Dtest.path=C:\\source\\file "
+			if key != "MAVEN_OPTS" {
+				raw += ` "-Dtest.spaces=C:\source files\file"`
+			}
+			t.Setenv(key, raw)
+			env, err := mavenJVMEnvironment("")
+			require.NoError(t, err)
+			require.Equal(t, raw, env[key], "unrelated options must retain their exact bytes")
+		})
+	}
+}
+
+func TestMavenPartialReactorCannotCertifyCompatibility(t *testing.T) {
+	for _, failedTest := range []bool{false, true} {
+		t.Run(fmt.Sprint(failedTest), func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project><modules><module>first</module><module>second</module></modules></project>`), 0600))
+			for _, module := range []string{"first", "second"} {
+				require.NoError(t, os.Mkdir(filepath.Join(root, module), 0700))
+				require.NoError(t, os.WriteFile(filepath.Join(root, module, "pom.xml"), []byte(`<project><artifactId>`+module+`</artifactId></project>`), 0600))
+			}
+			failure := ""
+			if failedTest {
+				failure = `<failure type="AssertionError" message="known failure"/>`
+			}
+			script := `#!/bin/sh
+mkdir -p first/target/surefire-reports
+printf '%s' '<testsuite><testcase classname="FirstTest" name="works">` + failure + `</testcase></testsuite>' > first/target/surefire-reports/TEST-First.xml
+printf '%s\n' '[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:testCompile (default-testCompile) on project second: Compilation failure'
+exit 1
+`
+			require.NoError(t, os.WriteFile(filepath.Join(root, "mvnw"), []byte(script), 0700))
+			session, err := NewSession()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, session.Close()) })
+			drive := &Testdrive{repositoryRoot: root, framework: framework.NewMaven("junit5", nil), command: "./mvnw", args: []string{"test"}, session: session, startIntake: func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{url: "http://127.0.0.1:1"}, nil }}
+			baseline, err := drive.mavenRun(t.Context(), io.Discard, "baseline", "", intake.Scenario{}, "", nil)
+			require.NoError(t, err)
+			reporting, err := drive.mavenRun(t.Context(), io.Discard, "reporting-only", "", intake.Scenario{}, "", nil)
+			require.NoError(t, err)
+			require.Len(t, baseline.Tests, 1, "partial results are retained as diagnostics")
+			require.Equal(t, "inconclusive", compareMavenNative(baseline, reporting).Status)
+			require.Contains(t, baseline.ResultError, "incomplete")
+		})
+	}
+}
+
+func TestMavenJVMEnvironmentRemovesOnlyVerifiedAgents(t *testing.T) {
+	var jar bytes.Buffer
+	writer := zip.NewWriter(&jar)
+	manifest, err := writer.Create("META-INF/MANIFEST.MF")
+	require.NoError(t, err)
+	_, err = manifest.Write([]byte("Premain-Class: datadog.trace.bootstrap.Agent\nImplementation-Version: 1.67.1\n"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	agent := filepath.Join(t.TempDir(), "agent.jar")
+	require.NoError(t, os.WriteFile(agent, jar.Bytes(), 0600))
+	keys := []string{"MAVEN_OPTS", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"}
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			for _, other := range keys {
+				t.Setenv(other, "")
+			}
+			option := "-javaagent:" + agent
+			if key != "MAVEN_OPTS" {
+				option = `"` + option + `"`
+			}
+			raw := ` -Dtest.regex=\d+  ` + option + ` -javaagent:/customer/jacoco.jar -Dliteral=C:\source `
+			t.Setenv(key, raw)
+			env, err := mavenJVMEnvironment("")
+			require.NoError(t, err)
+			require.Equal(t, strings.Replace(raw, option, "", 1), env[key])
+		})
+	}
+	option, err := mavenAgentOption(`/tmp/a path\agent.jar`)
+	require.NoError(t, err)
+	require.Equal(t, `"-javaagent:/tmp/a path\agent.jar"`, option)
 }

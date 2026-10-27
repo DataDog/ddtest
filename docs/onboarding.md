@@ -274,7 +274,9 @@ native scenario JSON) against a
 reporting-only Java-agent run, including identities, outcomes, exception
 type/message and exit code, then reconciles test events. Full stack traces and
 command output remain in the HTML report. Existing failures are acceptable when
-both executions agree. TestNG data-provider argument values remain part of each
+both executions agree and each Maven goal failure is attributable to native test
+failures in that module. Partial results followed by compilation or setup failure
+remain inconclusive, including with `--fail-never`. TestNG data-provider argument values remain part of each
 invocation identity; repeated invocations with indistinguishable native identities
 remain inconclusive.
 

@@ -258,7 +258,8 @@ func testdrivePOM(root, command string, args []string) (string, error) {
 	selected := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if arg == "deploy" || strings.HasSuffix(arg, ":deploy") || strings.HasSuffix(arg, ":deploy-file") || arg == "site-deploy" {
+		goal, _, _ := strings.Cut(arg, "@")
+		if !strings.HasPrefix(arg, "-") && (goal == "deploy" || strings.HasSuffix(goal, ":deploy") || strings.HasSuffix(goal, ":deploy-file") || goal == "site-deploy") {
 			return "", fmt.Errorf("maven publishing goals are not supported by local testdrive; select the test/verify portion of the CI command")
 		}
 		file := ""

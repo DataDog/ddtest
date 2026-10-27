@@ -137,41 +137,83 @@ func (t *Testdrive) runMaven(ctx context.Context, output io.Writer) (runErr erro
 	return t.mavenFeatures(ctx, output, agent, projects, reporting, &result)
 }
 
-// Maven JVM options use double-quoted paths, not shell evaluation. Preserve all
-// unrelated agents and options. Remove only JARs verified as Datadog agents.
+// MAVEN_OPTS is shell word-split; the JVM variables recognize quotes but
+// preserve backslashes. Keep unrelated text intact when removing verified agents.
 func mavenJVMEnvironment(agent string) (map[string]string, error) {
 	env := map[string]string{}
 	for _, key := range []string{"MAVEN_OPTS", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"} {
-		words, err := shellquote.Split(os.Getenv(key))
+		value, err := withoutMavenDatadogAgent(key, os.Getenv(key))
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", key, err)
 		}
-		var kept []string
-		for _, word := range words {
-			if path, ok := strings.CutPrefix(word, "-javaagent:"); ok {
-				path, _, _ = strings.Cut(path, "=")
-				if _, err := platform.JavaAgentVersion(path); err == nil {
-					continue
-				}
-			}
-			if strings.ContainsAny(word, " \t\r\n\"") {
-				word = strconv.Quote(word)
-			}
-			kept = append(kept, word)
-		}
-		env[key] = strings.Join(kept, " ")
+		env[key] = value
 	}
 	if agent != "" {
-		// Maven expands MAVEN_OPTS as shell words, so literal surrounding quotes
-		// become part of the Java argument. JVM-parsed JAVA_TOOL_OPTIONS supports
-		// paths containing spaces and is inherited by Maven's test forks.
 		if strings.ContainsAny(agent, " \t\r\n") {
-			env["JAVA_TOOL_OPTIONS"] = strings.TrimSpace(env["JAVA_TOOL_OPTIONS"] + " " + strconv.Quote("-javaagent:"+agent))
+			option, err := mavenAgentOption(agent)
+			if err != nil {
+				return nil, err
+			}
+			env["JAVA_TOOL_OPTIONS"] = strings.TrimSpace(env["JAVA_TOOL_OPTIONS"] + " " + option)
 		} else {
 			env["MAVEN_OPTS"] = strings.TrimSpace(env["MAVEN_OPTS"] + " -javaagent:" + agent)
 		}
 	}
 	return env, nil
+}
+
+func withoutMavenDatadogAgent(key, value string) (string, error) {
+	whitespace := " \t\n\r\f\v"
+	if key == "MAVEN_OPTS" {
+		whitespace = " \t\n"
+	}
+	var kept strings.Builder
+	copied := 0
+	for i := 0; i < len(value); {
+		if strings.ContainsRune(whitespace, rune(value[i])) {
+			i++
+			continue
+		}
+		start := i
+		var word strings.Builder
+		for i < len(value) && !strings.ContainsRune(whitespace, rune(value[i])) {
+			if key != "MAVEN_OPTS" && (value[i] == '\'' || value[i] == '"') {
+				quote := value[i]
+				i++
+				for i < len(value) && value[i] != quote {
+					word.WriteByte(value[i])
+					i++
+				}
+				if i == len(value) {
+					return "", fmt.Errorf("unmatched JVM option quote")
+				}
+				i++
+			} else {
+				word.WriteByte(value[i])
+				i++
+			}
+		}
+		if path, ok := strings.CutPrefix(word.String(), "-javaagent:"); ok {
+			path, _, _ = strings.Cut(path, "=")
+			if _, err := platform.JavaAgentVersion(path); err == nil {
+				kept.WriteString(value[copied:start])
+				copied = i
+			}
+		}
+	}
+	kept.WriteString(value[copied:])
+	return kept.String(), nil
+}
+
+// JVM option quotes group text; they do not interpret Go/shell backslash escapes.
+func mavenAgentOption(agent string) (string, error) {
+	if !strings.Contains(agent, `"`) {
+		return `"-javaagent:` + agent + `"`, nil
+	}
+	if !strings.Contains(agent, "'") {
+		return "'-javaagent:" + agent + "'", nil
+	}
+	return "", fmt.Errorf("java agent path contains both quote types and cannot be represented in JVM option variables")
 }
 
 // Every run starts with the same source tree and fresh build output. The
@@ -254,7 +296,11 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 			return run, err
 		}
 		env["MAVEN_OPTS"] = base["MAVEN_OPTS"]
-		env["JAVA_TOOL_OPTIONS"] = strings.TrimSpace(base["JAVA_TOOL_OPTIONS"] + " " + strconv.Quote("-javaagent:"+agent))
+		option, err := mavenAgentOption(agent)
+		if err != nil {
+			return run, err
+		}
+		env["JAVA_TOOL_OPTIONS"] = strings.TrimSpace(base["JAVA_TOOL_OPTIONS"] + " " + option)
 	}
 	configureScenarioEnvironment(env, scenario.Feature)
 	env["DD_CIVISIBILITY_CODE_COVERAGE_AGENTLESS_URL"] = server.URL()
@@ -299,6 +345,9 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 	run.mavenModules = mavenModuleDirectories(projects)
 	if probe == nil {
 		run.mavenCoverage = observeMavenModules(projects, tests, string(data))
+		if run.ResultError == "" {
+			run.ResultError = incompleteMavenBuild(run.ExitCode, projects, tests, string(data))
+		}
 	}
 	if len(projects) == 1 && t.framework.Name() == "scalatest" {
 		run.mavenModules["org.scalatest.tools.Runner"] = projects[0].Directory

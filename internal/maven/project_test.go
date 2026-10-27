@@ -196,3 +196,12 @@ func TestValidationChecksPOMAliasAndInheritedConfiguration(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(child, "pom.xml"), []byte(`<project/>`), 0600))
 	require.ErrorContains(t, ValidateTestdriveCommand(child, "mvn", []string{"test"}), "maven.config")
 }
+
+func TestValidationRejectsExecutionQualifiedPublishing(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project/>`), 0600))
+	for _, goal := range []string{"deploy:deploy@publish", "deploy:deploy-file@publish", "org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy@publish", "org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file@publish", "site:deploy@publish"} {
+		require.ErrorContains(t, ValidateTestdriveCommand(root, "mvn", []string{"test", goal}), "publishing", goal)
+	}
+	require.NoError(t, ValidateTestdriveCommand(root, "mvn", []string{"test", "-Dlabel=mail@example.test"}))
+}
