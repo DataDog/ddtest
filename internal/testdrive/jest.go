@@ -521,9 +521,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 		unavailableFeatures(result, reason)
 		return nil
 	}
-	if len(baseline.Tests) == 0 && (baseline.ResultError != "" || baseline.ExitCode != 0) {
-		result.Features = []featureResult{{Name: "all", Status: "not exercised", Reason: "The native suite did not produce test results. Resolve its startup/setup diagnostic before feature or coverage validation."}}
-		result.Compatibility = verdict{Status: "inconclusive", Code: "native_startup_failed", Reason: "Native execution failed before any test results. Resolve the baseline startup/setup diagnostic first: " + reportText(baseline.Diagnostic+" "+baseline.ResultError)}
+	if compatibility, feature, ok := missingNativeResults(baseline); ok {
+		result.Features = []featureResult{{Name: "all", Status: "not exercised", Reason: feature}}
+		result.Compatibility = compatibility
 		return nil
 	}
 	if t.framework.Name() == "webdriverio" {
@@ -569,4 +569,17 @@ func normalizeOwnedTemporaryPath(run validationRun, value string) string {
 		return value
 	}
 	return strings.ReplaceAll(value, run.temporaryRoot+string(filepath.Separator), "<ddtest-tmp>/")
+}
+
+// missingNativeResults explains a baseline without test results. A failed
+// command is a startup/setup problem; a successful one that ddtest can't read
+// is a result-reading problem and must not send agents to change the suite.
+func missingNativeResults(baseline validationRun) (verdict, string, bool) {
+	if len(baseline.Tests) > 0 || (baseline.ResultError == "" && baseline.ExitCode == 0) {
+		return verdict{}, "", false
+	}
+	if baseline.ExitCode == 0 {
+		return verdict{Status: "inconclusive", Code: "native_results_unreadable", Reason: reportText(baseline.ResultError) + ". The native suite exited 0, but ddtest could not read its results, so features were not validated. If this command runs the tests, this is a ddtest result-reading problem, not a suite failure: report it with the ddtest version instead of changing the repository."}, "ddtest could not read the native results of a successful suite run, so features were not validated.", true
+	}
+	return verdict{Status: "inconclusive", Code: "native_startup_failed", Reason: "Native execution failed before any test results. Resolve the baseline startup/setup diagnostic first: " + reportText(baseline.Diagnostic+" "+baseline.ResultError)}, "The native suite did not produce test results. Resolve its startup/setup diagnostic before feature or coverage validation.", true
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -222,4 +223,40 @@ func TestSetupSelectionAcceptsMochaCoverageThatSetupWraps(t *testing.T) {
 		require.Equal(t, repairable, repairableSetupFinding("mocha", ci.Jobs[0]), "%s: %s", command, ci.Jobs[0].Reason)
 		require.False(t, repairableSetupFinding("jest", ci.Jobs[0]), "only Mocha setup adds the NYC wrapper")
 	}
+}
+
+func TestSetupSelectionRefusesTracerThatAnUninstrumentedCIRowCannotRun(t *testing.T) {
+	drive := preflightFixture(t, "30.2.0", "jest-circus/runner.js")
+	root := drive.repositoryRoot
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+	// Setup adds the action to this Node 20 job, where dd-trace@6.16.0 (>=22) cannot run.
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '20.18.2'}\n      - run: jest\n")
+	_, err := drive.selectSetupTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest"}}}, false)
+	require.ErrorContains(t, err, "dd-trace@6.16.0 requires Node >=22, which these CI rows do not provide: .github/workflows/test.yml / test / step 2 (Node 20.18.2)")
+	// One release supports the Node 20 row, so the error names it instead of
+	// claiming the rows need different majors.
+	require.ErrorContains(t, err, "dd-trace@5.128.0 supports every instrumented CI row whose Node is known (20.18.2); rerun with --tracer-version 5.128.0")
+	require.NotContains(t, err.Error(), "different dd-trace majors")
+}
+
+func TestSetupSelectionSkipsCIRowsNoReleaseSupports(t *testing.T) {
+	drive := preflightFixture(t, "30.2.0", "jest-circus/runner.js")
+	root := drive.repositoryRoot
+	require.NoError(t, os.RemoveAll(filepath.Join(root, "node_modules/dd-trace")))
+	drive.projectTracer, drive.tracerVersion = "", "latest"
+	registry := t.TempDir()
+	requireWriteFile(t, filepath.Join(registry, "npm"), "#!/bin/sh\necho '{\"version\":\"6.17.0\",\"engines\":{\"node\":\">=22\"}}'\n")
+	require.NoError(t, os.Chmod(filepath.Join(registry, "npm"), 0700))
+	t.Setenv("PATH", registry+string(os.PathListSeparator)+os.Getenv("PATH"))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    strategy:\n      matrix:\n        node: ['16.20.2', '24.14.1']\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '${{ matrix.node }}'}\n      - run: jest\n")
+	// No dd-trace release runs on Node 16, so that row is ddtest's own
+	// exclusion: it neither constrains the tracer nor asks for approval.
+	selected, err := drive.selectSetupTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest"}}}, false)
+	require.NoError(t, err)
+	require.Equal(t, "6.17.0", selected.Version)
+	ci := onboard.CheckCIRuntimes(t.Context(), root, "jest")
+	require.True(t, slices.ContainsFunc(ci.Jobs, func(job onboard.RuntimeFinding) bool {
+		return job.Node == "16.20.2" && job.Code == onboard.CodeUnsupportedNode && job.Status == onboard.StatusExcluded
+	}), ci.Jobs)
 }

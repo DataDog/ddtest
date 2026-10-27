@@ -41,7 +41,9 @@ Start here:
   ddtest onboard
 
 The onboard command detects the test and CI setup, explains the required
-changes, points to local verification, and tells you when human action is needed.`,
+changes, points to local verification, and tells you when human action is needed.
+Coding agents: each onboard/testdrive result is one bounded document; read it
+whole, without head, tail or other truncation.`,
 	Version:           buildinfo.CurrentVersion(),
 	PersistentPreRunE: runPersistentPreRun,
 }

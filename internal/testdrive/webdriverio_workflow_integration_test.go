@@ -26,6 +26,21 @@ func TestPublicWebdriverIOTestdrive(t *testing.T) {
 	}
 	modules, err := filepath.Abs(modules)
 	require.NoError(t, err)
+	// Fixtures declare the installed versions, so the same test covers the
+	// pinned and the unpinned latest CI lanes.
+	installed := func(name string) string {
+		data, err := os.ReadFile(filepath.Join(modules, name, "package.json"))
+		require.NoError(t, err)
+		var pkg struct{ Version string }
+		require.NoError(t, json.Unmarshal(data, &pkg))
+		return pkg.Version
+	}
+	wdio, tracer := installed("@wdio/cli"), installed("dd-trace")
+	// WebdriverIO 10 reads capability-level selectors only from prefixed keys.
+	capabilitySpecs, capabilityExclude := "specs", "exclude"
+	if !strings.HasPrefix(wdio, "9.") {
+		capabilitySpecs, capabilityExclude = "'wdio:specs'", "'wdio:exclude'"
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 24*time.Minute)
 	defer cancel()
 	binary := filepath.Join(t.TempDir(), "ddtest")
@@ -78,11 +93,11 @@ func TestPublicWebdriverIOTestdrive(t *testing.T) {
 				requireWriteFile(t, filepath.Join(root, name), value)
 			}
 
-			write("package.json", `{"scripts":{"test":"wdio run wdio.conf.cjs"},"devDependencies":{"@wdio/cli":"9.20.0","@wdio/local-runner":"9.20.0","@wdio/mocha-framework":"9.20.0","@wdio/spec-reporter":"9.20.0","dd-trace":"6.20.1"}}`)
+			write("package.json", fmt.Sprintf(`{"scripts":{"test":"wdio run wdio.conf.cjs"},"devDependencies":{"@wdio/cli":%[1]q,"@wdio/local-runner":%[1]q,"@wdio/mocha-framework":%[1]q,"@wdio/spec-reporter":%[1]q,"dd-trace":%[2]q}}`, wdio, tracer))
 			config := `exports.config={runner:'local',specs:['./test/*.js'],maxInstances:1,framework:'mocha',reporters:['spec'],capabilities:[{browserName:'chrome','goog:chromeOptions':{binary:process.env.DDTEST_CHROME_BINARY,args:['--headless=new','--no-sandbox','--disable-dev-shm-usage']},...(process.env.DDTEST_CHROMEDRIVER_BINARY?{'wdio:chromedriverOptions':{binary:process.env.DDTEST_CHROMEDRIVER_BINARY}}:{})}]};`
 			if mode == "capability specs" {
 				config = strings.Replace(config, "specs:['./test/*.js']", "specs:[]", 1)
-				config = strings.Replace(config, "browserName:'chrome'", "browserName:'chrome',specs:['./test/*.js'],exclude:['**/ddtest*']", 1)
+				config = strings.Replace(config, "browserName:'chrome'", "browserName:'chrome',"+capabilitySpecs+":['./test/*.js'],"+capabilityExclude+":['**/ddtest*']", 1)
 			}
 			if mode == "existing failure" {
 				config = strings.Replace(config, "maxInstances:1", "maxInstances:1,specFileRetries:1", 1)
@@ -177,10 +192,10 @@ func TestPublicWebdriverIOTestdrive(t *testing.T) {
       - uses: actions/setup-node@v4
         with: {node-version: '24.14.1', architecture: %s}
       - uses: datadog/test-visibility-github-action@v3
-        with: {languages: js, js-tracer-version: '6.20.1'}
+        with: {languages: js, js-tracer-version: '%s'}
       - run: npm test
         env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}'}
-`, runnerOS, architecture))
+`, runnerOS, architecture, tracer))
 			if mode == "passing" {
 				path := filepath.Join(root, ".github/workflows/ci.yml")
 				data, e := os.ReadFile(path)
@@ -189,7 +204,7 @@ func TestPublicWebdriverIOTestdrive(t *testing.T) {
 			}
 			if mode == "unresolved suffix" {
 				write("unknown-wrapper.js", `require('node:fs').writeFileSync('must-not-run','bad')`)
-				write("package.json", `{"scripts":{"test":"wdio run wdio.conf.cjs && node unknown-wrapper.js"},"devDependencies":{"@wdio/cli":"9.20.0","dd-trace":"6.20.1"}}`)
+				write("package.json", fmt.Sprintf(`{"scripts":{"test":"wdio run wdio.conf.cjs && node unknown-wrapper.js"},"devDependencies":{"@wdio/cli":%q,"dd-trace":%q}}`, wdio, tracer))
 			}
 			output, err = command(root, "git", "init", "-q")
 			require.NoError(t, err, string(output))

@@ -87,6 +87,16 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			delete(env, key)
 			continue
 		}
+		// A remote browser grid's credentials are CI secrets that never exist
+		// locally. The step still runs in CI under the tracer; local validation
+		// reports it instead of demanding the secret.
+		if len(frameworks) > 0 && frameworks[0] == "webdriverio" {
+			if provider := remoteGridSecret(key, value); provider != "" {
+				step.RemoteGrid = provider
+				delete(env, key)
+				continue
+			}
+		}
 		if len(frameworks) > 0 && frameworks[0] == "vitest" && strings.HasPrefix(key, "DD_TEST_OPTIMIZATION_RUNNER_") {
 			if _, ok := VitestRunnerEnvironmentFlag(key); !ok {
 				return step, nil, fmt.Errorf("CI ddtest runner setting requires explicit command-based validation; not forwarded or silently dropped: %s", key)
@@ -120,7 +130,9 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			continue
 		}
 		applicationCoverage := len(frameworks) > 0 && frameworks[0] == "cypress" && key == "DD_TEST_COVERAGE"
-		if strings.HasPrefix(key, "DD_") && !applicationCoverage {
+		// Other DD_* settings configure CI's agent, intake or session, which local
+		// validation replaces. Plugin settings change test behavior and are kept.
+		if strings.HasPrefix(key, "DD_") && !applicationCoverage && !TracerPluginSetting(key) {
 			delete(env, key)
 			continue
 		}
@@ -330,4 +342,44 @@ func npmDependencyPreparation(words []string) bool {
 		}
 	}
 	return true
+}
+
+// TracerPluginSetting reports whether a DD_* variable selects which tracer
+// integrations load, such as disabling a plugin that conflicts with the
+// project. These are customer behavior, not intake or session configuration.
+func TracerPluginSetting(key string) bool {
+	switch key {
+	case "DD_TRACE_DISABLED_INSTRUMENTATIONS", "DD_TRACE_DISABLED_PLUGINS":
+		return true
+	}
+	name, ok := strings.CutPrefix(key, "DD_TRACE_")
+	plugin, enabled := strings.CutSuffix(name, "_ENABLED")
+	// DD_TRACE_ENABLED itself switches the whole tracer; local runs control it.
+	return ok && enabled && plugin != ""
+}
+
+// remoteGridProviders maps credential variable prefixes to remote browser
+// grids whose sessions run outside the local machine.
+var remoteGridProviders = []struct{ prefix, name string }{
+	{"SAUCE_", "Sauce Labs"},
+	{"BROWSERSTACK_", "BrowserStack"},
+	{"LT_", "LambdaTest"},
+	{"LAMBDATEST_", "LambdaTest"},
+	{"TESTINGBOT_", "TestingBot"},
+}
+
+var secretReference = regexp.MustCompile(`^\$\{\{\s*secrets\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}$`)
+
+// remoteGridSecret returns the remote browser grid a CI variable authenticates
+// to, when its value is only a secret reference, or "".
+func remoteGridSecret(key, value string) string {
+	if !secretReference.MatchString(strings.TrimSpace(value)) {
+		return ""
+	}
+	for _, provider := range remoteGridProviders {
+		if strings.HasPrefix(key, provider.prefix) {
+			return provider.name
+		}
+	}
+	return ""
 }

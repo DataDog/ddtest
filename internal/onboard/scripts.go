@@ -11,8 +11,10 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/kballard/go-shellquote"
@@ -92,7 +94,18 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		shell = runnerDefaultShell(job, nil)
 	}
 	if !supportedCIShell(shell) {
-		return unresolvedCommand("Unsupported CI shell: " + shell)
+		if !powershellArgvOnly(shell, step.Run) {
+			return unresolvedCommand("Unsupported CI shell: " + shell)
+		}
+		// These commands mean the same under pwsh and bash. pwsh runs every line
+		// and reports only the last exit code, so a multi-line test step differs.
+		posix := step
+		posix.Shell = "bash"
+		result := resolveTestStep(root, workflow, job, posix, language, framework)
+		if result.Matched && strings.Contains(strings.TrimSpace(step.Run), "\n") {
+			return unresolvedCommand("Unsupported CI shell: " + shell + " (a multi-line test step continues after a failing line)")
+		}
+		return result
 	}
 
 	if strings.ContainsAny(directory, "$`~") || (directory != "" && !filepath.IsLocal(directory)) {
@@ -489,6 +502,16 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		if slices.Equal(words, []string{"npm", "config", "get", "cache"}) {
 			return commandResolution{}
 		}
+		// npm configuration that only affects logging, registries or the cache is
+		// runner setup; like dependency installation, it is never replayed
+		// locally. Settings such as ignore-scripts or script-shell change how
+		// test scripts execute, so they stay unresolved.
+		if words[0] == "npm" && len(words) > 2 && words[1] == "config" && slices.Contains([]string{"set", "get", "list", "ls"}, words[2]) {
+			if words[2] == "set" && !npmSetupSettings(words[3:]) {
+				return unresolvedCommand("npm setting can change how test scripts execute and is not replayed locally: " + command)
+			}
+			return commandResolution{ReviewReason: "npm configuration setup is outside " + framework + " validation; CI setup itself is not executed locally: " + command}
+		}
 		// These are setup/metadata commands, not explicit test entry points.
 		if (words[0] == "npm" && slices.Contains([]string{"ci", "clean-install"}, words[1])) || slices.Contains([]string{"install", "i", "--version", "--help"}, words[1]) {
 			return commandResolution{}
@@ -638,13 +661,19 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	cucumber := len(frameworks) > 0 && frameworks[0] == "cucumber"
 	cucumberScoped := cucumber && cucumberScopedScript(script)
 	cucumberInlineIstanbul := cucumber && cucumberInlineIstanbulScript(script)
+	cucumberLoaders, _ := cucumberScopedLoaders(script)
+	loaderReason := ""
 	if cucumber {
 		script = cucumberDiscoveryScript(script)
+		if rest, loaders, ok := cucumberLoaderOverride(script); ok {
+			loaderReason = cucumberLoaderReason(script, loaders, rest)
+			script = rest
+		}
 		parts, err := staticCommands(script)
 		if variable := shellVariable.FindStringSubmatch(script); err != nil && variable != nil {
 			return unresolvedCommand("Cucumber alias uses unresolved environment variable $" + variable[1] + "; select the command with its value expanded: " + command)
 		}
-		if err != nil || len(parts) != 1 {
+		if err != nil || len(parts) != 1 && !cucumberChainResolvable(root, directory, script, append(slices.Clone(stack), key), *remaining) {
 			return unresolvedCommand("Cucumber aliases must forward formatter options to one invocation; compound scripts require explicit setup review: " + command)
 		}
 	}
@@ -664,6 +693,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 			}
 			scoped := false
 			inlineIstanbul := cucumberInlineIstanbulScript(part)
+			loaders, _ := cucumberScopedLoaders(part)
 			if cucumber {
 				scoped = cucumberScopedScript(part)
 				part = cucumberDiscoveryScript(part)
@@ -682,6 +712,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 						if cucumber {
 							resolved.Tests[i].cucumberScoped = true
 							resolved.Tests[i].cucumberInlineIstanbul = inlineIstanbul
+							resolved.Tests[i].cucumberLoaders = loaders
 						} else {
 							resolved.Tests[i].webdriverIOScoped = true
 						}
@@ -733,9 +764,15 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		}
 	}
 
+	if loaderReason != "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
+		result.Tests[0].cucumberLoaderReason = loaderReason
+	}
 	if cucumberScoped && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
 		result.Tests[0].cucumberScoped = true
 		result.Tests[0].cucumberInlineIstanbul = result.Tests[0].cucumberInlineIstanbul || cucumberInlineIstanbul
+		if result.Tests[0].cucumberLoaders == "" {
+			result.Tests[0].cucumberLoaders = cucumberLoaders
+		}
 	}
 	if mocha && lifecycle == "" && result.Reason == "" && !result.Matched && result.MochaAuxiliary && name == "build" {
 		return commandResolution{Builds: []BuildCommand{{Directory: repositoryPath(root, directory), Command: command, Kind: "package-build"}}}
@@ -861,6 +898,33 @@ func playwrightInteractiveMode(args []string) bool {
 	return false
 }
 
+// cucumberChainResolvable reports whether a compound Cucumber alias can be
+// resolved like any other sequence: either no link reaches cucumber-js (a
+// build or another framework), or exactly one does and it is the last link of
+// a single && chain, so forwarded options and its exit status stay its own.
+// Links that can't be resolved are left to the sequence's own diagnostics.
+func cucumberChainResolvable(root, directory, script string, stack []string, budget int) bool {
+	fragments, err := discoverCommands(script)
+	if err != nil || len(fragments) == 0 {
+		return false
+	}
+	leaves := []int{}
+	for i, fragment := range fragments {
+		if fragment.Reason != "" || len(fragment.Words) == 0 || fragment.Words[0] == "cd" {
+			continue
+		}
+		part := resolveJestWords(root, directory, fragment.Words, stack, &budget, "cucumber")
+		if part.Matched || len(part.Tests) > 0 {
+			leaves = append(leaves, i)
+		}
+	}
+	if len(leaves) == 0 {
+		return true
+	}
+	last := len(fragments) - 1
+	return len(leaves) == 1 && leaves[0] == last && !slices.ContainsFunc(fragments, func(fragment commandFragment) bool { return fragment.Chain != fragments[last].Chain })
+}
+
 // lifecycleRunner names frameworks whose npm pre/post hooks are not followed
 // during discovery; Mocha, Cucumber, Cypress and WebdriverIO resolve them.
 func lifecycleRunner(frameworks []string) (string, string) {
@@ -877,4 +941,65 @@ func lifecycleRunner(frameworks []string) (string, string) {
 		return "Playwright", "playwright"
 	}
 	return "", ""
+}
+
+// powershellArgvOnly reports whether a pwsh step is plain argv commands whose
+// meaning doesn't depend on the shell: no PowerShell variables, operators,
+// script blocks, splatting, escapes, arrays or backslash paths. Command
+// substitution $(...) is the same in both shells.
+func powershellArgvOnly(shell, run string) bool {
+	// Doubled quotes are a literal quote in PowerShell but concatenation in bash.
+	if shell != "pwsh" && shell != "powershell" || strings.TrimSpace(run) == "" || strings.Contains(run, "--%") || strings.Contains(run, "''") || strings.Contains(run, `""`) {
+		return false
+	}
+	for i, r := range run {
+		if r == '@' && npmPackageAt(run, i) {
+			continue
+		}
+		if strings.ContainsRune("`@;|&<>{},\\", r) || r == '$' && !strings.HasPrefix(run[i:], "$(") {
+			return false
+		}
+	}
+	return true
+}
+
+var npmScopedPackage = regexp.MustCompile(`^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*(@[a-zA-Z0-9._^~-]+)?(\s|$)`)
+
+// npmPackageAt reports whether the @ at i is part of an npm package spec:
+// @scope/name[@version] starting a word, or name@version inside one. Neither
+// is splatting, an array or a hashtable in PowerShell.
+func npmPackageAt(run string, i int) bool {
+	if i == 0 || unicode.IsSpace(rune(run[i-1])) {
+		return npmScopedPackage.MatchString(run[i:])
+	}
+	if i+1 >= len(run) || strings.ContainsRune("({\"'", rune(run[i+1])) {
+		return false
+	}
+	return !strings.ContainsRune("\"'", rune(run[i-1]))
+}
+
+// npm settings that cannot change which scripts run or how they execute.
+var npmSetupSettingNames = []string{"loglevel", "registry", "cache", "fund", "audit", "progress", "update-notifier", "color", "prefer-offline", "prefer-online", "fetch-retries", "fetch-retry-mintimeout", "fetch-retry-maxtimeout", "fetch-timeout", "maxsockets", "strict-ssl", "cafile", "ca", "proxy", "https-proxy", "noproxy", "always-auth"}
+
+// npmSetupSettings reports whether `npm config set` arguments only set
+// logging, registry, cache or network options (key value or key=value pairs).
+func npmSetupSettings(args []string) bool {
+	var keys []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			if args[i] == "--location" || args[i] == "-L" {
+				i++
+			}
+			continue
+		}
+		key, _, assigned := strings.Cut(args[i], "=")
+		keys = append(keys, key)
+		if !assigned {
+			i++ // The next word is this key's value.
+		}
+	}
+	return len(keys) > 0 && !slices.ContainsFunc(keys, func(key string) bool {
+		// Scoped registries and per-registry credentials are registry setup.
+		return !slices.Contains(npmSetupSettingNames, key) && !strings.HasSuffix(key, ":registry") && !strings.HasPrefix(key, "//")
+	})
 }

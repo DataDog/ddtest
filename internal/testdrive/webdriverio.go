@@ -156,12 +156,47 @@ func checkWebdriverIOSupport(check jestPreflight, selection platform.JSSelection
 	if status != "compatible" {
 		return verdict{Status: status, Reason: reason}
 	}
-	return verdict{Status: "compatible", Reason: "Runtime and tracer requirements match. Paired execution and supported feature controls are still required; TIA skipping/coverage are not supported."}
+	reason = "Runtime and tracer requirements match. Paired execution and supported feature controls are still required; TIA skipping/coverage are not supported."
+	if limitation := webdriverIOJasmineLimitation(check.WebdriverIO, "auto-retries", selection.Version); limitation != "" {
+		reason += " " + limitation
+	}
+	return verdict{Status: "compatible", Reason: reason}
+}
+
+// dd-trace's WDIO Jasmine hook reads the running spec when jasmine-core's
+// Spec execution starts; jasmine-core 5 only sets it later, so these
+// controls never engage there.
+var webdriverIOJasmineLimitedFeatures = []string{"auto-retries", "early-flake-detection", "disabled", "attempt-to-fix"}
+
+// webdriverIOJasmineFixedMinor maps a dd-trace major to its first release
+// that sees jasmine-core 5 specs at execution start (DataDog/dd-trace-js#10929).
+// Add each release line once it ships; until then every tracer is limited.
+var webdriverIOJasmineFixedMinor = map[int]int{}
+
+// webdriverIOJasmineLimitation explains a feature the tracer is known not to
+// apply for this WDIO Jasmine installation, or returns "". An empty tracer
+// (not selected yet) is treated as limited.
+func webdriverIOJasmineLimitation(config *framework.WebdriverIOConfig, feature, tracer string) string {
+	if config == nil || config.Framework != "jasmine" || !slices.Contains(webdriverIOJasmineLimitedFeatures, feature) {
+		return ""
+	}
+	if tracerMajor, tracerMinor, known := releaseParts(strings.TrimPrefix(tracer, "dd-trace@")); known {
+		if fixed, ok := webdriverIOJasmineFixedMinor[tracerMajor]; ok && tracerMinor >= fixed {
+			return ""
+		}
+	}
+	major, _, known := releaseParts(config.JasmineCore)
+	if !known || major >= 6 {
+		return ""
+	}
+	return "Known dd-trace limitation: with jasmine-core " + config.JasmineCore + " (<6), the tracer's WebdriverIO Jasmine hook does not see the running spec, so auto-retries, early flake detection, disabled and attempt-to-fix are not applied. Quarantine is unaffected. Upgrading to WebdriverIO 10 (jasmine-core 6) enables them; no other customer change is expected to."
 }
 
 type webdriverIOWorkerReport struct {
-	Complete                 bool
-	Retry                    int
+	Complete bool
+	Retry    int
+	// The worker's specFileRetries, when the reporter could read it.
+	SpecFileRetries          *int
 	Specs                    []string
 	Browser, Capability, CID string
 	Tests                    []struct {
@@ -217,6 +252,12 @@ func readWebdriverIOResults(directory string, run *validationRun) {
 			pending[key] = false
 		}
 		slices.Sort(report.Specs)
+		// WebdriverIO 9.20 numbers spec-file attempts 0..specFileRetries.
+		// Later releases start a spec with -1 remaining retries, so its first
+		// attempt reports specFileRetries+1 and the retries that follow 1, 2, ...
+		if report.SpecFileRetries != nil && report.Retry > *report.SpecFileRetries {
+			report.Retry = 0
+		}
 		key := report.Capability + "\x00" + report.CID + "\x00" + strings.Join(report.Specs, "\x00")
 		groups[key] = append(groups[key], report)
 	}
@@ -237,7 +278,11 @@ func readWebdriverIOResults(directory string, run *validationRun) {
 		history := map[string][]string{}
 		for i, report := range reports {
 			if report.Retry != i {
-				run.ResultError = "WebdriverIO native spec retry sequence is incomplete or duplicated"
+				attempts := make([]string, len(reports))
+				for j, report := range reports {
+					attempts[j] = strconv.Itoa(report.Retry)
+				}
+				run.ResultError = fmt.Sprintf("WebdriverIO native spec retry sequence is incomplete or duplicated (attempts %s)", strings.Join(attempts, ", "))
 				return
 			}
 			final := i == len(reports)-1
@@ -459,4 +504,44 @@ func webdriverIOCapabilityNumber(index string) string {
 		return strconv.Itoa(value + 1)
 	}
 	return index
+}
+
+// installedFeatureLimitations reads the installed packages, before any edit or
+// run, for features the tracer is known not to apply, so the plan names them
+// up front. Only WebdriverIO with jasmine-core <6 is known today.
+func installedFeatureLimitations(root, frameworkName, tracer string) map[string]string {
+	if frameworkName != "webdriverio" {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(root, "node_modules", "@wdio", "jasmine-framework", "package.json")); err != nil {
+		return nil
+	}
+	version := ""
+	for _, candidate := range []string{
+		filepath.Join(root, "node_modules", "@wdio", "jasmine-framework", "node_modules", "jasmine-core", "package.json"),
+		filepath.Join(root, "node_modules", "jasmine-core", "package.json"),
+	} {
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			continue
+		}
+		var manifest struct {
+			Version string `json:"version"`
+		}
+		if json.Unmarshal(data, &manifest) == nil && manifest.Version != "" {
+			version = manifest.Version
+			break
+		}
+	}
+	config := &framework.WebdriverIOConfig{Framework: "jasmine", JasmineCore: version}
+	limitations := map[string]string{}
+	for _, feature := range webdriverIOJasmineLimitedFeatures {
+		if reason := webdriverIOJasmineLimitation(config, feature, tracer); reason != "" {
+			limitations[feature] = reason
+		}
+	}
+	if len(limitations) == 0 {
+		return nil
+	}
+	return limitations
 }

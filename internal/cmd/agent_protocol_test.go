@@ -84,14 +84,14 @@ func TestOnboardCLIInitialHandoffPreservesOptions(t *testing.T) {
 	t.Cleanup(func() { viper.Reset(); settings.Init() })
 	require.NoError(t, os.WriteFile("package.json", []byte(`{"scripts":{"test":"vitest run"},"devDependencies":{"vitest":"4.1.11"}}`), 0600))
 	command := newOnboardCommand(nil)
-	command.SetArgs([]string{"--format", "json", "--site", "datadoghq.eu", "--tracer-version", "6.20.1", "--facts", "/external/facts.json", "--timeout", "13m", "--allow-reviewed-builds"})
+	command.SetArgs([]string{"--format", "json", "--site", "datadoghq.eu", "--tracer-version", "6.20.1", "--facts", "/external/facts.json", "--timeout", "13m", "--allow-reviewed-builds", "--accept-substitute-runtime"})
 	var out bytes.Buffer
 	command.SetOut(&out)
 	command.SetErr(io.Discard)
 	require.NoError(t, command.ExecuteContext(t.Context()))
 	var state onboard.AgentResult
 	require.NoError(t, json.Unmarshal(out.Bytes(), &state))
-	for _, value := range []string{"json", "datadoghq.eu", "6.20.1", "/external/facts.json", "13m0s", "--allow-reviewed-builds"} {
+	for _, value := range []string{"json", "datadoghq.eu", "6.20.1", "/external/facts.json", "13m0s", "--allow-reviewed-builds", "--accept-substitute-runtime"} {
 		require.Contains(t, state.NextCommand, value)
 	}
 }

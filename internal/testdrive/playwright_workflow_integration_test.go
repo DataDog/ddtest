@@ -263,6 +263,24 @@ func TestPlaywrightDiscoveryWithFileTerminatorOnlyLists(t *testing.T) {
 	require.NoFileExists(t, marker, "discovery lists tests; it must not execute them")
 }
 
+func TestPlaywrightDiscoveryKeepsConfiguredReportsOutOfTheCheckout(t *testing.T) {
+	modules := os.Getenv("DDTEST_PLAYWRIGHT_NODE_MODULES")
+	if modules == "" {
+		t.Skip("set DDTEST_PLAYWRIGHT_NODE_MODULES")
+	}
+	root := t.TempDir()
+	t.Chdir(root)
+	require.NoError(t, os.Symlink(modules, filepath.Join(root, "node_modules")))
+	requireWriteFile(t, filepath.Join(root, "playwright.config.cjs"), `module.exports={testDir:'.',reporter:[['html',{open:'never'}],['json',{outputFile:'results.json'}]]};`)
+	requireWriteFile(t, filepath.Join(root, "one.spec.cjs"), `const {test}=require('@playwright/test');test('listed',()=>{});`)
+	drive := &Testdrive{command: filepath.Join(root, "node_modules", ".bin", "playwright"), args: []string{"test"}, executor: &ext.DefaultCommandExecutor{Timeout: 30 * time.Second}, repositoryRoot: root}
+	discovered, err := drive.inspectPlaywright(t.Context(), root, "", "")
+	require.NoError(t, err)
+	require.Len(t, discovered.Tests, 1)
+	require.NoDirExists(t, filepath.Join(root, "playwright-report"), "configured reporters still run, but write to private storage")
+	require.NoFileExists(t, filepath.Join(root, "results.json"))
+}
+
 // Relative durations from CI; see integrationScenarios.
 var playwrightWorkflowScenarios = integrationScenarios{
 	names:   []string{"passing", "existing failure", "sharded repeated alias", "unsupported detached spawn", "dependency projects and bare playwright"},

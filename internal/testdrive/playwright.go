@@ -170,6 +170,21 @@ func playwrightArgs(command string, args []string, additions ...string) []string
 	return framework.WithFrameworkOptions(command, args, "playwright", additions...)
 }
 
+// PW_TEST_REPORTER adds the observer; configured reporters still run. Their
+// files go to private storage, so a run inside the checkout leaves no
+// playwright-report/ or result files behind. Environment values take
+// precedence over reporter options in the config.
+func privatePlaywrightReportOutput(env map[string]string, directory string) {
+	reports := filepath.Join(directory, "reports")
+	// Older Playwright releases read PLAYWRIGHT_HTML_REPORT instead.
+	env["PLAYWRIGHT_HTML_OUTPUT_DIR"] = filepath.Join(reports, "html")
+	env["PLAYWRIGHT_HTML_REPORT"] = env["PLAYWRIGHT_HTML_OUTPUT_DIR"]
+	env["PLAYWRIGHT_HTML_OPEN"] = "never"
+	env["PLAYWRIGHT_BLOB_OUTPUT_DIR"] = filepath.Join(reports, "blob")
+	env["PLAYWRIGHT_JSON_OUTPUT_FILE"] = filepath.Join(reports, "results.json")
+	env["PLAYWRIGHT_JUNIT_OUTPUT_FILE"] = filepath.Join(reports, "results.xml")
+}
+
 func (t *Testdrive) playwrightInvocation(args []string) (string, []string) {
 	if t.playwrightGuard {
 		// Pass arguments positionally; never interpret customer arguments as shell code.
@@ -198,6 +213,7 @@ func (t *Testdrive) inspectPlaywright(ctx context.Context, directory, probe, pro
 	}
 	env["DDTEST_PLAYWRIGHT_REPORT"] = resultPath
 	env["PW_TEST_REPORTER"] = reporter
+	privatePlaywrightReportOutput(env, directory)
 	owner, err := t.ownProcesses(directory, env)
 	if err != nil {
 		return result, err
@@ -302,7 +318,7 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	run.Name, run.Instrumented, run.ProbeMode, run.root, run.framework = name, instrumented, probeMode, t.checkoutRoot(), "playwright"
-	run.ExecutionContext = "Both comparison modes add a native-result observer through PW_TEST_REPORTER and process supervision, with private process groups for non-IPC child launches. Configured reporters are preserved. Baseline disables dd-trace; it is not an unmodified shell invocation."
+	run.ExecutionContext = "Both comparison modes add a native-result observer through PW_TEST_REPORTER and process supervision, with private process groups for non-IPC child launches. Configured reporters are preserved; their output files go to private storage. Baseline disables dd-trace; it is not an unmodified shell invocation."
 	run.ExecutionPath = "playwright-cli"
 	directory := filepath.Join(session.Directory(), name)
 	if err := os.MkdirAll(directory, 0700); err != nil {
@@ -339,6 +355,7 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 	env["DDTEST_PLAYWRIGHT_REPORT"] = filepath.Join(directory, "results.json")
 	run.ReplacedReporters = replacedPlaywrightReporter(t.configurationEnvironment)
 	env["PW_TEST_REPORTER"] = reporter
+	privatePlaywrightReportOutput(env, directory)
 	defer func() {
 		runErr = errors.Join(runErr, owner.Close())
 	}()

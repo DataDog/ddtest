@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import base64
 import os
 from pathlib import Path
 import re
@@ -31,6 +32,9 @@ def validate_image(image):
         raise ValueError("--image must be a prebuilt immutable image ID or repository@sha256 digest")
 
 
+# Runtime locations a trusted image may declare, such as an architecture-
+# matching browser driver; every other image variable is unset per command.
+IMAGE_RUNTIME_VARIABLES = ("CHROMEDRIVER_PATH",)
 CONTROL_TIMEOUT = 20
 TRIAL_ROOT_VARIABLE = "DDTEST_EVAL_TRIAL_ROOT"
 CONTAINER_NAME = re.compile(r"ddtest-eval-[a-f0-9]{32}")
@@ -133,9 +137,19 @@ class Container:
         # Values never appear on the docker command line, where any local
         # process can read them with ps. The private env file is read once by
         # the docker CLI and removed when the command ends.
-        for key, value in env.items():
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) or "\n" in value or "\0" in value:
+        decode = []
+        for key, value in list(env.items()):
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) or "\0" in value:
                 raise ValueError(f"Environment entry {key!r} cannot be forwarded to the container")
+            if "\n" in value:
+                # The env file holds one line per entry; restore multi-line
+                # values (such as custom model headers) inside the container.
+                del env[key]
+                env["DDTEST_EVAL_B64_" + key] = base64.b64encode(value.encode()).decode()
+                decode.append(key)
+        if decode:
+            restore = "".join(f'{key}="$(printf %s "$DDTEST_EVAL_B64_{key}" | base64 -d)"; export {key}; unset DDTEST_EVAL_B64_{key}; ' for key in decode)
+            argv = ["/bin/sh", "-c", restore + 'exec "$@"', "sh", *argv]
         descriptor, env_file = tempfile.mkstemp(prefix="ddtest-eval-env-")
         try:
             with os.fdopen(descriptor, "w") as stream:
@@ -143,7 +157,7 @@ class Container:
             arguments = ["docker", "exec", "--interactive", "--env-file", env_file, "--workdir", str(cwd),
                          self.name, "/usr/bin/env"]
             for key in self.container_environment:
-                if key not in env:
+                if key not in env and key not in IMAGE_RUNTIME_VARIABLES:
                     arguments.extend(["-u", key])
             arguments.extend(argv)
             return executor(arguments, self.trial, os.environ, timeout, on_line, prompt)

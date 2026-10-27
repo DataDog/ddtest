@@ -148,8 +148,17 @@ class ReviewTests(unittest.TestCase):
         self.assertFalse(seen['file'].exists())
         arguments=seen['arguments']
         self.assertEqual(arguments[arguments.index('/usr/bin/env')+1:],['-u','NODE_VERSION','-u','HOSTNAME','node','--version'])
+        # Multi-line values (managed model headers) travel base64-encoded in the
+        # env file and are restored by a shell wrapper inside the container.
+        container.execute(['true'],trial,{'HEADERS':'a: 1\nb: 2'},5,lambda _:None,None,executor)
+        self.assertEqual(seen['content'],'DDTEST_EVAL_B64_HEADERS=YTogMQpiOiAy\n')
+        arguments=seen['arguments']
+        wrapped=arguments[arguments.index('/bin/sh'):]
+        self.assertEqual(wrapped[1],'-c')
+        self.assertEqual(wrapped[3:],['sh','true'])
+        self.assertNotIn('a: 1',' '.join(arguments))
         with self.assertRaises(ValueError):
-            container.execute(['true'],trial,{'BAD':'line\nbreak'},5,lambda _:None,None,executor)
+            container.execute(['true'],trial,{'BAD':'nul\0byte'},5,lambda _:None,None,executor)
 
     def test_low_storage_stops_before_clone_or_model(self):
         from types import SimpleNamespace
@@ -270,6 +279,16 @@ class EvidenceTests(unittest.TestCase):
         for denied in (secret,'not-in-env','unknown-value','VERYSECRET','sk-1234567890abcdefghijk'):
             self.assertNotIn(denied,text)
         self.assertIn('https://example.com',text)
+
+    def test_workflow_secret_references_survive_redaction(self):
+        patch_text=("+          api_key: ${{ secrets.DD_API_KEY }}\n"
+                    "+          DD_API_KEY: '${{ secrets.DD_API_KEY }}'\n"
+                    "+          token: real-token-value\n")
+        text=run_eval.redact(patch_text)
+        self.assertIn("api_key: ${{ secrets.DD_API_KEY }}",text)
+        self.assertIn("DD_API_KEY: '${{ secrets.DD_API_KEY }}'",text)
+        self.assertNotIn("real-token-value",text)
+        self.assertIn("token: [REDACTED]",text)
 
     def test_setup_private_keys_remain_redacted_across_lines_and_excerpt_boundaries(self):
         clean = run_eval.LineRedactor()

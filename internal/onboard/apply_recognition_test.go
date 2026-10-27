@@ -116,10 +116,29 @@ func TestApplyAcceptsNpmOptionsAndWorkingDirectories(t *testing.T) {
 	}
 }
 
+// A job whose runner is one matrix value keeps its Windows rows: the action
+// skips them by that value, and the guarded preload falls back to nothing.
+func TestApplyGuardsWindowsRowsOfAMixedMatrix(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  test:\n    strategy: {matrix: {os: [ubuntu-latest, windows-latest]}}\n    runs-on: ${{ matrix.os }}\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '22'}\n      - run: npm test\n")
+	_, err := ApplyJavaScriptSetup(root, "jest", "5.132.0", "datadoghq.com", ">=18")
+	require.NoError(t, err)
+	data, err := os.ReadFile(filepath.Join(root, ".github/workflows/test.yml"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "if: matrix.os != 'windows-latest'")
+	require.Contains(t, string(data), "format('-r {0}', env.DD_TRACE_PACKAGE)")
+	check := CheckCIRuntimes(t.Context(), root, "jest")
+	statuses := map[string]string{}
+	for _, job := range check.Jobs {
+		statuses[job.Code] = job.Status
+	}
+	require.NotContains(t, statuses, CodeMissingInstrumentation, "%+v", check.Jobs)
+	require.Contains(t, statuses, CodeExcludedRuntime, "the Windows row runs uninstrumented by design: %+v", check.Jobs)
+}
+
 func TestApplyRefusesWindowsRunnersForEveryFramework(t *testing.T) {
 	for name, runner := range map[string]string{
 		"label":  "    runs-on: windows-latest\n",
-		"matrix": "    strategy: {matrix: {os: [ubuntu-latest, windows-latest]}}\n    runs-on: ${{ matrix.os }}\n",
+		"matrix": "    strategy: {matrix: {os: [windows-2022, windows-latest]}}\n    runs-on: ${{ matrix.os }}\n",
 		"group":  "    runs-on: {group: windows-runners}\n",
 		"labels": "    runs-on: {group: large-runners, labels: Windows}\n",
 	} {

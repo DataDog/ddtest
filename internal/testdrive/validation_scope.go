@@ -20,6 +20,7 @@ func hasValidationPair(result validationResult) bool {
 type configurationCoverage struct {
 	Discovered   int `json:"discovered"`
 	Excluded     int `json:"excluded"`
+	RemoteOnly   int `json:"remote_only,omitempty"`
 	Executed     int `json:"executed"`
 	Paired       int `json:"paired"`
 	Validated    int `json:"validated"`
@@ -104,6 +105,10 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 			coverage.Excluded++
 			continue
 		}
+		if configuration.RemoteGrid != "" {
+			coverage.RemoteOnly++
+			continue
+		}
 		switch configuration.Status {
 		case "passed":
 			coverage.Validated++
@@ -135,4 +140,12 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 		executed.Reason = fmt.Sprintf("%d/%d executed configurations passed paired comparison, supported features, static checks, cleanup and report publication. Unvalidated configurations and actual CI execution remain separate.", executed.Passed, executed.Configurations)
 	}
 	return coverage, executed
+}
+
+// remoteOnlyCount names configurations that run only on a remote browser grid.
+func remoteOnlyCount(coverage *configurationCoverage) string {
+	if coverage.RemoteOnly == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", %d remote grid only (CI runs them)", coverage.RemoteOnly)
 }

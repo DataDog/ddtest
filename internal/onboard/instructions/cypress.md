@@ -35,11 +35,18 @@ the CI setup, then validate with the customer's actual headless command.
    expose Istanbul's window.__coverage__ (babel-plugin-istanbul or
    vite-plugin-istanbul in the build served to Cypress). Testdrive requires that
    coverage in the real suite and a test-level ITR skip of its probe. Preserve an
-   existing coverage setup; @cypress/code-coverage is not required. Version 3 of
+   existing coverage setup. If there is none and testdrive returns `coverage.edit`
+   for a recognized build, apply that exact, test-only edit as given; the final
+   report lists it with its revert. For other builds, adding coverage changes the
+   application build and its dependencies: propose babel-plugin-istanbul (Babel)
+   or vite-plugin-istanbul (Vite) for test builds to the user, and add it only
+   with their approval. @cypress/code-coverage is not required. Version 3 of
    @cypress/code-coverage fails when the tracer skips a test; it needs version 4
    or later, which requires Cypress 15.10 or later.
-5. Finish ALL repository edits before final validation, including CI, coverage
-   instrumentation, README/documentation, ignored-file rules and lint/format fixes.
+5. Finish ALL repository edits before final validation: CI, ignored-file rules
+   and any coverage change ddtest prescribed or the user approved. Do not edit
+   documentation, rename tests, or rewrite scripts or CI only to satisfy ddtest;
+   report the blocker.
    Run the repository checks appropriate to any config or startup source files
    you edited, including their existing lint rules. Validation is a read-only
    phase for the agent: after launching testdrive, only wait with the host tool

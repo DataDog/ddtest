@@ -113,7 +113,7 @@ func TestJestDiscoveryWorkingDirectoryPrecedence(t *testing.T) {
 		result := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "npm test", WorkingDirectory: directory}, "javascript", "jest")
 		require.NotEmpty(t, result.Reason)
 	}
-	result := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "npm test", Shell: "pwsh"}, "javascript", "jest")
+	result := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "npm test $env:ARGS", Shell: "pwsh"}, "javascript", "jest")
 	require.Contains(t, result.Reason, "shell")
 }
 

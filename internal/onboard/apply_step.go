@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -101,6 +103,9 @@ func setupStepText(node *yaml.Node, indent, nested int, comments setupComments, 
 		return "", err
 	}
 	step := document.Content[0]
+	// The round trip quotes values the encoder escapes; keep the source styles
+	// so restoreEscapedScalars can write those values back as they were.
+	copyScalarStyles(step, node)
 	setupMember(step, "run").Value = command
 	if condition != "" {
 		if setupMember(step, "env") != nil {
@@ -149,9 +154,10 @@ func encodeSetupStep(step *yaml.Node, indent, nested int, comments setupComments
 	if err := encoder.Close(); err != nil {
 		return "", err
 	}
+	encoded := restoreEscapedScalars(out.String(), step)
 	var result strings.Builder
 	first := true
-	for _, line := range strings.SplitAfter(out.String(), "\n") {
+	for _, line := range strings.SplitAfter(encoded, "\n") {
 		if line == "" {
 			continue
 		}
@@ -219,6 +225,72 @@ func setupGuardedPreload(options string) string {
 
 const setupActionV3 = "datadog/test-visibility-github-action@7ce545f228901e4ac4ef0b45d946120f1c4124e0" // v3.3.0
 
+// pinSetupAction replaces the floating v3 reference in manual guidance with
+// the verified commit setup writes, so both paths install the same action.
+func pinSetupAction(text string) string {
+	return strings.NewReplacer(
+		"uses: datadog/test-visibility-github-action@v3\n", "uses: "+setupActionV3+" # v3.3.0\n",
+		"`datadog/test-visibility-github-action@v3`", "`"+setupActionV3+"` (v3.3.0)",
+	).Replace(text)
+}
+
+// simpleStepCondition reports whether a test step's if: reads only matrix and
+// env values through comparisons and logical operators. Setup copies such a
+// guard onto the action, so the tracer installs exactly where those tests run;
+// job status functions and other contexts keep the step outside the applier.
+func simpleStepCondition(condition string) bool {
+	expression := strings.TrimSpace(condition)
+	if strings.HasPrefix(expression, "${{") {
+		if !strings.HasSuffix(expression, "}}") {
+			return false
+		}
+		expression = strings.TrimSpace(expression[3 : len(expression)-2])
+	}
+	if expression == "" || strings.Contains(expression, "${{") {
+		return false
+	}
+	reference := false
+	for i := 0; i < len(expression); {
+		c := expression[i]
+		switch {
+		case c == ' ' || c == '(' || c == ')':
+			i++
+		case strings.HasPrefix(expression[i:], "&&") || strings.HasPrefix(expression[i:], "||") || strings.HasPrefix(expression[i:], "==") ||
+			strings.HasPrefix(expression[i:], "!=") || strings.HasPrefix(expression[i:], "<=") || strings.HasPrefix(expression[i:], ">="):
+			i += 2
+		case c == '!' || c == '<' || c == '>':
+			i++
+		case c == '\'':
+			end := strings.IndexByte(expression[i+1:], '\'')
+			if end < 0 {
+				return false
+			}
+			i += end + 2
+		default:
+			j := i
+			for j < len(expression) && (expression[j] == '.' || expression[j] == '_' || expression[j] == '-' ||
+				'a' <= expression[j] && expression[j] <= 'z' || 'A' <= expression[j] && expression[j] <= 'Z' || '0' <= expression[j] && expression[j] <= '9') {
+				j++
+			}
+			word := expression[i:j]
+			if word == "" || j < len(expression) && expression[j] == '(' {
+				return false // function calls such as success() or contains()
+			}
+			switch {
+			case strings.HasPrefix(word, "matrix.") || strings.HasPrefix(word, "env."):
+				reference = true
+			case word == "true" || word == "false" || word == "null":
+			default:
+				if _, err := strconv.ParseFloat(word, 64); err != nil {
+					return false
+				}
+			}
+			i = j
+		}
+	}
+	return reference
+}
+
 // These immutable releases were verified against the action's published v3 tags.
 func setupActionSupported(action string) bool {
 	switch strings.TrimPrefix(strings.ToLower(action), "datadog/test-visibility-github-action@") {
@@ -227,4 +299,59 @@ func setupActionSupported(action string) bool {
 		return true
 	}
 	return false
+}
+
+// escapedScalar matches a double-quoted scalar the encoder wrote with \u or \U
+// escapes, as it does for emoji and other characters outside its printable set.
+var escapedScalar = regexp.MustCompile(`"(?:[^"\\]|\\.)*\\[uU][0-9A-Fa-f]{4,8}(?:[^"\\]|\\.)*"`)
+
+// restoreEscapedScalars writes back, in their original style, the scalars the
+// encoder escaped only because of their characters (a step named "🧪 Test"
+// became "\U0001F9EA Test"). ddtest re-encodes a step to insert its own keys;
+// the customer's other values must stay as they were written.
+func restoreEscapedScalars(encoded string, step *yaml.Node) string {
+	styles := map[string]yaml.Style{}
+	var walk func(*yaml.Node)
+	walk = func(node *yaml.Node) {
+		if node.Kind == yaml.ScalarNode {
+			if _, seen := styles[node.Value]; !seen {
+				styles[node.Value] = node.Style
+			}
+		}
+		for _, child := range node.Content {
+			walk(child)
+		}
+	}
+	walk(step)
+	return escapedScalar.ReplaceAllStringFunc(encoded, func(token string) string {
+		value, err := strconv.Unquote(token)
+		if err != nil {
+			return token
+		}
+		style, ok := styles[value]
+		if !ok {
+			return token
+		}
+		switch style {
+		case 0:
+			return value
+		case yaml.SingleQuotedStyle:
+			return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+		}
+		return token
+	})
+}
+
+// copyScalarStyles copies scalar styles from src onto the same scalars of its
+// re-parsed copy dst.
+func copyScalarStyles(dst, src *yaml.Node) {
+	if dst.Kind != src.Kind || len(dst.Content) != len(src.Content) {
+		return
+	}
+	if dst.Kind == yaml.ScalarNode && dst.Value == src.Value {
+		dst.Style = src.Style
+	}
+	for i := range dst.Content {
+		copyScalarStyles(dst.Content[i], src.Content[i])
+	}
 }

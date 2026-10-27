@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -99,6 +100,23 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 		if framework == "webdriverio" {
 			prefix = webdriverIOScopedOptions
 		}
+		loaders := ""
+		if framework == "cucumber" {
+			// An earlier apply already wrote the scoped prefix, possibly with the
+			// loaders it kept; adding another would hide them from probes.
+			if found, scoped := cucumberScopedLoaders(script); scoped {
+				if strings.Contains(script, cucumberImpactedWorkaround) {
+					continue
+				}
+				if match := cucumberScopedPrefix.FindString(strings.TrimSpace(script)); match != "" {
+					script, loaders = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(script), match)), found
+				}
+			} else if rest, found, ok := cucumberLoaderOverride(script); ok {
+				// Keep in-script source loaders after the inherited options instead
+				// of letting their NODE_OPTIONS replace the tracer preload.
+				script, loaders = rest, found
+			}
+		}
 		if strings.HasPrefix(script, prefix+" ") {
 			if framework != "cucumber" || strings.Contains(script, cucumberImpactedWorkaround) {
 				continue
@@ -141,6 +159,9 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 		extra := ""
 		if framework == "cucumber" {
 			extra = " " + cucumberImpactedWorkaround
+		}
+		if loaders != "" {
+			prefix = strings.TrimSuffix(prefix, `"`) + " " + loaders + `"`
 		}
 		replacement := prefix + extra + " " + script
 		key, _ := json.Marshal(name)
@@ -224,7 +245,24 @@ func cucumberCoverageEdit(script string) (int, int, string, error) {
 
 var localWDIORunner = regexp.MustCompile(`(?m)^\s*runner:\s*['"]local['"]\s*,`)
 var browserWDIORunner = regexp.MustCompile(`(?m)^\s*runner:\s*(?:\[\s*)?['"]browser['"]`)
-var wdioBaseConfig = regexp.MustCompile(`(?m)^import\s+\{\s*config\s+as\s+baseConfig\s*\}\s+from\s+['"]([^'"]+)['"]`)
+var wdioBaseConfig = regexp.MustCompile(`(?m)^import\s+\{\s*config(?:\s+as\s+\w+)?\s*\}\s+from\s+['"]([^'"]+)['"]`)
+
+// wdioConfigSource returns the file a config import names. TypeScript ESM
+// imports name the emitted .js file while the repository holds the .ts source.
+func wdioConfigSource(root, config string) string {
+	if _, err := os.Stat(filepath.Join(root, config)); err == nil {
+		return config
+	}
+	for _, from := range []string{".js", ".mjs", ".cjs"} {
+		if stem, ok := strings.CutSuffix(config, from); ok {
+			source := stem + strings.Replace(from, "j", "t", 1)
+			if _, err := os.Stat(filepath.Join(root, source)); err == nil {
+				return source
+			}
+		}
+	}
+	return config
+}
 
 func localWDIOLeaf(root, script string) (bool, error) {
 	parts, err := staticCommands(script)
@@ -255,7 +293,7 @@ func localWDIOLeaf(root, script string) (bool, error) {
 			if len(base) != 2 {
 				break
 			}
-			config = filepath.Join(filepath.Dir(config), string(base[1]))
+			config = wdioConfigSource(root, filepath.Join(filepath.Dir(config), string(base[1])))
 		}
 		return false, fmt.Errorf("cannot identify a literal local/browser runner in %s; review its scoped worker initialization", words[i+2])
 	}
@@ -272,6 +310,40 @@ func setupPinnedDependencies(packages []string) []string {
 		}
 	}
 	return result
+}
+
+// OnlyPrescribedDependencyChanges reports whether every dirty file is a package
+// manifest or lockfile, and every dirty manifest declares all the dev
+// dependencies a setup handoff prescribed. Applying ddtest's own setup edits on
+// top of that install needs no approval; any other uncommitted change still does.
+func OnlyPrescribedDependencyChanges(root string, dirty, packages []string) bool {
+	if len(dirty) == 0 || len(packages) == 0 {
+		return false
+	}
+	for _, name := range dirty {
+		switch filepath.Base(name) {
+		case "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock":
+		case "package.json":
+			data, err := os.ReadFile(filepath.Join(root, name))
+			if err != nil {
+				return false
+			}
+			var manifest struct {
+				DevDependencies map[string]string `json:"devDependencies"`
+			}
+			if json.Unmarshal(data, &manifest) != nil {
+				return false
+			}
+			for _, pkg := range packages {
+				if _, ok := manifest.DevDependencies[pkg]; !ok {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func setupDependencyGap(root string, packages []string) error {

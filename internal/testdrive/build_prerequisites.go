@@ -2,6 +2,7 @@ package testdrive
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -65,8 +66,8 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 		if err != nil {
 			return err
 		}
-		if preparationNeedsReview(build.BuildCommand) && !t.allowReviewedBuilds {
-			build.Status, build.Code = "blocked", "preparation_review_required"
+		if review, found := preparationNeedsReview(directory, build.BuildCommand); review && !t.allowReviewedBuilds {
+			build.Status, build.Code, build.Diagnostic = "blocked", "preparation_review_required", found
 			return fmt.Errorf("preparation requires separate review: %s; review customer scripts/plugins and network access, then opt in with --allow-reviewed-builds", build.Command)
 		}
 		if build.Kind == onboard.PreparationPatch {
@@ -143,10 +144,138 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 	return nil
 }
 
-func preparationNeedsReview(build onboard.BuildCommand) bool {
-	if build.Kind == onboard.PreparationPackageBuild || build.Kind == onboard.PreparationDependencies {
-		return true
+// bundlerConfigs lists the files each reviewed bundler loads and executes.
+// Rollup and webpack always run customer configuration; tsup and unbuild also
+// run zero-config, bundling the package sources with their own defaults.
+var bundlerConfigs = map[string][]string{
+	"rollup":  {"rollup.config.js", "rollup.config.mjs", "rollup.config.cjs", "rollup.config.ts"},
+	"webpack": {"webpack.config.js", "webpack.config.mjs", "webpack.config.cjs", "webpack.config.ts"},
+	"tsup":    {"tsup.config.ts", "tsup.config.js", "tsup.config.mjs", "tsup.config.cjs", "tsup.config.json"},
+	"unbuild": {"build.config.ts", "build.config.js", "build.config.mjs", "build.config.cjs"},
+}
+
+// preparationNeedsReview reports whether running build executes customer code
+// that deserves review, and what review should look at.
+func preparationNeedsReview(directory string, build onboard.BuildCommand) (bool, string) {
+	switch build.Kind {
+	case onboard.PreparationPackageBuild:
+		return true, "package build lifecycle scripts"
+	case onboard.PreparationDependencies:
+		return true, "dependency installation, which may run install scripts and use the network"
 	}
 	words, err := shellquote.Split(build.Command)
-	return err == nil && len(words) > 0 && slices.Contains([]string{"rollup", "webpack", "tsup", "unbuild"}, words[0])
+	if err != nil || len(words) == 0 {
+		return false, ""
+	}
+	configs, reviewed := bundlerConfigs[words[0]]
+	if !reviewed {
+		return false, ""
+	}
+	var found []string
+	for _, name := range configs {
+		if info, err := os.Stat(filepath.Join(directory, name)); err == nil && info.Mode().IsRegular() {
+			found = append(found, name)
+		}
+	}
+	var pkg map[string]json.RawMessage
+	if data, err := os.ReadFile(filepath.Join(directory, "package.json")); err == nil && json.Unmarshal(data, &pkg) == nil {
+		if _, ok := pkg[words[0]]; ok {
+			found = append(found, `package.json "`+words[0]+`" settings`)
+		}
+	}
+	if slices.ContainsFunc(words[1:], func(word string) bool {
+		return word == "--config" || strings.HasPrefix(word, "--config=") || word == "-c"
+	}) {
+		found = append(found, "the --config file named by the command")
+	}
+	if len(found) == 0 && (words[0] == "tsup" || words[0] == "unbuild") {
+		return false, ""
+	}
+	if len(found) == 0 {
+		return true, words[0] + " command-line options"
+	}
+	return true, strings.Join(found, ", ")
+}
+
+// suggestPrerequisiteOutputs pre-fills each pending prerequisite's
+// expected_files with the git-ignored files its package.json entry points
+// name. These are suggestions from configuration, never from running the
+// prerequisite; the caller still reviews them and accepts them with --facts.
+func suggestPrerequisiteOutputs(ctx context.Context, root string, template *onboard.SetupFacts) {
+	if template == nil {
+		return
+	}
+	for i := range template.Configurations {
+		for j := range template.Configurations[i].Prerequisites {
+			fact := &template.Configurations[i].Prerequisites[j]
+			if len(fact.Argv) == 0 || len(fact.ExpectedFiles) > 0 {
+				continue
+			}
+			fact.ExpectedFiles = packageEntryOutputs(ctx, root, fact.Directory)
+		}
+	}
+}
+
+// packageEntryOutputs lists repository-relative files named by package.json
+// entry points (main, module, browser, types, exports, bin) that git ignores.
+// A tracked or unignored file is source, not a build output.
+func packageEntryOutputs(ctx context.Context, root, directory string) []string {
+	directory = filepath.FromSlash(directory)
+	if directory == "" {
+		directory = "."
+	}
+	if !filepath.IsLocal(directory) && directory != "." {
+		return []string{}
+	}
+	data, err := os.ReadFile(filepath.Join(root, directory, "package.json"))
+	if err != nil {
+		return []string{}
+	}
+	var manifest map[string]any
+	if json.Unmarshal(data, &manifest) != nil {
+		return []string{}
+	}
+	var targets []string
+	var collect func(any)
+	collect = func(value any) {
+		switch value := value.(type) {
+		case string:
+			targets = append(targets, value)
+		case map[string]any:
+			keys := make([]string, 0, len(value))
+			for key := range value {
+				keys = append(keys, key)
+			}
+			slices.Sort(keys)
+			for _, key := range keys {
+				collect(value[key])
+			}
+		case []any:
+			for _, item := range value {
+				collect(item)
+			}
+		}
+	}
+	for _, key := range []string{"main", "module", "browser", "types", "typings", "exports", "bin"} {
+		collect(manifest[key])
+	}
+	suggestions := []string{}
+	for _, target := range targets {
+		clean := filepath.Clean(filepath.Join(directory, filepath.FromSlash(target)))
+		if !filepath.IsLocal(clean) || strings.Contains(clean, "*") || filepath.Base(clean) == "package.json" || slices.Contains(suggestions, filepath.ToSlash(clean)) {
+			continue
+		}
+		parts := strings.Split(clean, string(filepath.Separator))
+		if slices.Contains(parts, "node_modules") || slices.Contains(parts, ".git") {
+			continue
+		}
+		if exec.CommandContext(ctx, "git", "-C", root, "check-ignore", "-q", "--no-index", "--", filepath.ToSlash(clean)).Run() != nil {
+			continue
+		}
+		suggestions = append(suggestions, filepath.ToSlash(clean))
+		if len(suggestions) == maxExpectedOutputs {
+			break
+		}
+	}
+	return suggestions
 }

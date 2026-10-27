@@ -20,7 +20,9 @@ function internal (file) {
   const base = path.join(root, 'lib', file)
   return require(fs.existsSync(base + '.js') ? base + '.js' : base + '.cjs')
 }
-const Runner = internal('runner')
+// Mocha 12.0.3 ships lib/runner as an ES module, whose require() result is a
+// namespace; the Runner class Mocha itself uses is exposed as Mocha.Runner.
+const Runner = internal('mocha').Runner
 let sequence = 0
 const observed = new WeakSet()
 const entry = process.argv[1] && path.resolve(process.argv[1])

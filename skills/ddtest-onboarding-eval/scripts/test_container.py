@@ -164,6 +164,19 @@ class ContainerTests(unittest.TestCase):
         self.assertEqual(dict(line.split('=',1) for line in lines if line),expected)
         self.assertNotIn('forwarded-value',' '.join(seen[0]))
 
+    def test_multiline_values_are_restored_exactly_inside_the_container(self):
+        trial=self.root/'multiline-trial';trial.mkdir()
+        container=isolation.Container(trial,IMAGE)
+        env=isolation.environment(trial);env['PATH']=container.path;env['HEADERS']='source: a\norg-id: b'
+        lines=[]
+        try:
+            container.start()
+            self.assertEqual(container.execute(['/bin/sh','-c','printf "%s|" "$HEADERS"; env | grep -c DDTEST_EVAL_B64_ || true'],
+                                               trial,env,10,lines.append,None,run_eval.execute),0)
+        finally:
+            container.close()
+        self.assertEqual(lines,['source: a','org-id: b|0'])
+
     def test_stopping_processes_ends_a_detached_agent_and_keeps_the_container(self):
         trial=self.root/'stop-trial';trial.mkdir()
         container=isolation.Container(trial,IMAGE)

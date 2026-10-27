@@ -56,6 +56,9 @@ export default class NativeReporter extends Reporter {
     if (!selection) throw new Error('WDIO worker capability identity is unavailable');
     fs.writeFileSync(path.join(directory, `${this.runner.cid}-${process.pid}.json`), JSON.stringify({
       complete: true, cid: this.runner.cid, retry: this.runner.retry || 0,
+      // Attempt numbering differs between WebdriverIO releases; ddtest uses
+      // the worker's own setting to number the first attempt.
+      specFileRetries: Number.isInteger(this.runner.config?.specFileRetries) ? this.runner.config.specFileRetries : undefined,
       specs: this.runner.specs.map(file => file.startsWith('file:') ? fileURLToPath(file) : file),
       browser: selection.browser, capability: selection.capability,
       tests: [...this.results.values()], errors: this.errors

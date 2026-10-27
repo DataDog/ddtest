@@ -15,7 +15,7 @@ import (
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
-const cypressMissingCoverageReason = "No application source coverage observed. Instrument the application served to Cypress with Istanbul (babel-plugin-istanbul or vite-plugin-istanbul) so the tested page exposes window.__coverage__. Specs, support files and dependencies alone are insufficient."
+const cypressMissingCoverageReason = "No application source coverage observed, so Test Impact Analysis cannot be validated. The tested page must expose Istanbul's window.__coverage__: instrument the application build served to Cypress with babel-plugin-istanbul (Babel) or vite-plugin-istanbul (Vite), limited to test builds. That changes the application build and its dependencies, so propose the exact change to the user and apply it only with their approval. Specs, support files and dependencies alone are insufficient."
 
 // cypressTestCode locates the code Cypress itself loads: the effective
 // project, whose cypress/ folder holds test code, and the configured support
@@ -92,6 +92,10 @@ func cypressSourceCoverage(root string, code cypressTestCode, facts intake.Facts
 		result.Reason = "Coverage named only Cypress specs, support code or dependencies. Instrument the application served to Cypress, not only the test bundle."
 	default:
 		result.Reason = cypressMissingCoverageReason
+		if edit := cypressCoverageEdit(root); edit != nil {
+			result.Edit = edit
+			result.Reason = cypressCoverageEditReason(edit)
+		}
 	}
 	return result
 }

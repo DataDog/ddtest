@@ -17,14 +17,19 @@ const workflowCheckpointLifetime = 24 * time.Hour
 // Keep one failure checkpoint for the same inputs, even without --resume.
 // The failure code and reason are deliberately excluded: a flaky cause that
 // alternates codes, or temporary paths in a reason, must not reset retries.
+// maxRecordedFailures bounds the attempt history a checkpoint keeps.
+const maxRecordedFailures = 5
+
 func (c *workflowCheckpoint) recordFailure(fingerprint, factsHash, code string) error {
 	key := fmt.Sprintf("%s\x00%s\x00%s\x00%t\x00%t\x00%s\x00%s\x00%s", c.Root, c.Framework, c.Command, c.Apply, c.All, fingerprint, factsHash, engineIdentity())
 	id := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))[:32]
 	previousID := c.RunID
 	attempts := 1
+	failures := c.Failures
 	previous, err := readCheckpoint(id)
 	if err == nil {
 		attempts = previous.Attempts + 1
+		failures = previous.Failures
 	} else if !os.IsNotExist(err) {
 		// An expired checkpoint is removed by readCheckpoint. Corruption must not
 		// silently overwrite evidence or disable the bounded-attempt contract.
@@ -36,7 +41,11 @@ func (c *workflowCheckpoint) recordFailure(fingerprint, factsHash, code string) 
 			return err
 		}
 	}
-	c.RunID, c.Attempts, c.Failure = id, attempts, code
+	failures = append(failures, code)
+	if len(failures) > maxRecordedFailures {
+		failures = failures[len(failures)-maxRecordedFailures:]
+	}
+	c.RunID, c.Attempts, c.Failure, c.Failures = id, attempts, code, failures
 	if err := c.save(); err != nil {
 		return err
 	}

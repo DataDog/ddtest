@@ -3,6 +3,7 @@ package onboard
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -127,4 +128,37 @@ func TestCypressActionSerializedOptionsMatchTheAction(t *testing.T) {
 	require.Equal(t, "viewportWidth=800", result.Tests[0].Cypress.Options["config"])
 	require.Equal(t, "feature=true,number=7", result.Tests[0].Cypress.Options["env"])
 	require.Equal(t, "publicValue=true", result.Tests[0].Cypress.Options["expose"])
+}
+
+func TestCypressRuntimeContextsReportEachFindingOnce(t *testing.T) {
+	root := newJestRepository(t, `on: [push, workflow_dispatch]
+jobs:
+  tests:
+    env:
+      DD_API_KEY: ${{ secrets.DD_API_KEY }}
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: 20}
+      - uses: datadog/test-visibility-github-action@v3
+        if: env.DD_API_KEY != ''
+        with: {languages: js, js-tracer-version: '6.20.1'}
+      - run: npx cypress run
+        env: {NODE_OPTIONS: "${{ env.DD_API_KEY != '' && format('-r {0}', env.DD_TRACE_PACKAGE) || '' }}"}
+`)
+	// A GitHub remote enables the push/dispatch × key present/absent contexts.
+	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "https://github.com/owner/repo.git"}} {
+		output, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput()
+		require.NoError(t, err, string(output))
+	}
+	check := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "6.20.1", Node: ">=18"}, nil
+	}, "cypress")
+	seen := map[string]int{}
+	for _, job := range check.Jobs {
+		seen[job.Status+"/"+job.Code+"/"+job.Node]++
+	}
+	for key, count := range seen {
+		require.Equal(t, 1, count, "%s repeated: %+v", key, check.Jobs)
+	}
+	require.NotEmpty(t, check.Jobs)
 }

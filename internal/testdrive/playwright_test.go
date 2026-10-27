@@ -134,23 +134,34 @@ func TestPlaywrightDiagnosticPreservesFailureCauseBeforeLongTitleList(t *testing
 	require.Contains(t, playwrightDiagnostic(run, nil), "Browser launch failed")
 }
 
-func TestPlaywrightReporterUsesDeviceBrowserDefault(t *testing.T) {
+// writePlaywrightReporterFixture installs the validation reporter beside a fake
+// playwright package whose reporters use either layout.
+func writePlaywrightReporterFixture(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	reporter := filepath.Join(root, "reporter.cjs")
+	requireWriteFile(t, reporter, playwrightReporter)
+	files["package.json"] = `{"name":"playwright","version":"0.0.0"}`
+	for name, content := range files {
+		path := filepath.Join(root, "node_modules", "playwright", name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+		requireWriteFile(t, path, content)
+	}
+	return reporter
+}
+
+func runPlaywrightReporterFixture(t *testing.T, reporter string) (validationRun, string) {
+	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is required for reporter regression")
 	}
-	root := t.TempDir()
-	reporter := filepath.Join(root, "reporter.cjs")
-	result := filepath.Join(root, "results.json")
-	requireWriteFile(t, reporter, playwrightReporter)
-	script := `const Module=require('node:module');const load=Module._load,resolve=Module._resolveFilename;
- Module._resolveFilename=function(name,...args){if(name==='playwright/package.json')return require('node:path').join(require('node:path').dirname(process.argv[1]),'package.json');return resolve.call(this,name,...args)};
- Module._load=function(name,...args){if(name.endsWith('/lib/reporters/line.js'))return {default:class{onBegin(){}onEnd(){}onError(){}}};return load.call(this,name,...args)};
- const Reporter=require(process.argv[1]);
+	result := filepath.Join(filepath.Dir(reporter), "results.json")
+	script := `const Reporter=require(process.argv[1]);
  const reporter=new Reporter();
  const project={name:'iPhone',testDir:'/repo/test',use:{defaultBrowserType:'webkit'}};
  const test={parent:{project:()=>project},titlePath:()=>['','iPhone','a.spec.ts','opens'],title:'opens',location:{file:'/repo/test/a.spec.ts'},results:[],repeatEachIndex:0,expectedStatus:'passed'};
- reporter.onBegin({version:'1.41.2',projects:[project]},{allTests:()=>[test]});reporter.onEnd();`
+ reporter.onBegin({version:'1.41.2',projects:[project]},{allTests:()=>[test]});Promise.resolve(reporter.onEnd({status:'passed'})).catch(e=>{console.error(e);process.exit(1)});`
 	command := exec.CommandContext(t.Context(), node, "-e", script, reporter)
 	command.Env = append(os.Environ(), "DDTEST_PLAYWRIGHT_REPORT="+result)
 	output, err := command.CombinedOutput()
@@ -158,8 +169,35 @@ func TestPlaywrightReporterUsesDeviceBrowserDefault(t *testing.T) {
 	var run validationRun
 	_, err = readPlaywrightResults(result, &run)
 	require.NoError(t, err)
+	return run, string(output)
+}
+
+func TestPlaywrightReporterUsesDeviceBrowserDefault(t *testing.T) {
+	reporter := writePlaywrightReporterFixture(t, map[string]string{
+		"lib/reporters/line.js": `exports.default=class{onBegin(){}onEnd(){}onError(){}}`,
+	})
+	run, _ := runPlaywrightReporterFixture(t, reporter)
 	require.Len(t, run.Tests, 1)
 	require.Equal(t, "webkit", run.Tests[0].Playwright.Browser)
+}
+
+func TestPlaywrightReporterUsesTheBundledTerminalReporter(t *testing.T) {
+	// Playwright 1.60+ has no lib/reporters/line.js; its terminal reporters are
+	// bundled into lib/runner, which exports only their v2 TerminalReporter base.
+	reporter := writePlaywrightReporterFixture(t, map[string]string{
+		"lib/runner/index.js": `exports.base={TerminalReporter:class{
+  version(){return 'v2'}
+  onConfigure(config){this.configured=config}
+  onBegin(suite){if(!this.configured)throw new Error('onConfigure must precede onBegin');this.total=suite.allTests().length}
+  onError(){}
+  async onEnd(){}
+  epilogue(full){console.log('summary printed: '+this.total+' full='+full)}
+}}`,
+	})
+	run, output := runPlaywrightReporterFixture(t, reporter)
+	require.Len(t, run.Tests, 1)
+	require.Equal(t, "webkit", run.Tests[0].Playwright.Browser)
+	require.Contains(t, output, "summary printed: 1 full=false", "the tracer reports disabled tests in the terminal summary")
 }
 
 func TestPlaywrightLaunchComparisonIgnoresOnlyPerProcessNoise(t *testing.T) {

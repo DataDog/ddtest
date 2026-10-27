@@ -619,7 +619,9 @@ runtime compatibility unverified when its version cannot be inferred safely.
 
 Preparation runs customer code. Bundlers marked for review, package build lifecycle
 scripts and dependency changes require `--allow-reviewed-builds`; they may use the
-network. Missing tools are reported as `tool_not_installed`. Literal substitutions
+network. Rollup and webpack always load customer configuration; `tsup` and `unbuild`
+need review only when a config file, package.json settings or `--config` exists. The
+review request names what was found and when the agent must ask the user first. A CI build step is replayed only when the tests can reach its outputs: when its tool and output directories are known and no repository source, test-runner configuration or self-import reaches them, the build is listed for review as not replayed instead. Missing tools are reported as `tool_not_installed`. Literal substitutions
 are applied by Go rather than system sed; regex/backreference patches require
 review. `--timeout` defaults to ten minutes per subprocess and kills its ordinary
 process group on expiry. The limit also applies to each full-suite run, baseline
@@ -642,8 +644,14 @@ repository lock on the next invocation. On macOS and Linux the lock lives in
 `/tmp`, like process-ownership storage, whatever `TMPDIR` is, so two invocations
 of one checkout with different `TMPDIR` values still exclude each other.
 Unmarked files and other repositories' storage are preserved. Failed full attempts replace old JSON evidence and remove
-stale HTML; check-only can retain one explicitly historical execution and leaves
-its HTML unchanged. HTML keeps every instrumented reporting snapshot, including
+stale HTML; check-only, and an agent workflow attempt that stops before running
+tests, retain one explicitly historical execution and leave its HTML unchanged.
+Untracked or ignored files that a run in the checkout leaves behind are listed in
+`cleanup.leftovers`. Inherited `DD_*` values that reach test commands without
+coming from CI or ddtest are recorded in `ambient_datadog_environment`. CI step
+settings that select tracer integrations (`DD_TRACE_DISABLED_INSTRUMENTATIONS`,
+`DD_TRACE_DISABLED_PLUGINS`, `DD_TRACE_<INTEGRATION>_ENABLED`) apply to local runs;
+other step `DD_*` values configure CI's intake and are replaced locally. HTML keeps every instrumented reporting snapshot, including
 repeat pairs, while aggregate execution counts include each primary run once.
 Configuration runs remain sequential while platform detection uses a scoped
 process working directory; changing all adapters to explicit working directories
@@ -840,7 +848,11 @@ worker results or incomplete telemetry keep validation incomplete.
 
 Each selected capability needs retries, EFD, quarantine, disabled-test and
 attempt-to-fix controls. TIA skipping and code coverage are unsupported and are
-never counted as passed. Browser runners, custom adapters and standalone browser
+never counted as passed. With Jasmine on jasmine-core 5, dd-trace does not apply
+retries, EFD, disabled-test or attempt-to-fix controls; those report a `known
+limitation` (never passed) and upgrading to WebdriverIO 10 (jasmine-core 6) enables
+them. A control the tracer reported without applying is `tracer_control_not_applied`;
+report such blockers rather than changing the suite. Browser runners, custom adapters and standalone browser
 automation remain outside this validation. Unknown wrappers and dynamic script
 orchestration stay visible for review. Preserve unrelated servers; an occupied
 static-server port blocks execution until local setup is resolved.

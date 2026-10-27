@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -26,6 +28,7 @@ func TestWorkflowExecutionBlockersRemainTypedAndNeverCertifySuccess(t *testing.T
 		{"process capability", "process_unavailable", "request_capability", &processSupervisionError{Code: "process_unavailable", Reason: "process ownership unavailable"}},
 		{"detached command", "unsupported_detached_spawn", "report_result", &processSupervisionError{Code: "unsupported_detached_spawn", Reason: "detached command"}},
 		{"report conflict", "execution_result_conflict", "report_result", errors.New("execution failed despite a complete report")},
+		{"local runtime", "local_runtime_mismatch", "request_capability", fmt.Errorf("cypress API preflight: %w", &localRuntimeError{Source: "The Cypress action API", Required: "20", Local: "v24.14.1"})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -42,6 +45,11 @@ func TestWorkflowExecutionBlockersRemainTypedAndNeverCertifySuccess(t *testing.T
 			require.NoError(t, json.Unmarshal(output.Bytes(), &result))
 			require.Equal(t, tc.code, result.Code)
 			require.Equal(t, tc.action, result.NextAction)
+			if tc.code == "local_runtime_mismatch" {
+				require.Equal(t, []string{"Node 20 runtime first on PATH"}, result.Capabilities)
+				require.Contains(t, result.Reason, "Ask the user before downloading a runtime")
+				require.NotEmpty(t, result.ResumeCommand)
+			}
 			require.Empty(t, result.FinalResponse)
 			require.NotEqual(t, "complete_locally", result.Status)
 		})
@@ -89,6 +97,10 @@ func TestOnboardNamedSetupBlockersReturnExecutableRecovery(t *testing.T) {
 				require.Equal(t, "setup_dependencies_missing", result.Code)
 				require.Contains(t, result.NextCommand, "nyc@17.1.0")
 				require.Equal(t, "run_command", result.NextAction)
+				// A prescribed install: run it as given, never stop to ask.
+				require.Contains(t, result.Instruction, onboard.PrescribedEditInstruction)
+				require.Contains(t, result.RequiredInput[0], "as given and without asking")
+				require.NotContains(t, result.Needs+strings.Join(result.RequiredInput, " "), "approval")
 			case "custom environment":
 				require.Equal(t, "ci_edit_unsupported", result.Code)
 				require.Equal(t, "apply_source_edit", result.NextAction)
@@ -141,7 +153,7 @@ func TestReviewedBuildBlockerReturnsFlagRatherThanNewFacts(t *testing.T) {
 	drive.workflowRun = func(_ context.Context, out io.Writer) error {
 		r := completeValidationFixture("cucumber")
 		r.Compatibility = verdict{Status: "not exercised"}
-		r.Configurations = []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm test"}, Status: "blocked", Preparation: []buildResult{{BuildCommand: onboard.BuildCommand{Command: "npm run build"}, Status: "blocked", Code: "preparation_review_required"}}}}
+		r.Configurations = []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm test"}, Status: "blocked", Preparation: []buildResult{{BuildCommand: onboard.BuildCommand{Command: "npm run build"}, Status: "blocked", Code: "preparation_review_required", Diagnostic: "package build lifecycle scripts"}}}}
 		r.Runs = nil
 		return finishValidation(out, root, r)
 	}
@@ -154,6 +166,9 @@ func TestReviewedBuildBlockerReturnsFlagRatherThanNewFacts(t *testing.T) {
 	require.Nil(t, result.InputTemplate)
 	require.Contains(t, result.Location, "npm run build")
 	require.Equal(t, "needs_input", result.Status)
+	// The agent learns what to read and when the decision belongs to the user.
+	require.Contains(t, result.RequiredInput[0], "npm run build (review package build lifecycle scripts)")
+	require.Contains(t, result.RequiredInput[0], "ask the user first")
 }
 
 func TestFocusedRunKeepsPreparationReceiptsOnItsConfiguration(t *testing.T) {

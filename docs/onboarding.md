@@ -29,7 +29,21 @@ an `.npmignore` that would change npm's `.gitignore` fallback.
 
 Every workflow is parsed and checked again before writing. Unsupported YAML,
 custom initialization, conflicting versions, Windows runners and unknown
-commands produce review gaps instead of guessed edits. A reusable
+commands produce review gaps instead of guessed edits. CI that discovery can't
+resolve never blocks the configurations that are ready: `--apply` edits and
+validates those, and leaves the unresolved entries unedited and reported as
+blockers, so the result stays incomplete until they are reviewed. A test step
+guarded only by matrix or env values (`if: matrix.node != '20'`) gets the same
+guard on the inserted action. CI rows below Node 18 (such as 16 or 17), the
+oldest Node any dd-trace major ddtest supports runs on, are ddtest's own
+decision, not the user's:
+they keep running uninstrumented, `--apply` guards them out of the inserted
+action with a matrix condition or leaves a job that only runs them unedited,
+validation counts them as excluded, and the result names them as "Not tried".
+When CI rows on a supported Node need an older tracer major than the rest,
+`--apply` stops and, for Mocha steps whose every row is affected, names the
+exact `DD_CIVISIBILITY_ENABLED: 'false'` opt-out for the user to approve; it
+never excludes those rows itself. A reusable
 (`workflow_call`) workflow is edited only when it declares
 `on.workflow_call.secrets.DD_API_KEY` and every caller in the repository passes
 it (`secrets: inherit` or `secrets: {DD_API_KEY: ...}`); callers in other
@@ -69,6 +83,8 @@ Cucumber edits add NYC coverage and set
 `DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false` in the selected scripts.
 These changes also affect developers running those scripts locally, including
 local `npm test`; the variable disables impacted-test detection on those runs.
+Manual setup (`onboard --instructions`) may set the variable on the CI test step
+instead; either place disables impacted-test detection in CI.
 Other feature controls and testdrive's isolated probes remain separate.
 
 Cucumber ESM coverage also needs `@istanbuljs/esm-loader-hook`. Missing coverage
@@ -79,8 +95,11 @@ run that command separately, then rerun onboarding. For example:
 npm install --save-dev --no-audit --no-fund nyc@17.1.0
 ```
 
-Windows runner jobs are never edited: the action's tracer installation and the
-preload are unverified there, so they need manual initialization. Scoped
+Windows runners are never instrumented: the action's tracer installation and
+the preload are unverified there, so they need manual initialization. In a job
+whose runner is one matrix value, the inserted action skips the Windows rows by
+that value, so the other rows are instrumented and the Windows rows keep running
+without the tracer; the report lists them as Windows runners, not as opt-outs. Scoped
 Cucumber/WebdriverIO package preambles also use POSIX shell syntax; Windows
 developers using `cmd.exe` need portable hooks before using these edited scripts.
 
@@ -114,7 +133,73 @@ and current execution evidence. The npm package check uses
 `npm pack --dry-run --ignore-scripts --json`; it neither publishes nor runs hooks.
 Checks and source-edit hashes stay in the bounded JSON; full output stays in HTML.
 
+`onboard --apply` selects a tracer every CI row it instruments can run: when the default release needs a newer Node than a CI job provides, it picks the verified release that supports all of them, or stops and names the rows that need different majors; every configuration it validates uses that one release, and a stop names the recommended release in its resume command. Configurations that can never run locally, such as WebdriverIO cloud grids and multiremote, don't constrain the tracer: a cloud grid whose credentials are CI secrets is instrumented and reported as a caveat, and other such configurations stay unedited and are reported as blockers. When a CI path, such as the Cypress action API, runs on a Node major the local host lacks, ddtest validates on the local Node if both the framework and the tracer support it, and records the substitution in `runtime_substitution`. That evidence completes only with `--accept-substitute-runtime`, a decision for the user; otherwise the result is `needs_input` (`substitute_runtime_unaccepted`) with the accepting resume command. When the local Node is unsupported, the result is `blocked_environment` (`local_runtime_mismatch`) naming the CI runtime. Either way, an existing installation of the CI runtime first on PATH validates without substitution; ddtest never downloads a runtime.
+
+Only CI that can reach a selected test is in scope. Jobs whose steps can't start
+one (system packages, coverage merging, linting, publishing, another framework)
+are listed as not a test consumer, and unresolved steps after a job's last
+possible test are listed as outside the test path. Before the test, a
+check-only step (it only reads or prints, or upgrades the package manager
+itself with `npm install -g npm@latest`) is listed rather than blocking, since
+each step's shell ends with it. Unknown executables, actions, repository files
+and package scripts whose body could start a test still block, and so do
+`source`/`eval`, interpreter invocations (`bash -c`, a script file, `node -e`
+code that spawns processes or loads a repository module) and npm settings that
+change how scripts execute (`ignore-scripts`, `script-shell`). A Cucumber alias
+chain such as `pnpm test:unit && pnpm test:bdd` resolves to its Cucumber leaf
+when that leaf is the chain's only and last link. CI files of other providers
+(`circle.yml`, `.gitlab-ci.yml` and the like) that mention the framework are
+listed for review; they are not analyzed. A job guard that reads only
+runtime context (`github.actor`, `github.event_name`, `github.run_number`,
+`needs.<job>.outputs`) is validated as a possible CI path and reported as
+unverified; only a guard that is false for every outcome excludes the job. Validation runs as
+close to CI as it can; where a CI value can't be reproduced locally, the report
+names it as a caveat instead of a blocker. A matrix axis computed at runtime
+(`fromJson(...)`) that only a dependency install reads becomes one value: the
+job's tests run with the locally installed dependencies, and the axis is a
+caveat once every configuration of that job passed with a framework version the
+tracer supports. Otherwise, or when anything else reads the axis, it blocks. An
+accepted substitute runtime is reported as a caveat too. So is a WebdriverIO
+configuration whose CI step reads a remote browser grid's credentials from CI
+secrets (Sauce Labs, BrowserStack, LambdaTest, TestingBot): setup instruments it
+like any other step, and it is reported as running only in CI once a local
+configuration of the same suite passed its paired comparison; without one, it
+blocks. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
+settings that disable a tracer integration (such as
+`DD_TRACE_DISABLED_INSTRUMENTATIONS=router`) and lists earlier attempts of the
+same workflow that stopped before the final run. Re-running `--apply` on its own
+output makes no change: the guard it writes on the Datadog action (runtime
+partition, the test steps' guard, Windows rows) is the guard it expects. Plain argv
+commands under `shell: pwsh`, including the Windows default, are read as POSIX
+commands, including npm package specs such as `@scope/name@version`; PowerShell
+syntax, doubled quotes and multi-line test steps remain unresolved.
+
 Automatic Mocha tracer recommendations use the verified major-5 and major-6 bootstrap contracts. Exact releases still come from registry tags; obsolete Node tags cannot win by covering more legacy CI rows. An explicitly selected or installed unverified major remains unvalidated instead of being silently replaced.
+
+Agents edit CI workflow and ignore files where a result asks for it. They also
+make the other edits ddtest prescribes for validation, exactly as given and without
+stopping to ask: dev dependencies through the exact install command, package
+scripts and coverage config. For Cypress without application coverage, a
+recognized browserify, Vite or webpack build gets a test-only edit in the run's
+`coverage.edit` (install command, files and how to serve the instrumented build),
+gated by an environment variable so other builds stay uninstrumented. A
+`replace` value names the exact existing line an edit replaces. When `tsc`
+compiles to ignored JavaScript before browserify, the coverage build bundles the
+tracked TypeScript sources with Babel, so coverage names tracked files. Babel
+packages are pinned to the 7 line that babelify supports. Other builds
+get instrumentation guidance, which needs the user's approval like any edit ddtest
+did not prescribe. The final response lists every uncommitted change outside CI and
+ignore files in `repository_changes`, with the commands that revert it, including
+the reinstall a reverted lockfile needs. Agents never rename tests, rewrite CI or
+package scripts so ddtest can parse them, disable an instrumentation ddtest did not
+prescribe disabling, or download a runtime; they report the blocker.
+A final result tells the agent to relay `final_response` verbatim. An incomplete or
+failed verdict starts with `NOT COMPLETE:`, so a paraphrase cannot turn it into a
+completion claim.
+
+When the host runs out of open file descriptors while isolating the checkout,
+the result is `blocked_environment` (`file_descriptors_exhausted`) with
+`next_action: run_command`: free descriptors and rerun the same command.
 
 Results distinguish ready, needs_input, blocked_environment, unsupported,
 validation_failed, selected_passed and complete_locally. Follow the returned argv
@@ -131,7 +216,7 @@ When repository-specific setup needs help, save the returned input template outs
 the checkout and use `--facts /absolute/path/setup.json` with `--all`. Facts bind to
 an input fingerprint covering the whole Git checkout (including nested package changes) and a configuration ID, can add validated local build argv,
 expected output files, services/readiness and documented port overrides, and cannot
-remove commands or change assertions. Services run in disposable copies with bounded
+remove commands or change assertions. A template for a pending build prerequisite pre-fills `expected_files` with the git-ignored files its package.json entry points name; ddtest never runs the prerequisite to find them, so review the list before supplying it. Services run in disposable copies with bounded
 readiness and cleanup. Their lifetime follows the configuration context, while each test/build command retains its own timeout. Live ownership leases stop declared services if the coordinator is killed. `--report --detail plan` or `--detail <configuration_id>`
 shows details capped at 1 MiB; add the returned resume ID for an unfinished plan.
 Unknown local Node build scripts in CI, including `npm run build && npm test`

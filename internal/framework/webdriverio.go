@@ -26,11 +26,13 @@ var webdriverIOReporter string
 
 // WebdriverIOConfig is the effective runner selection, without credentials or service options.
 type WebdriverIOConfig struct {
-	CloudGrid    []string            `json:"cloud_grid,omitempty"`
-	Node         string              `json:"node"`
-	Version      string              `json:"version"`
-	Runner       string              `json:"runner"`
-	Framework    string              `json:"framework"`
+	CloudGrid []string `json:"cloud_grid,omitempty"`
+	Node      string   `json:"node"`
+	Version   string   `json:"version"`
+	Runner    string   `json:"runner"`
+	Framework string   `json:"framework"`
+	// JasmineCore is the jasmine-core version the Jasmine adapter loads.
+	JasmineCore  string              `json:"jasmine_core,omitempty"`
 	Files        []string            `json:"files,omitempty"`
 	FileCount    int                 `json:"file_count,omitempty"`
 	ServerPorts  []int               `json:"static_server_ports,omitempty"`

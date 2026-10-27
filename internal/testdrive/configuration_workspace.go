@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/onboard"
@@ -266,6 +268,15 @@ func checkConfigurationSpace(directory string, needed int64) error {
 	}
 	return nil
 }
+
+// fileDescriptorsExhaustedCode marks a run stopped by the process or system
+// open-file limit, typically while copying a large node_modules.
+const fileDescriptorsExhaustedCode = "file_descriptors_exhausted"
+
+func fileDescriptorsExhausted(err error) bool {
+	return errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE)
+}
+
 func copyConfiguration(ctx context.Context, source, target string, keepIgnored bool) error {
 	canonical, err := filepath.EvalSymlinks(source)
 	if err != nil {
@@ -310,8 +321,25 @@ func copyConfiguration(ctx context.Context, source, target string, keepIgnored b
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("cannot isolate special file %s", relative)
 		}
-		return copyConfigurationFile(path, destination, info)
+		return copyWithDescriptorRetry(func() error { return copyConfigurationFile(path, destination, info) })
 	})
+}
+
+// descriptorRetryDelays spaces the retries of one file copy after the host
+// runs out of open files. Every trial hit this once at a few hundred open
+// descriptors: the pressure was host-wide and transient.
+var descriptorRetryDelays = []time.Duration{250 * time.Millisecond, time.Second}
+
+func copyWithDescriptorRetry(copyFile func() error) error {
+	err := copyFile()
+	for _, delay := range descriptorRetryDelays {
+		if !fileDescriptorsExhausted(err) {
+			return err
+		}
+		time.Sleep(delay)
+		err = copyFile()
+	}
+	return err
 }
 func copyConfigurationFile(source, target string, info fs.FileInfo) error {
 	cloned, err := cloneConfigurationFile(source, target)

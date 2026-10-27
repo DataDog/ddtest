@@ -7,6 +7,7 @@ package testdrive
 
 import (
 	"path/filepath"
+	"slices"
 )
 
 const sourceIdentityScope = "Native file and full test name, including reported source location and project/browser/capability/repeat identity. Counts cover reporting-only results, including skipped results, once per configuration; retries remain attempts. Matching source identities across commands do not establish equivalent configurations or environments."
@@ -77,17 +78,32 @@ func combineExecutionCounts(parts []*executionCounts) *executionCounts {
 		return nil
 	}
 	combined := &executionCounts{IdentityScope: sourceIdentityScope, identities: make(map[sourceTestIdentity]struct{})}
+	var reasons []string
 	for _, part := range parts {
 		if part == nil {
 			return nil
 		}
 		combined.TestExecutions += part.TestExecutions
 		if part.SourceTestIdentities == nil || part.identities == nil {
-			combined.Reason = "Source-test identities are unavailable because at least one configuration has missing or ambiguous native identities."
+			reason := part.Reason
+			if reason == "" {
+				reason = genericIdentityReason
+			}
+			if !slices.Contains(reasons, reason) {
+				reasons = append(reasons, reason)
+			}
 		}
 		for key := range part.identities {
 			combined.identities[key] = struct{}{}
 		}
+	}
+	// A single specific cause is kept so the summary can name it.
+	switch len(reasons) {
+	case 0:
+	case 1:
+		combined.Reason = reasons[0]
+	default:
+		combined.Reason = genericIdentityReason
 	}
 	if combined.Reason == "" {
 		unique := len(combined.identities)
@@ -97,6 +113,8 @@ func combineExecutionCounts(parts []*executionCounts) *executionCounts {
 	}
 	return combined
 }
+
+const genericIdentityReason = "Source-test identities are unavailable because at least one configuration has missing or ambiguous native identities."
 
 func reportingExecutionCounts(runs []runSummary) *executionCounts {
 	var parts []*executionCounts

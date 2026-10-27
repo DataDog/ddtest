@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -69,6 +70,10 @@ func (t *Testdrive) checkCucumberPreflight(ctx context.Context, output io.Writer
 			t.cucumberCoverage = installed.Coverage
 			t.cucumberNode, t.cucumberExecutable = installed.NodePath, installed.Executable
 		}
+	}
+	// Setup planning runs this preflight too, and setup is what scopes the loader.
+	if reason := onboard.CucumberLoaderOverride(t.repositoryRoot, check.Command); reason != "" {
+		_, _ = fmt.Fprintf(output, "Cucumber setup required before tests: %s\n", reason)
 	}
 	installer, ok := t.platform.(*platform.JavaScript)
 	if !ok {
@@ -283,6 +288,10 @@ func cucumberSharedExampleNames(root string, tests []jestTest) string {
 }
 
 func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+	// A replaced NODE_OPTIONS drops the tracer preload, so no run would report.
+	if reason := onboard.CucumberLoaderOverride(t.repositoryRoot, shellquote.Join(append([]string{t.command}, t.args...)...)); reason != "" {
+		return run, errors.New(reason)
+	}
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	run.framework, run.root, run.Name, run.Instrumented, run.ProbeMode = "cucumber", t.checkoutRoot(), name, instrumented, probeMode
@@ -324,6 +333,18 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 		}
 		env["DDTEST_PROBE_MODE"], env["DDTEST_PROBE_COUNTER"] = probeMode, filepath.Join(directory, "probe-bodies")
 		env["NODE_OPTIONS"] += " " + t.configurationEnvironment["DD_CUCUMBER_NODE_OPTIONS"]
+		// pnpm's bin shims export NODE_PATH into its virtual store; probes run
+		// the resolved scripts directly, so keep it for the wrapper's plugins.
+		if env["NODE_PATH"] == "" {
+			if paths := shimNodePath(filepath.Join(t.repositoryRoot, "node_modules/.bin"), shimNames(command, args)...); len(paths) > 0 {
+				env["NODE_PATH"] = strings.Join(paths, string(os.PathListSeparator))
+			}
+		}
+		// The scoped script appends its source loaders after the preload; the
+		// probe calls the runner directly, so keep them in the same order.
+		if loaders := onboard.CucumberProbeLoaders(t.repositoryRoot, shellquote.Join(append([]string{t.command}, t.args...)...)); loaders != "" {
+			env["NODE_OPTIONS"] += " " + loaders
+		}
 		run.ProbeCoverageThresholdsDisabled = strings.Contains(shellquote.Join(append([]string{command}, args...)...), "--check-coverage=false")
 	}
 	observer := filepath.Join(directory, "cucumber_support.cjs")
@@ -354,6 +375,7 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
 	data, commandErr := t.executor.CombinedOutput(ctx, command, args, env)
 	run.commandOutput, run.commandError, run.ExitCode = string(data), commandErr, commandExitCode(commandErr)
+	run.missingSourceLoader = missingSourceLoader(run.commandOutput, env["NODE_OPTIONS"])
 	if err := server.Close(); err != nil {
 		return run, err
 	}
@@ -467,4 +489,63 @@ func verifyCucumberTelemetry(run validationRun) verdict {
 		run.Facts.Tests[i].Attempts = attempts
 	}
 	return verifyJestTelemetry(run)
+}
+
+var moduleNotFound = regexp.MustCompile(`ERR_MODULE_NOT_FOUND\]?:? Cannot find module '([^']+)\.js'`)
+
+// missingSourceLoader explains a failed `.js` import whose TypeScript sibling
+// exists when no source loader such as tsx was active, or returns "".
+func missingSourceLoader(output, nodeOptions string) string {
+	if onboard.CucumberSourceLoaderActive(nodeOptions) {
+		return ""
+	}
+	for _, match := range moduleNotFound.FindAllStringSubmatch(output, -1) {
+		for _, extension := range []string{".ts", ".tsx", ".mts", ".cts"} {
+			if info, err := os.Stat(match[1] + extension); err == nil && info.Mode().IsRegular() {
+				return fmt.Sprintf("%s.js is only available as %s%s, and no source loader such as tsx was active. The command needs its source loader (for example NODE_OPTIONS=\"--import tsx\") in this run.", filepath.Base(match[1]), filepath.Base(match[1]), extension)
+			}
+		}
+	}
+	return ""
+}
+
+var shimNodePathExport = regexp.MustCompile(`(?m)^\s*export NODE_PATH="([^"]*)"\s*$`)
+
+// shimNodePath returns the NODE_PATH entries pnpm's shell shims for names set
+// when NODE_PATH is unset, with $basedir expanded, in order and without repeats.
+func shimNodePath(binDirectory string, names ...string) []string {
+	var paths []string
+	for _, name := range names {
+		data, err := os.ReadFile(filepath.Join(binDirectory, name))
+		if err != nil {
+			continue
+		}
+		match := shimNodePathExport.FindSubmatch(data)
+		if match == nil {
+			continue
+		}
+		for _, path := range filepath.SplitList(strings.ReplaceAll(string(match[1]), "$basedir", binDirectory)) {
+			if path != "" && !strings.Contains(path, "$") && !slices.Contains(paths, path) {
+				paths = append(paths, path)
+			}
+		}
+	}
+	return paths
+}
+
+// shimNames are the package bin names behind a probe's node invocations, such
+// as nyc and cucumber-js, taken from the resolved scripts' package folders.
+func shimNames(command string, args []string) []string {
+	var names []string
+	for _, word := range append([]string{command}, args...) {
+		switch filepath.Base(word) {
+		case "nyc.js":
+			names = append(names, "nyc")
+		case "c8.js":
+			names = append(names, "c8")
+		case "cucumber.js", "cucumber-js":
+			names = append(names, "cucumber-js")
+		}
+	}
+	return names
 }

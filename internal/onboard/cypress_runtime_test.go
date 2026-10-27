@@ -124,6 +124,7 @@ func TestCypressCIPathsCheckConditionalInstallationAndActionRuntime(t *testing.T
 					require.Equal(t, "24", findings[0].Node, "API runtime must not use setup-node's 22")
 				} else if conditionalPreload {
 					require.Equal(t, "excluded", findings[0].Status)
+					require.Equal(t, GuardedActionBranch, findings[0].Reason)
 				} else {
 					require.Equal(t, "incompatible", findings[0].Status, "unconditional preload cannot pass without installation")
 				}
