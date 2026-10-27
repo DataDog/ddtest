@@ -54,8 +54,21 @@ func TestMatrixInterpolationResolvesStaticExpressions(t *testing.T) {
 			require.Equal(t, tc.expected, actual)
 		})
 	}
+	// A runtime-computed axis holds a placeholder; it never selects a branch.
+	computed := map[string]any{"suite": computedAxisValue("suite"), "node": 20}
+	for _, command := range []string{
+		`npm test ${{ matrix.suite }}`,
+		`npm run ${{ matrix.suite == 'unit' && 'test:unit' || 'test:integration' }}`,
+		`npm run ${{ format('test:{0}', matrix.suite) }}`,
+	} {
+		_, err := interpolateMatrix(command, computed)
+		require.ErrorContains(t, err, "computed at runtime", command)
+	}
+	actual, err := interpolateMatrix(`npm test --node=${{ matrix.node }}`, computed)
+	require.NoError(t, err)
+	require.Equal(t, "npm test --node=20", actual)
 	// Without a matrix row, commands are left for the caller to report.
-	actual, err := interpolateMatrix(`npm test ${{ matrix.node }}`, nil)
+	actual, err = interpolateMatrix(`npm test ${{ matrix.node }}`, nil)
 	require.NoError(t, err)
 	require.Equal(t, `npm test ${{ matrix.node }}`, actual)
 }

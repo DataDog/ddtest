@@ -190,6 +190,22 @@ func TestComputedAxisReadByTheTestCommandStaysUnresolved(t *testing.T) {
 	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "matrix.shard")
 }
 
+func TestComputedAxisDoesNotSelectAnExpressionBranch(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  test:
+    strategy:
+      matrix:
+        suite: ${{ fromJson(needs.plan.outputs.suites) }}
+    steps:
+      - run: npm run ${{ matrix.suite == 'unit' && 'test:unit' || 'test:integration' }}
+`)
+	writeScripts(t, root, map[string]string{"test:unit": "jest unit", "test:integration": "jest integration"})
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Commands)
+	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "reads a matrix axis computed at runtime")
+}
+
 // Modeled on webdriverio/jasmine-boilerplate and morphatic/astrologyjs: a job
 // guard on the actor or on a paths-filter output only decides whether the job
 // runs at all.

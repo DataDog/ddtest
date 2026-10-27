@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"regexp"
@@ -31,6 +32,14 @@ func interpolateMatrix(command string, row map[string]any) (string, error) {
 	if len(command) > maxInterpolatedCommand {
 		return command, fmt.Errorf("CI command exceeds %d characters", maxInterpolatedCommand)
 	}
+	// A runtime-computed axis holds a placeholder, not its value. Never select
+	// a branch by comparing against it.
+	var computed []string
+	for key, value := range row {
+		if value == computedAxisValue(key) {
+			computed = append(computed, key)
+		}
+	}
 	original := command
 	var result strings.Builder
 	for {
@@ -40,6 +49,9 @@ func interpolateMatrix(command string, row map[string]any) (string, error) {
 			break
 		}
 		reference := workflowExpression.FindString("${{" + expression)
+		if readsComputedAxis(cmp.Or(reference, "${{"+expression), computed, row) {
+			return original, fmt.Errorf("CI expression reads a matrix axis computed at runtime: %s", cmp.Or(reference, "${{"+expression))
+		}
 		p := conditionParser{rest: expression, row: row}
 		value, err := p.expression(0)
 		if err != nil || !p.take("}}") {
