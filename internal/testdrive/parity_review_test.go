@@ -17,7 +17,7 @@ func TestUncontrolledFrameworkEnvironmentKeepsMainFeatureSettings(t *testing.T) 
 }
 
 func TestUnknownFrameworkHasNoImplicitValidationCapabilities(t *testing.T) {
-	for _, name := range []string{"", "pytest", "rspec", "unknown"} {
+	for _, name := range []string{"", "pytest", "unknown"} {
 		require.False(t, supportsValidationFramework(name))
 		require.False(t, featureChecksPassed(name, nil))
 		require.Empty(t, featurePolicies(name))

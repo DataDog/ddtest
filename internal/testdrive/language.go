@@ -4,7 +4,9 @@ import (
 	"context"
 	"io"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
@@ -25,6 +27,20 @@ type validationLanguage interface {
 
 	// prepareStorage runs before discovery and fails early on unusable storage.
 	prepareStorage() error
+	// selectCommand resolves the command a run without --all validates.
+	// handled is false when the framework's default command applies.
+	selectCommand(request commandRequest) (command string, args []string, handled bool, err error)
+	// detectsTracerInPreparation reports whether Prepare looks for a project
+	// tracer in the original checkout. Languages whose detection loads project
+	// code detect it later, inside the disposable copy.
+	detectsTracerInPreparation() bool
+	// refreshProjectTracer detects the project tracer again inside each
+	// configuration's copy. Missing project dependencies select the normal
+	// temporary fallback; a tracer resolved elsewhere is never retained.
+	refreshProjectTracer(t *Testdrive, ctx context.Context)
+	// usesPackageBinaries reports whether a bare configuration command
+	// resolves to the package's locally installed binaries.
+	usesPackageBinaries() bool
 	// inspectEnvironment resolves the runtime that runs the selected command.
 	// It may replace the command and returns a finding when tests cannot run.
 	inspectEnvironment(ctx context.Context, request environmentRequest) (string, []string, environmentInfo, *reportCard)
@@ -37,6 +53,11 @@ type validationLanguage interface {
 	// installPreview describes a temporary tracer installation. Empty prints
 	// the install command instead.
 	installPreview(label string) string
+	// previewNotes adds the language's own steps to the run preview.
+	previewNotes() []string
+	// installTracer installs a temporary tracer. handled is false when the
+	// platform installer applies.
+	installTracer(t *Testdrive, ctx context.Context, options platform.TracerOptions) (installation platform.TracerInstallation, handled bool, err error)
 	// dependencyChanges lists the root manifests a temporary installation may
 	// change. A non-empty note replaces that listing.
 	dependencyChanges(projectTracer string) (patterns []string, note string)
@@ -70,6 +91,25 @@ type validationLanguage interface {
 	// ciRuntimes inspects the runtimes and tracer selections of CI jobs for
 	// configuration-only checks.
 	ciRuntimes(ctx context.Context, root, framework string) onboard.RuntimeCheck
+	// ciRuntimeName names the runtime CI jobs select, as in "Node 20".
+	ciRuntimeName() string
+	// configurationsCIRuntime is the CI runtime inventory --all starts from,
+	// before any configuration runs; nil starts from none.
+	configurationsCIRuntime(t *Testdrive, scope onboard.ValidationScope) *onboard.RuntimeCheck
+	// mergeCIRuntime folds one configuration's CI runtime check into the
+	// aggregate. Languages whose every check covers all jobs keep the latest.
+	mergeCIRuntime(current, next *onboard.RuntimeCheck) *onboard.RuntimeCheck
+	// labelsTracerWithoutSelection reports whether a configuration's tracer
+	// label identifies its release even without a registry selection.
+	labelsTracerWithoutSelection() bool
+}
+
+// commandRequest is what selectCommand can use to choose a command.
+type commandRequest struct {
+	root     string
+	runner   framework.Framework
+	override string
+	all      bool
 }
 
 // environmentRequest is what inspectEnvironment can use to resolve a runtime.
@@ -90,9 +130,40 @@ type pairedFramework struct {
 	features func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, preload string, baseline validationRun, result *validationResult) error
 	// preflight checks the framework's own prerequisites; nil has none.
 	preflight func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error
-	// telemetry matches native results to reported telemetry; nil uses the
-	// default file/name/status identities.
+	// telemetry matches native results to reported telemetry; nil uses
+	// defaultTelemetry.
 	telemetry func(validationRun) verdict
+	// preflightAfterInstall runs preflight again once the tracer is
+	// installed, to inspect the dependencies that load it.
+	preflightAfterInstall bool
+	// missingCoverage is the blocking check when real-suite coverage is
+	// missing; empty uses the default.
+	missingCoverage string
+	// outcomeTotals adds the reporting-only native outcomes summed across
+	// configurations to the handoff.
+	outcomeTotals bool
+}
+
+// Neutral names for the paired-validation building blocks every language
+// shares; the originals are named after the framework that introduced them.
+type (
+	nativeTest     = jestTest
+	preflightCheck = jestPreflight
+)
+
+// defaultTelemetry matches native results to telemetry by file, name and status.
+func defaultTelemetry(run validationRun) verdict { return verifyJestTelemetry(run) }
+
+// repositoryCoverageFile returns the checkout-relative path of a covered
+// file, and whether it is an existing file inside the checkout.
+func repositoryCoverageFile(root, file string) (string, bool) {
+	return cucumberCoverageFile(root, file)
+}
+
+// applicationSourceCoverage summarizes the coverage of existing application
+// files, excluding the native test files themselves.
+func applicationSourceCoverage(root string, facts intake.Facts, native []nativeTest) *coverageSummary {
+	return cypressSourceCoverage(root, cypressTestCode{}, facts, native)
 }
 
 // languageNamed returns a registered language, or nil.
@@ -146,6 +217,16 @@ func (unsupportedLanguage) displayNames() map[string]string      { return nil }
 func (unsupportedLanguage) tracerPackage() string                { return "" }
 func (unsupportedLanguage) installedTracerVersion(string) string { return "" }
 func (unsupportedLanguage) prepareStorage() error                { return nil }
+func (unsupportedLanguage) selectCommand(commandRequest) (string, []string, bool, error) {
+	return "", nil, false, nil
+}
+func (unsupportedLanguage) detectsTracerInPreparation() bool                 { return true }
+func (unsupportedLanguage) refreshProjectTracer(*Testdrive, context.Context) {}
+func (unsupportedLanguage) usesPackageBinaries() bool                        { return true }
+func (unsupportedLanguage) previewNotes() []string                           { return nil }
+func (unsupportedLanguage) installTracer(*Testdrive, context.Context, platform.TracerOptions) (platform.TracerInstallation, bool, error) {
+	return platform.TracerInstallation{}, false, nil
+}
 func (unsupportedLanguage) inspectEnvironment(_ context.Context, request environmentRequest) (string, []string, environmentInfo, *reportCard) {
 	return request.command, request.args, environmentInfo{}, nil
 }
@@ -171,6 +252,22 @@ func (unsupportedLanguage) coordinated() bool        { return false }
 func (unsupportedLanguage) defaultsToCITracer() bool { return false }
 func (unsupportedLanguage) ciRuntimes(ctx context.Context, root, framework string) onboard.RuntimeCheck {
 	return onboard.CheckCIRuntimes(ctx, root, framework)
+}
+func (unsupportedLanguage) ciRuntimeName() string { return "Node" }
+func (unsupportedLanguage) configurationsCIRuntime(*Testdrive, onboard.ValidationScope) *onboard.RuntimeCheck {
+	return nil
+}
+func (unsupportedLanguage) mergeCIRuntime(_, next *onboard.RuntimeCheck) *onboard.RuntimeCheck {
+	return next
+}
+func (unsupportedLanguage) labelsTracerWithoutSelection() bool { return false }
+
+// frameworkCIRuntimeName names the runtime CI jobs select for framework.
+func frameworkCIRuntimeName(framework string) string {
+	if language := languageForFramework(framework); language != nil {
+		return language.ciRuntimeName()
+	}
+	return unsupportedLanguage{}.ciRuntimeName()
 }
 
 // frameworkCIRuntimes inspects CI runtimes with the framework's language.

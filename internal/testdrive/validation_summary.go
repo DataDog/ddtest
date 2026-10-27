@@ -97,7 +97,11 @@ func summarizeValidation(result validationResult) validationSummary {
 		timeouts := timedOutRuns(result)
 		summary.BlockingChecks = append(summary.BlockingChecks, timeouts...)
 		if len(timeouts) == 0 && missingRealCoverage(result) && (result.Compatibility.Status == "" || result.Compatibility.Status == "compatible") {
-			summary.BlockingChecks = append(summary.BlockingChecks, displayName(result.Framework)+" real-suite coverage was not observed: "+missingRealCoverageReason(result)+" Synthetic skipping probes do not validate coverage of customer source; preserve coverage thresholds.")
+			if adapter, _ := pairedFrameworkNamed(result.Framework); adapter.missingCoverage != "" {
+				summary.BlockingChecks = append(summary.BlockingChecks, adapter.missingCoverage)
+			} else {
+				summary.BlockingChecks = append(summary.BlockingChecks, displayName(result.Framework)+" real-suite coverage was not observed: "+missingRealCoverageReason(result)+" Synthetic skipping probes do not validate coverage of customer source; preserve coverage thresholds.")
+			}
 		}
 		if result.Compatibility.Status != "" && result.Compatibility.Status != "compatible" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility: "+result.Compatibility.Status)
@@ -185,7 +189,7 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.OnboardingResponse += " Local execution runtime: Node " + summary.LocalNode + "."
 	}
 	if summary.CIScope != nil {
-		summary.OnboardingResponse += fmt.Sprintf(" CI Node scope (static): configured for instrumentation: %s; excluded from instrumentation: %s; unresolved or blocked: %s.", scopeList(summary.CIScope.Instrumented), scopeList(summary.CIScope.Excluded), scopeList(summary.CIScope.Unverified))
+		summary.OnboardingResponse += fmt.Sprintf(" CI %s scope (static): configured for instrumentation: %s; excluded from instrumentation: %s; unresolved or blocked: %s.", frameworkCIRuntimeName(result.Framework), scopeList(summary.CIScope.Instrumented), scopeList(summary.CIScope.Excluded), scopeList(summary.CIScope.Unverified))
 	}
 	if len(summary.BlockingChecks) > 0 {
 		summary.OnboardingResponse += " Blocking checks: " + strings.Join(summary.BlockingChecks[:min(3, len(summary.BlockingChecks))], "; ") + "."
@@ -253,6 +257,19 @@ func validationHandoff(result validationResult) string {
 		}
 	}
 	current := !result.CheckOnly && (result.LastExecution == nil || result.LastExecution.Current)
+	if adapter, _ := pairedFrameworkNamed(result.Framework); current && adapter.outcomeTotals {
+		passed, failed, skipped := 0, 0, 0
+		for _, run := range result.Runs {
+			if run.Role == roleReporting {
+				passed += run.TestCounts.Passed
+				failed += run.TestCounts.Failed
+				skipped += run.TestCounts.Skipped
+			}
+		}
+		if passed+failed+skipped > 0 {
+			fmt.Fprintf(&block, "Reporting-only native outcomes across configurations: %d passed, %d failed, %d skipped.\n", passed, failed, skipped)
+		}
+	}
 	if counts := result.ReportingCounts; counts != nil {
 		label := "Reporting"
 		if !current {
@@ -326,7 +343,7 @@ func validationHandoff(result validationResult) string {
 	if scope := summary.CIScope; scope != nil {
 		// The scope groups CI jobs by Node version, so these count versions, not jobs.
 		instrumented, excluded, unverified := scope.counts()
-		fmt.Fprintf(&block, "CI runtime scope (static): Node versions %d instrumented, %d excluded, %d unverified (each version counted once; per-job findings in Results JSON).\n", instrumented, excluded, unverified)
+		fmt.Fprintf(&block, "CI runtime scope (static): %s versions %d instrumented, %d excluded, %d unverified (each version counted once; per-job findings in Results JSON).\n", frameworkCIRuntimeName(result.Framework), instrumented, excluded, unverified)
 		for _, job := range scope.NotTried {
 			fmt.Fprintf(&block, "Not tried: %s (below Node 18, the oldest dd-trace major ddtest supports; ddtest skipped them on its own, no approval needed).\n", job)
 		}
@@ -596,6 +613,9 @@ func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
 	}
 	for _, job := range check.Jobs {
 		label := nodeScopeLabel(job.Node)
+		if job.Runtime != "" {
+			label = nodeScopeLabel(job.Runtime)
+		}
 		switch job.Status {
 		case "compatible":
 			scope.Instrumented = appendUnique(scope.Instrumented, label)

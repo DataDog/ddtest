@@ -208,6 +208,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 	var tracerConfiguration string
 	var leftovers []string
 	ambient := map[string]string{}
+	result.CIRuntime = t.lang().configurationsCIRuntime(t, scope)
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
 		if ciInstrumentationDisabled(entry) {
@@ -296,7 +297,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if result.Preflight == nil {
 			result.Preflight = execution.Preflight
 		}
-		if result.Selection == nil && execution.Selection != nil {
+		if result.Selection == nil && (execution.Selection != nil || t.lang().labelsTracerWithoutSelection() && result.Tracer == "not selected" && execution.Tracer != "") {
 			result.Selection = execution.Selection
 			result.Tracer = execution.Tracer
 			result.TracerSource = execution.TracerSource
@@ -306,7 +307,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			runErrors = append(runErrors, tracerMismatchError(tracerConfiguration, result.Tracer, displayed, execution.Tracer))
 		}
 		if execution.CIRuntime != nil {
-			result.CIRuntime = execution.CIRuntime
+			result.CIRuntime = t.lang().mergeCIRuntime(result.CIRuntime, execution.CIRuntime)
 		}
 		for _, sub := range execution.substitutions() {
 			result.addSubstitution(sub)
@@ -366,7 +367,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 // Preflight and execution must resolve the same installed framework binary,
 // without requiring the caller to add node_modules/.bin to PATH.
 func (t *Testdrive) configurationExecutable(command string) string {
-	if strings.ContainsAny(command, `/\`) ||
+	if !t.lang().usesPackageBinaries() || strings.ContainsAny(command, `/\`) ||
 		slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx", "bun", "corepack", "ddtest"}, command) {
 		return command
 	}

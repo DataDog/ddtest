@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
@@ -24,6 +25,16 @@ func (pythonLanguage) displayNames() map[string]string {
 func (pythonLanguage) tracerPackage() string                         { return "ddtrace" }
 func (pythonLanguage) installedTracerVersion(detected string) string { return detected }
 func (pythonLanguage) prepareStorage() error                         { return nil }
+func (pythonLanguage) selectCommand(commandRequest) (string, []string, bool, error) {
+	return "", nil, false, nil
+}
+func (pythonLanguage) detectsTracerInPreparation() bool                 { return true }
+func (pythonLanguage) refreshProjectTracer(*Testdrive, context.Context) {}
+func (pythonLanguage) usesPackageBinaries() bool                        { return true }
+func (pythonLanguage) previewNotes() []string                           { return nil }
+func (pythonLanguage) installTracer(*Testdrive, context.Context, platform.TracerOptions) (platform.TracerInstallation, bool, error) {
+	return platform.TracerInstallation{}, false, nil
+}
 
 func (pythonLanguage) inspectEnvironment(ctx context.Context, request environmentRequest) (string, []string, environmentInfo, *reportCard) {
 	command, args, source := pythonTestdriveCommand(request.root, request.command, request.args, request.explicit)
@@ -106,3 +117,15 @@ func (pythonLanguage) defaultsToCITracer() bool { return false }
 func (pythonLanguage) ciRuntimes(ctx context.Context, root, framework string) onboard.RuntimeCheck {
 	return onboard.CheckCIRuntimes(ctx, root, framework)
 }
+
+func (pythonLanguage) ciRuntimeName() string { return "Python" }
+
+func (pythonLanguage) configurationsCIRuntime(*Testdrive, onboard.ValidationScope) *onboard.RuntimeCheck {
+	return nil
+}
+
+func (pythonLanguage) mergeCIRuntime(_, next *onboard.RuntimeCheck) *onboard.RuntimeCheck {
+	return next
+}
+
+func (pythonLanguage) labelsTracerWithoutSelection() bool { return false }

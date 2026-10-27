@@ -32,11 +32,19 @@ type jestTest struct {
 	CucumberLine          int                 `json:"-"`
 	CypressAttempts       []string            `json:"-"`
 	Playwright            *playwrightIdentity `json:"playwright,omitempty"`
-	telemetryName         *string
-	File                  string `json:"file"`
-	Name                  string `json:"name"`
-	Status                string `json:"status"`
-	Failure               string `json:"failure,omitempty"`
+	// NativeID is the runner's own unique example identity, reported in the
+	// tracer's parameters metadata as scoped_id.
+	NativeID string `json:"native_id,omitempty"`
+	// telemetryClass qualifies telemetryName with its test class, which the
+	// tracer reports as the suite.
+	telemetryClass string
+	// probe marks the controlled probe when its native name is not probeName.
+	probe         bool
+	telemetryName *string
+	File          string `json:"file"`
+	Name          string `json:"name"`
+	Status        string `json:"status"`
+	Failure       string `json:"failure,omitempty"`
 }
 
 type jestResults struct {
@@ -298,7 +306,11 @@ func outcomeKeys(run validationRun) []string {
 	keys = append(keys, run.SuiteErrors...)
 	keys = append(keys, run.SuiteFailures...)
 	for _, test := range run.Tests {
-		keys = append(keys, repositoryTestFile(run, test.File)+" › "+test.Name+cucumberLocation(test)+playwrightLabel(test)+webdriverIOOutcome(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test)+webdriverIOAttemptOutcome(test))
+		scoped := ""
+		if test.NativeID != "" {
+			scoped = " [scoped_id: " + test.NativeID + "]"
+		}
+		keys = append(keys, repositoryTestFile(run, test.File)+" › "+test.Name+scoped+cucumberLocation(test)+playwrightLabel(test)+webdriverIOOutcome(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test)+webdriverIOAttemptOutcome(test))
 	}
 	for i := range keys {
 		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])
@@ -388,12 +400,25 @@ func verifyJestTelemetry(run validationRun) verdict {
 	}
 	type identity struct{ file, name, status string }
 	expected := make(map[identity]int)
+	scopedExamples := make(map[string]bool)
+	classes := make(map[string][]string)
 	for _, test := range run.Tests {
 		status := map[string]string{"passed": "pass", "failed": "fail"}[test.Status]
 		if status != "" {
 			name := test.Name
 			if test.telemetryName != nil {
 				name = *test.telemetryName
+			}
+			if test.telemetryClass != "" {
+				key := test.File + "\x00" + name
+				if !slices.Contains(classes[key], test.telemetryClass) {
+					classes[key] = append(classes[key], test.telemetryClass)
+				}
+				name = test.telemetryClass + "\x00" + name
+			}
+			if test.NativeID != "" {
+				name = "scoped_id:" + test.NativeID
+				scopedExamples[test.File+"\x00"+name] = true
 			}
 			expected[identity{test.File, name, status}]++
 		}
@@ -414,9 +439,35 @@ func verifyJestTelemetry(run validationRun) verdict {
 			file = filepath.Join(base, file)
 		}
 		file = filepath.Clean(file)
+		name := test.Name
+		if candidates := classes[file+"\x00"+name]; len(candidates) > 0 {
+			var matches []string
+			for _, class := range candidates {
+				if test.Suite == class || strings.HasPrefix(test.Suite, class+" at ") {
+					matches = append(matches, class)
+				}
+			}
+			// Missing or ambiguous class evidence must not match by method alone.
+			if len(matches) == 1 {
+				name = matches[0] + "\x00" + name
+			}
+		}
+		if len(scopedExamples) > 0 {
+			var parameters struct {
+				Metadata struct {
+					ScopedID string `json:"scoped_id"`
+				}
+			}
+			if json.Unmarshal([]byte(test.Parameters), &parameters) == nil {
+				id := "scoped_id:" + parameters.Metadata.ScopedID
+				if scopedExamples[file+"\x00"+id] {
+					name = id
+				}
+			}
+		}
 		observe := func(attempt intake.TestRun) {
 			if attempt.Status == "pass" || attempt.Status == "fail" {
-				observed[identity{file, test.Name, attempt.Status}]++
+				observed[identity{file, name, attempt.Status}]++
 			}
 		}
 		// A span sent twice is one execution; counting it again could hide a
@@ -468,7 +519,7 @@ func verifyJestTelemetry(run validationRun) verdict {
 	return verdict{}
 }
 
-func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *workspace.Session, preload string, result *validationResult) error {
+func (t *Testdrive) runFrameworkValidation(ctx context.Context, output io.Writer, session *workspace.Session, preload string, result *validationResult) error {
 	adapter, ok := pairedFrameworkNamed(t.framework.Name())
 	if !ok {
 		return fmt.Errorf("paired validation is not supported for %s", t.framework.Name())

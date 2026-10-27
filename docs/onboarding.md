@@ -16,9 +16,9 @@ ddtest onboard --framework vitest --apply --yes
 ```
 
 Use the selected framework name for Jest, Mocha, Playwright, Cucumber or
-WebdriverIO. Cypress hooks still require explicit setup. Python and Ruby retain
-their existing instructions and testdrive behavior; automatic apply is JavaScript
-only.
+WebdriverIO. Cypress hooks still require explicit setup. Python retains its
+existing instructions and testdrive behavior. Ruby supports plain RSpec/Minitest
+validation as described below; automatic apply is JavaScript only.
 
 The editor preserves existing project and CI tracer selections, including tracers
 installed in workspace packages. It resolves one exact release for the actual
@@ -237,3 +237,53 @@ report links. Both `--agent` and `--format json` emit exactly one JSON object on
 stale results cannot produce a fresh completion claim. A later check-only attempt retains the full run’s binding; it does not create new execution evidence. Editing the public report cannot certify it or inject a saved recovery executable. Saved command options and `--report --detail plan` from the report are used only after receipt verification. Missing/expired private receipts require full validation again. A plain `testdrive` run replaces the report without the workflow checks or binding, so `--report` returns `plain_report` with the workflow command to run; a check-only run keeps the earlier binding and plan.
 Do not run extra cache audits or rewrite the verdict. Actual CI execution and
 Datadog backend processing remain untested.
+
+## Ruby validation
+
+RSpec and Minitest support plain `ddtest testdrive --all --check-only --yes`
+and full `ddtest testdrive --all --yes` validation. Native baseline and
+reporting-only results, real application coverage and all six feature controls
+are checked independently for each discovered command and Gemfile. Matching
+pre-existing test failures are permitted; missing native results or telemetry
+remain incomplete. Ruby validation uses disposable repository copies and
+preserves the original Gemfile and lockfile, including fallback tracer installs.
+Run `ddtest onboard --framework rspec` (or `minitest`) for the manual setup
+steps, then run the supplied validation command and retain both reports.
+Successful plain Ruby validation reports `PASSED`.
+
+Numeric CI Ruby selections are checked against the resolved tracer's RubyGems
+requirements. Other engines and floating selections require separate validation
+or explicit instrumentation exclusions that preserve their original test steps.
+CI configurations select their own Gemfile; a `BUNDLE_GEMFILE` from the shell
+applies only to a focused local `--command`.
+
+Literal one-target Rake default aliases retain their original bare `rake` command.
+Dynamic/default enhancements and custom tasks stay unresolved. Numeric matrix
+comparisons follow GitHub expression coercions; existing matrix types need no
+quoting workaround. A locally selected tracer dependency that excludes a target
+Ruby leaves CI compatibility inconclusive until that target resolution is checked;
+only the tracer release's own incompatible requirement is a definite rejection.
+
+For reports with 500 or more results, repeated source excerpts and covered-file
+lists are stored once in the standalone HTML and materialized when expanded.
+Search and coverage pagination retain access to this evidence.
+
+For Minitest's `ActiveSupport::Testing::Isolation`, keep fork/`exit!` isolation and
+all existing tests. `onboard --framework minitest` supplies a CI initializer using
+Datadog's public synchronous writer with the configured CI transport. Append it
+after the Datadog action's preload on the existing test step. Testdrive preserves
+that preload order and validates the same initializer; it does not silently add
+a local-only delivery workaround. Synchronous delivery adds network overhead but
+finishes each trace before the child exits. Temporary tracer installation clears
+application preloads, since native gem compilation changes working directory.
+
+For a native-platform dependency that excludes a CI Ruby, testdrive may inspect
+its exact release's portable RubyGems specification. Compatibility requires the
+same gem name/version, a portable platform, identical runtime dependency
+requirements and RubyGems requirements admitting the complete Ruby selector.
+Missing, offline, mismatched or still-incompatible metadata remains inconclusive;
+this never certifies actual CI compilation/execution. A direct tracer requirement
+still rejects an incompatible Ruby. Ruby 2.7 also needs a compatible installer:
+`onboard` shows how to select RubyGems 3.4.22 for that matrix entry, preserving
+both its tests and instrumentation. The old RubyGems 3.1 client can choose a native
+ffi archive requiring Ruby 3.0 instead of the compatible portable release.

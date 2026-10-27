@@ -302,7 +302,7 @@ func TestVitestUnhandledRegressionTriggersRepeatedPair(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	var result validationResult
 	result.Framework = "vitest"
-	require.NoError(t, drive.runJavaScriptValidation(t.Context(), &bytes.Buffer{}, session, "/tracer/ci/init.js", &result))
+	require.NoError(t, drive.runFrameworkValidation(t.Context(), &bytes.Buffer{}, session, "/tracer/ci/init.js", &result))
 	require.Equal(t, 4, executor.calls)
 	require.Equal(t, "suspected regression", result.Compatibility.Status)
 	require.Equal(t, []runRole{roleBaseline, roleReporting, roleRepeat, roleRepeat}, []runRole{result.Runs[0].Role, result.Runs[1].Role, result.Runs[2].Role, result.Runs[3].Role})
