@@ -310,7 +310,10 @@ func (p *conditionParser) atom() (any, error) {
 		return strings.HasPrefix(strings.ToLower(a), strings.ToLower(b)), nil
 	}
 	if key, ok := strings.CutPrefix(token, "matrix."); ok {
-		value, exists := p.row[key]
+		value, exists, err := matrixProperty(p.row, key)
+		if err != nil {
+			return nil, err
+		}
 		if exists {
 			if text, ok := value.(string); ok && strings.ContainsRune(text, 0) {
 				return nil, fmt.Errorf("matrix value contains a NUL byte")

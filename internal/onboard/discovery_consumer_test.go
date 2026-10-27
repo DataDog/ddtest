@@ -191,19 +191,27 @@ func TestComputedAxisReadByTheTestCommandStaysUnresolved(t *testing.T) {
 }
 
 func TestComputedAxisDoesNotSelectAnExpressionBranch(t *testing.T) {
-	root := newJestRepository(t, `jobs:
+	for _, expression := range []string{
+		`matrix.suite == 'unit' && 'test:unit' || 'test:integration'`,
+		`matrix.Suite == 'unit' && 'test:unit' || 'test:integration'`,
+		`format('{{{0}}}', matrix.suite) == '{unit}' && 'test:unit' || 'test:integration'`,
+	} {
+		t.Run(expression, func(t *testing.T) {
+			root := newJestRepository(t, `jobs:
   test:
     strategy:
       matrix:
         suite: ${{ fromJson(needs.plan.outputs.suites) }}
     steps:
-      - run: npm run ${{ matrix.suite == 'unit' && 'test:unit' || 'test:integration' }}
+      - run: npm run ${{ `+expression+` }}
 `)
-	writeScripts(t, root, map[string]string{"test:unit": "jest unit", "test:integration": "jest integration"})
-	scope, err := DiscoverValidationScope(root, "jest")
-	require.NoError(t, err)
-	require.Empty(t, scope.Commands)
-	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "reads a matrix axis computed at runtime")
+			writeScripts(t, root, map[string]string{"test:unit": "jest unit", "test:integration": "jest integration"})
+			scope, err := DiscoverValidationScope(root, "jest")
+			require.NoError(t, err)
+			require.Empty(t, scope.Commands)
+			require.Contains(t, strings.Join(scope.Unresolved, "\n"), "reads a matrix axis computed at runtime")
+		})
+	}
 }
 
 // Modeled on webdriverio/jasmine-boilerplate and morphatic/astrologyjs: a job

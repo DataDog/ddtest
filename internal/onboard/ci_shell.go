@@ -49,12 +49,19 @@ func interpolateMatrix(command string, row map[string]any) (string, error) {
 			break
 		}
 		reference := workflowExpression.FindString("${{" + expression)
-		if readsComputedAxis(cmp.Or(reference, "${{"+expression), computed, row) {
-			return original, fmt.Errorf("CI expression reads a matrix axis computed at runtime: %s", cmp.Or(reference, "${{"+expression))
-		}
 		p := conditionParser{rest: expression, row: row}
 		value, err := p.expression(0)
-		if err != nil || !p.take("}}") {
+		closed := err == nil && p.take("}}")
+		// A quoted }} ends the reference early; also check all the parser read.
+		read := "${{" + expression[:len(expression)-len(p.rest)]
+		text := cmp.Or(reference, "${{"+expression)
+		if len(read) > len(text) {
+			text = read
+		}
+		if readsComputedAxis(text, computed, row) || readsComputedAxis(read, computed, row) {
+			return original, fmt.Errorf("CI expression reads a matrix axis computed at runtime: %s", text)
+		}
+		if !closed {
 			if reference == "" {
 				result.WriteString("${{" + expression)
 				break

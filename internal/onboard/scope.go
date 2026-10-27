@@ -616,7 +616,7 @@ func dependencyInstallOnly(command string) bool {
 
 func readsComputedAxis(command string, axes []string, row map[string]any) bool {
 	return slices.ContainsFunc(axes, func(axis string) bool {
-		return row[axis] == computedAxisValue(axis) && regexp.MustCompile(`\bmatrix\.`+regexp.QuoteMeta(axis)+`\b`).MatchString(command)
+		return row[axis] == computedAxisValue(axis) && regexp.MustCompile(`(?i)\bmatrix\.`+regexp.QuoteMeta(axis)+`\b`).MatchString(command)
 	})
 }
 

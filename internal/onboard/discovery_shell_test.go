@@ -33,6 +33,9 @@ func TestMatrixInterpolationResolvesStaticExpressions(t *testing.T) {
 		{`npm run ${{ matrix.script || format('test:node{0}', matrix.version) }}`, "npm run test:node20", ""},
 		{`npm run ${{ matrix.os == 'windows-latest' && 'test:win' || 'test' }}`, "npm run test:win", ""},
 		{`npm test${{ matrix.missing }}`, "npm test", ""},
+		// GitHub resolves matrix properties case-insensitively.
+		{`npm test -- --shard=${{ matrix.Shard }}`, "npm test -- --shard=1", ""},
+		{`npm run ${{ matrix.OS == 'windows-latest' && 'test:win' || 'test' }}`, "npm run test:win", ""},
 		// Unresolvable expressions stay in place for the caller to report.
 		{`npm test --token ${{ secrets.TOKEN }} --node ${{ matrix.node }}`, "npm test --token ${{ secrets.TOKEN }} --node 20", ""},
 		{`cd ${{ github.workspace }}/app && npm test`, "cd ${{ github.workspace }}/app && npm test", ""},
@@ -59,6 +62,9 @@ func TestMatrixInterpolationResolvesStaticExpressions(t *testing.T) {
 		`npm test ${{ matrix.suite }}`,
 		`npm run ${{ matrix.suite == 'unit' && 'test:unit' || 'test:integration' }}`,
 		`npm run ${{ format('test:{0}', matrix.suite) }}`,
+		`npm run ${{ matrix.Suite == 'unit' && 'test:unit' || 'test:integration' }}`,
+		// A quoted }} must not hide a later computed-axis read.
+		`npm run ${{ format('{{{0}}}', matrix.suite) == '{unit}' && 'test:unit' || 'test:integration' }}`,
 	} {
 		_, err := interpolateMatrix(command, computed)
 		require.ErrorContains(t, err, "computed at runtime", command)
@@ -66,10 +72,27 @@ func TestMatrixInterpolationResolvesStaticExpressions(t *testing.T) {
 	actual, err := interpolateMatrix(`npm test --node=${{ matrix.node }}`, computed)
 	require.NoError(t, err)
 	require.Equal(t, "npm test --node=20", actual)
+	// Keys that differ only by case are ambiguous and stay unresolved.
+	ambiguous := `npm run ${{ matrix.NODE || 'test' }}`
+	actual, err = interpolateMatrix(ambiguous, map[string]any{"node": 20, "Node": 22})
+	require.NoError(t, err)
+	require.Equal(t, ambiguous, actual)
 	// Without a matrix row, commands are left for the caller to report.
 	actual, err = interpolateMatrix(`npm test ${{ matrix.node }}`, nil)
 	require.NoError(t, err)
 	require.Equal(t, `npm test ${{ matrix.node }}`, actual)
+}
+
+func TestMatrixPropertiesResolveCaseInsensitively(t *testing.T) {
+	row := map[string]any{"node": 20}
+	active, err := runtimeCondition("matrix.NODE == 20", row)
+	require.NoError(t, err)
+	require.True(t, active)
+	value, err := runtimeValue("${{ matrix.Node }}", row)
+	require.NoError(t, err)
+	require.Equal(t, "20", value)
+	_, err = runtimeCondition("matrix.node == 20", map[string]any{"node": 20, "Node": 22})
+	require.ErrorContains(t, err, "ambiguous")
 }
 
 func TestMatrixDiagnosticsRetainCausesAndScope(t *testing.T) {
