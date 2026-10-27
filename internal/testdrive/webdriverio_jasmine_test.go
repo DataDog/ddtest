@@ -1,6 +1,7 @@
 package testdrive
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -77,11 +78,21 @@ func TestFeatureNamesATracerControlThatWasNotApplied(t *testing.T) {
 	require.Contains(t, evaluateFeature("auto-retries", retried, control).Reason, "matching telemetry has 1 passed, 1 failed and 1 retries")
 }
 
-func TestOnlyTracerOnlyFeatureBlockersAreReportedNotRetried(t *testing.T) {
-	features := []featureResult{
-		{Project: "capability 1 (chrome)", Name: "auto-retries", Status: "known limitation", Code: tracerLimitation, Reason: "Known dd-trace limitation."},
-		{Project: "capability 1 (chrome)", Name: "quarantine", Status: "passed"},
+// tracerLimitedChromeFeatures returns one result per required WebdriverIO
+// feature for one project: the jasmine-core limitation, plus the rest passing.
+func tracerLimitedChromeFeatures(project string) []featureResult {
+	return []featureResult{
+		{Project: project, Name: "auto-retries", Status: "known limitation", Code: tracerLimitation, Reason: "Known dd-trace limitation."},
+		{Project: project, Name: "early-flake-detection", Status: "passed"},
+		{Project: project, Name: "skipping", Status: "not supported"},
+		{Project: project, Name: "quarantine", Status: "passed"},
+		{Project: project, Name: "disabled", Status: "passed"},
+		{Project: project, Name: "attempt-to-fix", Status: "passed"},
 	}
+}
+
+func TestOnlyTracerOnlyFeatureBlockersAreReportedNotRetried(t *testing.T) {
+	features := tracerLimitedChromeFeatures("capability 1 (chrome)")
 	validation := validationResult{Framework: "webdriverio", Features: features,
 		Configurations: []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm run test:local"}, PairedExecution: true, Status: "incomplete", Compatibility: verdict{Status: "compatible"}}},
 		Summary:        validationSummary{BlockingChecks: []string{"capability 1 (chrome)/auto-retries: known limitation", "not every project has every required feature result", "configuration npm run test:local: incomplete"}}}
@@ -99,4 +110,55 @@ func TestOnlyTracerOnlyFeatureBlockersAreReportedNotRetried(t *testing.T) {
 	validation.Summary.BlockingChecks = append([]string{"capability 1 (chrome)/disabled: failed"}, validation.Summary.BlockingChecks...)
 	_, actionable = splitTracerOnlyBlockers(validation)
 	require.True(t, strings.Contains(strings.Join(actionable, "\n"), "not every project has every required feature result"))
+}
+
+func TestSummaryDropsLinesThatOnlyRestateTracerOnlyFailures(t *testing.T) {
+	result := completeValidationFixture("webdriverio")
+	result.Success = false
+	result.Scope = &onboard.ValidationScope{}
+	result.Features = tracerLimitedChromeFeatures("capability 1 (chrome)")
+	result.Configurations = []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm run test:local"}, PairedExecution: true, Status: "incomplete", Compatibility: verdict{Status: "compatible"}}}
+	summary := summarizeValidation(result)
+	require.Contains(t, summary.BlockingChecks, "capability 1 (chrome)/auto-retries: known limitation")
+	require.NotContains(t, summary.BlockingChecks, featureCoverageBlocker)
+	require.NotContains(t, summary.BlockingChecks, "configuration npm run test:local: incomplete")
+
+	// A required feature without any result is not a tracer-only gap.
+	complete := result.Features
+	result.Features = slices.DeleteFunc(slices.Clone(complete), func(f featureResult) bool { return f.Name == "disabled" })
+	summary = summarizeValidation(result)
+	require.Contains(t, summary.BlockingChecks, featureCoverageBlocker)
+	require.Contains(t, summary.BlockingChecks, "configuration npm run test:local: incomplete")
+
+	// Neither is a project with no results at all.
+	result.Features = append(slices.Clone(complete), featureResult{Project: "capability 2 (firefox)", Name: "quarantine", Status: "passed"})
+	summary = summarizeValidation(result)
+	require.Contains(t, summary.BlockingChecks, featureCoverageBlocker)
+
+	// Nor a paired configuration whose project produced no results.
+	result.Features = complete
+	result.Configurations = append(result.Configurations, configurationResult{TestCommand: onboard.TestCommand{Command: "npm run test:firefox"}, PairedExecution: true, Status: "incomplete", Compatibility: verdict{Status: "compatible"}})
+	summary = summarizeValidation(result)
+	require.Contains(t, summary.BlockingChecks, featureCoverageBlocker)
+	result.Configurations = result.Configurations[:1]
+	result.Features = complete
+
+	// An ordinary feature failure keeps them.
+	result.Features = append(result.Features, featureResult{Project: "capability 1 (chrome)", Name: "disabled", Status: "failed"})
+	summary = summarizeValidation(result)
+	require.Contains(t, summary.BlockingChecks, featureCoverageBlocker)
+	require.Contains(t, summary.BlockingChecks, "configuration npm run test:local: incomplete")
+}
+
+func TestJasmineCoreLimitationLiftsForFixedTracers(t *testing.T) {
+	config := &framework.WebdriverIOConfig{Framework: "jasmine", JasmineCore: "5.9.0"}
+	require.NotEmpty(t, webdriverIOJasmineLimitation(config, "auto-retries", "dd-trace@6.21.0"), "no released fix yet")
+
+	t.Cleanup(func() { webdriverIOJasmineFixedMinor = map[int]int{} })
+	webdriverIOJasmineFixedMinor = map[int]int{6: 22}
+	require.Empty(t, webdriverIOJasmineLimitation(config, "auto-retries", "dd-trace@6.22.0"))
+	require.Empty(t, webdriverIOJasmineLimitation(config, "auto-retries", "6.23.1"))
+	require.NotEmpty(t, webdriverIOJasmineLimitation(config, "auto-retries", "dd-trace@6.21.0"))
+	require.NotEmpty(t, webdriverIOJasmineLimitation(config, "auto-retries", "dd-trace@5.132.0"), "v5 has no fixed release listed")
+	require.NotEmpty(t, webdriverIOJasmineLimitation(config, "auto-retries", ""), "unselected tracer stays limited")
 }

@@ -179,5 +179,5 @@ func tracerFeatureLimitation(result *validationResult, feature string) string {
 	if result.Framework != "webdriverio" || result.Preflight == nil {
 		return ""
 	}
-	return webdriverIOJasmineLimitation(result.Preflight.WebdriverIO, feature)
+	return webdriverIOJasmineLimitation(result.Preflight.WebdriverIO, feature, result.Tracer)
 }

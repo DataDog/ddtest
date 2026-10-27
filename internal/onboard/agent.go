@@ -110,7 +110,8 @@ func RenderAgentResult(output io.Writer, result AgentResult, format string) erro
 	}
 
 	if result.FinalResponse != "" && !strings.Contains(result.Instruction, FinalResponseInstruction) {
-		result.Instruction = strings.TrimSpace(result.Instruction + " " + FinalResponseInstruction)
+		// First, so it is read before the rest of the instruction.
+		result.Instruction = strings.TrimSpace(FinalResponseInstruction + " " + result.Instruction)
 	}
 	if !strings.Contains(result.Instruction, ReadWholeInstruction) && !strings.Contains(result.Reason, ReadWholeInstruction) {
 		result.Instruction = strings.TrimSpace(result.Instruction + " " + ReadWholeInstruction)
@@ -268,7 +269,7 @@ const ReadWholeInstruction = "Each result is one bounded JSON document: read it 
 
 // FinalResponseInstruction keeps the agent's answer factual: trials showed
 // paraphrases turning an incomplete verdict into a completion claim.
-const FinalResponseInstruction = "Relay final_response verbatim as the first block of your answer, and add context only after it. When it starts with NOT COMPLETE, do not call onboarding complete or successful, and do not record that result as expected or final in notes or memory."
+const FinalResponseInstruction = "Begin your answer with final_response exactly, as its first block, and add context only after it. When it starts with NOT COMPLETE, do not call onboarding complete or successful, and do not record that result as expected or final in notes or memory."
 
 // humanOnboardingHandoff points at the preview, which writes nothing, before
 // the command that applies the edits and runs local validation.

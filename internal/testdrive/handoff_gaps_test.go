@@ -107,12 +107,12 @@ func TestInstalledJasmineCoreLimitationsReachThePlan(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules", "jasmine-core"), 0o700))
 	requireWriteFile(t, filepath.Join(root, "node_modules", "@wdio", "jasmine-framework", "package.json"), `{"version":"9.31.2"}`)
 	requireWriteFile(t, filepath.Join(root, "node_modules", "jasmine-core", "package.json"), `{"version":"5.9.0"}`)
-	limitations := installedFeatureLimitations(root, "webdriverio")
+	limitations := installedFeatureLimitations(root, "webdriverio", "")
 	require.ElementsMatch(t, webdriverIOJasmineLimitedFeatures, mapKeys(limitations))
 	require.Contains(t, limitations["auto-retries"], "jasmine-core 5.9.0")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "node_modules", "jasmine-core", "package.json"), []byte(`{"version":"6.3.0"}`), 0o600))
-	require.Nil(t, installedFeatureLimitations(root, "webdriverio"))
-	require.Nil(t, installedFeatureLimitations(root, "jest"))
+	require.Nil(t, installedFeatureLimitations(root, "webdriverio", ""))
+	require.Nil(t, installedFeatureLimitations(root, "jest", ""))
 
 	var output bytes.Buffer
 	require.NoError(t, onboard.RenderAgentResult(&output, onboard.AgentResult{Status: "needs_input", Plan: &onboard.ExecutionPlan{Framework: "webdriverio", KnownLimitations: limitations}}, "json"))
@@ -148,4 +148,24 @@ func TestEveryAgentResultSaysToReadItWhole(t *testing.T) {
 	require.Contains(t, result.Instruction, onboard.ReadWholeInstruction)
 	require.Contains(t, onboard.AgentScope, onboard.PrescribedEditInstruction)
 	require.Contains(t, onboard.AgentScope, "Any edit ddtest did not prescribe needs the user's approval first.")
+}
+
+func TestPlanLimitationsFollowTheSelectedTracer(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules", "@wdio", "jasmine-framework"), 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules", "jasmine-core"), 0o700))
+	requireWriteFile(t, filepath.Join(root, "node_modules", "@wdio", "jasmine-framework", "package.json"), `{"version":"9.31.2"}`)
+	requireWriteFile(t, filepath.Join(root, "node_modules", "jasmine-core", "package.json"), `{"version":"5.9.0"}`)
+	t.Cleanup(func() { webdriverIOJasmineFixedMinor = map[int]int{} })
+	webdriverIOJasmineFixedMinor = map[int]int{6: 22}
+
+	testdrive := &Testdrive{repositoryRoot: root}
+	plan := &onboard.ExecutionPlan{Framework: "webdriverio"}
+	testdrive.setPlanTracer(plan, "")
+	require.Len(t, plan.KnownLimitations, len(webdriverIOJasmineLimitedFeatures), "an unselected tracer stays conservative")
+	testdrive.setPlanTracer(plan, "6.22.0")
+	require.Equal(t, "6.22.0", plan.Tracer)
+	require.Empty(t, plan.KnownLimitations, "a fixed release lifts the limitations")
+	testdrive.setPlanTracer(plan, "6.21.0")
+	require.Len(t, plan.KnownLimitations, len(webdriverIOJasmineLimitedFeatures))
 }

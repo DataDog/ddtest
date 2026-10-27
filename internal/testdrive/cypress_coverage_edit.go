@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -101,9 +102,13 @@ func cypressCoverageEdit(root string) *coverageEdit {
 		}
 	}
 	if config := firstExisting(root, "vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs", "vite.config.cjs"); config != "" && depends("vite") {
+		plugin := viteIstanbulPlugin(installedMajor(root, "vite"))
+		if plugin == "" {
+			return nil
+		}
 		return &coverageEdit{
 			Build:   "vite",
-			Install: install("vite-plugin-istanbul"),
+			Install: install(plugin),
 			Files: []fileEdit{{Path: config, Action: "edit", Where: "add the import at the top and the plugin to the plugins array of the exported config",
 				Content: "import istanbul from 'vite-plugin-istanbul'\n\nistanbul({ include: 'src/**/*', exclude: ['node_modules', 'cypress/'], extension: ['.js', '.jsx', '.ts', '.tsx', '.vue'], requireEnv: true })\n"}},
 			Serve:            "Start the application served to Cypress with VITE_COVERAGE=true; other builds stay uninstrumented.",
@@ -311,4 +316,36 @@ func coverageFileExists(path string) bool {
 
 func cypressCoverageEditReason(edit *coverageEdit) string {
 	return fmt.Sprintf("No application source coverage observed, so Test Impact Analysis cannot be validated. ddtest recognized the %s build served to Cypress; the exact change is in the JSON report at runs[].coverage.edit of the run whose role is \"reporting-only\": install (%s), %d file edit(s), and how to serve the instrumented build. It is a ddtest-prescribed, test-only change: apply it exactly as given, without modifying or extending it, then rerun; the final report lists it with its revert.", edit.Build, edit.Install, len(edit.Files))
+}
+
+// viteIstanbulPlugin pins the vite-plugin-istanbul major whose peer range
+// covers the installed Vite: 9 needs Vite 7 or later, 7 supports Vite 4-6.
+// An unknown Vite (not installed) gets the current major; older Vite has none.
+func viteIstanbulPlugin(viteMajor int) string {
+	switch {
+	case viteMajor == 0 || viteMajor >= 7:
+		return "vite-plugin-istanbul@^9"
+	case viteMajor >= 4:
+		return "vite-plugin-istanbul@^7"
+	}
+	return ""
+}
+
+// installedMajor reads the major version of an installed package, or 0.
+func installedMajor(root, name string) int {
+	data, err := os.ReadFile(filepath.Join(root, "node_modules", name, "package.json"))
+	if err != nil {
+		return 0
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(data, &manifest) != nil {
+		return 0
+	}
+	major, err := strconv.Atoi(strings.SplitN(manifest.Version, ".", 2)[0])
+	if err != nil {
+		return 0
+	}
+	return major
 }

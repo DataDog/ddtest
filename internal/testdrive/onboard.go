@@ -269,7 +269,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		}
 	}
 
-	plan.KnownLimitations = installedFeatureLimitations(t.repositoryRoot, name)
+	t.setPlanTracer(plan, plan.Tracer)
 	if plan.Site == "" {
 		plan.Site = "datadoghq.com"
 	}
@@ -343,7 +343,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			// don't pin a newer major themselves.
 			if !options.ExplicitVersion && t.projectTracer == "" {
 				if version := t.ciRuntimeTracer(ctx); version != "" {
-					plan.Tracer = version
+					t.setPlanTracer(plan, version)
 					needs += " For manual CI edits use js-tracer-version: " + version + " (every detected CI Node runtime supports it) and pass --tracer-version " + version + " to validation."
 				}
 			}
@@ -455,7 +455,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			}
 		}
 		result.Checks = append(result.Checks, onboard.WorkflowCheck{Name: "preflight_preparation", Status: "passed", Reason: fmt.Sprintf("Verified preflight reused: %t. Test execution is always fresh.", reused)})
-		plan.Tracer = selected
+		t.setPlanTracer(plan, selected)
 		if !onboard.SupportsAutomaticSetup(name) {
 			result.Location = "CI initialization"
 			result.RequiredInput = []string{"framework-specific CI loader/hook integration using the selected tracer release " + selected}
@@ -559,7 +559,8 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		onboard.AssignConfigurationIDs(&updated)
 		scope = updated
 		ctx = onboard.WithWorkflowSetupScope(ctx, t.repositoryRoot, scope)
-		plan.Scope, plan.Tracer = scope, selected
+		plan.Scope = scope
+		t.setPlanTracer(plan, selected)
 		t.workflowScope = &scope
 		t.tracerVersion = selected
 		// Prepare once more to bind installation commands to the exact release.
@@ -573,7 +574,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		prepared.workflowRun = t.workflowRun
 		t = prepared
 	}
-	plan.Tracer = t.tracerVersion
+	t.setPlanTracer(plan, t.tracerVersion)
 	checkpoint.Engine = engineIdentity()
 	checkpoint.Fingerprint, checkpoint.Node, checkpoint.FactsSHA256, checkpoint.Tracer, checkpoint.Plan = plan.Fingerprint, t.workflowNodeVersion(), factsHash, plan.Tracer, plan
 	// Cache only successful selection, not failed preflight or a test verdict.
@@ -624,7 +625,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	executed = true
 	plan.CIRuntime = validation.CIRuntime
 	if validation.Selection != nil {
-		plan.Tracer = validation.Selection.Version
+		t.setPlanTracer(plan, validation.Selection.Version)
 	}
 	var runtimeMetadata *platform.MetadataError
 	if errors.As(runErr, &runtimeMetadata) {
@@ -799,6 +800,30 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 // (with their reasons) from the rest. The summary lines that merely restate a
 // tracer-only feature failure are dropped.
 func splitTracerOnlyBlockers(validation validationResult) (reportOnly, actionable []string) {
+	tracerOnly, _ := tracerOnlyFeatures(validation)
+	for _, check := range validation.Summary.BlockingChecks {
+		if feature, ok := tracerOnly[check]; ok {
+			reportOnly = append(reportOnly, check+" — "+feature.Reason)
+			continue
+		}
+		if restatesTracerOnlyFailures(validation, check) {
+			continue
+		}
+		actionable = append(actionable, check)
+	}
+	// A configuration's "incomplete" line only restates the other blockers that
+	// caused it; keep it only when it is the sole explanation.
+	derived := func(check string) bool { return configurationStatusLine(validation, check) }
+	if slices.ContainsFunc(validation.Summary.BlockingChecks, func(check string) bool { return !derived(check) }) {
+		actionable = slices.DeleteFunc(actionable, derived)
+	}
+	return reportOnly, actionable
+}
+
+// tracerOnlyFeatures maps each unsatisfied feature's blocker line to the
+// feature when only a tracer change can address it, and reports whether any
+// other feature failed.
+func tracerOnlyFeatures(validation validationResult) (map[string]featureResult, bool) {
 	tracerOnly := map[string]featureResult{}
 	others := false
 	for _, feature := range validation.Features {
@@ -811,23 +836,46 @@ func splitTracerOnlyBlockers(validation validationResult) (reportOnly, actionabl
 			others = true
 		}
 	}
-	for _, check := range validation.Summary.BlockingChecks {
-		if feature, ok := tracerOnly[check]; ok {
-			reportOnly = append(reportOnly, check+" — "+feature.Reason)
-			continue
+	return tracerOnly, others
+}
+
+// restatesTracerOnlyFailures reports whether check only restates feature
+// failures that are all tracer-only: the generic feature-coverage line and a
+// compatible configuration's "incomplete" line.
+func restatesTracerOnlyFailures(validation validationResult, check string) bool {
+	tracerOnly, others := tracerOnlyFeatures(validation)
+	return len(tracerOnly) > 0 && !others && featureResultsComplete(validation) &&
+		(check == featureCoverageBlocker || pairedConfigurationBlocker(validation, check))
+}
+
+// featureResultsComplete reports whether every project has a result for every
+// required feature and every paired configuration produced one, so a missing
+// result is never hidden behind tracer-only failures.
+func featureResultsComplete(validation validationResult) bool {
+	projects := map[string]map[string]bool{}
+	for _, feature := range validation.Features {
+		if projects[feature.Project] == nil {
+			projects[feature.Project] = map[string]bool{}
 		}
-		if len(tracerOnly) > 0 && !others && (check == "not every project has every required feature result" || pairedConfigurationBlocker(validation, check)) {
-			continue
+		projects[feature.Project][feature.Name] = true
+	}
+	paired := 0
+	for _, configuration := range validation.Configurations {
+		if configuration.PairedExecution {
+			paired++
 		}
-		actionable = append(actionable, check)
 	}
-	// A configuration's "incomplete" line only restates the other blockers that
-	// caused it; keep it only when it is the sole explanation.
-	derived := func(check string) bool { return configurationStatusLine(validation, check) }
-	if slices.ContainsFunc(validation.Summary.BlockingChecks, func(check string) bool { return !derived(check) }) {
-		actionable = slices.DeleteFunc(actionable, derived)
+	if len(projects) == 0 || len(projects) < paired {
+		return false
 	}
-	return reportOnly, actionable
+	for _, names := range projects {
+		for _, policy := range featurePolicies(validation.Framework) {
+			if !names[policy.Name] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // configurationStatusLine reports whether check is the summary's derived
@@ -1161,4 +1209,11 @@ func refreshScopeCheck(checks []onboard.WorkflowCheck, scope *onboard.Validation
 		}
 	}
 	return checks
+}
+
+// setPlanTracer records the selected tracer and recomputes the known
+// limitations, which depend on it: a release with a tracer fix lifts them.
+func (t *Testdrive) setPlanTracer(plan *onboard.ExecutionPlan, tracer string) {
+	plan.Tracer = tracer
+	plan.KnownLimitations = installedFeatureLimitations(t.repositoryRoot, plan.Framework, tracer)
 }

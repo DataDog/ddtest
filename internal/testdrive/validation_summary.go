@@ -54,6 +54,9 @@ func apiKeyHumanAction(check *onboard.RuntimeCheck) string {
 	return apiKeyAction
 }
 
+// featureCoverageBlocker is the summary line for incomplete feature results.
+const featureCoverageBlocker = "not every project has every required feature result"
+
 func summarizeValidation(result validationResult) validationSummary {
 	summary := validationSummary{Status: "INCOMPLETE", LocalValidation: "INCOMPLETE", CIConfiguration: "not exercised", CIExecution: "not exercised"}
 	if result.LocalSuccess {
@@ -105,7 +108,7 @@ func summarizeValidation(result validationResult) validationSummary {
 			}
 		}
 		if !featureChecksPassed(result.Framework, result.Features) {
-			summary.BlockingChecks = append(summary.BlockingChecks, "not every project has every required feature result")
+			summary.BlockingChecks = append(summary.BlockingChecks, featureCoverageBlocker)
 		}
 		if result.Cleanup == nil {
 			summary.BlockingChecks = append(summary.BlockingChecks, "owned cleanup was not exercised")
@@ -141,6 +144,9 @@ func summarizeValidation(result validationResult) validationSummary {
 			}
 		}
 	}
+	// Lines that only restate tracer-only feature failures add nothing to the
+	// failures themselves.
+	summary.BlockingChecks = slices.DeleteFunc(summary.BlockingChecks, func(check string) bool { return restatesTracerOnlyFailures(result, check) })
 	// Success is scoped to an explicitly selected command; the overall summary
 	// continues to expose every unvalidated repository configuration.
 	if result.Scope != nil && (len(result.Scope.Unresolved)+len(fidelityBlockers) > 0 || slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return !configurationSettled(result, c) })) && summary.Status != "FAILED" {

@@ -592,7 +592,16 @@ jobs:
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
         run: go test -v ./internal/testdrive -run '^(TestPublicMochaTestdrive|TestMochaProbeCoverageThresholdControls|TestMochaDelayedCommandUsesSharedTimeout|TestMochaPreflightResolvesSelectedPackage)$' -count=1 -timeout=10m
 
+  playwright-latest:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        run: echo "version=$(npm view @playwright/test version)" >> "$GITHUB_OUTPUT"
+
   testdrive-playwright-workflow:
+    needs: playwright-latest
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -600,6 +609,12 @@ jobs:
       matrix:
         playwright: ['1.55.1', 'latest']
         shard: ['1/2', '2/2']
+    # The official image ships the browsers and their system packages for this
+    # exact Playwright release, so nothing is downloaded or installed per run.
+    container:
+      image: mcr.microsoft.com/playwright:v${{ matrix.playwright == 'latest' && needs.playwright-latest.outputs.version || matrix.playwright }}-noble
+    env:
+      PLAYWRIGHT_VERSION: ${{ matrix.playwright == 'latest' && needs.playwright-latest.outputs.version || matrix.playwright }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -608,16 +623,16 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
+      # The workspace is owned by the runner user, not the container's root;
+      # go build reads it with git for VCS stamping.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Isolate Playwright fixture caches
-        run: |
-          echo "npm_config_cache=$RUNNER_TEMP/playwright-testdrive/cache" >> "$GITHUB_ENV"
-          echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/playwright-testdrive/browsers" >> "$GITHUB_ENV"
+        run: echo "npm_config_cache=$RUNNER_TEMP/playwright-testdrive/cache" >> "$GITHUB_ENV"
       - name: Install Playwright testdrive fixture dependencies
         run: |
-          npm install --prefix "$RUNNER_TEMP/playwright-testdrive" "@playwright/test@${{ matrix.playwright }}" dd-trace@6.20.1 --no-audit --no-fund
+          npm install --prefix "$RUNNER_TEMP/playwright-testdrive" "@playwright/test@$PLAYWRIGHT_VERSION" dd-trace@6.20.1 --no-audit --no-fund
           npm ls --prefix "$RUNNER_TEMP/playwright-testdrive" --depth=0
-      - name: Install Chromium
-        run: "$RUNNER_TEMP/playwright-testdrive/node_modules/.bin/playwright install --with-deps chromium"
       - name: Validate browser execution, existing failures and supervised cleanup
         env:
           DDTEST_PLAYWRIGHT_NODE_MODULES: ${{ runner.temp }}/playwright-testdrive/node_modules
@@ -642,6 +657,15 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
+      - name: Resolve Cypress version
+        id: cypress
+        run: echo "version=$(npm view "cypress@${{ matrix.cypress }}" version | tail -n 1)" >> "$GITHUB_OUTPUT"
+      # The Cypress binary downloads during npm install; reuse it per release.
+      - name: Cache Cypress binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/cypress-testdrive-cache
+          key: ${{ runner.os }}-cypress-binary-${{ steps.cypress.outputs.version }}
       - name: Install Cypress testdrive fixture dependencies
         env:
           CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
