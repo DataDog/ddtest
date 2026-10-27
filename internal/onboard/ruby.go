@@ -26,6 +26,9 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if !filepath.IsLocal(directory) || strings.ContainsAny(directory, "$`~") {
 		return unresolvedCommand("Ruby working-directory needs explicit review: " + directory)
 	}
+	if rubyMaintenanceStep(step.Run) {
+		return commandResolution{Review: true, Reason: "Documentation, lint or release tooling is maintenance, outside " + framework + " test scope."}
+	}
 	parts, parseErr := staticCommands(step.Run)
 	matched := environment.LooksLikeTestCommand(filepath.Join(root, directory), step.Run, "ruby", framework)
 	if parseErr == nil && len(parts) == 1 {
@@ -55,6 +58,9 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	}
 	if !matched {
 		if strings.Contains(step.Run, "test") || strings.Contains(step.Run, "spec") {
+			if parseErr == nil && rubyOutsideUninstrumentedJob(root, workflow, job, parts, framework) {
+				return commandResolution{Review: true, Code: CodeUninstrumentedJob, Reason: "Uninstrumented CI job with no recognized " + framework + " step: this command is outside validation and its tests, if any, are not reported to Datadog. If it runs " + framework + " tests, add the Datadog action to this job and rerun validation: " + step.Run}
+			}
 			return unresolvedCommand("Ruby test wrapper was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
 		}
 		// An expression such as bundle exec ${{ matrix.command }} may select the
@@ -80,6 +86,95 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return unresolvedCommand("Ruby test entry point requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
 	}
 	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(parts[0]...)}}}
+}
+
+// rubyMaintenanceTools generate documentation, lint or release a gem; they
+// never run tests.
+var rubyMaintenanceTools = []string{"rdoc", "ri", "yard", "yardoc", "rubocop", "standardrb", "rufo", "reek", "brakeman", "bundle-audit", "bundler-audit", "erb_lint", "erblint"}
+
+// rubyReleaseSubcommands build or publish a gem.
+var rubyReleaseSubcommands = map[string][]string{"gem": {"build", "push", "yank", "owner", "signin", "cert"}}
+
+// rubyDependencySubcommands only install or inspect gems around maintenance.
+// Alone they are ordinary setup, not maintenance.
+var rubyDependencySubcommands = map[string][]string{
+	"gem":    {"install", "unpack", "fetch", "uninstall", "update", "list", "specification"},
+	"bundle": {"install", "config", "update", "lock", "package", "cache", "check", "binstubs", "clean", "outdated"},
+}
+
+// rubyShellBuiltins only move, print or inspect files around maintenance.
+var rubyShellBuiltins = []string{"cd", "cp", "mv", "mkdir", "rm", "ln", "echo", "printf", "cat", "ls", "touch", "tar", "pwd", "true"}
+
+// rubyMaintenanceStep reports whether every command of a step is
+// documentation, lint or release tooling, or file handling around it, with at
+// least one such tool. It never runs Rake, Ruby, a test runner or a
+// repository script, so it is maintenance, not test scope.
+func rubyMaintenanceStep(run string) bool {
+	if strings.ContainsAny(run, "`|") || strings.Contains(run, "$(") {
+		return false
+	}
+	tools := 0
+	for _, line := range strings.Split(run, "\n") {
+		for _, segment := range strings.FieldsFunc(strings.ReplaceAll(line, "&&", ";"), func(r rune) bool { return r == ';' }) {
+			segment = strings.TrimSpace(segment)
+			if segment == "" || strings.HasPrefix(segment, "#") {
+				continue
+			}
+			words, err := shellquote.Split(segment)
+			if err != nil || len(words) == 0 || strings.ContainsAny(words[0], "$=/") {
+				return false
+			}
+			if len(words) > 2 && words[0] == "bundle" && words[1] == "exec" {
+				words = words[2:]
+				if strings.ContainsAny(words[0], "$=/") {
+					return false
+				}
+			}
+			switch {
+			case slices.Contains(rubyMaintenanceTools, words[0]):
+				tools++
+			case len(words) > 1 && slices.Contains(rubyReleaseSubcommands[words[0]], words[1]):
+				tools++
+			case len(words) > 1 && slices.Contains(rubyDependencySubcommands[words[0]], words[1]):
+			case slices.Contains(rubyShellBuiltins, words[0]):
+			default:
+				return false
+			}
+		}
+	}
+	return tools > 0
+}
+
+// rubyOutsideUninstrumentedJob reports whether a command that only mentions
+// tests, with no framework, Rake, Ruby or repository entry point, runs in a
+// CI job that has no Datadog action and no step recognized as framework's.
+// Such a job was not set up for the framework, so its command is reported as
+// outside validation instead of blocking it. Repository scripts, Rake and
+// expressions stay in scope: they may well run the framework.
+func rubyOutsideUninstrumentedJob(root string, workflow ciWorkflow, job runtimeJob, parts [][]string, framework string) bool {
+	if len(job.Steps) == 0 || slices.ContainsFunc(parts, rubyRepositoryScript) {
+		return false
+	}
+	for _, words := range parts {
+		if len(words) > 2 && filepath.Base(words[0]) == "bundle" && words[1] == "exec" {
+			words = words[2:]
+		}
+		if len(words) == 0 || slices.Contains([]string{"rake", "ruby", "rspec", "rails", "minitest", "m", "testrb"}, filepath.Base(words[0])) || strings.ContainsAny(words[0], "$/") {
+			return false
+		}
+	}
+	// Siblings resolve without job context, so this check cannot recurse.
+	sibling := job
+	sibling.Steps = nil
+	for _, step := range job.Steps {
+		if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == githubAction {
+			return false
+		}
+		if step.Run != "" && resolveRubyStep(root, workflow, sibling, step, framework).Matched {
+			return false
+		}
+	}
+	return true
 }
 
 // rubyMaintenanceBinstubs are repository binstubs that never run tests.
@@ -305,7 +400,7 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 					resolved, _, resolveErr := resolveVariantStep(workflow, job, step, row, framework)
 					resolution := resolveRubyStep(root, workflow, job, resolved, framework)
 					if resolution.Review {
-						result.Review = append(result.Review, RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Status: "not checked", Reason: resolution.Reason})
+						result.Review = append(result.Review, RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Status: "not checked", Reason: resolution.Reason, Code: resolution.Code})
 						continue
 					}
 					if !resolution.Matched && resolution.Reason == "" {

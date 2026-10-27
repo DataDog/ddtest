@@ -7,6 +7,7 @@ package testdrive
 
 import (
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/onboard"
@@ -135,4 +136,19 @@ func TestSharedCIStepWorkIsReportedNotCertified(t *testing.T) {
 	result.Summary = summarizeValidation(result)
 	require.Contains(t, result.Summary.Caveats, note)
 	require.Contains(t, validationHandoff(result), "Caveat (not a blocker): "+note)
+}
+
+func TestUninstrumentedCIJobsAreReportedOutsideValidation(t *testing.T) {
+	result := completeValidationFixture("playwright")
+	finding := onboard.RuntimeFinding{Workflow: ".github/workflows/test-external.yaml", Job: "test", Step: 4, Command: "bundle exec bake test:external", Code: onboard.CodeUninstrumentedJob, Status: "not checked"}
+	result.CIRuntime = &onboard.RuntimeCheck{Status: "compatible", Review: []onboard.RuntimeFinding{finding, finding, {Workflow: "docs.yml", Job: "docs", Step: 2, Command: "bundle exec rdoc", Status: "not checked"}}}
+	summary := summarizeValidation(result)
+	var outside []string
+	for _, caveat := range summary.Caveats {
+		if strings.HasPrefix(caveat, "Outside validation") {
+			outside = append(outside, caveat)
+		}
+	}
+	require.Equal(t, []string{"Outside validation (uninstrumented CI job with no recognized Playwright step; its tests, if any, are not reported to Datadog): .github/workflows/test-external.yaml / test / step 4 (bundle exec bake test:external)"}, outside, "one line per step, matrix entries deduplicated")
+	require.Empty(t, summary.BlockingChecks)
 }

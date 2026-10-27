@@ -30,4 +30,7 @@ const (
 	CodeUnresolvedJestVersion        string = "unresolved_jest_version"
 	CodeUnsupportedJestConfiguration string = "unsupported_jest_configuration"
 	CodeNestedCIScope                string = "nested_ci_scope"
+	// CodeUninstrumentedJob marks a CI command outside validation because its
+	// job runs no Datadog action and no recognized step of the framework.
+	CodeUninstrumentedJob string = "uninstrumented_job"
 )

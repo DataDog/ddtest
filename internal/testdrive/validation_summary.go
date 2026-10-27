@@ -146,6 +146,17 @@ func summarizeValidation(result validationResult) validationSummary {
 			caveats = append(caveats, note)
 		}
 	}
+	if result.CIRuntime != nil {
+		for _, finding := range result.CIRuntime.Review {
+			if finding.Code != onboard.CodeUninstrumentedJob {
+				continue
+			}
+			note := fmt.Sprintf("Outside validation (uninstrumented CI job with no recognized %s step; its tests, if any, are not reported to Datadog): %s / %s / step %d (%s)", displayName(result.Framework), finding.Workflow, finding.Job, finding.Step, onboard.OneLineExcerpt(strings.TrimSpace(finding.Command)))
+			if !slices.Contains(caveats, note) {
+				caveats = append(caveats, note)
+			}
+		}
+	}
 	summary.Caveats = caveats
 	if result.Scope != nil {
 		summary.BlockingChecks = append(summary.BlockingChecks, scopeBlockers(append(slices.Clone(result.Scope.Unresolved), fidelityBlockers...))...)
