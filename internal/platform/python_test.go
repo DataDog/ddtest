@@ -641,10 +641,10 @@ func TestPythonProbeFailureAttemptsInstall(t *testing.T) {
 }
 
 func TestPythonExecutableNamesRejectUnknownWrappers(t *testing.T) {
-	for _, command := range []string{"python", "python3", "python3.12", "/venv/bin/python3.12", `C:\venv\Scripts\python.exe`, "Python3.EXE", "python3.13t", "python3t", `C:\Python313\python3.13t.exe`} {
+	for _, command := range []string{"python", "python3", "python3.12", "/venv/bin/python3.12", `C:\venv\Scripts\python.exe`, "Python3.EXE", "python3.13t", "python3t", `C:\Python313\python3.13t.exe`, `PCbuild\amd64\python_d.exe`, "python3.13t_d.exe"} {
 		require.True(t, IsPythonExecutable(command), command)
 	}
-	for _, command := range []string{"python-wrapper", "python3.12-helper", "python...", "python.3", "python3.", "pypy3.11", "pythont", "python3.13tt", "python3.13t-wrapper"} {
+	for _, command := range []string{"python-wrapper", "python3.12-helper", "python...", "python.3", "python3.", "pypy3.11", "pythont", "python3.13tt", "python3.13t-wrapper", "python_dd.exe", "python_d-wrapper", "python_t"} {
 		require.False(t, IsPythonExecutable(command), command)
 	}
 }

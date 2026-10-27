@@ -189,9 +189,10 @@ func looksLikeTestJob(root, commands, language, name string, depth int) bool {
 				for len(args) > 0 {
 					option, _, assigned := strings.Cut(args[0], "=")
 					switch option {
-					case "--locked", "--frozen", "--no-sync", "--no-default-groups", "--":
+					// Dependency selectors only choose what uv installs.
+					case "--locked", "--frozen", "--no-sync", "--no-default-groups", "--all-groups", "--no-dev", "--only-dev", "--all-extras", "--":
 						args = args[1:]
-					case "--group":
+					case "--group", "--no-group", "--only-group", "--extra", "--no-extra":
 						if !assigned {
 							if len(args) < 2 {
 								break uvOptions

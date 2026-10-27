@@ -132,9 +132,9 @@ func pythonProbeCommand(command string, args []string) (string, []string, error)
 			}
 			option, _, hasValue := strings.Cut(arg, "=")
 			switch option {
-			case "--no-sync", "--locked", "--frozen", "--offline", "--active", "--no-python-downloads", "--no-default-groups":
+			case "--no-sync", "--locked", "--frozen", "--offline", "--active", "--no-python-downloads", "--no-default-groups", "--all-groups", "--no-dev", "--only-dev", "--all-extras":
 				prefix = append(prefix, arg)
-			case "--project", "--directory", "--package", "--python", "-p", "--group", "--extra":
+			case "--project", "--directory", "--package", "--python", "-p", "--group", "--no-group", "--only-group", "--extra", "--no-extra":
 				prefix = append(prefix, arg)
 				if !hasValue && i+1 < len(args) {
 					i++

@@ -87,6 +87,10 @@ func TestGitHubFindTestWorkflowsCommandKinds(t *testing.T) {
 		{"python", "pytest", "uv run --no-sync -- pytest", true},
 		{"python", "pytest", "uv run --group dev ruff check", false},
 		{"python", "pytest", "uv run --group", false},
+		{"python", "pytest", "uv run --only-group test pytest", true},
+		{"python", "pytest", "uv run --all-groups --no-group=docs pytest", true},
+		{"python", "pytest", "uv run --no-dev --extra=cli --all-extras --no-extra slow pytest", true},
+		{"python", "pytest", "uv run --only-group lint ruff check", false},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			root := t.TempDir()
