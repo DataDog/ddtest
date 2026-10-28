@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -352,13 +353,17 @@ func TestJavaTestName(t *testing.T) {
 	}
 }
 
-func TestJavaValidatesJUnitWithPairedFeatureControls(t *testing.T) {
-	for _, name := range []string{"junit4", "junit5"} {
+func TestJavaValidatesSurefireFrameworksWithPairedFeatureControls(t *testing.T) {
+	for _, name := range []string{"junit4", "junit5", "testng", "spock"} {
 		require.True(t, supportsValidationFramework(name), name)
 		require.Len(t, featurePolicies(name), 6)
 		require.Equal(t, "java", languageForFramework(name).name())
+		require.Contains(t, javaProbes[name].source, "ddtest intentional failure", name)
+		require.Contains(t, javaProbes[name].source, "class DdtestValidationTest", "every probe is javaProbeClass")
 	}
-	require.False(t, supportsValidationFramework("testng"), "other Maven frameworks keep reporting-only checks")
+	require.Contains(t, javaProbes["testng"].source, "@org.testng.annotations.Test")
+	require.True(t, strings.HasSuffix(javaProbes["spock"].file, ".groovy"), "Spock specifications compile from src/test/groovy")
+	require.False(t, supportsValidationFramework("cucumber-java"), "other Maven frameworks keep reporting-only checks")
 	require.Equal(t, "java", languageForFramework("testng").name())
 	require.Equal(t, "JUnit 5", displayName("junit5"))
 	require.Equal(t, "Java", displayName("java"))

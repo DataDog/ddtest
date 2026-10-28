@@ -235,7 +235,11 @@ func (javaLanguage) pairedFrameworks() map[string]pairedFramework {
 		telemetry:       verifyJavaTelemetry,
 		missingCoverage: "Java application coverage was not observed. dd-java-agent reports per-test coverage of the classes each test runs; inspect the selected Maven command and its JDK, and check that tests execute application classes from the repository.",
 	}
-	return map[string]pairedFramework{"junit4": adapter, "junit5": adapter}
+	adapters := map[string]pairedFramework{}
+	for name := range javaProbes {
+		adapters[name] = adapter
+	}
+	return adapters
 }
 
 // Maven plugins run project code and every run rewrites target directories,

@@ -425,7 +425,41 @@ public class DdtestValidationTest {
 `
 }
 
-var javaProbeAnnotations = map[string]string{"junit4": "org.junit.Test", "junit5": "org.junit.jupiter.api.Test"}
+// spockProbeSource is javaProbeSource as a Spock specification. The failure is
+// thrown from a setup block: a Spock condition would report other text.
+const spockProbeSource = `package ddtest
+
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Paths
+import java.nio.file.StandardOpenOption
+
+class DdtestValidationTest extends spock.lang.Specification {
+    def ddtestProbe() {
+        setup:
+        def state = Paths.get(System.getenv("DDTEST_PROBE_STATE"))
+        Files.write(state, "run\n".getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+        def attempts = Files.readAllLines(state).size()
+        def mode = System.getenv("DDTEST_PROBE_MODE")
+        if (mode == "fail" || (mode == "fail-once" && attempts == 1)) {
+            throw new AssertionError("ddtest intentional failure")
+        }
+    }
+}
+`
+
+// javaProbe is a framework's controlled probe: its source file, relative to a
+// module, and its contents. Every probe is the class javaProbeClass.
+type javaProbe struct{ file, source string }
+
+// javaProbes are the frameworks with paired validation. Surefire runs and
+// reports each of them.
+var javaProbes = map[string]javaProbe{
+	"junit4": {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.junit.Test")},
+	"junit5": {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.junit.jupiter.api.Test")},
+	"testng": {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.testng.annotations.Test")},
+	"spock":  {filepath.Join("src", "test", "groovy", "ddtest", "DdtestValidationTest.groovy"), spockProbeSource},
+}
 
 // runJavaFeatures writes the probe into a module whose tests ran in the
 // baseline, inside the copy, then runs the shared feature controls.
@@ -445,7 +479,8 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 		unavailableFeatures(result, "No module of the selected Maven command ran native tests, so the controlled probe has nowhere to run.")
 		return nil
 	}
-	path := filepath.Join(module, "src", "test", "java", "ddtest", "DdtestValidationTest.java")
+	probeSource := javaProbes[t.framework.Name()]
+	path := filepath.Join(module, probeSource.file)
 	copyRoot, err := os.OpenRoot(checkout)
 	if err != nil {
 		return err
@@ -459,7 +494,7 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 	if err != nil {
 		return fmt.Errorf("write the validation probe: %w", err)
 	}
-	_, writeErr := probe.WriteString(javaProbeSource(javaProbeAnnotations[t.framework.Name()]))
+	_, writeErr := probe.WriteString(probeSource.source)
 	if err := errors.Join(writeErr, probe.Close()); err != nil {
 		return err
 	}

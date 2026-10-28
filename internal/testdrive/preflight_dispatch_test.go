@@ -31,6 +31,8 @@ func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 		"webdriverio": framework.NewWebdriverIO(javascript),
 		"junit4":      framework.NewMaven("junit4", platform.NewJava()),
 		"junit5":      framework.NewMaven("junit5", platform.NewJava()),
+		"testng":      framework.NewMaven("testng", platform.NewJava()),
+		"spock":       framework.NewMaven("spock", platform.NewJava()),
 	}
 	for name, policy := range frameworkFeaturePolicies {
 		if !policy.Preflight {
@@ -44,7 +46,7 @@ func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 		switch name {
 		case "rspec", "minitest":
 			require.Contains(t, function, ".checkRubyPreflight", name)
-		case "junit4", "junit5":
+		case "junit4", "junit5", "testng", "spock":
 			require.Contains(t, function, ".checkJavaPreflight", name)
 		default:
 			require.Contains(t, function, ".check"+displayName(name)+"Preflight", name)
