@@ -20,9 +20,8 @@ SHA-256 match its manifest.
   final binaries passed traces and binary qualification; the Native link
   control converged (80 repetitions).
 - [Race confirmation](confirm-race/README.md): Gin and Testify External with
-  `-race`, Native and POC Mini, with the recorded repetition counts. With three
-  repetitions, four forced-link cells of these cases had compared slower; with
-  ten, they compare faster than on 2026-10-16.
+  `-race`, Native and POC Mini, with the recorded repetition counts, such as ten
+  forced links instead of three.
 - [Memory](memory.md): every build scenario.
 
 Runtime and the local Agent control were not rerun. `runtime_benchmark.py` and
@@ -36,26 +35,6 @@ tables from this one; [compose.py](compose.py) writes it with the renderers of
 Two earlier attempts of the full collection on 2026-10-27 were stopped and are
 not part of this dataset: the first because the Native link control did not
 converge, the second because another workload ran on the host.
-
-## Against 2026-10-16
-
-Ratios of POC Mini's median time to Native's in each cell, against the same
-ratio in 20261016-linux-go1.27.1 (POC Mini of 2026-10-16, Native of
-2026-10-04), as the geometric mean over the 48 cells of each scenario.
-Orchestrion, whose code did not change, shows the variation between
-collections.
-
-| Scenario | POC Mini / Native | Orchestrion / Native | POC Mini, time | Native, time |
-| --- | ---: | ---: | ---: | ---: |
-| Cold | -7.6% | +0.9% | -0.1% | +8.1% |
-| Cached | -15.6% | +3.0% | -12.4% | +3.7% |
-| Forced link | -15.5% | -1.6% | -5.6% | +11.7% |
-| Body edit | -11.8% | -6.3% | -3.0% | +9.9% |
-| Constant edit | -17.5% | -4.8% | -9.5% | +9.6% |
-
-POC Mini's own memory peak changed between +1.0% and +5.6% per scenario
-(cached: 55.5 to 58.4 MiB in the median cell); Native's and Orchestrion's
-peaks were 5% to 23% lower than on 2026-10-04.
 
 ## Files
 
