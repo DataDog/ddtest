@@ -48,6 +48,11 @@ func (rubyDiscovery) coordinated() bool { return true }
 
 func (rubyDiscovery) automaticCISetup() bool { return false }
 
+// Ruby setup uses the Datadog GitHub Actions setup action only.
+func (rubyDiscovery) supportsCIProvider(provider string) bool {
+	return provider == gitHubActionsProvider
+}
+
 // Every discovered test step runs after a complete Datadog action or
 // explicitly skips it; at least one stays instrumented. Coordinated validation
 // enforces the same rule through RubyCIConfigurationForSite.

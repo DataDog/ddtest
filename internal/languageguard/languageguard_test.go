@@ -99,3 +99,27 @@ func TestCheckReportsJavaOutsideItsFiles(t *testing.T) {
 		t.Fatalf("want 2 violations (jest.go: mvn; java_validation.go: jest), got %d: %s", len(report.errors), strings.Join(report.errors, "; "))
 	}
 }
+
+func TestCheckNeutralReportsAnyLanguage(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		// Provider files name no language, JavaScript included.
+		"ci_provider_x.go": "package p\n\nconst install = \"npm install dd-trace\"\nconst gem = \"Gemfile\"\n",
+		// Comments and neutral facts are fine.
+		"ci_provider_y.go": "package p\n\n// Ruby and JavaScript steps are only commands here.\nconst image = \"ubuntu-latest\"\n",
+		// Files outside the patterns and tests are not checked.
+		"jest.go":               "package p\n\nconst jest = \"jest\"\n",
+		"ci_provider_x_test.go": "package p\n\nconst fixture = \"pytest\"\n",
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var report recorder
+	report.TB = t
+	CheckNeutral(&report, dir, "ci_provider*.go")
+	if len(report.errors) != 2 {
+		t.Fatalf("want 2 violations (dd-trace, Gemfile), got %d: %s", len(report.errors), strings.Join(report.errors, "; "))
+	}
+}

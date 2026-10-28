@@ -105,19 +105,6 @@ func DetectCIProvider() (CIProvider, error) {
 	return newCIProvider(providerName), nil
 }
 
-// DetectRepositoryCIProvider detects supported CI configuration in a checkout.
-// Unlike DetectCIProvider, it works outside CI and does not inspect environment tags.
-func DetectRepositoryCIProvider(repositoryRoot string) (CIProvider, error) {
-	paths, err := gitHubWorkflowPaths(repositoryRoot)
-	if err != nil {
-		return nil, err
-	}
-	if len(paths) > 0 {
-		return NewGitHub(), nil
-	}
-	return nil, fmt.Errorf("no supported CI provider detected in repository")
-}
-
 func newCIProvider(providerName string) CIProvider {
 	if providerName == "github" {
 		return NewGitHub()

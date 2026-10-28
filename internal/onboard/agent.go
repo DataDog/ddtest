@@ -212,6 +212,22 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	if err != nil {
 		return fail("framework_unresolved", err)
 	}
+	if root, err := os.Getwd(); err == nil {
+		if err := CheckCIProviderSupport(root, detected.Name(), runner.Name()); err != nil {
+			var choice *CIProviderChoice
+			var unsupported *CIProviderUnsupportedError
+			switch {
+			case errors.As(err, &choice):
+				return errors.Join(err, WriteAgentResult(output, ProviderChoiceResult(choice)))
+			case errors.As(err, &unsupported) && options.Human:
+				return err
+			case errors.As(err, &unsupported):
+				return errors.Join(err, WriteAgentResult(output, ProviderUnsupportedResult(unsupported)))
+			default:
+				return fail("ci_discovery", err)
+			}
+		}
+	}
 	if !coordinatedLanguage(detected.Name()) {
 		if options.Format != "" {
 			err := fmt.Errorf("controlled validation is not available for %s", detected.Name())
@@ -396,7 +412,12 @@ func DDTestCommand(args ...string) []string {
 	if executable == "" {
 		return nil
 	}
-	return append([]string{executable}, args...)
+	command := append([]string{executable}, args...)
+	// Follow-up commands keep the selected CI provider.
+	if provider := ActiveCIProvider(); provider != "" && len(args) > 0 && (args[0] == "onboard" || args[0] == "testdrive") && !slices.Contains(args, "--ci-provider") {
+		command = append(command, "--ci-provider", provider)
+	}
+	return command
 }
 
 // ddtestExecutable prefers the running executable. Only a temporary go run

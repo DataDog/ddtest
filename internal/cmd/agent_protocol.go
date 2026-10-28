@@ -12,6 +12,14 @@ import (
 
 func protocolFailure(cmd *cobra.Command, phase, code string, err error, next []string) error {
 	cmd.SilenceErrors, cmd.SilenceUsage = true, true
+	var choice *onboard.CIProviderChoice
+	if errors.As(err, &choice) {
+		return errors.Join(err, onboard.WriteAgentResult(cmd.OutOrStdout(), onboard.ProviderChoiceResult(choice)))
+	}
+	var unsupported *onboard.CIProviderUnsupportedError
+	if errors.As(err, &unsupported) {
+		return errors.Join(err, onboard.WriteAgentResult(cmd.OutOrStdout(), onboard.ProviderUnsupportedResult(unsupported)))
+	}
 	action := "supply_input"
 	status := "needs_input"
 	if code == "framework_unsupported" {
@@ -32,7 +40,8 @@ func confirmedCommand(cmd *cobra.Command) []string {
 		return nil
 	}
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
-		if flag.Name != "yes" {
+		// DDTestCommand already forwards the selected CI provider.
+		if flag.Name != "yes" && flag.Name != "ci-provider" {
 			words = append(words, "--"+flag.Name+"="+flag.Value.String())
 		}
 	})

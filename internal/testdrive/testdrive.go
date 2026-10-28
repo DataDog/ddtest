@@ -196,6 +196,11 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if all && !frameworkFeaturePolicies[runner.Name()].Configurations {
 		return nil, fmt.Errorf("--all currently validates %s only", frameworkNamesWith(func(policy frameworkPolicy) bool { return policy.Configurations }))
 	}
+	// Focused and --all runs both consult the selected provider's CI
+	// configuration, so the provider must support the language.
+	if err := onboard.CheckCIProviderSupport(repositoryRoot, language, runner.Name()); err != nil {
+		return nil, err
+	}
 
 	command, args, selected, discoveryError := selectedLanguage.selectCommand(commandRequest{root: repositoryRoot, runner: runner, override: strings.TrimSpace(settings.GetCommand()), all: all})
 	if !selected {
@@ -363,7 +368,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		// including the variables GitHub sets on every step.
 		matched := matchingConfigurationEnvironment(scope, scopeErr, repositoryRoot, runner.Name(), scopeCommand)
 		if matched != nil {
-			matched = onboard.WithGitHubActionsDefaults(matched)
+			matched = onboard.WithCIProviderDefaults(matched)
 		}
 		configurationEnvironment = mergeConfigurationEnvironment(matched, preflightEnvironment)
 		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, selectedPlan.Environment)

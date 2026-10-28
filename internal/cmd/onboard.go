@@ -22,7 +22,7 @@ var onboardCmd = newOnboardCommand(nil)
 
 func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 	var apply, yes, instructions, allowDirty, agent bool
-	var version, facts, site, format, resume string
+	var version, facts, site, format, resume, ciProvider string
 	var timeout time.Duration
 	var reviewed, substitute bool
 	command := &cobra.Command{
@@ -50,6 +50,10 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 			}
 			if apply && instructions {
 				return fail("invalid_options", fmt.Errorf("--apply and --instructions are mutually exclusive"))
+			}
+			if err := resolveCIProvider(cmd, ciProvider); err != nil {
+				// Without --instructions, onboarding answers non-terminals in the agent protocol.
+				return ciProviderFailure(cmd, structured || (!instructions && !apply && !isTerminalWriter(cmd.OutOrStdout())), err)
 			}
 			if instructions {
 				if structured || facts != "" || site != "" || cmd.Flags().Changed("tracer-version") {
@@ -119,6 +123,7 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 	command.Flags().StringVar(&facts, "facts", "", "JSON build/service facts bound to input_fingerprint; must be outside the checkout")
 	command.Flags().StringVar(&site, "site", "", "Datadog site for a new action (default DD_SITE, otherwise datadoghq.com)")
 	command.Flags().StringVar(&format, "format", "agent", "Result rendering: agent or json for direct host consumption")
+	command.Flags().StringVar(&ciProvider, "ci-provider", "", ciProviderFlagUsage())
 
 	command.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Explicitly extend uncommitted target-file edits after showing their exact diff")
 	agentHelp(command)

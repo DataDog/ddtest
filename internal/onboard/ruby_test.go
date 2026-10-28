@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/stretchr/testify/require"
 )
 
@@ -231,7 +230,7 @@ func TestRubyRakeTargetsValidateTheFrameworkTaskAndReportTheRest(t *testing.T) {
 	require.Equal(t, "not checked", ci.Jobs[0].Status, ci.Jobs[0].Reason)
 	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
 	var guidance strings.Builder
-	require.NoError(t, onboardGitHub(&guidance, &environment.GitHub{}, root, "ruby", "rspec", &agentHandoff{}))
+	require.NoError(t, onboardCI(&guidance, gitHubActions{}, root, "ruby", "rspec", &agentHandoff{}))
 	require.Contains(t, guidance.String(), "Shared CI step: This CI step also runs Rake task(s) features", "instructions name the other framework's tasks")
 
 	for command, expected := range map[string]string{

@@ -185,7 +185,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 	if len(frameworks) > 0 {
 		framework = frameworks[0]
 	}
-	result := RuntimeCheck{Status: StatusNotApplicable, Reason: "No candidate GitHub Actions " + framework + " test commands found; CI runtime compatibility was not checked."}
+	result := RuntimeCheck{Status: StatusNotApplicable, Reason: "No candidate " + CIProviderDisplayName() + " " + framework + " test commands found; CI runtime compatibility was not checked."}
 	workflows, err := readWorkflows(root)
 	if err != nil {
 		return RuntimeCheck{Status: StatusInconclusive, Reason: err.Error()}

@@ -20,6 +20,11 @@ func (pythonDiscovery) coordinated() bool { return false }
 
 func (pythonDiscovery) automaticCISetup() bool { return false }
 
+// Python setup uses the Datadog GitHub Actions setup action only.
+func (pythonDiscovery) supportsCIProvider(provider string) bool {
+	return provider == gitHubActionsProvider
+}
+
 func (pythonDiscovery) ciSetupConfigured(string, string, string) bool { return false }
 
 func (pythonDiscovery) agentInstructions(string, string) string { return "" }

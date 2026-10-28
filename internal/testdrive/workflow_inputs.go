@@ -35,14 +35,20 @@ const maxExpectedOutputs = 32
 const maxRepositoryNesting = 16
 
 // InputFingerprint binds facts and reports to source/configuration, runtime and
-// relevant non-secret environment. Git-ignored caches/outputs are not audited.
+// relevant non-secret environment, and to the selected CI provider: facts and
+// reports for one provider never certify another. Git-ignored caches/outputs
+// are not audited.
 func InputFingerprint(ctx context.Context, root string) (string, error) {
 	// Porcelain paths are checkout-relative even when invoked from a package.
 	// Use the whole checkout consistently for the index, status and file reads.
 	if data, err := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--show-toplevel").Output(); err == nil {
 		root = strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r")
 	}
-	return inputFingerprint(ctx, root, 0)
+	fingerprint, err := inputFingerprint(ctx, root, 0)
+	if provider := onboard.ActiveCIProvider(); err == nil && provider != "" {
+		fingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte("ci-provider="+provider+"\x00"+fingerprint)))
+	}
+	return fingerprint, err
 }
 
 func inputFingerprint(ctx context.Context, root string, depth int) (string, error) {

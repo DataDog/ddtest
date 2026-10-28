@@ -150,11 +150,15 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
-	workflows, err := readWorkflows(root)
+	provider, err := currentCIProvider(root)
 	if err != nil {
 		return scope, err
 	}
-	scope.Review = append(scope.Review, otherCIReview(root, framework)...)
+	workflows, err := provider.readWorkflows(root)
+	if err != nil {
+		return scope, err
+	}
+	scope.Review = append(scope.Review, otherCIReview(root, framework, provider)...)
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
@@ -590,21 +594,35 @@ func readsComputedAxis(command string, axes []string, row map[string]any) bool {
 	})
 }
 
-// CI configuration of providers other than GitHub Actions, by conventional path.
+// CI configuration of providers ddtest does not read, by conventional path.
 var otherCIFiles = []string{".circleci/config.yml", "circle.yml", ".gitlab-ci.yml", "azure-pipelines.yml", ".travis.yml", "Jenkinsfile", "bitbucket-pipelines.yml", ".buildkite/pipeline.yml", "appveyor.yml", ".drone.yml"}
 
-// otherCIReview names other providers' CI files that mention the framework.
-// They are not parsed, so their tests stay visible instead of silently outside.
-func otherCIReview(root, framework string) []string {
+// otherCIReview names the CI files outside the selected provider that mention
+// the framework: other providers' conventional files and the configuration of
+// every registered provider not selected. They are only searched as text,
+// never parsed, so their tests stay visible instead of silently outside, and a
+// file no provider can read never fails discovery.
+func otherCIReview(root, framework string, selected ciProvider) []string {
+	paths := slices.Clone(otherCIFiles)
+	for _, provider := range ciProviders {
+		if provider.name() != selected.name() {
+			files, _ := provider.configurationFiles(root)
+			paths = append(paths, files...)
+		}
+	}
+	owned, _ := selected.configurationFiles(root)
 	var review []string
-	for _, path := range otherCIFiles {
+	for i, path := range paths {
+		if slices.Contains(owned, path) || slices.Contains(paths[:i], path) {
+			continue
+		}
 		data, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil {
 			continue
 		}
 		text := strings.ToLower(string(data))
 		if strings.Contains(text, framework) || namesFramework(text, framework, true) {
-			review = append(review, path+": not a GitHub Actions workflow; ddtest does not analyze it, so "+framework+" tests it runs are outside this validation and need their own Datadog setup.")
+			review = append(review, path+": not a "+selected.displayName()+" workflow; ddtest does not analyze it, so "+framework+" tests it runs are outside this validation and need their own Datadog setup.")
 		}
 	}
 	return review
