@@ -390,3 +390,35 @@ func TestProviderSupportOnlyAppliesWithItsConfiguration(t *testing.T) {
 	var unsupported *CIProviderUnsupportedError
 	require.ErrorAs(t, CheckCIProviderSupport(root, "ruby", "rspec"), &unsupported)
 }
+
+// Human follow-ups keep the selected provider when several are configured,
+// so rerunning them doesn't ask again; with one provider they stay unchanged.
+func TestHumanFollowUpsKeepTheSelectedProvider(t *testing.T) {
+	registerTestCI(t)
+	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with:\n          languages: js\n      - run: npm test\n")
+	t.Chdir(root)
+	var output bytes.Buffer
+	require.NoError(t, Run(&output))
+	require.Contains(t, output.String(), "Run `ddtest testdrive --framework jest` to check the setup locally.")
+
+	writeFile(t, root, testCIFile, jestWorkflow)
+	useCIProvider(t, "github")
+	output.Reset()
+	require.NoError(t, Run(&output))
+	require.Contains(t, output.String(), "Run `ddtest testdrive --framework jest --ci-provider github` to check the setup locally.")
+}
+
+// Checkout-level checks list the selected provider's configuration only.
+func TestConfigurationFilesFollowTheSelectedProvider(t *testing.T) {
+	registerTestCI(t)
+	root := newJestRepository(t, jestWorkflow)
+	writeFile(t, root, testCIFile, jestWorkflow)
+	useCIProvider(t, "testci")
+	files, err := CIProviderConfigurationFiles(root)
+	require.NoError(t, err)
+	require.Equal(t, []string{testCIFile}, files)
+	useCIProvider(t, "github")
+	files, err = CIProviderConfigurationFiles(root)
+	require.NoError(t, err)
+	require.Equal(t, []string{".github/workflows/test.yml"}, files)
+}

@@ -89,7 +89,7 @@ func onboardCI(output io.Writer, provider ciProvider, repositoryRoot, language, 
 		if language != "javascript" {
 			return fmt.Errorf("onboard could not find a %s workflow that runs %s", provider.displayName(), name)
 		}
-		_, _ = fmt.Fprintf(output, "CI discovery is incomplete: no %s test workflow was resolved for %s. The guidance below is manual; it does not certify CI. Run ddtest testdrive --framework %s --command <your-test-command> --check-only --yes to inspect the local setup.\n\n", provider.displayName(), name, name)
+		_, _ = fmt.Fprintf(output, "CI discovery is incomplete: no %s test workflow was resolved for %s. The guidance below is manual; it does not certify CI. Run ddtest testdrive --framework %s%s --command <your-test-command> --check-only --yes to inspect the local setup.\n\n", provider.displayName(), name, name, ciProviderFollowUpFlag(repositoryRoot))
 		_, _ = fmt.Fprintln(output, strings.TrimSpace(instructions(language, name)))
 		return nil
 	}
@@ -110,6 +110,7 @@ func onboardCI(output io.Writer, provider ciProvider, repositoryRoot, language, 
 		if scope, err := DiscoverValidationScope(repositoryRoot, name); validatesConfigurations && err == nil && len(scope.Commands) > 1 {
 			command += " --all"
 		}
+		command += ciProviderFollowUpFlag(repositoryRoot)
 		_, _ = fmt.Fprintf(output, "Run `%s` to check the setup locally.\n", command)
 		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
 		if !instructionsWhenConfigured {

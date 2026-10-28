@@ -326,18 +326,16 @@ func checkConfigurationCIRuntimes(ctx context.Context, packageRoot, frameworkNam
 	if canonicalPackage == canonicalCheckout {
 		return check
 	}
-	entries, err := os.ReadDir(filepath.Join(checkout, ".github", "workflows"))
-	if os.IsNotExist(err) {
-		return check
-	}
-	hasWorkflow := err != nil
-	for _, entry := range entries {
-		hasWorkflow = hasWorkflow || (!entry.IsDir() && (filepath.Ext(entry.Name()) == ".yml" || filepath.Ext(entry.Name()) == ".yaml"))
-	}
-	if hasWorkflow {
+	// The selected provider's checkout-level configuration, not another's.
+	files, err := onboard.CIProviderConfigurationFiles(checkout)
+	if err != nil || len(files) > 0 {
+		location := onboard.CIProviderDisplayName()
+		if len(files) > 0 {
+			location = filepath.ToSlash(filepath.Dir(files[0]))
+		}
 		check.Status = onboard.StatusInconclusive
 		check.Reason = "Checkout-level " + onboard.CIProviderDisplayName() + " workflows were not validated from this package directory. Validate the checkout's CI/package scope before claiming configuration checks passed."
-		check.Review = append(check.Review, onboard.RuntimeFinding{Workflow: ".github/workflows", Status: onboard.StatusNotExercised, Code: onboard.CodeNestedCIScope, Reason: check.Reason})
+		check.Review = append(check.Review, onboard.RuntimeFinding{Workflow: location, Status: onboard.StatusNotExercised, Code: onboard.CodeNestedCIScope, Reason: check.Reason})
 	}
 	return check
 }

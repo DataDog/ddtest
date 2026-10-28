@@ -185,6 +185,32 @@ func WithCIProviderDefaults(env map[string]string) map[string]string {
 	return mergeEnvironment(activeOrDefaultCIProvider().environment(), env)
 }
 
+// CIProviderConfigurationFiles lists the selected CI provider's configuration
+// files in root without parsing them.
+func CIProviderConfigurationFiles(root string) ([]string, error) {
+	return activeOrDefaultCIProvider().configurationFiles(root)
+}
+
+// ciProviderFollowUpFlag returns the --ci-provider argument human follow-up
+// commands need: only when several providers have configuration in root, so
+// a rerun would ask again.
+func ciProviderFollowUpFlag(root string) string {
+	selected := ActiveCIProvider()
+	if selected == "" {
+		return ""
+	}
+	configured := 0
+	for _, provider := range ciProviders {
+		if files, err := provider.configurationFiles(root); err != nil || len(files) > 0 {
+			configured++
+		}
+	}
+	if configured < 2 {
+		return ""
+	}
+	return " --ci-provider " + selected
+}
+
 // CIProviderDisplayName names the selected CI provider in output.
 func CIProviderDisplayName() string { return activeOrDefaultCIProvider().displayName() }
 

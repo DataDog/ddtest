@@ -198,6 +198,7 @@ func TestNestedPackageDoesNotCertifyCheckoutCI(t *testing.T) {
 	check := checkConfigurationCIRuntimes(t.Context(), packageRoot, "jest")
 	require.Equal(t, onboard.StatusInconclusive, check.Status)
 	require.Equal(t, "nested_ci_scope", check.Review[0].Code)
+	require.Equal(t, ".github/workflows", check.Review[0].Workflow)
 	result := validationResult{CheckOnly: true, CIRuntime: &check, Preflight: &jestPreflight{Verdict: verdict{Status: onboard.StatusCompatible}}}
 	require.Error(t, finishValidation(&bytes.Buffer{}, packageRoot, result))
 }
