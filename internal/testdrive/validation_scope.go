@@ -143,6 +143,21 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 }
 
 // remoteOnlyCount names configurations that run only on a remote browser grid.
+// validatedText counts validated configurations against those local
+// validation must cover. CI opt-outs (configurations excluded from
+// instrumentation) are not unvalidated work; they are labeled separately.
+// Execution and pairing read as one fact when they agree.
+func (coverage *configurationCoverage) validatedText() string {
+	text := fmt.Sprintf("%d/%d validated", coverage.Validated, coverage.Discovered-coverage.Excluded)
+	if coverage.Excluded > 0 {
+		text += fmt.Sprintf(" (%d more excluded from instrumentation in CI)", coverage.Excluded)
+	}
+	if coverage.Paired == coverage.Executed {
+		return text + fmt.Sprintf("; %d executed with paired comparison", coverage.Executed)
+	}
+	return text + fmt.Sprintf("; %d executed, %d with paired comparison", coverage.Executed, coverage.Paired)
+}
+
 func remoteOnlyCount(coverage *configurationCoverage) string {
 	if coverage.RemoteOnly == 0 {
 		return ""

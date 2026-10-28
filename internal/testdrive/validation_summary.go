@@ -270,7 +270,7 @@ func validationHandoff(result validationResult) string {
 		fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s.\n", summary.Status, summary.LocalValidation)
 	}
 	if coverage := summary.ConfigurationCoverage; coverage != nil && coverage.Discovered > 0 {
-		fmt.Fprintf(&block, "Configurations: %d/%d validated; %d executed, %d paired; %d blocked, %d not exercised, %d incomplete%s.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete, remoteOnlyCount(coverage))
+		fmt.Fprintf(&block, "Configurations: %s; %d blocked, %d not exercised, %d incomplete%s.\n", coverage.validatedText(), coverage.Blocked, coverage.NotExercised, coverage.Incomplete, remoteOnlyCount(coverage))
 		windows := 0
 		for _, configuration := range result.Configurations {
 			if configurationExcluded(configuration) && configuration.WindowsRunner {

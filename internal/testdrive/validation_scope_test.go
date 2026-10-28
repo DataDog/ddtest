@@ -51,7 +51,7 @@ func TestConfigurationCoveragePrintsTheCompleteStatusPartition(t *testing.T) {
 	coverage, _ := summarizeConfigurationCoverage(result)
 	require.Equal(t, coverage.Discovered, coverage.Validated+coverage.Blocked+coverage.NotExercised+coverage.Incomplete)
 	require.Equal(t, 1, coverage.Incomplete)
-	require.Contains(t, output.String(), "Configuration coverage: 1/4 validated; 1 executed, 1 paired, 1 blocked, 1 not exercised, 1 incomplete.")
+	require.Contains(t, output.String(), "Configuration coverage: 1/4 validated; 1 executed with paired comparison; 1 blocked, 1 not exercised, 1 incomplete.")
 	output.Reset()
 	result.Configurations = nil
 	require.NoError(t, finishValidation(&output, t.TempDir(), result))

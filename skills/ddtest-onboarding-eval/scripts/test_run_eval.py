@@ -630,7 +630,7 @@ class VerdictTests(unittest.TestCase):
     def compact_answer(self):
         return ("Selected Cypress testdrive: PASSED.\nExecuted Cypress validations: PASSED (5/5).\n"
                 "Onboarding validation: INCOMPLETE. Local validation: PASSED.\n"
-                "Configurations: 5/8 validated; 5 executed, 5 paired; 2 blocked, 1 not exercised, 0 incomplete.\n"
+                "Configurations: 5/8 validated; 5 executed with paired comparison; 2 blocked, 1 not exercised, 0 incomplete.\n"
                 "Reporting: 96 test executions; 32 source-test identities.\n"
                 "[HTML report](</customer/repo/.testoptimization/report.html>)\n"
                 "[JSON evidence](</customer/repo/.testoptimization/testdrive.json>)\n")
@@ -666,7 +666,8 @@ class VerdictTests(unittest.TestCase):
     def test_swapped_distinct_counts_and_scope_upgrades_fail(self):
         for original, wrong in (("96 test executions; 32 source-test identities", "32 test executions; 96 source-test identities"),
                                 ("5/8 validated", "8/8 validated"),
-                                ("5 executed, 5 paired", "8 executed, 8 paired"),
+                                ("5 executed with paired comparison", "8 executed with paired comparison"),
+                                ("5 executed with paired comparison", "5 executed, 4 with paired comparison"),
                                 ("PASSED (5/5)", "PASSED (8/8)"),
                                 ("Onboarding validation: INCOMPLETE", "Onboarding validation: COMPLETE LOCALLY"),
                                 ("Selected Cypress testdrive: PASSED", "Selected Cypress testdrive: INCOMPLETE")):
@@ -674,6 +675,15 @@ class VerdictTests(unittest.TestCase):
                 result = run_eval.reporting_verdict(self.compact_answer().replace(original, wrong), self.compact_report())
                 self.assertEqual(result["status"], "fail")
                 self.assertTrue(result["differences"])
+
+    def test_ci_opt_outs_are_not_counted_as_unvalidated(self):
+        report = self.compact_report()
+        report["summary"]["configuration_coverage"].update(discovered=9, excluded=1)
+        answer = self.compact_answer().replace("5/8 validated;", "5/8 validated (1 more excluded from instrumentation in CI);")
+        self.assertEqual(run_eval.reporting_verdict(answer, report)["differences"], [])
+        for wrong in (answer.replace("5/8 validated", "5/9 validated"), answer.replace("(1 more excluded", "(2 more excluded")):
+            with self.subTest(wrong=wrong):
+                self.assertEqual(run_eval.reporting_verdict(wrong, report)["status"], "fail")
 
     def test_missing_ambiguous_facts_and_relative_links_require_review(self):
         for answer in ("", "Done", self.compact_answer().replace("Reporting: 96 test executions; 32 source-test identities.\n", ""),
@@ -734,7 +744,7 @@ class VerdictTests(unittest.TestCase):
         for claim in (
                 "Reporting: 999 test executions; 888 source-test identities.",
                 "Reporting: 96 test executions; 999 source-test identities.",
-                "Configurations: 8/8 validated; 8 executed, 8 paired; 0 blocked, 0 not exercised, 0 incomplete.",
+                "Configurations: 8/8 validated; 8 executed with paired comparison; 0 blocked, 0 not exercised, 0 incomplete.",
                 "Executed Cypress validations: PASSED (8/8).",
                 "Selected Cypress testdrive: INCOMPLETE."):
             with self.subTest(claim=claim):

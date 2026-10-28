@@ -437,7 +437,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	}
 	if coverage := result.Summary.ConfigurationCoverage; coverage != nil {
 		if coverage.Discovered > 0 {
-			_, _ = fmt.Fprintf(output, "Configuration coverage: %d/%d validated; %d executed, %d paired, %d blocked, %d not exercised, %d incomplete%s.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete, remoteOnlyCount(coverage))
+			_, _ = fmt.Fprintf(output, "Configuration coverage: %s; %d blocked, %d not exercised, %d incomplete%s.\n", coverage.validatedText(), coverage.Blocked, coverage.NotExercised, coverage.Incomplete, remoteOnlyCount(coverage))
 		} else {
 			_, _ = fmt.Fprintln(output, "Configuration coverage: no matching CI configurations discovered; current command evidence is reported separately.")
 		}

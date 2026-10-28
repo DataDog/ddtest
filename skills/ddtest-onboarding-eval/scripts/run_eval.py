@@ -278,11 +278,18 @@ def reporting_verdict(text, report):
         line = match[1]
         ratio = re.search(r"(\d+)\s*/\s*(\d+)\s+(?:fully\s+)?validated", line)
         if ratio:
-            compare("validated/discovered configurations", (coverage.get("validated"),coverage.get("discovered")), (int(ratio[1]),int(ratio[2])))
-        for key, label in (("executed","executed"),("paired","paired"),("blocked","blocked"),("not_exercised","not exercised"),("incomplete","incomplete")):
+            # CI opt-outs (excluded from instrumentation) are not unvalidated work.
+            discovered = coverage.get("discovered")
+            if isinstance(discovered, int):
+                discovered -= coverage.get("excluded") or 0
+            compare("validated/discovered configurations", (coverage.get("validated"),discovered), (int(ratio[1]),int(ratio[2])))
+        excluded = re.search(r"\((\d+)\s+more\s+excluded\b", line)
+        if excluded:
+            compare("excluded configurations", coverage.get("excluded") or 0, int(excluded[1]))
+        for key, label in (("executed","executed"),("paired","paired"),("paired","(?:executed\\s+)?with\\s+paired\\s+comparison"),("blocked","blocked"),("not_exercised","not exercised"),("incomplete","incomplete")):
             found = re.search(r"(?:^|[;,])\s*(\d+)\s+"+label+r"\b",line)
             if found:
-                compare(label+" configurations", coverage.get(key), int(found[1]))
+                compare(key.replace("_"," ")+" configurations", coverage.get(key), int(found[1]))
     counts = report.get("reporting_counts") if isinstance(report.get("reporting_counts"),dict) else {}
     evidence = report.get("last_execution") if isinstance(report.get("last_execution"),dict) else {}
     current = not report.get("check_only") and evidence.get("current", True)
