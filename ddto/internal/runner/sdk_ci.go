@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/ddto/internal/instrument"
@@ -35,16 +36,18 @@ func sdkCompilePackage(importPath string) (pkg string, own bool) {
 // Bump these contracts when the corresponding compiler edits change.
 func sdkCompilerCacheMarker(pkg string) string {
 	if pkg == sdkTracerPackage {
-		return "-I=ddto-sdk-span-mirror-v6"
+		return "-I=ddto-sdk-span-mirror-v7"
 	}
 	return "-I=ddto-sdk-ci-guard-v6"
 }
 
 // Mirror hooks are optional. CI ownership guards remain mandatory so an APM
 // SDK can keep its transport without reporting a second copy of the tests.
-func preflightSDKMirror(pkg *goPackage, replacements map[string]string) string {
+// The second result explains when copies work but the SDK's spans under tests
+// also go to APM: adoption's edits are missing.
+func preflightSDKMirror(pkg *goPackage, replacements map[string]string) (string, string) {
 	if pkg == nil || pkg.Error != nil {
-		return "" // Late SDK imports are checked against actual compiler inputs.
+		return "", "" // Late SDK imports are checked against actual compiler inputs.
 	}
 	var found uint8
 	for _, file := range pkg.GoFiles {
@@ -54,21 +57,24 @@ func preflightSDKMirror(pkg *goPackage, replacements map[string]string) string {
 		}
 		source, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Sprintf("SDK span copies disabled: %v", err)
+			return fmt.Sprintf("SDK span copies disabled: %v", err), ""
 		}
 		_, hooks, err := instrument.TransformSDKMirror(path, source)
 		if err != nil {
-			return fmt.Sprintf("SDK span copies disabled: %v", err)
+			return fmt.Sprintf("SDK span copies disabled: %v", err), ""
 		}
 		if found&hooks != 0 {
-			return "SDK span copies disabled: ambiguous hooks"
+			return "SDK span copies disabled: ambiguous hooks", ""
 		}
 		found |= hooks
 	}
-	if found != 15 {
-		return fmt.Sprintf("SDK span copies disabled: missing hooks (found %d)", found)
+	if found&instrument.SDKMirrorCopies != instrument.SDKMirrorCopies {
+		return fmt.Sprintf("SDK span copies disabled: missing hooks (found %d)", found), ""
 	}
-	return ""
+	if apm, _ := strconv.ParseBool(os.Getenv("DD_CIVISIBILITY_APM_SPANS_ENABLED")); !apm && found&instrument.SDKMirrorAdoption != instrument.SDKMirrorAdoption {
+		return "", fmt.Sprintf("SDK spans under tests also go to APM: this dd-trace-go lacks the hooks that keep them to Test Optimization (found %d)", found)
+	}
+	return "", ""
 }
 
 // prepareSDKCICompile rewrites the compiler's actual inputs, including covered
@@ -145,7 +151,7 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 		forwarded[i] = file.Name()
 	}
 	if pkg == sdkTracerPackage {
-		if mirrorFound != 15 {
+		if mirrorFound&instrument.SDKMirrorCopies != instrument.SDKMirrorCopies {
 			cleanup()
 			return nil, nil, fmt.Errorf("%w: SDK span mirror missing hooks (found %d)", instrument.ErrUnsupportedAPI, mirrorFound)
 		}
@@ -155,7 +161,7 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 			return nil, nil, err
 		}
 		temporary = append(temporary, file.Name())
-		_, err = file.WriteString(instrument.SDKMirrorHook)
+		_, err = file.WriteString(instrument.SDKMirrorHook(mirrorFound))
 		closeErr := file.Close()
 		if err != nil {
 			cleanup()

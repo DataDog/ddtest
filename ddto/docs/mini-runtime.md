@@ -7,8 +7,9 @@ tracer. Use the [README](../README.md) for installation and common commands.
 `--runtime=sdk` selects the unchanged SDK at the version pinned in
 [`internal/version`](../internal/version/version.go). Mini can coexist with an
 application's SDK imports; those imports still contribute their normal build
-dependencies. [SDK span copies](sdk-span-mirror.md) explain how the two runtimes
-associate operations without changing APM parentage.
+dependencies. [SDK spans under Mini tests](sdk-span-mirror.md) explain how the
+two runtimes associate operations without changing SDK parentage, and how those
+spans report to Test Optimization instead of APM.
 
 ## Configuration
 
@@ -349,9 +350,10 @@ propagation metadata; Mini records every CI event.
 A receiving APM tracer has its own private context value, so extract the
 carrier with that tracer's API to use the identity. In a combined binary,
 `t.Context()` also carries Mini identity when SDK mirror hooks are installed.
-Passing it to `tracer.StartSpanFromContext` creates an independent CI copy while
-the original APM span keeps its own trace; see
-[SDK span association](sdk-span-mirror.md).
+Passing it to `tracer.StartSpanFromContext` creates a CI copy. By default the
+SDK span joins the test's trace and is reported only through that copy;
+`DD_CIVISIBILITY_APM_SPANS_ENABLED=true` keeps its own trace and APM delivery.
+See [SDK span association](sdk-span-mirror.md).
 
 ## Explicit clients and manual instrumentation
 

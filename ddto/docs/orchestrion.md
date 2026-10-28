@@ -119,8 +119,11 @@ the existing graph query detects. Both `DD_CIVISIBILITY_ENABLED=parent` and
 
 [SDK span copies](sdk-span-mirror.md) associate application operations with a
 Mini test when the caller passes its context or a copied SDK parent's context.
-Orchestrion still weaves application spans. Their original APM IDs, parents and
-transport remain unchanged; Mini reports independent copies through CI intake.
+Orchestrion still weaves application spans and keeps their parents. Those
+under a test join its trace and are reported through Mini's copies instead of
+APM; services they call receive the test's trace and the `ciapp-test` origin.
+`DD_CIVISIBILITY_APM_SPANS_ENABLED=true` keeps their original IDs and APM
+transport, with independent copies.
 
 Mini's deferred delivery, retries and goleak shim continue to own Mini's data
 and goroutines. The goleak shim does not ignore arbitrary application or APM

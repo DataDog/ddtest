@@ -38,11 +38,14 @@ func TransformSDKMirror(name string, source []byte) ([]byte, uint8, error) {
 				typ := spec.(*ast.TypeSpec)
 				if typ.Name.Name == "SpanContext" {
 					structure, ok := typ.Type.(*ast.StructType)
-					if !ok || typ.Assign.IsValid() || found&1 != 0 {
+					if !ok || typ.Assign.IsValid() || found&SDKMirrorContext != 0 {
 						return nil, 0, sdkMirrorError("SDK SpanContext changed")
 					}
 					insert(structure.Fields.Opening+1, "\n__ddtoMirror any\n")
-					found |= 1
+					found |= SDKMirrorContext
+				}
+				if structure, ok := typ.Type.(*ast.StructType); ok && typ.Name.Name == "Span" && !typ.Assign.IsValid() && sdkSpanFields(structure) {
+					found |= SDKMirrorSpan
 				}
 			}
 		}
@@ -53,14 +56,24 @@ func TransformSDKMirror(name string, source []byte) ([]byte, uint8, error) {
 		var bit uint8
 		switch {
 		case fn.Recv == nil && fn.Name.Name == "spanStart":
-			bit = 2
+			bit = SDKMirrorStart
 			err = rewriteSDKSpanStart(fn, insert)
 		case sdkSpanReceiver(fn) != "" && fn.Name.Name == "finish":
-			bit = 4
+			bit = SDKMirrorFinish
 			err = rewriteSDKFinish(fn, insert)
 		case fn.Recv == nil && fn.Name.Name == "ContextWithSpan":
-			bit = 8
+			bit = SDKMirrorDetach
 			err = rewriteSDKContext(file, fn, insert)
+		// Adoption's edits are optional: an SDK without them keeps copies of
+		// their own identity and delivers its spans.
+		case sdkTracerMethod(fn) && fn.Name.Name == "submitChunk":
+			if rewriteSDKSubmit(file, fn, insert) {
+				bit = SDKMirrorSubmit
+			}
+		case sdkTracerMethod(fn) && fn.Name.Name == "computeOversizedSpanStats":
+			if rewriteSDKOversized(fn, insert) {
+				bit = SDKMirrorOversized
+			}
 		}
 		if err != nil {
 			return nil, 0, err
@@ -69,6 +82,9 @@ func TransformSDKMirror(name string, source []byte) ([]byte, uint8, error) {
 			return nil, 0, sdkMirrorError("duplicate SDK mirror function")
 		}
 		found |= bit
+	}
+	if sdkTraceInternals(file) {
+		found |= SDKMirrorTrace
 	}
 	if found == 0 {
 		return source, 0, nil
@@ -99,21 +115,3 @@ func sdkSpanReceiver(fn *ast.FuncDecl) string {
 	}
 	return receiver.Names[0].Name
 }
-
-const SDKMirrorHook = `package tracer
-import (
- "context"
- _ "unsafe"
-)
-//go:linkname __ddtoMirrorEnable github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorEnable
-func __ddtoMirrorEnable()
-func init(){ __ddtoMirrorEnable() }
-//go:linkname __ddtoMirrorStart github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorStart
-func __ddtoMirrorStart(context.Context,any,string) any
-//go:linkname __ddtoMirrorContext github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorContext
-func __ddtoMirrorContext(context.Context,any) context.Context
-//go:linkname __ddtoMirrorCapture github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorCapture
-func __ddtoMirrorCapture(any,string,string,string,string,int64,int64,int32,func(func(string,string)bool),map[string]float64,[16]byte,uint64) any
-//go:linkname __ddtoMirrorDeliver github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorDeliver
-func __ddtoMirrorDeliver(any)
-`

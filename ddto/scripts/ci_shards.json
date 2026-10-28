@@ -191,6 +191,7 @@
       "TestMiniLegacySDKShim",
       "TestMiniSDKMirrorBenchmarkMeasuresNoBinding",
       "TestMiniSDKMirrorContextMatrix",
+      "TestMiniSDKMirrorSupportedVersions",
       "TestMiniSDKSpanMirror",
       "TestMiniUnsupportedSDKMirrorRetainsTestReporting"
     ],
@@ -271,6 +272,7 @@
       "TestMiniLegacySDKShim",
       "TestMiniSDKMirrorBenchmarkMeasuresNoBinding",
       "TestMiniSDKMirrorContextMatrix",
+      "TestMiniSDKMirrorSupportedVersions",
       "TestMiniSDKSpanMirror",
       "TestMiniUnsupportedSDKMirrorRetainsTestReporting"
     ]

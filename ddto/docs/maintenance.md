@@ -594,3 +594,8 @@ Keep SDK-free context binding allocation-free, and rerun the real APM/CI
 receivers, parallel/retry isolation, pooled-context, coverage and Orchestrion
 cases described in [SDK span copies](sdk-span-mirror.md). Bump the cache marker
 when compiler hooks change, including generated initialization code.
+The edits that make SDK spans under a test join its trace (`submitChunk`,
+`computeOversizedSpanStats`, and the trace ID, origin and sampling internals)
+are optional: without them, copies keep their own identity, the SDK sends its
+spans to APM and the CLI warns. Keep `TestSDKMirrorAdoptionDrift` and
+`TestSDKMirrorHookCompiles` when changing them.

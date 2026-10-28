@@ -136,9 +136,11 @@ helpers. Mini then guards the SDK's CI initialization and transport
 configuration through the same hook, with or without Orchestrion, and APM keeps
 working. An SDK requirement that no package imports does not activate the
 guard. The hook also inserts the [SDK span mirror hooks](sdk-span-mirror.md):
-the native test context carries Mini's identity, SDK contexts keep their APM
-parentage, and finished SDK spans are copied into Mini's CI queue under
-independent IDs.
+the native test context carries Mini's identity, SDK contexts keep their
+parentage, an SDK root span under a test joins the test's trace, and finished
+SDK spans are copied into Mini's CI queue with their SDK span IDs instead of
+being sent to APM. `DD_CIVISIBILITY_APM_SPANS_ENABLED=true` keeps independent
+copies and APM delivery.
 
 Builds that need none of these features run without `-toolexec`. The exception
 is a build where go test may take results from its cache while ddto's Git
@@ -370,8 +372,9 @@ flowchart LR
 Inside one process, another tracer keeps its span under its own private
 `context.Context` key, so it must extract Mini's identity explicitly, through
 its own API or a header carrier; Mini's API provides both context values and
-header carriers. The [SDK mirror](sdk-span-mirror.md) instead associates
-independent CI copies with the test while preserving the original APM trace.
+header carriers. The [SDK mirror](sdk-span-mirror.md) instead puts SDK spans
+under a test into the test's trace, so the SDK's own propagator sends it, with
+the `ciapp-test` origin.
 Sampling priority is carried as propagation metadata; Mini has no APM sampling
 engine.
 
