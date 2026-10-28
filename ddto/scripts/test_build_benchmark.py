@@ -69,7 +69,7 @@ class ReportTests(unittest.TestCase):
         self.rows = [r for r in self.rows if r["variant"] == "mini"]
         self.save_rows()
         report, summary = benchmark.render(self.directory)
-        self.assertIn("| Project | Flags | CPUs | POC Mini |", report)
+        self.assertIn("| Project | Flags | CPUs | `ddtest instrument` |", report)
         self.assertNotIn("POC SDK", report)
         self.assertEqual(summary["measured_observations"], 15)
         self.rows.pop()

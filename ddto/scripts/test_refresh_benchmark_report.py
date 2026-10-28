@@ -61,6 +61,15 @@ class RuntimeStatisticsTests(unittest.TestCase):
                 refresh.runtime_statistics(rows,self.manifest)
 
 
+    def test_repetitions_and_variants_follow_the_collection(self):
+        rows=[r for r in self.rows if r['iteration']<3 and r['variant'] in ('native','mini')]
+        summary=refresh.runtime_statistics(rows,self.manifest,repetitions=3,variants=('native','mini'))
+        self.assertEqual(sorted(summary['fixture/4']),['mini','native'])
+        self.assertEqual(summary['fixture/4']['mini']['attempted'],4)
+        with self.assertRaisesRegex(ValueError,'incomplete runtime group'):
+            refresh.runtime_statistics(rows,self.manifest)
+
+
 class CollectionIntegrityTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()

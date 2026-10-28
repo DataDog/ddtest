@@ -473,7 +473,7 @@ execution and should not be used as evidence about a `-c` build's CPU cost.
 ## Compile-only comparisons
 
 Use four variants: native Go, Orchestrion with the pinned testing aspects,
-POC SDK and POC Mini. Fix the project revision, module graph, SDK reference,
+POC SDK and `ddtest instrument`. Fix the project revision, module graph, SDK reference,
 toolchain, flags and output layout before timing. Build the CLI and reference
 instrumentator outside the timed commands.
 
@@ -537,7 +537,7 @@ The [build benchmark guide](build-benchmarks.md) documents
 [`scripts/build_benchmark.py`](../scripts/build_benchmark.py), which runs
 Native, Orchestrion and Mini across the five scenarios, assigns affinity,
 measures exclusive cgroups and qualifies the outputs. Its `report` command regenerates the
-[recorded build tables](results/20261016-linux-go1.27.1/build/README.md)
+[recorded build tables](results/20261027-linux-go1.27.1/build/README.md)
 from every retained CSV observation, without Go or network access.
 
 ## Evidence and remaining work

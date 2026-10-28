@@ -29,7 +29,7 @@ CONFIG = ROOT / "scripts/build-benchmark.json"
 INPUTS = ROOT / "scripts/testdata/build-benchmark"
 VARIANTS = ("native", "orchestrion", "mini")
 LEGACY_VARIANTS = ("native", "orchestrion", "sdk", "mini")
-LABELS = {"native": "Native", "orchestrion": "Orchestrion", "sdk": "POC SDK", "mini": "POC Mini"}
+LABELS = {"native": "Native", "orchestrion": "Orchestrion", "sdk": "POC SDK", "mini": "`ddtest instrument`"}
 
 
 def variants(manifest):
@@ -194,19 +194,33 @@ def overview_lines(manifest, summary, link):
     if "measurement_origins" in manifest:
         mini = manifest["measurement_origins"]["mini"]
         reference = manifest["measurement_origins"]["native"]
-        provenance = [f"Mini was measured on {mini['started_at'][:10]} at `{mini['source_head']}`.",
+        provenance = [f"`ddtest instrument` was measured on {mini['started_at'][:10]} at `{mini['source_head']}`.",
                       f"Native and Orchestrion retain their {reference['started_at'][:10]} observations."]
     else:
         provenance = [f"Measured at commit `{manifest['source_head']}`."]
     return "\n".join([
         "## Benchmarks", "",
         "[Build, runtime and memory tables](docs/benchmarks.md) compare Native,",
-        "Orchestrion and POC Mini at 4/32 CPUs, with coverage and race cases.",
+        "Orchestrion and `ddtest instrument` at 4/32 CPUs, with coverage and race cases.",
         f"The [recorded build data]({link}/README.md) contains",
         f"{summary['measured_observations']:,} comparative observations.",
         *provenance, "",
         "[Run benchmarks or regenerate the tables](docs/build-benchmarks.md).", "",
     ])
+
+
+def check_instrumentation(symbols, variant, subject):
+    """Checks a test binary's `go tool nm` output: Orchestrion links the SDK's
+    testing hooks, Mini its port's, and Native neither; Testify subjects also
+    need the Testify suite hook."""
+    sdk = SDK_MODULE + "/internal/"
+    mini = POC_MODULE + "/internal/thirdparty/dd-trace-go/"
+    hooks = [("testing", "civisibility/integrations/gotesting.instrumentTestingMWithControl")]
+    if subject.startswith("testify"):
+        hooks.append(("Testify", "civisibility/integrations/gotesting.instrumentTestifySuiteRun"))
+    for name, suffix in hooks:
+        if (sdk + suffix in symbols) != (variant == "orchestrion") or (mini + suffix in symbols) != (variant == "mini"):
+            raise ValueError(f"{name} instrumentation hook mismatch")
 
 
 def report_command(args):
@@ -612,17 +626,7 @@ class Runner:
         spec = self.config["subjects"][case["subject"]]
         for binary in sorted(self.destination(case, cpus, variant).glob("*.test")):
             symbols = self.setup([str(self.go), "tool", "nm", str(binary)], ROOT)
-            sdk = SDK_MODULE + "/internal/"
-            mini = POC_MODULE + "/internal/thirdparty/dd-trace-go/"
-            suffix = "civisibility/integrations/gotesting.instrumentTestingMWithControl"
-            if ((sdk + suffix in symbols) != (variant == "orchestrion") or
-                    (mini + suffix in symbols) != (variant == "mini")):
-                raise ValueError("testing instrumentation hook mismatch")
-            if case["subject"].startswith("testify"):
-                suffix = "civisibility/integrations/gotesting.instrumentTestifySuiteRun"
-                if ((sdk + suffix in symbols) != (variant == "orchestrion") or
-                        (mini + suffix in symbols) != (variant == "mini")):
-                    raise ValueError("Testify instrumentation hook mismatch")
+            check_instrumentation(symbols, variant, case["subject"])
             sections = self.setup(["readelf", "-SW", str(binary)], ROOT)
             if re.search(r"\.(?:z)?debug_", sections):
                 raise ValueError("DWARF is present despite -w")
