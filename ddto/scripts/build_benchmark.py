@@ -209,6 +209,20 @@ def overview_lines(manifest, summary, link):
     ])
 
 
+def check_instrumentation(symbols, variant, subject):
+    """Checks a test binary's `go tool nm` output: Orchestrion links the SDK's
+    testing hooks, Mini its port's, and Native neither; Testify subjects also
+    need the Testify suite hook."""
+    sdk = SDK_MODULE + "/internal/"
+    mini = POC_MODULE + "/internal/thirdparty/dd-trace-go/"
+    hooks = [("testing", "civisibility/integrations/gotesting.instrumentTestingMWithControl")]
+    if subject.startswith("testify"):
+        hooks.append(("Testify", "civisibility/integrations/gotesting.instrumentTestifySuiteRun"))
+    for name, suffix in hooks:
+        if (sdk + suffix in symbols) != (variant == "orchestrion") or (mini + suffix in symbols) != (variant == "mini"):
+            raise ValueError(f"{name} instrumentation hook mismatch")
+
+
 def report_command(args):
     directory = args.input.resolve()
     markdown, summary = render(directory)
@@ -605,17 +619,7 @@ class Runner:
         spec = self.config["subjects"][case["subject"]]
         for binary in sorted(self.destination(case, cpus, variant).glob("*.test")):
             symbols = self.setup([str(self.go), "tool", "nm", str(binary)], ROOT)
-            sdk = SDK_MODULE + "/internal/"
-            mini = POC_MODULE + "/internal/thirdparty/dd-trace-go/"
-            suffix = "civisibility/integrations/gotesting.instrumentTestingMWithControl"
-            if ((sdk + suffix in symbols) != (variant == "orchestrion") or
-                    (mini + suffix in symbols) != (variant == "mini")):
-                raise ValueError("testing instrumentation hook mismatch")
-            if case["subject"].startswith("testify"):
-                suffix = "civisibility/integrations/gotesting.instrumentTestifySuiteRun"
-                if ((sdk + suffix in symbols) != (variant == "orchestrion") or
-                        (mini + suffix in symbols) != (variant == "mini")):
-                    raise ValueError("Testify instrumentation hook mismatch")
+            check_instrumentation(symbols, variant, case["subject"])
             sections = self.setup(["readelf", "-SW", str(binary)], ROOT)
             if re.search(r"\.(?:z)?debug_", sections):
                 raise ValueError("DWARF is present despite -w")

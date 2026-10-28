@@ -93,14 +93,14 @@ def write_rows(path, values):
         writer.writeheader(); writer.writerows(values)
 
 
-def runtime_statistics(records, manifest):
+def runtime_statistics(records, manifest, repetitions=5, variants=RUNTIME):
     summary={}
     for case in manifest['cases']:
         for cpus in manifest['cpus']:
             current=summary[f"{case['id']}/{cpus}"]={}
-            for variant in RUNTIME:
+            for variant in variants:
                 group=[r for r in records if r['case']==case['id'] and r['cpus']==cpus and r['variant']==variant]
-                if sorted(r['iteration'] for r in group) != list(range(-1,5)):
+                if sorted(r['iteration'] for r in group) != list(range(-1,repetitions)):
                     raise ValueError(f"incomplete runtime group: {case['id']}/{cpus}/{variant}")
                 samples=[r for r in group if not r['warmup']]
                 failed=[r for r in group if not r['validated_contract']]
@@ -133,14 +133,22 @@ def runtime_csv(path, records):
         for row in records: writer.writerow({field:row.get(field) for field in fields})
 
 
-def runtime_readme(directory, manifest, summary):
+COUNTS = {1: 'One', 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five'}
+
+
+def runtime_readme(directory, manifest, summary, repetitions=5, retained=True):
+    """Writes runtime/README.md. With retained, Native and Orchestrion keep an
+    earlier collection's observations; otherwise every variant ran together."""
+    sources = (['Native and Orchestrion observations retain their original dates. Mini and Mini deferred',
+                'use the new source revision.'] if retained else
+               ['Native, Orchestrion, Mini and Mini deferred ran together, in rotating order,',
+                'from the same revision.'])
     lines=['# Runtime comparisons','',
-           'Five measured executions follow one warmup at each CPU count. All package binaries',
+           f'{COUNTS.get(repetitions, str(repetitions))} measured executions follow one warmup at each CPU count. All package binaries',
            'come from the original subject sources, without the build-edit markers.',
            'Timings include startup, concurrent tests, settings and final delivery to loopback HTTP.',
            'Receiver setup, decoding and compilation are outside the timed scope.','',
-           'Native and Orchestrion observations retain their original dates. Mini and Mini deferred',
-           'use the new source revision. Test inventories match Native; CI inventories use the',
+           *sources[:-1], sources[-1]+' Test inventories match Native; CI inventories use the',
            'recorded SDK reference. Native Examples absent from that reference are checked against',
            'the executable function/source table and added explicitly.','',
            "Orchestrion's percentage compares time against Native. Mini's percentages compare",

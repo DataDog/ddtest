@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Refresh Mini runtime observations using qualified prebuilt test binaries.
+"""Measure runtime with test binaries built like the qualified build's.
 
-Native and SDK test/event inventories come from the retained baseline. Neither
-reference is executed. Timings include process startup, concurrent package tests,
-settings and delivery to loopback HTTP; decoding and receiver setup are excluded.
+Mini runs in normal and deferred delivery; Native and Orchestrion run too when
+the build measured them. Native and SDK test/event inventories come from the
+retained baseline, whose SDK is not executed: Native results must match its
+Native inventory, and Mini's and Orchestrion's CI events its SDK events.
+Timings include process startup, concurrent package tests, settings and
+delivery to loopback HTTP; decoding and receiver setup are excluded.
 """
 import argparse
 from collections import Counter
@@ -98,6 +101,40 @@ def expected_delivery(oracle, native_results, binaries, go):
     return delivery, additions
 
 
+def command_prefixes(rows, variants):
+    """The command prefix, before -p, that the build recorded for each variant:
+    go test, Orchestrion's -toolexec or ddtest instrument."""
+    prefixes = {}
+    for row in rows:
+        if row['variant'] in variants and row['variant'] not in prefixes:
+            recorded = json.loads(row['command'])
+            prefixes[row['variant']] = recorded[:next(i for i, arg in enumerate(recorded) if arg.startswith('-p='))]
+    if set(prefixes) != set(variants):
+        raise ValueError('the build recorded no command for a variant')
+    return prefixes
+
+
+def validation_failure(row, variant, native, oracle, expected_events, affinity, failed, agent):
+    """Why a measured run does not count, or None. Native reports nothing: its
+    test inventory is its whole contract. Mini and Orchestrion must also
+    deliver the archived SDK's CI events, and telemetry to the local Agent."""
+    if failed or row['returncode'] or row['timeout'] or not row['process_tree_drained']:
+        return 'test process failed, raced, timed out or did not drain'
+    if row['affinity'] != affinity or row['native_results'] != native['native_results']:
+        return 'CPU affinity or Native test inventory differs'
+    if variant == 'native':
+        return None
+    if not row['delivery']['event_counts'].get('test'):
+        return 'no test events delivered'
+    if oracle is None:
+        return 'historical SDK reference unavailable for this combination'
+    if {k:row['delivery'][k] for k in CONTRACT} != expected_events:
+        return 'CI event inventory, hierarchy or coverage count differs from the archived SDK'
+    if agent and not any('telemetry' in p for p in row['delivery']['requests']):
+        return 'no local telemetry request arrived'
+    return None
+
+
 class Runner:
     def __init__(self, args):
         self.args = args
@@ -107,8 +144,11 @@ class Runner:
             raise ValueError('use a new artifact directory outside /tmp and the repository')
         self.output.mkdir(parents=True)
         self.manifest = build.read_json(args.build / 'manifest.json')
-        if self.manifest['status'] != 'verified' or build.variants(self.manifest) != ('mini',):
+        if self.manifest['status'] != 'verified' or 'mini' not in build.variants(self.manifest):
             raise ValueError('Mini compilation and binary qualification must pass first')
+        # Variants with their own binaries, in the build's order; Mini deferred
+        # runs Mini's.
+        self.built = build.variants(self.manifest)
         self.qualified = build.read_json(args.build / 'final-binaries.json')
         self.go = next(Path(p) for p in self.manifest['source_and_tool_sha256'] if p.endswith('/bin/go'))
         self.decoder = self.output / 'decode'
@@ -131,11 +171,13 @@ class Runner:
         records = []
         cache = self.output / 'runtime-build-cache'
         with (self.args.build / 'observations.csv').open(newline='') as source:
-            row = next(r for r in csv.DictReader(source) if r['variant'] == 'mini')
-        recorded = json.loads(row['command'])
-        driver = Path(recorded[0])
+            prefixes = command_prefixes(csv.DictReader(source), self.built)
+        driver = Path(prefixes['mini'][0])
         if str(driver) not in self.manifest['source_and_tool_sha256'] or driver.parent != self.args.build:
             raise ValueError('recorded Mini driver is outside its qualified build')
+        for variant, prefix in prefixes.items():
+            if variant != 'mini' and str(prefix[0]) != str(self.go):
+                raise ValueError('recorded command does not use the qualified Go: ' + variant)
         cases = [case for case in self.manifest['cases']
                  if (not self.args.case or case['id'] in self.args.case)
                  and (not self.args.agent or case['id'] == 'gin')]
@@ -146,30 +188,31 @@ class Runner:
             raise ValueError('runtime CPUs were not qualified by the build matrix')
         for case in cases:
             for count in cpus:
-                destination = self.output / 'binaries' / f"{case['id']}-cpu{count}"
-                destination.mkdir(parents=True)
-                command = [str(driver), *recorded[1:recorded.index('test')], 'test', '--runtime=mini', f'-p={count}',
-                           '-mod=readonly', '-c', '-o', str(destination)+os.sep,
-                           '-ldflags=-w', *case['flags'], './...']
-                setup_env = dict(env, GOCACHE=str(cache), GOMAXPROCS=str(count),
-                                 PATH=str(self.go.parent)+os.pathsep+env.get('PATH',os.defpath),
-                                 DD_CIVISIBILITY_ENABLED='parent', DD_INSTRUMENTATION_TELEMETRY_ENABLED='false')
-                result = subprocess.run(command, cwd=self.args.build/'subjects'/case['subject'],
-                                        env=setup_env, text=True, capture_output=True,
-                                        timeout=min(600,self.budget()))
-                (destination/'build.log').write_text(result.stdout+result.stderr)
-                if result.returncode:
-                    raise RuntimeError('original runtime binary build failed: '+case['id'])
-                for binary in destination.glob('*.test'):
-                    symbols = subprocess.check_output([str(self.go),'tool','nm',str(binary)], text=True)
-                    hook = 'github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.instrumentTestingMWithControl'
-                    if hook not in symbols or b'ddci-real-test-body-edit-999' in binary.read_bytes():
-                        raise ValueError('runtime executable is uninstrumented or contains an edit marker')
-                    records.append(dict(case=case['id'],cpus=count,variant='mini',path=str(binary),
-                                        sha256=build.digest(binary),bytes=binary.stat().st_size))
-                expected = {Path(b['path']).name for b in self.qualified if b['case']==case['id'] and b['cpus']==count}
-                if expected != {b.name for b in destination.glob('*.test')}:
-                    raise ValueError('runtime binary set differs from the qualified build')
+                for variant, prefix in prefixes.items():
+                    destination = self.output / 'binaries' / f"{case['id']}-cpu{count}" / variant
+                    destination.mkdir(parents=True)
+                    command = [*prefix, f'-p={count}', '-mod=readonly', '-c', '-o', str(destination)+os.sep,
+                               '-ldflags=-w', *case['flags'], './...']
+                    setup_env = dict(env, GOCACHE=str(cache), GOMAXPROCS=str(count),
+                                     PATH=str(self.go.parent)+os.pathsep+env.get('PATH',os.defpath),
+                                     DD_CIVISIBILITY_ENABLED='parent', DD_INSTRUMENTATION_TELEMETRY_ENABLED='false')
+                    result = subprocess.run(command, cwd=self.args.build/'subjects'/case['subject'],
+                                            env=setup_env, text=True, capture_output=True,
+                                            timeout=min(600,self.budget()))
+                    (destination/'build.log').write_text(result.stdout+result.stderr)
+                    if result.returncode:
+                        raise RuntimeError(f"original runtime binary build failed: {case['id']} {variant}")
+                    for binary in destination.glob('*.test'):
+                        symbols = subprocess.check_output([str(self.go),'tool','nm',str(binary)], text=True)
+                        build.check_instrumentation(symbols, variant, case['subject'])
+                        if b'ddci-real-test-body-edit-999' in binary.read_bytes():
+                            raise ValueError('runtime executable contains an edit marker')
+                        records.append(dict(case=case['id'],cpus=count,variant=variant,path=str(binary),
+                                            sha256=build.digest(binary),bytes=binary.stat().st_size))
+                    expected = {Path(b['path']).name for b in self.qualified
+                                if b['case']==case['id'] and b['cpus']==count and b['variant']==variant}
+                    if expected != {b.name for b in destination.glob('*.test')}:
+                        raise ValueError(f"runtime binary set differs from the qualified build: {variant}")
         build.write_json(self.output/'binaries.json',records)
         return records
 
@@ -230,8 +273,9 @@ class Runner:
         affinity = self.manifest['affinity'][str(cpus)]
         timeout = min(600, remaining-30)
         binaries = []
+        source = 'mini' if variant == 'mini-deferred' else variant
         for b in self.qualified:
-            if b['case'] == case['id'] and b['cpus'] == cpus:
+            if b['case'] == case['id'] and b['cpus'] == cpus and b['variant'] == source:
                 binary = Path(b['path'])
                 cwd = self.args.build/'subjects'/case['subject']/PACKAGES[case['subject']][binary.name]
                 binaries.append({'path': str(binary), 'cwd': str(cwd)})
@@ -265,20 +309,9 @@ class Runner:
                    delivery=receiver.decoded(self.decoder), source_head=expected,
                    delivery_profile='agent-telemetry' if self.args.agent else 'agentless-gzip')
         native,oracle,scope = references(self.baseline,case['id'],cpus,case['subject'],case['flags'])
-        expected_events, additions = expected_delivery(oracle, native['native_results'], binaries, self.go) if oracle else (None, [])
-        failure = None
-        if race or result.returncode or row['returncode'] or row['timeout'] or not row['process_tree_drained']:
-            failure='test process failed, raced, timed out or did not drain'
-        elif row['affinity'] != affinity or row['native_results'] != native['native_results']:
-            failure='CPU affinity or Native test inventory differs'
-        elif not row['delivery']['event_counts'].get('test'):
-            failure='no test events delivered'
-        elif oracle is None:
-            failure='historical SDK reference unavailable for this combination'
-        elif {k:row['delivery'][k] for k in CONTRACT} != expected_events:
-            failure='CI event inventory, hierarchy or coverage count differs from the archived SDK'
-        elif self.args.agent and not any('telemetry' in p for p in row['delivery']['requests']):
-            failure='no local telemetry request arrived'
+        expected_events, additions = expected_delivery(oracle, native['native_results'], binaries, self.go) if oracle and variant != 'native' else (None, [])
+        failure = validation_failure(row, variant, native, oracle, expected_events, affinity,
+                                     race or result.returncode != 0, self.args.agent)
         row.update(validated_contract=failure is None, validated_failure=failure,
                    execution_and_event_counts_verified=failure is None,
                    sdk_reference_scope=scope, sdk_reference_case=oracle['case'] if oracle else None,
@@ -293,8 +326,9 @@ class Runner:
         selected = [c for c in self.manifest['cases'] if not self.args.case or c['id'] in self.args.case]
         if self.args.agent: selected=[c for c in selected if c['id']=='gin']
         counts=self.args.cpus or self.manifest['cpus']
-        variants=('mini',) if self.args.agent else ('mini','mini-deferred')
-        repetitions=3 if self.args.agent else 5
+        references=tuple(v for v in self.built if v != 'mini')
+        variants=(*references,'mini') if self.args.agent else (*references,'mini','mini-deferred')
+        repetitions=self.args.repeats or (3 if self.args.agent else 5)
         metadata=dict(source_head=self.manifest['source_head'],toolchain=self.manifest['toolchain'],
                       variants=variants,repetitions=repetitions,warmups=1,status='in progress',
                       baseline=str(self.args.baseline),started_at=datetime.now(timezone.utc).isoformat(),
@@ -325,6 +359,7 @@ def main():
     parser.add_argument('--case',action='append')
     parser.add_argument('--cpus',type=build.cpu_counts)
     parser.add_argument('--agent',action='store_true')
+    parser.add_argument('--repeats',type=build.positive,help="measured runs per group after one warmup; default 5, or 3 with --agent")
     parser.add_argument('--max-seconds',type=build.positive,required=True)
     parser.add_argument('--max-gib',type=build.positive,required=True)
     Runner(parser.parse_args()).run()
