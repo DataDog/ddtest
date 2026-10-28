@@ -5,6 +5,8 @@
 
 package onboard
 
+import "slices"
+
 // pythonDiscovery onboards pytest with ddtrace.
 type pythonDiscovery struct{}
 
@@ -14,7 +16,7 @@ func (pythonDiscovery) actionLanguage() string { return "python" }
 
 func (pythonDiscovery) bootstrap(string) string { return pythonBootstrap }
 
-func (pythonDiscovery) resolvesTestSteps(string) bool { return false }
+func (pythonDiscovery) resolvesTestSteps(framework string) bool { return framework == "pytest" }
 
 func (pythonDiscovery) coordinated() bool { return false }
 
@@ -31,21 +33,44 @@ func (pythonDiscovery) agentInstructions(string, string) string { return "" }
 
 func (pythonDiscovery) frameworks() []string { return []string{"pytest"} }
 
-func (pythonDiscovery) resolveStep(string, ciWorkflow, runtimeJob, runtimeStep, string) (commandResolution, bool) {
-	return commandResolution{}, false
+func (pythonDiscovery) resolveStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, _ string) (commandResolution, bool) {
+	return resolvePythonStep(root, workflow, job, step), true
 }
 
-func (pythonDiscovery) localCommands(string, string, string) ([]TestCommand, bool) { return nil, false }
+func (pythonDiscovery) localCommands(root, command, _ string) ([]TestCommand, bool) {
+	return resolvePythonStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command}).Tests, true
+}
 
-func (pythonDiscovery) variantValue(ciWorkflow, runtimeJob, runtimeStep, map[string]any, string, string) (string, bool, error) {
+// The action's CI-only PYTHONPATH and PYTEST_ADDOPTS entries are replaced by
+// the application's own values; local validation loads its own tracer.
+func (pythonDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, key, _ string) (string, bool, error) {
+	switch key {
+	case "PYTEST_ADDOPTS":
+		value, err := pythonAddopts(workflow, job, step, row)
+		return value, true, err
+	case "PYTHONPATH":
+		return pythonApplicationPath(workflow, job, step, row), true, nil
+	}
 	return "", false, nil
 }
 
 func (pythonDiscovery) skipsUnsupportedNode() bool { return false }
 
+// Onboarding output stays unchanged until pytest testdrive can run what the
+// discovered scope and pytest guidance would ask for.
 func (pythonDiscovery) instructions(string) string { return "" }
 
 func (pythonDiscovery) onboardingScope(string) (bool, bool) { return false, false }
+
+func (pythonDiscovery) jobConsumer(root string, workflow ciWorkflow, job runtimeJob, _ string) (bool, bool) {
+	return pythonJobCandidate(root, workflow, job), true
+}
+
+// ddtrace reads its test settings from DD_* variables. Only the CI agent,
+// intake and credentials are replaced locally.
+func (pythonDiscovery) keepsCISetting(key string) bool {
+	return !slices.Contains([]string{"DD_API_KEY", "DD_TRACE_AGENT_URL", "DD_CIVISIBILITY_AGENTLESS_URL"}, key)
+}
 
 const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtrace for pytest. Preserve these variables on the existing test step; do not replace its current arguments. Activate the same Python environment used for the tests before the action. If CI uses tox or nox, pass DD_*, PYTHONPATH, and PYTEST_ADDOPTS into the test environment."
 

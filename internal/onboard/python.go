@@ -1,0 +1,723 @@
+package onboard
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"maps"
+	"net/http"
+	"net/url"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/kballard/go-shellquote"
+	"go.yaml.in/yaml/v3"
+)
+
+// PythonRelease describes the exact PyPI release checked locally and in CI.
+type PythonRelease struct {
+	Version        string `json:"version"`
+	RequiresPython string `json:"requires_python"`
+}
+
+func ResolvePythonRelease(ctx context.Context, requested string) (PythonRelease, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	address := "https://pypi.org/pypi/ddtrace/"
+	if requested != "" && requested != "latest" {
+		address += url.PathEscape(requested) + "/"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address+"json", nil)
+	if err != nil {
+		return PythonRelease{}, err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return PythonRelease{}, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return PythonRelease{}, fmt.Errorf("read ddtrace metadata: HTTP %d", response.StatusCode)
+	}
+	return readPythonRelease(io.LimitReader(response.Body, 1<<20))
+}
+
+// The project endpoint includes a large releases history after info. Stop as
+// soon as the bounded package metadata is decoded, without reading that history.
+func readPythonRelease(reader io.Reader) (PythonRelease, error) {
+	decoder := json.NewDecoder(reader)
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return PythonRelease{}, fmt.Errorf("invalid PyPI package metadata")
+	}
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return PythonRelease{}, err
+		}
+		if key == "info" {
+			var info struct {
+				Version        string `json:"version"`
+				RequiresPython string `json:"requires_python"`
+			}
+			if err := decoder.Decode(&info); err != nil {
+				return PythonRelease{}, err
+			}
+			if info.Version == "" || info.RequiresPython == "" {
+				return PythonRelease{}, fmt.Errorf("ddtrace metadata has no version or Python requirement")
+			}
+			return PythonRelease{info.Version, info.RequiresPython}, nil
+		}
+		var ignored json.RawMessage
+		if err := decoder.Decode(&ignored); err != nil {
+			return PythonRelease{}, err
+		}
+	}
+	return PythonRelease{}, fmt.Errorf("PyPI package metadata has no info")
+}
+
+func pythonJobCandidate(root string, workflow ciWorkflow, job runtimeJob) bool {
+	rows, err := runtimeMatrix(job.Strategy.Matrix)
+	if err != nil {
+		// Inspect only referenced command values to identify relevant jobs. This
+		// does not expand unsupported matrices or authorize their execution.
+		for _, step := range job.Steps {
+			for _, match := range pythonMatrixCommandReference.FindAllStringSubmatch(step.Run, -1) {
+				for _, value := range pythonMatrixCommandValues(job.Strategy.Matrix, strings.Split(match[1], ".")) {
+					candidate := step
+					candidate.Run = strings.ReplaceAll(step.Run, match[0], value)
+					if pythonStepCandidate(root, workflow, job, candidate) {
+						return true
+					}
+				}
+			}
+		}
+		rows = []map[string]any{nil}
+	}
+	for _, row := range rows {
+		for _, step := range job.Steps {
+			resolved, _, _ := resolveVariantStep(workflow, job, step, row, "pytest")
+			if pythonStepCandidate(root, workflow, job, resolved) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pythonStepCandidate(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	resolution := resolvePythonStep(root, workflow, job, step)
+	if resolution.Matched || environment.LooksLikeTestCommand(root, step.Run, "python", "pytest") {
+		return true
+	}
+	if resolution.Review || resolution.Reason == "" {
+		return false
+	}
+	commands, _ := staticCommands(step.Run)
+	for _, words := range commands {
+		if _, ok := pythonRunnerArguments(words, "tox"); ok {
+			return true // Unknown tox configuration is not an unrelated typing/lint job.
+		}
+		for i, word := range words {
+			if i != 0 && (len(words) < 2 || words[1] != "run" || !slices.Contains([]string{"uv", "poetry"}, filepath.Base(words[0]))) {
+				break
+			}
+			if index, module := PythonModule(words[i+1:]); strings.HasPrefix(filepath.Base(word), "python") && index >= 0 && slices.Contains([]string{"pytest", "tox"}, module[0]) {
+				return true // Retain interpreter-like wrappers as unresolved, never native commands.
+			}
+		}
+	}
+	return false
+}
+
+var pythonMatrixCommandReference = regexp.MustCompile(`\$\{\{\s*matrix\.([a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*)\s*\}\}`)
+
+func pythonMatrixCommandValues(value any, path []string) []string {
+	if len(path) == 0 {
+		if text, ok := value.(string); ok {
+			return []string{text}
+		}
+		return nil
+	}
+	var values []string
+	switch value := value.(type) {
+	case map[string]any:
+		values = pythonMatrixCommandValues(value[path[0]], path[1:])
+		values = append(values, pythonMatrixCommandValues(value["include"], path)...)
+	case []any:
+		for _, item := range value {
+			values = append(values, pythonMatrixCommandValues(item, path)...)
+		}
+	}
+	return values
+}
+
+// Restrict static checks to numeric minimum/maximum constraints. Other PEP 440
+// expressions remain inconclusive rather than silently dropping a constraint.
+func ComparePythonRequirement(python, requirement string) (string, string) {
+	if strings.ContainsAny(requirement, "*~") {
+		return "inconclusive", "The Python version requirement needs manual review."
+	}
+	version := strings.Split(python, ".")
+	if len(version) < 2 || len(version) > 3 {
+		return "inconclusive", "The Python runtime must select a numeric major.minor or major.minor.patch version."
+	}
+	for _, part := range version {
+		if _, err := strconv.Atoi(part); err != nil {
+			return "inconclusive", "The Python runtime must select a numeric major.minor or major.minor.patch version."
+		}
+	}
+	status, reason := CompareNodeRequirement(python, strings.ReplaceAll(requirement, ",", " "))
+	return status, strings.NewReplacer("Node", "Python", "setup-node", "setup-python").Replace(reason)
+}
+
+func pythonInvocation(words []string) bool {
+	_, ok := pythonRunnerArguments(words, "pytest")
+	return ok
+}
+
+func pythonPathReference(value string) bool {
+	return strings.Join(strings.Fields(value), "") == "${{env.PYTHONPATH}}"
+}
+
+// Replace the action's CI-only path with the application's declared paths.
+// Local validation supplies its own tracer path. Empty reference expansions
+// must not introduce a new current-directory component into PYTHONPATH.
+func pythonApplicationPath(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) string {
+	separator := ":"
+	if runnerDefaultShell(job, row) == "pwsh" {
+		separator = ";"
+	}
+	var result string
+	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		value, declared := layer["PYTHONPATH"]
+		if !declared {
+			continue
+		}
+		var parts []string
+		for _, part := range strings.Split(value, separator) {
+			if pythonPathReference(part) {
+				if result != "" {
+					parts = append(parts, result)
+				}
+			} else {
+				parts = append(parts, part)
+			}
+		}
+		result = strings.Join(parts, separator)
+	}
+	return result
+}
+
+// PythonModule identifies -m among interpreter options, returning its index and
+// the module followed by its arguments. Attached -mmodule is normalized.
+// Parsing stops at a script, -c, stdin or --; later -m belongs to that target.
+// Unknown interpreter options remain unresolved rather than being skipped.
+func PythonModule(args []string) (int, []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-m":
+			if i+1 < len(args) {
+				return i, args[i+1:]
+			}
+			return -1, nil
+		case strings.HasPrefix(arg, "-m"):
+			return i, append([]string{arg[2:]}, args[i+1:]...)
+		case arg == "-W" || arg == "-X" || arg == "--check-hash-based-pycs":
+			i++
+			if i >= len(args) {
+				return -1, nil
+			}
+		case strings.HasPrefix(arg, "-W") || strings.HasPrefix(arg, "-X"):
+		case len(arg) > 1 && arg[0] == '-' && strings.Trim(arg[1:], "bBdEiIOPqRsSuvx") == "":
+		default:
+			return -1, nil
+		}
+	}
+	return -1, nil
+}
+
+func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
+	if len(words) == 0 {
+		return nil, false
+	}
+	base := strings.TrimSuffix(filepath.Base(words[0]), ".exe")
+	if base == runner {
+		return words[1:], true
+	}
+	if platform.IsPythonExecutable(words[0]) {
+		index, module := PythonModule(words[1:])
+		if index >= 0 && module[0] == runner {
+			return module[1:], true
+		}
+		return nil, false
+	}
+	if (base == "uv" || base == "poetry") && len(words) > 2 && words[1] == "run" {
+		for i := 2; i < len(words); i++ {
+			arg := words[i]
+			if args, ok := pythonRunnerArguments(words[i:], runner); ok {
+				return args, true
+			}
+			option, _, assigned := strings.Cut(arg, "=")
+			switch option {
+			case "--no-sync", "--locked", "--frozen", "--offline", "--active", "--no-python-downloads", "--no-default-groups", "--all-groups", "--no-dev", "--only-dev", "--all-extras", "--":
+			case "--project", "--directory", "--package", "--python", "-p", "--group", "--no-group", "--only-group", "--extra", "--no-extra":
+				if !assigned {
+					i++
+				}
+			default:
+				return nil, false
+			}
+		}
+	}
+	return nil, false
+}
+
+// PytestCommandOptions inspects environment and command options, including the
+// last inline addopts override (pytest's -o/--override-ini precedence). defaults
+// contains the selected config file's addopts. Wrapper separators and interpreter
+// options are not pytest arguments. iniAddopts is
+// returned separately so controlled local runs can reject nested disable flags
+// while still replacing direct tracer flags in their paired executions.
+func PytestCommandOptions(addopts string, words, defaults []string) (options, iniAddopts []string, err error) {
+	args, ok := pythonRunnerArguments(words, "pytest")
+	if !ok {
+		return nil, nil, fmt.Errorf("cannot identify pytest arguments in %q", words)
+	}
+	options, err = shellquote.Split(addopts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot parse PYTEST_ADDOPTS: %w", err)
+	}
+	options = append(options, args...)
+	var override string
+	overridden := false
+	for i := 0; i < len(options); i++ {
+		option := options[i]
+		if option == "--" {
+			options = options[:i]
+			break
+		}
+		var value string
+		switch {
+		case option == "-o" || option == "--override-ini":
+			i++
+			if i >= len(options) {
+				return nil, nil, fmt.Errorf("%s requires an ini override", option)
+			}
+			value = options[i]
+		case strings.HasPrefix(option, "--override-ini="):
+			value = strings.TrimPrefix(option, "--override-ini=")
+		case strings.HasPrefix(option, "-o"):
+			value = strings.TrimPrefix(strings.TrimPrefix(option, "-o"), "=")
+		default:
+			continue
+		}
+		key, value, _ := strings.Cut(value, "=")
+		if key == "addopts" {
+			override, overridden = value, true
+		}
+	}
+	iniAddopts = defaults
+	if overridden {
+		iniAddopts, err = shellquote.Split(override)
+		if err != nil {
+			return nil, nil, fmt.Errorf("cannot parse inline pytest addopts: %w", err)
+		}
+	}
+	return append(slices.Clone(iniAddopts), options...), iniAddopts, nil
+}
+
+// A setup-python version does not prove the interpreter chosen by a wrapper or
+// a different versioned executable. Keep those commands unverified in static CI
+// analysis; local preflight inspects the environment that actually executes.
+func pythonRuntimeOverride(words []string, python string, environment map[string]string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	base := strings.TrimSuffix(filepath.Base(words[0]), ".exe")
+	if platform.IsPythonExecutable(words[0]) {
+		return strings.ContainsAny(words[0], "/\\") || base != "python" && base != "python3" && !strings.HasPrefix("python"+python+".", base+".")
+	}
+	if (base == "uv" || base == "poetry") && len(words) > 2 && words[1] == "run" {
+		if base == "uv" && (environment["UV_PYTHON"] != "" || environment["UV_PROJECT_ENVIRONMENT"] != "") {
+			return true
+		}
+		for i := 2; i < len(words); i++ {
+			if pythonInvocation(words[i:]) {
+				return true
+			}
+			if _, ok := pythonRunnerArguments(words[i:], "tox"); ok {
+				return false
+			}
+			option, _, assigned := strings.Cut(words[i], "=")
+			if option == "--python" || option == "-p" || option == "--project" || option == "--directory" {
+				return true
+			}
+			if !assigned && slices.Contains([]string{"--package", "--group", "--no-group", "--only-group", "--extra", "--no-extra"}, option) {
+				i++
+			}
+		}
+	}
+	return false
+}
+
+func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) commandResolution {
+	if step.ResolutionError != "" {
+		return unresolvedCommand(step.ResolutionError)
+	}
+	if strings.TrimSpace(step.Run) == "" {
+		return commandResolution{}
+	}
+	commands, err := staticCommands(step.Run)
+	if err != nil {
+		return unresolvedCommand("Python shell command requires review: " + err.Error())
+	}
+	directory := stepDirectory(workflow, job, step)
+	if directory == "" {
+		directory = "."
+	}
+	if !filepath.IsLocal(directory) || strings.ContainsAny(directory, "$`~") {
+		return unresolvedCommand("Python working-directory requires review: " + directory)
+	}
+	shell := workflow.Defaults.Run.Shell
+	if job.Defaults.Run.Shell != "" {
+		shell = job.Defaults.Run.Shell
+	}
+	if step.Shell != "" {
+		shell = step.Shell
+	}
+	// A literal invocation has the same argument boundaries in PowerShell.
+	// Quoting, expansions and shell operators still require separate review.
+	literalPowerShell := shell == "pwsh" && len(commands) == 1 && shellMatrixScalar.MatchString(step.Run)
+	if !supportedCIShell(shell) && !literalPowerShell {
+		return unresolvedCommand("Unsupported Python CI shell: " + shell)
+	}
+	result := commandResolution{}
+	for _, words := range commands {
+		if len(words) == 0 {
+			continue
+		}
+		if pythonInvocation(words) {
+			result.Matched = true
+			result.Tests = append(result.Tests, TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...)})
+			continue
+		}
+		if args, ok := pythonRunnerArguments(words, "tox"); ok {
+			tox, err := readPythonTox(filepath.Join(root, directory), args)
+			if err != nil {
+				return unresolvedCommand("Cannot resolve tox pytest environment: " + err.Error())
+			}
+			if len(tox.Commands) == 0 {
+				result.ReviewReason = joinDiagnostic(result.ReviewReason, "Selected tox environment does not run pytest.")
+				continue
+			}
+			result.Matched = true
+			const unresolvedTox = "Local tox execution is not supported; activate the selected environment and pass its Python/pytest command with --command."
+			result.Setup = append(result.Setup, unresolvedTox)
+			result.Tests = append(result.Tests, TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...), Resolution: "Native tox pytest environment " + tox.Name,
+				UnvalidatedSetup: []string{unresolvedTox}})
+			continue
+		}
+		base := filepath.Base(words[0])
+		if len(words) == 2 && words[0] == "cd" && filepath.IsLocal(words[1]) {
+			directory = filepath.Join(directory, words[1])
+			continue
+		}
+		setup := base == "pip" || base == "pip3" || (base == "uv" && len(words) > 1 && slices.Contains([]string{"sync", "pip"}, words[1]))
+		if platform.IsPythonExecutable(words[0]) {
+			if index, module := PythonModule(words[1:]); index >= 0 && slices.Contains([]string{"pip", "venv"}, module[0]) {
+				setup = true
+			}
+		}
+		if setup {
+			result.ReviewReason = "Prepare the same Python dependencies as CI before local validation; dependency installation is not replayed."
+			continue
+		}
+		if checkOnlyStep(shellquote.Join(words...)) {
+			continue
+		}
+		if !environment.LooksLikeTestCommand(root, shellquote.Join(words...), "python", "pytest") && (slices.Contains(words, "tox") || slices.Contains(words, "nox")) {
+			return commandResolution{Review: true, Reason: "This wrapper does not identify a pytest test environment; review it separately."}
+		}
+		return unresolvedCommand("Unresolved Python entry point: " + shellquote.Join(words...) + ". For tox/nox or other wrappers, activate the selected test environment and pass its Python/pytest command explicitly.")
+	}
+	if !result.Matched {
+		result.Review, result.Reason = true, result.ReviewReason
+	}
+	return result
+}
+
+// CheckPythonCIRuntimes inventories every static matrix entry independently of
+// the evaluator's Python. It never executes workflows or installs dependencies.
+func CheckPythonCIRuntimes(ctx context.Context, root, localVersion string) RuntimeCheck {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return checkPythonCIRuntimes(ctx, root, localVersion, ResolvePythonRelease, pythonActionVersion)
+}
+
+func pythonActionVersion(ctx context.Context, action string) (string, error) {
+	_, ref, ok := strings.Cut(action, "@")
+	if !ok || ref == "" {
+		return "", fmt.Errorf("datadog action has no ref")
+	}
+	data, err := fetchRuntimeMetadata(ctx, &http.Client{Timeout: 10 * time.Second}, "https://raw.githubusercontent.com/DataDog/test-visibility-github-action/"+url.PathEscape(ref)+"/action.yml")
+	if err != nil {
+		return "", err
+	}
+	var definition struct {
+		Inputs map[string]struct {
+			Default string `yaml:"default"`
+		} `yaml:"inputs"`
+	}
+	if err := yaml.Unmarshal(data, &definition); err != nil {
+		return "", err
+	}
+	return definition.Inputs["python-tracer-version"].Default, nil
+}
+
+func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resolve func(context.Context, string) (PythonRelease, error), actionDefault func(context.Context, string) (string, error)) RuntimeCheck {
+	result := RuntimeCheck{Status: "not applicable", Reason: "No GitHub Actions pytest commands found; CI was not exercised."}
+	if err := CheckCIProviderSupport(root, "python", "pytest"); err != nil {
+		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
+	}
+	workflows, err := readWorkflows(root)
+	if err != nil {
+		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
+	}
+	cache := map[string]PythonRelease{}
+	defaults := map[string]string{}
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if !pythonJobCandidate(root, workflow, job) {
+				continue
+			}
+			rows, err := runtimeMatrix(job.Strategy.Matrix)
+			if err != nil {
+				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: err.Error()})
+				continue
+			}
+			for _, row := range rows {
+				active, conditionErr := possibleJobCondition(job.If, row)
+				if conditionErr == nil && !active {
+					continue
+				}
+				var python, action, requested string
+				var setupErr error
+				for i, step := range job.Steps {
+					uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+					active, err := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
+					if err == nil && !active {
+						continue
+					}
+					if err != nil {
+						setupErr = err
+					}
+					if uses == "actions/setup-python" {
+						action, requested = "", ""
+						python, err = runtimeValue(step.With["python-version"], row)
+						if err != nil {
+							setupErr = err
+						}
+					}
+					if uses == githubAction {
+						languages, e := runtimeValue(step.With["languages"], row)
+						if e != nil {
+							setupErr = e
+						}
+						if languages == "all" || slices.Contains(strings.Fields(languages), "python") {
+							action = step.Uses
+							requested, err = runtimeValue(step.With["python-tracer-version"], row)
+							if err == nil && requested == "" {
+								var known bool
+								requested, known = defaults[action]
+								if !known {
+									requested, err = actionDefault(ctx, action)
+									if err == nil {
+										defaults[action] = requested
+									}
+								}
+							}
+							if err != nil {
+								setupErr = err
+							}
+						}
+					}
+					resolved, environment, envErr := resolveVariantStep(workflow, job, step, row, "pytest")
+					r := resolvePythonStep(root, workflow, job, resolved)
+					if !r.Matched && (r.Review || r.Reason == "" || checkOnlyStep(resolved.Run)) {
+						continue
+					}
+					finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: python, Action: action, Status: "inconclusive"}
+					commands, _ := staticCommands(resolved.Run)
+					switch {
+					case conditionErr != nil:
+						finding.Reason = conditionErr.Error()
+					case setupErr != nil:
+						finding.Reason = setupErr.Error()
+					case envErr != nil:
+						finding.Reason = envErr.Error()
+					case r.Reason != "":
+						finding.Reason = r.Reason
+					case action == "":
+						finding.Status, finding.Code, finding.Reason = "incompatible", "missing_instrumentation", "No Datadog Python action runs before this pytest step. Preserve the test command and add instrumentation."
+					case slices.ContainsFunc(commands, func(words []string) bool { return pythonRuntimeOverride(words, python, environment) }):
+						finding.Reason = "The CI command selects its own Python interpreter; setup-python does not establish that runtime's compatibility. Validate the selected environment separately."
+					default:
+						selection, ok := cache[requested]
+						if !ok {
+							selection, err = resolve(ctx, requested)
+							if err == nil {
+								cache[requested] = selection
+							}
+						}
+						if err != nil {
+							finding.Reason = err.Error()
+						} else {
+							finding.Tracer = "ddtrace@" + selection.Version
+							finding.Requirement = selection.RequiresPython
+							finding.Status, finding.Reason = ComparePythonRequirement(python, selection.RequiresPython)
+							if selection.Version != localVersion {
+								finding.Status, finding.Reason = "incompatible", fmt.Sprintf("CI selects ddtrace@%s; local validation selected ddtrace@%s. Align selections or validate the CI release separately.", selection.Version, localVersion)
+							}
+							if value, ok := step.Env["PYTHONPATH"]; ok && !slices.ContainsFunc(strings.FieldsFunc(value, func(r rune) bool { return r == ':' || r == ';' }), pythonPathReference) {
+								finding.Status, finding.Reason = "incompatible", "The test step replaces the action's PYTHONPATH; preserve the injected tracer package path."
+							}
+							if status, reason := pythonInstrumentationOptions(root, workflow, job, resolved, row, python); status != "" {
+								finding.Status, finding.Reason = status, reason
+							}
+						}
+					}
+					result.Jobs = append(result.Jobs, finding)
+				}
+			}
+		}
+	}
+	if len(result.Jobs) > 0 {
+		result.Status = "compatible"
+		result.Reason = "Every identified pytest CI entry selects the validated ddtrace release and satisfies its Python requirement. CI execution and environment provisioning remain untested."
+		for _, finding := range result.Jobs {
+			if finding.Status != "compatible" {
+				result.Status = finding.Status
+				result.Reason = "Python CI configuration is incomplete or incompatible; inspect each entry and preserve the test matrix."
+				if finding.Status == "incompatible" {
+					break
+				}
+			}
+		}
+	}
+	return result
+}
+
+func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, python string) (string, string) {
+	env := map[string]string{}
+	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		maps.Copy(env, layer)
+	}
+	value, err := pythonAddopts(workflow, job, step, row)
+	if err != nil {
+		return "inconclusive", err.Error()
+	}
+	var invocations [][]string
+	commands, _ := staticCommands(step.Run)
+	directory := stepDirectory(workflow, job, step)
+	for _, words := range commands {
+		if len(words) == 2 && words[0] == "cd" && filepath.IsLocal(words[1]) {
+			directory = filepath.Join(directory, words[1])
+		}
+		if pythonInvocation(words) {
+			defaults, err := PytestConfigOptions(root, filepath.Join(root, directory), value, words)
+			if err != nil {
+				return "inconclusive", err.Error()
+			}
+			commandOptions, _, err := PytestCommandOptions(value, words, defaults)
+			if err != nil {
+				return "inconclusive", err.Error()
+			}
+			invocations = append(invocations, commandOptions)
+		}
+		if args, ok := pythonRunnerArguments(words, "tox"); ok {
+			if _, overridden := env["TOX_OVERRIDE"]; overridden {
+				return "inconclusive", "TOX_OVERRIDE changes the effective tox configuration; inspect it inside the selected environment."
+			}
+			tox, err := readPythonTox(filepath.Join(root, directory), args)
+			if err != nil {
+				return "inconclusive", err.Error()
+			}
+			if len(tox.Commands) == 0 {
+				continue
+			}
+			if status, reason := tox.runtime(python); status != "" {
+				return status, reason
+			}
+			if status, reason := tox.instrumentation(); status != "" {
+				return status, reason
+			}
+			for _, command := range tox.Commands {
+				defaults, err := PytestConfigOptions(root, filepath.Join(root, directory), value, command)
+				if err != nil {
+					return "inconclusive", err.Error()
+				}
+				commandOptions, _, err := PytestCommandOptions(value, command, defaults)
+				if err != nil {
+					return "inconclusive", err.Error()
+				}
+				invocations = append(invocations, commandOptions)
+			}
+		}
+	}
+	autoload, err := runtimeValue(env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"], row)
+	if err != nil {
+		return "inconclusive", err.Error()
+	}
+	for _, options := range invocations {
+		if slices.Contains(options, "--no-ddtrace") {
+			return "incompatible", "The pytest command or effective PYTEST_ADDOPTS explicitly disables Datadog instrumentation."
+		}
+		if !slices.Contains(options, "--ddtrace") {
+			return "incompatible", "The test step replaces the action's PYTEST_ADDOPTS; preserve --ddtrace and existing options."
+		}
+		loaded := false
+		for index, option := range options {
+			plugin := strings.TrimPrefix(option, "-p")
+			if option == "-p" && index+1 < len(options) {
+				plugin = options[index+1]
+			} else if !strings.HasPrefix(option, "-p") {
+				continue
+			}
+			if slices.Contains([]string{"ddtrace", "ddtrace.contrib.pytest.plugin", "ddtrace.contrib.internal.pytest.plugin", "ddtrace.testing.internal.pytest.entry_point"}, strings.TrimPrefix(plugin, "no:")) {
+				if strings.HasPrefix(plugin, "no:") {
+					return "incompatible", "The pytest options explicitly block the Datadog plugin."
+				}
+				loaded = true
+			}
+		}
+		if (autoload != "" || slices.Contains(options, "--disable-plugin-autoload")) && !loaded {
+			return "incompatible", "pytest plugin autoload is disabled; explicitly load the Datadog plugin with -p ddtrace in CI. Local plugin loading does not validate CI setup."
+		}
+	}
+	return "", ""
+}
+
+var pythonAddoptsReference = regexp.MustCompile(`\$\{\{\s*env\.PYTEST_ADDOPTS\s*\}\}`)
+
+// Resolve each declaration against its parent, keeping application selection
+// and plugin options identical in CI checks and local command discovery.
+func pythonAddopts(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (string, error) {
+	value := "--ddtrace" // Supplied by the Datadog action when not overridden.
+	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		declared, ok := layer["PYTEST_ADDOPTS"]
+		if !ok {
+			continue
+		}
+		parent := value
+		value = pythonAddoptsReference.ReplaceAllStringFunc(declared, func(string) string { return parent })
+	}
+	return runtimeValue(value, row)
+}
