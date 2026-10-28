@@ -189,6 +189,8 @@ jobs:
           DD_ENV: ci
           JOB_CHECK_RUN_ID: ${{ job.check_run_id }}
           DDTEST_REQUIRE_PROJECT_RUNTIMES: "1"
+          # `test` uploads this commit's coverage report.
+          DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED: "false"
 
   rspec-compatibility:
     runs-on: ubuntu-latest

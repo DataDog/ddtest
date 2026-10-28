@@ -10,6 +10,28 @@ import (
 	"testing"
 )
 
+// keepRunEnvironment restores, after t, the variables that run sets for the
+// whole process, so that later tests and their helper processes don't inherit
+// DD_CIVISIBILITY_ENABLED=1.
+func keepRunEnvironment(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"DD_CIVISIBILITY_ENABLED", "DD_TELEMETRY_DEPENDENCY_COLLECTION_ENABLED"} {
+		if value, ok := os.LookupEnv(name); ok {
+			t.Setenv(name, value)
+		} else {
+			t.Setenv(name, "")
+			os.Unsetenv(name)
+		}
+	}
+}
+
+// helperEnvironment is this process's environment for a helper run of the
+// test binary, with Test Optimization disabled: when the suite itself is
+// instrumented, a helper must not report a session of its own.
+func helperEnvironment(extra ...string) []string {
+	return append(append(os.Environ(), "DD_CIVISIBILITY_ENABLED=false"), extra...)
+}
+
 func TestRunSuccess(t *testing.T) {
 	t.Setenv("DD_CIVISIBILITY_ENABLED", "")
 	t.Setenv("DD_TELEMETRY_DEPENDENCY_COLLECTION_ENABLED", "")
@@ -35,6 +57,7 @@ func TestRunSuccess(t *testing.T) {
 }
 
 func TestRunFailure(t *testing.T) {
+	keepRunEnvironment(t)
 	exitCode := run(func() error {
 		return errors.New("boom")
 	})
@@ -48,12 +71,13 @@ func TestRunPreservesProcessExitCode(t *testing.T) {
 	if os.Getenv("DDTEST_EXIT_CODE_HELPER") == "1" {
 		os.Exit(7)
 	}
+	keepRunEnvironment(t)
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	command := exec.Command(executable, "-test.run=^TestRunPreservesProcessExitCode$")
-	command.Env = append(os.Environ(), "DDTEST_EXIT_CODE_HELPER=1")
+	command.Env = helperEnvironment("DDTEST_EXIT_CODE_HELPER=1")
 	err = command.Run()
 	code := run(func() error { return fmt.Errorf("test command failed: %w", err) })
 	if code != 7 {
@@ -65,6 +89,7 @@ func TestRunPreservesProcessSignal(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix signal exit status")
 	}
+	keepRunEnvironment(t)
 	err := exec.Command("sh", "-c", "kill -TERM $$").Run()
 	code := run(func() error { return fmt.Errorf("test command failed: %w", err) })
 	if code != 143 {
@@ -85,7 +110,7 @@ func TestCLIPrintsErrorsOnce(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			command := exec.Command(executable, "-test.run=^TestCLIPrintsErrorsOnce$")
 			command.Dir = t.TempDir()
-			command.Env = append(os.Environ(), "DDTEST_ERROR_HELPER="+scenario)
+			command.Env = helperEnvironment("DDTEST_ERROR_HELPER=" + scenario)
 			output, err := command.CombinedOutput()
 			var exitErr *exec.ExitError
 			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
@@ -103,12 +128,13 @@ type validationStatusError struct{ error }
 func (e validationStatusError) Unwrap() error { return e.error }
 func (e validationStatusError) ExitCode() int { return 1 }
 func TestRunUsesOuterValidationStatusInsteadOfBuildExitCode(t *testing.T) {
+	keepRunEnvironment(t)
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	command := exec.Command(executable, "-test.run=^TestRunPreservesProcessExitCode$")
-	command.Env = append(os.Environ(), "DDTEST_EXIT_CODE_HELPER=1")
+	command.Env = helperEnvironment("DDTEST_EXIT_CODE_HELPER=1")
 	cause := command.Run()
 	if cause == nil {
 		t.Fatal("expected helper failure")
