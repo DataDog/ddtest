@@ -453,7 +453,18 @@ func PackagedResources(root string) ([]Resource, error) {
 					directory = "." + rest
 				}
 			}
-			if !strings.Contains(directory, "${") {
+			switch {
+			case strings.Contains(directory, "${"):
+			case filepath.IsAbs(directory):
+				// An absolute directory may still name the checkout.
+				absolute, err := filepath.Abs(root)
+				if err != nil {
+					return err
+				}
+				if directory, err = filepath.Rel(absolute, directory); err != nil {
+					return err
+				}
+			default:
 				directory = filepath.Join(filepath.Dir(pom), directory)
 			}
 			resource.POM, resource.Directory = pom, directory

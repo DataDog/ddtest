@@ -120,3 +120,13 @@ func TestUnknownBuildOutputsAreNotDiscoveredByBuildingInTheCheckout(t *testing.T
 	require.Contains(t, result.Needs, "do not run it in the checkout")
 	require.NoDirExists(t, filepath.Join(root, "dist"))
 }
+
+func TestWorkflowStateSurvivesPreparingAgain(t *testing.T) {
+	scope := &onboard.ValidationScope{}
+	current := &Testdrive{selectedSite: "datadoghq.eu", workflowRoot: "/repo", workflowScope: scope}
+	prepared := (&Testdrive{tracerVersion: "1.67.1"}).withWorkflowState(current)
+	require.Equal(t, "datadoghq.eu", prepared.selectedSite, "a drive prepared for the CI pin still checks the selected site")
+	require.Equal(t, "/repo", prepared.workflowRoot)
+	require.Same(t, scope, prepared.workflowScope)
+	require.Equal(t, "1.67.1", prepared.tracerVersion)
+}

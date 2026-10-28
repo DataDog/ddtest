@@ -272,7 +272,8 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					if uses == "actions/setup-java" {
 						java, tracer, action, actionErr, inputs, skippedAction = "", "", "", nil, nil, false
 					}
-					if uses == githubAction {
+					// An action for other languages leaves Java's MAVEN_OPTS in place.
+					if selected, err := actionSelectsLanguage(step, row, "java"); uses == githubAction && (err != nil || selected) {
 						tracer, action, buildSystem, actionErr, inputs = "", "", "", nil, nil
 					}
 					if conditionErr == nil && stepErr == nil {

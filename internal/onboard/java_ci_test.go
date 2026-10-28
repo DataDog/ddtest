@@ -384,9 +384,18 @@ func TestJavaDeployCredentialsDoNotBlockValidation(t *testing.T) {
 	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, strings.Replace(workflow, "server-id: central, ", "", 1), nil), "junit5")
 	require.NoError(t, err)
 	require.NotEmpty(t, scope.Unresolved)
-	// The action's default credential names apply too.
-	defaults := strings.NewReplacer("server-username: MAVEN_USERNAME, server-password: MAVEN_PASSWORD", "gpg-private-key: '${{ secrets.GPG_KEY }}'", "MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}", "GITHUB_ACTOR: ${{ github.actor }}", "MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}", "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}").Replace(workflow)
+	// The action's default names, such as GITHUB_TOKEN, may serve the tests too.
+	defaults := strings.NewReplacer("server-username: MAVEN_USERNAME, server-password: MAVEN_PASSWORD", "gpg-private-key: '${{ secrets.GPG_KEY }}'", "MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}\n          ", "", "MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}", "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}").Replace(workflow)
 	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, defaults, nil), "junit5")
 	require.NoError(t, err)
-	require.Empty(t, scope.Unresolved)
+	require.NotEmpty(t, scope.Unresolved, "only credentials the workflow names for settings.xml are left out")
+}
+
+func TestJavaCIConfigurationKeepsJavaSetupAcrossOtherDatadogActions(t *testing.T) {
+	workflow := "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: SECOND, api_key: '${{ secrets.DD_API_KEY }}'}\n      - run: mvn verify\n"
+	job := JavaCIConfiguration(javaWorkflowFixture(t, strings.Replace(workflow, "SECOND", "js", 1), nil), "junit5", "").Jobs[0]
+	require.Equal(t, "not checked", job.Status, "a JavaScript action leaves the agent in MAVEN_OPTS: %s", job.Reason)
+	require.Equal(t, "1.67.1", job.TracerRequested)
+	job = JavaCIConfiguration(javaWorkflowFixture(t, strings.Replace(workflow, "SECOND", "java", 1), nil), "junit5", "").Jobs[0]
+	require.Contains(t, job.Reason, "not an exact release", "a later Java action replaces the selection")
 }

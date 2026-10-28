@@ -404,11 +404,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			if err != nil {
 				return fail("needs_input", "validation_preparation", err.Error(), "Resolve the named local prerequisite.")
 			}
-			prepared.workflowScope = t.workflowScope
-			prepared.workflowPlan = t.workflowPlan
-			prepared.workflowRoot = t.workflowRoot
-			prepared.workflowRun = t.workflowRun
-			t = prepared
+			t = prepared.withWorkflowState(t)
 		}
 	}
 	if options.Apply {
@@ -585,11 +581,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		if err != nil {
 			return fail("needs_input", "validation_preparation", err.Error(), "Resolve the named installed dependency or command prerequisite.")
 		}
-		prepared.workflowScope = t.workflowScope
-		prepared.workflowPlan = t.workflowPlan
-		prepared.workflowRoot = t.workflowRoot
-		prepared.workflowRun = t.workflowRun
-		t = prepared
+		t = prepared.withWorkflowState(t)
 	}
 	t.setPlanTracer(plan, t.tracerVersion)
 	checkpoint.Engine = engineIdentity()
@@ -1197,6 +1189,14 @@ func renderReportFailure(output io.Writer, format string, err error) error {
 		result.Code, result.Reason = "report_unreadable", errReportUnreadable.Error()
 	}
 	return errors.Join(err, onboard.RenderAgentResult(output, result, format))
+}
+
+// withWorkflowState carries the workflow's scope, plan, run and selected site
+// from current into t, a drive prepared again for another tracer release.
+func (t *Testdrive) withWorkflowState(current *Testdrive) *Testdrive {
+	t.workflowScope, t.workflowPlan, t.workflowRoot, t.workflowRun = current.workflowScope, current.workflowPlan, current.workflowRoot, current.workflowRun
+	t.selectedSite = current.selectedSite
+	return t
 }
 
 func (t *Testdrive) workflowNodeVersion() string {

@@ -6,7 +6,6 @@
 package onboard
 
 import (
-	"cmp"
 	_ "embed"
 	"fmt"
 	"slices"
@@ -93,18 +92,20 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 }
 
 // javaDeployCredentials are the environment variables that the job's
-// actions/setup-java steps with a server-id write into Maven's settings.xml as
-// repository credentials and the GPG passphrase, with the action's defaults.
-// Maven reads them only to deploy or sign, which local validation never does.
+// actions/setup-java steps with a server-id explicitly name for Maven's
+// settings.xml as repository credentials or the GPG passphrase. Maven reads
+// them only to deploy or sign, which local validation never does. The
+// action's default names, such as GITHUB_TOKEN, may serve tests too.
 func javaDeployCredentials(job runtimeJob) []string {
 	var names []string
 	for _, step := range job.Steps {
 		if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses != "actions/setup-java" || step.With["server-id"] == "" {
 			continue
 		}
-		names = append(names, cmp.Or(step.With["server-username"], "GITHUB_ACTOR"), cmp.Or(step.With["server-password"], "GITHUB_TOKEN"))
-		if step.With["gpg-private-key"] != "" {
-			names = append(names, cmp.Or(step.With["gpg-passphrase"], "GPG_PASSPHRASE"))
+		for _, input := range []string{"server-username", "server-password", "gpg-passphrase"} {
+			if name := step.With[input]; name != "" {
+				names = append(names, name)
+			}
 		}
 	}
 	return names

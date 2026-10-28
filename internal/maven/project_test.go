@@ -274,3 +274,13 @@ func TestPackagedResourcesResolveEveryPOMsDirectories(t *testing.T) {
 	require.Equal(t, []string{".testoptimization/**"}, directories[filepath.Join("service", "pom.xml")+" ."].Excludes, "profile resources count too")
 	require.Contains(t, directories, filepath.Join("tool", "pom.xml")+" ${shared.dir}", "other properties stay unresolved")
 }
+
+func TestPackagedResourcesResolveAbsoluteDirectories(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project><build><resources><resource><directory>`+root+`</directory></resource><resource><directory>/elsewhere/resources</directory></resource></resources></build></project>`), 0644))
+	resources, err := PackagedResources(root)
+	require.NoError(t, err)
+	require.Len(t, resources, 2)
+	require.Equal(t, ".", resources[0].Directory, "an absolute directory naming the checkout is its root")
+	require.False(t, filepath.IsLocal(resources[1].Directory), "one outside the checkout stays outside")
+}
