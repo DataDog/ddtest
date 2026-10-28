@@ -202,6 +202,10 @@ func CheckCIProviderSupport(root, language, framework string) error {
 	if err != nil {
 		return err
 	}
+	// Without the provider's configuration there is no CI to consult or set up.
+	if files, err := provider.configurationFiles(root); err == nil && len(files) == 0 {
+		return nil
+	}
 	if !languageSupportsCIProvider(language, provider) {
 		return &CIProviderUnsupportedError{Language: language, Framework: framework, Provider: provider.displayName()}
 	}
@@ -212,14 +216,14 @@ func CheckCIProviderSupport(root, language, framework string) error {
 // of a registered language, or cannot be resolved well enough to tell.
 func workflowHasTests(root string, workflow ciWorkflow) bool {
 	for _, job := range workflow.Jobs {
-		if job.If == "false" {
+		if disabledCondition(job.If) {
 			continue
 		}
 		if _, _, err := jobMatrix(job); err != nil {
 			return true // An unresolved matrix can run tests.
 		}
 		for _, step := range job.Steps {
-			if step.If == "false" {
+			if disabledCondition(step.If) {
 				continue
 			}
 			if step.Run == "" && step.ResolutionError != "" {
@@ -236,6 +240,16 @@ func workflowHasTests(root string, workflow ciWorkflow) bool {
 		}
 	}
 	return false
+}
+
+// disabledCondition reports whether condition can never pass, such as false or
+// ${{ false }}; anything unresolved may still run.
+func disabledCondition(condition string) bool {
+	if strings.TrimSpace(condition) == "" {
+		return false
+	}
+	active, err := possibleJobCondition(condition, nil)
+	return err == nil && !active
 }
 
 // ProviderChoiceResult asks the user to choose the CI provider to configure.

@@ -163,6 +163,9 @@ func TestSelectCIProvider(t *testing.T) {
 		{name: "explicit provider skips the choice", github: jestWorkflow, testci: jestWorkflow, requested: "testci", want: "testci"},
 		{name: "explicit provider is never parsed", github: "jobs: [", requested: "github", want: "github"},
 		{name: "unknown provider", github: jestWorkflow, requested: "gitlab", err: `unsupported --ci-provider "gitlab"; supported CI providers: github, testci`},
+		{name: "a disabled job is not a test path", github: jestWorkflow, testci: "jobs:\n  test:\n    if: ${{ false }}\n    steps:\n      - run: npm test\n", want: "github"},
+		{name: "a disabled step is not a test path", github: jestWorkflow, testci: "jobs:\n  test:\n    steps:\n      - if: ${{ false }}\n        run: npm test\n", want: "github"},
+		{name: "an unresolved condition may still run", github: jestWorkflow, testci: "jobs:\n  test:\n    if: ${{ github.event_name == 'push' }}\n    steps:\n      - run: npm test\n", choice: []string{"github", "testci"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := newJestRepository(t, tc.github)
@@ -373,4 +376,17 @@ func TestUnknownActiveProviderFails(t *testing.T) {
 // stay behind discoveryLanguage.
 func TestCIProviderFilesNameNoLanguage(t *testing.T) {
 	languageguard.CheckNeutral(t, ".", "ci_provider*.go", "ci_providers.go")
+}
+
+// A run without the selected provider's configuration consults no CI, so the
+// provider's language support doesn't apply.
+func TestProviderSupportOnlyAppliesWithItsConfiguration(t *testing.T) {
+	registerTestCI(t)
+	root := t.TempDir()
+	writeFile(t, root, "Gemfile", "source 'https://rubygems.org'\ngem 'rspec'\n")
+	useCIProvider(t, "testci")
+	require.NoError(t, CheckCIProviderSupport(root, "ruby", "rspec"))
+	writeFile(t, root, testCIFile, "jobs:\n  test:\n    steps:\n      - run: bundle exec rspec\n")
+	var unsupported *CIProviderUnsupportedError
+	require.ErrorAs(t, CheckCIProviderSupport(root, "ruby", "rspec"), &unsupported)
 }
