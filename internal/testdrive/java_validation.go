@@ -268,7 +268,7 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 	case spec.ProbePath == "" && maven.IncompleteBuild(run.ExitCode, projects, tests, string(data)):
 		run.ResultError = javaIncompleteBuild
 	}
-	run.Tests = javaNativeTests(projects, tests, spec.ProbePath != "")
+	run.Tests = javaNativeTests(projects, tests, run.framework, spec.ProbePath != "")
 	if spec.Instrumented && spec.ProbePath == "" {
 		run.Coverage = javaSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests)
 	}
@@ -307,13 +307,13 @@ func javaModuleLabels(projects []maven.Project) map[string]string {
 
 // javaNativeTests identifies each native result as "<module> / <class>", and
 // in a probe run marks the probe.
-func javaNativeTests(projects []maven.Project, tests []maven.Test, probe bool) []nativeTest {
+func javaNativeTests(projects []maven.Project, tests []maven.Test, framework string, probe bool) []nativeTest {
 	labels := javaModuleLabels(projects)
 	native := make([]nativeTest, 0, len(tests))
 	for _, test := range tests {
 		item := nativeTest{File: labels[test.Module] + " / " + test.Suite, Name: test.Name, Status: test.Status, Failure: test.Failure}
 		if probe && test.Suite == javaProbeClass {
-			name := javaTestName(test.Name)
+			name := javaTestName(test.Name, framework)
 			item.probe, item.telemetryName = true, &name
 		}
 		native = append(native, item)
@@ -329,11 +329,13 @@ var javaSignature = regexp.MustCompile(`^([\pL_$][\pL\pN_$]*)\([^)]*\)(\[[0-9]+\
 // as in parse[a, 1](2); dd-java-agent reports the method name.
 var testNGInvocation = regexp.MustCompile(`^([\pL_$][\pL\pN_$]*)\[.*\]\([0-9]+\)$`)
 
-func javaTestName(name string) string {
-	if parts := javaSignature.FindStringSubmatch(name); parts != nil {
+// javaTestName is how the agent names a test Surefire reports for framework.
+// Other frameworks, such as Spock, report any name as written.
+func javaTestName(name, framework string) string {
+	if parts := javaSignature.FindStringSubmatch(name); parts != nil && (framework == "junit4" || framework == "junit5") {
 		return parts[1] + parts[2]
 	}
-	if parts := testNGInvocation.FindStringSubmatch(name); parts != nil {
+	if parts := testNGInvocation.FindStringSubmatch(name); parts != nil && framework == "testng" {
 		return parts[1]
 	}
 	return name
@@ -380,7 +382,7 @@ func verifyJavaTelemetry(run validationRun) verdict {
 	expected, observed := map[string]int{}, map[string]int{}
 	for _, test := range run.Tests {
 		module, suite, _ := strings.Cut(test.File, " / ")
-		expected[fmt.Sprintf("module %q, class %q, test %q, status %q", module, suite, javaTestName(test.Name), statuses[test.Status])]++
+		expected[fmt.Sprintf("module %q, class %q, test %q, status %q", module, suite, javaTestName(test.Name, run.framework), statuses[test.Status])]++
 	}
 	for _, test := range run.Facts.Tests {
 		module := javaPluginSuffix.ReplaceAllString(test.Module, "")

@@ -425,3 +425,18 @@ func TestJavaMetadataScriptsRunNoTests(t *testing.T) {
 		require.NotEmpty(t, javaStep(t, root, run).Reason, "a script that may build or run tests stays unresolved: %s", run)
 	}
 }
+
+func TestJavaPostTestScopeFollowsEachRowAndMavenLaunchers(t *testing.T) {
+	action := "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n"
+	// The test step exists only once the row is expanded; the earlier
+	// unresolved setup stays in scope.
+	matrix := "jobs:\n  tests:\n    strategy:\n      matrix:\n        command: ['mvn test']\n    steps:\n" + action + "      - run: echo \"MAVEN_OPTS=${{ steps.opts.outputs.value }}\" >> $GITHUB_ENV\n      - run: ${{ matrix.command }}\n"
+	ci := JavaCIConfiguration(javaWorkflowFixture(t, matrix, nil), "junit5", "")
+	require.Len(t, ci.Jobs, 2, "the setup before a matrix-selected test step stays in scope: %+v", ci.Jobs)
+	// More Maven runs after the last literal test step stay in scope.
+	launcher := "jobs:\n  tests:\n    steps:\n" + action + "      - run: mvn test\n      - run: find . -name pom.xml -exec mvn -f '{}' test \\;\n"
+	ci = JavaCIConfiguration(javaWorkflowFixture(t, launcher, nil), "junit5", "")
+	require.Len(t, ci.Jobs, 2, "a launcher that runs Maven may run tests: %+v", ci.Jobs)
+	// A Maven call with an assignment may add goals, as MAVEN_ARGS does.
+	require.NotEmpty(t, javaStep(t, javaWorkflowFixture(t, "", nil), "VERSION=$(MAVEN_ARGS=test mvn help:evaluate -Dexpression=project.version -q -DforceStdout)").Reason)
+}

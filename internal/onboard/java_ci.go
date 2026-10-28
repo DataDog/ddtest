@@ -205,7 +205,8 @@ func javaMetadataScript(run string) bool {
 			readsMaven = true
 			goals := maven.Goals(words[1:])
 			help := len(goals) > 0 && !slices.ContainsFunc(goals, func(goal string) bool { return !strings.HasPrefix(goal, "help:") })
-			metadata = metadata && !slices.Contains(words, "\x00") && (help || maven.Metadata(words[1:]))
+			// An assignment such as MAVEN_ARGS=test may add goals.
+			metadata = metadata && len(call.Assigns) == 0 && !slices.Contains(words, "\x00") && (help || maven.Metadata(words[1:]))
 		case !slices.Contains(javaShellBuiltins, words[0]):
 			metadata = false
 		}
@@ -293,12 +294,12 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: err.Error()})
 				continue
 			}
-			lastTest := javaLastTestStep(root, workflow, job, framework)
 			for _, row := range rows {
 				active, conditionErr := possibleJobCondition(job.If, row)
 				if conditionErr == nil && !active {
 					continue
 				}
+				lastTest := javaLastTestStep(root, workflow, job, row, framework)
 				java, tracer, action, buildSystem := "", "", "", ""
 				var inputs map[string]string
 				skippedAction := false
@@ -357,7 +358,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					}
 					// Discovery leaves an unresolved step after the job's last
 					// possible test outside the test path, such as a report upload.
-					if !resolution.Matched && i > lastTest && !stepMayStartTests(root, workflow, job, step, framework) {
+					if !resolution.Matched && i > lastTest && !javaMayStartTests(root, workflow, job, step, framework) {
 						continue
 					}
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: java, Action: action, TracerRequested: tracer, setupInputs: inputs, Status: "inconclusive"}
@@ -403,16 +404,24 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 }
 
 // javaLastTestStep is the index of the job's last step that runs or may run
-// framework's tests, as discovery finds it; -1 when there is none.
-func javaLastTestStep(root string, workflow ciWorkflow, job runtimeJob, framework string) int {
+// framework's tests in a matrix row, as discovery finds it; -1 when there is
+// none.
+func javaLastTestStep(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, framework string) int {
 	last := -1
 	for i, step := range job.Steps {
-		resolution := resolveJavaStep(root, workflow, job, step, framework)
-		if !resolution.Review && (resolution.Matched || resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, framework)) {
+		resolved, _, _ := resolveVariantStep(workflow, job, step, row, framework)
+		resolution := resolveJavaStep(root, workflow, job, resolved, framework)
+		if !resolution.Review && (resolution.Matched || resolution.Reason != "" && javaMayStartTests(root, workflow, job, step, framework)) {
 			last = i
 		}
 	}
 	return last
+}
+
+// javaMayStartTests reports a step that may start tests, including one that
+// runs Maven where discovery cannot follow it, as in find … -exec mvn test.
+func javaMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) bool {
+	return stepMayStartTests(root, workflow, job, step, framework) || mavenMention.MatchString(step.Run)
 }
 
 // javaAgentVariable is where the Datadog action, per its
