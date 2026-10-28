@@ -82,7 +82,7 @@ func TestRubyRuntimeChecksUseEachConfigurationsBundle(t *testing.T) {
       - uses: ruby/setup-ruby@v1
         with: {ruby-version: '${{ matrix.ruby }}'}
       - uses: datadog/test-visibility-github-action@v3
-        with: {languages: ruby, ruby-tracer-version: '1.42.0'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - run: bundle exec rake test
         env: {BUNDLE_GEMFILE: 'gemfiles/${{ matrix.bundle }}.gemfile'}
 `
@@ -153,7 +153,7 @@ func TestRubyNestedPreflightInspectsCheckoutCI(t *testing.T) {
       - uses: ruby/setup-ruby@v1
         with: {ruby-version: '2.6'}
       - uses: datadog/test-visibility-github-action@v3
-        with: {languages: ruby, ruby-tracer-version: '1.42.0'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - run: bundle exec rake test
         working-directory: app
 `)

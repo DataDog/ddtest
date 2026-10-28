@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -40,14 +41,19 @@ func TestRubyMinitestForkValidationIntegration(t *testing.T) {
 	integrationFile(t, root, "test/isolation_test.rb", tests)
 	integrationFile(t, root, "ci/datadog_test_optimization.rb", onboard.RubyMinitestForkSetup)
 	integrationFile(t, root, ".gitignore", "/.testoptimization/\nGemfile.lock\n")
-	integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '"+installed.Ruby+"'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, ruby-tracer-version: '"+installed.Gems["datadog-ci"]+"'}\n      - run: bundle exec rake test\n        env:\n          RUBYOPT: '${{ env.RUBYOPT }} -r./ci/datadog_test_optimization.rb'\n")
+	integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '"+installed.Ruby+"'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '"+installed.Gems["datadog-ci"]+"'}\n      - run: bundle exec rake test\n        env:\n          RUBYOPT: '${{ env.RUBYOPT }} -r./ci/datadog_test_optimization.rb'\n")
 	integrationCommand(t, ctx, root, nil, "bundle", "lock", "--local")
 	integrationCommand(t, ctx, root, nil, "git", "add", ".")
 	binary := filepath.Join(t.TempDir(), "ddtest")
 	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
 	env := []string{"DD_GIT_REPOSITORY_URL=https://example.com/ddtest-isolation-fixture.git", "DD_GIT_COMMIT_SHA=" + strings.Repeat("1", 40), "RUBYOPT=-W0"}
-	plain := integrationCommand(t, ctx, root, env, binary, "testdrive", "--framework", "minitest", "--all", "--yes", "--tracer-version", installed.Gems["datadog-ci"])
-	require.Contains(t, plain, "Validation verdict: PASSED")
+	protocol := rubyProtocolCommand(t, ctx, root, env, binary, "testdrive", "--framework", "minitest", "--all", "--agent", "--yes", "--tracer-version", installed.Gems["datadog-ci"])
+	var state struct{ Status string }
+	require.NoError(t, json.Unmarshal([]byte(protocol), &state))
+	require.Equal(t, "complete_locally", state.Status, protocol)
+	report := rubyProtocolCommand(t, ctx, root, env, binary, "testdrive", "--report", "--format", "json")
+	require.NoError(t, json.Unmarshal([]byte(report), &state))
+	require.Equal(t, "complete_locally", state.Status, report)
 	data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
 	require.NoError(t, err)
 	var result struct {
@@ -58,7 +64,7 @@ func TestRubyMinitestForkValidationIntegration(t *testing.T) {
 		Summary struct{ Status string }
 	}
 	require.NoError(t, json.Unmarshal(data, &result))
-	require.Equal(t, "PASSED", result.Summary.Status)
+	require.Equal(t, "COMPLETE LOCALLY", result.Summary.Status)
 	for _, run := range result.Runs[:2] {
 		require.Equal(t, 7, run.TestCounts.Passed, run.Name)
 		require.Zero(t, run.TestCounts.Failed)
@@ -68,10 +74,20 @@ func TestRubyMinitestForkValidationIntegration(t *testing.T) {
 	withoutTracer := strings.Replace(gemfile, "gem 'datadog-ci', '"+installed.Gems["datadog-ci"]+"'\n", "", 1)
 	integrationFile(t, root, "Gemfile", withoutTracer)
 	integrationCommand(t, ctx, root, nil, "bundle", "lock", "--local")
+	// A frozen bundle needs complete lockfile checksums.
+	integrationCommand(t, ctx, root, nil, "bundle", "lock", "--add-checksums")
 	lockBefore, err := os.ReadFile(filepath.Join(root, "Gemfile.lock"))
 	require.NoError(t, err)
-	plain = integrationCommand(t, ctx, root, env, binary, "testdrive", "--framework", "minitest", "--all", "--yes", "--tracer-version", installed.Gems["datadog-ci"])
-	require.Contains(t, plain, "Validation verdict: PASSED")
+	// CI can supply the tracer separately from a correctly frozen app bundle.
+	frozenConfig := "---\nBUNDLE_FROZEN: \"true\"\n"
+	integrationFile(t, root, ".bundle/config", frozenConfig)
+	frozen := append(slices.Clone(env), "BUNDLE_FROZEN=true")
+	protocol = rubyProtocolCommand(t, ctx, root, frozen, binary, "testdrive", "--framework", "minitest", "--all", "--agent", "--yes", "--tracer-version", installed.Gems["datadog-ci"])
+	require.NoError(t, json.Unmarshal([]byte(protocol), &state))
+	require.Equal(t, "complete_locally", state.Status, protocol)
+	configAfter, err := os.ReadFile(filepath.Join(root, ".bundle/config"))
+	require.NoError(t, err)
+	require.Equal(t, frozenConfig, string(configAfter))
 	lockAfter, err := os.ReadFile(filepath.Join(root, "Gemfile.lock"))
 	require.NoError(t, err)
 	require.Equal(t, lockBefore, lockAfter)

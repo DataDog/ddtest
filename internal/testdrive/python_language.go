@@ -15,7 +15,7 @@ import (
 )
 
 // pythonLanguage observes pytest suites with ddtrace.
-type pythonLanguage struct{}
+type pythonLanguage struct{ sharedWorkflowHooks }
 
 func (pythonLanguage) name() string         { return "python" }
 func (pythonLanguage) frameworks() []string { return []string{"pytest"} }

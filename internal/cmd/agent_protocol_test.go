@@ -106,7 +106,7 @@ func TestProtocolSelectionSurvivesEarlierFlagError(t *testing.T) {
 }
 
 func TestUnsupportedLanguageDoesNotRequestExecutionConsent(t *testing.T) {
-	for _, fixture := range []struct{ name, contents string }{{"pytest.ini", "[pytest]\n"}, {"Gemfile", "gem 'rspec'\n"}} {
+	for _, fixture := range []struct{ name, contents string }{{"pytest.ini", "[pytest]\n"}} {
 		t.Run(fixture.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
 			viper.Reset()
@@ -126,4 +126,21 @@ func TestUnsupportedLanguageDoesNotRequestExecutionConsent(t *testing.T) {
 			require.Empty(t, state.NextCommand)
 		})
 	}
+}
+
+func TestRubyStructuredValidationRequiresConsent(t *testing.T) {
+	t.Chdir(t.TempDir())
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	require.NoError(t, os.WriteFile("Gemfile", []byte("gem 'rspec'\n"), 0600))
+	command := newTestdriveCommand()
+	command.SetArgs([]string{"--format", "json"})
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetErr(io.Discard)
+	require.Error(t, command.ExecuteContext(t.Context()))
+	var state onboard.AgentResult
+	require.NoError(t, json.Unmarshal(out.Bytes(), &state))
+	require.Equal(t, "consent_required", state.Code)
 }

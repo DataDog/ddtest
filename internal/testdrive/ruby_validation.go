@@ -84,6 +84,8 @@ def ruby_ci_requirement_status(selector, tracer, specs)
   # A precompiled native gem can require a newer Ruby than the same release's
   # portable source gem. Resolve that exact platform variant, without changing
   # the application bundle or assuming another dependency version is available.
+  # The lookup goes to rubygems.org directly (proxy variables apply; Bundler
+  # mirrors and private sources do not); a failed lookup stays inconclusive.
   portable = []
   resolved = specs.map do |spec|
     next spec if ruby_requirement_status(selector, [spec.required_ruby_version]) == "compatible" || spec.platform.to_s == "ruby"
@@ -143,17 +145,21 @@ func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, re
 		if err != nil {
 			return err
 		}
-		gemfile, err := rubyConfigurationGemfile(t.checkoutRoot(), directory, t.configurationEnvironment, len(t.configurationLocations) == 0)
+		local := len(t.configurationLocations) == 0
+		gemfile, err := rubyConfigurationGemfile(t.checkoutRoot(), directory, t.configurationEnvironment, local)
 		if err != nil {
 			return err
 		}
-		lockfile := filepath.Join(t.checkoutRoot(), rubyLockfile(gemfile))
+		lockfile, err := rubySelectedLockfile(t.checkoutRoot(), t.checkoutRoot(), directory, gemfile, t.configurationEnvironment, local)
+		if err != nil {
+			return err
+		}
 		if _, err := os.Stat(lockfile); err != nil {
 			check.Verdict.Reason = "Run bundle install for the selected Gemfile before configuration-only validation; its lockfile is unavailable."
 			return errors.New(check.Verdict.Reason)
 		}
 	}
-	ci := onboard.RubyCIConfiguration(t.checkoutRoot(), t.framework.Name())
+	ci := onboard.RubyCIConfigurationForSite(t.checkoutRoot(), t.framework.Name(), t.selectedSite)
 	if len(ci.Jobs) > 0 {
 		locations, err := t.rubyRuntimeLocations()
 		if err != nil {

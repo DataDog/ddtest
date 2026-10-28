@@ -34,7 +34,8 @@ func TestHandoffUsesCurrentFactsAndExistingClickableReports(t *testing.T) {
 	report := readValidationReport(t, root)
 	block := validationHandoff(report)
 	// An incomplete verdict leads with a headline no paraphrase turns into success.
-	require.True(t, strings.HasPrefix(block, "NOT COMPLETE: onboarding validation is INCOMPLETE. Report the blockers below; do not describe onboarding as complete or successful.\nExecuted Vitest validations: INCOMPLETE (0/1)."))
+	require.True(t, strings.HasPrefix(block, "NOT COMPLETE: onboarding validation is INCOMPLETE. Report the blockers below; do not describe onboarding as complete or successful.\nOnboarding validation: INCOMPLETE.\nLocal results so far (they do not complete onboarding): executed Vitest validations incomplete (0/1); local validation incomplete.\n"))
+	require.NotContains(t, block, "PASSED", "no standalone verdict line contradicts the headline")
 	require.Contains(t, block, "Onboarding validation: "+report.Summary.Status+".")
 	require.Contains(t, block, "INCOMPLETE")
 	require.Contains(t, block, "skipping: failed")
@@ -232,7 +233,7 @@ func TestHandoffSummarizesUnexecutedMochaConsumerWithoutRepeatingCommands(t *tes
 	result.Summary = summarizeValidation(result)
 	result.Summary.Facts = validationFacts(result)
 	response := validationHandoff(result)
-	require.Contains(t, response, "0/1 validated; 0 executed, 0 paired; 0 blocked, 1 not exercised")
+	require.Contains(t, response, "0/1 validated; 0 executed with paired comparison; 0 blocked, 1 not exercised")
 	require.Contains(t, response, "Full blockers and commands are in Results JSON.")
 	require.NotContains(t, response, "npm run build -> npm run test-esm")
 	data, err := json.Marshal(result)
@@ -259,7 +260,7 @@ func TestHandoffIncludesActionableCIFindingAlongsideRealCoverage(t *testing.T) {
 func TestHandoffSummarizesUnexecutedCypressConsumer(t *testing.T) {
 	result := validationResult{Framework: "cypress", Configurations: []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm run e2e", Resolution: "npm run e2e -> cypress run"}, Status: "not exercised", Compatibility: verdict{Status: "not exercised"}}}}
 	result.Summary = summarizeValidation(result)
-	require.Contains(t, validationHandoff(result), "0/1 validated; 0 executed, 0 paired; 0 blocked, 1 not exercised")
+	require.Contains(t, validationHandoff(result), "0/1 validated; 0 executed with paired comparison; 0 blocked, 1 not exercised")
 	require.NotContains(t, validationHandoff(result), "Mocha")
 }
 
@@ -301,9 +302,10 @@ func TestCompactHandoffKeepsExecutedScopeCountsAndRepositoryBlockersSeparate(t *
 	}
 	result.Summary = summarizeValidation(result)
 	response := validationHandoff(result)
-	require.Contains(t, response, "Executed Cypress validations: PASSED (5/5).")
+	require.Contains(t, response, "Local results so far (they do not complete onboarding): executed Cypress validations passed (5/5); local validation incomplete.")
+	require.NotContains(t, response, "PASSED", "partial passes never read as a standalone verdict next to NOT COMPLETE")
 	require.Contains(t, response, "Onboarding validation: INCOMPLETE.")
-	require.Contains(t, response, "Configurations: 5/8 validated; 5 executed, 5 paired; 2 blocked, 1 not exercised, 0 incomplete.")
+	require.Contains(t, response, "Configurations: 5/8 validated; 5 executed with paired comparison; 2 blocked, 1 not exercised, 0 incomplete.")
 	require.Contains(t, response, "Reporting: 610 test executions; 122 source-test identities.")
 	require.Contains(t, response, "Features: 30/30 supported checks passed.")
 	require.Contains(t, response, "Real-suite coverage: observed in 5/5 reporting runs; 610/610 results linked to source.")
@@ -323,8 +325,7 @@ func TestCompactHandoffDoesNotInventIdentitiesOrCurrentEvidence(t *testing.T) {
 	result.Runs[1].Coverage = &coverageSummary{Status: "observed", CoveredTests: 32, TotalTests: 32, Level: "suite"}
 	result.Summary = summarizeValidation(result)
 	response := validationHandoff(result)
-	require.Contains(t, response, "Selected Mocha testdrive: NOT EXERCISED.")
-	require.Contains(t, response, "Executed Mocha validations: NOT EXERCISED (0/0).")
+	require.Contains(t, response, "Local results so far (they do not complete onboarding): selected Mocha testdrive not exercised; executed Mocha validations not exercised (0/0); local validation not exercised.")
 	require.Contains(t, response, "Onboarding validation: INCOMPLETE.")
 	require.Contains(t, response, "Historical reporting (not revalidated): 96 test executions; source-test identities unavailable; this count does not affect coverage or feature results.")
 	require.NotContains(t, response, "0 source-test identities")
@@ -375,7 +376,7 @@ func TestHandoffExplainsAnUncreditedFocusedExecution(t *testing.T) {
 	}}
 	result.Summary = summarizeValidation(result)
 	response := validationHandoff(result)
-	require.Contains(t, response, "Configurations: 0/1 validated; 0 executed, 0 paired")
+	require.Contains(t, response, "Configurations: 0/1 validated; 0 executed with paired comparison")
 	require.Contains(t, response, "This run's command (pnpm exec jest --config original.js) executed and was paired, but matches no discovered CI configuration exactly, so no CI configuration is credited (CI environment differs for: npm_config_loglevel; run --all to validate those values).")
 }
 
@@ -386,4 +387,27 @@ func TestHandoffExplainsUnavailableIdentitiesAndOmitsHeadlineWhenComplete(t *tes
 	response := validationHandoff(result)
 	require.Contains(t, response, "source-test identities unavailable (native file/name identities repeat within a configuration); this count does not affect coverage or feature results.")
 	require.True(t, strings.HasPrefix(response, "Onboarding validation: COMPLETE LOCALLY."), response)
+}
+
+func TestHandoffBlockersShowOneLineExcerptsOfCIScripts(t *testing.T) {
+	result := completeValidationFixture("playwright")
+	result.Scope = &onboard.ValidationScope{Unresolved: []string{"docs.yml / generate / step 4 (gem install rack\ncd rack-3.2*\nbundle exec rdoc\n): Repository script could not be resolved: gem install rack\ncd rack-3.2*\n"}}
+	result.Summary = summarizeValidation(result)
+	response := validationHandoff(result)
+	require.Contains(t, response, "unresolved CI scope: docs.yml / generate / step 4 (gem install rack …): Repository script could not be resolved: gem install rack …")
+	require.NotContains(t, response, "cd rack-3.2*", "multi-line scripts stay in Results JSON")
+}
+
+// rack: the head/JRuby/TruffleRuby rows are CI opt-outs, not unvalidated work.
+func TestConfigurationLineLabelsCIOptOutsSeparately(t *testing.T) {
+	coverage := &configurationCoverage{Discovered: 2, Excluded: 1, Executed: 1, Paired: 1, Validated: 1}
+	require.Equal(t, "1/1 validated (1 more excluded from instrumentation in CI); 1 executed with paired comparison", coverage.validatedText())
+	coverage = &configurationCoverage{Discovered: 3, Executed: 2, Paired: 1, Validated: 1}
+	require.Equal(t, "1/3 validated; 2 executed, 1 with paired comparison", coverage.validatedText())
+	result := completeValidationFixture("jest")
+	result.Configurations = append(result.Configurations, configurationResult{TestCommand: onboard.TestCommand{Command: "npm test", CIInstrumentationExcluded: true}, Status: "excluded"})
+	result.Summary = summarizeValidation(result)
+	response := validationHandoff(result)
+	require.Contains(t, response, "(1 more excluded from instrumentation in CI)")
+	require.NotContains(t, response, "/2 validated", "an opt-out never reads as an unvalidated configuration")
 }

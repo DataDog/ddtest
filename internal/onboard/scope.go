@@ -54,9 +54,12 @@ type TestCommand struct {
 	mochaProbeDirectory             string
 	mochaProbeEnvironment           map[string]string
 
-	ScopeCommand            string            `json:"-"` // Original invocation before adding a forwarding wrapper.
-	ProbeLintSkipped        bool              `json:"probe_lint_skipped,omitempty"`
-	ReviewReason            string            `json:"review_reason,omitempty"`
+	ScopeCommand     string `json:"-"` // Original invocation before adding a forwarding wrapper.
+	ProbeLintSkipped bool   `json:"probe_lint_skipped,omitempty"`
+	ReviewReason     string `json:"review_reason,omitempty"`
+	// StepScopeNotes name other work the configuration's CI steps run in the
+	// same instrumented process, outside this configuration's validation.
+	StepScopeNotes          []string          `json:"step_scope_notes,omitempty"`
 	ExitOnFailure           bool              `json:"exit_on_failure,omitempty"`
 	Resolution              string            `json:"resolution,omitempty"`
 	Directory               string            `json:"directory"`
@@ -440,6 +443,12 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						scope.Commands = append(scope.Commands, entry)
 					} else {
 						scope.Commands[index].locations = append(scope.Commands[index].locations, entry.locations...)
+						// Steps merged into one configuration keep every shared-step note.
+						for _, note := range entry.StepScopeNotes {
+							if !slices.Contains(scope.Commands[index].StepScopeNotes, note) {
+								scope.Commands[index].StepScopeNotes = append(scope.Commands[index].StepScopeNotes, note)
+							}
+						}
 						scope.Commands[index].packageScripts = append(scope.Commands[index].packageScripts, entry.packageScripts...)
 					}
 				}

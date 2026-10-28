@@ -69,14 +69,20 @@ func TestOnboardFactsSurviveOwnedEditsAndResume(t *testing.T) {
 		return finishValidation(out, root, r)
 	}
 	resume := ""
-	for range 2 {
+	for attempt := range 2 {
 		var output bytes.Buffer
 		err = drive.Workflow(t.Context(), &output, WorkflowOptions{Apply: true, AllowDirty: true, Format: "json", FactsFile: factsFile, Resume: resume})
 		require.ErrorContains(t, err, "validation_incomplete", output.String())
 		var result onboard.AgentResult
 		require.NoError(t, json.Unmarshal(output.Bytes(), &result))
-		require.Contains(t, result.ResumeCommand, "--format")
-		require.Contains(t, result.ResumeCommand, "json")
+		if attempt == 0 {
+			require.Contains(t, result.ResumeCommand, "--format")
+			require.Contains(t, result.ResumeCommand, "json")
+		} else {
+			// The resumed run executed again, then failed identically: stop.
+			require.Contains(t, result.Needs, "failed exactly like the previous one")
+			require.Empty(t, result.ResumeCommand)
+		}
 		resume = result.RunID
 		checkpoint, err := readCheckpoint(resume)
 		require.NoError(t, err)

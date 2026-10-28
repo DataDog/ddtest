@@ -144,7 +144,7 @@ func TestConfigurationCheckOnlyUsesTheFrameworkLanguage(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
 	requireWriteFile(t, filepath.Join(root, "Gemfile"), "gem 'rspec'\n")
-	requireWriteFile(t, filepath.Join(root, ".github/workflows/ci.yml"), "jobs:\n  test:\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '3.4'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, ruby-tracer-version: '1.40.0'}\n      - run: bundle exec rspec\n")
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/ci.yml"), "jobs:\n  test:\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '3.4'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.40.0'}\n      - run: bundle exec rspec\n")
 	drive := &Testdrive{repositoryRoot: root, workflowRoot: root, framework: framework.NewRSpec(platform.NewRuby("")), language: "ruby", checkOnly: true}
 	drive.preflight = func(context.Context, io.Writer, *validationResult) error {
 		return fmt.Errorf("inspect Ruby bundle failed")

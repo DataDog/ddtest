@@ -52,7 +52,7 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 				integrationFile(t, root, "Rakefile", "require 'rake/testtask'\n3.times { |i| Rake::TestTask.new(\"test_#{i}\") { |t| t.pattern = 'test/**/*_test.rb' } }\ntask test: [:test_0, :test_1, :test_2]\n")
 				integrationFile(t, root, "test/one_test.rb", "require 'minitest/autorun'\nrequire_relative '../lib/customer'\nclass CustomerTest < Minitest::Test\n define_method('test_passes [1, 2]') { assert_equal 2, Customer.add }\n def test_existing_failure; Customer.add; flunk 'customer expected failure'; end\nend\n")
 			}
-			workflow := "jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '" + gems.Ruby + "'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, ruby-tracer-version: '" + gems.Tracer + "'}\n      - run: " + command + "\n"
+			workflow := "jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '" + gems.Ruby + "'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '" + gems.Tracer + "'}\n      - run: " + command + "\n"
 			integrationFile(t, root, ".github/workflows/test.yml", workflow)
 			integrationCommand(t, ctx, root, nil, "bundle", "lock", "--local")
 			before := map[string]string{}
@@ -63,8 +63,12 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 			}
 			// Explicit synthetic Git metadata avoids creating unsigned fixture commits.
 			env := []string{"DD_GIT_REPOSITORY_URL=https://example.com/ddtest-ruby-fixture.git", "DD_GIT_COMMIT_SHA=" + strings.Repeat("1", 40), "RUBYOPT=-W0", "BUNDLE_GEMFILE=" + filepath.Join(root, "Gemfile")}
-			onboard := integrationCommand(t, ctx, root, env, binary, "onboard", "--framework", framework)
+			onboard := integrationCommand(t, ctx, root, env, binary, "onboard", "--framework", framework, "--instructions")
 			require.Contains(t, onboard, "native baseline/reporting-only")
+			// The workflow already runs the action, so an agent goes straight to validation.
+			handoff := rubyProtocolCommand(t, ctx, root, env, binary, "onboard", "--framework", framework, "--agent")
+			require.Contains(t, handoff, `"status":"ready"`, handoff)
+			require.Contains(t, handoff, `"testdrive","--framework","`+framework+`","--all","--agent","--yes"`, handoff)
 			output := integrationCommand(t, ctx, root, env, binary, "testdrive", "--framework", framework, "--all", "--yes")
 			require.Contains(t, output, "Local validation: PASSED")
 			type rubyReport struct {
@@ -159,6 +163,29 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 				require.NoError(t, err)
 				require.Empty(t, probes)
 			}
+			// The coordinator certifies completion through a receipt bound to the
+			// ignored lockfile; plain PASSED never does.
+			integrationFile(t, root, ".gitignore", "/.testoptimization/\nGemfile.lock\n")
+			protocol := rubyProtocolCommand(t, ctx, root, env, binary, "testdrive", "--framework", framework, "--all", "--agent", "--tracer-version", gems.Tracer, "--yes")
+			var state struct {
+				Status        string
+				NextCommand   []string `json:"next_command"`
+				FinalResponse string   `json:"final_response"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(protocol), &state), protocol)
+			require.Equal(t, "complete_locally", state.Status, protocol)
+			require.Contains(t, state.NextCommand, "--report")
+			saved := rubyProtocolCommand(t, ctx, root, env, binary, "testdrive", "--report", "--format", "json")
+			require.NoError(t, json.Unmarshal([]byte(saved), &state), saved)
+			require.Equal(t, "complete_locally", state.Status, saved)
+			require.Contains(t, state.FinalResponse, "COMPLETE LOCALLY")
+			integrationFile(t, root, "Gemfile.lock", before["Gemfile.lock"]+"\n")
+			stale := exec.CommandContext(ctx, binary, "testdrive", "--report", "--format", "json")
+			stale.Dir, stale.Env = root, append(os.Environ(), env...)
+			staleOutput, staleErr := stale.CombinedOutput()
+			require.Error(t, staleErr, string(staleOutput))
+			require.Contains(t, string(staleOutput), "stale_report")
+			integrationFile(t, root, "Gemfile.lock", before["Gemfile.lock"])
 
 			if framework == "rspec" {
 				// Equal descriptions and failure messages must not hide a swap
@@ -178,4 +205,15 @@ end
 
 		})
 	}
+}
+
+// rubyProtocolCommand runs one structured ddtest command and returns its stdout.
+func rubyProtocolCommand(t *testing.T, ctx context.Context, root string, env []string, name string, args ...string) string {
+	t.Helper()
+	command := exec.CommandContext(ctx, name, args...)
+	command.Dir = root
+	command.Env = append(os.Environ(), env...)
+	data, err := command.Output()
+	require.NoError(t, err, string(data))
+	return string(data)
 }

@@ -47,7 +47,17 @@ type Testdrive struct {
 	// configurationLocations are the CI locations of the configuration being run.
 	configurationLocations []string
 	// tracerEnvironment is what a temporary tracer installation adds to every run.
-	tracerEnvironment        map[string]string
+	tracerEnvironment map[string]string
+	// runtimeVersion overrides the language runtime identity a coordinated
+	// report is bound to; tests set it, everything else asks the runtime.
+	runtimeVersion func() string
+	// reuseCheckCopy lets one coordinated validation share a single owned
+	// repository copy (checkCopy) across its read-only language checks.
+	reuseCheckCopy bool
+	// selectedSite is the Datadog site a coordinated validation checks CI
+	// setup against: --site, otherwise DD_SITE. Empty checks no site.
+	selectedSite             string
+	checkCopy                string
 	selectedPlan             onboard.TestCommand
 	cypressPackage           string
 	cypressSelected          onboard.TestCommand
@@ -551,22 +561,27 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}()
 
 	if ctx.Value(workflowLockKey{}) == workspace.CanonicalRoot(t.repositoryRoot) {
-		return t.runLocked(ctx, output)
+		// The coordinator recovered abandoned storage when it took this lock,
+		// before creating live storage such as the shared check copy. A second
+		// recovery would delete that live storage.
+		return t.runLocked(ctx, output, false)
 	}
 	lock, err := workspace.AcquireLock(t.repositoryRoot)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = lock.Close() }()
-	return t.runLocked(ctx, output)
+	return t.runLocked(ctx, output, true)
 }
 
-func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr error) {
+func (t *Testdrive) runLocked(ctx context.Context, output io.Writer, recoverStorage bool) (runErr error) {
 	if err := cleanupExpiredCheckpoints(); err != nil {
 		return t.finishStartupFailure(output, err)
 	}
-	if err := t.recoverStartup(output); err != nil {
-		return t.finishStartupFailure(output, err)
+	if recoverStorage {
+		if err := t.recoverStartup(output); err != nil {
+			return t.finishStartupFailure(output, err)
+		}
 	}
 	if t.allConfigurations {
 		return t.runAllConfigurations(ctx, output)

@@ -139,6 +139,26 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.BlockingChecks = append(summary.BlockingChecks, "CI preservation: "+result.CIPreservation.Status+" — "+result.CIPreservation.Reason)
 	}
 	caveats, fidelityBlockers := ciFidelity(&result)
+	// Work a validated CI step runs besides the selected framework is reported,
+	// never certified.
+	for _, configuration := range result.Configurations {
+		for _, note := range configuration.StepScopeNotes {
+			if !slices.Contains(caveats, note) {
+				caveats = append(caveats, note)
+			}
+		}
+	}
+	if result.CIRuntime != nil {
+		for _, finding := range result.CIRuntime.Review {
+			if finding.Code != onboard.CodeUninstrumentedJob {
+				continue
+			}
+			note := fmt.Sprintf("Outside validation (uninstrumented CI job with no recognized %s step; its tests, if any, are not reported to Datadog): %s / %s / step %d (%s)", displayName(result.Framework), finding.Workflow, finding.Job, finding.Step, onboard.OneLineExcerpt(strings.TrimSpace(finding.Command)))
+			if !slices.Contains(caveats, note) {
+				caveats = append(caveats, note)
+			}
+		}
+	}
 	summary.Caveats = caveats
 	if result.Scope != nil {
 		summary.BlockingChecks = append(summary.BlockingChecks, scopeBlockers(append(slices.Clone(result.Scope.Unresolved), fidelityBlockers...))...)
@@ -228,18 +248,31 @@ func validationHandoff(result validationResult) string {
 	summary := result.Summary
 	if summary.Status != "COMPLETE LOCALLY" && summary.Status != "PASSED" {
 		// A headline that cannot be paraphrased into success, even when a
-		// selected command or the local comparison passed.
+		// selected command or the local comparison passed. Partial local
+		// results stay on one line that says they don't change the verdict,
+		// instead of standalone PASSED lines next to it.
 		fmt.Fprintf(&block, "NOT COMPLETE: onboarding validation is %s. Report the blockers below; do not describe onboarding as complete or successful.\n", summary.Status)
+		fmt.Fprintf(&block, "Onboarding validation: %s.\n", summary.Status)
+		var partial []string
+		if summary.SelectedValidation != nil {
+			partial = append(partial, fmt.Sprintf("selected %s testdrive %s", displayName(result.Framework), strings.ToLower(summary.SelectedValidation.Status)))
+		}
+		if executed := summary.ExecutedValidation; executed != nil {
+			partial = append(partial, fmt.Sprintf("executed %s validations %s (%d/%d)", displayName(result.Framework), strings.ToLower(executed.Status), executed.Passed, executed.Configurations))
+		}
+		partial = append(partial, "local validation "+strings.ToLower(summary.LocalValidation))
+		fmt.Fprintf(&block, "Local results so far (they do not complete onboarding): %s.\n", strings.Join(partial, "; "))
+	} else {
+		if summary.SelectedValidation != nil {
+			fmt.Fprintf(&block, "Selected %s testdrive: %s.\n", displayName(result.Framework), summary.SelectedValidation.Status)
+		}
+		if executed := summary.ExecutedValidation; executed != nil {
+			fmt.Fprintf(&block, "Executed %s validations: %s (%d/%d).\n", displayName(result.Framework), executed.Status, executed.Passed, executed.Configurations)
+		}
+		fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s.\n", summary.Status, summary.LocalValidation)
 	}
-	if summary.SelectedValidation != nil {
-		fmt.Fprintf(&block, "Selected %s testdrive: %s.\n", displayName(result.Framework), summary.SelectedValidation.Status)
-	}
-	if executed := summary.ExecutedValidation; executed != nil {
-		fmt.Fprintf(&block, "Executed %s validations: %s (%d/%d).\n", displayName(result.Framework), executed.Status, executed.Passed, executed.Configurations)
-	}
-	fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s.\n", summary.Status, summary.LocalValidation)
 	if coverage := summary.ConfigurationCoverage; coverage != nil && coverage.Discovered > 0 {
-		fmt.Fprintf(&block, "Configurations: %d/%d validated; %d executed, %d paired; %d blocked, %d not exercised, %d incomplete%s.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete, remoteOnlyCount(coverage))
+		fmt.Fprintf(&block, "Configurations: %s; %d blocked, %d not exercised, %d incomplete%s.\n", coverage.validatedText(), coverage.Blocked, coverage.NotExercised, coverage.Incomplete, remoteOnlyCount(coverage))
 		windows := 0
 		for _, configuration := range result.Configurations {
 			if configurationExcluded(configuration) && configuration.WindowsRunner {
@@ -455,6 +488,7 @@ func validationFeatureCounts(framework string, features []featureResult) (passed
 }
 
 func briefValidationText(value string) string {
+	value = onboard.OneLineExcerpt(value)
 	text := []rune(value)
 	if len(text) > 240 {
 		return string(text[:240]) + "… (see Results JSON)"

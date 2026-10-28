@@ -14,6 +14,13 @@ import (
 )
 
 const maxWorkflowAttempts = 3
+
+// transientWorkflowFailure reports whether rerunning unchanged is the
+// expected next step, so an identical repeat is not a reason to stop.
+func transientWorkflowFailure(code string) bool {
+	return code == "workflow_busy" || code == fileDescriptorsExhaustedCode
+}
+
 const workflowCheckpointLifetime = 24 * time.Hour
 
 // Keep one failure checkpoint for the same inputs, even without --resume.
@@ -22,16 +29,22 @@ const workflowCheckpointLifetime = 24 * time.Hour
 // maxRecordedFailures bounds the attempt history a checkpoint keeps.
 const maxRecordedFailures = 5
 
-func (c *workflowCheckpoint) recordFailure(fingerprint, factsHash, code string) error {
+// The attempt counter ignores the reason, but an attempt that repeats the
+// previous failure exactly (same code and reason, same inputs) is marked
+// repeated: rerunning a deterministic failure unchanged cannot progress.
+func (c *workflowCheckpoint) recordFailure(fingerprint, factsHash, code, reason string) error {
 	key := fmt.Sprintf("%s\x00%s\x00%s\x00%t\x00%t\x00%s\x00%s\x00%s", c.Root, c.Framework, c.Command, c.Apply, c.All, fingerprint, factsHash, engineIdentity())
 	id := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))[:32]
 	previousID := c.RunID
 	attempts := 1
 	failures := c.Failures
+	signature := fmt.Sprintf("%x", sha256.Sum256([]byte(code+"\x00"+reason)))
+	repeated := false
 	previous, err := readCheckpoint(id)
 	if err == nil {
 		attempts = previous.Attempts + 1
 		failures = previous.Failures
+		repeated = previous.FailureSignature == signature
 	} else if !os.IsNotExist(err) {
 		// An expired checkpoint is removed by readCheckpoint. Corruption must not
 		// silently overwrite evidence or disable the bounded-attempt contract.
@@ -48,6 +61,7 @@ func (c *workflowCheckpoint) recordFailure(fingerprint, factsHash, code string) 
 		failures = failures[len(failures)-maxRecordedFailures:]
 	}
 	c.RunID, c.Attempts, c.Failure, c.Failures = id, attempts, code, failures
+	c.FailureSignature, c.repeated = signature, repeated
 	if err := c.save(); err != nil {
 		return err
 	}

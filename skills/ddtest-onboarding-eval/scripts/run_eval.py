@@ -179,7 +179,7 @@ def agent_environment(agent, timeout, framework=None):
         return {}
     # Print mode cannot resume a conversation after its final result. Keep Bash
     # synchronous and allow long paired runs without the default 120s handoff.
-    maximum = 3600000 if framework == "cypress" else 600000
+    maximum = 3600000 if framework in ("cypress", "rspec", "minitest") else 600000
     bash_timeout = str(min(maximum, int(timeout * 1000)))
     # Auto-memory would persist trial conclusions in the disposable home and
     # mix agent notes into the evidence; trials must stay independent.
@@ -278,11 +278,18 @@ def reporting_verdict(text, report):
         line = match[1]
         ratio = re.search(r"(\d+)\s*/\s*(\d+)\s+(?:fully\s+)?validated", line)
         if ratio:
-            compare("validated/discovered configurations", (coverage.get("validated"),coverage.get("discovered")), (int(ratio[1]),int(ratio[2])))
-        for key, label in (("executed","executed"),("paired","paired"),("blocked","blocked"),("not_exercised","not exercised"),("incomplete","incomplete")):
+            # CI opt-outs (excluded from instrumentation) are not unvalidated work.
+            discovered = coverage.get("discovered")
+            if isinstance(discovered, int):
+                discovered -= coverage.get("excluded") or 0
+            compare("validated/discovered configurations", (coverage.get("validated"),discovered), (int(ratio[1]),int(ratio[2])))
+        excluded = re.search(r"\((\d+)\s+more\s+excluded\b", line)
+        if excluded:
+            compare("excluded configurations", coverage.get("excluded") or 0, int(excluded[1]))
+        for key, label in (("executed","executed"),("paired","paired"),("paired","(?:executed\\s+)?with\\s+paired\\s+comparison"),("blocked","blocked"),("not_exercised","not exercised"),("incomplete","incomplete")):
             found = re.search(r"(?:^|[;,])\s*(\d+)\s+"+label+r"\b",line)
             if found:
-                compare(label+" configurations", coverage.get(key), int(found[1]))
+                compare(key.replace("_"," ")+" configurations", coverage.get(key), int(found[1]))
     counts = report.get("reporting_counts") if isinstance(report.get("reporting_counts"),dict) else {}
     evidence = report.get("last_execution") if isinstance(report.get("last_execution"),dict) else {}
     current = not report.get("check_only") and evidence.get("current", True)
@@ -345,6 +352,15 @@ def report_runtime(report, requested=None):
                          for version, sources in sorted(observed.items())],
             "framework_owned_nodes": framework_nodes,
             "scope": "Final ddtest report only; framework-owned Node runtimes and historical execution have separate scopes."}
+
+
+def report_ruby_runtime(report, requested):
+    # Ruby reports serialize the selected interpreter as preflight.runtime.
+    observed = sorted({preflight["runtime"] for preflight in [report.get("preflight") or {},
+        *[(configuration.get("preflight") or {}) for configuration in report.get("configurations") or []]]
+        if isinstance(preflight, dict) and isinstance(preflight.get("runtime"), str) and preflight.get("runtime")})
+    return {"requested_version": requested, "observed_versions": observed,
+            "status": "not observed" if not observed else "matched" if observed == [requested] else "mismatch"}
 
 
 def agent_command(agent, model):
@@ -476,6 +492,11 @@ def run(args):
         directory = trial / name if key == "XDG_STATE_HOME" else trial / "caches" / name
         directory.mkdir(parents=True, exist_ok=True)
         env[key] = str(directory)
+    # Ruby validation builds disposable bundles repeatedly. Keep that high-file-
+    # count scratch on the container's private tmpfs, not a macOS bind mount.
+    # It is removed with the container; retained reports remain in the checkout.
+    if getattr(args, "framework", None) in ("rspec", "minitest"):
+        env["TMPDIR"] = "/tmp"
     # pnpm's own configuration is not inherited by npm commands in test scripts.
     pnpm_config = Path(env["XDG_CONFIG_HOME"]) / "pnpm" / "rc"
     pnpm_config.parent.mkdir()
@@ -630,6 +651,9 @@ def run(args):
                                         "codex_login_shell": False}
             if runtime["executable"] != expected_executable:
                 raise RuntimeError("Selected Node executable did not run; inspect node_runtime")
+        if framework in ("rspec", "minitest"):
+            manifest["ruby_runtime"] = json.loads(command(["ruby", "-rjson", "-e",
+                'puts JSON.generate(executable: RbConfig.ruby, version: RUBY_VERSION)'], timeout=CLI_STARTUP_TIMEOUT))
         manifest["cli_version"] = command([args.agent, "--version"], timeout=CLI_STARTUP_TIMEOUT)
         expected_cli = container.cli_versions[args.agent]
         if not re.search(r"(?<![\d.])"+re.escape(expected_cli)+r"(?![\d.])", manifest["cli_version"]):
@@ -786,6 +810,14 @@ def run(args):
         try:
             manifest["agent_reporting"] = reporting_verdict(final_response, report)
             manifest["ddtest_runtime"] = report_runtime(report, manifest.get("node_runtime", {}).get("version"))
+            if "ruby_runtime" in manifest:
+                manifest["ddtest_ruby_runtime"] = report_ruby_runtime(report, manifest["ruby_runtime"]["version"])
+                if manifest["ddtest_ruby_runtime"]["status"] == "mismatch":
+                    manifest["status"], manifest["failure_kind"] = "failed", "evaluator_environment"
+                    manifest["failure_stage"] = "ddtest_ruby_runtime"
+                    manifest["error"] = "Final ddtest Ruby runtime differs from the selected image runtime"
+                    manifest["retry_recommended"] = False
+                    code = 1
         except (AttributeError, TypeError, ValueError) as error:
             # Reports are untrusted trial output. A malformed nested field must
             # not prevent durable evidence after the container has been removed.
@@ -847,7 +879,7 @@ def main():
     parser.add_argument("--agent", choices=("codex", "claude"))
     parser.add_argument("--node", type=Path,
                         help="Absolute Node executable for setup and Codex non-login shells; Codex only")
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio"),
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio", "rspec", "minitest"),
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--readiness-command", action="append", default=[], help="Repeatable native runtime/browser readiness checks before the uncoached agent")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")

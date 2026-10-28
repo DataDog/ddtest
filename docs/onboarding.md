@@ -17,8 +17,8 @@ ddtest onboard --framework vitest --apply --yes
 
 Use the selected framework name for Jest, Mocha, Playwright, Cucumber or
 WebdriverIO. Cypress hooks still require explicit setup. Python retains its
-existing instructions and testdrive behavior. Ruby supports plain RSpec/Minitest
-validation as described below; automatic apply is JavaScript only.
+existing instructions and testdrive behavior. Ruby supports plain and coordinated
+RSpec/Minitest validation as described below; automatic apply is JavaScript only.
 
 The editor preserves existing project and CI tracer selections, including tracers
 installed in workspace packages. It resolves one exact release for the actual
@@ -122,8 +122,10 @@ and plain `testdrive` print text only; the agent's final response is in `summary
 `onboard --apply --yes` applies recognized setup and runs the shared coordinator.
 For existing setup, use `testdrive --framework vitest --all --agent --yes`.
 Plain testdrive keeps its earlier execution behavior; explicit `--agent` or
-`--format json` selects coordination. Supplying `--facts` also selects the coordinator. Structured execution requires `--yes` and never opens an interactive prompt. Python/Ruby instructions and plain execution
-remain unchanged; structured validation is unsupported and returns no next command.
+`--format json` selects coordination. Supplying `--facts` also selects the coordinator. Structured execution requires `--yes` and never opens an interactive prompt. RSpec and Minitest use the shared
+coordinator after the agent applies the Ruby CI setup (see [Ruby validation](#ruby-validation)).
+Python instructions and plain execution remain unchanged; structured validation is
+unsupported for Python and returns no next command.
 
 The coordinator owns one resolved execution plan: actual commands, directories,
 environments, builds, runtime/tracer selection, initialization and feature policy.
@@ -197,6 +199,13 @@ A final result tells the agent to relay `final_response` verbatim. An incomplete
 failed verdict starts with `NOT COMPLETE:`, so a paraphrase cannot turn it into a
 completion claim.
 
+Before anything runs, a coordinated run checks that the selected configurations'
+dependencies are installed. When some are missing, the result is `needs_input`
+(`project_dependencies_missing`) with `next_action: run_command` and
+`setup_commands`: the argv commands, in order and from the repository root, that
+install them; `next_command` is the first. Run every entry once, then
+`resume_command`. The check itself installs nothing and runs no tests.
+
 When the host runs out of open file descriptors while isolating the checkout,
 the result is `blocked_environment` (`file_descriptors_exhausted`) with
 `next_action: run_command`: free descriptors and rerun the same command.
@@ -251,6 +260,35 @@ Run `ddtest onboard --framework rspec` (or `minitest`) for the manual setup
 steps, then run the supplied validation command and retain both reports.
 Successful plain Ruby validation reports `PASSED`.
 
+Coding agents start with `ddtest onboard --agent`. There is no automatic Ruby CI
+edit, so the handoff depends on the workflows:
+
+- When a discovered RSpec/Minitest test step does not yet run the Datadog action,
+  the result is `needs_input` (`ci_setup_required`) with
+  `next_action: apply_source_edit`. `agent_instruction` holds the discovered
+  configurations and the CI setup steps, without any validation commands, and
+  `resume_command` is `testdrive --framework <name> --all --agent --yes`. The
+  agent applies the setup, then runs `resume_command` once.
+- Once every discovered test step runs after the action, or explicitly skips it
+  with at least one instrumented step left, the result is `ready` with that
+  validation command as `next_command`. Repeating `onboard --agent` returns the
+  same handoff.
+
+`--site`, `--tracer-version`, `--facts`, `--platform`, `--timeout`,
+`--allow-reviewed-builds` and `--accept-substitute-runtime` are forwarded to the
+validation command; `--command` is rejected, because onboarding validates every
+discovered configuration. The coordinator then works as for JavaScript: it may
+return `project_dependencies_missing` with `setup_commands` for missing bundles,
+and it reports `COMPLETE LOCALLY` only after every selected configuration,
+supported feature, source-preservation check and Git/gem report-exclusion check
+passes. Repository gemspecs are loaded in an owned copy to list their packaged
+files; no gem is built or published. Finish with the exact `next_command`
+(`testdrive --report`) and render `final_response` unchanged. The report is bound
+to the Ruby on PATH (not the host's Node), to the selected manifests and their
+lockfiles, including ignored ones such as `gems.locked`, and to the effective
+Bundler configuration and `BUNDLE_*` environment; changing any of them requires
+fresh execution.
+
 Numeric CI Ruby selections are checked against the resolved tracer's RubyGems
 requirements. Other engines and floating selections require separate validation
 or explicit instrumentation exclusions that preserve their original test steps.
@@ -281,7 +319,9 @@ For a native-platform dependency that excludes a CI Ruby, testdrive may inspect
 its exact release's portable RubyGems specification. Compatibility requires the
 same gem name/version, a portable platform, identical runtime dependency
 requirements and RubyGems requirements admitting the complete Ruby selector.
-Missing, offline, mismatched or still-incompatible metadata remains inconclusive;
+This lookup queries `https://rubygems.org` directly with RubyGems' fetcher, which
+honors the standard proxy environment variables but not Bundler mirrors or
+private gem sources. Missing, offline, mismatched or still-incompatible metadata remains inconclusive;
 this never certifies actual CI compilation/execution. A direct tracer requirement
 still rejects an incompatible Ruby. Ruby 2.7 also needs a compatible installer:
 `onboard` shows how to select RubyGems 3.4.22 for that matrix entry, preserving

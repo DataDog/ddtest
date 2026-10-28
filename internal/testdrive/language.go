@@ -2,7 +2,10 @@ package testdrive
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"io"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
@@ -102,7 +105,55 @@ type validationLanguage interface {
 	// labelsTracerWithoutSelection reports whether a configuration's tracer
 	// label identifies its release even without a registry selection.
 	labelsTracerWithoutSelection() bool
+
+	// workflowRuntime is the language runtime, besides Node, that a
+	// coordinated report is bound to; empty binds none. An error means the
+	// runtime running the selected commands cannot be inspected.
+	workflowRuntime(t *Testdrive) (string, error)
+	// reportRuntimeCurrent reports whether the runtime a saved coordinated
+	// report is bound to still runs on this host.
+	reportRuntimeCurrent(root string, evidence WorkflowEvidence) bool
+	// packageManager names the package manager in a coordinated plan.
+	packageManager(root string) string
+	// ciPinnedTracer is the tracer release one CI job pins, if any.
+	ciPinnedTracer(job onboard.RuntimeFinding) string
+	// dependencyReadiness returns the commands that set up the missing
+	// dependencies of the selected configurations (every one in scope with
+	// --all), checked before anything runs. None lets validation start.
+	dependencyReadiness(t *Testdrive, ctx context.Context, scope onboard.ValidationScope) ([][]string, error)
+	// extraInputFingerprint is the language's inputs, beyond the shared source
+	// snapshot, that a coordinated report is bound to; empty adds none.
+	extraInputFingerprint(ctx context.Context, root string) (string, error)
+	// packageExclusions checks that the language's packages leave out the
+	// reports. handled is false when the shared package check applies.
+	packageExclusions(t *Testdrive, ctx context.Context) (check onboard.WorkflowCheck, handled bool)
+	// initialization describes framework's CI tracer initialization; empty
+	// uses the shared description.
+	initialization(framework string) string
 }
+
+// sharedWorkflowHooks is the coordinated-validation behavior every language
+// gets unless it binds its own runtime, inputs or packaging checks.
+type sharedWorkflowHooks struct{}
+
+func (sharedWorkflowHooks) workflowRuntime(*Testdrive) (string, error) { return "", nil }
+func (sharedWorkflowHooks) reportRuntimeCurrent(_ string, evidence WorkflowEvidence) bool {
+	return evidence.Node == currentNodeVersion()
+}
+func (sharedWorkflowHooks) packageManager(root string) string { return workflowPackageManager(root) }
+func (sharedWorkflowHooks) ciPinnedTracer(job onboard.RuntimeFinding) string {
+	return strings.TrimPrefix(job.Tracer, "dd-trace@")
+}
+func (sharedWorkflowHooks) dependencyReadiness(*Testdrive, context.Context, onboard.ValidationScope) ([][]string, error) {
+	return nil, nil
+}
+func (sharedWorkflowHooks) extraInputFingerprint(context.Context, string) (string, error) {
+	return "", nil
+}
+func (sharedWorkflowHooks) packageExclusions(*Testdrive, context.Context) (onboard.WorkflowCheck, bool) {
+	return onboard.WorkflowCheck{}, false
+}
+func (sharedWorkflowHooks) initialization(string) string { return "" }
 
 // commandRequest is what selectCommand can use to choose a command.
 type commandRequest struct {
@@ -209,7 +260,7 @@ func (t *Testdrive) lang() validationLanguage {
 
 // unsupportedLanguage is selected when no registered language matches. It adds
 // nothing to a run and supports no coordination.
-type unsupportedLanguage struct{}
+type unsupportedLanguage struct{ sharedWorkflowHooks }
 
 func (unsupportedLanguage) name() string                         { return "" }
 func (unsupportedLanguage) frameworks() []string                 { return nil }
@@ -276,4 +327,33 @@ func frameworkCIRuntimes(ctx context.Context, root, framework string) onboard.Ru
 		return language.ciRuntimes(ctx, root, framework)
 	}
 	return onboard.CheckCIRuntimes(ctx, root, framework)
+}
+
+// languageOrUnsupported returns framework's language; unsupportedLanguage when
+// none validates it.
+func languageOrUnsupported(framework string) validationLanguage {
+	if language := languageForFramework(framework); language != nil {
+		return language
+	}
+	return unsupportedLanguage{}
+}
+
+// workflowFingerprint is the source snapshot a coordinated report for
+// framework is bound to: the shared inputs plus the language's own.
+func workflowFingerprint(ctx context.Context, root, framework string) (string, error) {
+	fingerprint, err := InputFingerprint(ctx, root)
+	if err != nil {
+		return "", err
+	}
+	extra, err := languageOrUnsupported(framework).extraInputFingerprint(ctx, root)
+	if err != nil || extra == "" {
+		return fingerprint, err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(fingerprint+"\x00"+extra))), nil
+}
+
+// Coordinated reports whether the agent coordinator validates language.
+func Coordinated(language string) bool {
+	registered := languageNamed(language)
+	return registered != nil && registered.coordinated()
 }

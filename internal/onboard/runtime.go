@@ -67,6 +67,9 @@ type RuntimeFinding struct {
 	Status          string          `json:"status"`
 	Reason          string          `json:"reason"`
 	Code            string          `json:"code,omitempty"`
+	// setupInputs are the inputs of the Datadog setup action that precedes
+	// this entry, for a language's own setup checks. Not serialized.
+	setupInputs map[string]string
 }
 
 // A composite call's condition sees the caller's environment and string inputs,

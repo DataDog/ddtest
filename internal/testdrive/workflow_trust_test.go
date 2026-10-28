@@ -64,7 +64,8 @@ func TestAlternatingFailureCodesShareOneAttemptBound(t *testing.T) {
 	checkpoint, err := openCheckpoint("", root, "jest", "", true, true)
 	require.NoError(t, err)
 	for attempt, code := range []string{"metadata_network", "validation_preparation", "metadata_network"} {
-		require.NoError(t, checkpoint.recordFailure("fingerprint", "facts", code))
+		require.NoError(t, checkpoint.recordFailure("fingerprint", "facts", code, "reason"))
+		require.False(t, checkpoint.repeated, "an alternating cause is not an identical repeat")
 		require.Equal(t, attempt+1, checkpoint.Attempts, "a flaky cause alternating codes must not reset the counter (%s)", code)
 	}
 	require.Equal(t, maxWorkflowAttempts, checkpoint.Attempts)

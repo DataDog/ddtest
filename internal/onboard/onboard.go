@@ -16,7 +16,18 @@ import (
 )
 
 // Run detects the first supported onboarding path and prints its instructions.
-func Run(output io.Writer) error {
+func Run(output io.Writer) error { return run(output, nil) }
+
+// agentHandoff selects the setup instructions for a coding agent whose
+// validation ddtest hands off separately.
+type agentHandoff struct {
+	// site is the selected Datadog site; empty selects the default.
+	site string
+}
+
+// run prints the onboarding guidance; a non-nil agent selects the agent's
+// setup instructions.
+func run(output io.Writer, agent *agentHandoff) error {
 	repositoryRoot, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("find repository root: %w", err)
@@ -35,7 +46,7 @@ func Run(output io.Writer) error {
 	}
 	switch provider := provider.(type) {
 	case *environment.GitHub:
-		return onboardGitHub(output, provider, repositoryRoot, detectedPlatform.Name(), runner.Name())
+		return onboardGitHub(output, provider, repositoryRoot, detectedPlatform.Name(), runner.Name(), agent)
 	default:
 		return fmt.Errorf("onboard does not support CI provider %s", provider.Name())
 	}

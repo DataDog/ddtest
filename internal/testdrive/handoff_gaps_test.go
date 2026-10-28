@@ -169,3 +169,24 @@ func TestPlanLimitationsFollowTheSelectedTracer(t *testing.T) {
 	testdrive.setPlanTracer(plan, "6.21.0")
 	require.Len(t, plan.KnownLimitations, len(webdriverIOJasmineLimitedFeatures))
 }
+
+func TestWorkflowBlockersQuoteOneLineOfMultiLineCIScripts(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"private":true}`)
+	fixture := substitutedFixture(false)
+	fixture.Scope = &onboard.ValidationScope{Unresolved: []string{"docs.yml / generate / step 4 (gem install rack\ncd rack-3.2*\n): Repository script could not be resolved: gem install rack\ncd rack-3.2*\n"}}
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript", tracerVersion: "6.20.1", projectTracer: "fixture", executor: workflowCheckExecutor{}, nodeVersion: currentNodeVersion}
+	drive.workflowRun = func(_ context.Context, out io.Writer) error {
+		return finishValidation(out, root, fixture)
+	}
+	var output bytes.Buffer
+	require.Error(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json"}))
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Contains(t, result.RequiredInput, "unresolved CI scope: docs.yml / generate / step 4 (gem install rack …): Repository script could not be resolved: gem install rack …")
+	for _, item := range result.RequiredInput {
+		require.NotContains(t, item, "\n")
+	}
+	require.NotContains(t, result.Reason, "cd rack-3.2*")
+}

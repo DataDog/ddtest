@@ -45,7 +45,7 @@ func TestRubyMatrixInstrumentationSettingsApplyPerRow(t *testing.T) {
       - uses: ruby/setup-ruby@v1
         with: {ruby-version: '3.4'}
       - uses: datadog/test-visibility-github-action@v3
-        with: {languages: ruby, ruby-tracer-version: '1.42.0'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - run: bundle exec rspec
         env: {DD_TRACE_ENABLED: '${{ matrix.tracing }}'}
 `)
@@ -76,7 +76,7 @@ func TestRubyActionLanguagesResolveMatrixExpressions(t *testing.T) {
       - uses: ruby/setup-ruby@v1
         with: {ruby-version: '3.4'}
       - uses: datadog/test-visibility-github-action@v3
-        with: {languages: '${{ matrix.tracer-languages }}', ruby-tracer-version: '1.42.0'}
+        with: {languages: '${{ matrix.tracer-languages }}', api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - run: bundle exec rspec
 `)
 	ci := RubyCIConfiguration(root, "rspec")
@@ -96,7 +96,7 @@ func TestRubyActionLanguagesResolveMatrixExpressions(t *testing.T) {
         with: {ruby-version: '${{ matrix.ruby }}'}
       - uses: datadog/test-visibility-github-action@v3
         if: matrix.ruby != 'head'
-        with: {languages: '${{ matrix.tracer-languages }}', ruby-tracer-version: '1.42.0'}
+        with: {languages: '${{ matrix.tracer-languages }}', api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - run: bundle exec rspec
 `)
 	statuses := map[string]string{}
@@ -130,6 +130,108 @@ func TestConfiguredRubyWorkflowRecommendsAll(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, scope.Commands, 2)
 	var output strings.Builder
-	require.NoError(t, onboardGitHub(&output, &environment.GitHub{}, root, "ruby", "rspec"))
+	require.NoError(t, onboardGitHub(&output, &environment.GitHub{}, root, "ruby", "rspec", nil))
 	require.Contains(t, output.String(), "Run `ddtest testdrive --framework rspec --all` to check the setup locally.")
+}
+
+// rack's documentation and external-project workflows next to its Minitest CI.
+func TestRubyMaintenanceAndUninstrumentedJobsDoNotBlockMinitest(t *testing.T) {
+	root := rubyWorkflowFixture(t, `jobs:
+  test:
+    strategy:
+      matrix:
+        ruby: ['3.3', '3.4']
+    steps:
+      - uses: ruby/setup-ruby@v1
+        with: {ruby-version: '${{ matrix.ruby }}'}
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
+      - run: bundle exec rake test
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/documentation.yaml"), []byte(`jobs:
+  generate:
+    steps:
+      - uses: ruby/setup-ruby@v1
+        with: {ruby-version: ruby, bundler-cache: true}
+      - run: |
+          bundle exec rdoc --op docs/main --main README.md
+          cp -r contrib docs/main
+      - run: |
+          gem install rack --version "< 3.3"
+          gem unpack rack -v "< 3.3"
+          cd rack-3.2*
+          cp ../SECURITY.md .
+          bundle exec rdoc --op ../docs/3.2 --main README.md
+      - run: bundle exec rubocop && gem build rack.gemspec
+`), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/test-external.yaml"), []byte(`jobs:
+  test:
+    strategy:
+      matrix:
+        ruby: ['3.3', '3.4']
+    steps:
+      - uses: ruby/setup-ruby@v1
+        with: {ruby-version: '${{ matrix.ruby }}'}
+      - run: chmod -R o-w /opt/hostedtoolcache/Ruby
+      - run: bundle exec bake test:external
+`), 0644))
+	scope, err := DiscoverValidationScope(root, "minitest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved, "documentation, release and uninstrumented non-consumer steps are not blockers")
+	ci := RubyCIConfiguration(root, "minitest")
+	require.Len(t, ci.Jobs, 2, "only the Minitest consumers carry Ruby versions")
+	codes, maintenance := 0, 0
+	for _, finding := range ci.Review {
+		if finding.Code == CodeUninstrumentedJob {
+			codes++
+			require.Contains(t, finding.Reason, "Uninstrumented CI job with no recognized minitest step")
+		}
+		if strings.Contains(finding.Reason, "Documentation, lint or release tooling is maintenance") {
+			maintenance++
+		}
+	}
+	require.Equal(t, 2, codes, "each matrix entry of the external job is reported")
+	require.Equal(t, 3, maintenance, "every documentation and release step is maintenance")
+
+	// The same command blocks when its job is instrumented or runs the framework,
+	// and a repository script or Rake task always stays in scope.
+	for _, workflow := range []string{
+		"jobs:\n  t:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby}\n      - run: bundle exec bake test:external\n",
+		"jobs:\n  t:\n    steps:\n      - run: bundle exec rake test\n      - run: bundle exec bake test:external\n",
+		"jobs:\n  t:\n    steps:\n      - run: ./ci/run-tests\n",
+		"jobs:\n  t:\n    strategy:\n      matrix:\n        suite: [unit]\n    steps:\n      - run: bundle exec ./bin/test-${{ matrix.suite }}\n",
+	} {
+		root := rubyWorkflowFixture(t, workflow)
+		scope, err := DiscoverValidationScope(root, "minitest")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, workflow)
+	}
+	// A focused local command has no job context and stays unresolved.
+	require.NotEmpty(t, resolveRubyStep(t.TempDir(), ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "bundle exec bake test"}, "minitest").Reason)
+	for run, maintenance := range map[string]bool{
+		"bundle install":                                           false,
+		"gem install bundler && bundle install":                    false,
+		"bundle exec rdoc && bundle exec rake test":                false,
+		"yard doc $(git ls-files)":                                 false,
+		"bundle exec yard doc":                                     true,
+		"bundle exec rubocop & bundle exec rspec spec/integration": false,
+		"bundle exec rubocop || bundle exec rspec":                 false,
+		"bundle exec rubocop | tee log":                            false,
+		"(bundle exec rubocop; bundle exec rspec)":                 false,
+		"{ bundle exec rdoc; }":                                    false,
+		"bundle exec rdoc > rdoc.log":                              false,
+		"bundle exec rdoc \"$(bundle exec rspec)\"":                false,
+		"gem install rack --version \"< 3.3\" && bundle exec rdoc": true,
+		"gem build rack.gemspec":                                   true,
+	} {
+		require.Equal(t, maintenance, rubyMaintenanceStep(run), run)
+	}
+}
+
+func TestRubyBackgroundedSuiteStaysInScope(t *testing.T) {
+	root := rubyWorkflowFixture(t, "jobs:\n  t:\n    steps:\n      - run: bundle exec rubocop & bundle exec rspec spec/integration\n")
+	scope, err := DiscoverValidationScope(root, "rspec")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved, "a backgrounded RSpec suite cannot disappear as maintenance")
+	require.NotContains(t, strings.Join(scope.Review, "\n"), "maintenance")
 }

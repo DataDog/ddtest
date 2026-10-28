@@ -97,7 +97,7 @@ func TestConfiguredOnboardingSuggestsAllForSeveralConfigurations(t *testing.T) {
 		root := newJestRepository(t, workflow)
 		t.Chdir(root)
 		var output strings.Builder
-		require.NoError(t, onboardGitHub(&output, &environment.GitHub{}, root, "javascript", "jest"))
+		require.NoError(t, onboardGitHub(&output, &environment.GitHub{}, root, "javascript", "jest", nil))
 		require.Contains(t, output.String(), "Run "+want+" to check the setup locally.")
 	}
 }

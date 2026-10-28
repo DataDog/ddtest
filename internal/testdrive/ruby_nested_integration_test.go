@@ -58,7 +58,7 @@ end
         with: {ruby-version: '${{ matrix.ruby }}'}
       - uses: datadog/test-visibility-github-action@v3
         if: matrix.ruby != 'head'
-        with: {languages: ruby, ruby-tracer-version: 'TRACER_VERSION'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: 'TRACER_VERSION'}
       - run: bundle exec rake test
         working-directory: app
         env: {BUNDLE_GEMFILE: '${{ github.workspace }}/${{ matrix.bundle }}'}
@@ -76,8 +76,21 @@ end
 	lockBefore, err := os.ReadFile(filepath.Join(root, "app/gems.locked"))
 	require.NoError(t, err)
 	env := []string{"DD_GIT_REPOSITORY_URL=https://example.com/ddtest-nested-ruby.git", "DD_GIT_COMMIT_SHA=" + strings.Repeat("1", 40), "RUBYOPT=-W0"}
-	plain := integrationCommand(t, ctx, root, env, binary, "testdrive", "--framework", "minitest", "--all", "--yes", "--tracer-version", gems.Tracer)
-	require.Contains(t, plain, "Validation verdict: PASSED")
+	protocol := rubyProtocolCommand(t, ctx, root, env, binary, "testdrive", "--framework", "minitest", "--all", "--agent", "--yes", "--tracer-version", gems.Tracer)
+	var state struct{ Status string }
+	require.NoError(t, json.Unmarshal([]byte(protocol), &state))
+	require.Equal(t, "complete_locally", state.Status, protocol)
+	receipt := rubyProtocolCommand(t, ctx, root, env, binary, "testdrive", "--report", "--framework", "minitest", "--agent")
+	require.NoError(t, json.Unmarshal([]byte(receipt), &state))
+	require.Equal(t, "complete_locally", state.Status, receipt)
+	// The actual ignored gems.locked participates in the final receipt.
+	integrationFile(t, root, "app/gems.locked", string(lockBefore)+"\n")
+	stale := exec.CommandContext(ctx, binary, "testdrive", "--report", "--framework", "minitest", "--agent")
+	stale.Dir, stale.Env = root, append(os.Environ(), env...)
+	staleOutput, staleErr := stale.CombinedOutput()
+	require.Error(t, staleErr, string(staleOutput))
+	require.Contains(t, string(staleOutput), "stale_report")
+	integrationFile(t, root, "app/gems.locked", string(lockBefore))
 	reportPath := filepath.Join(root, ".testoptimization/testdrive.json")
 	data, err := os.ReadFile(reportPath)
 	require.NoError(t, err)

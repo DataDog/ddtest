@@ -37,6 +37,8 @@ type commandResolution struct {
 	Review            bool
 	UnknownExecutable bool
 	ReviewReason      string
+	// Code classifies a Review outcome for reports, such as CodeUninstrumentedJob.
+	Code string
 }
 
 func unresolvedCommand(reason string) commandResolution {

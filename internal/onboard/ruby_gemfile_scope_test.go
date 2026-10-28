@@ -1,17 +1,30 @@
 package onboard
 
 import (
-	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-func TestRubyMixedRakeConsumersStayUnresolved(t *testing.T) {
+// A step that runs both frameworks validates each framework's own task,
+// bound to that step, and reports the other one running alongside it.
+func TestRubyMixedRakeConsumersValidateEachFrameworkTask(t *testing.T) {
 	for _, framework := range []string{"rspec", "minitest"} {
+		own, other := "spec", "test"
+		if framework == "minitest" {
+			own, other = "test", "spec"
+		}
 		for _, command := range []string{"bundle exec rake spec test", "bundle exec rake test spec", "bundle exec rake spec:unit test:unit"} {
 			root := rubyWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: "+command+"\n")
 			scope, err := DiscoverValidationScope(root, framework)
 			require.NoError(t, err)
-			require.NotEmpty(t, scope.Unresolved, framework+": "+command)
+			require.Empty(t, scope.Unresolved, framework+": "+command)
+			require.Len(t, scope.Commands, 1)
+			require.Contains(t, scope.Commands[0].Command, "rake "+own, framework+": "+command)
+			require.NotContains(t, scope.Commands[0].Command, other, framework+": "+command)
+			require.Contains(t, strings.Join(scope.Commands[0].StepScopeNotes, "\n"), "other Ruby framework's "+other)
+			require.Len(t, scope.Commands[0].Locations, 1)
 			ci := RubyCIConfiguration(root, framework)
 			require.NotEmpty(t, ci.Jobs, "the mixed CI consumer must remain required")
 			require.Equal(t, "inconclusive", ci.Jobs[0].Status)
@@ -30,7 +43,7 @@ func TestRubyExcludedGemfileConfigurationsStayInScope(t *testing.T) {
         with: {ruby-version: '${{ matrix.ruby }}'}
       - uses: datadog/test-visibility-github-action@v3
         if: matrix.ruby != 'head'
-        with: {languages: ruby, ruby-tracer-version: '1.42.0'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - run: bundle exec rake test
         env: {BUNDLE_GEMFILE: 'gemfiles/${{ matrix.ruby }}.gemfile'}
 `)
