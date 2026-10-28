@@ -108,13 +108,13 @@ jobs:
           format: go-coverprofile
           version: v5.19.0
 
-  # Dogfooding: runs the `test` suite with ddto and its Mini runtime
-  # (https://github.com/tonyredondo/dd-ci-testing-poc) instead of Orchestrion.
-  test-ddto-mini:
+  # Dogfooding: runs the `test` suite with ddtest instrument, built from this
+  # checkout as a release builds it, instead of Orchestrion. Its results reach
+  # Test Optimization beside those of `test`, under this job's name.
+  test-ddtest-instrument:
     runs-on: ubuntu-latest
     env:
       DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
-      DDTO_VERSION: v0.3.0
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -142,15 +142,16 @@ jobs:
         with:
           ruby-version: "3.4"
 
+      # Its own key, so that its instrumented builds don't replace those of `test`.
       - name: Cache Go modules
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-ddto-${{ env.DDTO_VERSION }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-ddtest-instrument-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-go-ddto-${{ env.DDTO_VERSION }}-${{ hashFiles('go.mod') }}-
+            ${{ runner.os }}-go-ddtest-instrument-${{ hashFiles('go.mod') }}-
 
       - name: Download dependencies
         run: go mod download
@@ -161,13 +162,24 @@ jobs:
       - name: Install Python test dependencies
         run: python -m pip install "ddtrace>=4.11.0" pytest
 
-      # The release's installer downloads its executable for the runner, checks it
-      # against SHA256SUMS and adds it to PATH for the next steps.
-      - name: Install ddto
-        run: curl -fsSL "https://github.com/tonyredondo/dd-ci-testing-poc/releases/download/${DDTO_VERSION}/install.sh" | bash -s -- --version "${DDTO_VERSION}"
+      - name: Install evaluator package-manager fixture
+        run: npm install --global pnpm@12.14.0
+
+      # The release builder, as `make release` runs it for one target: ddtest
+      # with the runtime sources and tool wrapper that ddtest instrument provides.
+      - name: Build ddtest instrument from this checkout
+        run: |
+          version="dogfood-${GITHUB_SHA::12}"
+          go -C ddto run ./scripts/release -main .. -name ddtest -command instrument \
+            -version "v0.0.0-$version" -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$version" \
+            -target linux/amd64 -o "$RUNNER_TEMP/dist"
+          mkdir -p "$RUNNER_TEMP/bin"
+          mv "$RUNNER_TEMP/dist/ddtest-linux-amd64" "$RUNNER_TEMP/bin/ddtest"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/ddtest" instrument --version
 
       - name: Run tests
-        run: ddto test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
+        run: ddtest instrument go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
         env:
           DD_CIVISIBILITY_ENABLED: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' && 'parent' || 'false' }}
           DD_CIVISIBILITY_AGENTLESS_ENABLED: "true"
