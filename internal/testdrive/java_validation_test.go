@@ -131,11 +131,36 @@ func TestJavaReactorIncludesMavenConfig(t *testing.T) {
 	_, _, err = drive.javaReactor([]string{"test"})
 	require.ErrorContains(t, err, ".mvn/maven.config adds install")
 
-	// Maven reads the nearest .mvn directory above the selected POM.
+	// Maven 3.9 skips # comments.
+	requireWriteFile(t, filepath.Join(root, ".mvn", "maven.config"), "# shared build options\n-ntp\n\n")
+	_, projects, err = drive.javaReactor([]string{"test"})
+	require.NoError(t, err)
+	require.Equal(t, "root", projects[0].Artifact)
+
+	// The launcher reads the nearest .mvn directory above a POM that a
+	// separate -f names; compact forms keep the working directory's.
+	requireWriteFile(t, filepath.Join(root, ".mvn", "maven.config"), "install\n")
 	require.NoError(t, os.Mkdir(filepath.Join(root, "service", ".mvn"), 0755))
 	_, projects, err = drive.javaReactor([]string{"-f", "service/pom.xml", "test"})
 	require.NoError(t, err)
 	require.Equal(t, "service", projects[0].Artifact)
+	for _, args := range [][]string{{"--file=service/pom.xml", "test"}, {"-fservice/pom.xml", "test"}} {
+		_, _, err = drive.javaReactor(args)
+		require.ErrorContains(t, err, ".mvn/maven.config adds install", "%v", args)
+	}
+}
+
+func TestJavaRefusesADatadogAgentInJVMConfig(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)
+	require.NoError(t, os.Mkdir(filepath.Join(root, ".mvn"), 0755))
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root}
+	requireWriteFile(t, filepath.Join(root, ".mvn", "jvm.config"), "-Xmx2g -javaagent:/opt/jacoco.jar\n")
+	_, _, err := drive.javaReactor([]string{"test"})
+	require.NoError(t, err, "other agents and options are the project's own")
+	requireWriteFile(t, filepath.Join(root, ".mvn", "jvm.config"), "-Xmx2g\n-javaagent:tools/dd-java-agent.jar\n")
+	_, _, err = drive.javaReactor([]string{"test"})
+	require.ErrorContains(t, err, ".mvn/jvm.config attaches dd-java-agent", "the baseline could not run without the agent")
 }
 
 func TestJavaConfigurationRefusesImplicitPublishingGoalsForEveryFramework(t *testing.T) {
@@ -145,6 +170,17 @@ func TestJavaConfigurationRefusesImplicitPublishingGoalsForEveryFramework(t *tes
 	require.NoError(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root))
 	drive.configurationEnvironment = map[string]string{"MAVEN_ARGS": "deploy"}
 	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "MAVEN_ARGS adds deploy", "reporting-only frameworks never reach runJava")
+
+	// A configuration's command runs from its working directory.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)
+	require.NoError(t, os.Mkdir(filepath.Join(root, "build"), 0755))
+	drive = &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"-f", "../pom.xml", "verify"}}
+	item := &configurationResult{TestCommand: onboard.TestCommand{Directory: "build"}}
+	require.NoError(t, javaLanguage{}.prepareConfiguration(drive, item, root, root))
+	item.Directory = "."
+	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, item, root, root), "must stay inside the repository")
 }
 
 func TestJavaReactorIsBoundedByTheCheckout(t *testing.T) {

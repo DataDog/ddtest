@@ -243,9 +243,18 @@ func (javaLanguage) isolatesConfigurations() bool { return true }
 // Every Java framework, reporting-only ones included, runs in a configuration
 // copy: refuse a command that would install, publish or leave the copy before
 // any Maven process starts.
-func (javaLanguage) prepareConfiguration(t *Testdrive, _ *configurationResult, _, _ string) error {
-	_, args := t.executionCommand()
-	_, _, err := t.javaCommandPOM(args)
+func (javaLanguage) prepareConfiguration(t *Testdrive, item *configurationResult, _, copyRoot string) error {
+	// The command runs from the configuration's working directory.
+	scoped := *t
+	if item != nil {
+		directory, err := localSetupDirectory(copyRoot, item.Directory)
+		if err != nil {
+			return err
+		}
+		scoped.repositoryRoot = directory
+	}
+	_, args := scoped.executionCommand()
+	_, _, err := scoped.javaCommandPOM(args)
 	return err
 }
 

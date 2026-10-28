@@ -289,7 +289,9 @@ and left out, and `--command` refuses `install`, `deploy` and other goals, as
 validation does for goals in `MAVEN_ARGS` or `.mvn/maven.config`, so `~/.m2`
 artifacts are never overwritten and nothing is published. A dd-java-agent that
 `MAVEN_OPTS` or `JAVA_TOOL_OPTIONS` already attaches, as after the GitHub action,
-is removed from both runs; the reporting run attaches only the selected agent. One Maven
+is removed from both runs; the reporting run attaches only the selected agent.
+Validation refuses a dd-java-agent in `.mvn/jvm.config`, which no run could
+remove. One Maven
 command runs every framework the reactor declares; modules of other frameworks
 are reported.
 

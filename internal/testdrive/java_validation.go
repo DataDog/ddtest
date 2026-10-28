@@ -70,11 +70,25 @@ func (t *Testdrive) javaCommandPOM(args []string) (string, string, error) {
 // project's .mvn/maven.config, and those Maven 3.9+ reads from MAVEN_ARGS, with
 // a configuration's own value first, split on whitespace as the mvn script
 // does. Goals there that install, publish or run no tests are refused, since
-// they would run with every validated command.
+// they would run with every validated command. So is a Datadog agent that
+// .mvn/jvm.config attaches to every build, baseline included.
 func (t *Testdrive) javaImplicitArgs(args []string) ([]string, error) {
-	config, err := t.javaMavenConfig(args)
+	directory, err := t.javaMavenDirectory(args)
 	if err != nil {
 		return nil, err
+	}
+	var config []string
+	if directory != "" {
+		if config, err = readMavenConfig(filepath.Join(directory, "maven.config")); err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(filepath.Join(directory, "jvm.config"))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if options := string(data); withoutDatadogAgent(options) != options {
+			return nil, errors.New(".mvn/jvm.config attaches dd-java-agent to every Maven build, so validation cannot run the build without it; remove the -javaagent option from .mvn/jvm.config, as CI attaches the agent with the GitHub action")
+		}
 	}
 	value, configured := t.configurationEnvironment["MAVEN_ARGS"]
 	if !configured {
@@ -94,30 +108,49 @@ func (t *Testdrive) javaImplicitArgs(args []string) ([]string, error) {
 	return implicit, nil
 }
 
-// javaMavenConfig reads the .mvn/maven.config of the project directory Maven
-// finds: the nearest one with a .mvn directory, from the directory of the
-// POM the command selects up to the checkout.
-func (t *Testdrive) javaMavenConfig(args []string) ([]string, error) {
-	pom, err := maven.CommandPOM(args)
-	if err != nil {
-		return nil, err
+// javaMavenDirectory returns the .mvn directory the mvn launcher finds: the
+// nearest one up to the checkout, from the directory of the POM that a
+// separate -f or --file argument names, the only forms the launcher reads,
+// else from the working directory. It is empty when there is none.
+func (t *Testdrive) javaMavenDirectory(args []string) (string, error) {
+	start := t.repositoryRoot
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-f" || args[i] == "--file" {
+			if filepath.IsAbs(args[i+1]) {
+				return "", fmt.Errorf("maven POM must be a repository path: %s", args[i+1])
+			}
+			start = filepath.Dir(filepath.Join(t.repositoryRoot, args[i+1]))
+		}
 	}
 	root := t.checkoutRoot()
-	for directory := filepath.Dir(filepath.Join(t.repositoryRoot, pom)); ; directory = filepath.Dir(directory) {
+	for directory := start; ; directory = filepath.Dir(directory) {
 		if relative, err := filepath.Rel(root, directory); err != nil || !filepath.IsLocal(relative) {
-			return nil, nil
+			return "", nil
 		}
 		if info, err := os.Stat(filepath.Join(directory, ".mvn")); err == nil && info.IsDir() {
-			data, err := os.ReadFile(filepath.Join(directory, ".mvn", "maven.config"))
-			if errors.Is(err, os.ErrNotExist) {
-				return nil, nil
-			}
-			return strings.Fields(string(data)), err
+			return filepath.Join(directory, ".mvn"), nil
 		}
 		if directory == root {
-			return nil, nil
+			return "", nil
 		}
 	}
+}
+
+// readMavenConfig reads the arguments of a maven.config, skipping blank and
+// # comment lines, as Maven 3.9 does, and splitting the others on whitespace,
+// as earlier releases do.
+func readMavenConfig(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	var args []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); !strings.HasPrefix(line, "#") {
+			args = append(args, strings.Fields(line)...)
+		}
+	}
+	return args, err
 }
 
 // runJava runs the selected Maven command once in the disposable copy, with
