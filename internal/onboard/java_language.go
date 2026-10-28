@@ -112,7 +112,12 @@ func javaDeployCredentials(job runtimeJob) []string {
 
 func (javaDiscovery) skipsUnsupportedNode() bool { return false }
 
-func (javaDiscovery) instructions(string) string { return "" }
+//go:embed instructions/java.md
+var javaInstructions string
+
+func (javaDiscovery) instructions(framework string) string {
+	return strings.ReplaceAll(javaInstructions, "__FRAMEWORK__", framework)
+}
 
 func (javaDiscovery) onboardingScope(string) (discover, instructionsWhenConfigured bool) {
 	return true, true
