@@ -23,7 +23,7 @@ func __ddtoMirrorStart(ctx context.Context, parent any, name string) any {
 	return state
 }
 // Without adoption's edits, the hook file's adoption does nothing.
-func __ddtoMirrorAdoptSpan(*Span, any) {}
+func __ddtoMirrorAdoptSpan(*Span, any, *SpanContext) {}
 func __ddtoMirrorContext(ctx context.Context, state any) context.Context {
 	return context.WithValue(ctx, "mirror", state)
 }

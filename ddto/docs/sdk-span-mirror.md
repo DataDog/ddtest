@@ -63,6 +63,7 @@ flowchart TD
 | Child of a copied SDK span, including `StartChild` and `ChildOf` | Copy beneath that parent's copy |
 | `ContextWithSpan(ctx, nil)` inside a test | Next SDK root gets a new copy beneath the test |
 | `ChildOf` a baggage-only context inside a test | The SDK starts a root, which joins the test's trace like any other root |
+| `ChildOf` an extracted remote context inside a test, including a Synthetics one with span ID 0 | The span keeps the remote trace and goes to APM; its copy has a Mini span ID beneath the test |
 | A different subtest context carrying an older SDK parent | The copy belongs to the current subtest; the SDK parent remains unchanged |
 | `context.Background()` with no copied SDK parent | No copy; there is no test association |
 | SDK spans created before the test or during package initialization | No copy without a test association |

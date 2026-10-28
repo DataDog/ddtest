@@ -33,11 +33,9 @@ const (
 	sdkSamplerNamesImport = "github.com/DataDog/dd-trace-go/v2/internal/samplernames"
 )
 
-// sdkSpanFields reports whether Span holds the identity that adoption reads
-// and sets.
+// sdkSpanFields reports whether Span holds the identity that adoption sets.
 func sdkSpanFields(structure *ast.StructType) bool {
 	return sdkHasField(structure, "spanID", func(e ast.Expr) bool { return sdkTypeName(e, "uint64") }) &&
-		sdkHasField(structure, "parentID", func(e ast.Expr) bool { return sdkTypeName(e, "uint64") }) &&
 		sdkHasField(structure, "traceID", func(e ast.Expr) bool { return sdkTypeName(e, "uint64") }) &&
 		sdkHasField(structure, "context", func(e ast.Expr) bool { return sdkPointerType(e, "SpanContext") })
 }
@@ -71,7 +69,8 @@ func sdkTraceInternals(file *ast.File) bool {
 					}) && sdkHasField(structure, "hexEncoded", func(e ast.Expr) bool { return sdkTypeName(e, "string") })
 				case "SpanContext":
 					contextFields = sdkHasField(structure, "trace", func(e ast.Expr) bool { return sdkPointerType(e, "trace") }) &&
-						sdkHasField(structure, "origin", func(e ast.Expr) bool { return sdkTypeName(e, "string") })
+						sdkHasField(structure, "origin", func(e ast.Expr) bool { return sdkTypeName(e, "string") }) &&
+						sdkHasField(structure, "baggageOnly", func(e ast.Expr) bool { return sdkTypeName(e, "bool") })
 				}
 			}
 		case *ast.FuncDecl:
@@ -238,7 +237,7 @@ func __ddtoMirrorCapture(any,string,string,string,string,int64,int64,int32,func(
 func __ddtoMirrorDeliver(any)
 `)
 	if !adoption {
-		source.WriteString("func __ddtoMirrorAdoptSpan(*Span, any) {}\n")
+		source.WriteString("func __ddtoMirrorAdoptSpan(*Span, any, *SpanContext) {}\n")
 		if found&SDKMirrorSubmit != 0 {
 			source.WriteString("func __ddtoMirrorSubmit(*chunk) {}\n")
 		}
@@ -254,11 +253,12 @@ func __ddtoMirrorAdopted(any) bool
 //go:linkname __ddtoMirrorReport github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorWithheld
 func __ddtoMirrorReport(int,int)
 // A root SDK span under a test takes the test's trace ID, the ciapp-test
-// origin, which its children and propagation inherit, and keep priority. The
-// SDK leaves a root's parent ID 0, including under a baggage-only parent.
-func __ddtoMirrorAdoptSpan(span *Span, parent any) {
-	root := span.parentID == 0
-	id, ok := __ddtoMirrorAdopt(span.context.__ddtoMirror, parent, span.spanID, root)
+// origin, which its children and propagation inherit, and keep priority. As in
+// spanStart, a span is a root without a parent or under a baggage-only one;
+// any other parent, even a remote one with span ID 0, keeps its trace.
+func __ddtoMirrorAdoptSpan(span *Span, state any, parent *SpanContext) {
+	root := parent == nil || parent.baggageOnly
+	id, ok := __ddtoMirrorAdopt(span.context.__ddtoMirror, state, span.spanID, root)
 	if !ok || !root {
 		return
 	}

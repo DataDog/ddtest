@@ -92,11 +92,11 @@ func adoptionFixture(source string) string {
 	source = strings.ReplaceAll(source, "\r\n", "\n")
 	replaced := strings.NewReplacer(
 		"type SpanContext struct{ owner *Span }",
-		"type SpanContext struct {\n\towner   *Span\n\ttraceID traceID\n\ttrace   *trace\n\torigin  string\n}",
+		"type SpanContext struct {\n\towner       *Span\n\ttraceID     traceID\n\ttrace       *trace\n\torigin      string\n\tbaggageOnly bool\n}",
 		"import (\n",
 		"import (\n\t\"github.com/DataDog/dd-trace-go/v2/ddtrace/ext\"\n\t\"github.com/DataDog/dd-trace-go/v2/internal/samplernames\"\n",
 		"\tspanID                            uint64\n",
-		"\tspanID                            uint64\n\tparentID                          uint64\n\ttraceID                           uint64\n\tstatSpan                          *int\n",
+		"\tspanID                            uint64\n\ttraceID                           uint64\n\tstatSpan                          *int\n",
 	).Replace(source)
 	return replaced + adoptionInternals
 }
@@ -112,7 +112,7 @@ func TestSDKMirrorAdoptionEdits(t *testing.T) {
 	for _, want := range []string{
 		"func (t *tracer) submitChunk(c *chunk) {\n__ddtoMirrorSubmit(c)\n",
 		"span.statSpan = nil\nif __ddtoMirrorWithheld(span) {\nreturn\n}\n",
-		"__ddtoMirrorAdoptSpan(span, __ddtoParent)",
+		"__ddtoMirrorAdoptSpan(span, __ddtoParent, context)",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("missing %q in:\n%s", want, source)
@@ -160,12 +160,12 @@ func TestSDKMirrorAdoptionDrift(t *testing.T) {
 	}{
 		"span_trace_id":      {strings.Replace(full, "\ttraceID                           uint64\n", "", 1), SDKMirrorSpan},
 		"sampling_signature": {strings.Replace(full, "setSamplingPriority(p int, sampler samplernames.SamplerName) bool", "setSamplingPriority(p int) bool", 1), SDKMirrorTrace},
-		"origin_field":       {strings.Replace(full, "\torigin  string\n", "", 1), SDKMirrorTrace},
+		"origin_field":       {strings.Replace(full, "\torigin      string\n", "", 1), SDKMirrorTrace},
 		"cache_hex":          {strings.Replace(full, "func (t *traceID) cacheHex()", "func (t *traceID) cacheHexadecimal()", 1), SDKMirrorTrace},
 		"submit_parameter":   {strings.Replace(full, "submitChunk(c *chunk)", "submitChunk(c []*Span)", 1), SDKMirrorSubmit},
 		"chunk_spans":        {strings.Replace(full, "\tspans          []*Span\n", "\titems          []*Span\n", 1), SDKMirrorSubmit},
 		"chunk_release":      {strings.Replace(full, "\tspansToRelease []*Span\n", "", 1), SDKMirrorSubmit},
-		"span_parent_id":     {strings.Replace(full, "\tparentID                          uint64\n", "", 1), SDKMirrorSpan},
+		"baggage_only":       {strings.Replace(full, "\tbaggageOnly bool\n", "", 1), SDKMirrorTrace},
 		"oversized_reset":    {strings.Replace(full, "\tspan.statSpan = nil\n\tt.stats = stats + 1\n", "\tt.stats = stats + 1\n", 1), SDKMirrorStats},
 		"oversized_resets":   {strings.Replace(full, "\tspan.statSpan = nil\n", "\tspan.statSpan = nil\n\tspan.statSpan = nil\n", 1), SDKMirrorStats},
 	}
@@ -203,7 +203,7 @@ func TestSDKMirrorHookCompiles(t *testing.T) {
 	for name, source := range map[string]string{
 		"adoption":      adoptionFixture(sdkMirrorSource),
 		"before_v2_11":  beforeV211(adoptionFixture(sdkMirrorSource)),
-		"without_trace": strings.Replace(adoptionFixture(sdkMirrorSource), "\torigin  string\n", "", 1),
+		"without_trace": strings.Replace(adoptionFixture(sdkMirrorSource), "\torigin      string\n", "", 1),
 	} {
 		got, hooks, err := TransformSDKMirror("sdk.go", []byte(source))
 		if err != nil || hooks&SDKMirrorCopies != SDKMirrorCopies {

@@ -363,6 +363,18 @@ func TestSDKMirrorBaggage(t *testing.T) {
 	span.Finish()
 	tracer.Flush()
 }
+// A remote Synthetics parent can have span ID 0; its trace stays its own.
+func TestSDKMirrorSynthetics(t *testing.T) {
+	startMirrorSDK(t)
+	defer tracer.Stop()
+	parent, err := tracer.Extract(tracer.TextMapCarrier{"x-datadog-trace-id": "3", "x-datadog-parent-id": "0", "x-datadog-origin": "synthetics"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	span, _ := tracer.StartSpanFromContext(t.Context(), "synthetics.child", tracer.ChildOf(parent), tracer.WithSpanID(7002))
+	span.Finish()
+	tracer.Flush()
+}
 func BenchmarkSDKMirror(b *testing.B) {
 	if err := tracer.Start(tracer.WithAgentAddr(os.Getenv("POC_APM_ADDR")), tracer.WithLogStartup(false)); err != nil {
 		b.Fatal(err)
@@ -445,6 +457,7 @@ func TestMiniSDKMirrorContextMatrix(t *testing.T) {
 							assertSDKMirrorWorkloads(t, dir, bin, deferred, apmSpans)
 							assertSDKMirrorHTTP(t, dir, bin, deferred, apmSpans)
 							assertSDKMirrorBaggage(t, dir, bin, deferred, apmSpans)
+							assertSDKMirrorSynthetics(t, dir, bin, deferred, apmSpans)
 						}
 						events, _ := runSDKMirror(t, dir, bin, "TestSDKMirrorRetry", deferred, true, "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=1", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=in_process")
 						counts, err := countCIEvents(events)
@@ -569,6 +582,26 @@ func assertSDKMirrorBaggage(t *testing.T, dir, bin string, deferred, apmSpans bo
 	}
 	if len(apm) != 0 || copy["span_id"] != uint64(7001) {
 		t.Fatal("baggage root sent to APM or not adopted", apm, copy)
+	}
+}
+
+// A span under a remote parent keeps that trace and goes to APM in both modes;
+// its copy has an independent Mini identity beneath the test.
+func assertSDKMirrorSynthetics(t *testing.T, dir, bin string, deferred, apmSpans bool) {
+	t.Helper()
+	events, apm := runSDKMirror(t, dir, bin, "TestSDKMirrorSynthetics", deferred, true, sdkMirrorMode(apmSpans))
+	var test map[string]any
+	for _, event := range events {
+		if event["type"] == "test" {
+			test = event["content"].(map[string]any)
+		}
+	}
+	copy := mirrorContents(events)["synthetics.child"]
+	if test == nil || copy == nil || copy["parent_id"] != test["span_id"] || copy["span_id"] == uint64(7002) {
+		t.Fatal("synthetics copy", copy, test)
+	}
+	if len(apm) != 1 || apm[0]["span_id"] != uint64(7002) || apm[0]["trace_id"] != uint64(3) || apm[0]["meta"].(map[string]any)["_dd.origin"] != "synthetics" {
+		t.Fatal("the remote parent's trace changed", apm)
 	}
 }
 

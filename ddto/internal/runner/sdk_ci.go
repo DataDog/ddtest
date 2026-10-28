@@ -38,7 +38,7 @@ func sdkCompilePackage(importPath string) (pkg string, own bool) {
 // Bump these contracts when the corresponding compiler edits change.
 func sdkCompilerCacheMarker(pkg string) string {
 	if pkg == sdkTracerPackage {
-		return "-I=ddto-sdk-span-mirror-v7"
+		return "-I=ddto-sdk-span-mirror-v8"
 	}
 	return "-I=ddto-sdk-ci-guard-v6"
 }
