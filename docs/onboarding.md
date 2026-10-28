@@ -285,8 +285,9 @@ other than native test failures stays inconclusive.
 
 Validation runs only the Maven test lifecycle up to `verify`: a CI step such as
 `mvn clean install` is validated as `mvn clean verify`, other goals are reported
-and left out, and `--command` refuses `install`, `deploy` and other goals, so
-`~/.m2` artifacts are never overwritten and nothing is published. One Maven
+and left out, and `--command` refuses `install`, `deploy` and other goals, as
+validation does for goals in `MAVEN_ARGS`, so `~/.m2` artifacts are never
+overwritten and nothing is published. One Maven
 command runs every framework the reactor declares; modules of other frameworks
 are reported.
 

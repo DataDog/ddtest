@@ -92,6 +92,36 @@ func TestJavaReactorIsBoundedByTheCheckout(t *testing.T) {
 	require.ErrorContains(t, err, "must stay inside the repository")
 }
 
+func TestJavaReactorIncludesMavenArgs(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)
+	require.NoError(t, os.Mkdir(filepath.Join(root, "service"), 0755))
+	requireWriteFile(t, filepath.Join(root, "service", "pom.xml"), `<project><artifactId>service</artifactId></project>`)
+	drive := &Testdrive{repositoryRoot: root}
+
+	// Maven 3.9+ puts MAVEN_ARGS before every command's own arguments.
+	for _, value := range []string{"install", "-B deploy", "clean javadoc:jar"} {
+		t.Setenv("MAVEN_ARGS", value)
+		_, _, err := drive.javaReactor([]string{"test"})
+		require.ErrorContains(t, err, "MAVEN_ARGS adds", value)
+	}
+	t.Setenv("MAVEN_ARGS", "-B -ntp -f service/pom.xml")
+	_, projects, err := drive.javaReactor([]string{"test"})
+	require.NoError(t, err)
+	require.Equal(t, "service", projects[0].Artifact, "a POM that MAVEN_ARGS selects is the reactor")
+	_, _, err = drive.javaReactor([]string{"-f", "pom.xml", "test"})
+	require.ErrorContains(t, err, "more than one POM")
+
+	// A configuration's own value replaces the inherited one.
+	drive.configurationEnvironment = map[string]string{"MAVEN_ARGS": "deploy"}
+	_, _, err = drive.javaReactor([]string{"test"})
+	require.ErrorContains(t, err, "remove deploy")
+	drive.configurationEnvironment = map[string]string{"MAVEN_ARGS": ""}
+	_, projects, err = drive.javaReactor([]string{"test"})
+	require.NoError(t, err)
+	require.Equal(t, "root", projects[0].Artifact)
+}
+
 func TestJavaTemporaryAgentPathCannotContainWhitespace(t *testing.T) {
 	_, _, err := javaLanguage{}.installDirectory("/tmp/with space/session", "")
 	require.ErrorContains(t, err, "MAVEN_OPTS cannot carry")

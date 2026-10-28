@@ -256,6 +256,19 @@ func TestJavaValidationSkipsProbesWithoutUsableBaseline(t *testing.T) {
 	})
 }
 
+func TestJavaValidationNeverRunsPublishingGoalsFromMavenArgs(t *testing.T) {
+	drive, maven, session := javaSimulation(t)
+	t.Setenv("MAVEN_ARGS", "install")
+	result := &validationResult{Framework: "junit5"}
+	require.ErrorContains(t, drive.runFrameworkValidation(t.Context(), &bytes.Buffer{}, session, "/agent/dd-java-agent.jar", result), "MAVEN_ARGS adds install")
+	require.Empty(t, maven.calls, "Maven never starts")
+
+	drive.configurationEnvironment = map[string]string{"JAVA_HOME": writeJDK(t, "17.0.20")}
+	result = &validationResult{}
+	require.ErrorContains(t, drive.checkJavaPreflight(t.Context(), &bytes.Buffer{}, result), "inspect Maven reactor")
+	require.Contains(t, result.Preflight.Verdict.Reason, "MAVEN_ARGS adds install", "the preflight names the inherited goal")
+}
+
 func TestJavaPreflightInspectsTheConfigurationJDKAndReactor(t *testing.T) {
 	drive, _, _ := javaSimulation(t)
 	drive.configurationEnvironment = map[string]string{"JAVA_HOME": t.TempDir()}

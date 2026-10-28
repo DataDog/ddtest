@@ -35,7 +35,11 @@ const javaIncompleteBuild = "The Maven build stopped for a reason other than nat
 // ../pom.xml or declare sibling modules; project directories are relative to
 // the returned checkout root.
 func (t *Testdrive) javaReactor(args []string) (string, []maven.Project, error) {
-	pom, err := maven.CommandPOM(args)
+	implicit, err := t.javaMavenArgs()
+	if err != nil {
+		return "", nil, err
+	}
+	pom, err := maven.CommandPOM(append(implicit, args...))
 	if err != nil {
 		return "", nil, err
 	}
@@ -50,6 +54,22 @@ func (t *Testdrive) javaReactor(args []string) (string, []maven.Project, error) 
 	}
 	projects, err := maven.ProjectsFrom(root, pom)
 	return root, projects, err
+}
+
+// javaMavenArgs are the arguments Maven 3.9+ reads from MAVEN_ARGS, with a
+// configuration's own value first, and puts before the command's own, split on
+// whitespace as the mvn script does. Goals there that install, publish or run
+// no tests are refused, since they would run with every validated command.
+func (t *Testdrive) javaMavenArgs() ([]string, error) {
+	value, configured := t.configurationEnvironment["MAVEN_ARGS"]
+	if !configured {
+		value = os.Getenv("MAVEN_ARGS")
+	}
+	args := strings.Fields(value)
+	if _, omitted := maven.TestInvocation(args); len(omitted) > 0 {
+		return nil, fmt.Errorf("MAVEN_ARGS adds %s to every Maven command, but local validation runs only the Maven test lifecycle up to verify and never installs or publishes artifacts; unset MAVEN_ARGS or remove %s", strings.Join(omitted, ", "), strings.Join(omitted, ", "))
+	}
+	return args, nil
 }
 
 // runJava runs the selected Maven command once in the disposable copy, with
