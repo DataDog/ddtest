@@ -254,8 +254,9 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 		return run, err
 	}
 	tests, err := maven.ReadReports(checkout, projects)
-	// A skipped or disabled probe never starts, so no test case is reported.
-	if errors.Is(err, maven.ErrNoTestCases) && (scenario.Feature == "skipping" || scenario.Feature == "disabled") {
+	// A skipped or disabled probe never starts, so no test case is reported;
+	// older Surefire releases write no report for a skipped class at all.
+	if (errors.Is(err, maven.ErrNoTestCases) || errors.Is(err, maven.ErrNoReports)) && (scenario.Feature == "skipping" || scenario.Feature == "disabled") {
 		err = nil
 	}
 	switch {

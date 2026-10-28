@@ -399,3 +399,29 @@ func TestJavaCIConfigurationKeepsJavaSetupAcrossOtherDatadogActions(t *testing.T
 	job = JavaCIConfiguration(javaWorkflowFixture(t, strings.Replace(workflow, "SECOND", "java", 1), nil), "junit5", "").Jobs[0]
 	require.Contains(t, job.Reason, "not an exact release", "a later Java action replaces the selection")
 }
+
+func TestJavaCIConfigurationLeavesPostTestStepsOutside(t *testing.T) {
+	workflow := "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '8'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn test\n      - run: |\n          echo \"coverage = ${{ steps.jacoco.outputs.coverage }}\"\n"
+	ci := JavaCIConfiguration(javaWorkflowFixture(t, workflow, nil), "junit5", "")
+	require.Len(t, ci.Jobs, 1, "discovery reviews the post-test echo outside the test path: %+v", ci.Jobs)
+	require.Equal(t, "not checked", ci.Jobs[0].Status)
+	before := strings.Replace(workflow, "      - run: mvn test\n      - run: |\n          echo \"coverage = ${{ steps.jacoco.outputs.coverage }}\"\n", "      - run: echo ${{ steps.prepare.outputs.flags }}\n      - run: mvn test\n", 1)
+	ci = JavaCIConfiguration(javaWorkflowFixture(t, before, nil), "junit5", "")
+	require.Len(t, ci.Jobs, 2, "an unresolved step before the tests stays in scope")
+}
+
+func TestJavaMetadataScriptsRunNoTests(t *testing.T) {
+	root := javaWorkflowFixture(t, "", nil)
+	metadata := "ARTIFACT_ID=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)\nVERSION=$(./mvnw -q help:evaluate -Dexpression=project.version -DforceStdout)\necho \"zip=target/${ARTIFACT_ID}-${VERSION}.zip\" >> $GITHUB_OUTPUT\n"
+	resolution := javaStep(t, root, metadata)
+	require.False(t, resolution.Matched || resolution.Review, "help goals read the project without building it")
+	require.Empty(t, resolution.Reason)
+	for _, run := range []string{
+		"VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)\nmvn verify -Drevision=$VERSION",
+		"VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)\n./ci/release.sh $VERSION",
+		"GOAL=test\nRESULT=$(mvn $GOAL)",
+		"VERSION=$(mvn help:evaluate test -q)",
+	} {
+		require.NotEmpty(t, javaStep(t, root, run).Reason, "a script that may build or run tests stays unresolved: %s", run)
+	}
+}

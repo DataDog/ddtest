@@ -451,7 +451,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		// other runners report the suppressed failure as skipped.
 		success = quarantined && failed == 1 && passed == 0 && retries == 0 && len(run.Tests) == 1 && nativePass+nativeFail+nativeSkip == 1
 	case "disabled":
-		success = disabled && executedTests(run) == 0 && nativeSkip == 1
+		// A runner may report nothing for a test that never started; the probe's
+		// own execution count, checked below, then proves the body did not run.
+		success = disabled && executedTests(run) == 0 && (nativeSkip == 1 || len(run.Tests) == 0 && frameworkFeaturePolicies[run.framework].ProbeBodyCounts)
 	case "attempt-to-fix":
 		success = attemptToFix && passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
 	}

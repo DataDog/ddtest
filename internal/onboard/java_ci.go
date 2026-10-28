@@ -16,6 +16,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/kballard/go-shellquote"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // mavenExecutables run a Maven build; anything else is another tool.
@@ -45,6 +46,10 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return unresolvedCommand("CI command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
 	}
 	parts, parseErr := staticCommands(step.Run)
+	if parseErr != nil && javaMetadataScript(step.Run) {
+		// Release steps read project metadata, as in VERSION=$(mvn help:evaluate …).
+		return commandResolution{}
+	}
 	if parseErr != nil {
 		if mavenMention.MatchString(step.Run) {
 			return unresolvedCommand("Maven command could not be resolved statically; ddtest cannot tell which tests it runs: " + step.Run)
@@ -172,6 +177,43 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 	return unresolvedCommand("Test wrapper was not resolved; ddtest cannot tell which " + framework + " tests it runs: " + step.Run)
 }
 
+// javaMetadataScript reports a script whose commands only print or move files
+// and run Maven for help goals, such as help:evaluate, or its version, which
+// read the project without building it.
+func javaMetadataScript(run string) bool {
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(run), "")
+	if err != nil {
+		return false
+	}
+	metadata, readsMaven := true, false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		call, ok := node.(*syntax.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+		var words []string
+		for _, word := range call.Args {
+			literal := word.Lit()
+			if literal == "" {
+				// Only arguments of printing commands may expand.
+				literal = "\x00"
+			}
+			words = append(words, literal)
+		}
+		switch {
+		case mavenCommand(words):
+			readsMaven = true
+			goals := maven.Goals(words[1:])
+			help := len(goals) > 0 && !slices.ContainsFunc(goals, func(goal string) bool { return !strings.HasPrefix(goal, "help:") })
+			metadata = metadata && !slices.Contains(words, "\x00") && (help || maven.Metadata(words[1:]))
+		case !slices.Contains(javaShellBuiltins, words[0]):
+			metadata = false
+		}
+		return true
+	})
+	return metadata && readsMaven
+}
+
 // javaRepositoryScript reports a command that runs a script from the
 // repository, such as ./ci/test.sh or ci/test.sh, which may start Maven itself.
 func javaRepositoryScript(words []string) bool {
@@ -251,6 +293,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: err.Error()})
 				continue
 			}
+			lastTest := javaLastTestStep(root, workflow, job, framework)
 			for _, row := range rows {
 				active, conditionErr := possibleJobCondition(job.If, row)
 				if conditionErr == nil && !active {
@@ -312,6 +355,11 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					if !resolution.Matched && resolution.Reason == "" {
 						continue
 					}
+					// Discovery leaves an unresolved step after the job's last
+					// possible test outside the test path, such as a report upload.
+					if !resolution.Matched && i > lastTest && !stepMayStartTests(root, workflow, job, step, framework) {
+						continue
+					}
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: java, Action: action, TracerRequested: tracer, setupInputs: inputs, Status: "inconclusive"}
 					runtimeReason, runtimeCode := javaRuntimeProblem(java)
 					switch {
@@ -352,6 +400,19 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 		result.Status, result.Reason = "inconclusive", "Maven CI JDK and dd-java-agent selections need validation."
 	}
 	return result
+}
+
+// javaLastTestStep is the index of the job's last step that runs or may run
+// framework's tests, as discovery finds it; -1 when there is none.
+func javaLastTestStep(root string, workflow ciWorkflow, job runtimeJob, framework string) int {
+	last := -1
+	for i, step := range job.Steps {
+		resolution := resolveJavaStep(root, workflow, job, step, framework)
+		if !resolution.Review && (resolution.Matched || resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, framework)) {
+			last = i
+		}
+	}
+	return last
 }
 
 // javaAgentVariable is where the Datadog action, per its

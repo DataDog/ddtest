@@ -39,6 +39,9 @@ type simulatedMaven struct {
 	customerFailure bool
 	// brokenBuild writes no reports and exits 1, as a compilation failure does.
 	brokenBuild bool
+	// unreportedSkips writes no report for a probe that never starts, as
+	// Surefire 3.0.0-M5 does for a skipped Spock specification.
+	unreportedSkips bool
 	calls       []map[string]string
 }
 
@@ -158,6 +161,9 @@ func (m *simulatedMaven) run(t *testing.T, args []string, env map[string]string)
 	}
 	if m.scenario.Feature != "reporting-only" {
 		m.facts = intake.Facts{TestEventCount: len(events), Events: events}
+	}
+	if m.unreportedSkips && (m.scenario.Feature == "skipping" || m.scenario.Feature == "disabled") {
+		return "", nil
 	}
 	m.report(t, javaProbeClass, map[string]string{
 		"":     `<testcase classname="ddtest.DdtestValidationTest" name="ddtestProbe()"/>`,
@@ -314,4 +320,17 @@ func TestJavaValidationReportsTheCIPinnedAgent(t *testing.T) {
 	require.Equal(t, "dd-java-agent@1.67.1", result.Tracer, "the report names the release CI pins, which this run validated")
 	require.Equal(t, "1.67.1", drive.platform.(*fakeTracer).options.Version)
 	require.Equal(t, "compatible", result.CIRuntime.Status, "%+v", result.CIRuntime)
+}
+
+func TestJavaFeaturesPassWhenSurefireReportsNoSkippedProbe(t *testing.T) {
+	drive, maven, session := javaSimulation(t)
+	maven.unreportedSkips = true
+	result := &validationResult{Framework: "junit5"}
+	require.NoError(t, drive.runFrameworkValidation(t.Context(), &bytes.Buffer{}, session, "/agent/dd-java-agent.jar", result))
+	status := map[string]string{}
+	for _, feature := range result.Features {
+		status[feature.Name] = feature.Status + ": " + feature.Reason
+	}
+	require.True(t, strings.HasPrefix(status["skipping"], "passed"), status["skipping"])
+	require.True(t, strings.HasPrefix(status["disabled"], "passed"), "the probe's zero executions prove the body did not run: %s", status["disabled"])
 }
