@@ -20,19 +20,20 @@ import (
 func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 	javascript := platform.NewJavaScript()
 	frameworks := map[string]framework.Framework{
-		"rspec":       framework.NewRSpec(platform.NewRuby("")),
-		"minitest":    framework.NewMinitest(platform.NewRuby("")),
-		"jest":        framework.NewJest(javascript),
-		"vitest":      framework.NewVitest(javascript),
-		"mocha":       framework.NewMocha(javascript),
-		"playwright":  framework.NewPlaywright(javascript),
-		"cypress":     framework.NewCypress(javascript),
-		"cucumber":    framework.NewCucumber(javascript),
-		"webdriverio": framework.NewWebdriverIO(javascript),
-		"junit4":      framework.NewMaven("junit4", platform.NewJava()),
-		"junit5":      framework.NewMaven("junit5", platform.NewJava()),
-		"testng":      framework.NewMaven("testng", platform.NewJava()),
-		"spock":       framework.NewMaven("spock", platform.NewJava()),
+		"rspec":         framework.NewRSpec(platform.NewRuby("")),
+		"minitest":      framework.NewMinitest(platform.NewRuby("")),
+		"jest":          framework.NewJest(javascript),
+		"vitest":        framework.NewVitest(javascript),
+		"mocha":         framework.NewMocha(javascript),
+		"playwright":    framework.NewPlaywright(javascript),
+		"cypress":       framework.NewCypress(javascript),
+		"cucumber":      framework.NewCucumber(javascript),
+		"webdriverio":   framework.NewWebdriverIO(javascript),
+		"junit4":        framework.NewMaven("junit4", platform.NewJava()),
+		"junit5":        framework.NewMaven("junit5", platform.NewJava()),
+		"testng":        framework.NewMaven("testng", platform.NewJava()),
+		"spock":         framework.NewMaven("spock", platform.NewJava()),
+		"cucumber-java": framework.NewMaven("cucumber-java", platform.NewJava()),
 	}
 	for name, policy := range frameworkFeaturePolicies {
 		if !policy.Preflight {
@@ -46,7 +47,7 @@ func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 		switch name {
 		case "rspec", "minitest":
 			require.Contains(t, function, ".checkRubyPreflight", name)
-		case "junit4", "junit5", "testng", "spock":
+		case "junit4", "junit5", "testng", "spock", "cucumber-java":
 			require.Contains(t, function, ".checkJavaPreflight", name)
 		default:
 			require.Contains(t, function, ".check"+displayName(name)+"Preflight", name)

@@ -224,7 +224,7 @@ func (javaLanguage) noResultsFinding(reportRuntime, bool, bool, *reportCard, *in
 func (javaLanguage) pairedFrameworks() map[string]pairedFramework {
 	adapter := pairedFramework{
 		run: func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, agent string, spec runSpec) (validationRun, error) {
-			return t.runJava(ctx, output, session, agent, spec)
+			return t.runJava(ctx, output, session, agent, spec, nil)
 		},
 		features: func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, agent string, baseline validationRun, result *validationResult) error {
 			return t.runJavaFeatures(ctx, output, session, agent, baseline, result)
@@ -232,11 +232,14 @@ func (javaLanguage) pairedFrameworks() map[string]pairedFramework {
 		preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
 			return t.checkJavaPreflight
 		},
-		telemetry:       verifyJavaTelemetry,
+		telemetry: verifyJavaTelemetry,
+		// The agent reports no source file for some frameworks, such as
+		// Cucumber, so the probe is matched by module, class and name.
+		probeTelemetry:  verifyJavaTelemetry,
 		missingCoverage: "Java application coverage was not observed. dd-java-agent reports per-test coverage of the classes each test runs; inspect the selected Maven command and its JDK, and check that tests execute application classes from the repository.",
 	}
 	adapters := map[string]pairedFramework{}
-	for name := range javaProbes {
+	for _, name := range javaProbeFrameworks {
 		adapters[name] = adapter
 	}
 	return adapters
@@ -411,6 +414,6 @@ func init() {
 		{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "required"}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
 	}
 	for name := range (javaLanguage{}).pairedFrameworks() {
-		frameworkFeaturePolicies[name] = frameworkPolicy{SourceCoverage: true, ProbeBodyCounts: true, Paired: true, CheckOnly: true, Preflight: true, Configurations: true, Features: slices.Clone(features)}
+		frameworkFeaturePolicies[name] = frameworkPolicy{SourceCoverage: true, ProbeBodyCounts: true, TestLevelSkipping: true, Paired: true, CheckOnly: true, Preflight: true, Configurations: true, Features: slices.Clone(features)}
 	}
 }

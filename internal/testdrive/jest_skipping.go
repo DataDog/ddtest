@@ -48,7 +48,7 @@ func diagnoseSkipping(run validationRun, scenario intake.Scenario) *skippingDiag
 	probe := intake.Test{Module: scenario.Module, Suite: scenario.Suite, Name: scenario.Test, SourceFile: scenario.SourceFile}
 	for _, event := range run.Facts.Events {
 		tags := event.Tags
-		if isSkippedJestProbe(event, scenario.Module, scenario.Suite, scenario.SourceFile) || isSkippedProbeTest(event, probe) {
+		if isSkippedJestProbe(event, scenario.Module, scenario.Suite, scenario.SourceFile) || isSkippedProbeTest(event, probe, false) {
 			d.SkippedByITR = true
 			d.ObservedSuite = reportText(tags["test.suite"])
 			d.ObservedSourceFile = reportText(tags["test.source.file"])
@@ -73,9 +73,10 @@ func isSkippedJestProbe(event intake.Event, module, suite, sourceFile string) bo
 }
 
 // isSkippedProbeTest matches test-level ITR skip evidence: the probe test
-// itself is reported skipped by ITR, as Cypress's tracer does.
-func isSkippedProbeTest(event intake.Event, probe intake.Test) bool {
+// itself is reported skipped by ITR, as Cypress's tracer does. Without
+// testLevel, the probe must also have a source file.
+func isSkippedProbeTest(event intake.Event, probe intake.Test, testLevel bool) bool {
 	tags := event.Tags
-	return probe.SourceFile != "" && event.Type == "test" && tags["test.module"] == probe.Module && tags["test.suite"] == probe.Suite &&
+	return (probe.SourceFile != "" || testLevel) && event.Type == "test" && tags["test.module"] == probe.Module && tags["test.suite"] == probe.Suite &&
 		tags["test.name"] == probe.Name && tags["test.status"] == "skip" && tags["test.skipped_by_itr"] == "true"
 }

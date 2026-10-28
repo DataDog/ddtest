@@ -123,3 +123,26 @@ func TestCheckNeutralReportsAnyLanguage(t *testing.T) {
 		t.Fatalf("want 2 violations (dd-trace, Gemfile), got %d: %s", len(report.errors), strings.Join(report.errors, "; "))
 	}
 }
+
+func TestJavaNamesCucumberJVMButNotJavaScript(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		// Cucumber JVM is Java's too: allowed in its files.
+		"java_cucumber.go": "package p\n\nconst glue = \"io.cucumber.junit.platform.engine\"\nconst javaCucumberProbe = 1\n",
+		// Other JavaScript terms stay out, even next to a shared one.
+		"java_steps.go": "package p\n\nconst runner = \"cucumber with dd-trace\"\n",
+		// Shared code keeps naming Cucumber.js.
+		"cucumber.go": "package p\n\nconst runner = \"cucumber-js\"\n",
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var report recorder
+	report.TB = t
+	Check(&report, dir)
+	if len(report.errors) != 1 || !strings.Contains(report.errors[0], "java_steps.go") {
+		t.Fatalf("want 1 violation (java_steps.go: dd-trace), got %d: %s", len(report.errors), strings.Join(report.errors, "; "))
+	}
+}

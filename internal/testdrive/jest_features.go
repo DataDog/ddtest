@@ -303,7 +303,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 			result.Features = append(result.Features, featureResult{Name: feature, Status: policy.Status, Reason: policy.Reason})
 			continue
 		}
-		if feature == "skipping" && identity.SourceFile == "" {
+		if feature == "skipping" && identity.SourceFile == "" && !frameworkFeaturePolicies[result.Framework].TestLevelSkipping {
 			result.Features = append(result.Features, evaluateFeature(feature, validationRun{}, identity))
 			continue
 		}
@@ -341,7 +341,7 @@ func validProbeControl(run validationRun, status string) bool {
 		return false
 	}
 	expectedExit := (status == "passed" && run.ExitCode == 0) || (status == "failed" && run.ExitCode > 0)
-	if !expectedExit || run.ResultError != "" || executedTests(run) != 1 || len(run.SuiteErrors) != 0 || len(run.Facts.Tests) != 1 || verifyJestTelemetry(run).Status != "" {
+	if !expectedExit || run.ResultError != "" || executedTests(run) != 1 || len(run.SuiteErrors) != 0 || len(run.Facts.Tests) != 1 || probeTelemetry(run).Status != "" {
 		return false
 	}
 	for _, test := range run.Tests {
@@ -352,9 +352,18 @@ func validProbeControl(run validationRun, status string) bool {
 	return false
 }
 
+// probeTelemetry matches a probe control's native result to its telemetry,
+// with the framework's own check when it has one.
+func probeTelemetry(run validationRun) verdict {
+	if adapter, ok := pairedFrameworkNamed(run.framework); ok && adapter.probeTelemetry != nil {
+		return adapter.probeTelemetry(run)
+	}
+	return verifyJestTelemetry(run)
+}
+
 func evaluateFeature(feature string, run validationRun, identity intake.Test) featureResult {
 	result := featureResult{Name: feature, Status: "failed", Reason: "The controlled run did not show the expected feature behavior; see the recorded scenario command, exit code, and counts."}
-	if feature == "skipping" && identity.SourceFile == "" {
+	if feature == "skipping" && identity.SourceFile == "" && !frameworkFeaturePolicies[run.framework].TestLevelSkipping {
 		result.Status = "inconclusive"
 		result.Reason = "The control did not report test.source.file; a repository-relative file is required to request suite skipping."
 		return result
@@ -387,7 +396,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		if isSkippedJestProbe(event, identity.Module, identity.Suite, identity.SourceFile) {
 			skipped = true
 		}
-		if isSkippedProbeTest(event, identity) {
+		if isSkippedProbeTest(event, identity, frameworkFeaturePolicies[run.framework].TestLevelSkipping) {
 			skipped = true
 			skippedTestEvents++
 		}
@@ -519,7 +528,7 @@ func probeControlDiagnostic(runs ...validationRun) string {
 		if run.ResultError != "" {
 			return reportText(run.ResultError)
 		}
-		if telemetry := verifyJestTelemetry(run); telemetry.Status != "" {
+		if telemetry := probeTelemetry(run); telemetry.Status != "" {
 			return reportText(telemetry.Reason + " " + strings.Join(telemetry.Differences, "; "))
 		}
 		if run.Diagnostic != "" {

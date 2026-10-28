@@ -42,8 +42,8 @@ type simulatedMaven struct {
 	// unreportedSkips writes no report for a probe that never starts, as
 	// Surefire 3.0.0-M5 does for a skipped Spock specification.
 	unreportedSkips bool
-	calls       []map[string]string
-	args        [][]string
+	calls           []map[string]string
+	args            [][]string
 }
 
 type simulatedIntake struct{ maven *simulatedMaven }

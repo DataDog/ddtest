@@ -251,7 +251,7 @@ func TestJavaTemporaryAgentPathCannotContainWhitespace(t *testing.T) {
 func TestJavaRunsMavenOnlyInADisposableCopy(t *testing.T) {
 	drive := &Testdrive{repositoryRoot: t.TempDir(), framework: framework.NewMaven("junit5", nil)}
 	session := workspace.PlanSession()
-	_, err := drive.runJava(context.Background(), io.Discard, session, "", runSpec{Name: "baseline"})
+	_, err := drive.runJava(context.Background(), io.Discard, session, "", runSpec{Name: "baseline"}, nil)
 	require.ErrorContains(t, err, "disposable copy")
 }
 
@@ -271,13 +271,13 @@ func TestJavaNativeTestsUseTheAgentsModuleNames(t *testing.T) {
 		{Module: "core", Suite: "example.CoreTest", Name: "fails", Status: "failed", Failure: "AssertionError: no\n"},
 		{Module: "a/util", Suite: "example.UtilTest", Name: "works", Status: "passed"},
 		{Module: "core", Suite: javaProbeClass, Name: "ddtestProbe()", Status: "passed"},
-	}, "/copy/core/src/test/java/ddtest/DdtestValidationTest.java")
+	}, true)
 	require.Equal(t, "Customer API / example.ApiTest", tests[0].File, "the agent reports a project's <name>")
 	require.Equal(t, "core / example.CoreTest", tests[1].File, "and otherwise its artifactId")
 	require.Equal(t, "a/util / example.UtilTest", tests[2].File, "a name two projects share cannot identify either")
 	probe := tests[3]
 	require.True(t, probe.probe)
-	require.Equal(t, "/copy/core/src/test/java/ddtest/DdtestValidationTest.java", probe.File, "the probe is matched by its source file")
+	require.Equal(t, "core / "+javaProbeClass, probe.File, "the probe is matched by module, class and name, as other tests")
 	require.Equal(t, "ddtestProbe", *probe.telemetryName)
 }
 
@@ -356,16 +356,19 @@ func TestJavaTestName(t *testing.T) {
 }
 
 func TestJavaValidatesSurefireFrameworksWithPairedFeatureControls(t *testing.T) {
-	for _, name := range []string{"junit4", "junit5", "testng", "spock"} {
+	for _, name := range javaProbeFrameworks {
 		require.True(t, supportsValidationFramework(name), name)
 		require.Len(t, featurePolicies(name), 6)
+		require.True(t, frameworkFeaturePolicies[name].TestLevelSkipping, "dd-java-agent skips a test by its suite and name")
 		require.Equal(t, "java", languageForFramework(name).name())
-		require.Contains(t, javaProbes[name].source, "ddtest intentional failure", name)
-		require.Contains(t, javaProbes[name].source, "class DdtestValidationTest", "every probe is javaProbeClass")
 	}
-	require.Contains(t, javaProbes["testng"].source, "@org.testng.annotations.Test")
-	require.True(t, strings.HasSuffix(javaProbes["spock"].file, ".groovy"), "Spock specifications compile from src/test/groovy")
-	require.False(t, supportsValidationFramework("cucumber-java"), "other Maven frameworks keep reporting-only checks")
+	for name, source := range javaProbeSources {
+		require.Contains(t, source.source, "ddtest intentional failure", name)
+		require.Contains(t, source.source, "class DdtestValidationTest", "every probe is javaProbeClass")
+	}
+	require.Contains(t, javaProbeSources["testng"].source, "@org.testng.annotations.Test")
+	require.True(t, strings.HasSuffix(javaProbeSources["spock"].path, ".groovy"), "Spock specifications compile from src/test/groovy")
+	require.False(t, supportsValidationFramework("karate"), "other Maven frameworks keep reporting-only checks")
 	require.Equal(t, "java", languageForFramework("testng").name())
 	require.Equal(t, "JUnit 5", displayName("junit5"))
 	require.Equal(t, "Java", displayName("java"))

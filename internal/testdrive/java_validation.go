@@ -157,8 +157,9 @@ func readMavenConfig(path string) ([]string, error) {
 }
 
 // runJava runs the selected Maven command once in the disposable copy, with
-// fresh build output, and reads its native Surefire/Failsafe reports.
-func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *workspace.Session, agent string, spec runSpec) (run validationRun, runErr error) {
+// fresh build output, and reads its native Surefire/Failsafe reports. A probe
+// run adds probeArgs, which select only the probe.
+func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *workspace.Session, agent string, spec runSpec, probeArgs []string) (run validationRun, runErr error) {
 	run.Name, run.Role, run.Instrumented, run.ProbeMode = spec.Name, spec.Role, spec.Instrumented, spec.ProbeMode
 	if spec.ProbePath != "" {
 		run.Role = roleProbeControl
@@ -233,7 +234,7 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 	if spec.ProbePath != "" {
 		// The probe only needs Surefire: checks after the test phase, such as
 		// license headers or coverage gates, would judge the probe file itself.
-		args = append(maven.UpToTest(args), javaProbeArguments...)
+		args = append(maven.UpToTest(args), probeArgs...)
 		env["DDTEST_PROBE_MODE"] = spec.ProbeMode
 		env["DDTEST_PROBE_STATE"] = filepath.Join(directory, "probe-state")
 	}
@@ -267,7 +268,7 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 	case spec.ProbePath == "" && maven.IncompleteBuild(run.ExitCode, projects, tests, string(data)):
 		run.ResultError = javaIncompleteBuild
 	}
-	run.Tests = javaNativeTests(projects, tests, spec.ProbePath)
+	run.Tests = javaNativeTests(projects, tests, spec.ProbePath != "")
 	if spec.Instrumented && spec.ProbePath == "" {
 		run.Coverage = javaSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests)
 	}
@@ -304,16 +305,16 @@ func javaModuleLabels(projects []maven.Project) map[string]string {
 	return labels
 }
 
-// javaNativeTests identifies each native result as "<module> / <class>". The
-// probe is identified by its source file, as the tracer reports it.
-func javaNativeTests(projects []maven.Project, tests []maven.Test, probe string) []nativeTest {
+// javaNativeTests identifies each native result as "<module> / <class>", and
+// in a probe run marks the probe.
+func javaNativeTests(projects []maven.Project, tests []maven.Test, probe bool) []nativeTest {
 	labels := javaModuleLabels(projects)
 	native := make([]nativeTest, 0, len(tests))
 	for _, test := range tests {
 		item := nativeTest{File: labels[test.Module] + " / " + test.Suite, Name: test.Name, Status: test.Status, Failure: test.Failure}
-		if probe != "" && test.Suite == javaProbeClass {
+		if probe && test.Suite == javaProbeClass {
 			name := javaTestName(test.Name)
-			item.File, item.probe, item.telemetryName = probe, true, &name
+			item.probe, item.telemetryName = true, &name
 		}
 		native = append(native, item)
 	}
@@ -361,6 +362,11 @@ func javaTelemetryName(test intake.Test) string {
 // Surefire or Failsafe execution, as in "service maven-surefire-plugin default-test".
 var javaPluginSuffix = regexp.MustCompile(` (maven-surefire-plugin|maven-failsafe-plugin) .*$`)
 
+// javaFeatureURI is the feature file the agent puts before a Cucumber
+// feature's name in its suite, as in classpath:calc.feature:Calculator;
+// Surefire reports the name alone.
+var javaFeatureURI = regexp.MustCompile(`^(?:classpath|file):.*?\.feature:`)
+
 // verifyJavaTelemetry matches every native result to one reported test
 // execution by module, class, method and status. Equal totals are not enough.
 func verifyJavaTelemetry(run validationRun) verdict {
@@ -378,6 +384,7 @@ func verifyJavaTelemetry(run validationRun) verdict {
 	}
 	for _, test := range run.Facts.Tests {
 		module := javaPluginSuffix.ReplaceAllString(test.Module, "")
+		suite := javaFeatureURI.ReplaceAllString(test.Suite, "")
 		name := javaTelemetryName(test)
 		spans := map[uint64]bool{}
 		for _, attempt := range test.Attempts {
@@ -389,7 +396,7 @@ func verifyJavaTelemetry(run validationRun) verdict {
 				continue
 			}
 			spans[attempt.SpanID] = true
-			observed[fmt.Sprintf("module %q, class %q, test %q, status %q", module, test.Suite, name, attempt.Status)]++
+			observed[fmt.Sprintf("module %q, class %q, test %q, status %q", module, suite, name, attempt.Status)]++
 		}
 	}
 	keys := maps.Clone(expected)
@@ -458,17 +465,37 @@ class DdtestValidationTest extends spock.lang.Specification {
 }
 `
 
-// javaProbe is a framework's controlled probe: its source file, relative to a
-// module, and its contents. Every probe is the class javaProbeClass.
-type javaProbe struct{ file, source string }
+// javaProbeFile is one file of a probe, relative to the checkout.
+type javaProbeFile struct{ path, source string }
 
-// javaProbes are the frameworks with paired validation. Surefire runs and
-// reports each of them.
-var javaProbes = map[string]javaProbe{
+// javaProbe is a framework's controlled probe in one module: the files to
+// write, and the Maven arguments that select only it. Every probe reports the
+// class javaProbeClass.
+type javaProbe struct {
+	files []javaProbeFile
+	args  []string
+}
+
+// javaProbeSources are the probe sources of frameworks whose probe is one
+// test class, relative to a module.
+var javaProbeSources = map[string]javaProbeFile{
 	"junit4": {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.junit.Test")},
 	"junit5": {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.junit.jupiter.api.Test")},
 	"testng": {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.testng.annotations.Test")},
 	"spock":  {filepath.Join("src", "test", "groovy", "ddtest", "DdtestValidationTest.groovy"), spockProbeSource},
+}
+
+// javaProbeFrameworks are the frameworks with paired validation; Surefire
+// runs and reports each of them.
+var javaProbeFrameworks = []string{"junit4", "junit5", "testng", "spock", "cucumber-java"}
+
+// javaProbeFor returns framework's probe in module, or why it has none.
+func javaProbeFor(checkout, module, framework string) (javaProbe, string, error) {
+	if framework == "cucumber-java" {
+		return javaCucumberProbe(checkout, module)
+	}
+	source := javaProbeSources[framework]
+	return javaProbe{files: []javaProbeFile{{filepath.Join(module, source.path), source.source}}, args: javaProbeArguments}, "", nil
 }
 
 // runJavaFeatures writes the probe into a module whose tests ran in the
@@ -489,28 +516,43 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 		unavailableFeatures(result, "No module of the selected Maven command ran native tests, so the controlled probe has nowhere to run.")
 		return nil
 	}
-	probeSource := javaProbes[t.framework.Name()]
-	path := filepath.Join(module, probeSource.file)
+	probe, reason, err := javaProbeFor(checkout, module, t.framework.Name())
+	if err != nil {
+		return err
+	}
+	if reason != "" {
+		unavailableFeatures(result, reason)
+		return nil
+	}
 	copyRoot, err := os.OpenRoot(checkout)
 	if err != nil {
 		return err
 	}
-	defer func() { runErr = errors.Join(runErr, copyRoot.Remove(path), copyRoot.Close()) }()
-	if err := copyRoot.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
+	var written []string
+	defer func() {
+		for _, path := range written {
+			runErr = errors.Join(runErr, copyRoot.Remove(path))
+		}
+		runErr = errors.Join(runErr, copyRoot.Close())
+	}()
+	for _, file := range probe.files {
+		if err := copyRoot.MkdirAll(filepath.Dir(file.path), 0700); err != nil {
+			return err
+		}
+		// The copy owns the probe: refuse to overwrite a project file.
+		created, err := copyRoot.OpenFile(file.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return fmt.Errorf("write the validation probe: %w", err)
+		}
+		written = append(written, file.path)
+		_, writeErr := created.WriteString(file.source)
+		if err := errors.Join(writeErr, created.Close()); err != nil {
+			return err
+		}
 	}
-	// The copy owns the probe: refuse to overwrite a project file.
-	probe, err := copyRoot.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return fmt.Errorf("write the validation probe: %w", err)
-	}
-	_, writeErr := probe.WriteString(probeSource.source)
-	if err := errors.Join(writeErr, probe.Close()); err != nil {
-		return err
-	}
-	probePath := filepath.Join(checkout, path)
+	probePath := filepath.Join(checkout, probe.files[0].path)
 	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
-		return t.runJava(ctx, output, session, agent, runSpec{Name: name, Instrumented: true, Scenario: scenario, ProbePath: probePath, ProbeMode: mode})
+		return t.runJava(ctx, output, session, agent, runSpec{Name: name, Instrumented: true, Scenario: scenario, ProbePath: probePath, ProbeMode: mode}, probe.args)
 	}, result)
 }
 

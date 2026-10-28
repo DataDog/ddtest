@@ -62,7 +62,7 @@ container-native private `/tmp/bundle` as Bundler's path to avoid bind-mount
 filesystem overhead; it is removed with the container, while lockfiles and both
 reports stay in the checkout until collection. Ruby's `TMPDIR` also uses the
 container's private executable tmpfs; no host cache is mounted there.
-For `--framework junit4`, `junit5`, `testng` or `spock`, build `--target java`: it adds a
+For `--framework junit4`, `junit5`, `testng`, `spock` or `cucumber-java`, build `--target java`: it adds a
 digest-pinned Temurin JDK 21 (select another with
 `--build-arg JDK_IMAGE=eclipse-temurin:<version>-jdk@sha256:<digest>`) and a
 checksum-verified Maven. The runner records the JDK's release version before

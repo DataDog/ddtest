@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,20 +63,31 @@ func TestJavaValidationIntegration(t *testing.T) {
 		}
 		return root
 	}
-	pomWith := func(artifact, dependency, plugins string) string {
+	pomWith := func(artifact, dependency, surefire, plugins string) string {
 		return `<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>` + artifact + `</artifactId><version>1.0</version>
   <properties><maven.compiler.release>17</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties>
   <dependencies>` + dependency + `</dependencies>
-  <build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.3</version></plugin>` + plugins + `</plugins></build>
+  <build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>` + surefire + `</version></plugin>` + plugins + `</plugins></build>
 </project>`
 	}
-	pom := func(artifact, dependency string) string { return pomWith(artifact, dependency, "") }
+	pom := func(artifact, dependency string) string { return pomWith(artifact, dependency, "3.5.3", "") }
 	const jupiter = `<dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.12.2</version><scope>test</scope></dependency>`
 	// Validation requires per-test coverage of repository application classes.
 	const calc = "package example;\npublic class Calc { public static int add(int a, int b) { return a + b; } }\n"
 	const junit4 = `<dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>4.13.2</version><scope>test</scope></dependency>`
 	const testng = `<dependency><groupId>org.testng</groupId><artifactId>testng</artifactId><version>7.10.2</version><scope>test</scope></dependency>`
 	const spock = `<dependency><groupId>org.spockframework</groupId><artifactId>spock-core</artifactId><version>2.3-groovy-4.0</version><scope>test</scope></dependency><dependency><groupId>org.apache.groovy</groupId><artifactId>groovy</artifactId><version>4.0.24</version><scope>test</scope></dependency>`
+	const cucumber = `<dependency><groupId>io.cucumber</groupId><artifactId>cucumber-java</artifactId><version>7.20.1</version><scope>test</scope></dependency>`
+	const cucumberJUnit4 = cucumber + `<dependency><groupId>io.cucumber</groupId><artifactId>cucumber-junit</artifactId><version>7.20.1</version><scope>test</scope></dependency>` + junit4
+	const cucumberPlatform = cucumber + `<dependency><groupId>io.cucumber</groupId><artifactId>cucumber-junit-platform-engine</artifactId><version>7.20.1</version><scope>test</scope></dependency><dependency><groupId>org.junit.platform</groupId><artifactId>junit-platform-suite</artifactId><version>1.11.4</version><scope>test</scope></dependency>`
+	const cucumberFeature = "Feature: Calculator\n  Scenario: adds\n    When I add 2 and 2\n    Then the result is 4\n\n  Scenario: existing failure\n    When I add 2 and 2\n    Then the result is 5\n"
+	const cucumberSteps = `package example;
+public class StepDefinitions {
+    private int result;
+    @io.cucumber.java.en.When("I add {int} and {int}") public void add(int a, int b) { result = Calc.add(a, b); }
+    @io.cucumber.java.en.Then("the result is {int}") public void check(int expected) { if (result != expected) throw new AssertionError("customer expected failure: " + result); }
+}
+`
 	// Spock specifications compile with GMavenPlus from src/test/groovy.
 	const gmavenplus = `<plugin><groupId>org.codehaus.gmavenplus</groupId><artifactId>gmavenplus-plugin</artifactId><version>4.1.1</version><executions><execution><goals><goal>addTestSources</goal><goal>compileTests</goal></goals></execution></executions></plugin>`
 	testdrive := func(root string, args ...string) (string, error) {
@@ -85,39 +97,51 @@ func TestJavaValidationIntegration(t *testing.T) {
 		return string(output), err
 	}
 
-	for _, tc := range []struct{ framework, dependency, plugins, file, source string }{
-		{"junit5", jupiter, "", "src/test/java/example/ExampleTest.java", `package example;
+	for _, tc := range []struct {
+		name, framework, dependency, surefire, plugins string
+		files                                          map[string]string
+	}{
+		{"junit5", "junit5", jupiter, "3.5.3", "", map[string]string{"src/test/java/example/ExampleTest.java": `package example;
 public class ExampleTest {
     @org.junit.jupiter.api.Test void passes() { org.junit.jupiter.api.Assertions.assertEquals(4, Calc.add(2, 2)); }
     @org.junit.jupiter.api.Test void existingFailure() { org.junit.jupiter.api.Assertions.assertEquals(5, Calc.add(2, 2), "customer expected failure"); }
     @org.junit.jupiter.api.Test @org.junit.jupiter.api.Disabled("fixture") void ignored() {}
     @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2}) void positive(int value) { org.junit.jupiter.api.Assertions.assertTrue(value > 0); }
 }
-`},
-		{"junit4", junit4, "", "src/test/java/example/ExampleTest.java", `package example;
+`}},
+		{"junit4", "junit4", junit4, "3.5.3", "", map[string]string{"src/test/java/example/ExampleTest.java": `package example;
 public class ExampleTest {
     @org.junit.Test public void passes() { org.junit.Assert.assertEquals(4, Calc.add(2, 2)); }
     @org.junit.Test public void existingFailure() { org.junit.Assert.assertEquals("customer expected failure", 5, Calc.add(2, 2)); }
     @org.junit.Ignore("fixture") @org.junit.Test public void ignored() {}
 }
-`},
-		{"testng", testng, "", "src/test/java/example/ExampleTest.java", `package example;
+`}},
+		{"testng", "testng", testng, "3.5.3", "", map[string]string{"src/test/java/example/ExampleTest.java": `package example;
 public class ExampleTest {
     @org.testng.annotations.Test public void passes() { org.testng.Assert.assertEquals(Calc.add(2, 2), 4); }
     @org.testng.annotations.Test public void existingFailure() { org.testng.Assert.assertEquals(Calc.add(2, 2), 5, "customer expected failure"); }
     @org.testng.annotations.Test(enabled = false) public void ignored() {}
 }
-`},
-		{"spock", spock, gmavenplus, "src/test/groovy/example/ExampleTest.groovy", `package example
+`}},
+		{"spock", "spock", spock, "3.5.3", gmavenplus, map[string]string{"src/test/groovy/example/ExampleTest.groovy": `package example
 class ExampleTest extends spock.lang.Specification {
     def "passes"() { expect: Calc.add(2, 2) == 4 }
     def "existing failure"() { expect: Calc.add(2, 2) == 5 }
     @spock.lang.Ignore def "ignored"() { expect: true }
 }
-`},
+`}},
+		// Cucumber 7 needs its JUnit Platform release, which Surefire 3.2 runs.
+		{"cucumber junit4 runner", "cucumber-java", cucumberJUnit4, "3.2.5", "", map[string]string{
+			"src/test/java/example/RunCucumberTest.java": "package example;\n@org.junit.runner.RunWith(io.cucumber.junit.Cucumber.class)\n@io.cucumber.junit.CucumberOptions(features = \"classpath:example\", glue = \"example\")\npublic class RunCucumberTest {}\n",
+			"src/test/java/example/StepDefinitions.java": cucumberSteps, "src/test/resources/example/calc.feature": cucumberFeature}},
+		{"cucumber platform suite", "cucumber-java", cucumberPlatform, "3.2.5", "", map[string]string{
+			"src/test/java/example/RunCucumberTest.java": "package example;\n@org.junit.platform.suite.api.Suite\n@org.junit.platform.suite.api.IncludeEngines(\"cucumber\")\n@org.junit.platform.suite.api.SelectClasspathResource(\"example\")\n@org.junit.platform.suite.api.ConfigurationParameter(key = io.cucumber.junit.platform.engine.Constants.GLUE_PROPERTY_NAME, value = \"example\")\npublic class RunCucumberTest {}\n",
+			"src/test/java/example/StepDefinitions.java": cucumberSteps, "src/test/resources/example/calc.feature": cucumberFeature}},
 	} {
-		t.Run(tc.framework, func(t *testing.T) {
-			root := project(t, tc.framework, map[string]string{"pom.xml": pomWith("fixture", tc.dependency, tc.plugins), "src/main/java/example/Calc.java": calc, tc.file: tc.source})
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{"pom.xml": pomWith("fixture", tc.dependency, tc.surefire, tc.plugins), "src/main/java/example/Calc.java": calc}
+			maps.Copy(files, tc.files)
+			root := project(t, tc.framework, files)
 			output, err := testdrive(root, "--framework", tc.framework)
 			require.NoError(t, err, output)
 			require.Contains(t, output, "Local validation: PASSED")
@@ -135,6 +159,7 @@ class ExampleTest extends spock.lang.Specification {
 			}
 			require.NoDirExists(t, filepath.Join(root, "target"), "Maven runs only in disposable copies")
 			probes, err := filepath.Glob(filepath.Join(root, "src/test/*/ddtest"))
+			require.NoFileExists(t, filepath.Join(root, "src/test/java/example/DdtestValidationSteps.java"), "probe steps stay in the disposable copy")
 			require.NoError(t, err)
 			require.Empty(t, probes)
 

@@ -1,0 +1,142 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2026 Datadog, Inc.
+
+package testdrive
+
+import (
+	"bufio"
+	"cmp"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+// javaCucumberFeature is the probe feature, classpath:ddtest/DdtestValidation.feature.
+// Surefire reports a feature's name as its class, so the feature is named
+// javaProbeClass and its scenario after the probe method.
+const javaCucumberFeature = `Feature: ` + javaProbeClass + `
+
+  Scenario: ddtestProbe
+    When the ddtest validation probe runs
+`
+
+// javaCucumberSteps is the probe's step definition, javaProbeSource as a
+// Cucumber step in the project's glue package.
+func javaCucumberSteps(glue string) string {
+	return `package ` + glue + `;
+
+public class DdtestValidationSteps {
+    @io.cucumber.java.en.When("the ddtest validation probe runs")
+    public void ddtestProbe() throws Exception {
+        java.nio.file.Path state = java.nio.file.Paths.get(System.getenv("DDTEST_PROBE_STATE"));
+        java.nio.file.Files.write(state, "run\n".getBytes(java.nio.charset.StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        int attempts = java.nio.file.Files.readAllLines(state).size();
+        String mode = System.getenv("DDTEST_PROBE_MODE");
+        if ("fail".equals(mode) || ("fail-once".equals(mode) && attempts == 1)) {
+            throw new AssertionError("ddtest intentional failure");
+        }
+    }
+}
+`
+}
+
+var (
+	javaPackage = regexp.MustCompile(`(?m)^\s*package\s+([\w.]+)\s*;`)
+	// A JUnit 4 runner, a JUnit Platform suite of the Cucumber engine, or the
+	// engine's own @Cucumber class.
+	// Annotations may be fully qualified, as in @org.junit.runner.RunWith.
+	javaCucumberRunner = regexp.MustCompile(`@(?:[\w.]+\.)?RunWith\(\s*(?:[\w.]+\.)?Cucumber\.class\s*\)|@(?:[\w.]+\.)?IncludeEngines\(\s*\{?\s*"cucumber"|@(?:io\.cucumber\.junit\.platform\.engine\.)?Cucumber\b`)
+	javaCucumberSuite  = regexp.MustCompile(`@(?:[\w.]+\.)?IncludeEngines\(\s*\{?\s*"cucumber"`)
+	// glue = "x" or glue = {"x", ...} in @CucumberOptions, or the suite's
+	// glue configuration parameter.
+	javaCucumberGlue = regexp.MustCompile(`\bglue\s*=\s*\{?\s*"([^"]+)"|key\s*=\s*(?:(?:[\w.]+\.)?GLUE_PROPERTY_NAME|"cucumber\.glue")\s*,\s*value\s*=\s*"([^"]+)"`)
+)
+
+// javaCucumberProbe places the probe in module: the feature in the test
+// resources, and its step in the glue package of the module's Cucumber runner,
+// so the project's own glue, hooks and object factory still load. The runner
+// alone is selected, with the probe feature in place of the project's.
+func javaCucumberProbe(checkout, module string) (javaProbe, string, error) {
+	runner, glue, suite, err := javaCucumberRunnerClass(filepath.Join(checkout, module))
+	if err != nil {
+		return javaProbe{}, "", err
+	}
+	if runner == "" {
+		return javaProbe{}, "No Cucumber runner class (@RunWith(Cucumber.class) or a JUnit Platform suite of the cucumber engine) was found in " + module + "'s test sources, so the probe feature cannot be selected alone.", nil
+	}
+	args := []string{"-Dtest=" + runner, "-Dcucumber.features=classpath:ddtest/DdtestValidation.feature", "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false", "-DskipITs"}
+	if suite {
+		// With cucumber.features set, the root Cucumber engine discovers the
+		// probe too; the suite's own engine is the one that runs it.
+		args = append(args, "-Dsurefire.excludeJUnit5Engines=cucumber")
+	}
+	return javaProbe{
+		files: []javaProbeFile{
+			{filepath.Join(module, "src", "test", "resources", "ddtest", "DdtestValidation.feature"), javaCucumberFeature},
+			{filepath.Join(module, "src", "test", "java", filepath.FromSlash(strings.ReplaceAll(glue, ".", "/")), "DdtestValidationSteps.java"), javaCucumberSteps(glue)},
+		},
+		args: args,
+	}, "", nil
+}
+
+// javaCucumberRunnerClass finds the first Cucumber runner class in a module's
+// test sources, by path, and its glue package: the runner's glue option or
+// configuration parameter, the module's junit-platform.properties, or the
+// runner's own package. suite reports a JUnit Platform suite.
+func javaCucumberRunnerClass(module string) (runner, glue string, suite bool, err error) {
+	sources := filepath.Join(module, "src", "test", "java")
+	err = filepath.WalkDir(sources, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || runner != "" {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".java") || !entry.Type().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(data)
+		if !javaCucumberRunner.MatchString(text) {
+			return nil
+		}
+		pkg := ""
+		if match := javaPackage.FindStringSubmatch(text); match != nil {
+			pkg = match[1]
+		}
+		runner = strings.TrimPrefix(pkg+"."+strings.TrimSuffix(entry.Name(), ".java"), ".")
+		suite = javaCucumberSuite.MatchString(text)
+		if match := javaCucumberGlue.FindStringSubmatch(text); match != nil {
+			glue = cmp.Or(match[1], match[2])
+		}
+		glue = cmp.Or(glue, javaPlatformGlue(module), pkg)
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", "", false, nil
+	}
+	// A glue path such as classpath:com/example names the package com.example.
+	glue = strings.ReplaceAll(strings.Trim(strings.TrimPrefix(strings.TrimSpace(strings.Split(glue, ",")[0]), "classpath:"), "/"), "/", ".")
+	return runner, glue, suite, err
+}
+
+// javaPlatformGlue is the cucumber.glue of a module's junit-platform.properties.
+func javaPlatformGlue(module string) string {
+	file, err := os.Open(filepath.Join(module, "src", "test", "resources", "junit-platform.properties"))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		if key, value, ok := strings.Cut(scanner.Text(), "="); ok && strings.TrimSpace(key) == "cucumber.glue" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
