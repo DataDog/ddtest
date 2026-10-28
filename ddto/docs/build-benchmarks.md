@@ -173,14 +173,15 @@ coverage. It reports, for each mode:
 - with `--bench`, the project's benchmarks.
 
 ```sh
-python3 scripts/file_coverage_benchmark.py --ddto "$PWD/ddto" --output /var/tmp/file-coverage-run \
+(cd .. && go build -o ddto/ddtest .)   # ddtest's executable, which runs ddtest instrument
+python3 scripts/file_coverage_benchmark.py --ddtest "$PWD/ddtest" --output /var/tmp/file-coverage-run \
   --bench 'fiber=Benchmark_Router_(Chain|Handler|Next|NotFound)$' \
   --report docs/results/file-coverage-<date>-<platform> \
   lo=/path/to/lo fiber=/path/to/fiber gin=/path/to/gin
 ```
 
-Build `ddto` from the revision to measure, and measure from a separate worktree:
-`ddto` compiles Mini from its own checkout. Each test's files stay in the
-output's `files.json`. The report records each project's commit and local
-changes. See [Experimental file coverage](mini-runtime.md#experimental-file-coverage)
+Build ddtest's executable from the revision to measure, and measure from a
+separate worktree: `ddtest instrument` compiles Mini from the checkout that
+built it. Each test's files stay in the output's `files.json`. The report
+records each project's commit and local changes. See [Experimental file coverage](mini-runtime.md#experimental-file-coverage)
 for the latest numbers.

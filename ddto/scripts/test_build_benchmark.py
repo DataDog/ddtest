@@ -3,7 +3,10 @@
 import csv
 import json
 from pathlib import Path
+import sys
 import tempfile
+import time
+import types
 import unittest
 
 import build_benchmark as benchmark
@@ -128,6 +131,19 @@ class ReportTests(unittest.TestCase):
         self.save_rows()
         with self.assertRaisesRegex(ValueError, "SHA256"):
             benchmark.render(self.directory)
+
+
+class SetupTests(unittest.TestCase):
+    def test_a_failed_setup_command_reports_its_diagnostic(self):
+        # Setup captures the command's output, which the error must carry.
+        runner = object.__new__(benchmark.Runner)
+        runner.args = types.SimpleNamespace(max_seconds=60, command_seconds=60)
+        runner.started = time.monotonic()
+        runner.env = {}
+        command = [sys.executable, "-c", "import sys; sys.stderr.write('verifying module: checksum database disabled'); sys.exit(3)"]
+        with self.assertRaisesRegex(RuntimeError, "exited 3: verifying module: checksum database disabled"):
+            runner.setup(command, ".")
+        self.assertEqual(runner.setup([sys.executable, "-c", "print('ok')"], "."), "ok\n")
 
 
 if __name__ == "__main__":
