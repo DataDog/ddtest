@@ -55,6 +55,23 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 				// Without --instructions, onboarding answers non-terminals in the agent protocol.
 				return ciProviderFailure(cmd, structured || (!instructions && !apply && !isTerminalWriter(cmd.OutOrStdout())), err)
 			}
+			// start returns the onboarding handoff: the next command, or for a
+			// language whose CI setup the agent applies, the setup to apply first.
+			start := func() error {
+				selectedFormat := ""
+				if structured {
+					selectedFormat = format
+				}
+				selectedTracer := ""
+				if cmd.Flags().Changed("tracer-version") {
+					selectedTracer = version
+				}
+				selectedTimeout := ""
+				if cmd.Flags().Changed("timeout") {
+					selectedTimeout = timeout.String()
+				}
+				return onboard.StartWithOptions(cmd.OutOrStdout(), onboard.StartOptions{Timeout: selectedTimeout, AllowReviewedBuilds: reviewed, AcceptSubstituteRuntime: substitute, Format: selectedFormat, Site: site, Tracer: selectedTracer, Facts: facts, Platform: settings.GetPlatform(), Command: settings.GetCommand(), Human: isTerminalWriter(cmd.OutOrStdout()) && !structured})
+			}
 			if instructions {
 				if structured || facts != "" || site != "" || cmd.Flags().Changed("tracer-version") {
 					return fail("invalid_options", fmt.Errorf("--instructions cannot be combined with structured output or setup options"))
@@ -66,6 +83,11 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 				detected, err := platform.DetectPlatform()
 				if err != nil {
 					return fail("validation_preparation", err)
+				}
+				if detected.Name() != "javascript" && testdrive.Coordinated(detected.Name()) {
+					// ddtest writes no CI setup for this language; the agent applies
+					// it from the handoff, which then resumes coordinated validation.
+					return start()
 				}
 				if detected.Name() != "javascript" {
 					return fail("framework_unsupported", fmt.Errorf("--apply supports JavaScript frameworks (%s); %s users should use onboard instructions and testdrive", testdrive.AutomaticSetupFrameworkNames(), detected.Name()))
@@ -96,19 +118,7 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 			if run != nil {
 				return run(cmd.OutOrStdout())
 			}
-			selectedFormat := ""
-			if structured {
-				selectedFormat = format
-			}
-			selectedTracer := ""
-			if cmd.Flags().Changed("tracer-version") {
-				selectedTracer = version
-			}
-			selectedTimeout := ""
-			if cmd.Flags().Changed("timeout") {
-				selectedTimeout = timeout.String()
-			}
-			return onboard.StartWithOptions(cmd.OutOrStdout(), onboard.StartOptions{Timeout: selectedTimeout, AllowReviewedBuilds: reviewed, AcceptSubstituteRuntime: substitute, Format: selectedFormat, Site: site, Tracer: selectedTracer, Facts: facts, Platform: settings.GetPlatform(), Command: settings.GetCommand(), Human: isTerminalWriter(cmd.OutOrStdout()) && !structured})
+			return start()
 		},
 	}
 	command.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "Maximum duration per test or preparation command")

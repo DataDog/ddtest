@@ -20,7 +20,9 @@ WebdriverIO. Cypress hooks still require explicit setup. Python retains its
 existing instructions and testdrive behavior. Ruby supports plain and coordinated
 RSpec/Minitest validation as described below, and Java supports plain and
 coordinated Maven validation as described in [Java validation](#java-validation);
-automatic apply is JavaScript only.
+automatic apply is JavaScript only. For Ruby and Java, `onboard --apply` returns
+the same handoff as `onboard --agent`: the CI setup for the agent to apply, then
+coordinated validation.
 
 The editor preserves existing project and CI tracer selections, including tracers
 installed in workspace packages. It resolves one exact release for the actual
