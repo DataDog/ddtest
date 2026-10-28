@@ -35,7 +35,7 @@ func newTestdriveCommand() *cobra.Command {
 			return nil
 		},
 	}
-	var version, facts, format, resume, detail, site string
+	var version, facts, format, resume, detail, site, ciProvider string
 	var checkOnly, agent, report bool
 	var all bool
 	var allowReviewedBuilds, acceptSubstituteRuntime bool
@@ -54,6 +54,7 @@ func newTestdriveCommand() *cobra.Command {
 	command.Flags().StringVar(&resume, "resume", "", "Resume the same repository/framework/scope; tests always execute fresh")
 	command.Flags().StringVar(&facts, "facts", "", "JSON build/service facts bound to input_fingerprint (requires --all)")
 	command.Flags().StringVar(&site, "site", "", "Datadog site retained in the resolved validation plan")
+	command.Flags().StringVar(&ciProvider, "ci-provider", "", ciProviderFlagUsage())
 
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
 		structured := agent || cmd.Flags().Changed("format")
@@ -78,6 +79,10 @@ func newTestdriveCommand() *cobra.Command {
 		}
 		if report && (all || checkOnly) {
 			return fail("invalid_options", fmt.Errorf("--report cannot be combined with --all or --check-only"))
+		}
+		// Reports are bound to the provider they validated, so --report resolves it too.
+		if err := resolveCIProvider(cmd, ciProvider); err != nil {
+			return ciProviderFailure(cmd, structured, err)
 		}
 		if report {
 			cmd.SilenceErrors = true

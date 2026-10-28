@@ -109,7 +109,7 @@ func (t *Testdrive) rubyBundleReadiness(ctx context.Context, scope onboard.Valid
 func rubyBundleEnvironment(entry onboard.TestCommand) map[string]string {
 	env := map[string]string{}
 	if len(entry.Locations) > 0 {
-		env = onboard.WithGitHubActionsDefaults(entry.Environment)
+		env = onboard.WithCIProviderDefaults(entry.Environment)
 		if _, configured := env["BUNDLE_GEMFILE"]; !configured {
 			env["BUNDLE_GEMFILE"] = ""
 		}

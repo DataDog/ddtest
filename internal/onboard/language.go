@@ -53,6 +53,11 @@ type discoveryLanguage interface {
 	// inputs and the selected site (empty: not selected), or is explicitly
 	// excluded from it, with at least one instrumented step.
 	ciSetupConfigured(root, framework, site string) bool
+	// supportsCIProvider reports whether the language sets up Test
+	// Optimization on a CI provider (see ciProvider). Instructions, setup and
+	// completeness checks apply only on providers it supports; others get a
+	// clean unsupported answer.
+	supportsCIProvider(provider string) bool
 	// agentInstructions are framework's setup instructions for a coding agent
 	// whose validation ddtest runs separately, for the selected Datadog site
 	// (empty: the default); empty uses instructions.

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/stretchr/testify/require"
 )
 
@@ -130,7 +129,7 @@ func TestConfiguredRubyWorkflowRecommendsAll(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, scope.Commands, 2)
 	var output strings.Builder
-	require.NoError(t, onboardGitHub(&output, &environment.GitHub{}, root, "ruby", "rspec", nil))
+	require.NoError(t, onboardCI(&output, gitHubActions{}, root, "ruby", "rspec", nil))
 	require.Contains(t, output.String(), "Run `ddtest testdrive --framework rspec --all` to check the setup locally.")
 }
 

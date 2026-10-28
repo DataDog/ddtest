@@ -46,7 +46,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		return errors.Join(fmt.Errorf("%s", result.Reason), onboard.RenderAgentResult(output, result, options.Format))
 	}
 	if !options.Apply {
-		result.NextCommand = []string{result.NextCommand[0], "testdrive", "--framework", name, "--agent", "--yes"}
+		result.NextCommand = onboard.DDTestCommand("testdrive", "--framework", name, "--agent", "--yes")
 		if t.allConfigurations {
 			result.NextCommand = append(result.NextCommand, "--all")
 		}
@@ -140,7 +140,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			switch code {
 			case "scope_unresolved":
 				result.NextAction = "run_command"
-				result.NextCommand = []string{recoveryCommand[0], "onboard", "--framework", name, "--instructions"}
+				result.NextCommand = onboard.DDTestCommand("onboard", "--framework", name, "--instructions")
 				result.ResumeCommand, result.RequiredInput = nil, nil
 				result.Needs = "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it; do not rewrite CI or package scripts only so ddtest can parse them. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
 			case "setup_dependencies_missing", "project_dependencies_missing":
@@ -354,7 +354,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			result.RequiredInput = []string{"literal CI test entry point and any unresolved setup relationship"}
 			reason := fmt.Sprintf("Discovered %d commands. %s", len(scope.Commands), strings.Join(scope.Unresolved, "; "))
 			if len(scope.Commands) == 0 && len(scope.Unresolved) == 0 {
-				reason = "No " + displayName(name) + " test command was found in GitHub Actions workflows or package scripts."
+				reason = "No " + displayName(name) + " test command was found in " + onboard.CIProviderDisplayName() + " workflows or package scripts."
 			}
 			needs := "Facts can add prerequisites to discovered commands; they cannot erase unresolved CI or shrink scope. Do not rewrite CI or package scripts only so ddtest can parse them; report the unresolved entry as a blocker instead. Use --instructions only for this unsupported integration."
 			// Manual CI edits follow; name the release CI's Node can run so agents
@@ -727,7 +727,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	result.Instruction = "Validation finished for this source snapshot. Finish any source edits, then run next_command as the final check and report its factual response. Further source edits invalidate completion. ddtest has already checked its owned cleanup and report exclusions; do not repeat cache or package audits."
 	result.NextAction = "run_command"
 	resume := result.NextCommand
-	result.NextCommand = []string{resume[0], "testdrive", "--report"}
+	result.NextCommand = onboard.DDTestCommand("testdrive", "--report")
 	if options.Format == "json" {
 		result.NextCommand = append(result.NextCommand, "--format", "json")
 	}
@@ -1209,7 +1209,7 @@ func (t *Testdrive) workflowValidationResume(executable, name, selected string, 
 	if options.Format == "json" {
 		command = append(command, "--format", "json")
 	}
-	for _, flag := range []struct{ name, value string }{{"facts", options.FactsFile}, {"site", options.Site}, {"platform", settings.GetPlatform()}, {"command", settings.GetCommand()}} {
+	for _, flag := range []struct{ name, value string }{{"ci-provider", onboard.ActiveCIProvider()}, {"facts", options.FactsFile}, {"site", options.Site}, {"platform", settings.GetPlatform()}, {"command", settings.GetCommand()}} {
 		if flag.value != "" {
 			command = append(command, "--"+flag.name, flag.value)
 		}

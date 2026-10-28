@@ -29,6 +29,11 @@ func (javascriptDiscovery) coordinated() bool { return true }
 
 func (javascriptDiscovery) automaticCISetup() bool { return true }
 
+// JavaScript setup edits and checks GitHub Actions workflows only.
+func (javascriptDiscovery) supportsCIProvider(provider string) bool {
+	return provider == gitHubActionsProvider
+}
+
 func (javascriptDiscovery) ciSetupConfigured(string, string, string) bool { return false }
 
 func (javascriptDiscovery) agentInstructions(string, string) string { return "" }

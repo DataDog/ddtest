@@ -72,6 +72,20 @@ them. The output includes an executable `git apply -R` command for the exact
 setup diff. It reverses the setup edits while preserving pre-existing changes;
 review it before executing it if you have made further edits since apply.
 
+## CI provider
+
+`onboard` and `testdrive` read one CI provider's configuration. GitHub Actions
+(`--ci-provider github`) is currently the only supported provider and is selected
+automatically when `.github/workflows` exists; any other value is rejected with
+the list of supported providers. When several supported providers contain tests,
+ddtest asks which one to configure before discovery, edits or validation (agents
+receive `ci_provider_required` with `next_action: ask_user`), and follow-up
+commands keep the selected `--ci-provider`. A language without setup support on
+the selected provider gets `ci_provider_unsupported` instead of instructions.
+Other providers' CI files (GitLab, Jenkins, CircleCI, Buildkite and others) are
+never parsed: when they mention the framework they are listed as outside this
+validation, and they never fail onboarding.
+
 ## Coverage and local developer commands
 
 Mocha CI commands without Istanbul coverage are wrapped with the project's NYC.

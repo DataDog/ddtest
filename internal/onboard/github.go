@@ -7,13 +7,8 @@ package onboard
 
 import (
 	_ "embed"
-	"fmt"
-	"io"
-	"slices"
 	"strings"
 	"text/template"
-
-	"github.com/DataDog/ddtest/internal/environment"
 )
 
 //go:embed instructions/webdriverio.md
@@ -36,80 +31,6 @@ var vitestInstructions string
 
 //go:embed instructions/github.md
 var gitHubInstructions string
-
-func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoot, language, name string, agent *agentHandoff) error {
-	workflows, configured, err := provider.FindTestWorkflows(repositoryRoot, language, name)
-	if err != nil {
-		return err
-	}
-	var scope *ValidationScope
-	var discover, instructionsWhenConfigured, validatesConfigurations bool
-	if registered := discoveryLanguageNamed(language); registered != nil {
-		discover, instructionsWhenConfigured = registered.onboardingScope(name)
-		validatesConfigurations = discover || registered.coordinated()
-	}
-	if discover {
-		discovered, err := DiscoverValidationScope(repositoryRoot, name)
-		if err != nil {
-			return err
-		}
-		scope = &discovered
-		for _, entry := range discovered.Commands {
-			for _, location := range entry.locations {
-				if !slices.Contains(workflows, location.Workflow) {
-					workflows = append(workflows, location.Workflow)
-				}
-			}
-		}
-		slices.Sort(workflows)
-	}
-	if len(workflows) == 0 {
-		if language != "javascript" {
-			return fmt.Errorf("onboard could not find a GitHub Actions workflow that runs %s", name)
-		}
-		_, _ = fmt.Fprintf(output, "CI discovery is incomplete: no GitHub Actions test workflow was resolved for %s. The guidance below is manual; it does not certify CI. Run ddtest testdrive --framework %s --command <your-test-command> --check-only --yes to inspect the local setup.\n\n", name, name)
-		_, _ = fmt.Fprintln(output, strings.TrimSpace(instructions(language, name)))
-		return nil
-	}
-
-	_, _ = fmt.Fprintf(output, "DDTest found %s, %s, and GitHub Actions.\n", language, name)
-	_, _ = fmt.Fprintln(output)
-	_, _ = fmt.Fprintln(output, "Test workflow(s):")
-	for _, workflow := range workflows {
-		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
-	}
-
-	if len(configured) == len(workflows) && agent == nil {
-		_, _ = fmt.Fprintln(output)
-		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
-		command := "ddtest testdrive --framework " + name
-		// A plain run needs one CI command; with several, --all checks each
-		// where testdrive validates configurations.
-		if scope, err := DiscoverValidationScope(repositoryRoot, name); validatesConfigurations && err == nil && len(scope.Commands) > 1 {
-			command += " --all"
-		}
-		_, _ = fmt.Fprintf(output, "Run `%s` to check the setup locally.\n", command)
-		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
-		if !instructionsWhenConfigured {
-			return nil
-		}
-	}
-
-	_, _ = fmt.Fprintln(output)
-	if scope != nil && agent != nil {
-		writeAgentValidationScope(output, *scope)
-	} else if scope != nil && RedactsCommandKeys(name) {
-		WriteValidationScope(output, RedactCypressScope(*scope))
-	} else if scope != nil {
-		WriteValidationScope(output, *scope)
-	}
-	text := instructions(language, name)
-	if registered := discoveryLanguageNamed(language); agent != nil && registered != nil && registered.agentInstructions(name, agent.site) != "" {
-		text = registered.agentInstructions(name, agent.site)
-	}
-	_, _ = fmt.Fprintln(output, strings.TrimSpace(text))
-	return nil
-}
 
 func instructions(language, name string) string {
 	text := frameworkInstructions(language, name)

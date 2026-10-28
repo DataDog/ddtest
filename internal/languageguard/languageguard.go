@@ -65,31 +65,16 @@ func Check(t testing.TB, dir string) {
 			continue
 		}
 		owner := ownerOf(name)
-		source, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		fileSet := token.NewFileSet()
-		file := fileSet.AddFile(name, fileSet.Base(), len(source))
-		var tokens scanner.Scanner
-		tokens.Init(file, source, nil, 0)
-		for {
-			position, kind, literal := tokens.Scan()
-			if kind == token.EOF {
-				break
-			}
-			if kind != token.IDENT && kind != token.STRING {
-				continue
-			}
+		scan(t, path, func(literal string, position token.Position) {
 			for _, other := range languages {
 				if other.name == owner || owner == "javascript" && other.name == "javascript" {
 					continue
 				}
 				if other.marker.MatchString(literal) {
-					t.Errorf("%s: %s code names %s (%s); move it into %s*.go behind the language seam", fileSet.Position(position), owner, other.name, literal, other.name)
+					t.Errorf("%s: %s code names %s (%s); move it into %s*.go behind the language seam", position, owner, other.name, literal, other.name)
 				}
 			}
-		}
+		})
 	}
 }
 
@@ -103,4 +88,52 @@ func ownerOf(name string) string {
 		return "javascript"
 	}
 	return languages[index].name
+}
+
+// CheckNeutral fails t for every token in dir's non-test Go files matching
+// patterns that names any language, JavaScript included. It keeps files that
+// belong to another seam, such as CI providers, free of language decisions.
+func CheckNeutral(t testing.TB, dir string, patterns ...string) {
+	t.Helper()
+	for _, pattern := range patterns {
+		files, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range files {
+			name := filepath.Base(path)
+			if strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			scan(t, path, func(literal string, position token.Position) {
+				for _, language := range languages {
+					if language.marker.MatchString(literal) {
+						t.Errorf("%s: names %s (%s); move language decisions behind the language seam", position, language.name, literal)
+					}
+				}
+			})
+		}
+	}
+}
+
+// scan calls found with every identifier and string literal of path, ignoring comments.
+func scan(t testing.TB, path string, found func(literal string, position token.Position)) {
+	t.Helper()
+	source, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileSet := token.NewFileSet()
+	file := fileSet.AddFile(filepath.Base(path), fileSet.Base(), len(source))
+	var tokens scanner.Scanner
+	tokens.Init(file, source, nil, 0)
+	for {
+		position, kind, literal := tokens.Scan()
+		if kind == token.EOF {
+			return
+		}
+		if kind == token.IDENT || kind == token.STRING {
+			found(literal, fileSet.Position(position))
+		}
+	}
 }

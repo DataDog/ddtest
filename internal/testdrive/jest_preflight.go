@@ -336,7 +336,7 @@ func checkConfigurationCIRuntimes(ctx context.Context, packageRoot, frameworkNam
 	}
 	if hasWorkflow {
 		check.Status = onboard.StatusInconclusive
-		check.Reason = "Checkout-level GitHub Actions workflows were not validated from this package directory. Validate the checkout's CI/package scope before claiming configuration checks passed."
+		check.Reason = "Checkout-level " + onboard.CIProviderDisplayName() + " workflows were not validated from this package directory. Validate the checkout's CI/package scope before claiming configuration checks passed."
 		check.Review = append(check.Review, onboard.RuntimeFinding{Workflow: ".github/workflows", Status: onboard.StatusNotExercised, Code: onboard.CodeNestedCIScope, Reason: check.Reason})
 	}
 	return check
