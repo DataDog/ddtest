@@ -20,6 +20,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -95,6 +96,12 @@ func checkMochaSupport(check jestPreflight, selection platform.JSSelection) verd
 	if !known || !tracerKnown {
 		return verdict{Status: "inconclusive", Reason: "Could not resolve the installed Mocha and selected tracer versions."}
 	}
+	// These tracer majors have verified CI bootstrap and validation contracts.
+	// An old latest-node* tag is not evidence that it exposes ci/init or the
+	// controlled features. Preserve explicit/project selections as unvalidated.
+	if tracerMajor != 5 && tracerMajor != 6 {
+		return verdict{Status: "inconclusive", Code: "unverified_tracer_major", Reason: "Controlled Mocha validation is verified for dd-trace majors 5 and 6. This tracer major remains unvalidated; resolve a verified candidate before editing CI."}
+	}
 	// Instrumentation boundaries, not a validation-version allowlist.
 	if (tracerMajor >= 6 && major < 8) || major < 5 || (major == 5 && minor < 2) {
 		return verdict{Status: "incompatible", Reason: "dd-trace 6 requires Mocha >=8; dd-trace 5 requires Mocha >=5.2. Preserve the test matrix and select a compatible tracer."}
@@ -106,7 +113,7 @@ func checkMochaSupport(check jestPreflight, selection platform.JSSelection) verd
 	return verdict{Status: "compatible", Reason: "No known tracer/runtime incompatibility blocks Mocha. Paired execution and feature probes are still required."}
 }
 
-func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (run validationRun, runErr error) {
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	run.framework, run.root = "mocha", t.checkoutRoot()
@@ -226,9 +233,6 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 	if run.ExitCode != 0 || run.ResultError != "" || len(run.SuiteErrors) > 0 {
 		run.Diagnostic = commandDiagnostic(data)
 	}
-	if errors.Is(commandErr, context.DeadlineExceeded) {
-		run.ResultError = "Mocha command exceeded its per-command timeout; review delayed/setup commands or adjust --timeout before retrying."
-	}
 	return run, nil
 }
 
@@ -266,7 +270,7 @@ func readMochaResults(directory string, run *validationRun) {
 	}
 }
 
-func (t *Testdrive) runMochaFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
+func (t *Testdrive) runMochaFeatures(ctx context.Context, output io.Writer, session *workspace.Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
 	source := mochaProbeSource
 	probe, err := createProbe(t.repositoryRoot, baseline, source)
 	if err != nil {

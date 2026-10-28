@@ -15,6 +15,7 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,10 +31,10 @@ func TestScopeAppliesUnambiguousCIEnvironment(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"jest"}}`)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
 	requireWriteFile(t, filepath.Join(root, ".github/workflows/ci.yml"), "jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {TZ: UTC}\n")
-	env := matchingConfigurationEnvironment(root, "jest", "npm test")
-	require.Equal(t, map[string]string{"TZ": "UTC"}, env)
 	scope, err := onboard.DiscoverValidationScope(root, "jest")
 	require.NoError(t, err)
+	env := matchingConfigurationEnvironment(scope, nil, root, "jest", "npm test")
+	require.Equal(t, map[string]string{"TZ": "UTC"}, env)
 	result := completeValidationFixture("jest")
 	setSingleConfigurationScope(root, &result, scope, "npm test", env)
 	require.Equal(t, "passed", result.Configurations[0].Status)
@@ -79,10 +80,10 @@ func TestCopySkipsIgnoredOutputsPreservesDependenciesAndTimes(t *testing.T) {
 	stamp := time.Unix(1700000000, 0)
 	require.NoError(t, os.Chtimes(file, stamp, stamp))
 	require.NoError(t, os.Symlink("missing", filepath.Join(source, "node_modules", "dangling")))
-	size, err := configurationCopyEstimate(t.Context(), source, false)
+	size, err := configurationCopyEstimate(t.Context(), source, skipIgnoredOutput)
 	require.NoError(t, err)
 	require.Greater(t, size, int64(0))
-	require.NoError(t, copyConfiguration(t.Context(), source, target, false))
+	require.NoError(t, workspace.Copy(t.Context(), source, target, skipIgnoredOutput))
 	require.NoDirExists(t, filepath.Join(target, "cache"))
 	require.FileExists(t, filepath.Join(target, "node_modules", ".bin", "tsc"))
 	link, err := os.Readlink(filepath.Join(target, "node_modules", "dangling"))
@@ -205,8 +206,8 @@ func TestSnapshotPreservesUnrelatedLinksButBlocksEscapingConfiguration(t *testin
 	outside := t.TempDir()
 	requireWriteFile(t, filepath.Join(outside, "config.js"), "preserve")
 	require.NoError(t, os.Symlink(outside, filepath.Join(root, "external")))
-	require.NoError(t, validateConfigurationFiles(root, root, nil, []string{"jest.config.js"}))
-	require.ErrorContains(t, validateConfigurationFiles(root, root, []string{"--config", "external/config.js"}, nil), "outside checkout")
+	require.NoError(t, validateConfigurationFiles(root, root, nil, []string{"jest.config.js"}, nil))
+	require.ErrorContains(t, validateConfigurationFiles(root, root, []string{"--config", "external/config.js"}, nil, nil), "outside checkout")
 	require.NoError(t, os.Symlink(filepath.Join(outside, "config.js"), filepath.Join(root, "jest.config.js")))
-	require.ErrorContains(t, validateConfigurationFiles(root, root, nil, []string{"jest.config.js"}), "outside checkout")
+	require.ErrorContains(t, validateConfigurationFiles(root, root, nil, []string{"jest.config.js"}, nil), "outside checkout")
 }

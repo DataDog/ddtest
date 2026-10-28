@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 	"os"
@@ -28,11 +29,11 @@ func TestPublicJestPackageConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	modules, err = filepath.Abs(modules)
 	require.NoError(t, err)
-	require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root, false))
+	require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), root, skipIgnoredOutput))
 	tracerVersion := integrationTracerVersion(t, modules)
 	pkg := filepath.Join(root, "packages/app")
 	require.NoError(t, os.MkdirAll(pkg, 0700))
-	require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), pkg, false))
+	require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), pkg, skipIgnoredOutput))
 	// Only the unexecuted root installation's manifest differs; the package uses
 	// the original real tracer. This detects a stale cached root preload path.
 	manifest := filepath.Join(root, "node_modules/dd-trace/package.json")
@@ -215,7 +216,7 @@ func TestPublicJestTwoPackageConfiguration(t *testing.T) {
 	version := integrationTracerVersion(t, modules)
 	for _, name := range []string{"a", "b"} {
 		pkg := filepath.Join(root, "packages", name)
-		require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), pkg, false))
+		require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), pkg, skipIgnoredOutput))
 		write("packages/"+name+"/package.json", `{"scripts":{"test":"jest --runInBand"}}`)
 		write("packages/"+name+"/one.test.js", `test('same name',()=>{expect(1+1).toBe(2);expect(process.env.TZ).toBe('UTC')});`)
 	}

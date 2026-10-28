@@ -64,7 +64,7 @@ func TestBrowserCoverageRecognizesSharedFrameworkMetadata(t *testing.T) {
 	facts, err := server.Facts()
 	require.NoError(t, err)
 	require.True(t, facts.BrowserCoverageUnavailable)
-	advice := Troubleshoot(t.TempDir(), "Vitest", facts)
+	advice := Troubleshoot(t.TempDir(), "Vitest", facts, CoverageSetup{})
 	require.Len(t, advice, 1)
 	require.Equal(t, BrowserCoverageFinding, advice[0].Finding)
 	require.Contains(t, advice[0].Text, "--vitest-config")

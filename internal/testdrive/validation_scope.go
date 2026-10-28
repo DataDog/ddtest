@@ -19,6 +19,8 @@ func hasValidationPair(result validationResult) bool {
 
 type configurationCoverage struct {
 	Discovered   int `json:"discovered"`
+	Excluded     int `json:"excluded"`
+	RemoteOnly   int `json:"remote_only,omitempty"`
 	Executed     int `json:"executed"`
 	Paired       int `json:"paired"`
 	Validated    int `json:"validated"`
@@ -62,6 +64,11 @@ func selectedValidation(result validationResult) verdict {
 	}
 	check.Status = "PASSED"
 	check.Reason = "The selected command's paired comparison, all supported features, static CI checks and cleanup passed. Other configurations and actual CI execution remain unvalidated."
+	for _, policy := range featurePolicies(result.Framework) {
+		if policy.Status != "required" {
+			check.Reason += " Policy exception: " + policy.Name + " (" + policy.Status + ")."
+		}
+	}
 	return check
 }
 
@@ -74,7 +81,13 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 	// count them the same way a full run does.
 	if len(result.Configurations) == 0 && result.Scope != nil {
 		coverage.Discovered = len(result.Scope.Commands)
-		coverage.NotExercised = len(result.Scope.Commands)
+		for _, command := range result.Scope.Commands {
+			if ciInstrumentationDisabled(command) {
+				coverage.Excluded++
+			} else {
+				coverage.NotExercised++
+			}
+		}
 	}
 	executed := &executedValidation{Status: "NOT EXERCISED", Reason: "No current paired execution was completed. Earlier results do not validate this invocation."}
 	for _, configuration := range result.Configurations {
@@ -87,6 +100,14 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 			if configuration.Status == "passed" && configuration.PairedExecution {
 				executed.Passed++
 			}
+		}
+		if configurationExcluded(configuration) {
+			coverage.Excluded++
+			continue
+		}
+		if configuration.RemoteGrid != "" {
+			coverage.RemoteOnly++
+			continue
 		}
 		switch configuration.Status {
 		case "passed":
@@ -119,4 +140,27 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 		executed.Reason = fmt.Sprintf("%d/%d executed configurations passed paired comparison, supported features, static checks, cleanup and report publication. Unvalidated configurations and actual CI execution remain separate.", executed.Passed, executed.Configurations)
 	}
 	return coverage, executed
+}
+
+// remoteOnlyCount names configurations that run only on a remote browser grid.
+// validatedText counts validated configurations against those local
+// validation must cover. CI opt-outs (configurations excluded from
+// instrumentation) are not unvalidated work; they are labeled separately.
+// Execution and pairing read as one fact when they agree.
+func (coverage *configurationCoverage) validatedText() string {
+	text := fmt.Sprintf("%d/%d validated", coverage.Validated, coverage.Discovered-coverage.Excluded)
+	if coverage.Excluded > 0 {
+		text += fmt.Sprintf(" (%d more excluded from instrumentation in CI)", coverage.Excluded)
+	}
+	if coverage.Paired == coverage.Executed {
+		return text + fmt.Sprintf("; %d executed with paired comparison", coverage.Executed)
+	}
+	return text + fmt.Sprintf("; %d executed, %d with paired comparison", coverage.Executed, coverage.Paired)
+}
+
+func remoteOnlyCount(coverage *configurationCoverage) string {
+	if coverage.RemoteOnly == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", %d remote grid only (CI runs them)", coverage.RemoteOnly)
 }

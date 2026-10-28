@@ -21,6 +21,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -93,7 +94,7 @@ func TestVitestRetainsUnhandledErrorsDespitePassingJSONAndCoverageOutput(t *test
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
 	}
-	session, err := NewSession()
+	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	run, err := drive.runVitest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", runSpec{Name: "early-flake-detection", Role: roleProbeFeature, Instrumented: true, ProbePath: "probe.test.ts", ProbeMode: "pass"})
@@ -353,7 +354,7 @@ func TestVitestValidationFlagsPrecedeArgumentTerminator(t *testing.T) {
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
 	}
-	session, err := NewSession()
+	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	run, err := drive.runVitest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", runSpec{Name: "baseline", Role: roleBaseline})
@@ -394,7 +395,7 @@ func TestBareVitestReachesExecutionInRunMode(t *testing.T) {
 			drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 				return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
 			}
-			session, err := NewSession()
+			session, err := workspace.NewSession()
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, session.Close()) })
 			_, _, _, err = drive.inspectVitest(t.Context(), t.TempDir())
@@ -415,7 +416,7 @@ func TestUninspectedVitestArgumentsAreRejected(t *testing.T) {
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
 	}
-	session, err := NewSession()
+	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	_, err = drive.runVitest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", runSpec{Name: "baseline", Role: roleBaseline})

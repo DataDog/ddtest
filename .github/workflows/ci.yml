@@ -56,11 +56,24 @@ jobs:
       - name: Install Python test dependencies
         run: python -m pip install "ddtrace>=4.11.0" pytest
 
+      - name: Install evaluator package-manager fixture
+        run: npm install --global pnpm@12.14.0
+
+      - name: Test onboarding evaluator
+        run: python -m unittest discover -s skills/ddtest-onboarding-eval/scripts -p 'test_*.py'
+
+      # install.sh, and with the runner's pwsh install.ps1, against local release files.
+      - name: Test install scripts
+        run: python -m unittest discover -s scripts -p 'test_*.py'
+
+      # ddto is its own module, checked by its own workflow; its benchmark
+      # fixtures are deliberately compact.
       - name: Format check
         run: |
-          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          unformatted="$(git ls-files -z '*.go' ':!:ddto/**' | xargs -0 gofmt -s -l)"
+          if [ -n "$unformatted" ]; then
             echo "The following files are not formatted correctly:"
-            gofmt -s -l .
+            echo "$unformatted"
             exit 1
           fi
 
@@ -296,7 +309,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        jest: ["27.5.1", "28.1.3", "29.7.0", "30.5.1"]
+        jest: ["27.5.1", "28.1.3", "29.4.3", "29.7.0", "30.5.1"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -468,6 +481,8 @@ jobs:
             DDTEST_CUCUMBER_NODE_MODULES="${cucumber_dir}/node_modules" \
             DDTEST_CUCUMBER_VERSION="${{ matrix.cucumber }}" \
             go test -v ./internal/compatibility -run '^TestCucumberAdapterIntegration$'
+          DDTEST_CUCUMBER_NODE_MODULES="${cucumber_dir}/node_modules" \
+            go test -v ./internal/testdrive -run '^TestCucumberSupportMetadataIntegration$'
 
   lint:
     runs-on: ubuntu-latest
@@ -486,19 +501,25 @@ jobs:
           args: --timeout=5m
 
   jest-testdrive-workflow:
+    name: jest-testdrive-workflow (${{ matrix.node }}, ${{ matrix.jest }}, ${{ matrix.group }} ${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        # Per runtime: TestPublicJestTestdrive over two shards, plus two groups of
+        # configuration tests of similar length; together they are the full set.
         include:
-          - node: '24'
-            jest: '30.5.1'
-            tracer: '6.15.0'
-            typescript: ''
-          - node: '20'
-            jest: '29.7.0'
-            tracer: '5.132.0'
-            typescript: 'ts-jest@29 typescript@5 @types/jest@29'
+          - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: testdrive, shard: '1/2', tests: 'TestPublicJestTestdrive'}
+          - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
+          - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)|TestPublicCoordinatorJestFactsAndFreshReport'}
+          - {node: '24', jest: '30.5.1', tracer: '6.15.0', typescript: '', group: configurations, shard: '1/1', tests: 'TestPublicJest(Configurations|TwoPackageConfiguration|LoaderConfiguration)'}
+          # Unpinned: catches framework releases our pinned versions predate.
+          - {node: '24', jest: 'latest', tracer: '6.15.0', typescript: '', group: testdrive, shard: '1/2', tests: 'TestPublicJestTestdrive'}
+          - {node: '24', jest: 'latest', tracer: '6.15.0', typescript: '', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
+          - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: testdrive, shard: '1/2', tests: 'TestPublicJestTestdrive'}
+          - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
+          - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)|TestPublicCoordinatorJestFactsAndFreshReport'}
+          - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: configurations, shard: '1/1', tests: 'TestPublicJest(Configurations|TwoPackageConfiguration|LoaderConfiguration)'}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -508,11 +529,14 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Install real Jest and tracer
-        run: npm install --prefix "${RUNNER_TEMP}/jest-testdrive" jest@${{ matrix.jest }} dd-trace@${{ matrix.tracer }} ${{ matrix.typescript }} typescript@5
+        run: |
+          npm install --prefix "${RUNNER_TEMP}/jest-testdrive" jest@${{ matrix.jest }} dd-trace@${{ matrix.tracer }} ${{ matrix.typescript }} typescript@5
+          npm ls --prefix "${RUNNER_TEMP}/jest-testdrive" --depth=0
       - name: Validate paired outcomes, all feature probes and cleanup
         env:
           DDTEST_JEST_NODE_MODULES: ${{ runner.temp }}/jest-testdrive/node_modules
-        run: go test -v ./internal/testdrive -run '^TestPublicJest(Testdrive|Configurations|PackageConfiguration|TwoPackageConfiguration|LoaderConfiguration|ForwardedConfiguration)$' -count=1 -timeout=20m
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
+        run: go test -v ./internal/testdrive -run '^(${{ matrix.tests }})$' -count=1 -timeout=12m
 
   windows-probe-diagnostics:
     runs-on: windows-latest
@@ -531,21 +555,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        framework: [pytest, rspec, minitest]
+        framework: [pytest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        if: matrix.framework == 'pytest'
         with:
           python-version: '3.12'
-      - uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
-        if: matrix.framework != 'pytest'
-        with:
-          ruby-version: '3.4'
-      - name: Run Python or Ruby testdrive
+      - name: Run Python testdrive
         env:
           DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
           DDTEST_FRAMEWORK_REPORTS: ${{ runner.temp }}/ddtest-workflow-reports
@@ -555,6 +574,62 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: testdrive-${{ matrix.framework }}
+          path: ${{ runner.temp }}/ddtest-workflow-reports
+
+  ruby-testdrive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: pinned-minitest-6
+            datadog_ci: "1.40.0"
+            rspec: "3.13.2"
+            minitest: "6.0.6"
+            rake: "13.4.2"
+          - name: pinned-minitest-5
+            datadog_ci: "1.40.0"
+            rspec: "3.13.2"
+            minitest: "5.27.0"
+            rake: "13.4.2"
+          - name: latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
+        with:
+          ruby-version: '3.4'
+      - name: Install Ruby validation dependencies
+        env:
+          DATADOG_CI: ${{ matrix.datadog_ci }}
+          RSPEC: ${{ matrix.rspec }}
+          MINITEST: ${{ matrix.minitest }}
+          RAKE: ${{ matrix.rake }}
+        run: |
+          install() { if [ -n "$2" ]; then gem install "$1" --version "$2" --no-document; else gem install "$1" --no-document; fi; }
+          install datadog-ci "$DATADOG_CI"
+          install rspec "$RSPEC"
+          install minitest "$MINITEST"
+          install rake "$RAKE"
+          gem install activesupport --conservative --no-document
+          gem list | grep -E '^(datadog-ci|rspec-core|minitest|rake|activesupport) '
+      - name: Run Ruby testdrive integration tests
+        env:
+          DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
+          DDTEST_RUN_RUBY_INTEGRATION_TEST: '1'
+          DDTEST_RUN_RUBY_FORK_INTEGRATION_TEST: '1'
+          DDTEST_FRAMEWORK_REPORTS: ${{ runner.temp }}/ddtest-workflow-reports
+        run: |
+          go test -v ./internal/testdrive -run '^TestPublicPythonRubyTestdrives$/^(rspec|minitest)$' -count=1 -timeout=20m
+          go test -v ./internal/testdrive -run '^TestRuby.+Integration$' -skip '^TestRubyValidationIntegration$' -count=1 -timeout=20m
+      - name: Retain failed testdrive reports
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ruby-testdrive-${{ matrix.name }}
           path: ${{ runner.temp }}/ddtest-workflow-reports
           if-no-files-found: ignore
           retention-days: 7
@@ -572,6 +647,8 @@ jobs:
             tracer: '6.21.0'
           - vitest: '5.0.5'
             tracer: '6.21.0'
+          - vitest: 'latest'
+            tracer: '6.21.0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -580,16 +657,51 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
+      - name: Resolve Vitest version
+        run: |
+          version=$(npm view "vitest@${{ matrix.vitest }}" version)
+          echo "Vitest $version"
+          echo "DDTEST_VITEST_VERSION=$version" >> "$GITHUB_ENV"
       - name: Validate Vitest CLI and Node API paths against local intake
         env:
           DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
-          DDTEST_VITEST_VERSION: ${{ matrix.vitest }}
           DDTEST_VITEST_TRACER_VERSION: ${{ matrix.tracer }}
         run: go test -v ./internal/testdrive -run '^TestPublicVitestRunnerTestdrive$' -count=1 -timeout=15m
 
+  onboard-apply-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Validate generated workflow edits with actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" go test -v ./internal/onboard -run '^TestGeneratedSetupWorkflow.*Actionlint$' -count=1
+      - name: Install apply fixture dependencies
+        run: npm install --prefix "$RUNNER_TEMP/apply-testdrive" vitest@4.1.11 mocha@11.7.6 nyc@17.1.0 dd-trace@6.20.1 @cucumber/cucumber@12.2.0 @wdio/cli@9.20.0 @wdio/local-runner@9.20.0 @wdio/mocha-framework@9.20.0 --no-audit --no-fund
+      - name: Apply setup and validate against local intake
+        env:
+          DDTEST_MOCHA_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
+          DDTEST_VITEST_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
+          DDTEST_WEBDRIVERIO_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
+          DDTEST_CUCUMBER_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
+          DDTEST_CHROME_BINARY: /usr/bin/google-chrome
+        run: DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" go test -v ./internal/testdrive -run '^TestPublic(OnboardApply|MochaApply|WebdriverIOApply|CucumberApply)$' -count=1 -timeout=8m
+
   testdrive-mocha-workflow:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        mocha: ['11.7.6', 'latest']
+        shard: ['1/2', '2/2']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -599,8 +711,213 @@ jobs:
         with:
           node-version: '24'
       - name: Install Mocha testdrive fixture dependencies
-        run: npm install --prefix "$RUNNER_TEMP/mocha-testdrive" mocha@11.7.6 nyc@17.1.0 c8@12.0.0 dd-trace@6.21.0 --no-audit --no-fund
+        run: |
+          npm install --prefix "$RUNNER_TEMP/mocha-testdrive" "mocha@${{ matrix.mocha }}" nyc@17.1.0 c8@12.0.0 dd-trace@6.21.0 --no-audit --no-fund
+          npm ls --prefix "$RUNNER_TEMP/mocha-testdrive" --depth=0
       - name: Validate CLI, programmatic runner, existing failures and coverage gate
         env:
           DDTEST_MOCHA_NODE_MODULES: ${{ runner.temp }}/mocha-testdrive/node_modules
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
         run: go test -v ./internal/testdrive -run '^(TestPublicMochaTestdrive|TestMochaProbeCoverageThresholdControls|TestMochaDelayedCommandUsesSharedTimeout|TestMochaPreflightResolvesSelectedPackage)$' -count=1 -timeout=10m
+
+  playwright-latest:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        run: echo "version=$(npm view @playwright/test version)" >> "$GITHUB_OUTPUT"
+
+  testdrive-playwright-workflow:
+    needs: playwright-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        playwright: ['1.55.1', 'latest']
+        shard: ['1/2', '2/2']
+    # The official image ships the browsers and their system packages for this
+    # exact Playwright release, so nothing is downloaded or installed per run.
+    container:
+      image: mcr.microsoft.com/playwright:v${{ matrix.playwright == 'latest' && needs.playwright-latest.outputs.version || matrix.playwright }}-noble
+    env:
+      PLAYWRIGHT_VERSION: ${{ matrix.playwright == 'latest' && needs.playwright-latest.outputs.version || matrix.playwright }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      # The workspace is owned by the runner user, not the container's root;
+      # go build reads it with git for VCS stamping.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Isolate Playwright fixture caches
+        run: echo "npm_config_cache=$RUNNER_TEMP/playwright-testdrive/cache" >> "$GITHUB_ENV"
+      - name: Install Playwright testdrive fixture dependencies
+        run: |
+          npm install --prefix "$RUNNER_TEMP/playwright-testdrive" "@playwright/test@$PLAYWRIGHT_VERSION" dd-trace@6.20.1 --no-audit --no-fund
+          npm ls --prefix "$RUNNER_TEMP/playwright-testdrive" --depth=0
+      - name: Validate browser execution, existing failures and supervised cleanup
+        env:
+          DDTEST_PLAYWRIGHT_NODE_MODULES: ${{ runner.temp }}/playwright-testdrive/node_modules
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
+        run: go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects|TestPlaywrightDiscoveryKeepsConfiguredReportsOutOfTheCheckout)$' -count=1 -timeout=12m
+
+  testdrive-cypress-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Scenarios are split by integration_shard_test.go; each runs exactly
+        # once per Cypress version.
+        cypress: ['15.1.0', 'latest']
+        shard: ['1/5', '2/5', '3/5', '4/5', '5/5']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Resolve Cypress version
+        id: cypress
+        run: echo "version=$(npm view "cypress@${{ matrix.cypress }}" version | tail -n 1)" >> "$GITHUB_OUTPUT"
+      # The Cypress binary downloads during npm install; reuse it per release.
+      - name: Cache Cypress binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/cypress-testdrive-cache
+          key: ${{ runner.os }}-cypress-binary-${{ steps.cypress.outputs.version }}
+      - name: Install Cypress testdrive fixture dependencies
+        env:
+          CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
+        run: |
+          npm install --prefix "$RUNNER_TEMP/cypress-testdrive" "cypress@${{ matrix.cypress }}" dd-trace@6.20.1 typescript@5.9.3 --save-exact --no-audit --no-fund
+          npm ls --prefix "$RUNNER_TEMP/cypress-testdrive" --depth=0
+      - name: Validate original CLI, action API and matching failures with TIA deferred
+        env:
+          DDTEST_CYPRESS_NODE_MODULES: ${{ runner.temp }}/cypress-testdrive/node_modules
+          CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
+        run: xvfb-run -a go test -v ./internal/testdrive -run '^(TestPublicCypressTestdrive|TestCypressTypeScriptWrapperTranspilesToCommonJS)$' -failfast -count=1 -timeout=12m
+
+  testdrive-cucumber-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 10.9.0 and 13.3.0 run every scenario across shards; 8.11.1 the floor check.
+        include:
+          - {cucumber: '8.11.1', shard: '1/1'}
+          - {cucumber: '10.9.0', shard: '1/4'}
+          - {cucumber: '10.9.0', shard: '2/4'}
+          - {cucumber: '10.9.0', shard: '3/4'}
+          - {cucumber: '10.9.0', shard: '4/4'}
+          - {cucumber: '13.3.0', shard: '1/4'}
+          - {cucumber: '13.3.0', shard: '2/4'}
+          - {cucumber: '13.3.0', shard: '3/4'}
+          - {cucumber: '13.3.0', shard: '4/4'}
+          - {cucumber: 'latest', shard: '1/4'}
+          - {cucumber: 'latest', shard: '2/4'}
+          - {cucumber: 'latest', shard: '3/4'}
+          - {cucumber: 'latest', shard: '4/4'}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install Cucumber testdrive fixture dependencies
+        run: |
+          npm install --prefix "$RUNNER_TEMP/cucumber-testdrive" "@cucumber/cucumber@${{ matrix.cucumber }}" nyc@17.1.0 c8@12.0.0 dd-trace@6.20.1 @istanbuljs/esm-loader-hook@0.3.0 tsx@4.23.15 --save-exact --no-audit --no-fund
+          npm ls --prefix "$RUNNER_TEMP/cucumber-testdrive" --depth=0
+      - name: Validate native scenarios, matching failures and source coverage
+        env:
+          DDTEST_CUCUMBER_NODE_MODULES: ${{ runner.temp }}/cucumber-testdrive/node_modules
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
+        run: |
+          test_filter='^TestPublicCucumberTestdrive$'
+          if [ '${{ matrix.cucumber }}' = '8.11.1' ]; then test_filter='^TestPublicCucumberTestdrive/passing$'; fi
+          go test -v ./internal/testdrive -run "$test_filter" -failfast -count=1 -timeout=12m
+
+  testdrive-webdriverio-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # npm runs every scenario across shards; pnpm checks its layout on one.
+        # The latest lane also takes the latest tracer: support for a new
+        # WebdriverIO major lands there first.
+        include:
+          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '1/4'}
+          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '2/4'}
+          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '3/4'}
+          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '4/4'}
+          - {package-manager: pnpm, wdio: '9.20.0', tracer: '6.20.1', shard: '1/1'}
+          - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '1/4'}
+          - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '2/4'}
+          - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '3/4'}
+          - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '4/4'}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install WebdriverIO testdrive fixture dependencies
+        run: |
+          mkdir -p "$RUNNER_TEMP/wdio-testdrive"
+          printf '{"private":true}\n' > "$RUNNER_TEMP/wdio-testdrive/package.json"
+          if [ '${{ matrix.package-manager }}' = 'pnpm' ]; then
+            npm exec --yes --package=pnpm@10.20.0 -- pnpm --dir "$RUNNER_TEMP/wdio-testdrive" add --save-dev --save-exact @wdio/cli@${{ matrix.wdio }} @wdio/local-runner@${{ matrix.wdio }} @wdio/mocha-framework@${{ matrix.wdio }} @wdio/jasmine-framework@${{ matrix.wdio }} @wdio/spec-reporter@${{ matrix.wdio }} dd-trace@${{ matrix.tracer }}
+          else
+            npm install --prefix "$RUNNER_TEMP/wdio-testdrive" @wdio/cli@${{ matrix.wdio }} @wdio/local-runner@${{ matrix.wdio }} @wdio/mocha-framework@${{ matrix.wdio }} @wdio/jasmine-framework@${{ matrix.wdio }} @wdio/spec-reporter@${{ matrix.wdio }} dd-trace@${{ matrix.tracer }} --save-exact --no-audit --no-fund
+          fi
+          npm ls --prefix "$RUNNER_TEMP/wdio-testdrive" --depth=0
+      - name: Validate real browser outcomes with Linux Xvfb supervision
+        env:
+          DDTEST_WEBDRIVERIO_NODE_MODULES: ${{ runner.temp }}/wdio-testdrive/node_modules
+          DDTEST_CHROME_BINARY: /usr/bin/google-chrome
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
+        run: |
+          command -v xvfb-run
+          if [ '${{ matrix.package-manager }}' = 'pnpm' ]; then
+            go test -v ./internal/testdrive -run '^TestPublicWebdriverIOTestdrive$/^passing$' -failfast -count=1 -timeout=8m
+          else
+            go test -v ./internal/testdrive -run '^TestPublicWebdriverIOTestdrive$' -failfast -count=1 -timeout=12m
+          fi
+          if [ '${{ matrix.shard }}' = '1/4' ] || [ '${{ matrix.package-manager }}' = 'pnpm' ]; then
+            go test -v ./internal/framework ./internal/testdrive -run '^TestWebdriverIO' -failfast -count=1 -timeout=5m
+          fi
+
+  onboarding-evaluator-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build fake agent image (no model sessions)
+        run: |
+          scripts=skills/ddtest-onboarding-eval/scripts
+          docker build --target offline -t ddtest-eval-offline -f "$scripts/Dockerfile" "$scripts"
+          echo "DDTEST_EVAL_TEST_IMAGE=$(docker image inspect --format '{{.Id}}' ddtest-eval-offline)" >> "$GITHUB_ENV"
+      - name: Verify environment, signals and detached process isolation
+        run: python -m unittest discover -s skills/ddtest-onboarding-eval/scripts -p test_container.py -v

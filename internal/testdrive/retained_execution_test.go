@@ -3,6 +3,7 @@ package testdrive
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
@@ -78,9 +79,33 @@ func TestFailedFullRunNeverReusesEarlierPass(t *testing.T) {
 	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
 	got := readValidationReport(t, root)
 	require.NoFileExists(t, htmlReportPath(root))
-	require.Nil(t, got.Retained)
-	require.Nil(t, got.LastExecution)
+	require.NotNil(t, got.Retained)
+	require.NotNil(t, got.LastExecution)
+	require.False(t, got.LastExecution.Current)
+	require.False(t, got.Success)
 	require.Equal(t, "INCOMPLETE", got.Summary.LocalValidation)
+}
+
+func TestStoppedWorkflowAttemptKeepsEarlierExecutionAndFindings(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, finishValidation(&bytes.Buffer{}, root, pairedReport("earlier pass", "passed")))
+	requireWriteFile(t, htmlReportPath(root), "earlier findings")
+	invalidatePriorWorkflow(root, "jest", onboard.AgentResult{Code: "scope_unresolved", Reason: "Cannot statically resolve command: sudo apt-get -y install lcov"})
+	got := readValidationReport(t, root)
+	html, err := os.ReadFile(htmlReportPath(root))
+	require.NoError(t, err)
+	require.Equal(t, "earlier findings", string(html))
+	require.True(t, got.StoppedBeforeExecution)
+	require.False(t, got.Success)
+	require.NotNil(t, got.Retained)
+	require.Equal(t, "earlier pass", got.Retained.Result.Session)
+	require.NotNil(t, got.LastExecution)
+	require.False(t, got.LastExecution.Current)
+	require.Equal(t, "INCOMPLETE", got.Summary.Status)
+	require.Equal(t, "PASSED EARLIER; NOT RERUN", got.Summary.LocalValidation)
+	require.Contains(t, got.Summary.FinalResponse, "this attempt stopped before running tests; the earlier full execution (passed) is kept as history")
+	require.Contains(t, got.Summary.FinalResponse, "Previous HTML report (not regenerated)")
+	require.NotContains(t, got.Summary.FinalResponse, "stale")
 }
 
 func TestReportsCanReplaceExistingDestinationTwice(t *testing.T) {
@@ -90,4 +115,22 @@ func TestReportsCanReplaceExistingDestinationTwice(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, "second", string(data))
+}
+
+func TestBlockedDiscoveryRetainsPartialExecutionDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	code := 1
+	attempt := validationResult{Framework: "cypress", Session: "timed-out", Error: "browser process resource limit", Runs: []runSummary{{Role: roleBaseline, Name: "baseline", Command: "npm run test:ci", ExitCode: &code, Diagnostic: "Chrome failed to start"}}}
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, attempt))
+	for range 3 {
+		require.Error(t, finishValidation(&bytes.Buffer{}, root, validationResult{Framework: "cypress", Error: "CI discovery blocked"}))
+		got := readValidationReport(t, root)
+		require.False(t, got.Success)
+		require.Empty(t, got.Runs)
+		require.Equal(t, "CI discovery blocked", got.Error)
+		require.NotNil(t, got.Retained)
+		require.Nil(t, got.Retained.Result.Retained)
+		require.Equal(t, "npm run test:ci", got.Retained.Result.Runs[0].Command)
+		require.Equal(t, "Chrome failed to start", got.Retained.Result.Runs[0].Diagnostic)
+	}
 }

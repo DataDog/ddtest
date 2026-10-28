@@ -3,46 +3,36 @@
 package testdrive
 
 import (
-	"github.com/stretchr/testify/require"
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/stretchr/testify/require"
 )
 
-func TestWorkflowLockRejectsSharedDirectoryAndSymlink(t *testing.T) {
+func TestCoordinationFailureKeepsAnExecutableAgentCommand(t *testing.T) {
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(blocked, nil, 0600))
+	previous := workspace.LockParent
+	workspace.LockParent = blocked
+	t.Cleanup(func() { workspace.LockParent = previous })
 	root := t.TempDir()
-	t.Setenv("TMPDIR", t.TempDir())
-	directory := workflowLockDirectory(root)
-	require.NoError(t, os.Mkdir(directory, 0777))
-	require.NoError(t, os.Chmod(directory, 0777))
-	_, err := acquireWorkflowLock(root)
-	require.Error(t, err)
-	require.NoError(t, os.Chmod(directory, 0700))
-	lock, err := acquireWorkflowLock(root)
-	require.NoError(t, err)
-	path := lock.Name()
-	require.NoError(t, lock.Close())
-	require.NoFileExists(t, path)
-	canary := filepath.Join(t.TempDir(), "canary")
-	requireWriteFile(t, canary, "customer")
-	require.NoError(t, os.Symlink(canary, path))
-	_, err = acquireWorkflowLock(root)
-	require.Error(t, err)
-	data, err := os.ReadFile(canary)
-	require.NoError(t, err)
-	require.Equal(t, "customer", string(data))
-}
-
-func TestClosingAnOldLockCannotRemoveTheNextLock(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("TMPDIR", t.TempDir())
-	first, err := acquireWorkflowLock(root)
-	require.NoError(t, err)
-	require.NoError(t, first.Close())
-	second, err := acquireWorkflowLock(root)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, second.Close()) }()
-	require.NoError(t, first.Close())
-	_, err = acquireWorkflowLock(root)
-	require.ErrorIs(t, err, errWorkflowBusy)
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript"}
+	for _, format := range []string{"agent", "json"} {
+		var output bytes.Buffer
+		require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Apply: true, Format: format}), "coordination_unavailable")
+		var result onboard.AgentResult
+		require.NoError(t, json.Unmarshal(output.Bytes(), &result), output.String())
+		require.Equal(t, "request_capability", result.NextAction)
+		want := append(onboard.OnboardingCommand("vitest"), "--agent")
+		if format == "json" {
+			want = append(onboard.OnboardingCommand("vitest"), "--format", "json")
+		}
+		require.Equal(t, want, result.NextCommand, "the agent retries the same structured onboarding command")
+	}
 }

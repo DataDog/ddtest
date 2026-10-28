@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 const probeName = "ddtest validation probe"
@@ -151,7 +153,7 @@ func createProbe(root string, baseline validationRun, sourceText string) (string
 	return "", errors.New("no writable test location inside this repository was found for the probe")
 }
 
-func (t *Testdrive) runJestFeatures(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) (runErr error) {
+func (t *Testdrive) runJestFeatures(ctx context.Context, output io.Writer, session *workspace.Session, preload string, result *validationResult) (runErr error) {
 	if result.Preflight == nil || len(result.Preflight.Projects) == 0 {
 		unavailableFeatures(result, "Effective Jest projects were not resolved; feature coverage is unvalidated.")
 		return nil
@@ -207,7 +209,7 @@ func (t *Testdrive) runJestFeatures(ctx context.Context, output io.Writer, sessi
 	return nil
 }
 
-func (t *Testdrive) runJestProjectFeatures(ctx context.Context, output io.Writer, session *Session, preload, prefix string, check *projectProbeCheck, result *validationResult) (runErr error) {
+func (t *Testdrive) runJestProjectFeatures(ctx context.Context, output io.Writer, session *workspace.Session, preload, prefix string, check *projectProbeCheck, result *validationResult) (runErr error) {
 	files, command, err := t.discoverJestTests(ctx, "")
 	check.DiscoveryCommand = command
 	if err != nil || len(files) == 0 {
@@ -275,14 +277,20 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 	// Verify the probe in the actual project configuration before claiming anything
 	// about feature behavior. Never fall back to a clean, unrelated Jest config.
 	passControl, err := run("probe-pass-control", intake.Scenario{}, "pass")
+	passControl = markTimeout(passControl)
 	result.Runs = append(result.Runs, passControl.summary())
 	if err != nil {
 		return err
 	}
 	failControl, err := run("probe-fail-control", intake.Scenario{}, "fail")
+	failControl = markTimeout(failControl)
 	result.Runs = append(result.Runs, failControl.summary())
 	if err != nil {
 		return err
+	}
+	if reason := cmp.Or(passControl.Timeout, failControl.Timeout); reason != "" {
+		unavailableFeatures(result, reason+".")
+		return nil
 	}
 	if !validProbeControl(passControl, "passed") || !validProbeControl(failControl, "failed") {
 		unavailableFeatures(result, "The temporary probe did not produce its expected passing and failing control results under this framework configuration. "+probeControlDiagnostic(passControl, failControl))
@@ -306,24 +314,38 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 		case "skipping", "quarantine", "disabled":
 			mode = "fail"
 		}
-		scenario := intake.Scenario{Feature: feature, Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile}
+		scenario := intake.Scenario{Feature: feature, Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile, Parameters: identity.Parameters}
 		value, err := run(feature, scenario, mode)
+		value = markTimeout(value)
 		result.Runs = append(result.Runs, value.summary())
 		if err != nil {
 			return err
 		}
-		result.Features = append(result.Features, evaluateFeature(feature, value, identity))
+		result.Features = append(result.Features, withTracerLimitation(result, evaluateFeature(feature, value, identity)))
 	}
 	return nil
 }
 
+// withTracerLimitation reports a failed feature the tracer is known not to apply
+// as that limitation. The probe still runs, so a fixed tracer release passes.
+func withTracerLimitation(result *validationResult, feature featureResult) featureResult {
+	limitation := tracerFeatureLimitation(result, feature.Name)
+	if limitation == "" || feature.Status != "failed" {
+		return feature
+	}
+	return featureResult{Name: feature.Name, Status: "known limitation", Code: tracerLimitation, ObservedCode: feature.Code, Reason: limitation + " Observed: " + feature.Reason}
+}
+
 func validProbeControl(run validationRun, status string) bool {
+	if frameworkFeaturePolicies[run.framework].ProbeBodyCounts && (run.ProbeExecutions == nil || *run.ProbeExecutions != 1) {
+		return false
+	}
 	expectedExit := (status == "passed" && run.ExitCode == 0) || (status == "failed" && run.ExitCode > 0)
 	if !expectedExit || run.ResultError != "" || executedTests(run) != 1 || len(run.SuiteErrors) != 0 || len(run.Facts.Tests) != 1 || verifyJestTelemetry(run).Status != "" {
 		return false
 	}
 	for _, test := range run.Tests {
-		if test.Name == probeName && test.Status == status {
+		if (test.Name == probeName || test.probe) && test.Status == status {
 			return status != "failed" || strings.Contains(test.Failure, "ddtest intentional failure")
 		}
 	}
@@ -335,6 +357,10 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	if feature == "skipping" && identity.SourceFile == "" {
 		result.Status = "inconclusive"
 		result.Reason = "The control did not report test.source.file; a repository-relative file is required to request suite skipping."
+		return result
+	}
+	if run.Timeout != "" {
+		result.Status, result.Reason = "inconclusive", run.Timeout+"."
 		return result
 	}
 	if run.ResultError != "" || len(run.SuiteErrors) > 0 || len(run.Facts.ConfigurationErrors) > 0 {
@@ -350,23 +376,29 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		result.Reason = "The Vitest tracer did not request skippable suites. Check this tracer release's Vitest Test Impact Analysis support; a successful reporting run does not prove skipping is supported. Real Datadog credentials are not required."
 		return result
 	}
-	if run.ExitCode != 0 {
-		if d := run.Skipping; d != nil && d.PathMismatch && d.SkippableRequests > 0 {
-			result.Reason = "The mock returned the control's test.source.file, but that path differs from both repository-relative and project-relative probe paths. The probe executed instead of skipping; inspect the recorded skipping path mismatch. Preserve the original framework configuration. Real Datadog credentials are not required."
-		}
-		return result
-	}
 	passed, failed, retries := 0, 0, 0
 	quarantined, disabled, attemptToFix, skipped := false, false, false, false
+	omittedPlaywrightIdentity := false
+	// Test-level skipping (Cypress) reports the skipped test itself.
+	skippedTestEvents := 0
 	for _, event := range run.Facts.Events {
 		tags := event.Tags
+
 		if isSkippedJestProbe(event, identity.Module, identity.Suite, identity.SourceFile) {
 			skipped = true
+		}
+		if isSkippedProbeTest(event, identity) {
+			skipped = true
+			skippedTestEvents++
 		}
 		if tags["test.suite"] != identity.Suite {
 			continue
 		}
 		moduleMatches := tags["test.module"] == identity.Module
+		if feature == "disabled" && run.framework == "playwright" && !moduleMatches && playwrightDisabledProbe(tags, identity, run) {
+			moduleMatches = true
+			omittedPlaywrightIdentity = true
+		}
 		if event.Type != "test" || tags["test.name"] != identity.Name || !moduleMatches {
 			continue
 		}
@@ -386,7 +418,11 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	}
 	nativePass, nativeFail, nativeSkip := 0, 0, 0
 	for _, test := range run.Tests {
-		if test.Name != identity.Name {
+		name := test.Name
+		if test.probe && test.telemetryName != nil {
+			name = *test.telemetryName
+		}
+		if name != identity.Name {
 			result.Status = "inconclusive"
 			result.Reason = "The scenario selected tests beyond the controlled probe."
 			return result
@@ -400,7 +436,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 			nativeSkip++
 		}
 	}
-	nativeRepeated := nativePass >= 2 || (run.framework == "vitest" && nativePass == 1)
+	nativeRepeated := (frameworkFeaturePolicies[run.framework].ProbeBodyCounts && nativePass == 1 && run.ProbeExecutions != nil && *run.ProbeExecutions >= 2) || nativePass >= 2 || ((run.framework == "vitest" || run.framework == "playwright") && nativePass == 1)
 	success := false
 	switch feature {
 	case "auto-retries":
@@ -408,7 +444,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	case "early-flake-detection":
 		success = passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
 	case "skipping":
-		success = skipped && executedTests(run) == 0 && run.Facts.TestEventCount == 0
+		success = skipped && executedTests(run) == 0 && passed+failed == 0 && run.Facts.TestEventCount == skippedTestEvents
 	case "quarantine":
 		// Quarantine changes the command outcome, not necessarily the native
 		// assertion status. Some Jest versions retain the failing assertion.
@@ -418,6 +454,10 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	case "attempt-to-fix":
 		success = attemptToFix && passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
 	}
+	if frameworkFeaturePolicies[run.framework].ProbeBodyCounts {
+		success = success && run.ProbeExecutions != nil && *run.ProbeExecutions == passed+failed
+	}
+	success = success && run.ExitCode == 0
 	if !success {
 		result.Reason = fmt.Sprintf("Controlled %s did not show the expected behavior: matching telemetry has %d passed, %d failed and %d retries with the expected reason (%d total test events); runner has %d passed, %d failed and %d skipped; exit %d.",
 			feature, passed, failed, retries, run.Facts.TestEventCount, nativePass, nativeFail, nativeSkip, run.ExitCode)
@@ -427,17 +467,32 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 				result.Reason = fmt.Sprintf("Retry telemetry count mismatch: expected 1 failed event, received %d. ", failed) + result.Reason
 			}
 		}
+		if d := run.Skipping; run.ExitCode != 0 && d != nil && d.PathMismatch && d.SkippableRequests > 0 {
+			result.Reason = "The mock returned the control's test.source.file, but that path differs from both repository-relative and project-relative probe paths. The probe executed instead of skipping; inspect the recorded skipping path mismatch. Preserve the original framework configuration. Real Datadog credentials are not required."
+		}
+		// The tracer reported the probe exactly once, as the runner ran it, with
+		// none of the requested control: no retry, management tag or skip. An
+		// attempt-to-fix tag alone is not its control; the control is the retries.
+		applied := retries > 0 || quarantined || disabled || skipped || attemptToFix && feature != "attempt-to-fix"
+		if feature != "skipping" && !applied && passed+failed == 1 && nativePass+nativeFail+nativeSkip == 1 {
+			result.Code = tracerControlNotApplied
+			result.Reason = fmt.Sprintf("The tracer did not apply the %s control: telemetry reported the probe once (%d passed, %d failed) with no retry or test management evidence, and the runner ran it once (%d passed, %d failed, %d skipped; exit %d). The local intake served the control, so no customer change is expected to fix this; report it.",
+				feature, passed, failed, nativePass, nativeFail, nativeSkip, run.ExitCode)
+		}
 	}
 	if success {
 		result.Status = "passed"
 		result.Reason = map[string]string{
 			"auto-retries":          "The fail-once probe failed, retried with auto_test_retry evidence, and recovered to a successful command.",
 			"early-flake-detection": "The new passing probe ran repeatedly with early_flake_detection retry evidence.",
-			"skipping":              "The normally failing probe suite was skipped by ITR; no test body executed and the command succeeded.",
+			"skipping":              "The normally failing probe was skipped by ITR; no test body executed and the command succeeded.",
 			"quarantine":            "The normally failing probe still reported its failure and quarantine tag, while the command succeeded.",
 			"disabled":              "The normally failing probe was reported disabled/skipped, with no executed test body and a successful command.",
 			"attempt-to-fix":        "The marked passing probe ran repeatedly with attempt_to_fix retry evidence and a successful command.",
 		}[feature]
+		if omittedPlaywrightIdentity {
+			result.Reason += " The tracer omitted module/browser identity on the disabled event; the unique probe source, suite and name were matched to its single native project/browser."
+		}
 		if feature == "skipping" && run.Skipping != nil && run.Skipping.SuiteNameChanged {
 			result.Reason += " The tracer reported a different test.suite for the skipped suite; both names are retained in the skipping diagnostics."
 		}
@@ -447,6 +502,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 
 func probeControlDiagnostic(runs ...validationRun) string {
 	for _, run := range runs {
+		if run.missingSourceLoader != "" {
+			return reportText(run.missingSourceLoader)
+		}
 		if len(run.SuiteErrors) > 0 {
 			return reportText(run.SuiteErrors[0])
 		}

@@ -9,30 +9,53 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
 type configurationResult struct {
 	onboard.TestCommand
-	PairedExecution        bool           `json:"paired_execution"`
-	ExecutionAttempted     bool           `json:"execution_attempted"`
-	EnvironmentDifferences []string       `json:"environment_differences,omitempty"`
-	Status                 string         `json:"status"`
-	Compatibility          verdict        `json:"compatibility"`
-	Preflight              *jestPreflight `json:"preflight,omitempty"`
-	Error                  string         `json:"error,omitempty"`
-	Preparation            []buildResult  `json:"preparation,omitempty"`
+	PairedExecution        bool               `json:"paired_execution"`
+	ExecutionAttempted     bool               `json:"execution_attempted"`
+	EnvironmentDifferences []string           `json:"environment_differences,omitempty"`
+	Status                 string             `json:"status"`
+	Compatibility          verdict            `json:"compatibility"`
+	Preflight              *jestPreflight     `json:"preflight,omitempty"`
+	Error                  string             `json:"error,omitempty"`
+	Preparation            []buildResult      `json:"preparation,omitempty"`
+	ServiceExecutions      []serviceExecution `json:"service_executions,omitempty"`
 }
 
 func setSingleConfigurationScope(root string, result *validationResult, scope onboard.ValidationScope, executionCommand string, executionEnvironment map[string]string) {
+	setSelectedConfigurationScope(result, scope, onboard.ValidationCommands(root, executionCommand, result.Framework), executionEnvironment)
+}
+
+// setSelectedConfigurationScope credits the executed result only to discovered
+// configurations with the same resolved plan as one of the selected entries.
+func setSelectedConfigurationScope(result *validationResult, scope onboard.ValidationScope, selected []onboard.TestCommand, executionEnvironment map[string]string) {
 	result.Scope = &scope
-	selected := onboard.ValidationCommands(root, executionCommand, result.Framework)
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Run testdrive --all after required setup to validate every discovered configuration."}}
+		if ciInstrumentationDisabled(entry) {
+			result.Configurations = append(result.Configurations, excludedConfiguration(entry))
+			continue
+		}
+		// A remote browser grid runs only in CI; its secrets never exist here.
+		if entry.RemoteGrid != "" {
+			result.Configurations = append(result.Configurations, remoteGridConfiguration(entry))
+			continue
+		}
+		if !hostConfiguration(entry) {
+			item.Compatibility.Reason = nonHostConfigurationReason(entry)
+			result.Configurations = append(result.Configurations, item)
+			continue
+		}
 		for _, command := range selected {
 			if sameConfiguration(command, entry) && len(entry.UnvalidatedSetup) == 0 {
 				for key, required := range entry.Environment {
@@ -67,6 +90,17 @@ func setSingleConfigurationScope(root string, result *validationResult, scope on
 	}
 }
 
+// creditPreparation keeps a focused run's preparation receipts on the
+// configurations it was credited to, so recovery can name builds awaiting review.
+func creditPreparation(result *validationResult, executed configurationResult) {
+	for i := range result.Configurations {
+		item := &result.Configurations[i]
+		if item.Status != "not exercised" && len(item.Preparation) == 0 && sameConfiguration(item.TestCommand, executed.TestCommand) {
+			item.Preparation = executed.Preparation
+		}
+	}
+}
+
 // The same current-evidence predicate is used by a child, a focused command,
 // and final publication. Scope completeness is applied separately.
 func validationPassed(result validationResult) bool {
@@ -81,21 +115,34 @@ func configurationStatus(result validationResult) string {
 	}
 	return "passed"
 }
+
+// Managed startup, readiness and the action API are part of the plan, so a
+// bare command never stands in for a configuration that also needs them.
 func sameConfiguration(a, b onboard.TestCommand) bool {
-	return a.Command == b.Command && a.Directory == b.Directory && slices.EqualFunc(a.Prerequisites, b.Prerequisites, onboard.EqualPreparation)
+	return a.Command == b.Command && a.Directory == b.Directory && slices.EqualFunc(a.Prerequisites, b.Prerequisites, onboard.EqualPreparation) &&
+		reflect.DeepEqual(a.Cypress, b.Cypress) && (a.Platform == "" || b.Platform == "" || a.Platform == b.Platform)
+}
+
+// hostConfiguration reports whether a configuration's CI runner OS can be
+// executed on this host; an unknown runner is assumed to match.
+func hostConfiguration(entry onboard.TestCommand) bool {
+	return entry.Platform == "" || entry.Platform == runtime.GOOS
+}
+
+func nonHostConfigurationReason(entry onboard.TestCommand) string {
+	return entry.Platform + " Cypress configuration was not executed on this " + runtime.GOOS + " host. Use a matching runner; this variant remains unvalidated."
 }
 
 // Never guess between two CI variants with different environments.
-func matchingConfigurationEnvironment(root, framework, command string) map[string]string {
-	scope, err := onboard.DiscoverValidationScope(root, framework)
-	if err != nil {
+func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr error, root, framework, command string) map[string]string {
+	if scopeErr != nil {
 		return nil
 	}
 	var matched bool
 	var result map[string]string
 	for _, selected := range onboard.ValidationCommands(root, command, framework) {
 		for _, entry := range scope.Commands {
-			if !sameConfiguration(selected, entry) || len(entry.UnvalidatedSetup) > 0 {
+			if !sameConfiguration(selected, entry) || !hostConfiguration(entry) || len(entry.UnvalidatedSetup) > 0 {
 				continue
 			}
 			candidate := mergeConfigurationEnvironment(entry.Environment, selected.Environment)
@@ -109,6 +156,15 @@ func matchingConfigurationEnvironment(root, framework, command string) map[strin
 	return result
 }
 
+// A suspected regression in one configuration outranks configurations that
+// could not be compared, so --all fails like a default or --command run.
+func combineConfigurationCompatibility(current, next verdict) verdict {
+	if current.Status == "suspected regression" {
+		return current
+	}
+	return next
+}
+
 func applyScopeVerdict(result *validationResult) {
 	if result.Scope == nil {
 		return
@@ -116,14 +172,13 @@ func applyScopeVerdict(result *validationResult) {
 	if result.FocusedCommand {
 		return
 	}
-	if len(result.Scope.Unresolved) > 0 {
+	if _, blockers := ciFidelity(result); len(result.Scope.Unresolved)+len(blockers) > 0 {
 		result.Success = false
 		result.ChecksPassed = false
 	}
 	for _, configuration := range result.Configurations {
-		if configuration.Status != "passed" {
+		if !configurationSettled(*result, configuration) {
 			result.Success = false
-			result.LocalSuccess = false
 		}
 	}
 }
@@ -132,26 +187,60 @@ func applyScopeVerdict(result *validationResult) {
 // source, configuration, runtime or tracer edits. Each configuration has its own
 // paired comparison and feature controls, and shares only the final report pair.
 func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) error {
-	scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+	var scope onboard.ValidationScope
+	var err error
+	if t.workflowScope != nil {
+		scope = *t.workflowScope
+	} else {
+		scope, err = onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+	}
 	if err == nil && len(scope.Commands) == 0 {
 		err = fmt.Errorf("no explicit %s CI invocations discovered; review discovery and use --command for local validation", t.framework.Name())
 	}
 	if err != nil {
-		result := validationResult{Session: planSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Scope: &scope, Error: err.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Discovery failed; no test commands were executed."}}
+		result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Scope: &scope, Error: err.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Discovery failed; no test commands were executed."}}
 		return errors.Join(err, finishValidation(output, t.repositoryRoot, result))
 	}
-	result := validationResult{Session: planSession().ID(), Framework: t.framework.Name(), Tracer: "not selected", CheckOnly: t.checkOnly, Scope: &scope,
+	result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: "not selected", CheckOnly: t.checkOnly, Scope: &scope,
 		Compatibility: verdict{Status: "compatible", Reason: "Every discovered configuration passed its own paired comparison; configurations were not compared against each other."}, Cleanup: &verdict{Status: "passed", Reason: "Temporary sessions removed for all configurations."}}
 	var models []reportModel
 	var runErrors []error
+	var tracerConfiguration string
+	var leftovers []string
+	ambient := map[string]string{}
+	result.CIRuntime = t.lang().configurationsCIRuntime(t, scope)
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
+		if ciInstrumentationDisabled(entry) {
+			result.Configurations = append(result.Configurations, excludedConfiguration(entry))
+			continue
+		}
+		// A remote browser grid runs only in CI; its secrets never exist here.
+		if entry.RemoteGrid != "" {
+			result.Configurations = append(result.Configurations, remoteGridConfiguration(entry))
+			continue
+		}
+		if !hostConfiguration(entry) {
+			result.Compatibility = combineConfigurationCompatibility(result.Compatibility, verdict{Status: "inconclusive", Reason: "At least one discovered OS variant was not executed; see configurations."})
+			item.Error = nonHostConfigurationReason(entry)
+			result.Configurations = append(result.Configurations, item)
+			continue
+		}
+		// Terminal lines, labels and errors never repeat a recording key.
+		displayed, environment := entry.Command, entry.Environment
+		if onboard.RedactsCommandKeys(t.framework.Name()) {
+			displayed, environment = onboard.RedactCypressCommand(displayed), onboard.RedactCypressEnvironment(environment)
+		}
 		words, parseErr := shellquote.Split(entry.Command)
+		if entry.Cypress != nil {
+			words = []string{"node"}
+			parseErr = nil
+		}
 		if _, err := localSetupDirectory(t.repositoryRoot, entry.Directory); err != nil {
 			parseErr = err
 		}
 		if len(words) == 0 || strings.Contains(words[0], "=") {
-			parseErr = fmt.Errorf("configuration command needs explicit environment/wrapper review: %s", entry.Command)
+			parseErr = fmt.Errorf("configuration command needs explicit environment/wrapper review: %s", displayed)
 		}
 		if len(entry.UnvalidatedSetup) > 0 {
 			parseErr = fmt.Errorf("configuration requires separate CI setup; paired execution was not started: %s", strings.Join(entry.UnvalidatedSetup, "; "))
@@ -162,63 +251,66 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if parseErr != nil {
 			item.Error = reportText(parseErr.Error())
 			item.Status = "blocked"
-			result.Compatibility = verdict{Status: "inconclusive", Reason: "At least one discovered configuration did not execute; see configurations."}
-			runErrors = append(runErrors, fmt.Errorf("%s: %w", entry.Command, parseErr))
+			result.Compatibility = combineConfigurationCompatibility(result.Compatibility, verdict{Status: "inconclusive", Reason: "At least one discovered configuration did not execute; see configurations."})
+			runErrors = append(runErrors, fmt.Errorf("%s: %w", displayed, parseErr))
 			result.Configurations = append(result.Configurations, item)
 			continue
 		}
-		_, _ = fmt.Fprintf(output, "\nConfiguration %d/%d: %s\n", len(result.Configurations)+1, len(scope.Commands), entry.Command)
+		_, _ = fmt.Fprintf(output, "\nConfiguration %d/%d: %s\n", len(result.Configurations)+1, len(scope.Commands), displayed)
 
-		label := fmt.Sprintf("configuration %d: %s", len(result.Configurations)+1, entry.Command)
-		for _, key := range slices.Sorted(maps.Keys(entry.Environment)) {
-			if entry.Environment[key] == "" {
+		label := fmt.Sprintf("configuration %d: %s", len(result.Configurations)+1, displayed)
+		for _, key := range slices.Sorted(maps.Keys(environment)) {
+			if environment[key] == "" {
 				label += " (" + key + " cleared)"
 			} else {
-				label += " (" + key + "=" + entry.Environment[key] + ")"
+				label += " (" + key + "=" + environment[key] + ")"
 			}
 		}
 		child := *t
+		child.cypressSelected = entry
+		child.cypress, child.cypressCommand, child.cypressPackage = entry.Cypress, entry.Command, entry.CypressPackage
 		child.workflowRoot = t.repositoryRoot
 		child.allConfigurations = false
-		child.session = planSession()
+		child.session = workspace.PlanSession()
 		if result.Selection != nil && result.Selection.Source == "fallback" && result.Selection.Version != "" {
 			child.tracerVersion = result.Selection.Version
 		}
 		child.command = words[0]
 		child.args = words[1:]
+		child.playwrightGuard = entry.ExitOnFailure
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
-		child.preflight = child.checkJestPreflight
-		if child.framework.Name() == "vitest" {
-			child.preflight = child.checkVitestPreflight
-		}
-		if child.framework.Name() == "mocha" {
-			child.preflight = child.checkMochaPreflight
-		}
+		child.preflight = child.frameworkPreflight()
 		before := len(models)
 		execution, childErr := child.runPreparedConfiguration(ctx, output, &item)
 		prepareValidationResult(t.repositoryRoot, &execution)
 		completeConfigurationItem(&item, execution, childErr)
 		result.Configurations = append(result.Configurations, item)
 		if childErr != nil {
-			runErrors = append(runErrors, fmt.Errorf("%s: %w", entry.Command, childErr))
+			runErrors = append(runErrors, fmt.Errorf("%s: %w", displayed, childErr))
 		}
-		if execution.Compatibility.Status != "compatible" {
-			result.Compatibility = verdict{Status: "inconclusive", Reason: "At least one discovered configuration did not pass its paired comparison; see configurations."}
+		if execution.Compatibility.Status == "suspected regression" {
+			result.Compatibility = verdict{Status: "suspected regression", Reason: "At least one discovered configuration differs between uninstrumented and reporting-only runs; see configurations."}
+		} else if execution.Compatibility.Status != "compatible" {
+			result.Compatibility = combineConfigurationCompatibility(result.Compatibility, verdict{Status: "inconclusive", Reason: "At least one discovered configuration did not pass its paired comparison; see configurations."})
 		}
 		if result.Preflight == nil {
 			result.Preflight = execution.Preflight
 		}
-		if result.Selection == nil && execution.Selection != nil {
+		if result.Selection == nil && (execution.Selection != nil || t.lang().labelsTracerWithoutSelection() && result.Tracer == "not selected" && execution.Tracer != "") {
 			result.Selection = execution.Selection
 			result.Tracer = execution.Tracer
 			result.TracerSource = execution.TracerSource
+			tracerConfiguration = displayed
 		}
 		if execution.Tracer != "" && result.Tracer != execution.Tracer {
-			runErrors = append(runErrors, fmt.Errorf("tracer selection changed between configurations; select an exact --tracer-version"))
+			runErrors = append(runErrors, tracerMismatchError(tracerConfiguration, result.Tracer, displayed, execution.Tracer))
 		}
 		if execution.CIRuntime != nil {
-			result.CIRuntime = execution.CIRuntime
+			result.CIRuntime = t.lang().mergeCIRuntime(result.CIRuntime, execution.CIRuntime)
+		}
+		for _, sub := range execution.substitutions() {
+			result.addSubstitution(sub)
 		}
 		if result.CISelection == nil || execution.CISelection != nil && execution.CISelection.Status != "compatible" {
 			result.CISelection = execution.CISelection
@@ -226,6 +318,10 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if execution.Cleanup != nil && execution.Cleanup.Status != "passed" {
 			result.Cleanup = execution.Cleanup
 		}
+		if execution.Cleanup != nil {
+			leftovers = append(leftovers, execution.Cleanup.Leftovers...)
+		}
+		maps.Copy(ambient, execution.AmbientDatadogEnvironment)
 		for _, run := range execution.Runs {
 			run.Configuration = label
 			result.Runs = append(result.Runs, run)
@@ -238,6 +334,12 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		for i := before; i < len(models); i++ {
 			labelConfigurationModel(&models[i], label)
 		}
+	}
+	discloseConfigurationSideEffects(&result, leftovers, ambient)
+	// Remote-grid configurations never run here; without a compared local
+	// configuration of the same suite, nothing established compatibility.
+	if slices.ContainsFunc(result.Configurations, func(c configurationResult) bool { return c.RemoteGrid != "" }) && !remoteGridCovered(result) {
+		result.Compatibility = combineConfigurationCompatibility(result.Compatibility, verdict{Status: "inconclusive", Reason: "Only remote browser grid configurations were discovered; they can't run locally, so no local comparison established compatibility."})
 	}
 	if t.checkOnly {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration checks only; run --all without --check-only for all paired executions and features."}
@@ -265,7 +367,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 // Preflight and execution must resolve the same installed framework binary,
 // without requiring the caller to add node_modules/.bin to PATH.
 func (t *Testdrive) configurationExecutable(command string) string {
-	if strings.ContainsAny(command, `/\`) ||
+	if !t.lang().usesPackageBinaries() || strings.ContainsAny(command, `/\`) ||
 		slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx", "bun", "corepack", "ddtest"}, command) {
 		return command
 	}
@@ -378,4 +480,67 @@ func completeConfigurationItem(item *configurationResult, execution validationRe
 	if childErr != nil && execution.Preflight == nil {
 		item.Status = "blocked"
 	}
+}
+
+func ciInstrumentationDisabled(entry onboard.TestCommand) bool {
+	return entry.CIInstrumentationExcluded || entry.Environment["DD_CIVISIBILITY_ENABLED"] == "false"
+}
+
+func excludedConfiguration(entry onboard.TestCommand) configurationResult {
+	reason := "CI explicitly excludes Datadog instrumentation for this entry (disabled flags or a skipped conditional installer). Its original CI tests are preserved; no local paired execution or features are claimed."
+	if entry.UnsupportedNode {
+		reason = "Not tried: this entry's CI Node is below Node 18, the oldest dd-trace major ddtest supports, so ddtest left it uninstrumented on its own. Its original CI tests are preserved; no local paired execution or features are claimed."
+	}
+	if entry.WindowsRunner {
+		reason = "Windows runner: ddtest doesn't set up or validate Windows runners locally, so this entry stays uninstrumented. Add manual initialization to instrument it. Its original CI tests are preserved; no local paired execution or features are claimed."
+	}
+	return configurationResult{TestCommand: entry, Status: "excluded", Compatibility: verdict{Status: "not exercised", Reason: reason}}
+}
+
+func remoteGridConfiguration(entry onboard.TestCommand) configurationResult {
+	reason := entry.RemoteGrid + " runs this configuration on a remote browser grid with CI secrets, so it can't run locally; CI runs it with the same Datadog setup."
+	return configurationResult{TestCommand: entry, Status: "remote only", Compatibility: verdict{Status: "not exercised", Reason: reason}}
+}
+
+// remoteGridCovered reports whether a local configuration of the same suite
+// was compared: only then can a remote-grid configuration be a caveat.
+func remoteGridCovered(result validationResult) bool {
+	return slices.ContainsFunc(result.Configurations, func(configuration configurationResult) bool {
+		return configuration.RemoteGrid == "" && !configurationExcluded(configuration) && configuration.PairedExecution && configuration.Compatibility.Status == "compatible"
+	})
+}
+
+// configurationSettled reports whether a configuration can no longer block
+// completion: it passed, CI excludes it, or it runs only on a remote grid
+// while a local configuration of the same suite was validated.
+func configurationSettled(result validationResult, configuration configurationResult) bool {
+	return configuration.Status == "passed" || configurationExcluded(configuration) || configuration.RemoteGrid != "" && remoteGridCovered(result)
+}
+
+func configurationExcluded(entry configurationResult) bool {
+	return entry.Status == "excluded" && ciInstrumentationDisabled(entry.TestCommand)
+}
+
+// discloseConfigurationSideEffects keeps inherited Datadog settings and checkout
+// leftovers from every configuration, including passing ones, in the aggregate.
+func discloseConfigurationSideEffects(result *validationResult, leftovers []string, ambient map[string]string) {
+	if len(ambient) > 0 {
+		result.AmbientDatadogEnvironment = ambient
+	}
+	if len(leftovers) == 0 || result.Cleanup == nil {
+		return
+	}
+	cleanup := *result.Cleanup
+	slices.Sort(leftovers)
+	cleanup.Leftovers = slices.Compact(leftovers)
+	if !strings.Contains(cleanup.Reason, "Left in the checkout") {
+		cleanup.Reason += " Left in the checkout by commands run there: " + strings.Join(cleanup.Leftovers, ", ") + "."
+	}
+	result.Cleanup = &cleanup
+}
+
+// tracerMismatchError names the configurations whose tracer selections differ,
+// so one release covering both can be selected.
+func tracerMismatchError(firstCommand, firstTracer, command, tracer string) error {
+	return fmt.Errorf("tracer selection differs between configurations: %s uses %s, %s uses %s; rerun with an exact --tracer-version that both support", firstCommand, firstTracer, command, tracer)
 }

@@ -1,0 +1,640 @@
+# Maintenance and source updates
+
+The files under `internal/thirdparty` are maintained source subsets, and this
+repository owns their adaptations and tests. Each origin records an exact
+upstream commit so a later update can compare the original code with both the
+new source and our port.
+
+An SDK update must preserve CI behavior and the Mini runtime's dependency
+boundary. Review upstream changes in removed APM code too when they affect a
+shared helper or the CI wire schema.
+
+## Source ownership and records
+
+[`internal/thirdparty/README.md`](../internal/thirdparty/README.md) lists the
+origins and revisions. Every origin has its original licenses and a
+`SOURCE.json` manifest. Paths in that manifest are relative to the origin
+directory and use forward slashes.
+
+| Record | Meaning |
+| --- | --- |
+| `repository`, `commit`, `version` | Upstream repository, exact 40-character Git SHA and module version |
+| `files[].path`, `sha256` | Local file and its exact byte hash |
+| `source_path`, `source_sha256` | Original upstream path and bytes at the recorded base |
+| `role: upstream` | A copied file that matches upstream |
+| `role: adapted` | A derived file with local changes |
+| `role: local` | ddto's own code, test or documentation beside the upstream package |
+| `licenses` | License files that must remain present and recorded |
+| `feature_ports` | Separately frozen feature PRs, original paths/hashes and local destinations; select their SHA with `--source-commit` |
+| `additional_sources` | Upstream inputs used for an extraction or schema outside a direct file copy |
+
+When a feature PR lands in the selected base, its ordinary file records use that
+base. Keep its original `feature_ports` revision for comparison history and record
+the merge under `integrated_commit`. Advance the feature's differential fixture
+to the same SDK version; do not apply the feature delta a second time.
+
+The SDK's [test inventory](../internal/thirdparty/dd-trace-go/TESTS.json) records
+ported assertions and adaptations. The platform
+[extraction inventory](../internal/thirdparty/xsys/EXTRACTION.json) identifies
+selected declarations and their origins. These records need to agree with
+`SOURCE.json` after an update. `upstream.py verify` checks each test that the
+test inventory records with an `adapted_sha256`: a change to such a test needs
+its new hash there, and its `adaptation` says what the change keeps or adds.
+
+The SDK's [performance adaptation record](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md)
+explains each hot-path change, its ownership/lifetime rules and the regression
+checks required during synchronization. Review it alongside the generated patch:
+hashes identify changed bytes, and the record explains why they changed.
+
+SDK `internal/<path>` maps to `internal/thirdparty/dd-trace-go/<path>`.
+Its `ddtrace/ext/` subtree keeps that relative path. Removing only the top
+upstream `internal/` avoids a second Go visibility boundary. Codec files retain
+`msgp/msgp/` and the original `fwd/` root layout; platform code keeps
+`xsys/windows/`, `windows/registry/` and `unix/`.
+
+Code outside these origins has a separate owner. The native event schema in
+[`events.go`](../internal/minitracer/events.go) is derived from the SDK's
+`ddtrace/tracer/civisibility_tslv.go`, recorded under `additional_sources`.
+It must be reviewed even when the copied CI files are unchanged.
+
+## Audit commands
+
+Run these from the repository root with Python 3:
+
+```sh
+python3 scripts/upstream.py verify
+python3 -B -m unittest discover -s scripts -p 'test_upstream.py'
+```
+
+`verify` checks recorded local hashes, exact commit syntax, licenses, safe paths
+and unregistered Go or assembly sources. It runs offline, so it neither proves
+the supplied commit's contents nor discovers new upstream files.
+
+Given explicit upstream snapshots:
+
+```sh
+python3 scripts/upstream.py diff --library dd-trace-go --source "$NEW_SDK"
+python3 scripts/upstream.py patch --library dd-trace-go --source "$OLD_SDK" > "$UPDATE_DIR/local-adaptations.diff"
+```
+
+`diff` reports changed or missing selected source inputs. A successful exit can
+still report changed files; read the output. New upstream files outside the
+selection are not listed. `patch` first checks that the supplied old snapshot
+matches the recorded hashes, then writes the adaptation diff with original and
+local paths. Binary fixtures remain covered by hashes.
+
+After reviewing a local change against the same upstream base:
+
+```sh
+python3 scripts/upstream.py rehash --library dd-trace-go --source "$OLD_SDK"
+python3 scripts/upstream.py verify
+```
+
+`rehash` changes local hashes only. It preserves the upstream revision and
+original hashes, and refuses missing files, unregistered code and changed
+license texts. It cannot advance the SDK base. Origin READMEs and local test
+inventories are also hashed; editing them needs the same review and rehash.
+`rehash` also refuses a test whose hash the test inventory no longer records,
+so update `TESTS.json` first.
+
+## Updating the SDK base
+
+Prepare an isolated worktree and an update directory outside it. The examples
+below use a Unix shell, Git and tar. On Windows, use Git Bash or create equivalent
+archives with your Git client.
+
+1. Read the current SDK manifest and freeze the candidate SHA from the SDK's
+   default branch. Record its module version and verify that the Git commit and
+   module version identify the same revision. Resolve the default branch for
+   every update instead of assuming the pinned base is still its tip. This
+   command returns both the branch name and its current full SHA:
+
+```sh
+git ls-remote --symref https://github.com/DataDog/dd-trace-go.git HEAD
+```
+
+2. Obtain both snapshots from an SDK checkout containing those commits.
+   Set `SDK_CHECKOUT` to that checkout and `UPDATE_DIR` to a new scratch
+   directory. Read `OLD_SHA` from the manifest and set `NEW_SHA` to the
+   candidate's full SHA.
+
+```sh
+OLD_SDK="$UPDATE_DIR/old-sdk"
+NEW_SDK="$UPDATE_DIR/new-sdk"
+mkdir -p "$OLD_SDK" "$NEW_SDK"
+git -C "$SDK_CHECKOUT" archive "$OLD_SHA" | tar -x -C "$OLD_SDK"
+git -C "$SDK_CHECKOUT" archive "$NEW_SHA" | tar -x -C "$NEW_SDK"
+
+python3 scripts/upstream.py diff --library dd-trace-go --source "$NEW_SDK"
+python3 scripts/upstream.py patch --library dd-trace-go --source "$OLD_SDK" > "$UPDATE_DIR/local-adaptations.diff"
+git -C "$SDK_CHECKOUT" diff --name-status "$OLD_SHA" "$NEW_SHA" -- internal/civisibility ddtrace/tracer/civisibility_tslv.go
+```
+
+3. Compare each affected file with three inputs: the old upstream source, the
+   new upstream source and the current local adaptation. Retain import
+   relocation, native-client bindings, CI-only exclusions and local ownership
+   tests. Inspect added and deleted CI files separately, including helpers
+   called by CI code and changes to the schema recorded in `additional_sources`.
+   Removed APM files and APIs stay removed: the SDK's
+   [removed APM code](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#removed-apm-code)
+   lists what each reduced package keeps and when a removed API may return.
+
+```mermaid
+flowchart TB
+    Old["Recorded upstream<br/>base"] --> Upstream["Review old-to-new<br/>upstream changes"]
+    New["New default-branch<br/>snapshot"] --> Upstream
+    Old --> Adaptations["Review old-to-local<br/>adaptations"]
+    Local["Current CI-only port"] --> Adaptations
+    Upstream --> Merge["Merge selected<br/>changes into the<br/>local port"]
+    Adaptations --> Merge
+    Merge --> Records["Update source<br/>records, pins and<br/>test inventory"]
+    Records --> Generate["Regenerate affected<br/>serializers"]
+    Generate --> Audit["Audit hashes,<br/>licenses and<br/>dependency boundary"]
+    Audit --> Tests["Differential,<br/>coverage, race and<br/>platform checks"]
+```
+
+4. Update the SDK `SOURCE.json` repository/version/commit fields, original
+   hashes and source paths to the new base. Classify every new local or derived
+   file explicitly and remove records only for deliberately removed files.
+   Preserve original copyright headers, LICENSE and NOTICE; review any upstream
+   license change. Refresh the ported-test inventory and its own manifest hash.
+   If a wire-schema input changes, update its source hash and our native schema
+   together.
+
+5. Advance `SDKVersion` and `SDKCommit` in
+   [`internal/version/version.go`](../internal/version/version.go).
+   Update `testdata/fixture/go.mod` and its checksums to that exact module
+   version, and review transitive module changes there. The CLI, differential
+   tests and fixture must agree. The fixture's full SDK dependencies belong to
+   comparison tests; they must not become Mini runtime imports.
+   Review testing advice and CLI hook declarations too: the SDK runtime must
+   receive any newly supported hook, linked to its own implementation.
+
+6. Regenerate affected code, then use `rehash` against `NEW_SDK` after the
+   original-hash records have been updated. Refresh per-origin READMEs,
+   [NOTICE](../NOTICE), the root source overview and any configuration or
+   compatibility descriptions changed by the update. Benchmark reports keep
+   their measured revision until a new run replaces them; use the
+   [benchmark guide](build-benchmarks.md) to update the latest dataset.
+
+7. Run the applicable checks below and inspect the complete diff. An update
+   description should identify the old and new SHAs, CI behavior changes,
+   adaptations preserved, dependency result and platform proof.
+
+The update is a reviewed merge. There is no command in this repository that
+replaces an origin wholesale with the latest upstream source.
+
+## Codecs and generated files
+
+The MessagePack generator pins live in
+[`scripts/internal/messagepack/source.go`](../scripts/internal/messagepack/source.go).
+The copier reads those exact versions from the Go module cache; its output
+includes per-origin `COPY.json` files. Those copy inventories do not replace the
+canonical `SOURCE.json` record.
+
+For a deliberate codec recopy at the checked-in pins:
+
+```sh
+go mod download github.com/tinylib/msgp@v1.6.4 github.com/philhofer/fwd@v1.2.0
+go run ./scripts/vendor-msgpack
+go generate ./internal/thirdparty/msgp/msgp ./internal/minitracer ./internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage
+```
+
+The copier overwrites selected codec sources, so run it in an isolated worktree
+and review the diff before keeping its output. It skips the upstream
+directories listed in `excludedSubtrees` (currently `msgp/setof`, which nothing
+imports), so a recopy produces exactly the files recorded in `SOURCE.json`.
+It also copies Go's `LICENSE` from `GOROOT`; some distribution packages omit
+that file, so use an official toolchain, for example `GOTOOLCHAIN=go1.27.1`. A
+codec version upgrade also changes the generator pins, exact Git SHAs,
+manifests and origin READMEs.
+Generated `*_msgp.go` files come from their source schema and directives; edit
+those inputs and regenerate.
+
+Generation runs the pinned tool in an isolated module. Tool dependencies are
+allowed there; the resulting Mini runtime must still import only this module
+and the standard library. Check `go.mod` and `go.sum` for unintended changes.
+
+## Removing unused upstream code
+
+The incorporated sources are subsets, and code that nothing reaches can be
+removed. Run this check after an update adds code, or before a cleanup. A plain
+`deadcode ./...` is not enough: Mini is a library linked into user test
+binaries, and the instrumented `testing`, Testify and goleak packages call it
+through `//go:linkname` declarations that no analysis follows.
+
+1. Install the tools outside the module, so `go.mod` does not change:
+   `GOBIN="$TOOLS" go install golang.org/x/tools/cmd/deadcode@latest` and
+   `honnef.co/go/tools/cmd/staticcheck@latest`.
+2. Copy the tracked files to a scratch directory and add the missing roots there:
+   - a `main` package in `_deadroot/` that calls `cli.Main`, as ddtest does,
+     and every exported function, and takes every exported method value, of
+     `testopt` and `propagation`;
+   - the hook targets: every function that the hook source generated by
+     `internal/instrument` and `internal/runner` names in a `//go:linkname`
+     line. The runner rewrites the SDK paths to this port for Mini. They
+     include the `testing` hooks, the Testify registration,
+     `cidelivery.PrepareLeakCheck` and the SDK-mirror functions. Treat any other
+     single-argument (push) `//go:linkname` declaration as a root too, until
+     you confirm that nothing names it. In each package that defines one, add a
+     file such as
+     `var DeadRootRefs = []any{instrumentTestingM, instrumentTestingTFunc}`
+     and reference it from `_deadroot`. Taking the function values makes them
+     reachable.
+3. Run `GOOS=$os "$TOOLS/deadcode" ./_deadroot` for `linux`,
+   `darwin` and `windows`. Remove only functions unreachable on all three.
+   Platform files appear only for their own `GOOS`.
+4. `deadcode` reports functions only. Find unused constants, variables and types
+   (such as span tag constants) with a references search, for example `gopls`
+   or a `go/types` scan. Count test references separately: code used only by
+   ported tests goes with those tests.
+5. Keep reachable code that changes payloads or that the SDK differential tests
+   compare, even when it looks like APM.
+6. Compare `staticcheck -checks U1000 ./internal/thirdparty/...` before and
+   after. New findings are private code that the removal left orphaned.
+7. Remove the files' `SOURCE.json` records, add the area to `excluded_features`,
+   record local hashes with `rehash` against the recorded base, and update
+   `TESTS.json` for changed ported tests. Make copy scripts skip removed
+   upstream directories so a recopy cannot restore them.
+
+## Platform updates and Go upgrades
+
+The `xsys` origin is a selected adaptation, so review the declarations in
+`EXTRACTION.json` alongside `SOURCE.json` and `additional_sources`. Changes
+to Windows Job Objects, suspended-thread handling, timer layouts or registry
+decoding need native regression tests and ABI checks for the affected
+architectures. Unix metadata changes need fixed-buffer, partial-read and
+formatting checks. Solaris's runtime trampoline needs special review when Go
+changes.
+
+Linux and AIX metadata use `syscall.Uname`. BSD targets use fixed-buffer
+numeric sysctl reads, retaining partial data on `ENOMEM`; their tests preserve
+buffer bounds and whitespace. Solaris has a small libc/runtime trampoline.
+Windows keeps selected Job Object, thread, timer and registry operations,
+including system-directory-only DLL loading. Review those runtime/ABI hooks
+when Go changes; a cross-link does not establish native platform equivalence.
+
+For a Go upgrade, inspect the transformer and private hook signatures, testing
+reflection offsets, retry-process handling, the runtime coverage emitter and
+testing's `-test.run` matcher, which `gotesting/test_selection.go` ports.
+Add the new toolchain to the compatibility matrix only after exercising it.
+Keep the oldest tested toolchain until a compatibility change is explicitly
+accepted.
+
+## Supported dd-trace-go and Orchestrion versions
+
+`ddtest instrument` edits three dd-trace-go packages when it compiles a test
+binary: `internal/config` and `internal/civisibility/envconfig`, whose CI
+guards are mandatory, and `ddtrace/tracer`, for the
+[SDK span mirror](sdk-span-mirror.md). It supports every dd-trace-go release
+from v2.10.0 and the main branch. For Orchestrion, it supports the releases of
+the last two minors and the main branch.
+[`scripts/supported_versions.json`](../scripts/supported_versions.json) lists
+them, with main at a fixed pseudo-version, and the integration tests read it:
+
+- `TestMiniSDKSupportedVersions` applies every SDK edit to each listed
+  version, with `runner.SDKEdits` and the same steps as a compile. It only
+  parses sources, so it takes seconds for all of them.
+- The tests that build and run binaries with several SDK versions,
+  `TestMiniSDKMirrorContextMatrix`, `TestMiniLegacySDKShim` and
+  `TestMiniOrchestrionLegacySDKShim`, run the pinned SDK and one version for
+  each fingerprint: the hash of the edited packages' Go files and the module's
+  `go.mod`. Versions with the same fingerprint compile the same edited sources,
+  so the newest of them stands for the others. On 2026-10-28, v2.10.0 and
+  v2.10.1 shared one, and v2.11.1 and v2.11.2 another.
+- `TestMiniOrchestrionSupportedVersions`, on Linux, builds each listed
+  Orchestrion version and composes it with Mini and the pinned SDK. Orchestrion
+  is not edited, so every version runs. The deeper Orchestrion tests use the
+  pinned reference.
+
+Pull requests and pushes test the list. The nightly run of the
+[Go instrumentation workflow](../../.github/workflows/go-instrumentation.yml)
+tests the window that the module proxy has then, from
+`supported_versions.py resolve`, through `DDTO_SUPPORTED_VERSIONS`, and fails
+when `supported_versions.py check` finds releases that the list lacks or no
+longer includes. Update the list in a pull request then, with main's new
+pseudo-version from `supported_versions.py resolve`. Before each release the
+release workflow runs the whole workflow on that live window with
+`DDTO_COMPATIBILITY=full`, which runs every version even when fingerprints
+match; the release job waits for it.
+
+## Releases
+
+ddto is released with ddtest, by ddtest's release and prerelease workflows.
+A release first passes the
+[compatibility run](#supported-dd-trace-go-and-orchestrion-versions). Both run
+`make release`, which builds ddtest's executables with
+[`scripts/release`](../scripts/release/main.go) and `-version` set to
+ddtest's version. The executables, the runtime sources that they carry, logs,
+telemetry and test events report it, through `-overlay`; the checkout keeps
+`0.0.0-dev`, which development builds report. `scripts/release` takes
+`vMAJOR.MINOR.PATCH` with an optional prerelease, so the Makefile passes a
+version that does not start with `v`, such as a prerelease's
+`pre-release-<sha>`, as `v0.0.0-pre-release-<sha>`. Its `-stamp` mode, which
+wrote a version into the checkout for the release commits of ddto's own
+releases, is not used.
+
+[`scripts/release`](../scripts/release/main.go) builds `<name>-<os>-<arch>`
+(`-name`; `ddtest`, with `-main ..`, for ddtest's releases) for
+Linux, macOS and Windows on `amd64` and `arm64`. Each executable carries the
+two files of [`internal/bundle`](../internal/bundle/bundle.go): a zip of the
+runtime's sources, which are `go.mod`, the license files (`LICENSE`,
+`LICENSE.Apache`, `LICENSE.BSD3`, `LICENSE-3rdparty.csv`), `NOTICE` and the
+non-test sources and license texts of `internal`, `propagation` and `testopt`, and the
+tool wrapper built for its platform from the sources that ddto would build, so
+its key matches.
+`-overlay` supplies both with the `ddto_release` build tag, and the checkout is
+not modified. Other builds carry neither and behave as before.
+
+`TestRuntimeArchiveCoversEveryPlatform` checks that the zip holds every file Go
+compiles for a runtime package on each platform that `go tool dist list`
+names; a runtime package outside those directories needs a new entry in
+`runtimeDirs`. `TestReleaseExecutableIsSelfContained` builds the host's
+executable with a version and runs it with an empty user cache and module
+cache and a module proxy that refuses every request.
+ddtest's install scripts, `install.sh` and `install.ps1` in the
+[scripts directory of its repository](../../scripts), are in each release with
+the `SHA256SUMS` that they check the executables with; `make release` adds them,
+and the release workflows install the Linux executable from the release's files
+with both before publishing. [`test_install.py`](../../scripts/test_install.py),
+which ddtest's CI runs, runs them against a local server: a checked download, a
+checksum mismatch, a platform without an executable, an installed executable
+of the same version and `GITHUB_PATH`.
+`TestInstallScriptsInstallTheReleaseExecutable` installs the host's release
+executable of ddtest with each script that the platform has, PowerShell on
+Windows included.
+
+## Verification before publication
+
+Use focused checks while developing. For an SDK, codec, platform or ownership
+change, the relevant full validation is:
+
+```sh
+python3 scripts/upstream.py verify
+python3 -B -m unittest discover -s scripts -p 'test_upstream.py'
+go vet ./...
+GOARCH=386 go vet ./...
+go mod verify
+(cd testdata/fixture && go mod verify)
+go list -deps -f '{{if and (not .Standard) .Module}}{{.Module.Path}}{{end}}' ./testopt ./cli | sort -u
+```
+
+The final command should list only `github.com/DataDog/ddtest/ddto`.
+The distributed module has no `require` directives. This includes test-only
+dependencies: a consumer's `go mod tidy` also examines dependency tests. Ported
+SDK assertions use [`internal/testassert`](../internal/testassert/assert.go) and
+its fatal `require` wrappers. Preserve the assertion inputs and results when
+updating SDK tests; extend the helpers with standard-library code when needed.
+
+Integration tests start fake intakes with `newServer`
+([`integration/server_test.go`](../integration/server_test.go)), not
+`httptest.NewServer`. Test binaries share the SDK's short-lived read cache by
+intake URL, and binaries run directly by the test process share its scope. A
+server on a port that an earlier server used could otherwise see settings from
+that cache instead of being asked, as `TestMiniCodeOwnersCompiledServices` once
+did on CI. `newServer` never reuses an address within the process.
+
+The module declares Go 1.25 and uses that release's standard library APIs.
+`internal/compat` has only two Go 1.26 equivalents: `AsType` and `Pointer`.
+Keep native error matching and value ownership when changing them. Version
+constraints belong at private testing layouts or APIs that differ by toolchain;
+ordinary source files need no language header.
+
+A modern toolchain can compile a client with an older language version. Preserve
+that distinction: do not bump the client's `go` directive to satisfy Mini.
+Preparation supplies Mini as a separate main module in a temporary workspace.
+Each module keeps its language, and the workspace retains the caller's effective
+GODEBUG defaults. Native `-mod=mod` may update the client's own requirements;
+Mini's injected imports must never cause those updates. Alternate modfiles,
+overlays, workspaces and vendored patches participate in this contract.
+See [Go's GODEBUG contract](https://go.dev/doc/godebug). A missing `go`
+directive means Go 1.16 in `go.mod` and Go 1.18 in `go.work`; keep those
+defaults when a temporary workspace needs a newer `go` line.
+
+Temporary workspace settings belong to ddto's `go test` command and the build
+tools it runs. List every Go environment variable that preparation replaces in
+`goenv.Settings`, and save it with `goenv.Save`, or with `goenv.SaveValue` when
+the native value is not the caller's, as for a mirrored toolchain's `GOROOT` and
+`PATH`. Only the test runtime may import `internal/goenv/restore`; the CLI and
+its tool helpers import `goenv`, which restores nothing on its own. Values that
+the CLI computes once for test processes, such as `GitHubJobIDHandoff`, are
+removed by `goenv.Receive`, which only the restore package calls: `ddto
+test-exec` must pass them on. Both packages must keep importing only `syscall`:
+their tests check that restoration initializes before `os` and before an earlier
+dependency.
+
+The tool wrapper in `internal/toolwrap` is built as its own module from the
+sources that ddto embeds, so it can import only the standard library, and its
+cache key hashes those sources: a change needs no version bump.
+`TestConstantsMatchTheirOwners` checks the names it repeats from other
+packages. Keep any work that needs ddto's packages in `tool-overlay`, which the
+wrapper runs only for calls that need the plan.
+
+ddto's Git worker (`internal/runner/gitstate.go`, `civisibility/cligit`) must
+see what a test process sees: start it with the test processes' environment,
+and keep each piece of work in the order a test process does it. The upload
+precedes the base-branch discovery, which needs the fetched history. Nothing
+that changes the repository may run before a test process marks the state
+`used`, including fetching a CI head commit. Every result file that test
+processes wait for must be written, by the worker or by `recordMissingResults`
+once the worker closes its standard output, before `go test` can exit. Test
+processes open the state's files with `openUnlogged`, outside Go's test log.
+The worker links the SDK's HTTP client into `ddto`, and with it `globalconfig`,
+whose root-session variable `ddto` removes from its own environment at start.
+`ddto` stops the worker, on a signal or after `--git-upload-timeout`, with a
+`stop` line: the worker's Git commands receive SIGTERM (killed after
+`gitStopDelay`), its requests stop through `RequestHandler.Context`, and the
+upload removes its pack files and records the stop. Keep every Git command of
+the worker on `newGitCommand` and every request on the handler, or a stopped
+worker would wait for them; `ddto` kills a worker that has not exited after
+`gitWorkerStopWait`.
+
+The worker owns the invocation's telemetry application. It must write
+`telemetry.json` before its Git record, send `app-started` only once a test
+process uses the state, and send `app-closing` only after `go test` exits, so
+that no test process sends after it. Every process that reports the
+application takes its `seq_id` from `seq/`.
+
+With `-race`, `noraceOverlay` in `internal/runner/norace.go` gives a client's
+build copies of Mini's sources that mark each function `//go:norace`. The
+copies must keep every token and position of their sources:
+`TestNoraceSourcePreservesPositions` checks each Mini runtime file, and
+`TestMiniRaceInstrumentsClientOnly` checks a built binary. Clients that import
+Mini keep it instrumented (`TestMiniRaceKeepsMiniInstrumentedForAPIClients`).
+Because `ddtest instrument test -race` no longer race-checks Mini's own code, keep running
+Mini's unit tests with `go test -race`.
+
+Vendor workspaces are content-addressed: bump `vendorWorkspaceLayout` in
+`internal/runner/vendor.go` whenever their stored files or links change.
+`goSelectsVendor` mirrors cmd/go's `setDefaultBuildMod`, and
+`vendorManifest.contents` its `canonicalizeReplacePath`; recheck both when Go
+changes vendoring. Never write a manifest path containing whitespace: cmd/go
+splits those lines on spaces, so such targets use `replacements/<n>` links.
+`declareAliases` relies on cmd/go's `replacementFrom` reading `go.work`
+replacements before any `go.mod` replacement. Reuse and pruning coordinate
+through `<key>.lock`; keep the lock beside the workspace so removal never
+deletes a file a waiting run opened inside it.
+
+Check Go 1.25, 1.26, 1.27 and tip after changing these paths. The frozen SDK
+requires Go 1.26, so the Go 1.25 job runs all local runtime packages and explicit
+Mini fixtures with `GOTOOLCHAIN=local`. The latter assert the child runtime
+version and cover Testify, goleak, coverage, fuzz/examples and deferred delivery.
+Go 1.26 and 1.27 run the complete SDK differential suite. Tip runs the native
+Mini fixtures and manual SDK span-copy cases; the frozen Orchestrion reference
+cannot currently serve as a tip oracle. Check Orchestrion separately before
+extending the tip job to those comparisons. Pull requests, nightly and manual
+runs test tip.
+
+Run `python scripts/dependency_boundary.py` before publication; the
+Go instrumentation workflow runs it too. It fails on any external requirement or
+nonstandard runtime package outside this module. Consumer regressions cover
+older dependencies, readonly/mod flags and Go 1.21 language behavior.
+
+Install the frozen Orchestrion reference used by the
+[workflow](../../.github/workflows/go-instrumentation.yml), then export
+`ORCHESTRION_BIN` to that binary's absolute path. On Windows the binary has an
+`.exe` suffix. Without this variable, the Orchestrion comparison is skipped.
+
+```sh
+go test -count=1 -timeout=30m ./...
+PARITY_TEST_MODE=race PARITY_EXECUTION_ORDER=mini-first \
+  go test -race -count=1 -timeout=40m ./...
+go test -race -covermode=atomic \
+  -coverpkg=./internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage \
+  -run TestRuntimeCoverage -count=1 \
+  ./internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage
+```
+
+The workflow's `go test` timeout for each group is 20 minutes for normal Linux,
+25 minutes for Linux race and macOS, and 35 minutes for Windows. Job timeouts
+also include setup, every group in the job and reporting. Use the
+[workflow](../../.github/workflows/go-instrumentation.yml) as the source of truth when
+those limits change.
+
+When a group's duration changes noticeably, rebalance the `jobs` layout in
+[`ci_shards.json`](../scripts/ci_shards.json) with the per-group times in the
+`compatibility-evidence` summary. The account runs at most 20 jobs at a time,
+five of them on macOS, so fewer, balanced jobs finish sooner than many short
+ones. Keep the CLI group in the first job of each layout. That job saves the shared Go
+cache, and a cache built by the CLI and parity groups shortened the other jobs'
+groups by up to 78% in measured runs.
+
+The full compatibility suite exercises actual binaries, payloads, retry
+processes and failure paths. Its comparison preserves CI attributes and
+hierarchy semantics while allowing the documented APM-only differences.
+Do not expand normalization to hide a changed CI value.
+
+The CI matrix executes Go 1.25/1.26/1.27 on Linux, plus tip on pull requests,
+nightly and manual runs, and Go 1.27 on macOS/Windows. Linux also runs `-race`. Inspect the
+current head and PR merge checks after publication and verify that their
+checked-out inputs match the proposed change. Cross-compiling another
+architecture establishes build compatibility only. Actual intake acceptance and
+a real Bazel compiler invocation are separate verification tasks.
+
+For a docs-only change, check local links, code paths, command examples and
+Mermaid rendering. Diagrams are editable `mermaid` fences rendered by
+[GitHub](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/creating-diagrams).
+Update an invariant's description when its implementation changes.
+
+## Updating Testify instrumentation
+
+The Testify source belongs to the client and is not an incorporated source
+subset. The [Testify design and validation notes](testify.md) describe the
+version floor, ABI guard, selective tool dispatch, cache fingerprint and
+coverage bridge. Review the SDK's Testify advice and registration hook together
+with a Testify version update. Add the version to
+`TestTestifySupportedVersionsAndNativeSemantics` and run the full Orchestrion
+comparison, including covered library/helpers, external callers, user overlays,
+GOFLAGS and both retry modes. Keep the SDK/Orchestrion reference independent of
+both of ddto's runtimes. No Testify source is vendored into this repository.
+
+`testifyContractVersion` in [`runner/testify.go`](../internal/runner/testify.go)
+versions compiler-side edits. Bump it when the transformation changes without
+changing the prepared source or hook; otherwise Go can reuse an older
+instrumented object. `coverContractVersion` in
+[`runner/cover.go`](../internal/runner/cover.go) versions the coverage bridge.
+Prepared content fingerprints omit temporary paths. Preserve native compiler
+and linker `-V=full` responses and check unchanged builds avoid both tools.
+
+Run [`TestTestifyVersionGuardWithWarmVendoredSources`](../integration/vendor_cache_test.go)
+when changing detection or version validation. Its source bytes stay constant
+while module/vendor metadata changes, so compile-time-only guards cannot pass
+it. Also run [`TestTestifyContractInvalidatesOnlyTestingDependents`](../integration/selective_tools_test.go)
+when changing the marker or tool identity: Testify must rebuild while unrelated
+standard-library packages remain cached. These assertions use
+`compilerTraceLines` to recognize native `go test -x` commands, including quoted
+Windows executables and Unix paths with spaces. Keep that parser control when
+changing cache tests, because a missed command can invalidate their proof. The
+[Testify contract](testify.md) explains why selected-version validation must
+run before compilation even when Go can reuse a cached archive.
+
+After a platform change, check Unix `exec` replacement and Windows child exit
+status separately. A cross-compiled CLI is build proof; the workflow must run
+the integration fixtures natively on that platform. Update the architecture,
+Testify contract, validation inventory and performance guide together.
+
+## CODEOWNERS source updates
+
+`civisibility/utils/codeownership` is maintained with the SDK code and recorded as
+local additions until an upstream Go revision includes it. The
+[package guide](codeownership.md) describes matching, Unicode behavior and
+checks. Update it through the same SDK workflow; keep the Go rule tables,
+examples and wire tests alongside the implementation.
+
+## Fuzz and Examples source updates
+
+The general SDK base and PR #5442 feature have separate revisions. Use
+`--source-commit` with the recorded feature SHA when generating its patch.
+The [feature guide](fuzz-examples.md) describes its adapters, offset validation,
+fixtures and required checks. When the upstream default branch contains the
+feature, compare both records before selecting a new common base; preserve the
+original assertions, local deferred admission and precise goleak filters.
+
+## Mini and Orchestrion in one build
+
+[Orchestrion composition](orchestrion.md) assigns testing hooks to ddto and
+application weaving to Orchestrion. Keep version probes chained through the
+original tool, even for packages whose compilation bypasses Orchestrion.
+
+Mini activates the SDK guard when the existing package query finds SDK CI
+dependencies, including those reached through test-only helpers. Orchestrion
+builds always activate it because weaving can introduce SDK imports. Keep that
+detection in the shared dependency query; it needs no extra Go command. A client
+that merely requires an unused SDK keeps the wrapper disabled.
+
+The Mini-specific SDK guard rewrites `envconfig.FromEnv`,
+`Config.CIVisibilityEnabled` and `Config.CIVisibilityAgentlessActive` in temporary
+compiler inputs. Both CI initialization and transport selection must stay
+inactive in the full SDK while Mini owns reporting. Check the SDK consumers
+when these private APIs change. Do not disable CI by changing the process
+environment: Mini needs it, and runtime mutation could race with tests.
+
+Bump the contracts in `sdkCompilerCacheMarker` when the guard semantics change.
+Verify both build orders against SDK mode, and retain the actual APM HTTP test,
+because a mock span alone cannot establish which transport the SDK uses. The
+composition tests also exercise the SDK's manual test shim and v2.11
+configuration boundaries. `TestMiniLegacySDKShim` verifies the same boundary
+without Orchestrion, including native SDK builds before and after Mini, failed
+tests and APM HTTP delivery. No SDK source in the module cache or incorporated
+runtime is changed by this guard.
+
+The same compiler boundary installs the SDK span mirror. Maintain its
+construction, `SpanContext` snapshot, finish and deferred-unlock anchors
+together. Capture owns
+detached maps before the SDK can pool a span; delivery must run after its unlock.
+Register capture's defer after the SDK unlock defer and delivery's defer before
+it. Their execution order is capture, unlock, delivery. Only completed trace
+bookkeeping enables capture. Keep the compiled fixture tests for final fields,
+panic/early-return behavior and local renames when changing the matcher.
+The native context binding in `gotesting/context.go`, `testing.go` and
+`instrumentation_orchestrion.go` is a local runtime adaptation. Register local
+helpers and tests in `SOURCE.json`; retain the original SDK hashes and base.
+Keep SDK-free context binding allocation-free, and rerun the real APM/CI
+receivers, parallel/retry isolation, pooled-context, coverage and Orchestrion
+cases described in [SDK span copies](sdk-span-mirror.md). Bump the cache marker
+when compiler hooks change, including generated initialization code.
+The edits that make SDK spans under a test join its trace (`submitChunk`,
+`computeOversizedSpanStats`, and the trace ID, origin and sampling internals)
+are optional: without them, copies keep their own identity, the SDK sends its
+spans to APM and the CLI warns. Keep `TestSDKMirrorAdoptionDrift` and
+`TestSDKMirrorHookCompiles` when changing them.

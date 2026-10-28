@@ -1,0 +1,100 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2025 Datadog, Inc.
+
+package telemetrytest
+
+import (
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+
+	assert "github.com/DataDog/ddtest/ddto/internal/testassert"
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/telemetry/internal/transport"
+)
+
+func TestGlobalClient(t *testing.T) {
+	// Telemetry caches its enabled flag for the process lifetime. Exercise
+	// the upstream enabled-recorder contract in a fresh copy of this test binary
+	// when the enclosing suite deliberately disables telemetry.
+	if telemetry.Disabled() {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestGlobalClient$", "-test.v")
+		for _, variable := range os.Environ() {
+			if !strings.HasPrefix(variable, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=") {
+				cmd.Env = append(cmd.Env, variable)
+			}
+		}
+		cmd.Env = append(cmd.Env, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=true")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		require.Contains(t, string(output), "--- PASS: TestGlobalClient")
+		return
+	}
+	t.Run("config", func(t *testing.T) {
+		recorder := new(RecordClient)
+		defer telemetry.MockClient(recorder)()
+
+		telemetry.RegisterAppConfig("key", "value", telemetry.OriginCode)
+		assert.Len(t, recorder.Configuration, 1)
+		assert.Equal(t, "key", recorder.Configuration[0].Name)
+		assert.Equal(t, "value", recorder.Configuration[0].Value)
+		assert.Equal(t, telemetry.OriginCode, recorder.Configuration[0].Origin)
+	})
+
+	t.Run("configs", func(t *testing.T) {
+		recorder := new(RecordClient)
+		defer telemetry.MockClient(recorder)()
+
+		telemetry.RegisterAppConfigs(telemetry.Configuration{Name: "key", Value: "value", Origin: telemetry.OriginCode}, telemetry.Configuration{Name: "key2", Value: "value2", Origin: telemetry.OriginRemoteConfig})
+		assert.Len(t, recorder.Configuration, 2)
+		assert.Equal(t, "key", recorder.Configuration[0].Name)
+		assert.Equal(t, "value", recorder.Configuration[0].Value)
+		assert.Equal(t, telemetry.OriginCode, recorder.Configuration[0].Origin)
+		assert.Equal(t, "key2", recorder.Configuration[1].Name)
+		assert.Equal(t, "value2", recorder.Configuration[1].Value)
+		assert.Equal(t, telemetry.OriginRemoteConfig, recorder.Configuration[1].Origin)
+	})
+
+	t.Run("app-stop", func(t *testing.T) {
+		recorder := new(RecordClient)
+		defer telemetry.MockClient(recorder)()
+
+		telemetry.StopApp()
+		assert.True(t, recorder.Stopped)
+	})
+
+	t.Run("product-start", func(t *testing.T) {
+		recorder := new(RecordClient)
+		defer telemetry.MockClient(recorder)()
+
+		telemetry.ProductStarted(telemetry.NamespaceAppSec)
+		assert.Len(t, recorder.Products, 1)
+		assert.True(t, recorder.Products[telemetry.NamespaceAppSec])
+	})
+
+	t.Run("count", func(t *testing.T) {
+		recorder := new(RecordClient)
+		recorder.knownMetrics = true
+		defer telemetry.MockClient(recorder)()
+
+		telemetry.Count(telemetry.NamespaceTracers, "init_time", nil).Submit(1)
+		assert.Len(t, recorder.Metrics, 1)
+		require.Contains(t, recorder.Metrics, MetricKey{Name: "init_time", Namespace: telemetry.NamespaceTracers, Kind: string(transport.CountMetric)})
+		assert.Equal(t, 1.0, recorder.Metrics[MetricKey{Name: "init_time", Namespace: telemetry.NamespaceTracers, Kind: string(transport.CountMetric)}].Get())
+	})
+
+	t.Run("distribution", func(t *testing.T) {
+		recorder := new(RecordClient)
+		recorder.knownMetrics = true
+		defer telemetry.MockClient(recorder)()
+
+		telemetry.Distribution(telemetry.NamespaceGeneral, "init_time", nil).Submit(1)
+		assert.Len(t, recorder.Metrics, 1)
+		require.Contains(t, recorder.Metrics, MetricKey{Name: "init_time", Namespace: telemetry.NamespaceGeneral, Kind: string(transport.DistMetric)})
+		assert.Equal(t, 1.0, recorder.Metrics[MetricKey{Name: "init_time", Namespace: telemetry.NamespaceGeneral, Kind: string(transport.DistMetric)}].Get())
+	})
+}

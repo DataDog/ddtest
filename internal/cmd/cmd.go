@@ -41,7 +41,9 @@ Start here:
   ddtest onboard
 
 The onboard command detects the test and CI setup, explains the required
-changes, points to local verification, and tells you when human action is needed.`,
+changes, points to local verification, and tells you when human action is needed.
+Coding agents: each onboard/testdrive result is one bounded document; read it
+whole, without head, tail or other truncation.`,
 	Version:           buildinfo.CurrentVersion(),
 	PersistentPreRunE: runPersistentPreRun,
 }
@@ -166,6 +168,7 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(onboardCmd)
 	rootCmd.AddCommand(testdriveCmd)
+	rootCmd.AddCommand(instrumentCmd)
 
 	cobra.OnInitialize(settings.Init)
 }
@@ -185,6 +188,12 @@ func bindPersistentFlags(cmd *cobra.Command, bindings []persistentFlagBinding) e
 
 func runPersistentPreRun(cmd *cobra.Command, _ []string) error {
 	if err := git.CheckAvailable(); err != nil {
+		if cmd.Name() == "onboard" || cmd.Name() == "testdrive" {
+			agent, _ := cmd.Flags().GetBool("agent")
+			if agent || cmd.Flags().Changed("format") {
+				return protocolFailure(cmd, "preparation", "git_unavailable", err, nil)
+			}
+		}
 		commandType, errorCode, ok := gitAvailabilityTelemetryContext(cmd)
 		if !ok {
 			return err

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -227,7 +228,7 @@ func TestProbeRemovedWhenScenarioSetupFails(t *testing.T) {
 		}
 		return json.Marshal([]string{path})
 	})
-	session, err := NewSession()
+	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	run.startIntake = func(string, intake.Scenario) (localIntake, error) { return nil, errors.New("listener failed") }

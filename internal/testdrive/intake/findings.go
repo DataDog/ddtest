@@ -49,6 +49,9 @@ type TestRun struct {
 	ErrorType    string
 	ErrorMessage string
 	ErrorStack   string
+	// SpanID identifies the reported test span, so a re-sent event can't count
+	// as another execution.
+	SpanID uint64 `json:"-"`
 }
 
 // CoverageFact describes one test or suite with unusually broad coverage.
@@ -195,6 +198,7 @@ func analyzeTests(tests []testReference, coverages []coverageReference, level st
 				ErrorType:    attempt.errorType,
 				ErrorMessage: attempt.errorMessage,
 				ErrorStack:   attempt.errorStack,
+				SpanID:       attempt.spanID,
 			})
 		}
 		if finding.Status == "" {

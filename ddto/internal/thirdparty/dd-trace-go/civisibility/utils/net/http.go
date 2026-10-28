@@ -1,0 +1,683 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
+
+package net
+
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
+	"net"
+	"net/http"
+	"net/textproto"
+	"net/url"
+	"strconv"
+	"time"
+
+	"github.com/DataDog/ddtest/ddto/internal/cidelivery"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/msgp/msgp"
+)
+
+// Constants for common strings
+const (
+	ContentTypeJSON            = "application/json"
+	ContentTypeJSONAlternative = "application/vnd.api+json"
+	ContentTypeOctetStream     = "application/octet-stream"
+	ContentTypeMessagePack     = "application/msgpack"
+	ContentEncodingGzip        = "gzip"
+	HeaderContentType          = "Content-Type"
+	HeaderContentEncoding      = "Content-Encoding"
+	HeaderAcceptEncoding       = "Accept-Encoding"
+	HeaderRateLimitReset       = "x-ratelimit-reset"
+	HTTPStatusTooManyRequests  = 429
+	FormatJSON                 = "json"
+	FormatMessagePack          = "msgpack"
+)
+
+// FormFile represents a file to be uploaded in a multipart form request.
+type FormFile struct {
+	FieldName   string // The name of the form field
+	FileName    string // The name of the file
+	Content     any    // The content of the file (can be []byte, map, struct, etc.)
+	ContentType string // The MIME type of the file (e.g., "application/json", "application/octet-stream")
+}
+
+// RequestConfig holds configuration for a request.
+type RequestConfig struct {
+	Method             string            // HTTP method: GET or POST
+	URL                string            // Request URL
+	Headers            map[string]string // Additional HTTP headers
+	Body               any               // Request body for JSON, MessagePack, or raw bytes
+	Format             string            // Format: "json" or "msgpack"
+	Compressed         bool              // Whether to use gzip compression
+	Files              []FormFile        // Files to be uploaded in a multipart form data request
+	MaxRetries         int               // Maximum number of retries
+	Backoff            time.Duration     // Initial backoff duration for retries
+	ExpectJSONResponse bool              // When true, a 2xx response with a non-JSON Content-Type is retried instead of being returned as-is
+}
+
+// Response represents the HTTP response with deserialization capabilities and status code.
+type Response struct {
+	Body         []byte // Response body in raw format
+	Format       string // Format of the response (json or msgpack)
+	StatusCode   int    // HTTP status code
+	CanUnmarshal bool   // Whether the response body can be unmarshalled
+	Compressed   bool   // Whether to use gzip compression
+}
+
+// Unmarshal deserializes the response body into the provided target based on the response format.
+func (r *Response) Unmarshal(target any) error {
+	if !r.CanUnmarshal {
+		return fmt.Errorf("cannot unmarshal response with status code %d", r.StatusCode)
+	}
+
+	switch r.Format {
+	case FormatJSON:
+		return json.Unmarshal(r.Body, target)
+	case FormatMessagePack:
+		if target.(msgp.Unmarshaler) != nil {
+			_, err := target.(msgp.Unmarshaler).UnmarshalMsg(r.Body)
+			return err
+		}
+		return errors.New("target must implement msgp.Unmarshaler for MessagePack unmarshalling")
+	default:
+		return fmt.Errorf("unsupported format '%s' for unmarshalling", r.Format)
+	}
+}
+
+// RequestHandler handles HTTP requests with retries and different formats.
+type RequestHandler struct {
+	Client *http.Client
+	// Context, if set, cancels requests, their retries and the waits between
+	// them when it is done: ddto's Git worker stops its requests this way.
+	Context context.Context
+}
+
+// context returns the handler's context, or one that is never done.
+func (rh *RequestHandler) context() context.Context {
+	if rh.Context == nil {
+		return context.Background()
+	}
+	return rh.Context
+}
+
+// backoff waits before the next attempt, unless the handler's context is
+// done first. SendRequest returns its error right after the final attempt, so
+// waiting there would only delay the caller.
+func (rh *RequestHandler) backoff(config *RequestConfig, attempt int) {
+	if hasNextAttempt(config, attempt) {
+		rh.sleep(getExponentialBackoffDuration(attempt, config.Backoff))
+	}
+}
+
+// sleep waits between attempts with retrySleep, or until the handler's
+// context is done.
+func (rh *RequestHandler) sleep(duration time.Duration) {
+	ctx := rh.context()
+	if ctx.Done() == nil {
+		retrySleep(duration)
+		return
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+}
+
+// CloseIdleConnections closes idle connections owned by the request handler's
+// HTTP client. Active requests are left running by the standard library.
+func (rh *RequestHandler) CloseIdleConnections() {
+	if rh == nil || rh.Client == nil {
+		return
+	}
+	rh.Client.CloseIdleConnections()
+}
+
+// We copy the transport to avoid using the default one, as it might be
+// augmented with tracing and we don't want these calls to be recorded.
+// This also permits orchestrion to disable tracing on this client.
+// See https://golang.org/pkg/net/http/#DefaultTransport .
+// Except we use a higher timeout for this
+var defaultHTTPClient = createNewHTTPClient()
+
+func init() { cidelivery.RegisterConnectionCloser(CloseIdleConnections) }
+
+// CloseIdleConnections closes idle connections owned by the shared CI
+// Visibility HTTP client. It is safe to call during shutdown after CI
+// Visibility components have finished sending their final payloads.
+func CloseIdleConnections() {
+	if defaultHTTPClient == nil {
+		return
+	}
+	defaultHTTPClient.CloseIdleConnections()
+}
+
+// createNewHTTPClient creates a new HTTP client with custom transport settings.
+func createNewHTTPClient() *http.Client {
+	newTransport := func() *http.Transport {
+		return &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	}
+	secure := newTransport()
+	secure.MaxConnsPerHost = 1
+	strictHTTP2Streams(secure)
+	return &http.Client{
+		Timeout:   45 * time.Second,
+		Transport: &ciTransport{plain: newTransport(), secure: secure},
+		// A redirect to another host would carry the dd-api-key header,
+		// which Go keeps; the events' transport refuses redirects too.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// ciTransport sends HTTPS requests through a transport with one connection per
+// host. Concurrent requests without it each dial their own connection, and a
+// request that gets another request's connection first leaves its dial running.
+// Such a TLS dial finishes in the transport's own goroutine, which reads
+// time.Local while it sets up HTTP/2 or closes the unneeded connection, perhaps
+// while a test changes it. HTTP/2 multiplexes requests over the one connection.
+// HTTP/1.1 would serialize them, so plain HTTP, as to a local Agent, keeps its
+// concurrent connections; closing one does not read the clock.
+type ciTransport struct {
+	plain, secure *http.Transport
+}
+
+func (t *ciTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.usesTLS(req) {
+		return t.secure.RoundTrip(req)
+	}
+	return t.plain.RoundTrip(req)
+}
+
+// usesTLS reports a request whose connection uses TLS: an https destination,
+// or any destination through an https proxy. A proxy error is left to the
+// plain transport, which reports it.
+func (t *ciTransport) usesTLS(req *http.Request) bool {
+	if req.URL != nil && req.URL.Scheme == "https" {
+		return true
+	}
+	if t.plain.Proxy == nil {
+		return false
+	}
+	proxy, err := t.plain.Proxy(req)
+	return err == nil && proxy != nil && proxy.Scheme == "https"
+}
+
+// CloseIdleConnections closes both transports' idle connections and cancels
+// dials that no request waits for; http.Client forwards it here.
+func (t *ciTransport) CloseIdleConnections() {
+	t.plain.CloseIdleConnections()
+	t.secure.CloseIdleConnections()
+}
+
+// NewRequestHandler creates a new RequestHandler with a default HTTP client.
+func NewRequestHandler() *RequestHandler {
+	return &RequestHandler{
+		Client: defaultHTTPClient,
+	}
+}
+
+// NewRequestHandlerWithClient creates a new RequestHandler with a custom http.Client
+func NewRequestHandlerWithClient(client *http.Client) *RequestHandler {
+	cidelivery.RegisterConnectionCloser(client.CloseIdleConnections)
+	return &RequestHandler{
+		Client: client,
+	}
+}
+
+// SendRequest sends an HTTP request based on the provided configuration.
+func (rh *RequestHandler) SendRequest(config RequestConfig) (*Response, error) {
+	cidelivery.BeginSend()
+	defer cidelivery.EndSend()
+	if cidelivery.Enabled() {
+		defer rh.CloseIdleConnections()
+	}
+	if config.MaxRetries <= 0 {
+		config.MaxRetries = DefaultMaxRetries // Default retries
+	}
+	if config.Backoff <= 0 {
+		config.Backoff = DefaultBackoff // Default backoff
+	}
+	if config.Method == "" {
+		return nil, errors.New("HTTP method is required")
+	}
+	if config.URL == "" {
+		return nil, errors.New("URL is required")
+	}
+
+	// Buffer one-shot io.Reader payloads so every retry attempt re-sends the
+	// full body rather than a drained reader. config is a local copy (value
+	// receiver), so we can safely overwrite its fields here.
+	if r, ok := config.Body.(io.Reader); ok {
+		buf, err := io.ReadAll(r)
+		if err != nil {
+			return nil, err
+		}
+		config.Body = buf
+	}
+	if len(config.Files) > 0 {
+		// Copy the slice to avoid mutating the caller's FormFile backing array.
+		files := make([]FormFile, len(config.Files))
+		copy(files, config.Files)
+		for i := range files {
+			if r, ok := files[i].Content.(io.Reader); ok {
+				buf, err := io.ReadAll(r)
+				if err != nil {
+					return nil, err
+				}
+				files[i].Content = buf
+			}
+		}
+		config.Files = files
+	}
+
+	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
+		if err := rh.context().Err(); err != nil {
+			return nil, err
+		}
+		stopRetries, rs, err := rh.internalSendRequest(&config, attempt)
+		if stopRetries {
+			return rs, err
+		}
+	}
+
+	return nil, errors.New("max retries exceeded")
+}
+
+func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int) (stopRetries bool, response *Response, requestError error) {
+	statusCode := 0
+	if log.DebugEnabled() {
+		started := time.Now()
+		path := ""
+		if parsed, err := url.Parse(config.URL); err == nil {
+			path = parsed.EscapedPath()
+		}
+		defer func() {
+			log.Debug("ciVisibilityHttpClient: request finished path=%s attempt=%d duration=%s status_code=%d retry=%t", path, attempt, time.Since(started).Round(time.Microsecond), statusCode, !stopRetries && hasNextAttempt(config, attempt))
+		}()
+	}
+	var req *http.Request
+
+	if len(config.Files) > 0 {
+		// Check if it's a multipart form data request
+		// Create multipart form data body
+		body, contentType, err := createMultipartFormData(config.Files, config.Compressed)
+		if err != nil {
+			return true, nil, err
+		}
+
+		if log.DebugEnabled() {
+			var fileNames []string
+			for _, f := range config.Files {
+				fileNames = append(fileNames, f.FieldName)
+			}
+			log.Debug("ciVisibilityHttpClient: new request with files [method: %s, url: %s, attempt: %d, maxRetries: %d] %s",
+				config.Method, logURL(config.URL), attempt, config.MaxRetries, fileNames)
+		}
+		req, err = http.NewRequestWithContext(rh.context(), config.Method, config.URL, bytes.NewBuffer(body))
+		if err != nil {
+			return true, nil, redactURLError(err)
+		}
+		req.Header.Set(HeaderContentType, contentType)
+		if config.Compressed {
+			req.Header.Set(HeaderContentEncoding, ContentEncodingGzip)
+		}
+	} else if config.Body != nil {
+		// Handle JSON body
+		serializedBody, err := serializeData(config.Body, config.Format)
+		if err != nil {
+			return true, nil, err
+		}
+
+		// Compress body if needed
+		if config.Compressed {
+			serializedBody, err = compressData(serializedBody)
+			if err != nil {
+				return true, nil, err
+			}
+		}
+
+		if log.DebugEnabled() {
+			// Without the body: a logs payload holds the tests' output.
+			log.Debug("ciVisibilityHttpClient: new request with body [method: %s, url: %s, attempt: %d, maxRetries: %d, compressed: %t, format: %s] %d bytes",
+				config.Method, logURL(config.URL), attempt, config.MaxRetries, config.Compressed, config.Format, len(serializedBody))
+		}
+
+		req, err = http.NewRequestWithContext(rh.context(), config.Method, config.URL, bytes.NewBuffer(serializedBody))
+		if err != nil {
+			return true, nil, redactURLError(err)
+		}
+		if config.Format == FormatJSON {
+			req.Header.Set(HeaderContentType, ContentTypeJSON)
+		}
+		if config.Format == FormatMessagePack {
+			req.Header.Set(HeaderContentType, ContentTypeMessagePack)
+		}
+		if config.Compressed {
+			req.Header.Set(HeaderContentEncoding, ContentEncodingGzip)
+		}
+	} else {
+		// Handle requests without a body (e.g., GET requests)
+		var err error
+		req, err = http.NewRequestWithContext(rh.context(), config.Method, config.URL, nil)
+		if err != nil {
+			return true, nil, redactURLError(err)
+		}
+
+		log.Debug("ciVisibilityHttpClient: new request [method: %s, url: %s, attempt: %d, maxRetries: %d]",
+			config.Method, logURL(config.URL), attempt, config.MaxRetries)
+	}
+
+	// Set that is possible to handle gzip responses
+	req.Header.Set(HeaderAcceptEncoding, ContentEncodingGzip)
+
+	// Add custom headers if provided
+	for key, value := range config.Headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := rh.Client.Do(req)
+	if err != nil {
+		log.Debug("ciVisibilityHttpClient: error = %s", logError(err))
+		// Retry if there's an error
+		rh.backoff(config, attempt)
+		return false, nil, nil
+	}
+	// Close response body
+	defer resp.Body.Close()
+
+	// Capture the status code
+	statusCode = resp.StatusCode
+
+	// Check for rate-limiting (HTTP 429)
+	if resp.StatusCode == HTTPStatusTooManyRequests {
+		log.Debug("ciVisibilityHttpClient: response status code = %d", resp.StatusCode)
+
+		rateLimitReset := resp.Header.Get(HeaderRateLimitReset)
+		if rateLimitReset != "" {
+			if resetTime, err := strconv.ParseInt(rateLimitReset, 10, 64); err == nil {
+				var waitDuration time.Duration
+				if resetTime > time.Now().Unix() {
+					// Assume it's a Unix timestamp
+					waitDuration = time.Until(time.Unix(resetTime, 0))
+				} else {
+					// Assume it's a duration in seconds
+					waitDuration = time.Duration(resetTime) * time.Second
+				}
+				// Like the test-cycle client's Retry-After, a reset more than a
+				// minute away falls back to the exponential backoff below.
+				if waitDuration <= maxRateLimitResetWait {
+					if waitDuration > 0 && hasNextAttempt(config, attempt) {
+						rh.sleep(waitDuration)
+					}
+					return false, nil, nil
+				}
+				log.Debug("ciVisibilityHttpClient: ignoring rate limit reset %s beyond %s", waitDuration.Round(time.Second), maxRateLimitResetWait)
+			}
+		}
+
+		// Fallback to exponential backoff if header is missing or invalid
+		rh.backoff(config, attempt)
+		return false, nil, nil
+	}
+
+	// Check status code for retries
+	if statusCode >= 406 {
+		// Retry if the status code is >= 406
+		log.Debug("ciVisibilityHttpClient: response status code = %d", resp.StatusCode)
+		rh.backoff(config, attempt)
+		return false, nil, nil
+	}
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Debug("ciVisibilityHttpClient: error reading response body = %s", err.Error())
+		rh.backoff(config, attempt)
+		return false, nil, nil
+	}
+
+	// Decompress response if it is gzip compressed
+	compressedResponse := false
+	if resp.Header.Get(HeaderContentEncoding) == ContentEncodingGzip {
+		compressedResponse = true
+		responseBody, err = decompressData(responseBody)
+		if err != nil {
+			log.Debug("ciVisibilityHttpClient: error decompressing response body = %s", err.Error())
+			rh.backoff(config, attempt)
+			return false, nil, nil
+		}
+	}
+
+	// Determine response format from headers
+	responseFormat := "unknown"
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get(HeaderContentType))
+	if err == nil {
+		if mediaType == ContentTypeJSON || mediaType == ContentTypeJSONAlternative {
+			responseFormat = FormatJSON
+		}
+	}
+
+	// When the caller requires a JSON response but the server returned something
+	// unrecognised (e.g. a keep-alive reuse EOF that Go promotes to a 200 with an
+	// empty/plain-text body), treat it as a transient failure and retry.  Upload
+	// endpoints that never decode the response body must leave ExpectJSONResponse
+	// false so they are unaffected.
+	if config.ExpectJSONResponse && responseFormat == "unknown" && statusCode >= 200 && statusCode < 300 {
+		log.Debug("ciVisibilityHttpClient: expected JSON response but got format %q [method: %s, url: %s, status_code: %d]; retrying",
+			responseFormat, config.Method, logURL(config.URL), statusCode)
+		rh.backoff(config, attempt)
+		return false, nil, nil
+	}
+
+	if log.DebugEnabled() {
+		log.Debug("ciVisibilityHttpClient: response received [method: %s, url: %s, status_code: %d, format: %s] %d bytes",
+			config.Method, logURL(config.URL), resp.StatusCode, responseFormat, len(responseBody))
+	}
+
+	// Determine if we can unmarshal based on status code (2xx)
+	canUnmarshal := statusCode >= 200 && statusCode < 300
+
+	// Return the successful response with status code and unmarshal capability
+	return true, &Response{Body: responseBody, Format: responseFormat, StatusCode: statusCode, CanUnmarshal: canUnmarshal, Compressed: compressedResponse}, nil
+}
+
+// Helper functions for data serialization, compression, and handling multipart form data
+
+// serializeData serializes the data based on the format.
+func serializeData(data any, format string) ([]byte, error) {
+	switch v := data.(type) {
+	case []byte:
+		// If it's already a byte array, use it directly
+		return v, nil
+	case io.Reader:
+		// If it's an io.Reader, read the content
+		return io.ReadAll(v)
+	default:
+		// Otherwise, serialize it according to the specified format
+		if format == FormatJSON {
+			return json.Marshal(data)
+		}
+		if format == FormatMessagePack {
+			if data.(msgp.Marshaler) != nil {
+				return data.(msgp.Marshaler).MarshalMsg([]byte{})
+			}
+			return nil, errors.New("data must implement msgp.Marshaler for MessagePack serialization")
+		}
+	}
+	return nil, fmt.Errorf("unsupported format '%s' for data type '%T'", format, data)
+}
+
+// compressData compresses the data using gzip.
+func compressData(data []byte) ([]byte, error) {
+	if data == nil {
+		return nil, errors.New("attempt to compress a nil data array")
+	}
+
+	var buf bytes.Buffer
+	writer := gzip.NewWriter(&buf)
+	_, err := writer.Write(data)
+	if err != nil {
+		return nil, err
+	}
+	writer.Close()
+	return buf.Bytes(), nil
+}
+
+// decompressData decompresses gzip data.
+func decompressData(data []byte) ([]byte, error) {
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gzip reader: %s", err)
+	}
+	defer reader.Close()
+	decompressedData, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decompress data: %s", err)
+	}
+	return decompressedData, nil
+}
+
+// maxRateLimitResetWait bounds the wait for an x-ratelimit-reset header,
+// matching the 60 seconds that the test-cycle client accepts for Retry-After.
+const maxRateLimitResetWait = 60 * time.Second
+
+// hasNextAttempt reports whether SendRequest makes another attempt after this one.
+func hasNextAttempt(config *RequestConfig, attempt int) bool {
+	return attempt < config.MaxRetries
+}
+
+// exponentialBackoff performs an exponential backoff with retries.
+func exponentialBackoff(retryCount int, initialDelay time.Duration) {
+	retrySleep(getExponentialBackoffDuration(retryCount, initialDelay))
+}
+
+// retrySleep performs every wait between attempts; tests record the waits.
+var retrySleep = time.Sleep
+
+// getExponentialBackoffDuration calculates the backoff duration based on the retry count and initial delay.
+func getExponentialBackoffDuration(retryCount int, initialDelay time.Duration) time.Duration {
+	maxDelay := 10 * time.Second
+	delay := min(
+		// Exponential backoff
+		initialDelay*(1<<uint(retryCount)), maxDelay)
+	return delay
+}
+
+// prepareContent prepares the content for a FormFile by serializing it if needed.
+func prepareContent(content any, contentType string) ([]byte, error) {
+	if contentType == ContentTypeJSON {
+		return serializeData(content, FormatJSON)
+	} else if contentType == ContentTypeMessagePack {
+		return serializeData(content, FormatMessagePack)
+	} else if contentType == ContentTypeOctetStream {
+		// For binary data, ensure it's already in byte format
+		if data, ok := content.([]byte); ok {
+			return data, nil
+		}
+		if reader, ok := content.(io.Reader); ok {
+			return io.ReadAll(reader)
+		}
+		return nil, errors.New("content must be []byte or an io.Reader for octet-stream content type")
+	}
+	return nil, errors.New("unsupported content type for serialization")
+}
+
+// createMultipartFormData creates a multipart form data request body with the given files.
+// It also compresses the data using gzip if compression is enabled.
+func createMultipartFormData(files []FormFile, compressed bool) ([]byte, string, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	for _, file := range files {
+		partHeaders := textproto.MIMEHeader{}
+		if file.FileName == "" {
+			partHeaders.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"`, file.FieldName))
+		} else {
+			partHeaders.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, file.FieldName, file.FileName))
+		}
+		partHeaders.Set("Content-Type", file.ContentType)
+
+		part, err := writer.CreatePart(partHeaders)
+		if err != nil {
+			return nil, "", err
+		}
+
+		// Prepare the file content (serialize if necessary based on content type)
+		fileContent, err := prepareContent(file.Content, file.ContentType)
+		if err != nil {
+			return nil, "", err
+		}
+
+		if _, err := part.Write(fileContent); err != nil {
+			return nil, "", err
+		}
+	}
+
+	// Close the writer to set the terminating boundary
+	err := writer.Close()
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Compress the multipart form data if compression is enabled
+	if compressed {
+		compressedData, err := compressData(buf.Bytes())
+		if err != nil {
+			return nil, "", err
+		}
+		return compressedData, writer.FormDataContentType(), nil
+	}
+
+	return buf.Bytes(), writer.FormDataContentType(), nil
+}
+
+// logError returns err's text for a debug line, with the URL that an
+// *url.Error, as http.Client.Do returns, carries shown as logURL shows it.
+func logError(err error) string {
+	return redactURLError(err).Error()
+}
+
+// redactURLError returns the *url.Error in err, as http.Client.Do and
+// http.NewRequest return, with its URL shown as logURL shows it. Callers log
+// the errors that this client returns.
+func redactURLError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		copied := *urlErr
+		copied.URL = logURL(copied.URL)
+		return &copied
+	}
+	return err
+}
+
+// logURL returns rawURL for a debug line, without the user information or
+// query that a configured URL can carry.
+func logURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "(invalid URL)"
+	}
+	u.User, u.RawQuery, u.Fragment = nil, "", ""
+	return u.String()
+}

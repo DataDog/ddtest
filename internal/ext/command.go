@@ -242,11 +242,24 @@ func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []st
 	}
 }
 
+// CommandTimeoutError reports that the executor's own per-command bound, not a
+// caller's deadline, stopped the command. It matches context.DeadlineExceeded.
+type CommandTimeoutError struct {
+	Name    string
+	Timeout time.Duration
+}
+
+func (e *CommandTimeoutError) Error() string {
+	return fmt.Sprintf("%s exceeded the %s per-command limit; raise --timeout or fix the hanging command: %s", e.Name, e.Timeout, context.DeadlineExceeded)
+}
+
+func (e *CommandTimeoutError) Unwrap() error { return context.DeadlineExceeded }
+
 // Name the command and the limit when testdrive's own per-command bound
 // stopped it; a caller's cancellation or deadline is returned unchanged.
 func (e *DefaultCommandExecutor) contextError(parent, ctx context.Context, name string) error {
 	if e.Timeout > 0 && parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return fmt.Errorf("%s exceeded the %s per-command limit; raise --timeout or fix the hanging command: %w", filepath.Base(name), e.Timeout, context.DeadlineExceeded)
+		return &CommandTimeoutError{Name: filepath.Base(name), Timeout: e.Timeout}
 	}
 	return ctx.Err()
 }

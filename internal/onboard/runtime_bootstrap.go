@@ -75,16 +75,17 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		}
 		return ""
 	}
-	if reason := checkJestBootstrap(workflow, job, step, row, frameworks...); reason != "" {
+	esm := len(frameworks) > 0 && (frameworks[0] == "vitest" || frameworks[0] == "cucumber")
+	if reason := checkJestBootstrap(workflow, job, step, row, esm); reason != "" {
 		return reason
 	}
 	if len(frameworks) > 0 && frameworks[0] == "mocha" {
 		for _, command := range commands {
-			if command.mochaESM && checkJestBootstrap(workflow, job, step, row, "vitest") != "" {
+			if command.mochaESM && checkJestBootstrap(workflow, job, step, row, true) != "" {
 				return "Mocha ESM inputs require the action's --import ${{ env.DD_TRACE_ESM_IMPORT }} alongside its require preload"
 			}
 			if !command.usesNYC && !command.mochaIstanbul {
-				reason := "Cannot verify Istanbul/NYC coverage setup for Mocha CI command: " + command.Command + ". Wrap the original command with npx --no-install nyc --, adding nyc as a dev dependency if the project does not declare it; real source coverage is checked separately."
+				reason := MochaCoverageGap + command.Command + ". Wrap the original command with npx --no-install nyc --, adding nyc as a dev dependency if the project does not declare it; real source coverage is checked separately."
 				if words, err := shellquote.Split(command.Command); err == nil && len(words) > 0 && filepath.Base(words[0]) == "c8" {
 					reason = "Mocha CI command uses c8: " + command.Command + ". c8's V8 coverage is not reported per test; wrap the Mocha command with npx --no-install nyc -- instead."
 				}
@@ -95,7 +96,13 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	return ""
 }
 
-func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {
+// MochaCoverageGap starts the finding for a Mocha command without NYC or
+// recognized Istanbul instrumentation; automatic setup can add the NYC wrapper.
+const MochaCoverageGap = "Cannot verify Istanbul/NYC coverage setup for Mocha CI command: "
+
+// checkJestBootstrap verifies the action's require preload in the step's
+// effective NODE_OPTIONS; requireImport also requires its ESM --import.
+func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, requireImport bool) string {
 	options, err := effectiveBootstrapOptions(workflow, job, step, row, true)
 	if err == nil && !strings.ContainsAny(options, "$`'") {
 		words, err := shellquote.Split(options)
@@ -109,12 +116,25 @@ func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 					requireFound = true
 				}
 			}
-			if requireFound && (len(frameworks) == 0 || frameworks[0] != "vitest" || importFound) {
+			if requireFound && (!requireImport || importFound) {
 				return ""
 			}
 		}
 	}
-	return "Cannot verify the action's JavaScript preload in this test step's effective NODE_OPTIONS. Preserve custom initialization and report it for review."
+	return unverifiedPreloadReason
+}
+
+const unverifiedPreloadReason = "Cannot verify the action's JavaScript preload in this test step's effective NODE_OPTIONS. Preserve custom initialization and report it for review."
+
+// stepSetsNoNodeOptions reports whether no workflow, job or step layer sets
+// NODE_OPTIONS, so adding the action's preload overrides nothing custom.
+func stepSetsNoNodeOptions(workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		if _, ok := env["NODE_OPTIONS"]; ok {
+			return false
+		}
+	}
+	return true
 }
 
 func bootstrapOptions(value string, row map[string]any, env map[string]string) (string, error) {
@@ -150,8 +170,8 @@ func bootstrapOptions(value string, row map[string]any, env map[string]string) (
 }
 
 // GitHub format() replaces numbered placeholders and escapes doubled braces.
-// Only string arguments are needed for bootstrap paths; other types and format
-// specifiers stay inconclusive. Replacement values are never parsed again.
+// Scalar arguments are cast to strings as GitHub does; arrays, objects and
+// format specifiers stay inconclusive. Replacement values are never parsed again.
 func (p *conditionParser) format() (any, error) {
 	if !p.take("(") {
 		return nil, fmt.Errorf("missing format arguments")
@@ -159,7 +179,7 @@ func (p *conditionParser) format() (any, error) {
 	var args []string
 	for {
 		value, err := p.expression(0)
-		text, ok := value.(string)
+		text, ok := conditionString(value)
 		if err != nil || !ok {
 			return nil, fmt.Errorf("unsupported format argument")
 		}

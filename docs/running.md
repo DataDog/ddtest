@@ -576,7 +576,8 @@ make the checks incomplete. Run from the package directory; use `--command` only
 after reviewing required setup.
 
 `--tracer-version` selects a fallback only: an existing project tracer takes
-precedence. npm metadata uses the customer's configured registry, proxy and auth.
+precedence. Without it, testdrive falls back to the release that every
+instrumented CI job pins, and to the latest release when CI selections differ. npm metadata uses the customer's configured registry, proxy and auth.
 Runtime selectors and version files resolve to a timestamped exact release from
 Node metadata. CI may use a different cached patch when setup-node does not set
 `check-latest`; static checks do not prove which binary ran in CI.
@@ -618,7 +619,9 @@ runtime compatibility unverified when its version cannot be inferred safely.
 
 Preparation runs customer code. Bundlers marked for review, package build lifecycle
 scripts and dependency changes require `--allow-reviewed-builds`; they may use the
-network. Missing tools are reported as `tool_not_installed`. Literal substitutions
+network. Rollup and webpack always load customer configuration; `tsup` and `unbuild`
+need review only when a config file, package.json settings or `--config` exists. The
+review request names what was found and when the agent must ask the user first. A CI build step is replayed only when the tests can reach its outputs: when its tool and output directories are known and no repository source, test-runner configuration or self-import reaches them, the build is listed for review as not replayed instead. Missing tools are reported as `tool_not_installed`. Literal substitutions
 are applied by Go rather than system sed; regex/backreference patches require
 review. `--timeout` defaults to ten minutes per subprocess and kills its ordinary
 process group on expiry. The limit also applies to each full-suite run, baseline
@@ -637,10 +640,18 @@ config files and patch targets cannot resolve outside the checkout. Windows
 symlink creation can require Developer Mode or additional privilege.
 
 Marked abandoned configuration copies and sessions are recovered under the
-repository lock on the next invocation. Unmarked files and other repositories'
-storage are preserved. Failed full attempts replace old JSON evidence and remove
-stale HTML; check-only can retain one explicitly historical execution and leaves
-its HTML unchanged. HTML keeps every instrumented reporting snapshot, including
+repository lock on the next invocation. On macOS and Linux the lock lives in
+`/tmp`, like process-ownership storage, whatever `TMPDIR` is, so two invocations
+of one checkout with different `TMPDIR` values still exclude each other.
+Unmarked files and other repositories' storage are preserved. Failed full attempts replace old JSON evidence and remove
+stale HTML; check-only, and an agent workflow attempt that stops before running
+tests, retain one explicitly historical execution and leave its HTML unchanged.
+Untracked or ignored files that a run in the checkout leaves behind are listed in
+`cleanup.leftovers`. Inherited `DD_*` values that reach test commands without
+coming from CI or ddtest are recorded in `ambient_datadog_environment`. CI step
+settings that select tracer integrations (`DD_TRACE_DISABLED_INSTRUMENTATIONS`,
+`DD_TRACE_DISABLED_PLUGINS`, `DD_TRACE_<INTEGRATION>_ENABLED`) apply to local runs;
+other step `DD_*` values configure CI's intake and are replaced locally. HTML keeps every instrumented reporting snapshot, including
 repeat pairs, while aggregate execution counts include each primary run once.
 Configuration runs remain sequential while platform detection uses a scoped
 process working directory; changing all adapters to explicit working directories
@@ -751,3 +762,112 @@ The preview lists retained lifecycle hooks and warns that any may upload or
 publish, including through indirect scripts. Those hooks run in the disposable
 copy for both comparisons; synthetic probes omit them while retaining the
 runner's scoped environment and working directory.
+
+### Playwright validation
+
+Use `ddtest testdrive --framework playwright --all --check-only --yes` to list the discovered test configuration and check runtime/tracer compatibility without installing a tracer or executing tests. Install the repository dependencies and required Playwright browsers first. Configuration loading executes project JavaScript under the same process ownership supervision. The Unix supervisor uses Bash and `ps`; idle guards exit after their group empties and never load the tracer.
+
+Run `ddtest testdrive --framework playwright --all --yes` for all discovered commands, or replace `--all` with `--command 'npm test'` for a simple package alias. Testdrive runs in a temporary checkout, preserving the Playwright configuration, browser projects and native retries. It adds the same builtin summary/native-result reporter through `PW_TEST_REPORTER` alongside the customer reporters and uses the same process supervisor in both modes, redirects artifacts, compares test identities/attempts/failures and exit codes, and checks local telemetry. Matching existing failures are acceptable. This baseline disables dd-trace but is not an unmodified shell execution. Asynchronous non-IPC children run in private process groups so browser and server descendants can be stopped even after their launcher exits. Node IPC children retain their IPC channel and receive the ownership preload even with a custom environment. Feature probes replace the actual CLI’s file, project, shard and repeat selectors after package aliases expand and disable dependency/teardown projects with `--no-deps`; the full comparison retains those original selections. Probe runs record both the launcher command and the resolved native command.
+
+Each executed project gets separate retries, EFD, quarantine, disabled-test and attempt-to-fix controls. Playwright TIA skipping and per-test coverage are unsupported; the report records that exception without counting it as a passing check. Opaque setup, incomplete native results or unsupported detached process options keep validation incomplete, with a structured compatibility code for supervision failures. Literal leading environment assignments in `--command` use the shared command parser. Owned server/browser processes stop when validation ends or the owning connection closes; reused customer servers are preserved.
+
+Keep `.testoptimization/report.html` and `testdrive.json`. HTML retains full test-command output; JSON retains bounded diagnostics and aggregate evidence. Actual CI and Datadog backend processing remain untested locally.
+
+### Cypress validation
+
+Install the repository dependencies and the required Cypress browser first. Run `ddtest testdrive --framework cypress --all --check-only --yes` to resolve the declared CI commands, runtimes and tracer metadata. Run without `--check-only` to compare native Cypress outcomes without dd-trace and with reporting-only instrumentation. Matching existing failures are acceptable. Both modes use the same native observer and process supervisor; Cloud recording and parallel grouping are disabled locally.
+
+`--all` retains CLI/package aliases and supported `cypress-io/github-action` API options, including build/start/readiness inputs, browsers, configs, hooks and reporters. A CI step that runs `start-server-and-test`/`start-test` (or `run-p --race`) directly with package scripts replays its server startup and readiness URL or port for every run, probes included; inside a package alias the alias itself still runs. The action API uses the action's declared Node runtime; run locally with that same major and a compatible tracer. Unknown wrappers, unrecognized setup and unavailable browser/OS variants stay unvalidated. A focused `--command 'npm test'` checks only that command. Without an override, ddtest selects one unambiguous declared CI invocation, or a unique package script when CI has none. When CI has a Cypress command that cannot be resolved statically, testdrive stops and names it instead of falling back to a package script. Multiple invocations require `--command` or `--all`; no Cypress command is guessed. A successful focused command exits 0 and certifies only that selected validation; other configurations and actual CI execution remain unvalidated. Failed required checks exit nonzero. `--check-only` exits 0 when its checks pass, while execution remains incomplete (without claiming successful execution). Cypress component testing and Windows process supervision are explicitly unsupported by this testdrive; when a configuration also declares component testing, the report lists it under `not_exercised`. Probes always run with `retries=0`: they append `--config retries=0` (or set the API `config.retries`), ignore `CYPRESS_RETRIES`, and override retries returned by a customer `setupNodeEvents`. Paired comparisons include each test's native attempt history. Recording keys, `CYPRESS_RECORD_KEY` and `CYPRESS_CLOUD_TOKEN` are redacted from the terminal preview, `testdrive.json` and the HTML report.
+
+Five controlled checks validate retries, early flake detection, quarantine, disabled tests and attempt-to-fix. **Cypress TIA skipping and application coverage validation are deferred**. They are neither passed nor unsupported by the tracer, and missing application coverage does not block those five controls. Preserve existing coverage instrumentation. Real Datadog/Cypress Cloud processing and actual CI execution are not exercised locally.
+
+Execution uses disposable copies and removes owned browser/server processes and artifacts. Keep the report pair in `.testoptimization/`; JSON records commands, observed counts and bounded diagnostics, while HTML retains full test output. Unknown environment-printing utilities remain setup review items rather than receiving repository-specific exemptions.
+
+### Cucumber validation
+
+`ddtest onboard --framework cucumber` prints the Cucumber setup, including early
+tracer initialization, NYC source coverage and scoped instrumentation for mixed
+framework repositories. It does not edit files.
+
+Run `ddtest testdrive --framework cucumber --all --check-only --yes` to inspect
+CI commands and runtime requirements, then omit `--check-only` to validate them
+in disposable copies. A focused command can use `--command 'npm test'`. The
+original command runs without dd-trace and with reporting-only instrumentation;
+matching existing failures are acceptable. The public message formatter supplies
+native scenario results, including hooks and final retry outcomes. Incomplete
+messages cannot certify compatibility.
+
+Cucumber testdrive requires version 8 or later; the existing plan/run adapter
+still supports version 7. All six controls are required. Cucumber reports coverage at suite level; the
+report associates it with scenarios without claiming per-scenario precision.
+Feature/config/support files alone do not prove application coverage. Native ESM
+requires explicitly configured Istanbul instrumentation in addition to NYC.
+Testdrive preserves declared loaders; it does not inject one merely because it
+is installed, or add NYC around an existing c8 command. Unknown scripts,
+dynamic variables, orchestration globs and alias-specific working-directory or
+environment changes remain unvalidated with an explanation.
+
+Feature probes and their step definitions use the same recoverable ownership
+records as other adapters. On macOS and Linux, every Node process of a run,
+including NYC and `cucumber-js`, uses the same process supervisor as Playwright and Cypress, so
+owned processes stop when validation ends or when ddtest itself is killed. The
+next run recovers any leftover session, configuration copy and ownership
+storage. Only the JSON/HTML report pair remains in the customer repository.
+Local checks do not exercise customer CI or Datadog processing.
+
+A run that exceeds `--timeout` is reported as `<run> exceeded --timeout <limit>;
+raise --timeout or fix the hanging step`, in that run's `timeout`, the
+compatibility reason and the blocking checks, for every framework. The missing
+results, coverage and feature probes it caused are not reported again.
+
+Cucumber probes use an owned empty config, dropping customer tags/name/profile/paths
+while retaining resolved support imports, World and unconditional hooks. Their step
+definition is isolated from customer catch-all definitions; tagged hooks remain
+checked by the actual suite. Original parallel commands stay parallel: missing
+worker coverage/control telemetry remains explicitly unvalidated rather than
+being hidden by a serial rerun. The selected dd-trace sends no suite coverage
+from Cucumber parallel workers, so the report says so and does not advise adding
+NYC. When coverage is missing, the advice follows the command's own setup: NYC
+already on the command, c8, or no coverage tool.
+
+### WebdriverIO validation
+
+Install project dependencies and the browsers/drivers required by the original
+WDIO configuration. `ddtest onboard --framework webdriverio` prints scoped CI
+setup instructions without editing files. The action installs tracing in CI;
+local testdrive uses an existing tracer or a temporary installation.
+
+Run `ddtest testdrive --framework webdriverio --all --check-only --yes` to inspect
+the inventory, then `ddtest testdrive --framework webdriverio --command 'npm test'
+--yes` for one actual local-runner command. An explicit `--all` executes every
+discovered configuration; inventory alone is not permission to start the matrix.
+Both comparison modes preserve configuration, services, hooks, reporters and
+capabilities, with the same native observer and process supervisor. Baseline
+tracing is disabled; matching existing failures are acceptable. Missing native
+worker results or incomplete telemetry keep validation incomplete.
+
+Each selected capability needs retries, EFD, quarantine, disabled-test and
+attempt-to-fix controls. TIA skipping and code coverage are unsupported and are
+never counted as passed. With Jasmine on jasmine-core 5, dd-trace does not apply
+retries, EFD, disabled-test or attempt-to-fix controls; those report a `known
+limitation` (never passed) and upgrading to WebdriverIO 10 (jasmine-core 6) enables
+them. A control the tracer reported without applying is `tracer_control_not_applied`;
+report such blockers rather than changing the suite. Browser runners, custom adapters and standalone browser
+automation remain outside this validation. Unknown wrappers and dynamic script
+orchestration stay visible for review. Preserve unrelated servers; an occupied
+static-server port blocks execution until local setup is resolved.
+
+A focused pass certifies only that command; unexecuted variants can leave overall
+onboarding incomplete. Finish CI edits before the final full run and report both
+verdicts. Only `.testoptimization/report.html` and `testdrive.json` remain. HTML
+contains full test output; JSON bounds diagnostics. Actual customer CI and Datadog
+backend processing are not exercised locally.
+
+### Coordinated execution for coding agents
+
+Use `ddtest testdrive --framework <name> --all --agent --yes` for an existing
+JavaScript setup. Follow its structured next action, then `testdrive --report`
+for a fresh final response. `--report --detail plan` inspects resolved commands
+without running them. `onboard --apply --yes` adds recognized setup first. See
+[agent coordination](onboarding.md#agent-coordination-and-fresh-results) for
+bounded resume, setup facts, services, exclusions and freshness guarantees.

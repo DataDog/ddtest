@@ -34,3 +34,4 @@ ddtest
 # release artifacts
 dist
 .DS_Store
+__pycache__/

@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/stretchr/testify/require"
 )
 
@@ -97,7 +96,7 @@ func TestConfiguredOnboardingSuggestsAllForSeveralConfigurations(t *testing.T) {
 		root := newJestRepository(t, workflow)
 		t.Chdir(root)
 		var output strings.Builder
-		require.NoError(t, onboardGitHub(&output, &environment.GitHub{}, root, "javascript", "jest"))
+		require.NoError(t, onboardCI(&output, gitHubActions{}, root, "javascript", "jest", nil))
 		require.Contains(t, output.String(), "Run "+want+" to check the setup locally.")
 	}
 }
@@ -155,4 +154,33 @@ func TestMochaDefaultCommandAcceptsASimpleCIStep(t *testing.T) {
 	writeScripts(t, filepath.Join(root, "packages", "unit"), map[string]string{"test": "mocha"})
 	_, err = MochaValidationCommand(root, "")
 	require.ErrorContains(t, err, "runs in packages/unit; use --all")
+}
+
+func TestPlaywrightInteractiveModesAreRejected(t *testing.T) {
+	root := t.TempDir()
+	for _, command := range []string{"playwright test --ui", "playwright test --ui-port=8080", "playwright test --debug", "npx playwright test --ui-host 0.0.0.0"} {
+		remaining := packageScriptExpansionLimit
+		result := resolveJestSequence(root, root, command, nil, &remaining, "playwright")
+		require.Contains(t, result.Reason, "UI and debug modes are interactive", command)
+	}
+	remaining := packageScriptExpansionLimit
+	require.Empty(t, resolveJestSequence(root, root, "playwright test --project chromium", nil, &remaining, "playwright").Reason)
+}
+
+func TestScopeKeepsGuardedAndUnguardedPlaywrightJobsApart(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  guarded:\n    steps:\n      - run: npx playwright test || exit 1\n  plain:\n    steps:\n      - run: npx playwright test\n")
+	scope, err := DiscoverValidationScope(root, "playwright")
+	require.NoError(t, err)
+	guards := map[bool]bool{}
+	for _, command := range scope.Commands {
+		guards[command.ExitOnFailure] = true
+	}
+	require.Equal(t, map[bool]bool{true: true, false: true}, guards, "the || exit 1 guard is part of the configuration identity")
+}
+
+func TestPlaywrightDefaultCommandAcceptsACIEnvironment(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - run: npx playwright test\n        env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}', TZ: UTC}\n")
+	command, err := PlaywrightValidationCommand(root, "")
+	require.NoError(t, err, "a CI environment alone does not need --all")
+	require.NotEmpty(t, command)
 }

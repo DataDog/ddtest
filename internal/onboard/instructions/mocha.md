@@ -17,7 +17,7 @@ CI changes, then validate them locally. `onboard` itself only prints guidance.
    version and Node compatibility checks to choose one exact published release
    for both CI and local validation. The action default can lag npm latest;
    explicitly set `js-tracer-version`. Prefer the recommended compatible major
-   before considering any runtime changes. Never remove matrix entries or test steps to satisfy tracer requirements. If the maintained tracer cannot cover old runtimes, preserve their runtime/test coverage in uninstrumented steps with `DD_CIVISIBILITY_ENABLED: 'false'`, instrument supported entries with conditions, and report the coverage limitation. Do not stop local validation for this CI limitation: run the full comparison and features on a supported local runtime using the same maintained release. No hardcoded tracer patch is required.
+   before considering any runtime changes. Never remove matrix entries or test steps to satisfy tracer requirements. Rows below Node 18, the oldest dd-trace major ddtest supports, are skipped by ddtest itself: leave them unedited and uninstrumented, and report them as not tried; no approval is needed. If the maintained tracer cannot cover other old runtimes, preserve their runtime/test coverage in uninstrumented steps with `DD_CIVISIBILITY_ENABLED: 'false'`, instrument supported entries with conditions, and report the coverage limitation. Do not stop local validation for this CI limitation: run the full comparison and features on a supported local runtime using the same maintained release. No hardcoded tracer patch is required.
 3. Add `datadog/test-visibility-github-action@v3` before every Mocha test consumer,
    using `api_key: ${{ secrets.DD_API_KEY }}`, the intended Datadog site,
    `languages: js`, and the exact `js-tracer-version`. Initialize the tracer in
@@ -46,7 +46,12 @@ CI changes, then validate them locally. `onboard` itself only prints guidance.
    report missing real-suite coverage as incomplete.
    Do not install dd-trace permanently just for validation: testdrive installs
    the selected version in temporary storage and removes it afterwards.
-5. Exclude `.testoptimization/` from Git and published packages, respecting the existing `files`/`.npmignore` convention. After all edits, run `ddtest testdrive --all --tracer-version <exact-release> --yes`.
+5. Exclude `.testoptimization/` from Git and published packages, respecting the existing `files`/`.npmignore` convention. After all edits, run `ddtest testdrive --agent --all --tracer-version <exact-release> --yes`.
+   Keep structured agent mode for this full run and subsequent retries. It skips
+   setup required only by explicitly instrumentation-excluded CI rows, while
+   preserving those rows in the report. If it returns a blocker, follow its
+   named next_action and required_input; do not switch to plain output to bypass
+   that check. Wait for the command to exit before making any further edits.
    It compares native Mocha results with and without tracing for each CI command,
    reconciles telemetry, and runs pass/fail controls plus retries, early flake
    detection, skipping, quarantine, disabled tests, and attempt-to-fix. The

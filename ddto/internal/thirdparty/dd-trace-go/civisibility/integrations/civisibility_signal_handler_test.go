@@ -1,0 +1,339 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2026 Datadog, Inc.
+
+package integrations
+
+import (
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/DataDog/ddtest/ddto/internal/testassert/require"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility"
+)
+
+func TestExitCiVisibilityStopsSignalHandler(t *testing.T) {
+	replaceSignalNotifyForTesting(t, signal.Notify)
+	resetCIVisibilityBootstrapStateForTesting()
+	disableAdditionalFeaturesForBootstrapTest()
+	t.Cleanup(restoreCIVisibilityBootstrapForTesting)
+
+	initializeCIVisibilityLifecycleForTesting()
+	handler := currentCIVisibilitySignalHandlerForTesting()
+	require.NotNil(t, handler)
+
+	ExitCiVisibility()
+
+	assertSignalHandlerDone(t, handler)
+	require.Nil(t, currentCIVisibilitySignalHandlerForTesting())
+	require.Equal(t, civisibility.StateExited, civisibility.GetState())
+}
+
+func TestStopCIVisibilitySignalHandlerIsIdempotent(t *testing.T) {
+	replaceSignalNotifyForTesting(t, signal.Notify)
+	resetCIVisibilityBootstrapStateForTesting()
+	t.Cleanup(restoreCIVisibilityBootstrapForTesting)
+
+	startCIVisibilitySignalHandler()
+	handler := currentCIVisibilitySignalHandlerForTesting()
+	require.NotNil(t, handler)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Go(func() {
+			stopCIVisibilitySignalHandler()
+		})
+	}
+
+	waitForSignalHandlerStopCalls(t, &wg)
+	assertSignalHandlerDone(t, handler)
+	require.Nil(t, currentCIVisibilitySignalHandlerForTesting())
+}
+
+func TestCIVisibilitySignalHandlerSignalPathShutsDownWithoutSelfWait(t *testing.T) {
+	replaceSignalNotifyForTesting(t, signal.Notify)
+	resetCIVisibilityBootstrapStateForTesting()
+	disableAdditionalFeaturesForBootstrapTest()
+	t.Cleanup(restoreCIVisibilityBootstrapForTesting)
+
+	exitCodes := replaceSignalExitForTesting(t)
+
+	initializeCIVisibilityLifecycleForTesting()
+	handler := currentCIVisibilitySignalHandlerForTesting()
+	require.NotNil(t, handler)
+
+	handler.signals <- syscall.SIGTERM
+
+	require.Equal(t, os.Signal(syscall.SIGTERM), waitForSignalHandlerExitCode(t, exitCodes))
+	assertSignalHandlerDone(t, handler)
+	require.Equal(t, civisibility.StateExited, civisibility.GetState())
+}
+
+func TestConcurrentSignalExitWaitsForPreCloseOwner(t *testing.T) {
+	resetCIVisibilityBootstrapStateForTesting()
+	t.Cleanup(restoreCIVisibilityBootstrapForTesting)
+
+	preCloseEntered := make(chan struct{})
+	releasePreClose := make(chan struct{})
+	closeActionRan := make(chan struct{}, 1)
+	require.True(t, TryPushCiVisibilityPreCloseAction(func() {
+		close(preCloseEntered)
+		<-releasePreClose
+	}))
+	PushCiVisibilityCloseAction(func() {
+		closeActionRan <- struct{}{}
+	})
+	civisibility.SetState(civisibility.StateInitialized)
+
+	normalDone := make(chan struct{})
+	go func() {
+		ExitCiVisibility()
+		close(normalDone)
+	}()
+	<-preCloseEntered
+
+	shutdownWaitEntered := make(chan struct{})
+	originalWaitForShutdown := waitForCIVisibilityShutdown
+	waitForCIVisibilityShutdown = func(done <-chan struct{}) {
+		close(shutdownWaitEntered)
+		originalWaitForShutdown(done)
+	}
+	t.Cleanup(func() { waitForCIVisibilityShutdown = originalWaitForShutdown })
+	signalExitCodes := make(chan os.Signal, 1)
+	go func() {
+		exitCiVisibility(false)
+		signalExitCodes <- syscall.SIGTERM
+	}()
+	select {
+	case <-shutdownWaitEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("signal shutdown caller did not reach the owner wait")
+	}
+
+	select {
+	case code := <-signalExitCodes:
+		t.Fatalf("signal exit ran before the pre-close owner completed: %v", code)
+	default:
+	}
+	select {
+	case <-closeActionRan:
+		t.Fatal("regular close action ran before the pre-close barrier completed")
+	default:
+	}
+
+	close(releasePreClose)
+	require.Equal(t, os.Signal(syscall.SIGTERM), waitForSignalHandlerExitCode(t, signalExitCodes))
+	select {
+	case <-normalDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("normal shutdown did not complete")
+	}
+	select {
+	case <-closeActionRan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("regular close action did not run")
+	}
+	require.Equal(t, civisibility.StateExited, civisibility.GetState())
+}
+
+// A signal that arrives once the normal shutdown started ends the process
+// after that shutdown, as it would end the process under go test.
+func TestCIVisibilitySignalHandlerExitsAfterNormalShutdownStarts(t *testing.T) {
+	replaceSignalNotifyForTesting(t, signal.Notify)
+	resetCIVisibilityBootstrapStateForTesting()
+	disableAdditionalFeaturesForBootstrapTest()
+	t.Cleanup(restoreCIVisibilityBootstrapForTesting)
+
+	exitCodes := replaceSignalExitForTesting(t)
+
+	initializeCIVisibilityLifecycleForTesting()
+	handler := currentCIVisibilitySignalHandlerForTesting()
+	require.NotNil(t, handler)
+
+	markCIVisibilitySignalHandlerStopping()
+	handler.signals <- syscall.SIGTERM
+
+	assertSignalHandlerDone(t, handler)
+	assertNoSignalHandlerExitCode(t, exitCodes)
+	stopCIVisibilitySignalHandler()
+	require.Nil(t, currentCIVisibilitySignalHandlerForTesting())
+	require.Equal(t, os.Signal(syscall.SIGTERM), waitForSignalHandlerExitCode(t, exitCodes))
+}
+
+// A normal shutdown that starts during a signal's shutdown completes, and the
+// process then ends with the signal.
+func TestCIVisibilitySignalHandlerExitsWhenNormalShutdownStartsDuringSignalShutdown(t *testing.T) {
+	replaceSignalNotifyForTesting(t, signal.Notify)
+	resetCIVisibilityBootstrapStateForTesting()
+	disableAdditionalFeaturesForBootstrapTest()
+	t.Cleanup(restoreCIVisibilityBootstrapForTesting)
+
+	exitCodes := replaceSignalExitForTesting(t)
+
+	initializeCIVisibilityLifecycleForTesting()
+	handler := currentCIVisibilitySignalHandlerForTesting()
+	require.NotNil(t, handler)
+
+	preCloseEntered := make(chan struct{})
+	releasePreClose := make(chan struct{})
+	require.True(t, TryPushCiVisibilityPreCloseAction(func() {
+		close(preCloseEntered)
+		<-releasePreClose
+	}))
+
+	handler.signals <- syscall.SIGTERM
+	select {
+	case <-preCloseEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("signal shutdown did not reach the pre-close barrier")
+	}
+
+	markCIVisibilitySignalHandlerStopping()
+	close(releasePreClose)
+	assertSignalHandlerDone(t, handler)
+	assertNoSignalHandlerExitCode(t, exitCodes)
+	stopCIVisibilitySignalHandler()
+	require.Nil(t, currentCIVisibilitySignalHandlerForTesting())
+	require.Equal(t, civisibility.StateExited, civisibility.GetState())
+	require.Equal(t, os.Signal(syscall.SIGTERM), waitForSignalHandlerExitCode(t, exitCodes))
+}
+
+// Without ddto's os/signal overlay, CI Visibility cannot tell a signal that
+// the test handles from one that ends the process, so it handles none.
+func TestCIVisibilitySignalHandlerNeedsTheOverlay(t *testing.T) {
+	replaceSignalNotifyForTesting(t, nil)
+	resetCIVisibilityBootstrapStateForTesting()
+	t.Cleanup(restoreCIVisibilityBootstrapForTesting)
+
+	startCIVisibilitySignalHandler()
+	require.Nil(t, currentCIVisibilitySignalHandlerForTesting())
+}
+
+// A signal that the process ignores, such as SIGINT in a background job,
+// stays ignored: registering it would install a handler.
+func TestCIVisibilitySignalHandlerKeepsIgnoredSignalsIgnored(t *testing.T) {
+	if !signal.Ignored(syscall.SIGINT) {
+		signal.Ignore(syscall.SIGINT)
+		t.Cleanup(func() { signal.Reset(syscall.SIGINT) })
+	}
+	var registered []os.Signal
+	replaceSignalNotifyForTesting(t, func(_ chan<- os.Signal, sig ...os.Signal) { registered = sig })
+	resetCIVisibilityBootstrapStateForTesting()
+	t.Cleanup(restoreCIVisibilityBootstrapForTesting)
+
+	startCIVisibilitySignalHandler()
+	require.NotNil(t, currentCIVisibilitySignalHandlerForTesting())
+	require.Equal(t, []os.Signal{syscall.SIGTERM}, registered)
+}
+
+// replaceSignalNotifyForTesting stands in for the functions that ddto's
+// os/signal overlay sets; nil stands for a build without the overlay.
+func replaceSignalNotifyForTesting(t *testing.T, notify func(chan<- os.Signal, ...os.Signal)) {
+	t.Helper()
+	originalNotify, originalStop := signalNotify, signalStop
+	signalNotify, signalStop = nil, nil
+	if notify != nil {
+		signalNotify = func(c chan<- os.Signal, _ chan<- int, sig ...os.Signal) []os.Signal {
+			notify(c, sig...)
+			return sig
+		}
+		signalStop = signal.Stop
+	}
+	t.Cleanup(func() { signalNotify, signalStop = originalNotify, originalStop })
+}
+
+// replaceSignalExitForTesting records the signal that would end the process.
+func replaceSignalExitForTesting(t *testing.T) <-chan os.Signal {
+	t.Helper()
+	exits := make(chan os.Signal, 1)
+	original := ciVisibilitySignalExitFunc
+	ciVisibilitySignalExitFunc = func(sig os.Signal) { exits <- sig }
+	t.Cleanup(func() { ciVisibilitySignalExitFunc = original })
+	return exits
+}
+
+// currentCIVisibilitySignalHandlerForTesting returns the active handler under
+// the same mutex used by production code.
+func currentCIVisibilitySignalHandlerForTesting() *ciVisibilitySignalHandler {
+	ciVisibilitySignalHandlerMu.Lock()
+	defer ciVisibilitySignalHandlerMu.Unlock()
+	return activeCIVisibilitySignalHandler
+}
+
+// assertSignalHandlerDone waits for the handler goroutine to exit.
+func assertSignalHandlerDone(t *testing.T, handler *ciVisibilitySignalHandler) {
+	t.Helper()
+	require.NotNil(t, handler)
+	select {
+	case <-handler.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for CI Visibility signal handler to stop")
+	}
+}
+
+// waitForSignalHandlerStopCalls waits for concurrent stop calls to finish.
+func waitForSignalHandlerStopCalls(t *testing.T, wg *sync.WaitGroup) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for CI Visibility signal handler stop calls")
+	}
+}
+
+// waitForSignalHandlerExitCode waits for the test exit seam to be called.
+func waitForSignalHandlerExitCode(t *testing.T, exitCodes <-chan os.Signal) os.Signal {
+	t.Helper()
+	select {
+	case code := <-exitCodes:
+		return code
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for CI Visibility signal handler exit code")
+		return nil
+	}
+}
+
+// assertNoSignalHandlerExitCode verifies that normal shutdown suppression did
+// not route through the process-exit path.
+func assertNoSignalHandlerExitCode(t *testing.T, exitCodes <-chan os.Signal) {
+	t.Helper()
+	select {
+	case code := <-exitCodes:
+		t.Fatalf("unexpected CI Visibility signal handler exit: %v", code)
+	default:
+	}
+}
+
+// A signal still queued when the handler stops, which its goroutine did not
+// take before the stop, ends the process after the shutdown too.
+func TestCIVisibilitySignalHandlerExitsWithAQueuedSignal(t *testing.T) {
+	replaceSignalNotifyForTesting(t, signal.Notify)
+	exitCodes := replaceSignalExitForTesting(t)
+	handler := &ciVisibilitySignalHandler{
+		signals:  make(chan os.Signal, 1),
+		observed: make(chan int, 1),
+		stop:     make(chan struct{}),
+		done:     make(chan struct{}),
+	}
+	// The goroutine took the stop first and exited.
+	close(handler.done)
+	handler.signals <- syscall.SIGTERM
+	ciVisibilitySignalHandlerMu.Lock()
+	activeCIVisibilitySignalHandler = handler
+	ciVisibilitySignalHandlerMu.Unlock()
+
+	stopCIVisibilitySignalHandler()
+	require.Nil(t, currentCIVisibilitySignalHandlerForTesting())
+	require.Equal(t, os.Signal(syscall.SIGTERM), waitForSignalHandlerExitCode(t, exitCodes))
+}

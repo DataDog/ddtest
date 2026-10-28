@@ -572,8 +572,8 @@ func TestRubyTracerVersions(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, TracerInstallation{}, result)
 			require.Equal(t, command{name: "bundle", args: tc.args}, executor.commands[1])
-			require.Nil(t, executor.envs[0])                                     // Detect with the complete project environment.
-			require.Equal(t, map[string]string{"RUBYOPT": ""}, executor.envs[1]) // Clean preloads only for installation.
+			require.Equal(t, map[string]string{"BUNDLE_FROZEN": "true"}, executor.envs[0]) // Inherit project loaders without lockfile writes.
+			require.Equal(t, map[string]string{"RUBYOPT": ""}, executor.envs[1])           // Clean preloads only for installation.
 			entries, err := os.ReadDir(directory)
 			require.NoError(t, err)
 			require.Empty(t, entries)
@@ -613,4 +613,18 @@ func TestRubyProbeFailureAttemptsInstall(t *testing.T) {
 	require.Len(t, executor.commands, 2)
 	require.Equal(t, "bundle", executor.commands[1].name)
 	require.Equal(t, []string{"add", "datadog-ci"}, executor.commands[1].args)
+}
+
+func TestRubyDetectTracerUsesSelectedBundleEnvironment(t *testing.T) {
+	environment := map[string]string{"BUNDLE_GEMFILE": "gemfiles/selected.gemfile", "BUNDLE_FROZEN": "false", "APP_ENV": "test"}
+	executor := &mockCommandExecutor{combinedOutput: []byte("  * datadog-ci (1.42.0)\n"), onCombinedOutput: func(name string, args []string, env map[string]string) {
+		require.Equal(t, "gemfiles/selected.gemfile", env["BUNDLE_GEMFILE"])
+		require.Equal(t, "true", env["BUNDLE_FROZEN"])
+		require.Equal(t, "test", env["APP_ENV"])
+	}}
+	ruby := &Ruby{executor: executor}
+	detected, err := ruby.DetectTracer(t.Context(), TracerOptions{Environment: environment})
+	require.NoError(t, err)
+	require.Contains(t, detected, "1.42.0")
+	require.Equal(t, "false", environment["BUNDLE_FROZEN"], "do not modify the caller's environment")
 }

@@ -7,7 +7,10 @@ package cmd
 
 import (
 	"bytes"
+	"github.com/stretchr/testify/require"
 	"io"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -32,5 +35,52 @@ func TestOnboardCommandRunsDetection(t *testing.T) {
 	}
 	if output.String() != "onboarding instructions\n" {
 		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestOnboardApplyRequiresExplicitConsent(t *testing.T) {
+	for _, args := range [][]string{{"--yes"}, {"--allow-dirty"}} {
+		command := newOnboardCommand(func(io.Writer) error {
+			t.Fatal("invalid apply flags must not run detection or execution")
+			return nil
+		})
+		command.SetArgs(args)
+		command.SetOut(io.Discard)
+		command.SetErr(io.Discard)
+		if err := command.ExecuteContext(t.Context()); err == nil {
+			t.Fatalf("%v accepted without its required companion flag", args)
+		}
+	}
+}
+
+func TestOnboardApplyRefusesOtherLanguagesBeforeRuntimeSetup(t *testing.T) {
+	for _, manifest := range []struct{ name, body string }{{"pyproject.toml", "[tool.pytest.ini_options]\n"}, {"Gemfile", "source 'https://rubygems.org'\ngem 'rspec'\n"}} {
+		t.Run(manifest.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			require.NoError(t, os.WriteFile(manifest.name, []byte(manifest.body), 0600))
+			command := newOnboardCommand(func(io.Writer) error { t.Fatal("apply must not print unrelated instructions"); return nil })
+			command.SetArgs([]string{"--apply", "--yes"})
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetErr(&output)
+			err := command.ExecuteContext(t.Context())
+			require.ErrorContains(t, err, "--apply supports JavaScript frameworks")
+			require.NotContains(t, err.Error(), "--all")
+			require.NotContains(t, output.String(), "Usage:")
+		})
+	}
+}
+
+func TestAgentHelpOmitsUnrelatedPlannerFlags(t *testing.T) {
+	command := newOnboardCommand(func(io.Writer) error { return nil })
+	command.SetArgs([]string{"--help"})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	if err := command.ExecuteContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "--facts") || !strings.Contains(text, "--framework") || strings.Contains(text, "--ci-job-overhead") {
+		t.Fatalf("agent help is missing workflow flags or includes unrelated tuning: %s", text)
 	}
 }

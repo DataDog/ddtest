@@ -16,6 +16,16 @@ import (
 // VitestValidationCommand selects the same statically resolved CI/script scope
 // used by --all. Setup is never silently discarded when extracting a runner.
 func VitestValidationCommand(root, command string) (TestCommand, error) {
+	var scope ValidationScope
+	var err error
+	if command == "" {
+		scope, err = DiscoverValidationScope(root, "vitest")
+	}
+	return VitestValidationCommandInScope(root, command, scope, err)
+}
+
+// VitestValidationCommandInScope selects from an already discovered scope.
+func VitestValidationCommandInScope(root, command string, scope ValidationScope, scopeErr error) (TestCommand, error) {
 	selectOne := func(commands []TestCommand) (TestCommand, error) {
 		if len(commands) != 1 {
 			return TestCommand{}, fmt.Errorf("select one Vitest command with --command, or use --all for every CI configuration")
@@ -33,9 +43,8 @@ func VitestValidationCommand(root, command string) (TestCommand, error) {
 		}
 		return selectOne(ValidationCommands(root, command, "vitest"))
 	}
-	scope, err := DiscoverValidationScope(root, "vitest")
-	if err != nil {
-		return TestCommand{}, err
+	if scopeErr != nil {
+		return TestCommand{}, scopeErr
 	}
 	if len(scope.Commands) > 0 {
 		return selectOne(scope.Commands)

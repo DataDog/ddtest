@@ -34,7 +34,7 @@ jobs:
 	for _, expected := range []string{
 		"DDTest found javascript, jest, and GitHub Actions.",
 		".github/workflows/test.yml",
-		"datadog/test-visibility-github-action@v3",
+		"uses: " + setupActionV3 + " # v3.3.0",
 		"api_key: ${{ secrets.DD_API_KEY }}",
 		"NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}",
 		"ddtest testdrive",
@@ -152,10 +152,10 @@ func TestRunRequiresGitHubJestWorkflow(t *testing.T) {
 			repositoryRoot := newJestRepository(t, workflow)
 
 			t.Chdir(repositoryRoot)
-			err := Run(&bytes.Buffer{})
-			if err == nil || !strings.Contains(err.Error(), "could not find a GitHub Actions workflow that runs jest") {
-				t.Fatalf("Run() error = %v", err)
-			}
+			var output bytes.Buffer
+			require.NoError(t, Run(&output))
+			require.Contains(t, output.String(), "CI discovery is incomplete")
+			require.Contains(t, output.String(), "manual")
 		})
 	}
 }
@@ -217,7 +217,8 @@ func TestRunIdentifiesJavaScriptInvocations(t *testing.T) {
 				require.NoError(t, err)
 				require.Contains(t, output.String(), "languages: js")
 			} else {
-				require.ErrorContains(t, err, "could not find a GitHub Actions workflow that runs jest")
+				require.NoError(t, err)
+				require.Contains(t, output.String(), "CI discovery is incomplete")
 			}
 		})
 	}

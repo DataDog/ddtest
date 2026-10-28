@@ -22,6 +22,9 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			entry := name
 			files := map[string]string{"package.json": `{"scripts":{"test":"` + name + `"}}`}
 			switch name {
+			case "cucumber":
+				entry = "cucumber-js"
+				files = map[string]string{"package.json": `{"scripts":{"test":"cucumber-js"}}`}
 			case "pytest":
 				files = map[string]string{"pyproject.toml": "[tool.pytest.ini_options]\n"}
 				language = "python"
@@ -29,7 +32,10 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			case "rspec", "minitest":
 				files = map[string]string{"Gemfile": "gem '" + name + "'\n"}
 				language = "ruby"
-				entry = "bundle exec rake"
+				entry = "bundle exec rspec"
+				if name == "minitest" {
+					entry = "bundle exec rake test"
+				}
 			}
 			for file, contents := range files {
 				require.NoError(t, os.WriteFile(filepath.Join(root, file), []byte(contents), 0644))
@@ -41,9 +47,11 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			require.NoError(t, Run(&output))
 			require.Contains(t, output.String(), "languages: "+language)
 			switch name {
-			case "mocha":
+			case "rspec", "minitest":
+				require.Contains(t, output.String(), "`ruby-tracer-version`")
+			case "mocha", "cucumber":
 				require.Contains(t, output.String(), "`js-tracer-version`")
-			case "vitest":
+			case "vitest", "playwright", "cypress":
 				require.Contains(t, output.String(), "js-tracer-version: <resolved-release>")
 			default:
 				require.Contains(t, output.String(), language+"-tracer-version: '' # Latest release")
@@ -54,7 +62,9 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 				require.NotContains(t, output.String(), "NODE_OPTIONS")
 			}
 			switch name {
-			case "vitest":
+			case "cucumber":
+				require.Contains(t, output.String(), "`js-tracer-version`")
+			case "vitest", "playwright":
 				require.Contains(t, output.String(), "DD_TRACE_ESM_IMPORT")
 			}
 			if name == "cypress" {

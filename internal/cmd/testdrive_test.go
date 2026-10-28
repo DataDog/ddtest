@@ -170,8 +170,8 @@ func TestCheckOnlyPreviewRequiresConfirmationAndExposesOnlyCurrentFlags(t *testi
 		t.Fatal("missing --check-only")
 	}
 	for _, name := range []string{"agent", "format", "report", "detail", "resume", "facts"} {
-		if command.Flags().Lookup(name) != nil {
-			t.Fatalf("premature flag: --%s", name)
+		if command.Flags().Lookup(name) == nil {
+			t.Fatalf("missing coordinator flag: --%s", name)
 		}
 	}
 }
@@ -211,9 +211,28 @@ func TestTestdriveHelpUsesRegisteredFrameworkNames(t *testing.T) {
 
 func TestTestdrivePreparationFlagsRemainRegistered(t *testing.T) {
 	command := newTestdriveCommand()
-	for _, name := range []string{"all", "check-only", "timeout", "allow-reviewed-builds"} {
+	for _, name := range []string{"all", "check-only", "timeout", "allow-reviewed-builds", "accept-substitute-runtime"} {
 		if command.Flags().Lookup(name) == nil {
 			t.Errorf("missing preparation flag %s", name)
 		}
+	}
+}
+
+func TestReportErrorsRemainVisible(t *testing.T) {
+	for _, args := range [][]string{{"--report", "--format", "json"}, {"--report", "--detail", "plan"}, {"--report", "--detail", "plan", "--resume", "bad"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			command := newTestdriveCommand()
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetErr(&output)
+			command.SetArgs(args)
+			if err := command.ExecuteContext(t.Context()); err == nil {
+				t.Fatal("expected missing saved evidence to fail")
+			}
+			if !strings.Contains(output.String(), "report_unavailable") {
+				t.Fatalf("missing report failure was suppressed: %q", output.String())
+			}
+		})
 	}
 }

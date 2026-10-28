@@ -1,0 +1,669 @@
+name: Go instrumentation
+# The Go instrumentation that ddtest instrument runs is its own module in ddto/.
+# Its suite runs from there, with ddtest's executable as the driver. Every pull
+# request and push to main runs this workflow, so that its result can be a
+# required check: when a run already verified the files that the suite depends
+# on (see the plan job's inputs), the groups do not run again.
+#
+# Pull requests and pushes test the dd-trace-go and Orchestrion versions in
+# ddto/scripts/supported_versions.json. The nightly run tests the versions that
+# the module proxy has then, and fails when that file is out of date. The
+# release workflow calls this one with compatibility: full first: those
+# versions, each one run even when another has the same edited SDK packages.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_call:
+    inputs:
+      compatibility:
+        description: 'full: every supported version that the module proxy has now'
+        type: string
+        default: recorded
+  workflow_dispatch:
+    inputs:
+      compatibility:
+        description: 'full: every supported version that the module proxy has now'
+        type: choice
+        options: [recorded, full]
+        default: recorded
+permissions:
+  contents: read
+# A new push to a pull request replaces its running matrix. Other events never
+# share a group, so main and scheduled runs always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONIOENCODING: utf-8
+jobs:
+  plan:
+    name: Test groups
+    runs-on: ubuntu-latest
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      differential: ${{ steps.matrix.outputs.differential }}
+      mini: ${{ steps.matrix.outputs.mini }}
+      tip: ${{ steps.matrix.outputs.tip }}
+      tip-enabled: ${{ steps.matrix.outputs.tip-enabled }}
+      go-versions: ${{ steps.matrix.outputs.go-versions }}
+      inputs: ${{ steps.verified.outputs.inputs }}
+      skip: ${{ steps.verified.outputs.skip }}
+      verified-run: ${{ steps.verified.outputs.run }}
+      window: ${{ steps.window.outputs.window }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - id: matrix
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          # Go tip changes daily, independently of the change under test, so a
+          # pull request can fail on tip without causing it. A push to main
+          # reuses its pull request's run, tip included, and skips tip otherwise.
+          if [[ "$EVENT" != push ]]; then
+            python scripts/ci_shards.py matrix --with-tip >> "$GITHUB_OUTPUT"
+            echo "tip-enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            python scripts/ci_shards.py matrix >> "$GITHUB_OUTPUT"
+            echo "tip-enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Runner images carry different patch releases of a Go version while
+          # GitHub rolls out an update, and setup-go prefers the installed one.
+          # Every job of the run installs the newest release, chosen here.
+          curl -fsSL --retry 3 'https://go.dev/dl/?mode=json&include=all' |
+            python scripts/ci_shards.py go-versions >> "$GITHUB_OUTPUT"
+      # The suite depends on ddto, except its docs, and on what builds and runs
+      # ddtest's executable. A pull request or a push to main reuses a run of a
+      # branch in this repository that passed every group with the same files,
+      # and uploads that run's coverage. Scheduled and manual runs always run.
+      - id: verified
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          inputs="$(git ls-files -s -- ddto ':(exclude)ddto/docs' ':(exclude)ddto/README.md' \
+            main.go go.mod go.sum internal/cmd/instrument.go scripts/install.sh scripts/install.ps1 \
+            .github/workflows/go-instrumentation.yml | sha256sum | cut -d' ' -f1)"
+          echo "inputs=$inputs" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT" != push && "$EVENT" != pull_request ]]; then
+            exit 0
+          fi
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=verified-inputs-$inputs&per_page=100" \
+            --jq '[.artifacts[] | select(.expired | not)
+                   | select(.workflow_run.head_repository_id == .workflow_run.repository_id)
+                   | .workflow_run.id] | first // empty')" || run=""
+          if [[ -n "$run" ]]; then
+            echo "These inputs passed every group in run $run."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "run=$run" >> "$GITHUB_OUTPUT"
+          fi
+      # The test jobs read the window in DDTO_SUPPORTED_VERSIONS; without it,
+      # the recorded one.
+      - id: window
+        if: github.event_name == 'schedule' || inputs.compatibility == 'full'
+        shell: bash
+        run: |
+          window="$(python scripts/supported_versions.py resolve)"
+          echo "$window"
+          echo "window=$window" >> "$GITHUB_OUTPUT"
+
+  lint:
+    name: Sources, dependency boundary, scripts and 386 runtime
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # v6.4.0: on 2026-10-15 GitHub answered 404 for the archives of v6.5.0 and
+      # v7.0.0 by commit, which job setup downloads.
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - name: Audit sources, dependency boundary and scripts
+        shell: bash
+        run: |
+          python scripts/upstream.py verify
+          python -m unittest discover -s scripts -p "test_*.py"
+          python scripts/dependency_boundary.py
+      - name: Require the current supported versions
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: python scripts/ci_shards.py retry -- python scripts/supported_versions.py check
+      # The other jobs build for 64-bit targets. Mini's runtime compiles into
+      # the test binaries of any target, so every package must vet for 386 and
+      # the runtime's tests must pass there. ddto is released for 64-bit
+      # platforms only, and its own tests build for the host.
+      - name: Vet for 386 and test the runtime there
+        shell: bash
+        env:
+          GOARCH: '386'
+          GOTOOLCHAIN: local
+        run: |
+          go vet ./...
+          runtime=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./testopt ./propagation)
+          go test -count=1 $runtime
+
+  differential:
+    name: differential (${{ matrix.os }}, ${{ matrix.go }}, ${{ matrix.mode }}, ${{ matrix.job }})
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.differential) }}
+    runs-on: ${{ matrix.os }}
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 35 }}
+    env:
+      DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
+      DDTO_SUPPORTED_VERSIONS: ${{ needs.plan.outputs.window }}
+      DDTO_COMPATIBILITY: ${{ inputs.compatibility }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Exclude build directories from Windows Defender
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, $env:RUNNER_TOOL_CACHE,
+                     "$env:LOCALAPPDATA\go-build", "$env:USERPROFILE\go")
+          try {
+            Add-MpPreference -ExclusionPath $paths -ErrorAction Stop
+            Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop
+          } catch {
+            Write-Warning "Windows Defender settings unchanged: $_"
+          }
+          Get-MpComputerStatus -ErrorAction SilentlyContinue | Format-List RealTimeProtectionEnabled
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        id: go
+        with:
+          go-version: ${{ fromJSON(needs.plan.outputs.go-versions)[matrix.go] }}
+          cache: false
+      - name: Locate Go caches
+        id: paths
+        shell: bash
+        run: |
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+      # The jobs of a configuration share one Go cache. It holds the SDK, Orchestrion
+      # and dependency builds that most fixtures reuse, and the modules they need.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cache
+        with:
+          path: |
+            ${{ steps.paths.outputs.build }}
+            ${{ steps.paths.outputs.modules }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-differential-${{ matrix.mode }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-differential-${{ matrix.mode }}-
+      # Orchestrion's woven builds change with Orchestrion's and dd-trace-go's
+      # versions, not with ddto. On Windows, where a cold one takes minutes, the
+      # job of the Orchestrion groups keeps them in a Go cache of its own.
+      - name: Locate the Orchestrion build cache
+        if: runner.os == 'Windows' && contains(format(',{0},', matrix.shards), ',orchestrion,')
+        shell: bash
+        run: echo "DDTO_TEST_ORCHESTRION_GOCACHE=$RUNNER_TEMP/orchestrion-gocache" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: orchestrion-cache
+        if: runner.os == 'Windows' && contains(format(',{0},', matrix.shards), ',orchestrion,')
+        with:
+          path: ${{ runner.temp }}/orchestrion-gocache
+          # The job's groups decide which woven builds the cache holds.
+          key: orchestrion-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.job }}-${{ hashFiles('ddto/testdata/orchestrion/go.mod', 'ddto/testdata/orchestrion/go.sum', 'ddto/testdata/fixture/go.sum', 'ddto/integration/orchestrion_composition_test.go') }}
+          restore-keys: |
+            orchestrion-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.job }}-
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/orchestrion-reference
+          key: orchestrion-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('ddto/testdata/orchestrion/go.mod', 'ddto/testdata/orchestrion/go.sum') }}
+      # A module fetch from the proxy can fail or stall for minutes. Download
+      # explicitly with a deadline and retries, then build without the network.
+      - name: Build frozen Orchestrion reference
+        shell: bash
+        run: |
+          reference="$RUNNER_TEMP/orchestrion-reference/orchestrion"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then reference="$reference.exe"; fi
+          if [[ ! -x "$reference" ]]; then
+            python scripts/ci_shards.py retry -- go -C testdata/orchestrion mod download
+            go -C testdata/orchestrion build -mod=readonly -o "$reference" github.com/DataDog/orchestrion
+          fi
+          go version -m "$reference"
+          echo "ORCHESTRION_BIN=$reference" >> "$GITHUB_ENV"
+      - name: Verify fixture modules
+        shell: bash
+        run: |
+          python scripts/ci_shards.py retry -- go -C testdata/fixture mod download
+          go -C testdata/fixture mod verify
+          python scripts/ci_shards.py retry -- go -C testdata/toolchain mod download
+          go -C testdata/toolchain mod verify
+      # TestMiniGOROOTMirrorToolchainSwitch needs a real GOTOOLCHAIN switch to a
+      # toolchain in a module cache. It gets its own module cache, outside the
+      # cached one.
+      - name: Download a toolchain to switch to
+        if: runner.os == 'Linux' && contains(format(',{0},', matrix.shards), ',provision,')
+        shell: bash
+        env:
+          GOMODCACHE: ${{ runner.temp }}/switch-modcache
+          GOTOOLCHAIN: go1.25.0
+        run: |
+          python scripts/ci_shards.py retry -- go version
+          echo "DDTO_TEST_SWITCH_TOOLCHAIN=go1.25.0" >> "$GITHUB_ENV"
+          echo "DDTO_TEST_SWITCH_GOMODCACHE=$GOMODCACHE" >> "$GITHUB_ENV"
+      - name: Vet
+        if: contains(format(',{0},', matrix.shards), ',units,')
+        shell: bash
+        run: go vet ./...
+      - name: Run test groups
+        shell: bash
+        env:
+          CI_PLATFORM: ${{ matrix.os }}
+          CI_GO: ${{ matrix.go }}
+          CI_MODE: ${{ matrix.mode }}
+          CI_SHARDS: ${{ matrix.shards }}
+          # Two groups at a time keep the runner busy while fixtures start processes.
+          # In a cold run with two concurrent groups, a fixture's go.sum lacked a
+          # Testify entry, so groups without a restored cache run one at a time.
+          CI_PARALLEL: ${{ steps.cache.outputs.cache-matched-key != '' && 2 || 1 }}
+          GO_TEST_TIMEOUT: ${{ matrix.os == 'windows-latest' && '35m' || matrix.os == 'macos-latest' && '25m' || matrix.mode == 'race' && '25m' || '20m' }}
+        run: |
+          python scripts/ci_shards.py run --suite differential --os "$CI_PLATFORM" \
+            --go "$CI_GO" --mode "$CI_MODE" --shard "$CI_SHARDS" --parallel "$CI_PARALLEL" \
+            --timeout "$GO_TEST_TIMEOUT" --output artifacts --coverage "$RUNNER_TEMP/coverage"
+      # Each job reports the coverage of ddto's packages in what it ran; Datadog
+      # merges the reports of a commit with ddtest's.
+      - name: Merge the coverage of ddto's packages
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        shell: bash
+        run: python scripts/ci_shards.py coverage --input "$RUNNER_TEMP/coverage" --output coverage.out
+      - name: Upload coverage report to Datadog
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        uses: DataDog/coverage-upload-github-action@d9548b1c3c4ab639d5d3ab29a1508af188975f77 # v1.0.5
+        with:
+          api_key: ${{ secrets.DATADOG_API_KEY }}
+          site: datadoghq.com
+          files: ddto/coverage.out
+          format: go-coverprofile
+          version: v5.19.0
+      # A pull request or a push to main that reuses this run uploads it too.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        with:
+          name: coverage-differential-${{ matrix.os }}-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
+          path: ddto/coverage.out
+          retention-days: 7
+      - name: Report Go cache sizes
+        if: always()
+        shell: bash
+        run: du -sh "${{ steps.paths.outputs.build }}" "${{ steps.paths.outputs.modules }}" ${DDTO_TEST_ORCHESTRION_GOCACHE:+"$DDTO_TEST_ORCHESTRION_GOCACHE"} || true
+      # One cache per configuration fits the repository's 10 GB cache budget. Pull
+      # requests save only when nothing was restored; main and nightly runs keep it.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: >-
+          success() && matrix.owner && steps.cache.outputs.cache-hit != 'true' &&
+          (github.event_name != 'pull_request' || steps.cache.outputs.cache-matched-key == '')
+        with:
+          path: |
+            ${{ steps.paths.outputs.build }}
+            ${{ steps.paths.outputs.modules }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: >-
+          success() && steps.orchestrion-cache.outcome == 'success' && steps.orchestrion-cache.outputs.cache-hit != 'true' &&
+          (github.event_name != 'pull_request' || steps.orchestrion-cache.outputs.cache-matched-key == '')
+        with:
+          path: ${{ runner.temp }}/orchestrion-gocache
+          key: ${{ steps.orchestrion-cache.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ci-shard-differential-${{ matrix.os }}-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
+          path: ddto/artifacts/
+          retention-days: 7
+
+  go-tip:
+    name: Build shared Go tip
+    needs: plan
+    if: needs.plan.outputs.tip-enabled == 'true' && needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      sha: ${{ steps.build.outputs.sha }}
+    steps:
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - name: Build and archive toolchain
+        id: build
+        shell: bash
+        run: |
+          bootstrap="$(go env GOROOT)"
+          git clone --depth=1 https://go.googlesource.com/go "$RUNNER_TEMP/go-tip"
+          tip_sha="$(git -C "$RUNNER_TEMP/go-tip" rev-parse HEAD)"
+          echo "Go tip source: $tip_sha"
+          echo "sha=$tip_sha" >> "$GITHUB_OUTPUT"
+          (cd "$RUNNER_TEMP/go-tip/src" && GOROOT_BOOTSTRAP="$bootstrap" ./make.bash)
+          mkdir "$RUNNER_TEMP/toolchain"
+          echo "$tip_sha" > "$RUNNER_TEMP/toolchain/tip-sha.txt"
+          tar --exclude=.git -czf "$RUNNER_TEMP/toolchain/go-tip.tar.gz" -C "$RUNNER_TEMP" go-tip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: go-tip-toolchain
+          path: ${{ runner.temp }}/toolchain/
+          # As long as the groups' results: rerunning a failed tip job needs it.
+          retention-days: 7
+
+  mini:
+    name: mini (Linux, ${{ matrix.go }}, ${{ matrix.mode }}, ${{ matrix.job }})
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.mini) }}
+    runs-on: ubuntu-latest
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
+    timeout-minutes: 25
+    env:
+      DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
+      DDTO_SUPPORTED_VERSIONS: ${{ needs.plan.outputs.window }}
+      DDTO_COMPATIBILITY: ${{ inputs.compatibility }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        id: go
+        with:
+          go-version: ${{ fromJSON(needs.plan.outputs.go-versions)[matrix.go] }}
+          cache: false
+      - name: Locate Go caches
+        id: paths
+        shell: bash
+        run: |
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cache
+        with:
+          path: |
+            ${{ steps.paths.outputs.build }}
+            ${{ steps.paths.outputs.modules }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-mini-${{ matrix.mode }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-mini-${{ matrix.mode }}-
+      # The tests' consumer module needs Testify and goleak: download them with
+      # retries, as the differential jobs do, so no test waits on the network.
+      - name: Verify test modules
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          python scripts/ci_shards.py retry -- go -C testdata/toolchain mod download
+          go -C testdata/toolchain mod verify
+      - name: Vet
+        if: contains(format(',{0},', matrix.shards), ',units,')
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+        run: go vet ./...
+      - name: Run native Mini groups
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+          CI_GO: ${{ matrix.go }}
+          CI_MODE: ${{ matrix.mode }}
+          CI_SHARDS: ${{ matrix.shards }}
+        run: |
+          python scripts/ci_shards.py run --suite mini --os ubuntu-latest \
+            --go "$CI_GO" --mode "$CI_MODE" --shard "$CI_SHARDS" \
+            --timeout 20m --output artifacts --coverage "$RUNNER_TEMP/coverage"
+      # Each job reports the coverage of ddto's packages in what it ran; Datadog
+      # merges the reports of a commit with ddtest's.
+      - name: Merge the coverage of ddto's packages
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        shell: bash
+        run: python scripts/ci_shards.py coverage --input "$RUNNER_TEMP/coverage" --output coverage.out
+      - name: Upload coverage report to Datadog
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        uses: DataDog/coverage-upload-github-action@d9548b1c3c4ab639d5d3ab29a1508af188975f77 # v1.0.5
+        with:
+          api_key: ${{ secrets.DATADOG_API_KEY }}
+          site: datadoghq.com
+          files: ddto/coverage.out
+          format: go-coverprofile
+          version: v5.19.0
+      # A pull request or a push to main that reuses this run uploads it too.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        with:
+          name: coverage-mini-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
+          path: ddto/coverage.out
+          retention-days: 7
+      - name: Report Go cache sizes
+        if: always()
+        shell: bash
+        run: du -sh "${{ steps.paths.outputs.build }}" "${{ steps.paths.outputs.modules }}" || true
+      # One cache per configuration fits the repository's 10 GB cache budget. Pull
+      # requests save only when nothing was restored; main and nightly runs keep it.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: >-
+          success() && matrix.owner && steps.cache.outputs.cache-hit != 'true' &&
+          (github.event_name != 'pull_request' || steps.cache.outputs.cache-matched-key == '')
+        with:
+          path: |
+            ${{ steps.paths.outputs.build }}
+            ${{ steps.paths.outputs.modules }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ci-shard-mini-ubuntu-latest-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
+          path: ddto/artifacts/
+          retention-days: 7
+
+  tip:
+    name: mini (Linux, tip, normal)
+    needs: [plan, go-tip]
+    if: needs.plan.outputs.tip-enabled == 'true' && needs.plan.outputs.skip != 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.tip) }}
+    runs-on: ubuntu-latest
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
+    timeout-minutes: 25
+    env:
+      DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
+      DDTO_SUPPORTED_VERSIONS: ${{ needs.plan.outputs.window }}
+      DDTO_COMPATIBILITY: ${{ inputs.compatibility }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: go-tip-toolchain
+          path: ${{ runner.temp }}/toolchain/
+      - name: Select shared Go tip
+        shell: bash
+        env:
+          GO_TIP_SHA: ${{ needs.go-tip.outputs.sha }}
+        run: |
+          test "$(cat "$RUNNER_TEMP/toolchain/tip-sha.txt")" = "$GO_TIP_SHA"
+          tar -xzf "$RUNNER_TEMP/toolchain/go-tip.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/go-tip/bin" >> "$GITHUB_PATH"
+          echo "GOTOOLCHAIN=local" >> "$GITHUB_ENV"
+          echo "GO_TIP_SHA=$GO_TIP_SHA" >> "$GITHUB_ENV"
+      - name: Verify test modules
+        shell: bash
+        run: |
+          python scripts/ci_shards.py retry -- go -C testdata/toolchain mod download
+          go -C testdata/toolchain mod verify
+      - name: Vet
+        if: contains(format(',{0},', matrix.shards), ',units,')
+        shell: bash
+        run: go vet ./...
+      - name: Run native Mini groups on tip
+        shell: bash
+        env:
+          CI_SHARDS: ${{ matrix.shards }}
+        run: |
+          python scripts/ci_shards.py run --suite mini --os ubuntu-latest \
+            --go tip --mode normal --shard "$CI_SHARDS" --timeout 20m --output artifacts \
+            --coverage "$RUNNER_TEMP/coverage"
+      # Each job reports the coverage of ddto's packages in what it ran; Datadog
+      # merges the reports of a commit with ddtest's.
+      - name: Merge the coverage of ddto's packages
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        shell: bash
+        run: python scripts/ci_shards.py coverage --input "$RUNNER_TEMP/coverage" --output coverage.out
+      - name: Upload coverage report to Datadog
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        uses: DataDog/coverage-upload-github-action@d9548b1c3c4ab639d5d3ab29a1508af188975f77 # v1.0.5
+        with:
+          api_key: ${{ secrets.DATADOG_API_KEY }}
+          site: datadoghq.com
+          files: ddto/coverage.out
+          format: go-coverprofile
+          version: v5.19.0
+      # A pull request or a push to main that reuses this run uploads it too.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        with:
+          name: coverage-tip-${{ matrix.job }}
+          path: ddto/coverage.out
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ci-shard-mini-ubuntu-latest-go-tip-normal-${{ matrix.job }}
+          path: ddto/artifacts/
+          retention-days: 7
+
+  # The workflow's required check: it fails unless every group passed, in this
+  # run or in the run that it reuses.
+  evidence:
+    name: Complete compatibility evidence
+    if: ${{ !cancelled() }}
+    needs: [plan, lint, differential, mini, go-tip, tip]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
+    timeout-minutes: 10
+    env:
+      DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
+    steps:
+      - name: Reuse the verification of these inputs
+        if: needs.plan.outputs.skip == 'true'
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        env:
+          RUN: ${{ needs.plan.outputs.verified-run }}
+        run: |
+          echo "These inputs passed every group in run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # Datadog reports a commit's coverage from its uploads: without ddto's,
+      # ddto's lines would count as uncovered.
+      - name: Download the reused run's coverage
+        if: needs.plan.outputs.skip == 'true' && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ needs.plan.outputs.verified-run }}
+        run: gh run download "$RUN" --repo "$GITHUB_REPOSITORY" --pattern 'coverage-*' --dir "$RUNNER_TEMP/coverage"
+      - name: Upload the reused run's coverage to Datadog
+        if: needs.plan.outputs.skip == 'true' && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        uses: DataDog/coverage-upload-github-action@d9548b1c3c4ab639d5d3ab29a1508af188975f77 # v1.0.5
+        with:
+          api_key: ${{ secrets.DATADOG_API_KEY }}
+          site: datadoghq.com
+          files: ${{ runner.temp }}/coverage
+          format: go-coverprofile
+          version: v5.19.0
+      - name: Require the source audit
+        if: needs.plan.outputs.skip != 'true' && needs.lint.result != 'success'
+        working-directory: ${{ github.workspace }}
+        run: exit 1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.plan.outputs.skip != 'true'
+        with:
+          pattern: ci-shard-*
+          path: ddto/shards/
+      - name: Verify all groups and render full parity
+        id: aggregate
+        if: needs.plan.outputs.skip != 'true'
+        shell: bash
+        env:
+          TIP: ${{ needs.plan.outputs.tip-enabled }}
+        run: |
+          flags=()
+          if [[ "$TIP" == true ]]; then flags+=(--with-tip); fi
+          python scripts/ci_shards.py aggregate --input shards --output reports "${flags[@]}"
+          cat reports/summary.md >> "$GITHUB_STEP_SUMMARY"
+          for report in reports/*/parity.md; do cat "$report" >> "$GITHUB_STEP_SUMMARY"; done
+      # A group's manifest records its tests before the job reports and keeps
+      # its coverage, so every job of the matrix must also succeed.
+      - name: Require every job of the matrix
+        if: needs.plan.outputs.skip != 'true'
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        env:
+          RESULTS: ${{ needs.differential.result }} ${{ needs.mini.result }}
+          TIP: ${{ needs.plan.outputs.tip-enabled }}
+          TIP_RESULTS: ${{ needs.go-tip.result }} ${{ needs.tip.result }}
+        run: |
+          if [[ "$TIP" == true ]]; then
+            RESULTS="$RESULTS $TIP_RESULTS"
+          fi
+          for result in $RESULTS; do
+            if [[ "$result" != success ]]; then
+              echo "A job of the matrix did not succeed: $RESULTS" >&2
+              exit 1
+            fi
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && needs.plan.outputs.skip != 'true'
+        with:
+          name: compatibility-evidence
+          path: ddto/reports/
+          retention-days: 7
+      # Lets a pull request or a push to main with the same inputs reuse this
+      # run, which then carries the coverage that it uploads again. Only a run
+      # of the recorded versions verifies them; the nightly and full runs test
+      # the module proxy's window instead.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: success() && needs.plan.outputs.skip != 'true' && needs.plan.outputs.window == '' && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        with:
+          name: verified-inputs-${{ needs.plan.outputs.inputs }}
+          path: ddto/reports/summary.md
+          retention-days: 7

@@ -24,11 +24,17 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 	runtime := reportRuntime{
 		Environment: t.environmentInfo, SetupFailure: t.environmentFailure,
 		Framework: displayName(t.framework.Name()), Tracer: tracerDescription(*result),
-		Command: run.Command, Output: run.commandOutput,
+		Command: run.Command, Output: run.commandOutput, NotExercised: run.NotExercised,
 		TrafficDeleted: supportsValidationFramework(t.framework.Name()),
 	}
 	if run.commandError != nil {
 		runtime.Error = run.commandError.Error()
+	}
+	if run.Coverage != nil && run.Coverage.Status != "observed" {
+		runtime.CoverageReason = run.Coverage.Reason
+	}
+	if t.framework.Name() == "cucumber" {
+		runtime.CoverageSetup = t.cucumberCoverageSetup(run)
 	}
 	model := buildReport(t.checkoutRoot(), run.Facts, run.ExitCode != 0, runtime)
 	model.ExecutionCounts = nativeExecutionCounts(run)

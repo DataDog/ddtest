@@ -23,6 +23,7 @@ import (
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
@@ -116,7 +117,7 @@ func TestVitestRunnerResolvesRelativePackageBinary(t *testing.T) {
 	require.NoError(t, os.WriteFile(binary, []byte("#!/bin/sh\n"), 0700))
 	actual, err := resolveVitestRunnerBinary(root, "packages/app", "../../bin/ddtest")
 	require.NoError(t, err)
-	require.Equal(t, canonicalWorkflowRoot(binary), canonicalWorkflowRoot(actual))
+	require.Equal(t, workspace.CanonicalRoot(binary), workspace.CanonicalRoot(actual))
 	drive := preparedTestdrive(t)
 	drive.command, err = os.Executable()
 	require.NoError(t, err)
@@ -185,9 +186,12 @@ func TestVitestCIMatrixUsesCompatibleTracerFloors(t *testing.T) {
 	}
 	require.NoError(t, yaml.Unmarshal(data, &ci))
 	rows := ci.Jobs["testdrive-vitest-workflow"].Strategy.Matrix.Include
-	require.Len(t, rows, 3)
+	require.Len(t, rows, 4)
 	seen := map[int]bool{}
 	for _, row := range rows {
+		if row.Vitest == "latest" {
+			continue // Unpinned; it catches releases newer than the pinned floors.
+		}
 		major, _, known := releaseParts(row.Vitest)
 		require.True(t, known)
 		seen[major] = true
@@ -293,12 +297,12 @@ func TestVitestUnhandledRegressionTriggersRepeatedPair(t *testing.T) {
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
 	}
-	session, err := NewSession()
+	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	var result validationResult
 	result.Framework = "vitest"
-	require.NoError(t, drive.runJavaScriptValidation(t.Context(), &bytes.Buffer{}, session, "/tracer/ci/init.js", &result))
+	require.NoError(t, drive.runFrameworkValidation(t.Context(), &bytes.Buffer{}, session, "/tracer/ci/init.js", &result))
 	require.Equal(t, 4, executor.calls)
 	require.Equal(t, "suspected regression", result.Compatibility.Status)
 	require.Equal(t, []runRole{roleBaseline, roleReporting, roleRepeat, roleRepeat}, []runRole{result.Runs[0].Role, result.Runs[1].Role, result.Runs[2].Role, result.Runs[3].Role})

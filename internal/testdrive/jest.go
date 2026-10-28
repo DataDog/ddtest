@@ -19,10 +19,27 @@ import (
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
 type jestTest struct {
+	WebdriverIOCapability string              `json:"webdriverio_capability,omitempty"`
+	WebdriverIOTestID     string              `json:"webdriverio_test_id,omitempty"`
+	WebdriverIOBrowser    string              `json:"webdriverio_browser,omitempty"`
+	CucumberAttempts      []string            `json:"-"`
+	WebdriverIOAttempts   []string            `json:"-"`
+	CucumberLine          int                 `json:"-"`
+	CypressAttempts       []string            `json:"-"`
+	Playwright            *playwrightIdentity `json:"playwright,omitempty"`
+	// NativeID is the runner's own unique example identity, reported in the
+	// tracer's parameters metadata as scoped_id.
+	NativeID string `json:"native_id,omitempty"`
+	// telemetryClass qualifies telemetryName with its test class, which the
+	// tracer reports as the suite.
+	telemetryClass string
+	// probe marks the controlled probe when its native name is not probeName.
+	probe         bool
 	telemetryName *string
 	File          string `json:"file"`
 	Name          string `json:"name"`
@@ -158,7 +175,7 @@ func probeJestArgs(command string, args []string) []string {
 	return appendJestArgs(command, result, "--coverageThreshold={}")
 }
 
-func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (run validationRun, runErr error) {
+func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (run validationRun, runErr error) {
 	name, instrumented, scenario, probePath, probeMode := spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode
 	run.Role = spec.Role
 	if scenario.Feature == "" {
@@ -277,7 +294,7 @@ func configureScenarioEnvironment(env map[string]string, feature string) {
 func executedTests(run validationRun) int {
 	count := 0
 	for _, test := range run.Tests {
-		if test.Status == "passed" || test.Status == "failed" {
+		if test.Status == "passed" || test.Status == "failed" || (run.framework == "cucumber" && (test.Status == "pending" || test.Status == "undefined")) {
 			count++
 		}
 	}
@@ -289,7 +306,11 @@ func outcomeKeys(run validationRun) []string {
 	keys = append(keys, run.SuiteErrors...)
 	keys = append(keys, run.SuiteFailures...)
 	for _, test := range run.Tests {
-		keys = append(keys, test.File+" › "+test.Name+": "+test.Status+"\n"+test.Failure)
+		scoped := ""
+		if test.NativeID != "" {
+			scoped = " [scoped_id: " + test.NativeID + "]"
+		}
+		keys = append(keys, repositoryTestFile(run, test.File)+" › "+test.Name+scoped+cucumberLocation(test)+playwrightLabel(test)+webdriverIOOutcome(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test)+cypressOutcome(test)+cucumberOutcome(test)+webdriverIOAttemptOutcome(test))
 	}
 	for i := range keys {
 		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])
@@ -298,7 +319,27 @@ func outcomeKeys(run validationRun) []string {
 	return keys
 }
 
+// pairTimeout explains a paired comparison that testdrive's --timeout cut short.
+func pairTimeout(baseline, instrumented validationRun) string {
+	if baseline.Timeout != "" {
+		return baseline.Timeout + "."
+	}
+	if instrumented.Timeout != "" {
+		return instrumented.Timeout + ", while the uninstrumented run finished."
+	}
+	return ""
+}
+
 func compareJest(baseline, instrumented validationRun) verdict {
+	return compareRuns(baseline, instrumented, verifyJestTelemetry)
+}
+
+// compareRuns compares an uninstrumented and a reporting-only run of the same
+// suite, then matches the reporting run's telemetry with telemetry.
+func compareRuns(baseline, instrumented validationRun, telemetry func(validationRun) verdict) verdict {
+	if reason := pairTimeout(baseline, instrumented); reason != "" {
+		return verdict{Status: "inconclusive", Code: "command_timeout", Reason: reason}
+	}
 	if baseline.ResultError != "" {
 		return verdict{Status: "inconclusive", Reason: "The uninstrumented run did not produce usable results: " + reportText(baseline.ResultError) + "."}
 	}
@@ -332,13 +373,25 @@ func compareJest(baseline, instrumented validationRun) verdict {
 		slices.Sort(differences)
 		return verdict{Status: "suspected regression", Reason: "Uninstrumented and reporting-only results differ.", Differences: differences}
 	}
-	if telemetry := verifyJestTelemetry(instrumented); telemetry.Status != "" {
+	if telemetry := telemetry(instrumented); telemetry.Status != "" {
 		return telemetry
 	}
 	return verdict{Status: "compatible", Reason: "No observed behavioral regression: test identities, outcomes, failure details, and exit code match. Existing test failures are acceptable; reporting telemetry was verified."}
 }
 
 func verifyJestTelemetry(run validationRun) verdict {
+	if run.framework == "webdriverio" {
+		return verifyWebdriverIOTelemetry(run)
+	}
+	if run.framework == "cucumber" {
+		return verifyCucumberTelemetry(run)
+	}
+	if run.framework == "playwright" {
+		return verifyPlaywrightTelemetry(run)
+	}
+	if run.framework == "cypress" {
+		return verifyCypressTelemetry(run)
+	}
 	if run.Facts.TestEventCount == 0 {
 		return verdict{Status: "inconclusive", Reason: "The instrumented run sent no test events; matching test outcomes do not prove instrumentation worked."}
 	}
@@ -347,6 +400,8 @@ func verifyJestTelemetry(run validationRun) verdict {
 	}
 	type identity struct{ file, name, status string }
 	expected := make(map[identity]int)
+	scopedExamples := make(map[string]bool)
+	classes := make(map[string][]string)
 	for _, test := range run.Tests {
 		status := map[string]string{"passed": "pass", "failed": "fail"}[test.Status]
 		if status != "" {
@@ -354,10 +409,22 @@ func verifyJestTelemetry(run validationRun) verdict {
 			if test.telemetryName != nil {
 				name = *test.telemetryName
 			}
+			if test.telemetryClass != "" {
+				key := test.File + "\x00" + name
+				if !slices.Contains(classes[key], test.telemetryClass) {
+					classes[key] = append(classes[key], test.telemetryClass)
+				}
+				name = test.telemetryClass + "\x00" + name
+			}
+			if test.NativeID != "" {
+				name = "scoped_id:" + test.NativeID
+				scopedExamples[test.File+"\x00"+name] = true
+			}
 			expected[identity{test.File, name, status}]++
 		}
 	}
 	observed := make(map[identity]int)
+	var differences []string
 	for _, test := range run.Facts.Tests {
 		// The tracer reports source files relative to the Git checkout, and
 		// suite names relative to the test process directory.
@@ -372,26 +439,69 @@ func verifyJestTelemetry(run validationRun) verdict {
 			file = filepath.Join(base, file)
 		}
 		file = filepath.Clean(file)
+		name := test.Name
+		if candidates := classes[file+"\x00"+name]; len(candidates) > 0 {
+			var matches []string
+			for _, class := range candidates {
+				if test.Suite == class || strings.HasPrefix(test.Suite, class+" at ") {
+					matches = append(matches, class)
+				}
+			}
+			// Missing or ambiguous class evidence must not match by method alone.
+			if len(matches) == 1 {
+				name = matches[0] + "\x00" + name
+			}
+		}
+		if len(scopedExamples) > 0 {
+			var parameters struct {
+				Metadata struct {
+					ScopedID string `json:"scoped_id"`
+				}
+			}
+			if json.Unmarshal([]byte(test.Parameters), &parameters) == nil {
+				id := "scoped_id:" + parameters.Metadata.ScopedID
+				if scopedExamples[file+"\x00"+id] {
+					name = id
+				}
+			}
+		}
 		observe := func(attempt intake.TestRun) {
 			if attempt.Status == "pass" || attempt.Status == "fail" {
-				observed[identity{file, test.Name, attempt.Status}]++
+				observed[identity{file, name, attempt.Status}]++
+			}
+		}
+		// A span sent twice is one execution; counting it again could hide a
+		// missing test that shares its name, such as another outline example.
+		spans := map[uint64]int{}
+		attempts := make([]intake.TestRun, 0, len(test.Attempts))
+		for _, attempt := range test.Attempts {
+			if attempt.SpanID != 0 {
+				spans[attempt.SpanID]++
+				if spans[attempt.SpanID] > 1 {
+					continue
+				}
+			}
+			attempts = append(attempts, attempt)
+		}
+		for _, count := range spans {
+			if count > 1 {
+				differences = append(differences, fmt.Sprintf("Duplicate telemetry: file %q, test %q, one span reported %d times", file, test.Name, count))
 			}
 		}
 		var final *intake.TestRun
-		for i, attempt := range test.Attempts {
+		for i, attempt := range attempts {
 			if attempt.Retry && attempt.RetryReason != "external" && attempt.RetryReason != "" {
 				return verdict{Status: "inconclusive", Code: "unexpected_retry", Reason: "Unexpected tracer-controlled retry telemetry in the reporting-only run."}
 			}
 			if !attempt.Retry && final != nil {
 				observe(*final)
 			}
-			final = &test.Attempts[i]
+			final = &attempts[i]
 		}
 		if final != nil {
 			observe(*final)
 		}
 	}
-	var differences []string
 	for key, count := range expected {
 		if count > observed[key] {
 			differences = append(differences, fmt.Sprintf("Missing telemetry: file %q, test %q, status %q (count %d)", key.file, key.name, key.status, count-observed[key]))
@@ -409,13 +519,18 @@ func verifyJestTelemetry(run validationRun) verdict {
 	return verdict{}
 }
 
-func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
-	run := t.runJest
-	if t.framework.Name() == "mocha" {
-		run = t.runMocha
+func (t *Testdrive) runFrameworkValidation(ctx context.Context, output io.Writer, session *workspace.Session, preload string, result *validationResult) error {
+	adapter, ok := pairedFrameworkNamed(t.framework.Name())
+	if !ok {
+		return fmt.Errorf("paired validation is not supported for %s", t.framework.Name())
 	}
-	if t.framework.Name() == "vitest" {
-		run = t.runVitest
+	run := func(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (validationRun, error) {
+		return adapter.run(t, ctx, output, session, preload, spec)
+	}
+	runFramework := run
+	run = func(ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (validationRun, error) {
+		value, err := runFramework(ctx, output, session, preload, spec)
+		return markTimeout(value), err
 	}
 	baseline, err := run(ctx, output, session, preload, runSpec{Name: "baseline", Role: roleBaseline, Instrumented: false})
 	result.Runs = append(result.Runs, baseline.summary())
@@ -430,7 +545,11 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	if err := t.writeHTMLReport(output, result, instrumented); err != nil {
 		return err
 	}
-	result.Compatibility = compareJest(baseline, instrumented)
+	telemetry := adapter.telemetry
+	if telemetry == nil {
+		telemetry = verifyJestTelemetry
+	}
+	result.Compatibility = compareRuns(baseline, instrumented, telemetry)
 	if result.Compatibility.Status == "suspected regression" {
 		baselineAgain, err := run(ctx, output, session, preload, runSpec{Name: "baseline-repeat", Role: roleRepeat, Instrumented: false})
 		result.Runs = append(result.Runs, baselineAgain.summary())
@@ -445,25 +564,51 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 		if err := t.writeHTMLReport(output, result, instrumentedAgain); err != nil {
 			return err
 		}
-		result.Compatibility = compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrumentedAgain)
+		result.Compatibility = compareRepeatedRuns(baseline, instrumented, baselineAgain, instrumentedAgain, telemetry)
 	}
-	if t.framework.Name() == "vitest" {
-		return t.runVitestFeatures(ctx, output, session, preload, baseline, result)
+	// Probes would only repeat the hang; name the timeout once instead.
+	if reason := pairTimeout(baseline, instrumented); reason != "" {
+		unavailableFeatures(result, reason)
+		return nil
 	}
-	if t.framework.Name() == "mocha" {
-		return t.runMochaFeatures(ctx, output, session, preload, baseline, result)
+	if compatibility, feature, ok := missingNativeResults(baseline); ok {
+		result.Features = []featureResult{{Name: "all", Status: "not exercised", Reason: feature}}
+		result.Compatibility = compatibility
+		return nil
 	}
-	if err := t.runJestFeatures(ctx, output, session, preload, result); err != nil {
-		return err
-	}
-	return nil
+	return adapter.features(t, ctx, output, session, preload, baseline, result)
 }
 
 // Only the temporary directory created for this run is interchangeable. Keep
 // file suffixes and arbitrary customer paths/names intact, including failures.
+// repositoryTestFile shows a native test file relative to the checkout the run
+// used, so differences name repository paths, not a temporary copy.
+func repositoryTestFile(run validationRun, file string) string {
+	if run.root == "" || !filepath.IsAbs(file) {
+		return file
+	}
+	if relative, err := filepath.Rel(run.root, file); err == nil && filepath.IsLocal(relative) {
+		return filepath.ToSlash(relative)
+	}
+	return file
+}
+
 func normalizeOwnedTemporaryPath(run validationRun, value string) string {
 	if run.temporaryRoot == "" {
 		return value
 	}
 	return strings.ReplaceAll(value, run.temporaryRoot+string(filepath.Separator), "<ddtest-tmp>/")
+}
+
+// missingNativeResults explains a baseline without test results. A failed
+// command is a startup/setup problem; a successful one that ddtest can't read
+// is a result-reading problem and must not send agents to change the suite.
+func missingNativeResults(baseline validationRun) (verdict, string, bool) {
+	if len(baseline.Tests) > 0 || (baseline.ResultError == "" && baseline.ExitCode == 0) {
+		return verdict{}, "", false
+	}
+	if baseline.ExitCode == 0 {
+		return verdict{Status: "inconclusive", Code: "native_results_unreadable", Reason: reportText(baseline.ResultError) + ". The native suite exited 0, but ddtest could not read its results, so features were not validated. If this command runs the tests, this is a ddtest result-reading problem, not a suite failure: report it with the ddtest version instead of changing the repository."}, "ddtest could not read the native results of a successful suite run, so features were not validated.", true
+	}
+	return verdict{Status: "inconclusive", Code: "native_startup_failed", Reason: "Native execution failed before any test results. Resolve the baseline startup/setup diagnostic first: " + reportText(baseline.Diagnostic+" "+baseline.ResultError)}, "The native suite did not produce test results. Resolve its startup/setup diagnostic before feature or coverage validation.", true
 }

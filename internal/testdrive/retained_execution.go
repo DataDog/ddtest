@@ -62,34 +62,37 @@ func hasPairedExecution(result validationResult) bool {
 	return supportsValidationFramework(result.Framework) && hasValidationPair(result)
 }
 
-// Keep one historical paired run, never a growing chain of reports. Its verdict
+// Keep one historical execution attempt, never a growing chain of reports. Its verdict
 // is not reused: config, source, dependencies or environment may have changed.
 // As with probe execution, callers must run testdrive invocations sequentially.
 func retainExecution(root string, result *validationResult) error {
 	result.Retained = nil
-	if !result.CheckOnly || hasPairedExecution(*result) {
+	if hasValidationExecution(*result) {
 		return nil
 	}
 	previous, err := readPreviousValidation(root)
 	if err != nil {
 		return err
 	}
-	if previous == nil {
+	if previous == nil || previous.Framework != result.Framework {
 		return nil
 	}
-	if !hasPairedExecution(*previous) {
+	if !hasValidationExecution(*previous) {
 		if previous.Retained == nil || previous.Retained.Result == nil {
 			return nil
 		}
 		previous = previous.Retained.Result
 	}
-	if !hasPairedExecution(*previous) {
+	if !hasValidationExecution(*previous) {
 		return nil
 	}
 	previous.Retained = nil
 	result.Retained = &retainedExecution{Status: "historical", Reason: "Earlier execution evidence only; not revalidated by this invocation. Rerun full validation after changes to the test command, configuration, source, dependencies, runtime, or tracer. Earlier failures remain unresolved until rechecked.", Result: previous}
 	return nil
 }
+
+// errReportUnreadable marks a saved report that exists but can't be parsed.
+var errReportUnreadable = errors.New("saved validation report is unreadable; rerun full validation to replace it")
 
 func readPreviousValidation(root string) (*validationResult, error) {
 	file, err := os.Open(validationPath(root))
@@ -112,7 +115,7 @@ func readPreviousValidation(root string) (*validationResult, error) {
 	}
 	var previous validationResult
 	if err := json.Unmarshal(data, &previous); err != nil {
-		return nil, fmt.Errorf("preserve earlier execution report: existing report is unreadable: %w", err)
+		return nil, fmt.Errorf("preserve earlier execution report: %w (%v)", errReportUnreadable, err)
 	}
 	return &previous, nil
 }

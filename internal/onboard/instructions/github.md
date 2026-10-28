@@ -2,6 +2,9 @@
 
 Apply this setup to every GitHub Actions job that runs __FRAMEWORK__.
 
+[[if eq . "javascript"]]__AUTOMATIC_SETUP__
+
+[[end -]]
 ## 1. Instrument the test job
 
 Add this step after checkout and dependency installation, immediately before the first test step:
@@ -27,7 +30,7 @@ Keep the existing test command and unrelated workflow content unchanged. Add the
 Run the local, credential-free setup check:
 
 ```shell
-ddtest testdrive
+[[if eq . "javascript"]]ddtest testdrive --agent --yes[[else]]ddtest testdrive[[end]]
 ```
 
 After it finishes, post every `Open report:` link printed by `ddtest testdrive` to the user so they can open the local Test Optimization report. Do not only summarize the result.

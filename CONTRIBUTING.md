@@ -89,9 +89,16 @@ creating or pushing a tag locally:
 1. Open [Actions → Release](https://github.com/DataDog/ddtest/actions/workflows/release.yml).
 2. Select **Run workflow**, leave the branch set to `main`, and enter an unused
    version such as `v1.8.0` (`vMAJOR.MINOR.PATCH`, without leading zeroes).
-3. Run the workflow. It checks the initiator's permissions, checks out the latest
-   `main`, builds all six binaries, creates the tag at that exact checkout commit,
-   and creates a draft release with generated notes and the binaries attached.
+3. Run the workflow. It checks the initiator's permissions, then runs the Go
+   instrumentation suite with every dd-trace-go and Orchestrion version that
+   `ddtest instrument` supports, as the module proxy has them then. Only when
+   that passes does it check out the commit it tested, the `main` of the
+   request, build all six binaries with `make release`, check that the install
+   scripts install the Linux binary from those files, make the release commit
+   on that exact checkout commit and check that `go install` builds it, create
+   the tags `<version>` and `ddto/<version>` on the release commit, and create
+   a draft release with generated notes and the binaries, `install.sh`,
+   `install.ps1` and `SHA256SUMS` attached.
 4. Follow the link in the workflow summary, review the notes and assets, and
    publish the draft.
 
@@ -100,10 +107,19 @@ GitHub allows users with Write access to click **Run workflow**, but the release
 job rejects anyone without Maintain or Admin access. Re-runs check both the
 original initiator and the person requesting the re-run. Runs from other branches
 or forks are skipped. Release runs are serialized, and existing tags are never
-moved or overwritten. If `main` advances during a build, the tag still identifies
-the commit that was built. Pushing a version tag no longer starts a release.
+moved or overwritten. If `main` advances during a build, the tags still identify
+the release commit on the commit that was built. Pushing a version tag no longer
+starts a release.
 
-If a run fails after creating the tag, inspect its logs and any draft release.
+The release commit is that checkout commit with what
+`go install github.com/DataDog/ddtest@<version>` needs: `go.mod` requires the Go
+module in `ddto/`, `github.com/DataDog/ddtest/ddto`, at the version that
+`ddto/<version>` tags, instead of replacing it with `./ddto`, and that module
+reports the version. GitHub makes the commit; it is not on `main`, which keeps
+the replacement. [`release-commit.sh`](.github/scripts/release-commit.sh) makes
+it locally first and checks `go install` against local tags.
+
+If a run fails after creating the tags, inspect its logs and any draft release.
 The workflow deliberately refuses to reuse that version; recover the draft and
 assets manually or choose a new version. Never move a published release tag.
 
@@ -112,7 +128,8 @@ This follows the manual version-input approach in
 and the draft-release review step in
 [datadog-ci](https://github.com/DataDog/datadog-ci/blob/master/.github/workflows/publish-release.yml).
 Unlike those tools, ddtest does not need a version-bump PR: its binary version is
-injected by `make release VERSION=...`.
+injected by `make release VERSION=...`, and the release commit records it for
+`go install`.
 
 ## Final word
 

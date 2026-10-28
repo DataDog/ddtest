@@ -3,12 +3,8 @@ package onboard
 import (
 	"fmt"
 	"maps"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
-
-	"go.yaml.in/yaml/v3"
 )
 
 const githubAction = "datadog/test-visibility-github-action"
@@ -34,49 +30,13 @@ type ciWorkflow struct {
 	Jobs     map[string]runtimeJob `yaml:"jobs"`
 }
 
-func readWorkflows(root string) ([]ciWorkflow, error) {
-	var workflows []ciWorkflow
-	directory := filepath.Join(root, ".github", "workflows")
-	entries, err := os.ReadDir(directory)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("find GitHub Actions workflows: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || (filepath.Ext(entry.Name()) != ".yml" && filepath.Ext(entry.Name()) != ".yaml") {
-			continue
-		}
-		path := filepath.Join(directory, entry.Name())
-		contents, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", path, err)
-		}
-		var workflow ciWorkflow
-		if err := yaml.Unmarshal(contents, &workflow); err != nil {
-			return nil, fmt.Errorf("parse %s: %w", path, err)
-		}
-		workflow.Path = ".github/workflows/" + entry.Name()
-		for name, job := range workflow.Jobs {
-			job.Steps = expandCompositeSteps(root, workflow.Path, job.Steps)
-			workflow.Jobs[name] = job
-		}
-		workflows = append(workflows, workflow)
-	}
-	return workflows, nil
-}
-
 func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 	var result workflowDiscovery
 	workflows, err := readWorkflows(root)
 	if err != nil {
 		return result, err
 	}
-	actionLanguage := language
-	if language == "javascript" {
-		actionLanguage = "js"
-	}
+	actionLanguage := setupActionLanguage(language)
 	for _, workflow := range workflows {
 		found, configured := false, true
 		for _, jobName := range slices.Sorted(maps.Keys(workflow.Jobs)) {

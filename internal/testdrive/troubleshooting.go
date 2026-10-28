@@ -7,7 +7,6 @@ package testdrive
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
@@ -52,21 +51,8 @@ func runFindingCards(facts intake.Facts, commandFailed bool, runtime reportRunti
 			advice.Text = "DDTest launched bare node without its test entrypoint. Update ddtest and rerun the testdrive. Vitest options belong in its configuration; select a custom file with --vitest-config."
 		}
 	}
-	if noEvents && commandFailed && strings.EqualFold(runtime.Framework, "pytest") {
-		for _, line := range strings.Split(runtime.Output, "\n") {
-			_, arguments, found := strings.Cut(line, "error: unrecognized arguments:")
-			if !found || !slices.Contains(strings.Fields(arguments), "--ddtrace") {
-				continue
-			}
-			card.Kind, card.Title = "pytest-plugin-not-loaded", "pytest did not load the ddtrace plugin"
-			card.Context = "pytest rejected --ddtrace because the ddtrace plugin was not loaded. Automatic instrumentation could not start with this project's pytest configuration."
-			advice = intake.Advice{
-				Finding: card.Kind, Title: "Load the ddtrace pytest plugin in CI",
-				Text: "Check PYTEST_DISABLE_PLUGIN_AUTOLOAD, --disable-plugin-autoload, and -p no:ddtrace in the CI environment and pytest options. If autoloading is intentionally disabled, explicitly load ddtrace once, for example: python -m pytest -p ddtrace --ddtrace. Use the same plugin-loading options for testdrive and CI, then rerun testdrive.",
-				URL:  "https://docs.pytest.org/en/stable/how-to/plugins.html#disabling-plugins-from-autoloading",
-			}
-			break
-		}
+	if language := languageForFramework(strings.ToLower(runtime.Framework)); language != nil {
+		language.noResultsFinding(runtime, noEvents, commandFailed, &card, &advice)
 	}
 	card.Advices = []intake.Advice{advice}
 	return []reportCard{card}

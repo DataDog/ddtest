@@ -24,6 +24,8 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		{"false || true && false", false},
 		{"(false || true) && false", false},
 		{"contains(matrix.node, '20')", true},
+		{"contains(matrix.node,20)", true}, {"contains(22.1,'beta')", false},
+		{"format('{0}',22.1) == '22.1'", true}, {"startsWith(22.1,'22.')", true},
 		{`contains(fromJSON('["18.x", "20.x", "22.x"]'), matrix.node)`, true},
 		{`contains(fromJSON('["18.x", "22.x"]'), matrix.node)`, false},
 		{`contains(fromJSON('["20.X"]'), matrix.node)`, true},
@@ -31,6 +33,11 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		{"matrix.missing", false}, {"matrix.missing < 22", true}, {"matrix.missing != ''", false},
 		{"matrix.enabled", false}, {"matrix.text", true},
 		{"matrix.enabled == false", true}, {"matrix.number == 22", true},
+		{"matrix.number == '22'", true}, {"matrix.enabled == 'false'", false},
+		{"matrix.enabled < 22", true}, {"matrix.enabled == ''", true},
+		{"matrix.number != 'lts'", true}, {"matrix.number == '022'", true},
+		{"22.1 != 'lts' && 22.1 != 'beta'", true},
+		{"22.1 == '22.1'", true}, {"true == 1", true},
 		{"startsWith(matrix.node, '20') && matrix.text != 'FALSE'", false},
 		{"'it''s true' == 'IT''S TRUE'", true},
 		{"matrix.number >= 22", true}, {"matrix.number > 22", false},
@@ -41,7 +48,17 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		{"'22' >= matrix.number", true}, {"'9' > '22'", true},
 		{"'bad' < matrix.number", false}, {"'bad' >= matrix.number", false},
 		{"'' < matrix.number", true}, {"'2.2e1' >= matrix.number", true},
-		{"'022' >= matrix.number", false}, {"'null' <= matrix.number", false},
+		{"'022' >= matrix.number", true}, {"'null' <= matrix.number", false},
+		// The null literal is falsy and compares as zero with unlike types.
+		{"null", false}, {"!null", true}, {"null == null", true}, {"matrix.missing == null", true},
+		{"null == false", true}, {"null == 0", true}, {"null == ''", true}, {"null == 'x'", false},
+		{"matrix.number != null", true}, {"null < matrix.number", true},
+		// Relational operators coerce only unlike types; like booleans or nulls never order.
+		{"false < true", false}, {"false >= false", false}, {"null <= null", false},
+		{"null > null", false}, {"matrix.enabled < true", false},
+		{"null < true", true}, {"false < 1", true}, {"null <= false", true},
+		// GitHub converts a plain decimal string compared with a number.
+		{"matrix.number == '22'", true}, {"matrix.number != '20'", true}, {"'22.0' == matrix.number", true},
 	} {
 		t.Run(tc.expression, func(t *testing.T) {
 			got, err := runtimeCondition(tc.expression, row)
@@ -49,14 +66,22 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 			require.Equal(t, tc.want, got)
 		})
 	}
-	for _, expression := range []string{"matrix.enabled == 'false'", "matrix.number == '22'", "false && github.event_name == 'push'", "matrix.node == '20.x' ||", "(true", "true garbage"} {
+	for _, expression := range []string{"false && github.event_name == 'push'", "matrix.node == '20.x' ||", "(true", "true garbage"} {
 		_, err := runtimeCondition(expression, row)
 		require.Error(t, err, expression)
 	}
-	for _, expression := range []string{"matrix.enabled < 22", "matrix.number >=", "matrix.number >= 22 || github.event_name == 'push'", "matrix.number >= 22 garbage", `contains(fromJSON('[1]'), matrix.node)`, `fromJSON('{}')`, `fromJSON('null')`, `fromJSON('false')`, `fromJSON('oops')`, `contains(fromJSON(env.NODES), matrix.node)`, `contains(fromJSON('["20.x"]'), github.event_name)`, `contains(matrix.node, 20)`} {
+	for _, expression := range []string{"matrix.number >=", "matrix.number >= 22 || github.event_name == 'push'", "matrix.number >= 22 garbage", `contains(fromJSON('[[1]]'), matrix.node)`, `fromJSON('{}')`, `fromJSON('null')`, `fromJSON('false')`, `fromJSON('oops')`, `contains(fromJSON(env.NODES), matrix.node)`, `contains(fromJSON('["20.x"]'), github.event_name)`} {
 		_, err := runtimeCondition(expression, row)
 		require.Error(t, err, expression)
 	}
+}
+
+func TestCompositeEqualityRequiresRuntimeIdentity(t *testing.T) {
+	_, err := conditionEqual([]string{"22"}, []string{"22"})
+	require.ErrorContains(t, err, "runtime identity")
+	equal, err := conditionEqual([]string{"22"}, 22)
+	require.NoError(t, err)
+	require.False(t, equal)
 }
 
 func TestStaticMatrixIncludesFollowOriginalCombinations(t *testing.T) {
@@ -137,4 +162,77 @@ func TestEmptyMatrixDoesNotMasqueradeAsNoCI(t *testing.T) {
 	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, nil)
 	require.Equal(t, "inconclusive", result.Status)
 	require.Equal(t, CodeInvalidMatrix, result.Jobs[0].Code)
+}
+
+// A JavaScript matrix mixing numeric Node versions with an alias is compared
+// the way GitHub does: numbers against a non-numeric string are unequal, and a
+// boolean against the string 'true' compares 1 with NaN.
+func TestJavaScriptMatrixGuardsCompareLooselyTypedValues(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22, 'lts/*']
+        include:
+          - {node-version: 22, coverage: true}
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '${{ matrix.node-version }}'}
+      - run: npm ci
+      - if: matrix.node-version != 'lts/*' && contains(matrix.node-version, 2)
+        run: npx jest
+      - if: matrix.coverage == 'true'
+        run: npx jest --coverage
+`)
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "jest", scope.Commands[0].Command, "the coverage step never runs: true == 'true' compares 1 with NaN")
+}
+
+// The runner formats numbers with G15, parses strings with
+// ExpressionUtility.ParseNumber and searches arrays with loose equality.
+func TestConditionsFollowTheRunnersNumberRules(t *testing.T) {
+	row := map[string]any{"big": 1000000, "number": 22, "node": "20"}
+	for _, test := range []struct {
+		condition string
+		want      bool
+	}{
+		{"format('{0}', matrix.big) == '1000000'", true},
+		{"contains(matrix.big, '1000000')", true},
+		{"startsWith(matrix.big, '1e')", false},
+		{"format('{0}', 0.1) == '0.1'", true},
+		{"matrix.number == ' 22 '", true},
+		{"matrix.number == '+22'", true},
+		{"matrix.number == '22.'", true},
+		{"matrix.number == '2.2e1'", true},
+		{"matrix.number == '0x16'", true},
+		{"matrix.number == '0o26'", true},
+		{"matrix.number == '0x'", false},
+		{"matrix.number == '22px'", false},
+		{"matrix.number == '1_000'", false},
+		{"'Infinity' > matrix.number", true},
+		{"'-Infinity' < matrix.number", true},
+		{"'inf' > matrix.number", false},
+		{`contains(fromJSON('["20.0"]'), 20)`, true},
+		{`contains(fromJSON('[20]'), matrix.node)`, true},
+		{`contains(fromJSON('["022", "lts"]'), matrix.number)`, true},
+		{`contains(fromJSON('[1]'), matrix.node)`, false},
+		{`contains(fromJSON('["lts"]'), matrix.number)`, false},
+		{`contains(fromJSON('["20.x"]'), matrix.node)`, false},
+		{"-1 == '0xffffffff'", true},
+		{"-1 == '0o37777777777'", true},
+		{"matrix.number == '0x100000000'", false},
+		{"fromJSON('[1]')", true},
+		{"fromJSON('[1, \"a\"]') && true", true},
+		{"!fromJSON('[]')", false},
+		{"!('bad' == 1)", true},
+		{"matrix.missing || 'fallback'", true},
+	} {
+		got, err := runtimeCondition(test.condition, row)
+		require.NoError(t, err, test.condition)
+		require.Equal(t, test.want, got, test.condition)
+	}
 }

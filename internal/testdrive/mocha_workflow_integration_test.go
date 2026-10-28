@@ -2,6 +2,7 @@ package testdrive
 
 import (
 	"context"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
@@ -33,11 +34,11 @@ func TestPublicMochaTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "coverage disabled", "scoped alias", "CLI retries", "suite retries", "all thresholds", "TDD", "subpackage", "nested fixture", "nested programmatic"} {
+	for _, mode := range mochaWorkflowScenarios.selected(t) {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
-			require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root, false))
+			require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), root, skipIgnoredOutput))
 			write := func(name, value string) {
 				require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
 				requireWriteFile(t, filepath.Join(root, name), value)
@@ -117,7 +118,7 @@ func TestPublicMochaTestdrive(t *testing.T) {
 			output, err = command(root, "git", "init", "-q")
 			require.NoError(t, err, string(output))
 			if mode == "passing" {
-				output, err = command(root, binary, "onboard", "--framework", "mocha")
+				output, err = command(root, binary, "onboard", "--instructions", "--framework", "mocha")
 				require.NoError(t, err, string(output))
 				require.Contains(t, string(output), "Istanbul/NYC")
 				output, err = command(root, binary, "testdrive", "--framework", "mocha", "--all", "--check-only", "--yes")
@@ -199,4 +200,10 @@ func TestPublicMochaTestdrive(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Relative durations from CI; see integrationScenarios.
+var mochaWorkflowScenarios = integrationScenarios{
+	names:   []string{"passing", "existing failure", "coverage disabled", "scoped alias", "CLI retries", "suite retries", "all thresholds", "TDD", "subpackage", "nested fixture", "nested programmatic"},
+	weights: map[string]int{"passing": 15},
 }

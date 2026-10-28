@@ -63,16 +63,32 @@ func resolveMochaCoverage(root, directory string, words, stack []string, remaini
 		result.Tests[0].ProbeCoverageThresholdsDisabled = true
 		result.Tests[0].mochaProbeCommand = shellquote.Join(relaxCoverageChecks(words[:i])...) + " " + probe
 	}
+	if framework == "cucumber" {
+		result.Tests[0].cucumberCoverageWrapper = filepath.Base(words[0])
+	}
+	if framework == "cucumber" && result.Tests[0].cucumberProbeCommand != "" {
+		result.Tests[0].ProbeCoverageThresholdsDisabled = true
+		result.Tests[0].cucumberProbeCommand = shellquote.Join(relaxCoverageChecks(words[:i])...) + " " + result.Tests[0].cucumberProbeCommand
+	}
 	result.Tests[0].usesNYC = result.Tests[0].usesNYC || filepath.Base(words[0]) == "nyc"
 	result.Tests[0].Command = shellquote.Join(words...)
 	return result
 }
 
 func MochaValidationCommand(root, command string) (string, error) {
+	var scope ValidationScope
+	var err error
 	if strings.TrimSpace(command) == "" {
-		scope, err := DiscoverValidationScope(root, "mocha")
-		if err != nil {
-			return "", err
+		scope, err = DiscoverValidationScope(root, "mocha")
+	}
+	return MochaValidationCommandInScope(root, command, scope, err)
+}
+
+// MochaValidationCommandInScope selects from an already discovered scope.
+func MochaValidationCommandInScope(root, command string, scope ValidationScope, scopeErr error) (string, error) {
+	if strings.TrimSpace(command) == "" {
+		if scopeErr != nil {
+			return "", scopeErr
 		}
 		if len(scope.Commands) > 1 {
 			return "", fmt.Errorf("multiple Mocha CI commands discovered; use --all to validate each configuration")

@@ -25,13 +25,20 @@ const (
 
 // Scenario configures exactly one local feature experiment. The zero value preserves ordinary testdrive settings.
 type Scenario struct {
-	Feature string
-	Module  string
-	Suite   string
-	Test    string
+	Feature    string
+	Module     string
+	Suite      string
+	Test       string
+	Parameters string
+	// KnownModules each get an unrelated known test, for tracers that treat
+	// a module without known tests as unusable for early flake detection.
+	KnownModules []string
 	// SourceFile is the repository-relative path used by Jest suite skipping.
 	// Suite remains the reported identity used by test management.
 	SourceFile string
+	// SuiteSelector is an adapter's explicit suite identity when its tracer
+	// consumes test.suite rather than a repository-relative source file.
+	SuiteSelector string
 }
 
 func newHandler() http.Handler { return scenarioHandler(Scenario{}) }
@@ -136,6 +143,9 @@ func handleKnownTests(w http.ResponseWriter, _ *http.Request, scenario Scenario)
 	if scenario.Module != "" {
 		tests[scenario.Module] = map[string]any{}
 	}
+	for _, name := range scenario.KnownModules {
+		tests[name] = map[string]any{"ddtest unrelated known suite": []string{"known test"}}
+	}
 	writeJSON(w, map[string]any{
 		"data": map[string]any{
 			"attributes": map[string]any{
@@ -163,11 +173,19 @@ func handleSkippableTests(w http.ResponseWriter, r *http.Request, scenario Scena
 		return
 	}
 	data := []any{}
+	suite := scenario.SourceFile
+	if scenario.SuiteSelector != "" {
+		suite = scenario.SuiteSelector
+	}
 	if scenario.Feature == "skipping" && scenario.SourceFile != "" {
 		if level == "test" && scenario.Suite != "" && scenario.Test != "" {
-			data = append(data, map[string]any{"type": "test", "attributes": map[string]any{"suite": scenario.Suite, "name": scenario.Test}})
+			attributes := map[string]any{"suite": scenario.Suite, "name": scenario.Test}
+			if scenario.Parameters != "" {
+				attributes["parameters"] = scenario.Parameters
+			}
+			data = append(data, map[string]any{"type": "test", "attributes": attributes})
 		} else if level != "test" {
-			data = append(data, map[string]any{"type": "suite", "attributes": map[string]any{"suite": scenario.SourceFile}})
+			data = append(data, map[string]any{"type": "suite", "attributes": map[string]any{"suite": suite}})
 		}
 	}
 	writeJSON(w, map[string]any{

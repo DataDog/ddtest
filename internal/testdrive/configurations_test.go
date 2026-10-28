@@ -26,7 +26,7 @@ func TestSelectedCommandDoesNotCertifyOtherConfigurations(t *testing.T) {
 	require.Equal(t, "not exercised", result.Configurations[1].Status)
 	prepareValidationResult(root, &result)
 	require.False(t, result.Success)
-	require.False(t, result.LocalSuccess)
+	require.True(t, result.LocalSuccess, "completed local evidence is separate from unvalidated CI configurations")
 	summary := summarizeValidation(result)
 	require.Equal(t, "INCOMPLETE", summary.Status)
 	require.Contains(t, strings.Join(summary.BlockingChecks, "\n"), "production.ts: not exercised")
@@ -126,7 +126,7 @@ func TestSourceRunDoesNotValidateCIPreparedConfiguration(t *testing.T) {
 	result.Success, result.LocalSuccess = true, true
 	applyScopeVerdict(&result)
 	require.False(t, result.Success)
-	require.False(t, result.LocalSuccess)
+	require.True(t, result.LocalSuccess, "completed local evidence is separate from unvalidated CI configurations")
 }
 
 func TestAllDoesNotExecuteAConfigurationWithoutItsCISetup(t *testing.T) {
@@ -184,4 +184,26 @@ func TestPackageNativeIdentitiesKeepCheckoutPrefixes(t *testing.T) {
 	run := validationRun{root: root, framework: "jest", Tests: []jestTest{{File: filepath.Join(root, "packages/a/one.test.js"), Name: "test"}, {File: filepath.Join(root, "packages/b/one.test.js"), Name: "test"}}}
 	counts := nativeExecutionCounts(run)
 	require.Equal(t, 2, *counts.SourceTestIdentities)
+}
+
+func TestAllKeepsASuspectedRegressionFailedLikeASingleRun(t *testing.T) {
+	regression := verdict{Status: "suspected regression", Reason: "differs"}
+	inconclusive := verdict{Status: "inconclusive", Reason: "not compared"}
+	require.Equal(t, regression, combineConfigurationCompatibility(regression, inconclusive), "a later blocked configuration must not hide the regression")
+	require.Equal(t, inconclusive, combineConfigurationCompatibility(verdict{Status: "compatible"}, inconclusive))
+
+	result := completeValidationFixture("jest")
+	result.Compatibility = combineConfigurationCompatibility(regression, inconclusive)
+	result.Scope = &onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "jest a"}, {Directory: ".", Command: "jest b"}}}
+	result.Configurations = []configurationResult{{TestCommand: result.Scope.Commands[0], Status: "incomplete"}, {TestCommand: result.Scope.Commands[1], Status: "blocked"}}
+	root := t.TempDir()
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
+	report := readValidationReport(t, root)
+	require.Equal(t, "FAILED", report.Summary.Status)
+	require.Equal(t, "FAILED", report.Summary.LocalValidation)
+}
+
+func TestTracerMismatchNamesBothConfigurations(t *testing.T) {
+	err := tracerMismatchError("npm run test:local", "dd-trace@5.132.0", "npm run test:sauce", "dd-trace@6.21.0")
+	require.EqualError(t, err, "tracer selection differs between configurations: npm run test:local uses dd-trace@5.132.0, npm run test:sauce uses dd-trace@6.21.0; rerun with an exact --tracer-version that both support")
 }

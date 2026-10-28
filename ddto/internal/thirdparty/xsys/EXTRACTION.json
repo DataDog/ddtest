@@ -1,0 +1,360 @@
+{
+  "version": "golang.org/x/sys v0.47.0",
+  "adaptations": [
+    "Selected Windows native ABI declarations and wrappers",
+    "System32-only loader through the standard runtime hook (no unrestricted loader)",
+    "Read-only registry with portable value decoder and native buffer-growth behavior",
+    "Linux/AIX use standard syscall.Uname",
+    "BSD uses standard syscall.Syscall6 with pinned numeric keys, fixed Uname buffers and formatting",
+    "Solaris retains the pinned libc Uname trampoline"
+  ],
+  "sources": [
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "type DLLError struct",
+      "source_line": 27
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "type DLL struct",
+      "source_line": 38
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "type Proc struct",
+      "source_line": 144
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "type LazyDLL struct",
+      "source_line": 173
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "type LazyProc struct",
+      "source_line": 255
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (e *DLLError) Error()",
+      "source_line": 33
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (e *DLLError) Unwrap()",
+      "source_line": 35
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (d *DLL) FindProc(",
+      "source_line": 79
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (p *Proc) Addr()",
+      "source_line": 152
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (d *LazyDLL) mustLoad()",
+      "source_line": 220
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (d *LazyDLL) Handle()",
+      "source_line": 228
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (d *LazyDLL) NewProc(",
+      "source_line": 234
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func NewLazySystemDLL(",
+      "source_line": 249
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (p *LazyProc) Find()",
+      "source_line": 266
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (p *LazyProc) mustFind()",
+      "source_line": 290
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (p *LazyProc) Addr()",
+      "source_line": 300
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (p *Proc) Call(",
+      "source_line": 165
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (p *LazyProc) Call(",
+      "source_line": 314
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func LoadDLL(",
+      "source_line": 48
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/dll_windows.go",
+      "source_sha256": "1c62d9345dd0c1d8e660792c1955a407b2049210c3bd2d8000004375f07afed9",
+      "declaration": "func (d *LazyDLL) Load()",
+      "source_line": 187
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/types_windows.go",
+      "source_sha256": "afa1ce9faf38958759a3cabca512e105bf937970e8ed411e6d8a7a9fa9de4558",
+      "declaration": "type ThreadEntry32 struct",
+      "source_line": 988
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/types_windows.go",
+      "source_sha256": "afa1ce9faf38958759a3cabca512e105bf937970e8ed411e6d8a7a9fa9de4558",
+      "declaration": "type IO_COUNTERS struct",
+      "source_line": 2562
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/types_windows.go",
+      "source_sha256": "afa1ce9faf38958759a3cabca512e105bf937970e8ed411e6d8a7a9fa9de4558",
+      "declaration": "type JOBOBJECT_EXTENDED_LIMIT_INFORMATION struct",
+      "source_line": 2571
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/zsyscall_windows.go",
+      "source_sha256": "c40bdeba110bf46782feb55976a00c88c2ae51d8c812de5ae023326eeb083c92",
+      "declaration": "func AssignProcessToJobObject(",
+      "source_line": 1785
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/zsyscall_windows.go",
+      "source_sha256": "c40bdeba110bf46782feb55976a00c88c2ae51d8c812de5ae023326eeb083c92",
+      "declaration": "func CreateJobObject(",
+      "source_line": 1907
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/zsyscall_windows.go",
+      "source_sha256": "c40bdeba110bf46782feb55976a00c88c2ae51d8c812de5ae023326eeb083c92",
+      "declaration": "func OpenThread(",
+      "source_line": 3029
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/zsyscall_windows.go",
+      "source_sha256": "c40bdeba110bf46782feb55976a00c88c2ae51d8c812de5ae023326eeb083c92",
+      "declaration": "func ResumeThread(",
+      "source_line": 3195
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/zsyscall_windows.go",
+      "source_sha256": "c40bdeba110bf46782feb55976a00c88c2ae51d8c812de5ae023326eeb083c92",
+      "declaration": "func SetInformationJobObject(",
+      "source_line": 3388
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/zsyscall_windows.go",
+      "source_sha256": "c40bdeba110bf46782feb55976a00c88c2ae51d8c812de5ae023326eeb083c92",
+      "declaration": "func TerminateJobObject(",
+      "source_line": 3492
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/zsyscall_windows.go",
+      "source_sha256": "c40bdeba110bf46782feb55976a00c88c2ae51d8c812de5ae023326eeb083c92",
+      "declaration": "func Thread32First(",
+      "source_line": 3508
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/zsyscall_windows.go",
+      "source_sha256": "c40bdeba110bf46782feb55976a00c88c2ae51d8c812de5ae023326eeb083c92",
+      "declaration": "func Thread32Next(",
+      "source_line": 3516
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/types_windows_386.go",
+      "source_sha256": "02d259fd40882f68a35913b0c1d3320054804d92a4a7a4e6b86b1816c1b90258",
+      "declaration": "type JOBOBJECT_BASIC_LIMIT_INFORMATION struct",
+      "source_line": 24
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/types_windows_amd64.go",
+      "source_sha256": "c375406875cabc6447a9a8ca917eccab2227ea33a17ac3ed02a3a8fca0af8ce1",
+      "declaration": "type JOBOBJECT_BASIC_LIMIT_INFORMATION struct",
+      "source_line": 24
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/LICENSE",
+      "source_sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/registry/key.go",
+      "source_sha256": "59aab3af1dd13c55cb65c9189cc3da277fecfe82dc4c21baf557cb1c3d2c128d"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/windows/registry/value.go",
+      "source_sha256": "abf23b1dc18dbb3d54ea1e113794cf6d564c2dd1f946e7159f9aadabb8a1a1a5"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/asm_solaris_amd64.s",
+      "source_sha256": "fb0c083f4b4f98ed0654d6104bb5bcef5be5c6c4f3e53129246b33e82aa3babe"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/zsyscall_solaris_amd64.go",
+      "source_sha256": "4ca86eaf8f9017fb7a065a272f195b8eb2ac0184d99d84994edef3a7e7594a19"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/ztypes_solaris_amd64.go",
+      "source_sha256": "8be6e25c48202114da5c04e530ee67bf870c7773e1d8ffb3a36e7a5d34d1fc1f"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/syscall_darwin.go",
+      "source_sha256": "8928e516d815b6d95ff8d6b7ffdbf88843e47076737d885bd81d68bfa8f825ed"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/syscall_freebsd.go",
+      "source_sha256": "4008e3ba2768c6e74c2543ab438a5f8cf30fd06a86cd13dc8d7142740b432246"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/syscall_openbsd.go",
+      "source_sha256": "32d12aa40fbad0a373c3382ff8e92238ab0ba04e2f534d7125008760fd8566be"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/syscall_netbsd.go",
+      "source_sha256": "07b5b81fd3b5a41dd97a1fa6f679f7ea96cae3bbbca7c112c9c8e847c2491e9f"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/syscall_dragonfly.go",
+      "source_sha256": "bbad86381e07c5f4a6370bbc0e16d7fa285492c080237ed0b285bf5911f358ef"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/zerrors_darwin_amd64.go",
+      "source_sha256": "7314fbdfe24b9b48d27d21192c753c825f25a4328156d54c242b5a1f5ccfc307"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/zerrors_freebsd_amd64.go",
+      "source_sha256": "ac896c1e7c7714ba8ab2087bc827a601a6c8a92dd0420c9c56744d2ab88bff4d"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/zerrors_netbsd_amd64.go",
+      "source_sha256": "091c5337f22379bdf944f9bf6b639f2b20b0781c465879f6aff2965f8928b700"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/zerrors_openbsd_amd64.go",
+      "source_sha256": "0a7627470dce06b95a13b99ed321b89a9b9665e871f500e9ef9a07dd9186e824"
+    },
+    {
+      "source": "golang.org/x/sys@v0.47.0/unix/zerrors_dragonfly_amd64.go",
+      "source_sha256": "3884e33b8c394639bc8ef32d436df7a1520ecffbcc4ce2f4fab77eb1c3cb97ca"
+    }
+  ],
+  "destinations": [
+    {
+      "path": "internal/thirdparty/xsys/unix/uname.go",
+      "sha256": "dd5576ec7f58ebee2fb0b054027fb31b01cb880a8d70ac56efc1f1edf5515e3e"
+    },
+    {
+      "path": "internal/thirdparty/xsys/unix/uname_bsd.go",
+      "sha256": "49dd73d6794e167e266673edf1aca53d342e8bad7293b11cb01e2ed60d34825c"
+    },
+    {
+      "path": "internal/thirdparty/xsys/unix/uname_solaris.go",
+      "sha256": "d539c4930b69d9c6c020052cfea53d82e30a5b6cc12432e1ae9969aab2cd6fc2"
+    },
+    {
+      "path": "internal/thirdparty/xsys/unix/uname_solaris_amd64.s",
+      "sha256": "81e22e07775ea2162ac159132061abe73b2f4b42dd1e2f76267d4a014372e5f0"
+    },
+    {
+      "path": "internal/thirdparty/xsys/unix/uname_syscall.go",
+      "sha256": "cf6c0c7792cfb4a32934fe83773476beffe43f4c967fd795385a2c27a093895a"
+    },
+    {
+      "path": "internal/thirdparty/xsys/unix/uname_sysctl.go",
+      "sha256": "38dbd2d11ba4b78a9edb7e5c5ef60807cb5fbe579dc3601db2f11f54129931fb"
+    },
+    {
+      "path": "internal/thirdparty/xsys/unix/uname_test.go",
+      "sha256": "3795f1e32fe4bf49b2fb859b88af4261858053add59e1c3cdfad1f1b3f82174e"
+    },
+    {
+      "path": "internal/platform/LICENSE",
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    },
+    {
+      "path": "internal/thirdparty/xsys/windows/registry/key_windows.go",
+      "sha256": "8a8931255f3e3c48c0cf0ec832ad8459b27de83102c05d90cf9f3d51e2d2e1e4"
+    },
+    {
+      "path": "internal/thirdparty/xsys/windows/registry/key_windows_test.go",
+      "sha256": "42ba40022a6de13aeeb1758df29566fb23e896445942dc559e93b1884c6f7559"
+    },
+    {
+      "path": "internal/thirdparty/xsys/windows/registry/values.go",
+      "sha256": "af372b38424ba2032014f5d518df1311c1b1171263e1dd8644d85f7b57dbdbf0"
+    },
+    {
+      "path": "internal/thirdparty/xsys/windows/registry/values_test.go",
+      "sha256": "2a4a725915aa6b1756a8d5e5154b4ceba4772e958fdb64c8761716f3971700e9"
+    },
+    {
+      "path": "internal/thirdparty/xsys/windows/calls_windows.go",
+      "sha256": "d3fc5421ae05b89cc5a0260ea636d529934d78e59b18c7e3c096095b0bc5af86"
+    },
+    {
+      "path": "internal/thirdparty/xsys/windows/calls_windows_test.go",
+      "sha256": "50286d07e1ab4587a48d86b68cb3db09b30467d41ab8087a0d90c2dde9121dc0"
+    },
+    {
+      "path": "internal/thirdparty/xsys/windows/dll_windows.go",
+      "sha256": "3a56274572b49e81ddb755d03f6c0ca24964ed7019f1e6fde5e78f878ac52d22"
+    },
+    {
+      "path": "internal/thirdparty/xsys/windows/job_layout_386.go",
+      "sha256": "650f2b7bd9c8711b7128605e717e7def3def136c9aee05882c59d718e692f59c"
+    },
+    {
+      "path": "internal/thirdparty/xsys/windows/job_layout_64.go",
+      "sha256": "3ac8ed99af642b63ebecd6d147bfed0437e1443ba3e39e6defe4a23a16f946eb"
+    }
+  ],
+  "verification_boundaries": [
+    "Windows native tests cross-link but have not executed on this host.",
+    "Go 1.27.1 compiled locally; supported Go 1.26 native matrix is pending."
+  ],
+  "mib_constants": {
+    "CTL_KERN": 1,
+    "KERN_OSTYPE": 1,
+    "KERN_HOSTNAME": 10,
+    "KERN_OSRELEASE": 2,
+    "KERN_VERSION": 4,
+    "CTL_HW": 6,
+    "HW_MACHINE": 1
+  },
+  "commit": "9e7e939dcafac07e8ab4cffa6e5fc74908413f00",
+  "layout_note": "Source subsets now live under internal/thirdparty/xsys, with SDK metadata adapters in internal/thirdparty/dd-trace-go/osinfo."
+}

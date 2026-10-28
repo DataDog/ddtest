@@ -23,15 +23,15 @@ func TestAggregateCountsDistinguishRepeatedExecutionsWithoutDroppingContexts(t *
 	var models []reportModel
 	var runs []runSummary
 	for configuration := range 3 {
-		workspace := filepath.Join(root, fmt.Sprintf("workspace-%d", configuration))
-		run := validationRun{Role: roleReporting, Name: "reporting-only", Instrumented: true, root: workspace, Command: fmt.Sprintf("jest --configuration=%d", configuration)}
+		configurationRoot := filepath.Join(root, fmt.Sprintf("workspace-%d", configuration))
+		run := validationRun{Role: roleReporting, Name: "reporting-only", Instrumented: true, root: configurationRoot, Command: fmt.Sprintf("jest --configuration=%d", configuration)}
 		for index := range 32 {
 			name := fmt.Sprintf("native test %d", index)
-			run.Tests = append(run.Tests, jestTest{File: filepath.Join(workspace, "test.js"), Name: name, Status: "passed"})
+			run.Tests = append(run.Tests, jestTest{File: filepath.Join(configurationRoot, "test.js"), Name: name, Status: "passed"})
 			run.Facts.Tests = append(run.Facts.Tests, intake.Test{SourceFile: "test.js", Suite: "suite", Name: name, Status: "pass"})
 		}
 		run.Facts.TestEventCount = len(run.Tests)
-		model := buildReport(workspace, run.Facts, false, reportRuntime{Framework: "Jest", Command: run.Command})
+		model := buildReport(configurationRoot, run.Facts, false, reportRuntime{Framework: "Jest", Command: run.Command})
 		model.ExecutionCounts = nativeExecutionCounts(run)
 		labelConfigurationModel(&model, run.Command)
 		models = append(models, model)

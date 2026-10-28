@@ -58,14 +58,12 @@ printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$las
 					drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 						return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
 					}
-					require.NoError(t, drive.Run(t.Context(), &output))
-					require.NotContains(t, output.String(), "INCOMPLETE")
-					require.True(t, strings.HasPrefix(executor.env["RUBYOPT"], preloads+" "))
-					require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
-					report, err := os.ReadFile(htmlReportPath(root))
-					require.NoError(t, err)
-					require.Contains(t, string(report), "Ruby 3.4.7")
-					require.Contains(t, string(report), "/selected ruby/bin/ruby")
+					require.ErrorContains(t, drive.Run(t.Context(), &output), "ruby bundle did not produce framework metadata")
+					require.NotContains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument", "preflight disables tracing")
+					require.True(t, filepath.IsAbs(executor.env["BUNDLE_GEMFILE"]))
+					require.Contains(t, executor.env["BUNDLE_GEMFILE"], filepath.Join("checkout", "config", "Gemfile.test"))
+					require.NotContains(t, executor.env["BUNDLE_GEMFILE"], root, "Bundler must inspect the selected manifest only in the owned copy")
+					require.Contains(t, output.String(), "ruby bundle did not produce framework metadata")
 				} else {
 					require.Empty(t, drive.environmentInfo.Executable)
 					require.Empty(t, drive.environmentInfo.Version)
@@ -127,16 +125,6 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			case "python":
 				require.NotEmpty(t, executor.env["PYTHONPATH"])
 				require.Contains(t, executor.env["PYTEST_ADDOPTS"], "--ddtrace")
-				require.NotContains(t, executor.env, "NODE_OPTIONS")
-			case "ruby":
-				report, err := os.ReadFile(htmlReportPath(root))
-				require.NoError(t, err)
-				require.Contains(t, string(report), "Ruby from PATH")
-				require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
-				require.Contains(t, preview.String(), "Bundler updates Gemfile and Gemfile.lock.")
-				require.NotContains(t, preview.String(), "It will not change")
-				require.Contains(t, output.String(), "datadog-ci@latest · project bundle installation")
-				require.Contains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			}
 		})
@@ -236,7 +224,9 @@ func TestCypressTestdrivePreservesCommand(t *testing.T) {
 				return &fakeIntake{findings: intake.Facts{TestEventCount: 1, TestCount: 1}}, nil
 			}
 			var output bytes.Buffer
-			require.NoError(t, run.Run(t.Context(), &output))
+			_, err = run.runCypress(t.Context(), &output, run.session, run.projectTracer, runSpec{Name: "reporting-only", Role: roleReporting, Instrumented: true})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, run.session.Close()) })
 			require.Equal(t, command[0], executor.command)
 			require.Equal(t, command[1:], executor.args)
 			require.Contains(t, executor.env["NODE_OPTIONS"], run.projectTracer)

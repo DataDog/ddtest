@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +45,7 @@ func TestPublicJestConfigurations(t *testing.T) {
 	require.NoError(t, err, string(data))
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	require.NoError(t, copyConfiguration(ctx, filepath.Dir(modules), root, false))
+	require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), root, skipIgnoredOutput))
 	tracerVersion := integrationTracerVersion(t, modules)
 	data, err = command(root, "git", "init", "-q")
 	require.NoError(t, err, string(data))
@@ -55,7 +56,7 @@ func TestPublicJestConfigurations(t *testing.T) {
 	write("package.json", `{"scripts":{"build":"tsc --project tsconfig.json","test":"jest --runInBand"},"devDependencies":{"jest":"30.5.1","typescript":"5.9.3"}}`)
 	write("tsconfig.json", `{"compilerOptions":{"module":"CommonJS","outDir":"lib","types":[],"skipLibCheck":true},"files":["src/add.ts"]}`)
 	write("src/add.ts", `export const add=(a:number,b:number)=>a+b;`)
-	write("one.test.js", `const {add}=require('./lib/add'); test('adds',()=>{expect(add(1,1)).toBe(2);expect(['source','built']).toContain(process.env.MODE);expect(process.env.NODE_OPTIONS).toContain('--max-old-space-size='+process.env.HEAP);expect(process.env.NODE_OPTIONS).not.toContain('4096');});`)
+	write("one.test.js", `const {add}=require('./lib/add'); test('adds',()=>{expect(add(1,1)).toBe(2);expect(['source','built']).toContain(process.env.MODE);expect(process.env.NODE_OPTIONS).toContain('--max-old-space-size='+process.env.HEAP);expect(process.env.NODE_OPTIONS).not.toContain('--max-old-space-size=4096');});`)
 	write("source.config.js", `module.exports={displayName:'Source',testMatch:['**/*.test.js'],testEnvironment:'node',watchman:false};`)
 	write("built.config.js", `module.exports={displayName:'Built',testMatch:['**/*.test.js'],testEnvironment:'node',watchman:false};`)
 	write(".github/workflows/ci.yml", strings.ReplaceAll(`jobs:
@@ -139,7 +140,10 @@ func TestPublicJestConfigurations(t *testing.T) {
 		require.NotEmpty(t, item.Preparation[0].Diagnostic)
 	}
 	require.Empty(t, failed.Runs)
-	require.Nil(t, failed.Retained)
+	// The earlier full execution stays as history only; it certifies nothing now.
+	require.NotNil(t, failed.Retained)
+	require.NotNil(t, failed.LastExecution)
+	require.False(t, failed.LastExecution.Current)
 	entries, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
