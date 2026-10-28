@@ -343,11 +343,13 @@ func TestJavaProbeRunsInAModuleThatRanTests(t *testing.T) {
 
 func TestJavaTestName(t *testing.T) {
 	for native, telemetry := range map[string]string{
-		"works":              "works",
-		"works()":            "works",
-		"check(TestInfo)":    "check",
-		"add(int, int)[2]":   "add[2]",
-		"[1] custom display": "[1] custom display",
+		"works":               "works",
+		"works()":             "works",
+		"check(TestInfo)":     "check",
+		"add(int, int)[2]":    "add[2]",
+		"parse[a, 1](2)":      "parse",
+		"parse[[x], (y)](10)": "parse",
+		"[1] custom display":  "[1] custom display",
 	} {
 		require.Equal(t, telemetry, javaTestName(native), native)
 	}

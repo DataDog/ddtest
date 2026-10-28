@@ -43,6 +43,7 @@ type simulatedMaven struct {
 	// Surefire 3.0.0-M5 does for a skipped Spock specification.
 	unreportedSkips bool
 	calls       []map[string]string
+	args        [][]string
 }
 
 type simulatedIntake struct{ maven *simulatedMaven }
@@ -72,7 +73,7 @@ func (m *simulatedMaven) report(t *testing.T, class string, cases ...string) {
 
 func (m *simulatedMaven) run(t *testing.T, args []string, env map[string]string) (string, error) {
 	t.Helper()
-	m.calls = append(m.calls, env)
+	m.calls, m.args = append(m.calls, env), append(m.args, args)
 	instrumented := env["DD_CIVISIBILITY_ENABLED"] != "false"
 	if m.brokenBuild {
 		return "[ERROR] COMPILATION ERROR\n", exitStatus(t, 1)
@@ -333,4 +334,17 @@ func TestJavaFeaturesPassWhenSurefireReportsNoSkippedProbe(t *testing.T) {
 	}
 	require.True(t, strings.HasPrefix(status["skipping"], "passed"), status["skipping"])
 	require.True(t, strings.HasPrefix(status["disabled"], "passed"), "the probe's zero executions prove the body did not run: %s", status["disabled"])
+}
+
+func TestJavaProbesStopAtTheTestPhase(t *testing.T) {
+	drive, maven, session := javaSimulation(t)
+	drive.args = []string{"-B", "verify", "-Pcoverage"}
+	result := &validationResult{Framework: "junit5"}
+	require.NoError(t, drive.runFrameworkValidation(t.Context(), &bytes.Buffer{}, session, "/agent/dd-java-agent.jar", result))
+	require.Equal(t, []string{"-B", "verify", "-Pcoverage"}, maven.args[0], "the paired runs keep the selected command")
+	require.Equal(t, []string{"-B", "verify", "-Pcoverage"}, maven.args[1])
+	for _, args := range maven.args[2:] {
+		require.Equal(t, []string{"-B", "test", "-Pcoverage"}, args[:3], "post-test checks such as license headers never judge the probe")
+		require.Contains(t, args, "-Dtest="+javaProbeClass)
+	}
 }

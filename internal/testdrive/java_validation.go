@@ -231,7 +231,9 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 		env["DD_CIVISIBILITY_ENABLED"] = "false"
 	}
 	if spec.ProbePath != "" {
-		args = append(slices.Clone(args), javaProbeArguments...)
+		// The probe only needs Surefire: checks after the test phase, such as
+		// license headers or coverage gates, would judge the probe file itself.
+		args = append(maven.UpToTest(args), javaProbeArguments...)
 		env["DDTEST_PROBE_MODE"] = spec.ProbeMode
 		env["DDTEST_PROBE_STATE"] = filepath.Join(directory, "probe-state")
 	}
@@ -322,9 +324,16 @@ func javaNativeTests(projects []maven.Project, tests []maven.Test, probe string)
 // invocations with their index, as in check(TestInfo) or add(int, int)[2].
 var javaSignature = regexp.MustCompile(`^([\pL_$][\pL\pN_$]*)\([^)]*\)(\[[0-9]+\])?$`)
 
+// testNGInvocation is how Surefire reports a TestNG data-provider invocation,
+// as in parse[a, 1](2); dd-java-agent reports the method name.
+var testNGInvocation = regexp.MustCompile(`^([\pL_$][\pL\pN_$]*)\[.*\]\([0-9]+\)$`)
+
 func javaTestName(name string) string {
 	if parts := javaSignature.FindStringSubmatch(name); parts != nil {
 		return parts[1] + parts[2]
+	}
+	if parts := testNGInvocation.FindStringSubmatch(name); parts != nil {
+		return parts[1]
 	}
 	return name
 }

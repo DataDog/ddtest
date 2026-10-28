@@ -242,6 +242,34 @@ var validationPhases = []string{
 // verify that a CI build may end with.
 var testPhases = []string{"test", "prepare-package", "package", "pre-integration-test", "integration-test", "post-integration-test", "verify", "install", "deploy", "surefire:test", "failsafe:integration-test"}
 
+// afterTestPhases run after Surefire's test phase: packaging, integration
+// tests and the checks bound to verify.
+var afterTestPhases = []string{"prepare-package", "package", "pre-integration-test", "integration-test", "post-integration-test", "verify", "failsafe:integration-test", "failsafe:verify"}
+
+// UpToTest replaces the phases and goals of Maven arguments that run after the
+// test phase with test, once, keeping every option and earlier goal.
+func UpToTest(args []string) []string {
+	var result []string
+	test := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case slices.Contains(optionsWithValue, arg):
+			result = append(result, args[i:min(i+2, len(args))]...)
+			i++
+			continue
+		case strings.HasPrefix(arg, "-"):
+		case slices.Contains(afterTestPhases, shortGoal(arg)) || arg == "test":
+			if test {
+				continue
+			}
+			arg, test = "test", true
+		}
+		result = append(result, arg)
+	}
+	return result
+}
+
 // publishingPhases run every test phase, then write artifacts to the local
 // repository or publish them.
 var publishingPhases = []string{"install", "deploy"}
