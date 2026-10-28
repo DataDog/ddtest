@@ -64,6 +64,17 @@ def references(records, case, cpus, subject, flags):
     return native, oracle, scope
 
 
+def go_tool(go, *args, timeout=120):
+    """Output of go tool. go tool finds the tool in the build cache, where a
+    stat once stalled for minutes: a stalled call stops and runs once more."""
+    command = [str(go), 'tool', *map(str, args)]
+    try:
+        return subprocess.check_output(command, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"{' '.join(command)}: no answer in {timeout} s, running it again", flush=True)
+        return subprocess.check_output(command, text=True, timeout=timeout)
+
+
 def expected_delivery(oracle, native_results, binaries, go):
     """Add native Examples absent from the older SDK's CI inventory.
 
@@ -83,7 +94,7 @@ def expected_delivery(oracle, native_results, binaries, go):
         if not names:
             continue
         pattern = '|'.join(r'\.' + re.escape(name) + r'$' for name in sorted(names))
-        text = subprocess.check_output([str(go), 'tool', 'objdump', '-s', pattern, binary['path']], text=True)
+        text = go_tool(go, 'objdump', '-s', pattern, binary['path'])
         for line in text.splitlines():
             match = re.match(r'^TEXT (.+)\.(Example\w*)\(SB\) (.+)$', line)
             if not match or match[2] not in names:
@@ -203,7 +214,7 @@ class Runner:
                     if result.returncode:
                         raise RuntimeError(f"original runtime binary build failed: {case['id']} {variant}")
                     for binary in destination.glob('*.test'):
-                        symbols = subprocess.check_output([str(self.go),'tool','nm',str(binary)], text=True)
+                        symbols = go_tool(self.go, 'nm', binary)
                         build.check_instrumentation(symbols, variant, case['subject'])
                         if b'ddci-real-test-body-edit-999' in binary.read_bytes():
                             raise ValueError('runtime executable contains an edit marker')

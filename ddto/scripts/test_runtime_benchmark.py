@@ -6,6 +6,24 @@ from unittest.mock import patch
 import runtime_benchmark as runtime
 
 
+class GoToolTests(unittest.TestCase):
+    def test_a_stalled_go_tool_runs_once_more(self):
+        answers = [runtime.subprocess.TimeoutExpired('go', 120), 'symbols']
+        def check_output(command, **kwargs):
+            self.assertEqual(['/go', 'tool', 'nm', '/bin/pkg.test'], command)
+            self.assertEqual(120, kwargs['timeout'])
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        with patch.object(runtime.subprocess, 'check_output', side_effect=check_output), patch('builtins.print'):
+            self.assertEqual('symbols', runtime.go_tool(Path('/go'), 'nm', Path('/bin/pkg.test')))
+        stalled = [runtime.subprocess.TimeoutExpired('go', 120)] * 2
+        with patch.object(runtime.subprocess, 'check_output', side_effect=stalled), patch('builtins.print'):
+            with self.assertRaises(runtime.subprocess.TimeoutExpired):
+                runtime.go_tool(Path('/go'), 'nm', Path('/bin/pkg.test'))
+
+
 class ReferencesTests(unittest.TestCase):
     def test_examples_extend_the_inventory_without_changing_existing_events(self):
         oracle = {'delivery': {'event_counts': {'test': 1, 'test_suite_end': 1, 'test_module_end': 1},
