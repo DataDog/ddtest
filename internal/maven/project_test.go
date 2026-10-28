@@ -262,7 +262,7 @@ func TestPackagedResourcesResolveEveryPOMsDirectories(t *testing.T) {
 	write("service/pom.xml", `<project><build><resources><resource><directory>src/main/resources</directory></resource></resources></build><profiles><profile><build><resources><resource><directory>..</directory><excludes><exclude>.testoptimization/**</exclude></excludes></resource></resources></build></profile></profiles></project>`)
 	write("tool/pom.xml", `<project><build><resources><resource><directory>${shared.dir}</directory></resource></resources></build></project>`)
 	write("target/pom.xml", `<project><build><resources><resource><directory>.</directory></resource></resources></build></project>`)
-	resources, err := PackagedResources(root)
+	resources, err := PackagedResources(root, nil)
 	require.NoError(t, err)
 	directories := map[string]Resource{}
 	for _, resource := range resources {
@@ -278,7 +278,7 @@ func TestPackagedResourcesResolveEveryPOMsDirectories(t *testing.T) {
 func TestPackagedResourcesResolveAbsoluteDirectories(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project><build><resources><resource><directory>`+root+`</directory></resource><resource><directory>/elsewhere/resources</directory></resource></resources></build></project>`), 0644))
-	resources, err := PackagedResources(root)
+	resources, err := PackagedResources(root, nil)
 	require.NoError(t, err)
 	require.Len(t, resources, 2)
 	require.Equal(t, ".", resources[0].Directory, "an absolute directory naming the checkout is its root")

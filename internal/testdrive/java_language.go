@@ -313,7 +313,38 @@ func (javaLanguage) reportRuntimeCurrent(_ string, evidence WorkflowEvidence) bo
 func (javaLanguage) packageManager(string) string { return "maven" }
 
 func (javaLanguage) packageExclusions(t *Testdrive, _ context.Context) (onboard.WorkflowCheck, bool) {
-	return javaPackageExclusions(t.repositoryRoot), true
+	poms, err := t.javaScopePOMs()
+	if err != nil {
+		return onboard.WorkflowCheck{Name: "package_report_exclusions", Status: "failed", Reason: "Cannot read the reactor of a discovered Maven command: " + reportText(err.Error())}, true
+	}
+	return javaPackageExclusions(t.repositoryRoot, poms), true
+}
+
+// javaScopePOMs are the POMs, relative to the repository root, of the reactors
+// the discovered Maven commands build, whatever their file names.
+func (t *Testdrive) javaScopePOMs() ([]string, error) {
+	if t.workflowScope == nil {
+		return nil, nil
+	}
+	var poms []string
+	for _, entry := range t.workflowScope.Commands {
+		words, err := shellquote.Split(entry.Command)
+		if err != nil || len(words) == 0 {
+			return nil, fmt.Errorf("invalid Maven command: %s", entry.Command)
+		}
+		pom, err := maven.CommandPOM(words[1:])
+		if err != nil {
+			return nil, err
+		}
+		projects, err := maven.ProjectsFrom(t.repositoryRoot, filepath.Join(entry.Directory, pom))
+		if err != nil {
+			return nil, err
+		}
+		for _, project := range projects {
+			poms = append(poms, project.POM)
+		}
+	}
+	return poms, nil
 }
 
 func (javaLanguage) initialization(string) string {
@@ -327,9 +358,9 @@ var javaReports = []string{".testoptimization/testdrive.json", ".testoptimizatio
 // Maven packages only declared resources, so the reports at the repository
 // root are packaged only by a resource directory that contains them and
 // patterns that select them.
-func javaPackageExclusions(root string) onboard.WorkflowCheck {
+func javaPackageExclusions(root string, poms []string) onboard.WorkflowCheck {
 	check := onboard.WorkflowCheck{Name: "package_report_exclusions", Status: "passed"}
-	resources, err := maven.PackagedResources(root)
+	resources, err := maven.PackagedResources(root, poms)
 	if err != nil {
 		check.Status, check.Reason = "failed", "Cannot determine which files Maven packages: "+reportText(err.Error())
 		return check

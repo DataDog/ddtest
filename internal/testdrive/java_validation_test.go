@@ -521,7 +521,7 @@ func TestJavaPackageCheckFindsResourcesThatPackageTheReports(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><build><resources>`+tc.resources+`</resources></build></project>`)
-			check := javaPackageExclusions(root)
+			check := javaPackageExclusions(root, nil)
 			require.Equal(t, tc.status, check.Status, check.Reason)
 			require.Contains(t, check.Reason, tc.reason)
 		})
@@ -529,7 +529,7 @@ func TestJavaPackageCheckFindsResourcesThatPackageTheReports(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(root, "service"), 0755))
 	requireWriteFile(t, filepath.Join(root, "service", "pom.xml"), `<project><build><resources><resource><directory>..</directory></resource></resources></build></project>`)
-	require.Equal(t, "failed", javaPackageExclusions(root).Status, "a module can package its parent directory")
+	require.Equal(t, "failed", javaPackageExclusions(root, nil).Status, "a module can package its parent directory")
 }
 
 func TestJavaWorkflowIsBoundToTheJDK(t *testing.T) {
@@ -547,4 +547,23 @@ func TestJavaWorkflowIsBoundToTheJDK(t *testing.T) {
 	require.Equal(t, "maven", javaLanguage{}.packageManager(""))
 	require.Contains(t, javaLanguage{}.initialization("junit5"), "${{ env.MAVEN_OPTS }}")
 	require.True(t, Coordinated("java"))
+}
+
+func TestJavaPackageCheckInspectsTheReactorsCommandsSelect(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>plain</artifactId></project>`)
+	requireWriteFile(t, filepath.Join(root, "pom-ci.xml"), `<project><artifactId>ci</artifactId><modules><module>core</module></modules></project>`)
+	require.NoError(t, os.Mkdir(filepath.Join(root, "core"), 0755))
+	requireWriteFile(t, filepath.Join(root, "core", "pom.xml"), `<project><artifactId>core</artifactId></project>`)
+	drive := &Testdrive{repositoryRoot: root, workflowScope: &onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "mvn -B -f pom-ci.xml verify"}}}}
+	check, handled := javaLanguage{}.packageExclusions(drive, t.Context())
+	require.True(t, handled)
+	require.Equal(t, "passed", check.Status, check.Reason)
+	requireWriteFile(t, filepath.Join(root, "pom-ci.xml"), `<project><artifactId>ci</artifactId><build><resources><resource><directory>.</directory></resource></resources></build></project>`)
+	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
+	require.Equal(t, "failed", check.Status, "the POM a command selects is inspected whatever its name")
+	require.Contains(t, check.Reason, "pom-ci.xml packages")
+	drive.workflowScope.Commands[0].Command = "mvn -f missing.xml verify"
+	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
+	require.Equal(t, "failed", check.Status, "an unreadable reactor cannot be ruled out")
 }

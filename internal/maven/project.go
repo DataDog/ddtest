@@ -408,12 +408,12 @@ func ModuleDirectories(projects []Project) map[string]string {
 	return modules
 }
 
-// PackagedResources returns the main resources every POM under root declares,
-// in its build or any profile, with directories relative to root. A directory
-// under the build directory is build output and left out; one built from other
+// PackagedResources returns the main resources that every pom.xml under root,
+// and every other POM listed in poms (relative to root), declares in its
+// build or any profile, with directories relative to root. A directory under
+// the build directory is build output and left out; one built from other
 // properties is returned unresolved, with its ${...}.
-func PackagedResources(root string) ([]Resource, error) {
-	var resources []Resource
+func PackagedResources(root string, poms []string) ([]Resource, error) {
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -427,50 +427,65 @@ func PackagedResources(root string) ([]Resource, error) {
 		if entry.Name() != "pom.xml" || !entry.Type().IsRegular() {
 			return nil
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		var project Project
-		if err := xml.Unmarshal(data, &project); err != nil {
-			return fmt.Errorf("parse %s: %w", path, err)
-		}
 		pom, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		declared := slices.Clone(project.Resources)
-		for _, profile := range project.Profiles {
-			declared = append(declared, profile.Resources...)
-		}
-		for _, resource := range declared {
-			directory := strings.TrimSpace(resource.Directory)
-			if directory == "" || strings.HasPrefix(directory, "${project.build.directory}") {
-				continue
-			}
-			for _, base := range []string{"${project.basedir}", "${basedir}"} {
-				if rest, ok := strings.CutPrefix(directory, base); ok {
-					directory = "." + rest
-				}
-			}
-			switch {
-			case strings.Contains(directory, "${"):
-			case filepath.IsAbs(directory):
-				// An absolute directory may still name the checkout.
-				absolute, err := filepath.Abs(root)
-				if err != nil {
-					return err
-				}
-				if directory, err = filepath.Rel(absolute, directory); err != nil {
-					return err
-				}
-			default:
-				directory = filepath.Join(filepath.Dir(pom), directory)
-			}
-			resource.POM, resource.Directory = pom, directory
-			resources = append(resources, resource)
-		}
-		return nil
+		poms = append(poms, pom)
+		return err
 	})
-	return resources, err
+	if err != nil {
+		return nil, err
+	}
+	var resources []Resource
+	for _, pom := range slices.Compact(slices.Sorted(slices.Values(poms))) {
+		declared, err := pomResources(root, pom)
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, declared...)
+	}
+	return resources, nil
+}
+
+// pomResources returns the main resources pom declares, as PackagedResources.
+func pomResources(root, pom string) ([]Resource, error) {
+	data, err := os.ReadFile(filepath.Join(root, pom))
+	if err != nil {
+		return nil, err
+	}
+	var project Project
+	if err := xml.Unmarshal(data, &project); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", pom, err)
+	}
+	declared := slices.Clone(project.Resources)
+	for _, profile := range project.Profiles {
+		declared = append(declared, profile.Resources...)
+	}
+	var resources []Resource
+	for _, resource := range declared {
+		directory := strings.TrimSpace(resource.Directory)
+		if directory == "" || strings.HasPrefix(directory, "${project.build.directory}") {
+			continue
+		}
+		for _, base := range []string{"${project.basedir}", "${basedir}"} {
+			if rest, ok := strings.CutPrefix(directory, base); ok {
+				directory = "." + rest
+			}
+		}
+		switch {
+		case strings.Contains(directory, "${"):
+		case filepath.IsAbs(directory):
+			// An absolute directory may still name the checkout.
+			absolute, err := filepath.Abs(root)
+			if err != nil {
+				return nil, err
+			}
+			if directory, err = filepath.Rel(absolute, directory); err != nil {
+				return nil, err
+			}
+		default:
+			directory = filepath.Join(filepath.Dir(pom), directory)
+		}
+		resource.POM, resource.Directory = pom, directory
+		resources = append(resources, resource)
+	}
+	return resources, nil
 }
