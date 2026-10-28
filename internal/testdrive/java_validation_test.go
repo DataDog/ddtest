@@ -407,37 +407,51 @@ func javaCIFixture(t *testing.T, matrix string) string {
 	return root
 }
 
-func TestJavaCIRuntimeCertifiesOnlyTheValidatedJDKAndAgent(t *testing.T) {
-	root := javaCIFixture(t, "['17', '21']")
+func TestJavaCIRuntimeCertifiesTheValidatedJDKOrAnAcceptedSubstitute(t *testing.T) {
+	root := javaCIFixture(t, "['17', '21', '21.0.4']")
 	drive := &Testdrive{repositoryRoot: root, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"-B", "clean", "verify"}, tracerVersion: "1.67.1"}
-	ci, err := drive.javaCIRuntime("17.0.20")
+	ci, substitutions, err := drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
-	require.Len(t, ci.Jobs, 2, "the CI step validated as mvn -B clean verify matches both rows")
+	require.Len(t, ci.Jobs, 3, "the CI step validated as mvn -B clean verify matches every row")
 	status := map[string]string{}
 	for _, job := range ci.Jobs {
 		status[job.Runtime] = job.Status + ": " + job.Reason
 	}
 	require.Contains(t, status["17"], "compatible: dd-java-agent 1.67.1 is validated on this host's Java 17.0.20.")
-	require.Contains(t, status["21"], "inconclusive: This run validates Java 17.0.20. Validate Java 21 by running testdrive with JAVA_HOME")
-	require.Equal(t, "inconclusive", ci.Status)
+	require.Contains(t, status["21"], "compatible: dd-java-agent 1.67.1 is validated on this host's Java 17.0.20 as a substitute for Java 21.")
+	require.Equal(t, "compatible", ci.Status)
+	require.Len(t, substitutions, 1, "one substitution per other CI JDK major")
+	substitution := substitutions[0]
+	require.Equal(t, []string{"21", "17.0.20", "Java"}, []string{substitution.CI, substitution.Local, substitution.Runtime})
+	require.False(t, substitution.Accepted, "only the user accepts a substitute")
+	require.Contains(t, substitution.blocker(), "validated on substitute Java 17.0.20")
+	require.Contains(t, substitution.blocker(), "Accept this evidence with --accept-substitute-runtime, or set JAVA_HOME to an existing Java 21 JDK and rerun")
+	drive.acceptSubstituteRuntime = true
+	_, substitutions, err = drive.javaCIRuntime("17.0.20")
+	require.NoError(t, err)
+	require.True(t, substitutions[0].Accepted)
+	require.Contains(t, substitutions[0].caveat(), "validated on substitute Java 17.0.20")
 
-	drive.tracerVersion = "1.70.0"
-	ci, err = drive.javaCIRuntime("17.0.20")
+	drive.tracerVersion, drive.acceptSubstituteRuntime = "1.70.0", false
+	ci, substitutions, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
 	require.Contains(t, ci.Jobs[0].Reason, "CI pins dd-java-agent 1.67.1, but this run validates 1.70.0")
+	require.Empty(t, substitutions, "another agent release validates no row, on any JDK")
 
 	drive.tracerVersion, drive.checkOnly = "1.67.1", true
-	ci, err = drive.javaCIRuntime("17.0.20")
+	ci, substitutions, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
 	require.Equal(t, "inconclusive", ci.Jobs[0].Status, "configuration-only checks run nothing")
+	require.Empty(t, substitutions)
 
 	single := javaCIFixture(t, "['17']")
 	drive = &Testdrive{repositoryRoot: single, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"-B", "clean", "verify"}, tracerVersion: "1.67.1"}
-	ci, err = drive.javaCIRuntime("17.0.20")
+	ci, substitutions, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
 	require.Equal(t, "compatible", ci.Status)
+	require.Empty(t, substitutions)
 	drive.args = []string{"test"}
-	ci, err = drive.javaCIRuntime("17.0.20")
+	ci, _, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
 	require.Contains(t, ci.Reason, "No CI consumer matches this Maven command", "a local command that CI does not run certifies no CI row")
 }
@@ -492,4 +506,64 @@ func TestJavaAllConfigurationsComeFromCIDiscovery(t *testing.T) {
 	require.False(t, handled)
 	_, _, _, err = javaLanguage{}.selectCommand(commandRequest{runner: framework.NewMaven("junit5", nil), override: "mvn -B clean install"})
 	require.ErrorContains(t, err, "remove install, for example: mvn -B clean verify", "install would overwrite ~/.m2 artifacts")
+}
+
+func TestJavaPackageCheckFindsResourcesThatPackageTheReports(t *testing.T) {
+	for _, tc := range []struct{ name, resources, status, reason string }{
+		{"standard resources", `<resource><directory>src/main/resources</directory></resource>`, "passed", "none packages the reports"},
+		{"no resources", ``, "passed", "Checked 0 Maven resource declarations"},
+		{"root license only", `<resource><directory>${project.basedir}</directory><includes><include>LICENSE</include><include>*.txt</include></includes></resource>`, "passed", "none packages"},
+		{"whole root", `<resource><directory>.</directory></resource>`, "failed", "add <exclude>.testoptimization/**</exclude>"},
+		{"root json files", `<resource><directory>${basedir}</directory><includes><include>**/*.json</include></includes></resource>`, "failed", "including .testoptimization/"},
+		{"root with reports excluded", `<resource><directory>.</directory><excludes><exclude>.testoptimization/</exclude></excludes></resource>`, "passed", "none packages"},
+		{"unresolved directory", `<resource><directory>${shared}</directory></resource>`, "failed", "cannot resolve"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><build><resources>`+tc.resources+`</resources></build></project>`)
+			check := javaPackageExclusions(root, nil)
+			require.Equal(t, tc.status, check.Status, check.Reason)
+			require.Contains(t, check.Reason, tc.reason)
+		})
+	}
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "service"), 0755))
+	requireWriteFile(t, filepath.Join(root, "service", "pom.xml"), `<project><build><resources><resource><directory>..</directory></resource></resources></build></project>`)
+	require.Equal(t, "failed", javaPackageExclusions(root, nil).Status, "a module can package its parent directory")
+}
+
+func TestJavaWorkflowIsBoundToTheJDK(t *testing.T) {
+	t.Setenv("JAVA_HOME", writeJDK(t, "17.0.20"))
+	runtime, err := javaLanguage{}.workflowRuntime(&Testdrive{})
+	require.NoError(t, err)
+	require.Equal(t, "17.0.20", runtime)
+	require.True(t, javaLanguage{}.reportRuntimeCurrent("", WorkflowEvidence{Runtime: "17.0.20"}))
+	require.False(t, javaLanguage{}.reportRuntimeCurrent("", WorkflowEvidence{Runtime: "21.0.5"}), "a report from another JDK is stale")
+	require.False(t, javaLanguage{}.reportRuntimeCurrent("", WorkflowEvidence{Node: currentNodeVersion()}), "Node does not stand in for the JDK")
+	t.Setenv("JAVA_HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	_, err = javaLanguage{}.workflowRuntime(&Testdrive{})
+	require.ErrorContains(t, err, "no JDK was found")
+	require.Equal(t, "maven", javaLanguage{}.packageManager(""))
+	require.Contains(t, javaLanguage{}.initialization("junit5"), "${{ env.MAVEN_OPTS }}")
+	require.True(t, Coordinated("java"))
+}
+
+func TestJavaPackageCheckInspectsTheReactorsCommandsSelect(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>plain</artifactId></project>`)
+	requireWriteFile(t, filepath.Join(root, "pom-ci.xml"), `<project><artifactId>ci</artifactId><modules><module>core</module></modules></project>`)
+	require.NoError(t, os.Mkdir(filepath.Join(root, "core"), 0755))
+	requireWriteFile(t, filepath.Join(root, "core", "pom.xml"), `<project><artifactId>core</artifactId></project>`)
+	drive := &Testdrive{repositoryRoot: root, workflowScope: &onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "mvn -B -f pom-ci.xml verify"}}}}
+	check, handled := javaLanguage{}.packageExclusions(drive, t.Context())
+	require.True(t, handled)
+	require.Equal(t, "passed", check.Status, check.Reason)
+	requireWriteFile(t, filepath.Join(root, "pom-ci.xml"), `<project><artifactId>ci</artifactId><build><resources><resource><directory>.</directory></resource></resources></build></project>`)
+	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
+	require.Equal(t, "failed", check.Status, "the POM a command selects is inspected whatever its name")
+	require.Contains(t, check.Reason, "pom-ci.xml packages")
+	drive.workflowScope.Commands[0].Command = "mvn -f missing.xml verify"
+	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
+	require.Equal(t, "failed", check.Status, "an unreadable reactor cannot be ruled out")
 }

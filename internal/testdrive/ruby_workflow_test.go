@@ -648,7 +648,7 @@ func TestRubyCoordinatedValidationEnforcesTheSelectedSite(t *testing.T) {
 	drive := &Testdrive{repositoryRoot: root, framework: framework.NewRSpec(platform.NewRuby("")), language: "ruby", selectedSite: "datadoghq.eu"}
 	ci := rubyLanguage{}.configurationsCIRuntime(drive, onboard.ValidationScope{Commands: []onboard.TestCommand{{Command: "bundle exec rspec"}}})
 	require.Len(t, ci.Jobs, 1)
-	require.Equal(t, onboard.CodeIncompleteRubySetup, ci.Jobs[0].Code, "the action reports to the default site, not the selected one")
+	require.Equal(t, onboard.CodeIncompleteCISetup, ci.Jobs[0].Code, "the action reports to the default site, not the selected one")
 	drive.selectedSite = ""
 	ci = rubyLanguage{}.configurationsCIRuntime(drive, onboard.ValidationScope{Commands: []onboard.TestCommand{{Command: "bundle exec rspec"}}})
 	require.Equal(t, "not checked", ci.Jobs[0].Status)

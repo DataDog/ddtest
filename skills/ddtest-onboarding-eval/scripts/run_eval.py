@@ -174,12 +174,19 @@ class BackgroundCommands:
         return sorted(self.bash | self.pending)
 
 
+# Ruby and Java validations build their own environments (bundles, Maven
+# reactors in disposable copies) repeatedly; they need longer foreground runs
+# and container-native scratch storage.
+RUBY_FRAMEWORKS = ("rspec", "minitest")
+JAVA_FRAMEWORKS = ("junit4", "junit5")
+
+
 def agent_environment(agent, timeout, framework=None):
     if agent != "claude":
         return {}
     # Print mode cannot resume a conversation after its final result. Keep Bash
     # synchronous and allow long paired runs without the default 120s handoff.
-    maximum = 3600000 if framework in ("cypress", "rspec", "minitest") else 600000
+    maximum = 3600000 if framework in ("cypress", *RUBY_FRAMEWORKS, *JAVA_FRAMEWORKS) else 600000
     bash_timeout = str(min(maximum, int(timeout * 1000)))
     # Auto-memory would persist trial conclusions in the disposable home and
     # mix agent notes into the evidence; trials must stay independent.
@@ -354,8 +361,14 @@ def report_runtime(report, requested=None):
             "scope": "Final ddtest report only; framework-owned Node runtimes and historical execution have separate scopes."}
 
 
-def report_ruby_runtime(report, requested):
-    # Ruby reports serialize the selected interpreter as preflight.runtime.
+# JAVA_RUNTIME_SCRIPT prints the JDK home and its release file's JAVA_VERSION.
+JAVA_RUNTIME_SCRIPT = (
+    'home="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")}"; '
+    'printf "%s\\n" "$home"; sed -n \'s/^JAVA_VERSION="\\(.*\\)"$/\\1/p\' "$home/release"')
+
+
+def report_preflight_runtime(report, requested):
+    # Ruby and Java reports serialize the interpreter or JDK as preflight.runtime.
     observed = sorted({preflight["runtime"] for preflight in [report.get("preflight") or {},
         *[(configuration.get("preflight") or {}) for configuration in report.get("configurations") or []]]
         if isinstance(preflight, dict) and isinstance(preflight.get("runtime"), str) and preflight.get("runtime")})
@@ -492,10 +505,11 @@ def run(args):
         directory = trial / name if key == "XDG_STATE_HOME" else trial / "caches" / name
         directory.mkdir(parents=True, exist_ok=True)
         env[key] = str(directory)
-    # Ruby validation builds disposable bundles repeatedly. Keep that high-file-
-    # count scratch on the container's private tmpfs, not a macOS bind mount.
-    # It is removed with the container; retained reports remain in the checkout.
-    if getattr(args, "framework", None) in ("rspec", "minitest"):
+    # Ruby validation builds disposable bundles, and Java validation copies the
+    # repository per configuration, repeatedly. Keep that high-file-count
+    # scratch on the container's private tmpfs, not a macOS bind mount. It is
+    # removed with the container; retained reports remain in the checkout.
+    if getattr(args, "framework", None) in (*RUBY_FRAMEWORKS, *JAVA_FRAMEWORKS):
         env["TMPDIR"] = "/tmp"
     # pnpm's own configuration is not inherited by npm commands in test scripts.
     pnpm_config = Path(env["XDG_CONFIG_HOME"]) / "pnpm" / "rc"
@@ -651,9 +665,13 @@ def run(args):
                                         "codex_login_shell": False}
             if runtime["executable"] != expected_executable:
                 raise RuntimeError("Selected Node executable did not run; inspect node_runtime")
-        if framework in ("rspec", "minitest"):
+        if framework in RUBY_FRAMEWORKS:
             manifest["ruby_runtime"] = json.loads(command(["ruby", "-rjson", "-e",
                 'puts JSON.generate(executable: RbConfig.ruby, version: RUBY_VERSION)'], timeout=CLI_STARTUP_TIMEOUT))
+        if framework in JAVA_FRAMEWORKS:
+            # ddtest reads the JDK's release file, from JAVA_HOME or the java on PATH.
+            java_home, java_version = command(["sh", "-c", JAVA_RUNTIME_SCRIPT], timeout=CLI_STARTUP_TIMEOUT).strip().split("\n")
+            manifest["java_runtime"] = {"home": java_home, "version": java_version}
         manifest["cli_version"] = command([args.agent, "--version"], timeout=CLI_STARTUP_TIMEOUT)
         expected_cli = container.cli_versions[args.agent]
         if not re.search(r"(?<![\d.])"+re.escape(expected_cli)+r"(?![\d.])", manifest["cli_version"]):
@@ -810,12 +828,14 @@ def run(args):
         try:
             manifest["agent_reporting"] = reporting_verdict(final_response, report)
             manifest["ddtest_runtime"] = report_runtime(report, manifest.get("node_runtime", {}).get("version"))
-            if "ruby_runtime" in manifest:
-                manifest["ddtest_ruby_runtime"] = report_ruby_runtime(report, manifest["ruby_runtime"]["version"])
-                if manifest["ddtest_ruby_runtime"]["status"] == "mismatch":
+            for language, name in (("ruby", "Ruby"), ("java", "Java")):
+                if language+"_runtime" not in manifest:
+                    continue
+                manifest["ddtest_"+language+"_runtime"] = report_preflight_runtime(report, manifest[language+"_runtime"]["version"])
+                if manifest["ddtest_"+language+"_runtime"]["status"] == "mismatch":
                     manifest["status"], manifest["failure_kind"] = "failed", "evaluator_environment"
-                    manifest["failure_stage"] = "ddtest_ruby_runtime"
-                    manifest["error"] = "Final ddtest Ruby runtime differs from the selected image runtime"
+                    manifest["failure_stage"] = "ddtest_"+language+"_runtime"
+                    manifest["error"] = "Final ddtest "+name+" runtime differs from the selected image runtime"
                     manifest["retry_recommended"] = False
                     code = 1
         except (AttributeError, TypeError, ValueError) as error:
@@ -879,7 +899,7 @@ def main():
     parser.add_argument("--agent", choices=("codex", "claude"))
     parser.add_argument("--node", type=Path,
                         help="Absolute Node executable for setup and Codex non-login shells; Codex only")
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio", "rspec", "minitest"),
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio", *RUBY_FRAMEWORKS, *JAVA_FRAMEWORKS),
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--readiness-command", action="append", default=[], help="Repeatable native runtime/browser readiness checks before the uncoached agent")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")

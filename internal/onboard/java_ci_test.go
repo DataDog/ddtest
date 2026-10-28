@@ -128,7 +128,7 @@ func TestJavaReportsTestLikeCommandsOfUninstrumentedJobs(t *testing.T) {
 	require.Len(t, scope.Commands, 1)
 	require.Equal(t, "mvn -B verify", scope.Commands[0].Command)
 	require.Empty(t, scope.Unresolved, "a non-test job without the action is a caveat, not a blocker")
-	ci := JavaCIConfiguration(root, "junit5")
+	ci := JavaCIConfiguration(root, "junit5", "")
 	require.Len(t, ci.Review, 1)
 	require.Equal(t, CodeUninstrumentedJob, ci.Review[0].Code)
 }
@@ -165,7 +165,7 @@ func TestJavaCIConfigurationInventoriesJDKAndTracer(t *testing.T) {
         with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}
       - run: mvn -B verify
 `, nil)
-	ci := JavaCIConfiguration(root, "junit5")
+	ci := JavaCIConfiguration(root, "junit5", "")
 	require.Len(t, ci.Jobs, 4)
 	byJava := map[string]RuntimeFinding{}
 	for _, job := range ci.Jobs {
@@ -182,25 +182,27 @@ func TestJavaCIConfigurationInventoriesJDKAndTracer(t *testing.T) {
 
 func TestJavaCIConfigurationRequiresCompleteSelections(t *testing.T) {
 	for _, tc := range []struct{ name, steps, status, reason string }{
-		{"complete", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "not checked", "Validate dd-java-agent 1.67.1 on Java 17"},
-		{"old tracer on a new JDK", "      - uses: actions/setup-java@v4\n        with: {java-version: '21'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '0.94.0'}\n      - run: mvn verify\n", "not checked", "does not establish that this release supports this JDK"},
-		{"step replaces MAVEN_OPTS", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '-Xmx2g'}\n", "inconclusive", "replacing the -javaagent option"},
-		{"step extends MAVEN_OPTS", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '${{ env.MAVEN_OPTS }} -Xmx2g'}\n", "not checked", "Validate dd-java-agent"},
-		{"job MAVEN_OPTS is kept by the action", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n    env: {MAVEN_OPTS: '-Xmx2g'}\n", "not checked", "Validate dd-java-agent"},
-		{"step replaces JAVA_TOOL_OPTIONS", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1', java-instrumented-build-system: all}\n      - run: mvn verify\n        env: {JAVA_TOOL_OPTIONS: '-Xmx1g'}\n", "inconclusive", "sets JAVA_TOOL_OPTIONS"},
-		{"MAVEN_OPTS is free with all", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1', java-instrumented-build-system: all}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '-Xmx2g'}\n", "not checked", "Validate dd-java-agent"},
-		{"action instruments Gradle only", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1', java-instrumented-build-system: gradle}\n      - run: mvn verify\n", "inconclusive", "does not instrument Maven"},
-		{"no JDK setup", "      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "inconclusive", "static java-version"},
+		{"complete", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "not checked", "Validate dd-java-agent 1.67.1 on Java 17"},
+		{"old tracer on a new JDK", "      - uses: actions/setup-java@v4\n        with: {java-version: '21'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '0.94.0'}\n      - run: mvn verify\n", "not checked", "does not establish that this release supports this JDK"},
+		{"step replaces MAVEN_OPTS", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '-Xmx2g'}\n", "inconclusive", "replacing the -javaagent option"},
+		{"step extends MAVEN_OPTS", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '${{ env.MAVEN_OPTS }} -Xmx2g'}\n", "not checked", "Validate dd-java-agent"},
+		{"job MAVEN_OPTS is kept by the action", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn verify\n    env: {MAVEN_OPTS: '-Xmx2g'}\n", "not checked", "Validate dd-java-agent"},
+		{"step replaces JAVA_TOOL_OPTIONS", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1', java-instrumented-build-system: all}\n      - run: mvn verify\n        env: {JAVA_TOOL_OPTIONS: '-Xmx1g'}\n", "inconclusive", "sets JAVA_TOOL_OPTIONS"},
+		{"MAVEN_OPTS is free with all", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1', java-instrumented-build-system: all}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '-Xmx2g'}\n", "not checked", "Validate dd-java-agent"},
+		{"action instruments Gradle only", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1', java-instrumented-build-system: gradle}\n      - run: mvn verify\n", "inconclusive", "does not instrument Maven"},
+		{"no JDK setup", "      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "inconclusive", "static java-version"},
 		{"no action", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - run: mvn verify\n", "inconclusive", "No Datadog action"},
 		{"action for another language", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: python}\n      - run: mvn verify\n", "inconclusive", "No Datadog action"},
-		{"floating tracer", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java}\n      - run: mvn verify\n", "inconclusive", "not an exact release"},
-		{"old JDK", "      - uses: actions/setup-java@v4\n        with: {java-version: '1.7'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "inconclusive", "older than Java 8"},
-		{"reporting disabled", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {DD_CIVISIBILITY_ENABLED: 'false'}\n", "inconclusive", "explicitly disabled by DD_CIVISIBILITY_ENABLED"},
-		{"tracing disabled only", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {DD_TRACE_ENABLED: 'false'}\n", "not checked", "Validate dd-java-agent"},
-		{"action after the tests", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - run: mvn verify\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n", "inconclusive", "No Datadog action"},
+		{"floating tracer", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}'}\n      - run: mvn verify\n", "inconclusive", "not an exact release"},
+		{"old JDK", "      - uses: actions/setup-java@v4\n        with: {java-version: '1.7'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "inconclusive", "older than Java 8"},
+		{"reporting disabled", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {DD_CIVISIBILITY_ENABLED: 'false'}\n", "inconclusive", "explicitly disabled by DD_CIVISIBILITY_ENABLED"},
+		{"tracing disabled only", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {DD_TRACE_ENABLED: 'false'}\n", "not checked", "Validate dd-java-agent"},
+		{"no API key", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "inconclusive", "no api_key input"},
+		{"unsupported action release", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v2\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "inconclusive", "not a supported release"},
+		{"action after the tests", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - run: mvn verify\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n", "inconclusive", "No Datadog action"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ci := JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n"+tc.steps, nil), "junit5")
+			ci := JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n"+tc.steps, nil), "junit5", "")
 			require.Len(t, ci.Jobs, 1)
 			require.Equal(t, tc.status, ci.Jobs[0].Status)
 			require.Contains(t, ci.Jobs[0].Reason, tc.reason)
@@ -210,11 +212,11 @@ func TestJavaCIConfigurationRequiresCompleteSelections(t *testing.T) {
 }
 
 func TestJavaCIConfigurationKeepsUnresolvedStepsVisible(t *testing.T) {
-	ci := JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify\n      - run: ./ci/integration.sh\n      - run: mvn spotless:check\n", nil), "junit5")
+	ci := JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify\n      - run: ./ci/integration.sh\n      - run: mvn spotless:check\n", nil), "junit5", "")
 	require.Len(t, ci.Jobs, 2)
 	require.True(t, strings.Contains(ci.Jobs[1].Reason, "Repository script"), ci.Jobs[1].Reason)
 	require.Len(t, ci.Review, 1, "lint goals are listed outside scope")
-	require.Equal(t, "not applicable", JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  lint:\n    steps:\n      - run: echo ok\n", nil), "junit5").Status)
+	require.Equal(t, "not applicable", JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  lint:\n    steps:\n      - run: echo ok\n", nil), "junit5", "").Status)
 }
 
 func TestJavaVariantsKeepCustomerJVMOptions(t *testing.T) {
@@ -284,18 +286,18 @@ func TestJavaSeparatedSkipTestsIsOutsideScope(t *testing.T) {
 
 func TestJavaCIConfigurationNeedsTheDatadogAgent(t *testing.T) {
 	steps := func(with, env string) string {
-		return "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'" + with + "}\n      - run: mvn verify\n" + env
+		return "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'" + with + "}\n      - run: mvn verify\n" + env
 	}
 	for name, tc := range map[string]struct{ workflow, reason string }{
 		"another agent replaces it": {steps("", "        env: {MAVEN_OPTS: '-javaagent:/opt/jacoco.jar'}\n"), "replacing the -javaagent option"},
 		"build system expression":   {steps(", java-instrumented-build-system: '${{ inputs.build_system }}'", ""), "needs review"},
 	} {
-		ci := JavaCIConfiguration(javaWorkflowFixture(t, tc.workflow, nil), "junit5")
+		ci := JavaCIConfiguration(javaWorkflowFixture(t, tc.workflow, nil), "junit5", "")
 		require.Len(t, ci.Jobs, 1, name)
 		require.Equal(t, "inconclusive", ci.Jobs[0].Status, name)
 		require.Contains(t, ci.Jobs[0].Reason, tc.reason, name)
 	}
-	kept := JavaCIConfiguration(javaWorkflowFixture(t, steps("", "        env: {MAVEN_OPTS: '-javaagent:/opt/dd-java-agent.jar -javaagent:/opt/jacoco.jar'}\n"), nil), "junit5")
+	kept := JavaCIConfiguration(javaWorkflowFixture(t, steps("", "        env: {MAVEN_OPTS: '-javaagent:/opt/dd-java-agent.jar -javaagent:/opt/jacoco.jar'}\n"), nil), "junit5", "")
 	require.Equal(t, "not checked", kept.Jobs[0].Status, "an explicit Datadog agent keeps instrumentation")
 }
 
@@ -318,7 +320,7 @@ func TestJavaKeepsInheritedDefaultGoalsUnresolved(t *testing.T) {
 
 func TestJavaShellReferencesInStepEnvDoNotKeepTheAgent(t *testing.T) {
 	for _, value := range []string{"$MAVEN_OPTS -Xmx2g", "${MAVEN_OPTS} -Xmx2g"} {
-		ci := JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '"+value+"'}\n", nil), "junit5")
+		ci := JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '"+value+"'}\n", nil), "junit5", "")
 		require.Equal(t, "inconclusive", ci.Jobs[0].Status, value)
 		require.Contains(t, ci.Jobs[0].Reason, "replacing the -javaagent option", value)
 	}
@@ -345,4 +347,55 @@ func TestJavaKeepsFullyQualifiedTestGoalsInScope(t *testing.T) {
 	require.True(t, resolution.Matched)
 	require.Equal(t, "mvn -B org.apache.maven.plugins:maven-surefire-plugin:3.5.4:test", resolution.Tests[0].Command)
 	require.True(t, javaStep(t, root, "mvn -DskipTests=FALSE verify").Matched, "Maven reads FALSE as false")
+}
+
+func TestJavaCIConfigurationNeedsTheSelectedSite(t *testing.T) {
+	workflow := "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'SITE}\n      - run: mvn verify\n"
+	root := javaWorkflowFixture(t, strings.Replace(workflow, "SITE", "", 1), nil)
+	require.Equal(t, "not checked", JavaCIConfiguration(root, "junit5", "").Jobs[0].Status)
+	require.Equal(t, "not checked", JavaCIConfiguration(root, "junit5", "datadoghq.com").Jobs[0].Status, "the action reports to the default site")
+	job := JavaCIConfiguration(root, "junit5", "datadoghq.eu").Jobs[0]
+	require.Equal(t, "inconclusive", job.Status)
+	require.Equal(t, CodeIncompleteCISetup, job.Code)
+	require.Contains(t, job.Reason, "set site: datadoghq.eu on the action")
+	root = javaWorkflowFixture(t, strings.Replace(workflow, "SITE", ", site: datadoghq.eu", 1), nil)
+	require.Equal(t, "not checked", JavaCIConfiguration(root, "junit5", "datadoghq.eu").Jobs[0].Status)
+}
+
+func TestJavaDeployCredentialsDoNotBlockValidation(t *testing.T) {
+	workflow := `jobs:
+  build:
+    steps:
+      - uses: actions/setup-java@v4
+        with: {java-version: '21', distribution: temurin, server-id: central, server-username: MAVEN_USERNAME, server-password: MAVEN_PASSWORD}
+      - run: mvn --batch-mode deploy --file pom.xml
+        env:
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+`
+	scope, err := DiscoverValidationScope(javaWorkflowFixture(t, workflow, nil), "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved, "settings.xml credentials only deploy, which validation never runs")
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "mvn --batch-mode verify --file pom.xml", scope.Commands[0].Command)
+	require.Empty(t, scope.Commands[0].Environment["MAVEN_PASSWORD"], "no secret reaches validation")
+
+	// Without a server-id, setup-java writes no credentials: a secret may feed the tests.
+	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, strings.Replace(workflow, "server-id: central, ", "", 1), nil), "junit5")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved)
+	// The action's default names, such as GITHUB_TOKEN, may serve the tests too.
+	defaults := strings.NewReplacer("server-username: MAVEN_USERNAME, server-password: MAVEN_PASSWORD", "gpg-private-key: '${{ secrets.GPG_KEY }}'", "MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}\n          ", "", "MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}", "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}").Replace(workflow)
+	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, defaults, nil), "junit5")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved, "only credentials the workflow names for settings.xml are left out")
+}
+
+func TestJavaCIConfigurationKeepsJavaSetupAcrossOtherDatadogActions(t *testing.T) {
+	workflow := "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: SECOND, api_key: '${{ secrets.DD_API_KEY }}'}\n      - run: mvn verify\n"
+	job := JavaCIConfiguration(javaWorkflowFixture(t, strings.Replace(workflow, "SECOND", "js", 1), nil), "junit5", "").Jobs[0]
+	require.Equal(t, "not checked", job.Status, "a JavaScript action leaves the agent in MAVEN_OPTS: %s", job.Reason)
+	require.Equal(t, "1.67.1", job.TracerRequested)
+	job = JavaCIConfiguration(javaWorkflowFixture(t, strings.Replace(workflow, "SECOND", "java", 1), nil), "junit5", "").Jobs[0]
+	require.Contains(t, job.Reason, "not an exact release", "a later Java action replaces the selection")
 }

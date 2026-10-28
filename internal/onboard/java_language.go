@@ -6,7 +6,9 @@
 package onboard
 
 import (
+	_ "embed"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/maven"
@@ -23,7 +25,9 @@ func (javaDiscovery) bootstrap(string) string { return javaBootstrap }
 
 func (javaDiscovery) resolvesTestSteps(string) bool { return true }
 
-func (javaDiscovery) coordinated() bool { return false }
+// Agents apply Maven CI setup by hand; validation then runs through the
+// coordinator.
+func (javaDiscovery) coordinated() bool { return true }
 
 // Java CI discovery reads GitHub Actions only.
 func (javaDiscovery) supportsCIProvider(provider string) bool {
@@ -32,9 +36,33 @@ func (javaDiscovery) supportsCIProvider(provider string) bool {
 
 func (javaDiscovery) automaticCISetup() bool { return false }
 
-func (javaDiscovery) ciSetupConfigured(string, string, string) bool { return false }
+// Every discovered Maven test step runs after a complete Datadog action with an
+// exact agent release, or explicitly skips it; at least one stays instrumented.
+// Coordinated validation enforces the same rule through JavaCIConfiguration.
+func (javaDiscovery) ciSetupConfigured(root, framework, site string) bool {
+	instrumented := false
+	for _, job := range JavaCIConfiguration(root, framework, site).Jobs {
+		if job.Status == "excluded" {
+			continue
+		}
+		if job.Status != "not checked" {
+			return false
+		}
+		instrumented = true
+	}
+	return instrumented
+}
 
-func (javaDiscovery) agentInstructions(string, string) string { return "" }
+//go:embed instructions/java_agent.md
+var javaAgentInstructions string
+
+func (javaDiscovery) agentInstructions(framework, site string) string {
+	siteInput := ""
+	if site != "" && site != defaultDatadogSite {
+		siteInput = ", `site: " + site + "` (the selected Datadog site)"
+	}
+	return strings.NewReplacer("__FRAMEWORK__", framework, "__SITE_INPUT__", siteInput).Replace(javaAgentInstructions)
+}
 
 func (javaDiscovery) frameworks() []string { return maven.FrameworkNames }
 
@@ -49,6 +77,10 @@ func (javaDiscovery) localCommands(root, command, framework string) ([]TestComma
 // Local validation owns the agent option; keep the customer's other JVM
 // options. A reference to workflow or job values needs them explicitly.
 func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtimeStep, _ map[string]any, key, value string) (string, bool, error) {
+	// Deploy credentials matter only to the goals validation never runs.
+	if slices.Contains(javaDeployCredentials(job), key) {
+		return "", true, nil
+	}
 	if key != "MAVEN_OPTS" && key != "JAVA_TOOL_OPTIONS" {
 		return value, false, nil
 	}
@@ -59,9 +91,34 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 	return strings.TrimSpace(inherited), true, nil
 }
 
+// javaDeployCredentials are the environment variables that the job's
+// actions/setup-java steps with a server-id explicitly name for Maven's
+// settings.xml as repository credentials or the GPG passphrase. Maven reads
+// them only to deploy or sign, which local validation never does. The
+// action's default names, such as GITHUB_TOKEN, may serve tests too.
+func javaDeployCredentials(job runtimeJob) []string {
+	var names []string
+	for _, step := range job.Steps {
+		if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses != "actions/setup-java" || step.With["server-id"] == "" {
+			continue
+		}
+		for _, input := range []string{"server-username", "server-password", "gpg-passphrase"} {
+			if name := step.With[input]; name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
 func (javaDiscovery) skipsUnsupportedNode() bool { return false }
 
-func (javaDiscovery) instructions(string) string { return "" }
+//go:embed instructions/java.md
+var javaInstructions string
+
+func (javaDiscovery) instructions(framework string) string {
+	return strings.ReplaceAll(javaInstructions, "__FRAMEWORK__", framework)
+}
 
 func (javaDiscovery) onboardingScope(string) (discover, instructionsWhenConfigured bool) {
 	return true, true

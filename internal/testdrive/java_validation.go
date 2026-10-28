@@ -503,11 +503,15 @@ func (t *Testdrive) checkJavaPreflight(_ context.Context, output io.Writer, resu
 		check.Verdict.Reason = "The selected command's Maven reactor cannot be read: " + err.Error()
 		return fmt.Errorf("inspect Maven reactor: %w", err)
 	}
-	ci, err := t.javaCIRuntime(info.Version)
+	ci, substitutions, err := t.javaCIRuntime(info.Version)
 	if err != nil {
 		return err
 	}
 	result.CIRuntime = ci
+	for _, substitution := range substitutions {
+		result.addSubstitution(substitution)
+		_, _ = fmt.Fprintf(output, "Runtime substitution: %s\n", substitution.Reason)
+	}
 	reason := fmt.Sprintf("Java %s; the selected command builds %d Maven %s. Paired execution and feature controls are still required.", info.Version, len(projects), plural(len(projects), "project", "projects"))
 	if !slices.Contains(maven.Frameworks(projects), t.framework.Name()) {
 		reason += " No POM in the repository declares " + displayName(t.framework.Name()) + "; it may come from a parent or BOM outside the repository."
@@ -533,27 +537,29 @@ func javaOtherFrameworkModules(projects []maven.Project, framework string) []str
 }
 
 // javaCIRuntime checks the CI rows of this configuration. A row is compatible
-// only when this run validates its JDK major and agent release; other JDKs are
-// validated by running testdrive on them. Configuration-only checks run
-// nothing, so they certify no row.
-func (t *Testdrive) javaCIRuntime(localJava string) (*onboard.RuntimeCheck, error) {
-	ci := onboard.JavaCIConfiguration(t.checkoutRoot(), t.framework.Name())
+// when this run validates its agent release on its JDK major, or on the local
+// JDK as a substitute, which completes only once the user accepts it; one
+// substitution is returned per other CI JDK major. Configuration-only checks
+// run nothing, so they certify no row.
+func (t *Testdrive) javaCIRuntime(localJava string) (*onboard.RuntimeCheck, []runtimeSubstitution, error) {
+	ci := onboard.JavaCIConfiguration(t.checkoutRoot(), t.framework.Name(), t.selectedSite)
 	if len(ci.Jobs) == 0 {
-		return &ci, nil
+		return &ci, nil, nil
 	}
 	locations, err := t.javaRuntimeLocations()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ci.Jobs = slices.DeleteFunc(ci.Jobs, func(job onboard.RuntimeFinding) bool { return !slices.Contains(locations, job.Location) })
 	if len(ci.Jobs) == 0 {
 		ci.Status, ci.Reason = "inconclusive", "No CI consumer matches this Maven command and working directory; validate the discovered configurations with --all."
-		return &ci, nil
+		return &ci, nil, nil
 	}
 	tracer := t.tracerVersion
 	if t.projectTracer != "" {
 		tracer, _ = platform.JavaAgentVersion(t.projectTracer)
 	}
+	var substitutions []runtimeSubstitution
 	for i, job := range ci.Jobs {
 		if job.Status != "not checked" {
 			continue
@@ -562,16 +568,23 @@ func (t *Testdrive) javaCIRuntime(localJava string) (*onboard.RuntimeCheck, erro
 		switch {
 		case t.checkOnly:
 			ci.Jobs[i].Reason = "Full validation runs dd-java-agent " + job.TracerRequested + " on this host's Java " + localJava + "; configuration-only checks validate no JDK."
-		case javaMajor(job.Runtime) != javaMajor(localJava):
-			ci.Jobs[i].Reason = "This run validates Java " + localJava + ". Validate Java " + job.Runtime + " by running testdrive with JAVA_HOME set to that JDK."
 		case job.TracerRequested != tracer:
 			ci.Jobs[i].Reason = "CI pins dd-java-agent " + job.TracerRequested + ", but this run validates " + cmp.Or(tracer, "another release") + "; rerun without --tracer-version to validate the CI pin."
+		case javaMajor(job.Runtime) != javaMajor(localJava):
+			ci.Jobs[i].Status, ci.Jobs[i].Reason = "compatible", "dd-java-agent "+tracer+" is validated on this host's Java "+localJava+" as a substitute for Java "+job.Runtime+"."
+			if !slices.ContainsFunc(substitutions, func(existing runtimeSubstitution) bool { return javaMajor(existing.CI) == javaMajor(job.Runtime) }) {
+				substitutions = append(substitutions, runtimeSubstitution{
+					Source: job.Location, CI: job.Runtime, Local: localJava, Accepted: t.acceptSubstituteRuntime, Runtime: "Java",
+					Remedy: "set JAVA_HOME to an existing Java " + job.Runtime + " JDK",
+					Reason: "Local Java " + localJava + " runs dd-java-agent " + tracer + " in place of CI's Java " + job.Runtime + "; the agent release, the Maven command and the suite are the same.",
+				})
+			}
 		default:
 			ci.Jobs[i].Status, ci.Jobs[i].Reason = "compatible", "dd-java-agent "+tracer+" is validated on this host's Java "+localJava+"."
 		}
 	}
 	summarizeJavaRuntime(&ci)
-	return &ci, nil
+	return &ci, substitutions, nil
 }
 
 // javaRuntimeLocations are the CI locations of the configuration being run:

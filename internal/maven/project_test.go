@@ -251,3 +251,36 @@ func TestModuleDirectories(t *testing.T) {
 	})
 	require.Equal(t, map[string]string{"Customer API": "api", "api": "api", "core": "core", "util": "", "templated": "templated"}, modules)
 }
+
+func TestPackagedResourcesResolveEveryPOMsDirectories(t *testing.T) {
+	root := t.TempDir()
+	write := func(path, content string) {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, path), []byte(content), 0644))
+	}
+	write("pom.xml", `<project><build><resources><resource><directory>${project.basedir}</directory><includes><include>LICENSE</include></includes></resource><resource><directory>${project.build.directory}/generated</directory></resource></resources></build></project>`)
+	write("service/pom.xml", `<project><build><resources><resource><directory>src/main/resources</directory></resource></resources></build><profiles><profile><build><resources><resource><directory>..</directory><excludes><exclude>.testoptimization/**</exclude></excludes></resource></resources></build></profile></profiles></project>`)
+	write("tool/pom.xml", `<project><build><resources><resource><directory>${shared.dir}</directory></resource></resources></build></project>`)
+	write("target/pom.xml", `<project><build><resources><resource><directory>.</directory></resource></resources></build></project>`)
+	resources, err := PackagedResources(root, nil)
+	require.NoError(t, err)
+	directories := map[string]Resource{}
+	for _, resource := range resources {
+		directories[resource.POM+" "+resource.Directory] = resource
+	}
+	require.Len(t, directories, 4, "build output, in the build directory or a target tree, is left out: %v", directories)
+	require.Equal(t, []string{"LICENSE"}, directories["pom.xml ."].Includes, "${project.basedir} is the POM's directory")
+	require.Contains(t, directories, filepath.Join("service", "pom.xml")+" "+filepath.Join("service", "src", "main", "resources"))
+	require.Equal(t, []string{".testoptimization/**"}, directories[filepath.Join("service", "pom.xml")+" ."].Excludes, "profile resources count too")
+	require.Contains(t, directories, filepath.Join("tool", "pom.xml")+" ${shared.dir}", "other properties stay unresolved")
+}
+
+func TestPackagedResourcesResolveAbsoluteDirectories(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project><build><resources><resource><directory>`+root+`</directory></resource><resource><directory>/elsewhere/resources</directory></resource></resources></build></project>`), 0644))
+	resources, err := PackagedResources(root, nil)
+	require.NoError(t, err)
+	require.Len(t, resources, 2)
+	require.Equal(t, ".", resources[0].Directory, "an absolute directory naming the checkout is its root")
+	require.False(t, filepath.IsLocal(resources[1].Directory), "one outside the checkout stays outside")
+}

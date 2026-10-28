@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 )
@@ -34,11 +35,28 @@ const AcceptSubstituteRuntimeFlag = "--accept-substitute-runtime"
 // in place of the major a CI path uses. The evidence is real, but it is not the
 // CI runtime, so completion needs explicit acceptance.
 type runtimeSubstitution struct {
-	Source   string `json:"source"`
+	Source string `json:"source"`
+	// CI and Local are runtime versions; the names predate other runtimes.
 	CI       string `json:"ci_node"`
 	Local    string `json:"local_node"`
 	Reason   string `json:"reason"`
 	Accepted bool   `json:"accepted"`
+	// Runtime names the runtime, and Remedy how to provide CI's version instead
+	// of the substitute; empty means Node on PATH.
+	Runtime string `json:"runtime,omitempty"`
+	Remedy  string `json:"remedy,omitempty"`
+}
+
+func (s *runtimeSubstitution) name() string { return cmp.Or(s.Runtime, "Node") }
+
+// remedy is how to validate on CI's runtime instead.
+func (s *runtimeSubstitution) remedy() string {
+	return cmp.Or(s.Remedy, "put an existing Node "+s.CI+" first on PATH")
+}
+
+// caveat describes accepted evidence from the substitute.
+func (s *runtimeSubstitution) caveat() string {
+	return fmt.Sprintf("runtime fidelity: validated on substitute %s %s; %s runs on %s %s (accepted).", s.name(), s.Local, s.Source, s.name(), s.CI)
 }
 
 // substitutions lists every distinct substitute runtime the run validated on:
@@ -66,5 +84,5 @@ func (r *validationResult) addSubstitution(sub runtimeSubstitution) {
 }
 
 func (s *runtimeSubstitution) blocker() string {
-	return fmt.Sprintf("runtime fidelity: validated on substitute Node %s; %s runs on Node %s. Accept this evidence with %s, or put an existing Node %s first on PATH and rerun", s.Local, s.Source, s.CI, AcceptSubstituteRuntimeFlag, s.CI)
+	return fmt.Sprintf("runtime fidelity: validated on substitute %s %s; %s runs on %s %s. Accept this evidence with %s, or %s and rerun", s.name(), s.Local, s.Source, s.name(), s.CI, AcceptSubstituteRuntimeFlag, s.remedy())
 }

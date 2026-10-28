@@ -33,8 +33,9 @@ def validate_image(image):
 
 
 # Runtime locations a trusted image may declare, such as an architecture-
-# matching browser driver; every other image variable is unset per command.
-IMAGE_RUNTIME_VARIABLES = ("CHROMEDRIVER_PATH",)
+# matching browser driver or the JDK; every other image variable is unset per
+# command.
+IMAGE_RUNTIME_VARIABLES = ("CHROMEDRIVER_PATH", "JAVA_HOME")
 CONTROL_TIMEOUT = 20
 TRIAL_ROOT_VARIABLE = "DDTEST_EVAL_TRIAL_ROOT"
 CONTAINER_NAME = re.compile(r"ddtest-eval-[a-f0-9]{32}")

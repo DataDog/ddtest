@@ -504,7 +504,7 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 					} else if ruby != "" && tracer != "" && action != "" {
 						finding.Status, finding.Reason = "not checked", "Check the selected Ruby with the bundled tracer's RubyGems requirements and compare tracer releases."
 						if reason := rubyActionProblem(finding, site); reason != "" {
-							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteRubySetup, reason
+							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
 						} else if reason := rubyGemsResolverProblem(ruby, rubygems, row); reason != "" {
 							finding.Status, finding.Reason = "inconclusive", reason
 						}

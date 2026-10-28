@@ -288,12 +288,12 @@ class RunnerTests(unittest.TestCase):
         self.assertNotIn("--model", observed["argv"])
 
     def test_ruby_runtime_checks_every_configuration(self):
-        self.assertEqual(run_eval.report_ruby_runtime({}, "3.3.11")["status"], "not observed")
-        self.assertEqual(run_eval.report_ruby_runtime({"preflight": {"runtime": "3.3.11"}}, "3.3.11")["status"], "matched")
+        self.assertEqual(run_eval.report_preflight_runtime({}, "3.3.11")["status"], "not observed")
+        self.assertEqual(run_eval.report_preflight_runtime({"preflight": {"runtime": "3.3.11"}}, "3.3.11")["status"], "matched")
         report = {"preflight": {"runtime": "3.3.11"}, "configurations": [{"preflight": {"runtime": "3.4.9"}}, {"preflight": None}]}
-        self.assertEqual(run_eval.report_ruby_runtime(report, "3.3.11")["status"], "mismatch")
+        self.assertEqual(run_eval.report_preflight_runtime(report, "3.3.11")["status"], "mismatch")
         # The legacy key was never written by ddtest; it must not count.
-        self.assertEqual(run_eval.report_ruby_runtime({"preflight": {"ruby": "3.3.11"}}, "3.3.11")["status"], "not observed")
+        self.assertEqual(run_eval.report_preflight_runtime({"preflight": {"ruby": "3.3.11"}}, "3.3.11")["status"], "not observed")
 
     def test_short_owned_state_path_accepts_real_watchman_socket(self):
         code, manifest = self.trial()
@@ -447,6 +447,22 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue((self.args.output / "changes.patch").is_file())
         self.assertEqual(manifest["isolation"]["cleanup"], "removed")
 
+    def test_java_records_the_jdk_and_uses_container_tmpfs(self):
+        jdk = self.root / "jdk"
+        (jdk / "bin").mkdir(parents=True)
+        (jdk / "bin" / "java").write_text("#!/bin/sh\n")
+        (jdk / "bin" / "java").chmod(0o755)
+        (jdk / "release").write_text('IMPLEMENTOR="Eclipse Adoptium"\nJAVA_VERSION="17.0.20.1"\n')
+        (self.root / "java").symlink_to(jdk / "bin" / "java")
+        self.args.framework = "junit5"
+        with patch.dict(os.environ):
+            os.environ.pop("JAVA_HOME", None)
+            code, manifest = self.trial()
+        self.assertEqual(code, 0)
+        self.assertEqual(manifest["java_runtime"], {"home": str(jdk.resolve()), "version": "17.0.20.1"})
+        self.assertEqual(manifest["private_caches"]["TMPDIR"], "/tmp")
+        self.assertEqual(manifest["ddtest_java_runtime"]["requested_version"], "17.0.20.1")
+
     def test_framework_scope_reaches_agent_without_extra_instructions(self):
         self.args.framework = "playwright"
         code, manifest = self.trial()
@@ -580,7 +596,7 @@ class RunnerTests(unittest.TestCase):
 
 class FrameworkEnvironmentTests(unittest.TestCase):
     def test_long_matrix_timeout_is_scoped_and_bounded(self):
-        for framework in ("cypress", "rspec", "minitest"):
+        for framework in ("cypress", "rspec", "minitest", "junit4", "junit5"):
             self.assertEqual(run_eval.agent_environment("claude", 7200, framework)["BASH_MAX_TIMEOUT_MS"], "3600000")
             self.assertEqual(run_eval.agent_environment("claude", 1800, framework)["BASH_MAX_TIMEOUT_MS"], "1800000")
             self.assertEqual(run_eval.agent_environment("claude", 30, framework)["BASH_MAX_TIMEOUT_MS"], "30000")

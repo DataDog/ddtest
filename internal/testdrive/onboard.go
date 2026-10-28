@@ -404,11 +404,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			if err != nil {
 				return fail("needs_input", "validation_preparation", err.Error(), "Resolve the named local prerequisite.")
 			}
-			prepared.workflowScope = t.workflowScope
-			prepared.workflowPlan = t.workflowPlan
-			prepared.workflowRoot = t.workflowRoot
-			prepared.workflowRun = t.workflowRun
-			t = prepared
+			t = prepared.withWorkflowState(t)
 		}
 	}
 	if options.Apply {
@@ -585,11 +581,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		if err != nil {
 			return fail("needs_input", "validation_preparation", err.Error(), "Resolve the named installed dependency or command prerequisite.")
 		}
-		prepared.workflowScope = t.workflowScope
-		prepared.workflowPlan = t.workflowPlan
-		prepared.workflowRoot = t.workflowRoot
-		prepared.workflowRun = t.workflowRun
-		t = prepared
+		t = prepared.withWorkflowState(t)
 	}
 	t.setPlanTracer(plan, t.tracerVersion)
 	checkpoint.Engine = engineIdentity()
@@ -787,19 +779,21 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			return fail("needs_input", "configuration_setup_failed", reason, "Tests were not compared for this configuration. Correct only its declared setup; preserve scope and assertions.")
 		}
 		// Evidence that passed on a compatible substitute runtime is the user's to accept.
-		var subBlockers, subLocal, subCI []string
+		var subBlockers, subLocal, subRemedies []string
 		for _, sub := range validation.substitutions() {
 			if !sub.Accepted {
 				subBlockers = append(subBlockers, sub.blocker())
-				subLocal = append(subLocal, "Node "+sub.Local+" in place of CI's Node "+sub.CI)
-				subCI = append(subCI, "Node "+sub.CI)
+				subLocal = append(subLocal, sub.name()+" "+sub.Local+" in place of CI's "+sub.name()+" "+sub.CI)
+				if !slices.Contains(subRemedies, sub.remedy()) {
+					subRemedies = append(subRemedies, sub.remedy())
+				}
 			}
 		}
 		if len(subBlockers) > 0 && slices.Equal(validation.Summary.BlockingChecks, subBlockers) {
 			if !slices.Contains(result.ResumeCommand, AcceptSubstituteRuntimeFlag) {
 				result.ResumeCommand = append(result.ResumeCommand, AcceptSubstituteRuntimeFlag)
 			}
-			result.RequiredInput = []string{"User decision: accept the evidence from " + strings.Join(subLocal, " and ") + " by running resume_command, or put an existing " + strings.Join(subCI, " and ") + " first on PATH and rerun resume_command without " + AcceptSubstituteRuntimeFlag + "."}
+			result.RequiredInput = []string{"User decision: accept the evidence from " + strings.Join(subLocal, " and ") + " by running resume_command, or " + strings.Join(subRemedies, " and ") + " and rerun resume_command without " + AcceptSubstituteRuntimeFlag + "."}
 			return fail("needs_input", "substitute_runtime_unaccepted", strings.Join(subBlockers, "; "), "Every check passed on a compatible substitute runtime. Ask the user which option to take; do not accept it yourself, download a runtime, or change CI, the tracer or the test scope.")
 		}
 		reportOnly, actionable := splitTracerOnlyBlockers(validation)
@@ -809,7 +803,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			// it must not be lost among them or accepted by the agent.
 			actionable = slices.DeleteFunc(actionable, func(check string) bool { return slices.Contains(subBlockers, check) })
 			acceptFlag = AcceptSubstituteRuntimeFlag
-			decision = " Separately, ask the user whether to accept the evidence from substitute " + strings.Join(subLocal, " and ") + ": once they approve, run accept_resume_command instead of resume_command; otherwise put an existing " + strings.Join(subCI, " and ") + " first on PATH. Do not accept it yourself or download a runtime."
+			decision = " Separately, ask the user whether to accept the evidence from substitute " + strings.Join(subLocal, " and ") + ": once they approve, run accept_resume_command instead of resume_command; otherwise " + strings.Join(subRemedies, " and ") + ". Do not accept it yourself or download a runtime."
 		}
 		if len(actionable) == 0 && len(reportOnly) > 0 {
 			result.RequiredInput = reportOnly
@@ -1195,6 +1189,14 @@ func renderReportFailure(output io.Writer, format string, err error) error {
 		result.Code, result.Reason = "report_unreadable", errReportUnreadable.Error()
 	}
 	return errors.Join(err, onboard.RenderAgentResult(output, result, format))
+}
+
+// withWorkflowState carries the workflow's scope, plan, run and selected site
+// from current into t, a drive prepared again for another tracer release.
+func (t *Testdrive) withWorkflowState(current *Testdrive) *Testdrive {
+	t.workflowScope, t.workflowPlan, t.workflowRoot, t.workflowRun = current.workflowScope, current.workflowPlan, current.workflowRoot, current.workflowRun
+	t.selectedSite = current.selectedSite
+	return t
 }
 
 func (t *Testdrive) workflowNodeVersion() string {

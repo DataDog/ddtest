@@ -234,8 +234,10 @@ func javaRuntimeProblem(version string) (reason, code string) {
 }
 
 // JavaCIConfiguration inventories each CI Maven test step's JDK and the
-// Datadog action's dd-java-agent selection, per matrix row.
-func JavaCIConfiguration(root, framework string) RuntimeCheck {
+// Datadog action's dd-java-agent selection, per matrix row. A step is complete
+// only when its action is a supported release with an API key that reports to
+// site (empty: any site).
+func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 	result := RuntimeCheck{Status: "not applicable", Reason: "No candidate Maven CI test commands found."}
 	workflows, err := readWorkflows(root)
 	if err != nil {
@@ -255,6 +257,7 @@ func JavaCIConfiguration(root, framework string) RuntimeCheck {
 					continue
 				}
 				java, tracer, action, buildSystem := "", "", "", ""
+				var inputs map[string]string
 				skippedAction := false
 				var actionErr error
 				for i, step := range job.Steps {
@@ -267,10 +270,11 @@ func JavaCIConfiguration(root, framework string) RuntimeCheck {
 						continue
 					}
 					if uses == "actions/setup-java" {
-						java, tracer, action, actionErr, skippedAction = "", "", "", nil, false
+						java, tracer, action, actionErr, inputs, skippedAction = "", "", "", nil, nil, false
 					}
-					if uses == githubAction {
-						tracer, action, buildSystem, actionErr = "", "", "", nil
+					// An action for other languages leaves Java's MAVEN_OPTS in place.
+					if selected, err := actionSelectsLanguage(step, row, "java"); uses == githubAction && (err != nil || selected) {
+						tracer, action, buildSystem, actionErr, inputs = "", "", "", nil, nil
 					}
 					if conditionErr == nil && stepErr == nil {
 						if uses == "actions/setup-java" && hasVersion {
@@ -287,6 +291,15 @@ func JavaCIConfiguration(root, framework string) RuntimeCheck {
 								if buildErr != nil {
 									actionErr = buildErr
 								}
+								inputs = map[string]string{}
+								for key, value := range step.With {
+									inputs[key], _ = runtimeValue(value, row)
+									if inputs[key] == "" && strings.Contains(value, "${{") {
+										// A secret or other expression is set even
+										// though its value is unknown statically.
+										inputs[key] = value
+									}
+								}
 							}
 						}
 					}
@@ -299,7 +312,7 @@ func JavaCIConfiguration(root, framework string) RuntimeCheck {
 					if !resolution.Matched && resolution.Reason == "" {
 						continue
 					}
-					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: java, Action: action, TracerRequested: tracer, Status: "inconclusive"}
+					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: java, Action: action, TracerRequested: tracer, setupInputs: inputs, Status: "inconclusive"}
 					runtimeReason, runtimeCode := javaRuntimeProblem(java)
 					switch {
 					case conditionErr != nil || stepErr != nil || resolveErr != nil || actionErr != nil || resolution.Reason != "":
@@ -319,6 +332,8 @@ func JavaCIConfiguration(root, framework string) RuntimeCheck {
 						finding.Reason = "No Datadog action selects java before this test step, so its tests are not instrumented."
 					case !exactJavaRelease.MatchString(tracer):
 						finding.Reason = "The Datadog action's java-tracer-version " + strconv.Quote(tracer) + " is not an exact release; set an exact version such as 1.67.1."
+					case setupActionProblem(finding, site) != "":
+						finding.Code, finding.Reason = CodeIncompleteCISetup, setupActionProblem(finding, site)
 					default:
 						// Release notes, not version numbers, say which JDKs an agent
 						// release supports, so the pair is validated by running it.
