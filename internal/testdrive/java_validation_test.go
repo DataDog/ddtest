@@ -144,10 +144,16 @@ func TestJavaReactorIncludesMavenConfig(t *testing.T) {
 	_, projects, err = drive.javaReactor([]string{"-f", "service/pom.xml", "test"})
 	require.NoError(t, err)
 	require.Equal(t, "service", projects[0].Artifact)
+	_, projects, err = drive.javaReactor([]string{"-f", "service", "test"})
+	require.NoError(t, err, "a selected directory's own .mvn applies")
+	require.Equal(t, "service", projects[0].Artifact)
 	for _, args := range [][]string{{"--file=service/pom.xml", "test"}, {"-fservice/pom.xml", "test"}} {
 		_, _, err = drive.javaReactor(args)
 		require.ErrorContains(t, err, ".mvn/maven.config adds install", "%v", args)
 	}
+	requireWriteFile(t, filepath.Join(root, "service", ".mvn", "jvm.config"), "-javaagent:dd-java-agent.jar\n")
+	_, _, err = drive.javaReactor([]string{"-f", "service", "test"})
+	require.ErrorContains(t, err, ".mvn/jvm.config attaches dd-java-agent")
 }
 
 func TestJavaRefusesADatadogAgentInJVMConfig(t *testing.T) {
@@ -449,7 +455,7 @@ func TestJavaRuntimeChecksMergeAcrossConfigurations(t *testing.T) {
 
 func TestJavaCoverageCountsOnlyApplicationSources(t *testing.T) {
 	root := t.TempDir()
-	for _, file := range []string{"src/main/java/example/Calc.java", "src/test/java/example/CalcTest.java", "core/src/main/java/example/Core.java"} {
+	for _, file := range []string{"src/main/java/example/Calc.java", "src/test/java/example/CalcTest.java", "core/src/main/java/example/Core.java", "src/integrationTest/java/example/Fixture.java", "core/src/testFixtures/java/example/Data.java", "src/it/simple/Verify.java"} {
 		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, file)), 0755))
 		requireWriteFile(t, filepath.Join(root, file), "class X {}")
 	}
@@ -462,6 +468,10 @@ func TestJavaCoverageCountsOnlyApplicationSources(t *testing.T) {
 	require.Equal(t, 1, coverage.CoveredTests, "test-source coverage alone does not qualify")
 	require.Equal(t, "not observed", javaSourceCoverage(root, intake.Facts{TestCount: 1, Tests: []intake.Test{{Name: "testOnly", CoveredFiles: []string{"src/test/java/example/CalcTest.java"}}}}, nil).Status)
 	require.Equal(t, "invalid", javaSourceCoverage(root, intake.Facts{TestCount: 1, Tests: []intake.Test{{Name: "x", CoveredFiles: []string{"src/main/java/example/Missing.java"}}}}, nil).Status)
+	for _, file := range []string{"src/integrationTest/java/example/Fixture.java", "core/src/testFixtures/java/example/Data.java", "src/it/simple/Verify.java"} {
+		facts := intake.Facts{TestCount: 1, Tests: []intake.Test{{Name: "fixtureOnly", CoveredFiles: []string{file}}}}
+		require.Equal(t, "not observed", javaSourceCoverage(root, facts, nil).Status, "every test source tree is test code: %s", file)
+	}
 }
 
 func TestJavaPinsTheCITracer(t *testing.T) {

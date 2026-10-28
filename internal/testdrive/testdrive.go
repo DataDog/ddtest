@@ -821,6 +821,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		}
 		result.CIRuntime = &check
 		t.defaultToCITracer(check)
+		result.Tracer = t.tracerLabel
 		if t.preflight != nil {
 			if err := t.preflight(ctx, output, &result); err != nil {
 				return result, err

@@ -299,3 +299,19 @@ func TestJavaPreflightInspectsTheConfigurationJDKAndReactor(t *testing.T) {
 	require.ErrorContains(t, drive.checkJavaPreflight(t.Context(), &bytes.Buffer{}, result), "inspect Maven reactor")
 	require.Contains(t, result.Preflight.Verdict.Reason, "reactor cannot be read")
 }
+
+func TestJavaValidationReportsTheCIPinnedAgent(t *testing.T) {
+	drive, _, _ := javaSimulation(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(drive.repositoryRoot, ".github/workflows"), 0755))
+	requireWriteFile(t, filepath.Join(drive.repositoryRoot, ".github/workflows/ci.yml"), "jobs:\n  test:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn -B test\n")
+	drive.configurationEnvironment = map[string]string{"JAVA_HOME": writeJDK(t, "17.0.20")}
+	drive.platform = &fakeTracer{preloadPath: "/agent/dd-java-agent.jar"}
+	drive.tracerVersion, drive.tracerLabel, drive.tracerVersionDefaulted = "latest", "dd-java-agent@latest", true
+	drive.preflight = drive.frameworkPreflight()
+	var output bytes.Buffer
+	result, err := drive.run(t.Context(), &output)
+	require.NoError(t, err, output.String())
+	require.Equal(t, "dd-java-agent@1.67.1", result.Tracer, "the report names the release CI pins, which this run validated")
+	require.Equal(t, "1.67.1", drive.platform.(*fakeTracer).options.Version)
+	require.Equal(t, "compatible", result.CIRuntime.Status, "%+v", result.CIRuntime)
+}

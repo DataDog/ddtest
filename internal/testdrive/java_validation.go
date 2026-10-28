@@ -109,9 +109,9 @@ func (t *Testdrive) javaImplicitArgs(args []string) ([]string, error) {
 }
 
 // javaMavenDirectory returns the .mvn directory the mvn launcher finds: the
-// nearest one up to the checkout, from the directory of the POM that a
-// separate -f or --file argument names, the only forms the launcher reads,
-// else from the working directory. It is empty when there is none.
+// nearest one up to the checkout, from what a separate -f or --file argument
+// names, the only forms the launcher reads (a directory, or a POM's
+// directory), else from the working directory. It is empty when there is none.
 func (t *Testdrive) javaMavenDirectory(args []string) (string, error) {
 	start := t.repositoryRoot
 	for i := 0; i+1 < len(args); i++ {
@@ -119,7 +119,10 @@ func (t *Testdrive) javaMavenDirectory(args []string) (string, error) {
 			if filepath.IsAbs(args[i+1]) {
 				return "", fmt.Errorf("maven POM must be a repository path: %s", args[i+1])
 			}
-			start = filepath.Dir(filepath.Join(t.repositoryRoot, args[i+1]))
+			start = filepath.Join(t.repositoryRoot, args[i+1])
+			if info, err := os.Stat(start); err != nil || !info.IsDir() {
+				start = filepath.Dir(start)
+			}
 		}
 	}
 	root := t.checkoutRoot()
@@ -644,8 +647,13 @@ func mergeJavaRuntimeChecks(current, next *onboard.RuntimeCheck) *onboard.Runtim
 	return current
 }
 
+// javaTestSource matches files of a test source tree, such as src/test,
+// src/integrationTest, src/testFixtures or the invoker's src/it, and build
+// output; none of them is application code.
+var javaTestSource = regexp.MustCompile(`(^|/)(src/(it|[^/]*[Tt]est[^/]*)|target)/`)
+
 // javaSourceCoverage requires per-test coverage of repository application
-// classes; Maven test sources and build output do not qualify.
+// classes; test sources and build output do not qualify.
 func javaSourceCoverage(root string, facts intake.Facts, native []nativeTest) *coverageSummary {
 	if canonical, err := filepath.EvalSymlinks(root); err == nil {
 		root = canonical
@@ -654,7 +662,7 @@ func javaSourceCoverage(root string, facts intake.Facts, native []nativeTest) *c
 		var kept []string
 		for _, file := range files {
 			local, _ := repositoryCoverageFile(root, file)
-			if strings.Contains("/"+filepath.ToSlash(local), "/src/test/") || strings.Contains("/"+filepath.ToSlash(local), "/target/") {
+			if javaTestSource.MatchString(filepath.ToSlash(local)) {
 				continue
 			}
 			kept = append(kept, file)
