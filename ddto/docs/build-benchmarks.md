@@ -31,6 +31,14 @@ That dataset was recorded in ddto's original repository, so its input revisions 
 commits there: refresh Mini from it in that checkout, or record a new baseline
 of every variant here.
 
+The latest build data, [20261027-linux-go1.27.1](results/20261027-linux-go1.27.1/README.md),
+is such a baseline of every variant, recorded here with `--repeats 3`. The
+runtime scripts refresh only Mini against a dataset recorded in this repository,
+so [benchmarks.md](benchmarks.md) keeps the runtime sections of
+20261016-linux-go1.27.1; that dataset's
+[compose.py](results/20261027-linux-go1.27.1/compose.py) writes the page from
+its raw build data.
+
 ## Refresh only Mini
 
 Use the baseline directory linked from the comparison tables. The runner checks
