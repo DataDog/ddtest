@@ -271,7 +271,7 @@ func TestJavaNativeTestsUseTheAgentsModuleNames(t *testing.T) {
 		{Module: "core", Suite: "example.CoreTest", Name: "fails", Status: "failed", Failure: "AssertionError: no\n"},
 		{Module: "a/util", Suite: "example.UtilTest", Name: "works", Status: "passed"},
 		{Module: "core", Suite: javaProbeClass, Name: "ddtestProbe()", Status: "passed"},
-	}, "junit5", true)
+	}, true)
 	require.Equal(t, "Customer API / example.ApiTest", tests[0].File, "the agent reports a project's <name>")
 	require.Equal(t, "core / example.CoreTest", tests[1].File, "and otherwise its artifactId")
 	require.Equal(t, "a/util / example.UtilTest", tests[2].File, "a name two projects share cannot identify either")
@@ -342,23 +342,32 @@ func TestJavaProbeRunsInAModuleThatRanTests(t *testing.T) {
 }
 
 func TestJavaTestName(t *testing.T) {
-	for _, tc := range []struct{ native, framework, telemetry string }{
-		{"works", "junit5", "works"},
-		{"works()", "junit5", "works"},
-		{"check(TestInfo)", "junit5", "check"},
-		{"add(int, int)[2]", "junit5", "add[2]"},
-		{"[1] custom display", "junit5", "[1] custom display"},
-		{"works()", "junit4", "works"},
-		{"parse[a, 1](2)", "testng", "parse"},
-		{"parse[[x], (y)](10)", "testng", "parse"},
-		// Other frameworks report any name as written.
-		{"parse[a](1)", "spock", "parse[a](1)"},
-		{"adds(1, 2)", "spock", "adds(1, 2)"},
-		{"parse[a](1)", "junit5", "parse[a](1)"},
-		{"adds(x)", "cucumber-java", "adds(x)"},
+	for native, telemetry := range map[string]string{
+		"works":               "works",
+		"works()":             "works",
+		"check(TestInfo)":     "check",
+		"add(int, int)[2]":    "add[2]",
+		"[1] custom display":  "[1] custom display",
+		"parse[a, 1](2)":      "parse",
+		"parse[[x], (y)](10)": "parse",
 	} {
-		require.Equal(t, tc.telemetry, javaTestName(tc.native, tc.framework), "%s under %s", tc.native, tc.framework)
+		require.Equal(t, telemetry, javaTestName(native), native)
 	}
+}
+
+func TestJavaTelemetryNormalizesOnlyNamesTheAgentRenamed(t *testing.T) {
+	pass := []intake.TestRun{{Status: "pass", SpanID: 1}}
+	// A Spock feature keeps a name that looks like a TestNG invocation.
+	run := javaTelemetryRun([]nativeTest{{File: "service / example.ParseSpec", Name: "parse[a](1)", Status: "passed"}},
+		intake.Test{Module: "service", Suite: "example.ParseSpec", Name: "parse[a](1)", Attempts: pass})
+	run.framework = "testng"
+	require.Empty(t, verifyJavaTelemetry(run).Status, "a name the agent reports as written is compared as written")
+	// JUnit 5 methods in a build whose selected framework is another.
+	run = javaTelemetryRun([]nativeTest{{File: "service / example.ApiTest", Name: "convert(String)[1]", Status: "passed"}, {File: "service / example.ApiTest", Name: "convert(String)[2]", Status: "passed"}},
+		intake.Test{Module: "service", Suite: "example.ApiTest", Name: "convert", Parameters: `{"metadata":{"test_name":"[1] a"}}`, Attempts: pass},
+		intake.Test{Module: "service", Suite: "example.ApiTest", Name: "convert", Parameters: `{"metadata":{"test_name":"[2] b"}}`, Attempts: []intake.TestRun{{Status: "pass", SpanID: 2}}})
+	run.framework = "cucumber-java"
+	require.Empty(t, verifyJavaTelemetry(run).Status, "JUnit signatures are normalized whatever framework was selected")
 }
 
 func TestJavaValidatesSurefireFrameworksWithPairedFeatureControls(t *testing.T) {
