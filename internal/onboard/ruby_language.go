@@ -36,8 +36,6 @@ type rubyDiscovery struct{}
 
 func (rubyDiscovery) name() string { return "ruby" }
 
-func (rubyDiscovery) frameworks() []string { return []string{"rspec", "minitest"} }
-
 func (rubyDiscovery) actionLanguage() string { return "ruby" }
 
 func (rubyDiscovery) bootstrap(string) string { return rubyBootstrap }

@@ -10,8 +10,6 @@ type pythonDiscovery struct{}
 
 func (pythonDiscovery) name() string { return "python" }
 
-func (pythonDiscovery) frameworks() []string { return []string{"pytest"} }
-
 func (pythonDiscovery) actionLanguage() string { return "python" }
 
 func (pythonDiscovery) bootstrap(string) string { return pythonBootstrap }

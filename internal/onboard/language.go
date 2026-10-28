@@ -12,8 +12,6 @@ import "slices"
 // specifics in its own files and registers in languages.go.
 type discoveryLanguage interface {
 	name() string
-	// frameworks lists the test consumers this language can recognize.
-	frameworks() []string
 	// actionLanguage is the language's value in the setup action's languages input.
 	actionLanguage() string
 	// bootstrap explains how the existing test step loads the tracer.

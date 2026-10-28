@@ -12,10 +12,6 @@ type javascriptDiscovery struct{}
 
 func (javascriptDiscovery) name() string { return "javascript" }
 
-func (javascriptDiscovery) frameworks() []string {
-	return []string{"jest", "vitest", "mocha", "playwright", "cypress", "cucumber", "webdriverio"}
-}
-
 func (javascriptDiscovery) actionLanguage() string { return "js" }
 
 func (javascriptDiscovery) bootstrap(framework string) string {
