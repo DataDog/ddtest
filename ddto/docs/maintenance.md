@@ -281,10 +281,49 @@ Add the new toolchain to the compatibility matrix only after exercising it.
 Keep the oldest tested toolchain until a compatibility change is explicitly
 accepted.
 
+## Supported dd-trace-go and Orchestrion versions
+
+`ddtest instrument` edits three dd-trace-go packages when it compiles a test
+binary: `internal/config` and `internal/civisibility/envconfig`, whose CI
+guards are mandatory, and `ddtrace/tracer`, for the
+[SDK span mirror](sdk-span-mirror.md). It supports every dd-trace-go release
+from v2.10.0 and the main branch. For Orchestrion, it supports the releases of
+the last two minors and the main branch.
+[`scripts/supported_versions.json`](../scripts/supported_versions.json) lists
+them, with main at a fixed pseudo-version, and the integration tests read it:
+
+- `TestMiniSDKSupportedVersions` applies every SDK edit to each listed
+  version, with `runner.SDKEdits` and the same steps as a compile. It only
+  parses sources, so it takes seconds for all of them.
+- The tests that build and run binaries with several SDK versions,
+  `TestMiniSDKMirrorContextMatrix`, `TestMiniLegacySDKShim` and
+  `TestMiniOrchestrionLegacySDKShim`, run the pinned SDK and one version for
+  each fingerprint: the hash of the edited packages' Go files and the module's
+  `go.mod`. Versions with the same fingerprint compile the same edited sources,
+  so the newest of them stands for the others. On 2026-10-28, v2.10.0 and
+  v2.10.1 shared one, and v2.11.1 and v2.11.2 another.
+- `TestMiniOrchestrionSupportedVersions`, on Linux, builds each listed
+  Orchestrion version and composes it with Mini and the pinned SDK. Orchestrion
+  is not edited, so every version runs. The deeper Orchestrion tests use the
+  pinned reference.
+
+Pull requests and pushes test the list. The nightly run of the
+[Go instrumentation workflow](../../.github/workflows/go-instrumentation.yml)
+tests the window that the module proxy has then, from
+`supported_versions.py resolve`, through `DDTO_SUPPORTED_VERSIONS`, and fails
+when `supported_versions.py check` finds releases that the list lacks or no
+longer includes. Update the list in a pull request then, with main's new
+pseudo-version from `supported_versions.py resolve`. Before each release the
+release workflow runs the whole workflow on that live window with
+`DDTO_COMPATIBILITY=full`, which runs every version even when fingerprints
+match; the release job waits for it.
+
 ## Releases
 
 ddto is released with ddtest, by ddtest's release and prerelease workflows.
-Both run `make release`, which builds ddtest's executables with
+A release first passes the
+[compatibility run](#supported-dd-trace-go-and-orchestrion-versions). Both run
+`make release`, which builds ddtest's executables with
 [`scripts/release`](../scripts/release/main.go) and `-version` set to
 ddtest's version. The executables, the runtime sources that they carry, logs,
 telemetry and test events report it, through `-overlay`; the checkout keeps

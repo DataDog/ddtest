@@ -130,6 +130,13 @@ and goroutines. The goleak shim does not ignore arbitrary application or APM
 SDK goroutines. Applications that start an APM tracer should stop it or apply
 their usual leak-test policy.
 
+## Supported versions
+
+`ddtest instrument` supports the Orchestrion releases of the last two minors
+and Orchestrion's main branch, with dd-trace-go v2.10.0 or newer;
+[supported versions](maintenance.md#supported-dd-trace-go-and-orchestrion-versions)
+lists them and explains how each one is tested.
+
 ## Cache and maintenance
 
 Each SDK package that Mini's guards rewrite receives a versioned,
@@ -169,8 +176,9 @@ goleak success and a real client leak. Builds cover plain, atomic coverage,
 Covered cases also compare individual test coverage payloads.
 
 `TestMiniOrchestrionLegacySDKShim` checks single reporting with an existing SDK
-shim with the pinned SDK and v2.11.0-rc.2, in true/parent activation and both
-delivery modes. `TestMiniLegacySDKShim` covers the same SDK versions without
+shim with the pinned SDK and each
+[supported SDK fingerprint](maintenance.md#supported-dd-trace-go-and-orchestrion-versions),
+in true/parent activation and both delivery modes. `TestMiniLegacySDKShim` covers the same SDK versions without
 Orchestrion, with a shim reached through a test helper. It verifies subtest
 reporting, failed-test exit codes, APM delivery and native SDK builds on both
 sides of a Mini build. Inline executions check successful and failed tests,

@@ -1,0 +1,14 @@
+{
+  "dd-trace-go": {
+    "module": "github.com/DataDog/dd-trace-go/v2",
+    "minimum": "v2.10.0",
+    "releases": ["v2.10.0", "v2.10.1", "v2.11.0", "v2.11.1", "v2.11.2"],
+    "main": "v2.13.0-dev.0.20261028090430-0e0663070554"
+  },
+  "orchestrion": {
+    "module": "github.com/DataDog/orchestrion",
+    "minors": 2,
+    "releases": ["v1.13.0", "v1.13.1", "v1.14.0"],
+    "main": "v1.14.1-0.20261027170653-324ce59f991a"
+  }
+}

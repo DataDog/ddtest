@@ -1,7 +1,9 @@
 package runner
 
 import (
+	"errors"
 	"fmt"
+	"go/build"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -49,24 +51,9 @@ func preflightSDKMirror(pkg *goPackage, replacements map[string]string) (string,
 	if pkg == nil || pkg.Error != nil {
 		return "", "" // Late SDK imports are checked against actual compiler inputs.
 	}
-	var found uint8
-	for _, file := range pkg.GoFiles {
-		path := filepath.Join(pkg.Dir, file)
-		if replacement, exists := replacements[path]; exists {
-			path = replacement
-		}
-		source, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Sprintf("SDK span copies disabled: %v", err), ""
-		}
-		_, hooks, err := instrument.TransformSDKMirror(path, source)
-		if err != nil {
-			return fmt.Sprintf("SDK span copies disabled: %v", err), ""
-		}
-		if found&hooks != 0 {
-			return "SDK span copies disabled: ambiguous hooks", ""
-		}
-		found |= hooks
+	found, err := sdkMirrorEdits(pkg, replacements)
+	if err != nil {
+		return fmt.Sprintf("SDK span copies disabled: %v", err), ""
 	}
 	if found&instrument.SDKMirrorCopies != instrument.SDKMirrorCopies {
 		return fmt.Sprintf("SDK span copies disabled: missing hooks (found %d)", found), ""
@@ -75,6 +62,57 @@ func preflightSDKMirror(pkg *goPackage, replacements map[string]string) (string,
 		return "", fmt.Sprintf("SDK spans under tests also go to APM: this dd-trace-go lacks the hooks that keep them to Test Optimization (found %d)", found)
 	}
 	return "", ""
+}
+
+// sdkMirrorEdits returns the span mirror's edits that pkg's sources accept.
+func sdkMirrorEdits(pkg *goPackage, replacements map[string]string) (uint8, error) {
+	var found uint8
+	for _, file := range pkg.GoFiles {
+		path := filepath.Join(pkg.Dir, file)
+		if replacement, exists := replacements[path]; exists {
+			path = replacement
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return 0, err
+		}
+		_, hooks, err := instrument.TransformSDKMirror(path, source)
+		if err != nil {
+			return 0, err
+		}
+		if found&hooks != 0 {
+			return 0, errors.New("ambiguous hooks")
+		}
+		found |= hooks
+	}
+	return found, nil
+}
+
+// SDKEdits applies the CLI's edits to the dd-trace-go/v2 module extracted at
+// dir, through the steps of its compiles and without changing dir: the
+// mandatory CI guards and the span mirror. It returns the mirror's edits; an
+// error means that a guard or the copies cannot be installed. The
+// compatibility tests check every supported SDK version with it.
+func SDKEdits(dir string) (uint8, error) {
+	var tracer *goPackage
+	for _, pkg := range []string{sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkTracerPackage} {
+		relative := strings.TrimPrefix(pkg, "github.com/DataDog/dd-trace-go/v2/")
+		source, err := build.Default.ImportDir(filepath.Join(dir, filepath.FromSlash(relative)), 0)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %w", pkg, err)
+		}
+		args := []string{"compile"}
+		for _, file := range source.GoFiles {
+			args = append(args, filepath.Join(source.Dir, file))
+		}
+		_, cleanup, err := prepareSDKCICompile(args, pkg)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %w", pkg, err)
+		}
+		cleanup()
+		tracer = &goPackage{Dir: source.Dir, GoFiles: source.GoFiles}
+	}
+	return sdkMirrorEdits(tracer, nil)
 }
 
 // prepareSDKCICompile rewrites the compiler's actual inputs, including covered

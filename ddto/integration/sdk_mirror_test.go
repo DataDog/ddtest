@@ -1,9 +1,7 @@
 package integration
 
 import (
-	"encoding/json"
 	"fmt"
-	"go/build"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,50 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/DataDog/ddtest/ddto/internal/instrument"
 )
-
-// sdkMirrorVersions are the SDKs whose spans the mirror copies and keeps to
-// Test Optimization: the pinned one, the last two releases and main on
-// 2026-10-28.
-var sdkMirrorVersions = []string{sdkVersion, "v2.11.1", "v2.11.2", "v2.13.0-dev.0.20261028090430-0e0663070554"}
-
-// Each supported SDK, and the next release candidate, has every edit: the
-// copies' and those that keep its spans under tests out of APM.
-func TestMiniSDKMirrorSupportedVersions(t *testing.T) {
-	for _, version := range append(slices.Clone(sdkMirrorVersions), "v2.12.0-rc.6") {
-		t.Run(version, func(t *testing.T) {
-			out, stderr, code := command(t, t.TempDir(), testEnv(), "go", "mod", "download", "-json", "github.com/DataDog/dd-trace-go/v2@"+version)
-			if code != 0 {
-				t.Fatal(out, stderr)
-			}
-			var module struct{ Dir string }
-			if err := json.Unmarshal([]byte(out), &module); err != nil || module.Dir == "" {
-				t.Fatal(out, err)
-			}
-			pkg, err := build.Default.ImportDir(filepath.Join(module.Dir, "ddtrace", "tracer"), 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var found uint8
-			for _, name := range pkg.GoFiles {
-				source, err := os.ReadFile(filepath.Join(pkg.Dir, name))
-				if err != nil {
-					t.Fatal(err)
-				}
-				_, hooks, err := instrument.TransformSDKMirror(name, source)
-				if err != nil || found&hooks != 0 {
-					t.Fatalf("%s: hooks=%d found=%d err=%v", name, hooks, found, err)
-				}
-				found |= hooks
-			}
-			if want := instrument.SDKMirrorCopies | instrument.SDKMirrorAdoption; found != want {
-				t.Fatalf("edits found %d, want %d", found, want)
-			}
-		})
-	}
-}
 
 // By default an SDK span under a test joins the test's trace, propagates the
 // ciapp-test origin and reaches Test Optimization only, through its copy.
@@ -158,7 +113,7 @@ func TestSDKMirror(t *testing.T) {
 	for _, apmSpans := range []bool{false, true} {
 		for _, deferred := range []bool{false, true} {
 			t.Run(fmt.Sprintf("apm=%t/deferred=%t", apmSpans, deferred), func(t *testing.T) {
-				events, apm := runSDKMirror(t, dir, bin, "TestSDKMirror", deferred, true, fmt.Sprintf("DD_CIVISIBILITY_APM_SPANS_ENABLED=%t", apmSpans))
+				events, apm := runSDKMirror(t, dir, bin, "TestSDKMirror", deferred, true, sdkMirrorMode(apmSpans))
 				want := []uint64{303}
 				if apmSpans {
 					want = []uint64{101, 202, 303}
@@ -360,15 +315,28 @@ func FuzzSDKMirror(f *testing.F) {
 		span.Finish()
 	})
 }
-// Orchestrion's HTTP client span under the test propagates its trace.
+// The test calls a service that starts its own SDK span from the headers it
+// receives, as a remote service would.
 func TestSDKMirrorHTTP(t *testing.T) {
 	startMirrorSDK(t)
 	defer tracer.Stop()
 	origin := make(chan string, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { origin <- r.Header.Get("x-datadog-origin") }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin <- r.Header.Get("x-datadog-origin")
+		parent, err := tracer.Extract(tracer.HTTPHeadersCarrier(r.Header))
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		tracer.StartSpan("http.server", tracer.ChildOf(parent)).Finish()
+	}))
 	defer server.Close()
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL, nil)
+	client, ctx := tracer.StartSpanFromContext(t.Context(), "http.client")
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tracer.Inject(client.Context(), tracer.HTTPHeadersCarrier(request.Header)); err != nil {
 		t.Fatal(err)
 	}
 	response, err := server.Client().Do(request)
@@ -376,6 +344,7 @@ func TestSDKMirrorHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
+	client.Finish()
 	if got := <-origin; got != os.Getenv("POC_EXPECT_ORIGIN") {
 		t.Fatalf("x-datadog-origin: %q", got)
 	}
@@ -403,7 +372,7 @@ func TestMiniSDKMirrorContextMatrix(t *testing.T) {
 	if code != 0 {
 		t.Fatal(out, stderr)
 	}
-	for _, sdk := range sdkMirrorVersions {
+	for _, sdk := range sdkRuntimeVersions(t) {
 		t.Run(sdk, func(t *testing.T) {
 			if sdk != sdkVersion {
 				out, stderr, code = command(t, dir, testEnv(), "go", "mod", "edit", "-replace=github.com/DataDog/dd-trace-go/v2=github.com/DataDog/dd-trace-go/v2@"+sdk)
@@ -441,7 +410,7 @@ func TestMiniSDKMirrorContextMatrix(t *testing.T) {
 					}
 					for _, deferred := range []bool{false, true} {
 						for _, apmSpans := range []bool{false, true} {
-							mode := fmt.Sprintf("DD_CIVISIBILITY_APM_SPANS_ENABLED=%t", apmSpans)
+							mode := sdkMirrorMode(apmSpans)
 							for _, agentless := range []bool{false, true} {
 								t.Run(fmt.Sprintf("deferred=%t/agentless=%t/apm=%t", deferred, agentless, apmSpans), func(t *testing.T) {
 									events, apm := runSDKMirror(t, dir, bin, "TestSDKMirrorScopes", deferred, agentless, mode)
@@ -462,9 +431,7 @@ func TestMiniSDKMirrorContextMatrix(t *testing.T) {
 								t.Fatal("SDK pool corrupted copies", copies)
 							}
 							assertSDKMirrorWorkloads(t, dir, bin, deferred, apmSpans)
-							if build.name == "orchestrion" {
-								assertSDKMirrorHTTP(t, dir, bin, deferred, apmSpans)
-							}
+							assertSDKMirrorHTTP(t, dir, bin, deferred, apmSpans)
 						}
 						events, _ := runSDKMirror(t, dir, bin, "TestSDKMirrorRetry", deferred, true, "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=1", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=in_process")
 						counts, err := countCIEvents(events)
@@ -509,7 +476,7 @@ func assertSDKMirrorWorkloads(t *testing.T, dir, bin string, deferred, apmSpans 
 		name         string
 		tests, spans int
 	}{{"TestSDKMirrorSuite", 2, 1}, {"FuzzSDKMirror", 3, 2}, {"BenchmarkSDKMirror", 1, 1}} {
-		events, apm := runSDKMirror(t, dir, bin, workload.name, deferred, true, fmt.Sprintf("DD_CIVISIBILITY_APM_SPANS_ENABLED=%t", apmSpans))
+		events, apm := runSDKMirror(t, dir, bin, workload.name, deferred, true, sdkMirrorMode(apmSpans))
 		sent := 0
 		if apmSpans {
 			sent = workload.spans
@@ -524,16 +491,16 @@ func assertSDKMirrorWorkloads(t *testing.T, dir, bin string, deferred, apmSpans 
 	}
 }
 
-// The service that Orchestrion's HTTP client calls receives the test's trace
-// and the ciapp-test origin: its span, sent to APM, names the client span's
-// copy as its parent. The client span itself is not sent.
+// The service that the test calls receives the test's trace and the
+// ciapp-test origin: its span, sent to APM, names the client span's copy as
+// its parent. The client span itself is not sent.
 func assertSDKMirrorHTTP(t *testing.T, dir, bin string, deferred, apmSpans bool) {
 	t.Helper()
 	origin := "ciapp-test"
 	if apmSpans {
 		origin = ""
 	}
-	events, apm := runSDKMirror(t, dir, bin, "TestSDKMirrorHTTP", deferred, true, fmt.Sprintf("DD_CIVISIBILITY_APM_SPANS_ENABLED=%t", apmSpans), "POC_EXPECT_ORIGIN="+origin)
+	events, apm := runSDKMirror(t, dir, bin, "TestSDKMirrorHTTP", deferred, true, sdkMirrorMode(apmSpans), "POC_EXPECT_ORIGIN="+origin)
 	var test map[string]any
 	var copies []map[string]any
 	for _, event := range events {
@@ -548,19 +515,27 @@ func assertSDKMirrorHTTP(t *testing.T, dir, bin string, deferred, apmSpans bool)
 	if test == nil || len(copies) != 1 || copies[0]["parent_id"] != test["span_id"] {
 		t.Fatal("HTTP client copy", test, copies)
 	}
+	spans := map[string]map[string]any{}
+	for _, span := range apm {
+		spans[span["name"].(string)] = span
+	}
+	server := spans["http.server"]
 	if apmSpans {
-		if len(apm) != 2 {
+		client := spans["http.client"]
+		if len(apm) != 2 || client == nil || server == nil || server["parent_id"] != client["span_id"] || server["trace_id"] != client["trace_id"] {
 			t.Fatal("APM HTTP spans", apm)
 		}
 		return
 	}
-	if len(apm) != 1 {
-		t.Fatal("APM HTTP spans", apm)
+	client := copies[0]
+	if len(apm) != 1 || server == nil || server["trace_id"] != test["trace_id"] || server["parent_id"] != client["span_id"] || server["meta"].(map[string]any)["_dd.origin"] != "ciapp-test" {
+		t.Fatal("the server span did not join the test's trace", apm, client, test)
 	}
-	server, client := apm[0], copies[0]
-	if server["trace_id"] != test["trace_id"] || server["parent_id"] != client["span_id"] || server["meta"].(map[string]any)["_dd.origin"] != "ciapp-test" {
-		t.Fatal("the server span did not join the test's trace", server, client, test)
-	}
+}
+
+// sdkMirrorMode is the environment of a run in one of the two modes.
+func sdkMirrorMode(apmSpans bool) string {
+	return fmt.Sprintf("DD_CIVISIBILITY_APM_SPANS_ENABLED=%t", apmSpans)
 }
 
 func mirrorContents(events []map[string]any) map[string]map[string]any {

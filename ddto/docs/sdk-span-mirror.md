@@ -144,18 +144,21 @@ helpers requires an explicit matcher update and behavioral tests.
 `SetUpper`, `SetLower` and `cacheHex`; `SpanContext`'s `trace` and `origin`;
 `setSamplingPriority` with a `samplernames.SamplerName`; the `ext` and
 `samplernames` imports; `submitChunk` with a `*chunk` of `spans []*Span`; and
-`computeOversizedSpanStats` resetting `statSpan` once. Each group is one bit of
-the edits `TransformSDKMirror` reports. Without all of them, the copies keep
+`computeOversizedSpanStats` resetting `statSpan` once. Before v2.11,
+`ContextWithSpan` chains `context.WithValue` calls instead of building a
+`spanCtx`, and `submit` computes each span's stats when it finishes; the
+matcher accepts both layouts. Each group is one bit of the edits
+`TransformSDKMirror` reports. Without all of them, the copies keep
 their own identity, the SDK spans are sent to APM, and the CLI warns that SDK
 spans under tests also go to APM, unless
 `DD_CIVISIBILITY_APM_SPANS_ENABLED=true` asks for that.
 
-The integration suite runs the copies, in both modes, with the pinned SDK, the
-last two releases (v2.11.1 and v2.11.2) and main on 2026-10-28;
-`TestMiniSDKMirrorSupportedVersions` also checks that v2.12.0-rc.6 has every
-edit. Update these versions with each SDK release. The SDK 2.10.1 regression
-checks the fallback: incompatible mirror hooks produce a warning, the application
-SDK compiles unchanged, and Mini still reports the tests. Mandatory CI ownership
+The mirror supports every dd-trace-go release from v2.10.0 and the main
+branch; [supported versions](maintenance.md#supported-dd-trace-go-and-orchestrion-versions)
+explains how each one is tested. `TestMiniUnsupportedSDKMirrorRetainsTestReporting`
+checks the fallback with a copy of v2.10.1 whose `ContextWithSpan` the matcher
+does not recognize: incompatible mirror hooks produce a warning, the
+application SDK compiles unchanged, and Mini still reports the tests. Mandatory CI ownership
 guards remain active to prevent duplicate test reporting. Preparation validates
 selected sources before compilation; late compiler inputs receive the same
 optional-mirror fallback. Other layouts need their own mirror validation.
@@ -190,8 +193,9 @@ checks on Linux, macOS and Windows. `TestSDKMirrorCosmeticChanges` compiles and
 executes transformed fixtures, including renames, context import aliases,
 declaration styles, late field updates, early returns and panics. Rejection
 tests cover duplicate anchors, foreign snapshots and unsupported locking.
-`TestSDKMirrorAdoptionEdits`, `TestSDKMirrorAdoptionDrift` and
-`TestSDKMirrorHookCompiles` cover the edits that join a test's trace, their
-fallback when the SDK changes, and the generated hook with and without them.
+`TestSDKMirrorAdoptionEdits`, `TestSDKMirrorAdoptionDrift`,
+`TestSDKMirrorBeforeV211` and `TestSDKMirrorHookCompiles` cover the edits that
+join a test's trace, their fallback when the SDK changes, the layout before
+v2.11, and the generated hook with and without them.
 Runtime unit tests cover detached map ownership, concurrent capture, which
 spans join a test's trace and the SDK-free allocation path.

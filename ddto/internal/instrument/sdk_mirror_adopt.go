@@ -11,20 +11,21 @@ import (
 // The SDK edits that TransformSDKMirror finds, one bit each. Copies need the
 // first four. Adoption, with the other four, makes an SDK span under a test
 // join the test's trace with the ciapp-test origin and keep priority, and
-// withholds it from the SDK's delivery to APM: its copy reports it. Without
-// them, copies keep their own identity and the SDK delivers its spans.
+// withholds it from the SDK's delivery to APM and its stats: its copy reports
+// it. Without them, copies keep their own identity and the SDK delivers its
+// spans.
 const (
-	SDKMirrorContext   uint8 = 1 << iota // SpanContext gains the copy's state
-	SDKMirrorStart                       // spanStart creates the copy
-	SDKMirrorFinish                      // finish captures it
-	SDKMirrorDetach                      // ContextWithSpan keeps its scope
-	SDKMirrorSpan                        // Span's identity fields
-	SDKMirrorTrace                       // trace ID, origin and priority internals
-	SDKMirrorSubmit                      // submitChunk withholds adopted spans
-	SDKMirrorOversized                   // computeOversizedSpanStats skips them
+	SDKMirrorContext uint8 = 1 << iota // SpanContext gains the copy's state
+	SDKMirrorStart                     // spanStart creates the copy
+	SDKMirrorFinish                    // finish captures it
+	SDKMirrorDetach                    // ContextWithSpan keeps its scope
+	SDKMirrorSpan                      // Span's identity fields
+	SDKMirrorTrace                     // trace ID, origin and priority internals
+	SDKMirrorSubmit                    // submitChunk withholds adopted spans
+	SDKMirrorStats                     // the SDK's APM stats skip them
 
 	SDKMirrorCopies   = SDKMirrorContext | SDKMirrorStart | SDKMirrorFinish | SDKMirrorDetach
-	SDKMirrorAdoption = SDKMirrorSpan | SDKMirrorTrace | SDKMirrorSubmit | SDKMirrorOversized
+	SDKMirrorAdoption = SDKMirrorSpan | SDKMirrorTrace | SDKMirrorSubmit | SDKMirrorStats
 )
 
 const (
@@ -107,9 +108,12 @@ func rewriteSDKSubmit(file *ast.File, fn *ast.FuncDecl, insert func(token.Pos, s
 	return true
 }
 
-// rewriteSDKOversized skips the stats of an adopted span of an oversized
-// trace, which the SDK sends without assembling a chunk.
-func rewriteSDKOversized(fn *ast.FuncDecl, insert func(token.Pos, string)) bool {
+// rewriteSDKStats skips the APM stats of an adopted span. From v2.11 the SDK
+// computes a chunk's stats in submitChunk, which already withholds adopted
+// spans, and those of an oversized trace's spans in computeOversizedSpanStats,
+// after dropping a span's retained stats. Before, submit computed each span's
+// stats when it finished.
+func rewriteSDKStats(fn *ast.FuncDecl, insert func(token.Pos, string)) bool {
 	if !sdkTracerMethod(fn) || fn.Type.Results != nil || len(fn.Type.Params.List) != 1 || len(fn.Type.Params.List[0].Names) != 1 ||
 		!sdkPointerType(fn.Type.Params.List[0].Type, "Span") {
 		return false
@@ -118,23 +122,42 @@ func rewriteSDKOversized(fn *ast.FuncDecl, insert func(token.Pos, string)) bool 
 	if span == "_" {
 		return false
 	}
-	// The SDK drops the span's retained stats before computing new ones: keep
-	// doing so, then skip the rest.
-	var reset *ast.AssignStmt
-	for _, stmt := range fn.Body.List {
-		if assign, ok := stmt.(*ast.AssignStmt); ok && assign.Tok == token.ASSIGN && len(assign.Lhs) == 1 && len(assign.Rhs) == 1 &&
-			sdkSelector(assign.Lhs[0], span, "statSpan") && sdkTypeName(assign.Rhs[0], "nil") {
-			if reset != nil {
-				return false
+	at := fn.Body.Lbrace + 1
+	if fn.Name.Name == "computeOversizedSpanStats" {
+		// Keep dropping the span's retained stats, then skip the rest.
+		var reset *ast.AssignStmt
+		for _, stmt := range fn.Body.List {
+			if assign, ok := stmt.(*ast.AssignStmt); ok && assign.Tok == token.ASSIGN && len(assign.Lhs) == 1 && len(assign.Rhs) == 1 &&
+				sdkSelector(assign.Lhs[0], span, "statSpan") && sdkTypeName(assign.Rhs[0], "nil") {
+				if reset != nil {
+					return false
+				}
+				reset = assign
 			}
-			reset = assign
 		}
-	}
-	if reset == nil {
+		if reset == nil {
+			return false
+		}
+		at = reset.End()
+	} else if !sdkCallsMethod(fn.Body, "newTracerStatSpan") {
 		return false
 	}
-	insert(reset.End(), fmt.Sprintf("\nif __ddtoMirrorWithheld(%s) {\nreturn\n}\n", span))
+	insert(at, fmt.Sprintf("\nif __ddtoMirrorWithheld(%s) {\nreturn\n}\n", span))
 	return true
+}
+
+// sdkCallsMethod reports whether body calls a method with this name.
+func sdkCallsMethod(body *ast.BlockStmt, name string) bool {
+	found := false
+	ast.Inspect(body, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok {
+			if selector, ok := call.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == name {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
 }
 
 func sdkTracerMethod(fn *ast.FuncDecl) bool {
@@ -215,7 +238,7 @@ func __ddtoMirrorDeliver(any)
 		if found&SDKMirrorSubmit != 0 {
 			source.WriteString("func __ddtoMirrorSubmit(*chunk) bool { return false }\n")
 		}
-		if found&SDKMirrorOversized != 0 {
+		if found&SDKMirrorStats != 0 {
 			source.WriteString("func __ddtoMirrorWithheld(*Span) bool { return false }\n")
 		}
 		return source.String()

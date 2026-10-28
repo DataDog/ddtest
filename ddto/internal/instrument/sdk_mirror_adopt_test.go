@@ -1,6 +1,7 @@
 package instrument
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,7 +57,36 @@ func (t *tracer) computeOversizedSpanStats(span *Span) {
 }
 `
 
+// beforeV211 turns an adoption fixture into the layout of SDKs before v2.11:
+// ContextWithSpan chains context values, and submit computes each finished
+// span's stats.
+func beforeV211(source string) string {
+	start, end := strings.Index(source, "func ContextWithSpan("), strings.Index(source, "\nvar _ = ext.PriorityAutoKeep")
+	source = source[:start] + `type activeSpanKey struct{}
+type activeSpanContextKey struct{}
+
+var internal = struct{ ActiveSpanKey activeSpanKey }{}
+
+func ContextWithSpan(ctx context.Context, s *Span) context.Context {
+	newCtx := context.WithValue(ctx, internal.ActiveSpanKey, s)
+	if s != nil {
+		newCtx = context.WithValue(newCtx, activeSpanContextKey{}, s.Context())
+	}
+	return newCtx
+}
+` + source[end:]
+	stats := strings.Index(source, "func (t *tracer) computeOversizedSpanStats(")
+	return source[:stats] + `type statsCalc struct{}
+
+func (statsCalc) newTracerStatSpan(*Span) int { return 1 }
+
+func (t *tracer) submit(s *Span) { t.stats += statsCalc{}.newTracerStatSpan(s) }
+`
+}
+
 func adoptionFixture(source string) string {
+	// Windows checkouts can convert the embedded fixture to CRLF.
+	source = strings.ReplaceAll(source, "\r\n", "\n")
 	replaced := strings.NewReplacer(
 		"type SpanContext struct{ owner *Span }",
 		"type SpanContext struct {\n\towner   *Span\n\ttraceID traceID\n\ttrace   *trace\n\torigin  string\n}",
@@ -87,6 +117,36 @@ func TestSDKMirrorAdoptionEdits(t *testing.T) {
 	}
 }
 
+// SDKs before v2.11 have every edit in their own layout.
+func TestSDKMirrorBeforeV211(t *testing.T) {
+	got, hooks, err := TransformSDKMirror("sdk.go", []byte(beforeV211(adoptionFixture(sdkMirrorSource))))
+	if err != nil || hooks != SDKMirrorCopies|SDKMirrorAdoption {
+		t.Fatalf("hooks=%d err=%v", hooks, err)
+	}
+	for _, want := range []string{
+		"__ddtoMirrorContext(ctx,__ddtoState)\nnewCtx := context.WithValue(ctx, internal.ActiveSpanKey, s)",
+		"func (t *tracer) submit(s *Span) {\nif __ddtoMirrorWithheld(s) {\nreturn\n}\n",
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+	for name, mutation := range map[string][2]string{
+		"snapshot_missing":   {"newCtx = context.WithValue(newCtx, activeSpanContextKey{}, s.Context())", "_ = newCtx"},
+		"snapshot_unguarded": {"if s != nil {", "if s == nil {"},
+		"derived_twice":      {"return newCtx", "return context.WithValue(ctx, activeSpanContextKey{}, nil)"},
+	} {
+		source := strings.Replace(beforeV211(adoptionFixture(sdkMirrorSource)), mutation[0], mutation[1], 1)
+		if _, _, err := TransformSDKMirror("sdk.go", []byte(source)); !errors.Is(err, ErrUnsupportedAPI) {
+			t.Fatalf("%s accepted: %v", name, err)
+		}
+	}
+	stats := strings.Replace(beforeV211(adoptionFixture(sdkMirrorSource)), "statsCalc{}.newTracerStatSpan(s)", "1", 1)
+	if _, hooks, err := TransformSDKMirror("sdk.go", []byte(stats)); err != nil || hooks&SDKMirrorStats != 0 {
+		t.Fatalf("submit without stats: hooks=%d err=%v", hooks, err)
+	}
+}
+
 // An SDK that lacks one of adoption's pieces keeps copies of Mini's own
 // identity: the other edits are not an error, and copies still work.
 func TestSDKMirrorAdoptionDrift(t *testing.T) {
@@ -101,8 +161,8 @@ func TestSDKMirrorAdoptionDrift(t *testing.T) {
 		"cache_hex":          {strings.Replace(full, "func (t *traceID) cacheHex()", "func (t *traceID) cacheHexadecimal()", 1), SDKMirrorTrace},
 		"submit_parameter":   {strings.Replace(full, "submitChunk(c *chunk)", "submitChunk(c []*Span)", 1), SDKMirrorSubmit},
 		"chunk_spans":        {strings.Replace(full, "type chunk struct{ spans []*Span }", "type chunk struct{ items []*Span }", 1), SDKMirrorSubmit},
-		"oversized_reset":    {strings.Replace(full, "\tspan.statSpan = nil\n\tt.stats = stats + 1\n", "\tt.stats = stats + 1\n", 1), SDKMirrorOversized},
-		"oversized_resets":   {strings.Replace(full, "\tspan.statSpan = nil\n", "\tspan.statSpan = nil\n\tspan.statSpan = nil\n", 1), SDKMirrorOversized},
+		"oversized_reset":    {strings.Replace(full, "\tspan.statSpan = nil\n\tt.stats = stats + 1\n", "\tt.stats = stats + 1\n", 1), SDKMirrorStats},
+		"oversized_resets":   {strings.Replace(full, "\tspan.statSpan = nil\n", "\tspan.statSpan = nil\n\tspan.statSpan = nil\n", 1), SDKMirrorStats},
 	}
 	for name, variant := range variants {
 		t.Run(name, func(t *testing.T) {
@@ -137,6 +197,7 @@ func TestSDKMirrorHookCompiles(t *testing.T) {
 	write("internal/samplernames/samplernames.go", "package samplernames\n\ntype SamplerName int8\n\nconst Manual SamplerName = 4\n")
 	for name, source := range map[string]string{
 		"adoption":      adoptionFixture(sdkMirrorSource),
+		"before_v2_11":  beforeV211(adoptionFixture(sdkMirrorSource)),
 		"without_trace": strings.Replace(adoptionFixture(sdkMirrorSource), "\torigin  string\n", "", 1),
 	} {
 		got, hooks, err := TransformSDKMirror("sdk.go", []byte(source))
@@ -151,5 +212,20 @@ func TestSDKMirrorHookCompiles(t *testing.T) {
 	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=", "GOTOOLCHAIN=local")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("the edited SDK and its hook file must compile: %v\n%s", err, output)
+	}
+}
+
+// main's spanStart also returns whether the span is a root and its parent's
+// service.
+func TestSDKMirrorSpanStartResults(t *testing.T) {
+	source := strings.ReplaceAll(sdkMirrorSource, "\r\n", "\n")
+	source = strings.Replace(source, "opts StartSpanConfig) *Span {", "opts StartSpanConfig) (*Span, bool, string) {", 1)
+	source = strings.Replace(source, "\treturn span\n", "\treturn span, context == nil, \"\"\n", 1)
+	if _, hooks, err := TransformSDKMirror("sdk.go", []byte(source)); err != nil || hooks != SDKMirrorCopies {
+		t.Fatalf("hooks=%d err=%v", hooks, err)
+	}
+	several := strings.Replace(source, "(*Span, bool, string) {", "(span, other *Span, root bool) {", 1)
+	if _, _, err := TransformSDKMirror("sdk.go", []byte(several)); !errors.Is(err, ErrUnsupportedAPI) {
+		t.Fatalf("ambiguous span result accepted: %v", err)
 	}
 }

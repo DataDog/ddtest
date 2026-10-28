@@ -70,9 +70,9 @@ func TransformSDKMirror(name string, source []byte) ([]byte, uint8, error) {
 			if rewriteSDKSubmit(file, fn, insert) {
 				bit = SDKMirrorSubmit
 			}
-		case sdkTracerMethod(fn) && fn.Name.Name == "computeOversizedSpanStats":
-			if rewriteSDKOversized(fn, insert) {
-				bit = SDKMirrorOversized
+		case sdkTracerMethod(fn) && (fn.Name.Name == "computeOversizedSpanStats" || fn.Name.Name == "submit"):
+			if rewriteSDKStats(fn, insert) {
+				bit = SDKMirrorStats
 			}
 		}
 		if err != nil {

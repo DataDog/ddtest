@@ -89,11 +89,14 @@ creating or pushing a tag locally:
 1. Open [Actions → Release](https://github.com/DataDog/ddtest/actions/workflows/release.yml).
 2. Select **Run workflow**, leave the branch set to `main`, and enter an unused
    version such as `v1.8.0` (`vMAJOR.MINOR.PATCH`, without leading zeroes).
-3. Run the workflow. It checks the initiator's permissions, checks out the latest
-   `main`, builds all six binaries with `make release`, checks that the install
-   scripts install the Linux binary from those files, makes the release commit
-   on that exact checkout commit and checks that `go install` builds it, creates
-   the tags `<version>` and `ddto/<version>` on the release commit, and creates
+3. Run the workflow. It checks the initiator's permissions, then runs the Go
+   instrumentation suite with every dd-trace-go and Orchestrion version that
+   `ddtest instrument` supports, as the module proxy has them then. Only when
+   that passes does it check out the commit it tested, the `main` of the
+   request, build all six binaries with `make release`, check that the install
+   scripts install the Linux binary from those files, make the release commit
+   on that exact checkout commit and check that `go install` builds it, create
+   the tags `<version>` and `ddto/<version>` on the release commit, and create
    a draft release with generated notes and the binaries, `install.sh`,
    `install.ps1` and `SHA256SUMS` attached.
 4. Follow the link in the workflow summary, review the notes and assets, and

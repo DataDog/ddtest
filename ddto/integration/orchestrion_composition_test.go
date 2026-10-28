@@ -233,7 +233,7 @@ func TestPass(t *testing.T) {}
 	if err := os.WriteFile(original, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, sdk := range []string{sdkVersion, "v2.11.0-rc.2"} {
+	for _, sdk := range sdkRuntimeVersions(t) {
 		t.Run(sdk, func(t *testing.T) {
 			if sdk != sdkVersion {
 				out, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", "-replace=github.com/DataDog/dd-trace-go/v2=github.com/DataDog/dd-trace-go/v2@"+sdk)
