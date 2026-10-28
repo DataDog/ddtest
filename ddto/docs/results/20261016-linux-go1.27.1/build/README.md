@@ -8,7 +8,7 @@ Mini traces and symbols are checked again. Native and Orchestrion retain their o
 
 ## Cold compilation
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 17.896 s | 51.532 s (+188.0%) | 23.451 s (-54.5%; +31.0%) |
 | Gin | `none` | 32 | 10.844 s | 22.679 s (+109.1%) | 13.343 s (-41.2%; +23.0%) |
@@ -61,7 +61,7 @@ Mini traces and symbols are checked again. Native and Orchestrion retain their o
 
 ## Cached compilation — unchanged output reused
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 0.098 s | 0.366 s (+273.5%) | 0.220 s (-40.0%; +124.2%) |
 | Gin | `none` | 32 | 0.097 s | 0.410 s (+322.2%) | 0.239 s (-41.8%; +145.7%) |
@@ -114,7 +114,7 @@ Mini traces and symbols are checked again. Native and Orchestrion retain their o
 
 ## Warm dependencies — forced fresh link
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 1.158 s | 5.302 s (+357.8%) | 3.203 s (-39.6%; +176.5%) |
 | Gin | `none` | 32 | 1.213 s | 5.372 s (+342.7%) | 2.588 s (-51.8%; +113.3%) |
@@ -167,7 +167,7 @@ Mini traces and symbols are checked again. Native and Orchestrion retain their o
 
 ## Incremental compilation — reachable test-body edit
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 1.280 s | 2.810 s (+119.6%) | 1.622 s (-42.3%; +26.7%) |
 | Gin | `none` | 32 | 1.160 s | 2.871 s (+147.6%) | 1.439 s (-49.9%; +24.1%) |
@@ -220,7 +220,7 @@ Mini traces and symbols are checked again. Native and Orchestrion retain their o
 
 ## Unused-constant edit — diagnostic
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 0.760 s | 1.161 s (+52.8%) | 0.971 s (-16.3%; +27.8%) |
 | Gin | `none` | 32 | 0.651 s | 1.110 s (+70.4%) | 0.866 s (-22.0%; +33.0%) |

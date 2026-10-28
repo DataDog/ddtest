@@ -1,4 +1,4 @@
-# Compile-only measurements: Native, POC Mini
+# Compile-only measurements: Native, `ddtest instrument`
 
 POC `282b22a15776c3dfb1073d2e0197c78445c00d6f`; `go version go1.27.1 linux/amd64`; SDK `v2.12.0-dev.3.0.20261008222249-870449702d0a`; Orchestrion `v1.13.2-0.20260917114356-5c24783fcd76`.
 

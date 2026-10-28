@@ -1,4 +1,4 @@
-# Compile-only measurements: POC Mini
+# Compile-only measurements: `ddtest instrument`
 
 POC `126bf4fdd4c861d12453def57e9e47a05d003120`; `go version go1.27.1 linux/amd64`; SDK `v2.12.0-dev.3.0.20261002145613-96aedb31048c`; Orchestrion `v1.13.2-0.20260917114356-5c24783fcd76`.
 
@@ -16,31 +16,31 @@ Unchanged output reuse, forced linking and reachable edits are checked with tool
 
 ## Cold compilation
 
-| Project | Flags | CPUs | POC Mini |
+| Project | Flags | CPUs | `ddtest instrument` |
 | --- | --- | ---: | ---: |
 | Gin | `none` | 4 | 21.383 s |
 
 ## Cached compilation — unchanged output reused
 
-| Project | Flags | CPUs | POC Mini |
+| Project | Flags | CPUs | `ddtest instrument` |
 | --- | --- | ---: | ---: |
 | Gin | `none` | 4 | 0.197 s |
 
 ## Warm dependencies — forced fresh link
 
-| Project | Flags | CPUs | POC Mini |
+| Project | Flags | CPUs | `ddtest instrument` |
 | --- | --- | ---: | ---: |
 | Gin | `none` | 4 | 2.204 s |
 
 ## Incremental compilation — reachable test-body edit
 
-| Project | Flags | CPUs | POC Mini |
+| Project | Flags | CPUs | `ddtest instrument` |
 | --- | --- | ---: | ---: |
 | Gin | `none` | 4 | 1.510 s |
 
 ## Unused-constant edit — diagnostic
 
-| Project | Flags | CPUs | POC Mini |
+| Project | Flags | CPUs | `ddtest instrument` |
 | --- | --- | ---: | ---: |
 | Gin | `none` | 4 | 0.950 s |
 

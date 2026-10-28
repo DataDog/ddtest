@@ -139,9 +139,9 @@ COUNTS = {1: 'One', 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five'}
 def runtime_readme(directory, manifest, summary, repetitions=5, retained=True):
     """Writes runtime/README.md. With retained, Native and Orchestrion keep an
     earlier collection's observations; otherwise every variant ran together."""
-    sources = (['Native and Orchestrion observations retain their original dates. Mini and Mini deferred',
+    sources = (['Native and Orchestrion observations retain their original dates. `ddtest instrument`, with normal and deferred delivery,',
                 'use the new source revision.'] if retained else
-               ['Native, Orchestrion, Mini and Mini deferred ran together, in rotating order,',
+               ['Native, Orchestrion and `ddtest instrument`, with normal and deferred delivery, ran together, in rotating order,',
                 'from the same revision.'])
     lines=['# Runtime comparisons','',
            f'{COUNTS.get(repetitions, str(repetitions))} measured executions follow one warmup at each CPU count. All package binaries',
@@ -151,7 +151,7 @@ def runtime_readme(directory, manifest, summary, repetitions=5, retained=True):
            *sources[:-1], sources[-1]+' Test inventories match Native; CI inventories use the',
            'recorded SDK reference. Native Examples absent from that reference are checked against',
            'the executable function/source table and added explicitly.','',
-           "Orchestrion's percentage compares time against Native. Mini's percentages compare",
+           "Orchestrion's percentage compares time against Native. `ddtest instrument`'s percentages compare",
            'Orchestrion first, then Native. Positive values mean more time; negative values mean less.','',
            report.comparison_table(manifest,summary,'wall_s'),
            '## CPU, memory and dispersion','',
@@ -227,15 +227,15 @@ def merge(args):
     build.write_json(output/'build/manifest.json',manifest)
     (output/'build/methodology.md').write_text(
         '# Compile-only comparisons\n\n'
-        f"Mini: `{new['source_head']}`, collected {new['started_at'][:10]}. "
+        f"`ddtest instrument`: `{new['source_head']}`, collected {new['started_at'][:10]}. "
         f"Native/Orchestrion: retained from {reference['started_at'][:10]} at `{reference['source_head']}`.\n\n"
         f"All variants use `{new['toolchain']}`, the recorded subject versions, flags, CPU affinity and repetition counts. "
         'Each observation includes wall time, aggregate cgroup CPU and memory, command and exit status. '
         'Cold builds start with an empty Go build cache; module downloads and the OS page cache remain warm. '
         'The other scenarios reuse unchanged output, force a fresh link, edit a reachable test body or edit an unused constant.\n\n'
-        'Mini traces and symbols are checked again. Native and Orchestrion retain their original qualification. '
+        '`ddtest instrument` traces and symbols are checked again. Native and Orchestrion retain their original qualification. '
         'Those variants were not rerun. Dates differ, so small timing differences need the recorded ranges and uncertainty. '
-        "Orchestrion's percentage compares time against Native. Mini's percentages compare Orchestrion first, then Native. All time cells are seconds.\n")
+        "Orchestrion's percentage compares time against Native. `ddtest instrument`'s percentages compare Orchestrion first, then Native. All time cells are seconds.\n")
     (output/'build/notes.md').write_text('The original convergence control is retained evidence for its collection date. It is not a new host-stability check.\n')
     build.report_command(argparse.Namespace(input=output/'build',output=None,check=False))
     for v in RETAINED:
@@ -323,15 +323,15 @@ def merge(args):
     (output/'agent/README.md').write_text(
         '# Gin with local Agent delivery and telemetry\n\n'
         'Three measured runs follow one warmup at each CPU count. Native and Orchestrion retain '
-        'their original observations; Mini uses the new revision. Real CI events and telemetry '
+        'their original observations; `ddtest instrument` uses the new revision. Real CI events and telemetry '
         'are sent through the local EVP/telemetry proxy.\n\n'
-        "Orchestrion's percentage compares the same metric against Native. Mini's percentages "
+        "Orchestrion's percentage compares the same metric against Native. `ddtest instrument`'s percentages "
         'compare Orchestrion first, then Native.\n\n'
         +report.comparison_table(agent_manifest,agent_stats,'wall_s','agent')
         +'\n## Memory\n\n'+report.comparison_table(agent_manifest,agent_stats,'peak_bytes','agent'))
     (output/'README.md').write_text(
         '# Benchmark data\n\n'
-        f"Mini was measured at `{new['source_head']}` on {new['started_at'][:10]}. "
+        f"`ddtest instrument` was measured at `{new['source_head']}` on {new['started_at'][:10]}. "
         f"Native and Orchestrion retain the observations from {reference['started_at'][:10]}. "
         'measurement_origins in build/manifest.json records both sources.\n\n'
         '[Comparison tables](../../benchmarks.md) cover build, runtime and memory. '
@@ -346,7 +346,7 @@ def merge(args):
         heading, body = parity_text.split('\n', 1)
         parity_readme.write_text(heading + '\n\nThese are archived parity measurements at `'
                                 + parity_head + '`, from the 2026-10-04/05 collection. '
-                                'They were not rerun for the Mini performance refresh.\n' + body)
+                                'They were not rerun for the `ddtest instrument` performance refresh.\n' + body)
     for helper in ('build_benchmark.py', 'runtime_benchmark.py', 'benchmark_receiver.py', 'benchmark_runtime_measure.py'):
         shutil.copyfile(collectors / helper, output / 'provenance' / helper)
     shutil.copyfile(collectors / 'testdata/runtime-benchmark/decode.go', output / 'provenance/decode.go.txt')

@@ -1,15 +1,15 @@
 <!-- Composed by results/20261027-linux-go1.27.1/compose.py from scripts/build_benchmark.py's, scripts/refresh_benchmark_report.py's and scripts/benchmark_report.py's renderers. -->
 # Build, runtime and memory comparisons
 
-Native, Orchestrion and POC Mini were measured together from 2026-10-27, at
-ddtest `282b22a15776c3dfb1073d2e0197c78445c00d6f`, where POC Mini runs as `ddtest instrument`:
+Native, Orchestrion and `ddtest instrument` were measured together from 2026-10-27, at
+ddtest `282b22a15776c3dfb1073d2e0197c78445c00d6f`:
 the build, the runtime and the local Agent control. Each build scenario ran 3
 times instead of the recorded counts (cold, cached, forced link, body edit,
 constant edit: 5/10/20/10/3 for Gin and Chi without flags, 3/10/10/5/3 for the
 other cases), and each runtime group 3 times instead of
 5, to shorten the collection; a
 [confirmation run](results/20261027-linux-go1.27.1/confirm-race/README.md) repeated the Gin and Testify
-race builds, Native and POC Mini, 248 builds,
+race builds, Native and `ddtest instrument`, 248 builds,
 with the recorded counts.
 All variants use `go version go1.27.1 linux/amd64` and the recorded subject versions,
 flags and CPU affinity. The host is an AMD Ryzen 9 5950X: four CPUs use four
@@ -21,7 +21,7 @@ final binaries passed traces and binary qualification, and the Native link
 control converged before the matrix.
 
 All time cells are medians in seconds. Orchestrion's percentage compares its
-time against Native. Mini's percentages compare Orchestrion first, then Native.
+time against Native. `ddtest instrument`'s percentages compare Orchestrion first, then Native.
 For example, `(-50%; +20%)` means half Orchestrion's time and 20% more than Native's. Memory uses aggregate cgroup MiB.
 The records keep CPU time, ranges, repetitions, failures and median uncertainty.
 No slow observations are removed. With three repetitions, a small difference
@@ -31,7 +31,7 @@ in wall time alone does not establish a stable gain.
 | --- | --- |
 | [Build](results/20261027-linux-go1.27.1/build/README.md) | Every flag combination in cold, cached, forced-link and both edit scenarios |
 | [Race confirmation](results/20261027-linux-go1.27.1/confirm-race/README.md) | Gin and Testify race builds with the recorded repetitions |
-| [Runtime](results/20261027-linux-go1.27.1/runtime/README.md) | Native, Orchestrion, normal/deferred Mini, each run, CPU, memory and event validation |
+| [Runtime](results/20261027-linux-go1.27.1/runtime/README.md) | Native, Orchestrion, `ddtest instrument` with normal and deferred delivery, each run, CPU, memory and event validation |
 | [Agent control](results/20261027-linux-go1.27.1/agent/README.md) | Gin through the local EVP and telemetry proxy |
 | [Memory](results/20261027-linux-go1.27.1/memory.md) | All build and runtime cells and the local Agent control |
 | [Data and provenance](results/20261027-linux-go1.27.1/README.md) | Dates, revisions, repetitions and how this page is composed |
@@ -46,7 +46,7 @@ is a diagnostic; it can leave compiled code reusable.
 
 ## Cold compilation
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 21.355 s | 57.543 s (+169.5%) | 22.531 s (-60.8%; +5.5%) |
 | Gin | `none` | 32 | 13.404 s | 28.275 s (+110.9%) | 15.274 s (-46.0%; +13.9%) |
@@ -59,7 +59,7 @@ is a diagnostic; it can leave compiled code reusable.
 
 ## Cached compilation — unchanged output reused
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 0.098 s | 0.374 s (+283.0%) | 0.184 s (-50.6%; +89.1%) |
 | Gin | `none` | 32 | 0.102 s | 0.441 s (+330.5%) | 0.217 s (-50.8%; +111.9%) |
@@ -72,7 +72,7 @@ is a diagnostic; it can leave compiled code reusable.
 
 ## Warm dependencies — forced fresh link
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 1.337 s | 6.183 s (+362.4%) | 1.838 s (-70.3%; +37.4%) |
 | Gin | `none` | 32 | 2.799 s | 6.523 s (+133.1%) | 1.706 s (-73.9%; -39.1%) |
@@ -85,7 +85,7 @@ is a diagnostic; it can leave compiled code reusable.
 
 ## Incremental compilation — reachable test-body edit
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 1.258 s | 3.023 s (+140.3%) | 1.520 s (-49.7%; +20.8%) |
 | Gin | `none` | 32 | 1.199 s | 3.200 s (+166.8%) | 1.470 s (-54.1%; +22.6%) |
@@ -98,7 +98,7 @@ is a diagnostic; it can leave compiled code reusable.
 
 ## Unused-constant edit — diagnostic
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 0.841 s | 1.259 s (+49.6%) | 0.939 s (-25.4%; +11.6%) |
 | Gin | `none` | 32 | 0.739 s | 1.207 s (+63.2%) | 0.837 s (-30.6%; +13.2%) |
@@ -118,11 +118,11 @@ pages and kernel memory are included. This is neither a Go heap measurement
 nor the sum of independently observed process RSS peaks. Runtime receivers run
 outside the measured cgroup. Warmups and build qualification commands are excluded.
 
-Orchestrion's percentage compares memory against Native. Mini's percentages
+Orchestrion's percentage compares memory against Native. `ddtest instrument`'s percentages
 compare memory against Orchestrion first and Native second. Failed variants
 have no comparative median; their individual peaks remain in the raw records.
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 1643.1 MiB | 2370.4 MiB (+44.3%) | 1763.6 MiB (-25.6%; +7.3%) |
 | Gin | `none` | 32 | 1787.8 MiB | 2847.4 MiB (+59.3%) | 1809.0 MiB (-36.5%; +1.2%) |
@@ -139,17 +139,17 @@ Three measured runs follow one warmup, for every variant in rotating
 order. The clock includes process startup, concurrent package tests, settings
 and final delivery to loopback HTTP. Compilation, receiver startup and decoding
 are excluded. Telemetry is disabled in this matrix and enabled in the separate
-local Agent control. Mini deferred uses the same executable as normal Mini. The
+local Agent control. Deferred delivery uses the same executable as normal delivery. The
 runtime comes from two collections, each case from one of them; the
 [runtime report](results/20261027-linux-go1.27.1/runtime/README.md#collections) explains why.
 
 Test names, statuses and multiplicities match the archived Native inventory.
-The archived SDK supplies CI event expectations for Orchestrion and Mini. New
+The archived SDK supplies CI event expectations for Orchestrion and `ddtest instrument`. New
 native Examples are identified from the executable's function/source table and
 checked explicitly. A failed or unavailable reference remains visible in the
 validation results.
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini | Mini deferred |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` | `ddtest instrument`, deferred delivery |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 0.189747 s | 0.244531 s (+28.9%) | 0.220352 s (-9.9%; +16.1%) | 0.224050 s (-8.4%; +18.1%) |
 | Gin | `none` | 32 | 0.197496 s | 0.238528 s (+20.8%) | 0.218361 s (-8.5%; +10.6%) | 0.217293 s (-8.9%; +10.0%) |
@@ -162,7 +162,7 @@ validation results.
 
 ## Runtime: memory
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini | Mini deferred |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` | `ddtest instrument`, deferred delivery |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 35.1 MiB | 55.4 MiB (+57.9%) | 38.5 MiB (-30.5%; +9.7%) | 42.0 MiB (-24.1%; +19.8%) |
 | Gin | `none` | 32 | 42.7 MiB | 81.3 MiB (+90.2%) | 52.8 MiB (-35.0%; +23.6%) | 53.7 MiB (-34.0%; +25.6%) |

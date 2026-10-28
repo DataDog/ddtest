@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compose docs/benchmarks.md and this dataset's runtime, Agent and memory reports.
 
-Native, Orchestrion and POC Mini, through ddtest instrument, were measured
+Native, Orchestrion and `ddtest instrument` were measured
 together from 2026-10-27 at one ddtest revision: the build with
 build_benchmark.py, the runtime and the local Agent control with
 runtime_benchmark.py. benchmark_report.py renders a dataset whose variants
@@ -111,24 +111,24 @@ def compose():
     (DATASET / "agent/README.md").write_text(
         "# Gin with local Agent delivery and telemetry\n\n"
         f"{runs(agent['repetitions'])} measured runs follow one warmup at each CPU count, "
-        "for Native, Orchestrion and POC Mini together. Real CI events and telemetry are sent through "
+        "for Native, Orchestrion and `ddtest instrument` together. Real CI events and telemetry are sent through "
         "the local EVP/telemetry proxy.\n\n"
-        "Orchestrion's percentage compares the same metric against Native. Mini's percentages "
+        "Orchestrion's percentage compares the same metric against Native. `ddtest instrument`'s percentages "
         "compare Orchestrion first, then Native.\n\n"
         + report.comparison_table(agent_manifest, agent_stats, "wall_s", "agent")
         + "\n## Memory\n\n" + report.comparison_table(agent_manifest, agent_stats, "peak_bytes", "agent"))
     sections = [f"""<!-- Composed by {link}/compose.py from scripts/build_benchmark.py's, scripts/refresh_benchmark_report.py's and scripts/benchmark_report.py's renderers. -->
 # Build, runtime and memory comparisons
 
-Native, Orchestrion and POC Mini were measured together from {started}, at
-ddtest `{manifest['source_head']}`, where POC Mini runs as `ddtest instrument`:
+Native, Orchestrion and `ddtest instrument` were measured together from {started}, at
+ddtest `{manifest['source_head']}`:
 the build, the runtime and the local Agent control. Each build scenario ran 3
 times instead of the recorded counts (cold, cached, forced link, body edit,
 constant edit: 5/10/20/10/3 for Gin and Chi without flags, 3/10/10/5/3 for the
 other cases), and each runtime group {runtime['repetitions']} times instead of
 5, to shorten the collection; a
 [confirmation run]({link}/confirm-race/README.md) repeated the Gin and Testify
-race builds, Native and POC Mini, {confirm['measured_observations']:,} builds,
+race builds, Native and `ddtest instrument`, {confirm['measured_observations']:,} builds,
 with the recorded counts.
 All variants use `{manifest['toolchain']}` and the recorded subject versions,
 flags and CPU affinity. The host is an AMD Ryzen 9 5950X: four CPUs use four
@@ -140,7 +140,7 @@ final binaries passed traces and binary qualification, and the Native link
 control converged before the matrix.
 
 All time cells are medians in seconds. Orchestrion's percentage compares its
-time against Native. Mini's percentages compare Orchestrion first, then Native.
+time against Native. `ddtest instrument`'s percentages compare Orchestrion first, then Native.
 For example, `(-50%; +20%)` means half Orchestrion's time and 20% more than Native's. Memory uses aggregate cgroup MiB.
 The records keep CPU time, ranges, repetitions, failures and median uncertainty.
 No slow observations are removed. With three repetitions, a small difference
@@ -150,7 +150,7 @@ in wall time alone does not establish a stable gain.
 | --- | --- |
 | [Build]({link}/build/README.md) | Every flag combination in cold, cached, forced-link and both edit scenarios |
 | [Race confirmation]({link}/confirm-race/README.md) | Gin and Testify race builds with the recorded repetitions |
-| [Runtime]({link}/runtime/README.md) | Native, Orchestrion, normal/deferred Mini, each run, CPU, memory and event validation |
+| [Runtime]({link}/runtime/README.md) | Native, Orchestrion, `ddtest instrument` with normal and deferred delivery, each run, CPU, memory and event validation |
 | [Agent control]({link}/agent/README.md) | Gin through the local EVP and telemetry proxy |
 | [Memory]({link}/memory.md) | All build and runtime cells and the local Agent control |
 | [Data and provenance]({link}/README.md) | Dates, revisions, repetitions and how this page is composed |
@@ -172,12 +172,12 @@ is a diagnostic; it can leave compiled code reusable.
 order. The clock includes process startup, concurrent package tests, settings
 and final delivery to loopback HTTP. Compilation, receiver startup and decoding
 are excluded. Telemetry is disabled in this matrix and enabled in the separate
-local Agent control. Mini deferred uses the same executable as normal Mini. The
+local Agent control. Deferred delivery uses the same executable as normal delivery. The
 runtime comes from two collections, each case from one of them; the
 [runtime report]({link}/runtime/README.md#collections) explains why.
 
 Test names, statuses and multiplicities match the archived Native inventory.
-The archived SDK supplies CI event expectations for Orchestrion and Mini. New
+The archived SDK supplies CI event expectations for Orchestrion and `ddtest instrument`. New
 native Examples are identified from the executable's function/source table and
 checked explicitly. A failed or unavailable reference remains visible in the
 validation results.

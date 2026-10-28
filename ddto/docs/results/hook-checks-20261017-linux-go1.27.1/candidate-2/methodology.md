@@ -1,4 +1,4 @@
-# Compile-only measurements: POC Mini
+# Compile-only measurements: `ddtest instrument`
 
 POC `126bf4fdd4c861d12453def57e9e47a05d003120`; `go version go1.27.1 linux/amd64`; SDK `v2.12.0-dev.3.0.20261002145613-96aedb31048c`; Orchestrion `v1.13.2-0.20260917114356-5c24783fcd76`.
 

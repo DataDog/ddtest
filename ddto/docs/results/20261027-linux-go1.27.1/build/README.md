@@ -1,4 +1,4 @@
-# Compile-only measurements: Native, Orchestrion, POC Mini
+# Compile-only measurements: Native, Orchestrion, `ddtest instrument`
 
 POC `282b22a15776c3dfb1073d2e0197c78445c00d6f`; `go version go1.27.1 linux/amd64`; SDK `v2.12.0-dev.3.0.20261008222249-870449702d0a`; Orchestrion `v1.13.2-0.20260917114356-5c24783fcd76`.
 
@@ -16,7 +16,7 @@ Unchanged output reuse, forced linking and reachable edits are checked with tool
 
 ## Cold compilation
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 21.355 s | 57.543 s (+169.5%) | 22.531 s (-60.8%; +5.5%) |
 | Gin | `none` | 32 | 13.404 s | 28.275 s (+110.9%) | 15.274 s (-46.0%; +13.9%) |
@@ -69,7 +69,7 @@ Unchanged output reuse, forced linking and reachable edits are checked with tool
 
 ## Cached compilation — unchanged output reused
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 0.098 s | 0.374 s (+283.0%) | 0.184 s (-50.6%; +89.1%) |
 | Gin | `none` | 32 | 0.102 s | 0.441 s (+330.5%) | 0.217 s (-50.8%; +111.9%) |
@@ -122,7 +122,7 @@ Unchanged output reuse, forced linking and reachable edits are checked with tool
 
 ## Warm dependencies — forced fresh link
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 1.337 s | 6.183 s (+362.4%) | 1.838 s (-70.3%; +37.4%) |
 | Gin | `none` | 32 | 2.799 s | 6.523 s (+133.1%) | 1.706 s (-73.9%; -39.1%) |
@@ -175,7 +175,7 @@ Unchanged output reuse, forced linking and reachable edits are checked with tool
 
 ## Incremental compilation — reachable test-body edit
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 1.258 s | 3.023 s (+140.3%) | 1.520 s (-49.7%; +20.8%) |
 | Gin | `none` | 32 | 1.199 s | 3.200 s (+166.8%) | 1.470 s (-54.1%; +22.6%) |
@@ -228,7 +228,7 @@ Unchanged output reuse, forced linking and reachable edits are checked with tool
 
 ## Unused-constant edit — diagnostic
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 0.841 s | 1.259 s (+49.6%) | 0.939 s (-25.4%; +11.6%) |
 | Gin | `none` | 32 | 0.739 s | 1.207 s (+63.2%) | 0.837 s (-30.6%; +13.2%) |

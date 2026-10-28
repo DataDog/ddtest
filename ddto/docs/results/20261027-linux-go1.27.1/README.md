@@ -1,9 +1,9 @@
 # Benchmark data
 
-Native, Orchestrion and POC Mini were compiled together from 2026-10-27 and
-run together on 2026-10-28, at ddtest
+Native, Orchestrion and `ddtest instrument` were compiled together from
+2026-10-27 and run together on 2026-10-28, at ddtest
 `282b22a15776c3dfb1073d2e0197c78445c00d6f`, after the instrumentation moved
-into ddtest, where POC Mini runs as `ddtest instrument`. The toolchain is `go version go1.27.1 linux/amd64` and
+into ddtest as `ddtest instrument`. The toolchain is `go version go1.27.1 linux/amd64` and
 Orchestrion `v1.13.2-0.20260917114356-5c24783fcd76`: the same executables as
 in [20261016-linux-go1.27.1](../20261016-linux-go1.27.1/README.md), whose
 SHA-256 match its manifest.
@@ -21,12 +21,13 @@ SHA-256 match its manifest.
   final binaries passed traces and binary qualification; the Native link
   control converged (80 repetitions).
 - [Race confirmation](confirm-race/README.md): Gin and Testify External with
-  `-race`, Native and POC Mini, with the recorded repetition counts, such as ten
+  `-race`, Native and `ddtest instrument`, with the recorded repetition counts, such as ten
   forced links instead of three.
 - [Runtime](runtime/README.md): the original test binaries of every
-  combination at 4/32 CPUs, Native, Orchestrion, Mini and Mini deferred in
-  rotating order, with `runtime_benchmark.py --repeats 3`: three measured runs
-  after one warmup instead of five. Two collections on 2026-10-28 make it up,
+  combination at 4/32 CPUs, Native, Orchestrion and `ddtest instrument` with
+  normal and deferred delivery, in rotating order, with
+  `runtime_benchmark.py --repeats 3`: three measured runs after one warmup
+  instead of five. Two collections on 2026-10-28 make it up,
   each case from one of them: the first stopped when `go tool objdump`, which
   checks the native Examples, stalled on the Go build cache, and the second
   measured the remaining cases ([collections](runtime/README.md#collections)).

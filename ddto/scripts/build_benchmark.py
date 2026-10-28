@@ -29,7 +29,7 @@ CONFIG = ROOT / "scripts/build-benchmark.json"
 INPUTS = ROOT / "scripts/testdata/build-benchmark"
 VARIANTS = ("native", "orchestrion", "mini")
 LEGACY_VARIANTS = ("native", "orchestrion", "sdk", "mini")
-LABELS = {"native": "Native", "orchestrion": "Orchestrion", "sdk": "POC SDK", "mini": "POC Mini"}
+LABELS = {"native": "Native", "orchestrion": "Orchestrion", "sdk": "POC SDK", "mini": "`ddtest instrument`"}
 
 
 def variants(manifest):
@@ -194,14 +194,14 @@ def overview_lines(manifest, summary, link):
     if "measurement_origins" in manifest:
         mini = manifest["measurement_origins"]["mini"]
         reference = manifest["measurement_origins"]["native"]
-        provenance = [f"Mini was measured on {mini['started_at'][:10]} at `{mini['source_head']}`.",
+        provenance = [f"`ddtest instrument` was measured on {mini['started_at'][:10]} at `{mini['source_head']}`.",
                       f"Native and Orchestrion retain their {reference['started_at'][:10]} observations."]
     else:
         provenance = [f"Measured at commit `{manifest['source_head']}`."]
     return "\n".join([
         "## Benchmarks", "",
         "[Build, runtime and memory tables](docs/benchmarks.md) compare Native,",
-        "Orchestrion and POC Mini at 4/32 CPUs, with coverage and race cases.",
+        "Orchestrion and `ddtest instrument` at 4/32 CPUs, with coverage and race cases.",
         f"The [recorded build data]({link}/README.md) contains",
         f"{summary['measured_observations']:,} comparative observations.",
         *provenance, "",

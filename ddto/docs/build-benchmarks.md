@@ -1,8 +1,8 @@
 # Run and regenerate the benchmarks
 
-The comparison uses Native, Orchestrion and POC Mini. POC SDK is no longer a
-benchmark variant. Runtime includes normal and deferred Mini; memory and CPU
-are recorded for every measured command.
+The comparison uses Native, Orchestrion and `ddtest instrument`. POC SDK is no
+longer a benchmark variant. Runtime runs `ddtest instrument` with normal and
+deferred delivery; memory and CPU are recorded for every measured command.
 
 The [comparison tables](benchmarks.md) link to the complete matrix. Each
 variant has its own measured revision and date. Refreshing Mini reuses the
@@ -41,8 +41,8 @@ runtime and the local Agent control, as in
 ## Record every variant
 
 Without `--variant` and `--baseline`, the build benchmark measures Native,
-Orchestrion and POC Mini together, and the runtime benchmark then runs each
-variant's binaries, with Mini deferred, in rotating order. `--repeats 3` runs
+Orchestrion and `ddtest instrument` together, and the runtime benchmark then runs each
+variant's binaries, with deferred delivery too, in rotating order. `--repeats 3` runs
 three repetitions of every build scenario and three measured runtime runs after
 one warmup, instead of the recorded counts; the Agent control always runs three.
 

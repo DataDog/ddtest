@@ -473,7 +473,7 @@ execution and should not be used as evidence about a `-c` build's CPU cost.
 ## Compile-only comparisons
 
 Use four variants: native Go, Orchestrion with the pinned testing aspects,
-POC SDK and POC Mini. Fix the project revision, module graph, SDK reference,
+POC SDK and `ddtest instrument`. Fix the project revision, module graph, SDK reference,
 toolchain, flags and output layout before timing. Build the CLI and reference
 instrumentator outside the timed commands.
 

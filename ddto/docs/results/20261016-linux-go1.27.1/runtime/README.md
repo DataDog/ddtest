@@ -13,7 +13,7 @@ the executable function/source table and added explicitly.
 Orchestrion's percentage compares time against Native. Mini's percentages compare
 Orchestrion first, then Native. Positive values mean more time; negative values mean less.
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini | Mini deferred |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` | Mini deferred |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 0.183472 s | 0.227665 s (+24.1%) | 0.221166 s (-2.9%; +20.5%) | 0.227677 s (+0.0%; +24.1%) |
 | Gin | `none` | 32 | 0.192854 s | 0.235763 s (+22.2%) | 0.214014 s (-9.2%; +11.0%) | 0.223292 s (-5.3%; +15.8%) |

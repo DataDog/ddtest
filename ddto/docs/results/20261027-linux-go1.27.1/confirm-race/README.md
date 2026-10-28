@@ -1,4 +1,4 @@
-# Compile-only measurements: Native, POC Mini
+# Compile-only measurements: Native, `ddtest instrument`
 
 POC `282b22a15776c3dfb1073d2e0197c78445c00d6f`; `go version go1.27.1 linux/amd64`; SDK `v2.12.0-dev.3.0.20261008222249-870449702d0a`; Orchestrion `v1.13.2-0.20260917114356-5c24783fcd76`.
 
@@ -16,7 +16,7 @@ Unchanged output reuse, forced linking and reachable edits are checked with tool
 
 ## Cold compilation
 
-| Project | Flags | CPUs | Native | POC Mini |
+| Project | Flags | CPUs | Native | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: |
 | Gin | `-race` | 4 | 28.686 s | 29.349 s |
 | Gin | `-race` | 32 | 24.298 s | 24.470 s |
@@ -25,7 +25,7 @@ Unchanged output reuse, forced linking and reachable edits are checked with tool
 
 ## Cached compilation — unchanged output reused
 
-| Project | Flags | CPUs | Native | POC Mini |
+| Project | Flags | CPUs | Native | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: |
 | Gin | `-race` | 4 | 0.102 s | 0.211 s |
 | Gin | `-race` | 32 | 0.105 s | 0.229 s |
@@ -34,7 +34,7 @@ Unchanged output reuse, forced linking and reachable edits are checked with tool
 
 ## Warm dependencies — forced fresh link
 
-| Project | Flags | CPUs | Native | POC Mini |
+| Project | Flags | CPUs | Native | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: |
 | Gin | `-race` | 4 | 1.909 s | 2.941 s |
 | Gin | `-race` | 32 | 1.950 s | 2.632 s |
@@ -43,7 +43,7 @@ Unchanged output reuse, forced linking and reachable edits are checked with tool
 
 ## Incremental compilation — reachable test-body edit
 
-| Project | Flags | CPUs | Native | POC Mini |
+| Project | Flags | CPUs | Native | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: |
 | Gin | `-race` | 4 | 2.248 s | 2.507 s |
 | Gin | `-race` | 32 | 2.261 s | 2.564 s |
@@ -52,7 +52,7 @@ Unchanged output reuse, forced linking and reachable edits are checked with tool
 
 ## Unused-constant edit — diagnostic
 
-| Project | Flags | CPUs | Native | POC Mini |
+| Project | Flags | CPUs | Native | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: |
 | Gin | `-race` | 4 | 1.487 s | 1.585 s |
 | Gin | `-race` | 32 | 1.504 s | 1.612 s |

@@ -5,15 +5,15 @@ come from the original subject sources, without the build-edit markers.
 Timings include startup, concurrent tests, settings and final delivery to loopback HTTP.
 Receiver setup, decoding and compilation are outside the timed scope.
 
-Native, Orchestrion, Mini and Mini deferred ran together, in rotating order,
+Native, Orchestrion and `ddtest instrument`, with normal and deferred delivery, ran together, in rotating order,
 from the same revision. Test inventories match Native; CI inventories use the
 recorded SDK reference. Native Examples absent from that reference are checked against
 the executable function/source table and added explicitly.
 
-Orchestrion's percentage compares time against Native. Mini's percentages compare
+Orchestrion's percentage compares time against Native. `ddtest instrument`'s percentages compare
 Orchestrion first, then Native. Positive values mean more time; negative values mean less.
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini | Mini deferred |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` | `ddtest instrument`, deferred delivery |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 0.189747 s | 0.244531 s (+28.9%) | 0.220352 s (-9.9%; +16.1%) | 0.224050 s (-8.4%; +18.1%) |
 | Gin | `none` | 32 | 0.197496 s | 0.238528 s (+20.8%) | 0.218361 s (-8.5%; +10.6%) | 0.217293 s (-8.9%; +10.0%) |

@@ -407,7 +407,7 @@ internal: nothing needs to set them.
 ## Benchmarks
 
 [Build, runtime and memory tables](docs/benchmarks.md) compare Native,
-Orchestrion and POC Mini at 4/32 CPUs, with coverage and race cases.
+Orchestrion and `ddtest instrument` at 4/32 CPUs, with coverage and race cases.
 The [recorded build data](docs/results/20261027-linux-go1.27.1/build/README.md) contains
 2,160 comparative observations.
 Measured at commit `282b22a15776c3dfb1073d2e0197c78445c00d6f`.

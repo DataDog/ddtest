@@ -13,7 +13,7 @@ have no comparative median; their individual peaks remain in the raw records.
 
 ## Cold compilation
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 1674.3 MiB | 2480.6 MiB (+48.2%) | 1472.1 MiB (-40.7%; -12.1%) |
 | Gin | `none` | 32 | 1851.3 MiB | 2639.9 MiB (+42.6%) | 1765.1 MiB (-33.1%; -4.7%) |
@@ -66,7 +66,7 @@ have no comparative median; their individual peaks remain in the raw records.
 
 ## Cached compilation — unchanged output reused
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 49.9 MiB | 85.4 MiB (+71.1%) | 54.0 MiB (-36.7%; +8.3%) |
 | Gin | `none` | 32 | 67.0 MiB | 117.3 MiB (+75.1%) | 66.6 MiB (-43.2%; -0.6%) |
@@ -119,7 +119,7 @@ have no comparative median; their individual peaks remain in the raw records.
 
 ## Warm dependencies — forced fresh link
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 340.3 MiB | 816.5 MiB (+139.9%) | 438.6 MiB (-46.3%; +28.9%) |
 | Gin | `none` | 32 | 411.5 MiB | 1141.9 MiB (+177.5%) | 489.2 MiB (-57.2%; +18.9%) |
@@ -172,7 +172,7 @@ have no comparative median; their individual peaks remain in the raw records.
 
 ## Incremental compilation — reachable test-body edit
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 230.3 MiB | 347.5 MiB (+50.9%) | 230.3 MiB (-33.7%; +0.0%) |
 | Gin | `none` | 32 | 282.6 MiB | 366.2 MiB (+29.6%) | 270.8 MiB (-26.1%; -4.2%) |
@@ -225,7 +225,7 @@ have no comparative median; their individual peaks remain in the raw records.
 
 ## Unused-constant edit — diagnostic
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 229.9 MiB | 257.4 MiB (+12.0%) | 233.3 MiB (-9.4%; +1.5%) |
 | Gin | `none` | 32 | 288.6 MiB | 334.6 MiB (+16.0%) | 268.3 MiB (-19.8%; -7.0%) |
@@ -278,7 +278,7 @@ have no comparative median; their individual peaks remain in the raw records.
 
 ## Runtime
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini | Mini deferred |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` | Mini deferred |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 36.6 MiB | 60.3 MiB (+64.5%) | 38.9 MiB (-35.4%; +6.3%) | 38.6 MiB (-36.0%; +5.3%) |
 | Gin | `none` | 32 | 42.2 MiB | 70.7 MiB (+67.6%) | 53.1 MiB (-24.9%; +25.8%) | 51.1 MiB (-27.7%; +21.2%) |
@@ -333,7 +333,7 @@ have no comparative median; their individual peaks remain in the raw records.
 
 Three measured runs follow one warmup.
 
-| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| Project | Flags | CPUs | Native | Orchestrion | `ddtest instrument` |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Gin | `none` | 4 | 41.4 MiB | 77.5 MiB (+87.1%) | 39.3 MiB (-49.3%; -5.2%) |
 | Gin | `none` | 32 | 41.5 MiB | 78.2 MiB (+88.3%) | 54.6 MiB (-30.2%; +31.4%) |
