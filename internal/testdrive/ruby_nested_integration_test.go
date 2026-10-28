@@ -58,7 +58,7 @@ end
         with: {ruby-version: '${{ matrix.ruby }}'}
       - uses: datadog/test-visibility-github-action@v3
         if: matrix.ruby != 'head'
-        with: {languages: ruby, ruby-tracer-version: 'TRACER_VERSION'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: 'TRACER_VERSION'}
       - run: bundle exec rake test
         working-directory: app
         env: {BUNDLE_GEMFILE: '${{ github.workspace }}/${{ matrix.bundle }}'}

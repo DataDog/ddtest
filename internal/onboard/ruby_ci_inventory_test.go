@@ -45,7 +45,7 @@ func TestRubyMatrixInstrumentationSettingsApplyPerRow(t *testing.T) {
       - uses: ruby/setup-ruby@v1
         with: {ruby-version: '3.4'}
       - uses: datadog/test-visibility-github-action@v3
-        with: {languages: ruby, ruby-tracer-version: '1.42.0'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - run: bundle exec rspec
         env: {DD_TRACE_ENABLED: '${{ matrix.tracing }}'}
 `)
@@ -76,7 +76,7 @@ func TestRubyActionLanguagesResolveMatrixExpressions(t *testing.T) {
       - uses: ruby/setup-ruby@v1
         with: {ruby-version: '3.4'}
       - uses: datadog/test-visibility-github-action@v3
-        with: {languages: '${{ matrix.tracer-languages }}', ruby-tracer-version: '1.42.0'}
+        with: {languages: '${{ matrix.tracer-languages }}', api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - run: bundle exec rspec
 `)
 	ci := RubyCIConfiguration(root, "rspec")
@@ -96,7 +96,7 @@ func TestRubyActionLanguagesResolveMatrixExpressions(t *testing.T) {
         with: {ruby-version: '${{ matrix.ruby }}'}
       - uses: datadog/test-visibility-github-action@v3
         if: matrix.ruby != 'head'
-        with: {languages: '${{ matrix.tracer-languages }}', ruby-tracer-version: '1.42.0'}
+        with: {languages: '${{ matrix.tracer-languages }}', api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - run: bundle exec rspec
 `)
 	statuses := map[string]string{}

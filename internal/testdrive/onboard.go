@@ -193,6 +193,11 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		return fail("unsupported", "framework_unsupported", "Controlled validation is not available for this framework.", "Preserve its unsupported status; do not substitute a different framework.")
 	}
 	t.repositoryRoot = workspace.CanonicalRoot(t.repositoryRoot)
+	// Like onboard, DD_SITE is the default site the CI setup must report to.
+	t.selectedSite = options.Site
+	if t.selectedSite == "" {
+		t.selectedSite = os.Getenv("DD_SITE")
+	}
 	lock, err := workspace.AcquireLock(t.repositoryRoot)
 	if err != nil {
 		if errors.Is(err, workspace.ErrBusy) {

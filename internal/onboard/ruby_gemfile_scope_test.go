@@ -43,7 +43,7 @@ func TestRubyExcludedGemfileConfigurationsStayInScope(t *testing.T) {
         with: {ruby-version: '${{ matrix.ruby }}'}
       - uses: datadog/test-visibility-github-action@v3
         if: matrix.ruby != 'head'
-        with: {languages: ruby, ruby-tracer-version: '1.42.0'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - run: bundle exec rake test
         env: {BUNDLE_GEMFILE: 'gemfiles/${{ matrix.ruby }}.gemfile'}
 `)

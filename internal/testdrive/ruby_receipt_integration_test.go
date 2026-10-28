@@ -38,7 +38,7 @@ func TestRubyReceiptReviewIntegration(t *testing.T) {
 	integrationFile(t, root, "customer.gemspec", "Gem::Specification.new do |s|\n s.name='customer';s.version='1.0';s.summary='fixture';s.authors=['ddtest'];s.files=Dir['lib/**/*']\nend\n")
 	integrationFile(t, root, "test/one_test.rb", "require 'minitest/autorun'\nrequire_relative '../lib/customer'\nclass CustomerTest < Minitest::Test\n def test_one; assert_equal 'retained',Bundler.settings['build.fixture']; assert_equal 2,Customer.add; end\nend\n")
 	integrationFile(t, root, "Rakefile", "require 'rake/testtask'\nRake::TestTask.new(:test) { |task| task.pattern='test/**/*_test.rb' }\n")
-	workflow := "jobs:\n  tests:\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '" + gems.Ruby + "'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, ruby-tracer-version: '" + gems.Tracer + "'}\n      - run: bundle exec rake test\n        env: {BUNDLE_GEMFILE: bundles/integration.rb, BUNDLE_APP_CONFIG: custom-config}\n"
+	workflow := "jobs:\n  tests:\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '" + gems.Ruby + "'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '" + gems.Tracer + "'}\n      - run: bundle exec rake test\n        env: {BUNDLE_GEMFILE: bundles/integration.rb, BUNDLE_APP_CONFIG: custom-config}\n"
 	integrationFile(t, root, ".github/workflows/test.yml", workflow)
 	integrationCommand(t, ctx, root, []string{"BUNDLE_GEMFILE=bundles/integration.rb"}, "bundle", "lock", "--local")
 	// Force observer paths to contain both shell-sensitive characters, while

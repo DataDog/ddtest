@@ -41,7 +41,7 @@ func TestRubyMinitestForkValidationIntegration(t *testing.T) {
 	integrationFile(t, root, "test/isolation_test.rb", tests)
 	integrationFile(t, root, "ci/datadog_test_optimization.rb", onboard.RubyMinitestForkSetup)
 	integrationFile(t, root, ".gitignore", "/.testoptimization/\nGemfile.lock\n")
-	integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '"+installed.Ruby+"'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, ruby-tracer-version: '"+installed.Gems["datadog-ci"]+"'}\n      - run: bundle exec rake test\n        env:\n          RUBYOPT: '${{ env.RUBYOPT }} -r./ci/datadog_test_optimization.rb'\n")
+	integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '"+installed.Ruby+"'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '"+installed.Gems["datadog-ci"]+"'}\n      - run: bundle exec rake test\n        env:\n          RUBYOPT: '${{ env.RUBYOPT }} -r./ci/datadog_test_optimization.rb'\n")
 	integrationCommand(t, ctx, root, nil, "bundle", "lock", "--local")
 	integrationCommand(t, ctx, root, nil, "git", "add", ".")
 	binary := filepath.Join(t.TempDir(), "ddtest")

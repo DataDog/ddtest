@@ -639,3 +639,24 @@ func TestRubyPackagingIgnoresGemspecDiagnostics(t *testing.T) {
 	check := drive.rubyPackageExclusions(t.Context())
 	require.Equal(t, "passed", check.Status, check.Reason)
 }
+
+func TestRubyCoordinatedValidationEnforcesTheSelectedSite(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+	requireWriteFile(t, filepath.Join(root, "Gemfile"), "source 'https://rubygems.org'\n")
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  tests:\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '3.3'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}\n      - run: bundle exec rspec\n")
+	drive := &Testdrive{repositoryRoot: root, framework: framework.NewRSpec(platform.NewRuby("")), language: "ruby", selectedSite: "datadoghq.eu"}
+	ci := rubyLanguage{}.configurationsCIRuntime(drive, onboard.ValidationScope{Commands: []onboard.TestCommand{{Command: "bundle exec rspec"}}})
+	require.Len(t, ci.Jobs, 1)
+	require.Equal(t, onboard.CodeIncompleteRubySetup, ci.Jobs[0].Code, "the action reports to the default site, not the selected one")
+	drive.selectedSite = ""
+	ci = rubyLanguage{}.configurationsCIRuntime(drive, onboard.ValidationScope{Commands: []onboard.TestCommand{{Command: "bundle exec rspec"}}})
+	require.Equal(t, "not checked", ci.Jobs[0].Status)
+
+	// The coordinator defaults the site to DD_SITE, as onboard does.
+	t.Setenv("DD_SITE", "datadoghq.eu")
+	t.Chdir(root)
+	drive = &Testdrive{repositoryRoot: root, framework: framework.NewRSpec(platform.NewRuby("")), language: "ruby", executor: &rubyReadinessExecutor{}, runtimeVersion: func() string { return "" }}
+	_ = drive.Workflow(t.Context(), io.Discard, WorkflowOptions{Format: "json"})
+	require.Equal(t, "datadoghq.eu", drive.selectedSite)
+}

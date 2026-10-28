@@ -159,7 +159,7 @@ func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, re
 			return errors.New(check.Verdict.Reason)
 		}
 	}
-	ci := onboard.RubyCIConfiguration(t.checkoutRoot(), t.framework.Name())
+	ci := onboard.RubyCIConfigurationForSite(t.checkoutRoot(), t.framework.Name(), t.selectedSite)
 	if len(ci.Jobs) > 0 {
 		locations, err := t.rubyRuntimeLocations()
 		if err != nil {

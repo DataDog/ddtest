@@ -49,15 +49,15 @@ func (rubyDiscovery) coordinated() bool { return true }
 func (rubyDiscovery) automaticCISetup() bool { return false }
 
 // Every discovered test step runs after a complete Datadog action or
-// explicitly skips it; at least one stays instrumented. A complete action has
-// an API key, an exact tracer release and the selected site.
+// explicitly skips it; at least one stays instrumented. Coordinated validation
+// enforces the same rule through RubyCIConfigurationForSite.
 func (rubyDiscovery) ciSetupConfigured(root, framework, site string) bool {
 	instrumented := false
-	for _, job := range RubyCIConfiguration(root, framework).Jobs {
+	for _, job := range RubyCIConfigurationForSite(root, framework, site).Jobs {
 		if job.Status == "excluded" {
 			continue
 		}
-		if job.Action == "" || !rubyActionComplete(job, site) {
+		if job.Action == "" || rubyActionProblem(job, site) != "" {
 			return false
 		}
 		instrumented = true
@@ -68,15 +68,31 @@ func (rubyDiscovery) ciSetupConfigured(root, framework, site string) bool {
 // exactRubyRelease is a single RubyGems release, never a requirement or "latest".
 var exactRubyRelease = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9A-Za-z]+)*$`)
 
-func rubyActionComplete(job RuntimeFinding, site string) bool {
-	if strings.TrimSpace(job.setupInputs["api_key"]) == "" || !exactRubyRelease.MatchString(job.TracerRequested) {
-		return false
+// CodeIncompleteRubySetup marks an instrumented Ruby CI entry whose Datadog
+// action is not a complete, supported setup for the selected site.
+const CodeIncompleteRubySetup = "incomplete_ci_setup"
+
+// rubyActionProblem explains why the Datadog action before an instrumented
+// entry is not a complete setup: a supported v3 release, an API key, an exact
+// tracer release and the selected site (empty: not selected). Empty when it is.
+func rubyActionProblem(job RuntimeFinding, site string) string {
+	if !setupActionSupported(job.Action) {
+		return "The Datadog action " + job.Action + " is not a supported release; use datadog/test-visibility-github-action@v3."
+	}
+	if strings.TrimSpace(job.setupInputs["api_key"]) == "" {
+		return "The Datadog action has no api_key input; set api_key: ${{ secrets.DD_API_KEY }}."
+	}
+	if !exactRubyRelease.MatchString(job.TracerRequested) {
+		return "The Datadog action's ruby-tracer-version " + fmt.Sprintf("%q", job.TracerRequested) + " is not an exact release; set an exact version such as 1.42.0."
 	}
 	configured := job.setupInputs["site"]
 	if configured == "" {
 		configured = defaultDatadogSite
 	}
-	return site == "" || configured == site
+	if site != "" && configured != site {
+		return "The Datadog action reports to " + configured + ", but the selected Datadog site is " + site + "; set site: " + site + " on the action."
+	}
+	return ""
 }
 
 const defaultDatadogSite = "datadoghq.com"

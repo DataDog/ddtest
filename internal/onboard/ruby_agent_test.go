@@ -143,6 +143,9 @@ func TestRubyCISetupConfiguredNeedsAnInstrumentedStep(t *testing.T) {
 		{"no tracer version", strings.Replace(rubyAgentAction, ", ruby-tracer-version: '1.42.0'", "", 1), false},
 		{"tracer requirement", strings.Replace(rubyAgentAction, "'1.42.0'", "'~> 1.42'", 1), false},
 		{"tracer latest", strings.Replace(rubyAgentAction, "'1.42.0'", "latest", 1), false},
+		{"action v2", strings.Replace(rubyAgentAction, "@v3", "@v2", 1), false},
+		{"action main", strings.Replace(rubyAgentAction, "@v3", "@main", 1), false},
+		{"action v3 release", strings.Replace(rubyAgentAction, "@v3", "@v3.3.0", 1), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rubyAgentFixture(t, "rspec", tc.action)
@@ -224,4 +227,38 @@ func TestRubyAgentOnboardingDefaultsToDDSite(t *testing.T) {
 	state, err = rubyAgentStart(t, StartOptions{Format: "json"})
 	require.Error(t, err)
 	require.Equal(t, "invalid_options", state.Code)
+}
+
+// Coordinated validation reads the same inventory, so an incomplete action
+// keeps its consumer from counting as compatible.
+func TestRubyCIInventoryMarksIncompleteSetup(t *testing.T) {
+	for name, tc := range map[string]struct{ action, site, reason string }{
+		"unsupported ref": {strings.Replace(rubyAgentAction, "@v3", "@main", 1), "", "not a supported release"},
+		"no API key":      {strings.Replace(rubyAgentAction, "api_key: '${{ secrets.DD_API_KEY }}', ", "", 1), "", "no api_key input"},
+		"wrong site":      {rubyAgentAction, "datadoghq.eu", "selected Datadog site is datadoghq.eu"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rubyAgentFixture(t, "rspec", tc.action)
+			root, err := os.Getwd()
+			require.NoError(t, err)
+			ci := RubyCIConfigurationForSite(root, "rspec", tc.site)
+			instrumented := 0
+			for _, job := range ci.Jobs {
+				if job.Status == "excluded" {
+					continue
+				}
+				instrumented++
+				require.Equal(t, "inconclusive", job.Status)
+				require.Equal(t, CodeIncompleteRubySetup, job.Code)
+				require.Contains(t, job.Reason, tc.reason)
+			}
+			require.Equal(t, 1, instrumented)
+		})
+	}
+	rubyAgentFixture(t, "rspec", rubyAgentAction)
+	root, err := os.Getwd()
+	require.NoError(t, err)
+	for _, job := range RubyCIConfigurationForSite(root, "rspec", "datadoghq.com").Jobs {
+		require.NotEqual(t, CodeIncompleteRubySetup, job.Code)
+	}
 }

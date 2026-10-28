@@ -30,7 +30,7 @@ func TestRubyScopeKeepsFrameworkCommandsAndMatrixEnvironment(t *testing.T) {
       - uses: ruby/setup-ruby@v1
         with: {ruby-version: '${{ matrix.ruby }}'}
       - uses: datadog/test-visibility-github-action@v3
-        with: {languages: ruby, ruby-tracer-version: '1.40.0'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.40.0'}
       - run: bundle exec rspec spec/${{ matrix.suite }} --format documentation
         env: {APP_ENV: test, RUBYOPT: '-W0 -rdatadog/ci/auto_instrument'}
       - run: bundle exec rake test
@@ -80,7 +80,7 @@ func TestRubyCIRequiresInstallationBeforeTestsAndUnconditionalConditions(t *test
       - run: bundle exec rspec
       - uses: datadog/test-visibility-github-action@v3
         if: false
-        with: {languages: ruby, ruby-tracer-version: '1.40.0'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.40.0'}
       - run: bundle exec rspec spec/unit
 `)
 	check := RubyCIConfiguration(root, "rspec")
@@ -104,7 +104,7 @@ jobs:
         with: {ruby-version: '${{ matrix.ruby }}'}
       - uses: datadog/test-visibility-github-action@v3
         if: matrix.ruby != 'head'
-        with: {languages: ruby, ruby-tracer-version: '1.42.0'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - run: bundle exec rake test
 `)
 	scope, err := DiscoverValidationScope(root, "minitest")
@@ -260,7 +260,7 @@ func TestI18nOriginalRakeAndNumericMatrixNeedOnlyInstrumentation(t *testing.T) {
 	require.NoError(t, err)
 	workflow := strings.Replace(string(data), "      - name: Build and test with Rake", `      - uses: datadog/test-visibility-github-action@v3
         if: matrix.ruby_version != 'head' && !contains(matrix.ruby_version, 'jruby')
-        with: {languages: ruby, ruby-tracer-version: '1.42.0'}
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
       - name: Build and test with Rake`, 1)
 	root := rubyWorkflowFixture(t, workflow)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "gemfiles"), 0700))

@@ -383,6 +383,13 @@ func RubyValidationCommand(root, framework, override string) (string, error) {
 // RubyCIConfiguration inventories static Ruby selections. The caller checks
 // requirements with RubyGems itself, against the actual installed bundle.
 func RubyCIConfiguration(root, framework string) RuntimeCheck {
+	return RubyCIConfigurationForSite(root, framework, "")
+}
+
+// RubyCIConfigurationForSite is RubyCIConfiguration that also requires each
+// instrumented entry's Datadog action to report to the selected site (empty:
+// any site). An incomplete action keeps its entry inconclusive.
+func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 	result := RuntimeCheck{Status: "not applicable", Reason: "No candidate Ruby CI commands found."}
 	workflows, err := readWorkflows(root)
 	if err != nil {
@@ -466,7 +473,9 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 						finding.Reason = "Ruby CI scope needs review: " + strings.TrimSpace(strings.Join(reasons, "; "))
 					} else if ruby != "" && tracer != "" && action != "" {
 						finding.Status, finding.Reason = "not checked", "Check the selected Ruby with the bundled tracer's RubyGems requirements and compare tracer releases."
-						if reason := rubyGemsResolverProblem(ruby, rubygems, row); reason != "" {
+						if reason := rubyActionProblem(finding, site); reason != "" {
+							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteRubySetup, reason
+						} else if reason := rubyGemsResolverProblem(ruby, rubygems, row); reason != "" {
 							finding.Status, finding.Reason = "inconclusive", reason
 						}
 					} else if action == "" && skippedAction {

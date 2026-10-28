@@ -53,7 +53,10 @@ type Testdrive struct {
 	runtimeVersion func() string
 	// reuseCheckCopy lets one coordinated validation share a single owned
 	// repository copy (checkCopy) across its read-only language checks.
-	reuseCheckCopy           bool
+	reuseCheckCopy bool
+	// selectedSite is the Datadog site a coordinated validation checks CI
+	// setup against: --site, otherwise DD_SITE. Empty checks no site.
+	selectedSite             string
 	checkCopy                string
 	selectedPlan             onboard.TestCommand
 	cypressPackage           string

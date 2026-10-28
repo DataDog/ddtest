@@ -211,7 +211,7 @@ func (rubyLanguage) ciRuntimes(_ context.Context, root, framework string) onboar
 func (rubyLanguage) ciRuntimeName() string { return "Ruby" }
 
 func (rubyLanguage) configurationsCIRuntime(t *Testdrive, scope onboard.ValidationScope) *onboard.RuntimeCheck {
-	ci := onboard.RubyCIConfiguration(t.checkoutRoot(), t.framework.Name())
+	ci := onboard.RubyCIConfigurationForSite(t.checkoutRoot(), t.framework.Name(), t.selectedSite)
 	instrumented := false
 	for _, entry := range scope.Commands {
 		instrumented = instrumented || !ciInstrumentationDisabled(entry)
