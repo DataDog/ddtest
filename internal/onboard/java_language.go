@@ -25,6 +25,11 @@ func (javaDiscovery) resolvesTestSteps(string) bool { return true }
 
 func (javaDiscovery) coordinated() bool { return false }
 
+// Java CI discovery reads GitHub Actions only.
+func (javaDiscovery) supportsCIProvider(provider string) bool {
+	return provider == gitHubActionsProvider
+}
+
 func (javaDiscovery) automaticCISetup() bool { return false }
 
 func (javaDiscovery) ciSetupConfigured(string, string, string) bool { return false }
