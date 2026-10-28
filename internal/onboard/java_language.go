@@ -6,8 +6,10 @@
 package onboard
 
 import (
+	"cmp"
 	_ "embed"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/maven"
@@ -76,6 +78,10 @@ func (javaDiscovery) localCommands(root, command, framework string) ([]TestComma
 // Local validation owns the agent option; keep the customer's other JVM
 // options. A reference to workflow or job values needs them explicitly.
 func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtimeStep, _ map[string]any, key, value string) (string, bool, error) {
+	// Deploy credentials matter only to the goals validation never runs.
+	if slices.Contains(javaDeployCredentials(job), key) {
+		return "", true, nil
+	}
 	if key != "MAVEN_OPTS" && key != "JAVA_TOOL_OPTIONS" {
 		return value, false, nil
 	}
@@ -84,6 +90,24 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 		return "", false, fmt.Errorf("%s extends workflow or job JVM options; validate with those options explicitly", key)
 	}
 	return strings.TrimSpace(inherited), true, nil
+}
+
+// javaDeployCredentials are the environment variables that the job's
+// actions/setup-java steps with a server-id write into Maven's settings.xml as
+// repository credentials and the GPG passphrase, with the action's defaults.
+// Maven reads them only to deploy or sign, which local validation never does.
+func javaDeployCredentials(job runtimeJob) []string {
+	var names []string
+	for _, step := range job.Steps {
+		if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses != "actions/setup-java" || step.With["server-id"] == "" {
+			continue
+		}
+		names = append(names, cmp.Or(step.With["server-username"], "GITHUB_ACTOR"), cmp.Or(step.With["server-password"], "GITHUB_TOKEN"))
+		if step.With["gpg-private-key"] != "" {
+			names = append(names, cmp.Or(step.With["gpg-passphrase"], "GPG_PASSPHRASE"))
+		}
+	}
+	return names
 }
 
 func (javaDiscovery) skipsUnsupportedNode() bool { return false }

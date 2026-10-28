@@ -361,3 +361,32 @@ func TestJavaCIConfigurationNeedsTheSelectedSite(t *testing.T) {
 	root = javaWorkflowFixture(t, strings.Replace(workflow, "SITE", ", site: datadoghq.eu", 1), nil)
 	require.Equal(t, "not checked", JavaCIConfiguration(root, "junit5", "datadoghq.eu").Jobs[0].Status)
 }
+
+func TestJavaDeployCredentialsDoNotBlockValidation(t *testing.T) {
+	workflow := `jobs:
+  build:
+    steps:
+      - uses: actions/setup-java@v4
+        with: {java-version: '21', distribution: temurin, server-id: central, server-username: MAVEN_USERNAME, server-password: MAVEN_PASSWORD}
+      - run: mvn --batch-mode deploy --file pom.xml
+        env:
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+`
+	scope, err := DiscoverValidationScope(javaWorkflowFixture(t, workflow, nil), "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved, "settings.xml credentials only deploy, which validation never runs")
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "mvn --batch-mode verify --file pom.xml", scope.Commands[0].Command)
+	require.Empty(t, scope.Commands[0].Environment["MAVEN_PASSWORD"], "no secret reaches validation")
+
+	// Without a server-id, setup-java writes no credentials: a secret may feed the tests.
+	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, strings.Replace(workflow, "server-id: central, ", "", 1), nil), "junit5")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved)
+	// The action's default credential names apply too.
+	defaults := strings.NewReplacer("server-username: MAVEN_USERNAME, server-password: MAVEN_PASSWORD", "gpg-private-key: '${{ secrets.GPG_KEY }}'", "MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}", "GITHUB_ACTOR: ${{ github.actor }}", "MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}", "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}").Replace(workflow)
+	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, defaults, nil), "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+}
