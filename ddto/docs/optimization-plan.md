@@ -474,7 +474,7 @@ each phase measured and dropped.
 Mini was refreshed on 2026-10-14 at `97ec6e3`, in
 `docs/results/20261014-linux-go1.27.1`, which the 2026-10-16 refresh at
 `bfcf898`, in
-[docs/results/20261016-linux-go1.27.1](results/20261016-linux-go1.27.1/README.md),
+[docs/results/20261016-linux-go1.27.1](https://github.com/tonyredondo/dd-ci-testing-poc/tree/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/20261016-linux-go1.27.1),
 later replaced. By the user's decision, Native and Orchestrion keep their
 2026-10-04 observations.
 

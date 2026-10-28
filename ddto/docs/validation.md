@@ -352,7 +352,7 @@ Actions.
 ## Selective-tool validation
 
 The [recorded Linux Go 1.27.1
-dataset](results/20261016-linux-go1.27.1/parity/README.md), archived from the
+dataset](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/20261016-linux-go1.27.1/parity/README.md), archived from the
 2026-10-04/05 collection at `9d4786f`, repeats all 26 Testify cases and seven
 deferred Testify cases against the full SDK/Orchestrion reference, within the
 115-case matrix. Six rounds pass at each of 4/32 CPUs. That is local protocol

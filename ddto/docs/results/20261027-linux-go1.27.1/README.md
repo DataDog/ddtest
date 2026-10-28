@@ -5,8 +5,8 @@ Native, Orchestrion and `ddtest instrument` were compiled together from
 `282b22a15776c3dfb1073d2e0197c78445c00d6f`, after the instrumentation moved
 into ddtest as `ddtest instrument`. The toolchain is `go version go1.27.1 linux/amd64` and
 Orchestrion `v1.13.2-0.20260917114356-5c24783fcd76`: the same executables as
-in [20261016-linux-go1.27.1](../20261016-linux-go1.27.1/README.md), whose
-SHA-256 match its manifest.
+in [20261016-linux-go1.27.1](https://github.com/tonyredondo/dd-ci-testing-poc/tree/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/20261016-linux-go1.27.1), a dataset of ddto's original
+repository, whose SHA-256 match its manifest.
 
 [Comparison tables](../../benchmarks.md) cover build, runtime and memory.
 [Collection and regeneration](../../build-benchmarks.md) describe the commands.
@@ -36,10 +36,10 @@ SHA-256 match its manifest.
   warmup.
 - [Memory](memory.md): every build scenario, the runtime and the Agent control.
 
-The runtime and the Agent control validate Orchestrion and Mini against the SDK
-event inventories archived in
-[20261016-linux-go1.27.1](../20261016-linux-go1.27.1/README.md), and test
-names, statuses and counts against Native's.
+The runtime and the Agent control validate Orchestrion and `ddtest instrument`
+against the SDK event inventories archived in
+[20261016-linux-go1.27.1](https://github.com/tonyredondo/dd-ci-testing-poc/tree/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/20261016-linux-go1.27.1), and test names, statuses and counts against
+Native's.
 
 Two earlier attempts of the full build collection on 2026-10-27 were stopped and are
 not part of this dataset: the first because the Native link control did not

@@ -4,39 +4,26 @@ The comparison uses Native, Orchestrion and `ddtest instrument`. POC SDK is no
 longer a benchmark variant. Runtime runs `ddtest instrument` with normal and
 deferred delivery; memory and CPU are recorded for every measured command.
 
-The [comparison tables](benchmarks.md) link to the complete matrix. Each
-variant has its own measured revision and date. Refreshing Mini reuses the
-recorded Native and Orchestrion observations without changing their values.
+The [comparison tables](benchmarks.md) link to the complete matrix. They come
+from the latest data, [20261027-linux-go1.27.1](results/20261027-linux-go1.27.1/README.md):
+build, runtime and the local Agent control of every variant, recorded here
+with `--repeats 3`, as in [Record every variant](#record-every-variant). Its
+[compose.py](results/20261027-linux-go1.27.1/compose.py) writes
+[benchmarks.md](benchmarks.md) from the raw data in its `raw.zip`. A new
+dataset replaces it: remove the old directory and update the links that point
+to it.
 
-This repository keeps each dataset's reports. The raw data of
-`20261016-linux-go1.27.1`, its CSV, compressed JSON, manifests and the copies of
-the scripts that produced them, stays in ddto's original repository, at the commit
-that last recorded it; its `archive.json`, kept here, lists the SHA-256 of each
-file. Fetch it before you regenerate or refresh from it:
+The runtime benchmark validates Orchestrion's and `ddtest instrument`'s CI
+events against the SDK's event inventories in
+[20261016-linux-go1.27.1](https://github.com/tonyredondo/dd-ci-testing-poc/tree/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/20261016-linux-go1.27.1),
+a dataset of ddto's original repository. Fetch it, and pass its directory as
+`--baseline`:
 
 ```sh
 git clone --filter=blob:none https://github.com/tonyredondo/dd-ci-testing-poc.git /var/tmp/dd-ci-testing-poc
 git -C /var/tmp/dd-ci-testing-poc checkout 8cc70ca41bdf7f2f5ed276a691ea582f6f15250e
+SDK_BASELINE=/var/tmp/dd-ci-testing-poc/docs/results/20261016-linux-go1.27.1
 ```
-
-To regenerate this repository's reports from it, copy it in without replacing
-the files kept here:
-
-```sh
-cp -Rn /var/tmp/dd-ci-testing-poc/docs/results/20261016-linux-go1.27.1/. \
-  docs/results/20261016-linux-go1.27.1/
-```
-
-That dataset was recorded in ddto's original repository, so its input revisions are
-commits there: refresh Mini from it in that checkout, or record a new baseline
-of every variant here.
-
-The latest data, [20261027-linux-go1.27.1](results/20261027-linux-go1.27.1/README.md),
-is such a baseline of every variant, recorded here with `--repeats 3`: build,
-runtime and the local Agent control, as in
-[Record every variant](#record-every-variant). Its
-[compose.py](results/20261027-linux-go1.27.1/compose.py) writes
-[benchmarks.md](benchmarks.md) from its raw data.
 
 ## Record every variant
 
@@ -56,16 +43,15 @@ python3 scripts/build_benchmark.py run --repeats 3 --download \
   --output "$BENCH_RUN/build" --max-seconds 28800 --max-gib 24
 
 python3 scripts/runtime_benchmark.py --repeats 3 \
-  --build "$BENCH_RUN/build" --baseline docs/results/20261016-linux-go1.27.1 \
+  --build "$BENCH_RUN/build" --baseline "$SDK_BASELINE" \
   --output "$BENCH_RUN/runtime" --max-seconds 14400 --max-gib 12
 
 python3 scripts/runtime_benchmark.py --agent \
-  --build "$BENCH_RUN/build" --baseline docs/results/20261016-linux-go1.27.1 \
+  --build "$BENCH_RUN/build" --baseline "$SDK_BASELINE" \
   --output "$BENCH_RUN/agent" --max-seconds 3600 --max-gib 4
 ```
 
-`--baseline` gives the runtime benchmark the archived SDK event inventories
-that validate Orchestrion and Mini; copy that dataset in first, as above. The
+`--baseline` gives the runtime benchmark those SDK event inventories. The
 build matrix took about 3.4 hours on 2026-10-27, and the runtime about two. If a
 runtime collection stops, measure the remaining cases with `--case` into
 another output directory: 20261027-linux-go1.27.1 does, and its `compose.py`
@@ -73,7 +59,15 @@ takes each case from one collection.
 
 ## Refresh only Mini
 
-Use the baseline directory linked from the comparison tables. Keep the default
+A refresh measures only `ddtest instrument` and keeps a baseline's Native and
+Orchestrion observations. It needs a baseline of every variant recorded with
+`refresh_benchmark_report.py`'s layout from commits of this repository: the
+layout of 20261016-linux-go1.27.1, which was recorded in ddto's original
+repository, so refresh from it in that checkout. 20261027-linux-go1.27.1 has
+two runtime collections that `compose.py` merges; record every variant again
+instead of refreshing from it.
+
+Keep the default
 repetitions here: `refresh_benchmark_report.py` merges Mini into a baseline
 recorded with them and rejects a runtime collection with `--repeats`. The runner checks
 its Go version and CPU affinity, and restores the original project sources and
@@ -83,7 +77,7 @@ Use a new artifact directory on disk, outside the repository and `/tmp`.
 
 ```sh
 BENCH_RUN=/var/tmp/dd-ci-mini-benchmark-new
-BASELINE=docs/results/20261016-linux-go1.27.1
+BASELINE=docs/results/<baseline>
 GO_BENCH=/path/to/go1.27.1/bin/go
 ORCHESTRION_BENCH=/path/to/orchestrion
 
@@ -112,7 +106,7 @@ python3 scripts/benchmark_report.py --input docs/results/new-run
 ```
 
 Name the new dataset after its collection date, platform and Go version, as in
-`20261016-linux-go1.27.1`, instead of `new-run`. It replaces the previous
+`20261027-linux-go1.27.1`, instead of `new-run`. It replaces the previous
 dataset: remove the old directory and update the links that point to it.
 
 Orchestrion is checked as a reference tool during setup, although the
@@ -196,7 +190,8 @@ python3 scripts/build_benchmark.py report \
 python3 scripts/benchmark_report.py --input docs/results/new-run --check
 ```
 
-For `20261016-linux-go1.27.1`, copy its data in first, as above. The scripts
+For a dataset that keeps its raw data in `raw.zip`, such as
+20261027-linux-go1.27.1, extract it first, as its README shows. The scripts
 check file hashes, complete rounds and validation outcomes. The
 merger also verifies that every Native and Orchestrion build observation is
 unchanged. Regeneration changes only the presentation and refreshes no
