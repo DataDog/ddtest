@@ -71,6 +71,7 @@ func TestJavaReportsModulesOfOtherFrameworks(t *testing.T) {
 	require.Equal(t, "mvn -B verify", resolution.Tests[0].Command, "one Maven build runs every module; the command is unchanged")
 	require.Len(t, resolution.Tests[0].StepScopeNotes, 1)
 	require.Contains(t, resolution.Tests[0].StepScopeNotes[0], "legacy (testng)")
+	require.Contains(t, resolution.Tests[0].StepScopeNotes[0], "depends on its active profiles and reactor selectors", "-pl may leave the module out")
 	require.NotContains(t, resolution.Tests[0].StepScopeNotes[0], "docs", "a module without tests is not reported")
 	require.Equal(t, resolution.ReviewReason, resolution.Tests[0].StepScopeNotes[0])
 }
@@ -296,4 +297,29 @@ func TestJavaCIConfigurationNeedsTheDatadogAgent(t *testing.T) {
 	}
 	kept := JavaCIConfiguration(javaWorkflowFixture(t, steps("", "        env: {MAVEN_OPTS: '-javaagent:/opt/dd-java-agent.jar -javaagent:/opt/jacoco.jar'}\n"), nil), "junit5")
 	require.Equal(t, "not checked", kept.Jobs[0].Status, "an explicit Datadog agent keeps instrumentation")
+}
+
+func TestJavaKeepsAssignmentPrefixedMavenInScope(t *testing.T) {
+	root := javaWorkflowFixture(t, "", nil)
+	for _, run := range []string{"MAVEN_OPTS=-Xmx2g mvn clean install", "env CI=true mvn -B package"} {
+		resolution := javaStep(t, root, run)
+		require.False(t, resolution.Matched, run)
+		require.Contains(t, resolution.Reason, "single explicit command", run)
+	}
+}
+
+func TestJavaKeepsInheritedDefaultGoalsUnresolved(t *testing.T) {
+	root := javaWorkflowFixture(t, "", map[string]string{
+		"pom.xml":       `<project><build><defaultGoal>verify</defaultGoal></build><modules><module>child</module></modules></project>`,
+		"child/pom.xml": `<project><parent><artifactId>parent</artifactId></parent><artifactId>child</artifactId></project>`,
+	})
+	require.Contains(t, javaStep(t, root, "mvn -f child/pom.xml").Reason, "may inherit a default goal")
+}
+
+func TestJavaShellReferencesInStepEnvDoNotKeepTheAgent(t *testing.T) {
+	for _, value := range []string{"$MAVEN_OPTS -Xmx2g", "${MAVEN_OPTS} -Xmx2g"} {
+		ci := JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '"+value+"'}\n", nil), "junit5")
+		require.Equal(t, "inconclusive", ci.Jobs[0].Status, value)
+		require.Contains(t, ci.Jobs[0].Reason, "replacing the -javaagent option", value)
+	}
 }

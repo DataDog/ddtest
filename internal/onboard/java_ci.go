@@ -103,7 +103,7 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		notes = append(notes, "This CI step also runs "+strings.Join(omitted, ", ")+". Local validation runs only "+selected+", the test lifecycle up to verify, and never installs or publishes artifacts. Report this to the user.")
 	}
 	if others := otherFrameworkModules(projects, framework); len(others) > 0 {
-		notes = append(notes, "This Maven build also runs the tests of module(s) "+strings.Join(others, ", ")+", which declare other test frameworks and no "+framework+" dependency. Instrumenting this step reports those tests to Datadog too; local validation covers only the "+framework+" modules. Report this to the user.")
+		notes = append(notes, "This Maven reactor also declares module(s) "+strings.Join(others, ", ")+", which declare other test frameworks and no "+framework+" dependency. Whether this step runs their tests depends on its active profiles and reactor selectors. Instrumenting this step reports any selected tests to Datadog too; local validation covers only the "+framework+" modules. Report this to the user.")
 	}
 	return commandResolution{Matched: true, ReviewReason: strings.Join(notes, " "), Tests: []TestCommand{{Directory: directory, Command: selected, StepScopeNotes: notes}}}
 }
@@ -140,6 +140,9 @@ func javaDefaultGoal(root, directory string, args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if projects[0].DefaultGoal == "" && projects[0].Parent != nil {
+		return "", fmt.Errorf("%s may inherit a default goal from its parent POM", projects[0].POM)
+	}
 	return projects[0].DefaultGoal, nil
 }
 
@@ -171,6 +174,10 @@ func otherFrameworkModules(projects []maven.Project, framework string) []string 
 func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, parts [][]string, framework string) commandResolution {
 	if slices.ContainsFunc(parts, javaRepositoryScript) || parts == nil && scriptMention.MatchString(step.Run) {
 		return unresolvedCommand("Repository script may run " + framework + " tests; ddtest cannot tell which ones: " + step.Run)
+	}
+	// Maven hidden behind an assignment or env wrapper may run tests.
+	if mavenMention.MatchString(step.Run) && !slices.ContainsFunc(parts, mavenCommand) {
+		return unresolvedCommand("Maven test entry point requires a single explicit command; ddtest cannot replay its environment or shell setup: " + step.Run)
 	}
 	if !strings.Contains(step.Run, "test") && !strings.Contains(step.Run, "verify") {
 		return commandResolution{}
@@ -373,8 +380,9 @@ func javaInstrumentationProblem(workflow ciWorkflow, job runtimeJob, step runtim
 		if variable == "" {
 			return "The Datadog action's java-instrumented-build-system " + strconv.Quote(buildSystem) + " does not instrument Maven; this test step runs without the agent."
 		}
-		// Another agent, such as JaCoCo's, does not keep the Datadog one.
-		if value, set := step.Env[variable]; set && !strings.Contains(value, "dd-java-agent") && !strings.Contains(value, "${{ env."+variable+" }}") && !strings.Contains(value, "${{env."+variable+"}}") && !strings.Contains(value, "$"+variable) {
+		// Another agent, such as JaCoCo's, does not keep the Datadog one, and
+		// step env values are literal: $MAVEN_OPTS is not expanded.
+		if value, set := step.Env[variable]; set && !strings.Contains(value, "dd-java-agent") && !strings.Contains(value, "${{ env."+variable+" }}") && !strings.Contains(value, "${{env."+variable+"}}") {
 			return "This test step sets " + variable + ", replacing the -javaagent option the Datadog action added. Include ${{ env." + variable + " }} in the value to keep the agent."
 		}
 	}

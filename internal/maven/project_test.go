@@ -59,7 +59,7 @@ func TestFrameworksRecognizeEverySupportedDependency(t *testing.T) {
 }
 
 func TestProjectsRejectUnresolvableOrEscapingModules(t *testing.T) {
-	for _, module := range []string{"../outside", "${module}", "/absolute"} {
+	for _, module := range []string{"../outside", "../../outside", "${module}", "/absolute"} {
 		t.Run(module, func(t *testing.T) {
 			root := t.TempDir()
 			writePOM(t, root, "pom.xml", "<project><modules><module>"+module+"</module></modules></project>")
@@ -221,4 +221,14 @@ func TestProjectsReadTheDefaultGoal(t *testing.T) {
 	projects, err := Projects(root)
 	require.NoError(t, err)
 	require.Equal(t, "clean verify", projects[0].DefaultGoal)
+}
+
+func TestProjectsAcceptSiblingModulesInsideTheRepository(t *testing.T) {
+	root := t.TempDir()
+	writePOM(t, root, "build/pom.xml", `<project><modules><module>../core</module></modules></project>`)
+	writePOM(t, root, "core/pom.xml", `<project><artifactId>core</artifactId></project>`)
+	projects, err := ProjectsFrom(root, "build/pom.xml")
+	require.NoError(t, err)
+	require.Len(t, projects, 2)
+	require.Equal(t, "core", projects[1].Directory)
 }

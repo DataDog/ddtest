@@ -37,6 +37,8 @@ type Project struct {
 	Name         string       `xml:"name"`
 	Artifact     string       `xml:"artifactId"`
 	Dependencies []Dependency `xml:"dependencies>dependency"`
+	// Parent is set when the POM inherits from a parent POM.
+	Parent *struct{} `xml:"parent"`
 	// DefaultGoal runs when a command names no goal.
 	DefaultGoal string   `xml:"build>defaultGoal"`
 	Modules     []string `xml:"modules>module"`
@@ -90,10 +92,13 @@ func ProjectsFrom(root, pom string) ([]Project, error) {
 		project.POM, project.Directory = resolved, filepath.Dir(resolved)
 		projects = append(projects, project)
 		visitModule := func(module string, optional bool) error {
-			if strings.Contains(module, "${") || !filepath.IsLocal(module) {
+			// A module may name a sibling (../child); resolvePOM rejects any
+			// path that leaves the repository.
+			path := filepath.Join(project.Directory, module)
+			if strings.Contains(module, "${") || filepath.IsAbs(module) || !filepath.IsLocal(path) {
 				return fmt.Errorf("cannot statically resolve Maven module %q in %s", module, resolved)
 			}
-			err := visit(filepath.Join(project.Directory, module))
+			err := visit(path)
 			if optional && errors.Is(err, os.ErrNotExist) {
 				return nil
 			}
