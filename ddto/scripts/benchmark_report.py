@@ -56,9 +56,13 @@ def format_cell(cell, variant, field):
     elif variant in ("sdk", "mini", "mini-deferred"):
         native = metric(cell, "native", field)
         orchestrion = metric(cell, "orchestrion", field)
-        if orchestrion is None:
+        if orchestrion is None and native is None:
+            text += " (vs Orchestrion unavailable; vs Native unavailable)"
+        elif orchestrion is None:
             text += " (vs Orchestrion unavailable"
             text += f"; {100 * (value / native - 1):+.1f}% vs Native)"
+        elif native is None:
+            text += f" ({100 * (value / orchestrion - 1):+.1f}% vs Orchestrion; vs Native unavailable)"
         else:
             text += f" ({100 * (value / orchestrion - 1):+.1f}%"
             text += f"; {100 * (value / native - 1):+.1f}%)"

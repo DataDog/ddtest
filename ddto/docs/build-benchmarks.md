@@ -73,7 +73,9 @@ takes each case from one collection.
 
 ## Refresh only Mini
 
-Use the baseline directory linked from the comparison tables. The runner checks
+Use the baseline directory linked from the comparison tables. Keep the default
+repetitions here: `refresh_benchmark_report.py` merges Mini into a baseline
+recorded with them and rejects a runtime collection with `--repeats`. The runner checks
 its Go version and CPU affinity, and restores the original project sources and
 module templates. The original input revision must be available in local Git
 history. Keep the checkout unchanged until collection finishes.

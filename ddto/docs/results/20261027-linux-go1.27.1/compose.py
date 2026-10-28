@@ -43,14 +43,19 @@ def runtime_collections(manifest):
             raise ValueError(f"the runtime {name} is not a run of the build's revision")
         collections.append((collection, records))
     (first, early), (second, late) = collections
-    if "objdump" not in first.get("failure", "") or "failure" in second or second["status"] not in ("verified", "partial"):
+    if "'tool', 'objdump'" not in first.get("failure", "") or "failure" in second or second["status"] not in ("verified", "partial"):
         raise ValueError("the runtime collections did not end as recorded")
-    if (first["repetitions"], first["variants"]) != (second["repetitions"], second["variants"]):
-        raise ValueError("the runtime collections differ in repetitions or variants")
+    for key in ("toolchain", "baseline_sha256", "repetitions", "warmups", "variants"):
+        if first[key] != second[key]:
+            raise ValueError(f"the runtime collections differ in {key}")
+    # The first covers the cases up to the one it stopped in, in the matrix's
+    # order; the second, that case and the ones after it.
+    order = [case["id"] for case in manifest["cases"]]
     remeasured = {r["case"] for r in late}
+    stopped = min(order.index(case) for case in remeasured)
+    if {r["case"] for r in early} != set(order[:stopped + 1]) or remeasured != set(order[stopped:]):
+        raise ValueError("the runtime collections do not meet where the first stopped")
     records = [r for r in early if r["case"] not in remeasured] + late
-    if {r["case"] for r in records} != {case["id"] for case in manifest["cases"]}:
-        raise ValueError("the runtime collections do not cover every case")
     return first, second, records
 
 
@@ -95,8 +100,12 @@ def compose():
         target.write("\n## Collections\n\n"
                      f"Two collections from {runtime['started_at'][:10]} make up these results, both from ddtest "
                      f"`{manifest['source_head']}`. The first stopped at chi--cover-client with 32 CPUs: validating that "
-                     "group, `go tool objdump` stalled on a stat in the Go build cache. The second measured "
-                     f"chi--cover-client again and the cases after it: {', '.join(late)}. Each case comes from one "
+                     "group, `go tool objdump` stalled on a stat in the Go build cache, and that group's run, "
+                     f"measured but not validated, was not recorded ({runtime['commands']} commands, "
+                     f"{len(build.read_json(DATASET / 'runtime/collection-1/observations.json'))} observations). The second, "
+                     "with the same toolchain, binaries' revision and SDK references, and scripts that differ only by "
+                     f"a retry of stalled `go tool` calls, measured chi--cover-client again and the cases after it: "
+                     f"{', '.join(late)}. Each case comes from one "
                      "collection; `runtime/collection-1` and `runtime/collection-2` in [raw.zip](../raw.zip) keep "
                      "both, including the first's chi--cover-client groups, which are not used.\n")
     (DATASET / "agent/README.md").write_text(

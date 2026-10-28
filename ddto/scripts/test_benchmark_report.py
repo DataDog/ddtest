@@ -26,6 +26,18 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report.format_cell(cell, "mini", "wall_s"),
                          "2.000000 s (vs Orchestrion unavailable; +100.0% vs Native)")
 
+    def test_failed_native_keeps_mini_visible(self):
+        cell = {"native": {"valid": False, "failed": 1, "attempted": 4},
+                "orchestrion": {"valid": True, "wall_s": {"median": 4}},
+                "mini": {"valid": True, "wall_s": {"median": 2}}}
+        self.assertEqual(report.format_cell(cell, "native", "wall_s"), "FAIL 1/4")
+        self.assertEqual(report.format_cell(cell, "orchestrion", "wall_s"), "4.000000 s")
+        self.assertEqual(report.format_cell(cell, "mini", "wall_s"),
+                         "2.000000 s (-50.0% vs Orchestrion; vs Native unavailable)")
+        cell["orchestrion"] = {"valid": False, "failed": 0, "attempted": 4}
+        self.assertEqual(report.format_cell(cell, "mini", "wall_s"),
+                         "2.000000 s (vs Orchestrion unavailable; vs Native unavailable)")
+
     def test_memory_median_excludes_warmup_but_warmup_failure_invalidates_group(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

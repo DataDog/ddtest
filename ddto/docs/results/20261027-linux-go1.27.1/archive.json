@@ -213,7 +213,7 @@
       "sha256": "9cffbd0ad98f7c557e891e0400741fa84a811c50d4522c9550b457e08fcf8294"
     },
     "compose.py": {
-      "sha256": "cd77a5a362bb04f25acd0d9e42c5d6d7d4b2b64a02a41b1e854af2c17e1f2b4c"
+      "sha256": "f45af0abd852f649ffdca5d45eb1ba62f9b37d86772e6fb4ad88d34f5bef677b"
     },
     "confirm-race/README.md": {
       "sha256": "bc4831189f65547093c9310bb683a0bfd987a630ec28c928d449a916841087be"
@@ -258,7 +258,7 @@
       "sha256": "08bc1dd1c440badc48ad76fa39db15b2060ae720b9753295781654ee3d4e9f3a"
     },
     "runtime/README.md": {
-      "sha256": "1420de8380e97025a5d1182595160611b973eaa5a0456be06fc2d2bbd80f0254"
+      "sha256": "2d77f2ffff454a04d95ac7aa9db429387897e46fc19cee81cff6f7377ca881b7"
     },
     "runtime/collection-1/manifest.json": {
       "sha256": "3038985d128952e0c648ad7f706af0e5452057afbbef823c5616697333b19f53"
