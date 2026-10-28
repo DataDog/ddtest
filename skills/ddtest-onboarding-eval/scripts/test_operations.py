@@ -253,3 +253,16 @@ class TrialRootTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImageRuntimeVariableTests(unittest.TestCase):
+    def test_commands_keep_only_declared_image_runtime_locations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            container = isolation.Container(Path(directory), "sha256:" + "0" * 64)
+            container.name = "ddtest-eval-" + "0" * 32
+            container.container_environment = ["PATH", "HOSTNAME", "JAVA_HOME", "CHROMEDRIVER_PATH", "NPM_CONFIG_PREFIX"]
+            seen = []
+            container.execute(["true"], Path(directory), {"PATH": container.path}, 10, None, None,
+                              lambda arguments, *rest: seen.append(arguments) or 0)
+            unset = {seen[0][index + 1] for index, value in enumerate(seen[0]) if value == "-u"}
+            self.assertEqual(unset, {"HOSTNAME", "NPM_CONFIG_PREFIX"}, "the image's JDK and browser driver locations stay")

@@ -27,7 +27,10 @@ ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 # Java trials: the JDK the JDK_IMAGE stage provides and a checksum-verified Maven.
 FROM agents AS java
 COPY --from=jdk /opt/java/openjdk /opt/java/openjdk
-ENV JAVA_HOME=/opt/java/openjdk PATH=/opt/java/openjdk/bin:$PATH
+# Trial commands keep JAVA_HOME but run with a fixed PATH, so the JDK's tools
+# are linked into it.
+ENV JAVA_HOME=/opt/java/openjdk
+RUN ln -s /opt/java/openjdk/bin/* /usr/local/bin/
 ARG MAVEN_VERSION=3.9.11
 ARG MAVEN_SHA512=bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978
 RUN curl -fsSL -o /tmp/maven.tar.gz "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
