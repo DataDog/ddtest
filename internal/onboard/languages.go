@@ -8,4 +8,4 @@ package onboard
 // discoveryLanguages registers every language onboarding discovers. This is
 // the only shared file that names them; everything else goes through
 // discoveryLanguage (see language.go and TestLanguageSpecificsStayInTheirFiles).
-var discoveryLanguages = []discoveryLanguage{javascriptDiscovery{}, pythonDiscovery{}, rubyDiscovery{}}
+var discoveryLanguages = []discoveryLanguage{javascriptDiscovery{}, pythonDiscovery{}, rubyDiscovery{}, javaDiscovery{}}

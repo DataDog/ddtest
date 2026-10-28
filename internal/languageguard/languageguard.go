@@ -7,7 +7,7 @@
 // package's language seam.
 //
 // A package with a seam keeps each language in files named after it
-// (python*.go, ruby*.go), registers every language in languages.go, and leaves
+// (python*.go, ruby*.go, java_*.go), registers every language in languages.go, and leaves
 // the rest of its files to shared orchestration and JavaScript, the language
 // they were written for. Check reads the identifiers and string literals of
 // every non-test file, ignoring comments, and fails when:
@@ -45,6 +45,10 @@ var languages = []language{
 	{name: "javascript", marker: regexp.MustCompile(`(?i)javascript|dd-trace|node_options|jest|vitest|mocha|cypress|playwright|cucumber|webdriverio`)},
 	{name: "python", prefix: "python", marker: regexp.MustCompile(`(?i)python|pytest|ddtrace`)},
 	{name: "ruby", prefix: "ruby", marker: regexp.MustCompile(`(?i)ruby|rspec|minitest|gemfile|gems\.rb|bundle (exec|install|config)|bundle_|datadog-ci`)},
+	// "java" is a prefix of "javascript": Java files are java_*.go, and its
+	// markers are whole words or Java-only terms. JUnit XML is a report format
+	// every language uses, so only the JVM framework names count.
+	{name: "java", prefix: "java_", marker: regexp.MustCompile(`(?i)\bjava\b|maven|\bmvnw?\b|junit[45]|jupiter|testng|surefire|failsafe|dd-java-agent|pom\.xml`)},
 }
 
 // Check fails t for every token in dir's non-test Go files that names a

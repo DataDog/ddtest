@@ -60,3 +60,42 @@ func TestJavaScriptBundlesAreNotRuby(t *testing.T) {
 	}
 	Check(t, dir)
 }
+
+// "java" is a prefix of "javascript": neither the JavaScript language file nor
+// JavaScript tokens may be attributed to Java.
+func TestJavaScriptIsNotJava(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"javascript_language.go": "package p\n\nconst name = \"javascript\"\nconst label = \"JavaScript\"\n",
+		"shared.go":              "package p\n\nfunc javascriptRun() { _ = \"javascript\" }\n",
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	Check(t, dir)
+}
+
+func TestCheckReportsJavaOutsideItsFiles(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		// Shared code names Maven: rejected.
+		"jest.go": "package p\n\nconst build = \"mvn\"\n",
+		// Java's own file names Java: allowed.
+		"java_language.go": "package p\n\nconst agent = \"dd-java-agent\"\nconst language = \"java\"\n",
+		// Java's file names JavaScript: rejected.
+		"java_validation.go": "package p\n\nconst runner = \"jest\"\n",
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var report recorder
+	report.TB = t
+	Check(&report, dir)
+	if len(report.errors) != 2 {
+		t.Fatalf("want 2 violations (jest.go: mvn; java_validation.go: jest), got %d: %s", len(report.errors), strings.Join(report.errors, "; "))
+	}
+}

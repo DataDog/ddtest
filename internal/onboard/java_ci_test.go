@@ -1,0 +1,207 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2026 Datadog, Inc.
+
+package onboard
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+const javaJUnit5POM = `<project><artifactId>service</artifactId><dependencies><dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId></dependency></dependencies></project>`
+
+func javaWorkflowFixture(t *testing.T, workflow string, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	if files == nil {
+		files = map[string]string{"pom.xml": javaJUnit5POM}
+	}
+	files[".github/workflows/test.yml"] = workflow
+	for name, contents := range files {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(contents), 0644))
+	}
+	return root
+}
+
+func javaStep(t *testing.T, root, run string) commandResolution {
+	t.Helper()
+	return resolveJavaStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: run}, "junit5")
+}
+
+func TestJavaResolvesMavenTestSteps(t *testing.T) {
+	root := javaWorkflowFixture(t, "", nil)
+	for run, command := range map[string]string{
+		"mvn -B verify":                         "mvn -B verify",
+		"./mvnw test -pl service":               "./mvnw test -pl service",
+		"mvn --no-transfer-progress -B package": "mvn --no-transfer-progress -B package",
+		"mvn -B clean install":                  "mvn -B clean verify",
+		"mvn -B deploy":                         "mvn -B verify",
+		"mvn verify source:jar javadoc:jar":     "mvn verify",
+	} {
+		resolution := javaStep(t, root, run)
+		require.True(t, resolution.Matched, run)
+		require.Len(t, resolution.Tests, 1, run)
+		require.Equal(t, command, resolution.Tests[0].Command, run)
+		require.Equal(t, ".", resolution.Tests[0].Directory)
+		if command != run {
+			require.Len(t, resolution.Tests[0].StepScopeNotes, 1, run)
+			require.Contains(t, resolution.Tests[0].StepScopeNotes[0], "never installs or publishes artifacts", run)
+		} else {
+			require.Empty(t, resolution.Tests[0].StepScopeNotes, run)
+		}
+	}
+}
+
+func TestJavaReportsModulesOfOtherFrameworks(t *testing.T) {
+	root := javaWorkflowFixture(t, "", map[string]string{
+		"pom.xml":        `<project><modules><module>api</module><module>legacy</module><module>docs</module></modules></project>`,
+		"api/pom.xml":    javaJUnit5POM,
+		"legacy/pom.xml": `<project><dependencies><dependency><groupId>org.testng</groupId><artifactId>testng</artifactId></dependency></dependencies></project>`,
+		"docs/pom.xml":   `<project/>`,
+	})
+	resolution := javaStep(t, root, "mvn -B verify")
+	require.True(t, resolution.Matched)
+	require.Equal(t, "mvn -B verify", resolution.Tests[0].Command, "one Maven build runs every module; the command is unchanged")
+	require.Len(t, resolution.Tests[0].StepScopeNotes, 1)
+	require.Contains(t, resolution.Tests[0].StepScopeNotes[0], "legacy (testng)")
+	require.NotContains(t, resolution.Tests[0].StepScopeNotes[0], "docs", "a module without tests is not reported")
+	require.Equal(t, resolution.ReviewReason, resolution.Tests[0].StepScopeNotes[0])
+}
+
+func TestJavaKeepsUnresolvedStepsInScope(t *testing.T) {
+	root := javaWorkflowFixture(t, "", nil)
+	for run, reason := range map[string]string{
+		"mvn -B verify | tee build.log":  "could not be resolved statically",
+		"mvn verify || true":             "could not be resolved statically",
+		"(cd service && mvn test)":       "could not be resolved statically",
+		"cd service && mvn test":         "single explicit command",
+		"mvn ${{ matrix.goals }}":        "expression was not resolved",
+		"./ci/test.sh":                   "Repository script",
+		"bash scripts/run-tests":         "Repository script",
+		"make test":                      "Test wrapper was not resolved",
+		"gradle test":                    "Test wrapper was not resolved",
+		"mvn -f ../other/pom.xml verify": "POM selection needs review",
+	} {
+		resolution := javaStep(t, root, run)
+		require.False(t, resolution.Matched, run)
+		require.False(t, resolution.Review, run)
+		require.Contains(t, resolution.Reason, reason, run)
+	}
+	broken := javaWorkflowFixture(t, "", map[string]string{"pom.xml": `<project><modules><module>${module}</module></modules></project>`})
+	require.Contains(t, javaStep(t, broken, "mvn verify").Reason, "reactor could not be read")
+}
+
+func TestJavaLeavesNonTestStepsOutsideScope(t *testing.T) {
+	root := javaWorkflowFixture(t, "", nil)
+	for run, reason := range map[string]string{
+		"mvn -B spotless:check":                 "outside the test lifecycle",
+		"mvn javadoc:javadoc && mvn site":       "outside the test lifecycle",
+		"mvn -B -DskipTests package":            "skips tests",
+		"./mvnw -Dmaven.test.skip=true install": "skips tests",
+	} {
+		resolution := javaStep(t, root, run)
+		require.True(t, resolution.Review, run)
+		require.Contains(t, resolution.Reason, reason, run)
+	}
+	for _, run := range []string{"echo done", "java -version", "mvn -v"} {
+		resolution := javaStep(t, root, run)
+		require.False(t, resolution.Matched || resolution.Review, run)
+		require.Empty(t, resolution.Reason, run)
+	}
+}
+
+func TestJavaReportsTestLikeCommandsOfUninstrumentedJobs(t *testing.T) {
+	root := javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java}\n      - run: mvn -B verify\n  docs:\n    steps:\n      - run: make test-docs\n", nil)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "mvn -B verify", scope.Commands[0].Command)
+	require.Empty(t, scope.Unresolved, "a non-test job without the action is a caveat, not a blocker")
+	ci := JavaCIConfiguration(root, "junit5")
+	require.Len(t, ci.Review, 1)
+	require.Equal(t, CodeUninstrumentedJob, ci.Review[0].Code)
+}
+
+func TestJavaScopeFollowsTheMatrix(t *testing.T) {
+	root := javaWorkflowFixture(t, `jobs:
+  tests:
+    strategy:
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '${{ matrix.java }}'}
+      - run: ./mvnw -B verify
+`, nil)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "./mvnw -B verify", scope.Commands[0].Command)
+	require.Len(t, scope.Commands[0].Locations, 2, "one location per matrix row")
+}
+
+func TestJavaCIConfigurationInventoriesJDKAndTracer(t *testing.T) {
+	root := javaWorkflowFixture(t, `jobs:
+  tests:
+    strategy:
+      matrix:
+        java: ['8', '17', '25-ea', 'lts']
+    steps:
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '${{ matrix.java }}'}
+      - uses: datadog/test-visibility-github-action@v3
+        if: matrix.java != '25-ea'
+        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}
+      - run: mvn -B verify
+`, nil)
+	ci := JavaCIConfiguration(root, "junit5")
+	require.Len(t, ci.Jobs, 4)
+	byJava := map[string]RuntimeFinding{}
+	for _, job := range ci.Jobs {
+		byJava[job.Runtime] = job
+	}
+	require.Equal(t, "compatible", byJava["8"].Status)
+	require.Equal(t, "1.67.1", byJava["17"].TracerRequested)
+	require.Equal(t, "compatible", byJava["17"].Status)
+	require.Equal(t, "excluded", byJava["25-ea"].Status, "an early-access JDK is excluded with an if: on the action")
+	require.Equal(t, "inconclusive", byJava["lts"].Status)
+	require.Contains(t, byJava["lts"].Reason, "not a numeric selection")
+	require.Equal(t, "inconclusive", ci.Status)
+}
+
+func TestJavaCIConfigurationRequiresCompleteSelections(t *testing.T) {
+	for _, tc := range []struct{ name, steps, status, reason string }{
+		{"complete", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "compatible", "supports Java 17"},
+		{"no JDK setup", "      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "inconclusive", "static java-version"},
+		{"no action", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - run: mvn verify\n", "inconclusive", "No Datadog action"},
+		{"action for another language", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: python}\n      - run: mvn verify\n", "inconclusive", "No Datadog action"},
+		{"floating tracer", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java}\n      - run: mvn verify\n", "inconclusive", "not an exact release"},
+		{"old JDK", "      - uses: actions/setup-java@v4\n        with: {java-version: '1.7'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "inconclusive", "older than Java 8"},
+		{"reporting disabled", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {DD_CIVISIBILITY_ENABLED: 'false'}\n", "inconclusive", "explicitly disabled by DD_CIVISIBILITY_ENABLED"},
+		{"tracing disabled only", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {DD_TRACE_ENABLED: 'false'}\n", "compatible", "supports Java 17"},
+		{"action after the tests", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - run: mvn verify\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n", "inconclusive", "No Datadog action"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ci := JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n"+tc.steps, nil), "junit5")
+			require.Len(t, ci.Jobs, 1)
+			require.Equal(t, tc.status, ci.Jobs[0].Status)
+			require.Contains(t, ci.Jobs[0].Reason, tc.reason)
+			require.Equal(t, tc.status, ci.Status)
+		})
+	}
+}
+
+func TestJavaCIConfigurationKeepsUnresolvedStepsVisible(t *testing.T) {
+	ci := JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify\n      - run: ./ci/integration.sh\n      - run: mvn spotless:check\n", nil), "junit5")
+	require.Len(t, ci.Jobs, 2)
+	require.True(t, strings.Contains(ci.Jobs[1].Reason, "Repository script"), ci.Jobs[1].Reason)
+	require.Len(t, ci.Review, 1, "lint goals are listed outside scope")
+	require.Equal(t, "not applicable", JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  lint:\n    steps:\n      - run: echo ok\n", nil), "junit5").Status)
+}
