@@ -37,6 +37,8 @@ const javaAgentAction = `      - uses: datadog/test-visibility-github-action@v3
 
 func javaAgentFixture(t *testing.T, action string) string {
 	t.Helper()
+	// DD_SITE selects the default site and is forwarded to validation.
+	t.Setenv("DD_SITE", "")
 	root := t.TempDir()
 	t.Chdir(root)
 	require.NoError(t, os.WriteFile("pom.xml", []byte(javaJUnit5POM), 0600))
