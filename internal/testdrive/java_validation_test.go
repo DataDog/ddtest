@@ -48,17 +48,48 @@ func TestJavaSelectsOnlyLocalMavenTestCommands(t *testing.T) {
 func TestJavaAgentEnvironmentAttachesTheAgentOnce(t *testing.T) {
 	t.Setenv("MAVEN_OPTS", "-Xmx1g")
 	t.Setenv("JAVA_TOOL_OPTIONS", "-Dfile.encoding=UTF-8")
-	env := javaAgentEnvironment("/tmp/session/dd-java-agent.jar", "junit5")
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><dependencies><dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId></dependency></dependencies></project>`)
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"verify"}}
+	env := javaLanguage{}.runEnvironment(drive, "/tmp/session/dd-java-agent.jar")
 	require.Equal(t, "-Xmx1g -javaagent:/tmp/session/dd-java-agent.jar", env["MAVEN_OPTS"], "the Maven JVM configures the forked test JVMs")
 	require.NotContains(t, env, "JAVA_TOOL_OPTIONS")
 	require.Equal(t, "false", env["DD_CIVISIBILITY_COMPILER_PLUGIN_AUTO_CONFIGURATION_ENABLED"])
 
-	env = javaAgentEnvironment("/tmp/session/dd-java-agent.jar", "scalatest")
-	require.Equal(t, "-Dfile.encoding=UTF-8 -javaagent:/tmp/session/dd-java-agent.jar", env["JAVA_TOOL_OPTIONS"], "ScalaTest's plugin fork inherits only JAVA_TOOL_OPTIONS")
+	// A configuration's own options are kept, as the baseline keeps them.
+	drive.configurationEnvironment = map[string]string{"MAVEN_OPTS": "-Xmx4g -Dhttps.proxyHost=proxy"}
+	env = javaLanguage{}.runEnvironment(drive, "/tmp/session/dd-java-agent.jar")
+	require.Equal(t, "-Xmx4g -Dhttps.proxyHost=proxy -javaagent:/tmp/session/dd-java-agent.jar", env["MAVEN_OPTS"])
+
+	// ScalaTest's plugin fork inherits only JAVA_TOOL_OPTIONS, in any module.
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><modules><module>scala</module></modules><dependencies><dependency><groupId>junit</groupId><artifactId>junit</artifactId></dependency></dependencies></project>`)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "scala"), 0755))
+	requireWriteFile(t, filepath.Join(root, "scala", "pom.xml"), `<project><dependencies><dependency><groupId>org.scalatest</groupId><artifactId>scalatest_2.13</artifactId></dependency></dependencies></project>`)
+	drive.framework, drive.configurationEnvironment = framework.NewMaven("junit4", nil), nil
+	env = javaLanguage{}.runEnvironment(drive, "/tmp/session/dd-java-agent.jar")
+	require.Equal(t, "-Dfile.encoding=UTF-8 -javaagent:/tmp/session/dd-java-agent.jar", env["JAVA_TOOL_OPTIONS"])
 	require.NotContains(t, env, "MAVEN_OPTS")
 
-	env = javaAgentEnvironment("", "junit5")
-	require.NotContains(t, env, "MAVEN_OPTS", "the baseline never attaches the agent")
+	require.NotContains(t, javaLanguage{}.runEnvironment(drive, ""), "JAVA_TOOL_OPTIONS", "the baseline never attaches the agent")
+}
+
+func TestJavaReactorIsBoundedByTheCheckout(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><modules><module>core</module></modules></project>`)
+	for _, directory := range []string{"core", "build"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, directory), 0755))
+	}
+	requireWriteFile(t, filepath.Join(root, "core", "pom.xml"), `<project><artifactId>core</artifactId></project>`)
+	requireWriteFile(t, filepath.Join(root, "build", "pom.xml"), `<project><modules><module>../core</module></modules></project>`)
+	drive := &Testdrive{repositoryRoot: filepath.Join(root, "build"), configurationRoot: root}
+	for _, args := range [][]string{{"verify"}, {"-f", "../pom.xml", "verify"}} {
+		checkout, projects, err := drive.javaReactor(args)
+		require.NoError(t, err, "%v", args)
+		require.Equal(t, root, checkout)
+		require.Equal(t, "core", projects[len(projects)-1].Directory, "%v", args)
+	}
+	_, _, err := drive.javaReactor([]string{"-f", "../../pom.xml", "verify"})
+	require.ErrorContains(t, err, "must stay inside the repository")
 }
 
 func TestJavaTemporaryAgentPathCannotContainWhitespace(t *testing.T) {
@@ -199,7 +230,7 @@ func writeJDK(t *testing.T, version string) string {
 func TestJavaEnvironmentReadsTheJDKReleaseFile(t *testing.T) {
 	home := writeJDK(t, "21.0.5")
 	t.Setenv("JAVA_HOME", home)
-	info := javaEnvironmentInfo()
+	info := javaEnvironmentInfo(nil)
 	require.Equal(t, "21.0.5", info.Version)
 	require.Equal(t, "Java from JAVA_HOME", info.Source)
 
@@ -209,12 +240,16 @@ func TestJavaEnvironmentReadsTheJDKReleaseFile(t *testing.T) {
 	require.NoError(t, os.Symlink(filepath.Join(other, "bin", "java"), filepath.Join(path, "java")))
 	t.Setenv("JAVA_HOME", "")
 	t.Setenv("PATH", path)
-	info = javaEnvironmentInfo()
+	info = javaEnvironmentInfo(nil)
 	require.Equal(t, "1.8.0_442", info.Version)
 	require.Equal(t, "8", javaMajor(info.Version))
 
 	t.Setenv("PATH", t.TempDir())
-	require.Empty(t, javaEnvironmentInfo().Version, "no JDK, no version")
+	require.Empty(t, javaEnvironmentInfo(nil).Version, "no JDK, no version")
+
+	// A configuration's own JAVA_HOME or PATH selects the JDK Maven runs.
+	require.Equal(t, "21.0.5", javaEnvironmentInfo(map[string]string{"JAVA_HOME": home}).Version)
+	require.Equal(t, "1.8.0_442", javaEnvironmentInfo(map[string]string{"PATH": path}).Version)
 }
 
 func javaCIFixture(t *testing.T, matrix string) string {

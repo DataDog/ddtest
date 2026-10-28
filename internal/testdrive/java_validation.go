@@ -30,13 +30,26 @@ import (
 // javaIncompleteBuild explains a failed build that native test failures do not account for.
 const javaIncompleteBuild = "The Maven build stopped for a reason other than native test failures, such as compilation, setup or a later module's failure, so part of the reactor did not run. Inspect the Maven output"
 
-// javaReactor reads the projects the selected Maven command builds.
-func javaReactor(root string, args []string) ([]maven.Project, error) {
+// javaReactor reads the projects the selected Maven command builds. The
+// checkout bounds the reactor, so a command run from a subdirectory may select
+// ../pom.xml or declare sibling modules; project directories are relative to
+// the returned checkout root.
+func (t *Testdrive) javaReactor(args []string) (string, []maven.Project, error) {
 	pom, err := maven.CommandPOM(args)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	return maven.ProjectsFrom(root, pom)
+	root := t.checkoutRoot()
+	directory, err := filepath.Rel(root, t.repositoryRoot)
+	if err != nil {
+		return "", nil, err
+	}
+	pom = filepath.Join(directory, pom)
+	if !filepath.IsLocal(pom) {
+		return "", nil, fmt.Errorf("maven POM must stay inside the repository: %s", pom)
+	}
+	projects, err := maven.ProjectsFrom(root, pom)
+	return root, projects, err
 }
 
 // runJava runs the selected Maven command once in the disposable copy, with
@@ -54,14 +67,14 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 		return run, errors.New("validation runs Maven only in a disposable copy of the repository")
 	}
 	command, args := t.executionCommand()
-	projects, err := javaReactor(t.repositoryRoot, args)
+	checkout, projects, err := t.javaReactor(args)
 	if err != nil {
 		return run, err
 	}
 	// Reports from an earlier run would be read as this run's results. Only
 	// the reactor's own target directories are build output; a directory named
 	// target elsewhere is a project input.
-	copyRoot, err := os.OpenRoot(t.repositoryRoot)
+	copyRoot, err := os.OpenRoot(checkout)
 	if err != nil {
 		return run, err
 	}
@@ -136,7 +149,7 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 	if run.Facts, err = server.Facts(); err != nil {
 		return run, err
 	}
-	tests, err := maven.ReadReports(t.repositoryRoot, projects)
+	tests, err := maven.ReadReports(checkout, projects)
 	// A skipped or disabled probe never starts, so no test case is reported.
 	if errors.Is(err, maven.ErrNoTestCases) && (scenario.Feature == "skipping" || scenario.Feature == "disabled") {
 		err = nil
@@ -319,7 +332,7 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 		return nil
 	}
 	_, args := t.executionCommand()
-	projects, err := javaReactor(t.repositoryRoot, args)
+	checkout, projects, err := t.javaReactor(args)
 	if err != nil {
 		return err
 	}
@@ -329,7 +342,7 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 		return nil
 	}
 	path := filepath.Join(module, "src", "test", "java", "ddtest", "DdtestValidationTest.java")
-	copyRoot, err := os.OpenRoot(t.repositoryRoot)
+	copyRoot, err := os.OpenRoot(checkout)
 	if err != nil {
 		return err
 	}
@@ -346,7 +359,7 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 	if err := errors.Join(writeErr, probe.Close()); err != nil {
 		return err
 	}
-	probePath := filepath.Join(t.repositoryRoot, path)
+	probePath := filepath.Join(checkout, path)
 	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
 		return t.runJava(ctx, output, session, agent, runSpec{Name: name, Instrumented: true, Scenario: scenario, ProbePath: probePath, ProbeMode: mode})
 	}, result)
@@ -375,13 +388,13 @@ func javaProbeModule(projects []maven.Project, tests []nativeTest, framework str
 func (t *Testdrive) checkJavaPreflight(_ context.Context, output io.Writer, result *validationResult) error {
 	check := &preflightCheck{Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "The Maven project has not been inspected."}}
 	result.Preflight = check
-	info := javaEnvironmentInfo()
+	info := javaEnvironmentInfo(t.configurationEnvironment)
 	if info.Version == "" {
 		check.Verdict.Reason = "No JDK was found: set JAVA_HOME to the JDK the project builds with, or put its java on PATH."
 		return errors.New(check.Verdict.Reason)
 	}
 	check.Runtime, check.Executable = info.Version, info.Executable
-	projects, err := javaReactor(t.repositoryRoot, t.args)
+	_, projects, err := t.javaReactor(t.args)
 	if err != nil {
 		check.Verdict.Reason = "The selected command's Maven reactor cannot be read: " + err.Error()
 		return fmt.Errorf("inspect Maven reactor: %w", err)

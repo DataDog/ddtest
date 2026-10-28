@@ -11,7 +11,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -80,19 +79,33 @@ func (javaLanguage) refreshProjectTracer(*Testdrive, context.Context) {}
 func (javaLanguage) usesPackageBinaries() bool                        { return false }
 
 func (javaLanguage) inspectEnvironment(_ context.Context, request environmentRequest) (string, []string, environmentInfo, *reportCard) {
-	return request.command, request.args, javaEnvironmentInfo(), nil
+	return request.command, request.args, javaEnvironmentInfo(nil), nil
 }
 
 // javaEnvironmentInfo finds the JDK Maven runs on, JAVA_HOME or else the java
-// on PATH, and reads its release file rather than any command's output.
-func javaEnvironmentInfo() environmentInfo {
+// on PATH, with a configuration's own values first, and reads its release
+// file rather than any command's output.
+func javaEnvironmentInfo(configuration map[string]string) environmentInfo {
+	value := func(key string) string {
+		if value, ok := configuration[key]; ok {
+			return value
+		}
+		return os.Getenv(key)
+	}
 	info := environmentInfo{Source: "Java from PATH", Runtime: "Java"}
-	home := os.Getenv("JAVA_HOME")
+	home := value("JAVA_HOME")
 	if home != "" {
 		info.Source = "Java from JAVA_HOME"
-	} else if path, err := exec.LookPath("java"); err == nil {
-		if resolved, err := filepath.EvalSymlinks(path); err == nil {
-			home = filepath.Dir(filepath.Dir(resolved))
+	} else {
+		for _, directory := range filepath.SplitList(value("PATH")) {
+			candidate := filepath.Join(directory, "java")
+			if stat, err := os.Stat(candidate); err != nil || stat.IsDir() || stat.Mode()&0111 == 0 {
+				continue
+			}
+			if resolved, err := filepath.EvalSymlinks(candidate); err == nil {
+				home = filepath.Dir(filepath.Dir(resolved))
+			}
+			break
 		}
 	}
 	data, err := os.ReadFile(filepath.Join(home, "release"))
@@ -142,14 +155,32 @@ func (javaLanguage) installDirectory(sessionDirectory, _ string) (string, func()
 func (javaLanguage) projectTracerPath(projectTracer string) string { return projectTracer }
 func (javaLanguage) temporaryTracerSource() string                 { return "temporary installation" }
 
+// The agent rides on the Maven JVM, which configures the test JVMs Surefire
+// and Failsafe fork. ScalaTest's plugin forks its own JVM, which inherits only
+// JAVA_TOOL_OPTIONS, so a reactor with any ScalaTest module uses that instead.
+// A configuration's own value is kept, as the baseline keeps it.
 func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string {
-	return javaAgentEnvironment(path, t.framework.Name())
+	key := "MAVEN_OPTS"
+	if t.framework.Name() == "scalatest" || t.javaReactorDeclares("scalatest") {
+		key = "JAVA_TOOL_OPTIONS"
+	}
+	options, configured := t.configurationEnvironment[key]
+	if !configured {
+		options = os.Getenv(key)
+	}
+	return javaAgentEnvironment(path, key, options)
 }
 
-// javaAgentEnvironment attaches the agent at path, if any, to the Maven JVM,
-// which configures the test JVMs Surefire and Failsafe fork. ScalaTest's
-// plugin forks its own JVM, which inherits only JAVA_TOOL_OPTIONS.
-func javaAgentEnvironment(path, framework string) map[string]string {
+// javaReactorDeclares reports whether any module of the selected reactor
+// declares framework.
+func (t *Testdrive) javaReactorDeclares(framework string) bool {
+	_, args := t.executionCommand()
+	_, projects, err := t.javaReactor(args)
+	return err == nil && slices.Contains(maven.Frameworks(projects), framework)
+}
+
+// javaAgentEnvironment appends the agent at path, if any, to options in key.
+func javaAgentEnvironment(path, key, options string) map[string]string {
 	env := map[string]string{
 		"DD_TRACE_ENABLED": "false",
 		// Leave compiled classes as the uninstrumented build produces them.
@@ -158,11 +189,7 @@ func javaAgentEnvironment(path, framework string) map[string]string {
 	if path == "" {
 		return env
 	}
-	key := "MAVEN_OPTS"
-	if framework == "scalatest" {
-		key = "JAVA_TOOL_OPTIONS"
-	}
-	env[key] = strings.TrimSpace(os.Getenv(key) + " -javaagent:" + path)
+	env[key] = strings.TrimSpace(options + " -javaagent:" + path)
 	return env
 }
 
