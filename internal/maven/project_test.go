@@ -192,10 +192,10 @@ func TestTestInvocation(t *testing.T) {
 }
 
 func TestSkipsTests(t *testing.T) {
-	for _, args := range [][]string{{"-DskipTests", "package"}, {"-DskipTests=true"}, {"-Dmaven.test.skip=true", "verify"}, {"-Dmaven.test.skip"}} {
+	for _, args := range [][]string{{"-DskipTests", "package"}, {"-DskipTests=true"}, {"-Dmaven.test.skip=true", "verify"}, {"-Dmaven.test.skip"}, {"-D", "skipTests=true", "verify"}, {"--define", "maven.test.skip=true", "verify"}, {"--define=skipTests", "verify"}} {
 		require.True(t, SkipsTests(args), "%v", args)
 	}
-	for _, args := range [][]string{{"verify"}, {"-DskipTests=false", "test"}, {"-DskipITs", "verify"}} {
+	for _, args := range [][]string{{"verify"}, {"-DskipTests=false", "test"}, {"-DskipITs", "verify"}, {"-D", "skipTests=false", "verify"}, {"-P", "skipTests", "verify"}} {
 		require.False(t, SkipsTests(args), "%v", args)
 	}
 }
@@ -204,4 +204,21 @@ func TestGoals(t *testing.T) {
 	require.Equal(t, []string{"clean", "verify", "javadoc:jar"}, Goals([]string{"-B", "clean", "-pl", "service", "verify", "-Dtest=Example", "javadoc:jar"}))
 	require.Empty(t, Goals([]string{"-v"}))
 	require.Empty(t, Goals([]string{"-f", "pom.xml", "--version"}))
+}
+
+func TestMetadata(t *testing.T) {
+	for _, args := range [][]string{{"-v"}, {"--version"}, {"-B", "--help"}} {
+		require.True(t, Metadata(args), "%v", args)
+	}
+	for _, args := range [][]string{{"-B"}, {"-v", "verify"}, {"-V"}} {
+		require.False(t, Metadata(args), "%v", args)
+	}
+}
+
+func TestProjectsReadTheDefaultGoal(t *testing.T) {
+	root := t.TempDir()
+	writePOM(t, root, "pom.xml", `<project><build><defaultGoal>clean verify</defaultGoal></build></project>`)
+	projects, err := Projects(root)
+	require.NoError(t, err)
+	require.Equal(t, "clean verify", projects[0].DefaultGoal)
 }

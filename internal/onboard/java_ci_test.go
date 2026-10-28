@@ -229,3 +229,71 @@ func TestJavaVariantsKeepCustomerJVMOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, handled)
 }
+
+func TestJavaRunsTheDefaultGoalOfGoallessCommands(t *testing.T) {
+	root := javaWorkflowFixture(t, "", map[string]string{"pom.xml": `<project><build><defaultGoal>clean install</defaultGoal></build><dependencies><dependency><groupId>junit</groupId><artifactId>junit</artifactId></dependency></dependencies></project>`})
+	resolution := javaStep(t, root, "mvn -B")
+	require.True(t, resolution.Matched)
+	require.Equal(t, "mvn -B clean verify", resolution.Tests[0].Command)
+	plain := javaWorkflowFixture(t, "", nil)
+	for _, run := range []string{"mvn -B", "./mvnw --version", "mvn -v && echo done"} {
+		resolution := javaStep(t, plain, run)
+		require.False(t, resolution.Matched || resolution.Review, run)
+		require.Empty(t, resolution.Reason, run, "without a default goal or with metadata only, Maven builds nothing")
+	}
+}
+
+func TestJavaExpandsMatrixSelectedCommands(t *testing.T) {
+	root := javaWorkflowFixture(t, "jobs:\n  tests:\n    strategy:\n      matrix:\n        command: ['mvn -B verify']\n    steps:\n      - run: ${{ matrix.command }}\n", nil)
+	require.Contains(t, javaStep(t, root, "${{ matrix.command }}").Reason, "expression was not resolved", "an expression may select the tests")
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "mvn -B verify", scope.Commands[0].Command)
+}
+
+func TestJavaKeepsRepositoryRelativeScripts(t *testing.T) {
+	root := javaWorkflowFixture(t, "", nil)
+	for _, run := range []string{"ci/integration.sh", "ci/integration.sh | tee build.log", "integration.sh", "cd service && ../ci/run"} {
+		require.Contains(t, javaStep(t, root, run).Reason, "Repository script", run)
+	}
+	for _, run := range []string{"cat target/build.log | grep ERROR", "/usr/bin/env"} {
+		require.Empty(t, javaStep(t, root, run).Reason, run)
+	}
+}
+
+func TestJavaConfinesTheWorkingDirectory(t *testing.T) {
+	root := javaWorkflowFixture(t, "", nil)
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "pom.xml"), []byte(javaJUnit5POM), 0644))
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "linked")))
+	resolution := resolveJavaStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "mvn verify", WorkingDirectory: "linked"}, "junit5")
+	require.False(t, resolution.Matched)
+	require.Contains(t, resolution.Reason, "resolves outside the repository")
+}
+
+func TestJavaSeparatedSkipTestsIsOutsideScope(t *testing.T) {
+	root := javaWorkflowFixture(t, "", nil)
+	for _, run := range []string{"mvn -D skipTests=true verify", "mvn --define maven.test.skip=true install"} {
+		resolution := javaStep(t, root, run)
+		require.True(t, resolution.Review, run)
+		require.Contains(t, resolution.Reason, "skips tests", run)
+	}
+}
+
+func TestJavaCIConfigurationNeedsTheDatadogAgent(t *testing.T) {
+	steps := func(with, env string) string {
+		return "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'" + with + "}\n      - run: mvn verify\n" + env
+	}
+	for name, tc := range map[string]struct{ workflow, reason string }{
+		"another agent replaces it": {steps("", "        env: {MAVEN_OPTS: '-javaagent:/opt/jacoco.jar'}\n"), "replacing the -javaagent option"},
+		"build system expression":   {steps(", java-instrumented-build-system: '${{ inputs.build_system }}'", ""), "needs review"},
+	} {
+		ci := JavaCIConfiguration(javaWorkflowFixture(t, tc.workflow, nil), "junit5")
+		require.Len(t, ci.Jobs, 1, name)
+		require.Equal(t, "inconclusive", ci.Jobs[0].Status, name)
+		require.Contains(t, ci.Jobs[0].Reason, tc.reason, name)
+	}
+	kept := JavaCIConfiguration(javaWorkflowFixture(t, steps("", "        env: {MAVEN_OPTS: '-javaagent:/opt/dd-java-agent.jar -javaagent:/opt/jacoco.jar'}\n"), nil), "junit5")
+	require.Equal(t, "not checked", kept.Jobs[0].Status, "an explicit Datadog agent keeps instrumentation")
+}

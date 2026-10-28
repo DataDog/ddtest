@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"fmt"
 	"maps"
 	"path/filepath"
 	"regexp"
@@ -38,8 +39,10 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if !filepath.IsLocal(directory) || strings.ContainsAny(directory, "$`~") {
 		return unresolvedCommand("Maven working-directory needs explicit review: " + directory)
 	}
-	if workflowExpression.MatchString(step.Run) && mavenMention.MatchString(step.Run) {
-		return unresolvedCommand("Maven command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
+	// Matrix expansion resolves expressions per row; one left here may
+	// select the tests, so it stays in the required scope.
+	if workflowExpression.MatchString(step.Run) {
+		return unresolvedCommand("CI command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
 	}
 	parts, parseErr := staticCommands(step.Run)
 	if parseErr != nil {
@@ -48,15 +51,29 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		}
 		return unresolvedJavaWrapper(root, workflow, job, step, nil, framework)
 	}
-	// A Maven command without goals, such as mvn -v, builds nothing.
+	// A command without goals runs the POM's default goal; mvn -v and other
+	// metadata commands, or a POM without one, build nothing.
+	for i, words := range parts {
+		if !mavenCommand(words) || len(maven.Goals(words[1:])) > 0 || maven.Metadata(words[1:]) {
+			continue
+		}
+		goal, err := javaDefaultGoal(root, directory, words[1:])
+		if err != nil {
+			return unresolvedCommand("Maven default goal could not be read statically, so ddtest cannot tell whether this step runs tests: " + err.Error())
+		}
+		parts[i] = append(slices.Clone(words), strings.Fields(goal)...)
+	}
 	builds := slices.DeleteFunc(slices.Clone(parts), func(words []string) bool { return !mavenCommand(words) || len(maven.Goals(words[1:])) == 0 })
 	tests := slices.DeleteFunc(slices.Clone(builds), func(words []string) bool { return !maven.IsTestCommand(words[0], words[1:]) })
+	onlyMaven := !slices.ContainsFunc(parts, func(words []string) bool {
+		return !mavenCommand(words) && !slices.Contains(javaShellBuiltins, words[0])
+	})
 	switch {
+	case len(builds) == 0 && onlyMaven:
+		return commandResolution{}
 	case len(builds) == 0:
 		return unresolvedJavaWrapper(root, workflow, job, step, parts, framework)
-	case len(tests) == 0 && !slices.ContainsFunc(parts, func(words []string) bool {
-		return !mavenCommand(words) && !slices.Contains(javaShellBuiltins, words[0])
-	}):
+	case len(tests) == 0 && onlyMaven:
 		return commandResolution{Review: true, Reason: "Maven goals outside the test lifecycle, such as documentation, lint or release goals, are outside " + framework + " test scope."}
 	case len(tests) == 0:
 		// Another command in the sequence may still run tests.
@@ -71,7 +88,11 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if err != nil {
 		return unresolvedCommand("Maven POM selection needs review: " + err.Error())
 	}
-	projects, err := maven.ProjectsFrom(filepath.Join(root, directory), pom)
+	workingDirectory, err := javaWorkingDirectory(root, directory)
+	if err != nil {
+		return unresolvedCommand("Maven working-directory needs explicit review: " + err.Error())
+	}
+	projects, err := maven.ProjectsFrom(workingDirectory, pom)
 	if err != nil {
 		return unresolvedCommand("Maven reactor could not be read statically, so the modules this step tests are unknown: " + err.Error())
 	}
@@ -87,12 +108,47 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	return commandResolution{Matched: true, ReviewReason: strings.Join(notes, " "), Tests: []TestCommand{{Directory: directory, Command: selected, StepScopeNotes: notes}}}
 }
 
+// javaWorkingDirectory resolves a step's working directory, which must stay
+// inside the checkout even through symlinks, so discovery never reads another
+// checkout's POMs.
+func javaWorkingDirectory(root, directory string) (string, error) {
+	boundary, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	target, err := filepath.EvalSymlinks(filepath.Join(boundary, directory))
+	if err != nil {
+		return "", err
+	}
+	if relative, err := filepath.Rel(boundary, target); err != nil || !filepath.IsLocal(relative) && relative != "." {
+		return "", fmt.Errorf("%s resolves outside the repository", directory)
+	}
+	return target, nil
+}
+
+// javaDefaultGoal reads the default goal of the POM a goal-less command builds.
+func javaDefaultGoal(root, directory string, args []string) (string, error) {
+	pom, err := maven.CommandPOM(args)
+	if err != nil {
+		return "", err
+	}
+	workingDirectory, err := javaWorkingDirectory(root, directory)
+	if err != nil {
+		return "", err
+	}
+	projects, err := maven.ProjectsFrom(workingDirectory, pom)
+	if err != nil {
+		return "", err
+	}
+	return projects[0].DefaultGoal, nil
+}
+
 // mavenMention finds a Maven invocation inside shell syntax ddtest cannot parse.
 var mavenMention = regexp.MustCompile(`(^|[\s/;&|(])mvnw?(\.cmd)?(\s|$)`)
 
 // scriptMention finds a repository script inside shell syntax ddtest cannot
 // parse, such as ./ci/integration.sh | tee build.log.
-var scriptMention = regexp.MustCompile(`(^|[\s;&|(])(\./|bin/|scripts?/|(ba)?sh\s+[^-\s])`)
+var scriptMention = regexp.MustCompile(`(^\s*|[;&|(]\s*)((\.\.?/)?[\w.-]+/[\w./-]+|[\w.-]+\.sh(\s|$)|(ba)?sh\s+[^-\s])`)
 
 // javaShellBuiltins only print or move files around maintenance goals.
 var javaShellBuiltins = []string{"cd", "cp", "mv", "mkdir", "rm", "ln", "echo", "printf", "cat", "ls", "touch", "tar", "pwd", "true"}
@@ -113,9 +169,6 @@ func otherFrameworkModules(projects []maven.Project, framework string) []string 
 // A wrapper that may run tests stays in scope as unresolved; one in a job
 // without the Datadog action or any Maven test step is reported as a caveat.
 func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, parts [][]string, framework string) commandResolution {
-	if workflowExpression.MatchString(step.Run) && (strings.Contains(step.Run, "mvn") || strings.Contains(step.Run, "test")) {
-		return unresolvedCommand("Maven command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
-	}
 	if slices.ContainsFunc(parts, javaRepositoryScript) || parts == nil && scriptMention.MatchString(step.Run) {
 		return unresolvedCommand("Repository script may run " + framework + " tests; ddtest cannot tell which ones: " + step.Run)
 	}
@@ -129,9 +182,14 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 }
 
 // javaRepositoryScript reports a command that runs a script from the
-// repository, such as ./ci/test.sh, which may start Maven itself.
+// repository, such as ./ci/test.sh or ci/test.sh, which may start Maven itself.
 func javaRepositoryScript(words []string) bool {
-	return len(words) > 0 && (strings.HasPrefix(words[0], "./") || strings.HasPrefix(words[0], "bin/") || strings.HasPrefix(words[0], "scripts/") || slices.Contains([]string{"bash", "sh"}, words[0]) && len(words) > 1 && !strings.HasPrefix(words[1], "-"))
+	if len(words) == 0 {
+		return false
+	}
+	command := words[0]
+	return strings.Contains(command, "/") && !filepath.IsAbs(command) || strings.HasSuffix(command, ".sh") ||
+		slices.Contains([]string{"bash", "sh"}, command) && len(words) > 1 && !strings.HasPrefix(words[1], "-")
 }
 
 // javaOutsideUninstrumentedJob reports a job that neither runs the Datadog
@@ -233,7 +291,11 @@ func JavaCIConfiguration(root, framework string) RuntimeCheck {
 							if err == nil && selected {
 								action = step.Uses
 								tracer, _ = runtimeValue(step.With["java-tracer-version"], row)
-								buildSystem, _ = runtimeValue(step.With["java-instrumented-build-system"], row)
+								var buildErr error
+								buildSystem, buildErr = runtimeValue(step.With["java-instrumented-build-system"], row)
+								if buildErr != nil {
+									actionErr = buildErr
+								}
 							}
 						}
 					}
@@ -311,7 +373,8 @@ func javaInstrumentationProblem(workflow ciWorkflow, job runtimeJob, step runtim
 		if variable == "" {
 			return "The Datadog action's java-instrumented-build-system " + strconv.Quote(buildSystem) + " does not instrument Maven; this test step runs without the agent."
 		}
-		if value, set := step.Env[variable]; set && !strings.Contains(value, "-javaagent") && !strings.Contains(value, "${{ env."+variable+" }}") && !strings.Contains(value, "${{env."+variable+"}}") && !strings.Contains(value, "$"+variable) {
+		// Another agent, such as JaCoCo's, does not keep the Datadog one.
+		if value, set := step.Env[variable]; set && !strings.Contains(value, "dd-java-agent") && !strings.Contains(value, "${{ env."+variable+" }}") && !strings.Contains(value, "${{env."+variable+"}}") && !strings.Contains(value, "$"+variable) {
 			return "This test step sets " + variable + ", replacing the -javaagent option the Datadog action added. Include ${{ env." + variable + " }} in the value to keep the agent."
 		}
 	}

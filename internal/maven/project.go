@@ -37,8 +37,10 @@ type Project struct {
 	Name         string       `xml:"name"`
 	Artifact     string       `xml:"artifactId"`
 	Dependencies []Dependency `xml:"dependencies>dependency"`
-	Modules      []string     `xml:"modules>module"`
-	Profiles     []struct {
+	// DefaultGoal runs when a command names no goal.
+	DefaultGoal string   `xml:"build>defaultGoal"`
+	Modules     []string `xml:"modules>module"`
+	Profiles    []struct {
 		Dependencies []Dependency `xml:"dependencies>dependency"`
 		Modules      []string     `xml:"modules>module"`
 	} `xml:"profiles>profile"`
@@ -298,15 +300,35 @@ func TestInvocation(args []string) (validated, omitted []string) {
 }
 
 // SkipsTests reports whether Maven arguments skip test execution, as
-// -DskipTests and -Dmaven.test.skip do.
+// -DskipTests and -Dmaven.test.skip do, in any of their -D forms.
 func SkipsTests(args []string) bool {
-	for _, arg := range args {
-		property, value, _ := strings.Cut(strings.TrimPrefix(arg, "-D"), "=")
-		if strings.HasPrefix(arg, "-D") && (property == "skipTests" || property == "maven.test.skip") && value != "false" {
+	for i := 0; i < len(args); i++ {
+		property := ""
+		switch arg := args[i]; {
+		case (arg == "-D" || arg == "--define") && i+1 < len(args):
+			property = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--define="):
+			property = strings.TrimPrefix(arg, "--define=")
+		case strings.HasPrefix(arg, "-D") && arg != "-D":
+			property = strings.TrimPrefix(arg, "-D")
+		case slices.Contains(optionsWithValue, arg):
+			i++
+		}
+		name, value, _ := strings.Cut(property, "=")
+		if (name == "skipTests" || name == "maven.test.skip") && value != "false" {
 			return true
 		}
 	}
 	return false
+}
+
+// Metadata reports Maven arguments that print help or the version and exit
+// without building.
+func Metadata(args []string) bool {
+	return len(Goals(args)) == 0 && slices.ContainsFunc(args, func(arg string) bool {
+		return slices.Contains([]string{"-v", "--version", "-h", "--help"}, arg)
+	})
 }
 
 // Goals returns the phases and plugin goals in Maven arguments, without
