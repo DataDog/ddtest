@@ -98,12 +98,6 @@ jobs:
           DD_ENV: ci
           DDTEST_REQUIRE_PROJECT_RUNTIMES: "1"
 
-      - name: Normalize coverage counters
-        run: |
-          python3 -m unittest discover -s .github/scripts -p test_normalize_go_coverage.py
-          mv coverage.out coverage-raw.out
-          python3 .github/scripts/normalize_go_coverage.py coverage-raw.out coverage.out
-
       - name: Summarize coverage
         if: always()
         run: |
@@ -118,7 +112,6 @@ jobs:
         with:
           name: go-coverage-report
           path: |
-            coverage-raw.out
             coverage.out
             coverage-functions.txt
           if-no-files-found: ignore
