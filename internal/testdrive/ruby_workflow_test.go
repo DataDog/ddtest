@@ -585,3 +585,57 @@ func TestRubyCheckOnlyPreflightHonorsBundleLockfile(t *testing.T) {
 	require.ErrorContains(t, err, "bundle inspected", "the configured lockfile exists, so the bundle is inspected")
 	require.NotContains(t, result.Preflight.Verdict.Reason, "lockfile is unavailable")
 }
+
+func gitFixtureCommand(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	command := exec.CommandContext(t.Context(), "git", append([]string{"-C", root, "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "-c", "user.name=fixture", "-c", "user.email=fixture@example.com"}, args...)...)
+	data, err := command.CombinedOutput()
+	require.NoError(t, err, string(data))
+	return string(data)
+}
+
+// Release gemspecs read history and tags; they also print diagnostics.
+func TestRubyPackagingLoadsGemspecsThatReadGitHistory(t *testing.T) {
+	if _, err := exec.LookPath("ruby"); err != nil {
+		t.Skip("Ruby is required")
+	}
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0700))
+	requireWriteFile(t, filepath.Join(root, "lib/fixture.rb"), "module Fixture;end\n")
+	requireWriteFile(t, filepath.Join(root, "fixture.gemspec"), `version = `+"`git describe --tags --abbrev=0`"+`.strip
+raise "no tag: #{version.inspect}" unless version == "v1.0"
+raise "no history" if `+"`git log -1 --format=%H`"+`.strip.empty?
+files = `+"`git ls-tree -r --name-only HEAD`"+`.split("\n")
+puts "gemspec diagnostic on stdout"
+warn "gemspec diagnostic on stderr"
+Gem::Specification.new do |s|
+  s.name = 'fixture'; s.version = version.delete('v'); s.files = files
+end
+`)
+	gitFixtureCommand(t, root, "init", "-q")
+	gitFixtureCommand(t, root, "add", ".")
+	gitFixtureCommand(t, root, "commit", "-q", "-m", "fixture")
+	gitFixtureCommand(t, root, "tag", "v1.0")
+	refsBefore := gitFixtureCommand(t, root, "for-each-ref")
+	objectsBefore := gitFixtureCommand(t, root, "count-objects", "-v")
+	drive := &Testdrive{repositoryRoot: root, language: "ruby", executor: &ext.DefaultCommandExecutor{}}
+	check := drive.rubyPackageExclusions(t.Context())
+	require.Equal(t, "passed", check.Status, check.Reason)
+	require.Equal(t, refsBefore, gitFixtureCommand(t, root, "for-each-ref"), "the customer repository gains no refs")
+	require.Equal(t, objectsBefore, gitFixtureCommand(t, root, "count-objects", "-v"), "the customer repository gains no objects")
+	require.Empty(t, strings.TrimSpace(gitFixtureCommand(t, root, "remote")), "no remote points back from the customer repository")
+}
+
+func TestRubyPackagingIgnoresGemspecDiagnostics(t *testing.T) {
+	if _, err := exec.LookPath("ruby"); err != nil {
+		t.Skip("Ruby is required")
+	}
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0700))
+	requireWriteFile(t, filepath.Join(root, "lib/fixture.rb"), "module Fixture;end\n")
+	requireWriteFile(t, filepath.Join(root, "fixture.gemspec"), "puts 'loading fixture'\nwarn 'deprecated option'\nGem::Specification.new do |s|\n s.name='fixture';s.version='1.0';s.files=Dir['lib/**/*']\nend\n")
+	gitInit(t, root)
+	drive := &Testdrive{repositoryRoot: root, language: "ruby", executor: &ext.DefaultCommandExecutor{}}
+	check := drive.rubyPackageExclusions(t.Context())
+	require.Equal(t, "passed", check.Status, check.Reason)
+}

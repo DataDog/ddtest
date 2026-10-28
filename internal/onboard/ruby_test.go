@@ -224,7 +224,7 @@ func TestRubyRakeTargetsValidateTheFrameworkTaskAndReportTheRest(t *testing.T) {
 	require.Equal(t, "bundle exec rake spec", entry.Command, "only the framework's own task is validated")
 	require.Len(t, entry.Locations, 2, "bound to the original CI step in every matrix entry")
 	require.Contains(t, entry.Locations[0], "(bundle exec rake)")
-	require.Contains(t, entry.StepScopeNote, "features")
+	require.Contains(t, strings.Join(entry.StepScopeNotes, "\n"), "features")
 	require.Contains(t, strings.Join(scope.Review, "\n"), "also runs Rake task(s) features")
 	ci := RubyCIConfiguration(root, "rspec")
 	require.Len(t, ci.Jobs, 2)
@@ -242,11 +242,11 @@ func TestRubyRakeTargetsValidateTheFrameworkTaskAndReportTheRest(t *testing.T) {
 		resolution := resolveRubyStep(t.TempDir(), ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command}, "rspec")
 		require.True(t, resolution.Matched, command)
 		require.Equal(t, expected, resolution.Tests[0].Command, command)
-		require.NotEmpty(t, resolution.Tests[0].StepScopeNote, command)
+		require.NotEmpty(t, resolution.Tests[0].StepScopeNotes, command)
 	}
 	minitest := resolveRubyStep(t.TempDir(), ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "bundle exec rake spec test"}, "minitest")
 	require.Equal(t, "bundle exec rake test", minitest.Tests[0].Command)
-	require.Contains(t, minitest.Tests[0].StepScopeNote, "other Ruby framework's spec task")
+	require.Contains(t, strings.Join(minitest.Tests[0].StepScopeNotes, "\n"), "other Ruby framework's spec task")
 	for _, command := range []string{"bundle exec rake spec features --trace", "bundle exec rake spec SEED=1 features", "bundle exec rake features"} {
 		resolution := resolveRubyStep(t.TempDir(), ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command}, "rspec")
 		require.False(t, resolution.Matched, command)
@@ -306,5 +306,51 @@ func TestMinitestInstructionsKeepIsolationAndConfigureBothEnvironments(t *testin
 		require.Contains(t, text, expected)
 	}
 	require.NotContains(t, text, "__FORK_SETUP__")
+	require.Contains(t, text, "matrix entries where the Datadog action is skipped; there it does nothing", "excluded rows load the initializer harmlessly")
 	require.NotContains(t, instructions("ruby", "rspec"), "SyncWriter")
+}
+
+// rack runs both '2.7' and '2.7.3'; an equality pin misses the patch entry.
+func TestRubyGemsResolverPinMustCoverEveryRuby27Entry(t *testing.T) {
+	workflow := func(pin string) string {
+		return `jobs:
+  tests:
+    strategy:
+      matrix:
+        ruby: ['2.7', '2.7.3', '3.3']
+    steps:
+      - uses: ruby/setup-ruby@v1
+        with: {ruby-version: '${{ matrix.ruby }}'` + pin + `}
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '1.42.0'}
+      - run: bundle exec rspec
+`
+	}
+	statuses := func(pin string) map[string]string {
+		result := map[string]string{}
+		for _, job := range RubyCIConfiguration(rubyWorkflowFixture(t, workflow(pin)), "rspec").Jobs {
+			result[job.Runtime] = job.Status
+		}
+		return result
+	}
+	require.Equal(t, map[string]string{"2.7": "inconclusive", "2.7.3": "inconclusive", "3.3": "not checked"}, statuses(""))
+	require.Equal(t, map[string]string{"2.7": "not checked", "2.7.3": "inconclusive", "3.3": "not checked"}, statuses(`, rubygems: "${{ matrix.ruby == '2.7' && '3.4.22' || 'default' }}"`))
+	require.Equal(t, map[string]string{"2.7": "not checked", "2.7.3": "not checked", "3.3": "not checked"}, statuses(`, rubygems: "${{ startsWith(matrix.ruby, '2.7') && '3.4.22' || 'default' }}"`))
+	require.Equal(t, map[string]string{"2.7": "not checked", "2.7.3": "not checked", "3.3": "not checked"}, statuses(`, rubygems: '3.3.27'`))
+	require.Contains(t, RubyCIConfiguration(rubyWorkflowFixture(t, workflow("")), "rspec").Jobs[1].Reason, "startsWith(matrix.ruby, '2.7')")
+	for _, framework := range []string{"rspec", "minitest"} {
+		require.Contains(t, rubyDiscovery{}.agentInstructions(framework, ""), "startsWith(matrix.ruby, '2.7')")
+		require.Contains(t, instructions("ruby", framework), "startsWith(matrix.ruby, '2.7')")
+	}
+}
+
+func TestRubyMergedConfigurationsKeepEveryStepScopeNote(t *testing.T) {
+	root := rubyWorkflowFixture(t, "jobs:\n  unit:\n    steps:\n      - run: bundle exec rake spec\n  all:\n    steps:\n      - run: bundle exec rake spec features\n  lint:\n    steps:\n      - run: bundle exec rake spec rubocop\n")
+	scope, err := DiscoverValidationScope(root, "rspec")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1, "all three steps validate bundle exec rake spec")
+	require.Len(t, scope.Commands[0].Locations, 3)
+	notes := strings.Join(scope.Commands[0].StepScopeNotes, "\n")
+	require.Contains(t, notes, "Rake task(s) features")
+	require.Contains(t, notes, "Rake task(s) rubocop")
 }

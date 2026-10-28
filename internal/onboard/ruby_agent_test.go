@@ -207,3 +207,21 @@ func TestOneLineExcerptKeepsTheScriptHeadAndReason(t *testing.T) {
 	require.Equal(t, "ci.yml / docs / step 4 (gem install rack …): Repository script could not be resolved: gem install rack …", OneLineExcerpt(text))
 	require.Equal(t, "single line", OneLineExcerpt("single line"))
 }
+
+func TestRubyAgentOnboardingDefaultsToDDSite(t *testing.T) {
+	rubyAgentFixture(t, "rspec", "")
+	t.Setenv("DD_SITE", "datadoghq.eu")
+	state, err := rubyAgentStart(t, StartOptions{Format: "json"})
+	require.Error(t, err)
+	require.Equal(t, "ci_setup_required", state.Code)
+	require.Contains(t, state.Instruction, "`site: datadoghq.eu`", "the action reports to DD_SITE, as onboard --apply does")
+	require.Contains(t, state.ResumeCommand, "datadoghq.eu")
+	rubyAgentFixture(t, "rspec", strings.Replace(rubyAgentAction, "languages: ruby,", "languages: ruby, site: datadoghq.eu,", 1))
+	state, err = rubyAgentStart(t, StartOptions{Format: "json"})
+	require.NoError(t, err)
+	require.Equal(t, "ready", state.Status, "an action already on DD_SITE is complete")
+	t.Setenv("DD_SITE", "evil.com; rm -rf /")
+	state, err = rubyAgentStart(t, StartOptions{Format: "json"})
+	require.Error(t, err)
+	require.Equal(t, "invalid_options", state.Code)
+}

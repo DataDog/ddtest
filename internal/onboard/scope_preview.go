@@ -23,8 +23,8 @@ func WriteValidationScope(output io.Writer, scope ValidationScope) {
 		for _, setup := range entry.UnvalidatedSetup {
 			_, _ = fmt.Fprintf(output, "      Unvalidated setup: %s\n", setup)
 		}
-		if entry.StepScopeNote != "" {
-			_, _ = fmt.Fprintf(output, "      Shared CI step: %s\n", entry.StepScopeNote)
+		for _, note := range entry.StepScopeNotes {
+			_, _ = fmt.Fprintf(output, "      Shared CI step: %s\n", note)
 		}
 		for _, location := range entry.Locations {
 			_, _ = fmt.Fprintf(output, "      %s\n", location)
@@ -54,8 +54,8 @@ func writeAgentValidationScope(output io.Writer, scope ValidationScope) {
 			}
 		}
 		_, _ = fmt.Fprintln(output)
-		if entry.StepScopeNote != "" {
-			_, _ = fmt.Fprintf(output, "      Shared CI step: %s\n", entry.StepScopeNote)
+		for _, note := range entry.StepScopeNotes {
+			_, _ = fmt.Fprintf(output, "      Shared CI step: %s\n", note)
 		}
 	}
 	for _, reason := range scope.Unresolved {

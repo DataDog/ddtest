@@ -209,13 +209,29 @@ func TestRubyMaintenanceAndUninstrumentedJobsDoNotBlockMinitest(t *testing.T) {
 	// A focused local command has no job context and stays unresolved.
 	require.NotEmpty(t, resolveRubyStep(t.TempDir(), ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "bundle exec bake test"}, "minitest").Reason)
 	for run, maintenance := range map[string]bool{
-		"bundle install":                            false,
-		"gem install bundler && bundle install":     false,
-		"bundle exec rdoc && bundle exec rake test": false,
-		"yard doc $(git ls-files)":                  false,
-		"bundle exec yard doc":                      true,
-		"gem build rack.gemspec":                    true,
+		"bundle install":                                           false,
+		"gem install bundler && bundle install":                    false,
+		"bundle exec rdoc && bundle exec rake test":                false,
+		"yard doc $(git ls-files)":                                 false,
+		"bundle exec yard doc":                                     true,
+		"bundle exec rubocop & bundle exec rspec spec/integration": false,
+		"bundle exec rubocop || bundle exec rspec":                 false,
+		"bundle exec rubocop | tee log":                            false,
+		"(bundle exec rubocop; bundle exec rspec)":                 false,
+		"{ bundle exec rdoc; }":                                    false,
+		"bundle exec rdoc > rdoc.log":                              false,
+		"bundle exec rdoc \"$(bundle exec rspec)\"":                false,
+		"gem install rack --version \"< 3.3\" && bundle exec rdoc": true,
+		"gem build rack.gemspec":                                   true,
 	} {
 		require.Equal(t, maintenance, rubyMaintenanceStep(run), run)
 	}
+}
+
+func TestRubyBackgroundedSuiteStaysInScope(t *testing.T) {
+	root := rubyWorkflowFixture(t, "jobs:\n  t:\n    steps:\n      - run: bundle exec rubocop & bundle exec rspec spec/integration\n")
+	scope, err := DiscoverValidationScope(root, "rspec")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved, "a backgrounded RSpec suite cannot disappear as maintenance")
+	require.NotContains(t, strings.Join(scope.Review, "\n"), "maintenance")
 }

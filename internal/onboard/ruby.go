@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/kballard/go-shellquote"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // Ruby tasks can execute arbitrary code. Replay only a single explicit entry
@@ -110,25 +112,40 @@ var rubyShellBuiltins = []string{"cd", "cp", "mv", "mkdir", "rm", "ln", "echo", 
 // least one such tool. It never runs Rake, Ruby, a test runner or a
 // repository script, so it is maintenance, not test scope.
 func rubyMaintenanceStep(run string) bool {
-	if strings.ContainsAny(run, "`|") || strings.Contains(run, "$(") {
+	file, err := syntax.NewParser().Parse(strings.NewReader(run), "")
+	if err != nil {
 		return false
 	}
 	tools := 0
-	for _, line := range strings.Split(run, "\n") {
-		for _, segment := range strings.FieldsFunc(strings.ReplaceAll(line, "&&", ";"), func(r rune) bool { return r == ';' }) {
-			segment = strings.TrimSpace(segment)
-			if segment == "" || strings.HasPrefix(segment, "#") {
-				continue
-			}
-			words, err := shellquote.Split(segment)
-			if err != nil || len(words) == 0 || strings.ContainsAny(words[0], "$=/") {
+	// Only plain commands joined by newlines, ";" or "&&" are classified.
+	// Background jobs, pipes, "||", subshells, groups, redirections and
+	// substitutions can hide or start another command, as in
+	// "rubocop & rspec spec/integration".
+	var visit func(stmt *syntax.Stmt) bool
+	visit = func(stmt *syntax.Stmt) bool {
+		if stmt.Background || stmt.Coprocess || stmt.Negated || len(stmt.Redirs) > 0 {
+			return false
+		}
+		switch command := stmt.Cmd.(type) {
+		case *syntax.BinaryCmd:
+			return command.Op == syntax.AndStmt && visit(command.X) && visit(command.Y)
+		case *syntax.CallExpr:
+			if len(command.Assigns) > 0 || len(command.Args) == 0 {
 				return false
+			}
+			var words []string
+			for _, word := range command.Args {
+				text, static := rubyStaticWord(word)
+				if !static {
+					return false
+				}
+				words = append(words, text)
 			}
 			if len(words) > 2 && words[0] == "bundle" && words[1] == "exec" {
 				words = words[2:]
-				if strings.ContainsAny(words[0], "$=/") {
-					return false
-				}
+			}
+			if strings.ContainsAny(words[0], "$=/") {
+				return false
 			}
 			switch {
 			case slices.Contains(rubyMaintenanceTools, words[0]):
@@ -140,9 +157,40 @@ func rubyMaintenanceStep(run string) bool {
 			default:
 				return false
 			}
+			return true
+		}
+		return false
+	}
+	for _, stmt := range file.Stmts {
+		if !visit(stmt) {
+			return false
 		}
 	}
 	return tools > 0
+}
+
+// rubyStaticWord returns a word made only of literal and quoted literal text.
+func rubyStaticWord(word *syntax.Word) (string, bool) {
+	var text strings.Builder
+	for _, part := range word.Parts {
+		switch part := part.(type) {
+		case *syntax.Lit:
+			text.WriteString(part.Value)
+		case *syntax.SglQuoted:
+			text.WriteString(part.Value)
+		case *syntax.DblQuoted:
+			for _, inner := range part.Parts {
+				literal, ok := inner.(*syntax.Lit)
+				if !ok {
+					return "", false
+				}
+				text.WriteString(literal.Value)
+			}
+		default:
+			return "", false
+		}
+	}
+	return text.String(), true
 }
 
 // rubyOutsideUninstrumentedJob reports whether a command that only mentions
@@ -247,7 +295,7 @@ func resolveRubyRakeTargets(root, directory, run string, command, words []string
 		otherFramework = " (including the other Ruby framework's " + other + " task)"
 	}
 	note := "This CI step also runs Rake task(s) " + strings.Join(others, ", ") + otherFramework + " in the same process. Local validation covers only " + shellquote.Join(selected...) + "; instrumenting this step also reports those tasks' tests to Datadog, and they are not validated. Report this to the user; running " + framework + " in its own step keeps the other tasks uninstrumented."
-	return commandResolution{Matched: true, ReviewReason: note, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(selected...), StepScopeNote: note}}}, true
+	return commandResolution{Matched: true, ReviewReason: note, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(selected...), StepScopeNotes: []string{note}}}}, true
 }
 
 // rubyDefaultTarget is one literal default task declaration, such as
@@ -353,7 +401,7 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 				if conditionErr == nil && !active {
 					continue
 				}
-				ruby, tracer, action := "", "", ""
+				ruby, tracer, action, rubygems := "", "", "", ""
 				var inputs map[string]string
 				skippedAction := false
 				var actionErr error
@@ -367,7 +415,7 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 						continue
 					}
 					if uses == "ruby/setup-ruby" {
-						ruby, tracer, action, actionErr, inputs = "", "", "", nil, nil
+						ruby, tracer, action, actionErr, inputs, rubygems = "", "", "", nil, nil, ""
 						skippedAction = false
 					}
 					if uses == githubAction {
@@ -376,6 +424,7 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 					if conditionErr == nil && stepErr == nil {
 						if uses == "ruby/setup-ruby" && hasVersion {
 							ruby, _ = runtimeValue(step.With["ruby-version"], row)
+							rubygems = step.With["rubygems"]
 							// A missing version may come from .ruby-version, but
 							// the runner's implicit defaults are not certified here.
 						}
@@ -417,6 +466,9 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 						finding.Reason = "Ruby CI scope needs review: " + strings.TrimSpace(strings.Join(reasons, "; "))
 					} else if ruby != "" && tracer != "" && action != "" {
 						finding.Status, finding.Reason = "not checked", "Check the selected Ruby with the bundled tracer's RubyGems requirements and compare tracer releases."
+						if reason := rubyGemsResolverProblem(ruby, rubygems, row); reason != "" {
+							finding.Status, finding.Reason = "inconclusive", reason
+						}
 					} else if action == "" && skippedAction {
 						finding.Status, finding.Code = "excluded", "excluded_runtime"
 						finding.Reason = "The Datadog action is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."
@@ -434,6 +486,39 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 		result.Status, result.Reason = "inconclusive", "Ruby CI runtime and tracer selections need validation against the local bundle."
 	}
 	return result
+}
+
+// rubyGemsResolverPin is the ruby/setup-ruby input that gives every Ruby 2.7
+// row a RubyGems able to resolve the tracer's portable gems.
+const rubyGemsResolverPin = "rubygems: ${{ startsWith(matrix.ruby, '2.7') && '3.4.22' || 'default' }}"
+
+// rubyGemsResolverProblem explains why an instrumented Ruby 2.7.x row would
+// install the tracer with Ruby 2.7's own RubyGems 3.1, which can select a
+// native archive requiring Ruby 3.0. Empty when the row's rubygems input
+// statically selects RubyGems 3.2 or later, or the row is not Ruby 2.7.
+func rubyGemsResolverProblem(ruby, rubygems string, row map[string]any) string {
+	if ruby != "2.7" && !strings.HasPrefix(ruby, "2.7.") {
+		return ""
+	}
+	selected := strings.TrimSpace(rubygems)
+	if strings.Contains(selected, "${{") {
+		parser := conditionParser{rest: strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(selected, "${{"), "}}")), row: row}
+		value, err := parser.expression(0)
+		text, known := conditionString(value)
+		if err != nil || !known || strings.TrimSpace(parser.rest) != "" {
+			return "The rubygems input of ruby/setup-ruby could not be resolved for this Ruby " + ruby + " entry; use " + rubyGemsResolverPin + " (with the actual axis name)."
+		}
+		selected = text
+	}
+	parts := strings.SplitN(selected, ".", 3)
+	if len(parts) >= 2 {
+		major, majorErr := strconv.Atoi(parts[0])
+		minor, minorErr := strconv.Atoi(parts[1])
+		if majorErr == nil && minorErr == nil && (major > 3 || major == 3 && minor >= 2) {
+			return ""
+		}
+	}
+	return "Ruby " + ruby + " installs the tracer with RubyGems 3.1, which can select a native gem requiring Ruby 3.0. Set " + rubyGemsResolverPin + " on ruby/setup-ruby (with the actual axis name) so every 2.7.x entry is covered."
 }
 
 func rubyBootstrapProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {

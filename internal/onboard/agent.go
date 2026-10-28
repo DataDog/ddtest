@@ -226,6 +226,15 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input", RequiredInput: []string{"Omit --command to onboard every discovered configuration, or validate one suite with testdrive --framework " + runner.Name() + " --command <command>."}}))
 	}
 	automatic := discoveryLanguageAutomaticSetup(detected.Name())
+	if !automatic && options.Site == "" {
+		// Like onboard --apply, DD_SITE is the default site. The agent writes
+		// it into the action and the validation command records it.
+		options.Site = os.Getenv("DD_SITE")
+	}
+	if !automatic && strings.Trim(options.Site, "abcdefghijklmnopqrstuvwxyz0123456789.-") != "" {
+		err := fmt.Errorf("site must be a literal Datadog hostname: %q", options.Site)
+		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input"}))
+	}
 	command := OnboardingCommand(runner.Name())
 	if !automatic {
 		// The agent applies CI setup by hand; validation runs through the coordinator.
@@ -315,10 +324,13 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 	if len(unresolved) > 0 {
 		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers; tell the user now that they need a scope decision. ", len(unresolved))
 	}
+	var notes []string
 	for _, entry := range scope.Commands {
-		if entry.StepScopeNote != "" {
-			reason += "Shared CI step: " + entry.StepScopeNote + " "
-			break
+		for _, note := range entry.StepScopeNotes {
+			if !slices.Contains(notes, note) {
+				notes = append(notes, note)
+				reason += "Shared CI step: " + note + " "
+			}
 		}
 	}
 	reason += AgentScope + " " + notice

@@ -1,8 +1,10 @@
 package onboard
 
 import (
-	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // A step that runs both frameworks validates each framework's own task,
@@ -21,7 +23,7 @@ func TestRubyMixedRakeConsumersValidateEachFrameworkTask(t *testing.T) {
 			require.Len(t, scope.Commands, 1)
 			require.Contains(t, scope.Commands[0].Command, "rake "+own, framework+": "+command)
 			require.NotContains(t, scope.Commands[0].Command, other, framework+": "+command)
-			require.Contains(t, scope.Commands[0].StepScopeNote, "other Ruby framework's "+other)
+			require.Contains(t, strings.Join(scope.Commands[0].StepScopeNotes, "\n"), "other Ruby framework's "+other)
 			require.Len(t, scope.Commands[0].Locations, 1)
 			ci := RubyCIConfiguration(root, framework)
 			require.NotEmpty(t, ci.Jobs, "the mixed CI consumer must remain required")

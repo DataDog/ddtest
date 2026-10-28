@@ -142,8 +142,10 @@ func summarizeValidation(result validationResult) validationSummary {
 	// Work a validated CI step runs besides the selected framework is reported,
 	// never certified.
 	for _, configuration := range result.Configurations {
-		if note := configuration.StepScopeNote; note != "" && !slices.Contains(caveats, note) {
-			caveats = append(caveats, note)
+		for _, note := range configuration.StepScopeNotes {
+			if !slices.Contains(caveats, note) {
+				caveats = append(caveats, note)
+			}
 		}
 	}
 	if result.CIRuntime != nil {

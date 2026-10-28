@@ -170,11 +170,50 @@ func rubyBundleSetupCommand(entry onboard.TestCommand, gemfile string) ([]string
 	return append(command, "ruby", "-C", directory, "-S", "bundle", "install", "--gemfile", filepath.ToSlash(selected)), nil
 }
 
+// The inventory goes to a private file: gemspecs and their Git commands may
+// print diagnostics on stdout or stderr.
 const rubyPackageFilesScript = `require 'json'; require 'rubygems'
 spec = Gem::Specification.load(ARGV.fetch(0))
 abort 'gemspec did not load' unless spec
-puts JSON.generate(spec.files)
+File.write(ARGV.fetch(1), JSON.generate(spec.files))
 `
+
+// ownedGemspecRepository gives the copy its own Git repository with the
+// customer's history, tags and HEAD, so gemspecs using git ls-files, git
+// describe, git log or git ls-tree HEAD load as they do in a release. The
+// clone reads the customer's objects through alternates and has no remote;
+// nothing is written to the customer repository. Without a readable
+// repository, an empty one keeps the index-only behavior.
+func (t *Testdrive) ownedGemspecRepository(ctx context.Context, executor directoryExecutor, root string, gitEnv map[string]string) error {
+	clone := filepath.Join(root, ".ddtest-gemspec-git")
+	if _, err := executor.CombinedOutputInDirectory(ctx, root, "git", []string{"clone", "--quiet", "--shared", "--no-checkout", "--", t.repositoryRoot, clone}, nil); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		_ = os.RemoveAll(clone)
+		_, err := executor.CombinedOutputInDirectory(ctx, root, "git", []string{"init", "--quiet"}, gitEnv)
+		return err
+	}
+	if err := os.Rename(filepath.Join(clone, ".git"), filepath.Join(root, ".git")); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(clone); err != nil {
+		return err
+	}
+	// A push or fetch from gemspec code must not reach the customer repository.
+	if _, err := executor.CombinedOutputInDirectory(ctx, root, "git", []string{"remote", "remove", "origin"}, gitEnv); err != nil {
+		return err
+	}
+	// Match the customer's checked-out commit, including a detached HEAD.
+	if head, err := executor.CombinedOutputInDirectory(ctx, t.repositoryRoot, "git", []string{"rev-parse", "--verify", "--quiet", "HEAD"}, nil); err == nil {
+		if commit := strings.TrimSpace(string(head)); commit != "" {
+			if _, err := executor.CombinedOutputInDirectory(ctx, root, "git", []string{"update-ref", "--no-deref", "HEAD", commit}, gitEnv); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 // rubyPackageExclusions loads every repository gemspec in an owned copy and
 // fails when a gem would package the retained reports. Nothing is built or
@@ -235,12 +274,12 @@ func (t *Testdrive) checkRubyPackages(ctx context.Context, root string, specs []
 		return errors.New("gemspec inspection requires a working-directory executor")
 	}
 	// Replace copied metadata (including worktree pointers) with an owned
-	// repository. Git-based gemspecs need only the original file index.
+	// repository, so a gemspec that runs Git never writes to the customer's.
 	if err := os.RemoveAll(filepath.Join(root, ".git")); err != nil {
 		return err
 	}
 	gitEnv := map[string]string{"GIT_DIR": filepath.Join(root, ".git"), "GIT_WORK_TREE": root}
-	if _, err := executor.CombinedOutputInDirectory(ctx, root, "git", []string{"init", "--quiet"}, gitEnv); err != nil {
+	if err := t.ownedGemspecRepository(ctx, executor, root, gitEnv); err != nil {
 		return err
 	}
 	data, err := executor.CombinedOutputInDirectory(ctx, t.repositoryRoot, "git", []string{"rev-parse", "--git-path", "index"}, nil)
@@ -273,17 +312,13 @@ func (t *Testdrive) checkRubyPackages(ctx context.Context, root string, specs []
 		for _, directory := range slices.Compact([]string{root, filepath.Join(root, filepath.Dir(spec))}) {
 			env := maps.Clone(gitEnv)
 			env["RUBYOPT"] = ""
-			data, err := executor.CombinedOutputInDirectory(ctx, directory, "ruby", []string{"-e", rubyPackageFilesScript, filepath.Join(root, spec)}, env)
+			files, err := t.gemspecFiles(ctx, executor, directory, filepath.Join(root, spec), env)
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				loadErr = fmt.Errorf("inspect %s packaging: %w", spec, err)
 				continue
-			}
-			var files []string
-			if err := json.Unmarshal(data, &files); err != nil {
-				return fmt.Errorf("%s did not produce a file inventory: %w", spec, err)
 			}
 			valid = valid || len(files) > 0
 			for _, file := range files {
@@ -308,6 +343,32 @@ func (t *Testdrive) checkRubyPackages(ctx context.Context, root string, specs []
 		}
 	}
 	return nil
+}
+
+// gemspecFiles loads one gemspec's file inventory through a private result
+// file; the command's own output is only a diagnostic.
+func (t *Testdrive) gemspecFiles(ctx context.Context, executor directoryExecutor, directory, spec string, env map[string]string) ([]string, error) {
+	result, err := os.CreateTemp("", "ddtest-gemspec-files-*")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.Remove(result.Name()) }()
+	if err := result.Close(); err != nil {
+		return nil, err
+	}
+	output, err := executor.CombinedOutputInDirectory(ctx, directory, "ruby", []string{"-e", rubyPackageFilesScript, spec, result.Name()}, env)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", err, commandDiagnostic(output))
+	}
+	data, err := os.ReadFile(result.Name())
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	if err := json.Unmarshal(data, &files); err != nil {
+		return nil, fmt.Errorf("%s did not produce a file inventory: %w", filepath.Base(spec), err)
+	}
+	return files, nil
 }
 
 // fingerprintRubyBundles binds receipts to the actual bundles and settings,
