@@ -22,7 +22,7 @@ import (
 func ciFidelity(result *validationResult) (caveats, blockers []string) {
 	for _, sub := range result.substitutions() {
 		if sub.Accepted {
-			caveats = append(caveats, fmt.Sprintf("runtime fidelity: validated on substitute Node %s; %s runs on Node %s (accepted).", sub.Local, sub.Source, sub.CI))
+			caveats = append(caveats, sub.caveat())
 		}
 	}
 	for _, configuration := range result.Configurations {

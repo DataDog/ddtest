@@ -297,9 +297,12 @@ are reported.
 
 Testdrive uses the dd-java-agent release every instrumented CI job pins
 (`--tracer-version` selects another), or `DD_TRACER_FOLDER`'s agent. A CI matrix
-row is compatible only when this run validated its JDK major and agent release:
-the JDK comes from `JAVA_HOME`, else the `java` on PATH. Validate another JDK by
-running testdrive with `JAVA_HOME` set to it. `ddtest plan` and `ddtest run` do
+row is compatible when this run validated its agent release on its JDK major;
+the JDK comes from `JAVA_HOME`, else the `java` on PATH. A row of another JDK
+major is validated on the local JDK as a substitute, recorded in
+`runtime_substitutions`, which completes only with `--accept-substitute-runtime`,
+a decision for the user, and is then reported as a caveat. Validate that JDK
+instead by running testdrive with `JAVA_HOME` set to it. `ddtest plan` and `ddtest run` do
 not support Java: the agent performs Test Impact Analysis inside the Maven build.
 Other Maven frameworks run reporting-only checks.
 

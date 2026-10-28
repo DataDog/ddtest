@@ -407,37 +407,51 @@ func javaCIFixture(t *testing.T, matrix string) string {
 	return root
 }
 
-func TestJavaCIRuntimeCertifiesOnlyTheValidatedJDKAndAgent(t *testing.T) {
-	root := javaCIFixture(t, "['17', '21']")
+func TestJavaCIRuntimeCertifiesTheValidatedJDKOrAnAcceptedSubstitute(t *testing.T) {
+	root := javaCIFixture(t, "['17', '21', '21.0.4']")
 	drive := &Testdrive{repositoryRoot: root, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"-B", "clean", "verify"}, tracerVersion: "1.67.1"}
-	ci, err := drive.javaCIRuntime("17.0.20")
+	ci, substitutions, err := drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
-	require.Len(t, ci.Jobs, 2, "the CI step validated as mvn -B clean verify matches both rows")
+	require.Len(t, ci.Jobs, 3, "the CI step validated as mvn -B clean verify matches every row")
 	status := map[string]string{}
 	for _, job := range ci.Jobs {
 		status[job.Runtime] = job.Status + ": " + job.Reason
 	}
 	require.Contains(t, status["17"], "compatible: dd-java-agent 1.67.1 is validated on this host's Java 17.0.20.")
-	require.Contains(t, status["21"], "inconclusive: This run validates Java 17.0.20. Validate Java 21 by running testdrive with JAVA_HOME")
-	require.Equal(t, "inconclusive", ci.Status)
+	require.Contains(t, status["21"], "compatible: dd-java-agent 1.67.1 is validated on this host's Java 17.0.20 as a substitute for Java 21.")
+	require.Equal(t, "compatible", ci.Status)
+	require.Len(t, substitutions, 1, "one substitution per other CI JDK major")
+	substitution := substitutions[0]
+	require.Equal(t, []string{"21", "17.0.20", "Java"}, []string{substitution.CI, substitution.Local, substitution.Runtime})
+	require.False(t, substitution.Accepted, "only the user accepts a substitute")
+	require.Contains(t, substitution.blocker(), "validated on substitute Java 17.0.20")
+	require.Contains(t, substitution.blocker(), "Accept this evidence with --accept-substitute-runtime, or set JAVA_HOME to an existing Java 21 JDK and rerun")
+	drive.acceptSubstituteRuntime = true
+	_, substitutions, err = drive.javaCIRuntime("17.0.20")
+	require.NoError(t, err)
+	require.True(t, substitutions[0].Accepted)
+	require.Contains(t, substitutions[0].caveat(), "validated on substitute Java 17.0.20")
 
-	drive.tracerVersion = "1.70.0"
-	ci, err = drive.javaCIRuntime("17.0.20")
+	drive.tracerVersion, drive.acceptSubstituteRuntime = "1.70.0", false
+	ci, substitutions, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
 	require.Contains(t, ci.Jobs[0].Reason, "CI pins dd-java-agent 1.67.1, but this run validates 1.70.0")
+	require.Empty(t, substitutions, "another agent release validates no row, on any JDK")
 
 	drive.tracerVersion, drive.checkOnly = "1.67.1", true
-	ci, err = drive.javaCIRuntime("17.0.20")
+	ci, substitutions, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
 	require.Equal(t, "inconclusive", ci.Jobs[0].Status, "configuration-only checks run nothing")
+	require.Empty(t, substitutions)
 
 	single := javaCIFixture(t, "['17']")
 	drive = &Testdrive{repositoryRoot: single, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"-B", "clean", "verify"}, tracerVersion: "1.67.1"}
-	ci, err = drive.javaCIRuntime("17.0.20")
+	ci, substitutions, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
 	require.Equal(t, "compatible", ci.Status)
+	require.Empty(t, substitutions)
 	drive.args = []string{"test"}
-	ci, err = drive.javaCIRuntime("17.0.20")
+	ci, _, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
 	require.Contains(t, ci.Reason, "No CI consumer matches this Maven command", "a local command that CI does not run certifies no CI row")
 }

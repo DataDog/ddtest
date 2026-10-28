@@ -200,11 +200,17 @@ public class ExampleTest {
 		if pin == "latest" {
 			pin = "1.67.1"
 		}
-		workflow := "jobs:\n  tests:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        java: ['" + localJava(t) + "', '26-ea']\n    steps:\n      - uses: actions/setup-java@v4\n        with: {distribution: temurin, java-version: '${{ matrix.java }}'}\nACTION      - run: mvn -B clean install\n"
+		// Another JDK major, which only an accepted substitute validates locally.
+		other := "21"
+		if localJava(t) == "21" {
+			other = "17"
+		}
+		workflow := "jobs:\n  tests:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        java: ['" + localJava(t) + "', '" + other + "', '26-ea']\n    steps:\n      - uses: actions/setup-java@v4\n        with: {distribution: temurin, java-version: '${{ matrix.java }}'}\nACTION      - run: mvn -B clean install\n"
 		integrationFile(t, root, ".github/workflows/test.yml", strings.Replace(workflow, "ACTION", "", 1))
 		type agentResult struct {
 			Status        string
 			Code          string
+			RequiredInput []string `json:"required_input"`
 			ResumeCommand []string `json:"resume_command"`
 			NextCommand   []string `json:"next_command"`
 			FinalResponse string   `json:"final_response"`
@@ -225,12 +231,17 @@ public class ExampleTest {
 		// The agent's edit, as the instructions prescribe.
 		action := "      - uses: datadog/test-visibility-github-action@v3\n        if: ${{ !contains(matrix.java, '-ea') }}\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '" + pin + "'}\n"
 		integrationFile(t, root, ".github/workflows/test.yml", strings.Replace(workflow, "ACTION", action, 1))
-		validation := run(start.ResumeCommand)
+		decision := run(start.ResumeCommand)
+		require.Equal(t, "substitute_runtime_unaccepted", decision.Code, "%+v", decision)
+		require.Contains(t, decision.RequiredInput[0], "set JAVA_HOME to an existing Java "+other+" JDK")
+		require.Contains(t, decision.ResumeCommand, "--accept-substitute-runtime", "the user's acceptance resumes validation")
+		validation := run(decision.ResumeCommand)
 		require.Equal(t, "complete_locally", validation.Status, "%+v", validation)
 		report := run(validation.NextCommand)
 		require.Equal(t, "complete_locally", report.Status, "%+v", report)
 		require.Contains(t, report.FinalResponse, "Onboarding validation: COMPLETE LOCALLY")
 		require.Contains(t, report.FinalResponse, "1 excluded from instrumentation", "the early-access JDK keeps its uninstrumented tests")
+		require.Contains(t, report.FinalResponse, "runs on Java "+other+" (accepted)", "the accepted substitute is a caveat")
 		require.NoDirExists(t, filepath.Join(root, "target"))
 	})
 }
