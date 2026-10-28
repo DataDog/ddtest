@@ -113,3 +113,7 @@ func (javascriptDiscovery) automaticProviderSetup(framework string) bool {
 
 // Node versions no tracer supports are skipped through skipsUnsupportedNode.
 func (javascriptDiscovery) unsupportedImage(string) string { return "" }
+
+func (javascriptDiscovery) runtimeVariable(name string) bool {
+	return slices.Contains([]string{"NODE_OPTIONS", "NODE_PATH", "NODE_ENV"}, name) || strings.HasPrefix(strings.ToLower(name), "npm_config_")
+}

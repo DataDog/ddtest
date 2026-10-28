@@ -81,7 +81,7 @@ func TestGitLabRubySetupCompleteness(t *testing.T) {
 }
 
 func TestGitLabRubyInventoryReadsTheImage(t *testing.T) {
-	root := gitLabRubyRepository(t, rubyJob("ruby:3.3-slim", "", "")+"jruby:\n  image: jruby:9.4\n  script:\n    - bundle exec rspec\n")
+	root := gitLabRubyRepository(t, rubyJob("ruby:3.3-slim", "    - "+gitLabCurlInstall+"\n", "")+"jruby:\n  image: jruby:9.4\n  script:\n    - bundle exec rspec\n")
 	check := RubyCIConfigurationForSite(root, "rspec", "")
 	require.Len(t, check.Jobs, 2)
 	byJob := map[string]RuntimeFinding{}
@@ -476,7 +476,7 @@ func TestGitLabSetupNeedsBash(t *testing.T) {
 	jobs, _ := gitLabJobs(t, root)
 	require.Contains(t, jobs["rspec"].Steps[0].Setup.Problem, "has no Bash")
 	require.Empty(t, jobs["rspec"].Steps[1].Env["RUBYOPT"], "a setup that cannot run exports nothing")
-	for image, refused := range map[string]bool{"node:22-alpine": true, "node:22-alpine3.20": true, "busybox": true, "gcr.io/distroless/nodejs22-debian12": true, "node:22": false, "node:22-slim": false, "registry.example.com/ci/node:22": false} {
+	for image, refused := range map[string]bool{"node:22-alpine": true, "node:22-alpine3.20": true, "busybox": true, "gcr.io/distroless/nodejs22-debian12": true, "node:22": false, "registry.example.com/ci/node:22": false} {
 		_, _, err := planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: " + image + "\n  script:\n    - npm test\n"})
 		if refused {
 			var gap *SetupGap
@@ -884,4 +884,74 @@ func TestGitLabRubyGemsUpdateMustPrecedeTheSetup(t *testing.T) {
 		reasons += finding.Reason
 	}
 	require.Contains(t, reasons, "Run gem update --system 3.4.22 before it")
+}
+
+// Official slim images have no curl, so the setup script can't be
+// downloaded: the setup is incomplete and apply asks for the fix. An
+// earlier curl install makes it runnable.
+func TestGitLabSlimImagesNeedCurl(t *testing.T) {
+	useCIProvider(t, "gitlab")
+	root := gitLabRubyRepository(t, rubyJob("ruby:3.3-slim", "", ""))
+	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
+	jobs, _ := gitLabJobs(t, root)
+	require.Contains(t, jobs["rspec"].Steps[0].Setup.Problem, "has no curl")
+	root = gitLabRubyRepository(t, rubyJob("ruby:3.3-slim", "    - "+gitLabCurlInstall+"\n", ""))
+	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
+	_, _, err := planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: node:22-bookworm-slim\n  script:\n    - npm test\n"})
+	var gap *EditThenApplyGap
+	require.ErrorAs(t, err, &gap)
+	require.Contains(t, gap.Reason, gitLabCurlInstall)
+	_, _, err = planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: node:22-slim\n  script:\n    - " + gitLabCurlInstall + "\n    - npm test\n"})
+	require.NoError(t, err)
+}
+
+// An image ddtest cannot resolve may lack Bash or curl: no apply, no
+// complete setup.
+func TestGitLabUnresolvedImagesBlockSetup(t *testing.T) {
+	useCIProvider(t, "gitlab")
+	_, _, err := planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: $NODE_IMAGE\n  script:\n    - npm test\n"})
+	var gap *EditThenApplyGap
+	require.ErrorAs(t, err, &gap)
+	require.Contains(t, gap.Reason, "depends on a variable ddtest cannot resolve")
+	root := gitLabRubyRepository(t, rubyJob("$RUBY_IMAGE", "", ""))
+	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
+}
+
+// Container-launched tests stay in scope.
+func TestContainerLaunchedTestsStayInScope(t *testing.T) {
+	root := newJestRepository(t, "jobs:\n  e2e:\n    steps:\n      - run: docker compose run --rm tests\n")
+	require.True(t, mentionsFramework(root, root, "docker compose run --rm tests", "jest", 0))
+	require.True(t, mentionsFramework(root, root, "docker run node:22 npm test", "jest", 0))
+}
+
+// A negated key guard runs the setup without the key: not a setup.
+func TestGitLabNegatedKeyGuardIsNotASetup(t *testing.T) {
+	useCIProvider(t, "gitlab")
+	entry := strings.Replace(gitLabGuardedEntry(gitLabRubySetup, "DD_API_KEY"), `if [ -n "$DD_API_KEY" ]`, `if ! [ -n "$DD_API_KEY" ]`, 1)
+	root := gitLabRubyRepository(t, "rspec:\n  image: ruby:3.3\n  script:\n"+entry+"    - bundle exec rspec\n")
+	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
+}
+
+// A single-quoted '$DD_API_KEY' is passed to the installer as text, not
+// the key, whether in the entry or an earlier assignment.
+func TestGitLabLiteralAPIKeyIsNotAReference(t *testing.T) {
+	useCIProvider(t, "gitlab")
+	root := gitLabRubyRepository(t, rubyJob("ruby:3.3", "", "")+"")
+	writeFile(t, root, ".gitlab-ci.yml", strings.Replace(rubyJob("ruby:3.3", "", ""), `API_KEY="$DD_API_KEY"`, `API_KEY='$DD_API_KEY'`, 1))
+	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
+	writeFile(t, root, ".gitlab-ci.yml", "rspec:\n  image: ruby:3.3\n  script:\n    - API_KEY='$DD_API_KEY'\n"+gitLabSetupEntry(`LANGUAGES="ruby" RUBY_TRACER_VERSION="1.42.0"`)+"    - bundle exec rspec\n")
+	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
+	writeFile(t, root, ".gitlab-ci.yml", "rspec:\n  image: ruby:3.3\n  script:\n    - API_KEY=\"$DD_API_KEY\"\n"+gitLabSetupEntry(`LANGUAGES="ruby" RUBY_TRACER_VERSION="1.42.0"`)+"    - bundle exec rspec\n")
+	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
+}
+
+// Changing an exported variable such as PATH reaches later commands:
+// a PATH that selects another runtime is not ignored, while prepending the
+// repository's node_modules/.bin is.
+func TestGitLabInheritedVariableAssignments(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".gitlab-ci.yml", "other:\n  script:\n    - PATH=/opt/node16/bin:$PATH\n    - npm test\nlocal:\n  script:\n    - PATH=$(realpath ./node_modules/.bin):$PATH\n    - npm test\n")
+	jobs, _ := gitLabJobs(t, root)
+	require.Contains(t, jobs["other"].Steps[1].Env, "PATH")
+	require.NotContains(t, jobs["local"].Steps[1].Env, "PATH")
 }

@@ -65,3 +65,7 @@ func (pythonDiscovery) unsupportedImage(string) string { return "" }
 func (pythonDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) bool {
 	return false
 }
+
+func (pythonDiscovery) runtimeVariable(name string) bool {
+	return name == "PYTHONPATH" || name == "PYTHONHOME"
+}

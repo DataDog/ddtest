@@ -111,7 +111,7 @@ func gitLabStateOnly(stmt *syntax.Stmt) bool {
 // gitLabKeyGuard is the variable a [ -n "$NAME" ] or test -n "$NAME"
 // condition checks, or "".
 func gitLabKeyGuard(condition []*syntax.Stmt) string {
-	if len(condition) != 1 {
+	if len(condition) != 1 || condition[0].Negated {
 		return ""
 	}
 	call, ok := condition[0].Cmd.(*syntax.CallExpr)
@@ -165,7 +165,7 @@ func gitLabSources(stmts []*syntax.Stmt) bool {
 // script. Supported means a release ddtest knows, sourced only after its
 // SHA256 check passes. Inputs come from the entry's own assignments, then
 // from the job's variables and earlier exports (known).
-func gitLabSetupInvocation(command string, known map[string]string) (ciSetup, bool) {
+func gitLabSetupInvocation(command string, known map[string]string, literal ...map[string]bool) (ciSetup, bool) {
 	match := gitLabSetupURL.FindStringSubmatch(command)
 	if match == nil {
 		return ciSetup{}, false
@@ -173,9 +173,13 @@ func gitLabSetupInvocation(command string, known map[string]string) (ciSetup, bo
 	release := match[1]
 	setup := ciSetup{Reference: "test-optimization-gitlab-script " + release, Pinned: gitLabSetupVersion.MatchString(release), DefaultLatest: true, Inputs: map[string]string{}}
 	checksum := gitLabSetupChecksum.FindStringSubmatch(command)
+	written := map[string]bool{}
+	if len(literal) > 0 {
+		written = literal[0]
+	}
 	for variable, value := range known {
 		if input, ok := gitLabSetupInput(variable); ok {
-			setup.Inputs[input] = value
+			setup.Inputs[input] = gitLabLiteralInput(value, written[variable])
 		}
 	}
 	if site, ok := known["DD_SITE"]; ok && setup.Inputs["site"] == "" {
@@ -205,7 +209,7 @@ func gitLabSetupInvocation(command string, known map[string]string) (ciSetup, bo
 				continue
 			}
 			value, _ := gitLabWord(assign.Value, known, "")
-			setup.Inputs[input] = value
+			setup.Inputs[input] = gitLabLiteralInput(value, !gitLabExpands(assign.Value))
 		}
 	}
 	// A guard must test the variable API_KEY reads, so the script runs
@@ -424,6 +428,11 @@ func (s *gitLabState) assign(assigns []*syntax.Assign, known map[string]string, 
 			}
 			continue
 		}
+		if name == "PATH" && assign.Value != nil && gitLabRepositoryBinPath(assign.Value) {
+			// Prepending the repository's node_modules/.bin selects the
+			// tools local validation already resolves from it.
+			continue
+		}
 		visible := mergeEnvironment(mergeEnvironment(known, s.references), s.env)
 		value, literal := "", true
 		if assign.Value != nil {
@@ -432,7 +441,7 @@ func (s *gitLabState) assign(assigns []*syntax.Assign, known map[string]string, 
 		if assign.Append {
 			value = visible[name] + value
 		}
-		if !literal {
+		if _, input := gitLabSetupInput(name); !literal && !input {
 			// A computed value or an unknown read stays unresolved wherever the
 			// value is used, rather than replayed as text.
 			value = unresolvedCIValue(value)
@@ -443,7 +452,13 @@ func (s *gitLabState) assign(assigns []*syntax.Assign, known map[string]string, 
 		if _, inJob := s.job[name]; inJob {
 			exported = true
 		}
-		if export || exported {
+		if _, input := gitLabSetupInput(name); input && assign.Value != nil {
+			if s.literal == nil {
+				s.literal = map[string]bool{}
+			}
+			s.literal[name] = !gitLabExpands(assign.Value)
+		}
+		if export || exported || gitLabRunnerExported(name) {
 			s.env[name] = value
 			delete(s.references, name)
 		} else {
@@ -630,4 +645,67 @@ func gitLabResolveBranches(command string, known map[string]string) string {
 // when unset, which keeps set -u scripts running).
 func gitLabEmptyDefault(expansion *syntax.Expansion) bool {
 	return expansion == nil || expansion.Op == syntax.DefaultUnsetOrNull && (expansion.Word == nil || len(expansion.Word.Parts) == 0)
+}
+
+// gitLabExpands reports whether a shell word expands a variable, outside
+// single quotes.
+func gitLabExpands(word *syntax.Word) bool {
+	expands := false
+	syntax.Walk(word, func(node syntax.Node) bool {
+		switch node.(type) {
+		case *syntax.SglQuoted:
+			return false
+		case *syntax.ParamExp:
+			expands = true
+		}
+		return !expands
+	})
+	return expands
+}
+
+// gitLabLiteralInput keeps a value written literally, such as
+// API_KEY='$DD_API_KEY', from passing for a variable reference: the
+// installer receives the text itself.
+func gitLabLiteralInput(value string, literal bool) string {
+	if literal && strings.Contains(value, "$") {
+		return "'" + value + "'"
+	}
+	return value
+}
+
+// gitLabRunnerExported reports variables the runner or the image exports
+// to every process, such as PATH or a language runtime's options: assigning
+// one changes the environment of later commands even without export.
+func gitLabRunnerExported(name string) bool {
+	if slices.Contains([]string{"PATH", "HOME", "LANG", "TZ"}, name) {
+		return true
+	}
+	for _, prefix := range []string{"CI_", "GITLAB_", "LC_", "DD_"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool { return language.runtimeVariable(name) })
+}
+
+// gitLabRepositoryBinPath reports a PATH value that only prepends the
+// repository's node_modules/.bin to $PATH, as in
+// PATH=$(realpath ./node_modules/.bin):$PATH.
+func gitLabRepositoryBinPath(word *syntax.Word) bool {
+	var text strings.Builder
+	if err := syntax.NewPrinter().Print(&text, word); err != nil {
+		return false
+	}
+	parts := strings.Split(strings.Trim(text.String(), `"`), ":")
+	sawPath := false
+	for _, part := range parts {
+		switch strings.TrimSuffix(part, "/") {
+		case "$PATH", "${PATH}":
+			sawPath = true
+		case "./node_modules/.bin", "node_modules/.bin", "$(realpath ./node_modules/.bin)", "$(realpath node_modules/.bin)", "$PWD/node_modules/.bin", "${PWD}/node_modules/.bin", "$CI_PROJECT_DIR/node_modules/.bin", "${CI_PROJECT_DIR}/node_modules/.bin":
+		default:
+			return false
+		}
+	}
+	return sawPath
 }

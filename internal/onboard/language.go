@@ -70,6 +70,9 @@ type discoveryLanguage interface {
 	// syntax: its installer token, exact tracer input, commands that must
 	// follow the setup, and its own setup rules.
 	ciSetupRequest(root, framework, site string) ciSetupRequest
+	// runtimeVariable reports an environment variable the language's
+	// runtime or tools read, which images commonly export.
+	runtimeVariable(name string) bool
 	// outsideFrameworkJob reports whether a CI job, on one matrix row,
 	// cannot run framework's tests: nothing it runs (following package and
 	// repository scripts) mentions the framework. Such a job without the

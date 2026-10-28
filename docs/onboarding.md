@@ -146,9 +146,11 @@ that runs the tests, the script runs before the first test command with
 (`"$DD_API_KEY"`), an exact `<LANGUAGE>_TRACER_VERSION` and a `SITE` matching
 the selected site. A person adds `DD_API_KEY` as a masked CI/CD variable; jobs
 without it (protected variables on other branches, forks) log that Test
-Optimization is disabled and run their tests untraced. The entry needs Bash, so jobs on images known to lack it (Alpine
-variants, BusyBox, distroless) are refused with that reason; other images are
-assumed to have Bash. Runtimes come from the job's `image:`
+Optimization is disabled and run their tests untraced. The entry needs Bash and curl, so jobs on images known to lack them (Alpine
+variants, BusyBox, distroless; Docker's official `-slim` images, which drop
+curl, unless an earlier entry runs `apt-get install -y curl`) or on images
+ddtest cannot resolve (`image: $NODE_IMAGE`) are refused with that reason;
+other images are assumed to have both. Runtimes come from the job's `image:`
 (`node:22`, `ruby:3.3-slim`); floating tags such as `latest` stay
 inconclusive.
 

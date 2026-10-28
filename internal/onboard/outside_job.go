@@ -111,7 +111,7 @@ func mentionsCommand(root, directory string, words []string, framework string, d
 var releaseTools = []string{
 	"cp", "mv", "rm", "mkdir", "rmdir", "ln", "touch", "cat", "echo", "printf", "ls", "pwd", "cd", "pushd", "popd", "true", "chmod", "realpath", "dirname", "basename", "which",
 	"zip", "unzip", "tar", "gzip", "gunzip", "sha256sum", "shasum", "md5sum",
-	"git", "sentry-cli", "web-ext", "gh", "glab", "release-cli", "docker", "aws", "gsutil", "az",
+	"git", "sentry-cli", "web-ext", "gh", "glab", "release-cli", "aws", "gsutil", "az",
 	"webpack", "rollup", "esbuild", "tsc", "tsup", "babel", "parcel", "swc", "terser", "eslint", "prettier", "stylelint", "formatjs",
 	"npm", "pnpm", "yarn", "bun",
 }

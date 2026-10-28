@@ -142,3 +142,7 @@ func (javaDiscovery) unsupportedImage(string) string { return "" }
 func (javaDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) bool {
 	return false
 }
+
+func (javaDiscovery) runtimeVariable(name string) bool {
+	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"
+}

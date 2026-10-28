@@ -786,6 +786,13 @@ func (c *gitLabConfig) convert(job gitLabJob, globals map[string]string) map[str
 		return jobs
 	}
 	if fields["script"] == nil {
+		if fields["run"] != nil {
+			// GitLab CI steps (run:) execute components ddtest cannot read.
+			globalsOnly := gitLabExpandVariables(mergeEnvironment(globals, gitLabVariables(fields["variables"])))
+			if gitLabScalar(fields["when"]) != "never" && (fields["rules"] == nil || gitLabEvaluateRules(fields["rules"], globalsOnly).state != gitLabNever) {
+				unresolved(job.name, "uses GitLab CI run steps, which ddtest cannot resolve locally; validate that job's tests separately")
+			}
+		}
 		return jobs // Not a job GitLab runs.
 	}
 	inherited := maps.Clone(globals)
@@ -1362,7 +1369,7 @@ func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image 
 		}
 		command := entry.node.Value
 		current := mergeEnvironment(env, state.env)
-		if setup, ok := gitLabSetupInvocation(command, mergeEnvironment(current, state.references)); ok {
+		if setup, ok := gitLabSetupInvocation(command, mergeEnvironment(current, state.references), state.literal); ok {
 			if setup.Problem == "" && !setup.shaped {
 				// Other commands in the entry would disappear with the setup.
 				step.Run = command
@@ -1370,7 +1377,7 @@ func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image 
 				steps = append(steps, step)
 				continue
 			}
-			if reason := gitLabShellProblem(image); reason != "" && setup.Problem == "" {
+			if reason := gitLabImageProblem(image, state.curl); reason != "" && setup.Problem == "" {
 				setup.Problem = reason
 			}
 			step.Setup = &setup
@@ -1386,6 +1393,7 @@ func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image 
 			continue
 		}
 		command = gitLabResolveBranches(command, mergeEnvironment(current, state.references))
+		state.curl = state.curl || gitLabInstallsCurl(command)
 		step.Run = command
 		if consumed := strings.TrimSpace(command) == "" || state.apply(command, current); consumed {
 			step.Run = ""
@@ -1405,11 +1413,41 @@ func gitLabShellProblem(image string) string {
 	if name == "" {
 		return ""
 	}
+	if strings.Contains(name, "$") {
+		return "The job image " + image + " depends on a variable ddtest cannot resolve, so it cannot tell whether the image has the Bash and curl the Datadog setup script needs. Give the job a literal image (or a variable defined in the configuration) that has both."
+	}
 	repository, tag, _ := strings.Cut(name[strings.LastIndex(name, "/")+1:], ":")
 	if strings.Contains(tag, "alpine") || repository == "alpine" || repository == "busybox" || strings.Contains(name, "distroless") || strings.Contains(tag, "busybox") {
 		return "The job image " + image + " has no Bash, so GitLab runs its script with sh and the Datadog setup script (source, process substitution) cannot run. Use a Bash-capable image for this job, such as the non-Alpine variant, or a custom image with Bash preinstalled; installing Bash in the script does not change the job's shell."
 	}
 	return ""
+}
+
+// gitLabCurlInstall is the entry that adds curl to a Debian slim image.
+const gitLabCurlInstall = "apt-get update && apt-get install -y --no-install-recommends curl"
+
+// gitLabImageProblem explains why the setup entry cannot run in a job
+// image: no Bash, an image ddtest cannot resolve, or a slim image without
+// curl (unless an earlier entry installed it).
+func gitLabImageProblem(image string, curl bool) string {
+	if reason := gitLabShellProblem(image); reason != "" {
+		return reason
+	}
+	// Docker's official slim images remove curl and wget after building
+	// (verified on the slim language runtime images).
+	name := strings.ToLower(image)
+	official := !strings.Contains(strings.TrimPrefix(name, "docker.io/library/"), "/")
+	_, tag, _ := strings.Cut(name[strings.LastIndex(name, "/")+1:], ":")
+	if !curl && official && strings.Contains(tag, "slim") {
+		return "The job image " + image + " has no curl, so the Datadog setup script cannot be downloaded and its tests would run untraced. Use the full image (without -slim), or add an entry that installs curl before the setup entry: " + gitLabCurlInstall + "."
+	}
+	return ""
+}
+
+// gitLabInstallsCurl reports a command installing curl with apt.
+func gitLabInstallsCurl(command string) bool {
+	words := strings.Fields(command)
+	return (slices.Contains(words, "apt-get") || slices.Contains(words, "apt")) && slices.Contains(words, "install") && slices.Contains(words, "curl")
 }
 
 // gitLabState is the shell state script entries share.
@@ -1423,6 +1461,10 @@ type gitLabState struct {
 	directory string
 	// problem makes later entries unresolved.
 	problem string
+	// curl reports an earlier entry that installed curl.
+	curl bool
+	// literal marks setup inputs assigned without expansion ('$NAME').
+	literal map[string]bool
 }
 
 // applySetup adds what the setup script exports for each language it selects.

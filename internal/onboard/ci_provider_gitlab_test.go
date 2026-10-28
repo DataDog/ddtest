@@ -700,3 +700,13 @@ func TestGitLabDisabledTriggersAreNotBlockers(t *testing.T) {
 	writeFile(t, root, ".gitlab-ci.yml", "child:\n  trigger:\n    include: ci/child.yml\n  rules:\n    - if: $CI_COMMIT_TAG\n")
 	require.Contains(t, strings.Join(unresolved(t, root), "\n"), "triggers a downstream or child pipeline")
 }
+
+// Jobs using GitLab run steps can't be read: they are unresolved unless
+// they never run.
+func TestGitLabRunStepsAreUnresolved(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".gitlab-ci.yml", "steps-job:\n  run:\n    - name: test\n      step: gitlab.com/components/npm/test@1.0\noff:\n  run:\n    - name: test\n      script: npm test\n  when: never\n")
+	errors := strings.Join(unresolved(t, root), "\n")
+	require.Contains(t, errors, "GitLab CI job steps-job: uses GitLab CI run steps")
+	require.NotContains(t, errors, "job off")
+}

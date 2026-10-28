@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/stretchr/testify/require"
 )
@@ -84,4 +85,31 @@ func TestReviewedPreparationIsReported(t *testing.T) {
 	result.Configurations[0].Preparation[1].Reviewed, result.Configurations[0].Preparation[2].Reviewed, result.Configurations[1].Preparation[0].Reviewed = false, false, false
 	result.Summary = summarizeValidation(result)
 	require.NotContains(t, validationHandoff(result), "Reviewed preparation run")
+}
+
+// A plain Vitest CLI run that adopted CI preparation runs it in a prepared
+// copy before the tests; without preparation it runs as before.
+func TestAdoptedPreparationRunsBeforeCredit(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"devDependencies": {"vitest": "3.2.0"}}`), 0o644))
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript", command: "npx", args: []string{"vitest", "run"}}
+	require.False(t, drive.runsInPreparedCopy())
+	drive.selectedPlan.Prerequisites = []onboard.BuildCommand{{Directory: ".", Command: "cp config.example.json config.json", Kind: onboard.PreparationPatch}}
+	require.True(t, drive.runsInPreparedCopy())
+}
+
+// The adopted configuration's environment comes with its preparation;
+// variants that differ only by environment are never guessed between.
+func TestAdoptedPreparationKeepsItsEnvironment(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts": {"test": "mocha"}, "devDependencies": {"mocha": "11.0.0"}}`), 0o644))
+	preparation := []onboard.BuildCommand{{Directory: ".", Command: "cp config.example.json config.json", Kind: onboard.PreparationPatch}}
+	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "npm test", Prerequisites: preparation, Environment: map[string]string{"TZ": "UTC"}}}}
+	entry, ok := matchingConfigurationPreparation(scope, nil, root, "mocha", "npm test")
+	require.True(t, ok)
+	require.Equal(t, map[string]string{"TZ": "UTC"}, entry.Environment)
+	scope.Commands = append(scope.Commands, onboard.TestCommand{Directory: ".", Command: "npm test", Prerequisites: preparation, Environment: map[string]string{"TZ": "Europe/Madrid"}})
+	_, ok = matchingConfigurationPreparation(scope, nil, root, "mocha", "npm test")
+	require.False(t, ok)
 }

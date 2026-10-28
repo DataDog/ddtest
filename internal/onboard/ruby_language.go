@@ -301,3 +301,7 @@ func rubyGemPackaging(root string) string {
 	}
 	return ". The gemspec lists its files with git ls-files, so that .gitignore entry also keeps the reports out of the gem: do not edit the gemspec."
 }
+
+func (rubyDiscovery) runtimeVariable(name string) bool {
+	return slices.Contains([]string{"RUBYOPT", "RUBYLIB", "GEM_HOME", "GEM_PATH"}, name) || strings.HasPrefix(name, "BUNDLE_")
+}

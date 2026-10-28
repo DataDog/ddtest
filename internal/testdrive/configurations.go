@@ -147,7 +147,7 @@ func matchingConfigurationPreparation(scope onboard.ValidationScope, scopeErr er
 		if entry.Command != selected[0].Command || filepath.Clean(entry.Directory) != filepath.Clean(selected[0].Directory) || len(entry.Prerequisites) == 0 || len(entry.UnvalidatedSetup) > 0 || !hostConfiguration(entry) || ciInstrumentationDisabled(entry) {
 			continue
 		}
-		if found != nil && !slices.EqualFunc(found.Prerequisites, entry.Prerequisites, onboard.EqualPreparation) {
+		if found != nil && (!slices.EqualFunc(found.Prerequisites, entry.Prerequisites, onboard.EqualPreparation) || !maps.Equal(found.Environment, entry.Environment)) {
 			return onboard.TestCommand{}, false
 		}
 		candidate := entry

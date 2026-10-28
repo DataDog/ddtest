@@ -49,7 +49,7 @@ func (gitLabCI) planSetupEdits(root string, workflows []ciWorkflow, targets []ci
 		if aliased[entry.node] {
 			return nil, nil, &EditThenApplyGap{SetupGap{entry.file + ":" + strconv.Itoa(entry.node.Line), "This script entry is shared through a YAML anchor and alias (&name/*name), so one insertion cannot reach every job that runs it. Write the test command in each job's script, then rerun onboard --apply."}}
 		}
-		if reason := gitLabShellProblem(job.Image); reason != "" {
+		if reason := gitLabImageProblem(job.Image, gitLabCurlBefore(job, target.Step)); reason != "" {
 			return nil, nil, &EditThenApplyGap{SetupGap{target.Workflow + " / " + target.Job, reason}}
 		}
 		after := request.After
@@ -155,4 +155,14 @@ func gitLabTarget(workflows []ciWorkflow, target ciSetupTarget) (runtimeJob, run
 		return job, job.Steps[target.Step], true
 	}
 	return runtimeJob{}, runtimeStep{}, false
+}
+
+// gitLabCurlBefore reports an entry before step that installs curl.
+func gitLabCurlBefore(job runtimeJob, step int) bool {
+	for _, earlier := range job.Steps[:step] {
+		if gitLabInstallsCurl(earlier.Run) {
+			return true
+		}
+	}
+	return false
 }
