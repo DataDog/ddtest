@@ -178,6 +178,12 @@ func TestTestInvocation(t *testing.T) {
 		{[]string{"-pl", "service", "-am", "test", "-Dtest=Example*"}, []string{"-pl", "service", "-am", "test", "-Dtest=Example*"}, nil},
 		{[]string{"-f", "install", "test"}, []string{"-f", "install", "test"}, nil},
 		{[]string{"spotless:check"}, nil, []string{"spotless:check"}},
+		// Option values are never goals, and never stand in for one.
+		{[]string{"--color", "always", "test"}, []string{"--color", "always", "test"}, nil},
+		{[]string{"-D", "skipTests=false", "verify"}, []string{"-D", "skipTests=false", "verify"}, nil},
+		{[]string{"--define", "skipTests=false", "verify"}, []string{"--define", "skipTests=false", "verify"}, nil},
+		{[]string{"-gt", "toolchains.xml", "-emp", "secret", "-ep", "secret", "test"}, []string{"-gt", "toolchains.xml", "-emp", "secret", "-ep", "secret", "test"}, nil},
+		{[]string{"-P", "verify", "install"}, []string{"-P", "verify", "verify"}, []string{"install"}},
 	} {
 		validated, omitted := TestInvocation(tc.args)
 		require.Equal(t, tc.validated, validated, "%v", tc.args)

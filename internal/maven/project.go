@@ -192,8 +192,14 @@ func Frameworks(projects []Project) []string {
 	return names
 }
 
-// optionsWithValue are Maven CLI options whose next word is a value, never a goal.
-var optionsWithValue = []string{"-f", "--file", "-pl", "--projects", "-P", "--activate-profiles", "-s", "--settings", "-gs", "--global-settings", "-t", "--toolchains", "-T", "--threads", "-rf", "--resume-from", "-l", "--log-file", "-b", "--builder"}
+// optionsWithValue are the Maven CLI options whose next word is their value,
+// never a goal, as documented by mvn --help.
+var optionsWithValue = []string{
+	"-b", "--builder", "--color", "-D", "--define", "-emp", "--encrypt-master-password", "-ep", "--encrypt-password",
+	"-f", "--file", "-gs", "--global-settings", "-gt", "--global-toolchains", "-l", "--log-file",
+	"-P", "--activate-profiles", "-pl", "--projects", "-rf", "--resume-from", "-s", "--settings",
+	"-t", "--toolchains", "-T", "--threads",
+}
 
 // validationPhases are what local validation runs: the clean lifecycle, the
 // default lifecycle up to verify, and the Surefire and Failsafe goals.
@@ -281,7 +287,7 @@ func TestInvocation(args []string) (validated, omitted []string) {
 			validated = append(validated, arg)
 		case slices.Contains(publishingPhases, arg):
 			omitted = append(omitted, arg)
-			if !slices.Contains(validated, "verify") {
+			if !slices.Contains(Goals(validated), "verify") {
 				validated = append(validated, "verify")
 			}
 		default:

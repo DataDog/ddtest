@@ -54,8 +54,13 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	switch {
 	case len(builds) == 0:
 		return unresolvedJavaWrapper(root, workflow, job, step, parts, framework)
-	case len(tests) == 0:
+	case len(tests) == 0 && !slices.ContainsFunc(parts, func(words []string) bool {
+		return !mavenCommand(words) && !slices.Contains(javaShellBuiltins, words[0])
+	}):
 		return commandResolution{Review: true, Reason: "Maven goals outside the test lifecycle, such as documentation, lint or release goals, are outside " + framework + " test scope."}
+	case len(tests) == 0:
+		// Another command in the sequence may still run tests.
+		return unresolvedJavaWrapper(root, workflow, job, step, parts, framework)
 	case len(parts) != 1:
 		return unresolvedCommand("Maven test step requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
 	case maven.SkipsTests(tests[0][1:]):
@@ -85,6 +90,13 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 // mavenMention finds a Maven invocation inside shell syntax ddtest cannot parse.
 var mavenMention = regexp.MustCompile(`(^|[\s/;&|(])mvnw?(\.cmd)?(\s|$)`)
 
+// scriptMention finds a repository script inside shell syntax ddtest cannot
+// parse, such as ./ci/integration.sh | tee build.log.
+var scriptMention = regexp.MustCompile(`(^|[\s;&|(])(\./|bin/|scripts?/|(ba)?sh\s+[^-\s])`)
+
+// javaShellBuiltins only print or move files around maintenance goals.
+var javaShellBuiltins = []string{"cd", "cp", "mv", "mkdir", "rm", "ln", "echo", "printf", "cat", "ls", "touch", "tar", "pwd", "true"}
+
 // otherFrameworkModules lists the reactor modules that declare test
 // frameworks, none of them framework.
 func otherFrameworkModules(projects []maven.Project, framework string) []string {
@@ -104,7 +116,7 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 	if workflowExpression.MatchString(step.Run) && (strings.Contains(step.Run, "mvn") || strings.Contains(step.Run, "test")) {
 		return unresolvedCommand("Maven command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
 	}
-	if slices.ContainsFunc(parts, javaRepositoryScript) {
+	if slices.ContainsFunc(parts, javaRepositoryScript) || parts == nil && scriptMention.MatchString(step.Run) {
 		return unresolvedCommand("Repository script may run " + framework + " tests; ddtest cannot tell which ones: " + step.Run)
 	}
 	if !strings.Contains(step.Run, "test") && !strings.Contains(step.Run, "verify") {
@@ -193,7 +205,7 @@ func JavaCIConfiguration(root, framework string) RuntimeCheck {
 				if conditionErr == nil && !active {
 					continue
 				}
-				java, tracer, action := "", "", ""
+				java, tracer, action, buildSystem := "", "", "", ""
 				skippedAction := false
 				var actionErr error
 				for i, step := range job.Steps {
@@ -209,7 +221,7 @@ func JavaCIConfiguration(root, framework string) RuntimeCheck {
 						java, tracer, action, actionErr, skippedAction = "", "", "", nil, false
 					}
 					if uses == githubAction {
-						tracer, action, actionErr = "", "", nil
+						tracer, action, buildSystem, actionErr = "", "", "", nil
 					}
 					if conditionErr == nil && stepErr == nil {
 						if uses == "actions/setup-java" && hasVersion {
@@ -221,6 +233,7 @@ func JavaCIConfiguration(root, framework string) RuntimeCheck {
 							if err == nil && selected {
 								action = step.Uses
 								tracer, _ = runtimeValue(step.With["java-tracer-version"], row)
+								buildSystem, _ = runtimeValue(step.With["java-instrumented-build-system"], row)
 							}
 						}
 					}
@@ -254,10 +267,12 @@ func JavaCIConfiguration(root, framework string) RuntimeCheck {
 					case !exactJavaRelease.MatchString(tracer):
 						finding.Reason = "The Datadog action's java-tracer-version " + strconv.Quote(tracer) + " is not an exact release; set an exact version such as 1.67.1."
 					default:
-						finding.Status, finding.Reason = "compatible", "dd-java-agent "+tracer+" supports Java "+java+"."
+						// Release notes, not version numbers, say which JDKs an agent
+						// release supports, so the pair is validated by running it.
+						finding.Status, finding.Reason = "not checked", "Validate dd-java-agent "+tracer+" on Java "+java+"; a static selection does not establish that this release supports this JDK."
 					}
 					// An explicitly uninstrumented row has no instrumentation to lose.
-					if reason := javaInstrumentationProblem(workflow, job, step, row); finding.Status != "excluded" && reason != "" {
+					if reason := javaInstrumentationProblem(workflow, job, step, row, action != "", buildSystem); finding.Status != "excluded" && reason != "" {
 						finding.Status, finding.Code, finding.Reason = "inconclusive", "", reason
 					}
 					result.Jobs = append(result.Jobs, finding)
@@ -266,35 +281,51 @@ func JavaCIConfiguration(root, framework string) RuntimeCheck {
 		}
 	}
 	if len(result.Jobs) > 0 {
-		result.Status, result.Reason = "compatible", "Every Maven CI test step selects a supported JDK and an exact dd-java-agent release."
-		if slices.ContainsFunc(result.Jobs, func(job RuntimeFinding) bool { return job.Status == "inconclusive" }) {
-			result.Status, result.Reason = "inconclusive", "Some Maven CI test steps need a static JDK, an exact dd-java-agent release or scope review."
-		} else if !slices.ContainsFunc(result.Jobs, func(job RuntimeFinding) bool { return job.Status == "compatible" }) {
-			result.Status, result.Reason = "inconclusive", "Every Maven CI test step excludes instrumentation; at least one instrumented step is required."
-		}
+		result.Status, result.Reason = "inconclusive", "Maven CI JDK and dd-java-agent selections need validation."
 	}
 	return result
 }
 
-// javaInstrumentationProblem explains a test step whose environment turns
-// test reporting off; a matrix value applies to its row only. dd-java-agent
-// still reports tests with DD_TRACE_ENABLED=false, which only stops tracing.
-func javaInstrumentationProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) string {
+// javaAgentVariable is where the Datadog action, per its
+// java-instrumented-build-system input, adds -javaagent for a Maven build.
+func javaAgentVariable(buildSystem string) string {
+	switch buildSystem {
+	case "", "maven":
+		return "MAVEN_OPTS"
+	case "all":
+		return "JAVA_TOOL_OPTIONS"
+	}
+	return ""
+}
+
+// javaInstrumentationProblem explains a test step that runs without the
+// agent the action configured: the action instruments another build system,
+// the step replaces the variable that carries the agent, or test reporting
+// is off. Only a step's own env replaces what the action exported; workflow
+// and job values are read by the action and kept. A matrix value applies to
+// its row only. dd-java-agent still reports tests with DD_TRACE_ENABLED=false,
+// which only stops tracing.
+func javaInstrumentationProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, instrumented bool, buildSystem string) string {
+	if instrumented {
+		variable := javaAgentVariable(buildSystem)
+		if variable == "" {
+			return "The Datadog action's java-instrumented-build-system " + strconv.Quote(buildSystem) + " does not instrument Maven; this test step runs without the agent."
+		}
+		if value, set := step.Env[variable]; set && !strings.Contains(value, "-javaagent") && !strings.Contains(value, "${{ env."+variable+" }}") && !strings.Contains(value, "${{env."+variable+"}}") && !strings.Contains(value, "$"+variable) {
+			return "This test step sets " + variable + ", replacing the -javaagent option the Datadog action added. Include ${{ env." + variable + " }} in the value to keep the agent."
+		}
+	}
 	env := map[string]string{}
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
 	}
-	for _, key := range []string{"DD_CIVISIBILITY_ENABLED"} {
-		raw, set := env[key]
-		if !set {
-			continue
-		}
+	if raw, set := env["DD_CIVISIBILITY_ENABLED"]; set {
 		value, err := runtimeValue(raw, row)
 		if err != nil {
-			return "Java CI instrumentation setting " + key + " needs review: " + err.Error()
+			return "Java CI instrumentation setting DD_CIVISIBILITY_ENABLED needs review: " + err.Error()
 		}
 		if value = strings.ToLower(strings.TrimSpace(value)); value == "false" || value == "0" {
-			return "Java CI instrumentation is explicitly disabled by " + key
+			return "Java CI instrumentation is explicitly disabled by DD_CIVISIBILITY_ENABLED"
 		}
 	}
 	return ""

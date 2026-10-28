@@ -78,16 +78,19 @@ func TestJavaReportsModulesOfOtherFrameworks(t *testing.T) {
 func TestJavaKeepsUnresolvedStepsInScope(t *testing.T) {
 	root := javaWorkflowFixture(t, "", nil)
 	for run, reason := range map[string]string{
-		"mvn -B verify | tee build.log":  "could not be resolved statically",
-		"mvn verify || true":             "could not be resolved statically",
-		"(cd service && mvn test)":       "could not be resolved statically",
-		"cd service && mvn test":         "single explicit command",
-		"mvn ${{ matrix.goals }}":        "expression was not resolved",
-		"./ci/test.sh":                   "Repository script",
-		"bash scripts/run-tests":         "Repository script",
-		"make test":                      "Test wrapper was not resolved",
-		"gradle test":                    "Test wrapper was not resolved",
-		"mvn -f ../other/pom.xml verify": "POM selection needs review",
+		"mvn -B verify | tee build.log":       "could not be resolved statically",
+		"mvn verify || true":                  "could not be resolved statically",
+		"(cd service && mvn test)":            "could not be resolved statically",
+		"cd service && mvn test":              "single explicit command",
+		"mvn ${{ matrix.goals }}":             "expression was not resolved",
+		"./ci/test.sh":                        "Repository script",
+		"bash scripts/run-tests":              "Repository script",
+		"make test":                           "Test wrapper was not resolved",
+		"gradle test":                         "Test wrapper was not resolved",
+		"mvn -f ../other/pom.xml verify":      "POM selection needs review",
+		"mvn compile && ./ci/integration.sh":  "Repository script",
+		"./ci/integration.sh | tee build.log": "Repository script",
+		"mvn compile && make test":            "Test wrapper was not resolved",
 	} {
 		resolution := javaStep(t, root, run)
 		require.False(t, resolution.Matched, run)
@@ -167,9 +170,9 @@ func TestJavaCIConfigurationInventoriesJDKAndTracer(t *testing.T) {
 	for _, job := range ci.Jobs {
 		byJava[job.Runtime] = job
 	}
-	require.Equal(t, "compatible", byJava["8"].Status)
+	require.Equal(t, "not checked", byJava["8"].Status, "complete selections are validated, not certified statically")
 	require.Equal(t, "1.67.1", byJava["17"].TracerRequested)
-	require.Equal(t, "compatible", byJava["17"].Status)
+	require.Equal(t, "not checked", byJava["17"].Status)
 	require.Equal(t, "excluded", byJava["25-ea"].Status, "an early-access JDK is excluded with an if: on the action")
 	require.Equal(t, "inconclusive", byJava["lts"].Status)
 	require.Contains(t, byJava["lts"].Reason, "not a numeric selection")
@@ -178,14 +181,21 @@ func TestJavaCIConfigurationInventoriesJDKAndTracer(t *testing.T) {
 
 func TestJavaCIConfigurationRequiresCompleteSelections(t *testing.T) {
 	for _, tc := range []struct{ name, steps, status, reason string }{
-		{"complete", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "compatible", "supports Java 17"},
+		{"complete", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "not checked", "Validate dd-java-agent 1.67.1 on Java 17"},
+		{"old tracer on a new JDK", "      - uses: actions/setup-java@v4\n        with: {java-version: '21'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '0.94.0'}\n      - run: mvn verify\n", "not checked", "does not establish that this release supports this JDK"},
+		{"step replaces MAVEN_OPTS", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '-Xmx2g'}\n", "inconclusive", "replacing the -javaagent option"},
+		{"step extends MAVEN_OPTS", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '${{ env.MAVEN_OPTS }} -Xmx2g'}\n", "not checked", "Validate dd-java-agent"},
+		{"job MAVEN_OPTS is kept by the action", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n    env: {MAVEN_OPTS: '-Xmx2g'}\n", "not checked", "Validate dd-java-agent"},
+		{"step replaces JAVA_TOOL_OPTIONS", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1', java-instrumented-build-system: all}\n      - run: mvn verify\n        env: {JAVA_TOOL_OPTIONS: '-Xmx1g'}\n", "inconclusive", "sets JAVA_TOOL_OPTIONS"},
+		{"MAVEN_OPTS is free with all", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1', java-instrumented-build-system: all}\n      - run: mvn verify\n        env: {MAVEN_OPTS: '-Xmx2g'}\n", "not checked", "Validate dd-java-agent"},
+		{"action instruments Gradle only", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1', java-instrumented-build-system: gradle}\n      - run: mvn verify\n", "inconclusive", "does not instrument Maven"},
 		{"no JDK setup", "      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "inconclusive", "static java-version"},
 		{"no action", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - run: mvn verify\n", "inconclusive", "No Datadog action"},
 		{"action for another language", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: python}\n      - run: mvn verify\n", "inconclusive", "No Datadog action"},
 		{"floating tracer", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java}\n      - run: mvn verify\n", "inconclusive", "not an exact release"},
 		{"old JDK", "      - uses: actions/setup-java@v4\n        with: {java-version: '1.7'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n", "inconclusive", "older than Java 8"},
 		{"reporting disabled", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {DD_CIVISIBILITY_ENABLED: 'false'}\n", "inconclusive", "explicitly disabled by DD_CIVISIBILITY_ENABLED"},
-		{"tracing disabled only", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {DD_TRACE_ENABLED: 'false'}\n", "compatible", "supports Java 17"},
+		{"tracing disabled only", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n      - run: mvn verify\n        env: {DD_TRACE_ENABLED: 'false'}\n", "not checked", "Validate dd-java-agent"},
 		{"action after the tests", "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - run: mvn verify\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, java-tracer-version: '1.67.1'}\n", "inconclusive", "No Datadog action"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -193,7 +203,7 @@ func TestJavaCIConfigurationRequiresCompleteSelections(t *testing.T) {
 			require.Len(t, ci.Jobs, 1)
 			require.Equal(t, tc.status, ci.Jobs[0].Status)
 			require.Contains(t, ci.Jobs[0].Reason, tc.reason)
-			require.Equal(t, tc.status, ci.Status)
+			require.Equal(t, "inconclusive", ci.Status, "static selections never certify the inventory")
 		})
 	}
 }
@@ -204,4 +214,18 @@ func TestJavaCIConfigurationKeepsUnresolvedStepsVisible(t *testing.T) {
 	require.True(t, strings.Contains(ci.Jobs[1].Reason, "Repository script"), ci.Jobs[1].Reason)
 	require.Len(t, ci.Review, 1, "lint goals are listed outside scope")
 	require.Equal(t, "not applicable", JavaCIConfiguration(javaWorkflowFixture(t, "jobs:\n  lint:\n    steps:\n      - run: echo ok\n", nil), "junit5").Status)
+}
+
+func TestJavaVariantsKeepCustomerJVMOptions(t *testing.T) {
+	for _, key := range []string{"MAVEN_OPTS", "JAVA_TOOL_OPTIONS"} {
+		value, handled, err := javaDiscovery{}.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, key, "${{ env."+key+" }} -Xmx2g")
+		require.NoError(t, err)
+		require.True(t, handled)
+		require.Equal(t, "-Xmx2g", value, "local validation adds its own agent")
+		_, _, err = javaDiscovery{}.variantValue(ciWorkflow{}, runtimeJob{Env: map[string]string{key: "-Dfile.encoding=UTF-8"}}, runtimeStep{}, nil, key, "${{ env."+key+" }} -Xmx2g")
+		require.ErrorContains(t, err, "extends workflow or job JVM options")
+	}
+	_, handled, err := javaDiscovery{}.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "CI", "true")
+	require.NoError(t, err)
+	require.False(t, handled)
 }
