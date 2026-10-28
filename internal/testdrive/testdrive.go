@@ -1250,14 +1250,14 @@ func (t *Testdrive) defaultToCITracer(check onboard.RuntimeCheck) {
 		if job.Status == onboard.StatusExcluded {
 			continue
 		}
-		version := strings.TrimPrefix(job.Tracer, "dd-trace@")
+		version := t.lang().ciPinnedTracer(job)
 		if version == "" || (pinned != "" && version != pinned) {
 			return
 		}
 		pinned = version
 	}
 	if pinned != "" {
-		t.tracerVersion, t.tracerLabel = pinned, "dd-trace@"+pinned
+		t.tracerVersion, t.tracerLabel = pinned, t.lang().tracerPackage()+"@"+pinned
 	}
 }
 

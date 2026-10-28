@@ -240,3 +240,14 @@ func TestProjectsAcceptSiblingModulesInsideTheRepository(t *testing.T) {
 	require.Len(t, projects, 2)
 	require.Equal(t, "core", projects[1].Directory)
 }
+
+func TestModuleDirectories(t *testing.T) {
+	modules := ModuleDirectories([]Project{
+		{Directory: "api", Name: "Customer API", Artifact: "api"},
+		{Directory: "core", Artifact: "core"},
+		{Directory: "a/util", Artifact: "util"},
+		{Directory: "b/util", Artifact: "util"},
+		{Directory: "templated", Name: "${project.artifactId}", Artifact: "templated"},
+	})
+	require.Equal(t, map[string]string{"Customer API": "api", "api": "api", "core": "core", "util": "", "templated": "templated"}, modules)
+}

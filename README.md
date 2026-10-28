@@ -18,6 +18,11 @@ Currently supported:
 For Go, `ddtest instrument` reports a project's tests to Test Optimization
 directly; see [Go tests with ddtest instrument](#go-tests-with-ddtest-instrument).
 
+`ddtest onboard` and `ddtest testdrive` also support Java projects built with
+Maven; JUnit 4 and JUnit 5 get paired validation. `ddtest plan` and `ddtest run`
+do not support Java, because the Java agent performs Test Impact Analysis inside
+the Maven build. See [Java validation](docs/onboarding.md#java-validation).
+
 ## Try Test Optimization locally
 
 Install ddtest, which the install script checks against the release's

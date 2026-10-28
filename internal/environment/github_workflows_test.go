@@ -104,3 +104,29 @@ func TestGitHubFindTestWorkflowsCommandKinds(t *testing.T) {
 		})
 	}
 }
+
+func TestGitHubFindTestWorkflowsRecognizesMavenTestPhases(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		tests   bool
+	}{
+		{"mvn -B verify", true},
+		{"./mvnw test -pl service", true},
+		{"MAVEN_OPTS=-Xmx1g mvn package --file pom.xml", true},
+		{"mvn -B compile && mvn -B test", true},
+		{"mvn dependency:go-offline", false},
+		{"mvn -f test compile", false},
+		{"gradle test", false},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
+			workflow := fmt.Sprintf("jobs:\n  tests:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java}\n      - run: %s\n", tc.command)
+			require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/test.yml"), []byte(workflow), 0644))
+			workflows, configured, err := NewGitHub().FindTestWorkflows(root, "java", "junit5")
+			require.NoError(t, err)
+			require.Equal(t, tc.tests, len(workflows) == 1)
+			require.Equal(t, tc.tests, len(configured) == 1, "the action selects java")
+		})
+	}
+}

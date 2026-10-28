@@ -447,8 +447,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		success = skipped && executedTests(run) == 0 && passed+failed == 0 && run.Facts.TestEventCount == skippedTestEvents
 	case "quarantine":
 		// Quarantine changes the command outcome, not necessarily the native
-		// assertion status. Some Jest versions retain the failing assertion.
-		success = quarantined && failed == 1 && passed == 0 && retries == 0 && len(run.Tests) == 1 && nativePass+nativeFail == 1
+		// assertion status. Some Jest versions retain the failing assertion;
+		// other runners report the suppressed failure as skipped.
+		success = quarantined && failed == 1 && passed == 0 && retries == 0 && len(run.Tests) == 1 && nativePass+nativeFail+nativeSkip == 1
 	case "disabled":
 		success = disabled && executedTests(run) == 0 && nativeSkip == 1
 	case "attempt-to-fix":

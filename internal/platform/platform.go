@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,13 +49,25 @@ func runtimeTagProbeError(message string, output []byte, err error) error {
 	return fmt.Errorf("%s: %w", message, err)
 }
 
+// fallbackPlatform is detected automatically only in repositories no other
+// platform claims, so supporting a platform later never changes detection for
+// repositories whose users already rely on another one.
+type fallbackPlatform interface {
+	fallback() bool
+}
+
+func isFallback(p Platform) bool {
+	fallback, ok := p.(fallbackPlatform)
+	return ok && fallback.fallback()
+}
+
 // DetectPlatform selects a platform without running commands or checking installed
 // runtimes/tracers. Selection uses the current directory and settings.
 func DetectPlatform() (Platform, error) {
 	root := "."
 	frameworkHint := settings.GetFramework()
 	platformHint := settings.GetPlatform()
-	platforms := []Platform{NewJavaScript(), NewPython(), NewRuby(settings.GetTestSkippingLevel())}
+	platforms := []Platform{NewJavaScript(), NewPython(), NewRuby(settings.GetTestSkippingLevel()), NewJava()}
 	if platformHint != "" {
 		for _, p := range platforms {
 			if p.Name() == platformHint {
@@ -85,7 +98,14 @@ func DetectPlatform() (Platform, error) {
 		if frameworkHint != "" {
 			return nil, fmt.Errorf("unsupported framework: %s", frameworkHint)
 		}
-		return nil, fmt.Errorf("could not detect a supported platform; inspect package.json, Python project configuration, or Gemfile, or specify --platform")
+		return nil, fmt.Errorf("could not detect a supported platform; inspect package.json, Python project configuration, Gemfile, or pom.xml, or specify --platform")
+	}
+	if len(candidates) > 1 {
+		// A fallback platform never competes with one that already claims the
+		// repository; select it with --platform or --framework.
+		if primary := slices.DeleteFunc(slices.Clone(candidates), isFallback); len(primary) > 0 {
+			candidates = primary
+		}
 	}
 	if len(candidates) > 1 {
 		names := make([]string, len(candidates))

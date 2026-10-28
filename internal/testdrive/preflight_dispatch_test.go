@@ -29,6 +29,8 @@ func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 		"cypress":     framework.NewCypress(javascript),
 		"cucumber":    framework.NewCucumber(javascript),
 		"webdriverio": framework.NewWebdriverIO(javascript),
+		"junit4":      framework.NewMaven("junit4", platform.NewJava()),
+		"junit5":      framework.NewMaven("junit5", platform.NewJava()),
 	}
 	for name, policy := range frameworkFeaturePolicies {
 		if !policy.Preflight {
@@ -39,9 +41,12 @@ func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 		preflight := (&Testdrive{framework: runner}).frameworkPreflight()
 		require.NotNil(t, preflight, name)
 		function := runtime.FuncForPC(reflect.ValueOf(preflight).Pointer()).Name()
-		if name == "rspec" || name == "minitest" {
+		switch name {
+		case "rspec", "minitest":
 			require.Contains(t, function, ".checkRubyPreflight", name)
-		} else {
+		case "junit4", "junit5":
+			require.Contains(t, function, ".checkJavaPreflight", name)
+		default:
 			require.Contains(t, function, ".check"+displayName(name)+"Preflight", name)
 		}
 	}

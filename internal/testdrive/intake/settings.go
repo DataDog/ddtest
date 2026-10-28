@@ -39,6 +39,11 @@ type Scenario struct {
 	// SuiteSelector is an adapter's explicit suite identity when its tracer
 	// consumes test.suite rather than a repository-relative source file.
 	SuiteSelector string
+	// SkippingLevel applies when a tracer's skippable request omits test_level.
+	SkippingLevel string
+	// SkippableConfigurations is returned with each skippable test, for
+	// tracers that match skippable tests by configuration, such as test.bundle.
+	SkippableConfigurations map[string]string
 }
 
 func newHandler() http.Handler { return scenarioHandler(Scenario{}) }
@@ -168,6 +173,9 @@ func handleSkippableTests(w http.ResponseWriter, r *http.Request, scenario Scena
 		return
 	}
 	level := request.Data.Attributes.TestLevel
+	if level == "" {
+		level = scenario.SkippingLevel
+	}
 	if level != "" && level != "suite" && level != "test" {
 		http.Error(w, "unsupported skipping level", http.StatusBadRequest)
 		return
@@ -182,6 +190,9 @@ func handleSkippableTests(w http.ResponseWriter, r *http.Request, scenario Scena
 			attributes := map[string]any{"suite": scenario.Suite, "name": scenario.Test}
 			if scenario.Parameters != "" {
 				attributes["parameters"] = scenario.Parameters
+			}
+			if len(scenario.SkippableConfigurations) > 0 {
+				attributes["configurations"] = scenario.SkippableConfigurations
 			}
 			data = append(data, map[string]any{"type": "test", "attributes": attributes})
 		} else if level != "test" {
