@@ -74,7 +74,7 @@ func rewriteSDKSpanStart(fn *ast.FuncDecl, insert func(token.Pos, string)) error
 	if selected == "" || selected == "_" || ambiguous {
 		return sdkMirrorError("SDK selected context missing or ambiguous")
 	}
-	insert(anchor.End(), fmt.Sprintf("\nvar __ddtoParent any; if %[1]s != nil { __ddtoParent = %[1]s.__ddtoMirror }; %[2]s.context.__ddtoMirror = __ddtoMirrorStart(%[3]s, __ddtoParent, %[4]s); __ddtoMirrorAdoptSpan(%[2]s, __ddtoParent, %[1]s == nil)\n", parent.Name, span.Name, selected, operation.Names[0].Name))
+	insert(anchor.End(), fmt.Sprintf("\nvar __ddtoParent any; if %[1]s != nil { __ddtoParent = %[1]s.__ddtoMirror }; %[2]s.context.__ddtoMirror = __ddtoMirrorStart(%[3]s, __ddtoParent, %[4]s); __ddtoMirrorAdoptSpan(%[2]s, __ddtoParent)\n", parent.Name, span.Name, selected, operation.Names[0].Name))
 	return nil
 }
 

@@ -38,7 +38,10 @@ func (t *trace) setSamplingPriority(p int, sampler samplernames.SamplerName) boo
 	return true
 }
 
-type chunk struct{ spans []*Span }
+type chunk struct {
+	spans          []*Span
+	spansToRelease []*Span
+}
 
 type tracer struct {
 	sent  [][]*Span
@@ -93,7 +96,7 @@ func adoptionFixture(source string) string {
 		"import (\n",
 		"import (\n\t\"github.com/DataDog/dd-trace-go/v2/ddtrace/ext\"\n\t\"github.com/DataDog/dd-trace-go/v2/internal/samplernames\"\n",
 		"\tspanID                            uint64\n",
-		"\tspanID                            uint64\n\ttraceID                           uint64\n\tstatSpan                          *int\n",
+		"\tspanID                            uint64\n\tparentID                          uint64\n\ttraceID                           uint64\n\tstatSpan                          *int\n",
 	).Replace(source)
 	return replaced + adoptionInternals
 }
@@ -107,9 +110,9 @@ func TestSDKMirrorAdoptionEdits(t *testing.T) {
 	}
 	source := string(got)
 	for _, want := range []string{
-		"func (t *tracer) submitChunk(c *chunk) {\nif __ddtoMirrorSubmit(c) {\nreturn\n}\n",
+		"func (t *tracer) submitChunk(c *chunk) {\n__ddtoMirrorSubmit(c)\n",
 		"span.statSpan = nil\nif __ddtoMirrorWithheld(span) {\nreturn\n}\n",
-		"__ddtoMirrorAdoptSpan(span, __ddtoParent, context == nil)",
+		"__ddtoMirrorAdoptSpan(span, __ddtoParent)",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("missing %q in:\n%s", want, source)
@@ -160,7 +163,9 @@ func TestSDKMirrorAdoptionDrift(t *testing.T) {
 		"origin_field":       {strings.Replace(full, "\torigin  string\n", "", 1), SDKMirrorTrace},
 		"cache_hex":          {strings.Replace(full, "func (t *traceID) cacheHex()", "func (t *traceID) cacheHexadecimal()", 1), SDKMirrorTrace},
 		"submit_parameter":   {strings.Replace(full, "submitChunk(c *chunk)", "submitChunk(c []*Span)", 1), SDKMirrorSubmit},
-		"chunk_spans":        {strings.Replace(full, "type chunk struct{ spans []*Span }", "type chunk struct{ items []*Span }", 1), SDKMirrorSubmit},
+		"chunk_spans":        {strings.Replace(full, "\tspans          []*Span\n", "\titems          []*Span\n", 1), SDKMirrorSubmit},
+		"chunk_release":      {strings.Replace(full, "\tspansToRelease []*Span\n", "", 1), SDKMirrorSubmit},
+		"span_parent_id":     {strings.Replace(full, "\tparentID                          uint64\n", "", 1), SDKMirrorSpan},
 		"oversized_reset":    {strings.Replace(full, "\tspan.statSpan = nil\n\tt.stats = stats + 1\n", "\tt.stats = stats + 1\n", 1), SDKMirrorStats},
 		"oversized_resets":   {strings.Replace(full, "\tspan.statSpan = nil\n", "\tspan.statSpan = nil\n\tspan.statSpan = nil\n", 1), SDKMirrorStats},
 	}

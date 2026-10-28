@@ -33,9 +33,11 @@ const (
 	sdkSamplerNamesImport = "github.com/DataDog/dd-trace-go/v2/internal/samplernames"
 )
 
-// sdkSpanFields reports whether Span holds the identity that adoption sets.
+// sdkSpanFields reports whether Span holds the identity that adoption reads
+// and sets.
 func sdkSpanFields(structure *ast.StructType) bool {
 	return sdkHasField(structure, "spanID", func(e ast.Expr) bool { return sdkTypeName(e, "uint64") }) &&
+		sdkHasField(structure, "parentID", func(e ast.Expr) bool { return sdkTypeName(e, "uint64") }) &&
 		sdkHasField(structure, "traceID", func(e ast.Expr) bool { return sdkTypeName(e, "uint64") }) &&
 		sdkHasField(structure, "context", func(e ast.Expr) bool { return sdkPointerType(e, "SpanContext") })
 }
@@ -94,7 +96,8 @@ func sdkTraceInternals(file *ast.File) bool {
 }
 
 // rewriteSDKSubmit withholds adopted spans at the start of submitChunk, before
-// the SDK computes their stats or queues them for APM.
+// the SDK computes their stats or queues them for APM. The chunk, even empty,
+// still reaches the SDK's worker, which releases its spans to the span pool.
 func rewriteSDKSubmit(file *ast.File, fn *ast.FuncDecl, insert func(token.Pos, string)) bool {
 	if !sdkTracerMethod(fn) || fn.Type.Results != nil || len(fn.Type.Params.List) != 1 || len(fn.Type.Params.List[0].Names) != 1 ||
 		!sdkPointerType(fn.Type.Params.List[0].Type, "chunk") || !sdkChunkSpans(file) {
@@ -104,7 +107,7 @@ func rewriteSDKSubmit(file *ast.File, fn *ast.FuncDecl, insert func(token.Pos, s
 	if chunk == "_" {
 		return false
 	}
-	insert(fn.Body.Lbrace+1, fmt.Sprintf("\nif __ddtoMirrorSubmit(%s) {\nreturn\n}\n", chunk))
+	insert(fn.Body.Lbrace+1, fmt.Sprintf("\n__ddtoMirrorSubmit(%s)\n", chunk))
 	return true
 }
 
@@ -175,10 +178,11 @@ func sdkChunkSpans(file *ast.File) bool {
 		for _, spec := range group.Specs {
 			typ := spec.(*ast.TypeSpec)
 			if structure, ok := typ.Type.(*ast.StructType); ok && typ.Name.Name == "chunk" && !typ.Assign.IsValid() {
-				return sdkHasField(structure, "spans", func(e ast.Expr) bool {
+				spans := func(e ast.Expr) bool {
 					slice, ok := e.(*ast.ArrayType)
 					return ok && slice.Len == nil && sdkPointerType(slice.Elt, "Span")
-				})
+				}
+				return sdkHasField(structure, "spans", spans) && sdkHasField(structure, "spansToRelease", spans)
 			}
 		}
 	}
@@ -234,9 +238,9 @@ func __ddtoMirrorCapture(any,string,string,string,string,int64,int64,int32,func(
 func __ddtoMirrorDeliver(any)
 `)
 	if !adoption {
-		source.WriteString("func __ddtoMirrorAdoptSpan(*Span, any, bool) {}\n")
+		source.WriteString("func __ddtoMirrorAdoptSpan(*Span, any) {}\n")
 		if found&SDKMirrorSubmit != 0 {
-			source.WriteString("func __ddtoMirrorSubmit(*chunk) bool { return false }\n")
+			source.WriteString("func __ddtoMirrorSubmit(*chunk) {}\n")
 		}
 		if found&SDKMirrorStats != 0 {
 			source.WriteString("func __ddtoMirrorWithheld(*Span) bool { return false }\n")
@@ -250,8 +254,10 @@ func __ddtoMirrorAdopted(any) bool
 //go:linkname __ddtoMirrorReport github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorWithheld
 func __ddtoMirrorReport(int,int)
 // A root SDK span under a test takes the test's trace ID, the ciapp-test
-// origin, which its children and propagation inherit, and keep priority.
-func __ddtoMirrorAdoptSpan(span *Span, parent any, root bool) {
+// origin, which its children and propagation inherit, and keep priority. The
+// SDK leaves a root's parent ID 0, including under a baggage-only parent.
+func __ddtoMirrorAdoptSpan(span *Span, parent any) {
+	root := span.parentID == 0
 	id, ok := __ddtoMirrorAdopt(span.context.__ddtoMirror, parent, span.spanID, root)
 	if !ok || !root {
 		return
@@ -266,8 +272,9 @@ func __ddtoMirrorAdoptSpan(span *Span, parent any, root bool) {
 func __ddtoMirrorWithheld(span *Span) bool {
 	return span != nil && span.context != nil && __ddtoMirrorAdopted(span.context.__ddtoMirror)
 }
-// Adopted spans are not delivered: a new slice keeps spansToRelease intact.
-func __ddtoMirrorSubmit(c *chunk) bool {
+// Adopted spans are not delivered. The SDK still releases every span of the
+// chunk: a new slice of the kept ones leaves spansToRelease with all of them.
+func __ddtoMirrorSubmit(c *chunk) {
 	withheld := 0
 	for _, span := range c.spans {
 		if __ddtoMirrorWithheld(span) {
@@ -275,7 +282,7 @@ func __ddtoMirrorSubmit(c *chunk) bool {
 		}
 	}
 	if withheld == 0 {
-		return false
+		return
 	}
 	kept := make([]*Span, 0, len(c.spans)-withheld)
 	for _, span := range c.spans {
@@ -284,8 +291,10 @@ func __ddtoMirrorSubmit(c *chunk) bool {
 		}
 	}
 	__ddtoMirrorReport(withheld, len(kept))
+	if c.spansToRelease == nil {
+		c.spansToRelease = c.spans
+	}
 	c.spans = kept
-	return len(kept) == 0
 }
 `)
 	return source.String()

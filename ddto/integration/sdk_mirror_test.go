@@ -351,6 +351,18 @@ func TestSDKMirrorHTTP(t *testing.T) {
 	server.Close()
 	tracer.Flush()
 }
+// A baggage-only parent leaves the SDK span a root of its own trace.
+func TestSDKMirrorBaggage(t *testing.T) {
+	startMirrorSDK(t)
+	defer tracer.Stop()
+	parent, err := tracer.Extract(tracer.TextMapCarrier{"baggage": "tenant=qa"})
+	if err != nil || parent == nil {
+		t.Fatal(parent, err)
+	}
+	span, _ := tracer.StartSpanFromContext(t.Context(), "baggage.root", tracer.ChildOf(parent), tracer.WithSpanID(7001))
+	span.Finish()
+	tracer.Flush()
+}
 func BenchmarkSDKMirror(b *testing.B) {
 	if err := tracer.Start(tracer.WithAgentAddr(os.Getenv("POC_APM_ADDR")), tracer.WithLogStartup(false)); err != nil {
 		b.Fatal(err)
@@ -432,6 +444,7 @@ func TestMiniSDKMirrorContextMatrix(t *testing.T) {
 							}
 							assertSDKMirrorWorkloads(t, dir, bin, deferred, apmSpans)
 							assertSDKMirrorHTTP(t, dir, bin, deferred, apmSpans)
+							assertSDKMirrorBaggage(t, dir, bin, deferred, apmSpans)
 						}
 						events, _ := runSDKMirror(t, dir, bin, "TestSDKMirrorRetry", deferred, true, "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=1", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=in_process")
 						counts, err := countCIEvents(events)
@@ -530,6 +543,32 @@ func assertSDKMirrorHTTP(t *testing.T, dir, bin string, deferred, apmSpans bool)
 	client := copies[0]
 	if len(apm) != 1 || server == nil || server["trace_id"] != test["trace_id"] || server["parent_id"] != client["span_id"] || server["meta"].(map[string]any)["_dd.origin"] != "ciapp-test" {
 		t.Fatal("the server span did not join the test's trace", apm, client, test)
+	}
+}
+
+// An SDK root under a baggage-only parent joins the test's trace like any
+// other root.
+func assertSDKMirrorBaggage(t *testing.T, dir, bin string, deferred, apmSpans bool) {
+	t.Helper()
+	events, apm := runSDKMirror(t, dir, bin, "TestSDKMirrorBaggage", deferred, true, sdkMirrorMode(apmSpans))
+	var test map[string]any
+	for _, event := range events {
+		if event["type"] == "test" {
+			test = event["content"].(map[string]any)
+		}
+	}
+	copy := mirrorContents(events)["baggage.root"]
+	if test == nil || copy == nil || copy["parent_id"] != test["span_id"] || copy["trace_id"] != test["trace_id"] {
+		t.Fatal("baggage copy", copy, test)
+	}
+	if apmSpans {
+		if len(apm) != 1 || apm[0]["span_id"] != uint64(7001) || copy["span_id"] == uint64(7001) {
+			t.Fatal("baggage root with APM spans", apm, copy)
+		}
+		return
+	}
+	if len(apm) != 0 || copy["span_id"] != uint64(7001) {
+		t.Fatal("baggage root sent to APM or not adopted", apm, copy)
 	}
 }
 

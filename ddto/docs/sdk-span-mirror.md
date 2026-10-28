@@ -6,7 +6,8 @@ This works with manual SDK calls and [Orchestrion builds](orchestrion.md).
 
 By default those spans are reported once, to Test Optimization:
 
-- An SDK root span under a test stays a root span, but it takes the test's
+- An SDK root span under a test, which the SDK starts without a parent (also
+  under a baggage-only context), stays a root span, but it takes the test's
   128-bit trace ID, the `ciapp-test` origin and keep sampling priority. Its
   children inherit them, and the SDK's propagator sends them to the services
   the test calls, so those services' spans join the test's trace, with
@@ -61,6 +62,7 @@ flowchart TD
 | `StartSpanFromContext(t.Context(), ...)` | Copy beneath the current test |
 | Child of a copied SDK span, including `StartChild` and `ChildOf` | Copy beneath that parent's copy |
 | `ContextWithSpan(ctx, nil)` inside a test | Next SDK root gets a new copy beneath the test |
+| `ChildOf` a baggage-only context inside a test | The SDK starts a root, which joins the test's trace like any other root |
 | A different subtest context carrying an older SDK parent | The copy belongs to the current subtest; the SDK parent remains unchanged |
 | `context.Background()` with no copied SDK parent | No copy; there is no test association |
 | SDK spans created before the test or during package initialization | No copy without a test association |
@@ -109,7 +111,8 @@ The SDK span joins the test's trace in `spanStart`, after the SDK creates its
 context and before it samples the trace, so the SDK keeps the priority that
 the hook sets. When the SDK submits a finished chunk, the hook removes the
 spans that joined a test's trace before the SDK computes stats or queues the
-chunk, and drops a chunk left empty. An oversized trace's spans that joined a
+chunk. The chunk, even empty, still reaches the SDK's worker, which sends
+nothing for the removed spans and releases them to the span pool. An oversized trace's spans that joined a
 test's trace are likewise left out of the SDK's stats.
 
 Copies use Mini's existing byte limits, gzip, HTTP retries and flush/close

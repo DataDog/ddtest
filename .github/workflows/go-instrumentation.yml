@@ -658,9 +658,11 @@ jobs:
           path: ddto/reports/
           retention-days: 7
       # Lets a pull request or a push to main with the same inputs reuse this
-      # run, which then carries the coverage that it uploads again.
+      # run, which then carries the coverage that it uploads again. Only a run
+      # of the recorded versions verifies them; the nightly and full runs test
+      # the module proxy's window instead.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: success() && needs.plan.outputs.skip != 'true' && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        if: success() && needs.plan.outputs.skip != 'true' && needs.plan.outputs.window == '' && env.DATADOG_API_KEY_CONFIGURED == 'true'
         with:
           name: verified-inputs-${{ needs.plan.outputs.inputs }}
           path: ddto/reports/summary.md
