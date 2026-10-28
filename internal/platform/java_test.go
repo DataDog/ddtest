@@ -8,8 +8,10 @@ package platform
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/discovery"
@@ -142,4 +144,53 @@ func TestJavaTracerInstallCommand(t *testing.T) {
 		_, _, err := NewJava().TracerInstallCommand(TracerOptions{Version: version})
 		require.Error(t, err, version)
 	}
+}
+
+func TestJavaInstallTestdriveTracerChecksTheDownloadedAgent(t *testing.T) {
+	directory := t.TempDir()
+	executor := &mockCommandExecutor{}
+	java := &Java{executor: executor}
+	executor.onCombinedOutput = func(name string, args []string, _ map[string]string) {
+		require.Equal(t, "curl", name)
+		writeAgentJAR(t, args[slices.Index(args, "--output")+1], agentManifest)
+	}
+	installation, err := java.InstallTestdriveTracer(context.Background(), TracerOptions{Version: "1.67.1", Directory: directory})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(directory, "dd-java-agent.jar"), installation.Path)
+
+	_, err = java.InstallTestdriveTracer(context.Background(), TracerOptions{Version: "1.70.0", Directory: directory})
+	require.ErrorContains(t, err, "downloaded dd-java-agent 1.67.1, requested 1.70.0")
+	_, err = java.InstallTestdriveTracer(context.Background(), TracerOptions{Version: "main", Directory: directory})
+	require.ErrorContains(t, err, "git builds are not supported")
+
+	executor.onCombinedOutput = func(_ string, args []string, _ map[string]string) {
+		require.NoError(t, os.WriteFile(args[slices.Index(args, "--output")+1], []byte("<html>not found</html>"), 0600))
+	}
+	_, err = java.InstallTestdriveTracer(context.Background(), TracerOptions{Directory: directory})
+	require.ErrorContains(t, err, "read dd-java-agent JAR", "a download that is not the agent is never attached")
+	executor.combinedOutput, executor.combinedOutputErr = []byte("curl: (22) 404"), errors.New("exit status 22")
+	_, err = java.InstallTestdriveTracer(context.Background(), TracerOptions{Directory: directory})
+	require.ErrorContains(t, err, "download dd-java-agent")
+}
+
+func TestJavaRuntimeEnvironment(t *testing.T) {
+	executor := &mockCommandExecutor{}
+	java := &Java{executor: executor}
+	executor.onCombinedOutput = func(name string, args []string, _ map[string]string) {
+		require.Equal(t, "java", name)
+		require.Equal(t, []string{"-version"}, args)
+	}
+	require.NoError(t, java.SanityCheck(context.Background()))
+	executor.combinedOutputErr = errors.New("executable file not found")
+	require.ErrorContains(t, java.SanityCheck(context.Background()), "check Java runtime")
+
+	env := map[string]string{"MAVEN_OPTS": "-Xmx1g"}
+	runEnv, err := java.RunEnv(framework.RuntimeOptions{Env: env})
+	require.NoError(t, err)
+	require.Equal(t, env, runEnv)
+	runEnv["MAVEN_OPTS"] = "changed"
+	require.Equal(t, "-Xmx1g", env["MAVEN_OPTS"], "the caller's environment is copied")
+	_, err = java.DiscoveryEnv(context.Background(), framework.FileDiscovery, framework.RuntimeOptions{PreloadFiles: []string{"preload.rb"}})
+	require.ErrorContains(t, err, "preloads are not supported")
+	require.Equal(t, settings.TestSkippingLevelTest, java.TestSkippingLevel())
 }
