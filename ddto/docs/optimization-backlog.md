@@ -49,7 +49,7 @@ Pull requests #69 to #73 then halved the cost per test. On 2026-10-17, in
 `scripts/minitracer_benchmark.py`'s binary of 10,000 empty tests, Mini added
 7.24 µs of CPU and 3.96 µs of wall time per test, against 14.05 and 7.71 µs
 before them
-([data](results/minitracer-cumulative-20261017-linux-go1.27/README.md)).
+([data](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/minitracer-cumulative-20261017-linux-go1.27/README.md)).
 
 With an Agent that answers at once, preparation, about 0.11 s, is most of what
 `ddto` adds to a warm run. Request latency then adds about 0.3 s per run,

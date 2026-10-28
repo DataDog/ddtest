@@ -58,8 +58,8 @@ of Mini's `gotesting` package and 1 or 2 of the 15 of `integrations`, instead
 of all of them. Parsing them all took about 23 ms of every invocation. On
 2026-10-17, a cached Gin build at 4 CPUs took 0.197 s against 0.219 s, in two
 alternating rounds of the build benchmark
-([before](results/hook-checks-20261017-linux-go1.27.1/base-1/README.md),
-[after](results/hook-checks-20261017-linux-go1.27.1/candidate-1/README.md)).
+([before](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/hook-checks-20261017-linux-go1.27.1/base-1/README.md),
+[after](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/hook-checks-20261017-linux-go1.27.1/candidate-1/README.md)).
 `TestDeclaringSourcesKeepsEveryDeclaration` checks that every declaration of
 the checked packages has a name that its own file contains, and
 `TestDeclarationChecksMatchFullParse` that each check decides as a full parse
@@ -81,7 +81,7 @@ them. On 2026-10-17, with Gin and its runtime provided by ddto, a release
 executable prepared in 81.6 ms against 84.3 ms before, and an executable built
 from a checkout in 83.1 ms: medians of 15 rotating runs of
 `scripts/preparation_benchmark.py`
-([data](results/own-runtime-checks-20261017-linux-go1.27.1/README.md)).
+([data](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/own-runtime-checks-20261017-linux-go1.27.1/README.md)).
 
 [`PrepareRuntime`](../internal/runner/run.go) requests only the package fields
 it needs from a targeted `go list -deps`, which lists the named packages and
@@ -426,23 +426,23 @@ commands, raw repetitions and limits in a task-scoped artifact directory.
 It runs these microbenchmarks in both trees, with the candidate's benchmarks,
 then a test binary of many empty tests, built with `go test` and with each
 tree's ddto, and checks that every test event arrives. Its
-[first results](results/minitracer-20261016-linux-go1.27/README.md) measure four
+[first results](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/minitracer-20261016-linux-go1.27/README.md) measure four
 rows of the optimization table above: metadata capacity from `Tag` options,
 overrides recorded at enqueue, the shared-tag key filter and the finish
 configuration, which then lived in the event. The
-[second results](results/minitracer-allocs-20261016-linux-go1.27/README.md)
+[second results](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/minitracer-allocs-20261016-linux-go1.27/README.md)
 measure the events sealed in their span, the small sets, the span's context in
 one allocation and the typed tag setters. They also count the objects and bytes that the test
 process allocates per test, from its start until testing writes the memory
 profile, before Mini's final delivery. With `--own-benchmarks`, each tree runs its own
 benchmarks, for a candidate whose benchmarks use internals that the base lacks.
-The [third results](results/minitracer-test-span-20261016-linux-go1.27/README.md)
+The [third results](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/minitracer-test-span-20261016-linux-go1.27/README.md)
 measure test events started without option lists, and the
-[fourth](results/minitracer-test-path-20261016-linux-go1.27/README.md) the
+[fourth](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/minitracer-test-path-20261016-linux-go1.27/README.md) the
 per-test lookups and options without allocations, and the
-[fifth](results/minitracer-test-helper-20261017-linux-go1.27/README.md)
+[fifth](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/minitracer-test-helper-20261017-linux-go1.27/README.md)
 `t.Helper()` only for wrapped tests. The
-[cumulative results](results/minitracer-cumulative-20261017-linux-go1.27/README.md)
+[cumulative results](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/minitracer-cumulative-20261017-linux-go1.27/README.md)
 compare `d6fd1c3`, before the first of these changes, with `bfcf898`, after
 the last: Mini's CPU added per test went from 14.05 to 7.24 µs, its wall time
 added per test from 7.71 to 3.96 µs, and the objects that it
