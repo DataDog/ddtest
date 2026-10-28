@@ -362,6 +362,16 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if scopeCommand == "" {
 		scopeCommand = originalCommand
 	}
+	if frameworkFeaturePolicies[runner.Name()].Configurations && !all && len(selectedPlan.Prerequisites) == 0 {
+		// A command that is exactly one CI configuration runs that
+		// configuration's replayable preparation too, so it is credited.
+		if entry, ok := matchingConfigurationPreparation(scope, scopeErr, repositoryRoot, runner.Name(), scopeCommand); ok {
+			if selectedPlan.Command == "" {
+				selectedPlan.Command, selectedPlan.Directory = entry.Command, entry.Directory
+			}
+			selectedPlan.Prerequisites = entry.Prerequisites
+		}
+	}
 	var configurationEnvironment map[string]string
 	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
 		// A command matching a discovered CI configuration replays its environment,
@@ -672,7 +682,7 @@ func (t *Testdrive) setConfigurationScope(result *validationResult, scope onboar
 		setSelectedConfigurationScope(result, scope, []onboard.TestCommand{t.cypressSelected}, t.configurationEnvironment)
 		return
 	}
-	if t.framework.Name() == "cucumber" && len(t.selectedPlan.Prerequisites) > 0 {
+	if len(t.selectedPlan.Prerequisites) > 0 {
 		// The focused plan ran the CI preparation its command text drops.
 		setSelectedConfigurationScope(result, scope, []onboard.TestCommand{t.selectedPlan}, t.configurationEnvironment)
 		return

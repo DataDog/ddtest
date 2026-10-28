@@ -70,6 +70,12 @@ type RuntimeFinding struct {
 	// setupInputs are the inputs of the Datadog setup action that precedes
 	// this entry, for a language's own setup checks. Not serialized.
 	setupInputs map[string]string
+	// setupProvider is the CI provider whose setup precedes this entry, and
+	// setupSupported whether that setup is a supported release.
+	setupProvider  ciProvider
+	setupSupported bool
+	// setupReadProblem is why the provider found the setup cannot run there.
+	setupReadProblem string
 }
 
 // A composite call's condition sees the caller's environment and string inputs,
@@ -96,6 +102,12 @@ type runtimeStep struct {
 	Run              string                  `yaml:"run"`
 	If               string                  `yaml:"if"`
 	With             map[string]string       `yaml:"with"`
+	// Setup is the Datadog setup this step runs, when its provider recognized
+	// one while reading the configuration (see ciProvider.setupStep).
+	Setup *ciSetup `yaml:"-"`
+	// origin is the provider's private reference to the step's source, for
+	// prescribed edits.
+	origin any
 }
 
 type runtimeJob struct {
@@ -112,6 +124,11 @@ type runtimeJob struct {
 		Matrix any `yaml:"matrix"`
 	} `yaml:"strategy"`
 	Steps []runtimeStep `yaml:"steps"`
+	// Image is the container image the job runs in, as its provider resolved
+	// it (empty: none or unknown). Languages derive runtimes from it.
+	Image string `yaml:"-"`
+	// ImageTemplate is the image as written, before variables are expanded.
+	ImageTemplate string `yaml:"-"`
 }
 
 type tracerRequirement struct{ Version, Node, Requested string }
@@ -218,6 +235,11 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 					resolutions[i] = commandResolution{}
 				}
 				consumer = consumer || resolutions[i].Matched || resolutions[i].Reason != "" && stepMayStartTests(root, workflow, job, step, framework)
+			}
+			// A job discovery reports as never running the framework, without
+			// a test and without the setup, is not a consumer either.
+			if consumer && !slices.ContainsFunc(resolutions, func(resolution commandResolution) bool { return resolution.Matched }) && !jobSelectsSetup(job, "js") && (javascriptDiscovery{}).outsideFrameworkJob(root, workflow, job, nil, framework) {
+				consumer = false
 			}
 			if !consumer {
 				// No step can start a selected test, so no instrumented runtime runs here.
@@ -366,10 +388,10 @@ func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) err
 	if err != nil || !selected {
 		return err
 	}
-
-	state.action = step.Uses
-	state.tracer, err = runtimeValue(step.With["js-tracer-version"], row)
-	if _, explicit := step.With["js-tracer-version"]; explicit && state.tracer == "" {
+	setup, _ := datadogSetup(step)
+	state.action = setup.Reference
+	state.tracer, err = runtimeValue(setup.Inputs["js-tracer-version"], row)
+	if _, explicit := setup.Inputs["js-tracer-version"]; (explicit || setup.DefaultLatest) && state.tracer == "" {
 		state.tracer = "latest"
 	}
 	return err
@@ -394,24 +416,29 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		return []RuntimeFinding{finding}
 	}
 	state := runtimeState{}
+	if node := imageNode(job.Image); node != "" {
+		state.node, state.source, state.platform = node, "image "+job.Image, "linux-x64"
+	}
 	if len(frameworks) > 0 && frameworks[0] == "cypress" {
-		state.node = cypressContainerNode(job.Container)
-		if state.node != "" {
-			state.source = "container image"
+		// A job image (GitLab) already selected the runtime when there is no
+		// container runtime.
+		if node := cypressContainerNode(job.Container); node != "" {
+			state.node, state.source = node, "container image"
 		}
 	}
 	skippedTest := false
 	for i, step := range job.Steps {
 		uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+		setup, isSetup := datadogSetup(step)
 		resolution := resolutions[i]
 		// An unresolved step that can't start a test is setup, not a test entry.
 		test := resolution.Matched || resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, frameworkName(frameworks))
-		if uses != "actions/setup-node" && uses != githubAction && !changesNodeRuntime(step.Run) && !test {
+		if uses != "actions/setup-node" && !isSetup && !changesNodeRuntime(step.Run) && !test {
 			continue
 		}
 		finding = RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Source: step.Source, Command: step.Run, Resolution: resolution.Evidence, Node: state.node, NodeSource: state.source, Status: StatusInconclusive}
-		if uses == githubAction {
-			finding.Action = step.Uses
+		if isSetup {
+			finding.Action = setup.Reference
 		}
 		active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
 		if job.Context != nil && len(step.Parents) == 0 {
@@ -429,7 +456,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 			if job.Context != nil && step.ID != "" {
 				job.Context["steps."+step.ID+".outcome"] = "skipped"
 			}
-			if uses == githubAction {
+			if isSetup {
 				selected, err := actionSelectsJavaScript(step, row)
 				if err != nil && state.action == "" {
 					return fail(CodeUnverifiedExclusion, err.Error())
@@ -441,7 +468,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		if job.Context != nil && step.ID != "" {
 			job.Context["steps."+step.ID+".outcome"] = "success"
 		}
-		if uses == githubAction && strings.HasPrefix(job.Context["scenario"], "fork_pull_request") && (strings.Contains(step.With["api_key"], "secrets.") || strings.Contains(step.With["api-key"], "secrets.")) {
+		if isSetup && strings.HasPrefix(job.Context["scenario"], "fork_pull_request") && (strings.Contains(setup.Inputs["api_key"], "secrets.") || strings.Contains(setup.Inputs["api-key"], "secrets.")) {
 			finding.Status, finding.Code, finding.Reason = StatusIncompatible, "missing_fork_guard", "Datadog installation still runs on a fork pull request without credentials. Guard installation and its preload together."
 			return append(findings, finding)
 		}
@@ -453,7 +480,16 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 			return fail(CodeNodeResolution, step.ResolutionError)
 		}
 		state.trackNode(job, step, row)
-		if uses == githubAction {
+		if isSetup {
+			// Outside the shared syntax the setup counts only when complete,
+			// as onboarding and the Ruby inventory require.
+			if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
+				if selected, _ := actionSelectsJavaScript(step, row); selected {
+					if problem := provider.setupProblem(setup, "js-tracer-version", exactRelease, "the release onboard --apply selects", ""); problem != "" {
+						return fail(CodeIncompleteCISetup, problem)
+					}
+				}
+			}
 			if err := state.trackAction(step, row); err != nil {
 				return fail(CodeTracerMetadata, err.Error())
 			}
@@ -527,6 +563,9 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 			return finding
 		}
 		finding.Reason = "No Datadog JavaScript action runs before this test step for this matrix entry. It is not validated as instrumented."
+		if provider := activeOrDefaultCIProvider(); !provider.sharedSyntax() {
+			finding.Reason = "No " + provider.setupName() + " selecting JavaScript runs before this test command. It is not validated as instrumented."
+		}
 		return finding
 	}
 	requirement, err := resolve(ctx, state.action, state.tracer)
@@ -679,11 +718,11 @@ func actionSelectsJavaScript(step runtimeStep, row map[string]any) (bool, error)
 // actionSelectsLanguage reports whether the setup action installs the tracer of
 // the language named by its languages input.
 func actionSelectsLanguage(step runtimeStep, row map[string]any, language string) (bool, error) {
-	languages, err := runtimeValue(step.With["languages"], row)
-	if err != nil {
-		return false, err
+	setup, ok := datadogSetup(step)
+	if !ok {
+		setup.Inputs = step.With
 	}
-	return languages == "all" || slices.Contains(strings.Fields(languages), language), nil
+	return setupSelectsLanguage(setup, row, language)
 }
 
 func mochaInstrumentationDisabled(workflow ciWorkflow, job runtimeJob, step runtimeStep, rows ...map[string]any) bool {
@@ -705,4 +744,17 @@ func frameworkName(frameworks []string) string {
 		return "jest"
 	}
 	return frameworks[0]
+}
+
+// jobSelectsSetup reports whether a job runs a Datadog setup selecting the
+// installer language token.
+func jobSelectsSetup(job runtimeJob, token string) bool {
+	for _, step := range job.Steps {
+		if setup, ok := datadogSetup(step); ok {
+			if selected, err := setupSelectsLanguage(setup, nil, token); err != nil || selected {
+				return true
+			}
+		}
+	}
+	return false
 }

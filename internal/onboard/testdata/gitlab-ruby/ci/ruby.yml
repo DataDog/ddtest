@@ -1,0 +1,10 @@
+.bundle:
+  stage: test
+  cache:
+    key: gems-$CI_JOB_IMAGE
+    paths:
+      - vendor/bundle
+  before_script:
+    - ruby -v
+    - bundle config set --local path "$BUNDLE_PATH"
+    - bundle install --jobs 4

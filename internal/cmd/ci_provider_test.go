@@ -52,9 +52,9 @@ func TestCIProviderFlagRejectsUnknownProviders(t *testing.T) {
 		command func() *cobra.Command
 		args    []string
 	}{
-		{"onboard", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "--ci-provider", "gitlab"}},
-		{"onboard apply", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--apply", "--yes", "--format", "json", "--ci-provider", "gitlab"}},
-		{"testdrive", newTestdriveCommand, []string{"--agent", "--all", "--check-only", "--yes", "--ci-provider", "gitlab"}},
+		{"onboard", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "--ci-provider", "circleci"}},
+		{"onboard apply", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--apply", "--yes", "--format", "json", "--ci-provider", "circleci"}},
+		{"testdrive", newTestdriveCommand, []string{"--agent", "--all", "--check-only", "--yes", "--ci-provider", "circleci"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ciProviderFixture(t)
@@ -62,18 +62,18 @@ func TestCIProviderFlagRejectsUnknownProviders(t *testing.T) {
 			require.Error(t, err)
 			require.Equal(t, "invalid_options", result.Code)
 			require.Equal(t, "options", result.Phase)
-			require.Equal(t, `unsupported --ci-provider "gitlab"; supported CI providers: github`, result.Reason)
+			require.Equal(t, `unsupported --ci-provider "circleci"; supported CI providers: github, gitlab`, result.Reason)
 			require.NoDirExists(t, ".testoptimization")
 		})
 	}
 	t.Run("instructions", func(t *testing.T) {
 		ciProviderFixture(t)
 		command := newOnboardCommand(nil)
-		command.SetArgs([]string{"--instructions", "--ci-provider", "gitlab"})
+		command.SetArgs([]string{"--instructions", "--ci-provider", "circleci"})
 		var out bytes.Buffer
 		command.SetOut(&out)
 		command.SetErr(io.Discard)
-		require.EqualError(t, command.ExecuteContext(t.Context()), `unsupported --ci-provider "gitlab"; supported CI providers: github`)
+		require.EqualError(t, command.ExecuteContext(t.Context()), `unsupported --ci-provider "circleci"; supported CI providers: github, gitlab`)
 		require.Empty(t, out.String())
 	})
 }

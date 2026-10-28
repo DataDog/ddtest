@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
@@ -142,7 +143,32 @@ func matrixEntries(matrix map[string]any, name string) ([]map[string]any, error)
 
 var matrixReference = regexp.MustCompile(`^\$\{\{\s*matrix\.([a-zA-Z0-9_-]+)\s*\}\}$`)
 
+// unresolvedCIValue marks a value only CI can resolve, such as a variable
+// reading a predefined CI variable or a command substitution, with the text
+// it was written as. Resolving it fails with that text, never the marker.
+func unresolvedCIValue(written string) string {
+	return "${{ unresolved " + strconv.Quote(written) + " }}"
+}
+
+var unresolvedCIMarker = regexp.MustCompile(`\$\{\{ unresolved ("(?:[^"\\]|\\.)*") \}\}`)
+
+// unresolvedCIError explains a value holding an unresolvedCIValue marker.
+func unresolvedCIError(value string) error {
+	match := unresolvedCIMarker.FindStringSubmatch(value)
+	if match == nil {
+		return nil
+	}
+	written, err := strconv.Unquote(match[1])
+	if err != nil {
+		written = match[1]
+	}
+	return fmt.Errorf("its CI value %s reads values only CI knows (predefined CI variables or command output); ddtest cannot resolve it locally", written)
+}
+
 func runtimeValue(value string, row map[string]any) (string, error) {
+	if err := unresolvedCIError(value); err != nil {
+		return "", err
+	}
 	if match := matrixReference.FindStringSubmatch(strings.TrimSpace(value)); match != nil {
 		resolved, ok := row[match[1]]
 		if !ok {

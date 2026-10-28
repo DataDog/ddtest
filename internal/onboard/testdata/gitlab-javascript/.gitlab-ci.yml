@@ -1,0 +1,49 @@
+# A Node.js service: lint, unit tests on two Node versions, end-to-end tests
+# from an included template, and a manual deploy.
+include:
+  - local: ci/templates.yml
+
+stages:
+  - test
+  - deploy
+
+variables:
+  NODE_VERSION: "22"
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+default:
+  image: node:${NODE_VERSION}
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  before_script:
+    - npm ci --prefer-offline --no-audit
+
+lint:
+  stage: test
+  script:
+    - npm run lint
+
+unit:
+  extends: .node-test
+  parallel:
+    matrix:
+      - NODE_VERSION: ["20", "22"]
+  script:
+    - npm test -- --ci
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+
+deploy:
+  stage: deploy
+  needs: [unit]
+  script:
+    - echo "deploying $CI_COMMIT_SHORT_SHA"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual

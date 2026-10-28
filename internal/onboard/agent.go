@@ -208,12 +208,12 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	if err != nil {
 		return fail("platform_unresolved", err)
 	}
-	runner, err := detected.DetectFramework()
+	frameworkName, err := onboardingFramework(detected)
 	if err != nil {
 		return fail("framework_unresolved", err)
 	}
 	if root, err := os.Getwd(); err == nil {
-		if err := CheckCIProviderSupport(root, detected.Name(), runner.Name()); err != nil {
+		if err := CheckCIProviderSupport(root, detected.Name(), frameworkName); err != nil {
 			var choice *CIProviderChoice
 			var unsupported *CIProviderUnsupportedError
 			switch {
@@ -239,9 +239,14 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		// onboard --apply validates every discovered configuration, which rejects
 		// a single-command override; never hand off a command that cannot run.
 		err := fmt.Errorf("--command selects one suite, but onboarding applies and validates every discovered CI configuration")
-		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input", RequiredInput: []string{"Omit --command to onboard every discovered configuration, or validate one suite with testdrive --framework " + runner.Name() + " --command <command>."}}))
+		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input", RequiredInput: []string{"Omit --command to onboard every discovered configuration, or validate one suite with testdrive --framework " + frameworkName + " --command <command>."}}))
 	}
 	automatic := discoveryLanguageAutomaticSetup(detected.Name())
+	if root, err := os.Getwd(); err == nil && automatic {
+		if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
+			automatic = discoveryLanguageNamed(detected.Name()).automaticProviderSetup(frameworkName)
+		}
+	}
 	if !automatic && options.Site == "" {
 		// Like onboard --apply, DD_SITE is the default site. The agent writes
 		// it into the action and the validation command records it.
@@ -251,10 +256,10 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		err := fmt.Errorf("site must be a literal Datadog hostname: %q", options.Site)
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input"}))
 	}
-	command := OnboardingCommand(runner.Name())
+	command := OnboardingCommand(frameworkName)
 	if !automatic {
 		// The agent applies CI setup by hand; validation runs through the coordinator.
-		command = DDTestCommand("testdrive", "--framework", runner.Name(), "--all", "--agent", "--yes")
+		command = DDTestCommand("testdrive", "--framework", frameworkName, "--all", "--agent", "--yes")
 	}
 	if len(command) == 0 {
 		return errors.Join(fmt.Errorf("%s", TransientExecutableReason), WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "onboarding", Code: "transient_executable", Reason: TransientExecutableReason, NextAction: "supply_input"}))
@@ -277,10 +282,10 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	}
 	notice := ExecutableFallbackNotice()
 	if !automatic {
-		return manualSetupHandoff(output, options, detected.Name(), runner.Name(), command, notice)
+		return manualSetupHandoff(output, options, detected.Name(), frameworkName, command, notice)
 	}
 	if options.Human {
-		text := humanOnboardingHandoff(runner.Name(), command)
+		text := humanOnboardingHandoff(frameworkName, command)
 		if notice != "" {
 			text += notice + "\n"
 		}
@@ -306,11 +311,15 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 	if err != nil {
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "blocked_environment", Phase: "discovery", Code: "repository_unavailable", Reason: err.Error(), NextAction: "request_capability"}))
 	}
+	setup := "Datadog setup action"
+	if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
+		setup = provider.setupName()
+	}
 	if registered := discoveryLanguageNamed(language); registered != nil && registered.ciSetupConfigured(root, framework, options.Site) {
 		return WriteAgentResult(output, AgentResult{
 			Status: "ready", Phase: "onboarding", NextAction: "run_command", NextCommand: command,
 			Capabilities: validationCapabilities,
-			Reason:       strings.TrimSpace("CI already runs the Datadog setup action for every discovered " + framework + " test step. " + foregroundRunInstruction + " " + AgentScope + " " + validationWaitInstruction + " ddtest owns testdrive, report-exclusion checks and cleanup, and returns exact blockers for unsupported setup. No Datadog key is required locally. Do not launch a parallel preflight first. " + notice),
+			Reason:       strings.TrimSpace("CI already runs the " + setup + " for every discovered " + framework + " test step. " + foregroundRunInstruction + " " + AgentScope + " " + validationWaitInstruction + " ddtest owns testdrive, report-exclusion checks and cleanup, and returns exact blockers for unsupported setup. No Datadog key is required locally. Do not launch a parallel preflight first. " + notice),
 		})
 	}
 	scope, err := DiscoverValidationScope(root, framework)
@@ -336,7 +345,7 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 	if err := run(&guidance, &agentHandoff{site: options.Site}); err != nil {
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "scope_unresolved", Reason: err.Error(), NextAction: "supply_input"}))
 	}
-	reason := "CI does not yet run the Datadog setup action before every discovered " + framework + " test step. Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
+	reason := "CI does not yet run the " + setup + " before every discovered " + framework + " test step. Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
 	if len(unresolved) > 0 {
 		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers; tell the user now that they need a scope decision. ", len(unresolved))
 	}

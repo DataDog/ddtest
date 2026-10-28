@@ -28,6 +28,14 @@ type ciWorkflow struct {
 	Defaults ciDefaults            `yaml:"defaults"`
 	Env      map[string]string     `yaml:"env"`
 	Jobs     map[string]runtimeJob `yaml:"jobs"`
+	// Files are the other repository files the provider read for this
+	// workflow, such as included configuration.
+	Files []string `yaml:"-"`
+	// Review lists configuration the provider read as outside every test
+	// path, reported without blocking.
+	Review []string `yaml:"-"`
+	// Caveats summarize that configuration, one line per group.
+	Caveats []string `yaml:"-"`
 }
 
 func findWorkflows(root, language, name string) (workflowDiscovery, error) {
@@ -47,9 +55,9 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 				if condition == "false" {
 					continue
 				}
-				uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
-				languages := step.With["languages"]
-				if uses == githubAction && hasVersion && (condition == "" || condition == "true" || condition == "success()") && !strings.Contains(languages, "${{") {
+				setup, isSetup := datadogSetup(step)
+				languages := setup.Inputs["languages"]
+				if isSetup && setup.Pinned && (condition == "" || condition == "true" || condition == "success()") && !strings.Contains(languages, "${{") {
 					hasAction = hasAction || languages == "all" || slices.Contains(strings.Fields(languages), actionLanguage)
 				}
 				resolution := resolveTestStep(root, workflow, job, step, language, name)

@@ -171,7 +171,33 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if t.preflight != nil {
 		t.preflight = t.frameworkPreflight()
 	}
-	return t.runPreparedChecksOrTests(ctx, output)
+	result, runErr = t.runPreparedChecksOrTests(ctx, output)
+	if copyRoot != original {
+		scrubCopyPaths(&result, copyRoot)
+	}
+	return result, runErr
+}
+
+// scrubCopyPaths reports commands relative to the checkout, never through
+// the disposable copy's temporary path.
+func scrubCopyPaths(result *validationResult, copyRoot string) {
+	roots := []string{copyRoot + string(filepath.Separator)}
+	if canonical, err := filepath.EvalSymlinks(copyRoot); err == nil && canonical != copyRoot {
+		roots = append(roots, canonical+string(filepath.Separator))
+	}
+	scrub := func(text string) string {
+		for _, root := range roots {
+			text = strings.ReplaceAll(text, root, "")
+		}
+		return text
+	}
+	if result.Preflight != nil {
+		result.Preflight.Command = scrub(result.Preflight.Command)
+	}
+	for i := range result.Runs {
+		result.Runs[i].Command = scrub(result.Runs[i].Command)
+		result.Runs[i].NativeCommand = scrub(result.Runs[i].NativeCommand)
+	}
 }
 
 // Tracers resolve repository-relative source and skip paths against the CI

@@ -78,17 +78,90 @@ review it before executing it if you have made further edits since apply.
 
 ## CI provider
 
-`onboard` and `testdrive` read one CI provider's configuration. GitHub Actions
-(`--ci-provider github`) is currently the only supported provider and is selected
-automatically when `.github/workflows` exists; any other value is rejected with
-the list of supported providers. When several supported providers contain tests,
-ddtest asks which one to configure before discovery, edits or validation (agents
-receive `ci_provider_required` with `next_action: ask_user`), and follow-up
-commands keep the selected `--ci-provider`. A language without setup support on
-the selected provider gets `ci_provider_unsupported` instead of instructions.
-Other providers' CI files (GitLab, Jenkins, CircleCI, Buildkite and others) are
-never parsed: when they mention the framework they are listed as outside this
-validation, and they never fail onboarding.
+`onboard` and `testdrive` read one CI provider's configuration: GitHub Actions
+(`--ci-provider github`, `.github/workflows`) or GitLab CI (`--ci-provider
+gitlab`, `.gitlab-ci.yml`). The provider whose configuration exists is selected
+automatically; any other value is rejected with the list of supported
+providers. When several supported providers contain tests, ddtest asks which
+one to configure before discovery, edits or validation (agents receive
+`ci_provider_required` with `next_action: ask_user`), and follow-up commands
+keep the selected `--ci-provider`. A language without setup support on the
+selected provider gets `ci_provider_unsupported` instead of instructions:
+JavaScript and Ruby support both providers, Python and Java GitHub Actions only.
+Other CI files (Jenkins, CircleCI, Buildkite and others) are never parsed: when
+they mention the framework they are listed as outside this validation, and they
+never fail onboarding.
+
+### GitLab CI
+
+ddtest reads `.gitlab-ci.yml` and every local file it includes (`include:
+local`, string includes and `*` patterns), with `extends`, `!reference`,
+`default` and top-level defaults, `inherit`, `variables`, `parallel: matrix`,
+hidden template jobs and `before_script`/`script`. Script entries share one
+shell, so literal `export`, assignments and `cd` carry into later entries.
+`parallel: matrix` entries that differ only by the variable selecting the
+job's `image:` (such as `RUBY_IMAGE`) share one local configuration, and each
+entry's runtime is still checked statically; an `if` on such a variable
+(`if [ "$RUBY_IMAGE" = "ruby:3.0" ]; then …; fi`) is followed per entry.
+`rules` (including `include` rules and `workflow: rules`, whose `variables`
+apply when the deciding rule is certain) and `when: never` exclude a job (or one matrix entry) only when every
+operand is known; `only`/`except`, `changes`, `when: manual` and conditions on
+pipeline variables are possible CI paths. Variables that only locate a
+`cache:paths` directory are runner state and are not replayed. GitLab's own scanning, review and release components and templates run no
+tests and are reported, not blockers: the `sast`, `secret-detection`,
+`dependency-scanning`, `container-scanning` and `code-quality` components
+under `gitlab.com/components/`, `danger-review` and `gem-release` under
+`gitlab.com/gitlab-org/components/`, and the `Jobs/` and `Security/` SAST,
+secret detection, dependency, container and license scanning, code quality
+and `Workflows/` pipeline templates (the list is `gitLabNonTestComponents`
+and `gitLabNonTestTemplates`). A JavaScript job without the setup that never
+runs the selected framework (nothing it runs, following package and
+repository scripts, names it, and every other executable is a known file,
+release, deploy, bundler or linter tool; package runners such as `npx`,
+`npm exec` and `yarn dlx` count by their target) is reported as a caveat, not
+a blocker, and the CI runtime and tracer agreement checks skip it; unknown
+wrappers keep their job in scope. Inside a job that runs the framework, a
+repository Node script that never mentions it stays preparation of the tests,
+replayed after review (`--allow-reviewed-builds`). Agents may opt in without
+asking when every reviewed step runs repository-local code and nothing
+downloads, installs or writes outside the repository copy; the final response
+then lists the steps it ran ("Reviewed preparation run (opted in with
+--allow-reviewed-builds): …"). When `--apply` needs one
+source edit first (such as wrapping a Mocha command with NYC), its result
+asks for that edit and resumes with `onboard --apply`. Anything ddtest cannot read locally stays an
+unresolved blocker: remote, project, template and
+component includes, include inputs and `spec:` headers, includes whose rules
+depend on the pipeline, triggers and child
+pipelines, unknown `extends`/`!reference` targets, `rules:variables`, state
+changed inside shell control flow, and tests in `after_script`.
+
+CI setup uses Datadog's GitLab setup script
+([test-optimization-gitlab-script](https://github.com/DataDog/test-optimization-gitlab-script)),
+pinned to a release and sourced only after its SHA256 check, as its README
+shows. ddtest wraps it in `if [ -n "$DD_API_KEY" ]`, because the script exits
+the job when the key is missing; the plain README form is accepted too. It runs the same installer as the GitHub action and exports its
+configuration into the job's shell. The setup is complete when, in every job
+that runs the tests, the script runs before the first test command with
+`LANGUAGES` naming the language, `API_KEY` from a CI/CD variable
+(`"$DD_API_KEY"`), an exact `<LANGUAGE>_TRACER_VERSION` and a `SITE` matching
+the selected site. A person adds `DD_API_KEY` as a masked CI/CD variable; jobs
+without it (protected variables on other branches, forks) log that Test
+Optimization is disabled and run their tests untraced. The entry needs Bash, so jobs on images known to lack it (Alpine
+variants, BusyBox, distroless) are refused with that reason; other images are
+assumed to have Bash. Runtimes come from the job's `image:`
+(`node:22`, `ruby:3.3-slim`); floating tags such as `latest` stay
+inconclusive.
+
+`onboard --apply` inserts the script entry, as a block scalar, before the first
+JavaScript test command of each test job, plus the `--import` loader export for
+Vitest and other ESM tests. It keeps every other line, and refuses entries that
+a template, `!reference` or anchor shares with a job that does not run the same
+tests. An edited included file is listed in the preview, since other projects
+may include it. Ruby, Cucumber and WebdriverIO setup is applied by the coding
+agent from `onboard --agent` instructions: for Ruby the script adds datadog-ci
+to the CI bundle (no Gemfile edit) and replaces `RUBYOPT`, so existing Ruby
+options are re-added after it. Jobs whose image runs an engine datadog-ci does
+not instrument (JRuby, TruffleRuby, Ruby head) stay excluded.
 
 ## Coverage and local developer commands
 
@@ -168,8 +241,8 @@ code that spawns processes or loads a repository module) and npm settings that
 change how scripts execute (`ignore-scripts`, `script-shell`). A Cucumber alias
 chain such as `pnpm test:unit && pnpm test:bdd` resolves to its Cucumber leaf
 when that leaf is the chain's only and last link. CI files of other providers
-(`circle.yml`, `.gitlab-ci.yml` and the like) that mention the framework are
-listed for review; they are not analyzed. A job guard that reads only
+(`circle.yml`, `.gitlab-ci.yml` when GitHub Actions is selected, and the like)
+that mention the framework are listed for review; they are not analyzed. A job guard that reads only
 runtime context (`github.actor`, `github.event_name`, `github.run_number`,
 `needs.<job>.outputs`) is validated as a possible CI path and reported as
 unverified; only a guard that is false for every outcome excludes the job. Validation runs as

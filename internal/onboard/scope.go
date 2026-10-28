@@ -108,6 +108,9 @@ type ValidationScope struct {
 	// ComputedAxes can't be replayed locally value by value. Validation
 	// decides whether each is a caveat or a blocker from its job's results.
 	ComputedAxes []ComputedAxis `json:"computed_axes,omitempty"`
+	// Caveats are CI configuration outside this validation that needs no
+	// decision, one line per job or group: they never block completion.
+	Caveats []string `json:"caveats,omitempty"`
 }
 
 // ComputedAxis is a matrix axis computed at runtime (for example from
@@ -160,6 +163,8 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 	}
 	scope.Review = append(scope.Review, otherCIReview(root, framework, provider)...)
 	for _, workflow := range workflows {
+		scope.Review = append(scope.Review, workflow.Review...)
+		scope.Caveats = append(scope.Caveats, workflow.Caveats...)
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
 			lastTest := -1
@@ -249,11 +254,12 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				var unresolved, setupUnresolved, review []scopeDiagnostic
 				var commands []TestCommand
 				for i, step := range job.Steps {
-					if framework == "cypress" && strings.Split(strings.ToLower(step.Uses), "@")[0] == githubAction && step.Run == "" && step.ResolutionError == "" {
+					_, isSetup := datadogSetup(step)
+					if framework == "cypress" && isSetup && step.Run == "" && step.ResolutionError == "" {
 						step.If = ""
 					}
 					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
-					if strings.EqualFold(strings.Split(step.Uses, "@")[0], githubAction) && conditionErr == nil {
+					if isSetup && conditionErr == nil {
 						if selected, err := actionSelectsLanguage(step, row, setupActionLanguage(language)); err == nil && selected {
 							if active {
 								installerActive = true
@@ -306,6 +312,10 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 								review = append(review, scopeDiagnostic{location, "Post-test output/setup requires separate review: " + setup})
 							}
 							for _, build := range resolution.Builds {
+								if checkOnlyTool(build.Command) {
+									review = append(review, scopeDiagnostic{location, "After the job's last " + framework + " test step; lint or type check, outside the test path: " + build.Command})
+									continue
+								}
 								review = append(review, scopeDiagnostic{location, "Post-test preparation requires separate review: " + build.Command})
 							}
 							resolution.Builds = nil
@@ -368,6 +378,9 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						if unsupportedAt(i) {
 							entry.CIInstrumentationExcluded, entry.UnsupportedNode = true, true
 						}
+						if !installerActive && discoveryLanguageNamed(language).unsupportedImage(job.Image) != "" {
+							entry.CIInstrumentationExcluded = true
+						}
 						entry.WindowsRunner = entry.CIInstrumentationExcluded && installerSkipped && windowsRow(job, row)
 						entry.RemoteGrid = resolved.RemoteGrid
 						if framework == "mocha" && !entry.usesNYC && !entry.mochaIstanbul {
@@ -416,6 +429,19 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				// An explicit instrumentation opt-out never claims local validation
 				// of its setup. Keep that setup visible without blocking other rows.
 				// Unknown commands remain in unresolved, even on excluded rows.
+				// A job that never runs the framework and has no setup is not
+				// part of this validation; its gaps are reported, not blockers.
+				if len(commands) == 0 && !installerActive && len(unresolved)+len(setupUnresolved) > 0 && discoveryLanguageNamed(language).outsideFrameworkJob(root, workflow, job, row, framework) {
+					for _, diagnostic := range append(unresolved, setupUnresolved...) {
+						diagnostic.Reason = "Uninstrumented CI job that never runs " + framework + "; outside this validation, and any tests it runs are not reported to Datadog: " + diagnostic.Reason
+						review = append(review, diagnostic)
+					}
+					unresolved, setupUnresolved = nil, nil
+					caveat := workflow.Path + " / " + name + ": CI job without the Datadog setup that never runs " + framework + "; it is outside this validation, and any tests it runs are not reported to Datadog."
+					if !slices.Contains(scope.Caveats, caveat) {
+						scope.Caveats = append(scope.Caveats, caveat)
+					}
+				}
 				onlyExcluded := len(commands) > 0 && !slices.ContainsFunc(commands, func(command TestCommand) bool { return !command.CIInstrumentationExcluded })
 				for _, diagnostic := range setupUnresolved {
 					if onlyExcluded {
@@ -626,4 +652,23 @@ func otherCIReview(root, framework string, selected ciProvider) []string {
 		}
 	}
 	return review
+}
+
+// checkOnlyTool reports a linter or type check that only reads sources:
+// tsc --noEmit, eslint (without --fix), prettier --check, stylelint.
+func checkOnlyTool(command string) bool {
+	words, err := shellquote.Split(command)
+	if err != nil || len(words) == 0 {
+		return false
+	}
+	lower := strings.ToLower(command)
+	switch filepath.Base(words[0]) {
+	case "tsc", "vue-tsc":
+		return strings.Contains(lower, "--noemit")
+	case "eslint", "stylelint":
+		return !strings.Contains(lower, "--fix")
+	case "prettier":
+		return slices.Contains(words, "--check") || slices.Contains(words, "-c")
+	}
+	return false
 }

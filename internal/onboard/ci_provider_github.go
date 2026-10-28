@@ -6,9 +6,11 @@
 package onboard
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"go.yaml.in/yaml/v3"
@@ -85,4 +87,54 @@ func (g gitHubActions) readWorkflows(root string) ([]ciWorkflow, error) {
 
 func (gitHubActions) findTestWorkflows(root, language, framework string) ([]string, []string, error) {
 	return environment.NewGitHub().FindTestWorkflows(root, language, framework)
+}
+
+func (gitHubActions) sharedSyntax() bool { return true }
+
+// The Datadog setup action, at any ref; Pinned when the ref is present.
+func (gitHubActions) setupStep(step runtimeStep) (ciSetup, bool) {
+	uses, _, pinned := strings.Cut(strings.ToLower(step.Uses), "@")
+	if uses != githubAction {
+		return ciSetup{}, false
+	}
+	return ciSetup{Reference: step.Uses, Pinned: pinned, Supported: setupActionSupported(step.Uses), Inputs: step.With}, true
+}
+
+func (gitHubActions) setupName() string { return "Datadog action" }
+
+func (gitHubActions) setupInput(name string) string { return name }
+
+func (gitHubActions) setupProblem(setup ciSetup, tracerInput string, exact func(string) bool, example, site string) string {
+	if !setupActionSupported(setup.Reference) {
+		return "The Datadog action " + setup.Reference + " is not a supported release; use datadog/test-visibility-github-action@v3."
+	}
+	if strings.TrimSpace(setup.Inputs["api_key"]) == "" {
+		return "The Datadog action has no api_key input; set api_key: ${{ secrets.DD_API_KEY }}."
+	}
+	if tracer := setup.Inputs[tracerInput]; !exact(tracer) {
+		return "The Datadog action's " + tracerInput + " " + fmt.Sprintf("%q", tracer) + " is not an exact release; set an exact version such as " + example + "."
+	}
+	configured := setup.Inputs["site"]
+	if configured == "" {
+		configured = defaultDatadogSite
+	}
+	if site != "" && configured != site {
+		return "The Datadog action reports to " + configured + ", but the selected Datadog site is " + site + "; set site: " + site + " on the action."
+	}
+	return ""
+}
+
+func (gitHubActions) apiKeyAction(skipped bool) string {
+	if skipped {
+		return "Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step is skipped and tests run untraced."
+	}
+	return "Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step fails without failing the job and tests run untraced."
+}
+
+// GitHub Actions setup instructions are the languages' workflow templates.
+func (gitHubActions) setupInstructions(ciSetupRequest) string { return "" }
+
+// The shared workflow editor edits GitHub Actions workflows.
+func (gitHubActions) planSetupEdits(string, []ciWorkflow, []ciSetupTarget, ciSetupRequest) ([]setupEdit, []string, error) {
+	return nil, nil, errors.New("GitHub Actions workflows are edited by the shared workflow editor")
 }

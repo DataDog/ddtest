@@ -23,6 +23,8 @@ type buildResult struct {
 	Status     string `json:"status"`
 	ExitCode   *int   `json:"exit_code"`
 	Diagnostic string `json:"diagnostic,omitempty"`
+	// Reviewed marks preparation run only through --allow-reviewed-builds.
+	Reviewed bool `json:"reviewed_opt_in,omitempty"`
 }
 
 // Run the known build plan once, before either comparison mode. A failed build
@@ -70,6 +72,9 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 		if review, found := preparationNeedsReview(directory, build.BuildCommand); review && !t.allowReviewedBuilds {
 			build.Status, build.Code, build.Diagnostic = "blocked", "preparation_review_required", found
 			return fmt.Errorf("preparation requires separate review: %s; review customer scripts/plugins and network access, then opt in with --allow-reviewed-builds", build.Command)
+		} else if review {
+			// The final response reports every step run through this opt-in.
+			build.Reviewed = true
 		}
 		if build.Kind == onboard.PreparationPatch {
 			if err := applyLiteralPatch(t.repositoryRoot, directory, words); err != nil {

@@ -24,8 +24,11 @@ import (
 // an unresolved component is still inconclusive; it must not hide custom wrappers.
 type commandResolution struct {
 	MochaAuxiliary bool
-	OtherFramework bool
-	Setup          []string
+	// MochaReferenced reports an auxiliary Node script that mentions Mocha
+	// (or an inline one), so it may still start Mocha tests.
+	MochaReferenced bool
+	OtherFramework  bool
+	Setup           []string
 
 	Tests   []TestCommand
 	Builds  []BuildCommand
@@ -156,6 +159,12 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			return metadata
 		}
 	}
+	if result.MochaAuxiliary && !result.MochaReferenced && !result.Matched && result.Reason == "" && result.ReviewReason == "" && len(result.Tests) == 0 && len(result.Builds) == 0 {
+		// A repository Node script that never mentions Mocha doesn't start its
+		// tests, but it may generate files later tests read: it is preparation,
+		// replayed before them after review (--allow-reviewed-builds).
+		return commandResolution{Builds: []BuildCommand{{Directory: repositoryPath(root, resolvedDirectory), Command: strings.TrimSpace(step.Run), Kind: PreparationPackageBuild}}}
+	}
 	if result.MochaAuxiliary && (result.ReviewReason == "" || result.Matched) {
 		result.Reason = joinDiagnostic(result.Reason, "Node script is not identified as Mocha outside a resolved Mocha package command; review its test scope.")
 		for i := range result.Tests {
@@ -250,6 +259,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 		}
 		result.Tests = append(result.Tests, part.Tests...)
 		result.MochaAuxiliary = result.MochaAuxiliary || part.MochaAuxiliary
+		result.MochaReferenced = result.MochaReferenced || part.MochaReferenced
 		setup = append(setup, part.Setup...)
 
 		result.Builds = append(result.Builds, part.Builds...)
@@ -741,6 +751,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 			result.Matched = result.Matched || resolved.Matched
 			result.OtherFramework = result.OtherFramework || resolved.OtherFramework
 			result.MochaAuxiliary = result.MochaAuxiliary || resolved.MochaAuxiliary
+			result.MochaReferenced = result.MochaReferenced || resolved.MochaReferenced
 			result.Reason = joinDiagnostic(result.Reason, resolved.Reason)
 			result.ReviewReason = joinDiagnostic(result.ReviewReason, resolved.ReviewReason)
 			result.Evidence = joinDiagnostic(result.Evidence, resolved.Evidence)

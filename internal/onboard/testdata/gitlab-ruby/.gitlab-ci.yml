@@ -1,0 +1,32 @@
+# A Ruby gem: RSpec on two Rubies and two Gemfiles, Minitest-free lint, and a
+# JRuby job the tracer cannot instrument.
+include: ci/ruby.yml
+
+stages:
+  - test
+
+variables:
+  BUNDLE_PATH: vendor/bundle
+
+rspec:
+  extends: .bundle
+  image: ruby:${RUBY_VERSION}
+  parallel:
+    matrix:
+      - RUBY_VERSION: ["3.2", "3.3"]
+        BUNDLE_GEMFILE: ["Gemfile", "gemfiles/rake13.gemfile"]
+  script:
+    - bundle exec rspec --format progress
+
+rubocop:
+  extends: .bundle
+  image: ruby:3.3-slim
+  script:
+    - bundle exec rubocop
+
+jruby:
+  extends: .bundle
+  image: jruby:9.4
+  script:
+    - bundle exec rspec
+  allow_failure: true

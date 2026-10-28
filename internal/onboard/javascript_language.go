@@ -5,7 +5,10 @@
 
 package onboard
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // javascriptDiscovery onboards Node.js test frameworks with dd-trace.
 type javascriptDiscovery struct{}
@@ -29,12 +32,28 @@ func (javascriptDiscovery) coordinated() bool { return true }
 
 func (javascriptDiscovery) automaticCISetup() bool { return true }
 
-// JavaScript setup edits and checks GitHub Actions workflows only.
+// JavaScript setup edits and checks GitHub Actions workflows and GitLab CI.
 func (javascriptDiscovery) supportsCIProvider(provider string) bool {
-	return provider == gitHubActionsProvider
+	return provider == gitHubActionsProvider || provider == gitLabCIProvider
 }
 
-func (javascriptDiscovery) ciSetupConfigured(string, string, string) bool { return false }
+// Outside GitHub Actions the installer appends its require preload to the
+// current NODE_OPTIONS and exports the ESM loader path for an explicit
+// --import.
+func (javascriptDiscovery) setupShellExports(current map[string]string) (map[string]string, map[string]string) {
+	options := strings.TrimSpace(current["NODE_OPTIONS"] + " -r ${{ env.DD_TRACE_PACKAGE }}")
+	return map[string]string{"NODE_OPTIONS": options}, map[string]string{"DD_TRACE_ESM_IMPORT": "${{ env.DD_TRACE_ESM_IMPORT }}", "DD_TRACE_PACKAGE": "${{ env.DD_TRACE_PACKAGE }}"}
+}
+
+// On GitHub Actions onboard --apply owns the JavaScript setup check. Other
+// providers share the generic one, for setup agents apply by hand.
+func (javascriptDiscovery) ciSetupConfigured(root, framework, site string) bool {
+	provider, err := currentCIProvider(root)
+	if err != nil || provider.sharedSyntax() {
+		return false
+	}
+	return providerSetupConfigured(root, provider, "javascript", framework, site, "js-tracer-version", exactRelease)
+}
 
 func (javascriptDiscovery) agentInstructions(string, string) string { return "" }
 
@@ -64,3 +83,33 @@ func (javascriptDiscovery) onboardingScope(framework string) (bool, bool) {
 }
 
 const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set NODE_OPTIONS for later steps, so merge this into the existing test step, preserving any current Node options:\n\n```yaml\nenv:\n  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\n```\n\nThe --import loader is required for Vitest and other ESM tests."
+
+// esmImportCommand registers the tracer's ESM loader after a setup that runs
+// in the job's shell, as the GitLab setup script's README prescribes.
+// It runs only when the setup exported the loader path: without the API key
+// or after a failed install, a bare --import would stop Node.
+const esmImportCommand = `if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --import $DD_TRACE_ESM_IMPORT"; fi`
+
+func (javascriptDiscovery) ciSetupRequest(_, framework, site string) ciSetupRequest {
+	request := ciSetupRequest{Language: "js", Site: site, TracerInput: "js-tracer-version", TracerVersion: "<exact dd-trace release>"}
+	if setupImportsESM(framework) || framework == "mocha" {
+		request.After = []string{esmImportCommand}
+	}
+	request.Notes = append(request.Notes, "The script appends its dd-trace preload to NODE_OPTIONS for later commands of the job. Run the tests on Node.js 18 or newer (the job's image). After the entry, extend NODE_OPTIONS (export NODE_OPTIONS=\"$NODE_OPTIONS ...\") instead of replacing it, including in an inline NODE_OPTIONS=... prefix of the test command.")
+	if framework == "mocha" {
+		request.Notes = append(request.Notes, "Keep the export after the entry only for Mocha ESM test files; CommonJS suites need only the preload.")
+	}
+	if framework == "cucumber" {
+		request.Notes = append(request.Notes, "For Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false in the job's variables. This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected.")
+	}
+	return request
+}
+
+// Scoped initialization (Cucumber, WebdriverIO) edits package scripts for
+// a per-step variable; outside GitHub Actions it is set up manually.
+func (javascriptDiscovery) automaticProviderSetup(framework string) bool {
+	return framework != "cucumber" && framework != "webdriverio"
+}
+
+// Node versions no tracer supports are skipped through skipsUnsupportedNode.
+func (javascriptDiscovery) unsupportedImage(string) string { return "" }

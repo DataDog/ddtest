@@ -32,26 +32,24 @@ type validationSummary struct {
 	// Caveats name CI values this run could not reproduce exactly; they never
 	// block completion.
 	Caveats []string `json:"caveats,omitempty"`
+	// ReviewedPreparation lists preparation run only because the run opted
+	// in with --allow-reviewed-builds.
+	ReviewedPreparation []string `json:"reviewed_preparation,omitempty"`
 }
 
-// apiKeyAction is the one step CI needs that no local run can perform. What
-// happens until it exists depends on how the workflow guards the Datadog step.
-const (
-	apiKeyAction        = "Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step fails without failing the job and tests run untraced."
-	apiKeySkippedAction = "Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step is skipped and tests run untraced."
-)
-
-// apiKeyHumanAction picks the wording for a step skipped by an
+// apiKeyHumanAction is the one step CI needs that no local run can perform,
+// in the selected CI provider's settings. What happens until it exists
+// depends on how the configuration guards the Datadog step: skipped by an
 // env.DD_API_KEY guard (the Cypress setup) or kept with continue-on-error.
 func apiKeyHumanAction(check *onboard.RuntimeCheck) string {
 	if check != nil {
 		for _, job := range check.Jobs {
 			if job.Reason == onboard.GuardedActionBranch {
-				return apiKeySkippedAction
+				return onboard.CIProviderAPIKeyAction(true)
 			}
 		}
 	}
-	return apiKeyAction
+	return onboard.CIProviderAPIKeyAction(false)
 }
 
 // featureCoverageBlocker is the summary line for incomplete feature results.
@@ -160,6 +158,7 @@ func summarizeValidation(result validationResult) validationSummary {
 		}
 	}
 	summary.Caveats = caveats
+	summary.ReviewedPreparation = reviewedPreparation(result)
 	if result.Scope != nil {
 		summary.BlockingChecks = append(summary.BlockingChecks, scopeBlockers(append(slices.Clone(result.Scope.Unresolved), fidelityBlockers...))...)
 		for _, configuration := range result.Configurations {
@@ -383,6 +382,9 @@ func validationHandoff(result validationResult) string {
 	}
 	for _, caveat := range summary.Caveats {
 		block.WriteString("Caveat (not a blocker): " + caveat + "\n")
+	}
+	if len(summary.ReviewedPreparation) > 0 {
+		block.WriteString("Reviewed preparation run (opted in with --allow-reviewed-builds): " + strings.Join(summary.ReviewedPreparation, "; ") + "\n")
 	}
 	if result.Workflow != nil && len(result.Workflow.EarlierAttempts) > 0 {
 		fmt.Fprintf(&block, "Earlier attempts for this workflow stopped before this run: %s. This run's results stand on their own; the earlier stops are listed so retries stay visible.\n", strings.Join(result.Workflow.EarlierAttempts, ", "))
@@ -751,4 +753,18 @@ func disabledInstrumentations(result validationResult) []string {
 		}
 	}
 	return disabled
+}
+
+// reviewedPreparation lists, once each, the preparation commands that ran
+// only through the --allow-reviewed-builds opt-in.
+func reviewedPreparation(result validationResult) []string {
+	var commands []string
+	for _, configuration := range result.Configurations {
+		for _, build := range configuration.Preparation {
+			if build.Reviewed && build.Status != "not exercised" && !slices.Contains(commands, build.Command) {
+				commands = append(commands, build.Command)
+			}
+		}
+	}
+	return commands
 }

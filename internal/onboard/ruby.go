@@ -215,7 +215,7 @@ func rubyOutsideUninstrumentedJob(root string, workflow ciWorkflow, job runtimeJ
 	sibling := job
 	sibling.Steps = nil
 	for _, step := range job.Steps {
-		if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == githubAction {
+		if _, ok := datadogSetup(step); ok {
 			return false
 		}
 		if step.Run != "" && resolveRubyStep(root, workflow, sibling, step, framework).Matched {
@@ -421,7 +421,11 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 // any site). An incomplete action keeps its entry inconclusive.
 func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 	result := RuntimeCheck{Status: "not applicable", Reason: "No candidate Ruby CI commands found."}
-	workflows, err := readWorkflows(root)
+	provider, err := currentCIProvider(root)
+	if err != nil {
+		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
+	}
+	workflows, err := provider.readWorkflows(root)
 	if err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
@@ -438,25 +442,38 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 				if conditionErr == nil && !active {
 					continue
 				}
-				ruby, tracer, action, rubygems := "", "", "", ""
+				ruby, engine := rubyImageRuntime(job.Image)
+				imageRuby := ruby != ""
+				tracer, action, rubygems, gemsAtSetup := "", "", "", ""
+				var setup *ciSetup
 				var inputs map[string]string
 				skippedAction := false
 				var actionErr error
 				for i, step := range job.Steps {
 					uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
+					current, isSetup := datadogSetup(step)
 					active, stepErr := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
 					if stepErr == nil && !active {
-						if selected, err := actionSelectsLanguage(step, row, "ruby"); uses == githubAction && hasVersion && err == nil && selected {
+						if selected, err := setupSelectsLanguage(current, row, "ruby"); isSetup && current.Pinned && err == nil && selected {
 							skippedAction = true
 						}
 						continue
 					}
 					if uses == "ruby/setup-ruby" {
-						ruby, tracer, action, actionErr, inputs, rubygems = "", "", "", nil, nil, ""
+						ruby, engine, tracer, action, actionErr, inputs, rubygems, setup = "", "", "", "", nil, nil, "", nil
+						imageRuby = false
 						skippedAction = false
 					}
-					if uses == githubAction {
-						tracer, action, actionErr, inputs = "", "", nil, nil
+					if isSetup {
+						tracer, action, actionErr, inputs, setup = "", "", nil, nil, nil
+					}
+					if version := rubyGemsUpdate(step.Run); version != "" {
+						rubygems = version
+					}
+					if isSetup {
+						// The installer checks RubyGems when the setup runs; a later
+						// update comes too late.
+						gemsAtSetup = rubygems
 					}
 					if conditionErr == nil && stepErr == nil {
 						if uses == "ruby/setup-ruby" && hasVersion {
@@ -465,14 +482,15 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 							// A missing version may come from .ruby-version, but
 							// the runner's implicit defaults are not certified here.
 						}
-						if uses == githubAction && hasVersion {
-							selected, err := actionSelectsLanguage(step, row, "ruby")
+						if isSetup && current.Pinned {
+							selected, err := setupSelectsLanguage(current, row, "ruby")
 							actionErr = err
 							if err == nil && selected {
-								action = step.Uses
-								tracer, _ = runtimeValue(step.With["ruby-tracer-version"], row)
+								action = current.Reference
+								setup = &current
+								tracer, _ = runtimeValue(current.Inputs["ruby-tracer-version"], row)
 								inputs = map[string]string{}
-								for key, value := range step.With {
+								for key, value := range current.Inputs {
 									inputs[key], _ = runtimeValue(value, row)
 									if inputs[key] == "" && strings.Contains(value, "${{") {
 										// A secret or other expression is set even
@@ -492,7 +510,10 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 					if !resolution.Matched && resolution.Reason == "" {
 						continue
 					}
-					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: ruby, Action: action, TracerRequested: tracer, setupInputs: inputs, Status: "inconclusive", Reason: "Select a static Ruby version and exact ruby-tracer-version in a Datadog action before this test step; validate other installs separately."}
+					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: ruby, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive", Reason: rubyMissingSetupReason(provider)}
+					if setup != nil {
+						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem
+					}
 					if conditionErr != nil || stepErr != nil || resolveErr != nil || actionErr != nil || resolution.Reason != "" {
 						reasons := []string{resolution.Reason}
 						for _, err := range []error{conditionErr, stepErr, resolveErr, actionErr} {
@@ -505,12 +526,17 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						finding.Status, finding.Reason = "not checked", "Check the selected Ruby with the bundled tracer's RubyGems requirements and compare tracer releases."
 						if reason := rubyActionProblem(finding, site); reason != "" {
 							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
-						} else if reason := rubyGemsResolverProblem(ruby, rubygems, row); reason != "" {
+						} else if reason := rubyGemsResolverProblem(ruby, rubygems, row); !imageRuby && reason != "" {
+							finding.Status, finding.Reason = "inconclusive", reason
+						} else if reason := rubyImageGemsProblem(ruby, gemsAtSetup, provider); imageRuby && reason != "" {
 							finding.Status, finding.Reason = "inconclusive", reason
 						}
 					} else if action == "" && skippedAction {
 						finding.Status, finding.Code = "excluded", "excluded_runtime"
 						finding.Reason = "The Datadog action is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."
+					} else if action == "" && engine != "" {
+						finding.Status, finding.Code = "excluded", "excluded_runtime"
+						finding.Reason = "This job runs " + engine + " (image " + job.Image + "), which the tracer cannot instrument, without the " + provider.setupName() + ". Its tests still run without instrumentation; this runtime is not validated with the tracer."
 					}
 					// An explicitly uninstrumented row has no preload to lose.
 					if reason := rubyBootstrapProblem(workflow, job, step, row, framework); finding.Status != "excluded" && reason != "" {
@@ -565,8 +591,22 @@ func rubyBootstrapProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
 	}
+	// The installer replaces RUBYOPT in the job's shell: options the job
+	// set before it must be restored after it.
+	if options := step.Env["RUBYOPT"]; strings.Contains(options, rubyInstallerPreload) {
+		for _, layer := range []map[string]string{workflow.Env, job.Env} {
+			for _, option := range strings.Fields(layer["RUBYOPT"]) {
+				if !slices.Contains(strings.Fields(options), option) {
+					return "The Datadog setup script replaces RUBYOPT, dropping the job's " + option + "; restore it after the setup entry with export RUBYOPT=\"$RUBYOPT " + layer["RUBYOPT"] + "\"."
+				}
+			}
+		}
+	}
 	if options, overridden := env["RUBYOPT"]; overridden {
 		if !strings.Contains(options, "datadog/ci/auto_instrument") && !strings.Contains(options, "${{ env.RUBYOPT }}") && !strings.Contains(options, "${{env.RUBYOPT}}") {
+			if provider := activeOrDefaultCIProvider(); !provider.sharedSyntax() {
+				return "The Ruby test environment replaces the RUBYOPT the " + provider.setupName() + " exports, without its Datadog preload. Extend it instead (export RUBYOPT=\"$RUBYOPT ...\"), preserving the customer's Ruby options."
+			}
 			return "The Ruby test environment overrides the action's RUBYOPT without its Datadog preload. Preserve the instrumentation and the customer's Ruby options."
 		}
 	}
@@ -589,4 +629,73 @@ func rubyBootstrapProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 		}
 	}
 	return ""
+}
+
+// rubyMissingSetupReason asks for a static Ruby and an exact tracer release
+// in the provider's setup before a test step.
+func rubyMissingSetupReason(provider ciProvider) string {
+	if provider.sharedSyntax() {
+		return "Select a static Ruby version and exact ruby-tracer-version in a Datadog action before this test step; validate other installs separately."
+	}
+	return "Run the " + provider.setupName() + " with an exact " + provider.setupInput("ruby-tracer-version") + " before this test command, in a job whose image selects a static Ruby version (such as ruby:3.3); validate other installs separately."
+}
+
+// rubyImage matches official Ruby images (ruby:3.3, ruby:3.3.6-slim,
+// docker.io/library/ruby:3.2-alpine) and the alternative engines' images.
+var rubyImage = regexp.MustCompile(`^(?:docker\.io/)?(?:library/)?(ruby|jruby|truffleruby|ghcr\.io/graalvm/truffleruby[a-z-]*|flavorjones/truffleruby):([^@]+)(?:@.*)?$`)
+
+// rubyImageRuntime is the Ruby version a CI job's image selects, or the
+// engine the tracer cannot instrument (JRuby, TruffleRuby, Ruby head). Both
+// are empty when the image selects no static Ruby: no image, another image,
+// a floating tag such as latest, or an unresolved variable.
+func rubyImageRuntime(image string) (version, engine string) {
+	match := rubyImage.FindStringSubmatch(strings.TrimSpace(image))
+	if match == nil {
+		return "", ""
+	}
+	name, tag := match[1], match[2]
+	if name == "jruby" {
+		return "", "JRuby"
+	}
+	if name != "ruby" {
+		return "", "TruffleRuby"
+	}
+	if tag == "head" || strings.HasPrefix(tag, "head-") || tag == "master" {
+		return "", "Ruby head"
+	}
+	version, _, _ = strings.Cut(tag, "-")
+	if !rubyImageVersion.MatchString(version) {
+		return "", ""
+	}
+	return version, ""
+}
+
+var rubyImageVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+(?:\.[0-9]+)?$`)
+
+// rubyGemsUpdate is the RubyGems release a gem update --system step
+// installs, or "".
+func rubyGemsUpdate(run string) string {
+	words, err := shellquote.Split(strings.TrimSpace(run))
+	if err != nil || len(words) != 4 || words[0] != "gem" || words[1] != "update" || words[2] != "--system" {
+		return ""
+	}
+	return words[3]
+}
+
+// rubyImageGemsProblem explains why a Ruby 2.7 or 3.0 image cannot run the
+// installer: they ship RubyGems older than the 3.3.22 it requires, unless an
+// earlier step updates RubyGems.
+func rubyImageGemsProblem(ruby, rubygems string, provider ciProvider) string {
+	if ruby != "2.7" && !strings.HasPrefix(ruby, "2.7.") && ruby != "3.0" && !strings.HasPrefix(ruby, "3.0.") {
+		return ""
+	}
+	if parts := strings.SplitN(rubygems, ".", 3); len(parts) == 3 {
+		major, majorErr := strconv.Atoi(parts[0])
+		minor, minorErr := strconv.Atoi(parts[1])
+		patch, patchErr := strconv.Atoi(strings.SplitN(parts[2], ".", 2)[0])
+		if majorErr == nil && minorErr == nil && patchErr == nil && (major > 3 || major == 3 && (minor > 3 || minor == 3 && patch >= 22)) {
+			return ""
+		}
+	}
+	return "The Ruby " + ruby + " image ships RubyGems older than 3.3.22, which the " + provider.setupName() + "'s installer requires. Run gem update --system 3.4.22 before it in this job."
 }

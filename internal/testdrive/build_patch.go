@@ -12,6 +12,9 @@ import (
 // Apply only literal substitutions. Sed regexes/backreferences need separate
 // review rather than a platform-dependent shell invocation or guessed syntax.
 func applyLiteralPatch(root, directory string, words []string) error {
+	if len(words) == 3 && words[0] == "cp" {
+		return copyLiteralFile(root, directory, words[1], words[2])
+	}
 	if len(words) != 4 || words[0] != "sed" || !strings.HasPrefix(words[1], "-i") {
 		return fmt.Errorf("patch needs literal substitution review")
 	}
@@ -107,4 +110,45 @@ func applyLiteralPatch(root, directory string, words []string) error {
 		}
 	}
 	return nil
+}
+
+// copyLiteralFile replays cp SOURCE TARGET between files of the
+// configuration copy, such as a CI step creating config.json from its
+// example.
+func copyLiteralFile(root, directory, source, target string) error {
+	canonical := workspace.CanonicalRoot(root)
+	inside := func(path string) (string, error) {
+		if !filepath.IsLocal(path) {
+			return "", fmt.Errorf("copy path must stay in the configuration copy: %s", path)
+		}
+		full := filepath.Join(directory, path)
+		parent, err := filepath.EvalSymlinks(filepath.Dir(full))
+		if err != nil {
+			return "", err
+		}
+		if relative, err := filepath.Rel(canonical, parent); err != nil || !filepath.IsLocal(relative) && relative != "." {
+			return "", fmt.Errorf("copy path escapes configuration copy: %s", path)
+		}
+		return filepath.Join(parent, filepath.Base(full)), nil
+	}
+	from, err := inside(source)
+	if err != nil {
+		return err
+	}
+	to, err := inside(target)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(from)
+	if err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("copy source is not a regular file: %s", source)
+	}
+	if existing, err := os.Lstat(to); err == nil && !existing.Mode().IsRegular() {
+		return fmt.Errorf("copy target is not a regular file: %s", target)
+	}
+	data, err := os.ReadFile(from)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(to, data, info.Mode().Perm())
 }

@@ -199,3 +199,19 @@ func TestZeroConfigBundlersRunWithoutReviewAndConfiguredOnesNameTheirConfig(t *t
 	require.True(t, review)
 	require.Equal(t, `package.json "tsup" settings`, found)
 }
+
+// Preparation that needed review and ran through the opt-in is marked, so
+// the final response reports it; reviewed-free preparation is not.
+func TestOptedInPreparationIsMarkedReviewed(t *testing.T) {
+	executor := &buildExecutor{t: t}
+	root := t.TempDir()
+	t.Chdir(root)
+	installFakeBuildTool(t, root, "tsc")
+	require.NoError(t, os.Chmod(filepath.Join(root, "node_modules", ".bin", "tsc"), 0o755))
+	t.Setenv("PATH", filepath.Join(root, "node_modules", ".bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	drive := Testdrive{repositoryRoot: root, executor: executor, allowReviewedBuilds: true}
+	item := configurationResult{TestCommand: onboard.TestCommand{Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "tsc"}, {Directory: ".", Command: "tsc -p .", Kind: onboard.PreparationPackageBuild}}}}
+	require.NoError(t, drive.runBuildPrerequisites(t.Context(), &bytes.Buffer{}, &item))
+	require.False(t, item.Preparation[0].Reviewed)
+	require.True(t, item.Preparation[1].Reviewed)
+}

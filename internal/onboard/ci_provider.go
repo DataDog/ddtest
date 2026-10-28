@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // ciProvider is everything onboarding needs from one CI provider. A provider
@@ -35,6 +37,131 @@ type ciProvider interface {
 	findTestWorkflows(root, language, framework string) (workflows, configured []string, err error)
 	// environment holds the variables the provider sets in every job.
 	environment() map[string]string
+
+	// sharedSyntax reports whether the configuration is written in the shared
+	// workflow model's own syntax, so the shared workflow editor and setup
+	// instructions apply to it directly; otherwise setupInstructions and
+	// planSetupEdits do.
+	sharedSyntax() bool
+	// setupStep recognizes the provider's Datadog setup mechanism in a step
+	// of its configuration.
+	setupStep(step runtimeStep) (ciSetup, bool)
+	// setupName names the setup mechanism in findings, such as "Datadog action".
+	setupName() string
+	// setupInput names one setup input (in the setup action's terms, such as
+	// ruby-tracer-version) the way the provider's configuration spells it.
+	setupInput(name string) string
+	// setupProblem explains why setup, with inputs resolved for one
+	// configuration, is not a complete setup: a supported release, an API key
+	// from the provider's secret store, an exact tracer release in tracerInput
+	// (exact validates it; example is one) and the selected site (empty: any).
+	// Empty when it is complete.
+	setupProblem(setup ciSetup, tracerInput string, exact func(string) bool, example, site string) string
+	// apiKeyAction is the one step a person takes in the provider's settings
+	// so the setup can report: storing DD_API_KEY. skipped describes a setup
+	// guarded to skip without the key.
+	apiKeyAction(skipped bool) string
+	// setupInstructions explains how to add the setup step before a job's
+	// test commands, for a person or a coding agent.
+	setupInstructions(request ciSetupRequest) string
+	// planSetupEdits inserts the setup step before each target test step,
+	// preserving every other line, or explains why it cannot do so safely.
+	// impact lists consequences a person should review.
+	planSetupEdits(root string, workflows []ciWorkflow, targets []ciSetupTarget, request ciSetupRequest) (edits []setupEdit, impact []string, err error)
+}
+
+// ciSetup is the Datadog Test Optimization setup one CI step runs, described
+// in the setup action's terms. Each provider recognizes its own mechanism
+// (see ciProvider.setupStep); shared code never inspects the mechanism.
+type ciSetup struct {
+	// Reference names what the step runs, such as the action and its ref.
+	Reference string
+	// Pinned reports a reference that selects a release.
+	Pinned bool
+	// Supported reports a release ddtest validates, with its integrity check
+	// where the provider has one.
+	Supported bool
+	// DefaultLatest reports that an unset tracer version input installs the
+	// latest release; otherwise the mechanism's metadata defines the default.
+	DefaultLatest bool
+	// Problem is why the setup cannot work where it runs, as the provider
+	// found while reading it; setupProblem reports it first.
+	Problem string
+	// shaped reports a setup step in a form the provider recognizes entirely.
+	shaped bool
+	// after are shell statements that run only with the setup, inside its
+	// guard.
+	after []*syntax.Stmt
+	// Inputs are the installer inputs keyed by the setup action's input
+	// names: languages, api_key, site and <language>-tracer-version. Values
+	// are verbatim; unresolved references stay as written.
+	Inputs map[string]string
+}
+
+// ciSetupRequest is the setup one language asks a provider for: the
+// provider supplies the step, the language its own values.
+type ciSetupRequest struct {
+	// Language is the installer's token for the language (languages input).
+	Language string
+	// Site is the Datadog site the setup reports to.
+	Site string
+	// TracerInput names the exact tracer release input, such as
+	// js-tracer-version, and TracerVersion its value.
+	TracerInput, TracerVersion string
+	// After are shell commands that must follow the setup and precede the
+	// tests in the same job, such as an ESM loader registration.
+	After []string
+	// Notes are language rules the instructions add after the step.
+	Notes []string
+}
+
+// ciSetupTarget is one test step that needs the setup before it.
+type ciSetupTarget struct {
+	Workflow, Job string
+	// Step indexes the job's steps.
+	Step int
+	// After overrides the request's commands for this step.
+	After []string
+}
+
+// datadogSetup recognizes the Datadog setup a step runs, whichever provider
+// read it.
+func datadogSetup(step runtimeStep) (ciSetup, bool) {
+	if step.Setup != nil {
+		return *step.Setup, true
+	}
+	for _, provider := range ciProviders {
+		if setup, ok := provider.setupStep(step); ok {
+			return setup, true
+		}
+	}
+	return ciSetup{}, false
+}
+
+// setupSelectsLanguage reports whether setup installs the tracer of the
+// language named by its languages input, after resolving row's matrix values.
+func setupSelectsLanguage(setup ciSetup, row map[string]any, language string) (bool, error) {
+	languages, err := runtimeValue(setup.Inputs["languages"], row)
+	if err != nil {
+		return false, err
+	}
+	return languages == "all" || slices.Contains(strings.Fields(languages), language), nil
+}
+
+// CIProviderSetupName names the selected CI provider's setup mechanism when
+// it is not written in the shared workflow syntax; empty otherwise, where
+// languages name the setup action themselves.
+func CIProviderSetupName() string {
+	if provider := activeOrDefaultCIProvider(); !provider.sharedSyntax() {
+		return provider.setupName()
+	}
+	return ""
+}
+
+// CIProviderAPIKeyAction is the person's step that stores the Datadog API key
+// for the selected CI provider.
+func CIProviderAPIKeyAction(skipped bool) string {
+	return activeOrDefaultCIProvider().apiKeyAction(skipped)
 }
 
 // CIProviderChoice is a user decision: several CI providers contain tests and
@@ -189,6 +316,26 @@ func WithCIProviderDefaults(env map[string]string) map[string]string {
 // files in root without parsing them.
 func CIProviderConfigurationFiles(root string) ([]string, error) {
 	return activeOrDefaultCIProvider().configurationFiles(root)
+}
+
+// CIConfigurationFiles lists every repository file the selected CI
+// provider's configuration is read from, included files too. A
+// configuration that cannot be read lists its configuration files only.
+func CIConfigurationFiles(root string) []string {
+	provider := activeOrDefaultCIProvider()
+	files, _ := provider.configurationFiles(root)
+	workflows, err := provider.readWorkflows(root)
+	if err != nil {
+		return files
+	}
+	for _, workflow := range workflows {
+		for _, file := range append([]string{workflow.Path}, workflow.Files...) {
+			if !slices.Contains(files, file) {
+				files = append(files, file)
+			}
+		}
+	}
+	return files
 }
 
 // ciProviderFollowUpFlag returns the --ci-provider argument human follow-up

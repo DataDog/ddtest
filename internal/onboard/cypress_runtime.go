@@ -195,7 +195,7 @@ func cypressLocalNodeOptions(value string, workflow ciWorkflow, job runtimeJob, 
 		known := conditionEnvironment(workflow, child, step, row)
 		known["NODE_OPTIONS"] = ""
 		for _, candidate := range job.Steps {
-			if strings.HasPrefix(strings.ToLower(candidate.Uses), githubAction+"@") && candidate.ID != "" {
+			if setup, ok := datadogSetup(candidate); ok && setup.Pinned && candidate.ID != "" {
 				known["\x00steps."+candidate.ID+".outcome"] = outcome
 			}
 		}

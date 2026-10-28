@@ -145,6 +145,8 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.Needs = "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it; do not rewrite CI or package scripts only so ddtest can parse them. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
 			case "setup_dependencies_missing", "project_dependencies_missing":
 				result.NextAction = "run_command"
+			case "ci_edit_required":
+				result.NextAction = "apply_source_edit"
 			default:
 				result.NextAction = "supply_input"
 			}
@@ -532,6 +534,20 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.RequiredInput = []string{"A CI Node version that satisfies " + runtimeGap.Requirement + ", or an older tracer selected with --tracer-version"}
 				return fail("needs_input", "ci_runtime_incompatible", err.Error(), "Upgrade the CI Node version, or select an older tracer with --tracer-version, then rerun. No CI hook needs to be written by hand.")
 			}
+			var editGap *onboard.EditThenApplyGap
+			if errors.As(err, &editGap) {
+				// One source edit, then onboard --apply writes the setup itself:
+				// validating before that would check CI without the setup.
+				result.Location = editGap.Location
+				result.RequiredInput = []string{"Only the source edit reason names, at " + editGap.Location + " (and a dependency it names, through its install command); then run resume_command, which adds the Datadog CI setup and validates."}
+				result.ResumeCommand = append([]string{}, recoveryCommand...)
+				if !slices.Contains(result.ResumeCommand, "--allow-dirty") {
+					// It extends the uncommitted edit just made.
+					result.ResumeCommand = append(result.ResumeCommand, "--allow-dirty")
+				}
+				result.NextCommand = nil
+				return fail("needs_input", "ci_edit_required", err.Error(), "Make only the edit reason names, then run resume_command: onboard --apply adds the Datadog CI setup and validates. Do not run testdrive first.")
+			}
 			var gap *onboard.SetupGap
 			if errors.As(err, &gap) {
 				result.Location = gap.Location
@@ -757,7 +773,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		}
 		if len(reviewCommands) > 0 {
 			result.Location = strings.Join(reviewCommands, "; ")
-			result.RequiredInput = []string{"Read " + strings.Join(reviewItems, "; ") + ". The build runs in an isolated copy, never in the checkout. You may run resume_command if it only configures bundling (entries, formats, output) with well-known plugins; ask the user first if it runs unfamiliar plugins or scripts, or downloads anything. No new setup facts are required."}
+			result.RequiredInput = []string{"Read " + strings.Join(reviewItems, "; ") + ". The build runs in an isolated copy, never in the checkout. You may run resume_command without asking only when every named step runs repository-local code (package scripts resolving to files in the repository, or bundler configuration with well-known plugins) and nothing downloads or installs (no npx of uncached packages, curl, wget or network installs) or writes outside the repository copy; otherwise ask the user first. The final response reports the opt-in. No new setup facts are required."}
 			if !slices.Contains(result.ResumeCommand, "--allow-reviewed-builds") {
 				result.ResumeCommand = append(result.ResumeCommand, "--allow-reviewed-builds")
 			}

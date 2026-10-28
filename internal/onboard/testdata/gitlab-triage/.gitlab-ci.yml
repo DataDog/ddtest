@@ -1,0 +1,128 @@
+stages:
+  - prepare
+  - test
+  - triage
+  - deploy
+
+default:
+  tags:
+    - gitlab-org
+
+.ruby-cache: &ruby-cache
+  cache:
+    key:
+      files:
+        - Gemfile.lock
+    paths:
+      - vendor/ruby
+    policy: pull
+
+.use-ruby:
+  image: ruby:3.2
+  <<: *ruby-cache
+  variables:
+    BUNDLE_FROZEN: "true"
+    BUNDLE_PATH: "vendor"
+  before_script:
+    - ruby --version
+    - gem install bundler --no-document
+    - bundle --version
+    - bundle install --jobs $(nproc) --retry 3 --quiet
+    - bundle check
+
+workflow:
+  rules:
+    # For merge requests, create a pipeline.
+    - if: '$CI_MERGE_REQUEST_IID'
+    # For `master` branch, create a pipeline (this includes on schedules, pushes, merges, etc.).
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    # For tags, create a pipeline.
+    - if: '$CI_COMMIT_TAG'
+
+###################
+## Prepare stage ##
+###################
+setup-test-env:
+  extends: .use-ruby
+  stage: prepare
+  script:
+    - echo "Setup done!"
+  cache:
+    policy: pull-push
+  artifacts:
+    paths:
+      - Gemfile.lock
+
+################
+## Test stage ##
+################
+rubocop:
+  extends: .use-ruby
+  stage: test
+  needs: ["setup-test-env"]
+  dependencies: ["setup-test-env"]
+  script:
+    - bundle exec rubocop --parallel
+  cache:
+    key: "$CI_JOB_NAME"
+    paths:
+      - .cache/rubocop_cache/
+
+specs:
+  extends: .use-ruby
+  needs: ["setup-test-env"]
+  stage: test
+  script:
+    - bundle exec rake spec
+  image: $RUBY_IMAGE
+  parallel:
+    matrix:
+      - RUBY_IMAGE:
+        - ruby:3.0
+        - ruby:3.1
+        - ruby:3.2
+        - ruby:3.3
+
+##################
+## Triage stage ##
+##################
+dry-run:gitlab-triage:
+  extends: .use-ruby
+  needs: ["setup-test-env"]
+  stage: triage
+  script:
+    - bundle exec rake build
+    - gem install pkg/*.gem
+    - which gitlab-triage
+    - gitlab-triage --version
+    - gitlab-triage --help
+    - gitlab-triage --init
+    - gitlab-triage --dry-run --debug --source-id $CI_PROJECT_PATH
+
+# This job requires allows to override the `CI_PROJECT_PATH` variable when triggered.
+dry-run:custom:
+  extends: dry-run:gitlab-triage
+  rules:
+    - when: manual
+      allow_failure: true
+
+include:
+  - component: gitlab.com/components/sast/sast@~latest
+  - component: gitlab.com/components/secret-detection/secret-detection@~latest
+  - component: gitlab.com/gitlab-org/components/danger-review/danger-review@~latest
+  - component: gitlab.com/gitlab-org/components/gem-release/gem-release@~latest
+  - template: Jobs/Dependency-Scanning.gitlab-ci.yml
+
+.component-general-rules: &component-general-rules
+  rules:
+    - if: '$CI_MERGE_REQUEST_IID'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+semgrep-sast:
+  <<: *component-general-rules
+
+gemnasium-dependency_scanning:
+  <<: *component-general-rules
+
+secret_detection:
+  <<: *component-general-rules
