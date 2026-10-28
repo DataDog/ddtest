@@ -20,7 +20,7 @@
   },
   "files": {
     "README.md": {
-      "sha256": "c09ed399730cc20193de41d0ea9cbc7dc60a1940ff18e7ff4f64684056800218"
+      "sha256": "3f3f641ba67af3d8c3e6d37a5e560dc428fcac4a36bca256d4c432f652662cab"
     },
     "build/README.md": {
       "sha256": "167fa55059947ce4b4b1dc3d61c3fe4ef241d4712dd2332ee5570c40fc627fe7"
@@ -240,6 +240,9 @@
     },
     "memory.md": {
       "sha256": "ccd8509c0c47793dcb8bdda2b3fa27aae11845129e550a52fe1508b48f239914"
+    },
+    "raw.zip": {
+      "sha256": "1f1aa8919364b41a98b6ec45dcc89f368a21dab25a0302dd343f254835bbcd00"
     }
   }
 }

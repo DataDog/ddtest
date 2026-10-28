@@ -38,8 +38,20 @@ converge, the second because another workload ran on the host.
 
 ## Files
 
-This repository keeps the reports and the composition script. The raw data,
-`manifest.json`, `observations.csv`, `statistics.json`, `final-binaries.json`,
+The results are in the reports: [benchmarks.md](../../benchmarks.md), the
+[build](build/README.md), the [race confirmation](confirm-race/README.md) and
+[memory](memory.md). The raw data that they come from, `manifest.json`,
+`observations.csv`, `statistics.json`, `final-binaries.json`,
 `convergence.json` and the trace and module records of `build/` and
-`confirm-race/`, is not in this repository; `archive.json` lists the SHA-256 of
-every file of the dataset.
+`confirm-race/`, is in [raw.zip](raw.zip), to verify or regenerate them; the
+reports link to those files as extracted. `archive.json` lists the SHA-256 of
+every file. From `ddto/`:
+
+```sh
+(cd docs/results/20261027-linux-go1.27.1 && unzip -o raw.zip)
+python3 scripts/build_benchmark.py report --input docs/results/20261027-linux-go1.27.1/build --update-readme --check
+python3 scripts/build_benchmark.py report --input docs/results/20261027-linux-go1.27.1/confirm-race --check
+python3 docs/results/20261027-linux-go1.27.1/compose.py   # rewrites benchmarks.md and memory.md unchanged
+```
+
+Remove the extracted files afterwards; only `raw.zip` is kept.
