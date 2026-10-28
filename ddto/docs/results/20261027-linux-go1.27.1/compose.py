@@ -14,6 +14,7 @@ Run from ddto/ with this dataset's raw build data in build/ (see README.md):
 
     python3 docs/results/20261027-linux-go1.27.1/compose.py
 """
+import hashlib
 from pathlib import Path
 import sys
 
@@ -27,14 +28,17 @@ import build_benchmark as build  # noqa: E402
 RUNTIME_START = "## Runtime of the original test binaries"
 RUNTIME_END = "## Read and repeat the measurements"
 RETAINED = "results/20261016-linux-go1.27.1"
+# The runtime sections that scripts/benchmark_report.py rendered from
+# 20261016-linux-go1.27.1, as docs/benchmarks.md had them before this dataset.
+RUNTIME_SHA256 = "e0ee8d72dda93be5fd4157f3a9d9d77dff63bcfc4018dde2dd0cc448940effb5"
 
 
 def retained_runtime(page):
     """The runtime sections of the current page, rendered from 20261016."""
     start, end = page.index(RUNTIME_START), page.index(RUNTIME_END)
     sections = page[start:end].rstrip()
-    if RETAINED in sections or "Five measured runs follow one warmup" not in sections:
-        raise ValueError("unexpected runtime sections")
+    if hashlib.sha256(sections.encode()).hexdigest() != RUNTIME_SHA256:
+        raise ValueError("the runtime sections are not those rendered from 20261016-linux-go1.27.1")
     return sections
 
 
@@ -52,8 +56,9 @@ def compose():
 
 Build: Native, Orchestrion and POC Mini were measured together from {started},
 at ddtest `{manifest['source_head']}`, where POC Mini runs as `ddtest instrument`.
-Each scenario ran 3 times instead of the recorded 5/10/20/10/3 (cold, cached,
-forced link, body edit, constant edit), to shorten the collection; a
+Each scenario ran 3 times instead of the recorded counts (cold, cached, forced
+link, body edit, constant edit: 5/10/20/10/3 for Gin and Chi without flags,
+3/10/10/5/3 for the other cases), to shorten the collection; a
 [confirmation run]({link}/confirm-race/README.md) repeated the Gin and Testify
 race cases, Native and POC Mini, {confirm['measured_observations']:,} builds,
 with the recorded counts.

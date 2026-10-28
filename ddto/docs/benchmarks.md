@@ -3,8 +3,9 @@
 
 Build: Native, Orchestrion and POC Mini were measured together from 2026-10-27,
 at ddtest `282b22a15776c3dfb1073d2e0197c78445c00d6f`, where POC Mini runs as `ddtest instrument`.
-Each scenario ran 3 times instead of the recorded 5/10/20/10/3 (cold, cached,
-forced link, body edit, constant edit), to shorten the collection; a
+Each scenario ran 3 times instead of the recorded counts (cold, cached, forced
+link, body edit, constant edit: 5/10/20/10/3 for Gin and Chi without flags,
+3/10/10/5/3 for the other cases), to shorten the collection; a
 [confirmation run](results/20261027-linux-go1.27.1/confirm-race/README.md) repeated the Gin and Testify
 race cases, Native and POC Mini, 248 builds,
 with the recorded counts.

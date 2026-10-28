@@ -20,7 +20,7 @@
   },
   "files": {
     "README.md": {
-      "sha256": "ca1307b2c8747e1dafe9bbb402ff21fd5bf0e5f27ed6c9af6c65f66734031326"
+      "sha256": "c09ed399730cc20193de41d0ea9cbc7dc60a1940ff18e7ff4f64684056800218"
     },
     "build/README.md": {
       "sha256": "167fa55059947ce4b4b1dc3d61c3fe4ef241d4712dd2332ee5570c40fc627fe7"
@@ -200,7 +200,7 @@
       "sha256": "9cffbd0ad98f7c557e891e0400741fa84a811c50d4522c9550b457e08fcf8294"
     },
     "compose.py": {
-      "sha256": "f572dcb46a1c3be8947ddb3fb48324af6e3376ea9f03b0f8110470c5bc174984"
+      "sha256": "3c8785b04d6f4a27b7442ddc51751aa66e12a929d92bdc1f470f94dcc2b18632"
     },
     "confirm-race/README.md": {
       "sha256": "bc4831189f65547093c9310bb683a0bfd987a630ec28c928d449a916841087be"

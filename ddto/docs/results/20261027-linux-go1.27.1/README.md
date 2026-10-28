@@ -1,9 +1,8 @@
 # Benchmark data
 
 Native, Orchestrion and POC Mini were compiled together from 2026-10-27, at
-ddtest `282b22a15776c3dfb1073d2e0197c78445c00d6f`, the first revision after
-the instrumentation moved into ddtest, where POC Mini runs as
-`ddtest instrument`. The toolchain is `go version go1.27.1 linux/amd64` and
+ddtest `282b22a15776c3dfb1073d2e0197c78445c00d6f`, after the instrumentation
+moved into ddtest, where POC Mini runs as `ddtest instrument`. The toolchain is `go version go1.27.1 linux/amd64` and
 Orchestrion `v1.13.2-0.20260917114356-5c24783fcd76`: the same executables as
 in [20261016-linux-go1.27.1](../20261016-linux-go1.27.1/README.md), whose
 SHA-256 match its manifest.
@@ -15,8 +14,9 @@ SHA-256 match its manifest.
 
 - [Build](build/README.md): the complete matrix, 24 subject/flag combinations
   at 4/32 CPUs, with `build_benchmark.py run --repeats 3 --download`: three
-  repetitions of each scenario instead of the recorded 5/10/20/10/3, to
-  shorten the collection to about 3.4 hours. 2,160 measured builds; all 324
+  repetitions of each scenario instead of the recorded counts (5/10/20/10/3
+  for Gin and Chi without flags, 3/10/10/5/3 for the other cases), to shorten
+  the collection to about 3.4 hours. 2,160 measured builds; all 324
   final binaries passed traces and binary qualification; the Native link
   control converged (80 repetitions).
 - [Race confirmation](confirm-race/README.md): Gin and Testify External with
