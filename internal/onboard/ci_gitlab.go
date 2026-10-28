@@ -97,34 +97,14 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 		visiting[name] = true
 		own := ciMembers(definition)
 		merged := map[string]*yaml.Node{}
-		var variables map[string]*yaml.Node
 		for _, parent := range ciStrings(own["extends"]) {
 			base, err := resolve(parent, visiting)
 			if err != nil {
 				return nil, err
 			}
-			maps.Copy(merged, base)
-			if gitlabNull(base["variables"]) {
-				variables = nil
-				continue
-			}
-			if variables == nil {
-				variables = map[string]*yaml.Node{}
-			}
-			maps.Copy(variables, ciMembers(base["variables"]))
+			merged = mergeGitLabMappings(merged, base)
 		}
-		maps.Copy(merged, own)
-		if gitlabNull(own["variables"]) {
-			variables = nil
-		}
-		if len(variables) > 0 {
-			maps.Copy(variables, ciMembers(own["variables"]))
-			combined := &yaml.Node{Kind: yaml.MappingNode}
-			for _, key := range slices.Sorted(maps.Keys(variables)) {
-				combined.Content = append(combined.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: key}, variables[key])
-			}
-			merged["variables"] = combined
-		}
+		merged = mergeGitLabMappings(merged, own)
 		return merged, nil
 	}
 	reserved := []string{"include", "default", "variables", "stages", "workflow", "image", "services", "cache", "before_script", "after_script", "spec"}
@@ -324,7 +304,22 @@ func readGitLab(root, path string) (ciWorkflow, error) {
 	return w, nil
 }
 
-func gitlabNull(node *yaml.Node) bool {
-	node = ciUnalias(node)
-	return node != nil && node.Tag == "!!null"
+// GitLab extends recursively merges mappings; arrays and explicit null values
+// replace the inherited value. Source scalar nodes remain intact for editing.
+func mergeGitLabMappings(base, override map[string]*yaml.Node) map[string]*yaml.Node {
+	merged := maps.Clone(base)
+	for key, value := range override {
+		inherited, current := ciUnalias(merged[key]), ciUnalias(value)
+		if inherited != nil && current != nil && inherited.Kind == yaml.MappingNode && current.Kind == yaml.MappingNode {
+			members := mergeGitLabMappings(ciMembers(inherited), ciMembers(current))
+			combined := &yaml.Node{Kind: yaml.MappingNode}
+			for _, name := range slices.Sorted(maps.Keys(members)) {
+				combined.Content = append(combined.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: name}, members[name])
+			}
+			merged[key] = combined
+		} else {
+			merged[key] = value
+		}
+	}
+	return merged
 }

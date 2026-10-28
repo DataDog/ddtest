@@ -7,6 +7,7 @@ package onboard
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -124,8 +125,10 @@ func nativePackageInstalledBefore(root, provider string, job runtimeJob, index i
 		}
 		for _, words := range commands {
 			nodeEnv := nodeEnv
+			commandEnv := installEnv
 			if normalized, assignments, err := commandEnvironment(words); err == nil {
 				words = normalized
+				commandEnv = mergeEnvironment(installEnv, assignments)
 				if value, ok := assignments["NODE_ENV"]; ok {
 					nodeEnv = value
 				}
@@ -149,14 +152,22 @@ func nativePackageInstalledBefore(root, provider string, job runtimeJob, index i
 				continue
 			}
 			omitsDev := nodeEnv == "production"
-			noInstall := false
+			includesDev, noInstall := false, false
+			if words[0] == "npm" {
+				omit, include, skip, known := nativeNpmInstallConfig(provider, commandEnv, step.LiteralEnv)
+				if !known {
+					return false
+				}
+				omitsDev, includesDev, noInstall = omitsDev || omit, include, skip
+			}
 			for i, word := range words {
 				omitsDev = omitsDev || slices.Contains([]string{"--prod", "--prod=true", "--production", "--production=true", "--only=production", "--omit=dev"}, word) ||
 					(word == "--omit" && i+1 < len(words) && words[i+1] == "dev") || words[0] == "pnpm" && word == "-P"
+				includesDev = includesDev || word == "--include=dev" || word == "--include" && i+1 < len(words) && words[i+1] == "dev"
 				flag, value, _ := strings.Cut(word, "=")
 				noInstall = noInstall || slices.Contains([]string{"--prefix", "--cwd", "--dir", "--workspace", "-w", "--workspaces", "--filter", "-F"}, flag) || slices.Contains([]string{"--package-lock-only", "--lockfile-only", "--dry-run", "-g", "--global"}, flag) && value != "false"
 			}
-			if development && omitsDev && !noInstall {
+			if development && omitsDev && !includesDev && !noInstall {
 				installed = false
 				continue
 			}
@@ -167,4 +178,31 @@ func nativePackageInstalledBefore(root, provider string, job runtimeJob, index i
 		}
 	}
 	return installed
+}
+
+// Read only npm options that affect evidence of a local tracer installation.
+// npm accepts either prefix case, with lowercase taking precedence.
+func nativeNpmInstallConfig(provider string, env, literals map[string]string) (omit, include, skip, known bool) {
+	values := map[string]string{}
+	for _, key := range slices.Sorted(maps.Keys(env)) {
+		name := strings.TrimPrefix(strings.ToLower(key), "npm_config_")
+		if name == strings.ToLower(key) || !slices.Contains([]string{"omit", "include", "production", "only", "dry_run", "package_lock_only", "global", "prefix", "workspace", "workspaces"}, name) {
+			continue
+		}
+		value := env[key]
+		if (provider == "gitlab" || provider == "buildkite") && literals[key] != value {
+			var err error
+			value, err = nativeEnvironmentValue(value, env)
+			if err != nil {
+				return false, false, false, false
+			}
+		}
+		values[name] = strings.ToLower(value)
+	}
+	omit = slices.Contains(strings.Fields(values["omit"]), "dev") || values["production"] == "true" || slices.Contains([]string{"prod", "production"}, values["only"])
+	include = slices.Contains(strings.Fields(values["include"]), "dev")
+	for _, key := range []string{"dry_run", "package_lock_only", "global", "prefix", "workspace", "workspaces"} {
+		skip = skip || values[key] != "" && values[key] != "false"
+	}
+	return omit, include, skip, true
 }

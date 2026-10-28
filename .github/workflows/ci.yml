@@ -98,6 +98,32 @@ jobs:
           DD_ENV: ci
           DDTEST_REQUIRE_PROJECT_RUNTIMES: "1"
 
+      - name: Normalize coverage counters
+        run: |
+          python3 -m unittest discover -s .github/scripts -p test_normalize_go_coverage.py
+          mv coverage.out coverage-raw.out
+          python3 .github/scripts/normalize_go_coverage.py coverage-raw.out coverage.out
+
+      - name: Summarize coverage
+        if: always()
+        run: |
+          if [ -f coverage.out ]; then
+            go tool cover -func=coverage.out > coverage-functions.txt
+            tail -n 1 coverage-functions.txt
+          fi
+
+      - name: Preserve coverage diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-coverage-report
+          path: |
+            coverage-raw.out
+            coverage.out
+            coverage-functions.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload coverage report to Datadog
         if: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' }}
         uses: DataDog/coverage-upload-github-action@d9548b1c3c4ab639d5d3ab29a1508af188975f77 # v1.0.5

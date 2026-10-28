@@ -236,7 +236,7 @@ func checkNativeRuntimes(ctx context.Context, root string, w ciWorkflow, framewo
 		}
 		for i, step := range job.Steps {
 			resolved, r, envErr := resolveNativeTestStep(root, w, job, step, framework)
-			if !r.Matched {
+			if !r.Matched && (r.Review || r.Reason == "" || !stepMayStartTests(root, w, job, resolved, framework)) {
 				continue
 			}
 			node, nodeSource := nativeTestRuntime(w, job, i, r)

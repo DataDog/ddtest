@@ -27,6 +27,7 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 	fields := ciMembers(document)
 	var walk func(*yaml.Node, string, int, bool)
 	walk = func(list *yaml.Node, group string, depth int, excluded bool) {
+		list = ciUnalias(list)
 		if list == nil {
 			return
 		}
@@ -50,6 +51,9 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 				name = "step " + strconv.Itoa(index+1)
 			}
 			disabled := excluded || ciScalar(step["if"]) == "false"
+			if skip := ciUnalias(step["skip"]); skip != nil {
+				disabled = disabled || skip.Tag == "!!bool" && strings.EqualFold(skip.Value, "true") || skip.Tag == "!!str" && skip.Value != ""
+			}
 			if nested := step["steps"]; nested != nil {
 				if !disabled && ciScalar(step["if"]) != "" {
 					w.Review = append(w.Review, path+" / "+group+name+": Buildkite group condition is a possible CI path; event/branch eligibility is not validated")
@@ -180,8 +184,8 @@ func readBuildkite(root, path string) (ciWorkflow, error) {
 							if ciMembers(config)["env"] != nil || ciMembers(config)["environment"] != nil {
 								job.Gaps = append(job.Gaps, "Docker Compose plugin environment overrides require resolved container values before validation or editing")
 							}
-							if serviceFields["working_dir"] != nil || serviceFields["volumes"] != nil || serviceFields["depends_on"] != nil || serviceFields["entrypoint"] != nil {
-								job.Gaps = append(job.Gaps, "Compose working directory, volumes, dependencies or entrypoint require local setup facts")
+							if ciMembers(config)["shell"] != nil || serviceFields["working_dir"] != nil || serviceFields["volumes"] != nil || serviceFields["depends_on"] != nil || serviceFields["entrypoint"] != nil {
+								job.Gaps = append(job.Gaps, "Compose shell, working directory, volumes, dependencies or entrypoint require local setup facts")
 							}
 						case "artifacts":
 							w.Review = append(w.Review, path+" / "+group+name+": artifact transfer is not exercised locally")
