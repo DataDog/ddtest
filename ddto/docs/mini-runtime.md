@@ -631,7 +631,7 @@ Context mode has the gaps that .NET's `ExecutionContext` also has:
 
 **Measured** on 2026-10-17 at `bfcf898`, at GOMAXPROCS=4, three runs per mode
 after a warm-up run. The data is in
-[`docs/results/file-coverage-20261017-linux-go1.27`](results/file-coverage-20261017-linux-go1.27/README.md),
+[`docs/results/file-coverage-20261017-linux-go1.27`](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/file-coverage-20261017-linux-go1.27/README.md),
 produced by `scripts/file_coverage_benchmark.py`. Go's counters
 (`-cover -covermode=atomic -coverpkg=./...`) are what Test Impact Analysis uses
 today. Each run compares with the same run's Go's counters.
@@ -650,7 +650,7 @@ today. Each run compares with the same run's Go's counters.
 | | `=context` | 1.11 s | 8.90 | 74.8 | 76, 76, 76 |
 
 **Dropped `=parallel` mode.** A run on 2026-10-16, with the same projects, in
-[`file-coverage-20261016-linux-go1.27-parallel`](results/file-coverage-20261016-linux-go1.27-parallel/README.md),
+[`file-coverage-20261016-linux-go1.27-parallel`](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/file-coverage-20261016-linux-go1.27-parallel/README.md),
 also measured `=parallel`, a mode with overlapping windows:
 - fiber: 34.69 s, 88.17 files per test, 931.4 tests per changed file;
 - lo: 8.42 s, 18.64 files per test, 269.9 tests per changed file.
