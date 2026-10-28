@@ -7,7 +7,7 @@ package version
 // checkout, whose 0.0.0-dev development builds report. The release commit
 // that the release tags, for go install, has it written here (see
 // .github/scripts/release-commit.sh).
-const Number = "0.0.0-dev"
+const Number = "1.14.0"
 
 // LibraryName names, beside the version, the library that reports Mini's
 // events: ddtest, whose instrument command runs ddto. The SDK, which reports

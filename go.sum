@@ -1,3 +1,5 @@
+github.com/DataDog/ddtest/ddto v1.14.0 h1:jMdydRAC/IEfAOSuVlkTU6ToDjYBBYtvKG4CVxOFDhY=
+github.com/DataDog/ddtest/ddto v1.14.0/go.mod h1:wE4FtIlwNlMWMvDNITZ8gr8vcD5Z5ednzNcm2crnEaE=
 github.com/Masterminds/semver/v3 v3.5.0 h1:kQceYJfbupGfZOKZQg0kou0DgAKhzDg2NZPAwZ/2OOE=
 github.com/Masterminds/semver/v3 v3.5.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/bmatcuk/doublestar/v4 v4.10.3 h1:1UIv1+fqH3++ViVkpnaPTB+Pi1UHycnPFAq14zgK+gI=
