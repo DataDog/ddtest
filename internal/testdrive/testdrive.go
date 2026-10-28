@@ -362,6 +362,18 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if scopeCommand == "" {
 		scopeCommand = originalCommand
 	}
+	if frameworkFeaturePolicies[runner.Name()].Configurations && !all && len(selectedPlan.Prerequisites) == 0 {
+		// A command that is exactly one CI configuration runs that
+		// configuration's replayable preparation too, so it is credited.
+		if entry, ok := matchingConfigurationPreparation(scope, scopeErr, repositoryRoot, runner.Name(), scopeCommand); ok {
+			if selectedPlan.Command == "" {
+				selectedPlan.Command, selectedPlan.Directory = entry.Command, entry.Directory
+			}
+			selectedPlan.Prerequisites = entry.Prerequisites
+			// Preparation and tests run with the configuration's environment.
+			selectedPlan.Environment = mergeConfigurationEnvironment(entry.Environment, selectedPlan.Environment)
+		}
+	}
 	var configurationEnvironment map[string]string
 	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
 		// A command matching a discovered CI configuration replays its environment,
@@ -604,7 +616,7 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer, recoverStor
 	var prepared *configurationResult
 	if t.discoveryError != nil {
 		result, runErr = t.run(ctx, output)
-	} else if t.lang().isolatesConfigurations() || t.framework.Name() == "webdriverio" || t.framework.Name() == "cucumber" || t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
+	} else if t.runsInPreparedCopy() {
 		child := *t
 		child.workflowRoot = t.repositoryRoot
 		child.preflight = child.frameworkPreflight()
@@ -672,7 +684,7 @@ func (t *Testdrive) setConfigurationScope(result *validationResult, scope onboar
 		setSelectedConfigurationScope(result, scope, []onboard.TestCommand{t.cypressSelected}, t.configurationEnvironment)
 		return
 	}
-	if t.framework.Name() == "cucumber" && len(t.selectedPlan.Prerequisites) > 0 {
+	if len(t.selectedPlan.Prerequisites) > 0 {
 		// The focused plan ran the CI preparation its command text drops.
 		setSelectedConfigurationScope(result, scope, []onboard.TestCommand{t.selectedPlan}, t.configurationEnvironment)
 		return
@@ -1307,4 +1319,11 @@ func (t *Testdrive) ownershipRoot() string {
 		return t.workflowRoot
 	}
 	return t.repositoryRoot
+}
+
+// runsInPreparedCopy reports whether a single run executes in a disposable
+// configuration copy. A plan with preparation always does: the preparation
+// runs before the tests, and only then is that configuration credited.
+func (t *Testdrive) runsInPreparedCopy() bool {
+	return t.lang().isolatesConfigurations() || t.framework.Name() == "webdriverio" || t.framework.Name() == "cucumber" || t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) || len(t.selectedPlan.Prerequisites) > 0
 }

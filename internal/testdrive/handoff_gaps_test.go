@@ -95,7 +95,7 @@ func TestHandoffNamesTheAPIKeySecretWhenCIIsInstrumented(t *testing.T) {
 	result := completeValidationFixture("jest")
 	result.CIRuntime = &onboard.RuntimeCheck{Status: onboard.StatusCompatible, Jobs: []onboard.RuntimeFinding{{Node: "20", Status: "compatible"}}}
 	result.Summary = summarizeValidation(result)
-	require.Equal(t, []string{apiKeyAction}, result.Summary.HumanActions)
+	require.Equal(t, []string{onboard.CIProviderAPIKeyAction(false)}, result.Summary.HumanActions)
 	require.Contains(t, validationHandoff(result), "Human action: Add the DD_API_KEY repository secret")
 	result.CIRuntime = nil
 	require.Empty(t, summarizeValidation(result).HumanActions)

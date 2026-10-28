@@ -34,9 +34,9 @@ func TestCIScopeCountsEachNodeVersionOnce(t *testing.T) {
 }
 
 func TestAPIKeyActionFollowsTheActionGuard(t *testing.T) {
-	require.Equal(t, apiKeyAction, apiKeyHumanAction(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Status: "compatible"}}}))
-	require.Equal(t, apiKeySkippedAction, apiKeyHumanAction(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Status: "excluded", Reason: onboard.GuardedActionBranch}}}))
-	require.Contains(t, apiKeySkippedAction, "is skipped")
+	require.Equal(t, onboard.CIProviderAPIKeyAction(false), apiKeyHumanAction(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Status: "compatible"}}}))
+	require.Equal(t, onboard.CIProviderAPIKeyAction(true), apiKeyHumanAction(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Status: "excluded", Reason: onboard.GuardedActionBranch}}}))
+	require.Contains(t, onboard.CIProviderAPIKeyAction(true), "is skipped")
 }
 
 // A rerun-until-green must stay visible: trials reran an inconclusive

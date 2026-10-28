@@ -421,6 +421,7 @@ func TestOtherCIProvidersAreListedForReview(t *testing.T) {
 	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - run: npx cypress run\n")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "circle.yml"), []byte("workflows:\n  build:\n    jobs:\n      - cypress/run\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".gitlab-ci.yml"), []byte("lint:\n  script: npm run lint\n"), 0644))
+	useCIProvider(t, "github")
 	scope, err := DiscoverValidationScope(root, "cypress")
 	require.NoError(t, err)
 	var listed []string

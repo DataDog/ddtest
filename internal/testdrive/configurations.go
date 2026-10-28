@@ -133,6 +133,32 @@ func nonHostConfigurationReason(entry onboard.TestCommand) string {
 	return entry.Platform + " Cypress configuration was not executed on this " + runtime.GOOS + " host. Use a matching runner; this variant remains unvalidated."
 }
 
+// matchingConfigurationPreparation returns the one CI configuration whose
+// command and directory a focused command resolves to exactly and that adds
+// only preparation, such as copying a config file, before it. Variants with
+// different preparation are never guessed between.
+func matchingConfigurationPreparation(scope onboard.ValidationScope, scopeErr error, root, framework, command string) (onboard.TestCommand, bool) {
+	selected := onboard.ValidationCommands(root, command, framework)
+	if scopeErr != nil || len(selected) != 1 || len(selected[0].Prerequisites) > 0 {
+		return onboard.TestCommand{}, false
+	}
+	var found *onboard.TestCommand
+	for _, entry := range scope.Commands {
+		if entry.Command != selected[0].Command || filepath.Clean(entry.Directory) != filepath.Clean(selected[0].Directory) || len(entry.Prerequisites) == 0 || len(entry.UnvalidatedSetup) > 0 || !hostConfiguration(entry) || ciInstrumentationDisabled(entry) {
+			continue
+		}
+		if found != nil && (!slices.EqualFunc(found.Prerequisites, entry.Prerequisites, onboard.EqualPreparation) || !maps.Equal(found.Environment, entry.Environment)) {
+			return onboard.TestCommand{}, false
+		}
+		candidate := entry
+		found = &candidate
+	}
+	if found == nil {
+		return onboard.TestCommand{}, false
+	}
+	return *found, true
+}
+
 // Never guess between two CI variants with different environments.
 func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr error, root, framework, command string) map[string]string {
 	if scopeErr != nil {

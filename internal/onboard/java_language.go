@@ -125,3 +125,28 @@ func (javaDiscovery) onboardingScope(string) (discover, instructionsWhenConfigur
 }
 
 const javaBootstrap = "Place the action after the JDK setup step. By default it adds dd-java-agent to MAVEN_OPTS; a later step that sets MAVEN_OPTS must include `${{ env.MAVEN_OPTS }}` to keep the agent. Keep the existing Maven commands, profiles, modules, JVM options and matrices unchanged, and use Maven 3.2.1 or newer. One Maven command runs every framework the project declares: selecting a framework does not filter the suite."
+
+// Setup runs on GitHub Actions only, whose steps don't share a shell.
+func (javaDiscovery) setupShellExports(map[string]string) (map[string]string, map[string]string) {
+	return nil, nil
+}
+
+// Setup runs on GitHub Actions only.
+func (javaDiscovery) ciSetupRequest(string, string, string) ciSetupRequest { return ciSetupRequest{} }
+
+func (javaDiscovery) automaticProviderSetup(string) bool { return false }
+
+func (javaDiscovery) unsupportedImage(string) string { return "" }
+
+// Its own step rules decide which uninstrumented commands are outside scope.
+func (javaDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) bool {
+	return false
+}
+
+func (javaDiscovery) runtimeVariable(name string) bool {
+	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"
+}
+
+func (javaDiscovery) cacheVariable(name string) bool {
+	return name == "GRADLE_USER_HOME"
+}

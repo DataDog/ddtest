@@ -79,6 +79,9 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	}
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
+		if err := unresolvedCIError(value); err != nil && !strings.HasPrefix(key, "DD_") {
+			return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
+		}
 		if len(frameworks) > 0 {
 			if language := discoveryLanguageFor(frameworks[0]); language != nil {
 				rewritten, handled, err := language.variantValue(workflow, job, step, row, key, value)
@@ -267,6 +270,13 @@ func localPreparation(root, directory string, words []string) (BuildCommand, boo
 			kind = "patch"
 		}
 	}
+	// cp SOURCE TARGET between literal repository files, such as a config
+	// created from its example, is replayed in the configuration copy.
+	if len(words) == 3 && words[0] == "cp" && literalRepositoryPath(words[1]) && literalRepositoryPath(words[2]) {
+		if info, ok := repositoryFile(root, directory, words[1]); ok && info.Mode().IsRegular() {
+			kind = PreparationPatch
+		}
+	}
 	if kind == "" {
 		return BuildCommand{}, false
 	}
@@ -393,4 +403,9 @@ func remoteGridSecret(key, value string) string {
 		}
 	}
 	return ""
+}
+
+// literalRepositoryPath is a relative path without shell syntax or options.
+func literalRepositoryPath(path string) bool {
+	return path != "" && filepath.IsLocal(path) && !strings.HasPrefix(path, "-") && !strings.ContainsAny(path, "$`*?[]{}~\n:")
 }

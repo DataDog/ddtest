@@ -33,6 +33,9 @@ var vitestInstructions string
 var gitHubInstructions string
 
 func instructions(language, name string) string {
+	if provider := activeOrDefaultCIProvider(); !provider.sharedSyntax() {
+		return providerSetupInstructions(".", provider, language, name, "", false)
+	}
 	text := frameworkInstructions(language, name)
 	if language == "javascript" {
 		return pinSetupAction(text)

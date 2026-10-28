@@ -37,7 +37,11 @@ func setupRuntimeCondition(root string, workflow ciWorkflow, job runtimeJob, req
 			esmStatus, _ := CompareNodeRequirement(node, ">=18.19.0 <19 || >=20.6.0")
 			if esmStatus != StatusCompatible && (strings.Count(strings.TrimPrefix(node, "v"), ".") < 2 || strings.ContainsAny(node, "x*")) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				resolved, err := setupNodeResolver(&http.Client{Timeout: 10 * time.Second})(ctx, node, nodeDistributionPlatform(job.RunsOn, "", row))
+				platform := nodeDistributionPlatform(job.RunsOn, "", row)
+				if platform == "" && job.Image != "" {
+					platform = "linux-x64" // Container images run Linux.
+				}
+				resolved, err := setupNodeResolver(&http.Client{Timeout: 10 * time.Second})(ctx, node, platform)
 				cancel()
 				if err != nil {
 					return "", fmt.Errorf("resolve ESM CI runtime: %w", err)
@@ -108,7 +112,7 @@ func rowSetupNode(root string, workflow ciWorkflow, job runtimeJob, row map[stri
 // rowSetupNodeBefore is the Node a row's steps select before step limit: the
 // runtime active when that step runs, since a later setup-node can switch it.
 func rowSetupNodeBefore(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, limit int) (string, error) {
-	node := ""
+	node := imageNode(job.Image)
 	for _, step := range job.Steps[:min(limit, len(job.Steps))] {
 		if !strings.HasPrefix(strings.ToLower(step.Uses), "actions/setup-node@") && !strings.Contains(step.Run, "nvm") {
 			continue

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -274,4 +275,18 @@ func nodeDistributionPlatform(runner any, architecture string, row map[string]an
 		arch = "armv7l"
 	}
 	return prefix + arch + suffix
+}
+
+// nodeImage matches the official Node.js images and CircleCI's, with a
+// numeric version tag such as node:22, node:20.11-alpine or
+// docker.io/library/node:22.
+var nodeImage = regexp.MustCompile(`^(?:(?:docker\.io/)?(?:library/)?node|cimg/node|circleci/node):v?([0-9]+(?:\.[0-9]+){0,2})(?:[-@].*)?$`)
+
+// imageNode is the Node.js version a CI job's container image selects, or ""
+// when the image has none or its tag floats (latest, lts, current).
+func imageNode(image string) string {
+	if match := nodeImage.FindStringSubmatch(strings.TrimSpace(image)); match != nil {
+		return match[1]
+	}
+	return cypressContainerNode(image)
 }

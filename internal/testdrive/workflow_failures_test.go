@@ -169,6 +169,10 @@ func TestReviewedBuildBlockerReturnsFlagRatherThanNewFacts(t *testing.T) {
 	// The agent learns what to read and when the decision belongs to the user.
 	require.Contains(t, result.RequiredInput[0], "npm run build (review package build lifecycle scripts)")
 	require.Contains(t, result.RequiredInput[0], "ask the user first")
+	// Concrete criteria for opting in without asking, and the report of it.
+	require.Contains(t, result.RequiredInput[0], "every named step runs repository-local code")
+	require.Contains(t, result.RequiredInput[0], "nothing downloads or installs (no npx of uncached packages, curl, wget or network installs)")
+	require.Contains(t, result.RequiredInput[0], "The final response reports the opt-in.")
 }
 
 func TestFocusedRunKeepsPreparationReceiptsOnItsConfiguration(t *testing.T) {
@@ -203,4 +207,30 @@ func TestFocusedCucumberRunIsCreditedThroughItsRetainedPlan(t *testing.T) {
 	result := completeValidationFixture("cucumber")
 	drive.setConfigurationScope(&result, scope)
 	require.Equal(t, "passed", result.Configurations[0].Status, "the focused run executed the CI build with the test")
+}
+
+// A gap one source edit fixes (here the NYC wrap a GitLab Mocha command
+// needs) resumes with onboard --apply, which then adds the Datadog setup;
+// validating first would check CI without the setup.
+func TestEditThenApplyGapResumesWithApply(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	onboard.UseCIProvider("gitlab")
+	t.Cleanup(func() { onboard.UseCIProvider("") })
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"private":true,"scripts":{"test":"mocha"},"devDependencies":{"mocha":"11.0.0"}}`)
+	requireWriteFile(t, filepath.Join(root, ".gitlab-ci.yml"), "test:\n  image: node:22\n  script:\n    - npm test\n")
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Mocha{}, language: "javascript", tracerVersion: "6.20.1", executor: workflowCheckExecutor{}, nodeVersion: currentNodeVersion, allConfigurations: true}
+	drive.workflowSelect = func(context.Context, onboard.ValidationScope, bool) (string, error) { return "6.20.1", nil }
+	var output bytes.Buffer
+	require.Error(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Apply: true, Format: "json"}))
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result), output.String())
+	require.Equal(t, "ci_edit_required", result.Code, result.Reason)
+	require.Equal(t, "apply_source_edit", result.NextAction)
+	require.Contains(t, result.Reason, "then rerun onboard --apply")
+	require.Contains(t, result.ResumeCommand, "onboard")
+	require.Contains(t, result.ResumeCommand, "--apply")
+	require.Contains(t, result.ResumeCommand, "--allow-dirty")
+	require.NotContains(t, result.ResumeCommand, "testdrive")
+	require.NotContains(t, strings.Join(result.RequiredInput, " "), "CI tracer initialization")
 }

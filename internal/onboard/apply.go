@@ -30,6 +30,12 @@ type SetupChange struct {
 // SetupGap identifies an edit the bounded applier cannot safely make.
 type SetupGap struct{ Location, Reason string }
 
+// EditThenApplyGap is a SetupGap one source edit fixes, such as wrapping a
+// Mocha command with NYC; onboard --apply then writes the setup itself.
+type EditThenApplyGap struct{ SetupGap }
+
+func (g *EditThenApplyGap) Unwrap() error { return &g.SetupGap }
+
 func (g *SetupGap) Error() string { return g.Location + ": " + g.Reason }
 
 // DirtyWorkflowGap names target files with uncommitted changes; committing or
@@ -105,9 +111,16 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 	if !exactRelease(version) {
 		return nil, fmt.Errorf("CI requires an exact numeric tracer release, got %q", version)
 	}
-	workflows, err := readWorkflows(root)
+	provider, err := currentCIProvider(root)
 	if err != nil {
 		return nil, err
+	}
+	workflows, err := provider.readWorkflows(root)
+	if err != nil {
+		return nil, err
+	}
+	if !provider.sharedSyntax() {
+		return planProviderJavaScriptSetup(root, provider, workflows, framework, version, site, nodeRequirement)
 	}
 	edits, scopedOptions, err := scopedSetupEdits(root, framework)
 	if err != nil {
@@ -417,6 +430,21 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 	if targets == 0 {
 		return nil, &SetupGap{".github/workflows", "No literal " + framework + " CI step found. Identify its real CI entry point before applying onboarding."}
 	}
+	ignored, err := ignoreSetupEdits(root, coverageAdded)
+	if err != nil {
+		return nil, err
+	}
+	edits = append(edits, ignored...)
+	if coverageAdded {
+		impact = append(impact, "NYC coverage writes an untracked .nyc_output/ folder wherever the covered command runs, including local validation; it is added to .gitignore.")
+	}
+	return &SetupPlan{root: root, edits: edits, impact: impact}, nil
+}
+
+// ignoreSetupEdits excludes ddtest's report directory, and NYC's output when
+// coverage was added, from Git and npm packaging.
+func ignoreSetupEdits(root string, coverageAdded bool) ([]setupEdit, error) {
+	var edits []setupEdit
 	for _, path := range []string{".gitignore", ".npmignore"} {
 		edit, err := readSetupEdit(root, path)
 		if err != nil {
@@ -457,10 +485,7 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 		}
 		edits = append(edits, edit)
 	}
-	if coverageAdded {
-		impact = append(impact, "NYC coverage writes an untracked .nyc_output/ folder wherever the covered command runs, including local validation; it is added to .gitignore.")
-	}
-	return &SetupPlan{root: root, edits: edits, impact: impact}, nil
+	return edits, nil
 }
 
 func setupMember(node *yaml.Node, key string) *yaml.Node {

@@ -48,3 +48,28 @@ func (pythonDiscovery) instructions(string) string { return "" }
 func (pythonDiscovery) onboardingScope(string) (bool, bool) { return false, false }
 
 const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtrace for pytest. Preserve these variables on the existing test step; do not replace its current arguments. Activate the same Python environment used for the tests before the action. If CI uses tox or nox, pass DD_*, PYTHONPATH, and PYTEST_ADDOPTS into the test environment."
+
+// Setup runs on GitHub Actions only, whose steps don't share a shell.
+func (pythonDiscovery) setupShellExports(map[string]string) (map[string]string, map[string]string) {
+	return nil, nil
+}
+
+// Setup runs on GitHub Actions only.
+func (pythonDiscovery) ciSetupRequest(string, string, string) ciSetupRequest { return ciSetupRequest{} }
+
+func (pythonDiscovery) automaticProviderSetup(string) bool { return false }
+
+func (pythonDiscovery) unsupportedImage(string) string { return "" }
+
+// Its own step rules decide which uninstrumented commands are outside scope.
+func (pythonDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) bool {
+	return false
+}
+
+func (pythonDiscovery) runtimeVariable(name string) bool {
+	return name == "PYTHONPATH" || name == "PYTHONHOME"
+}
+
+func (pythonDiscovery) cacheVariable(name string) bool {
+	return name == "PIP_TARGET" || name == "POETRY_VIRTUALENVS_PATH"
+}

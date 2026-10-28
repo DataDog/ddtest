@@ -172,7 +172,7 @@ func resolveMochaNode(root, directory string, words []string) commandResolution 
 	if len(words) == 3 && (words[1] == "-e" || words[1] == "--eval") {
 		// A literal inline helper is retained only inside a package command with
 		// an identified Mocha consumer; it is never itself proof of test scope.
-		return commandResolution{MochaAuxiliary: true}
+		return commandResolution{MochaAuxiliary: true, MochaReferenced: true}
 	}
 	if len(words) < 2 || !filepath.IsLocal(words[1]) || !slices.Contains([]string{".js", ".cjs", ".mjs"}, filepath.Ext(words[1])) {
 		return unresolvedCommand("Mocha Node entry point requires a literal repository script: " + shellquote.Join(words...))
@@ -196,7 +196,9 @@ func resolveMochaNode(root, directory string, words []string) commandResolution 
 		if browserRunnerImport.Match(source) {
 			return commandResolution{ReviewReason: "Puppeteer browser runner is outside Node Mocha validation: " + command}
 		}
-		return commandResolution{MochaAuxiliary: true}
+		// A script (or a local module it imports) that may launch Mocha, or
+		// looks like a test itself, may still run tests; others are tooling.
+		return commandResolution{MochaAuxiliary: true, MochaReferenced: nodeScriptMayRun(root, path, "mocha", map[string]bool{})}
 	}
 	directoryRelative, _ := filepath.Rel(root, directory)
 	return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{mochaIstanbul: MochaBabelIstanbulConfigured(directory), mochaProbeCommand: command, mochaLookupDirectory: repositoryPath(root, filepath.Dir(path)), mochaProbeDirectory: filepath.ToSlash(directoryRelative), mochaESM: mochaESMInputs(directory, words[1:]), Directory: filepath.ToSlash(directoryRelative), Command: command}}}

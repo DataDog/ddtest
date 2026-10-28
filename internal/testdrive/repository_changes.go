@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -32,6 +33,7 @@ func nonCIChanges(root string) []repositoryChange {
 		return nil
 	}
 	var changes []repositoryChange
+	configuration := onboard.CIConfigurationFiles(root)
 	entries := strings.Split(string(status), "\x00")
 	for i := 0; i < len(entries); i++ {
 		entry := entries[i]
@@ -42,7 +44,7 @@ func nonCIChanges(root string) []repositoryChange {
 		if code[0] == 'R' || code[0] == 'C' {
 			i++ // the source path of a rename or copy follows
 		}
-		if ciOrIgnoreFile(name) {
+		if ciOrIgnoreFile(name) || slices.Contains(configuration, name) {
 			continue
 		}
 		changes = append(changes, repositoryChange{Path: name, Added: code == "??"})

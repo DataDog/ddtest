@@ -58,6 +58,38 @@ type discoveryLanguage interface {
 	// completeness checks apply only on providers it supports; others get a
 	// clean unsupported answer.
 	supportsCIProvider(provider string) bool
+	// setupShellExports are the variables the Datadog installer exports for
+	// the language into later commands of the same shell, on providers whose
+	// setup runs in the job's shell (see ciProvider.sharedSyntax). Values use
+	// the workflow model's syntax: ${{ env.NAME }} is a value only CI knows.
+	// environment reaches the commands' environment; references can only be
+	// expanded by later commands. current is the environment at the setup.
+	setupShellExports(current map[string]string) (environment, references map[string]string)
+	// ciSetupRequest is the language's part of a provider's setup step for
+	// framework, reporting to site, on providers without the shared workflow
+	// syntax: its installer token, exact tracer input, commands that must
+	// follow the setup, and its own setup rules.
+	ciSetupRequest(root, framework, site string) ciSetupRequest
+	// cacheVariable reports a variable that locates the language's package
+	// cache or install directory, which CI caches between jobs.
+	cacheVariable(name string) bool
+	// runtimeVariable reports an environment variable the language's
+	// runtime or tools read, which images commonly export.
+	runtimeVariable(name string) bool
+	// outsideFrameworkJob reports whether a CI job, on one matrix row,
+	// cannot run framework's tests: nothing it runs (following package and
+	// repository scripts) mentions the framework. Such a job without the
+	// setup and without a recognized test is reported, not a blocker.
+	// Languages without a static answer return false.
+	outsideFrameworkJob(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, framework string) bool
+	// unsupportedImage names the runtime a CI job's container image selects
+	// when the language's tracer cannot instrument it, such as another
+	// language engine; empty otherwise. Such a job without the setup keeps
+	// running uninstrumented and is excluded from validation.
+	unsupportedImage(image string) string
+	// automaticProviderSetup reports whether onboard --apply writes
+	// framework's setup on such providers.
+	automaticProviderSetup(framework string) bool
 	// agentInstructions are framework's setup instructions for a coding agent
 	// whose validation ddtest runs separately, for the selected Datadog site
 	// (empty: the default); empty uses instructions.

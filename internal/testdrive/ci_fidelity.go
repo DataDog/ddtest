@@ -38,6 +38,7 @@ func ciFidelity(result *validationResult) (caveats, blockers []string) {
 	if result.Scope == nil {
 		return caveats, blockers
 	}
+	caveats = append(caveats, result.Scope.Caveats...)
 	for _, axis := range result.Scope.ComputedAxes {
 		configurations := jobConfigurations(result, axis)
 		version, passed := "", len(configurations) > 0

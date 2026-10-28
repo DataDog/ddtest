@@ -276,7 +276,11 @@ func (rubyLanguage) packageExclusions(t *Testdrive, ctx context.Context) (onboar
 }
 
 func (rubyLanguage) initialization(string) string {
-	return "Install the pinned datadog-ci using the Ruby CI action after bundle setup; preserve RUBYOPT and the original test command. Keep both reports excluded from Git and gem packaging."
+	setup := "the Ruby CI action"
+	if name := onboard.CIProviderSetupName(); name != "" {
+		setup = "the " + name
+	}
+	return "Install the pinned datadog-ci using " + setup + " after bundle setup; preserve RUBYOPT and the original test command. Keep both reports excluded from Git and gem packaging."
 }
 
 func init() {

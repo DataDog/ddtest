@@ -1,0 +1,16 @@
+.node-test:
+  stage: test
+  interruptible: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+.legacy-node:
+  image: node:16
+
+legacy:
+  extends: .legacy-node
+  script:
+    - npm test
+  rules:
+    - when: never

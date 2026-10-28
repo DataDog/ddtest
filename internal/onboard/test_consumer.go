@@ -62,7 +62,9 @@ func stepMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step ru
 
 func mayStartTestsIn(directory string, step runtimeStep, framework string, depth int) bool {
 	if strings.TrimSpace(step.Run) == "" {
-		return step.Uses != "" // An unresolved action can run anything.
+		// An unresolved action, or configuration its provider could not
+		// read, can run anything.
+		return step.Uses != "" || step.ResolutionError != ""
 	}
 	var lines []string
 	terminator := ""

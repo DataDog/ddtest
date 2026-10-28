@@ -80,6 +80,20 @@ func (p testCI) findTestWorkflows(root, language, framework string) ([]string, [
 	return nil, nil, nil
 }
 
+// testCI uses the shared workflow syntax and has no setup mechanism.
+func (testCI) sharedSyntax() bool                      { return true }
+func (testCI) setupStep(runtimeStep) (ciSetup, bool)   { return ciSetup{}, false }
+func (testCI) setupName() string                       { return "test setup" }
+func (testCI) setupInput(name string) string           { return name }
+func (testCI) apiKeyAction(bool) string                { return "" }
+func (testCI) setupInstructions(ciSetupRequest) string { return "" }
+func (testCI) setupProblem(ciSetup, string, func(string) bool, string, string) string {
+	return "Test CI has no setup mechanism."
+}
+func (testCI) planSetupEdits(string, []ciWorkflow, []ciSetupTarget, ciSetupRequest) ([]setupEdit, []string, error) {
+	return nil, nil, fmt.Errorf("test CI has no setup mechanism")
+}
+
 // registerTestCI registers testCI after GitHub Actions for the test.
 func registerTestCI(t *testing.T) {
 	t.Helper()
@@ -113,7 +127,7 @@ func TestGitHubActionsConfigurationFiles(t *testing.T) {
 		github     bool
 	}{
 		{"no CI", "", false},
-		{"another provider", ".gitlab-ci.yml", false},
+		{"an unregistered provider", "Jenkinsfile", false},
 		{"GitHub metadata only", ".github/CODEOWNERS", false},
 		{"workflow documentation", ".github/workflows/README.md", false},
 		{"yml workflow", ".github/workflows/test.yml", true},
@@ -162,7 +176,7 @@ func TestSelectCIProvider(t *testing.T) {
 		{name: "unresolved steps are candidates", github: jestWorkflow, testci: "jobs:\n  test:\n    steps:\n      - uses: ./templates/test.yml\n", choice: []string{"github", "testci"}},
 		{name: "explicit provider skips the choice", github: jestWorkflow, testci: jestWorkflow, requested: "testci", want: "testci"},
 		{name: "explicit provider is never parsed", github: "jobs: [", requested: "github", want: "github"},
-		{name: "unknown provider", github: jestWorkflow, requested: "gitlab", err: `unsupported --ci-provider "gitlab"; supported CI providers: github, testci`},
+		{name: "unknown provider", github: jestWorkflow, requested: "circleci", err: `unsupported --ci-provider "circleci"; supported CI providers: github, gitlab, testci`},
 		{name: "a disabled job is not a test path", github: jestWorkflow, testci: "jobs:\n  test:\n    if: ${{ false }}\n    steps:\n      - run: npm test\n", want: "github"},
 		{name: "a disabled step is not a test path", github: jestWorkflow, testci: "jobs:\n  test:\n    steps:\n      - if: ${{ false }}\n        run: npm test\n", want: "github"},
 		{name: "an unresolved condition may still run", github: jestWorkflow, testci: "jobs:\n  test:\n    if: ${{ github.event_name == 'push' }}\n    steps:\n      - run: npm test\n", choice: []string{"github", "testci"}},
@@ -248,7 +262,7 @@ func TestSelectedProviderDrivesDiscovery(t *testing.T) {
 
 func TestGitHubActionsIsTheDefaultProvider(t *testing.T) {
 	UseCIProvider("")
-	require.Equal(t, []string{"github"}, CIProviderNames())
+	require.Equal(t, []string{"github", "gitlab"}, CIProviderNames())
 	require.Equal(t, "GitHub Actions", CIProviderDisplayName())
 	require.Equal(t, map[string]string{"CI": "true", "GITHUB_ACTIONS": "true"}, WithCIProviderDefaults(nil))
 }
@@ -346,12 +360,17 @@ func TestUnparseableOtherCIFilesNeverAbortOnboarding(t *testing.T) {
 func TestOtherProviderTestJobsStayOutsideValidation(t *testing.T) {
 	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - run: npx jest\n")
 	writeFile(t, root, ".gitlab-ci.yml", "test:\n  script:\n    - npx jest\n")
-	for _, requested := range []string{"", "github"} {
+	useCIProvider(t, "")
+	_, err := DiscoverValidationScope(root, "jest")
+	var choice *CIProviderChoice
+	require.ErrorAs(t, err, &choice)
+	require.Equal(t, []string{"github", "gitlab"}, choice.Providers)
+	for requested, other := range map[string]string{"github": ".gitlab-ci.yml: not a GitHub Actions workflow", "gitlab": ".github/workflows/test.yml: not a GitLab CI workflow"} {
 		useCIProvider(t, requested)
 		scope, err := DiscoverValidationScope(root, "jest")
 		require.NoError(t, err)
 		require.Len(t, scope.Commands, 1)
-		require.Contains(t, scope.Review, ".gitlab-ci.yml: not a GitHub Actions workflow; ddtest does not analyze it, so jest tests it runs are outside this validation and need their own Datadog setup.")
+		require.Contains(t, scope.Review, other+"; ddtest does not analyze it, so jest tests it runs are outside this validation and need their own Datadog setup.")
 	}
 }
 
@@ -367,9 +386,9 @@ func TestFollowUpCommandsKeepTheSelectedProvider(t *testing.T) {
 }
 
 func TestUnknownActiveProviderFails(t *testing.T) {
-	useCIProvider(t, "gitlab")
+	useCIProvider(t, "circleci")
 	_, err := readWorkflows(t.TempDir())
-	require.EqualError(t, err, `unsupported --ci-provider "gitlab"; supported CI providers: github`)
+	require.EqualError(t, err, `unsupported --ci-provider "circleci"; supported CI providers: github, gitlab`)
 }
 
 // Provider files parse CI configuration into neutral facts; language decisions
