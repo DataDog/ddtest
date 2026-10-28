@@ -955,3 +955,39 @@ func TestGitLabInheritedVariableAssignments(t *testing.T) {
 	require.Contains(t, jobs["other"].Steps[1].Env, "PATH")
 	require.NotContains(t, jobs["local"].Steps[1].Env, "PATH")
 }
+
+// Docker Hub's other names for official images are official images too.
+func TestGitLabOfficialImageAliasesNeedCurl(t *testing.T) {
+	for _, image := range []string{"library/node:22-slim", "docker.io/node:22-slim", "docker.io/library/node:22-slim", "index.docker.io/node:22-slim", "registry-1.docker.io/library/node:22-slim"} {
+		require.Contains(t, gitLabImageProblem(image, false), "has no curl", image)
+	}
+	require.Empty(t, gitLabImageProblem("registry.example.com/ci/node:22-slim", false), "another registry's image may have curl")
+	require.Contains(t, gitLabImageProblem("docker.io/library/node:22-alpine", false), "has no Bash")
+}
+
+// Side-effect imports anywhere in a launcher are followed, and one
+// computed process command keeps it possibly running tests even next to
+// literal ones.
+func TestNodeLauncherImportsAndComputedCommands(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"test": "mocha"})
+	writeFile(t, root, "runner.js", "// starts the suite\n'use strict'\nimport './lib/launch.js'\n")
+	writeFile(t, root, "lib/launch.js", "import Mocha from 'mocha'\nnew Mocha().run()\n")
+	writeFile(t, root, "mixed.js", "const { execSync } = require('child_process')\nexecSync('eslint .')\nexecSync(process.env.RUN_CMD)\n")
+	writeFile(t, root, "literal.js", "const { execSync } = require('child_process')\nexecSync('eslint .')\n")
+	for script, mayRun := range map[string]bool{"runner.js": true, "mixed.js": true, "literal.js": false} {
+		require.Equal(t, mayRun, nodeScriptMayRun(root, filepath.Join(root, script), "mocha", map[string]bool{}), script)
+	}
+}
+
+// A condition in front of the checksum and source may skip the installer:
+// not a setup, and it exports nothing.
+func TestGitLabSetupWithAPrefixConditionIsNotASetup(t *testing.T) {
+	useCIProvider(t, "gitlab")
+	entry := strings.Replace(gitLabSetupEntry(gitLabRubySetup), `echo "$SRC" | sha256sum`, `test "$ENABLE_DD" = 1 && echo "$SRC" | sha256sum`, 1)
+	root := gitLabRubyRepository(t, "rspec:\n  image: ruby:3.3\n  script:\n"+entry+"    - bundle exec rspec\n")
+	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
+	jobs, _ := gitLabJobs(t, root)
+	require.Nil(t, jobs["rspec"].Steps[0].Setup)
+	require.NotContains(t, jobs["rspec"].Steps[1].Env, "RUBYOPT")
+}

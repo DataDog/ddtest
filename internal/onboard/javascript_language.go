@@ -117,3 +117,7 @@ func (javascriptDiscovery) unsupportedImage(string) string { return "" }
 func (javascriptDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"NODE_OPTIONS", "NODE_PATH", "NODE_ENV"}, name) || strings.HasPrefix(strings.ToLower(name), "npm_config_")
 }
+
+func (javascriptDiscovery) cacheVariable(name string) bool {
+	return slices.Contains([]string{"npm_config_store_dir", "PNPM_STORE_DIR", "PNPM_HOME"}, name)
+}

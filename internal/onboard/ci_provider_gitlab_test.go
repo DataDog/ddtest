@@ -710,3 +710,23 @@ func TestGitLabRunStepsAreUnresolved(t *testing.T) {
 	require.Contains(t, errors, "GitLab CI job steps-job: uses GitLab CI run steps")
 	require.NotContains(t, errors, "job off")
 }
+
+// Only tool cache settings in cached directories are dropped; application
+// variables pointing into them stay.
+func TestGitLabApplicationVariablesInCachedDirectoriesStay(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".gitlab-ci.yml", "variables:\n  FIXTURE_DIR: fixtures\n  YARN_CACHE_FOLDER: fixtures/.yarn\n  BUNDLE_PATH: fixtures/bundle\ntest:\n  cache:\n    paths: [fixtures]\n  script: [npm test]\n")
+	jobs, _ := gitLabJobs(t, root)
+	require.Equal(t, map[string]string{"FIXTURE_DIR": "fixtures"}, jobs["test"].Env)
+}
+
+// Variables referenced from a later file of the merge resolve after every
+// file merges.
+func TestGitLabReferencedVariablesWithIncludes(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".gitlab-ci.yml", "include: ci/jobs.yml\n.vars:\n  variables:\n    SUITE: unit\nvariables: !reference [.vars, variables]\n")
+	writeFile(t, root, "ci/jobs.yml", "test:\n  script: [npm test]\n")
+	jobs, _ := gitLabJobs(t, root)
+	require.Equal(t, map[string]string{"SUITE": "unit"}, jobs["test"].Env)
+	require.Empty(t, unresolved(t, root))
+}

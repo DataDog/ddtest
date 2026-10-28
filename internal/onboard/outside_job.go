@@ -201,9 +201,10 @@ func repositoryScriptMayRun(root, directory, path, framework string, depth int) 
 }
 
 var (
-	nodeLocalImport   = regexp.MustCompile(`(?:require|import)\s*\(\s*['"](\.{1,2}/[^'"]+)['"]\s*\)|from\s+['"](\.{1,2}/[^'"]+)['"]|^\s*import\s+['"](\.{1,2}/[^'"]+)['"]`)
+	nodeLocalImport   = regexp.MustCompile(`(?m)(?:require|import)\s*\(\s*['"](\.{1,2}/[^'"]+)['"]\s*\)|from\s+['"](\.{1,2}/[^'"]+)['"]|^\s*import\s+['"](\.{1,2}/[^'"]+)['"]`)
 	nodeDynamicImport = regexp.MustCompile(`(?:require|import)\s*\(\s*[^'"\s)]`)
-	nodeProcessCall   = regexp.MustCompile("(?:execSync|execFileSync|execFile|exec|spawnSync|spawn|fork|execa|execaSync)\\s*\\(\\s*(['\"`])((?:[^'\"`\\\\]|\\\\.)*)['\"`]")
+	nodeProcessCall   = regexp.MustCompile("\\b(?:execSync|execFileSync|execFile|exec|spawnSync|spawn|fork|execa|execaSync)\\s*\\(\\s*(['\"`])((?:[^'\"`\\\\]|\\\\.)*)['\"`]")
+	nodeProcessStart  = regexp.MustCompile(`\b(?:execSync|execFileSync|execFile|exec|spawnSync|spawn|fork|execa|execaSync)\s*\(`)
 	nodeProcessUse    = regexp.MustCompile(`\b(?:child_process|execa|shelljs|zx)\b`)
 )
 
@@ -237,8 +238,10 @@ func nodeScriptMayRun(root, path, framework string, seen map[string]bool) bool {
 	}
 	if nodeProcessUse.MatchString(string(data)) {
 		calls := nodeProcessCall.FindAllStringSubmatch(string(data), -1)
-		if len(calls) == 0 {
-			return true // Processes started from computed commands.
+		// Every invocation counts: one computed command (process.argv,
+		// process.env, a variable) may run anything.
+		if len(calls) == 0 || len(nodeProcessStart.FindAllString(string(data), -1)) > len(calls) {
+			return true
 		}
 		for _, call := range calls {
 			command := regexp.MustCompile(`\$\{[^}]*\}`).ReplaceAllString(call[2], "x")

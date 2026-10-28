@@ -305,3 +305,7 @@ func rubyGemPackaging(root string) string {
 func (rubyDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"RUBYOPT", "RUBYLIB", "GEM_HOME", "GEM_PATH"}, name) || strings.HasPrefix(name, "BUNDLE_")
 }
+
+func (rubyDiscovery) cacheVariable(name string) bool {
+	return slices.Contains([]string{"BUNDLE_PATH", "GEM_HOME"}, name)
+}

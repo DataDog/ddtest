@@ -152,7 +152,9 @@ func (c *gitLabConfig) load(file string, chain []string) error {
 	}
 	members := gitLabMembers(document)
 	if include := members["include"]; include != nil {
-		for _, local := range c.includes(file, include, c.variables(members["variables"], file)) {
+		// Include rules see no YAML variables, and !reference variables
+		// resolve only after every file merges.
+		for _, local := range c.includes(file, include) {
 			if err := c.load(local, append(slices.Clone(chain), file)); err != nil {
 				return err
 			}
@@ -232,7 +234,7 @@ func (c *gitLabConfig) record(node *yaml.Node, file string) {
 
 // includes returns the repository files file includes locally; every other
 // include is a gap.
-func (c *gitLabConfig) includes(file string, include *yaml.Node, variables map[string]string) []string {
+func (c *gitLabConfig) includes(file string, include *yaml.Node) []string {
 	include = gitLabAlias(include)
 	entries := []*yaml.Node{include}
 	if include.Kind == yaml.SequenceNode {
@@ -878,6 +880,12 @@ func gitLabDropCaches(env map[string]string, cache *yaml.Node) {
 		}
 	}
 	for key, value := range env {
+		// Only tool cache settings (names with "cache", or a language's own,
+		// such as its package install directory) are runner state;
+		// application variables such as fixture paths stay.
+		if !strings.Contains(strings.ToLower(key), "cache") && !slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool { return language.cacheVariable(key) }) {
+			continue
+		}
 		location := strings.TrimPrefix(value, gitLabProjectDirectory+"/")
 		location = strings.Trim(path.Clean(strings.TrimPrefix(location, "./")), "/")
 		if slices.ContainsFunc(paths, func(cached string) bool { return location == cached || strings.HasPrefix(location, cached+"/") }) {
@@ -1436,12 +1444,25 @@ func gitLabImageProblem(image string, curl bool) string {
 	// Docker's official slim images remove curl and wget after building
 	// (verified on the slim language runtime images).
 	name := strings.ToLower(image)
-	official := !strings.Contains(strings.TrimPrefix(name, "docker.io/library/"), "/")
+	official := !strings.Contains(gitLabDockerHubName(name), "/")
 	_, tag, _ := strings.Cut(name[strings.LastIndex(name, "/")+1:], ":")
 	if !curl && official && strings.Contains(tag, "slim") {
 		return "The job image " + image + " has no curl, so the Datadog setup script cannot be downloaded and its tests would run untraced. Use the full image (without -slim), or add an entry that installs curl before the setup entry: " + gitLabCurlInstall + "."
 	}
 	return ""
+}
+
+// gitLabDockerHubName strips Docker Hub's registry and library prefixes,
+// so docker.io/library/node, index.docker.io/node and library/node all
+// read as the official node image.
+func gitLabDockerHubName(image string) string {
+	for _, registry := range []string{"docker.io/", "index.docker.io/", "registry-1.docker.io/", "registry.hub.docker.com/"} {
+		if rest, ok := strings.CutPrefix(image, registry); ok {
+			image = rest
+			break
+		}
+	}
+	return strings.TrimPrefix(image, "library/")
 }
 
 // gitLabInstallsCurl reports a command installing curl with apt.

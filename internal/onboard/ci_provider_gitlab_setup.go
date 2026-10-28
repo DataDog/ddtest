@@ -80,7 +80,44 @@ func gitLabSetupBody(stmts []*syntax.Stmt) (body []*syntax.Stmt, guard string, o
 	if call, isCall := stmts[0].Cmd.(*syntax.CallExpr); !isCall || len(call.Args) != 0 {
 		return nil, "", false
 	}
+	if !gitLabVerifiedSource(stmts[1]) {
+		return nil, "", false
+	}
 	return stmts, guard, true
+}
+
+// gitLabVerifiedSource reports the README's checksum-gated source, exactly:
+// echo "$SRC" | sha256sum | grep -q ... && source <(echo "$SRC") || echo ...
+// A condition in front of it (cond && echo ... && source ...) may skip the
+// installer, so it is not this shape.
+func gitLabVerifiedSource(stmt *syntax.Stmt) bool {
+	or, ok := stmt.Cmd.(*syntax.BinaryCmd)
+	if !ok || or.Op != syntax.OrStmt || gitLabCommandName(or.Y) != "echo" {
+		return false
+	}
+	and, ok := or.X.Cmd.(*syntax.BinaryCmd)
+	if !ok || and.Op != syntax.AndStmt || !slices.Contains([]string{"source", "."}, gitLabCommandName(and.Y)) {
+		return false
+	}
+	var names []string
+	var pipeline func(*syntax.Stmt) bool
+	pipeline = func(stmt *syntax.Stmt) bool {
+		if binary, ok := stmt.Cmd.(*syntax.BinaryCmd); ok {
+			return binary.Op == syntax.Pipe && pipeline(binary.X) && pipeline(binary.Y)
+		}
+		names = append(names, gitLabCommandName(stmt))
+		return true
+	}
+	return pipeline(and.X) && slices.Equal(names, []string{"echo", "sha256sum", "grep"})
+}
+
+// gitLabCommandName is the literal command a simple statement runs.
+func gitLabCommandName(stmt *syntax.Stmt) string {
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || stmt.Negated || len(call.Args) == 0 {
+		return ""
+	}
+	return call.Args[0].Lit()
 }
 
 // gitLabStateOnly reports whether a statement only changes shell state:

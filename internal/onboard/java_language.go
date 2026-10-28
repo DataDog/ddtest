@@ -146,3 +146,7 @@ func (javaDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[str
 func (javaDiscovery) runtimeVariable(name string) bool {
 	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"
 }
+
+func (javaDiscovery) cacheVariable(name string) bool {
+	return name == "GRADLE_USER_HOME"
+}

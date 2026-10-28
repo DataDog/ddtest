@@ -106,8 +106,10 @@ entry's runtime is still checked statically; an `if` on such a variable
 `rules` (including `include` rules and `workflow: rules`, whose `variables`
 apply when the deciding rule is certain) and `when: never` exclude a job (or one matrix entry) only when every
 operand is known; `only`/`except`, `changes`, `when: manual` and conditions on
-pipeline variables are possible CI paths. Variables that only locate a
-`cache:paths` directory are runner state and are not replayed. GitLab's own scanning, review and release components and templates run no
+pipeline variables are possible CI paths. Tool cache settings (variables
+named like `npm_config_cache` or `PIP_CACHE_DIR`, or a language's package install directory such as `BUNDLE_PATH`) that point into a
+`cache:paths` directory are runner state and are not replayed; other
+variables stay. GitLab's own scanning, review and release components and templates run no
 tests and are reported, not blockers: the `sast`, `secret-detection`,
 `dependency-scanning`, `container-scanning` and `code-quality` components
 under `gitlab.com/components/`, `danger-review` and `gem-release` under

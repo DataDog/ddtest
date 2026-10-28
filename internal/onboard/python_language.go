@@ -69,3 +69,7 @@ func (pythonDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[s
 func (pythonDiscovery) runtimeVariable(name string) bool {
 	return name == "PYTHONPATH" || name == "PYTHONHOME"
 }
+
+func (pythonDiscovery) cacheVariable(name string) bool {
+	return name == "PIP_TARGET" || name == "POETRY_VIRTUALENVS_PATH"
+}

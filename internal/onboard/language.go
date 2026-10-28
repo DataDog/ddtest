@@ -70,6 +70,9 @@ type discoveryLanguage interface {
 	// syntax: its installer token, exact tracer input, commands that must
 	// follow the setup, and its own setup rules.
 	ciSetupRequest(root, framework, site string) ciSetupRequest
+	// cacheVariable reports a variable that locates the language's package
+	// cache or install directory, which CI caches between jobs.
+	cacheVariable(name string) bool
 	// runtimeVariable reports an environment variable the language's
 	// runtime or tools read, which images commonly export.
 	runtimeVariable(name string) bool
