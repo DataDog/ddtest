@@ -11,8 +11,6 @@ Orchestrion's percentage compares memory against Native. Mini's percentages
 compare memory against Orchestrion first and Native second. Failed variants
 have no comparative median; their individual peaks remain in the raw records.
 
-Runtime and the local Agent control: [20261016-linux-go1.27.1](../20261016-linux-go1.27.1/memory.md).
-
 ## Cold compilation
 
 | Project | Flags | CPUs | Native | Orchestrion | POC Mini |
@@ -277,3 +275,65 @@ Runtime and the local Agent control: [20261016-linux-go1.27.1](../20261016-linux
 | Testify External | `-coverpkg=testing,github.com/stretchr/testify/suite -covermode=atomic` | 32 | 57.8 MiB | 81.6 MiB (+41.3%) | 73.8 MiB (-9.5%; +27.8%) |
 | Testify External | `-race -coverpkg=testing,github.com/stretchr/testify/suite -covermode=atomic` | 4 | 45.1 MiB | 66.9 MiB (+48.4%) | 66.4 MiB (-0.9%; +47.2%) |
 | Testify External | `-race -coverpkg=testing,github.com/stretchr/testify/suite -covermode=atomic` | 32 | 61.7 MiB | 82.4 MiB (+33.5%) | 78.0 MiB (-5.3%; +26.4%) |
+
+## Runtime
+
+| Project | Flags | CPUs | Native | Orchestrion | POC Mini | Mini deferred |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Gin | `none` | 4 | 35.1 MiB | 55.4 MiB (+57.9%) | 38.5 MiB (-30.5%; +9.7%) | 42.0 MiB (-24.1%; +19.8%) |
+| Gin | `none` | 32 | 42.7 MiB | 81.3 MiB (+90.2%) | 52.8 MiB (-35.0%; +23.6%) | 53.7 MiB (-34.0%; +25.6%) |
+| Chi | `none` | 4 | 34.2 MiB | 57.1 MiB (+67.0%) | 33.5 MiB (-41.3%; -1.9%) | 45.0 MiB (-21.2%; +31.6%) |
+| Chi | `none` | 32 | 106.1 MiB | 133.8 MiB (+26.1%) | 91.5 MiB (-31.6%; -13.8%) | 94.1 MiB (-29.7%; -11.3%) |
+| Gin | `-race` | 4 | 169.4 MiB | FAIL 4/4 | 188.3 MiB (vs Orchestrion unavailable; +11.2% vs Native) | 189.9 MiB (vs Orchestrion unavailable; +12.1% vs Native) |
+| Gin | `-race` | 32 | 264.9 MiB | FAIL 4/4 | 328.9 MiB (vs Orchestrion unavailable; +24.2% vs Native) | 324.1 MiB (vs Orchestrion unavailable; +22.4% vs Native) |
+| Gin | `-cover` | 4 | 35.1 MiB | 94.9 MiB (+170.0%) | 37.3 MiB (-60.7%; +6.2%) | 39.1 MiB (-58.8%; +11.2%) |
+| Gin | `-cover` | 32 | 41.7 MiB | 172.2 MiB (+312.7%) | 52.8 MiB (-69.3%; +26.5%) | 53.5 MiB (-68.9%; +28.1%) |
+| Gin | `-coverpkg=./... -covermode=atomic` | 4 | 36.3 MiB | 89.8 MiB (+147.0%) | 83.1 MiB (-7.4%; +128.8%) | 84.6 MiB (-5.8%; +132.7%) |
+| Gin | `-coverpkg=./... -covermode=atomic` | 32 | 43.0 MiB | 167.9 MiB (+291.0%) | 147.8 MiB (-12.0%; +244.0%) | 147.8 MiB (-12.0%; +244.1%) |
+| Gin | `-race -coverpkg=./... -covermode=atomic` | 4 | 179.6 MiB | FAIL 3/4 | UNVERIFIED | UNVERIFIED |
+| Gin | `-race -coverpkg=./... -covermode=atomic` | 32 | 284.4 MiB | FAIL 3/4 | UNVERIFIED | UNVERIFIED |
+| Chi | `-race` | 4 | 2988.7 MiB | 2950.3 MiB (-1.3%) | 2996.7 MiB (+1.6%; +0.3%) | 2993.0 MiB (+1.4%; +0.1%) |
+| Chi | `-race` | 32 | 3053.0 MiB | 3089.0 MiB (+1.2%) | 3078.6 MiB (-0.3%; +0.8%) | 3067.8 MiB (-0.7%; +0.5%) |
+| Chi | `-cover` | 4 | 45.3 MiB | 75.2 MiB (+66.2%) | 55.4 MiB (-26.4%; +22.3%) | 47.6 MiB (-36.7%; +5.2%) |
+| Chi | `-cover` | 32 | 88.0 MiB | 140.1 MiB (+59.2%) | 99.0 MiB (-29.3%; +12.5%) | 111.6 MiB (-20.3%; +26.9%) |
+| Chi | `-coverpkg=./... -covermode=atomic` | 4 | 30.8 MiB | 65.2 MiB (+111.8%) | 42.2 MiB (-35.3%; +37.2%) | 41.9 MiB (-35.7%; +36.2%) |
+| Chi | `-coverpkg=./... -covermode=atomic` | 32 | 49.1 MiB | 107.8 MiB (+119.8%) | 61.3 MiB (-43.2%; +24.9%) | 67.3 MiB (-37.6%; +37.2%) |
+| Chi | `-race -coverpkg=./... -covermode=atomic` | 4 | 2921.7 MiB | 3060.8 MiB (+4.8%) | 2967.3 MiB (-3.1%; +1.6%) | 2925.8 MiB (-4.4%; +0.1%) |
+| Chi | `-race -coverpkg=./... -covermode=atomic` | 32 | 2914.6 MiB | 3023.2 MiB (+3.7%) | 2952.5 MiB (-2.3%; +1.3%) | 2956.6 MiB (-2.2%; +1.4%) |
+| Testify Direct | `none` | 4 | 11.1 MiB | 17.4 MiB (+57.2%) | 13.7 MiB (-21.4%; +23.6%) | 13.2 MiB (-24.6%; +18.5%) |
+| Testify Direct | `none` | 32 | 12.0 MiB | 20.6 MiB (+71.8%) | 14.3 MiB (-30.8%; +18.8%) | 14.6 MiB (-29.4%; +21.2%) |
+| Testify Direct | `-race` | 4 | 25.3 MiB | 52.2 MiB (+105.9%) | 32.7 MiB (-37.4%; +28.9%) | 31.7 MiB (-39.3%; +24.9%) |
+| Testify Direct | `-race` | 32 | 26.7 MiB | 56.7 MiB (+112.0%) | 35.0 MiB (-38.3%; +30.9%) | 34.6 MiB (-39.0%; +29.3%) |
+| Testify Direct | `-cover` | 4 | 11.1 MiB | 19.5 MiB (+75.9%) | 13.3 MiB (-31.9%; +19.9%) | 13.0 MiB (-33.1%; +17.7%) |
+| Testify Direct | `-cover` | 32 | 11.8 MiB | 23.2 MiB (+97.6%) | 14.7 MiB (-36.9%; +24.8%) | 15.4 MiB (-33.9%; +30.7%) |
+| Testify Direct | `-coverpkg=./... -covermode=atomic` | 4 | 11.1 MiB | 19.7 MiB (+77.2%) | 15.9 MiB (-19.1%; +43.3%) | 15.5 MiB (-21.0%; +39.9%) |
+| Testify Direct | `-coverpkg=./... -covermode=atomic` | 32 | 12.5 MiB | 22.7 MiB (+81.9%) | 18.2 MiB (-19.7%; +46.2%) | 17.7 MiB (-22.0%; +42.0%) |
+| Testify Direct | `-race -coverpkg=./... -covermode=atomic` | 4 | 25.8 MiB | 53.1 MiB (+106.1%) | 34.1 MiB (-35.7%; +32.5%) | 33.3 MiB (-37.3%; +29.2%) |
+| Testify Direct | `-race -coverpkg=./... -covermode=atomic` | 32 | 27.5 MiB | 58.0 MiB (+110.6%) | 40.1 MiB (-30.8%; +45.7%) | 39.1 MiB (-32.6%; +41.9%) |
+| Testify Direct | `-coverpkg=testing,github.com/stretchr/testify/suite -covermode=atomic` | 4 | 11.4 MiB | 20.1 MiB (+76.7%) | 16.3 MiB (-18.9%; +43.3%) | 15.8 MiB (-21.1%; +39.4%) |
+| Testify Direct | `-coverpkg=testing,github.com/stretchr/testify/suite -covermode=atomic` | 32 | 12.2 MiB | 23.9 MiB (+95.5%) | 18.3 MiB (-23.4%; +49.8%) | 19.2 MiB (-19.8%; +56.7%) |
+| Testify Direct | `-race -coverpkg=testing,github.com/stretchr/testify/suite -covermode=atomic` | 4 | 27.1 MiB | 62.4 MiB (+130.4%) | 39.0 MiB (-37.4%; +44.2%) | 37.6 MiB (-39.7%; +38.8%) |
+| Testify Direct | `-race -coverpkg=testing,github.com/stretchr/testify/suite -covermode=atomic` | 32 | 28.8 MiB | 67.1 MiB (+133.0%) | 44.9 MiB (-33.2%; +55.8%) | 43.4 MiB (-35.3%; +50.7%) |
+| Testify External | `none` | 4 | 11.0 MiB | 17.5 MiB (+58.3%) | 13.3 MiB (-23.8%; +20.6%) | 13.3 MiB (-23.7%; +20.9%) |
+| Testify External | `none` | 32 | 11.5 MiB | 20.3 MiB (+76.0%) | 15.3 MiB (-24.7%; +32.6%) | 14.6 MiB (-28.0%; +26.7%) |
+| Testify External | `-race` | 4 | 25.5 MiB | 51.4 MiB (+101.7%) | 32.4 MiB (-37.0%; +27.0%) | 31.7 MiB (-38.5%; +24.1%) |
+| Testify External | `-race` | 32 | 26.8 MiB | 56.2 MiB (+110.0%) | 35.8 MiB (-36.2%; +34.0%) | 34.3 MiB (-39.0%; +28.2%) |
+| Testify External | `-cover` | 4 | 11.0 MiB | 19.2 MiB (+74.3%) | 13.2 MiB (-31.4%; +19.5%) | 13.4 MiB (-30.3%; +21.6%) |
+| Testify External | `-cover` | 32 | 11.5 MiB | 22.7 MiB (+97.0%) | 15.0 MiB (-34.0%; +30.1%) | 15.3 MiB (-32.3%; +33.4%) |
+| Testify External | `-coverpkg=./... -covermode=atomic` | 4 | 11.1 MiB | 19.0 MiB (+71.7%) | 16.0 MiB (-15.6%; +44.9%) | 15.6 MiB (-18.0%; +40.8%) |
+| Testify External | `-coverpkg=./... -covermode=atomic` | 32 | 11.8 MiB | 22.5 MiB (+91.0%) | 17.9 MiB (-20.7%; +51.5%) | 18.3 MiB (-18.6%; +55.5%) |
+| Testify External | `-race -coverpkg=./... -covermode=atomic` | 4 | 25.8 MiB | 54.0 MiB (+109.3%) | 34.2 MiB (-36.7%; +32.5%) | 33.0 MiB (-38.8%; +28.0%) |
+| Testify External | `-race -coverpkg=./... -covermode=atomic` | 32 | 27.8 MiB | 58.6 MiB (+111.0%) | 39.5 MiB (-32.6%; +42.1%) | 38.2 MiB (-34.8%; +37.5%) |
+| Testify External | `-coverpkg=testing,github.com/stretchr/testify/suite -covermode=atomic` | 4 | 11.8 MiB | 20.1 MiB (+70.3%) | 16.2 MiB (-19.5%; +37.2%) | 16.2 MiB (-19.6%; +36.9%) |
+| Testify External | `-coverpkg=testing,github.com/stretchr/testify/suite -covermode=atomic` | 32 | 12.5 MiB | 24.0 MiB (+92.1%) | 18.8 MiB (-21.5%; +50.7%) | 19.3 MiB (-19.6%; +54.5%) |
+| Testify External | `-race -coverpkg=testing,github.com/stretchr/testify/suite -covermode=atomic` | 4 | 27.6 MiB | 62.4 MiB (+126.2%) | 38.6 MiB (-38.1%; +40.0%) | 37.7 MiB (-39.6%; +36.7%) |
+| Testify External | `-race -coverpkg=testing,github.com/stretchr/testify/suite -covermode=atomic` | 32 | 28.9 MiB | 67.3 MiB (+133.0%) | 44.8 MiB (-33.4%; +55.2%) | 42.9 MiB (-36.3%; +48.5%) |
+
+## Gin: local Agent delivery and telemetry
+
+Three measured runs follow one warmup.
+
+| Project | Flags | CPUs | Native | Orchestrion | POC Mini |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Gin | `none` | 4 | 40.6 MiB | 84.3 MiB (+107.5%) | 60.8 MiB (-27.9%; +49.6%) |
+| Gin | `none` | 32 | 42.6 MiB | 82.0 MiB (+92.6%) | 80.0 MiB (-2.4%; +87.9%) |

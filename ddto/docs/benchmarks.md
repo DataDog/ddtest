@@ -1,17 +1,16 @@
-<!-- Composed by results/20261027-linux-go1.27.1/compose.py from scripts/build_benchmark.py's and scripts/benchmark_report.py's renderers. -->
+<!-- Composed by results/20261027-linux-go1.27.1/compose.py from scripts/build_benchmark.py's, scripts/refresh_benchmark_report.py's and scripts/benchmark_report.py's renderers. -->
 # Build, runtime and memory comparisons
 
-Build: Native, Orchestrion and POC Mini were measured together from 2026-10-27,
-at ddtest `282b22a15776c3dfb1073d2e0197c78445c00d6f`, where POC Mini runs as `ddtest instrument`.
-Each scenario ran 3 times instead of the recorded counts (cold, cached, forced
-link, body edit, constant edit: 5/10/20/10/3 for Gin and Chi without flags,
-3/10/10/5/3 for the other cases), to shorten the collection; a
+Native, Orchestrion and POC Mini were measured together from 2026-10-27, at
+ddtest `282b22a15776c3dfb1073d2e0197c78445c00d6f`, where POC Mini runs as `ddtest instrument`:
+the build, the runtime and the local Agent control. Each build scenario ran 3
+times instead of the recorded counts (cold, cached, forced link, body edit,
+constant edit: 5/10/20/10/3 for Gin and Chi without flags, 3/10/10/5/3 for the
+other cases), and each runtime group 3 times instead of
+5, to shorten the collection; a
 [confirmation run](results/20261027-linux-go1.27.1/confirm-race/README.md) repeated the Gin and Testify
-race cases, Native and POC Mini, 248 builds,
+race builds, Native and POC Mini, 248 builds,
 with the recorded counts.
-Runtime: retained from [20261016-linux-go1.27.1](results/20261016-linux-go1.27.1/README.md), where POC
-Mini was measured on 2026-10-16 in ddto's former repository and Native and
-Orchestrion on 2026-10-04; it was not rerun.
 All variants use `go version go1.27.1 linux/amd64` and the recorded subject versions,
 flags and CPU affinity. The host is an AMD Ryzen 9 5950X: four CPUs use four
 physical cores; 32 use all hardware threads.
@@ -31,9 +30,10 @@ in wall time alone does not establish a stable gain.
 | Report | Contents |
 | --- | --- |
 | [Build](results/20261027-linux-go1.27.1/build/README.md) | Every flag combination in cold, cached, forced-link and both edit scenarios |
-| [Race confirmation](results/20261027-linux-go1.27.1/confirm-race/README.md) | Gin and Testify race cases with the recorded repetitions |
-| [Runtime](results/20261016-linux-go1.27.1/runtime/README.md) | Normal/deferred Mini, each run, CPU, memory and event validation (2026-10-16) |
-| [Memory](results/20261027-linux-go1.27.1/memory.md) | All build cells; [runtime and the local Agent control](results/20261016-linux-go1.27.1/memory.md) (2026-10-16) |
+| [Race confirmation](results/20261027-linux-go1.27.1/confirm-race/README.md) | Gin and Testify race builds with the recorded repetitions |
+| [Runtime](results/20261027-linux-go1.27.1/runtime/README.md) | Native, Orchestrion, normal/deferred Mini, each run, CPU, memory and event validation |
+| [Agent control](results/20261027-linux-go1.27.1/agent/README.md) | Gin through the local EVP and telemetry proxy |
+| [Memory](results/20261027-linux-go1.27.1/memory.md) | All build and runtime cells and the local Agent control |
 | [Data and provenance](results/20261027-linux-go1.27.1/README.md) | Dates, revisions, repetitions and how this page is composed |
 
 ## Compilation
@@ -135,50 +135,51 @@ have no comparative median; their individual peaks remain in the raw records.
 
 ## Runtime of the original test binaries
 
-Five measured runs follow one warmup. The clock includes process startup,
-concurrent package tests, settings and final delivery to loopback HTTP.
-Compilation, receiver startup and decoding are excluded. Telemetry is disabled
-in this matrix and enabled in the separate local Agent control. Mini deferred
-uses the same executable as normal Mini.
+Three measured runs follow one warmup, for every variant in rotating
+order. The clock includes process startup, concurrent package tests, settings
+and final delivery to loopback HTTP. Compilation, receiver startup and decoding
+are excluded. Telemetry is disabled in this matrix and enabled in the separate
+local Agent control. Mini deferred uses the same executable as normal Mini. The
+runtime comes from two collections, each case from one of them; the
+[runtime report](results/20261027-linux-go1.27.1/runtime/README.md#collections) explains why.
 
-Test names, statuses and multiplicities match the retained Native inventory.
-The recorded SDK supplies CI event expectations. New native Examples are
-identified from the executable's function/source table and checked explicitly.
-A failed or unavailable reference remains visible in the validation results.
+Test names, statuses and multiplicities match the archived Native inventory.
+The archived SDK supplies CI event expectations for Orchestrion and Mini. New
+native Examples are identified from the executable's function/source table and
+checked explicitly. A failed or unavailable reference remains visible in the
+validation results.
 
 | Project | Flags | CPUs | Native | Orchestrion | POC Mini | Mini deferred |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Gin | `none` | 4 | 0.183472 s | 0.227665 s (+24.1%) | 0.221166 s (-2.9%; +20.5%) | 0.227677 s (+0.0%; +24.1%) |
-| Gin | `none` | 32 | 0.192854 s | 0.235763 s (+22.2%) | 0.214014 s (-9.2%; +11.0%) | 0.223292 s (-5.3%; +15.8%) |
-| Chi | `none` | 4 | 26.136864 s | 26.174048 s (+0.1%) | 26.160106 s (-0.1%; +0.1%) | 26.157522 s (-0.1%; +0.1%) |
-| Chi | `none` | 32 | 26.141335 s | 26.179190 s (+0.1%) | 26.171993 s (-0.0%; +0.1%) | 26.166768 s (-0.0%; +0.1%) |
-| Testify Direct | `none` | 4 | 0.002768 s | 0.014293 s (+416.4%) | 0.010578 s (-26.0%; +282.2%) | 0.010303 s (-27.9%; +272.3%) |
-| Testify Direct | `none` | 32 | 0.003034 s | 0.016014 s (+427.8%) | 0.011907 s (-25.6%; +292.4%) | 0.011984 s (-25.2%; +295.0%) |
-| Testify External | `none` | 4 | 0.002716 s | 0.014248 s (+424.6%) | 0.010423 s (-26.8%; +283.8%) | 0.010840 s (-23.9%; +299.1%) |
-| Testify External | `none` | 32 | 0.002940 s | 0.016444 s (+459.4%) | 0.011769 s (-28.4%; +300.3%) | 0.012057 s (-26.7%; +310.1%) |
+| Gin | `none` | 4 | 0.189747 s | 0.244531 s (+28.9%) | 0.220352 s (-9.9%; +16.1%) | 0.224050 s (-8.4%; +18.1%) |
+| Gin | `none` | 32 | 0.197496 s | 0.238528 s (+20.8%) | 0.218361 s (-8.5%; +10.6%) | 0.217293 s (-8.9%; +10.0%) |
+| Chi | `none` | 4 | 26.141200 s | 26.180264 s (+0.1%) | 26.155881 s (-0.1%; +0.1%) | 26.156406 s (-0.1%; +0.1%) |
+| Chi | `none` | 32 | 26.141928 s | 26.158359 s (+0.1%) | 26.154071 s (-0.0%; +0.0%) | 26.161188 s (+0.0%; +0.1%) |
+| Testify Direct | `none` | 4 | 0.002854 s | 0.014925 s (+422.9%) | 0.010428 s (-30.1%; +265.4%) | 0.010546 s (-29.3%; +269.5%) |
+| Testify Direct | `none` | 32 | 0.003185 s | 0.016874 s (+429.7%) | 0.011855 s (-29.7%; +272.2%) | 0.011521 s (-31.7%; +261.7%) |
+| Testify External | `none` | 4 | 0.002879 s | 0.014796 s (+413.9%) | 0.010448 s (-29.4%; +262.9%) | 0.010295 s (-30.4%; +257.6%) |
+| Testify External | `none` | 32 | 0.003148 s | 0.016865 s (+435.8%) | 0.011802 s (-30.0%; +274.9%) | 0.011919 s (-29.3%; +278.6%) |
 
 ## Runtime: memory
 
 | Project | Flags | CPUs | Native | Orchestrion | POC Mini | Mini deferred |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Gin | `none` | 4 | 36.6 MiB | 60.3 MiB (+64.5%) | 38.9 MiB (-35.4%; +6.3%) | 38.6 MiB (-36.0%; +5.3%) |
-| Gin | `none` | 32 | 42.2 MiB | 70.7 MiB (+67.6%) | 53.1 MiB (-24.9%; +25.8%) | 51.1 MiB (-27.7%; +21.2%) |
-| Chi | `none` | 4 | 45.6 MiB | 79.7 MiB (+74.5%) | 32.1 MiB (-59.7%; -29.6%) | 31.5 MiB (-60.5%; -31.0%) |
-| Chi | `none` | 32 | 94.7 MiB | 128.0 MiB (+35.2%) | 57.5 MiB (-55.1%; -39.3%) | 67.8 MiB (-47.0%; -28.4%) |
-| Testify Direct | `none` | 4 | 14.5 MiB | 26.6 MiB (+83.0%) | 13.4 MiB (-49.6%; -7.8%) | 13.0 MiB (-51.2%; -10.7%) |
-| Testify Direct | `none` | 32 | 15.0 MiB | 29.4 MiB (+96.5%) | 15.4 MiB (-47.5%; +3.2%) | 14.6 MiB (-50.5%; -2.7%) |
-| Testify External | `none` | 4 | 14.3 MiB | 27.1 MiB (+89.1%) | 13.2 MiB (-51.2%; -7.7%) | 13.0 MiB (-52.2%; -9.6%) |
-| Testify External | `none` | 32 | 14.5 MiB | 32.3 MiB (+123.1%) | 15.1 MiB (-53.2%; +4.5%) | 15.1 MiB (-53.3%; +4.2%) |
+| Gin | `none` | 4 | 35.1 MiB | 55.4 MiB (+57.9%) | 38.5 MiB (-30.5%; +9.7%) | 42.0 MiB (-24.1%; +19.8%) |
+| Gin | `none` | 32 | 42.7 MiB | 81.3 MiB (+90.2%) | 52.8 MiB (-35.0%; +23.6%) | 53.7 MiB (-34.0%; +25.6%) |
+| Chi | `none` | 4 | 34.2 MiB | 57.1 MiB (+67.0%) | 33.5 MiB (-41.3%; -1.9%) | 45.0 MiB (-21.2%; +31.6%) |
+| Chi | `none` | 32 | 106.1 MiB | 133.8 MiB (+26.1%) | 91.5 MiB (-31.6%; -13.8%) | 94.1 MiB (-29.7%; -11.3%) |
+| Testify Direct | `none` | 4 | 11.1 MiB | 17.4 MiB (+57.2%) | 13.7 MiB (-21.4%; +23.6%) | 13.2 MiB (-24.6%; +18.5%) |
+| Testify Direct | `none` | 32 | 12.0 MiB | 20.6 MiB (+71.8%) | 14.3 MiB (-30.8%; +18.8%) | 14.6 MiB (-29.4%; +21.2%) |
+| Testify External | `none` | 4 | 11.0 MiB | 17.5 MiB (+58.3%) | 13.3 MiB (-23.8%; +20.6%) | 13.3 MiB (-23.7%; +20.9%) |
+| Testify External | `none` | 32 | 11.5 MiB | 20.3 MiB (+76.0%) | 15.3 MiB (-24.7%; +32.6%) | 14.6 MiB (-28.0%; +26.7%) |
 
 ## Read and repeat the measurements
 
 [Collection and regeneration](build-benchmarks.md) explains how to run the
-benchmarks. The [runtime report](results/20261016-linux-go1.27.1/runtime/README.md) lists
+benchmarks. The [runtime report](results/20261027-linux-go1.27.1/runtime/README.md) lists
 failed or unverified groups and preserves their observed durations. Those groups
 have no comparative median in the main tables. Coverage in Go's default set
 mode is aggregate only; per-test uploads use count or atomic mode.
 
 These are Linux/amd64 measurements with a loopback receiver. Live intake and
 other operating systems are covered separately by [validation](validation.md).
-The archived runtime and parity measurements keep their original revisions and
-dates; they were not repeated by this build collection.

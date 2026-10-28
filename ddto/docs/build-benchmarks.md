@@ -31,13 +31,45 @@ That dataset was recorded in ddto's original repository, so its input revisions 
 commits there: refresh Mini from it in that checkout, or record a new baseline
 of every variant here.
 
-The latest build data, [20261027-linux-go1.27.1](results/20261027-linux-go1.27.1/README.md),
-is such a baseline of every variant, recorded here with `--repeats 3`. The
-runtime scripts refresh only Mini against a dataset recorded in this repository,
-so [benchmarks.md](benchmarks.md) keeps the runtime sections of
-20261016-linux-go1.27.1; that dataset's
-[compose.py](results/20261027-linux-go1.27.1/compose.py) writes the page from
-its raw build data.
+The latest data, [20261027-linux-go1.27.1](results/20261027-linux-go1.27.1/README.md),
+is such a baseline of every variant, recorded here with `--repeats 3`: build,
+runtime and the local Agent control, as in
+[Record every variant](#record-every-variant). Its
+[compose.py](results/20261027-linux-go1.27.1/compose.py) writes
+[benchmarks.md](benchmarks.md) from its raw data.
+
+## Record every variant
+
+Without `--variant` and `--baseline`, the build benchmark measures Native,
+Orchestrion and POC Mini together, and the runtime benchmark then runs each
+variant's binaries, with Mini deferred, in rotating order. `--repeats 3` runs
+three repetitions of every build scenario and three measured runtime runs after
+one warmup, instead of the recorded counts; the Agent control always runs three.
+
+```sh
+BENCH_RUN=/var/tmp/ddtest-benchmark-new
+GO_BENCH=/path/to/go1.27.1/bin/go
+ORCHESTRION_BENCH=/path/to/orchestrion
+
+python3 scripts/build_benchmark.py run --repeats 3 --download \
+  --go "$GO_BENCH" --orchestrion "$ORCHESTRION_BENCH" \
+  --output "$BENCH_RUN/build" --max-seconds 28800 --max-gib 24
+
+python3 scripts/runtime_benchmark.py --repeats 3 \
+  --build "$BENCH_RUN/build" --baseline docs/results/20261016-linux-go1.27.1 \
+  --output "$BENCH_RUN/runtime" --max-seconds 14400 --max-gib 12
+
+python3 scripts/runtime_benchmark.py --agent \
+  --build "$BENCH_RUN/build" --baseline docs/results/20261016-linux-go1.27.1 \
+  --output "$BENCH_RUN/agent" --max-seconds 3600 --max-gib 4
+```
+
+`--baseline` gives the runtime benchmark the archived SDK event inventories
+that validate Orchestrion and Mini; copy that dataset in first, as above. The
+build matrix took about 3.4 hours on 2026-10-27, and the runtime about two. If a
+runtime collection stops, measure the remaining cases with `--case` into
+another output directory: 20261027-linux-go1.27.1 does, and its `compose.py`
+takes each case from one collection.
 
 ## Refresh only Mini
 

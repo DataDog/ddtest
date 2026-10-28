@@ -1,8 +1,9 @@
 # Benchmark data
 
-Native, Orchestrion and POC Mini were compiled together from 2026-10-27, at
-ddtest `282b22a15776c3dfb1073d2e0197c78445c00d6f`, after the instrumentation
-moved into ddtest, where POC Mini runs as `ddtest instrument`. The toolchain is `go version go1.27.1 linux/amd64` and
+Native, Orchestrion and POC Mini were compiled together from 2026-10-27 and
+run together on 2026-10-28, at ddtest
+`282b22a15776c3dfb1073d2e0197c78445c00d6f`, after the instrumentation moved
+into ddtest, where POC Mini runs as `ddtest instrument`. The toolchain is `go version go1.27.1 linux/amd64` and
 Orchestrion `v1.13.2-0.20260917114356-5c24783fcd76`: the same executables as
 in [20261016-linux-go1.27.1](../20261016-linux-go1.27.1/README.md), whose
 SHA-256 match its manifest.
@@ -22,36 +23,47 @@ SHA-256 match its manifest.
 - [Race confirmation](confirm-race/README.md): Gin and Testify External with
   `-race`, Native and POC Mini, with the recorded repetition counts, such as ten
   forced links instead of three.
-- [Memory](memory.md): every build scenario.
+- [Runtime](runtime/README.md): the original test binaries of every
+  combination at 4/32 CPUs, Native, Orchestrion, Mini and Mini deferred in
+  rotating order, with `runtime_benchmark.py --repeats 3`: three measured runs
+  after one warmup instead of five. Two collections on 2026-10-28 make it up,
+  each case from one of them: the first stopped when `go tool objdump`, which
+  checks the native Examples, stalled on the Go build cache, and the second
+  measured the remaining cases ([collections](runtime/README.md#collections)).
+- [Local Agent control](agent/README.md): Gin through the local EVP and
+  telemetry proxy, Native, Orchestrion and Mini, three measured runs after one
+  warmup.
+- [Memory](memory.md): every build scenario, the runtime and the Agent control.
 
-Runtime and the local Agent control were not rerun. `runtime_benchmark.py` and
-`refresh_benchmark_report.py` refresh only POC Mini against a dataset whose
-inputs are commits of this repository, and 20261016-linux-go1.27.1 was recorded
-in ddto's former repository. [benchmarks.md](../../benchmarks.md) therefore
-keeps that dataset's runtime sections and takes its build and build-memory
-tables from this one; [compose.py](compose.py) writes it with the renderers of
-`scripts/build_benchmark.py` and `scripts/benchmark_report.py`.
+The runtime and the Agent control validate Orchestrion and Mini against the SDK
+event inventories archived in
+[20261016-linux-go1.27.1](../20261016-linux-go1.27.1/README.md), and test
+names, statuses and counts against Native's.
 
-Two earlier attempts of the full collection on 2026-10-27 were stopped and are
+Two earlier attempts of the full build collection on 2026-10-27 were stopped and are
 not part of this dataset: the first because the Native link control did not
 converge, the second because another workload ran on the host.
 
 ## Files
 
 The results are in the reports: [benchmarks.md](../../benchmarks.md), the
-[build](build/README.md), the [race confirmation](confirm-race/README.md) and
-[memory](memory.md). The raw data that they come from, `manifest.json`,
-`observations.csv`, `statistics.json`, `final-binaries.json`,
-`convergence.json` and the trace and module records of `build/` and
-`confirm-race/`, is in [raw.zip](raw.zip), to verify or regenerate them; the
-reports link to those files as extracted. `archive.json` lists the SHA-256 of
-every file. From `ddto/`:
+[build](build/README.md), the [race confirmation](confirm-race/README.md), the
+[runtime](runtime/README.md), the [Agent control](agent/README.md) and
+[memory](memory.md). The raw data that they come from is in [raw.zip](raw.zip),
+to verify or regenerate them: `manifest.json`, `observations.csv`,
+`statistics.json`, `final-binaries.json`, `convergence.json` and the trace and
+module records of `build/` and `confirm-race/`; the manifests and observations
+of both runtime collections in `runtime/collection-1` and
+`runtime/collection-2`, and the `observations.csv` and `statistics.json` that
+`compose.py` derives from them; and the Agent control's `manifest.json`,
+`observations.json` and `observations.json.gz`. The reports link to those files
+as extracted. `archive.json` lists the SHA-256 of every file. From `ddto/`:
 
 ```sh
 (cd docs/results/20261027-linux-go1.27.1 && unzip -o raw.zip)
 python3 scripts/build_benchmark.py report --input docs/results/20261027-linux-go1.27.1/build --update-readme --check
 python3 scripts/build_benchmark.py report --input docs/results/20261027-linux-go1.27.1/confirm-race --check
-python3 docs/results/20261027-linux-go1.27.1/compose.py   # rewrites benchmarks.md and memory.md unchanged
+python3 docs/results/20261027-linux-go1.27.1/compose.py   # rewrites benchmarks.md and the runtime, Agent and memory reports unchanged
 ```
 
 Remove the extracted files afterwards; only `raw.zip` is kept.
