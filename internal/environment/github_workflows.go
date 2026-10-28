@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/kballard/go-shellquote"
 	"github.com/pelletier/go-toml/v2"
 	"go.yaml.in/yaml/v3"
@@ -169,6 +170,13 @@ func looksLikeTestJob(root, commands, language, name string, depth int) bool {
 		}
 		for len(args) > 0 && strings.Contains(args[0], "=") {
 			args = args[1:]
+		}
+		// One Maven build runs every JVM framework the project declares.
+		if language == "java" {
+			if len(args) > 0 && maven.IsTestCommand(args[0], args[1:]) {
+				return true
+			}
+			continue
 		}
 	unwrap:
 		for len(args) > 1 {

@@ -821,6 +821,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		}
 		result.CIRuntime = &check
 		t.defaultToCITracer(check)
+		result.Tracer = t.tracerLabel
 		if t.preflight != nil {
 			if err := t.preflight(ctx, output, &result); err != nil {
 				return result, err
@@ -1250,14 +1251,14 @@ func (t *Testdrive) defaultToCITracer(check onboard.RuntimeCheck) {
 		if job.Status == onboard.StatusExcluded {
 			continue
 		}
-		version := strings.TrimPrefix(job.Tracer, "dd-trace@")
+		version := t.lang().ciPinnedTracer(job)
 		if version == "" || (pinned != "" && version != pinned) {
 			return
 		}
 		pinned = version
 	}
 	if pinned != "" {
-		t.tracerVersion, t.tracerLabel = pinned, "dd-trace@"+pinned
+		t.tracerVersion, t.tracerLabel = pinned, t.lang().tracerPackage()+"@"+pinned
 	}
 }
 

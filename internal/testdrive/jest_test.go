@@ -160,6 +160,9 @@ func TestFeatureAssertionsRequireBehaviorAndTelemetry(t *testing.T) {
 				// excluding it from the command's overall failure status.
 				run.Tests[0].Status = "failed"
 				require.Equal(t, "passed", evaluateFeature(feature, run, identity).Status)
+				// Other runners report the suppressed failure as skipped.
+				run.Tests[0].Status = "skipped"
+				require.Equal(t, "passed", evaluateFeature(feature, run, identity).Status)
 				run.Facts.Events[0].Tags["test.test_management.is_quarantined"] = "false"
 				require.Equal(t, "failed", evaluateFeature(feature, run, identity).Status)
 				run.Facts.Events[0].Tags["test.test_management.is_quarantined"] = "true"

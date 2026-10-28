@@ -190,3 +190,20 @@ func TestSkippingExplicitSuiteSelectorKeepsRepositorySourceIdentity(t *testing.T
 	require.NotContains(t, response.Body.String(), "packages/api")
 	require.Equal(t, "packages/api/features/probe.feature", scenario.SourceFile)
 }
+
+func TestSkippingDefaultsTheLevelATracerOmits(t *testing.T) {
+	scenario := Scenario{Feature: "skipping", Module: "service", Suite: "example.ProbeTest", SourceFile: "src/test/java/example/ProbeTest.java", Test: "probe", SkippingLevel: "test", SkippableConfigurations: map[string]string{"test.bundle": "service"}}
+	for _, request := range []string{`{}`, `{"data":{"attributes":{}}}`} {
+		response := httptest.NewRecorder()
+		scenarioHandler(scenario).ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(request)))
+		require.Equal(t, http.StatusOK, response.Code)
+		var result struct{ Data []json.RawMessage }
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+		require.Len(t, result.Data, 1)
+		require.JSONEq(t, `{"type":"test","attributes":{"suite":"example.ProbeTest","name":"probe","configurations":{"test.bundle":"service"}}}`, string(result.Data[0]))
+	}
+	// An explicit level still wins over the default.
+	response := httptest.NewRecorder()
+	scenarioHandler(scenario).ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(`{"data":{"attributes":{"test_level":"suite"}}}`)))
+	require.Contains(t, response.Body.String(), `"type":"suite"`)
+}

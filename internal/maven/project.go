@@ -20,6 +20,12 @@ import (
 // cucumber-java name keeps Cucumber JVM distinct from Cucumber.js.
 var FrameworkNames = []string{"junit4", "junit5", "testng", "spock", "cucumber-java", "karate", "scalatest", "munit"}
 
+// DisplayNames labels each framework in output.
+var DisplayNames = map[string]string{
+	"junit4": "JUnit 4", "junit5": "JUnit 5", "testng": "TestNG", "spock": "Spock",
+	"cucumber-java": "Cucumber JVM", "karate": "Karate", "scalatest": "ScalaTest", "munit": "Scala MUnit",
+}
+
 // maxModules bounds reactor traversal for pathological or generated POMs.
 const maxModules = 256
 
@@ -366,4 +372,24 @@ func Goals(args []string) []string {
 		}
 	}
 	return goals
+}
+
+// ModuleDirectories maps the names the Java agent reports as test.module, a
+// project's <name> or else its artifactId, to the project's directory. A name
+// that several projects share maps to "".
+func ModuleDirectories(projects []Project) map[string]string {
+	modules := map[string]string{}
+	for _, project := range projects {
+		for _, name := range []string{project.Name, project.Artifact} {
+			if name == "" || strings.Contains(name, "${") {
+				continue
+			}
+			if previous, ok := modules[name]; ok && previous != project.Directory {
+				modules[name] = ""
+			} else {
+				modules[name] = project.Directory
+			}
+		}
+	}
+	return modules
 }

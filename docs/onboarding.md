@@ -18,7 +18,9 @@ ddtest onboard --framework vitest --apply --yes
 Use the selected framework name for Jest, Mocha, Playwright, Cucumber or
 WebdriverIO. Cypress hooks still require explicit setup. Python retains its
 existing instructions and testdrive behavior. Ruby supports plain and coordinated
-RSpec/Minitest validation as described below; automatic apply is JavaScript only.
+RSpec/Minitest validation as described below, and Java supports plain Maven
+validation as described in [Java validation](#java-validation); automatic apply
+is JavaScript only.
 
 The editor preserves existing project and CI tracer selections, including tracers
 installed in workspace packages. It resolves one exact release for the actual
@@ -260,6 +262,46 @@ report links. Both `--agent` and `--format json` emit exactly one JSON object on
 stale results cannot produce a fresh completion claim. A later check-only attempt retains the full run’s binding; it does not create new execution evidence. Editing the public report cannot certify it or inject a saved recovery executable. Saved command options and `--report --detail plan` from the report are used only after receipt verification. Missing/expired private receipts require full validation again. A plain `testdrive` run replaces the report without the workflow checks or binding, so `--report` returns `plain_report` with the workflow command to run; a check-only run keeps the earlier binding and plan.
 Do not run extra cache audits or rewrite the verdict. Actual CI execution and
 Datadog backend processing remain untested.
+
+## Java validation
+
+Java projects build with Maven. `ddtest onboard --framework junit5` lists the
+Maven CI test commands of the GitHub Actions workflows and prints their setup;
+select the framework the project uses (`junit4`, `junit5`, `testng`, `spock`,
+`cucumber-java`, `karate`, `scalatest` or `munit`). A repository that also
+contains a JavaScript, Python or Ruby project keeps that platform by default;
+select Java with `--platform java` or a Maven `--framework`.
+
+JUnit 4 and JUnit 5 support plain `ddtest testdrive --all --check-only --yes`
+and full `ddtest testdrive --all --yes` validation, or a focused
+`ddtest testdrive --framework junit5 --command './mvnw -B verify' --yes`. Each
+configuration runs in a disposable copy with fresh build output, without and with
+dd-java-agent. Native Surefire/Failsafe results must match (identities, outcomes,
+failure types and messages, exit code), each must match one reported test
+execution, the reporting run must cover repository application sources, and all
+six feature controls run with a probe test in a module of the selected framework.
+Matching pre-existing failures are permitted; a build that stops for anything
+other than native test failures stays inconclusive.
+
+Validation runs only the Maven test lifecycle up to `verify`: a CI step such as
+`mvn clean install` is validated as `mvn clean verify`, other goals are reported
+and left out, and `--command` refuses `install`, `deploy` and other goals, as
+validation does for goals in `MAVEN_ARGS` or `.mvn/maven.config`, so `~/.m2`
+artifacts are never overwritten and nothing is published. A dd-java-agent that
+`MAVEN_OPTS` or `JAVA_TOOL_OPTIONS` already attaches, as after the GitHub action,
+is removed from both runs; the reporting run attaches only the selected agent.
+Validation refuses a dd-java-agent in `.mvn/jvm.config`, which no run could
+remove. One Maven
+command runs every framework the reactor declares; modules of other frameworks
+are reported.
+
+Testdrive uses the dd-java-agent release every instrumented CI job pins
+(`--tracer-version` selects another), or `DD_TRACER_FOLDER`'s agent. A CI matrix
+row is compatible only when this run validated its JDK major and agent release:
+the JDK comes from `JAVA_HOME`, else the `java` on PATH. Validate another JDK by
+running testdrive with `JAVA_HOME` set to it. `ddtest plan` and `ddtest run` do
+not support Java: the agent performs Test Impact Analysis inside the Maven build.
+Other Maven frameworks run reporting-only checks.
 
 ## Ruby validation
 
