@@ -7,6 +7,7 @@ package testdrive
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -21,6 +22,7 @@ import (
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -258,7 +260,9 @@ func (javaLanguage) prepareConfiguration(t *Testdrive, item *configurationResult
 	return err
 }
 
-func (javaLanguage) coordinated() bool { return false }
+// Agents apply Maven CI setup by hand; the coordinator then validates every
+// discovered configuration.
+func (javaLanguage) coordinated() bool { return true }
 
 // Local validation runs the dd-java-agent release every instrumented CI job pins.
 func (javaLanguage) defaultsToCITracer() bool { return true }
@@ -276,13 +280,13 @@ var exactJavaAgent = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 // The static inventory leaves every complete JDK and agent selection not
 // checked; the preflight checks the ones this run validates.
 func (javaLanguage) ciRuntimes(_ context.Context, root, framework string) onboard.RuntimeCheck {
-	return onboard.JavaCIConfiguration(root, framework)
+	return onboard.JavaCIConfiguration(root, framework, "")
 }
 
 func (javaLanguage) ciRuntimeName() string { return "Java" }
 
 func (javaLanguage) configurationsCIRuntime(t *Testdrive, _ onboard.ValidationScope) *onboard.RuntimeCheck {
-	ci := onboard.JavaCIConfiguration(t.checkoutRoot(), t.framework.Name())
+	ci := onboard.JavaCIConfiguration(t.checkoutRoot(), t.framework.Name(), t.selectedSite)
 	return &ci
 }
 
@@ -292,6 +296,80 @@ func (javaLanguage) mergeCIRuntime(current, next *onboard.RuntimeCheck) *onboard
 
 // The preflight labels the agent release; there is no registry selection.
 func (javaLanguage) labelsTracerWithoutSelection() bool { return true }
+
+// Reports are bound to the JDK that runs the selected Maven commands.
+func (javaLanguage) workflowRuntime(*Testdrive) (string, error) {
+	version := javaEnvironmentInfo(nil).Version
+	if version == "" {
+		return "", errors.New("no JDK was found: set JAVA_HOME to the JDK the project builds with, or put its java on PATH")
+	}
+	return version, nil
+}
+
+func (javaLanguage) reportRuntimeCurrent(_ string, evidence WorkflowEvidence) bool {
+	return evidence.Runtime != "" && evidence.Runtime == javaEnvironmentInfo(nil).Version
+}
+
+func (javaLanguage) packageManager(string) string { return "maven" }
+
+func (javaLanguage) packageExclusions(t *Testdrive, _ context.Context) (onboard.WorkflowCheck, bool) {
+	return javaPackageExclusions(t.repositoryRoot), true
+}
+
+func (javaLanguage) initialization(string) string {
+	return "Add the Datadog action with an exact java-tracer-version after JDK setup; it attaches dd-java-agent through MAVEN_OPTS, which later steps must extend with ${{ env.MAVEN_OPTS }}. Keep the Maven commands and the reports excluded from Git."
+}
+
+// javaReports are the retained reports, relative to the repository root.
+var javaReports = []string{".testoptimization/testdrive.json", ".testoptimization/report.html"}
+
+// javaPackageExclusions checks that no Maven artifact packages the reports.
+// Maven packages only declared resources, so the reports at the repository
+// root are packaged only by a resource directory that contains them and
+// patterns that select them.
+func javaPackageExclusions(root string) onboard.WorkflowCheck {
+	check := onboard.WorkflowCheck{Name: "package_report_exclusions", Status: "passed"}
+	resources, err := maven.PackagedResources(root)
+	if err != nil {
+		check.Status, check.Reason = "failed", "Cannot determine which files Maven packages: "+reportText(err.Error())
+		return check
+	}
+	for _, resource := range resources {
+		if strings.Contains(resource.Directory, "${") {
+			check.Status, check.Reason = "failed", resource.POM+" declares the resource directory "+resource.Directory+", which ddtest cannot resolve; check that Maven does not package .testoptimization/."
+			return check
+		}
+		for _, report := range javaReports {
+			relative, err := filepath.Rel(resource.Directory, report)
+			if err == nil && filepath.IsLocal(relative) && mavenResourceSelects(resource, filepath.ToSlash(relative)) {
+				check.Status, check.Reason = "failed", resource.POM+" packages "+resource.Directory+" as a resource, including .testoptimization/; add <exclude>.testoptimization/**</exclude> to that resource."
+				return check
+			}
+		}
+	}
+	check.Reason = fmt.Sprintf("Checked %d Maven resource declarations; none packages the reports.", len(resources))
+	return check
+}
+
+// mavenResourceSelects reports whether resource's Ant patterns select path:
+// every file without includes, and a directory pattern selects its contents.
+// A pattern ddtest cannot read selects the path and excludes nothing.
+func mavenResourceSelects(resource maven.Resource, path string) bool {
+	matches := func(patterns []string, unreadable bool) bool {
+		return slices.ContainsFunc(patterns, func(pattern string) bool {
+			pattern = strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(pattern)), "./")
+			if strings.HasSuffix(pattern, "/") {
+				pattern += "**"
+			}
+			matched, err := doublestar.Match(pattern, path)
+			if err != nil {
+				return unreadable
+			}
+			return matched
+		})
+	}
+	return (len(resource.Includes) == 0 || matches(resource.Includes, true)) && !matches(resource.Excludes, false)
+}
 
 func init() {
 	features := []featurePolicy{

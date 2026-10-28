@@ -249,7 +249,7 @@ func TestRubyCIInventoryMarksIncompleteSetup(t *testing.T) {
 				}
 				instrumented++
 				require.Equal(t, "inconclusive", job.Status)
-				require.Equal(t, CodeIncompleteRubySetup, job.Code)
+				require.Equal(t, CodeIncompleteCISetup, job.Code)
 				require.Contains(t, job.Reason, tc.reason)
 			}
 			require.Equal(t, 1, instrumented)
@@ -259,6 +259,6 @@ func TestRubyCIInventoryMarksIncompleteSetup(t *testing.T) {
 	root, err := os.Getwd()
 	require.NoError(t, err)
 	for _, job := range RubyCIConfigurationForSite(root, "rspec", "datadoghq.com").Jobs {
-		require.NotEqual(t, CodeIncompleteRubySetup, job.Code)
+		require.NotEqual(t, CodeIncompleteCISetup, job.Code)
 	}
 }

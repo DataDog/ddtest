@@ -18,9 +18,9 @@ ddtest onboard --framework vitest --apply --yes
 Use the selected framework name for Jest, Mocha, Playwright, Cucumber or
 WebdriverIO. Cypress hooks still require explicit setup. Python retains its
 existing instructions and testdrive behavior. Ruby supports plain and coordinated
-RSpec/Minitest validation as described below, and Java supports plain Maven
-validation as described in [Java validation](#java-validation); automatic apply
-is JavaScript only.
+RSpec/Minitest validation as described below, and Java supports plain and
+coordinated Maven validation as described in [Java validation](#java-validation);
+automatic apply is JavaScript only.
 
 The editor preserves existing project and CI tracer selections, including tracers
 installed in workspace packages. It resolves one exact release for the actual
@@ -302,6 +302,19 @@ the JDK comes from `JAVA_HOME`, else the `java` on PATH. Validate another JDK by
 running testdrive with `JAVA_HOME` set to it. `ddtest plan` and `ddtest run` do
 not support Java: the agent performs Test Impact Analysis inside the Maven build.
 Other Maven frameworks run reporting-only checks.
+
+Coding agents start with `ddtest onboard --agent`, as for Ruby: there is no
+automatic Maven CI edit. Until every discovered JUnit test step runs after a
+complete Datadog action, the result is `ci_setup_required` with the CI setup in
+`agent_instruction` and `testdrive --framework <name> --all --agent --yes` as
+`resume_command`; afterwards it is `ready` with that command. A complete action
+is a supported v3 release with an `api_key`, an exact `java-tracer-version` and
+the selected site; a JDK the agent cannot instrument is excluded with an `if:` on
+the action, keeping its tests. The coordinator reports `COMPLETE LOCALLY` only
+after every selected configuration, feature and Git report-exclusion check
+passes, and no POM packages the reports as a resource; Maven needs no dependency
+setup commands. The report is bound to the JDK that runs ddtest; changing it
+requires fresh execution.
 
 ## Ruby validation
 

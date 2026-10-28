@@ -73,34 +73,18 @@ func (rubyDiscovery) ciSetupConfigured(root, framework, site string) bool {
 // exactRubyRelease is a single RubyGems release, never a requirement or "latest".
 var exactRubyRelease = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9A-Za-z]+)*$`)
 
-// CodeIncompleteRubySetup marks an instrumented Ruby CI entry whose Datadog
-// action is not a complete, supported setup for the selected site.
-const CodeIncompleteRubySetup = "incomplete_ci_setup"
-
 // rubyActionProblem explains why the Datadog action before an instrumented
-// entry is not a complete setup: a supported v3 release, an API key, an exact
-// tracer release and the selected site (empty: not selected). Empty when it is.
+// entry is not a complete setup: the shared requirements and an exact tracer
+// release. Empty when it is.
 func rubyActionProblem(job RuntimeFinding, site string) string {
-	if !setupActionSupported(job.Action) {
-		return "The Datadog action " + job.Action + " is not a supported release; use datadog/test-visibility-github-action@v3."
-	}
-	if strings.TrimSpace(job.setupInputs["api_key"]) == "" {
-		return "The Datadog action has no api_key input; set api_key: ${{ secrets.DD_API_KEY }}."
+	if problem := setupActionProblem(job, site); problem != "" {
+		return problem
 	}
 	if !exactRubyRelease.MatchString(job.TracerRequested) {
 		return "The Datadog action's ruby-tracer-version " + fmt.Sprintf("%q", job.TracerRequested) + " is not an exact release; set an exact version such as 1.42.0."
 	}
-	configured := job.setupInputs["site"]
-	if configured == "" {
-		configured = defaultDatadogSite
-	}
-	if site != "" && configured != site {
-		return "The Datadog action reports to " + configured + ", but the selected Datadog site is " + site + "; set site: " + site + " on the action."
-	}
 	return ""
 }
-
-const defaultDatadogSite = "datadoghq.com"
 
 func (rubyDiscovery) agentInstructions(framework, site string) string {
 	siteInput := ""

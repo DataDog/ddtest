@@ -62,9 +62,19 @@ container-native private `/tmp/bundle` as Bundler's path to avoid bind-mount
 filesystem overhead; it is removed with the container, while lockfiles and both
 reports stay in the checkout until collection. Ruby's `TMPDIR` also uses the
 container's private executable tmpfs; no host cache is mounted there.
-Ruby multi-bundle validation can
+For `--framework junit4` or `junit5`, build `--target java`: it adds a
+digest-pinned Temurin JDK 21 (select another with
+`--build-arg JDK_IMAGE=eclipse-temurin:<version>-jdk@sha256:<digest>`) and a
+checksum-verified Maven. The runner records the JDK's release version before
+cloning and checks the report against it; local validation certifies only CI
+rows of that JDK major. Maven downloads dependencies into the private trial
+HOME during validation, so no setup command is required; `mvn -B -q
+dependency:go-offline` works as a readiness command. Java's `TMPDIR` uses the
+container's private tmpfs, like Ruby's, since validation copies the repository
+per configuration.
+Ruby multi-bundle and Java multi-configuration validation can
 exceed ten minutes for one foreground `testdrive --all`. Claude's synchronous
-Bash allowance is bounded by `--timeout`, up to one hour for Ruby/Cypress; use
+Bash allowance is bounded by `--timeout`, up to one hour for Ruby/Java/Cypress; use
 an adequate overall trial timeout for these matrices. This does not change
 ddtest's separate per-subprocess timeout or permit background tasks.
 The binary must also start inside the image;

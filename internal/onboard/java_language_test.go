@@ -34,8 +34,9 @@ func TestJavaOnboardUsesTheSharedGitHubInstructions(t *testing.T) {
 	require.Contains(t, text, "ddtest testdrive --framework junit5")
 }
 
-func TestJavaOnboardIsNotCoordinated(t *testing.T) {
-	require.False(t, coordinatedLanguage("java"), "agent onboarding returns manual guidance until Java has automatic CI setup")
+func TestJavaOnboardIsCoordinated(t *testing.T) {
+	require.True(t, coordinatedLanguage("java"), "agents apply the CI setup, then the coordinator validates")
+	require.False(t, discoveryLanguageAutomaticSetup("java"))
 	require.Equal(t, "java", discoveryLanguageName("cucumber-java"), "Cucumber JVM is not Cucumber.js")
 	require.Equal(t, "javascript", discoveryLanguageName("cucumber"))
 }

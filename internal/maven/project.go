@@ -10,6 +10,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -51,7 +52,20 @@ type Project struct {
 	Profiles    []struct {
 		Dependencies []Dependency `xml:"dependencies>dependency"`
 		Modules      []string     `xml:"modules>module"`
+		Resources    []Resource   `xml:"build>resources>resource"`
 	} `xml:"profiles>profile"`
+	// Resources are the main resources Maven packages into the artifact.
+	Resources []Resource `xml:"build>resources>resource"`
+}
+
+// Resource is a directory of files Maven copies into the artifact, filtered by
+// Ant-style include and exclude patterns.
+type Resource struct {
+	// POM declares the resource, relative to the inspected root.
+	POM       string   `xml:"-"`
+	Directory string   `xml:"directory"`
+	Includes  []string `xml:"includes>include"`
+	Excludes  []string `xml:"excludes>exclude"`
 }
 
 // Projects reads root's pom.xml and every module it declares; see ProjectsFrom.
@@ -392,4 +406,60 @@ func ModuleDirectories(projects []Project) map[string]string {
 		}
 	}
 	return modules
+}
+
+// PackagedResources returns the main resources every POM under root declares,
+// in its build or any profile, with directories relative to root. A directory
+// under the build directory is build output and left out; one built from other
+// properties is returned unresolved, with its ${...}.
+func PackagedResources(root string) ([]Resource, error) {
+	var resources []Resource
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if path != root && slices.Contains([]string{".git", "target", "node_modules", ".testoptimization"}, entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Name() != "pom.xml" || !entry.Type().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var project Project
+		if err := xml.Unmarshal(data, &project); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+		pom, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		declared := slices.Clone(project.Resources)
+		for _, profile := range project.Profiles {
+			declared = append(declared, profile.Resources...)
+		}
+		for _, resource := range declared {
+			directory := strings.TrimSpace(resource.Directory)
+			if directory == "" || strings.HasPrefix(directory, "${project.build.directory}") {
+				continue
+			}
+			for _, base := range []string{"${project.basedir}", "${basedir}"} {
+				if rest, ok := strings.CutPrefix(directory, base); ok {
+					directory = "." + rest
+				}
+			}
+			if !strings.Contains(directory, "${") {
+				directory = filepath.Join(filepath.Dir(pom), directory)
+			}
+			resource.POM, resource.Directory = pom, directory
+			resources = append(resources, resource)
+		}
+		return nil
+	})
+	return resources, err
 }

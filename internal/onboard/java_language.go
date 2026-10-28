@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	_ "embed"
 	"fmt"
 	"strings"
 
@@ -23,7 +24,9 @@ func (javaDiscovery) bootstrap(string) string { return javaBootstrap }
 
 func (javaDiscovery) resolvesTestSteps(string) bool { return true }
 
-func (javaDiscovery) coordinated() bool { return false }
+// Agents apply Maven CI setup by hand; validation then runs through the
+// coordinator.
+func (javaDiscovery) coordinated() bool { return true }
 
 // Java CI discovery reads GitHub Actions only.
 func (javaDiscovery) supportsCIProvider(provider string) bool {
@@ -32,9 +35,33 @@ func (javaDiscovery) supportsCIProvider(provider string) bool {
 
 func (javaDiscovery) automaticCISetup() bool { return false }
 
-func (javaDiscovery) ciSetupConfigured(string, string, string) bool { return false }
+// Every discovered Maven test step runs after a complete Datadog action with an
+// exact agent release, or explicitly skips it; at least one stays instrumented.
+// Coordinated validation enforces the same rule through JavaCIConfiguration.
+func (javaDiscovery) ciSetupConfigured(root, framework, site string) bool {
+	instrumented := false
+	for _, job := range JavaCIConfiguration(root, framework, site).Jobs {
+		if job.Status == "excluded" {
+			continue
+		}
+		if job.Status != "not checked" {
+			return false
+		}
+		instrumented = true
+	}
+	return instrumented
+}
 
-func (javaDiscovery) agentInstructions(string, string) string { return "" }
+//go:embed instructions/java_agent.md
+var javaAgentInstructions string
+
+func (javaDiscovery) agentInstructions(framework, site string) string {
+	siteInput := ""
+	if site != "" && site != defaultDatadogSite {
+		siteInput = ", `site: " + site + "` (the selected Datadog site)"
+	}
+	return strings.NewReplacer("__FRAMEWORK__", framework, "__SITE_INPUT__", siteInput).Replace(javaAgentInstructions)
+}
 
 func (javaDiscovery) frameworks() []string { return maven.FrameworkNames }
 

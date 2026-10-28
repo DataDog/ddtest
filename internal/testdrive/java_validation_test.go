@@ -493,3 +493,44 @@ func TestJavaAllConfigurationsComeFromCIDiscovery(t *testing.T) {
 	_, _, _, err = javaLanguage{}.selectCommand(commandRequest{runner: framework.NewMaven("junit5", nil), override: "mvn -B clean install"})
 	require.ErrorContains(t, err, "remove install, for example: mvn -B clean verify", "install would overwrite ~/.m2 artifacts")
 }
+
+func TestJavaPackageCheckFindsResourcesThatPackageTheReports(t *testing.T) {
+	for _, tc := range []struct{ name, resources, status, reason string }{
+		{"standard resources", `<resource><directory>src/main/resources</directory></resource>`, "passed", "none packages the reports"},
+		{"no resources", ``, "passed", "Checked 0 Maven resource declarations"},
+		{"root license only", `<resource><directory>${project.basedir}</directory><includes><include>LICENSE</include><include>*.txt</include></includes></resource>`, "passed", "none packages"},
+		{"whole root", `<resource><directory>.</directory></resource>`, "failed", "add <exclude>.testoptimization/**</exclude>"},
+		{"root json files", `<resource><directory>${basedir}</directory><includes><include>**/*.json</include></includes></resource>`, "failed", "including .testoptimization/"},
+		{"root with reports excluded", `<resource><directory>.</directory><excludes><exclude>.testoptimization/</exclude></excludes></resource>`, "passed", "none packages"},
+		{"unresolved directory", `<resource><directory>${shared}</directory></resource>`, "failed", "cannot resolve"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><build><resources>`+tc.resources+`</resources></build></project>`)
+			check := javaPackageExclusions(root)
+			require.Equal(t, tc.status, check.Status, check.Reason)
+			require.Contains(t, check.Reason, tc.reason)
+		})
+	}
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "service"), 0755))
+	requireWriteFile(t, filepath.Join(root, "service", "pom.xml"), `<project><build><resources><resource><directory>..</directory></resource></resources></build></project>`)
+	require.Equal(t, "failed", javaPackageExclusions(root).Status, "a module can package its parent directory")
+}
+
+func TestJavaWorkflowIsBoundToTheJDK(t *testing.T) {
+	t.Setenv("JAVA_HOME", writeJDK(t, "17.0.20"))
+	runtime, err := javaLanguage{}.workflowRuntime(&Testdrive{})
+	require.NoError(t, err)
+	require.Equal(t, "17.0.20", runtime)
+	require.True(t, javaLanguage{}.reportRuntimeCurrent("", WorkflowEvidence{Runtime: "17.0.20"}))
+	require.False(t, javaLanguage{}.reportRuntimeCurrent("", WorkflowEvidence{Runtime: "21.0.5"}), "a report from another JDK is stale")
+	require.False(t, javaLanguage{}.reportRuntimeCurrent("", WorkflowEvidence{Node: currentNodeVersion()}), "Node does not stand in for the JDK")
+	t.Setenv("JAVA_HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	_, err = javaLanguage{}.workflowRuntime(&Testdrive{})
+	require.ErrorContains(t, err, "no JDK was found")
+	require.Equal(t, "maven", javaLanguage{}.packageManager(""))
+	require.Contains(t, javaLanguage{}.initialization("junit5"), "${{ env.MAVEN_OPTS }}")
+	require.True(t, Coordinated("java"))
+}

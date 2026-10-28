@@ -192,6 +192,47 @@ public class ExampleTest {
 		require.NotContains(t, output, "Running baseline")
 		require.True(t, strings.Contains(output, "Validation verdict: INCOMPLETE"), output)
 	})
+
+	t.Run("agent workflow", func(t *testing.T) {
+		root := project(t, "agent", map[string]string{"pom.xml": pom("fixture", jupiter), "src/main/java/example/Calc.java": calc,
+			"src/test/java/example/ExampleTest.java": "package example;\npublic class ExampleTest { @org.junit.jupiter.api.Test void adds() { org.junit.jupiter.api.Assertions.assertEquals(4, Calc.add(2, 2)); } }\n"})
+		pin := tracer
+		if pin == "latest" {
+			pin = "1.67.1"
+		}
+		workflow := "jobs:\n  tests:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        java: ['" + localJava(t) + "', '26-ea']\n    steps:\n      - uses: actions/setup-java@v4\n        with: {distribution: temurin, java-version: '${{ matrix.java }}'}\nACTION      - run: mvn -B clean install\n"
+		integrationFile(t, root, ".github/workflows/test.yml", strings.Replace(workflow, "ACTION", "", 1))
+		type agentResult struct {
+			Status        string
+			Code          string
+			ResumeCommand []string `json:"resume_command"`
+			NextCommand   []string `json:"next_command"`
+			FinalResponse string   `json:"final_response"`
+		}
+		run := func(command []string) agentResult {
+			t.Helper()
+			process := exec.CommandContext(ctx, command[0], command[1:]...)
+			process.Dir = root
+			data, _ := process.Output()
+			var result agentResult
+			require.NoError(t, json.Unmarshal(data, &result), string(data))
+			return result
+		}
+		start := run([]string{binary, "onboard", "--agent", "--format", "json"})
+		require.Equal(t, "ci_setup_required", start.Code, "the agent applies the CI setup first")
+		require.NotEmpty(t, start.ResumeCommand)
+
+		// The agent's edit, as the instructions prescribe.
+		action := "      - uses: datadog/test-visibility-github-action@v3\n        if: ${{ !contains(matrix.java, '-ea') }}\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '" + pin + "'}\n"
+		integrationFile(t, root, ".github/workflows/test.yml", strings.Replace(workflow, "ACTION", action, 1))
+		validation := run(start.ResumeCommand)
+		require.Equal(t, "complete_locally", validation.Status, "%+v", validation)
+		report := run(validation.NextCommand)
+		require.Equal(t, "complete_locally", report.Status, "%+v", report)
+		require.Contains(t, report.FinalResponse, "Onboarding validation: COMPLETE LOCALLY")
+		require.Contains(t, report.FinalResponse, "1 excluded from instrumentation", "the early-access JDK keeps its uninstrumented tests")
+		require.NoDirExists(t, filepath.Join(root, "target"))
+	})
 }
 
 // localJava is the major version of the JDK Maven runs on, from its release file.

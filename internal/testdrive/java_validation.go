@@ -537,7 +537,7 @@ func javaOtherFrameworkModules(projects []maven.Project, framework string) []str
 // validated by running testdrive on them. Configuration-only checks run
 // nothing, so they certify no row.
 func (t *Testdrive) javaCIRuntime(localJava string) (*onboard.RuntimeCheck, error) {
-	ci := onboard.JavaCIConfiguration(t.checkoutRoot(), t.framework.Name())
+	ci := onboard.JavaCIConfiguration(t.checkoutRoot(), t.framework.Name(), t.selectedSite)
 	if len(ci.Jobs) == 0 {
 		return &ci, nil
 	}
