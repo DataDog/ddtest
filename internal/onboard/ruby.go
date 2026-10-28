@@ -259,12 +259,9 @@ func resolveRubyRakeTargets(root, directory, run string, command, words []string
 	if framework == "minitest" {
 		task, other = "test", "spec"
 	}
-	// Options and VAR=value arguments apply to the whole invocation.
-	isTarget := func(word string) bool { return !strings.HasPrefix(word, "-") && !strings.Contains(word, "=") }
-	targets := slices.DeleteFunc(slices.Clone(words[1:]), func(word string) bool { return !isTarget(word) })
-	flags := len(targets) < len(words)-1
+	targets, flags, rakefile := rubyRakeArguments(words[1:])
 	explicit := len(targets) > 0
-	if !explicit {
+	if !explicit && (rakefile == "" || rakefile == "Rakefile") {
 		targets = rubyDefaultTargets(root, directory)
 	}
 	ownTask := func(word string) bool { return word == task || strings.HasPrefix(word, task+":") }
@@ -296,6 +293,39 @@ func resolveRubyRakeTargets(root, directory, run string, command, words []string
 	}
 	note := "This CI step also runs Rake task(s) " + strings.Join(others, ", ") + otherFramework + " in the same process. Local validation covers only " + shellquote.Join(selected...) + "; instrumenting this step also reports those tasks' tests to Datadog, and they are not validated. Report this to the user; running " + framework + " in its own step keeps the other tasks uninstrumented."
 	return commandResolution{Matched: true, ReviewReason: note, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(selected...), StepScopeNotes: []string{note}}}}, true
+}
+
+// rubyRakeOperandOptions take the next word as their value, which is never a
+// task: rake -f Rakefile spec runs only spec.
+var rubyRakeOperandOptions = []string{"-f", "--rakefile", "-I", "--libdir", "-r", "--require", "-R", "--rakelibdir", "-e", "--execute", "-p", "--execute-print", "-E", "--execute-continue"}
+
+// rubyRakeArguments separates Rake's task targets from its options, their
+// values and VAR=value arguments, which apply to the whole invocation. It
+// also returns the selected Rakefile, when one is named.
+func rubyRakeArguments(arguments []string) (targets []string, flags bool, rakefile string) {
+	for i := 0; i < len(arguments); i++ {
+		word := arguments[i]
+		switch {
+		case slices.Contains(rubyRakeOperandOptions, word):
+			flags = true
+			if i+1 < len(arguments) {
+				i++
+				if word == "-f" || word == "--rakefile" {
+					rakefile = arguments[i]
+				}
+			}
+		case strings.HasPrefix(word, "--rakefile="):
+			flags, rakefile = true, strings.TrimPrefix(word, "--rakefile=")
+		case (word == "-j" || word == "--jobs") && i+1 < len(arguments) && strings.Trim(arguments[i+1], "0123456789") == "":
+			flags = true
+			i++
+		case strings.HasPrefix(word, "-") || strings.Contains(word, "="):
+			flags = true
+		default:
+			targets = append(targets, word)
+		}
+	}
+	return targets, flags, rakefile
 }
 
 // rubyDefaultTarget is one literal default task declaration, such as

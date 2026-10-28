@@ -354,3 +354,23 @@ func TestRubyMergedConfigurationsKeepEveryStepScopeNote(t *testing.T) {
 	require.Contains(t, notes, "Rake task(s) features")
 	require.Contains(t, notes, "Rake task(s) rubocop")
 }
+
+func TestRubyRakeOptionValuesAreNotTasks(t *testing.T) {
+	for command, framework := range map[string]string{
+		"bundle exec rake -f Rakefile spec":        "rspec",
+		"rake -I lib test":                         "minitest",
+		"bundle exec rake --rakefile=ci.rake spec": "rspec",
+		"rake -r ./ci/setup.rb -j 4 test":          "minitest",
+		"bundle exec rake --trace spec":            "rspec",
+	} {
+		resolution := resolveRubyStep(t.TempDir(), ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command}, framework)
+		require.True(t, resolution.Matched, command+": "+resolution.Reason)
+		require.Equal(t, command, resolution.Tests[0].Command, "a single-task invocation runs unchanged")
+		require.Empty(t, resolution.Tests[0].StepScopeNotes, command)
+	}
+	// A bare rake reading another Rakefile has an unknown default task.
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Rakefile"), []byte("task default: :spec\n"), 0600))
+	require.True(t, resolveRubyStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "bundle exec rake -f Rakefile"}, "rspec").Matched)
+	require.NotEmpty(t, resolveRubyStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "bundle exec rake -f ci/other.rake"}, "rspec").Reason)
+}
