@@ -226,6 +226,21 @@ var testPhases = []string{"test", "prepare-package", "package", "pre-integration
 // repository or publish them.
 var publishingPhases = []string{"install", "deploy"}
 
+// pluginPrefixes are the prefixes of the test plugins' fully qualified goals.
+var pluginPrefixes = map[string]string{"maven-surefire-plugin": "surefire", "maven-failsafe-plugin": "failsafe"}
+
+// shortGoal writes a fully qualified test plugin goal, such as
+// org.apache.maven.plugins:maven-surefire-plugin:3.5.4:test, by its prefix.
+func shortGoal(goal string) string {
+	parts := strings.Split(goal, ":")
+	if len(parts) == 3 || len(parts) == 4 {
+		if prefix, ok := pluginPrefixes[parts[1]]; ok {
+			return prefix + ":" + parts[len(parts)-1]
+		}
+	}
+	return goal
+}
+
 // IsTestCommand reports whether a literal mvn or mvnw invocation reaches a
 // test phase. Words that only contain a phase, such as -Dmessage=test, do not
 // count; shell wrappers and other build tools are not recognized.
@@ -238,7 +253,7 @@ func IsTestCommand(command string, args []string) bool {
 			i++
 			continue
 		}
-		if slices.Contains(testPhases, args[i]) {
+		if slices.Contains(testPhases, shortGoal(args[i])) {
 			return true
 		}
 	}
@@ -246,7 +261,7 @@ func IsTestCommand(command string, args []string) bool {
 }
 
 // CommandPOM returns the POM that -f/--file selects in a Maven command's
-// arguments, or pom.xml. The path must stay inside the repository.
+// arguments, relative to its working directory, or pom.xml.
 func CommandPOM(args []string) (string, error) {
 	pom := ""
 	for i := 0; i < len(args); i++ {
@@ -268,8 +283,10 @@ func CommandPOM(args []string) (string, error) {
 		if pom != "" {
 			return "", fmt.Errorf("maven command selects more than one POM")
 		}
-		if !filepath.IsLocal(file) {
-			return "", fmt.Errorf("maven POM must stay inside the repository: %s", file)
+		// The caller resolves the path from the command's working directory
+		// and confines it to the repository.
+		if filepath.IsAbs(file) {
+			return "", fmt.Errorf("maven POM must be a repository path: %s", file)
 		}
 		pom = file
 	}
@@ -290,7 +307,7 @@ func TestInvocation(args []string) (validated, omitted []string) {
 		case slices.Contains(optionsWithValue, arg):
 			validated = append(validated, args[i:min(i+2, len(args))]...)
 			i++
-		case strings.HasPrefix(arg, "-") || slices.Contains(validationPhases, arg):
+		case strings.HasPrefix(arg, "-") || slices.Contains(validationPhases, shortGoal(arg)):
 			validated = append(validated, arg)
 		case slices.Contains(publishingPhases, arg):
 			omitted = append(omitted, arg)
@@ -321,7 +338,7 @@ func SkipsTests(args []string) bool {
 			i++
 		}
 		name, value, _ := strings.Cut(property, "=")
-		if (name == "skipTests" || name == "maven.test.skip") && value != "false" {
+		if (name == "skipTests" || name == "maven.test.skip") && !strings.EqualFold(value, "false") {
 			return true
 		}
 	}

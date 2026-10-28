@@ -270,7 +270,7 @@ func TestJavaConfinesTheWorkingDirectory(t *testing.T) {
 	require.NoError(t, os.Symlink(outside, filepath.Join(root, "linked")))
 	resolution := resolveJavaStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "mvn verify", WorkingDirectory: "linked"}, "junit5")
 	require.False(t, resolution.Matched)
-	require.Contains(t, resolution.Reason, "resolves outside the repository")
+	require.Contains(t, resolution.Reason, "must stay inside the repository")
 }
 
 func TestJavaSeparatedSkipTestsIsOutsideScope(t *testing.T) {
@@ -322,4 +322,27 @@ func TestJavaShellReferencesInStepEnvDoNotKeepTheAgent(t *testing.T) {
 		require.Equal(t, "inconclusive", ci.Jobs[0].Status, value)
 		require.Contains(t, ci.Jobs[0].Reason, "replacing the -javaagent option", value)
 	}
+}
+
+func TestJavaResolvesPOMsFromSubdirectorySteps(t *testing.T) {
+	root := javaWorkflowFixture(t, "", map[string]string{
+		"pom.xml":       `<project><modules><module>core</module></modules></project>`,
+		"core/pom.xml":  javaJUnit5POM,
+		"build/pom.xml": `<project><modules><module>../core</module></modules></project>`,
+	})
+	for _, tc := range []struct{ directory, run string }{{"build", "mvn verify"}, {"build", "mvn -f ../pom.xml verify"}, {"core", "mvn -f .. verify"}} {
+		resolution := resolveJavaStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: tc.run, WorkingDirectory: tc.directory}, "junit5")
+		require.True(t, resolution.Matched, "%s in %s: %s", tc.run, tc.directory, resolution.Reason)
+		require.Equal(t, tc.directory, resolution.Tests[0].Directory)
+	}
+	resolution := resolveJavaStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "mvn -f ../../pom.xml verify", WorkingDirectory: "build"}, "junit5")
+	require.Contains(t, resolution.Reason, "leaves the repository")
+}
+
+func TestJavaKeepsFullyQualifiedTestGoalsInScope(t *testing.T) {
+	root := javaWorkflowFixture(t, "", nil)
+	resolution := javaStep(t, root, "mvn -B org.apache.maven.plugins:maven-surefire-plugin:3.5.4:test")
+	require.True(t, resolution.Matched)
+	require.Equal(t, "mvn -B org.apache.maven.plugins:maven-surefire-plugin:3.5.4:test", resolution.Tests[0].Command)
+	require.True(t, javaStep(t, root, "mvn -DskipTests=FALSE verify").Matched, "Maven reads FALSE as false")
 }

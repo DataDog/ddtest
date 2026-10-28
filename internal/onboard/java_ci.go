@@ -88,11 +88,13 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if err != nil {
 		return unresolvedCommand("Maven POM selection needs review: " + err.Error())
 	}
-	workingDirectory, err := javaWorkingDirectory(root, directory)
-	if err != nil {
-		return unresolvedCommand("Maven working-directory needs explicit review: " + err.Error())
+	pomPath := filepath.Join(directory, pom)
+	if !filepath.IsLocal(pomPath) {
+		return unresolvedCommand("Maven POM selection needs review: " + pom + " leaves the repository")
 	}
-	projects, err := maven.ProjectsFrom(workingDirectory, pom)
+	// The checkout bounds the reactor, including sibling modules and POMs
+	// reached through symlinks; the step's directory only locates the POM.
+	projects, err := maven.ProjectsFrom(root, pomPath)
 	if err != nil {
 		return unresolvedCommand("Maven reactor could not be read statically, so the modules this step tests are unknown: " + err.Error())
 	}
@@ -108,35 +110,17 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	return commandResolution{Matched: true, ReviewReason: strings.Join(notes, " "), Tests: []TestCommand{{Directory: directory, Command: selected, StepScopeNotes: notes}}}
 }
 
-// javaWorkingDirectory resolves a step's working directory, which must stay
-// inside the checkout even through symlinks, so discovery never reads another
-// checkout's POMs.
-func javaWorkingDirectory(root, directory string) (string, error) {
-	boundary, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", err
-	}
-	target, err := filepath.EvalSymlinks(filepath.Join(boundary, directory))
-	if err != nil {
-		return "", err
-	}
-	if relative, err := filepath.Rel(boundary, target); err != nil || !filepath.IsLocal(relative) && relative != "." {
-		return "", fmt.Errorf("%s resolves outside the repository", directory)
-	}
-	return target, nil
-}
-
 // javaDefaultGoal reads the default goal of the POM a goal-less command builds.
 func javaDefaultGoal(root, directory string, args []string) (string, error) {
 	pom, err := maven.CommandPOM(args)
 	if err != nil {
 		return "", err
 	}
-	workingDirectory, err := javaWorkingDirectory(root, directory)
-	if err != nil {
-		return "", err
+	pomPath := filepath.Join(directory, pom)
+	if !filepath.IsLocal(pomPath) {
+		return "", fmt.Errorf("%s leaves the repository", pom)
 	}
-	projects, err := maven.ProjectsFrom(workingDirectory, pom)
+	projects, err := maven.ProjectsFrom(root, pomPath)
 	if err != nil {
 		return "", err
 	}

@@ -135,6 +135,9 @@ func TestIsTestCommand(t *testing.T) {
 		{"./mvnw", []string{"test", "-pl", "service"}, true},
 		{"mvn", []string{"-B", "package", "--file", "pom.xml"}, true},
 		{"mvn.cmd", []string{"surefire:test"}, true},
+		{"mvn", []string{"org.apache.maven.plugins:maven-surefire-plugin:3.5.4:test"}, true},
+		{"mvn", []string{"org.apache.maven.plugins:maven-failsafe-plugin:integration-test"}, true},
+		{"mvn", []string{"org.apache.maven.plugins:maven-javadoc-plugin:3.11.2:jar"}, false},
 		{"mvn", []string{"-f", "test", "compile"}, false},
 		{"mvn", []string{"-P", "verify", "compile"}, false},
 		{"mvn", []string{"compile", "-Dmessage=test"}, false},
@@ -161,7 +164,10 @@ func TestCommandPOM(t *testing.T) {
 		require.NoError(t, err, "%v", tc.args)
 		require.Equal(t, tc.pom, pom, "%v", tc.args)
 	}
-	for _, args := range [][]string{{"-f", "../pom.xml", "test"}, {"--file=/outside/pom.xml"}, {"-f"}, {"-f", "a", "-f", "b"}} {
+	pom, err := CommandPOM([]string{"-f", "../pom.xml", "test"})
+	require.NoError(t, err, "a parent POM is resolved and confined by the caller")
+	require.Equal(t, "../pom.xml", pom)
+	for _, args := range [][]string{{"--file=/outside/pom.xml"}, {"-f"}, {"-f", "a", "-f", "b"}} {
 		_, err := CommandPOM(args)
 		require.Error(t, err, "%v", args)
 	}
@@ -184,6 +190,8 @@ func TestTestInvocation(t *testing.T) {
 		{[]string{"--define", "skipTests=false", "verify"}, []string{"--define", "skipTests=false", "verify"}, nil},
 		{[]string{"-gt", "toolchains.xml", "-emp", "secret", "-ep", "secret", "test"}, []string{"-gt", "toolchains.xml", "-emp", "secret", "-ep", "secret", "test"}, nil},
 		{[]string{"-P", "verify", "install"}, []string{"-P", "verify", "verify"}, []string{"install"}},
+		{[]string{"org.apache.maven.plugins:maven-surefire-plugin:3.5.4:test"}, []string{"org.apache.maven.plugins:maven-surefire-plugin:3.5.4:test"}, nil},
+		{[]string{"org.apache.maven.plugins:maven-javadoc-plugin:3.11.2:jar", "verify"}, []string{"verify"}, []string{"org.apache.maven.plugins:maven-javadoc-plugin:3.11.2:jar"}},
 	} {
 		validated, omitted := TestInvocation(tc.args)
 		require.Equal(t, tc.validated, validated, "%v", tc.args)
@@ -195,7 +203,7 @@ func TestSkipsTests(t *testing.T) {
 	for _, args := range [][]string{{"-DskipTests", "package"}, {"-DskipTests=true"}, {"-Dmaven.test.skip=true", "verify"}, {"-Dmaven.test.skip"}, {"-D", "skipTests=true", "verify"}, {"--define", "maven.test.skip=true", "verify"}, {"--define=skipTests", "verify"}} {
 		require.True(t, SkipsTests(args), "%v", args)
 	}
-	for _, args := range [][]string{{"verify"}, {"-DskipTests=false", "test"}, {"-DskipITs", "verify"}, {"-D", "skipTests=false", "verify"}, {"-P", "skipTests", "verify"}} {
+	for _, args := range [][]string{{"verify"}, {"-DskipTests=false", "test"}, {"-DskipITs", "verify"}, {"-D", "skipTests=false", "verify"}, {"-P", "skipTests", "verify"}, {"-DskipTests=FALSE", "verify"}, {"-Dmaven.test.skip=False", "verify"}} {
 		require.False(t, SkipsTests(args), "%v", args)
 	}
 }
