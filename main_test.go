@@ -20,7 +20,9 @@ func keepRunEnvironment(t *testing.T) {
 			t.Setenv(name, value)
 		} else {
 			t.Setenv(name, "")
-			os.Unsetenv(name)
+			if err := os.Unsetenv(name); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 }

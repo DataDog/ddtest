@@ -174,7 +174,10 @@ jobs:
     defaults:
       run:
         working-directory: ddto
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 35 }}
+    # A new Go patch release starts every job without a Go cache, and such a
+    # job runs its groups one at a time (see CI_PARALLEL). The first macOS run
+    # with Go 1.27.3, on 2026-10-28, passed 35 minutes; only Linux stays below.
+    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 35 || 45 }}
     env:
       DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
       DDTO_SUPPORTED_VERSIONS: ${{ needs.plan.outputs.window }}
