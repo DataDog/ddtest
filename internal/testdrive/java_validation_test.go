@@ -6,7 +6,9 @@
 package testdrive
 
 import (
+	"archive/zip"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -71,6 +73,78 @@ func TestJavaAgentEnvironmentAttachesTheAgentOnce(t *testing.T) {
 	require.NotContains(t, env, "MAVEN_OPTS")
 
 	require.NotContains(t, javaLanguage{}.runEnvironment(drive, ""), "JAVA_TOOL_OPTIONS", "the baseline never attaches the agent")
+}
+
+func TestJavaRunsRemoveAnInheritedDatadogAgent(t *testing.T) {
+	// The GitHub action attaches dd-java-agent to MAVEN_OPTS, or with
+	// java-instrumented-build-system: all to JAVA_TOOL_OPTIONS.
+	ciAgent := filepath.Join(t.TempDir(), "agent.jar")
+	writeTestAgentJAR(t, ciAgent)
+	t.Setenv("MAVEN_OPTS", "-Xmx1g -javaagent:/opt/datadog/dd-java-agent.jar -javaagent:/opt/jacoco.jar=destfile=jacoco.exec")
+	t.Setenv("JAVA_TOOL_OPTIONS", "-javaagent:"+ciAgent+" -Dfile.encoding=UTF-8")
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>fixture</artifactId></project>`)
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"verify"}}
+
+	baseline := javaLanguage{}.runEnvironment(drive, "")
+	require.Equal(t, "-Xmx1g -javaagent:/opt/jacoco.jar=destfile=jacoco.exec", baseline["MAVEN_OPTS"], "other agents stay")
+	require.Equal(t, "-Dfile.encoding=UTF-8", baseline["JAVA_TOOL_OPTIONS"], "an agent found by its manifest is removed too")
+	instrumented := javaLanguage{}.runEnvironment(drive, "/tmp/session/dd-java-agent.jar")
+	require.Equal(t, "-Xmx1g -javaagent:/opt/jacoco.jar=destfile=jacoco.exec -javaagent:/tmp/session/dd-java-agent.jar", instrumented["MAVEN_OPTS"], "only the selected agent runs")
+	require.Equal(t, "-Dfile.encoding=UTF-8", instrumented["JAVA_TOOL_OPTIONS"])
+
+	drive.configurationEnvironment = map[string]string{"MAVEN_OPTS": "-Xmx2g", "JAVA_TOOL_OPTIONS": ""}
+	baseline = javaLanguage{}.runEnvironment(drive, "")
+	require.NotContains(t, baseline, "MAVEN_OPTS", "a configuration's own options already reach Maven")
+	require.NotContains(t, baseline, "JAVA_TOOL_OPTIONS")
+}
+
+func writeTestAgentJAR(t *testing.T, path string) {
+	t.Helper()
+	file, err := os.Create(path)
+	require.NoError(t, err)
+	writer := zip.NewWriter(file)
+	entry, err := writer.Create("META-INF/MANIFEST.MF")
+	require.NoError(t, err)
+	_, err = entry.Write([]byte("Manifest-Version: 1.0\r\nImplementation-Title: dd-java-agent\r\nImplementation-Version: 1.67.1\r\nPremain-Class: datadog.trace.bootstrap.AgentPreCheck\r\n\r\n"))
+	require.NoError(t, err)
+	require.NoError(t, errors.Join(writer.Close(), file.Close()))
+}
+
+func TestJavaReactorIncludesMavenConfig(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)
+	for _, directory := range []string{".mvn", "service"} {
+		require.NoError(t, os.Mkdir(filepath.Join(root, directory), 0755))
+	}
+	requireWriteFile(t, filepath.Join(root, "service", "pom.xml"), `<project><artifactId>service</artifactId></project>`)
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root}
+
+	requireWriteFile(t, filepath.Join(root, ".mvn", "maven.config"), "-B\n--file=service/pom.xml\n")
+	_, projects, err := drive.javaReactor([]string{"test"})
+	require.NoError(t, err)
+	require.Equal(t, "service", projects[0].Artifact, "Maven reads the POM that maven.config selects")
+	requireWriteFile(t, filepath.Join(root, ".mvn", "maven.config"), "--file\n/elsewhere/pom.xml\n")
+	_, _, err = drive.javaReactor([]string{"test"})
+	require.ErrorContains(t, err, "must be a repository path", "the build cannot leave the disposable copy")
+	requireWriteFile(t, filepath.Join(root, ".mvn", "maven.config"), "-ntp install\n")
+	_, _, err = drive.javaReactor([]string{"test"})
+	require.ErrorContains(t, err, ".mvn/maven.config adds install")
+
+	// Maven reads the nearest .mvn directory above the selected POM.
+	require.NoError(t, os.Mkdir(filepath.Join(root, "service", ".mvn"), 0755))
+	_, projects, err = drive.javaReactor([]string{"-f", "service/pom.xml", "test"})
+	require.NoError(t, err)
+	require.Equal(t, "service", projects[0].Artifact)
+}
+
+func TestJavaConfigurationRefusesImplicitPublishingGoalsForEveryFramework(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewMaven("testng", nil), command: "mvn", args: []string{"test"}}
+	require.NoError(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root))
+	drive.configurationEnvironment = map[string]string{"MAVEN_ARGS": "deploy"}
+	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "MAVEN_ARGS adds deploy", "reporting-only frameworks never reach runJava")
 }
 
 func TestJavaReactorIsBoundedByTheCheckout(t *testing.T) {

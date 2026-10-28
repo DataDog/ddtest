@@ -158,17 +158,55 @@ func (javaLanguage) temporaryTracerSource() string                 { return "tem
 // The agent rides on the Maven JVM, which configures the test JVMs Surefire
 // and Failsafe fork. ScalaTest's plugin forks its own JVM, which inherits only
 // JAVA_TOOL_OPTIONS, so a reactor with any ScalaTest module uses that instead.
-// A configuration's own value is kept, as the baseline keeps it.
+// A configuration's own options are kept, as the baseline keeps them, except a
+// Datadog agent already attached, as in a CI job after the GitHub action: the
+// baseline must run without it and the reporting run with the selected one only.
 func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string {
 	key := "MAVEN_OPTS"
 	if t.framework.Name() == "scalatest" || t.javaReactorDeclares("scalatest") {
 		key = "JAVA_TOOL_OPTIONS"
 	}
-	options, configured := t.configurationEnvironment[key]
-	if !configured {
-		options = os.Getenv(key)
+	env := map[string]string{
+		"DD_TRACE_ENABLED": "false",
+		// Leave compiled classes as the uninstrumented build produces them.
+		"DD_CIVISIBILITY_COMPILER_PLUGIN_AUTO_CONFIGURATION_ENABLED": "false",
 	}
-	return javaAgentEnvironment(path, key, options)
+	for _, carrier := range []string{"MAVEN_OPTS", "JAVA_TOOL_OPTIONS"} {
+		options, configured := t.configurationEnvironment[carrier]
+		if !configured {
+			options = os.Getenv(carrier)
+		}
+		kept := withoutDatadogAgent(options)
+		if carrier == key && path != "" {
+			kept = strings.TrimSpace(kept + " -javaagent:" + path)
+		}
+		if kept != options {
+			env[carrier] = kept
+		}
+	}
+	return env
+}
+
+// withoutDatadogAgent removes every -javaagent option of dd-java-agent from
+// JVM options, by JAR name or manifest, and keeps the others as written.
+func withoutDatadogAgent(options string) string {
+	words := strings.Fields(options)
+	kept := slices.DeleteFunc(slices.Clone(words), func(word string) bool {
+		jar, ok := strings.CutPrefix(word, "-javaagent:")
+		if !ok {
+			return false
+		}
+		jar, _, _ = strings.Cut(jar, "=")
+		if strings.HasPrefix(filepath.Base(jar), "dd-java-agent") {
+			return true
+		}
+		_, err := platform.JavaAgentVersion(jar)
+		return err == nil
+	})
+	if len(kept) == len(words) {
+		return options
+	}
+	return strings.Join(kept, " ")
 }
 
 // javaReactorDeclares reports whether any module of the selected reactor
@@ -177,20 +215,6 @@ func (t *Testdrive) javaReactorDeclares(framework string) bool {
 	_, args := t.executionCommand()
 	_, projects, err := t.javaReactor(args)
 	return err == nil && slices.Contains(maven.Frameworks(projects), framework)
-}
-
-// javaAgentEnvironment appends the agent at path, if any, to options in key.
-func javaAgentEnvironment(path, key, options string) map[string]string {
-	env := map[string]string{
-		"DD_TRACE_ENABLED": "false",
-		// Leave compiled classes as the uninstrumented build produces them.
-		"DD_CIVISIBILITY_COMPILER_PLUGIN_AUTO_CONFIGURATION_ENABLED": "false",
-	}
-	if path == "" {
-		return env
-	}
-	env[key] = strings.TrimSpace(options + " -javaagent:" + path)
-	return env
 }
 
 func (javaLanguage) noResultsFinding(reportRuntime, bool, bool, *reportCard, *intake.Advice) {}
@@ -216,8 +240,13 @@ func (javaLanguage) pairedFrameworks() map[string]pairedFramework {
 // so each configuration runs in a disposable copy.
 func (javaLanguage) isolatesConfigurations() bool { return true }
 
-func (javaLanguage) prepareConfiguration(*Testdrive, *configurationResult, string, string) error {
-	return nil
+// Every Java framework, reporting-only ones included, runs in a configuration
+// copy: refuse a command that would install, publish or leave the copy before
+// any Maven process starts.
+func (javaLanguage) prepareConfiguration(t *Testdrive, _ *configurationResult, _, _ string) error {
+	_, args := t.executionCommand()
+	_, _, err := t.javaCommandPOM(args)
+	return err
 }
 
 func (javaLanguage) coordinated() bool { return false }

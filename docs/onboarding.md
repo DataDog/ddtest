@@ -286,8 +286,10 @@ other than native test failures stays inconclusive.
 Validation runs only the Maven test lifecycle up to `verify`: a CI step such as
 `mvn clean install` is validated as `mvn clean verify`, other goals are reported
 and left out, and `--command` refuses `install`, `deploy` and other goals, as
-validation does for goals in `MAVEN_ARGS`, so `~/.m2` artifacts are never
-overwritten and nothing is published. One Maven
+validation does for goals in `MAVEN_ARGS` or `.mvn/maven.config`, so `~/.m2`
+artifacts are never overwritten and nothing is published. A dd-java-agent that
+`MAVEN_OPTS` or `JAVA_TOOL_OPTIONS` already attaches, as after the GitHub action,
+is removed from both runs; the reporting run attaches only the selected agent. One Maven
 command runs every framework the reactor declares; modules of other frameworks
 are reported.
 

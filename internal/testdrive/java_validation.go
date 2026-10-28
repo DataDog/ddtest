@@ -35,41 +35,89 @@ const javaIncompleteBuild = "The Maven build stopped for a reason other than nat
 // ../pom.xml or declare sibling modules; project directories are relative to
 // the returned checkout root.
 func (t *Testdrive) javaReactor(args []string) (string, []maven.Project, error) {
-	implicit, err := t.javaMavenArgs()
+	root, pom, err := t.javaCommandPOM(args)
 	if err != nil {
 		return "", nil, err
-	}
-	pom, err := maven.CommandPOM(append(implicit, args...))
-	if err != nil {
-		return "", nil, err
-	}
-	root := t.checkoutRoot()
-	directory, err := filepath.Rel(root, t.repositoryRoot)
-	if err != nil {
-		return "", nil, err
-	}
-	pom = filepath.Join(directory, pom)
-	if !filepath.IsLocal(pom) {
-		return "", nil, fmt.Errorf("maven POM must stay inside the repository: %s", pom)
 	}
 	projects, err := maven.ProjectsFrom(root, pom)
 	return root, projects, err
 }
 
-// javaMavenArgs are the arguments Maven 3.9+ reads from MAVEN_ARGS, with a
-// configuration's own value first, and puts before the command's own, split on
-// whitespace as the mvn script does. Goals there that install, publish or run
-// no tests are refused, since they would run with every validated command.
-func (t *Testdrive) javaMavenArgs() ([]string, error) {
+// javaCommandPOM returns the checkout and the POM, relative to it, that the
+// selected Maven command builds once Maven adds its implicit arguments.
+func (t *Testdrive) javaCommandPOM(args []string) (string, string, error) {
+	implicit, err := t.javaImplicitArgs(args)
+	if err != nil {
+		return "", "", err
+	}
+	pom, err := maven.CommandPOM(append(implicit, args...))
+	if err != nil {
+		return "", "", err
+	}
+	root := t.checkoutRoot()
+	directory, err := filepath.Rel(root, t.repositoryRoot)
+	if err != nil {
+		return "", "", err
+	}
+	pom = filepath.Join(directory, pom)
+	if !filepath.IsLocal(pom) {
+		return "", "", fmt.Errorf("maven POM must stay inside the repository: %s", pom)
+	}
+	return root, pom, nil
+}
+
+// javaImplicitArgs are the arguments Maven adds to every command: those of the
+// project's .mvn/maven.config, and those Maven 3.9+ reads from MAVEN_ARGS, with
+// a configuration's own value first, split on whitespace as the mvn script
+// does. Goals there that install, publish or run no tests are refused, since
+// they would run with every validated command.
+func (t *Testdrive) javaImplicitArgs(args []string) ([]string, error) {
+	config, err := t.javaMavenConfig(args)
+	if err != nil {
+		return nil, err
+	}
 	value, configured := t.configurationEnvironment["MAVEN_ARGS"]
 	if !configured {
 		value = os.Getenv("MAVEN_ARGS")
 	}
-	args := strings.Fields(value)
-	if _, omitted := maven.TestInvocation(args); len(omitted) > 0 {
-		return nil, fmt.Errorf("MAVEN_ARGS adds %s to every Maven command, but local validation runs only the Maven test lifecycle up to verify and never installs or publishes artifacts; unset MAVEN_ARGS or remove %s", strings.Join(omitted, ", "), strings.Join(omitted, ", "))
+	var implicit []string
+	for _, source := range []struct {
+		name string
+		args []string
+	}{{".mvn/maven.config", config}, {"MAVEN_ARGS", strings.Fields(value)}} {
+		if _, omitted := maven.TestInvocation(source.args); len(omitted) > 0 {
+			goals := strings.Join(omitted, ", ")
+			return nil, fmt.Errorf("%s adds %s to every Maven command, but local validation runs only the Maven test lifecycle up to verify and never installs or publishes artifacts; remove %s from %s", source.name, goals, goals, source.name)
+		}
+		implicit = append(implicit, source.args...)
 	}
-	return args, nil
+	return implicit, nil
+}
+
+// javaMavenConfig reads the .mvn/maven.config of the project directory Maven
+// finds: the nearest one with a .mvn directory, from the directory of the
+// POM the command selects up to the checkout.
+func (t *Testdrive) javaMavenConfig(args []string) ([]string, error) {
+	pom, err := maven.CommandPOM(args)
+	if err != nil {
+		return nil, err
+	}
+	root := t.checkoutRoot()
+	for directory := filepath.Dir(filepath.Join(t.repositoryRoot, pom)); ; directory = filepath.Dir(directory) {
+		if relative, err := filepath.Rel(root, directory); err != nil || !filepath.IsLocal(relative) {
+			return nil, nil
+		}
+		if info, err := os.Stat(filepath.Join(directory, ".mvn")); err == nil && info.IsDir() {
+			data, err := os.ReadFile(filepath.Join(directory, ".mvn", "maven.config"))
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, nil
+			}
+			return strings.Fields(string(data)), err
+		}
+		if directory == root {
+			return nil, nil
+		}
+	}
 }
 
 // runJava runs the selected Maven command once in the disposable copy, with
