@@ -39,7 +39,7 @@ func TestSDKMirrorCosmeticChanges(t *testing.T) {
 	for name, source := range variants {
 		t.Run(name, func(t *testing.T) {
 			got, hooks, err := TransformSDKMirror("sdk.go", []byte(source))
-			if err != nil || hooks != 15 {
+			if err != nil || hooks != SDKMirrorCopies {
 				t.Fatalf("cosmetic change rejected: hooks=%d err=%v", hooks, err)
 			}
 			dir := filepath.Join(root, name)

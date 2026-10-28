@@ -5,12 +5,16 @@ import (
 	"go/ast"
 	"go/token"
 	"strconv"
+	"strings"
 )
 
 // Match roles within a small set of SDK operations instead of depending on
 // local variable names. Private types and fields remain part of the contract.
 func rewriteSDKSpanStart(fn *ast.FuncDecl, insert func(token.Pos, string)) error {
-	if fn.Type.TypeParams != nil || fn.Type.Results == nil || len(fn.Type.Results.List) != 1 || !sdkPointerType(fn.Type.Results.List[0].Type, "Span") || fn.Type.Params == nil || len(fn.Type.Params.List) == 0 {
+	// The span is the first result; main also returns whether it is a root
+	// and its parent's service.
+	if fn.Type.TypeParams != nil || fn.Type.Results == nil || len(fn.Type.Results.List) == 0 || len(fn.Type.Results.List[0].Names) > 1 ||
+		!sdkPointerType(fn.Type.Results.List[0].Type, "Span") || fn.Type.Params == nil || len(fn.Type.Params.List) == 0 {
 		return sdkMirrorError("SDK spanStart signature changed")
 	}
 	operation := fn.Type.Params.List[0]
@@ -70,7 +74,7 @@ func rewriteSDKSpanStart(fn *ast.FuncDecl, insert func(token.Pos, string)) error
 	if selected == "" || selected == "_" || ambiguous {
 		return sdkMirrorError("SDK selected context missing or ambiguous")
 	}
-	insert(anchor.End(), fmt.Sprintf("\nvar __ddtoParent any; if %[1]s != nil { __ddtoParent = %[1]s.__ddtoMirror }; %[2]s.context.__ddtoMirror = __ddtoMirrorStart(%[3]s, __ddtoParent, %[4]s)\n", parent.Name, span.Name, selected, operation.Names[0].Name))
+	insert(anchor.End(), fmt.Sprintf("\nvar __ddtoParent any; if %[1]s != nil { __ddtoParent = %[1]s.__ddtoMirror }; %[2]s.context.__ddtoMirror = __ddtoMirrorStart(%[3]s, __ddtoParent, %[4]s); __ddtoMirrorAdoptSpan(%[2]s, __ddtoParent, %[1]s)\n", parent.Name, span.Name, selected, operation.Names[0].Name))
 	return nil
 }
 
@@ -178,6 +182,9 @@ func rewriteSDKContext(file *ast.File, fn *ast.FuncDecl, insert func(token.Pos, 
 		}
 		return true
 	})
+	if count == 0 {
+		return rewriteSDKContextValues(file, fn, ctx, span, insert)
+	}
 	var anchor ast.Stmt
 	snapshot := ""
 	for _, stmt := range fn.Body.List {
@@ -218,6 +225,73 @@ func rewriteSDKContext(file *ast.File, fn *ast.FuncDecl, insert func(token.Pos, 
 	}
 	insert(anchor.Pos(), fmt.Sprintf("var __ddtoState any; if %[1]s != nil { __ddtoState = %[1]s.__ddtoMirror }; %[2]s = __ddtoMirrorContext(%[2]s,__ddtoState)\n", snapshot, ctx))
 	return nil
+}
+
+// Before v2.11 ContextWithSpan chains context values: the span, then its
+// SpanContext snapshot under the span's nil guard. The copy's state comes from
+// the same snapshot, read before the SDK derives its context from ctx.
+func rewriteSDKContextValues(file *ast.File, fn *ast.FuncDecl, ctx, span string, insert func(token.Pos, string)) error {
+	alias := sdkImportName(file, "context")
+	derived := 0
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok && sdkSelector(call.Fun, alias, "WithValue") && len(call.Args) == 3 && sdkTypeName(call.Args[0], ctx) {
+			derived++
+		}
+		return true
+	})
+	var anchor ast.Stmt
+	snapshots := 0
+	for _, stmt := range fn.Body.List {
+		for _, binding := range sdkBindings(stmt) {
+			call, ok := binding.value.(*ast.CallExpr)
+			if ok && sdkSelector(call.Fun, alias, "WithValue") && len(call.Args) == 3 && sdkTypeName(call.Args[0], ctx) && sdkTypeName(call.Args[2], span) {
+				if key, ok := call.Args[1].(*ast.SelectorExpr); ok && key.Sel.Name == "ActiveSpanKey" {
+					anchor = stmt
+				}
+			}
+		}
+		// if span != nil { derived = context.WithValue(derived, activeSpanContextKey{}, span.Context()) }
+		branch, ok := stmt.(*ast.IfStmt)
+		if !ok || branch.Init != nil {
+			continue
+		}
+		cond, ok := branch.Cond.(*ast.BinaryExpr)
+		if !ok || cond.Op != token.NEQ || !sdkTypeName(cond.X, span) || !sdkTypeName(cond.Y, "nil") {
+			continue
+		}
+		for _, body := range branch.Body.List {
+			assign, ok := body.(*ast.AssignStmt)
+			if !ok || len(assign.Rhs) != 1 {
+				continue
+			}
+			call, ok := assign.Rhs[0].(*ast.CallExpr)
+			if !ok || !sdkSelector(call.Fun, alias, "WithValue") || len(call.Args) != 3 {
+				continue
+			}
+			key, ok := call.Args[1].(*ast.CompositeLit)
+			value, isCall := call.Args[2].(*ast.CallExpr)
+			if ok && sdkTypeName(key.Type, "activeSpanContextKey") && isCall && len(value.Args) == 0 && sdkSelector(value.Fun, span, "Context") {
+				snapshots++
+			}
+		}
+	}
+	if anchor == nil || derived != 1 || snapshots != 1 {
+		return sdkMirrorError("SDK context construction missing or ambiguous")
+	}
+	insert(anchor.Pos(), fmt.Sprintf("var __ddtoState any; if %[1]s != nil { if __ddtoSnapshot := %[1]s.Context(); __ddtoSnapshot != nil { __ddtoState = __ddtoSnapshot.__ddtoMirror } }; %[2]s = __ddtoMirrorContext(%[2]s,__ddtoState)\n", span, ctx))
+	return nil
+}
+
+func sdkImportName(file *ast.File, path string) string {
+	for _, imp := range file.Imports {
+		if value, err := strconv.Unquote(imp.Path.Value); err == nil && value == path {
+			if imp.Name != nil {
+				return imp.Name.Name
+			}
+			return path[strings.LastIndex(path, "/")+1:]
+		}
+	}
+	return ""
 }
 
 // A snapshot must start nil and be populated once, from this span, under its

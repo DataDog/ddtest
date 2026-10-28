@@ -8,11 +8,31 @@ import (
 	"testing"
 )
 
+// Every supported SDK release has the copies' edits. A copy of v2.10.1 whose
+// ContextWithSpan the matcher does not recognize stands for a release that
+// changes it: the copies are disabled with a warning, and the mandatory CI
+// guards keep Mini the only reporter.
 func TestMiniUnsupportedSDKMirrorRetainsTestReporting(t *testing.T) {
 	_, driver := prepareMiniFixture(t)
+	sdk := filepath.Join(t.TempDir(), "sdk")
+	if err := os.CopyFS(sdk, os.DirFS(moduleDir(t, "github.com/DataDog/dd-trace-go/v2", "v2.10.1"))); err != nil {
+		t.Fatal(err)
+	}
+	contextFile := filepath.Join(sdk, "ddtrace", "tracer", "context.go")
+	source, err := os.ReadFile(contextFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := strings.Replace(string(source), "activeSpanContextKey{}, s.Context())", "activeSpanContextKey{}, (*Span).Context(s))", 1)
+	if changed == string(source) {
+		t.Fatal("the SDK's ContextWithSpan changed")
+	}
+	if err := os.WriteFile(contextFile, []byte(changed), 0600); err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	writeBuildFixture(t, dir, map[string]string{
-		"go.mod": "module example.com/sdkcompatibility\ngo 1.26.0\nrequire github.com/DataDog/dd-trace-go/v2 v2.10.1\n",
+		"go.mod": "module example.com/sdkcompatibility\ngo 1.26.0\nrequire github.com/DataDog/dd-trace-go/v2 v2.10.1\nreplace github.com/DataDog/dd-trace-go/v2 => " + filepath.ToSlash(sdk) + "\n",
 		"sdk_test.go": `package sdkcompatibility
 import("testing";"github.com/DataDog/dd-trace-go/v2/ddtrace/tracer")
 func TestSDKCompatibility(t *testing.T){span,_:=tracer.StartSpanFromContext(t.Context(),"sdk.operation");span.Finish()}

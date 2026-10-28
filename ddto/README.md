@@ -259,7 +259,7 @@ for another platform; then the CLI warns and runs it without its `go`.
 | Coverage | Aggregate coverage and per-test count/atomic coverage, including parallel tests, cleanup and retries. [Validation](docs/validation.md#mini-runtime-contracts) |
 | Testify suites | v1.4.0 and newer v1 releases, including external callers and compatible forks. Unsupported entries warn and run as ordinary subtests. [Details](docs/testify.md) |
 | Goleak | Automatic Mini integration for v1.3.0 and newer v1 releases, including compatible forks; real test leaks remain visible. [Details](docs/delivery.md#automatic-goleak-integration) |
-| Orchestrion and APM | Combined builds and independent SDK span copies under context-associated Mini tests. [Build commands](docs/orchestrion.md), [span association](docs/sdk-span-mirror.md) |
+| Orchestrion and APM | Combined builds; SDK spans under context-associated Mini tests report to Test Optimization, not APM. [Build commands](docs/orchestrion.md), [span association](docs/sdk-span-mirror.md) |
 | Bazel | Offline manifest and payload-file contracts; a real Bazel toolchain invocation is not part of the validation. [Details](docs/mini-runtime.md#delivery-and-offline-output) |
 | Platforms | Linux with Go 1.25/1.26/1.27 and tip, macOS and Windows with Go 1.27; Linux also runs Go 1.25 and 1.27 with `-race`. [CI matrix](docs/validation.md#go-instrumentation-workflow) |
 
@@ -333,6 +333,7 @@ See the [feature matrix](docs/ci-parity.md) for combinations and limitations.
 | `DD_CIVISIBILITY_DEFERRED_DELIVERY` | `false` | Send queued CI data between completed test groups. The next group waits for delivery; parallel groups can buffer more data. [Delivery and goleak](docs/delivery.md) |
 | `DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS` | `false` | Derive package services when `DD_SERVICE` has no value. [CODEOWNERS configuration](docs/codeowners-service.md) |
 | `DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS_FORMAT` | `service-$(owner)` | Service format; quote it with single quotes so the shell passes `$(owner)` literally. |
+| `DD_CIVISIBILITY_APM_SPANS_ENABLED` | `false` | Also send `dd-trace-go` spans created under Mini tests to APM, with their own traces. By default they join the test's trace and only their copies are sent, to Test Optimization. [SDK spans](docs/sdk-span-mirror.md) |
 | `DD_TRACE_DEBUG` | `false` | Build and runtime debug logs, including phase and request timings. |
 | `DD_CIVISIBILITY_LOGS_ENABLED` | `false` | Send CI diagnostic logs. |
 | `DD_LOGGING_RATE` | `60` | Error-log aggregation interval in seconds; `0` reports errors immediately. |

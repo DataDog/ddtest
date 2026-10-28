@@ -120,3 +120,48 @@ func TestSDKMirrorKeepsAnEmptyMetricSet(t *testing.T) {
 		t.Fatal("an SDK span without metrics sends a metrics map")
 	}
 }
+
+// By default a root SDK span under a test, and its children under the same
+// test, join the test's trace: the copies take the SDK span IDs, and the SDK
+// withholds them. A child of another test's span, and every span with
+// DD_CIVISIBILITY_APM_SPANS_ENABLED=true, keep copies of Mini's own identity.
+func TestSDKMirrorAdoption(t *testing.T) {
+	client := &Client{service: "test-service"}
+	owner, _ := newSpan(client, context.Background(), "test")
+	ctx := ContextWithTest(context.Background(), owner)
+	root := sdkMirrorStart(ctx, nil, "root")
+	trace, ok := sdkMirrorAdopt(root, nil, 101, true)
+	copied := root.(*sdkMirror).span
+	if !ok || trace != owner.identity.TraceID || copied.identity.SpanID != 101 || copied.event.Content.SpanID != 101 ||
+		copied.event.Content.ParentID != owner.identity.SpanID || !sdkMirrorAdopted(root) {
+		t.Fatalf("root was not adopted: ok=%t trace=%x copy=%+v", ok, trace, copied.identity)
+	}
+	child := sdkMirrorStart(context.Background(), root, "child")
+	if _, ok := sdkMirrorAdopt(child, root, 202, false); !ok || child.(*sdkMirror).span.event.Content.ParentID != 101 ||
+		child.(*sdkMirror).span.event.Content.SpanID != 202 || !sdkMirrorAdopted(child) {
+		t.Fatal("child of an adopted span was not adopted")
+	}
+	other, _ := newSpan(client, context.Background(), "another test")
+	foreign := sdkMirrorStart(ContextWithTest(context.Background(), other), root, "foreign")
+	if _, ok := sdkMirrorAdopt(foreign, root, 303, false); ok || sdkMirrorAdopted(foreign) || foreign.(*sdkMirror).span.identity.SpanID == 303 {
+		t.Fatal("a child of another test's trace was adopted")
+	}
+	if _, ok := sdkMirrorAdopt(sdkMirrorStart(ctx, nil, "orphan"), nil, 404, false); ok {
+		t.Fatal("a child without a copied SDK parent was adopted")
+	}
+	if _, ok := sdkMirrorAdopt(nil, nil, 505, true); ok || sdkMirrorAdopted(nil) {
+		t.Fatal("a span outside tests was adopted")
+	}
+	meta := map[string]string{"custom": "value"}
+	delivery := sdkMirrorCapture(root, "root", "service", "resource", "custom", 1, 2, 0, maps.All(meta), nil, [16]byte{1}, 101).(*sdkMirrorDelivery)
+	if _, exists := delivery.event.Content.Meta.asMap()["apm.span_id"]; exists {
+		t.Fatal("an adopted copy kept the diagnostic APM identity")
+	}
+
+	apmSpansEnabled.Store(true)
+	t.Cleanup(func() { apmSpansEnabled.Store(false) })
+	optedIn := sdkMirrorStart(ctx, nil, "root")
+	if _, ok := sdkMirrorAdopt(optedIn, nil, 606, true); ok || sdkMirrorAdopted(optedIn) || optedIn.(*sdkMirror).span.identity.SpanID == 606 {
+		t.Fatal("DD_CIVISIBILITY_APM_SPANS_ENABLED=true still adopted the span")
+	}
+}

@@ -559,9 +559,19 @@ func goGet(t *testing.T, dir string, args ...string) {
 
 func configureReferenceFixture(t *testing.T, dir string) {
 	t.Helper()
+	configureOrchestrionFixture(t, dir, orchestrionVersion, os.Getenv("ORCHESTRION_BIN"))
+}
+
+// configureOrchestrionFixture declares Orchestrion version, whose executable
+// is bin, as the fixture's tool, with the SDK's testing aspects.
+func configureOrchestrionFixture(t *testing.T, dir, version, bin string) {
+	t.Helper()
 	// Both compilers use this SAME temporary module graph, including any MVS
 	// upgrades introduced by the reference tool. The SDK version stays fixed.
-	goGet(t, dir, "github.com/DataDog/orchestrion@"+orchestrionVersion, "golang.org/x/tools@"+orchestrionToolsVersion)
+	goGet(t, dir, "github.com/DataDog/orchestrion@"+version)
+	if raiseOrchestrionTools(t, dir) {
+		goGet(t, dir, "golang.org/x/tools@"+orchestrionToolsVersion)
+	}
 	out, e, code := command(t, dir, testEnv(), "go", "list", "-m", "-json", "github.com/DataDog/dd-trace-go/v2")
 	if code != 0 {
 		t.Fatalf("SDK: %s", e)
@@ -586,7 +596,24 @@ func configureReferenceFixture(t *testing.T, dir string) {
 	}
 	// Check the pin once, as orchestrion go does before a build; testEnv then
 	// skips that check in every toolexec call. A different binary fails here.
-	if out, e, code := command(t, dir, testEnv(orchestrionPinChecked+"=false"), os.Getenv("ORCHESTRION_BIN"), "go", "version"); code != 0 || strings.Contains(out+e, "is not present in your go.mod") {
+	if out, e, code := command(t, dir, testEnv(orchestrionPinChecked+"=false"), bin, "go", "version"); code != 0 || strings.Contains(out+e, "is not present in your go.mod") {
 		t.Fatalf("orchestrion pin: %s\n%s", out, e)
 	}
+}
+
+// raiseOrchestrionTools reports whether the module in dir selects an x/tools
+// older than orchestrionToolsVersion, which cannot read Go 1.27.2's export
+// data. Newer Orchestrion releases already require a newer one.
+func raiseOrchestrionTools(t *testing.T, dir string) bool {
+	t.Helper()
+	out, e, code := command(t, dir, testEnv(), "go", "list", "-m", "-f", "{{.Version}}", "golang.org/x/tools")
+	if code != 0 {
+		t.Fatalf("x/tools: %s\n%s", out, e)
+	}
+	parse := func(version string) (parts [3]int) {
+		fmt.Sscanf(strings.TrimPrefix(strings.TrimSpace(version), "v"), "%d.%d.%d", &parts[0], &parts[1], &parts[2])
+		return parts
+	}
+	selected, needed := parse(out), parse(orchestrionToolsVersion)
+	return slices.Compare(selected[:], needed[:]) < 0
 }

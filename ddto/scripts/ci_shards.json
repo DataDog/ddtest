@@ -192,6 +192,7 @@
       "TestMiniSDKMirrorBenchmarkMeasuresNoBinding",
       "TestMiniSDKMirrorContextMatrix",
       "TestMiniSDKSpanMirror",
+      "TestMiniSDKSupportedVersions",
       "TestMiniUnsupportedSDKMirrorRetainsTestReporting"
     ],
     "sdk-orchestrion": [
@@ -272,6 +273,7 @@
       "TestMiniSDKMirrorBenchmarkMeasuresNoBinding",
       "TestMiniSDKMirrorContextMatrix",
       "TestMiniSDKSpanMirror",
+      "TestMiniSDKSupportedVersions",
       "TestMiniUnsupportedSDKMirrorRetainsTestReporting"
     ]
   },
@@ -290,6 +292,9 @@
       ],
       "parity": [
         "TestCIVisibilityUnixAgent"
+      ],
+      "sdk-orchestrion": [
+        "TestMiniOrchestrionSupportedVersions"
       ]
     },
     "darwin": {

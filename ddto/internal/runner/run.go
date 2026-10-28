@@ -572,9 +572,11 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	plan.sdkCI = plan.mini && (plan.orchestrion || sdkCI)
 	hooks := hooksForRuntime(runtime, rewritten.ParallelStop, rewritten.Timeout)
 	if plan.sdkCI {
-		if warning := preflightSDKMirror(libraries[sdkTracerPackage], replacements); warning != "" {
+		if warning, apm := preflightSDKMirror(libraries[sdkTracerPackage], replacements); warning != "" {
 			plan.sdkMirrorDisabled = true
 			plan.Warnings = append(plan.Warnings, warning)
+		} else if apm != "" {
+			plan.Warnings = append(plan.Warnings, apm)
 		}
 		for _, path := range []string{sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkTracerPackage} {
 			if path == sdkTracerPackage && plan.sdkMirrorDisabled {

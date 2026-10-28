@@ -13,7 +13,51 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The request is checked before the long compatibility run, and again by the
+  # release job.
+  authorize:
+    if: github.repository == 'DataDog/ddtest' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Get GitHub token
+        uses: DataDog/dd-octo-sts-action@c85802a58e202b7e764b5441e4378c76043c8108 # v1.0.5
+        id: octo-sts
+        with:
+          scope: DataDog/ddtest
+          policy: self.github.release.main
+
+      - name: Validate release request
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+        run: bash .github/scripts/release.sh validate
+
+  # Before a release, the Go instrumentation suite runs every dd-trace-go and
+  # Orchestrion version that ddtest instrument supports, as the module proxy
+  # has them now, so that no release ships without them passing.
+  compatibility:
+    needs: authorize
+    uses: ./.github/workflows/go-instrumentation.yml
+    with:
+      compatibility: full
+    permissions:
+      contents: read
+      actions: read
+    secrets: inherit
+
   release:
+    needs: compatibility
     if: github.repository == 'DataDog/ddtest' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -24,10 +68,11 @@ jobs:
       GH_REPO: ${{ github.repository }}
 
     steps:
+      # The commit that the compatibility run tested, even if main advanced.
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Get GitHub token

@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	_ "unsafe" // compiler hooks use go:linkname without importing the SDK
 
+	infra "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 	"github.com/DataDog/ddtest/ddto/propagation"
 )
 
@@ -16,6 +18,9 @@ type sdkTestScope struct{ test *Span }
 type sdkMirror struct {
 	span  *Span
 	scope *sdkTestScope
+	// adopted: the SDK span joined its test's trace, its copy has the SDK's
+	// span ID, and the SDK does not deliver it to APM.
+	adopted bool
 }
 type sdkMirrorDelivery struct {
 	client *Client
@@ -24,12 +29,22 @@ type sdkMirrorDelivery struct {
 
 var sdkMirrorEnabled atomic.Bool
 
+// apmSpansEnabled is DD_CIVISIBILITY_APM_SPANS_ENABLED. By default an SDK span
+// that Mini copies under a test joins the test's trace, with the ciapp-test
+// origin that services it calls inherit, and only its copy is delivered, to
+// Test Optimization. true keeps the SDK span unchanged and delivered to APM,
+// with a copy of Mini's own identity.
+var apmSpansEnabled atomic.Bool
+
 // SDKMirrorEnabled is set by the compiled SDK hook during package initialization.
 // Mini-only binaries skip native context binding and its allocations entirely.
 func SDKMirrorEnabled() bool { return sdkMirrorEnabled.Load() }
 
 //go:linkname sdkMirrorEnable
-func sdkMirrorEnable() { sdkMirrorEnabled.Store(true) }
+func sdkMirrorEnable() {
+	apmSpansEnabled.Store(infra.BoolEnv("DD_CIVISIBILITY_APM_SPANS_ENABLED", false))
+	sdkMirrorEnabled.Store(true)
+}
 
 // ContextWithTest binds the native cancellation lifetime to a CI test. SDK
 // copies inherit this scope; the full SDK never reads our propagation key.
@@ -72,6 +87,52 @@ func sdkMirrorStart(ctx context.Context, parent any, name string) any {
 	span.hierarchy, span.hierarchySet = scope.test.hierarchy, scope.test.hierarchySet
 	scope.test.mu.Unlock()
 	return &sdkMirror{span: span, scope: scope}
+}
+
+// sdkMirrorAdopt decides whether the SDK span that state copies joins its
+// test's trace, when the compiled SDK supports it. A root SDK span under a
+// test joins it; a child joins when its SDK parent joined the same test's
+// trace, whose ID it inherits. The copy then takes the SDK span's ID, so that
+// the parent IDs that services receive name copies. It returns the test's
+// trace ID, which a root takes.
+//
+//go:linkname sdkMirrorAdopt
+func sdkMirrorAdopt(state, parent any, spanID uint64, root bool) ([16]byte, bool) {
+	mirror, ok := state.(*sdkMirror)
+	if !ok || apmSpansEnabled.Load() {
+		return [16]byte{}, false
+	}
+	if !root {
+		previous, _ := parent.(*sdkMirror)
+		if previous == nil || !previous.adopted || previous.scope != mirror.scope {
+			return [16]byte{}, false
+		}
+	}
+	s := mirror.span
+	s.identity.SpanID = spanID
+	s.event.Content.SpanID = spanID
+	mirror.adopted = true
+	return s.identity.TraceID, true
+}
+
+// sdkMirrorAdopted reports whether the SDK must not deliver the span whose
+// state this is: its copy reports it.
+//
+//go:linkname sdkMirrorAdopted
+func sdkMirrorAdopted(state any) bool {
+	mirror, ok := state.(*sdkMirror)
+	return ok && mirror.adopted
+}
+
+// sdkMirrorWithheld explains a finished SDK chunk whose spans the SDK does not
+// deliver.
+//
+//go:linkname sdkMirrorWithheld
+func sdkMirrorWithheld(withheld, kept int) {
+	if !log.DebugEnabled() {
+		return
+	}
+	log.Debug("ci mini tracer: %d SDK spans not sent to APM: their copies report to Test Optimization (DD_CIVISIBILITY_APM_SPANS_ENABLED=true sends them); %d spans of the chunk sent", withheld, kept)
 }
 
 // sdkMirrorContext carries the independent CI identity alongside the original
@@ -136,9 +197,11 @@ func sdkMirrorCapture(state any, name, service, resource, kind string, start, du
 			s.event.Content.Metrics.set(key, value)
 		}
 	}
-	// Keep the original APM identity for diagnosis without modifying its trace.
-	s.setMeta("apm.trace_id", hex.EncodeToString(originalTrace[:]))
-	s.setMeta("apm.span_id", strconv.FormatUint(originalSpan, 10))
+	if !mirror.adopted {
+		// Keep the original APM identity for diagnosis without modifying its trace.
+		s.setMeta("apm.trace_id", hex.EncodeToString(originalTrace[:]))
+		s.setMeta("apm.span_id", strconv.FormatUint(originalSpan, 10))
+	}
 	s.event.Content.TraceID = binary.BigEndian.Uint64(s.identity.TraceID[8:])
 	s.event.Type, s.event.Version = "span", 1
 	s.sealHierarchy(&s.event.Content)

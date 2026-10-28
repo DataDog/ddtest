@@ -4,13 +4,31 @@ name: Go instrumentation
 # request and push to main runs this workflow, so that its result can be a
 # required check: when a run already verified the files that the suite depends
 # on (see the plan job's inputs), the groups do not run again.
+#
+# Pull requests and pushes test the dd-trace-go and Orchestrion versions in
+# ddto/scripts/supported_versions.json. The nightly run tests the versions that
+# the module proxy has then, and fails when that file is out of date. The
+# release workflow calls this one with compatibility: full first: those
+# versions, each one run even when another has the same edited SDK packages.
 on:
   push:
     branches: [main]
   pull_request:
   schedule:
     - cron: '17 3 * * *'
+  workflow_call:
+    inputs:
+      compatibility:
+        description: 'full: every supported version that the module proxy has now'
+        type: string
+        default: recorded
   workflow_dispatch:
+    inputs:
+      compatibility:
+        description: 'full: every supported version that the module proxy has now'
+        type: choice
+        options: [recorded, full]
+        default: recorded
 permissions:
   contents: read
 # A new push to a pull request replaces its running matrix. Other events never
@@ -42,6 +60,7 @@ jobs:
       inputs: ${{ steps.verified.outputs.inputs }}
       skip: ${{ steps.verified.outputs.skip }}
       verified-run: ${{ steps.verified.outputs.run }}
+      window: ${{ steps.window.outputs.window }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - id: matrix
@@ -91,6 +110,15 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "run=$run" >> "$GITHUB_OUTPUT"
           fi
+      # The test jobs read the window in DDTO_SUPPORTED_VERSIONS; without it,
+      # the recorded one.
+      - id: window
+        if: github.event_name == 'schedule' || inputs.compatibility == 'full'
+        shell: bash
+        run: |
+          window="$(python scripts/supported_versions.py resolve)"
+          echo "$window"
+          echo "window=$window" >> "$GITHUB_OUTPUT"
 
   lint:
     name: Sources, dependency boundary, scripts and 386 runtime
@@ -116,6 +144,10 @@ jobs:
           python scripts/upstream.py verify
           python -m unittest discover -s scripts -p "test_*.py"
           python scripts/dependency_boundary.py
+      - name: Require the current supported versions
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: python scripts/ci_shards.py retry -- python scripts/supported_versions.py check
       # The other jobs build for 64-bit targets. Mini's runtime compiles into
       # the test binaries of any target, so every package must vet for 386 and
       # the runtime's tests must pass there. ddto is released for 64-bit
@@ -145,6 +177,8 @@ jobs:
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 35 }}
     env:
       DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
+      DDTO_SUPPORTED_VERSIONS: ${{ needs.plan.outputs.window }}
+      DDTO_COMPATIBILITY: ${{ inputs.compatibility }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Exclude build directories from Windows Defender
@@ -354,6 +388,8 @@ jobs:
     timeout-minutes: 25
     env:
       DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
+      DDTO_SUPPORTED_VERSIONS: ${{ needs.plan.outputs.window }}
+      DDTO_COMPATIBILITY: ${{ inputs.compatibility }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -461,6 +497,8 @@ jobs:
     timeout-minutes: 25
     env:
       DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
+      DDTO_SUPPORTED_VERSIONS: ${{ needs.plan.outputs.window }}
+      DDTO_COMPATIBILITY: ${{ inputs.compatibility }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -620,9 +658,11 @@ jobs:
           path: ddto/reports/
           retention-days: 7
       # Lets a pull request or a push to main with the same inputs reuse this
-      # run, which then carries the coverage that it uploads again.
+      # run, which then carries the coverage that it uploads again. Only a run
+      # of the recorded versions verifies them; the nightly and full runs test
+      # the module proxy's window instead.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: success() && needs.plan.outputs.skip != 'true' && env.DATADOG_API_KEY_CONFIGURED == 'true'
+        if: success() && needs.plan.outputs.skip != 'true' && needs.plan.outputs.window == '' && env.DATADOG_API_KEY_CONFIGURED == 'true'
         with:
           name: verified-inputs-${{ needs.plan.outputs.inputs }}
           path: ddto/reports/summary.md

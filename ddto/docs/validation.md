@@ -131,8 +131,9 @@ context-associated spans while retaining their APM behavior.
 The AST transformer validates hook presence, ambiguity and selected shape
 constraints, but future Go source or ABI changes still require a new
 compatibility run. The [Go instrumentation workflow](../../.github/workflows/go-instrumentation.yml)
-defines the supported test matrix, and adding a Go or SDK version requires
-exercising its private hooks and runtime behavior. Long-running campaigns and
+defines the supported test matrix, and adding a Go version requires
+exercising its private hooks and runtime behavior. SDK and Orchestrion
+versions follow [their own window](maintenance.md#supported-dd-trace-go-and-orchestrion-versions). Long-running campaigns and
 arbitrary downstream modules need separate validation;
 [Fuzz and Examples](fuzz-examples.md) records the bounded campaign and feature
 cases.
@@ -183,7 +184,8 @@ The transparency and safety regressions cover these contracts:
 | Consumer dependency versions | `TestMiniPreservesOlderConsumerDependencies`, `TestMiniConsumerAddsOnlyOwnModule`: readonly/mod builds keep old Testify, go-spew and YAML; consumer tidy adds only Mini |
 | Consumer language version | `TestMiniPreservesConsumerLanguage`: Go 1.21, 1.22, 1.25 and a missing `go` directive; loop closures, timer compatibility and `panic(nil)` match native Go |
 | SDK compiler cache | `TestMiniLegacySDKShim`: native SDK builds before and after Mini retain CI reporting, and SDK spans retain their APM transport |
-| Optional SDK mirror compatibility | `TestMiniUnsupportedSDKMirrorRetainsTestReporting`: SDK 2.10.1 builds twice, warns, and retains one test/session per run without duplicate SDK reporting |
+| Optional SDK mirror compatibility | `TestMiniUnsupportedSDKMirrorRetainsTestReporting`: a copy of SDK 2.10.1 whose `ContextWithSpan` the mirror does not recognize builds twice, warns, and retains one test/session per run without duplicate SDK reporting |
+| Supported SDK and Orchestrion versions | `TestMiniSDKSupportedVersions`: every dd-trace-go release from v2.10.0 and main accepts every SDK edit; `TestMiniOrchestrionSupportedVersions`: each Orchestrion release of the last two minors and main composes with Mini. [Supported versions](maintenance.md#supported-dd-trace-go-and-orchestrion-versions) |
 | Package setup failures | `TestMiniContinuesAfterPackageSetupFailures`: valid packages execute beside mixed-package, missing and empty targets with native exit status |
 | Event metadata placement | Accepted change from the SDK: shared CI/Git/system strings use event-kind envelope metadata. `TestMiniCIConfigurationWireParity` and common-tag wire tests: defaults and local overrides retain effective values; raw payload assertions check their placement |
 | Workspace and vendor provisioning | `TestMiniProvisionsWorkspaceWithoutChangingModules`, `TestMiniProvisionsVendorAndPreservesPatchedSources`: preserve caller files, loop semantics, local patches, program defaults and modfiles from flags or `GOFLAGS`; runner tests cover selected versions, forks, source overlays, cached vendor links and their fallbacks |
