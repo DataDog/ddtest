@@ -221,6 +221,7 @@ func (t *Testdrive) ownedGemspecRepository(ctx context.Context, executor directo
 func (t *Testdrive) rubyPackageExclusions(ctx context.Context) onboard.WorkflowCheck {
 	check := onboard.WorkflowCheck{Name: "package_report_exclusions", Status: "passed"}
 	var specs []string
+	bundles := t.rubyBundlePaths()
 	err := filepath.WalkDir(t.repositoryRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -233,8 +234,11 @@ func (t *Testdrive) rubyPackageExclusions(ctx context.Context) onboard.WorkflowC
 			return err
 		}
 		if entry.IsDir() {
-			// Dependency/configuration trees and test fixtures aren't publish targets.
-			if relative != "." && (slices.Contains([]string{".git", ".bundle", "node_modules", ".testoptimization", "test", "tests", "spec", "fixtures"}, entry.Name()) || filepath.ToSlash(relative) == "vendor/bundle") {
+			// Dependency/configuration trees, installed gems and test fixtures
+			// aren't publish targets: an installed gem's specifications/*.gemspec
+			// lists no repository files.
+			if relative != "." && (slices.Contains([]string{".git", ".bundle", "vendor", "node_modules", ".testoptimization", "test", "tests", "spec", "fixtures"}, entry.Name()) ||
+				installedGemDirectory(entry.Name()) || rubyGemsInstallation(path) || slices.Contains(bundles, path)) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -262,6 +266,43 @@ func (t *Testdrive) rubyPackageExclusions(ctx context.Context) onboard.WorkflowC
 		check.Reason = "Repository gemspec inventories exclude both reports; loaded only in an owned copy, without building or publishing a gem."
 	}
 	return check
+}
+
+// rubyBundlePaths are the configured BUNDLE_PATH directories inside the
+// repository: the shell's, the selected configuration's and every discovered
+// CI consumer's.
+func (t *Testdrive) rubyBundlePaths() []string {
+	type located struct{ directory, path string }
+	candidates := []located{{".", os.Getenv("BUNDLE_PATH")}, {".", t.configurationEnvironment["BUNDLE_PATH"]}}
+	if t.workflowScope != nil {
+		for _, entry := range t.workflowScope.Commands {
+			candidates = append(candidates, located{entry.Directory, entry.Environment["BUNDLE_PATH"]})
+		}
+	}
+	var paths []string
+	for _, candidate := range candidates {
+		if candidate.path == "" {
+			continue
+		}
+		path := candidate.path
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(t.repositoryRoot, candidate.directory, path)
+		}
+		paths = append(paths, filepath.Clean(path))
+	}
+	return paths
+}
+
+// rubyGemsInstallation reports whether directory is a RubyGems installation
+// root, such as <BUNDLE_PATH>/ruby/3.4.0, which holds both gems and
+// specifications.
+func rubyGemsInstallation(directory string) bool {
+	for _, name := range []string{"gems", "specifications"} {
+		if info, err := os.Stat(filepath.Join(directory, name)); err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	return true
 }
 
 func (t *Testdrive) checkRubyPackages(ctx context.Context, root string, specs []string) error {

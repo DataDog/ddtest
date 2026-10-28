@@ -660,3 +660,33 @@ func TestRubyCoordinatedValidationEnforcesTheSelectedSite(t *testing.T) {
 	_ = drive.Workflow(t.Context(), io.Discard, WorkflowOptions{Format: "json"})
 	require.Equal(t, "datadoghq.eu", drive.selectedSite)
 }
+
+// Gems installed inside the repository are not packaging targets, wherever
+// Bundler put them.
+func TestRubyPackagingSkipsInstalledGems(t *testing.T) {
+	if _, err := exec.LookPath("ruby"); err != nil {
+		t.Skip("Ruby is required")
+	}
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0700))
+	requireWriteFile(t, filepath.Join(root, "lib/fixture.rb"), "module Fixture;end\n")
+	requireWriteFile(t, filepath.Join(root, "fixture.gemspec"), "Gem::Specification.new do |s|\n s.name='fixture';s.version='1.0';s.files=Dir['lib/**/*']\nend\n")
+	installed := "Gem::Specification.new do |s|\n s.name='rake';s.version='13.4.2';s.files=[]\nend\n"
+	for _, path := range []string{
+		".gems/ruby/3.4.0/specifications/rake-13.4.2.gemspec",
+		".gems/ruby/3.4.0/gems/rake-13.4.2/rake.gemspec",
+		"bundle/ruby/3.4.0/specifications/rake-13.4.2.gemspec",
+		"app/vendor/bundle/ruby/3.4.0/specifications/rake-13.4.2.gemspec",
+		"third_party/vendor/rake.gemspec",
+		"ci-gems/rake.gemspec",
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, filepath.Dir(path)), 0700))
+		requireWriteFile(t, filepath.Join(root, path), installed)
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "bundle/ruby/3.4.0/gems"), 0700))
+	gitInit(t, root)
+	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Environment: map[string]string{"BUNDLE_PATH": "ci-gems"}}}}
+	drive := &Testdrive{repositoryRoot: root, language: "ruby", executor: &ext.DefaultCommandExecutor{}, workflowScope: &scope}
+	check := drive.rubyPackageExclusions(t.Context())
+	require.Equal(t, "passed", check.Status, check.Reason)
+}
