@@ -344,3 +344,25 @@ func TestRakeRubyOptionsKeepInheritedOptions(t *testing.T) {
 	require.Equal(t, "bundle exec rake", scope.Commands[0].Command)
 	require.Equal(t, "-r./ci/datadog_test_optimization.rb -W2", scope.Commands[0].Environment["RUBYOPT"])
 }
+
+// Round-6 review findings on Ruby test steps with setup and artifacts.
+func TestRubyStepsWithSetupReviewFindings(t *testing.T) {
+	root := copyFixture(t, "circleci-brakeman")
+	resolve := func(run string) commandResolution {
+		return resolveRubyStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: run}, "minitest")
+	}
+	resolved := func(resolution commandResolution) bool { return resolution.Matched && resolution.Reason == "" }
+	// An inline RUBYOPT export would replace the preload unseen.
+	require.False(t, resolved(resolve("export RUBYOPT=-W0\nbundle exec rake")))
+	require.False(t, resolved(resolve("export DD_TRACE_ENABLED=false\nbundle exec rake")))
+	// Append assignments need the inherited value.
+	require.False(t, resolved(resolve("export LABEL+=_integration\nbundle exec rake")))
+	// Escapes decode as the shell does.
+	resolution := resolve("export LABEL=a\\ b NAME=\"x\\\"y\" RAW='c\\d'\nbundle exec rake")
+	require.True(t, resolved(resolution), resolution.Reason)
+	require.Equal(t, map[string]string{"LABEL": "a b", "NAME": `x"y`, "RAW": `c\d`}, resolution.Tests[0].Environment)
+	// Only report handling follows the tests: copying a configuration file
+	// may prepare a later test.
+	require.True(t, resolved(resolve("bundle exec rake\nmkdir -p tmp/\nmv coverage/coverage.json tmp/coverage.json\ncp test-results/junit.xml artifacts/")))
+	require.False(t, resolved(resolve("bundle exec rake\ncp config.integration.yml config.yml")))
+}

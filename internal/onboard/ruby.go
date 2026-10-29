@@ -134,7 +134,9 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 			}
 			for _, assign := range cmd.Args {
 				value, literal := rubyLiteralWord(assign.Value)
-				if assign.Name == nil || assign.Naked || assign.Index != nil || assign.Array != nil || !literal {
+				// An append needs the inherited value; RUBYOPT and Datadog
+				// settings would change the instrumentation unseen.
+				if assign.Name == nil || assign.Naked || assign.Append || assign.Index != nil || assign.Array != nil || !literal || assign.Name.Value == "RUBYOPT" || strings.HasPrefix(assign.Name.Value, "DD_") {
 					return unresolved, true
 				}
 				env[assign.Name.Value] = value
@@ -146,7 +148,10 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 			name, _ := rubyLiteralWord(cmd.Args[0])
 			if test >= 0 && slices.Contains(rubyArtifactCommands, name) {
 				for _, word := range cmd.Args[1:] {
-					if _, literal := rubyLiteralWord(word); !literal {
+					text, literal := rubyLiteralWord(word)
+					// Only report paths: copying other files may prepare a
+					// later test step.
+					if !literal || name != "echo" && name != "printf" && !strings.HasPrefix(text, "-") && !rubyReportPath(text) {
 						return unresolved, true
 					}
 				}
@@ -204,7 +209,21 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 	return resolution, true
 }
 
-// rubyLiteralWord is a shell word's text when it expands nothing.
+// rubyReportPaths are directories that only hold test reports and coverage.
+var rubyReportPaths = []string{"coverage", "report", "reports", "test-results", "test_results", "tmp", "artifacts", "log", "logs", "junit"}
+
+// rubyReportPath reports a path under a report or coverage directory.
+func rubyReportPath(path string) bool {
+	path = strings.TrimPrefix(path, "./")
+	if strings.HasPrefix(path, "/tmp/") {
+		return true
+	}
+	first, _, _ := strings.Cut(path, "/")
+	return slices.Contains(rubyReportPaths, strings.TrimSuffix(first, "/"))
+}
+
+// rubyLiteralWord is a shell word's text when it expands nothing, with its
+// escapes decoded as the shell decodes them.
 func rubyLiteralWord(word *syntax.Word) (string, bool) {
 	if word == nil {
 		return "", true
@@ -213,7 +232,7 @@ func rubyLiteralWord(word *syntax.Word) (string, bool) {
 	for _, part := range word.Parts {
 		switch part := part.(type) {
 		case *syntax.Lit:
-			text.WriteString(part.Value)
+			text.WriteString(rubyUnescape(part.Value, false))
 		case *syntax.SglQuoted:
 			text.WriteString(part.Value)
 		case *syntax.DblQuoted:
@@ -222,13 +241,26 @@ func rubyLiteralWord(word *syntax.Word) (string, bool) {
 				if !ok {
 					return "", false
 				}
-				text.WriteString(lit.Value)
+				text.WriteString(rubyUnescape(lit.Value, true))
 			}
 		default:
 			return "", false
 		}
 	}
 	return text.String(), true
+}
+
+// rubyUnescape decodes backslash escapes: unquoted, a backslash quotes the
+// next character; inside double quotes, only before $, `, " and \.
+func rubyUnescape(value string, quoted bool) string {
+	var text strings.Builder
+	for i := 0; i < len(value); i++ {
+		if value[i] == '\\' && i+1 < len(value) && (!quoted || strings.IndexByte("$`\"\\", value[i+1]) >= 0) {
+			i++
+		}
+		text.WriteByte(value[i])
+	}
+	return text.String()
 }
 
 // rubyExtendedOptions reads a RUBYOPT="$RUBYOPT <literal options>" argument

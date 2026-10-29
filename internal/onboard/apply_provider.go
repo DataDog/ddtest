@@ -71,7 +71,12 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 					}
 				}
 			}
+			// The runtime the tests run on: the image's, or one a modeled
+			// installer selects before them.
 			node := imageNode(job.Image)
+			if selected, err := rowSetupNodeBefore(root, workflow, job, nil, first); err == nil {
+				node = selected
+			}
 			if UnsupportedNode(node) {
 				continue // No tracer release runs here; validation reports it as not tried.
 			}

@@ -1361,12 +1361,36 @@ func circleExpandVariables(command string, variables map[string]string) (string,
 			assigned[name] = at
 		}
 	}
+	// Only statements the step runs unconditionally at its top level
+	// (joined by newlines, ; or &&) change what later commands read.
+	topLevel := map[syntax.Node]bool{}
+	var top func(*syntax.Stmt)
+	top = func(stmt *syntax.Stmt) {
+		if binary, ok := stmt.Cmd.(*syntax.BinaryCmd); ok && binary.Op == syntax.AndStmt {
+			top(binary.X)
+			top(binary.Y)
+			return
+		}
+		topLevel[stmt.Cmd] = true
+	}
+	for _, stmt := range file.Stmts {
+		top(stmt)
+	}
+	nested := func(node syntax.Node, name string) bool {
+		if _, known := variables[name]; known && !topLevel[node] {
+			problem = joinDiagnostic(problem, "the command sets $"+name+", which an earlier step assigned in $BASH_ENV, inside a subshell, function or condition ddtest does not follow")
+			return true
+		}
+		return false
+	}
 	syntax.Walk(file, func(node syntax.Node) bool {
 		switch node := node.(type) {
 		case *syntax.CallExpr:
 			if len(node.Args) == 0 {
 				for _, assign := range node.Assigns {
-					set(assign.Name.Value, assign.End().Offset())
+					if !nested(node, assign.Name.Value) {
+						set(assign.Name.Value, assign.End().Offset())
+					}
 				}
 			} else if name := node.Args[0].Lit(); name == "read" || name == "unset" || name == "mapfile" || name == "readarray" || name == "getopts" {
 				for _, word := range node.Args[1:] {
@@ -1377,7 +1401,7 @@ func circleExpandVariables(command string, variables map[string]string) (string,
 			}
 		case *syntax.DeclClause:
 			for _, assign := range node.Args {
-				if assign.Name != nil {
+				if assign.Name != nil && !nested(node, assign.Name.Value) {
 					set(assign.Name.Value, assign.End().Offset())
 				}
 			}

@@ -869,7 +869,7 @@ func TestCircleCIReviewFindings(t *testing.T) {
 			require.Empty(t, problem, command)
 			require.Equal(t, want, got, command)
 		}
-		for _, command := range []string{`npm test -- $SPACED`, `npm test -- ${SUITE:-unit}`, "read SUITE < suite.txt; npm test -- $SUITE", "unset SUITE; npm test -- $SUITE", "for SUITE in a b; do npm test -- $SUITE; done"} {
+		for _, command := range []string{`npm test -- $SPACED`, `npm test -- ${SUITE:-unit}`, "read SUITE < suite.txt; npm test -- $SUITE", "unset SUITE; npm test -- $SUITE", "for SUITE in a b; do npm test -- $SUITE; done", "(SUITE=unit); npm test -- $SUITE", "if [ -n \"$CI\" ]; then SUITE=unit; fi; npm test -- $SUITE", "f() { export SUITE=unit; }; npm test -- $SUITE"} {
 			_, problem := circleExpandVariables(command, map[string]string{"SUITE": "integration", "SPACED": "a b"})
 			require.NotEmpty(t, problem, command)
 		}
@@ -1072,4 +1072,12 @@ func TestBuildOnlyJobsAreOutsideTheWorkflowScope(t *testing.T) {
 			require.Contains(t, strings.Join(scope.Caveats, "\n"), "never runs jest")
 		})
 	}
+}
+
+// A job whose image runs Node 16 but installs Node 22 with node/install is
+// set up on the installed runtime.
+func TestCircleCIApplyUsesTheInstalledNode(t *testing.T) {
+	plan, _, err := planCircleCI(t, "jest", "version: 2.1\norbs:\n  node: circleci/node@5.2.0\njobs:\n  test:\n    docker:\n      - image: cimg/node:16.20.2\n    steps:\n      - node/install:\n          node-version: \"22.11.0\"\n      - run: npm test\n"+circleWorkflow("      - test\n"), nil)
+	require.NoError(t, err)
+	require.Contains(t, plannedFile(t, plan, circleCIFile), "/autoinstrument:")
 }
