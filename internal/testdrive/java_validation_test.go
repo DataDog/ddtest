@@ -368,6 +368,14 @@ func TestJavaTelemetryNormalizesOnlyNamesTheAgentRenamed(t *testing.T) {
 		intake.Test{Module: "service", Suite: "example.ApiTest", Name: "convert", Parameters: `{"metadata":{"test_name":"[2] b"}}`, Attempts: []intake.TestRun{{Status: "pass", SpanID: 2}}})
 	run.framework = "cucumber-java"
 	require.Empty(t, verifyJavaTelemetry(run).Status, "JUnit signatures are normalized whatever framework was selected")
+	// A custom @ParameterizedTest name keeps the invocation index out of telemetry.
+	custom := func(span uint64) intake.Test {
+		return intake.Test{Module: "service", Suite: "example.ApiTest", Name: "convert", Parameters: `{"metadata":{"test_name":"Missing parameter a"}}`, Attempts: []intake.TestRun{{Status: "pass", SpanID: span}}}
+	}
+	run = javaTelemetryRun([]nativeTest{{File: "service / example.ApiTest", Name: "convert(String)[1]", Status: "passed"}, {File: "service / example.ApiTest", Name: "convert(String)[2]", Status: "passed"}}, custom(1), custom(2))
+	require.Empty(t, verifyJavaTelemetry(run).Status, "invocations still match by count")
+	run = javaTelemetryRun([]nativeTest{{File: "service / example.ApiTest", Name: "convert(String)[1]", Status: "passed"}, {File: "service / example.ApiTest", Name: "convert(String)[2]", Status: "passed"}}, custom(1))
+	require.Equal(t, "inconclusive", verifyJavaTelemetry(run).Status, "a missing invocation is still missing")
 }
 
 func TestJavaValidatesSurefireFrameworksWithPairedFeatureControls(t *testing.T) {

@@ -341,6 +341,9 @@ func javaTestName(name string) string {
 	return name
 }
 
+// javaInvocationSuffix is the [n] a JUnit 5 invocation's name ends with.
+var javaInvocationSuffix = regexp.MustCompile(`\[[0-9]+\]$`)
+
 // javaInvocationIndex is the [n] prefix of a JUnit 5 invocation's display name.
 var javaInvocationIndex = regexp.MustCompile(`^\[[0-9]+\]`)
 
@@ -380,17 +383,23 @@ func verifyJavaTelemetry(run validationRun) verdict {
 	}
 	statuses := map[string]string{"passed": "pass", "failed": "fail", "skipped": "skip"}
 	expected, observed := map[string]int{}, map[string]int{}
-	// One build may run several frameworks, so a native name is normalized
-	// only when the agent did not report it as written.
+	// One build may run several frameworks, so a native name is compared as
+	// written when the agent reported it so, else without its JUnit signature
+	// or TestNG arguments, else also without the invocation index, which a
+	// custom @ParameterizedTest name keeps out of the agent's telemetry.
 	reported := map[string]bool{}
 	for _, test := range run.Facts.Tests {
 		reported[fmt.Sprintf("%q %q %q", javaPluginSuffix.ReplaceAllString(test.Module, ""), javaFeatureURI.ReplaceAllString(test.Suite, ""), javaTelemetryName(test))] = true
 	}
 	for _, test := range run.Tests {
 		module, suite, _ := strings.Cut(test.File, " / ")
-		name := test.Name
-		if !reported[fmt.Sprintf("%q %q %q", module, suite, name)] {
-			name = javaTestName(name)
+		normalized := javaTestName(test.Name)
+		name := normalized
+		for _, candidate := range []string{test.Name, normalized, javaInvocationSuffix.ReplaceAllString(normalized, "")} {
+			if reported[fmt.Sprintf("%q %q %q", module, suite, candidate)] {
+				name = candidate
+				break
+			}
 		}
 		expected[fmt.Sprintf("module %q, class %q, test %q, status %q", module, suite, name, statuses[test.Status])]++
 	}
