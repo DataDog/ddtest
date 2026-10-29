@@ -37,6 +37,9 @@ type WorkflowEvidence struct {
 	// EarlierAttempts lists the codes of attempts that stopped before this
 	// run on the same resumed workflow, oldest first.
 	EarlierAttempts []string `json:"earlier_attempts,omitempty"`
+	// EarlierVaryingTests are the tests whose outcomes varied between
+	// repeats in those attempts.
+	EarlierVaryingTests []string `json:"earlier_varying_tests,omitempty"`
 }
 
 func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.WorkflowCheck {

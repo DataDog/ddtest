@@ -169,3 +169,45 @@ func TestUnstableIdentitiesListEveryExampleOnce(t *testing.T) {
 	require.Len(t, many.Differences, 51)
 	require.Contains(t, many.Differences[50], "and 10 more examples")
 }
+
+// Tests only one run reports are unstable identities only when they are
+// one example's names in different runs; disjoint stable names, as when
+// discovery runs different subsets, stay varying outcomes.
+func TestDisjointStableNamesAreNotUnstableIdentities(t *testing.T) {
+	run := func(names ...string) validationRun {
+		result := validationRun{root: "/repo"}
+		for _, name := range names {
+			result.Tests = append(result.Tests, jestTest{File: "/repo/test/math.test.js", Name: name, Status: "passed"})
+		}
+		return result
+	}
+	telemetry := func(validationRun) verdict { return verdict{Status: "compatible"} }
+	got := compareRepeatedRuns(run("adds"), run("subtracts"), run("multiplies"), run("divides"), telemetry)
+	require.Equal(t, "varying_outcomes", got.Code)
+
+	// RSpec truncates long descriptions in the middle at different places.
+	truncated := func(address, tail string) validationRun {
+		return run(`OmniAI::Schema.object is expected to eql {age: #<OmniAI::Schema::Scalar:` + address + ` @title=nil, ...` + tail + ` @title=nil, @description="The name"`)
+	}
+	got = compareRepeatedRuns(truncated("0x0000ec08fa587678", "87a88"), truncated("0x0000f06c9bc03980", "03f70"), truncated("0x0000aaaabbbbcccc", "1d2e3"), truncated("0x0000ddddeeeeffff", "9f8e7"), telemetry)
+	require.Equal(t, "unstable_test_identities", got.Code)
+	require.Len(t, got.Differences, 1)
+	require.Contains(t, got.Reason, "1 example (4 test names across the runs)")
+}
+
+// The report keeps every listed example of an unstable-identity verdict,
+// not the 10 differences other verdicts keep.
+func TestReportKeepsEveryUnstableExample(t *testing.T) {
+	var differences []string
+	for i := range 12 {
+		differences = append(differences, fmt.Sprintf("Reported by a single run: spec/file_spec.rb › example %d", i))
+	}
+	result := validationResult{Compatibility: verdict{Status: "inconclusive", Code: "unstable_test_identities", Differences: differences}}
+	root := t.TempDir()
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
+	data, err := os.ReadFile(validationPath(root))
+	require.NoError(t, err)
+	var report validationResult
+	require.NoError(t, json.Unmarshal(data, &report))
+	require.Len(t, report.Compatibility.Differences, 12)
+}

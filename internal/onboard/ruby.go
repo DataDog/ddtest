@@ -187,6 +187,19 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 	if !resolution.Matched || resolution.Reason != "" || len(resolution.Tests) != 1 {
 		return unresolved, true
 	}
+	if extra, ok := env["RUBYOPT"]; ok && extended {
+		// The argument extends the RUBYOPT the step inherits: keep the
+		// options it already carries (validation owns the preload).
+		inherited := ""
+		for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+			if value, set := layer["RUBYOPT"]; set {
+				inherited = value
+			}
+		}
+		inherited = strings.Replace(inherited, rubyInstallerPreload, "", 1)
+		inherited = strings.NewReplacer("${{ env.RUBYOPT }}", "", "${{env.RUBYOPT}}", "").Replace(inherited)
+		env["RUBYOPT"] = strings.Join(strings.Fields(inherited+" "+extra), " ")
+	}
 	resolution.Tests[0].Environment = mergeEnvironment(resolution.Tests[0].Environment, env)
 	return resolution, true
 }

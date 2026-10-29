@@ -500,7 +500,9 @@ type circleInvocation struct {
 	matrix              map[string]string
 	pre, post           *yaml.Node
 	disabled            bool
-	source              string
+	// executorProblem is why the job's executor can't be read.
+	executorProblem string
+	source          string
 }
 
 // invocations lists the jobs every workflow runs. A configuration without
@@ -756,8 +758,15 @@ func (c *circleConfig) environment(node *yaml.Node, scope *circleScope, job *cir
 // workflow converts every invocation into the shared model.
 func (c *circleConfig) workflow() ciWorkflow {
 	workflow := ciWorkflow{Path: circleCIFile, Jobs: map[string]runtimeJob{}}
+	seen := map[string]int{}
 	for _, invocation := range c.invocations() {
 		key := invocation.workflow + "/" + invocation.name
+		if seen[key]++; seen[key] > 1 {
+			// CircleCI rejects a workflow running two jobs under one name;
+			// keep both, and report the clash.
+			c.gaps = append(c.gaps, "workflow "+invocation.workflow+" runs more than one job named "+invocation.name+", which CircleCI rejects; give each its own name")
+			key = fmt.Sprintf("%s (%d)", key, seen[key])
+		}
 		unresolved := func(reason string) {
 			workflow.Jobs[key] = runtimeJob{Steps: []runtimeStep{{Number: 1, Source: invocation.source, ResolutionError: "CircleCI job " + key + ": " + reason}}}
 		}
@@ -768,6 +777,15 @@ func (c *circleConfig) workflow() ciWorkflow {
 				if purpose := circleNonTestOrbs[declared.path]; purpose != "" {
 					c.nonTest = append(c.nonTest, declared.reference)
 					c.review = append(c.review, circleCIFile+": workflow "+invocation.workflow+" runs "+invocation.job+" from "+declared.reference+", the "+purpose+"; it runs no tests and is outside this validation.")
+					if invocation.pre != nil || invocation.post != nil {
+						// Its workflow hooks are the configuration's own steps.
+						invocation.executorProblem = "the orb job " + invocation.job + "'s executor comes from an orb or parameter ddtest cannot read"
+						converted := c.convert(invocation, &yaml.Node{Kind: yaml.MappingNode}, nil)
+						if invocation.disabled {
+							converted.If = "false"
+						}
+						workflow.Jobs[key] = converted
+					}
 					continue
 				}
 				if !invocation.disabled {
@@ -826,6 +844,9 @@ func (c *circleConfig) convert(invocation circleInvocation, definition *yaml.Nod
 	scope := c.parameters(definition, invocation.arguments, &circleScope{matrix: invocation.matrix}, orb)
 	job := &circleJob{name: invocation.workflow + "/" + invocation.name, env: map[string]string{}, directory: "~/project", legacy: circleLegacyVersion(gitLabScalar(c.top["version"]))}
 	c.circleExecutor(job, fields, scope, 0)
+	if invocation.executorProblem != "" {
+		job.imageProblem = invocation.executorProblem
+	}
 	job.env = mergeEnvironment(job.env, c.environment(fields["environment"], scope, job))
 	if directory := gitLabScalar(fields["working_directory"]); directory != "" {
 		job.directory = c.substitute(directory, scope)
@@ -1331,6 +1352,44 @@ func circleExpandVariables(command string, variables map[string]string) (string,
 	}
 	var replacements []replacement
 	problem := ""
+	// assigned is where the step itself first sets a variable: reads after
+	// it see that value, not the persisted one, and stay as written. A
+	// prefix assignment (NAME=x cmd $NAME) applies after the expansion.
+	assigned := map[string]uint{}
+	set := func(name string, at uint) {
+		if previous, ok := assigned[name]; !ok || at < previous {
+			assigned[name] = at
+		}
+	}
+	syntax.Walk(file, func(node syntax.Node) bool {
+		switch node := node.(type) {
+		case *syntax.CallExpr:
+			if len(node.Args) == 0 {
+				for _, assign := range node.Assigns {
+					set(assign.Name.Value, assign.End().Offset())
+				}
+			} else if name := node.Args[0].Lit(); name == "read" || name == "unset" || name == "mapfile" || name == "readarray" || name == "getopts" {
+				for _, word := range node.Args[1:] {
+					if _, known := variables[word.Lit()]; known {
+						problem = joinDiagnostic(problem, "the command sets $"+word.Lit()+", which an earlier step assigned in $BASH_ENV, with "+name+", which ddtest does not follow")
+					}
+				}
+			}
+		case *syntax.DeclClause:
+			for _, assign := range node.Args {
+				if assign.Name != nil {
+					set(assign.Name.Value, assign.End().Offset())
+				}
+			}
+		case *syntax.ForClause:
+			if loop, ok := node.Loop.(*syntax.WordIter); ok {
+				if _, known := variables[loop.Name.Value]; known {
+					problem = joinDiagnostic(problem, "the command loops over $"+loop.Name.Value+", which an earlier step assigned in $BASH_ENV")
+				}
+			}
+		}
+		return true
+	})
 	var stack []syntax.Node
 	syntax.Walk(file, func(node syntax.Node) bool {
 		if node == nil {
@@ -1339,6 +1398,9 @@ func circleExpandVariables(command string, variables map[string]string) (string,
 		}
 		if parameter, isRead := node.(*syntax.ParamExp); isRead {
 			value, known := variables[parameter.Param.Value]
+			if at, local := assigned[parameter.Param.Value]; known && local && parameter.Pos().Offset() >= at {
+				known = false // The step's own value.
+			}
 			if known {
 				quoted := false
 				for _, parent := range stack {
@@ -1431,6 +1493,9 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 	// variables are plain assignments steps appended to $BASH_ENV: shell
 	// variables later Bash steps can expand, not environment.
 	variables := map[string]string{}
+	// deferredReads are variables text appended to $BASH_ENV reads, with
+	// the value they had when it was appended.
+	deferredReads := map[string]string{}
 	var steps []runtimeStep
 	for i, item := range raw {
 		// An edit moves a version 2 configuration to 2.1 itself.
@@ -1448,6 +1513,18 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 		problem := item.problem
 		if bash {
 			env = mergeEnvironment(item.env, state.env)
+			for _, name := range slices.Sorted(maps.Keys(deferredReads)) {
+				value, set := job.env[name]
+				if own, ownSet := item.env[name]; ownSet {
+					value, set = own, true
+				}
+				_, exported := state.env[name]
+				_, referenced := state.references[name]
+				// Variables $BASH_ENV itself sets read the same in every step.
+				if !exported && !referenced && (set || deferredReads[name] != "") && value != deferredReads[name] {
+					problem = joinDiagnostic(problem, "the step sets "+name+", which text appended to $BASH_ENV reads when the step starts; ddtest evaluated it with "+name+" as the earlier step had it")
+				}
+			}
 		} else if setupApplied {
 			problem = joinDiagnostic(problem, "the step runs with /bin/sh, which does not read $BASH_ENV, so the Datadog orb's exports don't reach it; run it with Bash")
 		}
@@ -1480,7 +1557,8 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 			steps = append(steps, step)
 			continue
 		}
-		curl = curl || installsCurl(item.run)
+		// Only an install that certainly runs provides curl.
+		curl = curl || item.conditional == "" && installsCurl(item.run)
 		step.Run = run
 		if item.conditional != "" && strings.Contains(item.run, "BASH_ENV") {
 			// Later steps differ by a pipeline value ddtest doesn't know.
@@ -1489,7 +1567,7 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 			state.problem = joinDiagnostic(state.problem, circleUnfollowedBashEnv)
 		} else if problem == "" {
 			before := maps.Clone(state.references)
-			consumed, followed := circleFollowBashEnv(&state, run, mergeEnvironment(mergeEnvironment(job.env, item.env), state.env))
+			consumed, followed := circleFollowBashEnv(&state, run, mergeEnvironment(mergeEnvironment(job.env, item.env), state.env), deferredReads)
 			if consumed {
 				step.Run = ""
 			}

@@ -330,3 +330,17 @@ func TestRubyHandoffOffersTheInlineRakeOptions(t *testing.T) {
 	writeFile(t, root, ".gitlab-ci.yml", "test:\n  image: ruby:3.3\n  script:\n    - bundle exec rake\n")
 	require.NotContains(t, providerSetupInstructions(root, gitLabCI{}, "ruby", "minitest", "", true), "as a rake argument")
 }
+
+// A rake RUBYOPT="$RUBYOPT -W2" argument extends what the job already
+// exports, such as the Minitest fork initializer: the configuration keeps
+// those options and adds -W2, while validation owns the preload.
+func TestRakeRubyOptionsKeepInheritedOptions(t *testing.T) {
+	root := circleRubyRepository(t, circleRubyJob("cimg/ruby:3.3", "", "", "      - run: echo 'export RUBYOPT=\"$RUBYOPT -r./ci/datadog_test_optimization.rb\"' >> \"$BASH_ENV\"\n"))
+	data := readFixtureFile(t, root, circleCIFile)
+	writeFile(t, root, circleCIFile, strings.Replace(data, "      - run: bundle exec rspec\n", "      - run: bundle exec rake RUBYOPT=\"$RUBYOPT -W2\"\n", 1))
+	scope, err := DiscoverValidationScope(root, "rspec")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "bundle exec rake", scope.Commands[0].Command)
+	require.Equal(t, "-r./ci/datadog_test_optimization.rb -W2", scope.Commands[0].Environment["RUBYOPT"])
+}

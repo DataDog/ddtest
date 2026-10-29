@@ -98,7 +98,7 @@ var circleBashEnv = regexp.MustCompile(`^"?\$\{?BASH_ENV\}?"?$`)
 // nothing later steps must replay; followed is false when the step touches
 // $BASH_ENV in a way ddtest cannot follow, such as writing text it cannot
 // evaluate or that runs commands in every later step.
-func circleFollowBashEnv(state *ciShellState, command string, known map[string]string) (consumed, followed bool) {
+func circleFollowBashEnv(state *ciShellState, command string, known map[string]string, reads map[string]string) (consumed, followed bool) {
 	if !strings.Contains(command, "BASH_ENV") {
 		return false, true
 	}
@@ -162,9 +162,18 @@ func circleFollowBashEnv(state *ciShellState, command string, known map[string]s
 			}
 		}
 	}
-	// Every appended statement only changes state.
+	// Every appended statement only changes state. Bash evaluates it again
+	// when each later step starts: reads records what each variable it reads
+	// was here, so a step that sets it differently can be told apart.
 	for _, text := range appended {
 		file, _ := parseCIShell(text)
+		visible := mergeEnvironment(mergeEnvironment(mergeEnvironment(known, state.env), state.references), values)
+		syntax.Walk(file, func(node syntax.Node) bool {
+			if parameter, ok := node.(*syntax.ParamExp); ok && reads != nil && !strings.HasPrefix(parameter.Param.Value, "__ddtest_echo_") {
+				reads[parameter.Param.Value] = visible[parameter.Param.Value]
+			}
+			return true
+		})
 		for _, stmt := range file.Stmts {
 			state.statement(stmt, mergeEnvironment(mergeEnvironment(mergeEnvironment(known, state.env), state.references), values))
 		}

@@ -622,7 +622,12 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	result.Error = reportText(result.Error)
 	result.Compatibility.Reason = reportText(result.Compatibility.Reason)
 	result.Compatibility.DifferenceCount = len(result.Compatibility.Differences)
-	result.Compatibility.Differences = slices.Clone(result.Compatibility.Differences[:min(len(result.Compatibility.Differences), maxReportDifferences)])
+	// An unstable-identity verdict names every example to fix.
+	limit := maxReportDifferences
+	if result.Compatibility.Code == "unstable_test_identities" {
+		limit = maxUnstableExamples + 1
+	}
+	result.Compatibility.Differences = slices.Clone(result.Compatibility.Differences[:min(len(result.Compatibility.Differences), limit)])
 	for i, difference := range result.Compatibility.Differences {
 		result.Compatibility.Differences[i] = reportText(difference)
 	}

@@ -94,19 +94,25 @@ func compareRepeatedRuns(baseline, instrumented, baselineAgain, instrumentedAgai
 	}
 	// Keep exit codes and suite-level differences when no test identity explains
 	// the varying run, rather than pretending a process failure is a test failure.
-	if len(unstable) > 0 && len(unstable) == len(variable) && len(recurring) == 0 {
+	// One-off names are unstable identities only when each is one example's
+	// name in one of several runs; disjoint stable names stay varying.
+	runsNamed := map[string]int{}
+	for _, label := range unstable {
+		runsNamed[generatedName(label)]++
+	}
+	variants := len(unstable) > 0 && !slices.ContainsFunc(unstable, func(label string) bool { return runsNamed[generatedName(label)] < 2 })
+	if variants && len(unstable) == len(variable) && len(recurring) == 0 {
 		// Every difference is a test only one run reported: the set of names
 		// differs, not the outcomes. Each example is listed once, under the
 		// name one run gave it.
 		var examples []string
-		seen := map[string]bool{}
+		names := map[string]int{}
 		for _, label := range unstable {
 			key := generatedName(label)
-			if seen[key] {
-				continue
+			if names[key] == 0 {
+				examples = append(examples, label)
 			}
-			seen[key] = true
-			examples = append(examples, label)
+			names[key]++
 		}
 		result.Code = "unstable_test_identities"
 		result.Reason = fmt.Sprintf("%d %s (%d test names across the runs) %s reported by a single run: these test names change between runs, usually because a description the framework generates (such as a one-line example described by its matcher) embeds a temporary file name, a timestamp or another value created at run time. Every run then reports different tests, so outcomes cannot be compared, and Test Optimization cannot track these tests across CI runs either. Give each listed example a static description; ddtest does not rename tests.", len(examples), plural(len(examples), "example", "examples"), len(unstable), plural(len(examples), "is", "are"))
@@ -172,11 +178,15 @@ func outcomeDescription(values []string) string {
 const maxUnstableExamples = 50
 
 // generatedValues are the parts of a test name a run generates: quoted
-// strings, file paths holding digits and object addresses.
-var generatedValues = regexp.MustCompile(`"[^"]*"|'[^']*'|/[^\s>"']*[0-9][^\s>"']*|0x[0-9a-fA-F]+`)
+// strings, file paths holding digits, object addresses, timestamps and long
+// numbers.
+var generatedValues = regexp.MustCompile(`"[^"]*"|'[^']*'|/[^\s>"']*[0-9][^\s>"']*|0x[0-9a-fA-F]+|[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.]+|[0-9]{6,}`)
 
 // generatedName is a test label without the values a run generates, so the
-// names one example takes in different runs read the same.
+// names one example takes in different runs read the same. A description
+// a framework truncated in the middle ("...") compares by what precedes the
+// cut, which moves with the generated values.
 func generatedName(label string) string {
+	label, _, _ = strings.Cut(label, "...")
 	return generatedValues.ReplaceAllString(label, "…")
 }

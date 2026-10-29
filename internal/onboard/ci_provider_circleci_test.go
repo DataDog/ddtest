@@ -457,6 +457,7 @@ func TestCircleCISetupProblems(t *testing.T) {
 		{name: "alpine", orb: "@2", image: "node:22-alpine", problem: "has no Bash, so CircleCI runs its steps with /bin/sh"},
 		{name: "slim", orb: "@2", image: "node:22-slim", problem: "has neither curl nor wget"},
 		{name: "slim with curl", orb: "@2", image: "node:22-slim", jobExtra: "      - run: apt-get update && apt-get install -y curl\n"},
+		{name: "slim with a conditional curl install", orb: "@2", image: "node:22-slim", jobExtra: "      - when:\n          condition:\n            equal: [ main, << pipeline.git.branch >> ]\n          steps:\n            - run: apt-get update && apt-get install -y curl\n", problem: "has neither curl nor wget"},
 		{name: "committed key", orb: "@2", jobExtra: "", image: "cimg/node:22.11\n    environment:\n      DD_API_KEY: abc", problem: "never commit the key"},
 		{name: "sh shell", orb: "@2", image: "cimg/node:22.11\n    shell: /bin/sh -eo pipefail", problem: "only Bash reads the $BASH_ENV"},
 	} {
@@ -837,6 +838,13 @@ func TestCircleCIReviewFindings(t *testing.T) {
 			require.Contains(t, job.Steps[1].ResolutionError, "writes to $BASH_ENV in a way ddtest cannot follow", write)
 		}
 	})
+	t.Run("$BASH_ENV text reads variables when each step sources it", func(t *testing.T) {
+		config := "version: 2.1\njobs:\n  test:\n" + image + "    environment:\n      SUITE: unit\n    steps:\n      - run: echo 'export FILTER=\"$SUITE\"' >> \"$BASH_ENV\"\n      - run: npm test -- --filter=$FILTER\n      - run:\n          command: npm test -- --filter=$FILTER\n          environment:\n            SUITE: integration\n" + circleWorkflow("      - test\n")
+		job := circleJobs(t, circleRepository(t, config))["main/test"]
+		require.Empty(t, job.Steps[1].ResolutionError)
+		require.Equal(t, "unit", job.Steps[1].Env["FILTER"])
+		require.Contains(t, job.Steps[2].ResolutionError, "sets SUITE, which text appended to $BASH_ENV reads when the step starts")
+	})
 	t.Run("only the expansions Bash performs are substituted", func(t *testing.T) {
 		for command, want := range map[string]string{
 			`npm test -- --testNamePattern='$SUITE'`:              `npm test -- --testNamePattern='$SUITE'`,
@@ -851,7 +859,17 @@ func TestCircleCIReviewFindings(t *testing.T) {
 			require.Empty(t, problem, command)
 			require.Equal(t, want, got, command)
 		}
-		for _, command := range []string{`npm test -- $SPACED`, `npm test -- ${SUITE:-unit}`} {
+		// An assignment in the step itself wins for the reads after it.
+		for command, want := range map[string]string{
+			"SUITE=unit; npm test -- $SUITE":                                "SUITE=unit; npm test -- $SUITE",
+			"npm run lint -- $SUITE\nexport SUITE=unit\nnpm test -- $SUITE": "npm run lint -- integration\nexport SUITE=unit\nnpm test -- $SUITE",
+			"SUITE=unit npm test -- $SUITE":                                 "SUITE=unit npm test -- integration",
+		} {
+			got, problem := circleExpandVariables(command, map[string]string{"SUITE": "integration"})
+			require.Empty(t, problem, command)
+			require.Equal(t, want, got, command)
+		}
+		for _, command := range []string{`npm test -- $SPACED`, `npm test -- ${SUITE:-unit}`, "read SUITE < suite.txt; npm test -- $SUITE", "unset SUITE; npm test -- $SUITE", "for SUITE in a b; do npm test -- $SUITE; done"} {
 			_, problem := circleExpandVariables(command, map[string]string{"SUITE": "integration", "SPACED": "a b"})
 			require.NotEmpty(t, problem, command)
 		}
@@ -1002,4 +1020,56 @@ func TestCircleCINodeInstallSelectsTheRuntimeCheckedNode(t *testing.T) {
 	}, "jest")
 	require.Equal(t, StatusCompatible, result.Status, result)
 	require.Equal(t, "20.11.1", result.Jobs[len(result.Jobs)-1].Node)
+}
+
+// A workflow running one job twice under the same name keeps both
+// invocations, and the name clash, which CircleCI rejects, is unresolved.
+func TestCircleCIRepeatedJobNamesKeepEveryInvocation(t *testing.T) {
+	config := "version: 2.1\njobs:\n  test:\n    parameters:\n      suite:\n        type: string\n    docker:\n      - image: cimg/node:22.11\n    steps:\n      - run: npm test -- << parameters.suite >>\n" + circleWorkflow("      - test:\n          suite: unit\n      - test:\n          suite: integration\n")
+	jobs := circleJobs(t, circleRepository(t, config))
+	require.Equal(t, []string{"npm test -- unit"}, circleRuns(jobs["main/test"]))
+	require.Equal(t, []string{"npm test -- integration"}, circleRuns(jobs["main/test (2)"]))
+	require.Contains(t, circleRuns(jobs["(unresolved configuration 1)"])[0], "workflow main runs more than one job named test")
+}
+
+// Workflow hooks on a non-test orb's job are the configuration's own steps:
+// they are read, and a test they run is in scope.
+func TestCircleCIHooksOnNonTestOrbJobsAreRead(t *testing.T) {
+	config := "version: 2.1\norbs:\n  snyk: snyk/snyk@2.1.0\njobs:\n  lint:\n    docker:\n      - image: cimg/node:22.11\n    steps:\n      - run: echo lint\n" + circleWorkflow("      - snyk/scan:\n          pre-steps:\n            - checkout\n            - run: npm test\n")
+	root := circleRepository(t, config)
+	jobs := circleJobs(t, root)
+	require.Equal(t, []string{"npm test"}, circleRuns(jobs["main/snyk/scan"]))
+	require.Contains(t, jobs["main/snyk/scan"].Steps[0].origin.(circleStep).setupProblem, "comes from an orb or parameter ddtest cannot read")
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+}
+
+// A build-only job running a repository script, next to the test job, is a
+// job that never runs the framework: a caveat, not a blocker, on every
+// provider. Preparation inside a test job still needs resolution.
+func TestBuildOnlyJobsAreOutsideTheWorkflowScope(t *testing.T) {
+	pkg := `{"scripts":{"test":"jest","build":"node scripts/build.js"},"devDependencies":{"jest":"29.7.0"}}`
+	for provider, config := range map[string]string{
+		"circleci": "version: 2.1\njobs:\n  build:\n    docker:\n      - image: cimg/node:22.11\n    steps:\n      - checkout\n      - run: npm ci\n      - run: node scripts/build.js\n  test:\n    docker:\n      - image: cimg/node:22.11\n    steps:\n      - run: npm ci\n      - run: npm test\n" + circleWorkflow("      - build\n      - test\n"),
+		"gitlab":   "build:\n  image: node:22\n  script:\n    - npm ci\n    - node scripts/build.js\ntest:\n  image: node:22\n  script:\n    - npm ci\n    - npm test\n",
+	} {
+		t.Run(provider, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, root, "package.json", pkg)
+			writeFile(t, root, "scripts/build.js", "console.log('build')\n")
+			path := circleCIFile
+			if provider == "gitlab" {
+				path = ".gitlab-ci.yml"
+			}
+			writeFile(t, root, path, config)
+			useCIProvider(t, provider)
+			scope, err := DiscoverWorkflowScope(root, "jest")
+			require.NoError(t, err)
+			require.Empty(t, scope.Unresolved)
+			require.Len(t, scope.Commands, 1)
+			require.NotEmpty(t, scope.Caveats)
+			require.Contains(t, strings.Join(scope.Caveats, "\n"), "never runs jest")
+		})
+	}
 }
