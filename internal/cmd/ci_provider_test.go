@@ -62,7 +62,7 @@ func TestCIProviderFlagRejectsUnknownProviders(t *testing.T) {
 			require.Error(t, err)
 			require.Equal(t, "invalid_options", result.Code)
 			require.Equal(t, "options", result.Phase)
-			require.Equal(t, `unsupported --ci-provider "jenkins"; supported CI providers: github, gitlab, circleci`, result.Reason)
+			require.Equal(t, `unsupported --ci-provider "jenkins"; supported CI providers: github, gitlab, circleci, buildkite`, result.Reason)
 			require.NoDirExists(t, ".testoptimization")
 		})
 	}
@@ -73,7 +73,7 @@ func TestCIProviderFlagRejectsUnknownProviders(t *testing.T) {
 		var out bytes.Buffer
 		command.SetOut(&out)
 		command.SetErr(io.Discard)
-		require.EqualError(t, command.ExecuteContext(t.Context()), `unsupported --ci-provider "jenkins"; supported CI providers: github, gitlab, circleci`)
+		require.EqualError(t, command.ExecuteContext(t.Context()), `unsupported --ci-provider "jenkins"; supported CI providers: github, gitlab, circleci, buildkite`)
 		require.Empty(t, out.String())
 	})
 }

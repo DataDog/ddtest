@@ -52,9 +52,10 @@ func (rubyDiscovery) coordinated() bool { return true }
 func (rubyDiscovery) automaticCISetup() bool { return false }
 
 // Ruby setup uses the Datadog GitHub Actions setup action, the Datadog
-// GitLab setup script or the Datadog CircleCI orb.
+// GitLab setup script, the Datadog CircleCI orb or, on Buildkite, the Datadog
+// installer.
 func (rubyDiscovery) supportsCIProvider(provider string) bool {
-	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider
+	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider
 }
 
 // The installer adds datadog-ci to the bundle and replaces RUBYOPT with its

@@ -1,0 +1,13 @@
+{
+  "name": "buildkite-javascript-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint --ext .ts src",
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "29.7.0"
+  }
+}

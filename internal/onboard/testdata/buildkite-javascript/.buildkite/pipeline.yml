@@ -1,0 +1,24 @@
+# From heap/eslint-plugin-heap (MIT), .buildkite/pipeline.yml, with the
+# docker plugin's node:14 image, older than every supported dd-trace
+# release, moved to node:22.
+steps:
+  - label: ":jest: Jest Tests"
+    command: "npm install && npm test"
+    plugins:
+      - docker#v3.2.0:
+          image: "node:22"
+          workdir: /app
+
+  - label: ":eslint: ESLint"
+    command: "npm install && npm run lint"
+    plugins:
+      - docker#v3.2.0:
+          image: "node:22"
+          workdir: /app
+
+  - label: ":typescript: Build"
+    command: "./.buildkite/validate_build.bash"
+    plugins:
+      - docker#v3.2.0:
+          image: "node:22"
+          workdir: /app

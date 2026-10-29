@@ -32,10 +32,10 @@ func (javascriptDiscovery) coordinated() bool { return true }
 
 func (javascriptDiscovery) automaticCISetup() bool { return true }
 
-// JavaScript setup edits and checks GitHub Actions workflows, GitLab CI and
-// CircleCI.
+// JavaScript setup edits and checks GitHub Actions workflows, GitLab CI,
+// CircleCI and Buildkite.
 func (javascriptDiscovery) supportsCIProvider(provider string) bool {
-	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider
+	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider
 }
 
 // Outside GitHub Actions the installer appends its require preload to the
