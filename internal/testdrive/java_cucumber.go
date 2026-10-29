@@ -92,8 +92,8 @@ var (
 	// A JUnit 4 runner, a JUnit Platform suite of the Cucumber engine, or the
 	// engine's own @Cucumber class.
 	// Annotations may be fully qualified, as in @org.junit.runner.RunWith.
-	javaCucumberRunner = regexp.MustCompile(`@(?:[\w.]+\.)?RunWith\(\s*(?:[\w.]+\.)?Cucumber\.class\s*\)|@(?:[\w.]+\.)?IncludeEngines\(\s*\{?\s*"cucumber"|@(?:io\.cucumber\.junit\.platform\.engine\.)?Cucumber\b`)
-	javaCucumberSuite  = regexp.MustCompile(`@(?:[\w.]+\.)?IncludeEngines\(\s*\{?\s*"cucumber"`)
+	javaCucumberRunner = regexp.MustCompile(`@(?:[\w.]+\.)?RunWith\(\s*(?:[\w.]+\.)?Cucumber\.class\s*\)|@(?:[\w.]+\.)?IncludeEngines\(\s*(?:\{\s*(?:"[^"]*"\s*,\s*)*)?"cucumber"|@(?:io\.cucumber\.junit\.platform\.engine\.)?Cucumber\b`)
+	javaCucumberSuite  = regexp.MustCompile(`@(?:[\w.]+\.)?IncludeEngines\(\s*(?:\{\s*(?:"[^"]*"\s*,\s*)*)?"cucumber"`)
 	// glue = "x" or glue = {"x", ...} in @CucumberOptions, or the suite's
 	// glue configuration parameter.
 	javaCucumberGlue = regexp.MustCompile(`\bglue\s*=\s*\{?\s*"([^"]+)"|key\s*=\s*(?:(?:[\w.]+\.)?GLUE_PROPERTY_NAME|"cucumber\.glue")\s*,\s*value\s*=\s*"([^"]+)"|value\s*=\s*"([^"]+)"\s*,\s*key\s*=\s*(?:(?:[\w.]+\.)?GLUE_PROPERTY_NAME|"cucumber\.glue")`)
@@ -115,8 +115,18 @@ func javaCucumberProbe(checkout, module string, args []string) (javaProbe, strin
 		return javaProbe{}, "No Cucumber runner class (@RunWith(Cucumber.class) or a JUnit Platform suite of the cucumber engine) was found in " + module + "'s test sources, so the probe feature cannot be selected alone.", nil
 	}
 	// The selected command's own glue property wins over the runner's.
-	for _, arg := range args {
-		if value, ok := strings.CutPrefix(arg, "-Dcucumber.glue="); ok {
+	for i := 0; i < len(args); i++ {
+		property := ""
+		switch arg := args[i]; {
+		case (arg == "-D" || arg == "--define") && i+1 < len(args):
+			property = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--define="):
+			property = strings.TrimPrefix(arg, "--define=")
+		case strings.HasPrefix(arg, "-D"):
+			property = strings.TrimPrefix(arg, "-D")
+		}
+		if value, ok := strings.CutPrefix(property, "cucumber.glue="); ok {
 			glue = javaGluePackage(value)
 		}
 	}

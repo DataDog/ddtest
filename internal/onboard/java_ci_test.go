@@ -463,3 +463,18 @@ func TestJavaMetadataScriptsAndLaunchersFollowTheirEnvironmentAndMatrix(t *testi
 	ci := JavaCIConfiguration(javaWorkflowFixture(t, launcher, nil), "junit5", "")
 	require.Len(t, ci.Jobs, 2, "the expanded launcher runs Maven: %+v", ci.Jobs)
 }
+
+func TestJavaMetadataScriptsYieldToExportedArgsAndConfigGoals(t *testing.T) {
+	metadata := "VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)\necho $VERSION"
+	root := javaWorkflowFixture(t, "", nil)
+	require.Empty(t, javaStep(t, root, metadata).Reason, "metadata alone runs no tests")
+	// An earlier step may export MAVEN_ARGS for later steps.
+	job := runtimeJob{Steps: []runtimeStep{{Run: "echo 'MAVEN_ARGS=test' >> \"$GITHUB_ENV\""}, {Run: metadata}}}
+	require.NotEmpty(t, resolveJavaStep(root, ciWorkflow{}, job, job.Steps[1], "junit5").Reason)
+	// So may the project's Maven configuration.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".mvn"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".mvn", "maven.config"), []byte("# shared\n-B\ntest\n"), 0o644))
+	require.NotEmpty(t, javaStep(t, root, metadata).Reason, "a goal in maven.config runs with every Maven call")
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".mvn", "maven.config"), []byte("-B\n-ntp\n"), 0o644))
+	require.Empty(t, javaStep(t, root, metadata).Reason, "options alone add no goals")
+}

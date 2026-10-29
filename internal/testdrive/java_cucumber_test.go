@@ -26,6 +26,7 @@ func TestJavaCucumberProbeUsesTheRunnerAndItsGlue(t *testing.T) {
 		{"platform suite", "package com.acme;\n@Suite\n@IncludeEngines(\"cucumber\")\n@ConfigurationParameter(key = GLUE_PROPERTY_NAME, value = \"classpath:com/acme/glue\")\npublic class RunCucumberTest {}\n", "", "com.acme.glue", true},
 		{"qualified suite key", "package com.acme;\n@org.junit.platform.suite.api.Suite\n@org.junit.platform.suite.api.IncludeEngines(\"cucumber\")\n@ConfigurationParameter(key = io.cucumber.junit.platform.engine.Constants.GLUE_PROPERTY_NAME, value = \"com.acme.qualified\")\npublic class RunCucumberTest {}\n", "", "com.acme.qualified", true},
 		{"platform properties", "package com.acme;\n@Suite\n@IncludeEngines(\"cucumber\")\npublic class RunCucumberTest {}\n", "cucumber.glue = com.acme.props\n", "com.acme.props", true},
+		{"cucumber after other engines", "package com.acme;\n@Suite\n@IncludeEngines({\"junit-jupiter\", \"cucumber\"})\n@ConfigurationParameter(key = GLUE_PROPERTY_NAME, value = \"com.acme.mixed\")\npublic class RunCucumberTest {}\n", "", "com.acme.mixed", true},
 		{"value before key", "package com.acme;\n@Suite\n@IncludeEngines(\"cucumber\")\n@ConfigurationParameter(value = \"com.acme.reversed\", key = GLUE_PROPERTY_NAME)\npublic class RunCucumberTest {}\n", "", "com.acme.reversed", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,6 +118,11 @@ func TestJavaCucumberProbeHonorsTheCommandGlueAndInheritedBackends(t *testing.T)
 	// from its parent: its own POM declares no Cucumber dependency.
 	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "example", "steps", "Steps.java"), "package example.steps;\npublic class Steps implements io.cucumber.java8.En {}\n")
 	writeJavaSource(t, filepath.Join(root, "pom.xml"), "<project><parent><artifactId>parent</artifactId></parent><artifactId>service</artifactId></project>")
+	for _, args := range [][]string{{"-D", "cucumber.glue=example.steps"}, {"--define", "cucumber.glue=example.steps"}, {"--define=cucumber.glue=example.steps"}} {
+		probe, _, err := javaCucumberProbe(root, ".", append(args, "test"))
+		require.NoError(t, err)
+		require.Equal(t, filepath.Join("src", "test", "java", "example", "steps", "DdtestValidationSteps.java"), probe.files[1].path, "separated property forms: %v", args)
+	}
 	probe, reason, err := javaCucumberProbe(root, ".", []string{"-B", "-Dcucumber.glue=example.steps", "test"})
 	require.NoError(t, err)
 	require.Empty(t, reason)

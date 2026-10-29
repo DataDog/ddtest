@@ -295,6 +295,8 @@ func TestUpToTestStopsProbeBuildsAfterSurefire(t *testing.T) {
 		"test-compile integration-test verify": "test-compile test",
 		"-pl core -am verify":                  "-pl core -am test",
 		"org.apache.maven.plugins:maven-failsafe-plugin:3.5.4:integration-test": "test",
+		"surefire:test failsafe:integration-test":                               "surefire:test",
+		"test surefire:test": "test",
 	} {
 		require.Equal(t, want, strings.Join(UpToTest(strings.Fields(args)), " "), args)
 	}

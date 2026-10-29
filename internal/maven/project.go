@@ -259,6 +259,12 @@ func UpToTest(args []string) []string {
 			i++
 			continue
 		case strings.HasPrefix(arg, "-"):
+		case shortGoal(arg) == "surefire:test":
+			// The goal runs the tests itself; later phases add nothing.
+			if test {
+				continue
+			}
+			test = true
 		case slices.Contains(afterTestPhases, shortGoal(arg)) || arg == "test":
 			if test {
 				continue

@@ -6,8 +6,11 @@
 package onboard
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -48,7 +51,8 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	parts, parseErr := staticCommands(step.Run)
 	// Release steps read project metadata, as in VERSION=$(mvn help:evaluate …),
 	// unless an inherited MAVEN_ARGS adds goals.
-	if parseErr != nil && javaMetadataScript(step.Run) && workflow.Env["MAVEN_ARGS"] == "" && job.Env["MAVEN_ARGS"] == "" && step.Env["MAVEN_ARGS"] == "" {
+	if parseErr != nil && javaMetadataScript(step.Run) && workflow.Env["MAVEN_ARGS"] == "" && job.Env["MAVEN_ARGS"] == "" && step.Env["MAVEN_ARGS"] == "" &&
+		!javaExportsMavenArgs(job) && !javaConfigGoals(root, directory) {
 		return commandResolution{}
 	}
 	if parseErr != nil {
@@ -218,6 +222,37 @@ func javaMetadataScript(run string) bool {
 		return true
 	})
 	return metadata && readsMaven
+}
+
+// javaExportsMavenArgs reports a job step that may set MAVEN_ARGS for later
+// steps through the GITHUB_ENV file.
+func javaExportsMavenArgs(job runtimeJob) bool {
+	return slices.ContainsFunc(job.Steps, func(step runtimeStep) bool {
+		return strings.Contains(step.Run, "MAVEN_ARGS") && strings.Contains(step.Run, "GITHUB_ENV")
+	})
+}
+
+// javaConfigGoals reports goals in the .mvn/maven.config that Maven reads for
+// a command run in directory: the nearest one up to the repository root.
+func javaConfigGoals(root, directory string) bool {
+	for current := directory; ; current = filepath.Dir(current) {
+		if info, err := os.Stat(filepath.Join(root, current, ".mvn")); err == nil && info.IsDir() {
+			data, err := os.ReadFile(filepath.Join(root, current, ".mvn", "maven.config"))
+			if err != nil {
+				return !errors.Is(err, fs.ErrNotExist)
+			}
+			var args []string
+			for _, line := range strings.Split(string(data), "\n") {
+				if line = strings.TrimSpace(line); !strings.HasPrefix(line, "#") {
+					args = append(args, strings.Fields(line)...)
+				}
+			}
+			return len(maven.Goals(args)) > 0
+		}
+		if current == "." {
+			return false
+		}
+	}
 }
 
 // javaRepositoryScript reports a command that runs a script from the
