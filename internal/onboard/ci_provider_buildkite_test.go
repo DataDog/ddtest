@@ -866,3 +866,104 @@ func TestBuildkiteReviewFindings(t *testing.T) {
 		require.Len(t, rows, 200)
 	})
 }
+
+// Findings of the second review round: what a container and the step's
+// shell actually receive, and which files are pipelines.
+func TestBuildkiteContainerAndShellFindings(t *testing.T) {
+	snippet := buildkiteSnippetText("js", "5.133.0", "datadoghq.com", "      ")
+	t.Run("a pipeline file whose name mentions compose", func(t *testing.T) {
+		root := buildkiteRepository(t, "steps:\n  - command: echo lint\n")
+		writeFile(t, root, ".buildkite/pipeline-compose-tests.yml", "steps:\n  - label: tests\n    command: npm test\n")
+		writeFile(t, root, ".buildkite/docker-compose.ci.yml", "version: \"3\"\nservices:\n  app:\n    image: node:22\n")
+		files, err := buildkite{}.configurationFiles(root)
+		require.NoError(t, err)
+		require.Equal(t, []string{".buildkite/pipeline-compose-tests.yml", buildkiteFile}, files)
+		require.Equal(t, []string{"npm test"}, circleRuns(buildkiteJobs(t, root, ".buildkite/pipeline-compose-tests.yml")["tests"]))
+	})
+	t.Run("a Compose service entrypoint replacing the commands", func(t *testing.T) {
+		for entrypoint, unresolved := range map[string]bool{"[sh, -c, 'npm run integration']": true, "\"\"": false, "[tini, --]": false, "docker-entrypoint.sh": false} {
+			root := buildkiteRepository(t, "steps:\n  - label: test\n    command: npm test\n    plugins:\n      - docker-compose#v5.5.0:\n          run: app\n")
+			writeFile(t, root, "docker-compose.yml", "services:\n  app:\n    image: node:22\n    volumes:\n      - .:/app\n    entrypoint: "+entrypoint+"\n")
+			runs := circleRuns(buildkiteJobs(t, root, buildkiteFile)["test"])
+			if unresolved {
+				require.Contains(t, runs[0], "the Docker Compose service app's entrypoint sh -c npm run integration receives the commands", entrypoint)
+			} else {
+				require.Equal(t, []string{"npm test"}, runs, entrypoint)
+			}
+		}
+		root := buildkiteRepository(t, "steps:\n  - label: test\n    command: npm test\n    plugins:\n      - docker#v5.12.0:\n          image: node:22\n          entrypoint: \"\"\n")
+		require.Equal(t, []string{"npm test"}, circleRuns(buildkiteJobs(t, root, buildkiteFile)["test"]), "an emptied entrypoint runs the commands")
+	})
+	t.Run("the step clears DD_API_KEY before the snippet", func(t *testing.T) {
+		for _, clear := range []string{"export DD_API_KEY=", "unset DD_API_KEY"} {
+			root := buildkiteRepository(t, "steps:\n  - label: test\n    commands:\n      - "+clear+"\n"+snippet+"      - npm test\n")
+			job := buildkiteJobs(t, root, buildkiteFile)["test"]
+			index := slices.IndexFunc(job.Steps, func(step runtimeStep) bool { return step.Setup != nil })
+			require.Contains(t, job.Steps[index].Setup.Problem, "clears DD_API_KEY", clear)
+			require.NotContains(t, job.Steps[len(job.Steps)-1].Env["NODE_OPTIONS"], "DD_TRACE_PACKAGE", "no exports from a setup that skips")
+			require.False(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
+		}
+	})
+	t.Run("the container's environment", func(t *testing.T) {
+		root := buildkiteRepository(t, `env:
+  SHARD: "1"
+steps:
+  - label: docker
+    env:
+      NOT_PASSED: "1"
+    command: npm test
+    plugins:
+      - docker#v5.12.0:
+          image: node:22
+          environment:
+            - NODE_ENV=production
+            - SHARD
+            - FROM_UPLOAD=$UNKNOWN
+  - label: compose
+    command: npm test
+    plugins:
+      - docker-compose#v5.5.0:
+          run: app
+          environment:
+            - TZ=UTC
+  - label: propagated
+    env:
+      FROM_STEP: "1"
+    command: npm test
+    plugins:
+      - docker#v5.12.0:
+          image: node:22
+          propagate-environment: true
+`)
+		writeFile(t, root, "docker-compose.yml", "services:\n  app:\n    image: node:22\n    volumes:\n      - .:/app\n    environment:\n      LOG: debug\n      TZ: Europe/Paris\n      SHARD_NAME: shard-${SHARD}\n")
+		jobs := buildkiteJobs(t, root, buildkiteFile)
+		require.Equal(t, map[string]string{"NODE_ENV": "production", "SHARD": "1", "FROM_UPLOAD": unresolvedCIValue("$UNKNOWN")}, jobs["docker"].Env)
+		require.Equal(t, map[string]string{"LOG": "debug", "TZ": "UTC", "SHARD_NAME": "shard-1"}, jobs["compose"].Env)
+		require.Equal(t, map[string]string{"SHARD": "1", "FROM_STEP": "1"}, jobs["propagated"].Env)
+	})
+	t.Run("a Compose working directory inside the mounted checkout", func(t *testing.T) {
+		for directory, want := range map[string]string{"/app/packages/ui": "packages/ui", "/app": "", "/srv": "outside the checkout it mounts at /app"} {
+			root := buildkiteRepository(t, "steps:\n  - label: test\n    command: npm test\n    plugins:\n      - docker-compose#v5.5.0:\n          run: app\n")
+			writeFile(t, root, "docker-compose.yml", "services:\n  app:\n    image: node:22\n    volumes:\n      - .:/app:cached\n    working_dir: "+directory+"\n")
+			step := buildkiteJobs(t, root, buildkiteFile)["test"].Steps[0]
+			if strings.Contains(want, " ") {
+				require.Contains(t, step.ResolutionError, want, directory)
+				continue
+			}
+			require.Empty(t, step.ResolutionError, directory)
+			require.Equal(t, want, step.WorkingDirectory, directory)
+		}
+	})
+	t.Run("propagate-environment passes the pipeline's key", func(t *testing.T) {
+		root := buildkiteRepository(t, "steps:\n  - label: test\n    commands:\n"+snippet+"      - npm test\n    plugins:\n      - docker#v5.12.0:\n          image: node:22\n          propagate-environment: true\n")
+		workflow := buildkiteWorkflow(t, root, buildkiteFile)
+		require.Empty(t, workflow.Jobs["test"].Steps[0].Setup.Problem)
+		require.Contains(t, strings.Join(workflow.Review, "\n"), "never a key an agent hook or secrets plugin exports")
+	})
+	t.Run("a step's agents override the pipeline's", func(t *testing.T) {
+		root := buildkiteRepository(t, "agents:\n  queue: windows\nsteps:\n  - label: linux\n    command: npm test\n    agents:\n      queue: linux\n  - label: inherited\n    command: npm test\n")
+		jobs := buildkiteJobs(t, root, buildkiteFile)
+		require.Equal(t, []string{"npm test"}, circleRuns(jobs["linux"]))
+		require.Contains(t, circleRuns(jobs["inherited"])[0], "runs on Windows agents")
+	})
+}

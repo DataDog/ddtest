@@ -50,7 +50,9 @@ func TestBuildkiteRubySetupCompleteness(t *testing.T) {
 		{"agent host", strings.Replace(strings.Replace(complete, "    plugins:\n      - docker#v5.12.0:\n          image: ruby:3.3\n          environment:\n            - DD_API_KEY\n", "", 1), "", "", 1), "", true, "in a job whose image selects a static Ruby version"},
 		{"replaced preload", buildkiteRubyStep("ruby:3.3", "", "", "      - export RUBYOPT=-W0\n"), "", true, "replaces the RUBYOPT the Datadog setup snippet exports"},
 		{"extended preload", buildkiteRubyStep("ruby:3.3", "", "", "      - export RUBYOPT=\"$$RUBYOPT -W0\"\n"), "", true, ""},
-		{"step options before the snippet", buildkiteRubyStep("ruby:3.3", "    env:\n      RUBYOPT: -W0\n", "", ""), "", true, "dropping the job's -W0; restore it after the Datadog setup snippet with export RUBYOPT=\"$$RUBYOPT -W0\""},
+		{"step options before the snippet", strings.Replace(buildkiteRubyStep("ruby:3.3", "    env:\n      RUBYOPT: -W0\n", "", ""), "          environment:\n", "          propagate-environment: true\n          environment:\n", 1), "", true, "dropping the job's -W0; restore it after the Datadog setup snippet with export RUBYOPT=\"$$RUBYOPT -W0\""},
+		// The docker plugin passes the container only what it lists.
+		{"step options the container never receives", buildkiteRubyStep("ruby:3.3", "    env:\n      RUBYOPT: -W0\n", "", ""), "", true, ""},
 		{"Ruby 3.0 RubyGems", buildkiteRubyStep("ruby:3.0", "", "", ""), "", true, "Run gem update --system 3.4.22 before it"},
 		{"Ruby 3.0 updated RubyGems", buildkiteRubyStep("ruby:3.0", "", "      - gem update --system 3.4.22\n", ""), "", true, ""},
 		{"JRuby step excluded", complete + "  - label: jruby\n    command: bundle exec rspec\n    plugins:\n      - docker#v5.12.0:\n          image: jruby:9.4\n", "", true, ""},

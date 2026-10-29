@@ -6,10 +6,12 @@
 package onboard
 
 import (
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -46,6 +48,13 @@ type buildkiteExecutor struct {
 	// one some step reaches through a YAML alias.
 	plugin        *yaml.Node
 	pluginAliased bool
+	// env is the environment the container receives: the variables its
+	// plugin and Compose service list. propagate reports a plugin that also
+	// passes the step's pipeline environment (propagate-environment).
+	env       map[string]string
+	propagate bool
+	// directory is where the commands start, relative to the checkout.
+	directory string
 }
 
 // buildkiteNonTestPlugins are plugins that only fetch secrets, artifacts or
@@ -172,7 +181,7 @@ func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkite
 		executor.pluginAliased = executor.pluginAliased || c.aliased[plugin.config]
 		switch name {
 		case "buildkite-plugins/docker":
-			c.docker(executor, plugin.config, value)
+			c.docker(executor, plugin.config, value, env)
 		case "buildkite-plugins/docker-compose":
 			c.compose(executor, plugin.config, value, env)
 		default:
@@ -185,9 +194,15 @@ func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkite
 // containerOptions reads what docker and docker-compose plugins share: the
 // shell running the commands and the environment passed into the
 // container.
-func (executor *buildkiteExecutor) containerOptions(fields map[string]*yaml.Node, plugin string) {
+func (executor *buildkiteExecutor) containerOptions(fields map[string]*yaml.Node, plugin string, value func(*yaml.Node) (string, bool), host map[string]string) {
 	executor.container = true
 	executor.shell = "sh"
+	if executor.env == nil {
+		executor.env = map[string]string{}
+	}
+	// It passes only what $BUILDKITE_ENV_FILE holds: the pipeline's env and
+	// the one set in the Buildkite UI, never what agent hooks export.
+	executor.propagate = executor.propagate || gitLabScalar(fields["propagate-environment"]) == "true"
 	if shell := gitLabAlias(fields["shell"]); shell != nil {
 		words := gitLabStrings(shell)
 		switch {
@@ -202,8 +217,10 @@ func (executor *buildkiteExecutor) containerOptions(fields map[string]*yaml.Node
 	}
 	for _, key := range []string{"environment", "env"} {
 		for _, item := range gitLabStrings(fields[key]) {
-			name, value, assigned := strings.Cut(item, "=")
-			if strings.TrimSpace(name) != "DD_API_KEY" {
+			name, written, assigned := strings.Cut(item, "=")
+			name = strings.TrimSpace(name)
+			if name != "DD_API_KEY" {
+				executor.containerVariable(name, written, assigned, value, host)
 				continue
 			}
 			// Only a bare name passes the agent's value through; KEY= passes
@@ -211,7 +228,7 @@ func (executor *buildkiteExecutor) containerOptions(fields map[string]*yaml.Node
 			switch {
 			case !assigned:
 				executor.keyPassed = true
-			case value == "":
+			case written == "":
 				executor.keyEmpty = true
 			default:
 				executor.keyProblem = true
@@ -220,12 +237,56 @@ func (executor *buildkiteExecutor) containerOptions(fields map[string]*yaml.Node
 	}
 }
 
+// containerVariable records one variable a plugin lists for its container:
+// NAME=value as written (pipeline upload interpolates it), a bare NAME with
+// the step's value when the pipeline sets it. A value ddtest cannot know
+// stays unresolved.
+func (executor *buildkiteExecutor) containerVariable(name, written string, assigned bool, value func(*yaml.Node) (string, bool), host map[string]string) {
+	if name == "" {
+		return
+	}
+	if !assigned {
+		if known, ok := host[name]; ok {
+			executor.env[name] = known
+		}
+		return
+	}
+	resolved, ok := value(&yaml.Node{Kind: yaml.ScalarNode, Value: written})
+	if !ok {
+		resolved = unresolvedCIValue(written)
+	}
+	executor.env[name] = resolved
+}
+
+// buildkitePassthroughEntrypoints run the command they receive unchanged:
+// init processes and the official images' entrypoints.
+var buildkitePassthroughEntrypoints = [][]string{{"tini", "--"}, {"/sbin/tini", "--"}, {"/usr/bin/tini", "--"}, {"dumb-init", "--"}, {"/usr/bin/dumb-init", "--"}, {"docker-entrypoint.sh"}, {"/usr/local/bin/docker-entrypoint.sh"}, {"env"}, {"/usr/bin/env"}}
+
+// buildkiteEntrypointProblem explains an entrypoint that receives the
+// step's commands without running them as given; empty for none, an
+// emptied one or a known passthrough.
+func buildkiteEntrypointProblem(node *yaml.Node, owner string) string {
+	words := gitLabStrings(node)
+	if len(words) == 0 || len(words) == 1 && strings.TrimSpace(words[0]) == "" {
+		return ""
+	}
+	if gitLabAlias(node).Kind == yaml.ScalarNode {
+		words = strings.Fields(words[0])
+	}
+	for _, passthrough := range buildkitePassthroughEntrypoints {
+		if slices.Equal(words, passthrough) {
+			return ""
+		}
+	}
+	return owner + " entrypoint " + strings.Join(words, " ") + " receives the commands, and ddtest cannot tell how it runs them"
+}
+
 // docker reads the docker plugin: commands run in image, with the checkout
 // mounted at its working directory.
-func (c *buildkiteConfig) docker(executor *buildkiteExecutor, config *yaml.Node, value func(*yaml.Node) (string, bool)) {
+func (c *buildkiteConfig) docker(executor *buildkiteExecutor, config *yaml.Node, value func(*yaml.Node) (string, bool), host map[string]string) {
 	fields := gitLabMembers(config)
 	executor.plugin = config
-	executor.containerOptions(fields, "docker")
+	executor.containerOptions(fields, "docker", value, host)
 	executor.template = gitLabScalar(fields["image"])
 	image, resolved := value(fields["image"])
 	executor.image, executor.imageProblem = image, ""
@@ -235,9 +296,7 @@ func (c *buildkiteConfig) docker(executor *buildkiteExecutor, config *yaml.Node,
 	case !resolved:
 		executor.imageProblem = "its image " + executor.template + " depends on a variable or matrix value ddtest cannot resolve"
 	}
-	if entrypoint := gitLabScalar(fields["entrypoint"]); entrypoint != "" {
-		executor.problem = joinDiagnostic(executor.problem, "the docker plugin's entrypoint "+entrypoint+" receives the commands, and ddtest cannot tell how it runs them")
-	}
+	executor.problem = joinDiagnostic(executor.problem, buildkiteEntrypointProblem(fields["entrypoint"], "the docker plugin's"))
 	if mount := gitLabScalar(fields["mount-checkout"]); mount == "false" {
 		executor.problem = joinDiagnostic(executor.problem, "the docker plugin does not mount the checkout, so the commands run on files ddtest cannot map")
 	}
@@ -259,7 +318,8 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 		executor.container = executor.compose != ""
 		return
 	}
-	executor.containerOptions(fields, "docker-compose")
+	executor.containerOptions(fields, "docker-compose", value, env)
+	executor.problem = joinDiagnostic(executor.problem, buildkiteEntrypointProblem(fields["entrypoint"], "the docker-compose plugin's"))
 	var files []string
 	for _, written := range gitLabStrings(fields["config"]) {
 		file, resolved := value(&yaml.Node{Kind: yaml.ScalarNode, Value: written})
@@ -313,41 +373,87 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 			executor.imageProblem = "its Docker Compose service " + service + " image " + executor.template + " depends on a variable the step's env does not set, which the agent or a .env file may supply"
 		}
 	}
+	executor.problem = joinDiagnostic(executor.problem, buildkiteEntrypointProblem(definition["entrypoint"], "the Docker Compose service "+service+"'s"))
+	// The service's environment, under what the plugin passes with -e.
+	listed := executor.env
+	executor.env = map[string]string{}
 	environment := gitLabAlias(definition["environment"])
 	if environment != nil && environment.Kind == yaml.MappingNode {
-		if key, set := gitLabMembers(environment)["DD_API_KEY"]; set {
-			// A null value passes the variable through; "" sets it empty.
-			switch text := strings.TrimSpace(gitLabScalar(key)); {
-			case gitLabAlias(key).Tag == "!!null", text == "$DD_API_KEY", text == "${DD_API_KEY}":
-				executor.keyPassed = true
-			case text == "":
-				executor.keyEmpty = true
-			default:
-				executor.keyProblem = true
+		for _, name := range gitLabKeys(environment) {
+			node := gitLabAlias(gitLabMembers(environment)[name])
+			text := strings.TrimSpace(gitLabScalar(node))
+			if name == "DD_API_KEY" {
+				// A null value passes the variable through; "" sets it empty.
+				switch {
+				case node == nil || node.Tag == "!!null", text == "$DD_API_KEY", text == "${DD_API_KEY}":
+					executor.keyPassed = true
+				case text == "":
+					executor.keyEmpty = true
+				default:
+					executor.keyProblem = true
+				}
+				continue
 			}
+			c.composeVariable(executor, name, gitLabScalar(node), node != nil && node.Tag != "!!null", env)
 		}
 	} else {
 		for _, item := range gitLabStrings(environment) {
-			name, value, assigned := strings.Cut(item, "=")
+			name, written, assigned := strings.Cut(item, "=")
+			name = strings.TrimSpace(name)
+			if name != "DD_API_KEY" {
+				c.composeVariable(executor, name, written, assigned, env)
+				continue
+			}
 			switch {
-			case strings.TrimSpace(name) != "DD_API_KEY":
-			case !assigned || value == "$DD_API_KEY" || value == "${DD_API_KEY}":
+			case !assigned || written == "$DD_API_KEY" || written == "${DD_API_KEY}":
 				executor.keyPassed = true
-			case value == "":
+			case written == "":
 				executor.keyEmpty = true
 			default:
 				executor.keyProblem = true
 			}
 		}
 	}
-	mounted := false
+	maps.Copy(executor.env, listed)
+	// The commands start in working_dir, mapped back into the checkout
+	// through the volume that mounts it.
+	mount := ""
 	for _, volume := range gitLabStrings(definition["volumes"]) {
-		source, _, _ := strings.Cut(volume, ":")
-		mounted = mounted || source == "." || source == "./"
+		source, destination, _ := strings.Cut(volume, ":")
+		destination, _, _ = strings.Cut(destination, ":")
+		if source == "." || source == "./" {
+			mount = path.Clean(destination)
+		}
 	}
-	if !mounted {
+	directory := gitLabScalar(definition["working_dir"])
+	switch {
+	case mount == "":
 		c.review = append(c.review, file+": the Docker Compose service "+service+" does not mount the checkout, so the step runs on the copy of the repository in its image; ddtest validates the checkout.")
+	case directory == "" || path.Clean(directory) == mount:
+	case strings.HasPrefix(path.Clean(directory), mount+"/") && !strings.Contains(directory, "$"):
+		executor.directory = strings.TrimPrefix(path.Clean(directory), mount+"/")
+	default:
+		executor.problem = joinDiagnostic(executor.problem, "the Docker Compose service "+service+" runs the commands in "+directory+", outside the checkout it mounts at "+mount)
 	}
+}
+
+// composeVariable records one variable a Compose service sets: a literal or
+// ${NAME} reads of the step's env, a bare name the step's value.
+func (c *buildkiteConfig) composeVariable(executor *buildkiteExecutor, name, written string, assigned bool, host map[string]string) {
+	if name == "" {
+		return
+	}
+	if !assigned {
+		if known, ok := host[name]; ok {
+			executor.env[name] = known
+		}
+		return
+	}
+	value, resolved := buildkiteComposeImage(written, host)
+	if !resolved {
+		value = unresolvedCIValue(written)
+	}
+	executor.env[name] = value
 }
 
 // buildkiteComposeVariable matches Compose's $NAME, ${NAME}, ${NAME:-x}
@@ -396,7 +502,7 @@ func (executor *buildkiteExecutor) setupProblem(curl bool) string {
 		return "The step's image " + executor.image + " has neither curl nor wget, so the Datadog installer cannot be downloaded and its tests would run untraced. Use the full image (without -slim), or install curl in a command before the setup: " + buildkiteCurlInstall + "."
 	case executor.keyEmpty:
 		return "The step's container receives DD_API_KEY set to an empty value, which replaces the agent's key, so the Datadog setup snippet always skips: list DD_API_KEY without a value so the agent's key passes through."
-	case executor.container && !executor.keyPassed:
+	case executor.container && !executor.keyPassed && !executor.propagate:
 		return "The step runs its commands in a container, which receives only the environment its plugin lists, so DD_API_KEY never reaches the Datadog setup snippet: add DD_API_KEY to the plugin's environment list."
 	}
 	return ""

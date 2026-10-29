@@ -77,16 +77,34 @@ func (buildkite) configurationFiles(root string) ([]string, error) {
 			name := entry.Name()
 			extension := path.Ext(name)
 			pipeline := slices.Contains([]string{".yml", ".yaml"}, extension) || extension == ".json" && strings.HasPrefix(name, "pipeline")
-			if entry.IsDir() || strings.Contains(name, "compose") || !pipeline {
+			file := directory + "/" + name
+			if entry.IsDir() || !pipeline || buildkiteComposeFile(root, file) {
 				continue
 			}
-			file := directory + "/" + name
 			if info, ok := repositoryFile(root, root, file); ok && !info.IsDir() {
 				files = append(files, file)
 			}
 		}
 	}
 	return files, nil
+}
+
+// buildkiteComposeTop matches the top-level keys of a Compose file and of
+// a pipeline.
+var (
+	buildkiteComposeTop  = regexp.MustCompile(`(?m)^(?:services|version)\s*:`)
+	buildkitePipelineTop = regexp.MustCompile(`(?m)^(?:steps\s*:|- )`)
+)
+
+// buildkiteComposeFile reports a Docker Compose file: top-level services or
+// version and no steps. Listing reads only its top-level keys.
+func buildkiteComposeFile(root, file string) bool {
+	info, ok := repositoryFile(root, root, file)
+	if !ok || info.IsDir() || info.Size() > buildkiteSizeLimit {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
+	return err == nil && buildkiteComposeTop.Match(data) && !buildkitePipelineTop.Match(data)
 }
 
 func (b buildkite) readWorkflows(root string) ([]ciWorkflow, error) {
@@ -409,8 +427,20 @@ func (c *buildkiteConfig) command(workflow *ciWorkflow, item *yaml.Node, fields 
 			continue
 		}
 		executor.keyProblem = executor.keyProblem || keyProblem
-		if executor.windows = buildkiteWindows(matrix, scope.agents, fields["agents"]); executor.windows {
+		if executor.windows = buildkiteWindows(matrix, buildkiteAgents(scope.agents, fields["agents"])); executor.windows {
 			executor.problem = joinDiagnostic(executor.problem, "it runs on Windows agents, whose default shell is cmd.exe, which ddtest cannot replay")
+		}
+		if executor.container && executor.composeRun || executor.container && executor.compose == "" {
+			// A container receives only what its plugin passes: the variables
+			// it lists and, with propagate-environment, the pipeline's env.
+			passed := map[string]string{}
+			if executor.propagate {
+				passed = maps.Clone(env)
+			}
+			env = mergeEnvironment(passed, executor.env)
+			if executor.propagate && !executor.keyPassed {
+				c.review = append(c.review, scope.file+": "+name+" passes DD_API_KEY into its container with propagate-environment, which carries only the pipeline's env, such as one set in the Buildkite UI, and never a key an agent hook or secrets plugin exports: list DD_API_KEY in the plugin's environment for those.")
+			}
 		}
 		job := runtimeJob{Env: env, Image: executor.image, ImageTemplate: executor.template}
 		if disabled {
@@ -437,27 +467,36 @@ func (c *buildkiteConfig) commandless(fields map[string]*yaml.Node, executor *bu
 	return ""
 }
 
-// buildkiteWindows reports agent targeting that selects Windows agents,
-// with the step's matrix values substituted.
-func buildkiteWindows(matrix func(string) (string, string), nodes ...*yaml.Node) bool {
+// buildkiteAgents is a step's effective agent targeting: the pipeline's
+// agents, each key overridden by the step's (key: value or "key=value").
+func buildkiteAgents(nodes ...*yaml.Node) map[string]string {
+	agents := map[string]string{}
 	for _, node := range nodes {
 		node = gitLabAlias(node)
 		if node == nil {
 			continue
 		}
-		var values []string
 		if node.Kind == yaml.MappingNode {
 			for key, value := range gitLabMembers(node) {
-				values = append(values, key+"="+gitLabScalar(value))
+				agents[key] = gitLabScalar(value)
 			}
-		} else {
-			values = gitLabStrings(node)
+			continue
 		}
-		for _, value := range values {
-			value, _ = matrix(value)
-			if strings.Contains(strings.ToLower(value), "windows") {
-				return true
-			}
+		for _, item := range gitLabStrings(node) {
+			key, value, _ := strings.Cut(item, "=")
+			agents[key] = value
+		}
+	}
+	return agents
+}
+
+// buildkiteWindows reports agent targeting that selects Windows agents,
+// with the step's matrix values substituted.
+func buildkiteWindows(matrix func(string) (string, string), agents map[string]string) bool {
+	for key, value := range agents {
+		value, _ = matrix(key + "=" + value)
+		if strings.Contains(strings.ToLower(value), "windows") {
+			return true
 		}
 	}
 	return false
@@ -477,7 +516,7 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 	} else {
 		entries = append(entries, buildkiteEntry{node: list, file: scope.file, aliased: listAliased, executor: executor})
 	}
-	state := ciShellState{dialect: buildkiteShellDialect, env: map[string]string{}, references: map[string]string{}, job: env}
+	state := ciShellState{dialect: buildkiteShellDialect, env: map[string]string{}, references: map[string]string{}, job: env, directory: executor.directory}
 	var steps []runtimeStep
 	add := func(entry buildkiteEntry, run, problem string) *runtimeStep {
 		step := runtimeStep{Number: len(steps) + 1, Source: entry.file + ":" + strconv.Itoa(entry.fileLine()), origin: entry, Shell: executor.shell}
@@ -532,6 +571,14 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 				}
 				if setup.Problem == "" {
 					setup.Problem = executor.setupProblem(state.curl)
+				}
+				if key, changed := state.env["DD_API_KEY"]; changed && setup.Problem == "" {
+					switch {
+					case key == "":
+						setup.Problem = "An earlier command of the step clears DD_API_KEY (export DD_API_KEY= or unset), so the Datadog setup snippet always skips; remove it."
+					case unresolvedCIError(key) == nil:
+						setup.Problem = "An earlier command of the step sets DD_API_KEY to a value written into the pipeline; never commit the key: provide it from " + buildkiteKeySources + "."
+					}
 				}
 				step := add(current, "", "")
 				step.ResolutionError = ""

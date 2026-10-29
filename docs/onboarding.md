@@ -275,7 +275,8 @@ Which repository file a Buildkite pipeline uploads is configured in the
 Buildkite UI, so ddtest reads every pipeline file: `buildkite.yml` (`.yaml`,
 `.json`), `buildkite/pipeline.yml` (`.yaml`, `.json`) and the YAML files under `.buildkite/` and `.buildkite/pipelines/`
 that define `steps` (in the mapping or the legacy list form; Docker Compose
-files, hooks and anchor-only files are not pipelines). Each command step
+files, recognized by top-level `services` or `version` without `steps`, hooks
+and anchor-only files are not pipelines). Each command step
 becomes one job per matrix combination, named by its `label` (or `key`) under
 its `group`s, and each top-level shell statement of its `command`/`commands`
 (a string, a list or a block) one step. A step's commands share one shell, so
@@ -297,12 +298,19 @@ value in every job, and any other `$NAME` (including the step's own `env` and
 agent or job variables such as `$BUILDKITE_BUILD_CHECKOUT_PATH` or
 `$BUILDKITE_PARALLEL_JOB`) is replaced with a value of the upload step that ddtest cannot know, so a
 command reading one is unresolved and an env value reading one is replayed as
-unknown. The docker plugin runs the commands in its `image` with `/bin/sh`
-(or its `shell`), the docker-compose plugin in its `run` service's image from
+unknown. A container receives only the environment its plugin passes: the
+plugin's `environment` (`NAME=value` as written, a bare `NAME` with the
+pipeline's value) and the Compose service's `environment`, plus, with
+`propagate-environment: true`, the pipeline's `env`. Windows agents are read
+from the effective `agents` (the step's keys override the pipeline's). The
+docker plugin runs the commands in its `image` with `/bin/sh` (or its
+`shell`) at the mounted checkout, the docker-compose plugin in its `run` service's image from
 the Compose file (`config`, default `docker-compose.yml`, with matrix values;
 `${NAME:-default}` in the image reads the step's env, and a variable it does not
 set, which the agent or a `.env` file may supply, leaves the image unknown; a
-service built from a Dockerfile has no image ddtest can check), and steps without either run on
+service built from a Dockerfile has no image ddtest can check; its
+`working_dir` maps back into the checkout through the volume mounting `.`,
+and one outside it is unresolved), and steps without either run on
 the agent host, whose runtime ddtest cannot know: the runtime check reports
 them for review instead of certifying them. Plugins that only fetch secrets,
 artifacts or caches, log in to registries or annotate results run no tests
@@ -319,7 +327,9 @@ ddtest cannot read locally stays an unresolved blocker: `trigger` steps,
 every other `buildkite-agent pipeline upload` (generated or piped steps,
 files ddtest does not read, `--no-interpolation`), every other plugin (or one
 named by a variable), a step that runs a container's own command, the docker
-plugin's `entrypoint`, `shell: false` and `mount-checkout: false`, matrices it
+plugin's or Compose service's `entrypoint` (other than an emptied one or a
+known passthrough such as `tini --` or `docker-entrypoint.sh`), `shell:
+false` and `mount-checkout: false`, matrices it
 cannot expand or that exceed 200 jobs, and Windows agents (also when a matrix
 value selects them).
 
@@ -347,7 +357,10 @@ site. A statement that runs the installer in any other shape stays an
 unresolved command; an unescaped `$`, a `DD_API_KEY` written into the pipeline
 or a plugin's `environment`, one set to an empty value (`DD_API_KEY=`), and a
 container that does not receive `DD_API_KEY` (only a bare name, or a Compose
-`${DD_API_KEY}` reference, passes it through) are reported. A person provides `DD_API_KEY` from an agent
+`${DD_API_KEY}` reference, passes it through; `propagate-environment` passes
+only a key set in the pipeline's environment, such as in the Buildkite UI,
+never one an agent hook or secrets plugin exports, which is noted), and an
+earlier command of the step that clears or writes `DD_API_KEY` are reported. A person provides `DD_API_KEY` from an agent
 environment hook, a secrets plugin or the pipeline's environment in the
 Buildkite UI. The installer needs Bash and curl or wget, so steps on images
 known to lack them (Alpine variants, BusyBox, distroless; official `-slim`
