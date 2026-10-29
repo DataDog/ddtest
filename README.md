@@ -356,6 +356,38 @@ Each release lists its executables, `ddtest-<os>-<arch>` for Linux, macOS and
 Windows on `amd64` and `arm64`, with the install scripts and `SHA256SUMS`, on
 the [release page](https://github.com/DataDog/ddtest/releases/latest).
 
+### Direct download (legacy)
+
+Setups that download the executable directly keep working: every release
+publishes it under the same `ddtest-<os>-<arch>` names, which the install
+scripts download too. Prefer the install script above, which also checks the
+file against `SHA256SUMS`.
+
+Download the latest release with the `gh` command line tool in GitHub Actions:
+
+```yaml
+- name: Download ddtest binary
+  run: |
+    mkdir -p bin
+    gh release download --repo DataDog/ddtest --pattern "ddtest-linux-amd64" --dir bin
+    mv bin/ddtest-linux-amd64 bin/ddtest
+    chmod +x bin/ddtest
+  env:
+    GH_TOKEN: ${{ github.token }}
+```
+
+...or with `curl`:
+
+```bash
+mkdir -p bin
+curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/ddtest-linux-amd64 -o bin/ddtest
+chmod +x bin/ddtest
+```
+
+Replace `linux-amd64` with your platform. For a fixed release, pass its tag to
+`gh release download` (`gh release download v1.2.3 ...`) or use
+`releases/download/v1.2.3/` instead of `releases/latest/download/` in the URL.
+
 ## CI configuration examples
 
 - [GitHub Actions](docs/examples/github-actions.md)
