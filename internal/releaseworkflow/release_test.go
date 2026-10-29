@@ -136,3 +136,45 @@ esac
 		})
 	}
 }
+
+// Every release must publish the executables that customers download directly.
+func TestReleaseAssets(t *testing.T) {
+	assets := []string{"ddtest-linux-amd64", "ddtest-linux-arm64", "ddtest-darwin-amd64", "ddtest-darwin-arm64",
+		"ddtest-windows-amd64.exe", "ddtest-windows-arm64.exe"}
+	tests := []struct {
+		name, drop, unlisted, want string
+	}{
+		{name: "complete"},
+		{name: "missing executable", drop: "ddtest-linux-arm64", want: "ddtest-linux-arm64 is missing"},
+		{name: "missing checksum", unlisted: "ddtest-windows-amd64.exe", want: "no line for ddtest-windows-amd64.exe"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dist := t.TempDir()
+			var sums strings.Builder
+			for _, asset := range assets {
+				if asset != tt.drop {
+					if err := os.WriteFile(filepath.Join(dist, asset), []byte(asset), 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if asset != tt.unlisted {
+					sums.WriteString("0123456789abcdef  " + asset + "\n")
+				}
+			}
+			if err := os.WriteFile(filepath.Join(dist, "SHA256SUMS"), []byte(sums.String()), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			output, err := exec.Command("bash", "../../.github/scripts/check-release-assets.sh", dist).CombinedOutput()
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("complete release rejected: %v\n%s", err, output)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(string(output), tt.want) {
+				t.Fatalf("err = %v, output = %s, want %q", err, output, tt.want)
+			}
+		})
+	}
+}

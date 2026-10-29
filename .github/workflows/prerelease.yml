@@ -37,6 +37,7 @@ jobs:
       # from the release's files after checking SHA256SUMS.
       - name: Check the release files
         run: |
+          bash .github/scripts/check-release-assets.sh dist
           test "$(dist/ddtest-linux-amd64 --version)" = "$VERSION"
           DDTEST_INSTALL_DOWNLOAD_URL="file://$PWD/dist" bash dist/install.sh --dir "$RUNNER_TEMP/bin"
           cmp dist/ddtest-linux-amd64 "$RUNNER_TEMP/bin/ddtest"
