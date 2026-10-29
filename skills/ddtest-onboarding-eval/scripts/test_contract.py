@@ -19,7 +19,7 @@ class ProductContractTests(unittest.TestCase):
                            check=False,capture_output=True,text=True,timeout=180)
             self.assertEqual(command.returncode,0,command.stdout+command.stderr)
             reports=json.loads(output.read_text())
-        self.assertEqual(len(reports),28)
+        self.assertEqual(len(reports),34)
         for report in reports:
             with self.subTest(framework=report['framework'],check_only=report['check_only']):
                 self.assertIsInstance(report['schema_version'],int)

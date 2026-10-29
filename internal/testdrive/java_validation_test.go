@@ -251,7 +251,7 @@ func TestJavaTemporaryAgentPathCannotContainWhitespace(t *testing.T) {
 func TestJavaRunsMavenOnlyInADisposableCopy(t *testing.T) {
 	drive := &Testdrive{repositoryRoot: t.TempDir(), framework: framework.NewMaven("junit5", nil)}
 	session := workspace.PlanSession()
-	_, err := drive.runJava(context.Background(), io.Discard, session, "", runSpec{Name: "baseline"}, nil)
+	_, err := drive.runJava(context.Background(), io.Discard, session, "", runSpec{Name: "baseline"}, javaProbe{})
 	require.ErrorContains(t, err, "disposable copy")
 }
 
@@ -279,6 +279,12 @@ func TestJavaNativeTestsUseTheAgentsModuleNames(t *testing.T) {
 	require.True(t, probe.probe)
 	require.Equal(t, "core / "+javaProbeClass, probe.File, "the probe is matched by module, class and name, as other tests")
 	require.Equal(t, "ddtestProbe", *probe.telemetryName)
+	karate := javaNativeTests(javaFixtureProjects(), []maven.Test{
+		{Module: "core", Suite: "[src/test/resources/ddtest/DdtestValidation] " + javaProbeClass, Name: "ddtestProbe", Status: "passed"},
+		{Module: "core", Suite: "[example/calc] Calculator", Name: "adds", Status: "passed"},
+	}, true)
+	require.True(t, karate[0].probe, "a Karate probe is its feature's path and name")
+	require.False(t, karate[1].probe)
 }
 
 func javaTelemetryRun(native []nativeTest, reported ...intake.Test) validationRun {
@@ -315,6 +321,15 @@ func TestJavaTelemetryMatchesEveryNativeResult(t *testing.T) {
 		`Unexpected telemetry: module "core", class "example.CoreTest", test "positive[1]", status "pass" (count 1)`,
 		`Missing telemetry: module "core", class "example.CoreTest", test "positive[2]", status "pass" (count 1)`,
 	}, check.Differences)
+}
+
+func TestJavaTelemetryAttributesScalaTestSuitesToTheirModule(t *testing.T) {
+	native := []nativeTest{{File: "core / example.CalcTest", Name: "adds", Status: "passed"}}
+	run := javaTelemetryRun(native, reported(javaScalaTestRunner, "example.CalcTest", "adds", "", intake.TestRun{Status: "pass", SpanID: 1}))
+	require.Equal(t, verdict{}, verifyJavaTelemetry(run), "the plugin's runner stands for the module that ran the suite")
+	native = append(native, nativeTest{File: "api / example.CalcTest", Name: "adds", Status: "passed"})
+	run = javaTelemetryRun(native, reported(javaScalaTestRunner, "example.CalcTest", "adds", "", intake.TestRun{Status: "pass", SpanID: 1}), reported(javaScalaTestRunner, "example.CalcTest", "adds", "", intake.TestRun{Status: "pass", SpanID: 2}))
+	require.Equal(t, "inconclusive", verifyJavaTelemetry(run).Status, "a suite two modules ran cannot be attributed")
 }
 
 func TestJavaTelemetryRejectsUnusableEvidence(t *testing.T) {
@@ -383,6 +398,10 @@ func TestJavaValidatesSurefireFrameworksWithPairedFeatureControls(t *testing.T) 
 		require.True(t, supportsValidationFramework(name), name)
 		require.Len(t, featurePolicies(name), 6)
 		require.True(t, frameworkFeaturePolicies[name].TestLevelSkipping, "dd-java-agent skips a test by its suite and name")
+		for _, feature := range featurePolicies(name) {
+			unsupported := name == "munit" && (feature.Name == "skipping" || feature.Name == "disabled")
+			require.Equal(t, unsupported, feature.Status == "not supported", "%s %s", name, feature.Name)
+		}
 		require.Equal(t, "java", languageForFramework(name).name())
 	}
 	for name, source := range javaProbeSources {
@@ -391,7 +410,31 @@ func TestJavaValidatesSurefireFrameworksWithPairedFeatureControls(t *testing.T) 
 	}
 	require.Contains(t, javaProbeSources["testng"].source, "@org.testng.annotations.Test")
 	require.True(t, strings.HasSuffix(javaProbeSources["spock"].path, ".groovy"), "Spock specifications compile from src/test/groovy")
-	require.False(t, supportsValidationFramework("karate"), "other Maven frameworks keep reporting-only checks")
+	require.Contains(t, javaProbeSources["munit"].source, "extends munit.FunSuite")
+	require.True(t, strings.HasSuffix(javaProbeSources["scalatest"].path, ".scala"), "Scala suites compile from src/test/scala")
+	probe, reason, err := javaProbeFor(t.TempDir(), "core", "scalatest", nil)
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	require.Contains(t, probe.args, "-DwildcardSuites="+javaProbeClass, "the scalatest-maven-plugin selects suites by its own property, which modules without the probe tolerate")
+	require.Contains(t, probe.args, "-Dsuites=", "the probe replaces the command's own suite selection")
+	require.Contains(t, probe.args, "-Dtest="+javaProbeClass, "suites Surefire runs through JUnit match -Dtest")
+	require.NotContains(t, probe.files[0].source, "RunWith", "the scalatest-maven-plugin needs no JUnit runner")
+	for _, runner := range javaScalaTestJUnitRunners {
+		pkg := strings.TrimSuffix(runner, ".JUnitRunner")
+		for _, imports := range []string{"import " + runner, "import " + pkg + "._", "import " + pkg + ".{JUnitRunner, JUnitSuite}"} {
+			root := t.TempDir()
+			writeJavaSource(t, filepath.Join(root, "core", "src", "test", "scala", "example", "CalcTest.scala"), "package example\nimport org.junit.runner.RunWith\n"+imports+"\n@RunWith(classOf[JUnitRunner])\nclass CalcTest extends AnyFunSuite\n")
+			probe, _, err := javaProbeFor(root, "core", "scalatest", nil)
+			require.NoError(t, err)
+			require.Contains(t, probe.files[0].source, "\n@org.junit.runner.RunWith(classOf["+runner+"])\nclass DdtestValidationTest extends org.scalatest.funsuite.AnyFunSuite", "Surefire runs the probe through the module's JUnit runner: %s", imports)
+		}
+	}
+	// A JUnit runner of another library is not ScalaTest's.
+	root := t.TempDir()
+	writeJavaSource(t, filepath.Join(root, "core", "src", "test", "scala", "example", "CalcTest.scala"), "package example\nimport org.other.JUnitRunner\n@RunWith(classOf[JUnitRunner])\nclass CalcTest\n")
+	probe, _, err = javaProbeFor(root, "core", "scalatest", nil)
+	require.NoError(t, err)
+	require.NotContains(t, probe.files[0].source, "RunWith")
 	require.Equal(t, "java", languageForFramework("testng").name())
 	require.Equal(t, "JUnit 5", displayName("junit5"))
 	require.Equal(t, "Java", displayName("java"))

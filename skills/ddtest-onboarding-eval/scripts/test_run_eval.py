@@ -596,7 +596,7 @@ class RunnerTests(unittest.TestCase):
 
 class FrameworkEnvironmentTests(unittest.TestCase):
     def test_long_matrix_timeout_is_scoped_and_bounded(self):
-        for framework in ("cypress", "rspec", "minitest", "junit4", "junit5", "testng", "spock", "cucumber-java"):
+        for framework in ("cypress", "rspec", "minitest", "junit4", "junit5", "testng", "spock", "cucumber-java", "karate", "scalatest", "munit"):
             self.assertEqual(run_eval.agent_environment("claude", 7200, framework)["BASH_MAX_TIMEOUT_MS"], "3600000")
             self.assertEqual(run_eval.agent_environment("claude", 1800, framework)["BASH_MAX_TIMEOUT_MS"], "1800000")
             self.assertEqual(run_eval.agent_environment("claude", 30, framework)["BASH_MAX_TIMEOUT_MS"], "30000")

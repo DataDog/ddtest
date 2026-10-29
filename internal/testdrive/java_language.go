@@ -224,7 +224,7 @@ func (javaLanguage) noResultsFinding(reportRuntime, bool, bool, *reportCard, *in
 func (javaLanguage) pairedFrameworks() map[string]pairedFramework {
 	adapter := pairedFramework{
 		run: func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, agent string, spec runSpec) (validationRun, error) {
-			return t.runJava(ctx, output, session, agent, spec, nil)
+			return t.runJava(ctx, output, session, agent, spec, javaProbe{})
 		},
 		features: func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, agent string, baseline validationRun, result *validationResult) error {
 			return t.runJavaFeatures(ctx, output, session, agent, baseline, result)
@@ -416,4 +416,14 @@ func init() {
 	for name := range (javaLanguage{}).pairedFrameworks() {
 		frameworkFeaturePolicies[name] = frameworkPolicy{SourceCoverage: true, ProbeBodyCounts: true, TestLevelSkipping: true, Paired: true, CheckOnly: true, Preflight: true, Configurations: true, Features: slices.Clone(features)}
 	}
+	for i, feature := range frameworkFeaturePolicies["munit"].Features {
+		if feature.Name == "skipping" || feature.Name == "disabled" {
+			frameworkFeaturePolicies["munit"].Features[i] = featurePolicy{Name: feature.Name, Status: "not supported", Reason: munitSkippingReason}
+		}
+	}
 }
+
+// munitSkippingReason is why MUnit tests are neither skipped nor disabled:
+// dd-java-agent skips a JUnit 4 test as a ParentRunner starts it, and MUnit's
+// runner is not one.
+const munitSkippingReason = "dd-java-agent cannot skip or disable a Scala MUnit test: it skips JUnit 4 tests through ParentRunner, which MUnit's runner does not extend. This feature is not exercised and is not counted as a passed check."

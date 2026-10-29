@@ -112,7 +112,7 @@ func javaCucumberProbe(checkout, module string, args []string) (javaProbe, strin
 		return javaProbe{}, "", err
 	}
 	if runner == "" {
-		return javaProbe{}, "No Cucumber runner class (@RunWith(Cucumber.class) or a JUnit Platform suite of the cucumber engine) was found in " + module + "'s test sources, so the probe feature cannot be selected alone.", nil
+		return javaProbe{}, "No Cucumber runner class (@RunWith(Cucumber.class) or a JUnit Platform suite of the cucumber engine) was found in the test sources of " + javaModuleText(module) + ", so the probe feature cannot be selected alone.", nil
 	}
 	// The selected command's own glue property wins over the runner's.
 	for i := 0; i < len(args); i++ {
@@ -187,26 +187,6 @@ func javaCucumberRunnerClass(module string) (runner, glue string, suite, pinned 
 		return "", "", false, false, backendUse{}, nil
 	}
 	return runner, javaGluePackage(glue), suite, pinned, lambda, err
-}
-
-// javaCucumberModule picks the first module, in reactor order, whose tests ran
-// in the baseline and that holds a Cucumber runner class.
-func javaCucumberModule(checkout string, projects []maven.Project, tests []nativeTest) (string, bool) {
-	labels := javaModuleLabels(projects)
-	executed := map[string]bool{}
-	for _, test := range tests {
-		module, _, _ := strings.Cut(test.File, " / ")
-		executed[module] = true
-	}
-	for _, project := range projects {
-		if !executed[labels[project.Directory]] {
-			continue
-		}
-		if runner, _, _, _, _, err := javaCucumberRunnerClass(filepath.Join(checkout, project.Directory)); err == nil && runner != "" {
-			return project.Directory, true
-		}
-	}
-	return "", false
 }
 
 // javaGluePackage is the first package of a glue list; a path such as
