@@ -416,6 +416,7 @@ func TestJavaValidatesSurefireFrameworksWithPairedFeatureControls(t *testing.T) 
 	require.NoError(t, err)
 	require.Empty(t, reason)
 	require.Contains(t, probe.args, "-DwildcardSuites="+javaProbeClass, "the scalatest-maven-plugin selects suites by its own property, which modules without the probe tolerate")
+	require.Contains(t, probe.args, "-Dsuites=", "the probe replaces the command's own suite selection")
 	require.Contains(t, probe.args, "-Dtest="+javaProbeClass, "suites Surefire runs through JUnit match -Dtest")
 	require.NotContains(t, probe.files[0].source, "RunWith", "the scalatest-maven-plugin needs no JUnit runner")
 	for _, runner := range javaScalaTestJUnitRunners {

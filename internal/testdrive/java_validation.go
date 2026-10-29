@@ -598,8 +598,8 @@ func javaProbeFor(checkout, module, framework string, args []string) (javaProbe,
 		// The scalatest-maven-plugin selects suites by its own property;
 		// suites that Surefire runs through JUnit match -Dtest. Unlike
 		// suites, wildcardSuites lets the plugin's other modules, which lack
-		// the probe, run nothing.
-		probe.args = append(slices.Clone(javaProbeArguments), "-DwildcardSuites="+javaProbeClass)
+		// the probe, run nothing; an empty suites clears the command's own.
+		probe.args = append(slices.Clone(javaProbeArguments), "-Dsuites=", "-DwildcardSuites="+javaProbeClass)
 	}
 	return probe, "", nil
 }
