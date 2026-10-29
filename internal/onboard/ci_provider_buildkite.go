@@ -442,11 +442,13 @@ func (c *buildkiteConfig) command(workflow *ciWorkflow, item *yaml.Node, fields 
 				c.review = append(c.review, scope.file+": "+name+" passes DD_API_KEY into its container with propagate-environment, which carries only the pipeline's env, such as one set in the Buildkite UI, and never a key an agent hook or secrets plugin exports: list DD_API_KEY in the plugin's environment for those.")
 			}
 		}
-		job := runtimeJob{Env: env, Image: executor.image, ImageTemplate: executor.template}
+		job := runtimeJob{Env: env, Image: executor.image, ImageTemplate: executor.template, ImageProblem: executor.imageProblem}
 		if disabled {
 			job.If = "false"
 		}
 		job.Steps = c.steps(name, scope, commands, matrix, env, executor)
+		curl := slices.ContainsFunc(job.Steps, func(step runtimeStep) bool { return installsCurl(step.Run) })
+		job.SetupImageProblem = executor.imageSetupProblem(curl)
 		workflow.Jobs[name] = job
 	}
 }

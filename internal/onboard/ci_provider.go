@@ -209,6 +209,18 @@ func CIProviderSetupName() string {
 	return ""
 }
 
+// CIProviderTracerSetting is how the selected CI provider's setup pins
+// the language's tracer release, such as js-tracer-version: 5.133.0, or
+// DD_SET_TRACER_VERSION_JS="5.133.0" in the Buildkite setup snippet.
+func CIProviderTracerSetting(language, version string) string {
+	provider := activeOrDefaultCIProvider()
+	input := provider.setupInput(language + "-tracer-version")
+	if provider.name() == buildkiteProvider {
+		return input + `="` + version + `"`
+	}
+	return input + ": " + version
+}
+
 // CIProviderAPIKeyAction is the person's step that stores the Datadog API key
 // for the selected CI provider.
 func CIProviderAPIKeyAction(skipped bool) string {

@@ -139,3 +139,39 @@ func TestBuildkiteRubyFixture(t *testing.T) {
 		require.Equal(t, "not checked", job.Status, job.Job+": "+job.Reason)
 	}
 }
+
+// freshshell/fresh's rspec step runs in a Compose service built from a
+// Dockerfile FROM ruby:3.4.7-slim-trixie: the Dockerfile selects the Ruby
+// the setup is checked against, and its slim base has no curl.
+func TestBuildkiteRubyImageBuiltFromADockerfile(t *testing.T) {
+	snippet := buildkiteSnippetText("ruby", "1.42.0", "datadoghq.com", "      ")
+	pipeline := "steps:\n  - label: rspec\n    command:\n" + snippet + "      - rspec --format doc\n    plugins:\n      - docker-compose#v4.9.0:\n          run: app\n          environment:\n            - DD_API_KEY\n"
+	for _, tc := range []struct{ name, dockerfile, status, runtime, reason string }{
+		{"a slim base without curl", freshshellDockerfile, "inconclusive", "3.4.7", "whose final stage is FROM ruby:3.4.7-slim-trixie, which has neither curl nor wget, and no RUN instruction of the Dockerfile installs them"},
+		{"a slim base installing curl", strings.Replace(freshshellDockerfile, "perl git build-essential", "perl git build-essential curl", 1), "not checked", "3.4.7", ""},
+		{"a base ddtest cannot resolve", "ARG RUBY\nFROM ruby:${RUBY}-slim\n", "inconclusive", "", "The Datadog setup snippet runs before this test command, but this job's Ruby version is unknown: its Docker Compose service app is built from Dockerfile, whose base image ruby:${RUBY}-slim reads the build argument RUBY, which has no literal default ddtest can resolve."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := buildkiteRubyRepository(t, pipeline)
+			writeFile(t, root, "docker-compose.yml", "version: '2'\nservices:\n  app:\n    build: .\n")
+			writeFile(t, root, "Dockerfile", tc.dockerfile)
+			jobs := RubyCIConfigurationForSite(root, "rspec", "").Jobs
+			require.Len(t, jobs, 1)
+			require.Equal(t, tc.status, jobs[0].Status, jobs[0].Reason)
+			require.Equal(t, tc.runtime, jobs[0].Runtime)
+			require.Contains(t, jobs[0].Reason, tc.reason)
+			require.NotContains(t, jobs[0].Reason, "in a job whose image selects a static Ruby version")
+			require.Equal(t, tc.reason == "", rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
+		})
+	}
+	t.Run("the instructions name the missing curl before the snippet is written", func(t *testing.T) {
+		root := buildkiteRubyRepository(t, strings.Replace(pipeline, snippet, "", 1))
+		writeFile(t, root, "docker-compose.yml", "version: '2'\nservices:\n  app:\n    build: .\n")
+		writeFile(t, root, "Dockerfile", freshshellDockerfile)
+		notes := strings.Join(rubyDiscovery{}.ciSetupRequest(root, "rspec", "datadoghq.com", buildkite{}.setupTerms()).Notes, "\n")
+		require.Contains(t, notes, ".buildkite/pipeline.yml / rspec: The step's image is built from Dockerfile, whose final stage is FROM ruby:3.4.7-slim-trixie, which has neither curl nor wget")
+		jobs := RubyCIConfigurationForSite(root, "rspec", "").Jobs
+		require.Len(t, jobs, 1)
+		require.Equal(t, "3.4.7", jobs[0].Runtime)
+	})
+}

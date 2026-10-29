@@ -190,3 +190,29 @@ func TestWorkflowBlockersQuoteOneLineOfMultiLineCIScripts(t *testing.T) {
 	}
 	require.NotContains(t, result.Reason, "cd rack-3.2*")
 }
+
+// Manual CI edits go into the steps ddtest could not resolve, so the Node
+// those steps run on decides the release they pin: on node:18, the newest
+// release Node 18 runs, not latest.
+func TestManualCITracerFitsUnresolvedStepsWithAKnownNode(t *testing.T) {
+	releases := map[string]platform.JSSelection{"6.22.0": {Version: "6.22.0", Node: ">=22"}, "5.133.0": {Version: "5.133.0", Node: ">=18"}}
+	resolve := func(_ context.Context, version string) (platform.JSSelection, error) { return releases[version], nil }
+	tags := func(context.Context) (map[string]string, error) {
+		return map[string]string{"latest": "6.22.0", "latest-node18": "5.133.0"}, nil
+	}
+	ci := onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Workflow: ".buildkite/pipeline.yml", Job: ":mocha: Test", Node: "18", NodeSource: "image node:18", Code: onboard.CodeUnresolvedCommand}}}
+	require.Equal(t, "5.133.0", manualCITracer(t.Context(), ci, resolve, tags))
+	require.Equal(t, onboard.CodeUnresolvedCommand, ci.Jobs[0].Code, "the caller's check is unchanged")
+	ci.Jobs[0].Node = ""
+	require.Empty(t, manualCITracer(t.Context(), ci, resolve, tags), "no known CI Node constrains the release")
+}
+
+// Sending unresolved CI to the manual instructions keeps the release every
+// CI Node runs, which those edits pin.
+func TestScopeUnresolvedNeedsKeepTheManualTracer(t *testing.T) {
+	prior := "Facts can add prerequisites." + manualCITracerPrefix + `DD_SET_TRACER_VERSION_JS="5.133.0" (every detected CI Node runtime supports it) and pass --tracer-version 5.133.0 to validation.`
+	needs := scopeUnresolvedNeeds(prior)
+	require.True(t, strings.HasPrefix(needs, "Run next_command for the unsupported CI integration"))
+	require.True(t, strings.HasSuffix(needs, `For manual CI edits use DD_SET_TRACER_VERSION_JS="5.133.0" (every detected CI Node runtime supports it) and pass --tracer-version 5.133.0 to validation.`))
+	require.NotContains(t, scopeUnresolvedNeeds("Facts can add prerequisites."), "manual CI edits")
+}

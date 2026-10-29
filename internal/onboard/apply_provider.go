@@ -184,3 +184,36 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 	}
 	return instrumented
 }
+
+// setupImageNote names the CI jobs running the framework's tests whose
+// container cannot run the provider's setup as configured, such as an image
+// without curl, so the person learns it before the setup is written; empty
+// when there are none. Fixing an image is not part of the prescribed setup.
+func setupImageNote(root, language, framework string) string {
+	provider, err := currentCIProvider(root)
+	if err != nil {
+		return ""
+	}
+	workflows, err := provider.readWorkflows(root)
+	if err != nil {
+		return ""
+	}
+	var problems []string
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if job.SetupImageProblem == "" || disabledCondition(job.If) {
+				continue
+			}
+			if slices.ContainsFunc(job.Steps, func(step runtimeStep) bool {
+				return resolveTestStep(root, workflow, job, step, language, framework).Matched
+			}) {
+				problems = append(problems, workflow.Path+" / "+name+": "+job.SetupImageProblem)
+			}
+		}
+	}
+	if len(problems) == 0 {
+		return ""
+	}
+	return "These CI steps cannot run the " + provider.setupName() + " in their current image, so their tests would stay untraced even with it in place; changing an image or Dockerfile is not part of this setup, so tell the user and ask before making it:\n" + strings.Join(problems, "\n")
+}

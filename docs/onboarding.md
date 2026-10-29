@@ -308,9 +308,19 @@ docker plugin runs the commands in its `image` with `/bin/sh` (or its
 the Compose file (`config`, default `docker-compose.yml`, with matrix values;
 `${NAME:-default}` in the image reads the step's env, and a variable it does not
 set, which the agent or a `.env` file may supply, leaves the image unknown; a
-service built from a Dockerfile has no image ddtest can check; its
-`working_dir` maps back into the checkout through the volume mounting `.`,
-and one outside it is unresolved), and steps without either run on
+service with `build` (a context, or `context`, `dockerfile`,
+`dockerfile_inline`, `args` and `target`) runs in the image its Dockerfile's
+final stage, or `target`, builds `FROM`, followed through stage aliases, which
+then selects the runtime and is checked for the setup like a written image; a
+`FROM` reading a build argument without a literal default, or one the
+Compose `args` or the plugin's `args` override, `FROM scratch`, a remote
+context or a Dockerfile outside the repository leaves the image unknown with
+that reason; its
+`working_dir`, or else the Dockerfile's last `WORKDIR`, maps back into the
+checkout through the volume mounting a repository directory (relative to the
+Compose file, as Compose reads it) or, without one, through the
+Dockerfile's `COPY . <destination>` of the build context, and one outside a
+mounted checkout is unresolved), and steps without either run on
 the agent host, whose runtime ddtest cannot know: the runtime check reports
 them for review instead of certifying them. Plugins that only fetch secrets,
 artifacts or caches, log in to registries or annotate results run no tests
@@ -364,8 +374,17 @@ earlier command of the step that clears or writes `DD_API_KEY` are reported. A p
 environment hook, a secrets plugin or the pipeline's environment in the
 Buildkite UI. The installer needs Bash and curl or wget, so steps on images
 known to lack them (Alpine variants, BusyBox, distroless; official `-slim`
-images unless an earlier command installs curl) or on images ddtest cannot
-resolve are refused with that reason; the agent host is assumed to have them.
+images unless an earlier command installs curl; for an image built from a
+Dockerfile, unless one of its `RUN` instructions installs bash, or curl or
+wget, with `apt-get`, `apt`, `apk`, `yum`, `dnf`, `microdnf` or `zypper`) or
+on images ddtest cannot resolve are refused with that reason, which names
+the Dockerfile and the fix (install curl in it, or build from the full
+image); the setup instructions name those steps before the snippet is
+written, since changing an image needs the person's approval. The agent host
+is assumed to have them. A job whose Ruby or Node is unknown because its image
+cannot be resolved is reported with that cause, and the release of manual
+setup edits for steps ddtest could not resolve is the newest one every known
+CI Node runs (`DD_SET_TRACER_VERSION_JS="5.133.0"` on `node:18`).
 
 `onboard --apply` inserts the snippet before the first JavaScript test command
 of each test step: a new commands entry before a listed command, lines inside

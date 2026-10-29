@@ -134,6 +134,14 @@ type runtimeJob struct {
 	Image string `yaml:"-"`
 	// ImageTemplate is the image as written, before variables are expanded.
 	ImageTemplate string `yaml:"-"`
+	// ImageProblem explains why a provider that read the job's container
+	// cannot know its image, such as one built from a Dockerfile it could
+	// not resolve; empty when the image is known or there is no container.
+	ImageProblem string `yaml:"-"`
+	// SetupImageProblem explains why the job's container cannot run the
+	// provider's setup, such as an image without curl, before any setup is
+	// written; empty when it can or the provider does not check.
+	SetupImageProblem string `yaml:"-"`
 }
 
 type tracerRequirement struct{ Version, Node, Requested string }
@@ -608,6 +616,9 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	}
 	if node == "" {
 		finding.Code, finding.Reason = CodeRuntimeUnknown, "The CI Node runtime is unknown after setup; preserve the workflow and resolve it before claiming compatibility."
+		if job.ImageProblem != "" {
+			finding.Reason = "The CI Node runtime is unknown: " + job.ImageProblem + ". Preserve the workflow and resolve it before claiming compatibility."
+		}
 		return finding
 	}
 	if resolveNode != nil && !actionAPI {

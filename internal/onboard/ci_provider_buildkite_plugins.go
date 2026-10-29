@@ -55,6 +55,11 @@ type buildkiteExecutor struct {
 	propagate bool
 	// directory is where the commands start, relative to the checkout.
 	directory string
+	// dockerfile names the Dockerfile the image is built from; bash and
+	// downloader report its RUN instructions installing Bash, and curl or
+	// wget, on top of image.
+	dockerfile       string
+	bash, downloader bool
 }
 
 // buildkiteNonTestPlugins are plugins that only fetch secrets, artifacts or
@@ -358,12 +363,10 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 		executor.imageProblem = "its Compose file " + file + " defines no service " + service
 		return
 	}
+	var built buildkiteDockerfile
+	var context string
 	if build := gitLabAlias(definition["build"]); build != nil {
-		context := gitLabScalar(build)
-		if context == "" {
-			context = gitLabScalar(gitLabMembers(build)["context"])
-		}
-		executor.imageProblem = "its Docker Compose service " + service + " is built from " + strings.TrimSpace(context+" ") + "with a Dockerfile ddtest does not read"
+		context, built = c.composeBuild(executor, file, service, build, fields, env)
 	} else {
 		executor.template = gitLabScalar(definition["image"])
 		image, resolved := buildkiteComposeImage(executor.template, env)
@@ -415,26 +418,173 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 		}
 	}
 	maps.Copy(executor.env, listed)
-	// The commands start in working_dir, mapped back into the checkout
-	// through the volume that mounts it.
-	mount := ""
+	// The commands start in working_dir, or else the Dockerfile's last
+	// WORKDIR, mapped back into the checkout through the volume that mounts
+	// a repository directory (relative to the Compose file, as Compose
+	// reads it) or, without one, the copy of the build context the
+	// Dockerfile makes.
+	mounts := map[string]string{}
 	for _, volume := range gitLabStrings(definition["volumes"]) {
 		source, destination, _ := strings.Cut(volume, ":")
 		destination, _, _ = strings.Cut(destination, ":")
-		if source == "." || source == "./" {
-			mount = path.Clean(destination)
+		if !strings.HasPrefix(source, ".") || destination == "" {
+			continue
+		}
+		if directory, ok := buildkiteRepositoryDirectory(c.root, path.Join(path.Dir(file), source)); ok {
+			mounts[path.Clean(destination)] = directory
 		}
 	}
-	directory := gitLabScalar(definition["working_dir"])
-	switch {
-	case mount == "":
-		c.review = append(c.review, file+": the Docker Compose service "+service+" does not mount the checkout, so the step runs on the copy of the repository in its image; ddtest validates the checkout.")
-	case directory == "" || path.Clean(directory) == mount:
-	case strings.HasPrefix(path.Clean(directory), mount+"/") && !strings.Contains(directory, "$"):
-		executor.directory = strings.TrimPrefix(path.Clean(directory), mount+"/")
-	default:
-		executor.problem = joinDiagnostic(executor.problem, "the Docker Compose service "+service+" runs the commands in "+directory+", outside the checkout it mounts at "+mount)
+	mounted := slices.Contains(slices.Collect(maps.Values(mounts)), "")
+	if _, taken := mounts[built.contextCopy]; !mounted && !taken && built.contextCopy != "" {
+		mounts[built.contextCopy] = context
 	}
+	directory := gitLabScalar(definition["working_dir"])
+	source := "runs the commands in " + directory
+	if directory == "" && built.workdirProblem != "" {
+		executor.problem = joinDiagnostic(executor.problem, "the Docker Compose service "+service+" sets no working_dir, and "+executor.dockerfile+" "+built.workdirProblem)
+	}
+	if directory == "" && built.workdir != "" {
+		directory, source = built.workdir, "starts in its Dockerfile's WORKDIR "+built.workdir
+	}
+	if !mounted {
+		c.review = append(c.review, file+": the Docker Compose service "+service+" does not mount the checkout, so the step runs on the copy of the repository in its image; ddtest validates the checkout.")
+	}
+	if directory == "" || len(mounts) == 0 {
+		return
+	}
+	mapped, ok := buildkiteMountedDirectory(mounts, directory)
+	switch {
+	case ok:
+		executor.directory = mapped
+	case mounted:
+		var destinations []string
+		for destination, directory := range mounts {
+			if directory == "" {
+				destinations = append(destinations, destination)
+			}
+		}
+		slices.Sort(destinations)
+		executor.problem = joinDiagnostic(executor.problem, "the Docker Compose service "+service+" "+source+", outside the checkout it mounts at "+strings.Join(destinations, ", "))
+	}
+}
+
+// buildkiteRepositoryDirectory is a directory of the repository, relative
+// to its root ("" for the root itself).
+func buildkiteRepositoryDirectory(root, directory string) (string, bool) {
+	directory = path.Clean(directory)
+	if !filepath.IsLocal(filepath.FromSlash(directory)) && directory != "." {
+		return "", false
+	}
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(directory)))
+	if err != nil || !info.IsDir() {
+		return "", false
+	}
+	if directory == "." {
+		return "", true
+	}
+	return directory, true
+}
+
+// buildkiteMountedDirectory maps a container directory back into the
+// checkout through the deepest mount containing it.
+func buildkiteMountedDirectory(mounts map[string]string, directory string) (string, bool) {
+	if strings.Contains(directory, "$") {
+		return "", false
+	}
+	directory = path.Clean(directory)
+	best, found := "", false
+	for destination := range mounts {
+		if (directory == destination || strings.HasPrefix(directory, strings.TrimSuffix(destination, "/")+"/")) && (!found || len(destination) > len(best)) {
+			best, found = destination, true
+		}
+	}
+	if !found {
+		return "", false
+	}
+	rest := strings.TrimPrefix(strings.TrimPrefix(directory, best), "/")
+	mapped := path.Join(mounts[best], rest)
+	if mapped == "." {
+		mapped = ""
+	}
+	return mapped, true
+}
+
+// composeBuild reads the Dockerfile a Compose service is built from: its
+// image becomes the step's, for the image and static runtime rules. A
+// Dockerfile ddtest cannot read, or whose base image it cannot resolve,
+// leaves the image unknown with that reason. context is the build context,
+// relative to the repository root.
+func (c *buildkiteConfig) composeBuild(executor *buildkiteExecutor, file, service string, build *yaml.Node, plugin map[string]*yaml.Node, env map[string]string) (string, buildkiteDockerfile) {
+	settings := gitLabMembers(build)
+	written := gitLabScalar(build)
+	if build.Kind == yaml.MappingNode {
+		written = gitLabScalar(settings["context"])
+		if written == "" {
+			written = "."
+		}
+	}
+	owner := "its Docker Compose service " + service + " is built from "
+	context, resolved := buildkiteComposeImage(written, env)
+	if !resolved || strings.Contains(context, "://") || strings.HasPrefix(context, "git@") {
+		executor.imageProblem = owner + "the build context " + written + ", which ddtest cannot read"
+		return "", buildkiteDockerfile{}
+	}
+	context, ok := buildkiteRepositoryDirectory(c.root, path.Join(path.Dir(file), context))
+	if !ok {
+		executor.imageProblem = owner + "the build context " + written + ", which is not a directory of the repository"
+		return "", buildkiteDockerfile{}
+	}
+	overridden := map[string]bool{}
+	for _, args := range []*yaml.Node{settings["args"], plugin["args"]} {
+		args = gitLabAlias(args)
+		names := gitLabKeys(args)
+		if args != nil && args.Kind != yaml.MappingNode {
+			names = nil
+			for _, item := range gitLabStrings(args) {
+				name, _, _ := strings.Cut(item, "=")
+				names = append(names, strings.TrimSpace(name))
+			}
+		}
+		for _, name := range names {
+			overridden[name] = true
+		}
+	}
+	target := gitLabScalar(settings["target"])
+	var text string
+	if inline := gitLabScalar(settings["dockerfile_inline"]); inline != "" {
+		executor.dockerfile = "its inline Dockerfile"
+		text = inline
+	} else {
+		dockerfile := gitLabScalar(settings["dockerfile"])
+		if dockerfile == "" {
+			dockerfile = "Dockerfile"
+		}
+		name := path.Join(context, dockerfile)
+		if path.IsAbs(dockerfile) || strings.Contains(dockerfile, "$") {
+			name = dockerfile
+		}
+		info, ok := repositoryFile(c.root, c.root, name)
+		var data []byte
+		var err error
+		if ok && !info.IsDir() && info.Size() <= buildkiteSizeLimit {
+			data, err = os.ReadFile(filepath.Join(c.root, filepath.FromSlash(name)))
+		}
+		if !ok || err != nil || info.Size() > buildkiteSizeLimit {
+			executor.imageProblem = owner + "the Dockerfile " + name + ", which is not a file ddtest can read in the repository"
+			return context, buildkiteDockerfile{}
+		}
+		c.files = append(c.files, name)
+		executor.dockerfile = name
+		text = string(data)
+	}
+	built := readBuildkiteDockerfile(text, target, overridden)
+	if built.problem != "" {
+		executor.imageProblem = owner + executor.dockerfile + ", " + built.problem
+		return context, built
+	}
+	executor.image, executor.template = built.image, built.image
+	executor.bash, executor.downloader = built.bash, built.downloader
+	return context, built
 }
 
 // composeVariable records one variable a Compose service sets: a literal or
@@ -494,16 +644,34 @@ func (executor *buildkiteExecutor) setupProblem(curl bool) string {
 		return "The pipeline sets DD_API_KEY in its configuration; never commit the key, and pipeline upload bakes interpolated values into the uploaded pipeline: remove it and provide DD_API_KEY from an agent environment hook, a secrets plugin or the pipeline's environment in the Buildkite UI."
 	case executor.windows:
 		return "The step runs on Windows agents, whose default shell is cmd.exe; the Datadog setup snippet needs a POSIX shell and Bash. Run the tests on Linux or macOS agents."
-	case executor.imageProblem != "":
-		return "The step's container cannot be checked: " + executor.imageProblem + ", so ddtest cannot tell whether it has the Bash and the curl or wget the Datadog installer needs. Give the step a literal image that has them."
-	case imageWithoutBash(executor.image):
-		return "The step's image " + executor.image + " has no Bash, which the Datadog installer needs. Use a Bash-capable image for this step, such as the non-Alpine variant, or a custom image with Bash preinstalled."
-	case !curl && imageWithoutDownloader(executor.image):
-		return "The step's image " + executor.image + " has neither curl nor wget, so the Datadog installer cannot be downloaded and its tests would run untraced. Use the full image (without -slim), or install curl in a command before the setup: " + buildkiteCurlInstall + "."
+	case executor.imageSetupProblem(curl) != "":
+		return executor.imageSetupProblem(curl)
 	case executor.keyEmpty:
 		return "The step's container receives DD_API_KEY set to an empty value, which replaces the agent's key, so the Datadog setup snippet always skips: list DD_API_KEY without a value so the agent's key passes through."
 	case executor.container && !executor.keyPassed && !executor.propagate:
 		return "The step runs its commands in a container, which receives only the environment its plugin lists, so DD_API_KEY never reaches the Datadog setup snippet: add DD_API_KEY to the plugin's environment list."
+	}
+	return ""
+}
+
+// imageSetupProblem explains why the step's container cannot run the
+// Datadog installer, which needs Bash and curl or wget: an image ddtest
+// cannot resolve, or one known to lack them. curl reports an earlier
+// command that installed curl.
+func (executor *buildkiteExecutor) imageSetupProblem(curl bool) string {
+	switch {
+	case executor.imageProblem != "" && executor.dockerfile != "":
+		return "The step's container cannot be checked: " + executor.imageProblem + ", so ddtest cannot tell whether the image it builds has the Bash and the curl or wget the Datadog installer needs. Make the Dockerfile's final FROM a literal image that has them, or validate this step's image separately."
+	case executor.imageProblem != "":
+		return "The step's container cannot be checked: " + executor.imageProblem + ", so ddtest cannot tell whether it has the Bash and the curl or wget the Datadog installer needs. Give the step a literal image that has them."
+	case !executor.bash && imageWithoutBash(executor.image) && executor.dockerfile != "":
+		return "The step's image is built from " + executor.dockerfile + ", whose final stage is FROM " + executor.image + ", which has no Bash, which the Datadog installer needs. Install bash in the Dockerfile (for Alpine: RUN apk add --no-cache bash), or build FROM the non-Alpine variant."
+	case !executor.bash && imageWithoutBash(executor.image):
+		return "The step's image " + executor.image + " has no Bash, which the Datadog installer needs. Use a Bash-capable image for this step, such as the non-Alpine variant, or a custom image with Bash preinstalled."
+	case !curl && !executor.downloader && imageWithoutDownloader(executor.image) && executor.dockerfile != "":
+		return "The step's image is built from " + executor.dockerfile + ", whose final stage is FROM " + executor.image + ", which has neither curl nor wget, and no RUN instruction of the Dockerfile installs them, so the Datadog installer cannot be downloaded and its tests would run untraced. Install curl in the Dockerfile (add curl to its apt-get install packages, or RUN " + buildkiteCurlInstall + "), or build FROM the full image (without -slim)."
+	case !curl && !executor.downloader && imageWithoutDownloader(executor.image):
+		return "The step's image " + executor.image + " has neither curl nor wget, so the Datadog installer cannot be downloaded and its tests would run untraced. Use the full image (without -slim), or install curl in a command before the setup: " + buildkiteCurlInstall + "."
 	}
 	return ""
 }

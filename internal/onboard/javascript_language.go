@@ -91,7 +91,7 @@ const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set 
 // or after a failed install, a bare --import would stop Node.
 const esmImportCommand = `if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --import $DD_TRACE_ESM_IMPORT"; fi`
 
-func (javascriptDiscovery) ciSetupRequest(_, framework, site string, terms ciSetupTerms) ciSetupRequest {
+func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
 	request := ciSetupRequest{Language: "js", Site: site, TracerInput: "js-tracer-version", TracerVersion: "<exact dd-trace release>"}
 	if setupImportsESM(framework) || framework == "mocha" {
 		request.After = []string{esmImportCommand}
@@ -99,6 +99,9 @@ func (javascriptDiscovery) ciSetupRequest(_, framework, site string, terms ciSet
 	request.Notes = append(request.Notes, "The "+terms.Installer+" appends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". Run the tests on Node.js 18 or newer (the job's image). After "+terms.Entry+", extend NODE_OPTIONS ("+terms.Persist(`export NODE_OPTIONS="$NODE_OPTIONS ..."`)+") instead of replacing it, including in an inline NODE_OPTIONS=... prefix of the test command.")
 	if framework == "mocha" {
 		request.Notes = append(request.Notes, "Keep the export after "+terms.Entry+" only for Mocha ESM test files; CommonJS suites need only the preload.")
+	}
+	if note := setupImageNote(root, "javascript", framework); note != "" {
+		request.Notes = append(request.Notes, note)
 	}
 	if framework == "cucumber" {
 		request.Notes = append(request.Notes, "For Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false in "+terms.Variables+". This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected.")

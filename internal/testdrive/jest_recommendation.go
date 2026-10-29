@@ -184,7 +184,7 @@ func (t *Testdrive) recommendTracer(ctx context.Context, output io.Writer, resul
 		if command := onboard.DDTestCommand("testdrive", "--framework", t.framework.Name(), "--all", "--agent", "--tracer-version", rec.Selection.Version, "--yes"); len(command) > 0 {
 			validate = shellquote.Join(command...)
 		}
-		_, _ = fmt.Fprintf(output, "Recommended candidate: dd-trace@%s (Node %s). CI Node compatible: %s; unsupported: %s; unresolved: %s.\nPrefer a candidate covering the whole existing matrix before excluding runtimes. Use js-tracer-version: %s in CI, then run full validation through the agent workflow: %s. This is advisory; the current selection and project dependency are unchanged.\n", rec.Selection.Version, rec.Selection.Node, scopeList(rec.Compatible), scopeList(rec.Unsupported), scopeList(rec.Unresolved), rec.Selection.Version, validate)
+		_, _ = fmt.Fprintf(output, "Recommended candidate: dd-trace@%s (Node %s). CI Node compatible: %s; unsupported: %s; unresolved: %s.\nPrefer a candidate covering the whole existing matrix before excluding runtimes. Use %s in CI, then run full validation through the agent workflow: %s. This is advisory; the current selection and project dependency are unchanged.\n", rec.Selection.Version, rec.Selection.Node, scopeList(rec.Compatible), scopeList(rec.Unsupported), scopeList(rec.Unresolved), onboard.CIProviderTracerSetting("js", rec.Selection.Version), validate)
 	}
 	for _, note := range check.RecommendationNotes {
 		_, _ = fmt.Fprintln(output, "Tracer recommendation: "+note)
@@ -197,11 +197,23 @@ func (t *Testdrive) ciRuntimeTracer(ctx context.Context) string {
 	if t.resolveJSTracer == nil || t.resolveJSTags == nil {
 		return ""
 	}
-	ci := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
+	return manualCITracer(ctx, onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name()), t.resolveJSTracer, t.resolveJSTags)
+}
+
+// manualCITracer is ciRuntimeTracer's selection. The manual CI edits it
+// guides go into the steps ddtest could not resolve, so their known Node
+// runtimes constrain the release too.
+func manualCITracer(ctx context.Context, ci onboard.RuntimeCheck, resolve func(context.Context, string) (platform.JSSelection, error), tags func(context.Context) (map[string]string, error)) string {
 	if len(ci.Jobs) == 0 {
 		return ""
 	}
-	rec, _ := recommendJavaScriptTracer(ctx, jestPreflight{}, &ci, t.resolveJSTracer, t.resolveJSTags, "")
+	ci.Jobs = slices.Clone(ci.Jobs)
+	for i, job := range ci.Jobs {
+		if job.Code == onboard.CodeUnresolvedCommand && job.Node != "" {
+			ci.Jobs[i].Code = ""
+		}
+	}
+	rec, _ := recommendJavaScriptTracer(ctx, jestPreflight{}, &ci, resolve, tags, "")
 	if rec == nil || len(rec.Unsupported) > 0 || len(rec.Compatible) == 0 {
 		return ""
 	}
