@@ -104,21 +104,48 @@ func TestDiscoveryPreservesExplicitEmptyNodeOptions(t *testing.T) {
 	}
 }
 
-func TestNonTestSecretEnvironmentDoesNotBlockUnrelatedConfiguration(t *testing.T) {
+func TestCredentialSecretsAreValidatedWithoutAndReported(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"test":"jest"}}`), 0600))
 	path := filepath.Join(root, ".github/workflows/ci.yml")
-	require.NoError(t, os.WriteFile(path, []byte("jobs:\n  test:\n    steps:\n      - run: npm ci\n        env: {NPM_TOKEN: '${{ secrets.NPM_TOKEN }}'}\n      - run: npm test\n"), 0600))
-	scope, err := DiscoverValidationScope(root, "jest")
-	require.NoError(t, err)
+	discover := func(workflow string) ValidationScope {
+		t.Helper()
+		require.NoError(t, os.WriteFile(path, []byte(workflow), 0600))
+		scope, err := DiscoverValidationScope(root, "jest")
+		require.NoError(t, err)
+		return scope
+	}
+	// A setup step's, the job's and the test step's own credentials.
+	for _, workflow := range []string{
+		"jobs:\n  test:\n    steps:\n      - run: npm ci\n        env: {NPM_TOKEN: '${{ secrets.NPM_TOKEN }}'}\n      - run: npm test\n",
+		"jobs:\n  test:\n    env: {NPM_TOKEN: '${{ secrets.ACCESS_TOKEN }}'}\n    steps:\n      - run: npm ci\n      - run: npm test\n",
+		"jobs:\n  test:\n    steps:\n      - run: npm ci\n      - run: npm test\n        env: {NPM_TOKEN: '${{ github.token }}'}\n",
+	} {
+		scope := discover(workflow)
+		require.Len(t, scope.Commands, 1, workflow)
+		require.Empty(t, scope.Unresolved, workflow)
+		require.Empty(t, scope.Commands[0].UnvalidatedSetup, workflow)
+		require.Equal(t, []string{"NPM_TOKEN"}, scope.Commands[0].WithoutSecrets, workflow)
+		require.NotContains(t, scope.Commands[0].Environment, "NPM_TOKEN", "no secret reaches validation")
+		require.Contains(t, strings.Join(scope.Caveats, "\n"), "step 2 (npm test): validated without the CI secrets NPM_TOKEN", workflow)
+	}
+	// A secret after the last test can't reach it.
+	scope := discover("jobs:\n  test:\n    steps:\n      - run: npm test\n      - run: npx codecov\n        env: {CODECOV_TOKEN: '${{ secrets.CODECOV_TOKEN }}'}\n")
 	require.Len(t, scope.Commands, 1)
-	require.Empty(t, scope.Commands[0].UnvalidatedSetup)
-	require.Empty(t, scope.Unresolved)
-	require.NotEmpty(t, scope.Review)
-	require.NoError(t, os.WriteFile(path, []byte("jobs:\n  test:\n    env: {TOKEN: '${{ secrets.ACCESS_TOKEN }}'}\n    steps:\n      - run: npm ci\n      - run: npm test\n"), 0600))
-	scope, err = DiscoverValidationScope(root, "jest")
-	require.NoError(t, err)
-	require.Len(t, scope.Commands, 1)
-	require.Contains(t, strings.Join(scope.Commands[0].UnvalidatedSetup, "\n"), "CI environment variable TOKEN")
+	require.Empty(t, scope.Commands[0].WithoutSecrets)
+	// A command that reads the credential, a secret used as a setting and a
+	// value that only contains a secret still require review.
+	for _, workflow := range []string{
+		"jobs:\n  test:\n    steps:\n      - run: npm test -- --token=$NPM_TOKEN\n        env: {NPM_TOKEN: '${{ secrets.NPM_TOKEN }}'}\n",
+		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {API_URL: '${{ secrets.API_URL }}'}\n",
+		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {AUTH: 'Bearer ${{ secrets.TOKEN }}'}\n",
+	} {
+		scope := discover(workflow)
+		blocked := len(scope.Unresolved) > 0
+		for _, entry := range scope.Commands {
+			blocked = blocked || len(entry.UnvalidatedSetup) > 0
+		}
+		require.True(t, blocked, workflow)
+	}
 }

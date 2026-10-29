@@ -31,7 +31,11 @@ type TestCommand struct {
 	// RemoteGrid names the remote browser grid (such as Sauce Labs) whose CI
 	// secrets the entry reads. It runs only in CI: CI setup instruments it, and
 	// local validation reports it as a caveat instead of running it.
-	RemoteGrid                      string            `json:"remote_grid,omitempty"`
+	RemoteGrid string `json:"remote_grid,omitempty"`
+	// WithoutSecrets name the CI secret variables the entry's job sets for it
+	// or its setup. They never exist locally, so validation runs without them
+	// and reports each as a caveat.
+	WithoutSecrets                  []string          `json:"without_secrets,omitempty"`
 	LocalOverrides                  []string          `json:"local_overrides,omitempty"`
 	ID                              string            `json:"id,omitempty"`
 	Services                        []ServiceCommand  `json:"services,omitempty"`
@@ -255,7 +259,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				finalNode, finalErr := rowSetupNode(root, workflow, job, row)
 				unsupportedRow := skipsNode && finalErr == nil && UnsupportedNode(finalNode)
 				installerActive, installerSkipped := false, false
-				var pendingSetup []string
+				var pendingSetup, withoutSecrets []string
 				var preparation []BuildCommand
 				var unresolved, setupUnresolved, review []scopeDiagnostic
 				var commands []TestCommand
@@ -283,6 +287,11 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						continue
 					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
+					for _, secret := range resolved.WithoutSecrets {
+						if !slices.Contains(withoutSecrets, secret) {
+							withoutSecrets = append(withoutSecrets, secret)
+						}
+					}
 					resolution := resolveTestStep(root, workflow, job, resolved, language, framework)
 					if readsComputedAxis(step.Run, computed, row) && !resolution.Matched && !stepMayStartTests(root, workflow, job, step, framework) {
 						// A dependency install of a computed variant is the axis
@@ -389,6 +398,13 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						}
 						entry.WindowsRunner = entry.CIInstrumentationExcluded && installerSkipped && windowsRow(job, row)
 						entry.RemoteGrid = resolved.RemoteGrid
+						if len(withoutSecrets) > 0 {
+							entry.WithoutSecrets = slices.Sorted(slices.Values(withoutSecrets))
+							caveat := location.String() + ": validated without the CI secrets " + strings.Join(entry.WithoutSecrets, ", ") + ", which exist only in CI; tests that read them ran locally without them, and CI runs them with the secrets."
+							if !slices.Contains(scope.Caveats, caveat) {
+								scope.Caveats = append(scope.Caveats, caveat)
+							}
+						}
 						if framework == "mocha" && !entry.usesNYC && !entry.mochaIstanbul {
 							parts, err := staticCommands(entry.Command)
 							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {

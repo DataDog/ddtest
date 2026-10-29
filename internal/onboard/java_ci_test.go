@@ -384,11 +384,15 @@ func TestJavaDeployCredentialsDoNotBlockValidation(t *testing.T) {
 	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, strings.Replace(workflow, "server-id: central, ", "", 1), nil), "junit5")
 	require.NoError(t, err)
 	require.NotEmpty(t, scope.Unresolved)
-	// The action's default names, such as GITHUB_TOKEN, may serve the tests too.
+	// A token under the action's default names, such as GITHUB_TOKEN, is a
+	// credential: the tests are validated without it and the report says so.
 	defaults := strings.NewReplacer("server-username: MAVEN_USERNAME, server-password: MAVEN_PASSWORD", "gpg-private-key: '${{ secrets.GPG_KEY }}'", "MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}\n          ", "", "MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}", "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}").Replace(workflow)
 	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, defaults, nil), "junit5")
 	require.NoError(t, err)
-	require.NotEmpty(t, scope.Unresolved, "only credentials the workflow names for settings.xml are left out")
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, []string{"GITHUB_TOKEN"}, scope.Commands[0].WithoutSecrets)
+	require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI secrets GITHUB_TOKEN")
 }
 
 func TestJavaCIConfigurationKeepsJavaSetupAcrossOtherDatadogActions(t *testing.T) {
