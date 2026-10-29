@@ -378,10 +378,12 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 	var configurationEnvironment map[string]string
+	without := selectedPlan.WithoutSecrets
 	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
 		// A command matching a discovered CI configuration replays its environment,
-		// including the variables GitHub sets on every step.
-		matched := matchingConfigurationEnvironment(scope, scopeErr, repositoryRoot, runner.Name(), scopeCommand)
+		// including the variables GitHub sets on every step, and its omitted secrets.
+		matched, matchedWithout := matchingConfigurationEnvironment(scope, scopeErr, repositoryRoot, runner.Name(), scopeCommand)
+		without = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(without), matchedWithout...))))
 		if matched != nil {
 			matched = onboard.WithCIProviderDefaults(matched)
 		}
@@ -426,8 +428,8 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		drive.executor = &ext.DefaultCommandExecutor{Timeout: timeout}
 	}
 	drive.configurationEnvironment = configurationEnvironment
-	if len(configurationEnvironment) > 0 || len(selectedPlan.WithoutSecrets) > 0 {
-		drive.executor = configurationExecutor{commandExecutor: drive.executor, environment: configurationEnvironment, without: selectedPlan.WithoutSecrets}
+	if len(configurationEnvironment) > 0 || len(without) > 0 {
+		drive.executor = configurationExecutor{commandExecutor: drive.executor, environment: configurationEnvironment, without: without}
 	}
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		drive.preflight = drive.frameworkPreflight()

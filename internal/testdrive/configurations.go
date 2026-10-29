@@ -160,12 +160,13 @@ func matchingConfigurationPreparation(scope onboard.ValidationScope, scopeErr er
 }
 
 // Never guess between two CI variants with different environments.
-func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr error, root, framework, command string) map[string]string {
+func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr error, root, framework, command string) (map[string]string, []string) {
 	if scopeErr != nil {
-		return nil
+		return nil, nil
 	}
 	var matched bool
 	var result map[string]string
+	var without []string
 	for _, selected := range onboard.ValidationCommands(root, command, framework) {
 		for _, entry := range scope.Commands {
 			if !sameConfiguration(selected, entry) || !hostConfiguration(entry) || len(entry.UnvalidatedSetup) > 0 {
@@ -173,13 +174,15 @@ func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr er
 			}
 			candidate := mergeConfigurationEnvironment(entry.Environment, selected.Environment)
 			if matched && !maps.Equal(result, candidate) {
-				return nil
+				return nil, nil
 			}
 			result = candidate
 			matched = true
+			// The command runs without every secret a matching configuration omits.
+			without = slices.Compact(slices.Sorted(slices.Values(append(without, entry.WithoutSecrets...))))
 		}
 	}
-	return result
+	return result, without
 }
 
 // A suspected regression in one configuration outranks configurations that

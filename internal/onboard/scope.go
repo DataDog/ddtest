@@ -287,6 +287,11 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						continue
 					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
+					// A later step that sets the variable itself runs with that value.
+					withoutSecrets = slices.DeleteFunc(withoutSecrets, func(secret string) bool {
+						_, set := env[secret]
+						return set
+					})
 					for _, secret := range resolved.WithoutSecrets {
 						if !slices.Contains(withoutSecrets, secret) {
 							withoutSecrets = append(withoutSecrets, secret)
