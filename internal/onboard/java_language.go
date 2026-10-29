@@ -36,6 +36,12 @@ func (javaDiscovery) supportsCIProvider(provider string) bool {
 
 func (javaDiscovery) automaticCISetup() bool { return false }
 
+func (javaDiscovery) keepsCISetting(string) bool { return false }
+
+func (javaDiscovery) jobConsumer(string, ciWorkflow, runtimeJob, string) (bool, bool) {
+	return false, false
+}
+
 // Every discovered Maven test step runs after a complete Datadog action with an
 // exact agent release, or explicitly skips it; at least one stays instrumented.
 // Coordinated validation enforces the same rule through JavaCIConfiguration.

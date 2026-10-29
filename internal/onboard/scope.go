@@ -169,6 +169,13 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 			lastTest := -1
 			{
 				consumer, hidden := false, false
+				if isConsumer, handled := discoveryLanguageNamed(language).jobConsumer(root, workflow, job, framework); handled {
+					if !isConsumer {
+						scope.Review = append(scope.Review, workflow.Path+" / "+name+": no "+framework+" environment identified; review other entry points separately.")
+						continue
+					}
+					consumer = true
+				}
 				var outside []string
 				for i, step := range job.Steps {
 					resolution := resolveTestStep(root, workflow, job, step, language, framework)

@@ -99,6 +99,15 @@ type discoveryLanguage interface {
 	// whose validation ddtest runs separately, for the selected Datadog site
 	// (empty: the default); empty uses instructions.
 	agentInstructions(framework, site string) string
+
+	// jobConsumer identifies jobs whose test commands are selected by matrix
+	// values, before the shared unresolved-command scan. handled is false when
+	// that scan should decide whether the job can run framework's tests.
+	jobConsumer(root string, workflow ciWorkflow, job runtimeJob, framework string) (consumer, handled bool)
+
+	// keepsCISetting reports whether a DD_* CI setting reaches local replay.
+	// Other DD_* settings configure CI's agent, intake or session.
+	keepsCISetting(key string) bool
 }
 
 // discoveryLanguageFor returns the language that discovers framework's CI, or nil.

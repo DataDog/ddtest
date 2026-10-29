@@ -83,6 +83,12 @@ func (javascriptDiscovery) onboardingScope(framework string) (bool, bool) {
 	return discover, slices.Contains([]string{"webdriverio", "cypress", "cucumber"}, framework)
 }
 
+func (javascriptDiscovery) keepsCISetting(string) bool { return false }
+
+func (javascriptDiscovery) jobConsumer(string, ciWorkflow, runtimeJob, string) (bool, bool) {
+	return false, false
+}
+
 const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set NODE_OPTIONS for later steps, so merge this into the existing test step, preserving any current Node options:\n\n```yaml\nenv:\n  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\n```\n\nThe --import loader is required for Vitest and other ESM tests."
 
 // esmImportCommand registers the tracer's ESM loader after a setup that runs

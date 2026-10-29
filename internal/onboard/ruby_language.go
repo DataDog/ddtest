@@ -189,6 +189,12 @@ func (rubyDiscovery) onboardingScope(string) (discover, instructionsWhenConfigur
 	return true, true
 }
 
+func (rubyDiscovery) keepsCISetting(string) bool { return false }
+
+func (rubyDiscovery) jobConsumer(string, ciWorkflow, runtimeJob, string) (bool, bool) {
+	return false, false
+}
+
 const rubyBootstrap = "The action installs datadog-ci into the CI bundle and exports RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument. Preserve RUBYOPT on the RSpec or Minitest step and merge any existing Ruby options. Keep the existing bundle exec or binstub entry point."
 
 func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
