@@ -368,9 +368,12 @@ configuration of the same suite passed its paired comparison; without one, it
 blocks. A GitHub Actions variable that carries only a credential secret, such
 as `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` or a `SONAR_TOKEN` set on the test
 step, its job or an earlier setup step, is a caveat as well: local validation
-runs without it and names it. A command that reads such a variable, a secret
-used as a setting (such as a URL or mode) and a remote grid's key outside
-WebdriverIO still require review. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
+runs without it (a value the host exports is unset too) and names it. A
+credential is a variable whose name ends with TOKEN, SECRET, PASSWORD,
+PASSPHRASE, API_KEY, ACCESS_KEY, SECRET_KEY, PRIVATE_KEY, CREDENTIALS or AUTH.
+A command that reads such a variable, a secret used as a setting (such as
+`AUTH_MODE` or a URL) and a remote grid's key outside WebdriverIO still
+require review. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
 settings that disable a tracer integration (such as
 `DD_TRACE_DISABLED_INSTRUMENTATIONS=router`) and lists earlier attempts of the
 same workflow that stopped before the final run. Re-running `--apply` on its own

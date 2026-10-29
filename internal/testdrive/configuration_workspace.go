@@ -21,12 +21,14 @@ import (
 type configurationExecutor struct {
 	commandExecutor
 	environment map[string]string
-	// without names CI secrets the configuration runs without, which a
-	// value inherited from this host must not replace.
+	// without names CI secrets the configuration's steps run without, which
+	// a value inherited from this host must not replace.
 	without []string
 }
 
-// commandEnvironment is a command's environment in the configuration.
+// commandEnvironment is a command's environment in the configuration. An
+// omitted secret is unset unless the command or configuration sets the
+// variable itself, as a later CI step may.
 func (e configurationExecutor) commandEnvironment(env map[string]string) map[string]string {
 	merged := mergeConfigurationEnvironment(e.environment, env)
 	if len(e.without) > 0 {
@@ -35,7 +37,9 @@ func (e configurationExecutor) commandEnvironment(env map[string]string) map[str
 			merged = map[string]string{}
 		}
 		for _, name := range e.without {
-			merged[name] = ext.UnsetEnvironment
+			if _, explicit := merged[name]; !explicit {
+				merged[name] = ext.UnsetEnvironment
+			}
 		}
 	}
 	return merged

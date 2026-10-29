@@ -415,9 +415,10 @@ func TracerPluginSetting(key string) bool {
 	return ok && enabled && plugin != ""
 }
 
-// credentialName is a variable name whose word parts name a credential, as in
-// GITHUB_TOKEN, SONAR_LOGIN_PASSWORD or NPM_AUTH.
-var credentialName = regexp.MustCompile(`(?i)(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH)(?:_|$)`)
+// credentialName is a variable name that ends with a credential, as in
+// GITHUB_TOKEN, SONAR_LOGIN_PASSWORD or NPM_AUTH. A name that only contains
+// one, such as AUTH_MODE or PASSWORD_POLICY, is a setting.
+var credentialName = regexp.MustCompile(`(?i)(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|SECRET_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH)$`)
 
 // ciCredential reports a CI variable that only carries a credential secret.
 // Datadog's own settings and remote grid keys are not.

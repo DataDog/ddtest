@@ -369,12 +369,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		// A command that is exactly one CI configuration runs that
 		// configuration's replayable preparation too, so it is credited.
 		if entry, ok := matchingConfigurationPreparation(scope, scopeErr, repositoryRoot, runner.Name(), scopeCommand); ok {
-			if selectedPlan.Command == "" {
-				selectedPlan.Command, selectedPlan.Directory = entry.Command, entry.Directory
-			}
-			selectedPlan.Prerequisites = entry.Prerequisites
-			// Preparation and tests run with the configuration's environment.
-			selectedPlan.Environment = mergeConfigurationEnvironment(entry.Environment, selectedPlan.Environment)
+			adoptConfigurationPreparation(&selectedPlan, entry)
 		}
 	}
 	var configurationEnvironment map[string]string

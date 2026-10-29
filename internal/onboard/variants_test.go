@@ -130,10 +130,11 @@ func TestCredentialSecretsAreValidatedWithoutAndReported(t *testing.T) {
 		require.NotContains(t, scope.Commands[0].Environment, "NPM_TOKEN", "no secret reaches validation")
 		require.Contains(t, strings.Join(scope.Caveats, "\n"), "step 2 (npm test): validated without the CI secrets NPM_TOKEN", workflow)
 	}
-	// A test step that sets the variable itself runs with its own value.
+	// A test step that sets the variable itself keeps its value, while the
+	// setup step that read the secret still ran without it.
 	scope := discover("jobs:\n  test:\n    steps:\n      - run: npm ci\n        env: {NPM_TOKEN: '${{ secrets.NPM_TOKEN }}'}\n      - run: npm test\n        env: {NPM_TOKEN: local-value}\n")
 	require.Len(t, scope.Commands, 1)
-	require.Empty(t, scope.Commands[0].WithoutSecrets)
+	require.Equal(t, []string{"NPM_TOKEN"}, scope.Commands[0].WithoutSecrets)
 	require.Equal(t, "local-value", scope.Commands[0].Environment["NPM_TOKEN"])
 	// Identical configurations merge, keeping every location's omitted secrets.
 	scope = discover("jobs:\n  plain:\n    steps:\n      - run: npm test\n  sonar:\n    steps:\n      - run: npm test\n        env: {SONAR_TOKEN: '${{ secrets.SONAR_TOKEN }}'}\n")
@@ -148,6 +149,8 @@ func TestCredentialSecretsAreValidatedWithoutAndReported(t *testing.T) {
 	for _, workflow := range []string{
 		"jobs:\n  test:\n    steps:\n      - run: npm test -- --token=$NPM_TOKEN\n        env: {NPM_TOKEN: '${{ secrets.NPM_TOKEN }}'}\n",
 		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {API_URL: '${{ secrets.API_URL }}'}\n",
+		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {AUTH_MODE: '${{ secrets.AUTH_MODE }}'}\n",
+		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {PASSWORD_POLICY: '${{ secrets.PASSWORD_POLICY }}'}\n",
 		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {AUTH: 'Bearer ${{ secrets.TOKEN }}'}\n",
 	} {
 		scope := discover(workflow)
@@ -156,5 +159,14 @@ func TestCredentialSecretsAreValidatedWithoutAndReported(t *testing.T) {
 			blocked = blocked || len(entry.UnvalidatedSetup) > 0
 		}
 		require.True(t, blocked, workflow)
+	}
+}
+
+func TestCredentialNamesEndWithACredential(t *testing.T) {
+	for _, name := range []string{"GITHUB_TOKEN", "SONAR_TOKEN", "NPM_AUTH", "AUTH", "SONAR_LOGIN_PASSWORD", "AWS_SECRET_ACCESS_KEY", "CLIENT_SECRET", "GPG_PASSPHRASE", "OPENAI_API_KEY", "DJANGO_SECRET_KEY", "GOOGLE_CREDENTIALS"} {
+		require.True(t, credentialName.MatchString(name), name)
+	}
+	for _, name := range []string{"AUTH_MODE", "PASSWORD_POLICY", "TOKEN_URL", "API_URL", "OAUTH", "SECRETS_DIR"} {
+		require.False(t, credentialName.MatchString(name), name)
 	}
 }
