@@ -181,9 +181,32 @@ steps:
 	require.Contains(t, circleRuns(jobs["unknown"])[0], "the command reads $REPORTS, which buildkite-agent pipeline upload replaces when the pipeline is uploaded")
 	require.Equal(t, unresolvedCIValue("$AGENT_VALUE"), jobs["inherited"].Env["FROM_AGENT"])
 
-	text, unknown := buildkiteInterpolate(`a $$b \$c ${KNOWN} ${KNOWN:-x} $UNKNOWN ${BUILDKITE_BRANCH}`, map[string]string{"KNOWN": "k"})
-	require.Equal(t, `a $b $c k ${KNOWN:-x} $UNKNOWN ${BUILDKITE_BRANCH}`, text)
-	require.Equal(t, []string{"KNOWN", "UNKNOWN"}, unknown)
+	text, unknown := buildkiteInterpolate(`a $$b \$c ${KNOWN} $UNKNOWN ${BUILDKITE_BRANCH}`, map[string]string{"KNOWN": "k"})
+	require.Equal(t, `a $b $c k $UNKNOWN ${BUILDKITE_BRANCH}`, text)
+	require.Equal(t, []string{"UNKNOWN"}, unknown)
+
+	// Default values follow pipeline upload's rules for known variables:
+	// :- replaces an empty or missing value, - only a missing one. A
+	// variable ddtest does not know stays unknown, default or not.
+	known := map[string]string{"NODE_IMAGE": "node:22", "EMPTY": ""}
+	for written, want := range map[string]string{
+		"${NODE_IMAGE:-node:20}": "node:22",
+		"${NODE_IMAGE-node:20}":  "node:22",
+		"${EMPTY:-node:20}":      "node:20",
+		"${EMPTY-node:20}":       "",
+	} {
+		text, unknown := buildkiteInterpolate(written, known)
+		require.Equal(t, want, text, written)
+		require.Empty(t, unknown, written)
+	}
+	for _, written := range []string{"${MISSING:-node:20}", "${MISSING-node:20}", "${EMPTY:?required}", "${NODE_IMAGE:0:4}"} {
+		text, unknown := buildkiteInterpolate(written, known)
+		require.Equal(t, written, text)
+		require.Len(t, unknown, 1, written)
+	}
+	root = buildkiteRepository(t, "env:\n  NODE_IMAGE: node:22\nsteps:\n"+buildkiteDockerStep("test", "${NODE_IMAGE:-node:20}", buildkiteSnippetText("js", "5.133.0", "datadoghq.com", "      ")+"      - npm test\n"))
+	require.Equal(t, "node:22", buildkiteJobs(t, root, buildkiteFile)["test"].Image)
+	require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
 }
 
 // A matrix runs one job per combination: a list of values ({{matrix}}),
@@ -965,5 +988,80 @@ steps:
 		jobs := buildkiteJobs(t, root, buildkiteFile)
 		require.Equal(t, []string{"npm test"}, circleRuns(jobs["linux"]))
 		require.Contains(t, circleRuns(jobs["inherited"])[0], "runs on Windows agents")
+	})
+}
+
+// Findings of the third review round: upload interpolation in agent
+// targeting and the pipeline image, Compose paths relative to the Compose
+// file, build-only Compose steps and the plugin's DD_API_KEY precedence.
+func TestBuildkiteThirdReviewFindings(t *testing.T) {
+	snippet := buildkiteSnippetText("js", "5.133.0", "datadoghq.com", "      ")
+	t.Run("agent targeting reads upload-time values", func(t *testing.T) {
+		root := buildkiteRepository(t, "env:\n  TARGET_QUEUE: windows-large\n  LINUX_QUEUE: linux\nsteps:\n  - label: known windows\n    command: npm test\n    agents:\n      queue: \"$TARGET_QUEUE\"\n  - label: known linux\n    command: npm test\n    agents:\n      queue: \"${LINUX_QUEUE:-default}\"\n  - label: unknown\n    command: npm test\n    agents:\n      queue: \"$QUEUE_FROM_AGENT\"\n  - label: escaped\n    command: npm test\n    agents:\n      queue: \"$$LITERAL\"\n")
+		jobs := buildkiteJobs(t, root, buildkiteFile)
+		require.Contains(t, circleRuns(jobs["known windows"])[0], "runs on Windows agents")
+		require.Equal(t, []string{"npm test"}, circleRuns(jobs["known linux"]))
+		require.Contains(t, circleRuns(jobs["unknown"])[0], "its agent targeting queue=$QUEUE_FROM_AGENT reads $QUEUE_FROM_AGENT, which buildkite-agent pipeline upload replaces with a value ddtest cannot know, so the step may run on Windows agents")
+		require.Equal(t, []string{"npm test"}, circleRuns(jobs["escaped"]), "an escaped $$ is a literal queue name")
+		plan, err := PlanJavaScriptSetup(root, "jest", "5.133.0", "datadoghq.com", ">=18")
+		require.NoError(t, err)
+		config := plannedFile(t, plan, buildkiteFile)
+		require.Contains(t, config, "  - label: unknown\n    command: npm test\n", "no Bash setup in a step that may run on Windows")
+		require.Contains(t, config, "  - label: known windows\n    command: npm test\n")
+		require.Equal(t, 2, strings.Count(config, buildkiteInstallerChecksum), "only the Linux steps get the setup")
+	})
+	t.Run("the pipeline image is interpolated once", func(t *testing.T) {
+		root := buildkiteRepository(t, "env:\n  NODE_IMAGE: node:22\nimage: $$NODE_IMAGE\nsteps:\n  - label: escaped\n    commands:\n"+snippet+"      - npm test\n  - label: known\n    image: $NODE_IMAGE\n    command: npm test\n")
+		jobs := buildkiteJobs(t, root, buildkiteFile)
+		require.Empty(t, jobs["escaped"].Image, "$$NODE_IMAGE is the literal $NODE_IMAGE")
+		require.Equal(t, "$$NODE_IMAGE", jobs["escaped"].ImageTemplate)
+		setup := slices.IndexFunc(jobs["escaped"].Steps, func(step runtimeStep) bool { return step.Setup != nil })
+		require.Contains(t, jobs["escaped"].Steps[setup].Setup.Problem, "its image $$NODE_IMAGE depends on a variable or matrix value ddtest cannot resolve")
+		require.Equal(t, "node:22", jobs["known"].Image)
+	})
+	t.Run("Compose paths are relative to the Compose file", func(t *testing.T) {
+		root := buildkiteComposeRepository(t, "      - npm test\n", "ci/docker-compose.yml", "services:\n  app:\n    build: .\n    working_dir: /app\n    volumes:\n      - .:/app\n", map[string]string{"ci/Dockerfile": "FROM node:20\n", "ci/package.json": `{"scripts":{"test":"jest"}}`})
+		job := buildkiteJobs(t, root, buildkiteFile)["test"]
+		require.Equal(t, "ci", job.Steps[0].WorkingDirectory, ". is ci/, the Compose file's directory")
+		require.Equal(t, "node:20", job.Image, "the build context is ci/ too")
+		root = buildkiteComposeRepository(t, "      - npm test\n", "ci/docker-compose.yml", "services:\n  app:\n    build:\n      context: ..\n      dockerfile: docker/Dockerfile\n    volumes:\n      - ..:/src\n", map[string]string{"docker/Dockerfile": "FROM node:22\nWORKDIR /src/packages/ui\n", "packages/ui/package.json": "{}"})
+		job = buildkiteJobs(t, root, buildkiteFile)["test"]
+		require.Equal(t, "node:22", job.Image, "dockerfile is relative to the context, the repository root")
+		require.Equal(t, "packages/ui", job.Steps[0].WorkingDirectory)
+	})
+	t.Run("a build-only Compose step runs its commands on the agent", func(t *testing.T) {
+		pipeline := "steps:\n  - label: test\n    command: npm test\n    plugins:\n      - docker-compose#v5.5.0:\n          build: app\n"
+		plan, root, err := planBuildkite(t, "jest", pipeline, map[string]string{"docker-compose.yml": "services:\n  app:\n    build: .\n"})
+		require.NoError(t, err)
+		config := plannedFile(t, plan, buildkiteFile)
+		require.Contains(t, config, snippet+"      - npm test\n")
+		require.NotContains(t, config, "DD_API_KEY\n          build", "the agent host already has the key")
+		require.NotContains(t, config, "environment:")
+		_, err = plan.apply(true, os.Rename)
+		require.NoError(t, err)
+		require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", "datadoghq.com"), "apply and the re-check agree")
+		job := buildkiteJobs(t, root, buildkiteFile)["test"]
+		require.Empty(t, job.Image)
+	})
+	t.Run("the plugin's DD_API_KEY overrides the Compose service's", func(t *testing.T) {
+		for compose, problem := range map[string]string{
+			"    environment:\n      DD_API_KEY: \"\"\n":   "",
+			"    environment:\n      - DD_API_KEY=\n":      "",
+			"    environment:\n      DD_API_KEY: abc123\n": "never commit the key",
+		} {
+			root := buildkiteComposeRepository(t, snippet+"      - npm test\n", "docker-compose.yml", "services:\n  app:\n    image: node:22\n    volumes:\n      - .:/app\n"+compose, nil)
+			job := buildkiteJobs(t, root, buildkiteFile)["test"]
+			setup := slices.IndexFunc(job.Steps, func(step runtimeStep) bool { return step.Setup != nil })
+			if problem == "" {
+				require.Empty(t, job.Steps[setup].Setup.Problem, compose)
+				continue
+			}
+			require.Contains(t, job.Steps[setup].Setup.Problem, problem, compose)
+		}
+		root := buildkiteComposeRepository(t, snippet+"      - npm test\n", "docker-compose.yml", "services:\n  app:\n    image: node:22\n    volumes:\n      - .:/app\n    environment:\n      - DD_API_KEY\n", nil)
+		writeFile(t, root, buildkiteFile, strings.Replace(readFixtureFile(t, root, buildkiteFile), "            - DD_API_KEY\n", "            - DD_API_KEY=\n", 1))
+		job := buildkiteJobs(t, root, buildkiteFile)["test"]
+		setup := slices.IndexFunc(job.Steps, func(step runtimeStep) bool { return step.Setup != nil })
+		require.Contains(t, job.Steps[setup].Setup.Problem, "receives DD_API_KEY set to an empty value", "the plugin's empty value wins over the service's pass-through")
 	})
 }

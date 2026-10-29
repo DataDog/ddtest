@@ -164,6 +164,7 @@ func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkite
 		var resolved bool
 		executor.image, resolved = value(&yaml.Node{Kind: yaml.ScalarNode, Value: executor.template})
 		if !resolved {
+			executor.image = ""
 			executor.imageProblem = "its image " + executor.template + " depends on a variable or matrix value ddtest cannot resolve"
 		}
 	}
@@ -299,6 +300,7 @@ func (c *buildkiteConfig) docker(executor *buildkiteExecutor, config *yaml.Node,
 	case executor.template == "":
 		executor.imageProblem = "its docker plugin names no image"
 	case !resolved:
+		executor.image = ""
 		executor.imageProblem = "its image " + executor.template + " depends on a variable or matrix value ddtest cannot resolve"
 	}
 	executor.problem = joinDiagnostic(executor.problem, buildkiteEntrypointProblem(fields["entrypoint"], "the docker plugin's"))
@@ -315,12 +317,13 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 	service, _ := value(fields["run"])
 	executor.compose, executor.composeRun = service, service != ""
 	if service == "" {
+		// Building or pushing images runs no container: the step's commands
+		// still run on the agent host.
 		for _, key := range []string{"build", "push"} {
 			if names := gitLabStrings(fields[key]); len(names) > 0 {
 				executor.compose = strings.Join(names, ", ")
 			}
 		}
-		executor.container = executor.compose != ""
 		return
 	}
 	executor.containerOptions(fields, "docker-compose", value, env)
@@ -377,9 +380,14 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 		}
 	}
 	executor.problem = joinDiagnostic(executor.problem, buildkiteEntrypointProblem(definition["entrypoint"], "the Docker Compose service "+service+"'s"))
-	// The service's environment, under what the plugin passes with -e.
+	// The service's environment, under what the plugin passes with -e,
+	// DD_API_KEY included: a plugin that lists it decides what the
+	// container receives. A key written into the Compose file is reported
+	// either way, since it is committed.
 	listed := executor.env
 	executor.env = map[string]string{}
+	pluginPassed, pluginEmpty := executor.keyPassed, executor.keyEmpty
+	pluginListed := pluginPassed || pluginEmpty || executor.keyProblem
 	environment := gitLabAlias(definition["environment"])
 	if environment != nil && environment.Kind == yaml.MappingNode {
 		for _, name := range gitLabKeys(environment) {
@@ -418,6 +426,9 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 		}
 	}
 	maps.Copy(executor.env, listed)
+	if pluginListed {
+		executor.keyPassed, executor.keyEmpty = pluginPassed, pluginEmpty
+	}
 	// The commands start in working_dir, or else the Dockerfile's last
 	// WORKDIR, mapped back into the checkout through the volume that mounts
 	// a repository directory (relative to the Compose file, as Compose

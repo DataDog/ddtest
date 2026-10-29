@@ -298,11 +298,18 @@ value in every job, and any other `$NAME` (including the step's own `env` and
 agent or job variables such as `$BUILDKITE_BUILD_CHECKOUT_PATH` or
 `$BUILDKITE_PARALLEL_JOB`) is replaced with a value of the upload step that ddtest cannot know, so a
 command reading one is unresolved and an env value reading one is replayed as
-unknown. A container receives only the environment its plugin passes: the
+unknown. For a known variable, `${NAME:-default}` reads the default when the
+value is empty and `${NAME-default}` keeps an empty value, as upload does; an
+unknown variable stays unknown with either. Upload interpolates the file
+once, so a pipeline `image: $$NAME` stays the literal `$NAME`, an image ddtest
+cannot resolve. A container receives only the environment its plugin passes: the
 plugin's `environment` (`NAME=value` as written, a bare `NAME` with the
-pipeline's value) and the Compose service's `environment`, plus, with
+pipeline's value) over the Compose service's `environment` (for `DD_API_KEY`
+too: a plugin listing it decides whether the key passes), plus, with
 `propagate-environment: true`, the pipeline's `env`. Windows agents are read
-from the effective `agents` (the step's keys override the pipeline's). The
+from the effective `agents` (the step's keys override the pipeline's), after
+upload interpolation; a target reading a variable ddtest cannot know may
+select Windows agents, so the step is unresolved. The
 docker plugin runs the commands in its `image` with `/bin/sh` (or its
 `shell`) at the mounted checkout, the docker-compose plugin in its `run` service's image from
 the Compose file (`config`, default `docker-compose.yml`, with matrix values;
@@ -328,7 +335,8 @@ and are reported, not blockers: `artifacts`, `cache`, `docker-login`, `ecr`,
 `junit-annotate`, `test-collector`, `secrets`, `vault-secrets`,
 `aws-assume-role-with-web-identity`, `seek-oss/aws-sm` and
 `bugcrowd/test-summary` (the list is `buildkiteNonTestPlugins`), as are
-docker-compose steps that only build or push images and `buildkite-agent
+docker-compose steps that only build or push images (whose commands, if any,
+run on the agent host, not in a container) and `buildkite-agent
 artifact`, `annotate` and `meta-data` commands without command substitutions.
 An upload of pipeline files ddtest reads (`buildkite-agent pipeline upload` with
 literal paths, or without arguments, where exactly one of Buildkite's default

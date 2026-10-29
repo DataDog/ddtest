@@ -247,7 +247,9 @@ func (c *buildkiteConfig) workflow(file string, body *yaml.Node) ciWorkflow {
 			}
 			scope.env[key] = value
 		}
-		scope.image, _ = buildkiteInterpolate(gitLabScalar(fields["image"]), scope.known)
+		// The image is interpolated once, with the step's: an escaped
+		// $$NAME stays a literal reference.
+		scope.image = gitLabScalar(fields["image"])
 		scope.agents = fields["agents"]
 	}
 	c.walk(&workflow, steps, scope, 0)
@@ -427,9 +429,11 @@ func (c *buildkiteConfig) command(workflow *ciWorkflow, item *yaml.Node, fields 
 			continue
 		}
 		executor.keyProblem = executor.keyProblem || keyProblem
-		if executor.windows = buildkiteWindows(matrix, buildkiteAgents(scope.agents, fields["agents"])); executor.windows {
+		windows, targeting := buildkiteWindows(matrix, scope.known, buildkiteAgents(scope.agents, fields["agents"]))
+		if executor.windows = windows; executor.windows {
 			executor.problem = joinDiagnostic(executor.problem, "it runs on Windows agents, whose default shell is cmd.exe, which ddtest cannot replay")
 		}
+		executor.problem = joinDiagnostic(executor.problem, targeting)
 		if executor.container && executor.composeRun || executor.container && executor.compose == "" {
 			// A container receives only what its plugin passes: the variables
 			// it lists and, with propagate-environment, the pipeline's env.
@@ -493,15 +497,21 @@ func buildkiteAgents(nodes ...*yaml.Node) map[string]string {
 }
 
 // buildkiteWindows reports agent targeting that selects Windows agents,
-// with the step's matrix values substituted.
-func buildkiteWindows(matrix func(string) (string, string), agents map[string]string) bool {
-	for key, value := range agents {
-		value, _ = matrix(key + "=" + value)
-		if strings.Contains(strings.ToLower(value), "windows") {
-			return true
+// with the step's matrix values and pipeline upload's interpolation
+// substituted. problem names targeting that reads a value ddtest cannot
+// know, which may select Windows agents.
+func buildkiteWindows(matrix func(string) (string, string), known map[string]string, agents map[string]string) (windows bool, problem string) {
+	for _, key := range slices.Sorted(maps.Keys(agents)) {
+		target, _ := matrix(key + "=" + agents[key])
+		target, unknown := buildkiteInterpolate(target, known)
+		if strings.Contains(strings.ToLower(target), "windows") {
+			return true, ""
+		}
+		if len(unknown) > 0 && problem == "" {
+			problem = "its agent targeting " + key + "=" + agents[key] + " reads $" + strings.Join(unknown, ", $") + ", which buildkite-agent pipeline upload replaces with a value ddtest cannot know, so the step may run on Windows agents, whose default shell is cmd.exe"
 		}
 	}
-	return false
+	return false, problem
 }
 
 // steps splits a step's commands into top-level statements and follows the
@@ -792,8 +802,20 @@ func buildkiteInterpolate(text string, known map[string]string) (string, []strin
 		}
 		parts := buildkiteVariable.FindStringSubmatch(match)
 		name := parts[1] + parts[3]
-		if value, ok := known[name]; ok && parts[2] == "" {
-			return value
+		if value, ok := known[name]; ok {
+			// ${NAME:-default} replaces an empty value too, ${NAME-default}
+			// only a missing one, which a known variable never is.
+			switch modifier := parts[2]; {
+			case modifier == "":
+				return value
+			case strings.HasPrefix(modifier, ":-"):
+				if value == "" {
+					return strings.TrimPrefix(modifier, ":-")
+				}
+				return value
+			case strings.HasPrefix(modifier, "-"):
+				return value
+			}
 		}
 		if !buildkiteBuildVariable(name) && !slices.Contains(unknown, name) {
 			unknown = append(unknown, name)
