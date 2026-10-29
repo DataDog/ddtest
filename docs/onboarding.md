@@ -348,7 +348,14 @@ and package scripts whose body could start a test still block, and so do
 code that spawns processes or loads a repository module) and npm settings that
 change how scripts execute (`ignore-scripts`, `script-shell`). A Cucumber alias
 chain such as `pnpm test:unit && pnpm test:bdd` resolves to its Cucumber leaf
-when that leaf is the chain's only and last link. CI files of other providers
+when that leaf is the chain's only and last link. An unquoted pathname pattern
+in a JavaScript test command, such as `"test": "mocha *.test.js"`, is expanded
+as `sh` expands it in that command's directory (no globstar, so `**` matches
+like `*`; no dot files) and probes receive those files, while full-suite runs
+keep the original alias; a quoted pattern stays a runner argument. A pattern
+with a variable, braces, `~` or an escape, one matching no repository files and
+one expanding to more than 1000 files stay unresolved, except in a companion
+tool such as Prettier that starts no tests. CI files of other providers
 (`circle.yml`, `.gitlab-ci.yml` when GitHub Actions is selected, and the like)
 that mention the framework are listed for review; they are not analyzed. A job guard that reads only
 runtime context (`github.actor`, `github.event_name`, `github.run_number`,

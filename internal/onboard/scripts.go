@@ -221,7 +221,16 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			result.Builds = nil
 		}
 		previousChain = fragment.Chain
-		words := fragment.Words
+		words, err := expandPathnames(root, directory, fragment)
+		if err != nil {
+			// A tool that selects no tests, builds or setup whatever its file
+			// arguments are, such as a formatter, needs no file list.
+			if review, ok := inertCommand(root, directory, fragment.Words, stack, *remaining, frameworks...); ok {
+				result.ReviewReason = joinDiagnostic(result.ReviewReason, review)
+				continue
+			}
+			fragment.Reason = "Unvalidated setup or command with dynamic shell syntax: " + fragment.Text + " (" + repositoryError(root, err) + ")"
+		}
 		if fragment.Reason != "" {
 			result.Reason = joinDiagnostic(result.Reason, fragment.Reason)
 			result.UnknownExecutable = false
@@ -291,6 +300,23 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 
 	result.Setup = append(result.Setup, setup...)
 	return result
+}
+
+// inertCommand reports whether a command is review-only regardless of its
+// arguments: it neither changes directory, prepares a build, edits CI inputs
+// nor resolves to, or might start, any test invocation.
+func inertCommand(root, directory string, words, stack []string, remaining int, frameworks ...string) (string, bool) {
+	if len(words) == 0 || words[0] == "cd" || mutatesCIFiles(shellquote.Join(words...)) {
+		return "", false
+	}
+	if _, ok := localPreparation(root, directory, words); ok {
+		return "", false
+	}
+	part := resolveJestWords(root, directory, words, stack, &remaining, frameworks...)
+	if part.Reason != "" || part.Matched || part.OtherFramework || part.MochaAuxiliary || part.MochaReferenced || part.UnknownExecutable || len(part.Tests) > 0 || len(part.Builds) > 0 || len(part.Setup) > 0 || part.Evidence != "" {
+		return "", false
+	}
+	return part.ReviewReason, true
 }
 
 func resolveJestWords(root, directory string, words, stack []string, remaining *int, frameworks ...string) (result commandResolution) {
@@ -884,6 +910,10 @@ func staticCommands(command string) ([][]string, error) {
 		if fragment.Reason != "" {
 			return nil, fmt.Errorf("%s", fragment.Reason)
 		}
+		// Callers without the command's working directory cannot expand them.
+		if len(fragment.Patterns) > 0 {
+			return nil, fmt.Errorf("%s", "Unvalidated setup or command with dynamic shell syntax: "+fragment.Text)
+		}
 		commands = append(commands, fragment.Words)
 	}
 	return commands, nil
@@ -976,7 +1006,9 @@ func powershellArgvOnly(shell, run string) bool {
 		if r == '@' && npmPackageAt(run, i) {
 			continue
 		}
-		if strings.ContainsRune("`@;|&<>{},\\", r) || r == '$' && !strings.HasPrefix(run[i:], "$(") {
+		// PowerShell never expands * ? [ for a native command on Windows, so
+		// the runner would receive the pattern that bash discovery expands.
+		if strings.ContainsRune("`@;|&<>{},\\*?[", r) || r == '$' && !strings.HasPrefix(run[i:], "$(") {
 			return false
 		}
 	}
