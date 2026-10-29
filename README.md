@@ -384,9 +384,12 @@ curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/ddtest-lin
 chmod +x bin/ddtest
 ```
 
-Replace `linux-amd64` with your platform. For a fixed release, pass its tag to
-`gh release download` (`gh release download v1.2.3 ...`) or use
-`releases/download/v1.2.3/` instead of `releases/latest/download/` in the URL.
+For another platform, download `ddtest-linux-arm64`, `ddtest-darwin-amd64`,
+`ddtest-darwin-arm64`, `ddtest-windows-amd64.exe` or `ddtest-windows-arm64.exe`
+instead; on Windows, keep the `.exe` suffix in the saved name (`ddtest.exe`).
+For a fixed release, pass its tag to `gh release download`
+(`gh release download v1.2.3 ...`) or use `releases/download/v1.2.3/` instead
+of `releases/latest/download/` in the URL.
 
 ## CI configuration examples
 
