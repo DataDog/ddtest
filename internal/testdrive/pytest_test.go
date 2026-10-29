@@ -159,7 +159,7 @@ func TestPythonReviewAllSelectsEachCommandEnvironment(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)
 			t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
-			for _, command := range []string{"python3.10", "python3.12", ".venv/bin/python", "poetry"} {
+			for _, command := range []string{"python3.10", "python3.12", ".venv/bin/python", "poetry", "bin/python"} {
 				version := "3.12.8"
 				if command == "python3.10" {
 					version = "3.10.16"
@@ -170,7 +170,7 @@ func TestPythonReviewAllSelectsEachCommandEnvironment(t *testing.T) {
 				require.NoError(t, err)
 				file := filepath.Join(root, command)
 				require.NoError(t, os.MkdirAll(filepath.Dir(file), 0755))
-				requireWriteFile(t, file, "#!/bin/sh\nfor last; do :; done\ncase \"$*\" in\n*'result = {\"executable\"'*) printf '%s' '"+string(availability)+"' > \"$last\";;\n*) printf '%s' '"+string(metadata)+"' > \"$last\";;\nesac\n")
+				requireWriteFile(t, file, "#!/bin/sh\nfor last; do :; done\ncase \"$*\" in\n*'env info --path'*) printf '%s\\n' '"+root+"';;\n*'result = {\"executable\"'*) printf '%s' '"+string(availability)+"' > \"$last\";;\n*) printf '%s' '"+string(metadata)+"' > \"$last\";;\nesac\n")
 				require.NoError(t, os.Chmod(file, 0755))
 			}
 			var steps strings.Builder

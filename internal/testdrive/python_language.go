@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -34,6 +35,21 @@ func (pythonLanguage) refreshProjectTracer(t *Testdrive, ctx context.Context) {
 	source := t.environmentInfo.Source
 	if source == "" {
 		source = "Selected Python configuration"
+	}
+	if strings.TrimSuffix(filepath.Base(t.command), ".exe") == "poetry" && t.configurationSourceRoot != "" {
+		relative, err := filepath.Rel(t.checkoutRoot(), t.repositoryRoot)
+		if err == nil {
+			var pinned map[string]string
+			pinned, err = pythonPoetryEnvironment(ctx, t.command, filepath.Join(t.configurationSourceRoot, relative), t.configurationEnvironment, t.commandTimeout)
+			if err == nil {
+				maps.Copy(t.configurationEnvironment, pinned)
+			}
+		}
+		if err != nil {
+			t.environmentFailure = environmentFinding("python-environment-unresolved", "Cannot retain the selected Poetry environment", err.Error(), "Prepare the Poetry environment with the project's test dependencies, then rerun testdrive.")
+			t.projectTracer = ""
+			return
+		}
 	}
 	t.environmentInfo, t.environmentFailure = pythonEnvironmentInfo(ctx, t.command, t.args, source, t.configurationEnvironment, t.commandTimeout)
 	t.projectTracer = ""
