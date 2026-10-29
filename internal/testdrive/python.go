@@ -78,7 +78,13 @@ func pythonEnvironmentInfo(ctx context.Context, command string, args []string, s
 			// original project-cache entry over an activated environment.
 			for i, arg := range prefix {
 				if platform.IsPythonExecutable(arg) {
-					probeCommand, prefix = environmentPython(selected), prefix[i+1:]
+					probeCommand, prefix = arg, prefix[i+1:]
+					if filepath.Base(arg) == arg {
+						candidate := filepath.Join(filepath.Dir(environmentPython(selected)), arg)
+						if _, err := os.Stat(candidate); err == nil {
+							probeCommand = candidate
+						}
+					}
 					break
 				}
 			}

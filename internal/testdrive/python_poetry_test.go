@@ -114,6 +114,18 @@ esac
 	info, finding := pythonEnvironmentInfo(t.Context(), command, []string{"run", "python", "-I", "-m", "pytest"}, "Poetry", env, time.Second)
 	require.Nil(t, finding)
 	require.Equal(t, "/prepared/bin/python", info.Executable)
+	for _, selected := range []string{"python3.10", filepath.Join(t.TempDir(), "python3.10")} {
+		interpreter := selected
+		if !filepath.IsAbs(interpreter) {
+			interpreter = filepath.Join(tools, "bin", interpreter)
+		}
+		availability, err := json.Marshal(map[string]any{"executable": interpreter, "version": "3.10.16", "pytest": true})
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(interpreter, []byte("#!/bin/sh\nfor last; do :; done\nprintf '%s' '"+string(availability)+"' > \"$last\"\n"), 0755))
+		info, finding := pythonEnvironmentInfo(t.Context(), command, []string{"run", selected, "-m", "pytest"}, "Poetry", env, time.Second)
+		require.Nil(t, finding)
+		require.Equal(t, interpreter, info.Executable)
+	}
 	drive := &Testdrive{repositoryRoot: original, language: "python", framework: framework.NewPytest(platform.NewPython()), command: command, args: []string{"run", "pytest"}, executor: &ext.DefaultCommandExecutor{}, checkOnly: true}
 	drive.preflight = drive.frameworkPreflight()
 	result, err := drive.runPreparedConfiguration(t.Context(), io.Discard, &configurationResult{TestCommand: onboard.TestCommand{Directory: ".", Environment: env}})
