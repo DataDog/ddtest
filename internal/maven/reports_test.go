@@ -38,6 +38,43 @@ func TestReadReportsReadsSurefireAndFailsafeResults(t *testing.T) {
 	}, tests)
 }
 
+func TestReadReportsReadsScalaTestAndKarateResults(t *testing.T) {
+	root := t.TempDir()
+	projects := []Project{{Directory: "scala"}, {Directory: "api"}}
+	writePOM(t, root, "scala/target/scalatest-reports/TEST-example.CalcTest.xml", `<testsuite name="example.CalcTest"><testcase classname="example.CalcTest" name="adds"/></testsuite>`)
+	// The plugin's discovery wrapper holds no test case.
+	writePOM(t, root, "scala/target/scalatest-reports/TEST-org.scalatest.tools.DiscoverySuite-1.xml", `<testsuite name="org.scalatest.tools.DiscoverySuite" tests="0"/>`)
+	// Surefire reports a JUnit 5 runner's scenarios by feature path, and here
+	// loses the failing one; the feature's own report replaces them.
+	writePOM(t, root, "api/target/surefire-reports/TEST-example.CalcTest.xml", `<testsuite name="example.CalcTest">
+  <testcase classname="example/calc" name="[1:2] adds"/>
+  <testcase classname="example.UnitTest" name="checks"/>
+</testsuite>`)
+	writePOM(t, root, "api/target/karate-reports/example.calc.karate-json.txt", `{"name": "Calculator", "relativePath": "example/calc.feature", "callDepth": 0, "scenarioResults": [
+  {"name": "adds", "refId": "[1:2]", "failed": false, "stepResults": [{}]},
+  {"name": "existing failure", "refId": "[2:6]", "failed": true, "error": "match failed: EQUALS\n  4\n  5", "stepResults": [{}]},
+  {"name": "", "refId": "[3:10]", "failed": false, "stepResults": [{}]},
+  {"name": "skipped by a hook", "refId": "[4:14]", "failed": false, "stepResults": []}
+]}`)
+	// A called feature is part of its caller's scenario.
+	writePOM(t, root, "api/target/karate-reports/example.helper.karate-json.txt", `{"name": "Helper", "relativePath": "example/helper.feature", "callDepth": 1, "scenarioResults": [{"name": "login"}]}`)
+
+	tests, err := ReadReports(root, projects)
+	require.NoError(t, err)
+	require.Equal(t, []Test{
+		{Module: "scala", Suite: "example.CalcTest", Name: "adds", Status: "passed"},
+		{Module: "api", Suite: "example.UnitTest", Name: "checks", Status: "passed"},
+		{Module: "api", Suite: "[example/calc] Calculator", Name: "adds", Status: "passed"},
+		{Module: "api", Suite: "[example/calc] Calculator", Name: "existing failure", Status: "failed", Failure: "karate: match failed: EQUALS\n"},
+		{Module: "api", Suite: "[example/calc] Calculator", Name: "[3:10]", Status: "passed"},
+		{Module: "api", Suite: "[example/calc] Calculator", Name: "skipped by a hook", Status: "skipped"},
+	}, tests)
+
+	writePOM(t, root, "api/target/karate-reports/example.other.karate-json.txt", `{"name": "Other"}`)
+	_, err = ReadReports(root, projects)
+	require.ErrorContains(t, err, "names no feature path")
+}
+
 func TestReadReportsDistinguishesMissingAndEmptyResults(t *testing.T) {
 	root := t.TempDir()
 	projects := []Project{{Directory: "."}}
@@ -85,6 +122,7 @@ func TestIncompleteBuild(t *testing.T) {
 		{"successful build", 0, []Test{{Module: "core", Status: "passed"}}, "", false},
 		{"native test failure", 1, failedCore, testFailure, false},
 		{"ANSI-colored test failure", 1, failedCore, "\x1b[1;31m" + testFailure + "\x1b[m", false},
+		{"ScalaTest plugin failure", 1, failedCore, "[ERROR] Failed to execute goal org.scalatest:scalatest-maven-plugin:2.2.0:test (test) on project core: There are test failures -> [Help 1]\n", false},
 		{"Failsafe verification failure", 1, failedCore, "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-failsafe-plugin:3.5.3:verify (default) on project core: There are test failures.\n", false},
 		{"compilation failure", 1, nil, "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile (default-compile) on project api: Compilation failure\n", true},
 		{"later module fails to compile", 1, failedCore, testFailure + "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile (default-compile) on project api: Compilation failure\n", true},

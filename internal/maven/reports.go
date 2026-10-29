@@ -7,6 +7,7 @@ package maven
 
 import (
 	"cmp"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -17,7 +18,8 @@ import (
 	"strings"
 )
 
-// Test is one test case from a module's native Surefire or Failsafe report.
+// Test is one test case from a module's native Surefire, Failsafe, ScalaTest
+// or Karate report.
 type Test struct {
 	// Module is the project directory relative to the inspected root.
 	Module, Suite, Name, Status string
@@ -30,7 +32,7 @@ type Test struct {
 var ErrNoTestCases = errors.New("native reports contain no test cases")
 
 // ErrNoReports reports a build that wrote no native report for any module.
-var ErrNoReports = errors.New("no native TEST-*.xml reports under the modules' target/surefire-reports or target/failsafe-reports; configure Surefire or Failsafe XML reporting and run the intended Maven profile")
+var ErrNoReports = errors.New("no native reports under the modules' target/surefire-reports, target/failsafe-reports, target/scalatest-reports or target/karate-reports; configure Surefire, Failsafe or ScalaTest XML reporting and run the intended Maven profile")
 
 type reportCase struct {
 	Class    string          `xml:"classname,attr"`
@@ -51,8 +53,12 @@ type reportSuite struct {
 	Cases []reportCase `xml:"testcase"`
 }
 
-// reportDirectories are where Surefire and Failsafe write one TEST-*.xml per class.
-var reportDirectories = []string{filepath.Join("target", "surefire-reports"), filepath.Join("target", "failsafe-reports")}
+// reportDirectories are where Surefire, Failsafe and the scalatest-maven-plugin
+// write one TEST-*.xml per class.
+var reportDirectories = []string{filepath.Join("target", "surefire-reports"), filepath.Join("target", "failsafe-reports"), filepath.Join("target", "scalatest-reports")}
+
+// karateReports is where Karate writes one *.karate-json.txt per feature.
+var karateReports = filepath.Join("target", "karate-reports")
 
 // ReadReports reads the native reports of every project under root. Call it
 // only on fresh build output: reports from an earlier build are read as well.
@@ -60,28 +66,49 @@ func ReadReports(root string, projects []Project) ([]Test, error) {
 	var tests []Test
 	reports := 0
 	for _, project := range projects {
+		var paths []string
 		for _, directory := range reportDirectories {
-			paths, err := filepath.Glob(filepath.Join(root, project.Directory, directory, "TEST-*.xml"))
+			found, err := filepath.Glob(filepath.Join(root, project.Directory, directory, "TEST-*.xml"))
 			if err != nil {
 				return nil, err
 			}
-			slices.Sort(paths)
-			for _, path := range paths {
-				info, err := os.Lstat(path)
-				if err != nil {
-					return nil, err
-				}
-				if !info.Mode().IsRegular() {
-					return nil, fmt.Errorf("native test report is not a regular file: %s", path)
-				}
-				read, err := readReport(path, project.Directory)
-				if err != nil {
-					return nil, err
-				}
-				reports++
-				tests = append(tests, read...)
-			}
+			slices.Sort(found)
+			paths = append(paths, found...)
 		}
+		features, err := filepath.Glob(filepath.Join(root, project.Directory, karateReports, "*.karate-json.txt"))
+		if err != nil {
+			return nil, err
+		}
+		slices.Sort(features)
+		var module, karate []Test
+		var karatePaths []string
+		for _, path := range append(paths, features...) {
+			info, err := os.Lstat(path)
+			if err != nil {
+				return nil, err
+			}
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("native test report is not a regular file: %s", path)
+			}
+			var read []Test
+			if strings.HasSuffix(path, ".karate-json.txt") {
+				var feature string
+				read, feature, err = readKarateReport(path, project.Directory)
+				karate, karatePaths = append(karate, read...), append(karatePaths, feature)
+			} else {
+				read, err = readReport(path, project.Directory)
+				module = append(module, read...)
+			}
+			if err != nil {
+				return nil, err
+			}
+			reports++
+		}
+		// Surefire reports each Karate scenario of a JUnit 5 runner under its
+		// feature path, as example/calc, and may lose some; the feature's
+		// own report replaces them.
+		module = slices.DeleteFunc(module, func(test Test) bool { return slices.Contains(karatePaths, test.Suite) })
+		tests = append(append(tests, module...), karate...)
 	}
 	switch {
 	case reports == 0:
@@ -90,6 +117,58 @@ func ReadReports(root string, projects []Project) ([]Test, error) {
 		return nil, ErrNoTestCases
 	}
 	return tests, nil
+}
+
+// karateFeature is the part of a Karate feature's JSON report that names its
+// scenarios and their outcomes.
+type karateFeature struct {
+	Name         string `json:"name"`
+	RelativePath string `json:"relativePath"`
+	CallDepth    int    `json:"callDepth"`
+	Scenarios    []struct {
+		Name   string            `json:"name"`
+		RefID  string            `json:"refId"`
+		Failed bool              `json:"failed"`
+		Error  string            `json:"error"`
+		Steps  []json.RawMessage `json:"stepResults"`
+	} `json:"scenarioResults"`
+}
+
+// readKarateReport reads a feature's Karate JSON report. Each scenario is a
+// test of the suite dd-java-agent reports, "[<feature>] <name>", where feature
+// is the feature's path without .feature, which readKarateReport also returns.
+// As in dd-java-agent, an unnamed scenario is named by its reference, as
+// [2:6], and one that ran no step, as a hook skips it, is skipped.
+func readKarateReport(path, module string) ([]Test, string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	var report karateFeature
+	if err := json.Unmarshal(data, &report); err != nil {
+		return nil, "", fmt.Errorf("parse native report %s: %w", path, err)
+	}
+	if report.RelativePath == "" {
+		return nil, "", fmt.Errorf("native report %s names no feature path", path)
+	}
+	feature := strings.TrimSuffix(report.RelativePath, ".feature")
+	// A feature another one calls is part of the caller's scenario.
+	if report.CallDepth > 0 {
+		return nil, feature, nil
+	}
+	var tests []Test
+	for _, scenario := range report.Scenarios {
+		test := Test{Module: module, Suite: "[" + feature + "] " + report.Name, Name: cmp.Or(strings.TrimSpace(scenario.Name), scenario.RefID), Status: "passed"}
+		if len(scenario.Steps) == 0 {
+			test.Status = "skipped"
+		}
+		if scenario.Failed {
+			message, _, _ := strings.Cut(strings.TrimSpace(scenario.Error), "\n")
+			test.Status, test.Failure = "failed", "karate: "+message+"\n"
+		}
+		tests = append(tests, test)
+	}
+	return tests, feature, nil
 }
 
 func readReport(path, module string) ([]Test, error) {
@@ -149,7 +228,7 @@ func readReport(path, module string) ([]Test, error) {
 var failedGoal = regexp.MustCompile(`^\[ERROR\] Failed to execute goal ([^ ]+) \([^)]*\) on project ([^:]+): (.*)$`)
 
 // testGoals are the plugin goals whose failure a native test failure explains.
-var testGoals = []string{"org.apache.maven.plugins:maven-surefire-plugin:test", "org.apache.maven.plugins:maven-failsafe-plugin:verify"}
+var testGoals = []string{"org.apache.maven.plugins:maven-surefire-plugin:test", "org.apache.maven.plugins:maven-failsafe-plugin:verify", "org.scalatest:scalatest-maven-plugin:test"}
 
 var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 

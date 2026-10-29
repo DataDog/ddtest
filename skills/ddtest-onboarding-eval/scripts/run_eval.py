@@ -178,7 +178,7 @@ class BackgroundCommands:
 # reactors in disposable copies) repeatedly; they need longer foreground runs
 # and container-native scratch storage.
 RUBY_FRAMEWORKS = ("rspec", "minitest")
-JAVA_FRAMEWORKS = ("junit4", "junit5", "testng", "spock", "cucumber-java")
+JAVA_FRAMEWORKS = ("junit4", "junit5", "testng", "spock", "cucumber-java", "karate", "scalatest", "munit")
 
 
 def agent_environment(agent, timeout, framework=None):

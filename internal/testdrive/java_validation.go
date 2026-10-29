@@ -158,8 +158,8 @@ func readMavenConfig(path string) ([]string, error) {
 
 // runJava runs the selected Maven command once in the disposable copy, with
 // fresh build output, and reads its native Surefire/Failsafe reports. A probe
-// run adds probeArgs, which select only the probe.
-func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *workspace.Session, agent string, spec runSpec, probeArgs []string) (run validationRun, runErr error) {
+// run adds the probe's arguments, which select only the probe.
+func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *workspace.Session, agent string, spec runSpec, probe javaProbe) (run validationRun, runErr error) {
 	run.Name, run.Role, run.Instrumented, run.ProbeMode = spec.Name, spec.Role, spec.Instrumented, spec.ProbeMode
 	if spec.ProbePath != "" {
 		run.Role = roleProbeControl
@@ -234,7 +234,7 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 	if spec.ProbePath != "" {
 		// The probe only needs Surefire: checks after the test phase, such as
 		// license headers or coverage gates, would judge the probe file itself.
-		args = append(maven.UpToTest(args), probeArgs...)
+		args = append(maven.UpToTest(args), probe.args...)
 		env["DDTEST_PROBE_MODE"] = spec.ProbeMode
 		env["DDTEST_PROBE_STATE"] = filepath.Join(directory, "probe-state")
 	}
@@ -268,6 +268,11 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 	case spec.ProbePath == "" && maven.IncompleteBuild(run.ExitCode, projects, tests, string(data)):
 		run.ResultError = javaIncompleteBuild
 	}
+	if probe.harness != "" {
+		// The runner that starts the probe feature is not a test of its own.
+		tests = slices.DeleteFunc(tests, func(test maven.Test) bool { return test.Suite == probe.harness })
+		run.Facts = withoutSuite(run.Facts, probe.harness)
+	}
 	run.Tests = javaNativeTests(projects, tests, spec.ProbePath != "")
 	if spec.Instrumented && spec.ProbePath == "" {
 		run.Coverage = javaSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests)
@@ -283,6 +288,19 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 		run.Diagnostic = commandDiagnostic(data)
 	}
 	return run, nil
+}
+
+// withoutSuite leaves a suite's tests and their events out of facts.
+func withoutSuite(facts intake.Facts, suite string) intake.Facts {
+	facts.Tests = slices.DeleteFunc(slices.Clone(facts.Tests), func(test intake.Test) bool {
+		if test.Suite == suite {
+			facts.TestEventCount -= len(test.Attempts)
+			return true
+		}
+		return false
+	})
+	facts.Events = slices.DeleteFunc(slices.Clone(facts.Events), func(event intake.Event) bool { return event.Tags["test.suite"] == suite })
+	return facts
 }
 
 // javaModuleLabels maps each project directory to the name dd-java-agent
@@ -312,7 +330,8 @@ func javaNativeTests(projects []maven.Project, tests []maven.Test, probe bool) [
 	native := make([]nativeTest, 0, len(tests))
 	for _, test := range tests {
 		item := nativeTest{File: labels[test.Module] + " / " + test.Suite, Name: test.Name, Status: test.Status, Failure: withoutObjectAddresses(test.Failure)}
-		if probe && test.Suite == javaProbeClass {
+		// A Karate suite is the probe feature's path and name.
+		if probe && (test.Suite == javaProbeClass || strings.HasSuffix(test.Suite, "] "+javaProbeClass)) {
 			name := javaTestName(test.Name)
 			item.probe, item.telemetryName = true, &name
 		}
@@ -372,6 +391,10 @@ var javaPluginSuffix = regexp.MustCompile(` (maven-surefire-plugin|maven-failsaf
 // Surefire reports the name alone.
 var javaFeatureURI = regexp.MustCompile(`^(?:classpath|file):.*?\.feature:`)
 
+// javaScalaTestRunner is the module dd-java-agent reports for suites the
+// scalatest-maven-plugin runs.
+const javaScalaTestRunner = "org.scalatest.tools.Runner"
+
 // verifyJavaTelemetry matches every native result to one reported test
 // execution by module, class, method and status. Equal totals are not enough.
 func verifyJavaTelemetry(run validationRun) verdict {
@@ -387,9 +410,24 @@ func verifyJavaTelemetry(run validationRun) verdict {
 	// written when the agent reported it so, else without its JUnit signature
 	// or TestNG arguments, else also without the invocation index, which a
 	// custom @ParameterizedTest name keeps out of the agent's telemetry.
+	// The scalatest-maven-plugin's suites are reported under its runner, so
+	// they are attributed to the one module whose native results hold the suite.
+	suiteModules := map[string][]string{}
+	for _, test := range run.Tests {
+		module, suite, _ := strings.Cut(test.File, " / ")
+		if !slices.Contains(suiteModules[suite], module) {
+			suiteModules[suite] = append(suiteModules[suite], module)
+		}
+	}
+	telemetryModule := func(test intake.Test) string {
+		if modules := suiteModules[test.Suite]; test.Module == javaScalaTestRunner && len(modules) == 1 {
+			return modules[0]
+		}
+		return javaPluginSuffix.ReplaceAllString(test.Module, "")
+	}
 	reported := map[string]bool{}
 	for _, test := range run.Facts.Tests {
-		reported[fmt.Sprintf("%q %q %q", javaPluginSuffix.ReplaceAllString(test.Module, ""), javaFeatureURI.ReplaceAllString(test.Suite, ""), javaTelemetryName(test))] = true
+		reported[fmt.Sprintf("%q %q %q", telemetryModule(test), javaFeatureURI.ReplaceAllString(test.Suite, ""), javaTelemetryName(test))] = true
 	}
 	for _, test := range run.Tests {
 		module, suite, _ := strings.Cut(test.File, " / ")
@@ -404,7 +442,7 @@ func verifyJavaTelemetry(run validationRun) verdict {
 		expected[fmt.Sprintf("module %q, class %q, test %q, status %q", module, suite, name, statuses[test.Status])]++
 	}
 	for _, test := range run.Facts.Tests {
-		module := javaPluginSuffix.ReplaceAllString(test.Module, "")
+		module := telemetryModule(test)
 		suite := javaFeatureURI.ReplaceAllString(test.Suite, "")
 		name := javaTelemetryName(test)
 		spans := map[uint64]bool{}
@@ -486,37 +524,72 @@ class DdtestValidationTest extends spock.lang.Specification {
 }
 `
 
+// scalaProbeSource is javaProbeSource as a Scala suite of the given class,
+// which defines test(name) { ... } in both MUnit and ScalaTest.
+func scalaProbeSource(suite string) string {
+	return `package ddtest
+
+import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Paths, StandardOpenOption}
+
+class DdtestValidationTest extends ` + suite + ` {
+  test("ddtestProbe") {
+    val state = Paths.get(System.getenv("DDTEST_PROBE_STATE"))
+    Files.write(state, "run\n".getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+    val attempts = Files.readAllLines(state).size
+    val mode = System.getenv("DDTEST_PROBE_MODE")
+    if (mode == "fail" || (mode == "fail-once" && attempts == 1)) {
+      throw new AssertionError("ddtest intentional failure")
+    }
+  }
+}
+`
+}
+
 // javaProbeFile is one file of a probe, relative to the checkout.
 type javaProbeFile struct{ path, source string }
 
 // javaProbe is a framework's controlled probe in one module: the files to
 // write, and the Maven arguments that select only it. Every probe reports the
-// class javaProbeClass.
+// class javaProbeClass. A probe that a runner class starts names it as its
+// harness, whose own results are left out.
 type javaProbe struct {
-	files []javaProbeFile
-	args  []string
+	files   []javaProbeFile
+	args    []string
+	harness string
 }
 
 // javaProbeSources are the probe sources of frameworks whose probe is one
 // test class, relative to a module.
 var javaProbeSources = map[string]javaProbeFile{
-	"junit4": {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.junit.Test")},
-	"junit5": {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.junit.jupiter.api.Test")},
-	"testng": {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.testng.annotations.Test")},
-	"spock":  {filepath.Join("src", "test", "groovy", "ddtest", "DdtestValidationTest.groovy"), spockProbeSource},
+	"junit4":    {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.junit.Test")},
+	"junit5":    {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.junit.jupiter.api.Test")},
+	"testng":    {filepath.Join("src", "test", "java", "ddtest", "DdtestValidationTest.java"), javaProbeSource("org.testng.annotations.Test")},
+	"spock":     {filepath.Join("src", "test", "groovy", "ddtest", "DdtestValidationTest.groovy"), spockProbeSource},
+	"scalatest": {filepath.Join("src", "test", "scala", "ddtest", "DdtestValidationTest.scala"), scalaProbeSource("org.scalatest.funsuite.AnyFunSuite")},
+	"munit":     {filepath.Join("src", "test", "scala", "ddtest", "DdtestValidationTest.scala"), scalaProbeSource("munit.FunSuite")},
 }
 
-// javaProbeFrameworks are the frameworks with paired validation; Surefire
-// runs and reports each of them.
-var javaProbeFrameworks = []string{"junit4", "junit5", "testng", "spock", "cucumber-java"}
+// javaProbeFrameworks are the frameworks with paired validation; Surefire or
+// the scalatest-maven-plugin runs each of them.
+var javaProbeFrameworks = []string{"junit4", "junit5", "testng", "spock", "cucumber-java", "karate", "scalatest", "munit"}
 
 // javaProbeFor returns framework's probe in module, or why it has none.
 func javaProbeFor(checkout, module, framework string, args []string) (javaProbe, string, error) {
-	if framework == "cucumber-java" {
+	switch framework {
+	case "cucumber-java":
 		return javaCucumberProbe(checkout, module, args)
+	case "karate":
+		return javaKarateProbe(checkout, module)
 	}
 	source := javaProbeSources[framework]
-	return javaProbe{files: []javaProbeFile{{filepath.Join(module, source.path), source.source}}, args: javaProbeArguments}, "", nil
+	probe := javaProbe{files: []javaProbeFile{{filepath.Join(module, source.path), source.source}}, args: javaProbeArguments}
+	if framework == "scalatest" {
+		// The scalatest-maven-plugin selects suites by its own property;
+		// suites that Surefire runs through JUnit match -Dtest.
+		probe.args = append(slices.Clone(javaProbeArguments), "-Dsuites="+javaProbeClass)
+	}
+	return probe, "", nil
 }
 
 // runJavaFeatures writes the probe into a module whose tests ran in the
@@ -537,12 +610,10 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 		unavailableFeatures(result, "No module of the selected Maven command ran native tests, so the controlled probe has nowhere to run.")
 		return nil
 	}
-	if t.framework.Name() == "cucumber-java" {
-		// The probe needs the module that holds a Cucumber runner, which an
-		// inherited dependency hides from reactor order.
-		if owner, found := javaCucumberModule(checkout, projects, baseline.Tests); found {
-			module = owner
-		}
+	// A Cucumber or Karate probe needs the module that holds the runner,
+	// which an inherited dependency hides from reactor order.
+	if owner, found := javaRunnerModule(checkout, projects, baseline.Tests, t.framework.Name()); found {
+		module = owner
 	}
 	probe, reason, err := javaProbeFor(checkout, module, t.framework.Name(), args)
 	if err != nil {
@@ -580,7 +651,7 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 	}
 	probePath := filepath.Join(checkout, probe.files[0].path)
 	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
-		return t.runJava(ctx, output, session, agent, runSpec{Name: name, Instrumented: true, Scenario: scenario, ProbePath: probePath, ProbeMode: mode}, probe.args)
+		return t.runJava(ctx, output, session, agent, runSpec{Name: name, Instrumented: true, Scenario: scenario, ProbePath: probePath, ProbeMode: mode}, probe)
 	}, result)
 }
 
@@ -599,6 +670,40 @@ func javaProbeModule(projects []maven.Project, tests []nativeTest, framework str
 	}
 	declared := slices.IndexFunc(candidates, func(project maven.Project) bool { return slices.Contains(project.Frameworks(), framework) })
 	return candidates[max(declared, 0)].Directory, true
+}
+
+// javaRunners find the runner class of the frameworks whose probe is
+// selected through one, in a module directory.
+var javaRunners = map[string]func(module string) (string, error){
+	"cucumber-java": func(module string) (string, error) {
+		runner, _, _, _, _, err := javaCucumberRunnerClass(module)
+		return runner, err
+	},
+	"karate": javaKarateRunnerClass,
+}
+
+// javaRunnerModule picks the first module, in reactor order, whose tests ran
+// in the baseline and that holds a runner class of framework.
+func javaRunnerModule(checkout string, projects []maven.Project, tests []nativeTest, framework string) (string, bool) {
+	find, ok := javaRunners[framework]
+	if !ok {
+		return "", false
+	}
+	labels := javaModuleLabels(projects)
+	executed := map[string]bool{}
+	for _, test := range tests {
+		module, _, _ := strings.Cut(test.File, " / ")
+		executed[module] = true
+	}
+	for _, project := range projects {
+		if !executed[labels[project.Directory]] {
+			continue
+		}
+		if runner, err := find(filepath.Join(checkout, project.Directory)); err == nil && runner != "" {
+			return project.Directory, true
+		}
+	}
+	return "", false
 }
 
 // checkJavaPreflight inspects the JDK Maven runs on, the reactor the selected

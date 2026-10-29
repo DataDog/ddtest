@@ -90,6 +90,10 @@ public class StepDefinitions {
     @io.cucumber.java.en.Then("the result is {int}") public void check(int expected) { if (result != expected) throw new AssertionError("customer expected failure: " + result); }
 }
 `
+	const scala = `<dependency><groupId>org.scala-lang</groupId><artifactId>scala-library</artifactId><version>2.13.15</version></dependency>`
+	const scalaPlugin = `<plugin><groupId>net.alchim31.maven</groupId><artifactId>scala-maven-plugin</artifactId><version>4.9.2</version><executions><execution><goals><goal>testCompile</goal></goals></execution></executions></plugin>`
+	const karate = `<dependency><groupId>io.karatelabs</groupId><artifactId>karate-junit5</artifactId><version>1.5.2</version><scope>test</scope></dependency>`
+	const karateFeature = "Feature: Calculator\n  Scenario: adds\n    * match Java.type('example.Calc').add(2, 2) == 4\n\n  Scenario: existing failure\n    * match Java.type('example.Calc').add(2, 2) == 5\n\n  Scenario Outline: sums <a>\n    * match Java.type('example.Calc').add(<a>, 1) == <b>\n    Examples:\n      | a | b |\n      | 1 | 2 |\n      | 2 | 3 |\n"
 	// Spock specifications compile with GMavenPlus from src/test/groovy.
 	const gmavenplus = `<plugin><groupId>org.codehaus.gmavenplus</groupId><artifactId>gmavenplus-plugin</artifactId><version>4.1.1</version><executions><execution><goals><goal>addTestSources</goal><goal>compileTests</goal></goals></execution></executions></plugin>`
 	testdrive := func(root string, args ...string) (string, error) {
@@ -101,9 +105,9 @@ public class StepDefinitions {
 
 	// CI spreads the scenarios over shards (DDTEST_TEST_SHARD); weights are
 	// relative durations.
-	scenarios := []string{"junit5", "junit4", "testng", "spock", "cucumber junit4 runner", "cucumber java8 lambdas", "cucumber platform suite",
+	scenarios := []string{"junit5", "junit4", "testng", "spock", "cucumber junit4 runner", "cucumber java8 lambdas", "cucumber platform suite", "karate parallel runner", "karate junit5 runner", "scalatest", "munit",
 		"no application coverage", "instrumentation-only failure", "incomplete reactor", "publishing goal", "agent workflow"}
-	weights := map[string]int{"junit5": 20, "agent workflow": 16, "no application coverage": 6, "instrumentation-only failure": 6, "incomplete reactor": 2, "publishing goal": 1}
+	weights := map[string]int{"junit5": 20, "scalatest": 6, "munit": 6, "agent workflow": 16, "no application coverage": 6, "instrumentation-only failure": 6, "incomplete reactor": 2, "publishing goal": 1}
 	selected := shard.SelectedIntegrationScenarios(t, scenarios, weights)
 	run := func(name string, test func(t *testing.T)) {
 		t.Helper()
@@ -158,6 +162,21 @@ class ExampleTest extends spock.lang.Specification {
 		{"cucumber platform suite", "cucumber-java", cucumberPlatform, "3.2.5", "", map[string]string{
 			"src/test/java/example/RunCucumberTest.java": "package example;\n@org.junit.platform.suite.api.Suite\n@org.junit.platform.suite.api.IncludeEngines(\"cucumber\")\n@org.junit.platform.suite.api.SelectClasspathResource(\"example\")\n@org.junit.platform.suite.api.ConfigurationParameter(key = io.cucumber.junit.platform.engine.Constants.GLUE_PROPERTY_NAME, value = \"example\")\npublic class RunCucumberTest {}\n",
 			"src/test/java/example/StepDefinitions.java": cucumberSteps, "src/test/resources/example/calc.feature": cucumberFeature}},
+		// Karate's documented runner is a JUnit test that runs features in
+		// parallel and fails with them, so it is a native failure too.
+		{"karate parallel runner", "karate", karate, "3.2.5", "", map[string]string{
+			"src/test/java/example/KarateTest.java":   "package example;\nclass KarateTest {\n    @org.junit.jupiter.api.Test void all() {\n        com.intuit.karate.Results results = com.intuit.karate.Runner.path(\"classpath:example\").tags(\"~@ignore\").parallel(2);\n        org.junit.jupiter.api.Assertions.assertEquals(0, results.getFailCount(), results.getErrorMessages());\n    }\n}\n",
+			"src/test/resources/example/calc.feature": karateFeature}},
+		// Surefire reports a @Karate.Test runner's scenarios as dynamic tests.
+		{"karate junit5 runner", "karate", karate, "3.2.5", "", map[string]string{
+			"src/test/java/example/CalcTest.java":     "package example;\nclass CalcTest {\n    @com.intuit.karate.junit5.Karate.Test com.intuit.karate.junit5.Karate calc() { return com.intuit.karate.junit5.Karate.run(\"classpath:example/calc.feature\"); }\n}\n",
+			"src/test/resources/example/calc.feature": karateFeature}},
+		// The scalatest-maven-plugin runs the suites; Surefire has none to run.
+		{"scalatest", "scalatest", scala + `<dependency><groupId>org.scalatest</groupId><artifactId>scalatest_2.13</artifactId><version>3.2.19</version><scope>test</scope></dependency>`, "3.5.3",
+			scalaPlugin + `<plugin><groupId>org.scalatest</groupId><artifactId>scalatest-maven-plugin</artifactId><version>2.2.0</version><configuration><junitxml>.</junitxml></configuration><executions><execution><id>test</id><goals><goal>test</goal></goals></execution></executions></plugin>`,
+			map[string]string{"src/test/scala/example/CalcTest.scala": "package example\n\nclass CalcTest extends org.scalatest.funsuite.AnyFunSuite {\n  test(\"adds\") { assert(Calc.add(2, 2) == 4) }\n  test(\"existing failure\") { assert(Calc.add(2, 2) == 5, \"customer expected failure\") }\n  ignore(\"ignored\") {}\n}\n"}},
+		{"munit", "munit", scala + `<dependency><groupId>org.scalameta</groupId><artifactId>munit_2.13</artifactId><version>1.0.4</version><scope>test</scope></dependency>`, "3.5.3", scalaPlugin,
+			map[string]string{"src/test/scala/example/CalcTest.scala": "package example\n\nclass CalcTest extends munit.FunSuite {\n  test(\"adds\") { assertEquals(Calc.add(2, 2), 4) }\n  test(\"existing failure\") { assertEquals(Calc.add(2, 2), 5, \"customer expected failure\") }\n  test(\"ignored\".ignore) {}\n}\n"}},
 	} {
 		run(tc.name, func(t *testing.T) {
 			files := map[string]string{"pom.xml": pomWith("fixture", tc.dependency, tc.surefire, tc.plugins), "src/main/java/example/Calc.java": calc}
@@ -172,10 +191,16 @@ class ExampleTest extends spock.lang.Specification {
 			require.Equal(t, "compatible", report.Compatibility.Status)
 			require.Len(t, report.Features, 6)
 			for _, feature := range report.Features {
-				require.Equal(t, "passed", feature.Status, feature.Name)
+				// dd-java-agent cannot skip an MUnit test.
+				want := "passed"
+				if tc.framework == "munit" && (feature.Name == "skipping" || feature.Name == "disabled") {
+					want = "not supported"
+				}
+				require.Equal(t, want, feature.Status, feature.Name)
 			}
 			for _, run := range report.Runs[:2] {
-				require.Equal(t, 1, run.TestCounts.Failed, "matching existing failures are acceptable")
+				// Karate's runner test fails with the feature's failure.
+				require.Equal(t, cmp.Or(map[string]int{"karate parallel runner": 2}[tc.name], 1), run.TestCounts.Failed, "matching existing failures are acceptable")
 				require.NotZero(t, run.ExitCode)
 			}
 			require.NoDirExists(t, filepath.Join(root, "target"), "Maven runs only in disposable copies")
