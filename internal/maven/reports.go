@@ -32,7 +32,7 @@ type Test struct {
 var ErrNoTestCases = errors.New("native reports contain no test cases")
 
 // ErrNoReports reports a build that wrote no native report for any module.
-var ErrNoReports = errors.New("no native reports under the modules' target/surefire-reports, target/failsafe-reports, target/scalatest-reports or target/karate-reports; configure Surefire, Failsafe or ScalaTest XML reporting and run the intended Maven profile")
+var ErrNoReports = errors.New("no native reports under the modules' target/surefire-reports, target/failsafe-reports, target/scalatest-reports or target/karate-reports; configure Surefire or Failsafe XML reporting (the scalatest-maven-plugin writes it with <junitxml>.</junitxml>) and run the intended Maven profile")
 
 type reportCase struct {
 	Class    string          `xml:"classname,attr"`

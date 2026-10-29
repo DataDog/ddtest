@@ -80,6 +80,7 @@ func TestReadReportsDistinguishesMissingAndEmptyResults(t *testing.T) {
 	projects := []Project{{Directory: "."}}
 	_, err := ReadReports(root, projects)
 	require.ErrorIs(t, err, ErrNoReports)
+	require.ErrorContains(t, err, "<junitxml>.</junitxml>", "the scalatest-maven-plugin writes no XML by default")
 
 	writePOM(t, root, "target/surefire-reports/TEST-example.EmptyTest.xml", `<testsuite name="example.EmptyTest"/>`)
 	_, err = ReadReports(root, projects)
