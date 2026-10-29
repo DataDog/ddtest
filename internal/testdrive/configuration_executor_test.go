@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,4 +36,46 @@ func TestFocusedCommandRunsWithoutTheMatchedConfigurationsSecrets(t *testing.T) 
 	require.Equal(t, []string{"GITHUB_TOKEN"}, without, "a command matched to CI runs without the configuration's omitted secrets")
 	_, without = matchingConfigurationEnvironment(scope, nil, root, "jest", "npx jest --ci")
 	require.Empty(t, without, "a command that matches no configuration omits nothing")
+}
+
+// envCapture records the environment each executor method receives.
+type envCapture struct{ seen []map[string]string }
+
+func (c *envCapture) CombinedOutput(_ context.Context, _ string, _ []string, env map[string]string) ([]byte, error) {
+	c.seen = append(c.seen, env)
+	return nil, nil
+}
+
+func (c *envCapture) CombinedOutputInDirectory(_ context.Context, _, _ string, _ []string, env map[string]string) ([]byte, error) {
+	c.seen = append(c.seen, env)
+	return nil, nil
+}
+
+func (c *envCapture) ServiceOutput(_ context.Context, _, _ string, _ []string, env map[string]string) ([]byte, error) {
+	c.seen = append(c.seen, env)
+	return nil, nil
+}
+
+func (c *envCapture) Output(_ context.Context, _ string, _ []string, env map[string]string) ([]byte, []byte, error) {
+	c.seen = append(c.seen, env)
+	return nil, nil, nil
+}
+
+func TestEveryConfigurationCommandRunsWithoutOmittedSecrets(t *testing.T) {
+	capture := &envCapture{}
+	executor := configurationExecutor{commandExecutor: capture, environment: map[string]string{"CI": "true"}, without: []string{"GITHUB_TOKEN"}}
+	ctx := context.Background()
+	_, err := executor.CombinedOutput(ctx, "mvn", nil, nil)
+	require.NoError(t, err)
+	_, err = executor.CombinedOutputInDirectory(ctx, ".", "mvn", nil, nil)
+	require.NoError(t, err)
+	_, err = executor.ServiceOutput(ctx, ".", "npm", []string{"start"}, nil)
+	require.NoError(t, err)
+	_, _, err = executor.Output(ctx, "git", nil, nil)
+	require.NoError(t, err)
+	require.Len(t, capture.seen, 4)
+	for _, env := range capture.seen {
+		require.Equal(t, ext.UnsetEnvironment, env["GITHUB_TOKEN"], "tests, setup, application services and checks all run without it")
+		require.Equal(t, "true", env["CI"])
+	}
 }
