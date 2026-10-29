@@ -220,3 +220,106 @@ func TestPythonReviewMinorSelectorsKeepUnknownPatches(t *testing.T) {
 		require.Equal(t, tc.status, status, "%s %s", tc.python, tc.requirement)
 	}
 }
+
+func TestPythonPluginOptionsUseFinalBlockedState(t *testing.T) {
+	for _, tc := range []struct{ options, command, status string }{
+		{"-p no:ddtrace", "pytest -p ddtrace", "compatible"},
+		{"-pno:ddtrace", "pytest -pddtrace", "compatible"},
+		{"-p ddtrace", "pytest -p no:ddtrace", "incompatible"},
+		{"-p no:ddtrace", "pytest -p ddtrace -p no:ddtrace", "incompatible"},
+	} {
+		root := pythonReviewWorkflow(t, "{}", "", tc.command)
+		writeFile(t, root, "pytest.ini", "[pytest]\naddopts = "+tc.options+"\n")
+		require.Equal(t, tc.status, pythonRuntimeCheck(t, root).Status, "%+v", tc)
+	}
+}
+
+func TestPythonPluginEnvironmentRequiresModuleNames(t *testing.T) {
+	for _, tc := range []struct{ declared, command, status string }{
+		{"ddtrace", "pytest", "inconclusive"},
+		{"ddtrace", "pytest -p ddtrace", "compatible"},
+		{"ddtrace.contrib.pytest.plugin", "pytest", "compatible"},
+		{"ddtrace.contrib.internal.pytest.plugin", "pytest", "compatible"},
+		{"ddtrace.testing.internal.pytest.entry_point", "pytest", "compatible"},
+	} {
+		root := pythonReviewWorkflow(t, "{PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1', PYTEST_PLUGINS: '"+tc.declared+"'}", "", tc.command)
+		require.Equal(t, tc.status, pythonRuntimeCheck(t, root).Status, "%+v", tc)
+	}
+}
+
+func TestPythonArgumentFilesRemainUnverified(t *testing.T) {
+	for _, tc := range []struct{ command, environment, config string }{
+		{"pytest @ci-args.txt", "{}", ""},
+		{"pytest -- @ci-args.txt", "{}", ""},
+		{"pytest", "{PYTEST_ADDOPTS: '@ci-args.txt'}", ""},
+		{"pytest", "{}", "[pytest]\naddopts = @ci-args.txt\n"},
+	} {
+		root := pythonReviewWorkflow(t, tc.environment, "", tc.command)
+		writeFile(t, root, "ci-args.txt", "--no-ddtrace\n")
+		if tc.config != "" {
+			writeFile(t, root, "pytest.ini", tc.config)
+		}
+		check := pythonRuntimeCheck(t, root)
+		require.Equal(t, "inconclusive", check.Status, "%+v", tc)
+		require.Contains(t, check.Jobs[0].Reason, "argument files")
+	}
+	root := pythonReviewWorkflow(t, "{}", "", "tox -e py312")
+	writeFile(t, root, "pyproject.toml", "[tool.tox.env_run_base]\npass_env = ['DD_*', 'PYTHONPATH', 'PYTEST_ADDOPTS']\ncommands = [['pytest', '@ci-args.txt']]\n")
+	require.Equal(t, "inconclusive", pythonRuntimeCheck(t, root).Status)
+	_, _, err := PytestCommandOptions("--ddtrace", []string{"pytest", "-o", "addopts="}, []string{"@overridden.txt"})
+	require.NoError(t, err)
+}
+
+func TestPythonActionPrependsInheritedAddopts(t *testing.T) {
+	for _, layer := range []string{"workflow", "job"} {
+		root := pythonReviewWorkflow(t, "{}", "", "pytest")
+		path := filepath.Join(root, ".github/workflows/test.yml")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		text := string(data)
+		if layer == "workflow" {
+			text = "env: {PYTEST_ADDOPTS: '-q -k selected'}\n" + text
+		} else {
+			text = strings.Replace(text, "env: {}", "env: {PYTEST_ADDOPTS: '-q -k selected'}", 1)
+		}
+		require.NoError(t, os.WriteFile(path, []byte(text), 0644))
+		require.Equal(t, "compatible", pythonRuntimeCheck(t, root).Status, layer)
+		scope, err := DiscoverValidationScope(root, "pytest")
+		require.NoError(t, err)
+		require.Empty(t, scope.Unresolved)
+		require.Equal(t, "--ddtrace -q -k selected", scope.Commands[0].Environment["PYTEST_ADDOPTS"])
+	}
+}
+
+func TestPythonLiteralCommandEnvironmentIsScoped(t *testing.T) {
+	root := pythonReviewWorkflow(t, "{COVERAGE_FILE: '.coverage-job'}", "", "|\n          COVERAGE_FILE='.coverage-unit' python -m pytest tests/unit\n          COVERAGE_FILE='.coverage-integration' pytest tests/integration\n          python -m pytest tests/other")
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 3)
+	for i, expected := range []string{".coverage-unit", ".coverage-integration", ".coverage-job"} {
+		require.Equal(t, expected, scope.Commands[i].Environment["COVERAGE_FILE"])
+		require.NotContains(t, scope.Commands[i].Command, "COVERAGE_FILE=")
+	}
+	require.Equal(t, "compatible", pythonRuntimeCheck(t, root).Status)
+	for _, tc := range []struct{ command, status string }{
+		{"PYTEST_ADDOPTS='--no-ddtrace' pytest", "incompatible"},
+		{"PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest", "incompatible"},
+		{"PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTEST_PLUGINS=ddtrace.testing.internal.pytest.entry_point pytest", "compatible"},
+		{"COVERAGE_FILE=.coverage python -E -m pytest", "inconclusive"},
+		{"UV_PYTHON=3.8 uv run pytest", "inconclusive"},
+		{"PYTHONPATH=/other pytest", "inconclusive"},
+		{"DD_CIVISIBILITY_ENABLED=false pytest", "inconclusive"},
+		{"COVERAGE_FILE=.coverage python -m pytest --version", "not applicable"},
+		{"COVERAGE_FILE=.coverage tox -e py312", "compatible"},
+	} {
+		root := pythonReviewWorkflow(t, "{}", "", tc.command)
+		writeFile(t, root, "pyproject.toml", "[tool.tox.env_run_base]\npass_env = ['DD_*', 'PYTHONPATH', 'PYTEST_ADDOPTS']\ncommands = [['pytest']]\n")
+		require.Equal(t, tc.status, pythonRuntimeCheck(t, root).Status, tc.command)
+	}
+	root = pythonReviewWorkflow(t, "{}", "", "COVERAGE_FILE=.coverage pytest\n        shell: pwsh")
+	scope, err = DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved)
+	require.Equal(t, "inconclusive", pythonRuntimeCheck(t, root).Status)
+}

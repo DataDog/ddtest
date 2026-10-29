@@ -150,7 +150,7 @@ func readPythonTox(root string, args []string) (pythonTox, error) {
 }
 
 func (t pythonTox) instrumentation() (string, string) {
-	for _, key := range []string{"set_env", "disallow_pass_env", "env_file"} {
+	for _, key := range []string{"set_env", "setenv", "disallow_pass_env", "env_file"} {
 		if _, exists := t.Settings[key]; exists {
 			return "inconclusive", fmt.Sprintf("tox environment %s uses %s; verify effective tracing variables inside tox", t.Name, key)
 		}

@@ -219,6 +219,19 @@ var pythonRequirementVersion = regexp.MustCompile(`[0-9]+(?:\.[0-9]+){0,2}`)
 
 var pythonNumericRequirement = regexp.MustCompile(`^\s*(?:[<>]=?|==|!=)\s*[0-9]+(?:\.[0-9]+){0,2}\s*$`)
 
+func pythonCommandEnvironment(words []string) ([]string, map[string]string, error) {
+	words, env, err := commandEnvironment(words)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, key := range []string{"PYTHONPATH", "PYTHONHOME"} {
+		if _, exists := env[key]; exists {
+			return nil, nil, fmt.Errorf("command overrides the Python runtime or tracer path: %s", key)
+		}
+	}
+	return words, env, nil
+}
+
 func pythonInvocation(words []string) bool {
 	args, ok := pythonRunnerArguments(words, "pytest")
 	return ok && !pythonMetadataQuery(args)
@@ -352,6 +365,9 @@ func PytestCommandOptions(addopts string, words, defaults []string) (options, in
 		return nil, nil, fmt.Errorf("cannot parse PYTEST_ADDOPTS: %w", err)
 	}
 	options = append(options, args...)
+	if slices.ContainsFunc(options, func(option string) bool { return strings.HasPrefix(option, "@") }) {
+		return nil, nil, fmt.Errorf("pytest argument files require separate inspection")
+	}
 	var override string
 	overridden := false
 	for i := 0; i < len(options); i++ {
@@ -386,6 +402,9 @@ func PytestCommandOptions(addopts string, words, defaults []string) (options, in
 		if err != nil {
 			return nil, nil, fmt.Errorf("cannot parse inline pytest addopts: %w", err)
 		}
+	}
+	if slices.ContainsFunc(iniAddopts, func(option string) bool { return strings.HasPrefix(option, "@") }) {
+		return nil, nil, fmt.Errorf("pytest argument files require separate inspection")
 	}
 	return append(slices.Clone(iniAddopts), options...), iniAddopts, nil
 }
@@ -501,13 +520,20 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		if len(words) == 0 {
 			continue
 		}
+		words, assignments, err := pythonCommandEnvironment(words)
+		if err != nil {
+			return unresolvedCommand(err.Error())
+		}
+		if literalPowerShell && len(assignments) > 0 {
+			return unresolvedCommand("POSIX environment assignments are not supported in PowerShell.")
+		}
 		if args, ok := pythonRunnerArguments(words, "pytest"); ok && pythonMetadataQuery(args) {
 			result.ReviewReason = joinDiagnostic(result.ReviewReason, "pytest metadata query does not run tests.")
 			continue
 		}
 		if pythonInvocation(words) {
 			result.Matched = true
-			result.Tests = append(result.Tests, TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...)})
+			result.Tests = append(result.Tests, TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...), Environment: assignments})
 			continue
 		}
 		if args, ok := pythonRunnerArguments(words, "tox"); ok {
@@ -525,7 +551,7 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 			result.Matched = true
 			const unresolvedTox = "Local tox execution is not supported; activate the selected environment and pass its Python/pytest command with --command."
 			result.Setup = append(result.Setup, unresolvedTox)
-			result.Tests = append(result.Tests, TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...), Resolution: "Native tox pytest environment " + tox.Name,
+			result.Tests = append(result.Tests, TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...), Environment: assignments, Resolution: "Native tox pytest environment " + tox.Name,
 				UnvalidatedSetup: []string{unresolvedTox}})
 			continue
 		}
@@ -675,7 +701,10 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 						finding.Reason = r.Reason
 					case action == "":
 						finding.Status, finding.Code, finding.Reason = "incompatible", "missing_instrumentation", "No Datadog Python action runs before this pytest step. Preserve the test command and add instrumentation."
-					case slices.ContainsFunc(commands, func(words []string) bool { return pythonRuntimeOverride(words, python, environment) }):
+					case slices.ContainsFunc(commands, func(words []string) bool {
+						words, assignments, err := pythonCommandEnvironment(words)
+						return err == nil && pythonRuntimeOverride(words, python, mergeEnvironment(environment, assignments))
+					}):
 						finding.Reason = "The CI command selects its own Python interpreter; setup-python does not establish that runtime's compatibility. Validate the selected environment separately."
 					default:
 						selection, ok := cache[requested]
@@ -752,6 +781,15 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 	commands, _ := staticCommands(step.Run)
 	directory := stepDirectory(workflow, job, step)
 	for _, words := range commands {
+		words, assignments, err := pythonCommandEnvironment(words)
+		if err != nil {
+			return "inconclusive", err.Error()
+		}
+		commandEnv := mergeEnvironment(env, assignments)
+		commandValue := value
+		if override, exists := assignments["PYTEST_ADDOPTS"]; exists {
+			commandValue = override
+		}
 		if len(words) == 2 && words[0] == "cd" && filepath.IsLocal(words[1]) {
 			directory = filepath.Join(directory, words[1])
 		}
@@ -759,21 +797,21 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 			if pythonIgnoresEnvironment(words) {
 				return "inconclusive", "The Python interpreter ignores PYTHONPATH; the action's tracer installation cannot be verified in this mode."
 			}
-			defaults, err := PytestConfigOptions(root, filepath.Join(root, directory), value, words)
+			defaults, err := PytestConfigOptions(root, filepath.Join(root, directory), commandValue, words)
 			if err != nil {
 				return "inconclusive", err.Error()
 			}
-			commandOptions, _, err := PytestCommandOptions(value, words, defaults)
+			commandOptions, _, err := PytestCommandOptions(commandValue, words, defaults)
 			if err != nil {
 				return "inconclusive", err.Error()
 			}
-			invocations = append(invocations, invocation{commandOptions, env})
+			invocations = append(invocations, invocation{commandOptions, commandEnv})
 		}
 		if args, ok := pythonRunnerArguments(words, "tox"); ok {
 			if pythonWrapperChangesDirectory(words) {
 				return "inconclusive", "The wrapper selects a different tox project directory; inspect that environment separately."
 			}
-			if _, overridden := env["TOX_OVERRIDE"]; overridden {
+			if _, overridden := commandEnv["TOX_OVERRIDE"]; overridden {
 				return "inconclusive", "TOX_OVERRIDE changes the effective tox configuration; inspect it inside the selected environment."
 			}
 			tox, err := readPythonTox(filepath.Join(root, directory), args)
@@ -789,7 +827,7 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 			if status, reason := tox.instrumentation(); status != "" {
 				return status, reason
 			}
-			effective := tox.environment(env)
+			effective := tox.environment(commandEnv)
 			for _, command := range tox.Commands {
 				if pythonIgnoresEnvironment(command) {
 					return "inconclusive", "The tox Python interpreter ignores PYTHONPATH; the action's tracer installation cannot be verified in this mode."
@@ -797,11 +835,11 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 				if pythonRuntimeOverride(command, python, effective) {
 					return "inconclusive", "The tox pytest command selects its own Python interpreter; validate the selected environment separately."
 				}
-				defaults, err := PytestConfigOptions(root, filepath.Join(root, directory), value, command)
+				defaults, err := PytestConfigOptions(root, filepath.Join(root, directory), commandValue, command)
 				if err != nil {
 					return "inconclusive", err.Error()
 				}
-				commandOptions, _, err := PytestCommandOptions(value, command, defaults)
+				commandOptions, _, err := PytestCommandOptions(commandValue, command, defaults)
 				if err != nil {
 					return "inconclusive", err.Error()
 				}
@@ -833,24 +871,38 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 		if err != nil {
 			return "inconclusive", err.Error()
 		}
-		loaded := slices.ContainsFunc(strings.Split(declared, ","), func(name string) bool {
-			return slices.Contains(plugins, strings.TrimSpace(name))
-		})
-		for index, option := range options {
+		// Older pytest versions resolve PYTEST_PLUGINS as modules only.
+		loaded, alias := false, false
+		for _, name := range strings.Split(declared, ",") {
+			name = strings.TrimSpace(name)
+			loaded = loaded || slices.Contains(plugins[1:], name)
+			alias = alias || name == "ddtrace"
+		}
+		blocked := map[string]bool{}
+		for index := 0; index < len(options); index++ {
+			option := options[index]
 			plugin := strings.TrimPrefix(option, "-p")
 			if option == "-p" && index+1 < len(options) {
-				plugin = options[index+1]
+				index++
+				plugin = options[index]
 			} else if !strings.HasPrefix(option, "-p") {
 				continue
 			}
-			if slices.Contains(plugins, strings.TrimPrefix(plugin, "no:")) {
-				if strings.HasPrefix(plugin, "no:") {
-					return "incompatible", "The pytest options explicitly block the Datadog plugin."
+			name := strings.TrimPrefix(plugin, "no:")
+			if slices.Contains(plugins, name) {
+				blocked[name] = strings.HasPrefix(plugin, "no:")
+				if !blocked[name] {
+					loaded = true
 				}
-				loaded = true
 			}
 		}
+		if slices.ContainsFunc(plugins, func(name string) bool { return blocked[name] }) {
+			return "incompatible", "The pytest options explicitly block the Datadog plugin."
+		}
 		if (autoload != "" || slices.Contains(options, "--disable-plugin-autoload")) && !loaded {
+			if alias {
+				return "inconclusive", "PYTEST_PLUGINS entry-point aliases depend on the pytest version; use a Datadog plugin module or -p ddtrace to verify explicit loading."
+			}
 			return "incompatible", "pytest plugin autoload is disabled; explicitly load the Datadog plugin with -p ddtrace in CI. Local plugin loading does not validate CI setup."
 		}
 	}
@@ -859,15 +911,20 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 
 var pythonAddoptsReference = regexp.MustCompile(`\$\{\{\s*env\.PYTEST_ADDOPTS\s*\}\}`)
 
-// Resolve each declaration against its parent, keeping application selection
-// and plugin options identical in CI checks and local command discovery.
+// The action prepends --ddtrace to inherited options through GITHUB_ENV.
+// Test-step declarations override that export in both CI checks and replay.
 func pythonAddopts(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (string, error) {
-	value := "--ddtrace" // Supplied by the Datadog action when not overridden.
-	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+	value := ""
+	for _, layer := range []map[string]string{workflow.Env, job.Env} {
 		declared, ok := layer["PYTEST_ADDOPTS"]
 		if !ok {
 			continue
 		}
+		parent := value
+		value = pythonAddoptsReference.ReplaceAllStringFunc(declared, func(string) string { return parent })
+	}
+	value = strings.TrimSpace("--ddtrace " + value)
+	if declared, exists := step.Env["PYTEST_ADDOPTS"]; exists {
 		parent := value
 		value = pythonAddoptsReference.ReplaceAllStringFunc(declared, func(string) string { return parent })
 	}

@@ -85,6 +85,7 @@ func TestPythonToxChecksEffectiveInstrumentation(t *testing.T) {
 		{"missing pytest variable", `pass_env = ["DD*", "PYTHON*"]`, "tox run -e py3.12", "incompatible", "PYTEST_ADDOPTS"},
 		{"partial forwarding", `pass_env = ["DD_*", "PYTHONPATH"]`, "tox run -e py3.12", "incompatible", "PYTEST_ADDOPTS"},
 		{"overridden environment", forwarded + "\nset_env = { PYTEST_ADDOPTS = '--no-ddtrace' }", "tox run -e py3.12", "inconclusive", "set_env"},
+		{"overridden environment alias", forwarded + "\nsetenv = { PYTEST_ADDOPTS = '--no-ddtrace' }", "tox run -e py3.12", "inconclusive", "setenv"},
 		{"excluded variable", forwarded + "\ndisallow_pass_env = ['PYTHONPATH']", "tox run -e py3.12", "inconclusive", "disallow_pass_env"},
 		{"posargs disable tracer", forwarded, "uv run --locked tox run -e py3.12 -- --no-ddtrace", "incompatible", "disables"},
 		{"other interpreter", forwarded, "tox -e py311", "inconclusive", "tox selects Python 3.11"},

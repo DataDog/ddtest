@@ -434,7 +434,7 @@ func TestPythonCIInstrumentationIsCheckedPerInvocation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := pythonWorkflow(t, fmt.Sprintf(`jobs:
   tests:
-    env: {PYTEST_DISABLE_PLUGIN_AUTOLOAD: '%s', PYTEST_ADDOPTS: '%s'}
+    env: {PYTEST_DISABLE_PLUGIN_AUTOLOAD: '%s'}
     steps:
       - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
@@ -442,7 +442,8 @@ func TestPythonCIInstrumentationIsCheckedPerInvocation(t *testing.T) {
         with: {languages: python, python-tracer-version: '4.16.0'}
       - run: |
           %s
-`, tc.autoload, tc.addopts, strings.ReplaceAll(tc.command, "\n", "\n          ")))
+        env: {PYTEST_ADDOPTS: '%s'}
+`, tc.autoload, strings.ReplaceAll(tc.command, "\n", "\n          "), tc.addopts))
 			if tc.toxCommands != "" {
 				config := "[tool.tox.env_run_base]\npass_env = ['DD_*', 'PYTHONPATH', 'PYTEST_ADDOPTS', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD']\ncommands = " + tc.toxCommands + "\n"
 				require.NoError(t, os.WriteFile(filepath.Join(root, "pyproject.toml"), []byte(config), 0644))

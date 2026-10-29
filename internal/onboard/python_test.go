@@ -102,7 +102,7 @@ func TestPythonMatrixPreservationExcludesUnrelatedJobs(t *testing.T) {
 }
 
 func TestPythonAddoptsPreservesParentOptionsLocallyAndInCIChecks(t *testing.T) {
-	workflow := ciWorkflow{Env: map[string]string{"PYTEST_ADDOPTS": "--ddtrace -k selected"}}
+	workflow := ciWorkflow{Env: map[string]string{"PYTEST_ADDOPTS": "-k selected"}}
 	job := runtimeJob{Env: map[string]string{"PYTEST_ADDOPTS": "${{env.PYTEST_ADDOPTS}} --cov=app"}}
 	step := runtimeStep{Run: "python -m pytest", Env: map[string]string{"PYTEST_ADDOPTS": "${{ env.PYTEST_ADDOPTS }} -p ddtrace -q"}}
 	value, err := pythonAddopts(workflow, job, step, nil)
