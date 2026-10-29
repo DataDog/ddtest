@@ -201,7 +201,7 @@ func (e configurationExecutor) ServiceOutput(ctx context.Context, directory, nam
 	if !ok {
 		return nil, fmt.Errorf("command executor cannot capture bounded service output")
 	}
-	return executor.ServiceOutput(ctx, directory, name, args, mergeConfigurationEnvironment(e.environment, env))
+	return executor.ServiceOutput(ctx, directory, name, args, e.commandEnvironment(env))
 }
 func serviceCanceledBySignal(err error) bool {
 	var exit *exec.ExitError

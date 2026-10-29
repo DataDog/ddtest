@@ -142,7 +142,7 @@ func TestForwardedScriptKeepsScopeAndCIEnvironment(t *testing.T) {
 	require.Equal(t, "passed", result.Configurations[0].Status)
 	// Explicit local assignments win over CI defaults and remain a scope finding.
 	local := "TZ=Europe/Madrid npm test"
-	env := matchingConfigurationEnvironment(scope, nil, root, "jest", local)
+	env, _ := matchingConfigurationEnvironment(scope, nil, root, "jest", local)
 	require.Equal(t, "Europe/Madrid", env["TZ"])
 	result = completeValidationFixture("jest")
 	setSingleConfigurationScope(root, &result, scope, local, env)

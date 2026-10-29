@@ -384,11 +384,15 @@ func TestJavaDeployCredentialsDoNotBlockValidation(t *testing.T) {
 	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, strings.Replace(workflow, "server-id: central, ", "", 1), nil), "junit5")
 	require.NoError(t, err)
 	require.NotEmpty(t, scope.Unresolved)
-	// The action's default names, such as GITHUB_TOKEN, may serve the tests too.
+	// A token under the action's default names, such as GITHUB_TOKEN, is a
+	// credential: the tests are validated without it and the report says so.
 	defaults := strings.NewReplacer("server-username: MAVEN_USERNAME, server-password: MAVEN_PASSWORD", "gpg-private-key: '${{ secrets.GPG_KEY }}'", "MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}\n          ", "", "MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}", "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}").Replace(workflow)
 	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, defaults, nil), "junit5")
 	require.NoError(t, err)
-	require.NotEmpty(t, scope.Unresolved, "only credentials the workflow names for settings.xml are left out")
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, []string{"GITHUB_TOKEN"}, scope.Commands[0].WithoutSecrets)
+	require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI secrets GITHUB_TOKEN")
 }
 
 func TestJavaCIConfigurationKeepsJavaSetupAcrossOtherDatadogActions(t *testing.T) {
@@ -478,4 +482,13 @@ func TestJavaMetadataScriptsYieldToExportedArgsAndConfigGoals(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".mvn", "maven.config"), []byte("-B\n-ntp\n"), 0o644))
 	require.Empty(t, javaStep(t, root, metadata).Reason, "options alone add no goals")
 	require.NotEmpty(t, javaStep(t, root, "VERSION=$(mvn -f module/pom.xml help:evaluate -Dexpression=project.version -q -DforceStdout)").Reason, "an alternate POM may select another maven.config")
+}
+
+func TestJavaReportingActionsAfterTestsAreReviewed(t *testing.T) {
+	workflow := "jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: 21, distribution: temurin}\n      - run: mvn -B verify\n      - name: Upload test results\n        if: failure()\n        uses: actions/upload-artifact@v4\n        with: {name: test-reports, path: target/surefire-reports/}\n"
+	scope, err := DiscoverValidationScope(javaWorkflowFixture(t, workflow, nil), "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved, "an artifact upload runs no tests, whatever its condition")
+	require.Len(t, scope.Commands, 1)
+	require.Contains(t, strings.Join(scope.Review, "\n"), "Post-test reporting/debug action")
 }

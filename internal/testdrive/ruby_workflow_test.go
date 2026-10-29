@@ -65,6 +65,19 @@ func TestRubyReadinessInventoriesMissingBundlesWithoutChangingLocks(t *testing.T
 	require.Equal(t, "installed lock\n", string(data))
 }
 
+func TestRubyReadinessRunsWithoutOmittedSecrets(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "Gemfile"), "source 'https://rubygems.org'\n")
+	requireWriteFile(t, filepath.Join(root, "Gemfile.lock"), "installed lock\n")
+	executor := &rubyReadinessExecutor{}
+	drive := &Testdrive{repositoryRoot: root, executor: executor}
+	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", WithoutSecrets: []string{"GITHUB_TOKEN"}}}}
+	_, err := drive.rubyBundleReadiness(t.Context(), scope)
+	require.NoError(t, err)
+	require.Len(t, executor.environments, 1)
+	require.Equal(t, ext.UnsetEnvironment, executor.environments[0]["GITHUB_TOKEN"], "a Gemfile that reads the secret sees what validation sees")
+}
+
 func TestRubyReadinessUsesWorkingDirectoryAndGemsLocked(t *testing.T) {
 	for _, tc := range []struct{ directory, gemfile, lock string }{
 		{".", "gems.rb", "gems.locked"},

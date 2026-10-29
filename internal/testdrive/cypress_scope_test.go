@@ -73,7 +73,8 @@ func TestCypressFocusedCommandDoesNotCreditManagedStartup(t *testing.T) {
 	result := completeValidationFixture("cypress")
 	setSingleConfigurationScope(root, &result, scope, "npm test", nil)
 	require.Equal(t, "not exercised", result.Configurations[0].Status, "npm test alone skips the action's startup and readiness")
-	require.Nil(t, matchingConfigurationEnvironment(scope, nil, root, "cypress", "npm test"))
+	env, _ := matchingConfigurationEnvironment(scope, nil, root, "cypress", "npm test")
+	require.Nil(t, env)
 }
 
 func TestCypressOSMatrixCreditsOnlyTheHostRow(t *testing.T) {
