@@ -31,6 +31,9 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if rubyMaintenanceStep(step.Run) {
 		return commandResolution{Review: true, Reason: "Documentation, lint or release tooling is maintenance, outside " + framework + " test scope."}
 	}
+	if resolution, handled := resolveRubyStepWithSetup(root, workflow, job, step, framework); handled {
+		return resolution
+	}
 	parts, parseErr := staticCommands(step.Run)
 	matched := environment.LooksLikeTestCommand(filepath.Join(root, directory), step.Run, "ruby", framework)
 	if parseErr == nil && len(parts) == 1 {
@@ -88,6 +91,150 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return unresolvedCommand("Ruby test entry point requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
 	}
 	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(parts[0]...)}}}
+}
+
+// rubyArtifactCommands only create directories, move or copy files, or
+// print: after the tests they handle reports, not the tests.
+var rubyArtifactCommands = []string{"mkdir", "mv", "cp", "echo", "printf", "true"}
+
+// resolveRubyStepWithSetup resolves a step made of literal exports, exactly
+// one test command and then commands that only handle its artifacts, as in
+// export CC_TEST_REPORTER_ID=...; bundle exec rake; mv coverage/... tmp/.
+// The exports become the configuration's environment. A rake
+// RUBYOPT="$RUBYOPT <options>" argument extends the preload for the tests
+// rake runs: locally the options join the configuration's RUBYOPT, which
+// validation extends with its own preload. It handles only steps with more
+// than one statement or such an argument; anything else it can't follow
+// (control flow, computed values, several test commands) stays unresolved.
+func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) (commandResolution, bool) {
+	file, ok := parseCIShell(step.Run)
+	if !ok || len(file.Stmts) == 0 {
+		return commandResolution{}, false
+	}
+	if len(file.Stmts) == 1 {
+		// One statement is the single-command rules' unless it extends RUBYOPT.
+		call, isCall := file.Stmts[0].Cmd.(*syntax.CallExpr)
+		if !isCall || !slices.ContainsFunc(call.Args, func(word *syntax.Word) bool { _, ok := rubyExtendedOptions(word); return ok }) {
+			return commandResolution{}, false
+		}
+	}
+	unresolved := unresolvedCommand("Ruby test entry point requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
+	env := map[string]string{}
+	test := -1
+	var command string
+	extended := false
+	for i, stmt := range file.Stmts {
+		if stmt.Background || stmt.Coprocess || stmt.Negated || len(stmt.Redirs) > 0 {
+			return unresolved, len(file.Stmts) > 1
+		}
+		switch cmd := stmt.Cmd.(type) {
+		case *syntax.DeclClause:
+			if test >= 0 || cmd.Variant.Value != "export" {
+				return unresolved, len(file.Stmts) > 1
+			}
+			for _, assign := range cmd.Args {
+				value, literal := rubyLiteralWord(assign.Value)
+				if assign.Name == nil || assign.Naked || assign.Index != nil || assign.Array != nil || !literal {
+					return unresolved, true
+				}
+				env[assign.Name.Value] = value
+			}
+		case *syntax.CallExpr:
+			if len(cmd.Args) == 0 || len(cmd.Assigns) > 0 {
+				return unresolved, len(file.Stmts) > 1
+			}
+			name, _ := rubyLiteralWord(cmd.Args[0])
+			if test >= 0 && slices.Contains(rubyArtifactCommands, name) {
+				for _, word := range cmd.Args[1:] {
+					if _, literal := rubyLiteralWord(word); !literal {
+						return unresolved, true
+					}
+				}
+				continue
+			}
+			if test >= 0 {
+				return unresolved, len(file.Stmts) > 1
+			}
+			var words []string
+			extends := false
+			for j, word := range cmd.Args {
+				if j > 0 {
+					if options, ok := rubyExtendedOptions(word); ok {
+						env["RUBYOPT"], extends = options, true
+						continue
+					}
+				}
+				words = append(words, shellText(word))
+			}
+			// Only a recognized test command ends the setup; any other command
+			// before it is left to the single-command rules.
+			single := step
+			single.Run = strings.Join(words, " ")
+			if candidate := resolveRubyStep(root, workflow, job, single, framework); !candidate.Matched {
+				return commandResolution{}, false
+			}
+			test, command, extended = i, single.Run, extends
+		default:
+			return unresolved, len(file.Stmts) > 1
+		}
+	}
+	if test < 0 || len(file.Stmts) == 1 && !extended {
+		return commandResolution{}, false
+	}
+	single := step
+	single.Run = command
+	resolution := resolveRubyStep(root, workflow, job, single, framework)
+	if !resolution.Matched || resolution.Reason != "" || len(resolution.Tests) != 1 {
+		return unresolved, true
+	}
+	resolution.Tests[0].Environment = mergeEnvironment(resolution.Tests[0].Environment, env)
+	return resolution, true
+}
+
+// rubyLiteralWord is a shell word's text when it expands nothing.
+func rubyLiteralWord(word *syntax.Word) (string, bool) {
+	if word == nil {
+		return "", true
+	}
+	var text strings.Builder
+	for _, part := range word.Parts {
+		switch part := part.(type) {
+		case *syntax.Lit:
+			text.WriteString(part.Value)
+		case *syntax.SglQuoted:
+			text.WriteString(part.Value)
+		case *syntax.DblQuoted:
+			for _, inner := range part.Parts {
+				lit, ok := inner.(*syntax.Lit)
+				if !ok {
+					return "", false
+				}
+				text.WriteString(lit.Value)
+			}
+		default:
+			return "", false
+		}
+	}
+	return text.String(), true
+}
+
+// rubyExtendedOptions reads a RUBYOPT="$RUBYOPT <literal options>" argument
+// and returns the options it adds.
+func rubyExtendedOptions(word *syntax.Word) (string, bool) {
+	if len(word.Parts) != 2 {
+		return "", false
+	}
+	prefix, ok := word.Parts[0].(*syntax.Lit)
+	quoted, isQuoted := word.Parts[1].(*syntax.DblQuoted)
+	if !ok || prefix.Value != "RUBYOPT=" || !isQuoted || len(quoted.Parts) != 2 {
+		return "", false
+	}
+	read, isRead := quoted.Parts[0].(*syntax.ParamExp)
+	rest, isLit := quoted.Parts[1].(*syntax.Lit)
+	if !isRead || !isLit || read.Param.Value != "RUBYOPT" || read.Exp != nil || read.Index != nil || read.Slice != nil || read.Repl != nil || read.Length || read.Excl || !strings.HasPrefix(rest.Value, " ") {
+		return "", false
+	}
+	return strings.TrimSpace(rest.Value), true
 }
 
 // rubyMaintenanceTools generate documentation, lint or release a gem; they

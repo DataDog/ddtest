@@ -83,7 +83,8 @@ review it before executing it if you have made further edits since apply.
 gitlab`, `.gitlab-ci.yml`) or CircleCI (`--ci-provider circleci`,
 `.circleci/config.yml`). The provider whose configuration exists is selected
 automatically; any other value is rejected with the list of supported
-providers. When several supported providers contain tests, ddtest asks which
+providers. When several supported providers contain tests (documentation, lint and
+release tooling, such as `bundle exec yard doc`, does not count), ddtest asks which
 one to configure before discovery, edits or validation (agents receive
 `ci_provider_required` with `next_action: ask_user`), and follow-up commands
 keep the selected `--ci-provider`. A language without setup support on the
@@ -302,7 +303,10 @@ Keep `.testoptimization/testdrive.json` and `report.html`. They distinguish loca
 validation from actual CI execution and Datadog processing, which are not proven
 by these local checks. `--site` selects the site for a new action (default
 `DD_SITE`, then `datadoghq.com`); `--tracer-version` is a fallback when no project
-or CI version is selected.
+or CI version is selected. Without either, when the latest release can't run
+on every instrumented CI row's Node, setup selects the newest release that
+can, says so ("Selected dd-trace@…"), and reports any framework support it
+lacks for that release; with no such release it stops and names the rows.
 
 ### Agent coordination and fresh results
 
@@ -518,6 +522,21 @@ preserves the original Gemfile and lockfile, including fallback tracer installs.
 Run `ddtest onboard --framework rspec` (or `minitest`) for the manual setup
 steps, then run the supplied validation command and retain both reports.
 Successful plain Ruby validation reports `PASSED`.
+
+A CI step may set up its tests in the same script: literal `export`s before
+exactly one recognized test command become that configuration's environment,
+a `rake RUBYOPT="$RUBYOPT <options>"` argument adds its options to the
+preload, and commands after the tests that only create directories, move or
+copy files, or print (such as moving a coverage report) are outside the test
+path. Several test commands, control flow or computed values keep the step
+unresolved.
+
+Failure messages compare without object addresses (`#<Foo:0x000…>`), so a
+failure every run repeats is not reported as varying. Tests whose names
+change between runs, such as one-line examples whose generated description
+embeds a temporary file name, are reported as `unstable_test_identities` with
+the offending examples: give them static descriptions, because Test
+Optimization cannot track them across CI runs either.
 
 Coding agents start with `ddtest onboard --agent`. There is no automatic Ruby CI
 edit, so the handoff depends on the workflows:

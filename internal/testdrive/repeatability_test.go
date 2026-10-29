@@ -117,3 +117,30 @@ func TestFailuresCompareWithoutObjectAddresses(t *testing.T) {
 	require.NotEqual(t, "varying_outcomes", got.Code)
 	require.NotEqual(t, "suspected regression", got.Status)
 }
+
+// omniai's one-line RSpec examples take generated descriptions that embed
+// Tempfile names, so each run reports differently named tests. That is an
+// unstable identity, not flaky outcomes, and stays a blocker with its cause.
+func TestUnstableTestIdentitiesAreNotFlakiness(t *testing.T) {
+	run := func(name string) validationRun {
+		return validationRun{root: "/repo", Tests: []jestTest{
+			{File: "/repo/spec/omniai/chat/file_spec.rb", Name: "OmniAI::Chat::File#filename is expected to eql \"" + name + "\"", Status: "passed"},
+			{File: "/repo/spec/omniai/chat/file_spec.rb", Name: "OmniAI::Chat::File#data works", Status: "passed"},
+		}}
+	}
+	telemetry := func(validationRun) verdict { return verdict{Status: "compatible"} }
+	got := compareRepeatedRuns(run("20261029-2450-1u5kul"), run("20261029-2451-8hsr1m"), run("20261029-2452-aaaaaa"), run("20261029-2453-bbbbbb"), telemetry)
+	require.Equal(t, "inconclusive", got.Status)
+	require.Equal(t, "unstable_test_identities", got.Code)
+	require.Contains(t, got.Reason, "test names change between runs")
+	require.Contains(t, got.Reason, "static descriptions")
+	require.Contains(t, strings.Join(got.Differences, "\n"), "spec/omniai/chat/file_spec.rb › OmniAI::Chat::File#filename is expected to eql \"20261029-2450-1u5kul\"")
+	require.NotContains(t, strings.Join(got.Differences, "\n"), "#data works")
+
+	// Outcomes that vary under stable names stay flakiness.
+	flaky := run("fixed")
+	flakyAgain := run("fixed")
+	flakyAgain.Tests[1].Status, flakyAgain.ExitCode = "failed", 1
+	got = compareRepeatedRuns(flaky, flaky, flakyAgain, flaky, telemetry)
+	require.Equal(t, "varying_outcomes", got.Code)
+}

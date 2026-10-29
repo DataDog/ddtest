@@ -926,18 +926,20 @@ func TestCircleCINionFixture(t *testing.T) {
 
 // presidentbeef/brakeman's configuration: Minitest through rake on
 // cimg/ruby 3.2 to 4.0, jobs sharing steps through a YAML anchor, and Qlty's
-// coverage upload orb. The test-3-2 job's multi-command step stays a scope
-// decision, and its rake RUBYOPT argument is reported with the fix.
+// coverage upload orb. The test-3-2 job's multi-command step resolves, and its
+// rake RUBYOPT argument, which replaces the preload, is reported with the fix.
 func TestCircleCIBrakemanFixture(t *testing.T) {
 	root := copyFixture(t, "circleci-brakeman")
 	useCIProvider(t, "circleci")
 	scope, err := DiscoverValidationScope(root, "minitest")
 	require.NoError(t, err)
-	require.Len(t, scope.Commands, 1)
+	require.Len(t, scope.Commands, 2)
 	require.Equal(t, "bundle exec rake", scope.Commands[0].Command)
 	require.Len(t, scope.Commands[0].locations, 3)
-	require.Len(t, scope.Unresolved, 1)
-	require.Contains(t, scope.Unresolved[0], "tests/test-3-2")
+	// test-3-2's export, rake and coverage moves resolve to one configuration.
+	require.Equal(t, "bundle exec rake 'RUBYOPT=--enable-frozen-string-literal --debug-frozen-string-literal'", scope.Commands[1].Command)
+	require.Equal(t, "CC_TEST_REPORTER_ID", scope.Commands[1].Environment["CC_TEST_REPORTER_ID"])
+	require.Empty(t, scope.Unresolved)
 	require.Contains(t, scope.Caveats, ".circleci/config.yml: CircleCI orbs that only notify, scan or upload coverage run no tests and are outside this validation: qltysh/qlty-orb@0.1.")
 	var reasons []string
 	for _, job := range RubyCIConfigurationForSite(root, "minitest", "").Jobs {

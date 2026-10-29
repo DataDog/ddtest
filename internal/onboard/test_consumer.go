@@ -124,6 +124,11 @@ func mayStartTestsIn(directory string, step runtimeStep, framework string, depth
 		for len(words) > 0 && strings.HasPrefix(words[0], "-") {
 			words = words[1:] // xargs/env options before the command.
 		}
+		// Bundler's exec runs a gem's executable, which a JavaScript suite
+		// is not: classify that executable.
+		if len(words) > 2 && words[0] == "bundle" && words[1] == "exec" {
+			words = words[2:]
+		}
 		if len(words) == 0 {
 			continue
 		}
@@ -186,6 +191,7 @@ var nonTestTools = []string{
 	"apt", "apt-get", "dpkg", "brew", "choco", "winget", "yum", "dnf", "apk", "pip", "pip3", "pipx", "corepack", "nvm", "volta", "fnm", "asdf", "rustup", "cargo", "go",
 	"lcov", "genhtml", "codecov", "coveralls", "cspell", "markdownlint", "markdownlint-cli2", "prettier", "eslint", "tsc", "stylelint", "commitlint", "biome", "oxlint",
 	"tsd", "vue-tsc", "attw", "publint", "depcheck",
+	"yard", "rdoc", "jsdoc", "mkdocs",
 	"tsup", "unbuild", "esbuild", "rollup", "webpack", "vite", "babel", "swc", "parcel", "typedoc", "rimraf",
 }
 

@@ -55,7 +55,7 @@ func compareRepeatedRuns(baseline, instrumented, baselineAgain, instrumentedAgai
 		}
 		return strings.Compare(a.playwright, b.playwright)
 	})
-	var recurring, variable []string
+	var recurring, variable, unstable []string
 	for _, key := range keys {
 		a, b, c, d := outcomes[0][key], outcomes[1][key], outcomes[2][key], outcomes[3][key]
 		if slices.Equal(a, b) && slices.Equal(a, c) && slices.Equal(a, d) {
@@ -66,6 +66,19 @@ func compareRepeatedRuns(baseline, instrumented, baselineAgain, instrumentedAgai
 			file = relative
 		}
 		label := file + " › " + key.name + key.playwright
+		reported := 0
+		for _, values := range [][]string{a, b, c, d} {
+			if len(values) > 0 {
+				reported++
+			}
+		}
+		if reported == 1 {
+			// A name only one run reports: the test's identity changes
+			// between runs, as when its description embeds generated data.
+			unstable = append(unstable, label)
+			variable = append(variable, "Varies between repeats: "+label+"; baseline: "+outcomeDescription(a)+" -> "+outcomeDescription(c)+"; instrumented: "+outcomeDescription(b)+" -> "+outcomeDescription(d))
+			continue
+		}
 		if slices.Equal(a, c) && slices.Equal(b, d) {
 			recurring = append(recurring, "Recurring difference in both pairs: "+label+"; baseline: "+outcomeDescription(a)+"; instrumented: "+outcomeDescription(b))
 		} else {
@@ -80,6 +93,21 @@ func compareRepeatedRuns(baseline, instrumented, baselineAgain, instrumentedAgai
 	}
 	// Keep exit codes and suite-level differences when no test identity explains
 	// the varying run, rather than pretending a process failure is a test failure.
+	if len(unstable) > 0 && len(unstable) == len(variable) && len(recurring) == 0 {
+		// Every difference is a test only one run reported: the set of names
+		// differs, not the outcomes.
+		result.Code = "unstable_test_identities"
+		result.Reason = fmt.Sprintf("%d %s reported by a single run: these test names change between runs, usually because a description the framework generates (such as a one-line example described by its matcher) embeds a temporary file name, a timestamp or another value created at run time. Every run then reports different tests, so outcomes cannot be compared, and Test Optimization cannot track these tests across CI runs either. Give them static descriptions; ddtest does not rename tests.", len(unstable), plural(len(unstable), "test is", "tests are"))
+		result.Differences = nil
+		for i, label := range unstable {
+			if i == 10 {
+				result.Differences = append(result.Differences, fmt.Sprintf("... and %d more", len(unstable)-i))
+				break
+			}
+			result.Differences = append(result.Differences, "Reported by a single run: "+label)
+		}
+		return result
+	}
 	if len(recurring)+len(variable) > 0 {
 		result.Differences = append(recurring, variable...)
 	}

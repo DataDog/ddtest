@@ -86,3 +86,29 @@ func TestPreflightResumePinsTheRecommendedTracer(t *testing.T) {
 	require.NotContains(t, result.Needs, "opt-out the user approves", "no opt-out applies outside Mocha")
 	require.Contains(t, result.Needs, "dd-trace@5.132.0")
 }
+
+// Patreon/nion runs Jest 24 on cimg/node:18.17.1: no release passes Jest's
+// support check (it needs jest-circus), so the framework-aware
+// recommendation is empty. Setup still selects the newest release that
+// runs on every instrumented CI row, dd-trace 5.133.0, and the support
+// check then reports the actual mismatch for it.
+func TestSetupSelectsTheNewestReleaseEveryCIRowRuns(t *testing.T) {
+	ci := onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Workflow: ".circleci/config.yml", Job: "primary_workflow/build", Step: 6, Node: "18.17.1", Status: onboard.StatusIncompatible}}}
+	releases := map[string]platform.JSSelection{"6.22.0": {Version: "6.22.0", Node: ">=22"}, "5.133.0": {Version: "5.133.0", Node: ">=18"}, "4.55.0": {Version: "4.55.0", Node: ">=16"}}
+	resolve := func(_ context.Context, version string) (platform.JSSelection, error) { return releases[version], nil }
+	tags := func(context.Context) (map[string]string, error) {
+		return map[string]string{"latest": "6.22.0", "latest-node18": "5.133.0", "latest-node16": "4.55.0"}, nil
+	}
+	check := jestPreflight{Version: "24.9.0"}
+	framework, _ := recommendJavaScriptTracer(t.Context(), check, &ci, resolve, tags, "jest")
+	require.Nil(t, framework, "Jest 24 without jest-circus passes no release")
+	covering := ciCoveringTracer(t.Context(), check, &ci, resolve, tags)
+	require.NotNil(t, covering)
+	require.Equal(t, "5.133.0", covering.Selection.Version)
+	require.Equal(t, "Selected dd-trace@5.133.0, the newest release that runs on every instrumented CI row (Node 18.17.1).", coveringTracerNote(covering))
+
+	ci.Jobs[0].Node = "16.20.2"
+	ci.Jobs = append(ci.Jobs, onboard.RuntimeFinding{Workflow: ".circleci/config.yml", Job: "primary_workflow/modern", Step: 6, Node: "22.11.0"})
+	releases["4.55.0"] = platform.JSSelection{Version: "4.55.0", Node: ">=16 <17"}
+	require.Nil(t, ciCoveringTracer(t.Context(), check, &ci, resolve, tags), "no release runs on Node 16 and 22")
+}

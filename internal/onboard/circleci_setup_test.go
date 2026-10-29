@@ -196,3 +196,66 @@ func TestCircleCIRubyOrb(t *testing.T) {
 	steps := strings.Join(circleRuns(circleJobs(t, root)["main/rspec"]), "\n")
 	require.Contains(t, steps, "ruby/install-deps configures Bundler to use gemfiles/rails.gemfile in later steps")
 }
+
+// ksylvest/omniai's GitHub workflows only build documentation (bundle exec
+// yard doc) and merge Dependabot pull requests: they don't make GitHub
+// Actions a provider to choose, so CircleCI, which runs the tests, is
+// selected.
+func TestOmniaiDocumentationWorkflowsAreNotTestProviders(t *testing.T) {
+	root := copyFixture(t, "circleci-omniai")
+	useCIProvider(t, "")
+	selected, err := SelectCIProvider(root, "")
+	require.NoError(t, err)
+	require.Equal(t, "circleci", selected)
+	useCIProvider(t, "github")
+	for _, framework := range []string{"jest", "rspec"} {
+		scope, err := DiscoverValidationScope(root, framework)
+		require.NoError(t, err)
+		require.Empty(t, scope.Unresolved, framework)
+	}
+}
+
+// presidentbeef/brakeman's test-3-2 step exports a variable, runs rake and
+// then moves the coverage report. Literal exports before exactly one test
+// command are its environment, a RUBYOPT="$RUBYOPT ..." rake argument keeps
+// the preload and adds its options, and artifact handling after it is
+// outside the test path. Anything else stays unresolved.
+func TestRubyStepsWithSetupAndArtifactCommands(t *testing.T) {
+	root := copyFixture(t, "circleci-brakeman")
+	const step = "# This triggers SimpleCov to generate a coverage.json file\nexport CC_TEST_REPORTER_ID=CC_TEST_REPORTER_ID\nbundle exec rake RUBYOPT=\"$RUBYOPT --enable-frozen-string-literal --debug-frozen-string-literal\"\nmkdir -p tmp/\nmv coverage/coverage.json tmp/coverage.json\n"
+	resolution := resolveRubyStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: step}, "minitest")
+	require.True(t, resolution.Matched, resolution.Reason)
+	require.Len(t, resolution.Tests, 1)
+	require.Equal(t, "bundle exec rake", resolution.Tests[0].Command)
+	require.Equal(t, map[string]string{"CC_TEST_REPORTER_ID": "CC_TEST_REPORTER_ID", "RUBYOPT": "--enable-frozen-string-literal --debug-frozen-string-literal"}, resolution.Tests[0].Environment)
+	require.Empty(t, rubyRakeOptionsProblem(step), "the argument keeps the preload")
+
+	for _, unresolved := range []string{
+		"bundle exec rake\nbundle exec rake test:integration",
+		"export SEED=$(date +%s)\nbundle exec rake",
+		"if [ -n \"$CI\" ]; then export A=1; fi\nbundle exec rake",
+		"bundle exec rake\nbundle exec rubocop --autocorrect",
+		"bundle exec rake\nrm -rf coverage",
+		"bundle exec rake RUBYOPT=\"$RUBYOPT $EXTRA\"",
+	} {
+		resolution := resolveRubyStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: unresolved}, "minitest")
+		require.False(t, resolution.Matched && resolution.Reason == "", unresolved)
+	}
+}
+
+// ksylvest/omniai's CircleCI configuration: rspec through circleci/ruby's
+// rspec-test on a three-Ruby matrix, with documentation, RuboCop, release
+// and Qlty jobs that run no tests.
+func TestCircleCIOmniaiFixture(t *testing.T) {
+	root := copyFixture(t, "circleci-omniai")
+	useCIProvider(t, "circleci")
+	scope, err := DiscoverValidationScope(root, "rspec")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "bundle exec rspec --profile 10 --format RspecJunitFormatter --out /tmp/test-results/rspec/results.xml --format progress", scope.Commands[0].Command)
+	require.Len(t, scope.Commands[0].locations, 3)
+	require.Contains(t, scope.Caveats, ".circleci/config.yml: CircleCI orbs that only notify, scan or upload coverage run no tests and are outside this validation: qltysh/qlty-orb@0.0.11.")
+	request := rubyDiscovery{}.ciSetupRequest(root, "rspec", "datadoghq.com", circleCI{}.setupTerms())
+	require.NotContains(t, strings.Join(request.Notes, "\n"), "These CI jobs run", "Ruby 3.2 and newer ship a recent RubyGems")
+}

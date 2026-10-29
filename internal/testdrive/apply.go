@@ -75,6 +75,9 @@ func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOp
 		}
 	}
 	selection, reportOnly, err := t.selectSetupTracerReporting(ctx, scope, options.ExplicitTracer)
+	if err == nil && t.setupTracerNote != "" {
+		_, _ = fmt.Fprintln(output, t.setupTracerNote)
+	}
 	if err == nil && selection.Version == "" {
 		err = noRunnableConfiguration(reportOnly)
 	}
@@ -275,14 +278,24 @@ func (t *Testdrive) selectSetupTracerReporting(ctx context.Context, scope onboar
 			// run on each of their Node versions, not only on the local one.
 			if len(unsupportedCINodes(ci, selection)) > 0 && t.resolveJSTracer != nil && t.resolveJSTags != nil {
 				rec, _ := recommendJavaScriptTracer(ctx, *check.Preflight, &ci, t.resolveJSTracer, t.resolveJSTags, t.framework.Name())
+				if rec == nil {
+					// No release passes the framework's support check: select the
+					// newest one every instrumented CI row runs, whose support
+					// check then names what the project must change.
+					rec = ciCoveringTracer(ctx, *check.Preflight, &ci, t.resolveJSTracer, t.resolveJSTags)
+				}
 				if rec == nil || len(rec.Unsupported) > 0 || len(rec.Unresolved) > 0 {
 					return platform.JSSelection{}, nil, ciTracerMajorsError(t.framework.Name(), ci, selection, rec)
 				}
 				selection = rec.Selection
+				t.setupTracerNote = coveringTracerNote(rec)
 			}
 		}
 		support := map[string]func(jestPreflight, platform.JSSelection) verdict{"jest": checkJestSupport, "vitest": checkVitestSupport, "mocha": checkMochaSupport, "playwright": checkPlaywrightSupport, "cypress": checkCypressSupport, "cucumber": checkCucumberSupport, "webdriverio": checkWebdriverIOSupport}[t.framework.Name()]
 		if verdict := support(*check.Preflight, selection); verdict.Status != "compatible" {
+			if t.setupTracerNote != "" {
+				return platform.JSSelection{}, nil, fmt.Errorf("%s %s: %s", t.setupTracerNote, entry.Command, verdict.Reason)
+			}
 			return platform.JSSelection{}, nil, fmt.Errorf("%s: %s", entry.Command, verdict.Reason)
 		}
 		for _, job := range ci.Jobs {
@@ -327,6 +340,22 @@ func (t *Testdrive) readyConfiguration(entry onboard.TestCommand) bool {
 func (t *Testdrive) setupStaysReported(entry onboard.TestCommand, partial bool) bool {
 	return ciInstrumentationDisabled(entry) || onboard.WindowsOnlyConfiguration(t.repositoryRoot, entry) ||
 		partial && len(entry.UnvalidatedSetup) > 0 && !missingPrerequisiteFacts(entry)
+}
+
+// ciCoveringTracer is the newest release that runs on every instrumented CI
+// row's Node, whatever the framework's support check says; nil when no
+// release covers them all.
+func ciCoveringTracer(ctx context.Context, check jestPreflight, ci *onboard.RuntimeCheck, resolve func(context.Context, string) (platform.JSSelection, error), tags func(context.Context) (map[string]string, error)) *tracerRecommendation {
+	rec, _ := recommendJavaScriptTracer(ctx, check, ci, resolve, tags, "")
+	if rec == nil || len(rec.Unsupported) > 0 || len(rec.Unresolved) > 0 || len(rec.Compatible) == 0 {
+		return nil
+	}
+	return rec
+}
+
+// coveringTracerNote says which release setup selected for the CI rows.
+func coveringTracerNote(rec *tracerRecommendation) string {
+	return "Selected dd-trace@" + rec.Selection.Version + ", the newest release that runs on every instrumented CI row (Node " + scopeList(rec.Compatible) + ")."
 }
 
 // setupInstrumentsRow reports whether setup instruments this CI row. Excluded

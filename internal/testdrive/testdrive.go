@@ -44,6 +44,9 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	// setupTracerNote says which tracer release setup selected for the CI
+	// rows when no release passed the framework support check.
+	setupTracerNote string
 	// configurationLocations are the CI locations of the configuration being run.
 	configurationLocations []string
 	// tracerEnvironment is what a temporary tracer installation adds to every run.
