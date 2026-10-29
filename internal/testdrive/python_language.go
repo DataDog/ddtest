@@ -3,6 +3,7 @@ package testdrive
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,10 +29,22 @@ func (pythonLanguage) prepareStorage() error                         { return ni
 func (pythonLanguage) selectCommand(commandRequest) (string, []string, bool, error) {
 	return "", nil, false, nil
 }
-func (pythonLanguage) detectsTracerInPreparation() bool                 { return true }
-func (pythonLanguage) refreshProjectTracer(*Testdrive, context.Context) {}
-func (pythonLanguage) usesPackageBinaries() bool                        { return true }
-func (pythonLanguage) previewNotes() []string                           { return nil }
+func (pythonLanguage) detectsTracerInPreparation() bool { return true }
+func (pythonLanguage) refreshProjectTracer(t *Testdrive, ctx context.Context) {
+	source := t.environmentInfo.Source
+	if source == "" {
+		source = "Selected Python configuration"
+	}
+	t.environmentInfo, t.environmentFailure = pythonEnvironmentInfo(ctx, t.command, t.args, source, t.configurationEnvironment)
+	t.projectTracer = ""
+}
+func (pythonLanguage) usesPackageBinaries() bool { return false }
+func (pythonLanguage) previewNotes() []string {
+	return []string{
+		"check GitHub Actions Python runtimes and tracer release agreement using action and PyPI metadata",
+		"disable coverage thresholds only for isolated probes, preserving collection and full-suite thresholds",
+	}
+}
 func (pythonLanguage) installTracer(*Testdrive, context.Context, platform.TracerOptions) (platform.TracerInstallation, bool, error) {
 	return platform.TracerInstallation{}, false, nil
 }
@@ -42,7 +55,7 @@ func (pythonLanguage) inspectEnvironment(ctx context.Context, request environmen
 	return command, args, info, finding
 }
 
-func (pythonLanguage) parsesCommandAssignments() bool { return false }
+func (pythonLanguage) parsesCommandAssignments() bool { return true }
 
 // The tracer installer inspects the selected interpreter, not a wrapper.
 func (pythonLanguage) tracerCommand(info environmentInfo, command string, args []string) (string, []string) {
@@ -106,8 +119,21 @@ func (pythonLanguage) noResultsFinding(runtime reportRuntime, noEvents, commandF
 	}
 }
 
-func (pythonLanguage) pairedFrameworks() map[string]pairedFramework { return nil }
-func (pythonLanguage) isolatesConfigurations() bool                 { return false }
+func (pythonLanguage) pairedFrameworks() map[string]pairedFramework {
+	return map[string]pairedFramework{"pytest": {
+		run:      (*Testdrive).runPytest,
+		features: (*Testdrive).runPytestFeatures,
+		preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
+			return t.checkPytestPreflight
+		},
+		telemetry:      verifyPytestTelemetry,
+		probeTelemetry: verifyPytestTelemetry,
+		verifyInstallation: func(t *Testdrive, ctx context.Context, path string) error {
+			return t.verifyPytestTracer(ctx, path, t.tracerVersion)
+		},
+	}}
+}
+func (pythonLanguage) isolatesConfigurations() bool { return true }
 
 func (pythonLanguage) prepareConfiguration(*Testdrive, *configurationResult, string, string) error {
 	return nil
@@ -128,4 +154,10 @@ func (pythonLanguage) mergeCIRuntime(_, next *onboard.RuntimeCheck) *onboard.Run
 	return next
 }
 
-func (pythonLanguage) labelsTracerWithoutSelection() bool { return false }
+func (pythonLanguage) labelsTracerWithoutSelection() bool { return true }
+
+func init() {
+	frameworkFeaturePolicies["pytest"] = frameworkPolicy{SourceCoverage: true, ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"}, ConfigurationOptions: []string{"-c", "--config-file"}, Features: []featurePolicy{
+		{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "required"}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
+	}}
+}

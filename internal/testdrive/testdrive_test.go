@@ -484,7 +484,7 @@ func TestPythonTemporaryEnvironmentCleanup(t *testing.T) {
 			installer := &fakeTracer{}
 			executor := &fakeTestdriveExecutor{}
 			drive := &Testdrive{
-				repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()),
+				repositoryRoot: root, language: "python", framework: &telemetryOnlyFramework{},
 				command: "python", args: []string{"-m", "pytest"}, platform: installer, executor: executor,
 				session: workspace.PlanSession(),
 			}

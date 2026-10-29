@@ -3,6 +3,7 @@ package onboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -247,6 +248,12 @@ func pythonInvocation(words []string) bool {
 	return ok && !pythonMetadataQuery(args)
 }
 
+// PytestArguments returns only pytest's arguments, preserving the supported
+// wrapper and interpreter boundaries for controlled local execution.
+func PytestArguments(words []string) ([]string, bool) {
+	return pythonRunnerArguments(words, "pytest")
+}
+
 func pythonMetadataQuery(args []string) bool {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -359,6 +366,10 @@ func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
 	return nil, false
 }
 
+// ErrPytestRuntimeValidation marks options the static checker cannot certify.
+// A local paired run can resolve them through pytest itself.
+var ErrPytestRuntimeValidation = errors.New("pytest options require runtime validation")
+
 // PytestCommandOptions inspects environment and command options, including the
 // last inline addopts override (pytest's -o/--override-ini precedence). defaults
 // contains the selected config file's addopts. Wrapper separators and interpreter
@@ -376,7 +387,7 @@ func PytestCommandOptions(addopts string, words, defaults []string) (options, in
 	}
 	options = append(options, args...)
 	if slices.ContainsFunc(options, func(option string) bool { return strings.HasPrefix(option, "@") }) {
-		return nil, nil, fmt.Errorf("pytest argument files require separate inspection")
+		return nil, nil, fmt.Errorf("%w: argument files need separate inspection", ErrPytestRuntimeValidation)
 	}
 	var override string
 	overridden := false
@@ -403,7 +414,7 @@ func PytestCommandOptions(addopts string, words, defaults []string) (options, in
 		}
 		key, value, _ := strings.Cut(value, "=")
 		if key == "ddtrace" || key == "no-ddtrace" {
-			return nil, nil, fmt.Errorf("pytest config-based Datadog activation requires runtime validation")
+			return nil, nil, fmt.Errorf("%w: config-based Datadog activation", ErrPytestRuntimeValidation)
 		}
 		if key == "addopts" {
 			override, overridden = value, true
@@ -417,7 +428,7 @@ func PytestCommandOptions(addopts string, words, defaults []string) (options, in
 		}
 	}
 	if slices.ContainsFunc(iniAddopts, func(option string) bool { return strings.HasPrefix(option, "@") }) {
-		return nil, nil, fmt.Errorf("pytest argument files require separate inspection")
+		return nil, nil, fmt.Errorf("%w: argument files need separate inspection", ErrPytestRuntimeValidation)
 	}
 	return append(slices.Clone(iniAddopts), options...), iniAddopts, nil
 }

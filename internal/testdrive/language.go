@@ -190,6 +190,8 @@ type pairedFramework struct {
 	// preflightAfterInstall runs preflight again once the tracer is
 	// installed, to inspect the dependencies that load it.
 	preflightAfterInstall bool
+	// verifyInstallation confirms that the selected runtime loads the selected tracer.
+	verifyInstallation func(t *Testdrive, ctx context.Context, preload string) error
 	// missingCoverage is the blocking check when real-suite coverage is
 	// missing; empty uses the default.
 	missingCoverage string

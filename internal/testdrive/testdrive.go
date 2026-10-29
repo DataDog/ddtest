@@ -888,6 +888,11 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		result.TracerSource = "project installation · reused"
 	}
 	if supportsValidationFramework(t.framework.Name()) {
+		if adapter, ok := pairedFrameworkNamed(t.framework.Name()); ok && adapter.verifyInstallation != nil {
+			if err := adapter.verifyInstallation(t, ctx, installation.Path); err != nil {
+				return result, err
+			}
+		}
 		if adapter, ok := pairedFrameworkNamed(t.framework.Name()); ok && adapter.preflightAfterInstall && t.preflight != nil {
 			if err := t.preflight(ctx, output, &result); err != nil {
 				return result, err

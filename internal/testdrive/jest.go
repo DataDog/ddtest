@@ -399,6 +399,10 @@ func compareRuns(baseline, instrumented validationRun, telemetry func(validation
 }
 
 func verifyJestTelemetry(run validationRun) verdict {
+	return verifyNativeTelemetry(run, false)
+}
+
+func verifyNativeTelemetry(run validationRun, includeSkipped bool) verdict {
 	if run.framework == "webdriverio" {
 		return verifyWebdriverIOTelemetry(run)
 	}
@@ -423,6 +427,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 	classes := make(map[string][]string)
 	for _, test := range run.Tests {
 		status := map[string]string{"passed": "pass", "failed": "fail"}[test.Status]
+		if includeSkipped && test.Status == "skipped" {
+			status = "skip"
+		}
 		if status != "" {
 			name := test.Name
 			if test.telemetryName != nil {
@@ -485,7 +492,7 @@ func verifyJestTelemetry(run validationRun) verdict {
 			}
 		}
 		observe := func(attempt intake.TestRun) {
-			if attempt.Status == "pass" || attempt.Status == "fail" {
+			if attempt.Status == "pass" || attempt.Status == "fail" || includeSkipped && attempt.Status == "skip" {
 				observed[identity{file, name, attempt.Status}]++
 			}
 		}

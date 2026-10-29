@@ -37,7 +37,7 @@ type WorkflowOptions struct {
 
 func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options WorkflowOptions) error {
 	name := t.framework.Name()
-	if !supportsValidationFramework(name) && options.Format == "verbose" && !options.Apply {
+	if !t.lang().coordinated() && options.Format == "verbose" && !options.Apply && options.Resume == "" && options.FactsFile == "" {
 		return t.Run(ctx, output)
 	}
 	result := onboard.AgentResult{Status: "running", Phase: "discovery", NextAction: "run_command", NextCommand: onboard.OnboardingCommand(name)}
@@ -1133,8 +1133,8 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 	if validation == nil {
 		return renderReportFailure(output, format, fmt.Errorf("no saved validation report"))
 	}
-	if !supportsValidationFramework(validation.Framework) {
-		result := onboard.AgentResult{Status: "unsupported", Phase: "report", Code: "framework_unsupported", Reason: "Controlled validation is not available for this framework.", NextAction: "report_result"}
+	if !supportsValidationFramework(validation.Framework) || !languageOrUnsupported(validation.Framework).coordinated() {
+		result := onboard.AgentResult{Status: "unsupported", Phase: "report", Code: "framework_unsupported", Reason: "Structured onboarding reports are not available for this framework. Inspect the saved standalone HTML/JSON as historical evidence, or rerun standalone testdrive.", NextAction: "report_result"}
 		return errors.Join(fmt.Errorf("%s", result.Reason), onboard.RenderAgentResult(output, result, format))
 	}
 	if validation.CheckOnly && validation.Retained != nil && validation.Retained.Result != nil {

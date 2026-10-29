@@ -17,8 +17,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Python preserves reporting-only checks; Ruby exercises native paired
-// validation, source coverage and all six feature controls.
+// The public Python CLI exercises paired validation, source coverage and all
+// six feature controls, including temporary tracer installation and cleanup.
 func TestPublicPythonRubyTestdrives(t *testing.T) {
 	if os.Getenv("DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST") == "" {
 		t.Skip("set DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST=1")
@@ -41,7 +41,11 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 			for name, contents := range fixture.files {
 				integrationFile(t, root, name, contents)
 			}
-			env := []string{}
+			env := []string{
+				"DD_GIT_REPOSITORY_URL=https://example.com/ddtest-pytest-fixture.git",
+				"DD_GIT_COMMIT_SHA=0123456789012345678901234567890123456789",
+				"DD_GIT_BRANCH=main", "DD_GIT_COMMIT_MESSAGE=pytest validation fixture",
+			}
 			if fixture.name == "pytest" {
 				venv := filepath.Join(t.TempDir(), "venv")
 				integrationCommand(t, ctx, root, nil, "python3", "-m", "venv", venv)
@@ -65,15 +69,15 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 				{"plain", nil},
 			} {
 				t.Run(mode.name, func(t *testing.T) {
+					integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    steps:\n      - uses: actions/setup-python@v6\n        with: {python-version: '3.12'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: python, python-tracer-version: '4.16.0'}\n      - run: "+fixture.command+"\n")
 					retainIntegrationReports(t, root, fixture.name+"-"+mode.name)
-					args := []string{"testdrive", "--framework", fixture.name, "--command", fixture.command, "--yes"}
+					args := []string{"testdrive", "--framework", fixture.name, "--command", fixture.command, "--tracer-version", "4.16.0", "--yes"}
 					args = append(args, mode.args...)
 					command := exec.CommandContext(ctx, binary, args...)
 					command.Dir = root
 					command.Env = integrationEnvironment(env)
 					output, err := command.CombinedOutput()
-					require.NoError(t, err, "a passing command with events retains main's exit 0: %s", output)
-					require.Contains(t, string(output), "Test events received.")
+					require.NoError(t, err, "paired validation and all controls must pass: %s", output)
 					require.NotContains(t, string(output), "INCOMPLETE")
 					data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
 					require.NoError(t, err, string(output))
@@ -92,24 +96,28 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 					require.True(t, report.Success)
 					var fields map[string]json.RawMessage
 					require.NoError(t, json.Unmarshal(data, &fields))
-					require.JSONEq(t, `true`, string(fields["telemetry_only"]))
-					require.Contains(t, string(fields["summary"]), "UNVALIDATED (TELEMETRY ONLY)")
+					require.NotContains(t, fields, "telemetry_only")
+					require.Contains(t, string(fields["summary"]), "PASSED")
 					require.NotContains(t, string(data), "INCOMPLETE")
-					require.Len(t, report.Runs, 1)
-					require.Equal(t, "reporting-only", report.Runs[0].Name)
-					require.True(t, report.Runs[0].Instrumented)
+					require.GreaterOrEqual(t, len(report.Runs), 2)
+					require.Equal(t, "baseline", report.Runs[0].Name)
+					require.False(t, report.Runs[0].Instrumented)
 					require.Zero(t, report.Runs[0].ExitCode, string(output))
-					require.Positive(t, report.Runs[0].TestEventCount)
+					require.Equal(t, "reporting-only", report.Runs[1].Name)
+					require.True(t, report.Runs[1].Instrumented)
+					require.Positive(t, report.Runs[1].TestEventCount)
+					var features []struct{ Status string }
+					require.NoError(t, json.Unmarshal(fields["features"], &features))
+					require.Len(t, features, 6)
+					for _, feature := range features {
+						require.Equal(t, "passed", feature.Status)
+					}
 					for name, contents := range fixture.files {
 						after, err := os.ReadFile(filepath.Join(root, name))
 						require.NoError(t, err)
 						require.Equal(t, contents, string(after), name)
 					}
-					entries, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
-					require.NoError(t, err)
-					require.Len(t, entries, 3)
-					require.DirExists(t, filepath.Join(root, ".testoptimization/testdrive"))
-					require.Contains(t, string(output), "Saved diagnostics")
+					require.NoDirExists(t, filepath.Join(root, ".testoptimization/testdrive"))
 					require.FileExists(t, filepath.Join(root, ".testoptimization/report.html"))
 				})
 			}
