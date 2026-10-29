@@ -273,7 +273,7 @@ guarded by a `when` on the image where a matrix shares the job.
 
 Which repository file a Buildkite pipeline uploads is configured in the
 Buildkite UI, so ddtest reads every pipeline file: `buildkite.yml` (`.yaml`,
-`.json`) and the YAML files under `.buildkite/` and `.buildkite/pipelines/`
+`.json`), `buildkite/pipeline.yml` (`.yaml`, `.json`) and the YAML files under `.buildkite/` and `.buildkite/pipelines/`
 that define `steps` (in the mapping or the legacy list form; Docker Compose
 files, hooks and anchor-only files are not pipelines). Each command step
 becomes one job per matrix combination, named by its `label` (or `key`) under
@@ -291,13 +291,18 @@ possible CI path), `skip`, `branches` (a possible path), groups, YAML anchors
 and merge keys; `wait`, `block` and `input` steps only pause the pipeline.
 `buildkite-agent pipeline upload` interpolates the file before any step runs:
 `$$NAME` and `\$NAME` are read when the step runs, the top-level `env` is known,
-`$BUILDKITE_*` read the build, and any other `$NAME` (including the step's own
-`env`) is replaced with a value of the upload step that ddtest cannot know, so a
+variables that describe the build (`$BUILDKITE_BRANCH`, `$BUILDKITE_COMMIT`,
+`$BUILDKITE_BUILD_NUMBER`, `$BUILDKITE_PIPELINE_SLUG` and the like) read the same
+value in every job, and any other `$NAME` (including the step's own `env` and
+agent or job variables such as `$BUILDKITE_BUILD_CHECKOUT_PATH` or
+`$BUILDKITE_PARALLEL_JOB`) is replaced with a value of the upload step that ddtest cannot know, so a
 command reading one is unresolved and an env value reading one is replayed as
 unknown. The docker plugin runs the commands in its `image` with `/bin/sh`
 (or its `shell`), the docker-compose plugin in its `run` service's image from
-the Compose file (`config`, default `docker-compose.yml`; a service built from
-a Dockerfile has no image ddtest can check), and steps without either run on
+the Compose file (`config`, default `docker-compose.yml`, with matrix values;
+`${NAME:-default}` in the image reads the step's env, and a variable it does not
+set, which the agent or a `.env` file may supply, leaves the image unknown; a
+service built from a Dockerfile has no image ddtest can check), and steps without either run on
 the agent host, whose runtime ddtest cannot know: the runtime check reports
 them for review instead of certifying them. Plugins that only fetch secrets,
 artifacts or caches, log in to registries or annotate results run no tests
@@ -306,15 +311,17 @@ and are reported, not blockers: `artifacts`, `cache`, `docker-login`, `ecr`,
 `aws-assume-role-with-web-identity`, `seek-oss/aws-sm` and
 `bugcrowd/test-summary` (the list is `buildkiteNonTestPlugins`), as are
 docker-compose steps that only build or push images and `buildkite-agent
-artifact`, `annotate` and `meta-data` commands. An upload of pipeline files
-ddtest reads (`buildkite-agent pipeline upload` without arguments, or with
-their paths) is reported, since those files are read as pipelines. Anything
+artifact`, `annotate` and `meta-data` commands without command substitutions.
+An upload of pipeline files ddtest reads (`buildkite-agent pipeline upload` with
+literal paths, or without arguments, where exactly one of Buildkite's default
+files must exist), resolved from the step's working directory, is reported, since those files are read as pipelines. Anything
 ddtest cannot read locally stays an unresolved blocker: `trigger` steps,
 every other `buildkite-agent pipeline upload` (generated or piped steps,
 files ddtest does not read, `--no-interpolation`), every other plugin (or one
 named by a variable), a step that runs a container's own command, the docker
 plugin's `entrypoint`, `shell: false` and `mount-checkout: false`, matrices it
-cannot expand and Windows agents.
+cannot expand or that exceed 200 jobs, and Windows agents (also when a matrix
+value selects them).
 
 There is no Datadog Buildkite plugin: CI setup runs Datadog's installer
 (`install_test_visibility_v15.sh` from `install.datadoghq.com`, the one the
@@ -336,9 +343,11 @@ every step that runs the tests, the snippet (guarded, or its two statements
 without the guard) runs before the first test command in exactly ddtest's
 shape, with the pinned installer and checksum, a language token naming the
 language, an exact tracer release and a `DD_SITE` matching the selected
-site; any other shape, an unescaped `$`, a `DD_API_KEY` written into the
-pipeline or a plugin's `environment`, and a container that does not receive
-`DD_API_KEY` are reported. A person provides `DD_API_KEY` from an agent
+site. A statement that runs the installer in any other shape stays an
+unresolved command; an unescaped `$`, a `DD_API_KEY` written into the pipeline
+or a plugin's `environment`, one set to an empty value (`DD_API_KEY=`), and a
+container that does not receive `DD_API_KEY` (only a bare name, or a Compose
+`${DD_API_KEY}` reference, passes it through) are reported. A person provides `DD_API_KEY` from an agent
 environment hook, a secrets plugin or the pipeline's environment in the
 Buildkite UI. The installer needs Bash and curl or wget, so steps on images
 known to lack them (Alpine variants, BusyBox, distroless; official `-slim`

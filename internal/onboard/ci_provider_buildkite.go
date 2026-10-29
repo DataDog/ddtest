@@ -49,7 +49,7 @@ func (buildkite) sharedSyntax() bool { return false }
 
 // buildkiteRootFiles are the pipeline files Buildkite looks for at the
 // repository root.
-var buildkiteRootFiles = []string{"buildkite.yml", "buildkite.yaml", "buildkite.json"}
+var buildkiteRootFiles = []string{"buildkite.yml", "buildkite.yaml", "buildkite.json", "buildkite/pipeline.yml", "buildkite/pipeline.yaml", "buildkite/pipeline.json"}
 
 // buildkiteSizeLimit bounds every file ddtest reads.
 const buildkiteSizeLimit = 2 << 20
@@ -382,15 +382,6 @@ func (c *buildkiteConfig) command(workflow *ciWorkflow, item *yaml.Node, fields 
 			name += " (" + strings.Join(values, ", ") + ")"
 		}
 		name = buildkiteUniqueName(workflow, scope.group+name)
-		executor := c.executor(fields, scope, matrix)
-		if commands == nil {
-			if !disabled {
-				if reason := c.commandless(fields, executor); reason != "" {
-					c.unresolved(workflow, name, source, reason)
-				}
-			}
-			continue
-		}
 		env := maps.Clone(scope.env)
 		keyProblem := scope.env["DD_API_KEY"] != ""
 		stepEnv := gitLabAlias(fields["env"])
@@ -408,8 +399,17 @@ func (c *buildkiteConfig) command(workflow *ciWorkflow, item *yaml.Node, fields 
 		if _, set := scope.env["DD_API_KEY"]; set {
 			keyProblem = true
 		}
+		executor := c.executor(fields, scope, matrix, env)
+		if commands == nil {
+			if !disabled {
+				if reason := c.commandless(fields, executor); reason != "" {
+					c.unresolved(workflow, name, source, reason)
+				}
+			}
+			continue
+		}
 		executor.keyProblem = executor.keyProblem || keyProblem
-		if executor.windows = buildkiteWindows(scope.agents, fields["agents"]); executor.windows {
+		if executor.windows = buildkiteWindows(matrix, scope.agents, fields["agents"]); executor.windows {
 			executor.problem = joinDiagnostic(executor.problem, "it runs on Windows agents, whose default shell is cmd.exe, which ddtest cannot replay")
 		}
 		job := runtimeJob{Env: env, Image: executor.image, ImageTemplate: executor.template}
@@ -437,8 +437,9 @@ func (c *buildkiteConfig) commandless(fields map[string]*yaml.Node, executor *bu
 	return ""
 }
 
-// buildkiteWindows reports agent targeting that selects Windows agents.
-func buildkiteWindows(nodes ...*yaml.Node) bool {
+// buildkiteWindows reports agent targeting that selects Windows agents,
+// with the step's matrix values substituted.
+func buildkiteWindows(matrix func(string) (string, string), nodes ...*yaml.Node) bool {
 	for _, node := range nodes {
 		node = gitLabAlias(node)
 		if node == nil {
@@ -453,6 +454,7 @@ func buildkiteWindows(nodes ...*yaml.Node) bool {
 			values = gitLabStrings(node)
 		}
 		for _, value := range values {
+			value, _ = matrix(value)
 			if strings.Contains(strings.ToLower(value), "windows") {
 				return true
 			}
@@ -518,6 +520,13 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 			known := mergeEnvironment(mergeEnvironment(env, state.env), state.references)
 			if setup, consumed, ok := buildkiteSetupAt(file.Stmts, i, known); ok {
 				statement := buildkiteStatementText(text, file.Stmts, i, i+consumed)
+				if !setup.shaped {
+					// It may run anything, tests included: an unresolved
+					// command, never a setup step that hides it.
+					add(current, statement, setup.Problem)
+					i += consumed - 1
+					continue
+				}
 				if reads := buildkiteReads(statement, unknown); len(reads) > 0 && setup.Problem == "" {
 					setup.Problem = "The Datadog setup snippet reads " + strings.Join(reads, ", ") + " without escaping the $: buildkite-agent pipeline upload replaces it when the pipeline is uploaded (with the upload step's value, or empty), so write every $ in the snippet as $$, as ddtest's instructions show."
 				}
@@ -549,7 +558,7 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 			if reads := buildkiteReads(statement, unknown); len(reads) > 0 {
 				problem = uploadProblem
 			}
-			dynamic, uploads := buildkiteUpload(c, statement)
+			dynamic, uploads := buildkiteUpload(c, statement, state.directory)
 			problem = joinDiagnostic(problem, dynamic)
 			step := add(current, command, problem)
 			if problem == "" && (uploads || buildkiteAgentRecord(statement)) {
@@ -609,47 +618,82 @@ var buildkitePipelineUpload = regexp.MustCompile(`buildkite-agent\s+pipeline\s+u
 // nothing ddtest replays, like CircleCI's artifact steps.
 func buildkiteAgentRecord(statement string) bool {
 	file, ok := parseCIShell(statement)
-	if !ok || len(file.Stmts) != 1 || file.Stmts[0].Background || file.Stmts[0].Negated {
+	if !ok || len(file.Stmts) != 1 || file.Stmts[0].Background || file.Stmts[0].Negated || buildkiteSubstitutes(file.Stmts[0]) {
 		return false
 	}
 	call, isCall := file.Stmts[0].Cmd.(*syntax.CallExpr)
 	return isCall && len(call.Assigns) == 0 && len(call.Args) >= 2 && call.Args[0].Lit() == "buildkite-agent" && slices.Contains([]string{"artifact", "annotate", "annotation", "meta-data"}, call.Args[1].Lit())
 }
 
+// buildkiteSubstitutes reports a command or process substitution anywhere in
+// a statement, such as an argument "$(npm test)": it runs a command of its own.
+func buildkiteSubstitutes(stmt *syntax.Stmt) bool {
+	found := false
+	syntax.Walk(stmt, func(node syntax.Node) bool {
+		switch node.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst:
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// buildkiteDefaultPipelines are the files buildkite-agent pipeline upload
+// looks for without arguments, relative to its working directory; exactly
+// one must exist (buildkite/agent, clicommand/pipeline_upload.go).
+var buildkiteDefaultPipelines = []string{"buildkite.yml", "buildkite.yaml", "buildkite.json", ".buildkite/pipeline.yml", ".buildkite/pipeline.yaml", ".buildkite/pipeline.json", "buildkite/pipeline.yml", "buildkite/pipeline.yaml", "buildkite/pipeline.json"}
+
 // buildkiteUpload explains why a statement that uploads steps leaves them
 // unresolved: anything but an upload of pipeline files ddtest reads, which
-// is reported and runs nothing ddtest replays (uploads). Empty for other
-// statements.
-func buildkiteUpload(c *buildkiteConfig, statement string) (problem string, uploads bool) {
+// is reported and runs nothing ddtest replays (uploads). Paths resolve from
+// directory, the statement's working directory. Empty for other statements.
+func buildkiteUpload(c *buildkiteConfig, statement, directory string) (problem string, uploads bool) {
 	if !buildkitePipelineUpload.MatchString(statement) {
 		return "", false
 	}
+	unresolved := "the command generates or uploads steps with buildkite-agent pipeline upload (" + statement + "), which ddtest cannot read; they may run tests. Commit the uploaded pipeline to the repository, or validate those steps separately"
 	file, ok := parseCIShell(statement)
-	if ok && len(file.Stmts) == 1 && !file.Stmts[0].Background && !file.Stmts[0].Negated && len(file.Stmts[0].Redirs) == 0 {
-		if call, isCall := file.Stmts[0].Cmd.(*syntax.CallExpr); isCall && len(call.Assigns) == 0 && len(call.Args) >= 3 {
-			var paths []string
-			literal := true
-			for _, word := range call.Args[3:] {
-				value := word.Lit()
-				if value == "" || strings.HasPrefix(value, "-") {
-					literal = false
-					break
-				}
-				paths = append(paths, path.Clean(value))
-			}
-			if literal && call.Args[0].Lit() == "buildkite-agent" && call.Args[1].Lit() == "pipeline" && call.Args[2].Lit() == "upload" {
-				if len(paths) == 0 {
-					paths = []string{".buildkite/pipeline.yml"}
-				}
-				read := !slices.ContainsFunc(paths, func(file string) bool { return c.documents[file] == nil })
-				if read {
-					c.review = append(c.review, "Buildkite uploads "+strings.Join(paths, ", ")+" with buildkite-agent pipeline upload; ddtest reads "+map[bool]string{true: "it", false: "them"}[len(paths) == 1]+" as "+map[bool]string{true: "a pipeline", false: "pipelines"}[len(paths) == 1]+" of its own.")
-					return "", true
-				}
+	if !ok || len(file.Stmts) != 1 || file.Stmts[0].Background || file.Stmts[0].Negated || len(file.Stmts[0].Redirs) > 0 {
+		return unresolved, true
+	}
+	call, isCall := file.Stmts[0].Cmd.(*syntax.CallExpr)
+	if !isCall || len(call.Assigns) > 0 || len(call.Args) < 3 {
+		return unresolved, true
+	}
+	var words []string
+	for _, word := range call.Args {
+		value, literal := ciShellWord(word, nil, "", "")
+		if !literal || value == "" {
+			return unresolved, true
+		}
+		words = append(words, value)
+	}
+	if !slices.Equal(words[:3], []string{"buildkite-agent", "pipeline", "upload"}) {
+		return unresolved, true
+	}
+	var paths []string
+	for _, value := range words[3:] {
+		if strings.HasPrefix(value, "-") || path.IsAbs(value) {
+			return unresolved, true
+		}
+		paths = append(paths, path.Join(directory, value))
+	}
+	if len(paths) == 0 {
+		for _, candidate := range buildkiteDefaultPipelines {
+			if info, found := repositoryFile(c.root, c.root, path.Join(directory, candidate)); found && !info.IsDir() {
+				paths = append(paths, path.Join(directory, candidate))
 			}
 		}
+		if len(paths) != 1 {
+			return unresolved, true // Upload fails, or ddtest cannot tell which file.
+		}
 	}
-	return "the command generates or uploads steps with buildkite-agent pipeline upload (" + statement + "), which ddtest cannot read; they may run tests. Commit the uploaded pipeline to the repository, or validate those steps separately", true
+	if slices.ContainsFunc(paths, func(file string) bool { return c.documents[file] == nil }) {
+		return unresolved, true
+	}
+	c.review = append(c.review, "Buildkite uploads "+strings.Join(paths, ", ")+" with buildkite-agent pipeline upload; ddtest reads "+map[bool]string{true: "it", false: "them"}[len(paths) == 1]+" as "+map[bool]string{true: "a pipeline", false: "pipelines"}[len(paths) == 1]+" of its own.")
+	return "", true
 }
 
 // buildkiteShellDialect is how a Buildkite step's commands read: the
@@ -670,7 +714,19 @@ var buildkiteVariable = regexp.MustCompile(`\\\$|\$\$|\$\{([A-Za-z_][A-Za-z0-9_]
 // with a value Buildkite also gives the step, or one that only names the
 // build: reading them at upload time is reading them at runtime.
 func buildkiteBuildVariable(name string) bool {
-	return strings.HasPrefix(name, "BUILDKITE") || name == "CI"
+	return slices.Contains(buildkiteBuildVariables, name)
+}
+
+// buildkiteBuildVariables describe the build, so every job of it, the
+// upload step's included, sees the same value. Agent and job variables
+// (BUILDKITE_AGENT_*, BUILDKITE_BUILD_CHECKOUT_PATH, BUILDKITE_JOB_ID,
+// BUILDKITE_PARALLEL_JOB...) differ between the upload step and the test.
+var buildkiteBuildVariables = []string{
+	"CI", "BUILDKITE", "BUILDKITE_BRANCH", "BUILDKITE_COMMIT", "BUILDKITE_TAG", "BUILDKITE_MESSAGE", "BUILDKITE_REPO",
+	"BUILDKITE_BUILD_ID", "BUILDKITE_BUILD_NUMBER", "BUILDKITE_BUILD_URL", "BUILDKITE_BUILD_AUTHOR", "BUILDKITE_BUILD_AUTHOR_EMAIL", "BUILDKITE_BUILD_CREATOR", "BUILDKITE_BUILD_CREATOR_EMAIL", "BUILDKITE_SOURCE",
+	"BUILDKITE_PIPELINE_ID", "BUILDKITE_PIPELINE_SLUG", "BUILDKITE_PIPELINE_NAME", "BUILDKITE_PIPELINE_DEFAULT_BRANCH", "BUILDKITE_ORGANIZATION_ID", "BUILDKITE_ORGANIZATION_SLUG",
+	"BUILDKITE_PULL_REQUEST", "BUILDKITE_PULL_REQUEST_BASE_BRANCH", "BUILDKITE_PULL_REQUEST_REPO", "BUILDKITE_PULL_REQUEST_DRAFT",
+	"BUILDKITE_REBUILT_FROM_BUILD_ID", "BUILDKITE_REBUILT_FROM_BUILD_NUMBER", "BUILDKITE_TRIGGERED_FROM_BUILD_ID", "BUILDKITE_TRIGGERED_FROM_BUILD_NUMBER", "BUILDKITE_TRIGGERED_FROM_BUILD_PIPELINE_SLUG",
 }
 
 // buildkiteInterpolate applies the interpolation buildkite-agent pipeline
@@ -697,6 +753,9 @@ func buildkiteInterpolate(text string, known map[string]string) (string, []strin
 	})
 	return result, unknown
 }
+
+// buildkiteMatrixLimit bounds the jobs one matrix expands to.
+const buildkiteMatrixLimit = 200
 
 // buildkiteMatrixReference matches {{matrix}} and {{matrix.name}}.
 var buildkiteMatrixReference = regexp.MustCompile(`\{\{\s*matrix(?:\.([A-Za-z0-9_-]+))?\s*\}\}`)
@@ -756,12 +815,31 @@ func buildkiteMatrix(node *yaml.Node) ([]map[string]string, error) {
 			rows = append(rows, map[string]string{"": value})
 		}
 	case setup.Kind == yaml.MappingNode:
-		rows = []map[string]string{{}}
+		// Bound the combinations before building them: adjustments that skip
+		// can only remove one each.
+		skips := 0
+		if adjustments != nil && adjustments.Kind == yaml.SequenceNode {
+			for _, adjustment := range adjustments.Content {
+				if buildkiteSkipped(gitLabMembers(adjustment)) {
+					skips++
+				}
+			}
+		}
+		dimensions := map[string][]string{}
+		combinations := 1
 		for _, dimension := range gitLabKeys(setup) {
 			values, err := scalars(gitLabMembers(setup)[dimension], dimension)
 			if err != nil {
 				return nil, err
 			}
+			dimensions[dimension] = values
+			if combinations *= len(values); combinations-skips > buildkiteMatrixLimit {
+				return nil, fmt.Errorf("matrix expands to more than %d jobs", buildkiteMatrixLimit)
+			}
+		}
+		rows = []map[string]string{{}}
+		for _, dimension := range gitLabKeys(setup) {
+			values := dimensions[dimension]
 			var next []map[string]string
 			for _, row := range rows {
 				for _, value := range values {
@@ -804,8 +882,8 @@ func buildkiteMatrix(node *yaml.Node) ([]map[string]string, error) {
 			}
 		}
 	}
-	if len(rows) > 200 {
-		return nil, fmt.Errorf("matrix expands to more than 200 jobs")
+	if len(rows) > buildkiteMatrixLimit {
+		return nil, fmt.Errorf("matrix expands to more than %d jobs", buildkiteMatrixLimit)
 	}
 	return rows, nil
 }

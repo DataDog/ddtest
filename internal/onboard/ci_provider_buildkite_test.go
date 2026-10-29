@@ -9,7 +9,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -161,7 +163,9 @@ steps:
     commands:
       - npm test -- --outputFile=$$REPORTS/out.json
   - label: known
-    command: npm test -- --selectProjects $SUITE --shard=$BUILDKITE_PARALLEL_JOB
+    command: npm test -- --selectProjects $SUITE --branch=$BUILDKITE_BRANCH
+  - label: job variable
+    command: npm test -- --shard=$BUILDKITE_PARALLEL_JOB --cache=$BUILDKITE_BUILD_CHECKOUT_PATH/.jest
   - label: unknown
     env:
       REPORTS: reports
@@ -171,7 +175,9 @@ steps:
 `)
 	jobs := buildkiteJobs(t, root, buildkiteFile)
 	require.Equal(t, []string{"npm test -- --outputFile=$REPORTS/out.json"}, circleRuns(jobs["escaped"]))
-	require.Equal(t, []string{"npm test -- --selectProjects unit --shard=$BUILDKITE_PARALLEL_JOB"}, circleRuns(jobs["known"]))
+	require.Equal(t, []string{"npm test -- --selectProjects unit --branch=$BUILDKITE_BRANCH"}, circleRuns(jobs["known"]))
+	// Agent and job variables of the upload step differ from the test's.
+	require.Contains(t, circleRuns(jobs["job variable"])[0], "the command reads $BUILDKITE_PARALLEL_JOB, $BUILDKITE_BUILD_CHECKOUT_PATH, which buildkite-agent pipeline upload replaces")
 	require.Contains(t, circleRuns(jobs["unknown"])[0], "the command reads $REPORTS, which buildkite-agent pipeline upload replaces when the pipeline is uploaded")
 	require.Equal(t, unresolvedCIValue("$AGENT_VALUE"), jobs["inherited"].Env["FROM_AGENT"])
 
@@ -361,7 +367,7 @@ func TestBuildkitePlugins(t *testing.T) {
 	require.Equal(t, "node:22", docker.Image)
 	require.Equal(t, "bash", docker.Steps[0].Shell)
 	compose := workflow.Jobs["compose"]
-	require.Equal(t, "node:22-slim", compose.Image)
+	require.Empty(t, compose.Image, "the agent or a .env file may set NODE_IMAGE")
 	require.Equal(t, "sh", compose.Steps[0].Shell)
 	require.Empty(t, workflow.Jobs["built"].Image)
 	require.NotContains(t, workflow.Jobs, "build only")
@@ -413,6 +419,16 @@ func TestBuildkiteRecognizesTheSetupSnippet(t *testing.T) {
 			root := buildkiteRepository(t, pipeline(tc.snippet))
 			job := buildkiteJobs(t, root, buildkiteFile)["test"]
 			reference := "Datadog installer " + buildkiteInstallerURL.FindStringSubmatch(tc.snippet)[1]
+			if strings.Contains(tc.problem, "does not recognize") {
+				// It may run anything, tests included: an unresolved command.
+				runs := circleRuns(job)
+				require.Len(t, runs, 3)
+				require.Contains(t, runs[1], "<unresolved: Buildkite step test: The step runs Datadog's installer in a form ddtest does not recognize")
+				require.Nil(t, job.Steps[1].Setup)
+				require.Contains(t, job.Steps[1].Run, "install_test_visibility")
+				require.False(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
+				return
+			}
 			require.Equal(t, []string{"npm ci", "<setup " + reference + ">", "npm test"}, circleRuns(job))
 			setup := job.Steps[1].Setup
 			require.Equal(t, tc.supported, setup.Supported, setup.Problem)
@@ -748,4 +764,105 @@ func TestBuildkiteComposeServicePassesTheKey(t *testing.T) {
 			require.Contains(t, setup.Problem, tc.problem)
 		})
 	}
+}
+
+// Findings of the PR review: each case leaves the step unresolved, refuses
+// the setup, or reads what Buildkite reads.
+func TestBuildkiteReviewFindings(t *testing.T) {
+	snippet := buildkiteSnippetText("js", "5.133.0", "datadoghq.com", "      ")
+	t.Run("an empty key in the container's environment", func(t *testing.T) {
+		for _, tc := range []struct{ name, plugin, compose string }{
+			{"docker list", "      - docker#v5.12.0:\n          image: node:22\n          environment:\n            - DD_API_KEY=\n", ""},
+			{"compose list", "      - docker-compose#v5.5.0:\n          run: app\n", "    environment:\n      - DD_API_KEY=\n"},
+			{"compose mapping", "      - docker-compose#v5.5.0:\n          run: app\n", "    environment:\n      DD_API_KEY: \"\"\n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				root := buildkiteRepository(t, "steps:\n  - label: test\n    commands:\n"+snippet+"      - npm test\n    plugins:\n"+tc.plugin)
+				writeFile(t, root, "docker-compose.yml", "services:\n  app:\n    image: node:22\n    volumes:\n      - .:/app\n"+tc.compose)
+				setup := buildkiteJobs(t, root, buildkiteFile)["test"].Steps[0].Setup
+				require.NotNil(t, setup)
+				require.Contains(t, setup.Problem, "DD_API_KEY set to an empty value")
+				require.False(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
+			})
+		}
+		root := buildkiteRepository(t, "steps:\n  - label: test\n    commands:\n"+snippet+"      - npm test\n    plugins:\n      - docker-compose#v5.5.0:\n          run: app\n")
+		writeFile(t, root, "docker-compose.yml", "services:\n  app:\n    image: node:22\n    environment:\n      DD_API_KEY:\n")
+		require.Empty(t, buildkiteJobs(t, root, buildkiteFile)["test"].Steps[0].Setup.Problem, "a null value passes the agent's key through")
+	})
+	t.Run("uploads resolve from the working directory", func(t *testing.T) {
+		root := buildkiteRepository(t, "steps:\n  - command: npm test\n")
+		writeFile(t, root, "packages/app/.buildkite/pipeline.yml", "steps:\n  - command: npm test\n")
+		writeFile(t, root, ".buildkite/upload.yml", "steps:\n  - commands:\n      - cd packages/app\n      - buildkite-agent pipeline upload .buildkite/pipeline.yml\n")
+		require.Contains(t, circleRuns(buildkiteJobs(t, root, ".buildkite/upload.yml")["step 1"])[0], "generates or uploads steps with buildkite-agent pipeline upload")
+	})
+	t.Run("a quoted upload path is literal", func(t *testing.T) {
+		root := buildkiteRepository(t, "steps:\n  - command: npm test\n")
+		writeFile(t, root, ".buildkite/upload.yml", "steps:\n  - command: buildkite-agent pipeline upload \".buildkite/pipeline.yml\"\n  - command: buildkite-agent pipeline upload \"$$FILE\"\n")
+		jobs := buildkiteJobs(t, root, ".buildkite/upload.yml")
+		require.Empty(t, circleRuns(jobs["step 1"]))
+		require.Contains(t, circleRuns(jobs["step 2"])[0], "generates or uploads steps")
+	})
+	t.Run("an upload without arguments reads Buildkite's default file", func(t *testing.T) {
+		root := buildkiteRepository(t, "steps:\n  - command: npm test\n")
+		require.NoError(t, os.Remove(filepath.Join(root, buildkiteFile)))
+		writeFile(t, root, "buildkite/pipeline.yaml", "steps:\n  - command: npm test\n")
+		writeFile(t, root, ".buildkite/upload.yml", "steps:\n  - command: buildkite-agent pipeline upload\n")
+		workflow := buildkiteWorkflow(t, root, ".buildkite/upload.yml")
+		require.Empty(t, circleRuns(workflow.Jobs["step 1"]))
+		require.Equal(t, []string{"Buildkite uploads buildkite/pipeline.yaml with buildkite-agent pipeline upload; ddtest reads it as a pipeline of its own."}, workflow.Review)
+		// With two default files the upload fails: ddtest cannot tell.
+		writeFile(t, root, "buildkite.yml", "steps:\n  - command: npm test\n")
+		require.Contains(t, circleRuns(buildkiteJobs(t, root, ".buildkite/upload.yml")["step 1"])[0], "generates or uploads steps")
+	})
+	t.Run("a record command running a substitution", func(t *testing.T) {
+		root := buildkiteRepository(t, "steps:\n  - label: test\n    commands:\n      - buildkite-agent annotate \"$$(npm test)\"\n")
+		require.Equal(t, []string{`buildkite-agent annotate "$(npm test)"`}, circleRuns(buildkiteJobs(t, root, buildkiteFile)["test"]))
+	})
+	t.Run("an unrecognized installer statement running tests", func(t *testing.T) {
+		root := buildkiteRepository(t, "steps:\n  - label: test\n    commands:\n      - curl -fsSL https://install.datadoghq.com/scripts/install_test_visibility_v15.sh | bash && npm test\n")
+		job := buildkiteJobs(t, root, buildkiteFile)["test"]
+		require.Contains(t, job.Steps[0].Run, "npm test")
+		require.Contains(t, job.Steps[0].ResolutionError, "in a form ddtest does not recognize")
+		scope, err := DiscoverValidationScope(root, "jest")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved)
+	})
+	t.Run("Windows rows of a matrix", func(t *testing.T) {
+		root := buildkiteRepository(t, "steps:\n  - label: \"test {{matrix.os}}\"\n    command: npm test\n    agents:\n      queue: \"{{matrix.os}}\"\n    matrix:\n      setup:\n        os: [linux, windows]\n")
+		jobs := buildkiteJobs(t, root, buildkiteFile)
+		require.Equal(t, []string{"npm test"}, circleRuns(jobs["test linux"]))
+		require.Contains(t, circleRuns(jobs["test windows"])[0], "runs on Windows agents")
+	})
+	t.Run("Compose images read the step's env", func(t *testing.T) {
+		root := buildkiteRepository(t, "env:\n  NODE_IMAGE: node:20\nsteps:\n  - label: test\n    command: npm test\n    plugins:\n      - docker-compose#v5.5.0:\n          run: app\n")
+		writeFile(t, root, "docker-compose.yml", "services:\n  app:\n    image: ${NODE_IMAGE:-node:22}\n")
+		require.Equal(t, "node:20", buildkiteJobs(t, root, buildkiteFile)["test"].Image)
+	})
+	t.Run("Compose files named by matrix values", func(t *testing.T) {
+		root := buildkiteRepository(t, "steps:\n  - label: \"test {{matrix}}\"\n    command: npm test\n    matrix: [a, b]\n    plugins:\n      - docker-compose#v5.5.0:\n          run: app\n          config: \"compose.{{matrix}}.yml\"\n")
+		writeFile(t, root, "compose.a.yml", "services:\n  app:\n    image: node:20\n")
+		writeFile(t, root, "compose.b.yml", "services:\n  app:\n    image: node:22\n")
+		jobs := buildkiteJobs(t, root, buildkiteFile)
+		require.Equal(t, "node:20", jobs["test a"].Image)
+		require.Equal(t, "node:22", jobs["test b"].Image)
+	})
+	t.Run("matrices are bounded before they are built", func(t *testing.T) {
+		values := "[" + strings.TrimSuffix(strings.Repeat("x,", 20), ",") + "]"
+		node := yamlNode(t, "setup:\n  a: "+values+"\n  b: "+values+"\n  c: "+values+"\n  d: "+values+"\n  e: "+values+"\n  f: "+values+"\n")
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		_, err := buildkiteMatrix(node)
+		runtime.ReadMemStats(&after)
+		require.EqualError(t, err, "matrix expands to more than 200 jobs")
+		require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(1<<20), "64 million combinations are never built")
+		// A skipping adjustment brings a product just over the limit back
+		// to it.
+		var many []string
+		for i := range 67 {
+			many = append(many, strconv.Itoa(i))
+		}
+		rows, err := buildkiteMatrix(yamlNode(t, "setup:\n  a: ["+strings.Join(many, ", ")+"]\n  b: [x, y, z]\nadjustments:\n  - with: {a: \"0\", b: x}\n    skip: true\n"))
+		require.NoError(t, err)
+		require.Len(t, rows, 200)
+	})
 }

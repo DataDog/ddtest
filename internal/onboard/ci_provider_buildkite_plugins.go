@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -36,9 +37,10 @@ type buildkiteExecutor struct {
 	// problem makes every command of the step unresolved.
 	problem string
 	// keyPassed reports DD_API_KEY listed in the container's environment;
-	// keyProblem a DD_API_KEY written into the configuration.
-	keyPassed, keyProblem bool
-	windows               bool
+	// keyProblem a DD_API_KEY written into the configuration; keyEmpty one
+	// set to an empty value, which replaces the agent's key.
+	keyPassed, keyProblem, keyEmpty bool
+	windows                         bool
 	// plugin is the docker or docker-compose plugin's configuration, for
 	// edits that pass DD_API_KEY into the container; pluginAliased reports
 	// one some step reaches through a YAML alias.
@@ -131,7 +133,7 @@ func buildkitePlugins(node *yaml.Node) ([]buildkitePlugin, bool) {
 
 // executor reads where a step runs its commands from its plugins and the
 // image attribute; matrix substitutes the step's combination.
-func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkiteScope, matrix func(string) (string, string)) *buildkiteExecutor {
+func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkiteScope, matrix func(string) (string, string), env map[string]string) *buildkiteExecutor {
 	executor := &buildkiteExecutor{shell: "bash"}
 	// A value pipeline upload leaves reading a variable ($$NAME) is never
 	// expanded by a plugin either.
@@ -172,7 +174,7 @@ func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkite
 		case "buildkite-plugins/docker":
 			c.docker(executor, plugin.config, value)
 		case "buildkite-plugins/docker-compose":
-			c.compose(executor, plugin.config, value)
+			c.compose(executor, plugin.config, value, env)
 		default:
 			executor.problem = joinDiagnostic(executor.problem, "the plugin "+reference+" may change how the step runs its commands, or run tests itself, and ddtest cannot read it; validate this step separately")
 		}
@@ -204,10 +206,15 @@ func (executor *buildkiteExecutor) containerOptions(fields map[string]*yaml.Node
 			if strings.TrimSpace(name) != "DD_API_KEY" {
 				continue
 			}
-			if assigned && value != "" {
-				executor.keyProblem = true
-			} else {
+			// Only a bare name passes the agent's value through; KEY= passes
+			// an empty value and KEY=value writes the key.
+			switch {
+			case !assigned:
 				executor.keyPassed = true
+			case value == "":
+				executor.keyEmpty = true
+			default:
+				executor.keyProblem = true
 			}
 		}
 	}
@@ -238,7 +245,7 @@ func (c *buildkiteConfig) docker(executor *buildkiteExecutor, config *yaml.Node,
 
 // compose reads the docker-compose plugin: commands run in the run
 // service's container, whose image comes from the Compose file.
-func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node, value func(*yaml.Node) (string, bool)) {
+func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node, value func(*yaml.Node) (string, bool), env map[string]string) {
 	fields := gitLabMembers(config)
 	executor.plugin = config
 	service, _ := value(fields["run"])
@@ -253,7 +260,15 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 		return
 	}
 	executor.containerOptions(fields, "docker-compose")
-	files := gitLabStrings(fields["config"])
+	var files []string
+	for _, written := range gitLabStrings(fields["config"]) {
+		file, resolved := value(&yaml.Node{Kind: yaml.ScalarNode, Value: written})
+		if !resolved {
+			executor.imageProblem = "its Compose file " + written + " depends on a variable or matrix value ddtest cannot resolve"
+			return
+		}
+		files = append(files, file)
+	}
 	if len(files) == 0 {
 		files = []string{"docker-compose.yml"}
 	}
@@ -291,18 +306,22 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 		executor.imageProblem = "its Docker Compose service " + service + " is built from " + strings.TrimSpace(context+" ") + "with a Dockerfile ddtest does not read"
 	} else {
 		executor.template = gitLabScalar(definition["image"])
-		image, resolved := value(&yaml.Node{Kind: yaml.ScalarNode, Value: buildkiteComposeDefaults(executor.template)})
+		image, resolved := buildkiteComposeImage(executor.template, env)
 		executor.image = image
-		if !resolved || strings.Contains(image, "$") {
-			executor.imageProblem = "its Docker Compose service " + service + " image " + executor.template + " depends on a variable ddtest cannot resolve"
+		if !resolved {
+			executor.image = ""
+			executor.imageProblem = "its Docker Compose service " + service + " image " + executor.template + " depends on a variable the step's env does not set, which the agent or a .env file may supply"
 		}
 	}
 	environment := gitLabAlias(definition["environment"])
 	if environment != nil && environment.Kind == yaml.MappingNode {
 		if key, set := gitLabMembers(environment)["DD_API_KEY"]; set {
-			switch text := strings.TrimSpace(gitLabScalar(key)); text {
-			case "", "$DD_API_KEY", "${DD_API_KEY}":
+			// A null value passes the variable through; "" sets it empty.
+			switch text := strings.TrimSpace(gitLabScalar(key)); {
+			case gitLabAlias(key).Tag == "!!null", text == "$DD_API_KEY", text == "${DD_API_KEY}":
 				executor.keyPassed = true
+			case text == "":
+				executor.keyEmpty = true
 			default:
 				executor.keyProblem = true
 			}
@@ -312,10 +331,12 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 			name, value, assigned := strings.Cut(item, "=")
 			switch {
 			case strings.TrimSpace(name) != "DD_API_KEY":
-			case assigned && value != "" && value != "$DD_API_KEY" && value != "${DD_API_KEY}":
-				executor.keyProblem = true
-			default:
+			case !assigned || value == "$DD_API_KEY" || value == "${DD_API_KEY}":
 				executor.keyPassed = true
+			case value == "":
+				executor.keyEmpty = true
+			default:
+				executor.keyProblem = true
 			}
 		}
 	}
@@ -329,24 +350,30 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 	}
 }
 
-// buildkiteComposeDefaults resolves ${NAME:-default} in a Compose image to
-// its default, as Compose does when NAME is unset.
-func buildkiteComposeDefaults(image string) string {
-	for {
-		start := strings.Index(image, "${")
-		if start < 0 {
-			return image
+// buildkiteComposeVariable matches Compose's $NAME, ${NAME}, ${NAME:-x}
+// and ${NAME-x}.
+var buildkiteComposeVariable = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?-)([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
+
+// buildkiteComposeImage resolves a Compose image with the variables the
+// step's env sets, as Compose reads them from the environment it runs in.
+// A variable the env does not set comes from the agent or a .env file:
+// unresolved, even with a default, since either may supply it.
+func buildkiteComposeImage(image string, env map[string]string) (string, bool) {
+	resolved := true
+	result := buildkiteComposeVariable.ReplaceAllStringFunc(image, func(match string) string {
+		parts := buildkiteComposeVariable.FindStringSubmatch(match)
+		name := parts[1] + parts[4]
+		value, set := env[name]
+		if !set || unresolvedCIError(value) != nil {
+			resolved = false
+			return match
 		}
-		end := strings.Index(image[start:], "}")
-		if end < 0 {
-			return image
+		if value == "" && parts[2] == ":-" {
+			return parts[3]
 		}
-		_, fallback, ok := strings.Cut(image[start+2:start+end], ":-")
-		if !ok {
-			return image
-		}
-		image = image[:start] + fallback + image[start+end+1:]
-	}
+		return value
+	})
+	return result, resolved && !strings.Contains(result, "$")
 }
 
 // buildkiteCurlInstall is the command that adds curl to a Debian slim image.
@@ -367,6 +394,8 @@ func (executor *buildkiteExecutor) setupProblem(curl bool) string {
 		return "The step's image " + executor.image + " has no Bash, which the Datadog installer needs. Use a Bash-capable image for this step, such as the non-Alpine variant, or a custom image with Bash preinstalled."
 	case !curl && imageWithoutDownloader(executor.image):
 		return "The step's image " + executor.image + " has neither curl nor wget, so the Datadog installer cannot be downloaded and its tests would run untraced. Use the full image (without -slim), or install curl in a command before the setup: " + buildkiteCurlInstall + "."
+	case executor.keyEmpty:
+		return "The step's container receives DD_API_KEY set to an empty value, which replaces the agent's key, so the Datadog setup snippet always skips: list DD_API_KEY without a value so the agent's key passes through."
 	case executor.container && !executor.keyPassed:
 		return "The step runs its commands in a container, which receives only the environment its plugin lists, so DD_API_KEY never reaches the Datadog setup snippet: add DD_API_KEY to the plugin's environment list."
 	}
