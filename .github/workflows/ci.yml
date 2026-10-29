@@ -649,11 +649,16 @@ jobs:
           retention-days: 7
 
   java-testdrive:
+    name: java-testdrive (${{ matrix.name }}, ${{ matrix.java }}, ${{ matrix.tracer }}, ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
+        # Each scenario runs a full paired validation with real Maven builds;
+        # the scenarios are spread over shards (DDTEST_TEST_SHARD).
+        name: [pinned, latest]
+        shard: ['1/3', '2/3', '3/3']
         include:
           - name: pinned
             java: '17'
@@ -684,12 +689,16 @@ jobs:
           DDTEST_RUN_JAVA_INTEGRATION_TEST: '1'
           DDTEST_JAVA_TRACER_VERSION: ${{ matrix.tracer }}
           DDTEST_FRAMEWORK_REPORTS: ${{ runner.temp }}/ddtest-workflow-reports
-        run: go test -v ./internal/testdrive -run '^TestJavaValidationIntegration$' -count=1 -timeout=40m
+          DDTEST_TEST_SHARD: ${{ matrix.shard }}
+          # Every validation starts Maven many times; short-lived Maven JVMs
+          # start faster without the optimizing compiler. Both runs inherit it.
+          MAVEN_OPTS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1
+        run: go test -v ./internal/testdrive -run '^TestJavaValidationIntegration$' -count=1 -timeout=20m
       - name: Retain failed testdrive reports
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: java-testdrive-${{ matrix.name }}
+          name: java-testdrive-${{ matrix.name }}-${{ strategy.job-index }}
           path: ${{ runner.temp }}/ddtest-workflow-reports
           if-no-files-found: ignore
           retention-days: 7

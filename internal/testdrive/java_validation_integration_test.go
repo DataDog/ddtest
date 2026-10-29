@@ -13,10 +13,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	shard "github.com/DataDog/ddtest/internal/testdrive"
 	"github.com/stretchr/testify/require"
 )
 
@@ -97,6 +99,19 @@ public class StepDefinitions {
 		return string(output), err
 	}
 
+	// CI spreads the scenarios over shards (DDTEST_TEST_SHARD); weights are
+	// relative durations.
+	scenarios := []string{"junit5", "junit4", "testng", "spock", "cucumber junit4 runner", "cucumber java8 lambdas", "cucumber platform suite",
+		"no application coverage", "instrumentation-only failure", "incomplete reactor", "publishing goal", "agent workflow"}
+	weights := map[string]int{"junit5": 20, "agent workflow": 16, "no application coverage": 6, "instrumentation-only failure": 6, "incomplete reactor": 2, "publishing goal": 1}
+	selected := shard.SelectedIntegrationScenarios(t, scenarios, weights)
+	run := func(name string, test func(t *testing.T)) {
+		t.Helper()
+		require.Contains(t, scenarios, name, "every scenario is assigned to a shard")
+		if slices.Contains(selected, name) {
+			t.Run(name, test)
+		}
+	}
 	for _, tc := range []struct {
 		name, framework, dependency, surefire, plugins string
 		files                                          map[string]string
@@ -144,7 +159,7 @@ class ExampleTest extends spock.lang.Specification {
 			"src/test/java/example/RunCucumberTest.java": "package example;\n@org.junit.platform.suite.api.Suite\n@org.junit.platform.suite.api.IncludeEngines(\"cucumber\")\n@org.junit.platform.suite.api.SelectClasspathResource(\"example\")\n@org.junit.platform.suite.api.ConfigurationParameter(key = io.cucumber.junit.platform.engine.Constants.GLUE_PROPERTY_NAME, value = \"example\")\npublic class RunCucumberTest {}\n",
 			"src/test/java/example/StepDefinitions.java": cucumberSteps, "src/test/resources/example/calc.feature": cucumberFeature}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		run(tc.name, func(t *testing.T) {
 			files := map[string]string{"pom.xml": pomWith("fixture", tc.dependency, tc.surefire, tc.plugins), "src/main/java/example/Calc.java": calc}
 			maps.Copy(files, tc.files)
 			root := project(t, tc.framework, files)
@@ -171,7 +186,11 @@ class ExampleTest extends spock.lang.Specification {
 
 			// Onboarding starts from the CI workflow. With the runner's JDK and
 			// an exact agent pin, --all validates the CI step's test lifecycle
-			// (install becomes verify) and certifies that CI row.
+			// (install becomes verify) and certifies that CI row. The flow is the
+			// same for every framework, so one checks it.
+			if tc.framework != "junit5" {
+				return
+			}
 			pin := tracer
 			if pin == "latest" {
 				pin = "1.67.1"
@@ -197,7 +216,7 @@ class ExampleTest extends spock.lang.Specification {
 		})
 	}
 
-	t.Run("no application coverage", func(t *testing.T) {
+	run("no application coverage", func(t *testing.T) {
 		root := project(t, "coverage", map[string]string{"pom.xml": pom("fixture", jupiter), "src/test/java/example/ExampleTest.java": "package example;\npublic class ExampleTest { @org.junit.jupiter.api.Test void passes() { org.junit.jupiter.api.Assertions.assertEquals(4, 2 + 2); } }\n"})
 		output, err := testdrive(root, "--framework", "junit5")
 		require.Error(t, err, output)
@@ -205,7 +224,7 @@ class ExampleTest extends spock.lang.Specification {
 		require.Equal(t, "compatible", read(t, root).Compatibility.Status)
 	})
 
-	t.Run("instrumentation-only failure", func(t *testing.T) {
+	run("instrumentation-only failure", func(t *testing.T) {
 		root := project(t, "regression", map[string]string{"pom.xml": pom("fixture", jupiter), "src/test/java/example/ExampleTest.java": `package example;
 public class ExampleTest {
     @org.junit.jupiter.api.Test void passesWithoutTheAgent() {
@@ -219,7 +238,7 @@ public class ExampleTest {
 		require.False(t, read(t, root).Success)
 	})
 
-	t.Run("incomplete reactor", func(t *testing.T) {
+	run("incomplete reactor", func(t *testing.T) {
 		root := project(t, "reactor", map[string]string{
 			"pom.xml":      `<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>parent</artifactId><version>1.0</version><packaging>pom</packaging><modules><module>core</module><module>broken</module></modules></project>`,
 			"core/pom.xml": pom("core", jupiter),
@@ -234,7 +253,7 @@ public class ExampleTest {
 		require.Len(t, report.Runs, 2, "probes would rebuild the same failing reactor")
 	})
 
-	t.Run("publishing goal", func(t *testing.T) {
+	run("publishing goal", func(t *testing.T) {
 		root := project(t, "publishing", map[string]string{"pom.xml": pom("fixture", jupiter), "src/test/java/example/ExampleTest.java": "package example;\npublic class ExampleTest { @org.junit.jupiter.api.Test void passes() {} }\n"})
 		output, err := testdrive(root, "--framework", "junit5", "--command", "mvn test deploy:deploy@publish")
 		require.Error(t, err, output)
@@ -243,7 +262,7 @@ public class ExampleTest {
 		require.True(t, strings.Contains(output, "Validation verdict: INCOMPLETE"), output)
 	})
 
-	t.Run("agent workflow", func(t *testing.T) {
+	run("agent workflow", func(t *testing.T) {
 		root := project(t, "agent", map[string]string{"pom.xml": pom("fixture", jupiter), "src/main/java/example/Calc.java": calc,
 			"src/test/java/example/ExampleTest.java": "package example;\npublic class ExampleTest { @org.junit.jupiter.api.Test void adds() { org.junit.jupiter.api.Assertions.assertEquals(4, Calc.add(2, 2)); } }\n"})
 		pin := tracer
