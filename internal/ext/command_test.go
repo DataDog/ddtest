@@ -406,3 +406,32 @@ func replaceStdin(t *testing.T, contents string) {
 		_ = stdin.Close()
 	})
 }
+
+func TestApplyEnvMapUnsetsAnInheritedVariable(t *testing.T) {
+	t.Setenv("DDTEST_INHERITED_TOKEN", "host-value")
+	t.Setenv("DDTEST_INHERITED_OTHER", "kept")
+	cmd := exec.Command("true")
+	applyEnvMap(cmd, map[string]string{"DDTEST_INHERITED_TOKEN": UnsetEnvironment, "DDTEST_SET": "value"})
+	for _, entry := range cmd.Env {
+		if strings.HasPrefix(entry, "DDTEST_INHERITED_TOKEN=") {
+			t.Fatalf("unset variable reached the command: %s", entry)
+		}
+	}
+	joined := strings.Join(cmd.Env, "\n")
+	if !strings.Contains(joined, "DDTEST_INHERITED_OTHER=kept") || !strings.Contains(joined, "DDTEST_SET=value") {
+		t.Fatalf("other variables must be kept: %v", cmd.Env)
+	}
+}
+
+func TestOverridesEnvIgnoresCaseOnlyOnWindows(t *testing.T) {
+	envMap := map[string]string{"GITHUB_TOKEN": UnsetEnvironment}
+	if !overridesEnv(envMap, "Github_Token", true) {
+		t.Fatal("on Windows, Github_Token is the GITHUB_TOKEN the map unsets")
+	}
+	if overridesEnv(envMap, "Github_Token", false) {
+		t.Fatal("elsewhere, variable names are case-sensitive")
+	}
+	if !overridesEnv(envMap, "GITHUB_TOKEN", false) || overridesEnv(envMap, "OTHER", true) {
+		t.Fatal("exact names override; other names don't")
+	}
+}

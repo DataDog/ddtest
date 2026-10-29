@@ -369,19 +369,16 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		// A command that is exactly one CI configuration runs that
 		// configuration's replayable preparation too, so it is credited.
 		if entry, ok := matchingConfigurationPreparation(scope, scopeErr, repositoryRoot, runner.Name(), scopeCommand); ok {
-			if selectedPlan.Command == "" {
-				selectedPlan.Command, selectedPlan.Directory = entry.Command, entry.Directory
-			}
-			selectedPlan.Prerequisites = entry.Prerequisites
-			// Preparation and tests run with the configuration's environment.
-			selectedPlan.Environment = mergeConfigurationEnvironment(entry.Environment, selectedPlan.Environment)
+			adoptConfigurationPreparation(&selectedPlan, entry)
 		}
 	}
 	var configurationEnvironment map[string]string
+	without := selectedPlan.WithoutSecrets
 	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
 		// A command matching a discovered CI configuration replays its environment,
-		// including the variables GitHub sets on every step.
-		matched := matchingConfigurationEnvironment(scope, scopeErr, repositoryRoot, runner.Name(), scopeCommand)
+		// including the variables GitHub sets on every step, and its omitted secrets.
+		matched, matchedWithout := matchingConfigurationEnvironment(scope, scopeErr, repositoryRoot, runner.Name(), scopeCommand)
+		without = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(without), matchedWithout...))))
 		if matched != nil {
 			matched = onboard.WithCIProviderDefaults(matched)
 		}
@@ -426,8 +423,8 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		drive.executor = &ext.DefaultCommandExecutor{Timeout: timeout}
 	}
 	drive.configurationEnvironment = configurationEnvironment
-	if len(configurationEnvironment) > 0 {
-		drive.executor = configurationExecutor{drive.executor, configurationEnvironment}
+	if len(configurationEnvironment) > 0 || len(without) > 0 {
+		drive.executor = configurationExecutor{commandExecutor: drive.executor, environment: configurationEnvironment, without: without}
 	}
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		drive.preflight = drive.frameworkPreflight()

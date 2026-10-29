@@ -95,6 +95,7 @@ type runtimeStep struct {
 	Parents          []runtimeConditionScope `yaml:"-"`
 	ResolutionError  string                  `yaml:"-"`
 	RemoteGrid       string                  `yaml:"-"`
+	WithoutSecrets   []string                `yaml:"-"`
 	WorkingDirectory string                  `yaml:"working-directory"`
 	Shell            string                  `yaml:"shell"`
 	Env              map[string]string       `yaml:"env"`

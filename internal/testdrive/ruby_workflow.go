@@ -82,10 +82,12 @@ func (t *Testdrive) rubyBundleReadiness(ctx context.Context, scope onboard.Valid
 			_, lockErr := os.Stat(lockfile)
 			var checkErr error
 			if lockErr == nil {
-				executor, ok := t.executor.(directoryExecutor)
-				if !ok {
+				if _, ok := t.executor.(directoryExecutor); !ok {
 					return errors.New("ruby readiness requires a working-directory command executor")
 				}
+				// The check runs without the configuration's omitted secrets, as
+				// its validation does: a Gemfile may read one.
+				executor := configurationExecutor{commandExecutor: t.executor, without: entry.WithoutSecrets}
 				_, checkErr = executor.CombinedOutputInDirectory(ctx, filepath.Join(root, entry.Directory), "bundle", []string{"check", "--dry-run"}, env)
 			}
 			if lockErr != nil || checkErr != nil {

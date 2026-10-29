@@ -33,7 +33,7 @@ func TestScopeAppliesUnambiguousCIEnvironment(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, ".github/workflows/ci.yml"), "jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {TZ: UTC}\n")
 	scope, err := onboard.DiscoverValidationScope(root, "jest")
 	require.NoError(t, err)
-	env := matchingConfigurationEnvironment(scope, nil, root, "jest", "npm test")
+	env, _ := matchingConfigurationEnvironment(scope, nil, root, "jest", "npm test")
 	require.Equal(t, map[string]string{"TZ": "UTC"}, env)
 	result := completeValidationFixture("jest")
 	setSingleConfigurationScope(root, &result, scope, "npm test", env)

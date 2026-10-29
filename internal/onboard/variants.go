@@ -111,6 +111,17 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 				continue
 			}
 		}
+		// A credential that only carries a CI secret, such as a token for a
+		// coverage or analysis upload, never exists locally. The step's tests
+		// run without it and the report names it; a command that reads it
+		// still requires review below. A secret used as a setting, such as a
+		// URL or mode, or a remote grid's key, which every test depends on,
+		// still requires review.
+		if ciCredential(key, value) {
+			step.WithoutSecrets = append(step.WithoutSecrets, key)
+			delete(env, key)
+			continue
+		}
 		if len(frameworks) > 0 && frameworks[0] == "vitest" && strings.HasPrefix(key, "DD_TEST_OPTIMIZATION_RUNNER_") {
 			if _, ok := VitestRunnerEnvironmentFlag(key); !ok {
 				return step, nil, fmt.Errorf("CI ddtest runner setting requires explicit command-based validation; not forwarded or silently dropped: %s", key)
@@ -404,6 +415,17 @@ func TracerPluginSetting(key string) bool {
 	return ok && enabled && plugin != ""
 }
 
+// credentialName is a variable name that ends with a credential, as in
+// GITHUB_TOKEN, SONAR_LOGIN_PASSWORD or NPM_AUTH. A name that only contains
+// one, such as AUTH_MODE or PASSWORD_POLICY, is a setting.
+var credentialName = regexp.MustCompile(`(?i)(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|SECRET_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH)$`)
+
+// ciCredential reports a CI variable that only carries a credential secret.
+// Datadog's own settings and remote grid keys are not.
+func ciCredential(key, value string) bool {
+	return secretReference.MatchString(strings.TrimSpace(value)) && credentialName.MatchString(key) && !strings.HasPrefix(key, "DD_") && remoteGridSecret(key, value) == ""
+}
+
 // remoteGridProviders maps credential variable prefixes to remote browser
 // grids whose sessions run outside the local machine.
 var remoteGridProviders = []struct{ prefix, name string }{
@@ -414,7 +436,9 @@ var remoteGridProviders = []struct{ prefix, name string }{
 	{"TESTINGBOT_", "TestingBot"},
 }
 
-var secretReference = regexp.MustCompile(`^\$\{\{\s*secrets\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}$`)
+// secretReference is a value that is exactly one GitHub secret or the job's
+// token.
+var secretReference = regexp.MustCompile(`^\$\{\{\s*(?:secrets\.[A-Za-z_][A-Za-z0-9_]*|github\.token)\s*\}\}$`)
 
 // remoteGridSecret returns the remote browser grid a CI variable authenticates
 // to, when its value is only a secret reference, or "".

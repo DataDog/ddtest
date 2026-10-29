@@ -163,5 +163,5 @@ func (e configurationExecutor) Output(ctx context.Context, name string, args []s
 	if !ok {
 		return nil, nil, fmt.Errorf("command executor cannot capture stdout and stderr separately")
 	}
-	return executor.Output(ctx, name, args, mergeConfigurationEnvironment(e.environment, env))
+	return executor.Output(ctx, name, args, e.commandEnvironment(env))
 }
