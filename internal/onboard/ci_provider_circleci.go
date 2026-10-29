@@ -997,7 +997,9 @@ func (e *circleExpander) modeledEffect(key string, value *yaml.Node, scope *circ
 		step.runtime = map[string]string{}
 		for language, version := range gitLabMembers(value) {
 			text := e.config.substitute(gitLabScalar(version), scope)
-			if circleReads(text) {
+			// Under a condition ddtest can't decide the installer may not run:
+			// later steps run on a runtime it can't tell.
+			if circleReads(text) || step.conditional != "" {
 				text = ""
 			}
 			step.runtime[language] = text
@@ -1164,15 +1166,6 @@ func circleDirectory(job, step string) (string, error) {
 	return cleaned, nil
 }
 
-// circleSplit matches CircleCI's test splitting: circleci tests glob
-// patterns piped to circleci tests run --command="xargs <command>" or to
-// circleci tests split and xargs <command>.
-var (
-	circleSplitRun   = regexp.MustCompile(`^circleci tests glob\s+(.+?)\s*\|\s*circleci tests run\s+(.*)$`)
-	circleSplitXargs = regexp.MustCompile(`^circleci tests glob\s+(.+?)\s*\|\s*circleci tests split(?:\s+--[a-z-]+(?:[= ](?:"[^"]*"|'[^']*'|[^\s|]+))?)*\s*\|\s*xargs\s+(.+)$`)
-	circleSplitFlag  = regexp.MustCompile(`--command[= ](?:"([^"]*)"|'([^']*)'|(\S+))`)
-)
-
 // circleTestSplitting resolves a command that splits tests across parallel
 // containers into the command each container runs on its share of the
 // files, which local validation runs once on every test; review explains
@@ -1184,26 +1177,111 @@ func circleTestSplitting(command string) (resolved, review string, err error) {
 	if resolved, files, ok := circleSplitVariable(command); ok {
 		return resolved, "CircleCI test splitting passes each parallel container its share of the test files in $" + files + "; local validation runs the tests once without that list, on every test.", nil
 	}
+	unresolved := fmt.Errorf("the command splits tests across parallel containers with circleci tests in a form ddtest cannot resolve: %s", command)
 	// Only a single pipeline: commands around it (&&, ;) would be lost.
-	if file, ok := parseCIShell(command); !ok || len(file.Stmts) != 1 || !circlePipeline(file.Stmts[0]) {
-		return "", "", fmt.Errorf("the command splits tests across parallel containers with circleci tests in a form ddtest cannot resolve: %s", command)
+	file, ok := parseCIShell(command)
+	if !ok || len(file.Stmts) != 1 || !circlePipeline(file.Stmts[0]) {
+		return "", "", unresolved
 	}
-	text := strings.TrimSpace(strings.Join(strings.Fields(strings.ReplaceAll(command, "\\\n", " ")), " "))
-	inner := ""
-	if match := circleSplitRun.FindStringSubmatch(text); match != nil {
-		flag := circleSplitFlag.FindStringSubmatch(match[2])
-		if flag != nil {
-			inner = flag[1] + flag[2] + flag[3]
+	calls := circlePipelineCalls(file.Stmts[0])
+	if len(calls) < 2 || !circleCLI(calls[0], "glob") {
+		return "", "", unresolved
+	}
+	// The command each container runs, as written: xargs and what it runs.
+	var inner string
+	switch last := calls[len(calls)-1]; {
+	case len(calls) == 2 && circleCLI(last, "run"):
+		for i, arg := range last.Args {
+			text, literal := circleLiteralWord(arg)
+			if !literal {
+				continue
+			}
+			if value, ok := strings.CutPrefix(text, "--command="); ok {
+				inner = value
+			} else if text == "--command" && i+1 < len(last.Args) {
+				if value, literal := circleLiteralWord(last.Args[i+1]); literal {
+					inner = value
+				}
+			}
+			if inner != "" {
+				break
+			}
 		}
-	} else if match := circleSplitXargs.FindStringSubmatch(text); match != nil {
-		inner = "xargs " + match[2]
+	case len(calls) == 3 && circleCLI(calls[1], "split") && last.Args[0].Lit() == "xargs":
+		inner = command[last.Pos().Offset():last.End().Offset()]
 	}
-	rest, ok := strings.CutPrefix(strings.TrimSpace(inner), "xargs ")
-	if !ok || strings.TrimSpace(rest) == "" || strings.ContainsAny(rest, "|;&`$()") {
-		return "", "", fmt.Errorf("the command splits tests across parallel containers with circleci tests in a form ddtest cannot resolve: %s", command)
+	rest, ok := circleXargsCommand(inner)
+	if !ok {
+		return "", "", unresolved
 	}
-	rest = strings.TrimSpace(rest)
 	return rest, "CircleCI test splitting runs " + rest + " on each parallel container's share of the test files; local validation runs it once on every test.", nil
+}
+
+// circlePipelineCalls lists a pipeline's simple commands in order.
+func circlePipelineCalls(stmt *syntax.Stmt) []*syntax.CallExpr {
+	switch command := stmt.Cmd.(type) {
+	case *syntax.BinaryCmd:
+		return append(circlePipelineCalls(command.X), circlePipelineCalls(command.Y)...)
+	case *syntax.CallExpr:
+		return []*syntax.CallExpr{command}
+	}
+	return nil
+}
+
+// circleCLI reports a call of circleci tests <subcommand>.
+func circleCLI(call *syntax.CallExpr, subcommand string) bool {
+	return len(call.Assigns) == 0 && len(call.Args) >= 3 && call.Args[0].Lit() == "circleci" && call.Args[1].Lit() == "tests" && call.Args[2].Lit() == subcommand
+}
+
+// circleXargsCommand is the command an xargs invocation runs, as written,
+// after its flag-only options; false for anything else, such as a command
+// reading variables, several commands or options with values.
+func circleXargsCommand(inner string) (string, bool) {
+	file, ok := parseCIShell(inner)
+	if !ok || len(file.Stmts) != 1 {
+		return "", false
+	}
+	call, isCall := file.Stmts[0].Cmd.(*syntax.CallExpr)
+	if !isCall || len(file.Stmts[0].Redirs) > 0 || file.Stmts[0].Background || len(call.Assigns) > 0 || len(call.Args) < 2 || call.Args[0].Lit() != "xargs" {
+		return "", false
+	}
+	start := 1
+	for start < len(call.Args) && slices.Contains([]string{"-t", "-r", "--verbose", "--no-run-if-empty"}, call.Args[start].Lit()) {
+		start++
+	}
+	if start == len(call.Args) {
+		return "", false
+	}
+	for _, arg := range call.Args[start:] {
+		if _, literal := circleLiteralWord(arg); !literal {
+			return "", false
+		}
+	}
+	return inner[call.Args[start].Pos().Offset():call.End().Offset()], true
+}
+
+// circleLiteralWord is a shell word's text when it expands nothing.
+func circleLiteralWord(word *syntax.Word) (string, bool) {
+	var text strings.Builder
+	for _, part := range word.Parts {
+		switch part := part.(type) {
+		case *syntax.Lit:
+			text.WriteString(strings.ReplaceAll(part.Value, "\\", ""))
+		case *syntax.SglQuoted:
+			text.WriteString(part.Value)
+		case *syntax.DblQuoted:
+			for _, inner := range part.Parts {
+				lit, ok := inner.(*syntax.Lit)
+				if !ok {
+					return "", false
+				}
+				text.WriteString(strings.NewReplacer(`\"`, `"`, `\\`, `\`, `\$`, `$`, "\\`", "`").Replace(lit.Value))
+			}
+		default:
+			return "", false
+		}
+	}
+	return text.String(), true
 }
 
 // circlePipeline reports a statement that is one pipeline of simple
@@ -1221,27 +1299,76 @@ func circlePipeline(stmt *syntax.Stmt) bool {
 	return false
 }
 
+// circleUnfollowedBashEnv makes the steps after an unfollowed $BASH_ENV
+// write unresolved.
+const circleUnfollowedBashEnv = "an earlier step writes to $BASH_ENV in a way ddtest cannot follow, so this step's environment is unknown"
+
 // circleSafeValue is a value that substitutes into a command as one word.
 var circleSafeValue = regexp.MustCompile(`^[A-Za-z0-9_./@:+=,%-]*$`)
 
 // circleExpandVariables substitutes the shell variables earlier steps
-// assigned in $BASH_ENV into command, as Bash does when the step reads them;
-// problem names a value that cannot be substituted as one word.
+// assigned in $BASH_ENV into command where Bash expands them: plain reads
+// ($NAME, ${NAME}) outside single quotes and escapes, read through the shell
+// syntax tree. Inside double quotes any value is written escaped; an unquoted
+// read takes only a value that stays one word. problem names a read ddtest
+// cannot substitute, such as one with an expansion operator.
 func circleExpandVariables(command string, variables map[string]string) (string, string) {
-	problem := ""
-	for _, name := range slices.Sorted(maps.Keys(variables)) {
-		reads := regexp.MustCompile(`\$(?:` + regexp.QuoteMeta(name) + `\b|\{` + regexp.QuoteMeta(name) + `\})`)
-		if !reads.MatchString(command) {
-			continue
-		}
-		value := variables[name]
-		if !circleSafeValue.MatchString(value) {
-			problem = joinDiagnostic(problem, "the command reads $"+name+", which an earlier step assigned in $BASH_ENV to a value ddtest cannot substitute")
-			continue
-		}
-		command = reads.ReplaceAllLiteralString(command, value)
+	if len(variables) == 0 || !strings.Contains(command, "$") {
+		return command, ""
 	}
-	return command, problem
+	file, ok := parseCIShell(command)
+	if !ok {
+		for name := range variables {
+			if strings.Contains(command, "$"+name) || strings.Contains(command, "${"+name) {
+				return command, "the command reads $" + name + ", which an earlier step assigned in $BASH_ENV, in shell ddtest cannot parse"
+			}
+		}
+		return command, ""
+	}
+	type replacement struct {
+		start, end uint
+		text       string
+	}
+	var replacements []replacement
+	problem := ""
+	var stack []syntax.Node
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if node == nil {
+			stack = stack[:len(stack)-1]
+			return true
+		}
+		if parameter, isRead := node.(*syntax.ParamExp); isRead {
+			value, known := variables[parameter.Param.Value]
+			if known {
+				quoted := false
+				for _, parent := range stack {
+					if _, inside := parent.(*syntax.DblQuoted); inside {
+						quoted = true
+					}
+				}
+				switch {
+				case parameter.Exp != nil || parameter.Index != nil || parameter.Slice != nil || parameter.Repl != nil || parameter.Excl || parameter.Length:
+					problem = joinDiagnostic(problem, "the command expands $"+parameter.Param.Value+", which an earlier step assigned in $BASH_ENV, with an operator ddtest does not evaluate")
+				case quoted:
+					replacements = append(replacements, replacement{parameter.Pos().Offset(), parameter.End().Offset(), strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(value)})
+				case circleSafeValue.MatchString(value):
+					replacements = append(replacements, replacement{parameter.Pos().Offset(), parameter.End().Offset(), value})
+				default:
+					problem = joinDiagnostic(problem, "the command reads $"+parameter.Param.Value+", which an earlier step assigned in $BASH_ENV to a value ddtest cannot substitute")
+				}
+			}
+		}
+		stack = append(stack, node)
+		return true
+	})
+	if problem != "" {
+		return command, problem
+	}
+	slices.SortFunc(replacements, func(a, b replacement) int { return int(b.start) - int(a.start) })
+	for _, item := range replacements {
+		command = command[:item.start] + item.text + command[item.end:]
+	}
+	return command, ""
 }
 
 // circleSplitVariable resolves the documented splitting form that stores
@@ -1310,6 +1437,9 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 		editable := *job
 		editable.legacy = false
 		item.origin.setupProblem = circleSetupProblem(&editable, item.conditional, curl)
+		if item.origin.setupProblem == "" && item.shell == "sh" {
+			item.origin.setupProblem = "The test step runs with /bin/sh, which does not read $BASH_ENV, so the Datadog orb's exports would not reach it. Run the step with Bash (remove its shell: /bin/sh), then rerun onboard --apply."
+		}
 		step := runtimeStep{Number: i + 1, Source: item.source, origin: item.origin, Shell: item.shell, WorkingDirectory: item.workdir, Runtime: item.runtime}
 		// Only Bash reads $BASH_ENV: a step run with sh starts from its own
 		// environment.
@@ -1355,10 +1485,17 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 		if item.conditional != "" && strings.Contains(item.run, "BASH_ENV") {
 			// Later steps differ by a pipeline value ddtest doesn't know.
 			state.problem = joinDiagnostic(state.problem, "a step appends to $BASH_ENV only under a condition ddtest cannot decide ("+item.conditional+"), so later steps' environment depends on the pipeline")
+		} else if problem != "" && strings.Contains(item.run, "BASH_ENV") {
+			state.problem = joinDiagnostic(state.problem, circleUnfollowedBashEnv)
 		} else if problem == "" {
 			before := maps.Clone(state.references)
-			if circleFollowBashEnv(&state, run, mergeEnvironment(mergeEnvironment(job.env, item.env), state.env)) {
+			consumed, followed := circleFollowBashEnv(&state, run, mergeEnvironment(mergeEnvironment(job.env, item.env), state.env))
+			if consumed {
 				step.Run = ""
+			}
+			if !followed {
+				// Later steps start from an environment ddtest doesn't know.
+				state.problem = joinDiagnostic(state.problem, circleUnfollowedBashEnv)
 			}
 			for name, value := range state.references {
 				if previous, ok := before[name]; !ok || previous != value {

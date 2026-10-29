@@ -282,3 +282,16 @@ func TestCircleCIBrakemanAfterTheRubyOptionsFix(t *testing.T) {
 	require.Equal(t, "--enable-frozen-string-literal --debug-frozen-string-literal", entry.Environment["RUBYOPT"])
 	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "minitest", "datadoghq.com"))
 }
+
+// An installer under a condition ddtest cannot decide may or may not run,
+// so the runtime it selects is unknown rather than certain.
+func TestCircleCIConditionalInstallersLeaveTheRuntimeUnknown(t *testing.T) {
+	root := circleRubyRepository(t, "version: 2.1\norbs:\n  ruby: circleci/ruby@2.1.0\n  node: circleci/node@5.2.0\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\njobs:\n  rspec:\n    docker:\n      - image: cimg/ruby:3.0\n    steps:\n      - checkout\n      - when:\n          condition:\n            equal: [ main, << pipeline.git.branch >> ]\n          steps:\n            - ruby/install:\n                version: \"3.3.6\"\n            - node/install:\n                node-version: \"16.20.2\"\n"+circleRubyOrb+"      - run: bundle exec rspec\n"+circleWorkflow("      - rspec\n"))
+	job := circleJobs(t, root)["main/rspec"]
+	require.Equal(t, map[string]string{"ruby": ""}, job.Steps[0].Runtime)
+	require.Equal(t, map[string]string{"js": ""}, job.Steps[1].Runtime)
+	jobs := RubyCIConfigurationForSite(root, "rspec", "").Jobs
+	require.Len(t, jobs, 1)
+	require.Empty(t, jobs[0].Runtime, "neither 3.0 nor 3.3 is certain")
+	require.Equal(t, "inconclusive", jobs[0].Status)
+}

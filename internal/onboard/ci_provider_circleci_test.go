@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -373,6 +374,10 @@ func TestCircleCITestSplitting(t *testing.T) {
 		{`circleci tests glob "src/**/*.test.js" | circleci tests run --command="xargs npx jest --ci" --verbose --split-by=timings`, "npx jest --ci", ""},
 		{`circleci tests glob "src/**/*.test.js" | circleci tests split --split-by=timings | xargs npx jest`, "npx jest", ""},
 		{"TEST_FILES=\"$(circleci tests glob \"spec/**/*_spec.rb\" | \\\n  circleci tests split --split-by=timings)\"\nnpx jest --ci \\\n  $TEST_FILES", "npx jest --ci", ""},
+		{`circleci tests glob "src/**/*.test.js" | circleci tests run --command="xargs npx jest --testNamePattern='a  b'" --split-by=timings`, "npx jest --testNamePattern='a  b'", ""},
+		{`circleci tests glob "src/**/*.test.js" | circleci tests run --command 'xargs npx jest -t "a  b"'`, `npx jest -t "a  b"`, ""},
+		{`circleci tests glob "src/**/*.test.js" | circleci tests split --split-by=timings | xargs npx jest -t "a  b"`, `npx jest -t "a  b"`, ""},
+		{`circleci tests glob "src/**/*.test.js" | circleci tests run --command="xargs npx jest --label=$LABEL"`, "", "in a form ddtest cannot resolve"},
 		{`npx jest $(circleci tests glob "src/**/*.test.js" | circleci tests split)`, "", "splits tests across parallel containers"},
 		{"FILES=$(circleci tests glob a | circleci tests split)\nnpx jest --files=$FILES", "", "splits tests across parallel containers"},
 		{"FILES=\"$(circleci tests glob a | circleci tests split | head -1)\"\nnpx jest $FILES", "", "splits tests across parallel containers"},
@@ -675,6 +680,12 @@ func TestCircleCIApplySharedSteps(t *testing.T) {
 		require.ErrorAs(t, err, &gap)
 		require.Contains(t, gap.Reason, "has no Bash")
 	})
+	t.Run("a test step run with sh", func(t *testing.T) {
+		_, _, err := planCircleCI(t, "jest", "version: 2.1\njobs:\n  unit:\n    docker:\n      - image: cimg/node:22.11\n    steps:\n      - run:\n          command: npm test\n          shell: /bin/sh -eo pipefail\n"+circleWorkflow("      - unit\n"), nil)
+		var gap *EditThenApplyGap
+		require.ErrorAs(t, err, &gap)
+		require.Contains(t, gap.Reason, "runs with /bin/sh, which does not read $BASH_ENV")
+	})
 	t.Run("a step in a workflow's pre-steps", func(t *testing.T) {
 		_, _, err := planCircleCI(t, "jest", "version: 2.1\njobs:\n  unit:\n    docker:\n      - image: cimg/node:22.11\n    steps:\n      - run: echo done\n"+circleWorkflow("      - unit:\n          pre-steps:\n            - run: npm test\n"), nil)
 		var gap *EditThenApplyGap
@@ -812,6 +823,39 @@ func TestCircleCIReviewFindings(t *testing.T) {
 		require.Equal(t, "npm test -- --selectProjects=integration", runs[0])
 		require.Contains(t, runs[1], "reads $ODD, which an earlier step assigned in $BASH_ENV")
 	})
+	t.Run("$BASH_ENV writes in steps that do more", func(t *testing.T) {
+		config := "version: 2.1\norbs:\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\njobs:\n  test:\n" + image + "    steps:\n" + circleOrbStep + "      - run: echo 'export SUITE=integration' >> \"$BASH_ENV\" && npm run prepare\n      - run: echo 'export NODE_OPTIONS=--max-old-space-size=4096' >> \"$BASH_ENV\" && echo done\n      - run: npm test\n" + circleWorkflow("      - test\n")
+		job := circleJobs(t, circleRepository(t, config))["main/test"]
+		require.Contains(t, job.Steps[1].Run, "npm run prepare", "the step's other commands stay")
+		last := job.Steps[3]
+		require.Empty(t, last.ResolutionError)
+		require.Equal(t, "integration", last.Env["SUITE"])
+		require.Equal(t, "--max-old-space-size=4096", last.Env["NODE_OPTIONS"], "the replaced options reach the tests, without the preload")
+		for _, write := range []string{"cat ci/extra.env >> \"$BASH_ENV\"", "echo '. \"$NVM_DIR/nvm.sh\"' >> $BASH_ENV && npm ci", "echo \"export A=$(date)\" >> $BASH_ENV"} {
+			config := "version: 2.1\njobs:\n  test:\n" + image + "    steps:\n      - run: " + strconvQuoteYAML(write) + "\n      - run: npm test\n" + circleWorkflow("      - test\n")
+			job := circleJobs(t, circleRepository(t, config))["main/test"]
+			require.Contains(t, job.Steps[1].ResolutionError, "writes to $BASH_ENV in a way ddtest cannot follow", write)
+		}
+	})
+	t.Run("only the expansions Bash performs are substituted", func(t *testing.T) {
+		for command, want := range map[string]string{
+			`npm test -- --testNamePattern='$SUITE'`:              `npm test -- --testNamePattern='$SUITE'`,
+			`printf '%s' '$SUITE' && npm test`:                    `printf '%s' '$SUITE' && npm test`,
+			`npm test -- \$SUITE`:                                 `npm test -- \$SUITE`,
+			`npm test -- "$SUITE"`:                                `npm test -- "integration"`,
+			`npm test -- ${SUITE} --x=$SUITE_LONG`:                `npm test -- integration --x=$SUITE_LONG`,
+			`npm test -- "label: ${SPACED}"`:                      `npm test -- "label: a b"`,
+			`npm test -- --title="it's $SPACED" '$SPACED' $SUITE`: `npm test -- --title="it's a b" '$SPACED' integration`,
+		} {
+			got, problem := circleExpandVariables(command, map[string]string{"SUITE": "integration", "SPACED": "a b"})
+			require.Empty(t, problem, command)
+			require.Equal(t, want, got, command)
+		}
+		for _, command := range []string{`npm test -- $SPACED`, `npm test -- ${SUITE:-unit}`} {
+			_, problem := circleExpandVariables(command, map[string]string{"SUITE": "integration", "SPACED": "a b"})
+			require.NotEmpty(t, problem, command)
+		}
+	})
 	t.Run("matches needs the whole value", func(t *testing.T) {
 		config := "version: 2.1\njobs:\n  test:\n    parameters:\n      branch:\n        type: string\n        default: feature-main\n" + image + "    steps:\n      - when:\n          condition:\n            matches: { pattern: main, value: << parameters.branch >> }\n          steps:\n            - run: npm run partial\n      - when:\n          condition:\n            matches: { pattern: \"feature-.+\", value: << parameters.branch >> }\n          steps:\n            - run: npm run whole\n" + circleWorkflow("      - test\n")
 		require.Equal(t, []string{"npm run whole"}, circleRuns(circleJobs(t, circleRepository(t, config))["main/test"]))
@@ -946,4 +990,16 @@ func TestCircleCIBrakemanFixture(t *testing.T) {
 		reasons = append(reasons, job.Job+": "+job.Reason)
 	}
 	require.Contains(t, strings.Join(reasons, "\n"), "tests/test-3-2: bundle exec rake sets RUBYOPT='--enable-frozen-string-literal --debug-frozen-string-literal' as a rake argument")
+}
+
+// A modeled node/install selects the Node later tests run on, also on a
+// machine executor without an image Node.
+func TestCircleCINodeInstallSelectsTheRuntimeCheckedNode(t *testing.T) {
+	config := "version: 2.1\norbs:\n  node: circleci/node@5.2.0\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\njobs:\n  test:\n    machine:\n      image: ubuntu-2204:current\n    steps:\n      - checkout\n      - node/install:\n          node-version: \"20.11.1\"\n" + circleOrbStep + "      - run: npx jest\n" + circleWorkflow("      - test\n")
+	root := circleRepository(t, config)
+	result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "5.133.0", Node: ">=18"}, nil
+	}, "jest")
+	require.Equal(t, StatusCompatible, result.Status, result)
+	require.Equal(t, "20.11.1", result.Jobs[len(result.Jobs)-1].Node)
 }

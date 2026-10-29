@@ -106,9 +106,12 @@ func TestFailuresCompareWithoutObjectAddresses(t *testing.T) {
 	}
 	require.Equal(t, failure("0x000000011f3a2b48", "Brakeman::Logger::Console"), failure("0x0000000120c4d9e0", "Brakeman::Logger::Console"))
 	require.NotEqual(t, failure("0x000000011f3a2b48", "Brakeman::Logger::Console"), failure("0x000000011f3a2b48", "Brakeman::Logger::Quiet"))
-	require.Equal(t, failureSignature("<object at 0x7f3a2b48c0d0> is not None"), failureSignature("<object at 0x7f3a2b48e110> is not None"))
+	require.Equal(t, failureSignature("<app.Widget object at 0x7f3a2b48c0d0> is not None"), failureSignature("<app.Widget object at 0x7f3a2b48e110> is not None"))
 	require.Equal(t, failureSignature("expected com.acme.Widget@1b6d3586 but was null"), failureSignature("expected com.acme.Widget@4554617c but was null"))
 	require.NotEqual(t, failureSignature("expected 0x10 to equal 0x20"), failureSignature("expected 0x10 to equal 0x30"), "short hexadecimal values are data")
+	require.NotEqual(t, failureSignature("expected 0xdeadbeef, got 0xcafebabe"), failureSignature("expected 0xdeadbeef, got 0xfeedface"), "bare hexadecimal values are data, whatever their length")
+	require.NotEqual(t, failureSignature("checksum 0x00000000deadbeef differs"), failureSignature("checksum 0x00000000cafebabe differs"))
+	require.Equal(t, failureSignature("Expected #<Foo:0x000000010a2b3c48> to be nil"), failureSignature("Expected #<Foo:0x0000000120c4d9e0> to be nil"))
 
 	run := func(address string) validationRun {
 		return validationRun{ExitCode: 1, Tests: []jestTest{{File: "/repo/test/logger_test.rb", Name: "test_logger_type", Status: "failed", Failure: failure(address, "Brakeman::Logger::Console")}}}

@@ -444,7 +444,8 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		resolution := resolutions[i]
 		// An unresolved step that can't start a test is setup, not a test entry.
 		test := resolution.Matched || resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, frameworkName(frameworks))
-		if uses != "actions/setup-node" && !isSetup && !changesNodeRuntime(step.Run) && !test {
+		_, selectsNode := step.Runtime["js"]
+		if uses != "actions/setup-node" && !isSetup && !selectsNode && !changesNodeRuntime(step.Run) && !test {
 			continue
 		}
 		finding = RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Source: step.Source, Command: step.Run, Resolution: resolution.Evidence, Node: state.node, NodeSource: state.source, Status: StatusInconclusive}

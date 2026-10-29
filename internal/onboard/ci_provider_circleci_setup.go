@@ -92,33 +92,60 @@ var circleShellDialect = ciShellDialect{label: "CircleCI $BASH_ENV", projectVari
 var circleBashEnv = regexp.MustCompile(`^"?\$\{?BASH_ENV\}?"?$`)
 
 // circleFollowBashEnv records what a run step appends to $BASH_ENV with
-// echo, as in echo 'export NAME=value' >> "$BASH_ENV", into the state
-// later steps start from. It reports whether the step does only that, so it
-// runs nothing later steps must replay. Text ddtest cannot evaluate, or
-// that runs commands in every later step, leaves the step as it is.
-func circleFollowBashEnv(state *ciShellState, command string, known map[string]string) bool {
+// echo, as in echo 'export NAME=value' >> "$BASH_ENV", into the state later
+// steps start from, also when the step runs other commands too (joined by
+// newlines, ; or &&). consumed reports a step that only does that, so it runs
+// nothing later steps must replay; followed is false when the step touches
+// $BASH_ENV in a way ddtest cannot follow, such as writing text it cannot
+// evaluate or that runs commands in every later step.
+func circleFollowBashEnv(state *ciShellState, command string, known map[string]string) (consumed, followed bool) {
 	if !strings.Contains(command, "BASH_ENV") {
-		return false
+		return false, true
 	}
 	file, ok := parseCIShell(command)
 	if !ok || len(file.Stmts) == 0 {
-		return false
+		return false, false
+	}
+	var leaves []*syntax.Stmt
+	var flatten func(*syntax.Stmt)
+	flatten = func(stmt *syntax.Stmt) {
+		if binary, ok := stmt.Cmd.(*syntax.BinaryCmd); ok && binary.Op == syntax.AndStmt && len(stmt.Redirs) == 0 && !stmt.Negated && !stmt.Background {
+			flatten(binary.X)
+			flatten(binary.Y)
+			return
+		}
+		leaves = append(leaves, stmt)
+	}
+	for _, stmt := range file.Stmts {
+		flatten(stmt)
 	}
 	var appended []string
 	values := map[string]string{}
-	for _, stmt := range file.Stmts {
-		call, ok := stmt.Cmd.(*syntax.CallExpr)
-		if !ok || stmt.Negated || stmt.Background || len(call.Assigns) > 0 || len(call.Args) < 2 || call.Args[0].Lit() != "echo" {
-			return false
+	others := false
+	for _, stmt := range leaves {
+		call, isCall := stmt.Cmd.(*syntax.CallExpr)
+		writes := len(stmt.Redirs) == 1 && stmt.Redirs[0].Op == syntax.AppOut && circleBashEnv.MatchString(shellText(stmt.Redirs[0].Word))
+		if !writes {
+			text := shellText(stmt)
+			if !strings.Contains(text, "BASH_ENV") {
+				others = true
+				continue
+			}
+			// Loading it again changes nothing later steps see.
+			if isCall && len(call.Args) == 2 && len(stmt.Redirs) == 0 && (call.Args[0].Lit() == "source" || call.Args[0].Lit() == ".") && circleBashEnv.MatchString(shellText(call.Args[1])) {
+				others = true
+				continue
+			}
+			return false, false
 		}
-		if len(stmt.Redirs) != 1 || stmt.Redirs[0].Op != syntax.AppOut || !circleBashEnv.MatchString(shellText(stmt.Redirs[0].Word)) {
-			return false
+		if !isCall || stmt.Negated || stmt.Background || len(call.Assigns) > 0 || len(call.Args) < 2 || call.Args[0].Lit() != "echo" {
+			return false, false
 		}
 		var words []string
 		for _, word := range call.Args[1:] {
 			text, ok := circleEchoWord(word, mergeEnvironment(known, state.references), values)
 			if !ok {
-				return false
+				return false, false
 			}
 			words = append(words, text)
 		}
@@ -127,11 +154,11 @@ func circleFollowBashEnv(state *ciShellState, command string, known map[string]s
 	for _, text := range appended {
 		file, ok := parseCIShell(text)
 		if !ok {
-			return false
+			return false, false
 		}
 		for _, stmt := range file.Stmts {
 			if !circleStateOnly(stmt) {
-				return false
+				return false, false
 			}
 		}
 	}
@@ -142,7 +169,7 @@ func circleFollowBashEnv(state *ciShellState, command string, known map[string]s
 			state.statement(stmt, mergeEnvironment(mergeEnvironment(mergeEnvironment(known, state.env), state.references), values))
 		}
 	}
-	return true
+	return !others, true
 }
 
 // circleStateOnly reports a statement that only exports or assigns
