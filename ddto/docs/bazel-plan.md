@@ -72,6 +72,11 @@ The user settled these on 2026-10-29.
 | Code checks, not versions | Library gates check the code that each edit needs, in and outside Bazel. Testify v1.3.0 is instrumented when its code fits. |
 | No API key in tests | Tests run in agent mode, with no network and no key; the uploader keeps the key. |
 | Where Bazel is tested | ddtest's CI runs a basic Bazel test. The full Bazel suites live in rules_test_optimization and rules_test_optimization_tests. |
+| The test rule | ddtest generates the Starlark from files in its own repository, and `dd_topt_go_test` wraps it. [Validating the Starlark](#validating-the-starlark) lists the checks. |
+| Platforms | Every platform with a ddtest release asset: Linux, macOS and Windows on amd64 and arm64, as exec and target platforms, plus remote execution. Every rules_go minor version from 0.60 to the latest, at its latest patch. |
+| WORKSPACE and Bzlmod | Both stay supported. |
+| One Mini per test | The test binary links only the Mini of the ddtest release, as outside Bazel. [Mini from `go_deps`](#mini-from-go_deps) covers tests that use Mini's Go API. |
+| Dogfooding | dd-source. |
 | Releases | Neither ddtest nor the rule is released before end-to-end tests pass in the rule's repository, in its test repository and in internal dogfooding. |
 | A major version of the rule | `orchestrion_mode` and the pin file attributes are removed. |
 | Same Bazel behavior as today | `stage_sources` stays opt-in and documented. Support warnings appear only when an action runs, as with Orchestrion, and are documented. |
@@ -137,6 +142,31 @@ hooks that `testing` and the libraries declare. The binary that compiled the
 hooks also wrote Mini's sources, so both sides of every `//go:linkname`
 come from the same release.
 
+### Mini from `go_deps`
+
+A test binary links one Mini, the one from the ddtest release. Outside Bazel
+the CLI's Mini also replaces the version that a module requires
+([runtime provisioning](mini-runtime.md#runtime-provisioning)). A workspace
+whose tests use Mini's Go API
+([explicit clients](mini-runtime.md#explicit-clients-and-manual-instrumentation))
+also gets Mini from `go_deps`, with the same import paths. rules_go then stops
+the link with `package conflict error: ...: multiple copies of package passed
+to linker` (`go/tools/builders/importcfg.go`).
+
+- **Bzlmod.** Such a workspace adds one line to its root `MODULE.bazel`:
+  `override_repo(go_deps, com_github_datadog_ddtest_ddto = "<Mini repository>")`.
+  `override_repo` only applies in the root module. The generated `BUILD.bazel`
+  files use the target names that Gazelle gives `go_deps` repositories, a
+  target named after the package plus a `go_default_library` alias, so the
+  API's imports resolve to the generated Mini unchanged.
+- **WORKSPACE.** The rule's repository macro declares the same repository
+  name. Phase 3 settles which declaration wins and documents the order.
+- **The error.** `docs/bazel.md` maps rules_go's package conflict for
+  `github.com/DataDog/ddtest/ddto` to that line.
+- **Plain builds.** After the override, builds with the default SDK that use
+  the API also link the generated Mini, so Mini must link without the
+  instrumented `testing`.
+
 ### Registration
 
 rules_test_optimization's module extension:
@@ -165,9 +195,8 @@ declarations for a wrapped SDK also match the empty `sdk_name`
 instrumented SDK the default for every target; that is why registration goes
 through toolchains of our own.
 
-rules_test_optimization supports WORKSPACE mode in its first major version. If
-the new major version keeps it (open question 3), a repository macro does the
-same and registers the toolchains.
+The new major version keeps WORKSPACE mode: a repository macro does the same
+and registers the toolchains.
 
 The SDK's Go version follows rules_go's `go_sdk.from_file`: the root module's
 `go.mod` `toolchain` directive, then its `go` directive
@@ -216,6 +245,33 @@ Today `ddtest instrument bazel test //...` runs `bazel test //...` unchanged.
 The subcommand therefore accepts only its directory and flags, and it fails
 with a clear message when it receives a Bazel command such as `test`,
 `build`, `run` or `coverage`.
+
+### Validating the Starlark
+
+ddtest keeps the Starlark as ordinary `.bzl` and `BUILD.bazel` files in its
+repository, embedded in the binary. `ddtest instrument bazel` copies them and
+generates only Mini's `BUILD.bazel` files and a constants file with the
+release version, the `sdk_name` value and a contract version.
+
+- **Format and lint:** buildifier in ddtest's CI, on the source files and on
+  a generated directory.
+- **Generated output:** a Go test compares the command's output with golden
+  files in the repository.
+- **Analysis tests,** with bazel-skylib's `analysistest`:
+  - the transition sets `sdk_name`;
+  - the test gets Mini and the registration file;
+  - the environment is set;
+  - `data` stays outside the transition;
+  - the toolchains never match an empty `sdk_name`.
+- **The basic Bazel test** in ddtest's CI uses the generated rule, in Bzlmod
+  and WORKSPACE modes.
+- **Cross validation.** rules_test_optimization and
+  rules_test_optimization_tests run their full suites on the pinned ddtest
+  and on the newest release candidate, over every supported Bazel and
+  rules_go version, mode and platform.
+- **Contract version.** The extension checks the generated contract version
+  at fetch time, so a ddtest outside the supported range fails with a clear
+  message.
 
 ## Spike results
 
@@ -309,17 +365,12 @@ entries.
    from the test's working directory, so `test.source.end` is missing, as it
    is with Orchestrion. Mini resolves the path under the runfiles, where the
    opt-in `stage_sources` puts the files.
-5. **Platforms.** Only linux_amd64 ran. Other target and exec platforms,
-   remote execution and Windows are untested.
+5. **Platforms.** Only linux_amd64 ran. The other five platforms, remote
+   execution, and a host that differs from the exec platform are untested.
 6. **API key wording.** [Delivery and offline output](mini-runtime.md#delivery-and-offline-output)
    says the settings-cache reader needs a nonempty API key. Both spikes read
    the cache in agent mode without one; the requirement applies to agentless
    mode, and the page needs to say so.
-7. **Mini from `go_deps`.** A test that uses Mini's Go API
-   ([explicit clients](mini-runtime.md#explicit-clients-and-manual-instrumentation))
-   gets a second copy of Mini from `go_deps`, with the same import path.
-   rules_go then fails the link. Phase 2 makes those imports resolve to the
-   generated Mini, or reports the conflict with a clear message.
 
 ## Phases
 
@@ -328,7 +379,7 @@ entries.
 | 1 | ddtest | Prerequisites in ddto, without Bazel | Existing CI and the full compatibility window pass |
 | 2 | ddtest | Compiler mode, `ddtest instrument bazel`, a basic Bazel test and a release candidate | The basic Bazel test passes |
 | 3 | rules_test_optimization and its test repository | The major version on the release candidate | Both repositories' full Bazel suites pass |
-| 4 | Dogfooding repositories | Internal dogfooding and measurements | They report through the new path |
+| 4 | dd-source | Internal dogfooding and measurements | It reports through the new path |
 | 5 | ddtest, then the rule | Releases | Built from the release candidate's commit |
 
 ### Phase 1: prerequisites in ddto
@@ -358,11 +409,13 @@ tested in ddtest without Bazel, with unit tests checked by mutation.
 - **Import configuration additions** for standard packages.
 - **Vendored packages** identified after the last `vendor` element of `-p`,
   with fixtures for a Gazelle prefix and an empty one.
-- **Mini from `go_deps`** (open problem 7).
+- **Mini from `go_deps`** as described above. Fixtures cover a test that uses
+  the API, with and without the override, and a plain build that uses it.
 - **`ddtest instrument bazel <dir>`** as described above, rejecting Bazel
   commands.
-- **A basic Bazel test in ddtest's CI,** on Linux and macOS. Its fixture
-  covers:
+- **The Starlark checks** in [Validating the Starlark](#validating-the-starlark).
+- **A basic Bazel test in ddtest's CI,** on Linux and macOS, in Bzlmod and
+  WORKSPACE modes. Its fixture covers:
   - standard tests, Testify, goleak and dd-trace-go;
   - a plain binary that must stay unmodified;
   - an exec tool that imports `testing`;
@@ -377,10 +430,9 @@ tested in ddtest without Bazel, with unit tests checked by mutation.
 
 The new major version, built on the release candidate:
 
-- **The module extension and toolchains** described above, for the platforms
-  chosen for the first release.
-- **WORKSPACE support,** if the major version keeps it (open question 3): the
-  same repository rule and toolchain registration in
+- **The module extension and toolchains** described above, for every
+  platform.
+- **WORKSPACE support:** the same repository rule and toolchain registration in
   `tools/go/workspace_repositories.bzl`, with a WORKSPACE test, before the
   vendored trees that those helpers fetch are removed.
 - **`dd_topt_go_test`** on top of the new test rule.
@@ -392,17 +444,19 @@ The new major version, built on the release candidate:
   - retries, early flake detection and test management from the manifest;
   - sharding and `-race`;
   - reproducibility;
-  - vendored packages;
-  - the rules_go versions and platforms of the first release, including a
-    host that differs from the exec platform;
+  - vendored packages and Mini from `go_deps`;
+  - every supported Bazel and rules_go version, in Bzlmod and WORKSPACE
+    modes;
+  - every platform, remote execution, and a host that differs from the exec
+    platform;
   - the doctor and the uploader dry run with `--validate-enrichment`;
   - a comparison of the payloads with today's Orchestrion path on the same
     targets, before that path is removed.
 
 ### Phase 4: internal dogfooding and measurements
 
-Run the dogfooding repositories on the release candidate and the new major
-version, and compare with today's Orchestrion path:
+Run dd-source on the release candidate and the new major version, and
+compare with today's Orchestrion path:
 
 - cold and warm build time;
 - the cost of the split cache;
@@ -423,35 +477,9 @@ to that release.
 
 ## Open questions
 
-1. **Who owns the test rule.** If ddtest generates the Starlark, the rule
-   always matches Mini and the registration file of the same release.
-   However, `dd_topt_go_test` lives in another repository, so the two need
-   cross validation:
-   - ddtest's basic Bazel test uses the generated rule;
-   - rules_test_optimization tests its pinned ddtest and the newest release
-     candidate;
-   - the generated repository carries a contract version that the extension
-     checks at fetch time.
-
-   If rules_test_optimization owns the whole rule, the same checks apply to
-   the labels, the registration file and the `sdk_name` value that it must
-   match. Recommendation: ddtest generates the rule, and `dd_topt_go_test`
-   wraps it.
-2. **Platforms and rules_go versions** for the first release.
-   - **What each platform needs.** Every exec platform needs an instrumented
-     SDK with that platform's ddtest executable as `compile`. Target
-     platforms reuse those SDKs by cross-compiling. The host needs its own
-     executable to run the generator.
-   - **Proposal:**
-     - Linux amd64 and arm64, macOS amd64 and arm64;
-     - Windows amd64, because the rule's CI already runs a Windows Go lane;
-       the wrapper is untested there;
-     - remote execution with a Linux exec platform;
-     - rules_go 0.60.0 to 0.63.0, which the rule supports today, plus the
-       latest release.
-3. **WORKSPACE in the major version.** Keep it, as the first major version
-   does, or support Bzlmod only.
-4. **The dogfooding repositories** for phase 4.
+1. **dd-source.** Does the plan fit what dd-source already runs with
+   rules_test_optimization? The user's thread on its rollout gets this
+   question before phase 3 starts.
 
 ## Out of scope
 
