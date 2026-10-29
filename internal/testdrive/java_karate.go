@@ -42,8 +42,12 @@ const javaKarateFeature = `Feature: ` + javaProbeClass + `
 var javaKarateProbeFeature = filepath.Join("src", "test", "resources", "ddtest", "DdtestValidation.feature")
 
 // javaKarateRunner is a test class that runs features: a JUnit 5 @Karate.Test,
-// a JUnit 4 runner, or Karate's parallel Runner.
-var javaKarateRunner = regexp.MustCompile(`\bcom\.intuit\.karate\.(?:Runner|junit[45]\.Karate)\b|@Karate\.Test\b|@RunWith\(\s*Karate\.class\s*\)|\bRunner\.(?:path|builder)\(`)
+// a JUnit 4 runner, or Karate's parallel Runner. Importing Karate's types does
+// not make a class one.
+var javaKarateRunner = regexp.MustCompile(`@(?:[\w.]+\.)?Karate\.Test\b|@(?:[\w.]+\.)?RunWith\(\s*(?:[\w.]+\.)?Karate\.class\s*\)|` + javaKarateParallel.String())
+
+// javaKarateParallel is a call of Karate's parallel Runner.
+var javaKarateParallel = regexp.MustCompile(`\bRunner\.(?:path|builder)\(`)
 
 // javaKarateMethod is a JUnit 5 @Karate.Test or JUnit @Test method, whose
 // name is the first group.
@@ -53,8 +57,8 @@ var javaKarateMethod = regexp.MustCompile(`@(?:[\w.]+\.)?(?:Karate\.)?Test\b(?:\
 // the module's Karate runner: karate.options replaces the runner's features
 // and tags, and keeps its environment and configuration. A runner that runs
 // features in parallel from a JUnit test reports that test too; it is the
-// probe's harness. Each method of a runner runs the probe, so only its first
-// is selected.
+// probe's harness. Each method of a runner runs the probe, so only one is
+// selected.
 func javaKarateProbe(checkout, module string) (javaProbe, string, error) {
 	runner, method, err := javaKarateRunnerClass(filepath.Join(checkout, module))
 	if err != nil {
@@ -78,7 +82,9 @@ func javaKarateProbe(checkout, module string) (javaProbe, string, error) {
 }
 
 // javaKarateRunnerClass finds the first Karate runner class in a module's test
-// sources, by path, and its first test method; a JUnit 4 runner has none.
+// sources, by path, and the test method that runs features: its first
+// @Karate.Test, else the test that calls the parallel Runner. A JUnit 4
+// runner has none.
 func javaKarateRunnerClass(module string) (runner, method string, err error) {
 	err = filepath.WalkDir(filepath.Join(module, "src", "test", "java"), func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -100,13 +106,31 @@ func javaKarateRunnerClass(module string) (runner, method string, err error) {
 			pkg = match[1]
 		}
 		runner = strings.TrimPrefix(pkg+"."+strings.TrimSuffix(entry.Name(), ".java"), ".")
-		if match := javaKarateMethod.FindStringSubmatch(text); match != nil {
-			method = match[1]
-		}
+		method = javaKarateRunnerMethod(text)
 		return nil
 	})
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", "", nil
 	}
 	return runner, method, err
+}
+
+// javaKarateRunnerMethod is the test method of a runner's source that runs
+// features, as javaKarateRunnerClass describes.
+func javaKarateRunnerMethod(text string) string {
+	matches := javaKarateMethod.FindAllStringSubmatchIndex(text, -1)
+	for _, match := range matches {
+		if strings.Contains(text[match[0]:match[1]], "Karate.Test") {
+			return text[match[2]:match[3]]
+		}
+	}
+	// The test that calls the Runner is the last one declared before the call.
+	call := javaKarateParallel.FindStringIndex(text)
+	method := ""
+	for _, match := range matches {
+		if call != nil && match[0] < call[0] {
+			method = text[match[2]:match[3]]
+		}
+	}
+	return method
 }

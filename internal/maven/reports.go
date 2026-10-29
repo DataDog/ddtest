@@ -163,8 +163,9 @@ func readKarateReport(path, module string) ([]Test, string, error) {
 			test.Status = "skipped"
 		}
 		if scenario.Failed {
-			message, _, _ := strings.Cut(strings.TrimSpace(scenario.Error), "\n")
-			test.Status, test.Failure = "failed", "karate: "+message+"\n"
+			// A match failure's first line names only the operator; the
+			// values that differ follow on the next lines.
+			test.Status, test.Failure = "failed", "karate: "+strings.Join(strings.Fields(scenario.Error), " ")+"\n"
 		}
 		tests = append(tests, test)
 	}
@@ -225,7 +226,7 @@ func readReport(path, module string) ([]Test, error) {
 	return tests, nil
 }
 
-var failedGoal = regexp.MustCompile(`^\[ERROR\] Failed to execute goal ([^ ]+) \([^)]*\) on project ([^:]+): (.*)$`)
+var failedGoal = regexp.MustCompile(`^\[ERROR\] Failed to execute goal ([^ ]+) \([^)]*\) on project ([^:]+):(.*)$`)
 
 // testGoals are the plugin goals whose failure a native test failure explains.
 var testGoals = []string{"org.apache.maven.plugins:maven-surefire-plugin:test", "org.apache.maven.plugins:maven-failsafe-plugin:verify", "org.scalatest:scalatest-maven-plugin:test"}
@@ -246,13 +247,14 @@ func IncompleteBuild(exitCode int, projects []Project, tests []Test, output stri
 		failedModules[test.Module] = failedModules[test.Module] || test.Status == "failed"
 	}
 	goals := 0
-	for _, line := range strings.Split(ansiEscape.ReplaceAllString(output, ""), "\n") {
+	lines := strings.Split(ansiEscape.ReplaceAllString(output, ""), "\n")
+	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "[ERROR] Failed to execute goal") {
 			continue
 		}
 		match := failedGoal.FindStringSubmatch(line)
-		if match == nil || !strings.HasPrefix(match[3], "There are test failures") {
+		if match == nil || !testFailures(strings.TrimSpace(match[3]), lines[i+1:]) {
 			return true
 		}
 		// The goal is group:artifact:version:goal; the version varies.
@@ -268,4 +270,23 @@ func IncompleteBuild(exitCode int, projects []Project, tests []Test, output stri
 		goals++
 	}
 	return exitCode != 0 && goals == 0
+}
+
+// testFailures reports whether a failed goal's message, and the error lines
+// after it, describe native test failures. Surefire 3.5 states no message when
+// every failed test is an error, and points at the reports on the next lines.
+func testFailures(message string, next []string) bool {
+	if message != "" {
+		return strings.HasPrefix(message, "There are test failures")
+	}
+	for _, line := range next {
+		detail, ok := strings.CutPrefix(strings.TrimSpace(line), "[ERROR]")
+		if !ok {
+			return false
+		}
+		if detail = strings.TrimSpace(detail); detail != "" {
+			return strings.HasPrefix(detail, "See ") && strings.HasSuffix(detail, " for the individual test results.")
+		}
+	}
+	return false
 }

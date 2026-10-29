@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -585,11 +586,57 @@ func javaProbeFor(checkout, module, framework string, args []string) (javaProbe,
 	source := javaProbeSources[framework]
 	probe := javaProbe{files: []javaProbeFile{{filepath.Join(module, source.path), source.source}}, args: javaProbeArguments}
 	if framework == "scalatest" {
+		// Surefire runs ScalaTest suites through the JUnit runner they
+		// declare, so the probe declares the module's.
+		runner, err := javaScalaTestJUnitRunner(filepath.Join(checkout, module))
+		if err != nil {
+			return javaProbe{}, "", err
+		}
+		if runner != "" {
+			probe.files[0].source = strings.Replace(source.source, "\nclass ", "\n@org.junit.runner.RunWith(classOf["+runner+"])\nclass ", 1)
+		}
 		// The scalatest-maven-plugin selects suites by its own property;
 		// suites that Surefire runs through JUnit match -Dtest.
 		probe.args = append(slices.Clone(javaProbeArguments), "-Dsuites="+javaProbeClass)
 	}
 	return probe, "", nil
+}
+
+// javaScalaTestJUnitRunners are ScalaTest's JUnit 4 runners, current and
+// before ScalaTest 3.1.
+var javaScalaTestJUnitRunners = []string{"org.scalatestplus.junit.JUnitRunner", "org.scalatest.junit.JUnitRunner"}
+
+// javaScalaTestJUnitRunner is the ScalaTest JUnit runner a module's Scala
+// tests declare with @RunWith, if any.
+func javaScalaTestJUnitRunner(module string) (string, error) {
+	runner := ""
+	err := filepath.WalkDir(filepath.Join(module, "src", "test", "scala"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if runner != "" || entry.IsDir() || !strings.HasSuffix(path, ".scala") || !entry.Type().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(data)
+		if !strings.Contains(text, "RunWith") {
+			return nil
+		}
+		for _, candidate := range javaScalaTestJUnitRunners {
+			if strings.Contains(text, candidate) {
+				runner = candidate
+				return nil
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	return runner, err
 }
 
 // runJavaFeatures writes the probe into a module whose tests ran in the

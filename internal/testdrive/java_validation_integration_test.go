@@ -105,9 +105,9 @@ public class StepDefinitions {
 
 	// CI spreads the scenarios over shards (DDTEST_TEST_SHARD); weights are
 	// relative durations.
-	scenarios := []string{"junit5", "junit4", "testng", "spock", "cucumber junit4 runner", "cucumber java8 lambdas", "cucumber platform suite", "karate parallel runner", "karate junit5 runner", "scalatest", "munit",
+	scenarios := []string{"junit5", "junit4", "testng", "spock", "cucumber junit4 runner", "cucumber java8 lambdas", "cucumber platform suite", "karate parallel runner", "karate junit5 runner", "scalatest", "scalatest junit runner", "munit",
 		"no application coverage", "instrumentation-only failure", "incomplete reactor", "publishing goal", "agent workflow"}
-	weights := map[string]int{"junit5": 20, "scalatest": 6, "munit": 6, "agent workflow": 16, "no application coverage": 6, "instrumentation-only failure": 6, "incomplete reactor": 2, "publishing goal": 1}
+	weights := map[string]int{"junit5": 20, "scalatest": 6, "scalatest junit runner": 2, "munit": 6, "agent workflow": 16, "no application coverage": 6, "instrumentation-only failure": 6, "incomplete reactor": 2, "publishing goal": 1}
 	selected := shard.SelectedIntegrationScenarios(t, scenarios, weights)
 	run := func(name string, test func(t *testing.T)) {
 		t.Helper()
@@ -240,6 +240,19 @@ class ExampleTest extends spock.lang.Specification {
 			require.NotContains(t, string(data), "Running baseline")
 		})
 	}
+
+	// Surefire runs suites that declare ScalaTest's JUnit runner. dd-java-agent
+	// 1.67.1 and 1.68.0 fail each test of such a suite ("Could not find test
+	// suite with descriptor"), so the build reports other results with the
+	// agent: validation must not pass.
+	run("scalatest junit runner", func(t *testing.T) {
+		root := project(t, "scalatest", map[string]string{"pom.xml": pomWith("fixture", scala+`<dependency><groupId>org.scalatest</groupId><artifactId>scalatest_2.13</artifactId><version>3.2.19</version><scope>test</scope></dependency><dependency><groupId>org.scalatestplus</groupId><artifactId>junit-4-13_2.13</artifactId><version>3.2.19.0</version><scope>test</scope></dependency>`, "3.5.3", scalaPlugin), "src/main/java/example/Calc.java": calc,
+			"src/test/scala/example/CalcTest.scala": "package example\n\n@org.junit.runner.RunWith(classOf[org.scalatestplus.junit.JUnitRunner])\nclass CalcTest extends org.scalatest.funsuite.AnyFunSuite {\n  test(\"adds\") { assert(Calc.add(2, 2) == 4) }\n  test(\"existing failure\") { assert(Calc.add(2, 2) == 5, \"customer expected failure\") }\n  ignore(\"ignored\") {}\n}\n"})
+		output, err := testdrive(root, "--framework", "scalatest")
+		require.Error(t, err, output)
+		require.Contains(t, output, "Compatibility (this invocation): suspected regression")
+		require.False(t, read(t, root).Success)
+	})
 
 	run("no application coverage", func(t *testing.T) {
 		root := project(t, "coverage", map[string]string{"pom.xml": pom("fixture", jupiter), "src/test/java/example/ExampleTest.java": "package example;\npublic class ExampleTest { @org.junit.jupiter.api.Test void passes() { org.junit.jupiter.api.Assertions.assertEquals(4, 2 + 2); } }\n"})

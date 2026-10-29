@@ -43,6 +43,8 @@ func TestJavaKarateProbeSelectsTheFeatureThroughTheRunner(t *testing.T) {
 func TestJavaKarateProbeNeedsARunner(t *testing.T) {
 	root := t.TempDir()
 	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "example", "CalcTest.java"), "package example;\npublic class CalcTest {}\n")
+	// A helper that only imports Karate's types runs no feature.
+	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "example", "Helpers.java"), "package example;\nimport com.intuit.karate.Runner;\nimport com.intuit.karate.junit5.Karate;\npublic class Helpers {}\n")
 	_, reason, err := javaKarateProbe(root, ".")
 	require.NoError(t, err)
 	require.Contains(t, reason, "No Karate runner class")
@@ -55,7 +57,7 @@ func TestJavaKarateProbeNeedsARunner(t *testing.T) {
 func TestJavaKarateProbeGoesToTheModuleWithTheRunner(t *testing.T) {
 	root := t.TempDir()
 	writeJavaSource(t, filepath.Join(root, "api", "src", "test", "java", "example", "ApiTest.java"), "package example;\npublic class ApiTest {}\n")
-	writeJavaSource(t, filepath.Join(root, "e2e", "src", "test", "java", "example", "E2ETest.java"), "package example;\nimport com.intuit.karate.junit5.Karate;\nclass E2ETest {}\n")
+	writeJavaSource(t, filepath.Join(root, "e2e", "src", "test", "java", "example", "E2ETest.java"), "package example;\nimport com.intuit.karate.junit5.Karate;\nclass E2ETest {\n    @Karate.Test Karate all() { return Karate.run(\"classpath:example\"); }\n}\n")
 	projects := []maven.Project{{Directory: "api", Artifact: "api"}, {Directory: "e2e", Artifact: "e2e"}}
 	module, ok := javaRunnerModule(root, projects, []nativeTest{{File: "api / example.ApiTest"}, {File: "e2e / [example/calc] Calculator"}}, "karate")
 	require.True(t, ok)

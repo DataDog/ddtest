@@ -65,7 +65,7 @@ func TestReadReportsReadsScalaTestAndKarateResults(t *testing.T) {
 		{Module: "scala", Suite: "example.CalcTest", Name: "adds", Status: "passed"},
 		{Module: "api", Suite: "example.UnitTest", Name: "checks", Status: "passed"},
 		{Module: "api", Suite: "[example/calc] Calculator", Name: "adds", Status: "passed"},
-		{Module: "api", Suite: "[example/calc] Calculator", Name: "existing failure", Status: "failed", Failure: "karate: match failed: EQUALS\n"},
+		{Module: "api", Suite: "[example/calc] Calculator", Name: "existing failure", Status: "failed", Failure: "karate: match failed: EQUALS 4 5\n"},
 		{Module: "api", Suite: "[example/calc] Calculator", Name: "[3:10]", Status: "passed"},
 		{Module: "api", Suite: "[example/calc] Calculator", Name: "skipped by a hook", Status: "skipped"},
 	}, tests)
@@ -124,6 +124,8 @@ func TestIncompleteBuild(t *testing.T) {
 		{"native test failure", 1, failedCore, testFailure, false},
 		{"ANSI-colored test failure", 1, failedCore, "\x1b[1;31m" + testFailure + "\x1b[m", false},
 		{"ScalaTest plugin failure", 1, failedCore, "[ERROR] Failed to execute goal org.scalatest:scalatest-maven-plugin:2.2.0:test (test) on project core: There are test failures -> [Help 1]\n", false},
+		{"Surefire 3.5 test errors only", 1, failedCore, "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.3:test (default-test) on project core: \n[ERROR] \n[ERROR] See /work/core/target/surefire-reports for the individual test results.\n", false},
+		{"failure without a message or reports", 1, failedCore, "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.3:test (default-test) on project core: \n[ERROR] \n[ERROR] The forked VM terminated without properly saying goodbye.\n", true},
 		{"Failsafe verification failure", 1, failedCore, "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-failsafe-plugin:3.5.3:verify (default) on project core: There are test failures.\n", false},
 		{"compilation failure", 1, nil, "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile (default-compile) on project api: Compilation failure\n", true},
 		{"later module fails to compile", 1, failedCore, testFailure + "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile (default-compile) on project api: Compilation failure\n", true},

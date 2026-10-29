@@ -477,7 +477,10 @@ module's runner class (`@Karate.Test`, `@RunWith(Karate.class)` or a JUnit test
 calling `Runner.path`) runs through `karate.options`, so `karate-config.js` and
 `karate.env` still apply; the runner's own JUnit result is left out. MUnit's
 runner is not one dd-java-agent can skip tests in, so its skipping and disabled
-features are reported as not supported. Probe builds stop at the `test` phase, so
+features are reported as not supported. A ScalaTest suite that Surefire runs
+through ScalaTest's `JUnitRunner` gets a probe with the same runner; dd-java-agent
+1.67.1 and 1.68.0 fail every test of such a suite, which validation reports as a
+suspected regression. Probe builds stop at the `test` phase, so
 checks after the tests, such as license headers, do not judge the probe.
 Matching pre-existing failures are permitted; a build that stops for anything
 other than native test failures stays inconclusive.
