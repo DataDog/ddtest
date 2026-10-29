@@ -6,6 +6,8 @@
 package onboard
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -294,4 +296,37 @@ func TestCircleCIConditionalInstallersLeaveTheRuntimeUnknown(t *testing.T) {
 	require.Len(t, jobs, 1)
 	require.Empty(t, jobs[0].Runtime, "neither 3.0 nor 3.3 is certain")
 	require.Equal(t, "inconclusive", jobs[0].Status)
+}
+
+// ksylvest/omniai's gemspec lists its files with an allowlist of globs
+// (Dir.glob("{bin,lib,exe}/**/*") + %w[README.md Gemfile]) that cannot match
+// .testoptimization/, so no gemspec edit is needed; a glob that could match
+// it still asks for the exclusion.
+func TestGemPackagingAllowlistsNeedNoEdit(t *testing.T) {
+	root := copyFixture(t, "circleci-omniai")
+	t.Chdir(root)
+	text := providerSetupInstructions(root, circleCI{}, "ruby", "rspec", "", true)
+	require.Contains(t, text, "The gemspec lists its files from specific paths that cannot include .testoptimization/, so the reports stay out of the gem: do not edit the gemspec.")
+	for _, files := range []string{`Dir["**/*"]`, `Dir.glob("{lib,.testoptimization}/**/*")`, `Dir.glob("*")`, `Dir.glob("lib/**/*") + Dir.glob(".*")`, `Dir.glob("lib/**/*").reject { |f| f.end_with?(".tmp") }`} {
+		writeFile(t, root, "omniai.gemspec", "Gem::Specification.new do |spec|\n  spec.files = "+files+"\nend\n")
+		require.Contains(t, providerSetupInstructions(root, circleCI{}, "ruby", "rspec", "", true), "exclude .testoptimization/ from its files", files)
+	}
+}
+
+// When a test command passes RUBYOPT as a rake argument, as brakeman's
+// test-3-2 does, the handoff prescribes the inline RUBYOPT="$RUBYOPT ..."
+// form for it on every provider; job-level options keep the re-add after
+// the setup.
+func TestRubyHandoffOffersTheInlineRakeOptions(t *testing.T) {
+	root := copyFixture(t, "circleci-brakeman")
+	t.Chdir(root)
+	useCIProvider(t, "circleci")
+	const want = `pass RUBYOPT as a rake argument, which replaces the preload for the tests rake runs: .circleci/config.yml / tests/test-3-2. Write that argument as RUBYOPT="$RUBYOPT <its options>", here RUBYOPT="$RUBYOPT --enable-frozen-string-literal --debug-frozen-string-literal"`
+	require.Contains(t, providerSetupInstructions(root, circleCI{}, "ruby", "minitest", "", true), want)
+	writeFile(t, root, ".gitlab-ci.yml", "test:\n  image: ruby:3.3\n  script:\n    - bundle exec rake RUBYOPT='-W0'\n")
+	require.NoError(t, os.RemoveAll(filepath.Join(root, ".circleci")))
+	useCIProvider(t, "gitlab")
+	require.Contains(t, providerSetupInstructions(root, gitLabCI{}, "ruby", "minitest", "", true), `Write that argument as RUBYOPT="$RUBYOPT <its options>", here RUBYOPT="$RUBYOPT -W0"`)
+	writeFile(t, root, ".gitlab-ci.yml", "test:\n  image: ruby:3.3\n  script:\n    - bundle exec rake\n")
+	require.NotContains(t, providerSetupInstructions(root, gitLabCI{}, "ruby", "minitest", "", true), "as a rake argument")
 }

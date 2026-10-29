@@ -197,9 +197,11 @@ func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 		"Replace <exact datadog-ci release> with an exact datadog-ci release compatible with every instrumented Ruby, such as 1.42.0; when the bundle already locks datadog-ci, use that release. Keep the existing Gemfile, lockfile, Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments: the " + terms.Installer + " adds datadog-ci to the CI bundle itself, so do not edit the Gemfile. In a mixed RSpec/Minitest repository, scope this change to " + framework + ".",
 		"The " + terms.Installer + " replaces RUBYOPT with -rbundler/setup -rdatadog/ci/auto_instrument. When the job sets RUBYOPT, re-add those options right after " + terms.Entry + " with " + terms.Persist(`export RUBYOPT="$RUBYOPT <existing options>"`) + "; never replace RUBYOPT after it. Set BUNDLE_GEMFILE in " + terms.Variables + " (one per matrix entry where the matrix selects it), so datadog-ci joins the bundle the tests use.",
 		rubyGemsNote(root, framework, terms),
+		rubyRakeOptionsNote(root),
 		"If a job or matrix entry runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), keep its tests running uninstrumented in a job without " + terms.Entry + "; ddtest reports such jobs as excluded. To split a shared matrix, exclude those entries from the instrumented job " + terms.MatrixExclusion + " and run them in that separate job. Report each exclusion and its reason; do not drop entries, guard the tests or change Ruby versions to obtain a pass. At least one compatible instrumented job is required.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
 	}
+	request.Notes = slices.DeleteFunc(request.Notes, func(note string) bool { return note == "" })
 	if framework == "minitest" {
 		request.Notes = append(request.Notes, rubyShellForkSetup(terms))
 	}
@@ -289,6 +291,41 @@ func rubyGemsNote(root, framework string, terms ciSetupTerms) string {
 	return note
 }
 
+// rubyRakeOptionsNote names the CI test commands that pass RUBYOPT as a rake
+// argument (rake RUBYOPT='-W0'), which replaces the preload for the tests rake
+// runs, and prescribes the inline form that keeps it; empty when none does.
+func rubyRakeOptionsNote(root string) string {
+	provider, err := currentCIProvider(root)
+	if err != nil {
+		return ""
+	}
+	workflows, err := provider.readWorkflows(root)
+	if err != nil {
+		return ""
+	}
+	var locations, forms []string
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			for _, step := range workflow.Jobs[name].Steps {
+				options, found := rubyRakeOptions(step.Run)
+				if !found {
+					continue
+				}
+				if location := workflow.Path + " / " + name; !slices.Contains(locations, location) {
+					locations = append(locations, location)
+				}
+				if form := `RUBYOPT="$RUBYOPT ` + options + `"`; !slices.Contains(forms, form) {
+					forms = append(forms, form)
+				}
+			}
+		}
+	}
+	if len(locations) == 0 {
+		return ""
+	}
+	return "These CI test commands pass RUBYOPT as a rake argument, which replaces the preload for the tests rake runs: " + strings.Join(locations, ", ") + ". Write that argument as RUBYOPT=\"$RUBYOPT <its options>\", here " + strings.Join(forms, "; ") + ": it keeps the preload, so that command needs no other RUBYOPT change."
+}
+
 // rubyGemPackaging completes the report exclusion for the repository's gem
 // packaging. A gemspec listing its files with git ls-files already leaves out
 // what .gitignore excludes, so it needs no edit; one listing globs needs the
@@ -298,13 +335,61 @@ func rubyGemPackaging(root string) string {
 	if len(specs) == 0 {
 		return " and from gem packaging."
 	}
+	allowlists := 0
 	for _, spec := range specs {
 		data, err := os.ReadFile(spec)
+		if err == nil && rubyGemspecAllowlist(string(data)) {
+			allowlists++
+			continue
+		}
 		if err != nil || !strings.Contains(string(data), "git ls-files") {
 			return " and from gem packaging: the gemspec lists its files with globs, so exclude .testoptimization/ from its files."
 		}
 	}
+	if allowlists == len(specs) {
+		return ". The gemspec lists its files from specific paths that cannot include .testoptimization/, so the reports stay out of the gem: do not edit the gemspec."
+	}
 	return ". The gemspec lists its files with git ls-files, so that .gitignore entry also keeps the reports out of the gem: do not edit the gemspec."
+}
+
+var (
+	// rubyGemspecFiles is a one-line files assignment.
+	rubyGemspecFiles = regexp.MustCompile(`(?m)^\s*\w+\.files\s*=\s*(.+?)\s*$`)
+	// rubyGemspecAllowlistTerms are the terms of an allowlist: Dir globs,
+	// %w lists and strings, joined by +.
+	rubyGemspecAllowlistTerms = regexp.MustCompile(`^(?:Dir(?:\.glob)?\s*[\[(]\s*(?:"[^"]*"|'[^']*')(?:\s*,\s*(?:"[^"]*"|'[^']*'))*\s*[\])]|%w[\[(][^\])]*[\])]|"[^"]*"|'[^']*')(?:\s*\+\s*(?:Dir(?:\.glob)?\s*[\[(]\s*(?:"[^"]*"|'[^']*')(?:\s*,\s*(?:"[^"]*"|'[^']*'))*\s*[\])]|%w[\[(][^\])]*[\])]|"[^"]*"|'[^']*'))*$`)
+	rubyGemspecPattern        = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
+)
+
+// rubyGemspecAllowlist reports a gemspec whose files are only globs and names
+// under specific top-level paths, as in Dir.glob("{bin,lib,exe}/**/*") +
+// %w[README.md Gemfile]: none can match .testoptimization/.
+func rubyGemspecAllowlist(gemspec string) bool {
+	matches := rubyGemspecFiles.FindAllStringSubmatch(gemspec, -1)
+	if len(matches) != 1 || !rubyGemspecAllowlistTerms.MatchString(matches[0][1]) {
+		return false
+	}
+	expression := matches[0][1]
+	var paths []string
+	for _, quoted := range rubyGemspecPattern.FindAllStringSubmatch(expression, -1) {
+		paths = append(paths, quoted[1]+quoted[2])
+	}
+	for _, list := range regexp.MustCompile(`%w[\[(]([^\])]*)[\])]`).FindAllStringSubmatch(expression, -1) {
+		paths = append(paths, strings.Fields(list[1])...)
+	}
+	for _, pattern := range paths {
+		first, _, _ := strings.Cut(strings.TrimPrefix(pattern, "./"), "/")
+		names := []string{first}
+		if strings.HasPrefix(first, "{") && strings.HasSuffix(first, "}") {
+			names = strings.Split(strings.Trim(first, "{}"), ",")
+		}
+		for _, name := range names {
+			if name == "" || strings.HasPrefix(name, ".") || strings.ContainsAny(name, "*?[]{}") {
+				return false
+			}
+		}
+	}
+	return len(paths) > 0
 }
 
 func (rubyDiscovery) runtimeVariable(name string) bool {

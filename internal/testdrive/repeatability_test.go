@@ -3,6 +3,7 @@ package testdrive
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -136,7 +137,7 @@ func TestUnstableTestIdentitiesAreNotFlakiness(t *testing.T) {
 	require.Equal(t, "inconclusive", got.Status)
 	require.Equal(t, "unstable_test_identities", got.Code)
 	require.Contains(t, got.Reason, "test names change between runs")
-	require.Contains(t, got.Reason, "static descriptions")
+	require.Contains(t, got.Reason, "static description")
 	require.Contains(t, strings.Join(got.Differences, "\n"), "spec/omniai/chat/file_spec.rb › OmniAI::Chat::File#filename is expected to eql \"20261029-2450-1u5kul\"")
 	require.NotContains(t, strings.Join(got.Differences, "\n"), "#data works")
 
@@ -146,4 +147,25 @@ func TestUnstableTestIdentitiesAreNotFlakiness(t *testing.T) {
 	flakyAgain.Tests[1].Status, flakyAgain.ExitCode = "failed", 1
 	got = compareRepeatedRuns(flaky, flaky, flakyAgain, flaky, telemetry)
 	require.Equal(t, "varying_outcomes", got.Code)
+}
+
+// Every affected example is listed once, however many runs renamed it, so
+// all of them can be fixed in one pass (omniai has 9 examples, 36 names).
+func TestUnstableIdentitiesListEveryExampleOnce(t *testing.T) {
+	run := func(examples int, seed string) validationRun {
+		result := validationRun{root: "/repo"}
+		for i := range examples {
+			result.Tests = append(result.Tests, jestTest{File: "/repo/spec/file_spec.rb", Name: fmt.Sprintf("File#attribute%d is expected to eql \"20261029-%s-%d\"", i, seed, i), Status: "passed"})
+		}
+		return result
+	}
+	telemetry := func(validationRun) verdict { return verdict{Status: "compatible"} }
+	got := compareRepeatedRuns(run(9, "a1"), run(9, "b2"), run(9, "c3"), run(9, "d4"), telemetry)
+	require.Equal(t, "unstable_test_identities", got.Code)
+	require.Len(t, got.Differences, 9)
+	require.Contains(t, got.Reason, "9 examples (36 test names across the runs)")
+	require.Contains(t, got.Differences[0], "spec/file_spec.rb › File#attribute0 is expected to eql")
+	many := compareRepeatedRuns(run(60, "a1"), run(60, "b2"), run(60, "c3"), run(60, "d4"), telemetry)
+	require.Len(t, many.Differences, 51)
+	require.Contains(t, many.Differences[50], "and 10 more examples")
 }

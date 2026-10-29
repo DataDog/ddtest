@@ -796,6 +796,17 @@ func rubyBootstrapProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 	return ""
 }
 
+// rubyRakeOptions reads a rake invocation's RUBYOPT=... argument that
+// replaces the preload, and returns the options it sets.
+func rubyRakeOptions(command string) (string, bool) {
+	reason := rubyRakeOptionsProblem(command)
+	if reason == "" {
+		return "", false
+	}
+	_, options, _ := strings.Cut(reason, `RUBYOPT="$RUBYOPT `)
+	return strings.TrimSuffix(options, `".`), true
+}
+
 // rubyRakeOptionsProblem explains a rake invocation whose RUBYOPT=...
 // argument replaces the Datadog preload in the environment of the tests rake
 // runs, as in bundle exec rake RUBYOPT='--enable-frozen-string-literal'.
