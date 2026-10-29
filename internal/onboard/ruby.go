@@ -712,6 +712,9 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 					if setup != nil {
 						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem
 					}
+					if ruby == "" && engine == "" && job.ImageProblem != "" {
+						finding.Reason = rubyUnknownImageReason(provider, job.ImageProblem, setup != nil)
+					}
 					if conditionErr != nil || stepErr != nil || resolveErr != nil || actionErr != nil || resolution.Reason != "" {
 						reasons := []string{resolution.Reason}
 						for _, err := range []error{conditionErr, stepErr, resolveErr, actionErr} {
@@ -903,6 +906,15 @@ func rubyMissingSetupReason(provider ciProvider) string {
 		return "Select a static Ruby version and exact ruby-tracer-version in a Datadog action before this test step; validate other installs separately."
 	}
 	return "Run the " + provider.setupName() + " with an exact " + provider.setupInput("ruby-tracer-version") + " before this test command, in a job whose image selects a static Ruby version (such as ruby:3.3); validate other installs separately."
+}
+
+// rubyUnknownImageReason explains a job whose Ruby is unknown because its
+// provider could not resolve the container image, naming that cause.
+func rubyUnknownImageReason(provider ciProvider, problem string, configured bool) string {
+	if configured {
+		return "The " + provider.setupName() + " runs before this test command, but this job's Ruby version is unknown: " + problem + ". Validate this job's Ruby separately, or make its image select a static Ruby version (such as ruby:3.3)."
+	}
+	return rubyMissingSetupReason(provider) + " This job's Ruby version is unknown: " + problem + "."
 }
 
 // rubyImage matches official Ruby images (ruby:3.3, ruby:3.3.6-slim,

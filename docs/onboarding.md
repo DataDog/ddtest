@@ -80,8 +80,9 @@ review it before executing it if you have made further edits since apply.
 
 `onboard` and `testdrive` read one CI provider's configuration: GitHub Actions
 (`--ci-provider github`, `.github/workflows`), GitLab CI (`--ci-provider
-gitlab`, `.gitlab-ci.yml`) or CircleCI (`--ci-provider circleci`,
-`.circleci/config.yml`). The provider whose configuration exists is selected
+gitlab`, `.gitlab-ci.yml`), CircleCI (`--ci-provider circleci`,
+`.circleci/config.yml`) or Buildkite (`--ci-provider buildkite`,
+`buildkite.yml` and `.buildkite/`). The provider whose configuration exists is selected
 automatically; any other value is rejected with the list of supported
 providers. When several supported providers contain tests (documentation, lint and
 release tooling, such as `bundle exec yard doc`, does not count), ddtest asks which
@@ -90,7 +91,7 @@ one to configure before discovery, edits or validation (agents receive
 keep the selected `--ci-provider`. A language without setup support on the
 selected provider gets `ci_provider_unsupported` instead of instructions:
 JavaScript and Ruby support every provider, Python and Java GitHub Actions only.
-Other CI files (Jenkins, Buildkite and others) are never parsed: when
+Other CI files (Jenkins and others) are never parsed: when
 they mention the framework they are listed as outside this validation, and they
 never fail onboarding.
 
@@ -267,6 +268,146 @@ bundle and replaces `RUBYOPT`, so existing Ruby options are re-added after it
 through `$BASH_ENV`, and a `rake RUBYOPT=…` argument that would replace the
 preload is reported with the form that keeps it; Ruby 2.7 and 3.0 images get a `gem update --system` step,
 guarded by a `when` on the image where a matrix shares the job.
+
+### Buildkite
+
+Which repository file a Buildkite pipeline uploads is configured in the
+Buildkite UI, so ddtest reads every pipeline file: `buildkite.yml` (`.yaml`,
+`.json`), `buildkite/pipeline.yml` (`.yaml`, `.json`) and the YAML files under `.buildkite/` and `.buildkite/pipelines/`
+that define `steps` (in the mapping or the legacy list form; Docker Compose
+files, recognized by top-level `services` or `version` without `steps`, hooks
+and anchor-only files are not pipelines). Each command step
+becomes one job per matrix combination, named by its `label` (or `key`) under
+its `group`s, and each top-level shell statement of its `command`/`commands`
+(a string, a list or a block) one step. A step's commands share one shell, so
+literal `export`, assignments and `cd` carry into later statements of the
+step; every Buildkite step starts a fresh shell, possibly on another agent, so
+nothing carries across steps. ddtest reads the pipeline and step `env`, the
+`image` attribute, `matrix` (a list of values for `{{matrix}}`, or `setup`
+dimensions for `{{matrix.name}}`, with `adjustments` that add or `skip`
+combinations; values reach labels, commands, env and plugins), `if`
+(decided only when every operand is a literal: `false`, `"a" == "b"`; build
+values, `build.env()`, regular expressions and `includes` keep the step as a
+possible CI path), `skip`, `branches` (a possible path), groups, YAML anchors
+and merge keys; `wait`, `block` and `input` steps only pause the pipeline.
+`buildkite-agent pipeline upload` interpolates the file before any step runs:
+`$$NAME` and `\$NAME` are read when the step runs, the top-level `env` is known,
+variables that describe the build (`$BUILDKITE_BRANCH`, `$BUILDKITE_COMMIT`,
+`$BUILDKITE_BUILD_NUMBER`, `$BUILDKITE_PIPELINE_SLUG` and the like) read the same
+value in every job, and any other `$NAME` (including the step's own `env` and
+agent or job variables such as `$BUILDKITE_BUILD_CHECKOUT_PATH` or
+`$BUILDKITE_PARALLEL_JOB`) is replaced with a value of the upload step that ddtest cannot know, so a
+command reading one is unresolved and an env value reading one is replayed as
+unknown. For a known variable, `${NAME:-default}` reads the default when the
+value is empty and `${NAME-default}` keeps an empty value, as upload does; an
+unknown variable stays unknown with either. Upload interpolates the file
+once, so a pipeline `image: $$NAME` stays the literal `$NAME`, an image ddtest
+cannot resolve. A container receives only the environment its plugin passes: the
+plugin's `environment` (`NAME=value` as written, a bare `NAME` with the
+pipeline's value) over the Compose service's `environment` (for `DD_API_KEY`
+too: a plugin listing it decides whether the key passes), plus, with
+`propagate-environment: true`, the pipeline's `env`. Windows agents are read
+from the effective `agents` (the step's keys override the pipeline's), after
+upload interpolation; a target reading a variable ddtest cannot know may
+select Windows agents, so the step is unresolved. The
+docker plugin runs the commands in its `image` with `/bin/sh` (or its
+`shell`) at the mounted checkout, the docker-compose plugin in its `run` service's image from
+the Compose file (`config`, default `docker-compose.yml`, with matrix values;
+`${NAME:-default}` in the image reads the step's env, and a variable it does not
+set, which the agent or a `.env` file may supply, leaves the image unknown; a
+service with `build` (a context, or `context`, `dockerfile`,
+`dockerfile_inline`, `args` and `target`) runs in the image its Dockerfile's
+final stage, or `target`, builds `FROM`, followed through stage aliases, which
+then selects the runtime and is checked for the setup like a written image; a
+`FROM` reading a build argument without a literal default, or one the
+Compose `args` or the plugin's `args` override, `FROM scratch`, a remote
+context or a Dockerfile outside the repository leaves the image unknown with
+that reason; its
+`working_dir`, or else the Dockerfile's last `WORKDIR`, maps back into the
+checkout through the volume mounting a repository directory (relative to the
+Compose file, as Compose reads it) or, without one, through the
+Dockerfile's `COPY . <destination>` of the build context, and one outside a
+mounted checkout is unresolved), and steps without either run on
+the agent host, whose runtime ddtest cannot know: the runtime check reports
+them for review instead of certifying them. Plugins that only fetch secrets,
+artifacts or caches, log in to registries or annotate results run no tests
+and are reported, not blockers: `artifacts`, `cache`, `docker-login`, `ecr`,
+`junit-annotate`, `test-collector`, `secrets`, `vault-secrets`,
+`aws-assume-role-with-web-identity`, `seek-oss/aws-sm` and
+`bugcrowd/test-summary` (the list is `buildkiteNonTestPlugins`), as are
+docker-compose steps that only build or push images (whose commands, if any,
+run on the agent host, not in a container) and `buildkite-agent
+artifact`, `annotate` and `meta-data` commands without command substitutions.
+An upload of pipeline files ddtest reads (`buildkite-agent pipeline upload` with
+literal paths, or without arguments, where exactly one of Buildkite's default
+files must exist), resolved from the step's working directory, is reported, since those files are read as pipelines. Anything
+ddtest cannot read locally stays an unresolved blocker: `trigger` steps,
+every other `buildkite-agent pipeline upload` (generated or piped steps,
+files ddtest does not read, `--no-interpolation`), every other plugin (or one
+named by a variable), a step that runs a container's own command, the docker
+plugin's or Compose service's `entrypoint` (other than an emptied one or a
+known passthrough such as `tini --` or `docker-entrypoint.sh`), `shell:
+false` and `mount-checkout: false`, matrices it
+cannot expand or that exceed 200 jobs, and Windows agents (also when a matrix
+value selects them).
+
+There is no Datadog Buildkite plugin: CI setup runs Datadog's installer
+(`install_test_visibility_v15.sh` from `install.datadoghq.com`, the one the
+GitLab script and the CircleCI orb wrap), pinned with its SHA256 in
+`ci_provider_buildkite_setup.go`. ddtest's setup snippet, written as a block
+scalar with every `$` escaped as `$$`, runs in the test step itself, before
+the test command: it downloads the installer with curl or wget, checks its
+SHA256 (`sha256sum`, or `shasum` on macOS agents), runs it with Bash with
+`DD_CIVISIBILITY_INSTRUMENTATION_LANGUAGES`, an exact
+`DD_SET_TRACER_VERSION_<LANGUAGE>`, `DD_SITE` and
+`DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER=buildkite`, and exports the
+`KEY=VALUE` lines it prints (`NODE_OPTIONS` with the dd-trace preload and the
+ESM loader path, or `RUBYOPT`, plus `DD_CIVISIBILITY_ENABLED`,
+`DD_CIVISIBILITY_AGENTLESS_ENABLED` and the installed versions) into the
+step's shell. It is guarded by `if [ -n "${DD_API_KEY:-}" ]`, and every command
+that may fail is a condition, so a step without the key or whose install
+fails logs that and runs its tests untraced. The setup is complete when, in
+every step that runs the tests, the snippet (guarded, or its two statements
+without the guard) runs before the first test command in exactly ddtest's
+shape, with the pinned installer and checksum, a language token naming the
+language, an exact tracer release and a `DD_SITE` matching the selected
+site. A statement that runs the installer in any other shape stays an
+unresolved command; an unescaped `$`, a `DD_API_KEY` written into the pipeline
+or a plugin's `environment`, one set to an empty value (`DD_API_KEY=`), and a
+container that does not receive `DD_API_KEY` (only a bare name, or a Compose
+`${DD_API_KEY}` reference, passes it through; `propagate-environment` passes
+only a key set in the pipeline's environment, such as in the Buildkite UI,
+never one an agent hook or secrets plugin exports, which is noted), and an
+earlier command of the step that clears or writes `DD_API_KEY` are reported. A person provides `DD_API_KEY` from an agent
+environment hook, a secrets plugin or the pipeline's environment in the
+Buildkite UI. The installer needs Bash and curl or wget, so steps on images
+known to lack them (Alpine variants, BusyBox, distroless; official `-slim`
+images unless an earlier command installs curl; for an image built from a
+Dockerfile, unless one of its `RUN` instructions installs bash, or curl or
+wget, with `apt-get`, `apt`, `apk`, `yum`, `dnf`, `microdnf` or `zypper`) or
+on images ddtest cannot resolve are refused with that reason, which names
+the Dockerfile and the fix (install curl in it, or build from the full
+image); the setup instructions name those steps before the snippet is
+written, since changing an image needs the person's approval. The agent host
+is assumed to have them. A job whose Ruby or Node is unknown because its image
+cannot be resolved is reported with that cause, and the release of manual
+setup edits for steps ddtest could not resolve is the newest one every known
+CI Node runs (`DD_SET_TRACER_VERSION_JS="5.133.0"` on `node:18`).
+
+`onboard --apply` inserts the snippet before the first JavaScript test command
+of each test step: a new commands entry before a listed command, lines inside
+a `command: |` block before the test statement, or a list holding the snippet
+and the command for a single `command:` string. It adds `DD_API_KEY` to the
+docker or docker-compose plugin's `environment` list (or adds the list) so the
+key reaches the container, and keeps every other line. Commands shared through
+anchors (or a plugin configuration shared that way), folded commands, a test
+statement after another in one string, and commands a step that does not run
+the same tests also runs are refused; matrix combinations share one insertion.
+Applying again changes nothing. Ruby, Cucumber and WebdriverIO setup is applied
+by the coding agent from `onboard --agent` instructions; for Ruby the installer
+adds datadog-ci to the CI bundle and replaces `RUBYOPT`, so existing Ruby
+options are re-added after it, and Ruby 2.7 and 3.0 images get a `gem update
+--system` command, guarded on the image where a matrix shares the step.
 
 ## Coverage and local developer commands
 

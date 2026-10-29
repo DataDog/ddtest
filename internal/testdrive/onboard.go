@@ -151,7 +151,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.NextAction = "run_command"
 				result.NextCommand = onboard.DDTestCommand("onboard", "--framework", name, "--instructions")
 				result.ResumeCommand, result.RequiredInput = nil, nil
-				result.Needs = "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it; do not rewrite CI or package scripts only so ddtest can parse them. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
+				result.Needs = scopeUnresolvedNeeds(result.Needs)
 			case "setup_dependencies_missing", "project_dependencies_missing":
 				result.NextAction = "run_command"
 			case "ci_edit_required":
@@ -373,7 +373,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			if !options.ExplicitVersion && t.projectTracer == "" {
 				if version := t.ciRuntimeTracer(ctx); version != "" {
 					t.setPlanTracer(plan, version)
-					needs += " For manual CI edits use js-tracer-version: " + version + " (every detected CI Node runtime supports it) and pass --tracer-version " + version + " to validation."
+					needs += manualCITracerPrefix + onboard.CIProviderTracerSetting("js", version) + " (every detected CI Node runtime supports it) and pass --tracer-version " + version + " to validation."
 				}
 			}
 			return fail("needs_input", "scope_unresolved", reason, needs)
@@ -1281,6 +1281,20 @@ func refreshScopeCheck(checks []onboard.WorkflowCheck, scope *onboard.Validation
 
 // setPlanTracer records the selected tracer and recomputes the known
 // limitations, which depend on it: a release with a tracer fix lifts them.
+// manualCITracerPrefix starts the sentence naming the tracer release manual
+// CI edits pin.
+const manualCITracerPrefix = " For manual CI edits use "
+
+// scopeUnresolvedNeeds sends unresolved CI to the manual instructions,
+// keeping the tracer release every CI Node runs that prior named for them.
+func scopeUnresolvedNeeds(prior string) string {
+	needs := "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it; do not rewrite CI or package scripts only so ddtest can parse them. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
+	if _, tracer, found := strings.Cut(prior, manualCITracerPrefix); found {
+		needs += manualCITracerPrefix + tracer
+	}
+	return needs
+}
+
 func (t *Testdrive) setPlanTracer(plan *onboard.ExecutionPlan, tracer string) {
 	plan.Tracer = tracer
 	plan.KnownLimitations = installedFeatureLimitations(t.repositoryRoot, plan.Framework, tracer)

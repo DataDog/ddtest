@@ -1,0 +1,22 @@
+# From buildkite/rspec-junit-example (MIT), .buildkite/pipeline.yml, with
+# the JUnit formatter (a gem this fixture does not bundle) and the JUnit
+# annotation and deploy steps (repository scripts) removed, and the docker
+# plugin's ruby:2.4 image, which datadog-ci does not support, replaced by a
+# matrix of Ruby 3.0 and 3.3.
+image: "sorchaabel/ruby-pipeline-example:1.0"
+steps:
+  - label: ":rspec: {{matrix}}"
+    artifact_paths: "tmp/rspec-*.xml"
+    commands:
+      - "bundle"
+      - "rspec --format progress"
+    matrix:
+      - "3.0"
+      - "3.3"
+    plugins:
+      - docker#v2.0.0:
+          image: "ruby:{{matrix}}"
+          workdir: /app
+
+  - wait:
+    continue_on_failure: true
