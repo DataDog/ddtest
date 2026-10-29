@@ -166,9 +166,11 @@ func TestPythonReviewAllSelectsEachCommandEnvironment(t *testing.T) {
 				}
 				metadata, err := json.Marshal(map[string]string{"Pytest": "8.4.2", "Python": version, "Tracer": "4.16.0", "RequiresPython": ">=3.9", "Executable": filepath.Join(root, command)})
 				require.NoError(t, err)
+				availability, err := json.Marshal(map[string]any{"pytest": true, "version": version, "executable": filepath.Join(root, command)})
+				require.NoError(t, err)
 				file := filepath.Join(root, command)
 				require.NoError(t, os.MkdirAll(filepath.Dir(file), 0755))
-				requireWriteFile(t, file, "#!/bin/sh\nfor last; do :; done\nprintf '%s' '"+string(metadata)+"' > \"$last\"\n")
+				requireWriteFile(t, file, "#!/bin/sh\nfor last; do :; done\ncase \"$*\" in\n*'result = {\"executable\"'*) printf '%s' '"+string(availability)+"' > \"$last\";;\n*) printf '%s' '"+string(metadata)+"' > \"$last\";;\nesac\n")
 				require.NoError(t, os.Chmod(file, 0755))
 			}
 			var steps strings.Builder

@@ -41,6 +41,10 @@ test_ddtest_validation_probe.__test__ = True
 func (t *Testdrive) checkPytestPreflight(ctx context.Context, output io.Writer, result *validationResult) error {
 	check := &preflightCheck{Runtime: t.environmentInfo.Version, Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "Python tracer selection was not resolved."}}
 	result.Preflight = check
+	if t.environmentFailure != nil {
+		check.Verdict = verdict{Status: "incompatible", Reason: t.environmentFailure.Context}
+		return fmt.Errorf("pytest preflight: %s", t.environmentFailure.Context)
+	}
 	addopts := os.Getenv("PYTEST_ADDOPTS")
 	if configured, ok := t.configurationEnvironment["PYTEST_ADDOPTS"]; ok {
 		addopts = configured
@@ -60,6 +64,7 @@ func (t *Testdrive) checkPytestPreflight(ctx context.Context, output io.Writer, 
 	}
 	var metadata struct{ Pytest, Python, Tracer, RequiresPython, Executable, Directory string }
 	const script = `import importlib.metadata as m, json, os, pathlib, platform, sys
+import pytest
 result = {"pytest": m.version("pytest"), "python": platform.python_version(), "executable": sys.executable, "directory": os.getcwd()}
 try:
     result.update(tracer=m.version("ddtrace"), requiresPython=m.metadata("ddtrace").get("Requires-Python", ""))

@@ -52,6 +52,7 @@ func TestPythonValidationProbesRespectTimeout(t *testing.T) {
 	drive := &Testdrive{repositoryRoot: root, command: python, args: []string{"-m", "pytest"}, commandTimeout: 100 * time.Millisecond}
 	for _, probe := range []string{"initial", "refresh", "preflight", "verification"} {
 		t.Run(probe, func(t *testing.T) {
+			drive.environmentFailure = nil
 			started := time.Now()
 			var err error
 			switch probe {
@@ -190,4 +191,29 @@ func TestPytestNestedCheckKeepsCheckoutCIFindings(t *testing.T) {
 	require.NotEqual(t, "not applicable", result.CIRuntime.Status)
 	require.NotEqual(t, "compatible", result.CIRuntime.Status)
 	require.Len(t, result.CIRuntime.Jobs, 1)
+}
+
+func TestPytestCheckOnlyRejectsBrokenImport(t *testing.T) {
+	python := feedbackPython(t)
+	for _, mode := range []string{"direct preflight", "check only"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			requireWriteFile(t, "pytest.ini", "[pytest]\n")
+			requireWriteFile(t, "pytest.py", "raise ImportError('broken pytest dependency')\n")
+			drive := &Testdrive{repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()), command: python, args: []string{"-m", "pytest"}, checkOnly: true}
+			if mode == "direct preflight" {
+				result := validationResult{}
+				require.ErrorContains(t, drive.checkPytestPreflight(t.Context(), io.Discard, &result), "broken pytest dependency")
+				require.NotEqual(t, "compatible", result.Preflight.Verdict.Status)
+			} else {
+				drive.preflight = drive.frameworkPreflight()
+				require.Error(t, drive.Run(t.Context(), io.Discard))
+				result := readValidationReport(t, root)
+				require.False(t, result.ChecksPassed)
+				require.False(t, result.Success)
+				require.Contains(t, result.Error, "broken pytest dependency")
+			}
+		})
+	}
 }
