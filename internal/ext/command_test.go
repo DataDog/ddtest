@@ -422,3 +422,16 @@ func TestApplyEnvMapUnsetsAnInheritedVariable(t *testing.T) {
 		t.Fatalf("other variables must be kept: %v", cmd.Env)
 	}
 }
+
+func TestOverridesEnvIgnoresCaseOnlyOnWindows(t *testing.T) {
+	envMap := map[string]string{"GITHUB_TOKEN": UnsetEnvironment}
+	if !overridesEnv(envMap, "Github_Token", true) {
+		t.Fatal("on Windows, Github_Token is the GITHUB_TOKEN the map unsets")
+	}
+	if overridesEnv(envMap, "Github_Token", false) {
+		t.Fatal("elsewhere, variable names are case-sensitive")
+	}
+	if !overridesEnv(envMap, "GITHUB_TOKEN", false) || overridesEnv(envMap, "OTHER", true) {
+		t.Fatal("exact names override; other names don't")
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -82,7 +83,7 @@ func applyEnvMap(cmd *exec.Cmd, envMap map[string]string) {
 		cmd.Env = make([]string, 0, len(os.Environ())+len(envMap))
 		for _, entry := range os.Environ() {
 			key, _, _ := strings.Cut(entry, "=")
-			if _, overridden := envMap[key]; !overridden {
+			if !overridesEnv(envMap, key, runtime.GOOS == "windows") {
 				cmd.Env = append(cmd.Env, entry)
 			}
 		}
@@ -92,6 +93,23 @@ func applyEnvMap(cmd *exec.Cmd, envMap map[string]string) {
 			}
 		}
 	}
+}
+
+// overridesEnv reports whether envMap sets or unsets an inherited variable.
+// Windows variable names are case-insensitive, so Github_Token there is the
+// GITHUB_TOKEN a map may unset.
+func overridesEnv(envMap map[string]string, key string, caseInsensitive bool) bool {
+	if _, overridden := envMap[key]; overridden {
+		return true
+	}
+	if caseInsensitive {
+		for name := range envMap {
+			if strings.EqualFold(name, key) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func prepareCommand(cmd *exec.Cmd) {
