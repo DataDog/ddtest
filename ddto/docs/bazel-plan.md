@@ -32,17 +32,21 @@ depends on are merged.
 
 Read at `eceed1a`, 2026-10-29:
 
-- `dd_topt_go_test` transitions a hidden `go_test` to one of four vendored
-  rules_go trees (`third_party/rgo`, 0.60.0 to 0.63.0, 54 MB). Patches in
-  `third_party/rules_go_orchestrion` run Orchestrion in the stdlib, synthetic
-  test main and link actions.
+- **The Orchestrion patches.** The consumer's rules_go carries the patches in
+  `third_party/rules_go_orchestrion`. They come either from one of the four
+  vendored rules_go trees (`third_party/rgo`, 0.60.0 to 0.63.0, 54 MB) or from
+  the consumer's own patched rules_go. They run Orchestrion in the stdlib,
+  synthetic test main and link actions.
+- **The transition.** `dd_topt_go_test` turns those patches on for a hidden
+  `go_test`, through `@rules_go//go/private/orchestrion:enabled` and `:mode`
+  (`modules/go/topt_go_orchestrion.bzl`).
 - Orchestrion is built from source. In the rule's fixture, a cold build took
   249 s, 153 s of them in the Orchestrion bootstrap
   (`docs/go_orchestrion_maintainer_state.md`).
 - `orchestrion_mode = "test_optimization"`, the mode used in pilots, supports
   standard `testing` only, without Testify. The default `general` mode keeps
-  Orchestrion's generic behavior. Both need pin files (`go.mod`,
-  `orchestrion.tool.go`, `orchestrion.yml`).
+  Orchestrion's generic behavior. Both need pin files: `go.mod` and `go.sum`
+  in `test_optimization` mode, plus `orchestrion.tool.go` in `general` mode.
 - A repository rule syncs settings, known tests and test management into a
   manifest with `cache/http` JSON files. Tests get no network and no
   credentials, and they write payload files. A doctor validates the files and
@@ -183,7 +187,7 @@ rules_test_optimization's module extension:
    (`ddtest-<os>-<arch>`, checked against `SHA256SUMS`). This executable runs
    the next step.
 2. For each exec platform:
-   - downloads the official Go SDK, checked against the go.dev checksum;
+   - takes the workspace's own Go SDK, or downloads the official one;
    - downloads that platform's ddtest executable;
    - runs `ddtest instrument bazel <dir>`, which makes that executable the
      SDK's `compile`.
@@ -196,8 +200,8 @@ Target platforms reuse those SDKs by cross-compiling, as rules_go does with
 its own (`go/private/go_toolchain.bzl`). Only exec platforms need an
 instrumented SDK.
 
-rules_test_optimization's `MODULE.bazel` registers those toolchains. The
-customer's `MODULE.bazel` has no SDK lines. rules_go's own toolchain
+rules_test_optimization's `MODULE.bazel` registers those toolchains, so the
+customer registers no extra SDK. rules_go's own toolchain
 declarations for a wrapped SDK also match the empty `sdk_name`
 (`match_all_sdks` in `go/private/go_toolchain.bzl`), so they would make the
 instrumented SDK the default for every target; that is why registration goes
@@ -206,10 +210,21 @@ through toolchains of our own.
 The new major version keeps WORKSPACE mode: a repository macro does the same
 and registers the toolchains.
 
-The SDK's Go version follows rules_go's `go_sdk.from_file`: the root module's
-`go.mod` `toolchain` directive, then its `go` directive
-(`go/private/go_mod.bzl`). An extension attribute overrides it for workspaces
-that register their SDK another way.
+**The base SDK.** The instrumented SDK must match the SDK the workspace
+already uses: its version, download mirrors, checksums, patches and
+`GOEXPERIMENT` values (`go_wrap_sdk` accepts `experiments`).
+
+- **Named SDK.** A workspace that registers its SDK with
+  `go_sdk.download(name = ...)` can `use_repo` that repository and give the
+  extension its `ROOT` label. The generator then copies that SDK, and the
+  extension declares the same experiments.
+- **Default.** Without one, the extension downloads the official SDK. Its
+  version follows rules_go's `go_sdk.from_file`: the root module's `go.mod`
+  `toolchain` directive, then its `go` directive (`go/private/go_mod.bzl`).
+- **Laziness.** Builds without the instrumented configuration must not fetch
+  the SDK or ddtest, nor change any ordinary action. Toolchain resolution
+  only fetches the repository of a toolchain that it selects, and
+  `sdk_name` keeps ours unselected; the full suites check this.
 
 | rules_go API | Status |
 | --- | --- |
@@ -380,6 +395,30 @@ entries.
    the cache in agent mode without one; the requirement applies to agentless
    mode, and the page needs to say so.
 
+7. **Other transitions.** A workspace can already transition Go SDKs, for
+   example with `go_cross_binary(sdk_version = ...)`, transition platforms,
+   or patch rules_go to restore the original SDK across non-Go edges.
+   Keeping the test's own `data` outside the transition is not enough.
+   Nested data, exec tools and `nogo` analyzers must keep the SDK they would
+   have had, or at least still build and run. The full suites test those
+   combinations.
+8. **Patched rules_go.** A workspace may carry its own rules_go patches for
+   linking, build metadata or reproducibility. The rule needs no fork of its
+   own, but the internals it relies on (the compiler path, the stdlib
+   `-toolexec` and the SDK `BUILD` template) must survive those patches.
+9. **The metadata contract.** Today the rule's metadata producer resolves an
+   Orchestrion tool label and emits `bazel.go.orchestrion.enabled` and
+   `bazel.go.orchestrion.mode` (`modules/go/topt_go_infer.bzl`), and
+   consumer validators check those values. The major version defines
+   replacement metadata for the ddtest instrumentation. It keeps
+   `bazel_target_metadata.json`, the public target identity, the service
+   and repository identity, the import path and the payload-selection
+   metadata.
+10. **dd-trace-go v1.** dd-trace-go v1.74 is built on v2: its
+    `ddtrace/tracer` imports the v2 tracer. v2's guards therefore cover it
+    when the selected v2 is in the window. Older v1 releases are not
+    covered.
+
 ## Phases
 
 | Phase | Repository | Work | Done when |
@@ -424,9 +463,10 @@ tested in ddtest without Bazel, with unit tests checked by mutation.
 - **`ddtest instrument bazel <dir>`** as described above, rejecting Bazel
   commands.
 - **The Starlark checks** in [Validating the Starlark](#validating-the-starlark).
-- **A basic Bazel test in ddtest's CI,** on Linux and macOS, in Bzlmod and
-  WORKSPACE modes. Its fixture covers:
-  - standard tests, Testify, goleak and dd-trace-go;
+- **A basic Bazel test in ddtest's CI,** on Linux and macOS, with Go 1.25 to
+  1.27, in Bzlmod and WORKSPACE modes. The spikes covered only Go 1.25 and
+  1.26. Its fixture covers:
+  - standard tests, Testify, goleak, dd-trace-go v2 and v1.74;
   - a plain binary that must stay unmodified;
   - an exec tool that imports `testing`;
   - an event comparison with the same packages run through
@@ -459,19 +499,36 @@ The new major version, built on the release candidate:
     modes;
   - every platform, remote execution, and a host that differs from the exec
     platform;
-  - the doctor and the uploader dry run with `--validate-enrichment`;
+  - a named SDK with its own mirrors, patches and experiments;
+  - other SDK and platform transitions, nested data, exec tools and `nogo`;
+  - builds without the instrumented configuration: nothing fetched, no
+    metadata requests and unchanged action inputs;
+  - the replacement metadata;
+  - the doctor and the uploader dry run with `--validate-enrichment`. Checks
+    read their reports, because a runner can return the tests' exit status
+    even when post-processing fails;
   - a comparison of the payloads with today's Orchestrion path on the same
     targets, before that path is removed.
 
 ### Phase 4: internal dogfooding and measurements
 
-Run dd-source on the release candidate and the new major version, and
-compare with today's Orchestrion path:
+Run dd-source on the release candidate and the new major version.
 
-- cold and warm build time;
-- the cost of the split cache;
-- the ddtest executable's share of compile time;
-- payload enrichment.
+- **Its own migration.** dd-source migrates in step with the major version.
+  - Its central test wrapper drops the removed attributes and the
+    Orchestrion-only dependencies.
+  - Its validator moves to the replacement metadata.
+  - It keeps its public test labels, eligibility rules, tags and named
+    configuration.
+- **Measurements and acceptance.** Compare with today's Orchestrion path:
+  - cold and warm builds;
+  - a plain build followed by an instrumented one, including the stdlib and
+    analyzer work, and with remote execution;
+  - remote cache volume;
+  - the ddtest executable's share of compile time;
+  - payload enrichment.
+
+  The split cache is accepted on these numbers, not before.
 
 ### Phase 5: releases
 
@@ -487,9 +544,9 @@ to that release.
 
 ## Open questions
 
-1. **dd-source.** Does the plan fit what dd-source already runs with
-   rules_test_optimization? The user's thread on its rollout gets this
-   question before phase 3 starts.
+None. The dd-source rollout thread reviewed the plan on 2026-10-29. Open
+problems 7 to 10, the base SDK, the laziness checks and phase 4's consumer
+migration and acceptance criteria come from that review.
 
 ## Out of scope
 
