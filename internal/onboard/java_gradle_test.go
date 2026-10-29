@@ -106,3 +106,13 @@ func TestJavaCIConfigurationNamesTheBuildToolOfAStepUnderReview(t *testing.T) {
 	require.Len(t, result.Jobs, 1)
 	require.True(t, strings.HasPrefix(result.Jobs[0].Reason, "Gradle CI scope needs review: cannot statically resolve CI condition"), result.Jobs[0].Reason)
 }
+
+func TestJavaGradleTestExclusionKeepsOtherTestTasksInScope(t *testing.T) {
+	files := gradleFixture()
+	files["app/build.gradle.kts"] += "val integrationTest = tasks.register<Test>(\"integrationTest\")\ntasks.check { dependsOn(integrationTest) }\n"
+	root := javaWorkflowFixture(t, "", files)
+	resolution := javaStep(t, root, "./gradlew check -x test")
+	require.True(t, resolution.Matched, "check still runs integrationTest: %s", resolution.Reason)
+	require.Equal(t, "./gradlew check -x test", resolution.Tests[0].Command)
+	require.True(t, javaStep(t, javaWorkflowFixture(t, "", gradleFixture()), "./gradlew check -x test").Review, "without other test tasks, excluding test skips the tests")
+}

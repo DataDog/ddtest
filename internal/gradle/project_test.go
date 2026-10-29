@@ -138,3 +138,43 @@ func TestProjectsPrefersGroovyFilesLikeGradle(t *testing.T) {
 	require.Equal(t, filepath.Join("app", "build.gradle"), projects[1].BuildFile)
 	require.Equal(t, []string{"testng"}, projects[1].Frameworks())
 }
+
+func TestProjectsStayInsideTheRepositoryThroughSymlinks(t *testing.T) {
+	outside := t.TempDir()
+	writeFile(t, outside, "build.gradle", "dependencies { testImplementation 'org.testng:testng:7.10.2' }\n")
+	root := t.TempDir()
+	writeFile(t, root, "settings.gradle", "include 'app'\nproject(':app').projectDir = file('linked')\n")
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "linked")))
+	_, err := Projects(root, ".")
+	require.ErrorContains(t, err, "leaves the repository through a symlink")
+	// A symlink to a directory inside the checkout is read.
+	writeFile(t, root, "real/app/build.gradle", "")
+	require.NoError(t, os.Remove(filepath.Join(root, "linked")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "real", "app"), filepath.Join(root, "linked")))
+	_, err = Projects(root, ".")
+	require.NoError(t, err)
+}
+
+func TestOtherTestTasks(t *testing.T) {
+	for name, build := range map[string]string{
+		"Kotlin registration": `tasks.register<Test>("integrationTest") { }`,
+		"Groovy task":         `task integrationTest(type: Test) { }`,
+		"register with class": `tasks.register("integrationTest", Test) { }`,
+		"test suites":         "testing {\n    suites {\n        val integrationTest by registering(JvmTestSuite::class)\n    }\n}",
+	} {
+		root := t.TempDir()
+		writeFile(t, root, "settings.gradle", "include 'app'\n")
+		writeFile(t, root, "app/build.gradle.kts", build)
+		projects, err := Projects(root, ".")
+		require.NoError(t, err)
+		require.True(t, OtherTestTasks(root, ".", projects), name)
+	}
+	root := t.TempDir()
+	writeFile(t, root, "settings.gradle", "include 'app'\n")
+	writeFile(t, root, "app/build.gradle", "tasks.withType(Test) { useJUnitPlatform() }\n")
+	projects, err := Projects(root, ".")
+	require.NoError(t, err)
+	require.False(t, OtherTestTasks(root, ".", projects), "configuring test tasks declares none")
+	writeFile(t, root, "buildSrc/src/main/kotlin/conventions.gradle.kts", "")
+	require.True(t, OtherTestTasks(root, ".", projects), "convention plugins ddtest does not read may declare some")
+}

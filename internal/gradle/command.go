@@ -114,7 +114,8 @@ func IsTestCommand(words []string) bool {
 // SkipsTests reports whether a command excludes test while requesting only
 // tasks that run it through their dependencies, as in build -x test. Only the
 // unqualified selector test excludes every project's test task; :app:test
-// excludes one project's.
+// excludes one project's. A build whose lifecycle tasks run other test tasks
+// still runs them; see OtherTestTasks.
 func SkipsTests(args []string) bool {
 	if !slices.Contains(excluded(args), "test") {
 		return false

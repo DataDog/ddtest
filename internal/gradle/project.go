@@ -108,8 +108,8 @@ func Projects(root, build string) ([]Project, error) {
 	projects := make([]Project, 0, len(paths)+1)
 	for _, path := range append([]string{":"}, paths...) {
 		directory := filepath.Join(build, directories[path])
-		if !filepath.IsLocal(directory) && directory != "." {
-			return nil, fmt.Errorf("gradle project %s leaves the repository: %s", path, directory)
+		if err := insideRoot(root, directory); err != nil {
+			return nil, fmt.Errorf("gradle project %s %w", path, err)
 		}
 		project := Project{Path: path, Directory: directory}
 		for _, name := range BuildFiles {
@@ -128,6 +128,57 @@ func Projects(root, build string) ([]Project, error) {
 		projects = append(projects, project)
 	}
 	return projects, nil
+}
+
+// insideRoot checks that directory, relative to root, stays inside root once
+// symlinks resolve. A directory that does not exist reads no build file.
+func insideRoot(root, directory string) error {
+	if !filepath.IsLocal(directory) && directory != "." {
+		return fmt.Errorf("leaves the repository: %s", directory)
+	}
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(root, directory))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if relative, err := filepath.Rel(canonical, resolved); err != nil || !filepath.IsLocal(relative) && relative != "." {
+		return fmt.Errorf("leaves the repository through a symlink: %s", directory)
+	}
+	return nil
+}
+
+// otherTestTask declares a Test task besides test, or a JVM test suite, as
+// tasks.register<Test>("integrationTest"), task it(type: Test) or
+// testing { suites { … } }.
+var otherTestTask = regexp.MustCompile(`type\s*:\s*Test\b|<Test>|\bTest::class\b|,\s*Test\s*[,)]|\bsuites\s*\{`)
+
+// OtherTestTasks reports whether the build may have test tasks besides
+// test, which a lifecycle task such as check can run even with -x test: a
+// project declares one, or build logic ddtest does not read, such as buildSrc
+// or an included build, may.
+func OtherTestTasks(root, build string, projects []Project) bool {
+	if info, err := os.Stat(filepath.Join(root, build, "buildSrc")); err == nil && info.IsDir() {
+		return true
+	}
+	if settings, err := readFirst(root, build, SettingsFiles); err != nil || strings.Contains(settings, "includeBuild") {
+		return true
+	}
+	for _, project := range projects {
+		if project.BuildFile == "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, project.BuildFile))
+		if err != nil || otherTestTask.MatchString(stripComments(string(data))) {
+			return true
+		}
+	}
+	return false
 }
 
 // readFirst reads the first of names in directory that exists; empty when none does.

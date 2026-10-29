@@ -89,8 +89,6 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		return unresolvedJavaWrapper(root, workflow, job, step, parts, framework)
 	case len(parts) != 1:
 		return unresolvedCommand("Gradle test step requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
-	case gradle.SkipsTests(tests[0][1:]):
-		return commandResolution{Review: true, Reason: "Gradle step excludes the test task, so it is outside " + framework + " test scope: " + step.Run}
 	}
 	words := tests[0]
 	invoked, reason := gradleInvokedDirectory(directory, words[1:])
@@ -104,6 +102,11 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 	projects, err := gradle.Projects(root, build)
 	if err != nil {
 		return unresolvedCommand("Gradle build could not be read statically, so the projects this step tests are unknown: " + err.Error())
+	}
+	// With test excluded, check or build still runs the build's other test
+	// tasks, such as an integrationTest wired to check.
+	if gradle.SkipsTests(words[1:]) && !gradle.OtherTestTasks(root, build, projects) {
+		return commandResolution{Review: true, Reason: "Gradle step excludes the test task, so it is outside " + framework + " test scope: " + step.Run}
 	}
 	validated, omitted := gradle.TestInvocation(words[1:])
 	selected := shellquote.Join(append([]string{words[0]}, validated...)...)
