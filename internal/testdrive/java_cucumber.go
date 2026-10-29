@@ -13,7 +13,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/DataDog/ddtest/internal/maven"
 )
 
 // javaCucumberFeature is the probe feature, classpath:ddtest/DdtestValidation.feature.
@@ -25,24 +28,59 @@ const javaCucumberFeature = `Feature: ` + javaProbeClass + `
     When the ddtest validation probe runs
 `
 
-// javaCucumberSteps is the probe's step definition, javaProbeSource as a
-// Cucumber step in the project's glue package.
-func javaCucumberSteps(glue string) string {
-	return `package ` + glue + `;
-
-public class DdtestValidationSteps {
-    @io.cucumber.java.en.When("the ddtest validation probe runs")
-    public void ddtestProbe() throws Exception {
-        java.nio.file.Path state = java.nio.file.Paths.get(System.getenv("DDTEST_PROBE_STATE"));
+// javaCucumberProbeBody records each execution and fails as DDTEST_PROBE_MODE
+// asks, as javaProbeSource does.
+const javaCucumberProbeBody = `        java.nio.file.Path state = java.nio.file.Paths.get(System.getenv("DDTEST_PROBE_STATE"));
         java.nio.file.Files.write(state, "run\n".getBytes(java.nio.charset.StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
         int attempts = java.nio.file.Files.readAllLines(state).size();
         String mode = System.getenv("DDTEST_PROBE_MODE");
         if ("fail".equals(mode) || ("fail-once".equals(mode) && attempts == 1)) {
             throw new AssertionError("ddtest intentional failure");
         }
+`
+
+// javaCucumberSteps is the probe's step definition in the project's glue
+// package (the default package when empty): an annotated method, or for the
+// lambda backend of cucumber-java8, a step registered in the constructor.
+func javaCucumberSteps(glue string, lambda bool) string {
+	source := ""
+	if glue != "" {
+		source = "package " + glue + ";\n\n"
+	}
+	if lambda {
+		return source + `public class DdtestValidationSteps implements io.cucumber.java8.En {
+    public DdtestValidationSteps() {
+        When("the ddtest validation probe runs", () -> {
+` + javaCucumberProbeBody + `        });
     }
 }
 `
+	}
+	return source + `public class DdtestValidationSteps {
+    @io.cucumber.java.en.When("the ddtest validation probe runs")
+    public void ddtestProbe() throws Exception {
+` + javaCucumberProbeBody + `    }
+}
+`
+}
+
+// javaCucumberLambda reports a module that declares only cucumber-java8, whose
+// lambda backend has no step annotations.
+func javaCucumberLambda(checkout, module string) bool {
+	projects, err := maven.ProjectsFrom(checkout, filepath.Join(module, "pom.xml"))
+	if err != nil || len(projects) == 0 {
+		return false
+	}
+	dependencies := slices.Clone(projects[0].Dependencies)
+	for _, profile := range projects[0].Profiles {
+		dependencies = append(dependencies, profile.Dependencies...)
+	}
+	declares := func(artifact string) bool {
+		return slices.ContainsFunc(dependencies, func(dependency maven.Dependency) bool {
+			return dependency.Group == "io.cucumber" && dependency.Artifact == artifact
+		})
+	}
+	return declares("cucumber-java8") && !declares("cucumber-java")
 }
 
 var (
@@ -78,7 +116,7 @@ func javaCucumberProbe(checkout, module string) (javaProbe, string, error) {
 	return javaProbe{
 		files: []javaProbeFile{
 			{filepath.Join(module, "src", "test", "resources", "ddtest", "DdtestValidation.feature"), javaCucumberFeature},
-			{filepath.Join(module, "src", "test", "java", filepath.FromSlash(strings.ReplaceAll(glue, ".", "/")), "DdtestValidationSteps.java"), javaCucumberSteps(glue)},
+			{filepath.Join(module, "src", "test", "java", filepath.FromSlash(strings.ReplaceAll(glue, ".", "/")), "DdtestValidationSteps.java"), javaCucumberSteps(glue, javaCucumberLambda(checkout, module))},
 		},
 		args: args,
 	}, "", nil

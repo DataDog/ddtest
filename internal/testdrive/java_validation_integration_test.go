@@ -134,6 +134,12 @@ class ExampleTest extends spock.lang.Specification {
 		{"cucumber junit4 runner", "cucumber-java", cucumberJUnit4, "3.2.5", "", map[string]string{
 			"src/test/java/example/RunCucumberTest.java": "package example;\n@org.junit.runner.RunWith(io.cucumber.junit.Cucumber.class)\n@io.cucumber.junit.CucumberOptions(features = \"classpath:example\", glue = \"example\")\npublic class RunCucumberTest {}\n",
 			"src/test/java/example/StepDefinitions.java": cucumberSteps, "src/test/resources/example/calc.feature": cucumberFeature}},
+		// The lambda backend has no step annotations; the probe registers its
+		// step in a constructor.
+		{"cucumber java8 lambdas", "cucumber-java", strings.Replace(cucumberJUnit4, "<artifactId>cucumber-java</artifactId>", "<artifactId>cucumber-java8</artifactId>", 1), "3.2.5", "", map[string]string{
+			"src/test/java/example/RunCucumberTest.java": "package example;\n@org.junit.runner.RunWith(io.cucumber.junit.Cucumber.class)\n@io.cucumber.junit.CucumberOptions(features = \"classpath:example\", glue = \"example\")\npublic class RunCucumberTest {}\n",
+			"src/test/java/example/StepDefinitions.java": "package example;\npublic class StepDefinitions implements io.cucumber.java8.En {\n    private int result;\n    public StepDefinitions() {\n        When(\"I add {int} and {int}\", (Integer a, Integer b) -> { result = Calc.add(a, b); });\n        Then(\"the result is {int}\", (Integer expected) -> { if (result != expected) throw new AssertionError(\"customer expected failure: \" + result); });\n    }\n}\n",
+			"src/test/resources/example/calc.feature":    cucumberFeature}},
 		{"cucumber platform suite", "cucumber-java", cucumberPlatform, "3.2.5", "", map[string]string{
 			"src/test/java/example/RunCucumberTest.java": "package example;\n@org.junit.platform.suite.api.Suite\n@org.junit.platform.suite.api.IncludeEngines(\"cucumber\")\n@org.junit.platform.suite.api.SelectClasspathResource(\"example\")\n@org.junit.platform.suite.api.ConfigurationParameter(key = io.cucumber.junit.platform.engine.Constants.GLUE_PROPERTY_NAME, value = \"example\")\npublic class RunCucumberTest {}\n",
 			"src/test/java/example/StepDefinitions.java": cucumberSteps, "src/test/resources/example/calc.feature": cucumberFeature}},

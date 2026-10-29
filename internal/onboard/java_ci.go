@@ -187,6 +187,10 @@ func javaMetadataScript(run string) bool {
 	}
 	metadata, readsMaven := true, false
 	syntax.Walk(file, func(node syntax.Node) bool {
+		// MAVEN_ARGS, exported or not, adds goals to every later Maven call.
+		if assign, ok := node.(*syntax.Assign); ok && assign.Name != nil && assign.Name.Value == "MAVEN_ARGS" {
+			metadata = false
+		}
 		call, ok := node.(*syntax.CallExpr)
 		if !ok || len(call.Args) == 0 {
 			return true

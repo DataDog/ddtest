@@ -439,4 +439,7 @@ func TestJavaPostTestScopeFollowsEachRowAndMavenLaunchers(t *testing.T) {
 	require.Len(t, ci.Jobs, 2, "a launcher that runs Maven may run tests: %+v", ci.Jobs)
 	// A Maven call with an assignment may add goals, as MAVEN_ARGS does.
 	require.NotEmpty(t, javaStep(t, javaWorkflowFixture(t, "", nil), "VERSION=$(MAVEN_ARGS=test mvn help:evaluate -Dexpression=project.version -q -DforceStdout)").Reason)
+	for _, run := range []string{"export MAVEN_ARGS=test\nVERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)", "MAVEN_ARGS=test\nexport MAVEN_ARGS\nVERSION=$(mvn help:evaluate -q -DforceStdout)"} {
+		require.NotEmpty(t, javaStep(t, javaWorkflowFixture(t, "", nil), run).Reason, "MAVEN_ARGS set anywhere in the script adds goals: %s", run)
+	}
 }

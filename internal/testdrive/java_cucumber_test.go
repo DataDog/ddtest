@@ -83,3 +83,28 @@ func TestJavaProbeControlsMatchTelemetryWithoutASourceFile(t *testing.T) {
 	require.True(t, isSkippedProbeTest(intake.Event{Type: "test", Tags: map[string]string{"test.module": "service", "test.suite": "s", "test.name": "n", "test.status": "skip", "test.skipped_by_itr": "true"}}, intake.Test{Module: "service", Suite: "s", Name: "n"}, true), "test-level skipping needs no source file")
 	require.False(t, isSkippedProbeTest(intake.Event{Type: "test", Tags: map[string]string{"test.module": "service", "test.suite": "s", "test.name": "n", "test.status": "skip", "test.skipped_by_itr": "true"}}, intake.Test{Module: "service", Suite: "s", Name: "n"}, false))
 }
+
+func TestJavaCucumberStepsMatchTheGlueBackendAndPackage(t *testing.T) {
+	annotated := javaCucumberSteps("com.acme", false)
+	require.True(t, strings.HasPrefix(annotated, "package com.acme;"))
+	require.Contains(t, annotated, "@io.cucumber.java.en.When(\"the ddtest validation probe runs\")")
+	require.False(t, strings.HasPrefix(javaCucumberSteps("", false), "package"), "default-package glue has no package declaration")
+	lambda := javaCucumberSteps("com.acme", true)
+	require.Contains(t, lambda, "implements io.cucumber.java8.En")
+	require.Contains(t, lambda, "When(\"the ddtest validation probe runs\", () -> {")
+	require.NotContains(t, lambda, "io.cucumber.java.en", "the lambda backend has no step annotations")
+	require.Contains(t, lambda, "ddtest intentional failure")
+
+	root := t.TempDir()
+	pom := func(dependencies string) {
+		writeJavaSource(t, filepath.Join(root, "service", "pom.xml"), "<project><artifactId>service</artifactId><dependencies>"+dependencies+"</dependencies></project>")
+	}
+	java8 := "<dependency><groupId>io.cucumber</groupId><artifactId>cucumber-java8</artifactId></dependency>"
+	annotations := "<dependency><groupId>io.cucumber</groupId><artifactId>cucumber-java</artifactId></dependency>"
+	pom(java8)
+	require.True(t, javaCucumberLambda(root, "service"), "only the lambda backend")
+	pom(java8 + annotations)
+	require.False(t, javaCucumberLambda(root, "service"), "annotations are available")
+	pom(annotations)
+	require.False(t, javaCucumberLambda(root, "service"))
+}
