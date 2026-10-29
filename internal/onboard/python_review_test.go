@@ -1,0 +1,222 @@
+package onboard
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func pythonReviewWorkflow(t *testing.T, environment, before, command string) string {
+	t.Helper()
+	return pythonWorkflow(t, fmt.Sprintf(`jobs:
+  tests:
+    env: %s
+    steps:
+%s      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: python, python-tracer-version: '4.16.0'}
+      - run: %s
+`, environment, before, command))
+}
+
+func TestPythonReviewReplayDropsManagedControls(t *testing.T) {
+	root := pythonReviewWorkflow(t, `{DD_CIVISIBILITY_ENABLED: 'false', DD_TRACE_ENABLED: 'false', DD_CIVISIBILITY_AGENTLESS_ENABLED: 'false', DD_AGENT_HOST: '${{ secrets.AGENT }}', DD_TRACE_AGENT_PORT: '8126', DD_API_KEY: '${{ secrets.DD_API_KEY }}', DD_TRACE_AGENT_URL: '${{ secrets.URL }}', DD_CIVISIBILITY_AGENTLESS_URL: '${{ secrets.URL }}', DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED: 'false', DD_ENV: ci}`, "", "python -m pytest")
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	env := scope.Commands[0].Environment
+	for _, key := range []string{"DD_CIVISIBILITY_ENABLED", "DD_TRACE_ENABLED", "DD_CIVISIBILITY_AGENTLESS_ENABLED", "DD_AGENT_HOST", "DD_TRACE_AGENT_PORT", "DD_API_KEY", "DD_TRACE_AGENT_URL", "DD_CIVISIBILITY_AGENTLESS_URL"} {
+		require.NotContains(t, env, key)
+	}
+	require.Equal(t, "false", env["DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED"])
+	require.Equal(t, "ci", env["DD_ENV"])
+}
+
+func TestPythonReviewDisabledVisibilityIsNotCompatible(t *testing.T) {
+	for _, layer := range []string{"workflow", "job", "step", "matrix"} {
+		t.Run(layer, func(t *testing.T) {
+			root := pythonReviewWorkflow(t, "{}", "", "python -m pytest")
+			path := filepath.Join(root, ".github/workflows/test.yml")
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			text := string(data)
+			switch layer {
+			case "workflow":
+				text = "env: {DD_CIVISIBILITY_ENABLED: 'false'}\n" + text
+			case "job":
+				text = strings.Replace(text, "env: {}", "env: {DD_CIVISIBILITY_ENABLED: 'false'}", 1)
+			case "step":
+				text += "        env: {DD_CIVISIBILITY_ENABLED: 'false'}\n"
+			case "matrix":
+				text = strings.Replace(text, "    env: {}", "    strategy:\n      matrix: {tracing: ['false']}\n    env: {DD_CIVISIBILITY_ENABLED: '${{ matrix.tracing }}'}", 1)
+			}
+			require.NoError(t, os.WriteFile(path, []byte(text), 0644))
+			check := pythonRuntimeCheck(t, root)
+			require.Equal(t, "incompatible", check.Status)
+			require.Contains(t, check.Jobs[0].Reason, "DD_CIVISIBILITY_ENABLED")
+		})
+	}
+}
+
+func TestPythonReviewConditionalTestsStayUnresolved(t *testing.T) {
+	for _, command := range []string{"if [ -f run-tests ]; then python -m pytest; fi", "if [ -f run-tests ]; then python -mpytest; fi"} {
+		root := pythonReviewWorkflow(t, "{}", "", command)
+		scope, err := DiscoverValidationScope(root, "pytest")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved)
+		check := pythonRuntimeCheck(t, root)
+		require.Equal(t, "inconclusive", check.Status)
+		require.Len(t, check.Jobs, 1)
+	}
+}
+
+func TestPythonReviewConditionsDoNotLeakToLaterTests(t *testing.T) {
+	for _, command := range []string{"echo docs", "python -m pip --version"} {
+		before := "      - if: needs.docs.outputs.ready\n        run: " + command + "\n"
+		root := pythonReviewWorkflow(t, "{}", before, "python -m pytest")
+		check := pythonRuntimeCheck(t, root)
+		require.Equal(t, "compatible", check.Status, "%+v", check)
+	}
+	root := pythonReviewWorkflow(t, "{}", "", "python -m pytest\n        if: needs.tests.outputs.ready\n      - run: python -m pytest other")
+	check := pythonRuntimeCheck(t, root)
+	require.Len(t, check.Jobs, 2)
+	require.Equal(t, "inconclusive", check.Jobs[0].Status)
+	require.Equal(t, "compatible", check.Jobs[1].Status)
+	for _, action := range []string{"actions/setup-python@v6", "datadog/test-visibility-github-action@v3"} {
+		root := pythonReviewWorkflow(t, "{}", "", "python -m pytest")
+		path := filepath.Join(root, ".github/workflows/test.yml")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		text := strings.Replace(string(data), "      - uses: "+action, "      - if: needs.setup.outputs.ready\n        uses: "+action, 1)
+		require.NoError(t, os.WriteFile(path, []byte(text), 0644))
+		require.Equal(t, "inconclusive", pythonRuntimeCheck(t, root).Status, action)
+	}
+}
+
+func TestPythonReviewMetadataQueriesAreNotTests(t *testing.T) {
+	for _, command := range []string{"pytest --version", "python -m pytest --help", "python -mpytest -h", "uv run --only-group test pytest --version"} {
+		root := pythonReviewWorkflow(t, "{}", "      - run: "+command+"\n", "python -m pytest")
+		scope, err := DiscoverValidationScope(root, "pytest")
+		require.NoError(t, err)
+		require.Empty(t, scope.Unresolved)
+		require.Len(t, scope.Commands, 1)
+		check := pythonRuntimeCheck(t, root)
+		require.Equal(t, "compatible", check.Status)
+		require.Len(t, check.Jobs, 1)
+	}
+	root := pythonReviewWorkflow(t, "{}", "", "tox -e py312")
+	writeFile(t, root, "pyproject.toml", "[tool.tox.env_run_base]\npass_env = ['DD_*', 'PYTHONPATH', 'PYTEST_ADDOPTS']\ncommands = [['pytest', '--version'], ['pytest']]\n")
+	require.Equal(t, "compatible", pythonRuntimeCheck(t, root).Status)
+	require.True(t, pythonInvocation([]string{"pytest", "-k", "--help"}))
+	require.True(t, pythonInvocation([]string{"pytest", "--", "--help"}))
+}
+
+func TestPythonReviewUnknownInterpreterAndIsolationModes(t *testing.T) {
+	for _, command := range []string{".venv38/bin/pytest", "/opt/python/bin/pytest", "python -E -m pytest", "python -I -mpytest", "python -bEI -m pytest", "python -W error -E -m pytest"} {
+		root := pythonReviewWorkflow(t, "{}", "", command)
+		check := pythonRuntimeCheck(t, root)
+		require.Equal(t, "inconclusive", check.Status, "%s: %+v", command, check)
+	}
+	for _, command := range []string{"python -W I -m pytest", "python -X devE -m pytest"} {
+		root := pythonReviewWorkflow(t, "{}", "", command)
+		require.Equal(t, "compatible", pythonRuntimeCheck(t, root).Status)
+	}
+}
+
+func TestPythonReviewWrapperDirectoryStaysUnresolved(t *testing.T) {
+	for _, selector := range []string{"--directory sub", "--directory=sub", "--project=sub"} {
+		root := pythonReviewWorkflow(t, "{}", "", "uv run "+selector+" tox -e py312")
+		writeFile(t, root, "pyproject.toml", "[tool.tox.env_run_base]\ncommands = [['mypy', 'src']]\n")
+		writeFile(t, root, "sub/pyproject.toml", "[tool.tox.env_run_base]\ncommands = [['pytest']]\n")
+		scope, err := DiscoverValidationScope(root, "pytest")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved)
+		require.Empty(t, scope.Commands)
+		check := pythonRuntimeCheck(t, root)
+		require.Equal(t, "inconclusive", check.Status)
+		require.Len(t, check.Jobs, 1)
+	}
+}
+
+func TestPythonReviewToxNestedRuntime(t *testing.T) {
+	for _, command := range []string{"uv run --python=3.8 pytest", "python3.8 -m pytest", ".venv38/bin/pytest", "python -IE -m pytest"} {
+		root := pythonReviewWorkflow(t, "{}", "", "tox -e py312")
+		commands, err := json.Marshal([][]string{strings.Fields(command)})
+		require.NoError(t, err)
+		writeFile(t, root, "pyproject.toml", "[tool.tox.env_run_base]\npass_env = ['DD_*', 'PYTHONPATH', 'PYTEST_ADDOPTS']\ncommands = "+string(commands)+"\n")
+		require.Equal(t, "inconclusive", pythonRuntimeCheck(t, root).Status, command)
+	}
+}
+
+func TestPythonReviewEffectivePluginEnvironment(t *testing.T) {
+	for _, tc := range []struct{ name, command, forwarded, status string }{
+		{"direct plugin declaration", "python -m pytest", "", "compatible"},
+		{"tox filters both", "tox -e py312", "", "compatible"},
+		{"tox forwards autoload only", "tox -e py312", ", 'PYTEST_DISABLE_PLUGIN_AUTOLOAD'", "incompatible"},
+		{"tox forwards both", "tox -e py312", ", 'PYTEST_*'", "compatible"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := pythonReviewWorkflow(t, "{PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1', PYTEST_PLUGINS: 'ddtrace.testing.internal.pytest.entry_point'}", "", tc.command)
+			writeFile(t, root, "pyproject.toml", "[tool.tox.env_run_base]\npass_env = ['DD_*', 'PYTHONPATH', 'PYTEST_ADDOPTS'"+tc.forwarded+"]\ncommands = [['pytest']]\n")
+			check := pythonRuntimeCheck(t, root)
+			require.Equal(t, tc.status, check.Status, "%+v", check)
+		})
+	}
+}
+
+func TestPythonReviewFindingsKeepMatrixIdentity(t *testing.T) {
+	root := pythonReviewWorkflow(t, "{}", "", "python -m pytest")
+	path := filepath.Join(root, ".github/workflows/test.yml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	text := strings.Replace(string(data), "    env: {}", "    strategy:\n      matrix: {os: [linux, windows], dependency: [old, new]}\n    env: {}", 1)
+	require.NoError(t, os.WriteFile(path, []byte(text), 0644))
+	check := pythonRuntimeCheck(t, root)
+	require.Len(t, check.Jobs, 4)
+	locations := map[string]bool{}
+	for _, finding := range check.Jobs {
+		require.Contains(t, finding.Location, "os:")
+		require.Contains(t, finding.Location, "dependency:")
+		locations[finding.Location] = true
+	}
+	require.Len(t, locations, 4)
+}
+
+func TestPythonReviewDefiniteFailuresSurviveUnknownConfiguration(t *testing.T) {
+	root := pythonReviewWorkflow(t, "{}", "", "python -m pytest -c missing.ini")
+	path := filepath.Join(root, ".github/workflows/test.yml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte(strings.Replace(string(data), "'3.12'", "'3.8'", 1)), 0644))
+	check := pythonRuntimeCheck(t, root)
+	require.Equal(t, "incompatible", check.Status)
+	require.Contains(t, check.Jobs[0].Reason, "Python 3.8")
+	require.Contains(t, check.Jobs[0].Reason, "missing.ini")
+}
+
+func TestPythonReviewMinorSelectorsKeepUnknownPatches(t *testing.T) {
+	for _, tc := range []struct{ python, requirement, status string }{
+		{"3.9", ">=3.9.1", "inconclusive"},
+		{"3.9", "<3.9.7", "inconclusive"},
+		{"3.9", "<=3.9.0", "inconclusive"},
+		{"3.9", "==3.9", "inconclusive"},
+		{"3.9", "<=3.9", "inconclusive"},
+		{"3.9", ">3.9", "inconclusive"},
+		{"3.9", "!=3.9.2", "inconclusive"},
+		{"3.9", ">=3.9.0", "compatible"},
+		{"3.10", ">=3.9.1,<3.15", "compatible"},
+		{"3.8", ">=3.9.1", "incompatible"},
+		{"3.9.10", ">=3.9.1", "compatible"},
+		{"3.9.0", ">=3.9.1", "incompatible"},
+	} {
+		status, _ := ComparePythonRequirement(tc.python, tc.requirement)
+		require.Equal(t, tc.status, status, "%s %s", tc.python, tc.requirement)
+	}
+}

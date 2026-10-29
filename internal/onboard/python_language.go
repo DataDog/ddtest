@@ -5,7 +5,10 @@
 
 package onboard
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // pythonDiscovery onboards pytest with ddtrace.
 type pythonDiscovery struct{}
@@ -66,10 +69,12 @@ func (pythonDiscovery) jobConsumer(root string, workflow ciWorkflow, job runtime
 	return pythonJobCandidate(root, workflow, job), true
 }
 
-// ddtrace reads its test settings from DD_* variables. Only the CI agent,
-// intake and credentials are replaced locally.
+// Preserve application identity and feature settings. The local evaluator owns
+// tracer activation, transport and credentials, so those never reach replay.
 func (pythonDiscovery) keepsCISetting(key string) bool {
-	return !slices.Contains([]string{"DD_API_KEY", "DD_TRACE_AGENT_URL", "DD_CIVISIBILITY_AGENTLESS_URL"}, key)
+	return slices.Contains([]string{"DD_ENV", "DD_SERVICE", "DD_VERSION", "DD_TAGS", "DD_TEST_SESSION_NAME", "DD_CIVISIBILITY_ITR_ENABLED", "DD_CIVISIBILITY_CODE_COVERAGE_ENABLED", "DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"}, key) ||
+		strings.HasPrefix(key, "DD_GIT_") || strings.HasPrefix(key, "DD_CIVISIBILITY_FLAKY_RETRY_") ||
+		strings.HasPrefix(key, "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_") || strings.HasPrefix(key, "DD_CIVISIBILITY_TEST_MANAGEMENT_")
 }
 
 const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtrace for pytest. Preserve these variables on the existing test step; do not replace its current arguments. Activate the same Python environment used for the tests before the action. If CI uses tox or nox, pass DD_*, PYTHONPATH, and PYTEST_ADDOPTS into the test environment."

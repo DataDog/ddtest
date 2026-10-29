@@ -54,14 +54,14 @@ func TestPythonRetainsApplicationEnvironment(t *testing.T) {
 	root := pythonWorkflow(t, `env:
   DD_ENV: ci
   DD_SERVICE: application
-  DD_APPLICATION_SETTING: '${{ matrix.mode }}'
+  DD_CIVISIBILITY_FLAKY_RETRY_COUNT: '${{ matrix.mode }}'
   DD_GIT_BRANCH: fixture
   DD_API_KEY: '${{ secrets.DD_API_KEY }}'
   DD_TRACE_AGENT_URL: '${{ env.ACTION_AGENT_URL }}'
 jobs:
   tests:
     strategy:
-      matrix: {mode: [one, two]}
+      matrix: {mode: [1, 2]}
     steps:
       - run: python -m pytest
 `)
@@ -72,7 +72,7 @@ jobs:
 	for index, command := range scope.Commands {
 		require.Equal(t, "ci", command.Environment["DD_ENV"])
 		require.Equal(t, "application", command.Environment["DD_SERVICE"])
-		require.Equal(t, []string{"one", "two"}[index], command.Environment["DD_APPLICATION_SETTING"])
+		require.Equal(t, []string{"1", "2"}[index], command.Environment["DD_CIVISIBILITY_FLAKY_RETRY_COUNT"])
 		require.Equal(t, "fixture", command.Environment["DD_GIT_BRANCH"])
 		require.NotContains(t, command.Environment, "DD_API_KEY")
 		require.NotContains(t, command.Environment, "DD_TRACE_AGENT_URL")

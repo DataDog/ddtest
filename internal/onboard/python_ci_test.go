@@ -444,7 +444,7 @@ func TestPythonCIInstrumentationIsCheckedPerInvocation(t *testing.T) {
           %s
 `, tc.autoload, tc.addopts, strings.ReplaceAll(tc.command, "\n", "\n          ")))
 			if tc.toxCommands != "" {
-				config := "[tool.tox.env_run_base]\npass_env = ['DD_*', 'PYTHONPATH', 'PYTEST_ADDOPTS']\ncommands = " + tc.toxCommands + "\n"
+				config := "[tool.tox.env_run_base]\npass_env = ['DD_*', 'PYTHONPATH', 'PYTEST_ADDOPTS', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD']\ncommands = " + tc.toxCommands + "\n"
 				require.NoError(t, os.WriteFile(filepath.Join(root, "pyproject.toml"), []byte(config), 0644))
 			}
 			check := pythonRuntimeCheck(t, root)

@@ -137,6 +137,9 @@ func readPythonTox(root string, args []string) (pythonTox, error) {
 			}
 			words = append(words, selected...)
 		}
+		if args, ok := pythonRunnerArguments(words, "pytest"); ok && pythonMetadataQuery(args) {
+			continue
+		}
 		if pythonInvocation(words) {
 			result.Commands = append(result.Commands, words)
 		} else if len(words) > 0 && !slices.Contains([]string{"mypy", "pyright", "ruff", "pre-commit", "sphinx-build"}, words[0]) {
@@ -174,4 +177,21 @@ func (t pythonTox) instrumentation() (string, string) {
 		}
 	}
 	return "", ""
+}
+
+// Only explicitly forwarded pytest settings reach these supported native tox
+// environments. set_env and other overrides are already left inconclusive.
+func (t pythonTox) environment(outer map[string]string) map[string]string {
+	env := map[string]string{}
+	patterns, _ := t.Settings["pass_env"].([]any)
+	for key, value := range outer {
+		for _, pattern := range patterns {
+			text, _ := pattern.(string)
+			if matched, _ := filepath.Match(strings.ToUpper(text), strings.ToUpper(key)); matched {
+				env[key] = value
+				break
+			}
+		}
+	}
+	return env
 }
