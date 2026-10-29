@@ -526,7 +526,8 @@ Successful plain Ruby validation reports `PASSED`.
 A CI step may set up its tests in the same script: literal `export`s before
 exactly one recognized test command become that configuration's environment,
 a `rake RUBYOPT="$RUBYOPT <options>"` argument adds its options to the
-preload, and commands after the tests that only create directories, move or
+preload (discovery keeps reads of the variables the installer exports, such
+as `$RUBYOPT`, as written instead of asking for their CI value), and commands after the tests that only create directories, move or
 copy files, or print (such as moving a coverage report) are outside the test
 path. Several test commands, control flow or computed values keep the step
 unresolved.

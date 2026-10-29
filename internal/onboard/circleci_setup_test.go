@@ -259,3 +259,26 @@ func TestCircleCIOmniaiFixture(t *testing.T) {
 	request := rubyDiscovery{}.ciSetupRequest(root, "rspec", "datadoghq.com", circleCI{}.setupTerms())
 	require.NotContains(t, strings.Join(request.Notes, "\n"), "These CI jobs run", "Ruby 3.2 and newer ship a recent RubyGems")
 }
+
+// After the fix the report suggests, brakeman's test-3-2 job runs the orb
+// and extends RUBYOPT: the step's export and $RUBYOPT read pass discovery's
+// shell checks, so it is one configuration ready to validate.
+func TestCircleCIBrakemanAfterTheRubyOptionsFix(t *testing.T) {
+	root := copyFixture(t, "circleci-brakeman")
+	useCIProvider(t, "circleci")
+	data := readFixtureFile(t, root, circleCIFile)
+	data = strings.Replace(data, "orbs:\n  qlty: qltysh/qlty-orb@0.1\n", "orbs:\n  qlty: qltysh/qlty-orb@0.1\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\n", 1)
+	data = strings.ReplaceAll(data, "bundle install\n", "bundle install\n      - test-optimization-circleci-orb/autoinstrument:\n          languages: ruby\n          ruby_tracer_version: 1.42.0\n")
+	data = strings.Replace(data, "RUBYOPT='--enable-frozen-string-literal --debug-frozen-string-literal'", "RUBYOPT=\"$RUBYOPT --enable-frozen-string-literal --debug-frozen-string-literal\"", 1)
+	writeFile(t, root, circleCIFile, data)
+	scope, err := DiscoverValidationScope(root, "minitest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 2)
+	entry := scope.Commands[1]
+	require.Equal(t, "bundle exec rake", entry.Command)
+	require.Empty(t, entry.UnvalidatedSetup)
+	require.Equal(t, "CC_TEST_REPORTER_ID", entry.Environment["CC_TEST_REPORTER_ID"])
+	require.Equal(t, "--enable-frozen-string-literal --debug-frozen-string-literal", entry.Environment["RUBYOPT"])
+	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "minitest", "datadoghq.com"))
+}

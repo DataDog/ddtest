@@ -272,6 +272,9 @@ func (t *Testdrive) selectSetupTracerReporting(ctx context.Context, scope onboar
 		selection := *check.Selection
 		if pin == "" && t.projectTracer == "" && selection.Source != "project" && !explicit && selected.Version == "" {
 			if rec := check.Preflight.Recommendation; rec != nil && len(rec.Unresolved) == 0 && len(rec.Compatible) > 0 {
+				if rec.Selection.Version != selection.Version && len(rec.Unsupported) == 0 {
+					t.setupTracerNote = coveringTracerNote(rec)
+				}
 				selection = rec.Selection
 			}
 			// Setup instruments every active CI row, so the default release must
