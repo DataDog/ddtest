@@ -151,8 +151,12 @@ func (pythonLanguage) pairedFrameworks() map[string]pairedFramework {
 }
 func (pythonLanguage) isolatesConfigurations() bool { return true }
 
-func (pythonLanguage) prepareConfiguration(t *Testdrive, _ *configurationResult, _, _ string) error {
-	return t.rebasePytestConfiguration()
+func (pythonLanguage) prepareConfiguration(t *Testdrive, item *configurationResult, _, _ string) error {
+	directory, err := localSetupDirectory(t.repositoryRoot, item.Directory)
+	if err != nil {
+		return err
+	}
+	return t.rebasePytestConfiguration(directory)
 }
 func (pythonLanguage) coordinated() bool        { return false }
 func (pythonLanguage) defaultsToCITracer() bool { return false }
