@@ -1,0 +1,19 @@
+{
+  "name": "circleci-javascript-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "check:audit": "npm audit",
+    "check:format": "npm run -s format -- -c",
+    "check:ts": "tsc --noEmit",
+    "format": "prettier \"**/*.{css,js,json,md,scss,ts,yaml,yml}\"",
+    "lint:css": "stylelint \"./*.{css,scss}\"",
+    "lint:js": "eslint --cache",
+    "test:unit": "jest",
+    "test:unit:coverage": "jest --coverage"
+  },
+  "devDependencies": {
+    "jest": "29.7.0",
+    "jest-junit": "17.0.0"
+  }
+}

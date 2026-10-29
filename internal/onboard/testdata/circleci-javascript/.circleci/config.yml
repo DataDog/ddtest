@@ -1,0 +1,149 @@
+# Trimmed from marp-team/marp-vscode (MIT), .circleci/config.yml
+version: 2.1
+
+orbs:
+  codecov: codecov/codecov@6.0.0
+
+executors:
+  node:
+    parameters:
+      version:
+        type: string
+        default: lts
+    docker:
+      - image: cimg/node:<< parameters.version >>
+    working_directory: ~/marp-vscode
+
+commands:
+  install:
+    parameters:
+      postinstall:
+        type: steps
+        default: []
+    steps:
+      - run: node --version
+
+      - restore_cache:
+          keys:
+            - v2.3-dependencies-{{ .Environment.CI_CACHE_KEY }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "package-lock.json" }}-{{ .Branch }}
+            - v2.3-dependencies-{{ .Environment.CI_CACHE_KEY }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "package-lock.json" }}-
+            - v2.3-dependencies-{{ .Environment.CI_CACHE_KEY }}-{{ .Environment.CIRCLE_JOB }}-
+
+      - run: npm ci
+      - steps: << parameters.postinstall >>
+
+      - save_cache:
+          key: v2.3-dependencies-{{ .Environment.CI_CACHE_KEY }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "package-lock.json" }}-{{ .Branch }}
+          paths:
+            - ~/.npm
+
+  audit:
+    steps:
+      - checkout
+      - install:
+          postinstall:
+            - run: npm run check:audit
+
+  lint:
+    steps:
+      - checkout
+      - install
+
+      - run:
+          name: Prettier formatting
+          command: npm run check:format
+
+      - run:
+          name: TypeScript type checking
+          command: npm run check:ts
+
+      - run:
+          name: ESLint
+          command: npm run lint:js
+
+      - run:
+          name: stylelint
+          command: npm run lint:css
+
+  test:
+    steps:
+      - checkout
+      - install
+
+      - run:
+          name: Jest
+          command: npm run test:unit:coverage -- --ci --maxWorkers=2 --reporters=default --reporters=jest-junit
+          environment:
+            JEST_JUNIT_OUTPUT_DIR: tmp/test-results
+
+      - codecov/upload
+
+      - store_test_results:
+          path: tmp/test-results
+
+      - store_artifacts:
+          path: ./coverage
+          destination: coverage
+
+jobs:
+  audit:
+    executor: node
+    steps:
+      - audit
+
+  lint:
+    executor: node
+    steps:
+      - lint
+
+  unit-electron35:
+    executor:
+      name: node
+      version: '22.15.1'
+    steps:
+      - test
+
+  unit-electron39:
+    executor:
+      name: node
+      version: '22.20.0'
+    steps:
+      - test
+
+  unit-electron42-0:
+    executor:
+      name: node
+      version: '24.15.0'
+    steps:
+      - test
+
+  unit-electron42-6:
+    executor:
+      name: node
+      version: '24.18.0'
+    steps:
+      - test
+
+workflows:
+  test:
+    jobs:
+      - audit
+      - lint:
+          requires:
+            - audit
+      - unit-electron35:
+          requires:
+            - audit
+            - lint
+      - unit-electron39:
+          requires:
+            - audit
+            - lint
+      - unit-electron42-0:
+          requires:
+            - audit
+            - lint
+      - unit-electron42-6:
+          requires:
+            - audit
+            - lint

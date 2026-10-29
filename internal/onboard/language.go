@@ -69,7 +69,7 @@ type discoveryLanguage interface {
 	// framework, reporting to site, on providers without the shared workflow
 	// syntax: its installer token, exact tracer input, commands that must
 	// follow the setup, and its own setup rules.
-	ciSetupRequest(root, framework, site string) ciSetupRequest
+	ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest
 	// cacheVariable reports a variable that locates the language's package
 	// cache or install directory, which CI caches between jobs.
 	cacheVariable(name string) bool

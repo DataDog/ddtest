@@ -131,6 +131,15 @@ func (gitHubActions) apiKeyAction(skipped bool) string {
 	return "Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step fails without failing the job and tests run untraced."
 }
 
+// GitHub Actions setup notes are the languages' workflow templates.
+func (gitHubActions) setupTerms() ciSetupTerms {
+	return ciSetupTerms{
+		Persist:      func(command string) string { return command },
+		PersistEntry: func(command string) string { return "- " + command },
+		ImageGuard:   func(string, string, string) string { return "" },
+	}
+}
+
 // GitHub Actions setup instructions are the languages' workflow templates.
 func (gitHubActions) setupInstructions(ciSetupRequest) string { return "" }
 

@@ -597,7 +597,12 @@ func rubyBootstrapProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 		for _, layer := range []map[string]string{workflow.Env, job.Env} {
 			for _, option := range strings.Fields(layer["RUBYOPT"]) {
 				if !slices.Contains(strings.Fields(options), option) {
-					return "The Datadog setup script replaces RUBYOPT, dropping the job's " + option + "; restore it after the setup entry with export RUBYOPT=\"$RUBYOPT " + layer["RUBYOPT"] + "\"."
+					provider := activeOrDefaultCIProvider()
+					if provider.sharedSyntax() {
+						return "The Datadog setup script replaces RUBYOPT, dropping the job's " + option + "; restore it after the setup entry with export RUBYOPT=\"$RUBYOPT " + layer["RUBYOPT"] + "\"."
+					}
+					terms := provider.setupTerms()
+					return "The " + provider.setupName() + " replaces RUBYOPT, dropping the job's " + option + "; restore it after " + terms.SetupEntry + " with " + terms.Persist(`export RUBYOPT="$RUBYOPT `+layer["RUBYOPT"]+`"`) + "."
 				}
 			}
 		}
@@ -605,7 +610,7 @@ func rubyBootstrapProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 	if options, overridden := env["RUBYOPT"]; overridden {
 		if !strings.Contains(options, "datadog/ci/auto_instrument") && !strings.Contains(options, "${{ env.RUBYOPT }}") && !strings.Contains(options, "${{env.RUBYOPT}}") {
 			if provider := activeOrDefaultCIProvider(); !provider.sharedSyntax() {
-				return "The Ruby test environment replaces the RUBYOPT the " + provider.setupName() + " exports, without its Datadog preload. Extend it instead (export RUBYOPT=\"$RUBYOPT ...\"), preserving the customer's Ruby options."
+				return "The Ruby test environment replaces the RUBYOPT the " + provider.setupName() + " exports, without its Datadog preload. Extend it instead (" + provider.setupTerms().Persist(`export RUBYOPT="$RUBYOPT ..."`) + "), preserving the customer's Ruby options."
 			}
 			return "The Ruby test environment overrides the action's RUBYOPT without its Datadog preload. Preserve the instrumentation and the customer's Ruby options."
 		}
@@ -641,8 +646,9 @@ func rubyMissingSetupReason(provider ciProvider) string {
 }
 
 // rubyImage matches official Ruby images (ruby:3.3, ruby:3.3.6-slim,
-// docker.io/library/ruby:3.2-alpine) and the alternative engines' images.
-var rubyImage = regexp.MustCompile(`^(?:docker\.io/)?(?:library/)?(ruby|jruby|truffleruby|ghcr\.io/graalvm/truffleruby[a-z-]*|flavorjones/truffleruby):([^@]+)(?:@.*)?$`)
+// docker.io/library/ruby:3.2-alpine), CircleCI's (cimg/ruby:3.3.6,
+// circleci/ruby:2.7-node) and the alternative engines' images.
+var rubyImage = regexp.MustCompile(`^(?:cimg/|circleci/|(?:docker\.io/)?(?:library/)?)(ruby|jruby|truffleruby|ghcr\.io/graalvm/truffleruby[a-z-]*|flavorjones/truffleruby):([^@]+)(?:@.*)?$`)
 
 // rubyImageRuntime is the Ruby version a CI job's image selects, or the
 // engine the tracer cannot instrument (JRuby, TruffleRuby, Ruby head). Both

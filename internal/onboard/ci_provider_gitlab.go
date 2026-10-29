@@ -1008,7 +1008,7 @@ func gitLabReadsUnknown(value string) bool {
 
 // gitLabProjectDirectory is the shared model's expression for the checkout
 // root, which GitLab names CI_PROJECT_DIR.
-const gitLabProjectDirectory = "${{ github.workspace }}"
+const gitLabProjectDirectory = ciProjectDirectory
 
 // gitLabExpand replaces $NAME and ${NAME} with known values, a bounded
 // number of times; unknown references stay as written.
@@ -1361,7 +1361,7 @@ func (c *gitLabConfig) entries(node *yaml.Node) []gitLabStep {
 // their working directory, and the Datadog setup script a setup step.
 // Changes ddtest cannot follow make later steps unresolved.
 func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image string) []runtimeStep {
-	state := gitLabState{env: map[string]string{}, references: map[string]string{}, job: env}
+	state := ciShellState{dialect: gitLabShellDialect, env: map[string]string{}, references: map[string]string{}, job: env}
 	var steps []runtimeStep
 	for i, entry := range entries {
 		step := runtimeStep{Number: offset + i + 1, Source: entry.file + ":" + strconv.Itoa(entry.node.Line), origin: entry}
@@ -1401,7 +1401,7 @@ func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image 
 			continue
 		}
 		command = gitLabResolveBranches(command, mergeEnvironment(current, state.references))
-		state.curl = state.curl || gitLabInstallsCurl(command)
+		state.curl = state.curl || installsCurl(command)
 		step.Run = command
 		if consumed := strings.TrimSpace(command) == "" || state.apply(command, current); consumed {
 			step.Run = ""
@@ -1424,8 +1424,7 @@ func gitLabShellProblem(image string) string {
 	if strings.Contains(name, "$") {
 		return "The job image " + image + " depends on a variable ddtest cannot resolve, so it cannot tell whether the image has the Bash and curl the Datadog setup script needs. Give the job a literal image (or a variable defined in the configuration) that has both."
 	}
-	repository, tag, _ := strings.Cut(name[strings.LastIndex(name, "/")+1:], ":")
-	if strings.Contains(tag, "alpine") || repository == "alpine" || repository == "busybox" || strings.Contains(name, "distroless") || strings.Contains(tag, "busybox") {
+	if imageWithoutBash(image) {
 		return "The job image " + image + " has no Bash, so GitLab runs its script with sh and the Datadog setup script (source, process substitution) cannot run. Use a Bash-capable image for this job, such as the non-Alpine variant, or a custom image with Bash preinstalled; installing Bash in the script does not change the job's shell."
 	}
 	return ""
@@ -1441,78 +1440,8 @@ func gitLabImageProblem(image string, curl bool) string {
 	if reason := gitLabShellProblem(image); reason != "" {
 		return reason
 	}
-	// Docker's official slim images remove curl and wget after building
-	// (verified on the slim language runtime images).
-	name := strings.ToLower(image)
-	official := !strings.Contains(gitLabDockerHubName(name), "/")
-	_, tag, _ := strings.Cut(name[strings.LastIndex(name, "/")+1:], ":")
-	if !curl && official && strings.Contains(tag, "slim") {
+	if !curl && imageWithoutDownloader(image) {
 		return "The job image " + image + " has no curl, so the Datadog setup script cannot be downloaded and its tests would run untraced. Use the full image (without -slim), or add an entry that installs curl before the setup entry: " + gitLabCurlInstall + "."
 	}
 	return ""
-}
-
-// gitLabDockerHubName strips Docker Hub's registry and library prefixes,
-// so docker.io/library/node, index.docker.io/node and library/node all
-// read as the official node image.
-func gitLabDockerHubName(image string) string {
-	for _, registry := range []string{"docker.io/", "index.docker.io/", "registry-1.docker.io/", "registry.hub.docker.com/"} {
-		if rest, ok := strings.CutPrefix(image, registry); ok {
-			image = rest
-			break
-		}
-	}
-	return strings.TrimPrefix(image, "library/")
-}
-
-// gitLabInstallsCurl reports a command installing curl with apt.
-func gitLabInstallsCurl(command string) bool {
-	words := strings.Fields(command)
-	return (slices.Contains(words, "apt-get") || slices.Contains(words, "apt")) && slices.Contains(words, "install") && slices.Contains(words, "curl")
-}
-
-// gitLabState is the shell state script entries share.
-type gitLabState struct {
-	// env are the variables entries exported for later ones.
-	env map[string]string
-	// references are values later entries may expand without exporting.
-	references map[string]string
-	// job are the job's variables, which the shell exports.
-	job       map[string]string
-	directory string
-	// problem makes later entries unresolved.
-	problem string
-	// curl reports an earlier entry that installed curl.
-	curl bool
-	// literal marks setup inputs assigned without expansion ('$NAME').
-	literal map[string]bool
-}
-
-// applySetup adds what the setup script exports for each language it selects.
-func (s *gitLabState) applySetup(setup ciSetup, current map[string]string) {
-	languages := strings.Fields(setup.Inputs["languages"])
-	for _, language := range discoveryLanguages {
-		if setup.Inputs["languages"] != "all" && !slices.Contains(languages, language.actionLanguage()) {
-			continue
-		}
-		exported, references := language.setupShellExports(mergeEnvironment(current, s.env))
-		maps.Copy(s.env, exported)
-		maps.Copy(s.references, references)
-	}
-}
-
-// apply records the state one entry changes and reports whether the entry
-// only changed state, so it runs nothing later steps must replay.
-func (s *gitLabState) apply(command string, current map[string]string) bool {
-	file, ok := parseCIShell(command)
-	if !ok {
-		return false
-	}
-	known := mergeEnvironment(current, s.references)
-	onlyState := len(file.Stmts) > 0
-	for _, stmt := range file.Stmts {
-		onlyState = s.statement(stmt, known) && onlyState
-		known = mergeEnvironment(mergeEnvironment(current, s.env), s.references)
-	}
-	return onlyState
 }

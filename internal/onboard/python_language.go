@@ -55,7 +55,9 @@ func (pythonDiscovery) setupShellExports(map[string]string) (map[string]string, 
 }
 
 // Setup runs on GitHub Actions only.
-func (pythonDiscovery) ciSetupRequest(string, string, string) ciSetupRequest { return ciSetupRequest{} }
+func (pythonDiscovery) ciSetupRequest(string, string, string, ciSetupTerms) ciSetupRequest {
+	return ciSetupRequest{}
+}
 
 func (pythonDiscovery) automaticProviderSetup(string) bool { return false }
 

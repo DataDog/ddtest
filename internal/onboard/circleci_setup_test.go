@@ -1,0 +1,147 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2026 Datadog, Inc.
+
+package onboard
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// circleRubyRepository is an RSpec repository whose only CI is the
+// CircleCI configuration config; the test runs in it with CircleCI selected.
+func circleRubyRepository(t *testing.T, config string) string {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, root, "Gemfile", "source 'https://rubygems.org'\ngem 'rspec'\n")
+	writeFile(t, root, circleCIFile, config)
+	t.Chdir(root)
+	useCIProvider(t, "circleci")
+	return root
+}
+
+const circleRubyOrb = "      - test-optimization-circleci-orb/autoinstrument:\n          languages: ruby\n          site: datadoghq.com\n          ruby_tracer_version: 1.42.0\n"
+
+// circleRubyJob is an RSpec job in image with steps before and after the
+// orb step.
+func circleRubyJob(image, environment, before, after string) string {
+	return "version: 2.1\norbs:\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\njobs:\n  rspec:\n    docker:\n      - image: " + image + "\n" + environment + "    steps:\n      - checkout\n      - run: bundle install\n" + before + circleRubyOrb + after + "      - run: bundle exec rspec\n" + circleWorkflow("      - rspec\n")
+}
+
+// The shared completeness check reads the orb on CircleCI: the language,
+// a supported release, an exact tracer release and the selected site,
+// before every test command, on a Ruby the image selects.
+func TestCircleCIRubySetupCompleteness(t *testing.T) {
+	complete := circleRubyJob("cimg/ruby:3.3", "", "", "")
+	for _, tc := range []struct {
+		name, config, site string
+		configured         bool
+		reason             string
+	}{
+		{"complete", complete, "", true, ""},
+		{"selected site", complete, "datadoghq.com", true, ""},
+		{"other site", complete, "datadoghq.eu", false, "set site: datadoghq.eu on the step"},
+		{"missing", strings.Replace(complete, circleRubyOrb, "", 1), "", false, "Run the Datadog Test Optimization orb with an exact ruby_tracer_version"},
+		{"latest tracer", strings.Replace(complete, "1.42.0", "latest", 1), "", false, "is not an exact release"},
+		{"unsupported orb", strings.Replace(complete, "orb@2", "orb@1", 1), "", false, "is not a supported release"},
+		{"official image", circleRubyJob("ruby:3.3", "", "", ""), "", true, ""},
+		{"floating image", circleRubyJob("cimg/ruby:current", "", "", ""), "", true, "in a job whose image selects a static Ruby version"},
+		{"replaced preload", circleRubyJob("cimg/ruby:3.3", "", "", "      - run: echo 'export RUBYOPT=-W0' >> \"$BASH_ENV\"\n"), "", true, "replaces the RUBYOPT the Datadog Test Optimization orb exports"},
+		{"extended preload", circleRubyJob("cimg/ruby:3.3", "", "", "      - run: echo 'export RUBYOPT=\"$RUBYOPT -W0\"' >> \"$BASH_ENV\"\n"), "", true, ""},
+		// $BASH_ENV overrides a step's environment, so the preload stays.
+		{"step environment after the orb", strings.Replace(complete, "      - run: bundle exec rspec\n", "      - run:\n          command: bundle exec rspec\n          environment:\n            RUBYOPT: -W0\n", 1), "", true, ""},
+		{"job options before the orb", circleRubyJob("cimg/ruby:3.3", "    environment:\n      RUBYOPT: -W0\n", "", ""), "", true, "dropping the job's -W0; restore it after the Datadog orb step with a later step that appends it to $BASH_ENV"},
+		{"Ruby 3.0 RubyGems", circleRubyJob("cimg/ruby:3.0", "", "", ""), "", true, "Run gem update --system 3.4.22 before it"},
+		{"Ruby 3.0 updated RubyGems", circleRubyJob("cimg/ruby:3.0", "", "      - run: gem update --system 3.4.22\n", ""), "", true, ""},
+		{"JRuby job excluded", strings.Replace(strings.Replace(complete, "\nworkflows:", "  jruby:\n    docker:\n      - image: jruby:9.4\n    steps:\n      - run: bundle exec rspec\n\nworkflows:", 1), "      - rspec\n", "      - rspec\n      - jruby\n", 1), "", true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := circleRubyRepository(t, tc.config)
+			require.Equal(t, tc.configured, rubyDiscovery{}.ciSetupConfigured(root, "rspec", tc.site))
+			var reasons []string
+			for _, job := range RubyCIConfigurationForSite(root, "rspec", tc.site).Jobs {
+				reasons = append(reasons, job.Status+": "+job.Reason)
+			}
+			if tc.reason != "" {
+				require.Contains(t, strings.Join(reasons, "\n"), "inconclusive: ")
+				require.Contains(t, strings.Join(reasons, "\n"), tc.reason)
+			} else if tc.configured {
+				require.NotContains(t, strings.Join(reasons, "\n"), "inconclusive: ")
+			}
+		})
+	}
+}
+
+// Agent onboarding asks for the orb with the selected site, then hands off
+// validation once every test job runs it.
+func TestCircleCIRubyAgentOnboarding(t *testing.T) {
+	root := circleRubyRepository(t, strings.Replace(circleRubyJob("cimg/ruby:3.3", "", "", ""), circleRubyOrb, "", 1))
+	state, err := rubyAgentStart(t, StartOptions{Format: "json", Site: "datadoghq.eu"})
+	require.Error(t, err)
+	require.Equal(t, "ci_setup_required", state.Code)
+	require.Contains(t, state.Reason, "CI does not yet run the Datadog Test Optimization orb")
+	require.Contains(t, state.Instruction, "# Enable Datadog Test Optimization for rspec on CircleCI")
+	require.Contains(t, state.Instruction, "- test-optimization-circleci-orb/autoinstrument:\n    languages: ruby\n    site: datadoghq.eu\n    ruby_tracer_version: <exact datadog-ci release>\n")
+	require.Contains(t, state.Instruction, "Without it the Datadog orb step fails, which fails the job")
+	require.Contains(t, state.Instruction, "do not edit the Gemfile")
+	require.NotContains(t, state.Instruction, "test-visibility-github-action")
+	require.NotContains(t, state.Instruction, "GitLab")
+
+	writeFile(t, root, circleCIFile, strings.Replace(circleRubyJob("cimg/ruby:3.3", "", "", ""), "site: datadoghq.com", "site: datadoghq.eu", 1))
+	state, err = rubyAgentStart(t, StartOptions{Format: "json", Site: "datadoghq.eu"})
+	require.NoError(t, err)
+	require.Equal(t, "ready", state.Status)
+	require.Contains(t, state.Reason, "CI already runs the Datadog Test Optimization orb")
+}
+
+// Options that must follow the orb persist through $BASH_ENV.
+func TestCircleCIMinitestInstructionsExtendTheExportedOptions(t *testing.T) {
+	text := providerSetupInstructions(t.TempDir(), circleCI{}, "ruby", "minitest", "", true)
+	require.Contains(t, text, "Right after the Datadog orb step, append the initializer to the exported options:")
+	require.Contains(t, text, `- run: echo 'export RUBYOPT="$RUBYOPT -r./ci/datadog_test_optimization.rb"' >> "$BASH_ENV"`)
+	require.NotContains(t, text, "${{ env.RUBYOPT }}")
+	text = providerSetupInstructions(t.TempDir(), gitLabCI{}, "ruby", "minitest", "", true)
+	require.Contains(t, text, "Right after the Datadog setup entry, append the initializer to the exported options:")
+}
+
+// The committed fixture is rubyXL's configuration: a Ruby version matrix
+// on cimg/ruby images with test splitting. Its Ruby 3.0 entry needs a
+// RubyGems update, which a when step on the image guards per entry.
+func TestCircleCIRubyFixture(t *testing.T) {
+	root := copyFixture(t, "circleci-ruby")
+	useCIProvider(t, "circleci")
+	scope, err := DiscoverValidationScope(root, "rspec")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "bundle exec rspec --format progress", scope.Commands[0].Command)
+	require.Len(t, scope.Commands[0].locations, 6)
+	require.Contains(t, strings.Join(scope.Review, "\n"), "CircleCI test splitting passes each parallel container its share of the test files in $TEST_FILES")
+	request := rubyDiscovery{}.ciSetupRequest(root, "rspec", "datadoghq.com", circleCI{}.setupTerms())
+	notes := strings.Join(request.Notes, "\n")
+	guard := "- when:\n    condition:\n      equal: [ \"cimg/ruby:3.0\", \"cimg/ruby:<< parameters.ruby-version >>\" ]\n    steps:\n      - run: gem update --system 3.4.22"
+	require.Contains(t, notes, "These CI jobs run cimg/ruby:3.0")
+	require.Contains(t, notes, guard)
+
+	// The agent's edit: the guard and the orb before the tests.
+	data := readFixtureFile(t, root, circleCIFile)
+	indented := "      " + strings.ReplaceAll(guard, "\n", "\n      ") + "\n"
+	edited := strings.Replace(data, "      - run:\n          name: run tests\n", indented+circleRubyOrb+"      - run:\n          name: run tests\n", 1)
+	edited = strings.Replace(edited, "version: 2.1\n", "version: 2.1\norbs:\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\n", 1)
+	writeFile(t, root, circleCIFile, edited)
+	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", "datadoghq.com"))
+	for _, job := range RubyCIConfigurationForSite(root, "rspec", "datadoghq.com").Jobs {
+		require.Equal(t, "not checked", job.Status, job.Job+": "+job.Reason)
+	}
+}
+
+func readFixtureFile(t *testing.T, root, path string) string {
+	t.Helper()
+	data, err := readSetupEdit(root, path)
+	require.NoError(t, err)
+	return string(data.before)
+}

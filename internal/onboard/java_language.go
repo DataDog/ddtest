@@ -132,7 +132,9 @@ func (javaDiscovery) setupShellExports(map[string]string) (map[string]string, ma
 }
 
 // Setup runs on GitHub Actions only.
-func (javaDiscovery) ciSetupRequest(string, string, string) ciSetupRequest { return ciSetupRequest{} }
+func (javaDiscovery) ciSetupRequest(string, string, string, ciSetupTerms) ciSetupRequest {
+	return ciSetupRequest{}
+}
 
 func (javaDiscovery) automaticProviderSetup(string) bool { return false }
 

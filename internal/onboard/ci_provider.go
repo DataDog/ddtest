@@ -7,6 +7,7 @@ package onboard
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -61,6 +62,9 @@ type ciProvider interface {
 	// so the setup can report: storing DD_API_KEY. skipped describes a setup
 	// guarded to skip without the key.
 	apiKeyAction(skipped bool) string
+	// setupTerms are the provider's words for its setup, which languages'
+	// setup notes use.
+	setupTerms() ciSetupTerms
 	// setupInstructions explains how to add the setup step before a job's
 	// test commands, for a person or a coding agent.
 	setupInstructions(request ciSetupRequest) string
@@ -113,6 +117,38 @@ type ciSetupRequest struct {
 	After []string
 	// Notes are language rules the instructions add after the step.
 	Notes []string
+}
+
+// ciSetupTerms are how a provider without the shared workflow syntax names
+// its setup in the languages' setup notes, which refer to the setup's place
+// in a job and to how a later command keeps a variable it exports.
+type ciSetupTerms struct {
+	// Installer names the setup mechanism after "the", such as "script".
+	Installer string
+	// Entry names the setup's place in a job, such as "the entry", and
+	// SetupEntry the same place where the setup must be named, such as "the
+	// setup entry".
+	Entry, SetupEntry string
+	// Later names what the setup's exports reach, such as "later commands of
+	// the job".
+	Later string
+	// Variables names where a job declares its variables, such as "the job's
+	// variables".
+	Variables string
+	// Persist describes, in a sentence, running a shell command after the
+	// setup so that later test commands see what it exports; PersistEntry
+	// writes it as an entry of the job's configuration (a YAML list item).
+	Persist, PersistEntry func(command string) string
+	// MatrixExclusion says how matrix entries leave a job, such as "with
+	// rules (when: never on their matrix variables)".
+	MatrixExclusion string
+	// SharedMatrix names a matrix whose entries share one job's commands,
+	// such as "a parallel:matrix shares the script".
+	SharedMatrix string
+	// ImageGuard writes an entry that runs command only where the job's
+	// image, written as template, is image; empty when the template selects
+	// no image through a variable or parameter.
+	ImageGuard func(template, image, command string) string
 }
 
 // ciSetupTarget is one test step that needs the setup before it.
@@ -434,4 +470,39 @@ func ProviderChoiceResult(choice *CIProviderChoice) AgentResult {
 // does not set up.
 func ProviderUnsupportedResult(err *CIProviderUnsupportedError) AgentResult {
 	return AgentResult{Status: "unsupported", Phase: "onboarding", Code: "ci_provider_unsupported", Reason: err.Error(), NextAction: "report_result"}
+}
+
+// testWorkflowsWithSetup lists the workflows whose jobs run framework's tests
+// and those where an active setup selecting language precedes every test step.
+func testWorkflowsWithSetup(root string, workflows []ciWorkflow, language, framework string) (found, configured []string) {
+	token := setupActionLanguage(language)
+	for _, workflow := range workflows {
+		tests, complete := false, true
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if disabledCondition(job.If) {
+				continue
+			}
+			setup := false
+			for _, step := range job.Steps {
+				if current, ok := datadogSetup(step); ok {
+					selected, err := setupSelectsLanguage(current, nil, token)
+					setup = setup || err == nil && selected
+				}
+				resolution := resolveTestStep(root, workflow, job, step, language, framework)
+				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
+					continue
+				}
+				tests = true
+				complete = complete && setup && resolution.Reason == ""
+			}
+		}
+		if tests {
+			found = append(found, workflow.Path)
+			if complete {
+				configured = append(configured, workflow.Path)
+			}
+		}
+	}
+	return found, configured
 }

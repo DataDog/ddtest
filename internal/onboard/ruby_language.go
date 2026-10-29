@@ -51,10 +51,10 @@ func (rubyDiscovery) coordinated() bool { return true }
 
 func (rubyDiscovery) automaticCISetup() bool { return false }
 
-// Ruby setup uses the Datadog GitHub Actions setup action or the Datadog
-// GitLab setup script.
+// Ruby setup uses the Datadog GitHub Actions setup action, the Datadog
+// GitLab setup script or the Datadog CircleCI orb.
 func (rubyDiscovery) supportsCIProvider(provider string) bool {
-	return provider == gitHubActionsProvider || provider == gitLabCIProvider
+	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider
 }
 
 // The installer adds datadog-ci to the bundle and replaces RUBYOPT with its
@@ -191,17 +191,17 @@ func (rubyDiscovery) onboardingScope(string) (discover, instructionsWhenConfigur
 
 const rubyBootstrap = "The action installs datadog-ci into the CI bundle and exports RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument. Preserve RUBYOPT on the RSpec or Minitest step and merge any existing Ruby options. Keep the existing bundle exec or binstub entry point."
 
-func (rubyDiscovery) ciSetupRequest(root, framework, site string) ciSetupRequest {
+func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
 	request := ciSetupRequest{Language: "ruby", Site: site, TracerInput: "ruby-tracer-version", TracerVersion: "<exact datadog-ci release>"}
 	request.Notes = []string{
-		"Replace <exact datadog-ci release> with an exact datadog-ci release compatible with every instrumented Ruby, such as 1.42.0; when the bundle already locks datadog-ci, use that release. Keep the existing Gemfile, lockfile, Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments: the script adds datadog-ci to the CI bundle itself, so do not edit the Gemfile. In a mixed RSpec/Minitest repository, scope this change to " + framework + ".",
-		"The script replaces RUBYOPT with -rbundler/setup -rdatadog/ci/auto_instrument. When the job sets RUBYOPT, re-add those options right after the entry with export RUBYOPT=\"$RUBYOPT <existing options>\"; never replace RUBYOPT after it. Set BUNDLE_GEMFILE in the job's variables (one per matrix entry where the matrix selects it), so datadog-ci joins the bundle the tests use.",
-		rubyGemsNote(root, framework),
-		"If a job or matrix entry runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), keep its tests running uninstrumented in a job without the entry; ddtest reports such jobs as excluded. To split a shared matrix, exclude those entries from the instrumented job with rules (when: never on their matrix variables) and run them in that separate job. Report each exclusion and its reason; do not drop entries, guard the tests or change Ruby versions to obtain a pass. At least one compatible instrumented job is required.",
+		"Replace <exact datadog-ci release> with an exact datadog-ci release compatible with every instrumented Ruby, such as 1.42.0; when the bundle already locks datadog-ci, use that release. Keep the existing Gemfile, lockfile, Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments: the " + terms.Installer + " adds datadog-ci to the CI bundle itself, so do not edit the Gemfile. In a mixed RSpec/Minitest repository, scope this change to " + framework + ".",
+		"The " + terms.Installer + " replaces RUBYOPT with -rbundler/setup -rdatadog/ci/auto_instrument. When the job sets RUBYOPT, re-add those options right after " + terms.Entry + " with " + terms.Persist(`export RUBYOPT="$RUBYOPT <existing options>"`) + "; never replace RUBYOPT after it. Set BUNDLE_GEMFILE in " + terms.Variables + " (one per matrix entry where the matrix selects it), so datadog-ci joins the bundle the tests use.",
+		rubyGemsNote(root, framework, terms),
+		"If a job or matrix entry runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), keep its tests running uninstrumented in a job without " + terms.Entry + "; ddtest reports such jobs as excluded. To split a shared matrix, exclude those entries from the instrumented job " + terms.MatrixExclusion + " and run them in that separate job. Report each exclusion and its reason; do not drop entries, guard the tests or change Ruby versions to obtain a pass. At least one compatible instrumented job is required.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
 	}
 	if framework == "minitest" {
-		request.Notes = append(request.Notes, rubyShellForkSetup())
+		request.Notes = append(request.Notes, rubyShellForkSetup(terms))
 	}
 	return request
 }
@@ -211,14 +211,23 @@ func (rubyDiscovery) automaticProviderSetup(string) bool { return false }
 
 // rubyShellForkSetup is the Minitest fork setup for a setup that runs in the
 // job's shell: the initializer extends the exported RUBYOPT after it.
-func rubyShellForkSetup() string {
+func rubyShellForkSetup(terms ciSetupTerms) string {
 	text := strings.ReplaceAll(rubyMinitestForkInstructions, "__FORK_SETUP__", strings.TrimSpace(RubyMinitestForkSetup))
 	return strings.NewReplacer(
-		"On the existing test step, after the Datadog action, append the initializer to the action's exported options:", "Right after the Datadog setup entry, append the initializer to the exported options:",
-		"env:\n  RUBYOPT: \"${{ env.RUBYOPT }} -r./ci/datadog_test_optimization.rb\"", "- export RUBYOPT=\"$RUBYOPT -r./ci/datadog_test_optimization.rb\"",
+		"On the existing test step, after the Datadog action, append the initializer to the action's exported options:", "Right after "+datadogSetupEntry(terms)+", append the initializer to the exported options:",
+		"env:\n  RUBYOPT: \"${{ env.RUBYOPT }} -r./ci/datadog_test_optimization.rb\"", terms.PersistEntry(`export RUBYOPT="$RUBYOPT -r./ci/datadog_test_optimization.rb"`),
 		"Adjust the relative path only if the test step has another working directory.", "Adjust the relative path only if the tests run from another directory.",
 		"The step's `RUBYOPT` also loads it on matrix entries where the Datadog action is skipped; there it does nothing, because Datadog CI is not loaded.", "In a job without the setup it does nothing, because Datadog CI is not loaded.",
 	).Replace(text)
+}
+
+// datadogSetupEntry names the setup's place in a job with Datadog's name,
+// such as "the Datadog setup entry".
+func datadogSetupEntry(terms ciSetupTerms) string {
+	if strings.Contains(terms.SetupEntry, "Datadog") {
+		return terms.SetupEntry
+	}
+	return "the Datadog " + strings.TrimPrefix(terms.SetupEntry, "the ")
 }
 
 // JRuby, TruffleRuby and Ruby head images run an engine datadog-ci does not
@@ -237,8 +246,8 @@ func (rubyDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[str
 // 3.3.22 the installer requires (Ruby 2.7 and 3.0) and the update they need
 // before the setup entry; in a shared matrix script, a guard on the variable
 // that selects the image updates only those entries.
-func rubyGemsNote(root, framework string) string {
-	const generic = "Ruby 2.7 and 3.0 images ship RubyGems older than 3.3.22, which the installer rejects: in those jobs run gem update --system 3.4.22 before the entry. Keep their test and instrumentation entries."
+func rubyGemsNote(root, framework string, terms ciSetupTerms) string {
+	generic := "Ruby 2.7 and 3.0 images ship RubyGems older than 3.3.22, which the installer rejects: in those jobs run gem update --system 3.4.22 before " + terms.Entry + ". Keep their test and instrumentation entries."
 	provider, err := currentCIProvider(root)
 	if err != nil {
 		return generic
@@ -265,24 +274,20 @@ func rubyGemsNote(root, framework string) string {
 			images = append(images, job.Image)
 			// Compare the image as written with the entry's image, which also
 			// works when the variable is only the tag (ruby:${RUBY_VERSION}).
-			if rubyImageVariable.MatchString(job.ImageTemplate) {
-				guards = append(guards, `- if [ "`+job.ImageTemplate+`" = "`+job.Image+`" ]; then gem update --system 3.4.22; fi`)
+			if guard := terms.ImageGuard(job.ImageTemplate, job.Image, "gem update --system 3.4.22"); guard != "" {
+				guards = append(guards, guard)
 			}
 		}
 	}
 	if len(images) == 0 {
 		return generic
 	}
-	note := "These CI jobs run " + strings.Join(images, ", ") + ", whose RubyGems is older than the 3.3.22 the installer requires: run gem update --system 3.4.22 before the setup entry in them, and keep their test and instrumentation entries."
+	note := "These CI jobs run " + strings.Join(images, ", ") + ", whose RubyGems is older than the 3.3.22 the installer requires: run gem update --system 3.4.22 before " + terms.SetupEntry + " in them, and keep their test and instrumentation entries."
 	if len(guards) > 0 {
-		note += " Where a parallel:matrix shares the script, add this entry before the setup entry instead of splitting the job; ddtest follows the guard per matrix entry:\n" + strings.Join(guards, "\n")
+		note += " Where " + terms.SharedMatrix + ", add this entry before " + terms.SetupEntry + " instead of splitting the job; ddtest follows the guard per matrix entry:\n" + strings.Join(guards, "\n")
 	}
 	return note
 }
-
-// rubyImageVariable is the variable an image is selected by, as in
-// image: $RUBY_IMAGE or ruby:${RUBY_VERSION}.
-var rubyImageVariable = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?`)
 
 // rubyGemPackaging completes the report exclusion for the repository's gem
 // packaging. A gemspec listing its files with git ls-files already leaves out

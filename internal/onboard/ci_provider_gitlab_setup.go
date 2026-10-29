@@ -7,8 +7,6 @@ package onboard
 
 import (
 	"fmt"
-	"maps"
-	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -178,7 +176,7 @@ func gitLabKeyGuard(condition []*syntax.Stmt) string {
 		return ""
 	}
 	parameter, ok := quoted.Parts[0].(*syntax.ParamExp)
-	if !ok || !gitLabEmptyDefault(parameter.Exp) || parameter.Repl != nil || parameter.Slice != nil || parameter.Index != nil || parameter.Length || parameter.Excl {
+	if !ok || !ciEmptyDefault(parameter.Exp) || parameter.Repl != nil || parameter.Slice != nil || parameter.Index != nil || parameter.Length || parameter.Excl {
 		return ""
 	}
 	return parameter.Param.Value
@@ -246,7 +244,7 @@ func gitLabSetupInvocation(command string, known map[string]string, literal ...m
 				continue
 			}
 			value, _ := gitLabWord(assign.Value, known, "")
-			setup.Inputs[input] = gitLabLiteralInput(value, !gitLabExpands(assign.Value))
+			setup.Inputs[input] = gitLabLiteralInput(value, !ciShellExpands(assign.Value))
 		}
 	}
 	// A guard must test the variable API_KEY reads, so the script runs
@@ -254,6 +252,51 @@ func gitLabSetupInvocation(command string, known map[string]string, literal ...m
 	guarded := guard == "" || strings.Trim(strings.TrimPrefix(setup.Inputs["api_key"], "$"), "{}") == guard
 	setup.Supported = checksum != nil && setup.Pinned && guarded && gitLabSetupChecksums[release] == checksum[1]
 	return setup, true
+}
+
+// gitLabShellDialect is how GitLab CI scripts read: CI_PROJECT_DIR is the
+// checkout and the setup script's inputs are variables.
+var gitLabShellDialect = ciShellDialect{
+	label:           "GitLab CI script",
+	projectVariable: "CI_PROJECT_DIR",
+	runnerPrefixes:  []string{"CI_", "GITLAB_"},
+	setupVariable: func(name string) bool {
+		_, input := gitLabSetupInput(name)
+		return input
+	},
+}
+
+// gitLabWord evaluates a shell word of a GitLab CI script (see ciShellWord).
+func gitLabWord(word *syntax.Word, known map[string]string, self string) (string, bool) {
+	return ciShellWord(word, known, self, gitLabShellDialect.projectVariable)
+}
+
+// gitLabImageVariable is a variable read in an image, as in $RUBY_IMAGE or
+// ruby:${RUBY_VERSION}.
+var gitLabImageVariable = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?`)
+
+// The setup script runs in the job's shell, so later entries see its
+// exports; matrix entries share one script.
+func (gitLabCI) setupTerms() ciSetupTerms {
+	return ciSetupTerms{
+		Installer:       "script",
+		Entry:           "the entry",
+		SetupEntry:      "the setup entry",
+		Later:           "later commands of the job",
+		Variables:       "the job's variables",
+		Persist:         func(command string) string { return command },
+		PersistEntry:    func(command string) string { return "- " + command },
+		MatrixExclusion: "with rules (when: never on their matrix variables)",
+		SharedMatrix:    "a parallel:matrix shares the script",
+		ImageGuard: func(template, image, command string) string {
+			// Compare the image as written with the entry's image, which also
+			// works when the variable is only the tag (ruby:${RUBY_VERSION}).
+			if !gitLabImageVariable.MatchString(template) {
+				return ""
+			}
+			return `- if [ "` + template + `" = "` + image + `" ]; then ` + command + `; fi`
+		},
+	}
 }
 
 func (gitLabCI) setupName() string { return "Datadog setup script" }
@@ -334,321 +377,6 @@ func (g gitLabCI) setupInstructions(request ciSetupRequest) string {
 	return strings.TrimSpace(text.String())
 }
 
-// gitLabWord evaluates a shell word: literal text and $NAME/${NAME} reads of
-// known values. self is the variable being assigned; reading it while unset
-// is empty. Other unknown reads stay as written and make the value dynamic.
-func gitLabWord(word *syntax.Word, known map[string]string, self string) (value string, literal bool) {
-	var text strings.Builder
-	literal = true
-	var parts func([]syntax.WordPart)
-	parts = func(items []syntax.WordPart) {
-		for _, part := range items {
-			switch part := part.(type) {
-			case *syntax.Lit:
-				text.WriteString(part.Value)
-			case *syntax.SglQuoted:
-				text.WriteString(part.Value)
-			case *syntax.DblQuoted:
-				parts(part.Parts)
-			case *syntax.ParamExp:
-				name := part.Param.Value
-				if part.Index != nil || part.Slice != nil || part.Repl != nil || !gitLabEmptyDefault(part.Exp) || part.Excl || part.Length {
-					literal = false
-					text.WriteString("${" + name + "...}")
-					continue
-				}
-				if name == "CI_PROJECT_DIR" {
-					text.WriteString(gitLabProjectDirectory)
-					continue
-				}
-				if value, ok := known[name]; ok {
-					text.WriteString(value)
-					continue
-				}
-				if name == self {
-					continue
-				}
-				literal = false
-				text.WriteString("$" + name)
-			default:
-				literal = false
-				text.WriteString("$(…)")
-			}
-		}
-	}
-	parts(word.Parts)
-	return text.String(), literal
-}
-
-// statement records the state one statement changes and reports whether it
-// only changed state.
-func (s *gitLabState) statement(stmt *syntax.Stmt, known map[string]string) bool {
-	if stmt.Background || stmt.Negated || stmt.Coprocess || len(stmt.Redirs) > 0 {
-		s.unfollowed(stmt)
-		return false
-	}
-	switch command := stmt.Cmd.(type) {
-	case *syntax.BinaryCmd:
-		if command.Op == syntax.AndStmt {
-			left := s.statement(command.X, known)
-			right := s.statement(command.Y, mergeEnvironment(known, s.env))
-			return left && right
-		}
-		s.unfollowed(stmt)
-		return false
-	case *syntax.DeclClause:
-		if command.Variant.Value != "export" {
-			s.unfollowed(stmt)
-			return false
-		}
-		s.assign(command.Args, known, true)
-		return true
-	case *syntax.CallExpr:
-		if len(command.Args) == 0 {
-			s.assign(command.Assigns, known, false)
-			return true
-		}
-		var words []string
-		for _, word := range command.Args {
-			value, literal := gitLabWord(word, known, "")
-			if !literal {
-				words = nil
-				break
-			}
-			words = append(words, value)
-		}
-		if len(words) == 0 {
-			return false
-		}
-		switch words[0] {
-		case "cd":
-			s.changeDirectory(words[1:])
-			return true
-		case "set":
-			return len(command.Assigns) == 0
-		case "unset":
-			for _, name := range words[1:] {
-				s.env[name] = ""
-			}
-			return true
-		}
-		return false
-	case *syntax.Subshell:
-		return false
-	case *syntax.IfClause:
-		// A condition on known values: follow the branch that runs.
-		if branch, ok := gitLabStaticBranch(command, known); ok {
-			onlyState := true
-			for _, inner := range branch {
-				onlyState = s.statement(inner, mergeEnvironment(known, s.env)) && onlyState
-			}
-			return onlyState
-		}
-	}
-	s.unfollowed(stmt)
-	return false
-}
-
-// assign records assignments; values ddtest cannot evaluate keep their
-// dynamic text, so later readers stay unresolved.
-func (s *gitLabState) assign(assigns []*syntax.Assign, known map[string]string, export bool) {
-	for _, assign := range assigns {
-		if assign.Name == nil || assign.Index != nil || assign.Array != nil {
-			s.problem = "GitLab CI script assigns an array or indexed variable ddtest cannot follow"
-			continue
-		}
-		name := assign.Name.Value
-		if assign.Naked {
-			if value, ok := mergeEnvironment(known, s.references)[name]; ok && export {
-				s.env[name] = value
-				delete(s.references, name)
-			}
-			continue
-		}
-		if name == "PATH" && assign.Value != nil && gitLabRepositoryBinPath(assign.Value) {
-			// Prepending the repository's node_modules/.bin selects the
-			// tools local validation already resolves from it.
-			continue
-		}
-		visible := mergeEnvironment(mergeEnvironment(known, s.references), s.env)
-		value, literal := "", true
-		if assign.Value != nil {
-			value, literal = gitLabWord(assign.Value, visible, name)
-		}
-		if assign.Append {
-			value = visible[name] + value
-		}
-		if _, input := gitLabSetupInput(name); !literal && !input {
-			// A computed value or an unknown read stays unresolved wherever the
-			// value is used, rather than replayed as text.
-			value = unresolvedCIValue(value)
-		}
-		// A plain assignment stays in the shell unless the variable is
-		// already exported, as the job's variables are.
-		_, exported := s.env[name]
-		if _, inJob := s.job[name]; inJob {
-			exported = true
-		}
-		if _, input := gitLabSetupInput(name); input && assign.Value != nil {
-			if s.literal == nil {
-				s.literal = map[string]bool{}
-			}
-			s.literal[name] = !gitLabExpands(assign.Value)
-		}
-		if export || exported || gitLabRunnerExported(name) {
-			s.env[name] = value
-			delete(s.references, name)
-		} else {
-			s.references[name] = value
-		}
-	}
-}
-
-// changeDirectory follows a literal cd within the repository.
-func (s *gitLabState) changeDirectory(arguments []string) {
-	if len(arguments) != 1 || arguments[0] == "-" || strings.HasPrefix(arguments[0], "~") {
-		s.problem = "GitLab CI script changes directory with cd " + strings.Join(arguments, " ") + ", which ddtest cannot follow"
-		return
-	}
-	target := arguments[0]
-	base := s.directory
-	if rest, ok := strings.CutPrefix(target, gitLabProjectDirectory); ok {
-		target, base = strings.TrimPrefix(rest, "/"), ""
-	}
-	if strings.HasPrefix(target, "/") || strings.Contains(target, "$") {
-		s.problem = "GitLab CI script changes directory to " + arguments[0] + ", outside the repository ddtest reads"
-		return
-	}
-	next := path.Clean(path.Join(base, target))
-	if next == "." {
-		next = ""
-	}
-	if strings.HasPrefix(next, "..") {
-		s.problem = "GitLab CI script changes directory to " + arguments[0] + ", outside the repository"
-		return
-	}
-	s.directory = next
-}
-
-// unfollowed records state changes inside control flow ddtest does not
-// evaluate: they make later entries unresolved.
-func (s *gitLabState) unfollowed(stmt *syntax.Stmt) {
-	syntax.Walk(stmt, func(node syntax.Node) bool {
-		switch node := node.(type) {
-		case *syntax.Subshell, *syntax.CmdSubst:
-			return false
-		case *syntax.DeclClause:
-			if node.Variant.Value == "export" {
-				s.problem = "GitLab CI script exports variables conditionally, which ddtest cannot follow"
-			}
-		case *syntax.CallExpr:
-			if len(node.Args) == 0 && len(node.Assigns) > 0 {
-				s.problem = "GitLab CI script assigns variables conditionally, which ddtest cannot follow"
-			}
-			if len(node.Args) > 0 && node.Args[0].Lit() == "cd" {
-				s.problem = "GitLab CI script changes directory conditionally, which ddtest cannot follow"
-			}
-		}
-		return true
-	})
-}
-
-// testWorkflowsWithSetup lists the workflows whose jobs run framework's tests
-// and those where an active setup selecting language precedes every test step.
-func testWorkflowsWithSetup(root string, workflows []ciWorkflow, language, framework string) (found, configured []string) {
-	token := setupActionLanguage(language)
-	for _, workflow := range workflows {
-		tests, complete := false, true
-		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
-			job := workflow.Jobs[name]
-			if disabledCondition(job.If) {
-				continue
-			}
-			setup := false
-			for _, step := range job.Steps {
-				if current, ok := datadogSetup(step); ok {
-					selected, err := setupSelectsLanguage(current, nil, token)
-					setup = setup || err == nil && selected
-				}
-				resolution := resolveTestStep(root, workflow, job, step, language, framework)
-				if resolution.Review || !resolution.Matched && resolution.Reason == "" {
-					continue
-				}
-				tests = true
-				complete = complete && setup && resolution.Reason == ""
-			}
-		}
-		if tests {
-			found = append(found, workflow.Path)
-			if complete {
-				configured = append(configured, workflow.Path)
-			}
-		}
-	}
-	return found, configured
-}
-
-// gitLabStaticBranch returns the statements an if clause runs when its
-// conditions are tests on known values: [ -n "$X" ], [ -z "$X" ] and
-// [ "$X" = "value" ] (also != and ==, or test ...).
-func gitLabStaticBranch(clause *syntax.IfClause, known map[string]string) ([]*syntax.Stmt, bool) {
-	for current := clause; current != nil; current = current.Else {
-		if len(current.Cond) == 0 {
-			return current.Then, true // else
-		}
-		truth, ok := gitLabStaticTest(current.Cond, known)
-		if !ok {
-			return nil, false
-		}
-		if truth {
-			return current.Then, true
-		}
-	}
-	return nil, true
-}
-
-// gitLabStaticTest evaluates one [ ... ] or test ... condition whose words
-// are literal or read known values.
-func gitLabStaticTest(condition []*syntax.Stmt, known map[string]string) (bool, bool) {
-	if len(condition) != 1 || condition[0].Negated || len(condition[0].Redirs) > 0 {
-		return false, false
-	}
-	call, ok := condition[0].Cmd.(*syntax.CallExpr)
-	if !ok || len(call.Assigns) > 0 || len(call.Args) == 0 {
-		return false, false
-	}
-	args := call.Args[1:]
-	switch call.Args[0].Lit() {
-	case "[":
-		if len(args) == 0 || args[len(args)-1].Lit() != "]" {
-			return false, false
-		}
-		args = args[:len(args)-1]
-	case "test":
-	default:
-		return false, false
-	}
-	var words []string
-	for _, word := range args {
-		value, literal := gitLabWord(word, known, "")
-		if !literal || strings.Contains(strings.ReplaceAll(value, "${{ env.", ""), "$") {
-			return false, false
-		}
-		words = append(words, value)
-	}
-	switch {
-	case len(words) == 2 && words[0] == "-n":
-		return words[1] != "", true
-	case len(words) == 2 && words[0] == "-z":
-		return words[1] == "", true
-	case len(words) == 3 && (words[1] == "=" || words[1] == "=="):
-		return words[0] == words[2], true
-	case len(words) == 3 && words[1] == "!=":
-		return words[0] != words[2], true
-	}
-	return false, false
-}
-
 // gitLabResolveBranches replaces a script entry that is one if clause on
 // known values with the branch it runs, so the job's commands are those of
 // its matrix entry, as in if [ "$RUBY_IMAGE" = "ruby:3.0" ]; then ...; fi.
@@ -661,7 +389,7 @@ func gitLabResolveBranches(command string, known map[string]string) string {
 	if !ok || file.Stmts[0].Background || len(file.Stmts[0].Redirs) > 0 {
 		return command
 	}
-	branch, ok := gitLabStaticBranch(clause, known)
+	branch, ok := ciStaticBranch(clause, known, "CI_PROJECT_DIR")
 	if !ok {
 		return command
 	}
@@ -678,28 +406,6 @@ func gitLabResolveBranches(command string, known map[string]string) string {
 	return text.String()
 }
 
-// gitLabEmptyDefault reports no expansion operator, or ${NAME:-} (empty
-// when unset, which keeps set -u scripts running).
-func gitLabEmptyDefault(expansion *syntax.Expansion) bool {
-	return expansion == nil || expansion.Op == syntax.DefaultUnsetOrNull && (expansion.Word == nil || len(expansion.Word.Parts) == 0)
-}
-
-// gitLabExpands reports whether a shell word expands a variable, outside
-// single quotes.
-func gitLabExpands(word *syntax.Word) bool {
-	expands := false
-	syntax.Walk(word, func(node syntax.Node) bool {
-		switch node.(type) {
-		case *syntax.SglQuoted:
-			return false
-		case *syntax.ParamExp:
-			expands = true
-		}
-		return !expands
-	})
-	return expands
-}
-
 // gitLabLiteralInput keeps a value written literally, such as
 // API_KEY='$DD_API_KEY', from passing for a variable reference: the
 // installer receives the text itself.
@@ -708,41 +414,4 @@ func gitLabLiteralInput(value string, literal bool) string {
 		return "'" + value + "'"
 	}
 	return value
-}
-
-// gitLabRunnerExported reports variables the runner or the image exports
-// to every process, such as PATH or a language runtime's options: assigning
-// one changes the environment of later commands even without export.
-func gitLabRunnerExported(name string) bool {
-	if slices.Contains([]string{"PATH", "HOME", "LANG", "TZ"}, name) {
-		return true
-	}
-	for _, prefix := range []string{"CI_", "GITLAB_", "LC_", "DD_"} {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool { return language.runtimeVariable(name) })
-}
-
-// gitLabRepositoryBinPath reports a PATH value that only prepends the
-// repository's node_modules/.bin to $PATH, as in
-// PATH=$(realpath ./node_modules/.bin):$PATH.
-func gitLabRepositoryBinPath(word *syntax.Word) bool {
-	var text strings.Builder
-	if err := syntax.NewPrinter().Print(&text, word); err != nil {
-		return false
-	}
-	parts := strings.Split(strings.Trim(text.String(), `"`), ":")
-	sawPath := false
-	for _, part := range parts {
-		switch strings.TrimSuffix(part, "/") {
-		case "$PATH", "${PATH}":
-			sawPath = true
-		case "./node_modules/.bin", "node_modules/.bin", "$(realpath ./node_modules/.bin)", "$(realpath node_modules/.bin)", "$PWD/node_modules/.bin", "${PWD}/node_modules/.bin", "$CI_PROJECT_DIR/node_modules/.bin", "${CI_PROJECT_DIR}/node_modules/.bin":
-		default:
-			return false
-		}
-	}
-	return sawPath
 }

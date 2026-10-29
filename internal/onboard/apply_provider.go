@@ -22,7 +22,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 	if !language.automaticProviderSetup(framework) {
 		return nil, &SetupGap{"CI initialization", framework + " initializes the tracer through package scripts, which onboard --apply does not edit on " + provider.displayName() + ". Add the setup from onboard --instructions manually, then validate with testdrive --all."}
 	}
-	request := language.ciSetupRequest(root, framework, site)
+	request := language.ciSetupRequest(root, framework, site, provider.setupTerms())
 	request.TracerVersion = version
 	var targets []ciSetupTarget
 	configured := 0
@@ -166,7 +166,7 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 					}
 				}
 				resolution := resolveTestStep(root, workflow, job, step, language, framework)
-				if resolution.Review || !resolution.Matched && resolution.Reason == "" {
+				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
 					continue
 				}
 				if resolution.Reason != "" || setup == nil || provider.setupProblem(*setup, tracerInput, exact, "", site) != "" {

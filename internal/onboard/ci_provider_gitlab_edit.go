@@ -160,7 +160,7 @@ func gitLabTarget(workflows []ciWorkflow, target ciSetupTarget) (runtimeJob, run
 // gitLabCurlBefore reports an entry before step that installs curl.
 func gitLabCurlBefore(job runtimeJob, step int) bool {
 	for _, earlier := range job.Steps[:step] {
-		if gitLabInstallsCurl(earlier.Run) {
+		if installsCurl(earlier.Run) {
 			return true
 		}
 	}
