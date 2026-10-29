@@ -323,3 +323,122 @@ func TestPythonLiteralCommandEnvironmentIsScoped(t *testing.T) {
 	require.NotEmpty(t, scope.Unresolved)
 	require.Equal(t, "inconclusive", pythonRuntimeCheck(t, root).Status)
 }
+
+func TestPythonUnresolvedActionLanguagesStayInconclusive(t *testing.T) {
+	root := pythonReviewWorkflow(t, "{}", "", "pytest")
+	path := filepath.Join(root, ".github/workflows/test.yml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte(strings.Replace(string(data), "languages: python", "languages: '${{ vars.DD_LANGUAGES }}'", 1)), 0644))
+	check := pythonRuntimeCheck(t, root)
+	require.Equal(t, "inconclusive", check.Status)
+	require.Len(t, check.Jobs, 1)
+	require.Contains(t, check.Jobs[0].Reason, "DD_LANGUAGES")
+	require.NotEqual(t, "missing_instrumentation", check.Jobs[0].Code)
+}
+
+func TestPythonCollectionOnlyCommandsAreNotTestRuns(t *testing.T) {
+	for _, command := range []string{"pytest --collect-only", "python -m pytest --co", "uv run pytest --collect-only"} {
+		root := pythonReviewWorkflow(t, "{}", "      - run: "+command+"\n", "pytest")
+		scope, err := DiscoverValidationScope(root, "pytest")
+		require.NoError(t, err)
+		require.Empty(t, scope.Unresolved)
+		require.Len(t, scope.Commands, 1)
+		check := pythonRuntimeCheck(t, root)
+		require.Equal(t, "compatible", check.Status)
+		require.Len(t, check.Jobs, 1)
+	}
+	root := pythonReviewWorkflow(t, "{}", "", "tox -e py312")
+	writeFile(t, root, "pyproject.toml", "[tool.tox.env_run_base]\npass_env = ['DD_*', 'PYTHONPATH', 'PYTEST_ADDOPTS']\ncommands = [['pytest', '--collect-only'], ['pytest']]\n")
+	require.Equal(t, "compatible", pythonRuntimeCheck(t, root).Status)
+	require.True(t, pythonInvocation([]string{"pytest", "-k", "--collect-only"}))
+	require.True(t, pythonInvocation([]string{"pytest", "--", "--co"}))
+}
+
+func TestPythonInheritedHomeIsUnverified(t *testing.T) {
+	for _, layer := range []string{"workflow", "job", "step"} {
+		root := pythonReviewWorkflow(t, "{}", "", "python -m pytest")
+		path := filepath.Join(root, ".github/workflows/test.yml")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		text := string(data)
+		switch layer {
+		case "workflow":
+			text = "env: {PYTHONHOME: '/other/python'}\n" + text
+		case "job":
+			text = strings.Replace(text, "env: {}", "env: {PYTHONHOME: '/other/python'}", 1)
+		case "step":
+			text += "        env: {PYTHONHOME: '/other/python'}\n"
+		}
+		require.NoError(t, os.WriteFile(path, []byte(text), 0644))
+		require.Equal(t, "inconclusive", pythonRuntimeCheck(t, root).Status, layer)
+	}
+	for _, command := range []string{"pytest", "uv run pytest", "tox -e py312"} {
+		root := pythonReviewWorkflow(t, "{PYTHONHOME: '/other/python'}", "", command)
+		writeFile(t, root, "pyproject.toml", "[tool.tox.env_run_base]\npass_env = ['DD_*', 'PYTHONPATH', 'PYTEST_ADDOPTS', 'PYTHONHOME']\ncommands = [['pytest']]\n")
+		require.Equal(t, "inconclusive", pythonRuntimeCheck(t, root).Status, command)
+	}
+	root := pythonReviewWorkflow(t, "{PYTHONHOME: ''}", "", "pytest")
+	require.Equal(t, "compatible", pythonRuntimeCheck(t, root).Status)
+}
+
+func TestPythonSetupWithoutEnvironmentUpdateIsUnverified(t *testing.T) {
+	for _, tc := range []struct{ value, status string }{
+		{"false", "inconclusive"},
+		{"${{ matrix.update }}", "inconclusive"},
+		{"${{ vars.UPDATE_PYTHON }}", "inconclusive"},
+		{"true", "compatible"},
+	} {
+		root := pythonReviewWorkflow(t, "{}", "", "pytest")
+		path := filepath.Join(root, ".github/workflows/test.yml")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		text := strings.Replace(string(data), "env: {}", "strategy:\n      matrix: {update: [false]}\n    env: {}", 1)
+		text = strings.Replace(text, "python-version: '3.12'", "python-version: '3.12', update-environment: '"+tc.value+"'", 1)
+		require.NoError(t, os.WriteFile(path, []byte(text), 0644))
+		require.Equal(t, tc.status, pythonRuntimeCheck(t, root).Status, tc.value)
+	}
+}
+
+func TestPythonMatrixCommandsRequiringReviewRemainCandidates(t *testing.T) {
+	for _, command := range []string{"pytest --cov=app", "python -m pytest -k 'unit or integration'"} {
+		root := pythonWorkflow(t, fmt.Sprintf(`jobs:
+  tests:
+    strategy:
+      matrix:
+        command: [%q]
+    steps:
+      - run: ${{ matrix.command }}
+`, command))
+		scope, err := DiscoverValidationScope(root, "pytest")
+		require.NoError(t, err)
+		require.Empty(t, scope.Commands)
+		require.NotEmpty(t, scope.Unresolved)
+		check := pythonRuntimeCheck(t, root)
+		require.Equal(t, "inconclusive", check.Status)
+		require.Len(t, check.Jobs, 1)
+		rows, err := CIMatrixRows(root, "pytest")
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		require.Contains(t, rows[0], " / tests / ")
+	}
+}
+
+func TestPythonConfigBasedActivationRequiresRuntimeValidation(t *testing.T) {
+	for _, tc := range []struct{ command, name, config string }{
+		{"pytest", "pytest.ini", "[pytest]\nddtrace = true\n"},
+		{"pytest", "pyproject.toml", "[tool.pytest.ini_options]\nddtrace = true\n"},
+		{"pytest", "setup.cfg", "[tool:pytest]\nddtrace = true\n"},
+		{"pytest -o ddtrace=true", "pytest.ini", "[pytest]\n"},
+		{"pytest --override-ini=ddtrace=true", "pytest.ini", "[pytest]\n"},
+		{"pytest -oddtrace=false", "pytest.ini", "[pytest]\nddtrace = true\n"},
+		{"pytest -o no-ddtrace=true", "pytest.ini", "[pytest]\n"},
+		{"pytest", "pytest.ini", "[pytest]\nno-ddtrace = true\n"},
+	} {
+		root := pythonReviewWorkflow(t, "{}", "", tc.command+"\n        env: {PYTEST_ADDOPTS: '-q'}")
+		writeFile(t, root, tc.name, tc.config)
+		check := pythonRuntimeCheck(t, root)
+		require.Equal(t, "inconclusive", check.Status, "%+v", tc)
+		require.Contains(t, check.Jobs[0].Reason, "activation")
+	}
+}

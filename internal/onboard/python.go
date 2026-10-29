@@ -87,22 +87,32 @@ func pythonJobCandidate(root string, workflow ciWorkflow, job runtimeJob) bool {
 		// Inspect only referenced command values to identify relevant jobs. This
 		// does not expand unsupported matrices or authorize their execution.
 		for _, step := range job.Steps {
-			for _, match := range pythonMatrixCommandReference.FindAllStringSubmatch(step.Run, -1) {
-				for _, value := range pythonMatrixCommandValues(job.Strategy.Matrix, strings.Split(match[1], ".")) {
-					candidate := step
-					candidate.Run = strings.ReplaceAll(step.Run, match[0], value)
-					if pythonStepCandidate(root, workflow, job, candidate) {
-						return true
-					}
-				}
+			if pythonMatrixStepCandidate(root, workflow, job, step, job.Strategy.Matrix) {
+				return true
 			}
 		}
 		rows = []map[string]any{nil}
 	}
 	for _, row := range rows {
 		for _, step := range job.Steps {
-			resolved, _, _ := resolveVariantStep(workflow, job, step, row, "pytest")
+			resolved, _, err := resolveVariantStep(workflow, job, step, row, "pytest")
+			if err != nil && pythonMatrixStepCandidate(root, workflow, job, step, row) {
+				return true
+			}
 			if pythonStepCandidate(root, workflow, job, resolved) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pythonMatrixStepCandidate(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, matrix any) bool {
+	for _, match := range pythonMatrixCommandReference.FindAllStringSubmatch(step.Run, -1) {
+		for _, value := range pythonMatrixCommandValues(matrix, strings.Split(match[1], ".")) {
+			candidate := step
+			candidate.Run = strings.ReplaceAll(step.Run, match[0], value)
+			if pythonStepCandidate(root, workflow, job, candidate) {
 				return true
 			}
 		}
@@ -242,7 +252,7 @@ func pythonMetadataQuery(args []string) bool {
 		switch args[i] {
 		case "--":
 			return false
-		case "--version", "--help", "-h", "-V":
+		case "--version", "--help", "-h", "-V", "--collect-only", "--co":
 			return true
 		case "-k", "-m", "-o", "-p", "-c", "--override-ini", "--config-file", "--rootdir":
 			i++ // A value is not a pytest metadata flag.
@@ -392,6 +402,9 @@ func PytestCommandOptions(addopts string, words, defaults []string) (options, in
 			continue
 		}
 		key, value, _ := strings.Cut(value, "=")
+		if key == "ddtrace" || key == "no-ddtrace" {
+			return nil, nil, fmt.Errorf("pytest config-based Datadog activation requires runtime validation")
+		}
 		if key == "addopts" {
 			override, overridden = value, true
 		}
@@ -415,6 +428,9 @@ func PytestCommandOptions(addopts string, words, defaults []string) (options, in
 func pythonRuntimeOverride(words []string, python string, environment map[string]string) bool {
 	if len(words) == 0 {
 		return false
+	}
+	if environment["PYTHONHOME"] != "" {
+		return true
 	}
 	base := strings.TrimSuffix(filepath.Base(words[0]), ".exe")
 	if base == "pytest" && strings.ContainsAny(words[0], "/\\") {
@@ -651,6 +667,11 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 						action, requested = "", ""
 						actionErr = nil
 						python, pythonErr = runtimeValue(step.With["python-version"], row)
+						if update, err := runtimeValue(step.With["update-environment"], row); err != nil {
+							pythonErr = err
+						} else if update != "" && !strings.EqualFold(update, "true") {
+							pythonErr = fmt.Errorf("setup-python does not establish the active Python environment; validate the runtime separately")
+						}
 						if stepErr != nil {
 							pythonErr = stepErr
 						}

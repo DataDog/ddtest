@@ -14,7 +14,7 @@ import (
 // PytestConfigOptions reads configuration without importing project code. For
 // collection paths which could change config discovery, require an explicit -c
 // instead of guessing which file pytest will select. Version-dependent native
-// TOML configuration remains unverified.
+// TOML and config-based Datadog activation remain unverified.
 func PytestConfigOptions(root, directory, addopts string, words []string) ([]string, error) {
 	args, ok := pythonRunnerArguments(words, "pytest")
 	if !ok {
@@ -186,6 +186,11 @@ func readPytestConfigOptions(root, path string) ([]string, bool, error) {
 		if !matched && project.Tool.Pytest != nil {
 			return nil, false, fmt.Errorf("native pytest TOML configuration requires runtime validation")
 		}
+		for _, key := range []string{"ddtrace", "no-ddtrace"} {
+			if _, exists := settings[key]; exists {
+				return nil, false, fmt.Errorf("pytest config-based Datadog activation requires runtime validation")
+			}
+		}
 		switch value := settings["addopts"].(type) {
 		case nil:
 			return nil, matched, nil
@@ -215,6 +220,11 @@ func readPytestConfigOptions(root, path string) ([]string, bool, error) {
 			section = "tool:pytest"
 			if sections[section] == nil && sections["pytest"] != nil {
 				return nil, false, fmt.Errorf("pytest configuration in setup.cfg requires [tool:pytest]")
+			}
+		}
+		for _, key := range []string{"ddtrace", "no-ddtrace"} {
+			if _, exists := sections[section][key]; exists {
+				return nil, false, fmt.Errorf("pytest config-based Datadog activation requires runtime validation")
 			}
 		}
 		options, err := shellquote.Split(sections[section]["addopts"])
