@@ -113,6 +113,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		// and reports only the last exit code, so a multi-line test step differs.
 		posix := step
 		posix.Shell = "bash"
+		posix.windowsShell = posix.windowsShell || shell == "powershell"
 		result := resolveTestStep(root, workflow, job, posix, language, framework)
 		if result.Matched && strings.Contains(strings.TrimSpace(step.Run), "\n") {
 			return unresolvedCommand("Unsupported CI shell: " + shell + " (a multi-line test step continues after a failing line)")
@@ -153,8 +154,8 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			return result
 		}
 	}
-	remaining := packageScriptExpansionLimit
-	result := resolveJestSequence(root, resolvedDirectory, step.Run, nil, &remaining, framework)
+	remaining := &scriptBudget{left: packageScriptExpansionLimit, cmdScripts: step.windowsShell || windowsRunner(job)}
+	result := resolveJestSequence(root, resolvedDirectory, step.Run, nil, remaining, framework)
 
 	if _, err := staticCommands(step.Run); err != nil {
 		if metadata, ok := resolveMetadataStep(root, workflow, job, step, framework); ok {
@@ -184,14 +185,22 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 // alias graph cannot hang discovery.
 const packageScriptExpansionLimit = 256
 
+// scriptBudget is shared by one resolution and every package script it
+// reaches. left bounds the remaining alias expansions; cmdScripts reports that
+// npm runs those package scripts with cmd.exe (Windows), not sh.
+type scriptBudget struct {
+	left       int
+	cmdScripts bool
+}
+
 // Resolve only ordinary static commands and package script aliases. Never run
 // a shell, load JavaScript, or rewrite the CI entry point during discovery.
 func resolveJestCommand(directory, command string, stack []string) commandResolution {
-	remaining := packageScriptExpansionLimit
-	return resolveJestSequence(directory, directory, command, stack, &remaining)
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	return resolveJestSequence(directory, directory, command, stack, remaining)
 }
 
-func resolveJestSequence(root, directory, command string, stack []string, remaining *int, frameworks ...string) commandResolution {
+func resolveJestSequence(root, directory, command string, stack []string, remaining *scriptBudget, frameworks ...string) commandResolution {
 	if len(stack) >= 16 {
 		return unresolvedCommand("Package script nesting exceeds 16 levels")
 	}
@@ -221,7 +230,14 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			result.Builds = nil
 		}
 		previousChain = fragment.Chain
-		words, err := expandPathnames(root, directory, fragment)
+		var words []string
+		var err error
+		if len(fragment.Patterns) > 0 && len(stack) > 0 && remaining.cmdScripts {
+			// cmd.exe leaves the pattern to the runner, whose glob rules differ.
+			err = fmt.Errorf("npm runs package scripts with cmd.exe on Windows, which passes unquoted pathname patterns to the runner unexpanded")
+		} else {
+			words, err = expandPathnames(root, directory, fragment)
+		}
 		if err != nil {
 			// A tool that selects no tests, builds or setup whatever its file
 			// arguments are, such as a formatter, needs no file list.
@@ -236,8 +252,8 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			result.UnknownExecutable = false
 			continue
 		}
-		*remaining--
-		if *remaining < 0 {
+		remaining.left--
+		if remaining.left < 0 {
 			return unresolvedCommand(fmt.Sprintf("Package script expansion exceeds %d commands", packageScriptExpansionLimit))
 		}
 		if len(words) > 0 && words[0] == "cd" {
@@ -305,7 +321,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 // inertCommand reports whether a command is review-only regardless of its
 // arguments: it neither changes directory, prepares a build, edits CI inputs
 // nor resolves to, or might start, any test invocation.
-func inertCommand(root, directory string, words, stack []string, remaining int, frameworks ...string) (string, bool) {
+func inertCommand(root, directory string, words, stack []string, remaining scriptBudget, frameworks ...string) (string, bool) {
 	if len(words) == 0 || words[0] == "cd" || mutatesCIFiles(shellquote.Join(words...)) {
 		return "", false
 	}
@@ -319,7 +335,7 @@ func inertCommand(root, directory string, words, stack []string, remaining int, 
 	return part.ReviewReason, true
 }
 
-func resolveJestWords(root, directory string, words, stack []string, remaining *int, frameworks ...string) (result commandResolution) {
+func resolveJestWords(root, directory string, words, stack []string, remaining *scriptBudget, frameworks ...string) (result commandResolution) {
 	framework := "jest"
 	if len(frameworks) > 0 {
 		framework = frameworks[0]
@@ -637,7 +653,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	}
 }
 
-func resolvePackageScript(root, directory, name string, args, stack []string, command string, remaining *int, frameworks ...string) commandResolution {
+func resolvePackageScript(root, directory, name string, args, stack []string, command string, remaining *scriptBudget, frameworks ...string) commandResolution {
 
 	if len(frameworks) > 0 && frameworks[0] == "webdriverio" && strings.HasPrefix(command, "npm ") {
 		canonicalRoot, err := filepath.EvalSymlinks(root)
@@ -953,7 +969,7 @@ func playwrightInteractiveMode(args []string) bool {
 // build or another framework), or exactly one does and it is the last link of
 // a single && chain, so forwarded options and its exit status stay its own.
 // Links that can't be resolved are left to the sequence's own diagnostics.
-func cucumberChainResolvable(root, directory, script string, stack []string, budget int) bool {
+func cucumberChainResolvable(root, directory, script string, stack []string, budget scriptBudget) bool {
 	fragments, err := discoverCommands(script)
 	if err != nil || len(fragments) == 0 {
 		return false
@@ -996,23 +1012,27 @@ func lifecycleRunner(frameworks []string) (string, string) {
 // powershellArgvOnly reports whether a pwsh step is plain argv commands whose
 // meaning doesn't depend on the shell: no PowerShell variables, operators,
 // script blocks, splatting, escapes, arrays or backslash paths. Command
-// substitution $(...) is the same in both shells.
+// substitution $(...) is the same in both shells, and so is a quoted argument:
+// with no $, backtick, backslash or doubled quote, '...' and "..." are literal
+// in both.
 func powershellArgvOnly(shell, run string) bool {
 	// Doubled quotes are a literal quote in PowerShell but concatenation in bash.
-	if shell != "pwsh" && shell != "powershell" || strings.TrimSpace(run) == "" || strings.Contains(run, "--%") || strings.Contains(run, "''") || strings.Contains(run, `""`) {
+	// PowerShell also accepts typographic quotes, which bash treats as text.
+	if shell != "pwsh" && shell != "powershell" || strings.TrimSpace(run) == "" || strings.Contains(run, "--%") || strings.Contains(run, "''") || strings.Contains(run, `""`) || strings.ContainsAny(run, "‘’‚‛“”„") {
 		return false
 	}
 	for i, r := range run {
 		if r == '@' && npmPackageAt(run, i) {
 			continue
 		}
-		// PowerShell never expands * ? [ for a native command on Windows, so
-		// the runner would receive the pattern that bash discovery expands.
-		if strings.ContainsRune("`@;|&<>{},\\*?[", r) || r == '$' && !strings.HasPrefix(run[i:], "$(") {
+		if strings.ContainsRune("`@;|&<>{},\\", r) || r == '$' && !strings.HasPrefix(run[i:], "$(") {
 			return false
 		}
 	}
-	return true
+	// PowerShell never expands an unquoted * ? [ for a native command on
+	// Windows (and uses its own wildcard rules elsewhere), so the runner would
+	// not receive what bash discovery expands. Quoted ones are literal in both.
+	return !unquotedPathnamePattern(run)
 }
 
 var npmScopedPackage = regexp.MustCompile(`^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*(@[a-zA-Z0-9._^~-]+)?(\s|$)`)

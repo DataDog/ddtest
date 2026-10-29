@@ -162,15 +162,15 @@ func TestWebdriverIOScopedBootstrapUsesOwningPackage(t *testing.T) {
 func TestWebdriverIOShortCommandsAndOtherFrameworkClassification(t *testing.T) {
 	root := t.TempDir()
 	for _, command := range []string{"wdio", "wdio wdio.conf.ts", "npx wdio wdio.conf.mjs", "wdio wdio.ci.conf.js", "wdio config/wdio.local.conf.ts", "wdio run config/wdio.local.conf.ts"} {
-		remaining := 256
-		resolution := resolveJestSequence(root, root, command, nil, &remaining, "webdriverio")
+		remaining := &scriptBudget{left: 256}
+		resolution := resolveJestSequence(root, root, command, nil, remaining, "webdriverio")
 		require.Empty(t, resolution.Reason, command)
 		require.Empty(t, resolution.ReviewReason, command)
 		require.Len(t, resolution.Tests, 1, command)
 	}
 	for _, command := range []string{"wdio config", "wdio install service sauce", "npx wdio repl chrome"} {
-		remaining := 256
-		resolution := resolveJestSequence(root, root, command, nil, &remaining, "webdriverio")
+		remaining := &scriptBudget{left: 256}
+		resolution := resolveJestSequence(root, root, command, nil, remaining, "webdriverio")
 		require.Contains(t, resolution.ReviewReason, "WebdriverIO setup/tool command is outside test execution", command)
 		require.Empty(t, resolution.Tests, command)
 	}

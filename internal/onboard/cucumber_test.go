@@ -136,8 +136,8 @@ func TestCucumberAliasNamesItsUnresolvedVariable(t *testing.T) {
 	for _, script := range []string{`nyc -- cucumber-js "$FEATURES"`, `nyc -- cucumber-js ${FEATURES}`} {
 		root := t.TempDir()
 		writeScripts(t, root, map[string]string{"test": script})
-		remaining := 256
-		resolution := resolveJestSequence(root, root, "npm test", nil, &remaining, "cucumber")
+		remaining := &scriptBudget{left: 256}
+		resolution := resolveJestSequence(root, root, "npm test", nil, remaining, "cucumber")
 		require.Contains(t, resolution.Reason, "unresolved environment variable $FEATURES", script)
 		require.NotContains(t, resolution.Reason, "compound scripts")
 	}
@@ -146,8 +146,8 @@ func TestCucumberCompoundAliasesCannotMisrouteFormatter(t *testing.T) {
 	for _, script := range []string{"nyc -- cucumber-js && echo done", "npm run bdd && echo done", "npm run bdd && npm run bdd", "echo begin; nyc -- cucumber-js"} {
 		root := t.TempDir()
 		writeScripts(t, root, map[string]string{"test": script, "bdd": "nyc -- cucumber-js"})
-		remaining := 256
-		resolution := resolveJestSequence(root, root, "npm test", nil, &remaining, "cucumber")
+		remaining := &scriptBudget{left: 256}
+		resolution := resolveJestSequence(root, root, "npm test", nil, remaining, "cucumber")
 		require.Contains(t, resolution.Reason, "formatter options", script)
 		_, err := CucumberValidationCommand(root, "npm test")
 		require.Error(t, err, script)
@@ -160,8 +160,8 @@ func TestCucumberChainEndingInItsOnlyLeafResolves(t *testing.T) {
 	for _, script := range []string{"echo begin && nyc -- cucumber-js", "pnpm test:unit && pnpm test:bdd"} {
 		root := t.TempDir()
 		writeScripts(t, root, map[string]string{"test": script, "test:unit": "vitest run", "test:bdd": "nyc cucumber-js"})
-		remaining := 256
-		resolution := resolveJestSequence(root, root, "npm test", nil, &remaining, "cucumber")
+		remaining := &scriptBudget{left: 256}
+		resolution := resolveJestSequence(root, root, "npm test", nil, remaining, "cucumber")
 		require.Empty(t, resolution.Reason, script)
 		require.True(t, resolution.Matched, script)
 		require.Len(t, resolution.Tests, 1, script)
@@ -171,8 +171,8 @@ func TestCucumberChainEndingInItsOnlyLeafResolves(t *testing.T) {
 func TestCucumberCompoundScriptWithoutALeafIsNotACucumberAlias(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"build": "rimraf dist && tsup && tsc -p tsconfig.build.json"})
-	remaining := 256
-	resolution := resolveJestSequence(root, root, "pnpm build", nil, &remaining, "cucumber")
+	remaining := &scriptBudget{left: 256}
+	resolution := resolveJestSequence(root, root, "pnpm build", nil, remaining, "cucumber")
 	require.NotContains(t, resolution.Reason, "formatter options")
 	require.False(t, resolution.Matched)
 }

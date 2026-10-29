@@ -201,6 +201,10 @@ func expandPathnames(root, directory string, fragment commandFragment) ([]string
 	if err != nil {
 		return nil, err
 	}
+	// The glob skips a directory whose read fails, as if it held no match, so
+	// a directory outside the repository is recorded here and fails the whole
+	// expansion instead of silently narrowing it.
+	var outside error
 	config := &expand.Config{
 		Env: expand.ListEnviron("PWD=" + canonicalDirectory),
 		ReadDir2: func(path string) ([]fs.DirEntry, error) {
@@ -209,7 +213,9 @@ func expandPathnames(root, directory string, fragment commandFragment) ([]string
 				return nil, err
 			}
 			if relative, err := filepath.Rel(canonicalRoot, canonical); err != nil || !filepath.IsLocal(relative) && relative != "." {
-				return nil, fmt.Errorf("pathname expansion outside the repository requires review")
+				link, _ := filepath.Rel(canonicalRoot, path)
+				outside = fmt.Errorf("pathname expansion through %s, which leaves the repository, requires review", filepath.ToSlash(link))
+				return nil, outside
 			}
 			return os.ReadDir(path)
 		},
@@ -233,6 +239,9 @@ func expandPathnames(root, directory string, fragment commandFragment) ([]string
 		if err != nil {
 			return nil, err
 		}
+		if outside != nil {
+			return nil, outside
+		}
 		if len(matches) == 1 && matches[0] == word {
 			return nil, fmt.Errorf("unquoted shell pathname pattern %s matches no files in %s; the runner would expand it with different rules", word, repositoryPath(root, directory))
 		}
@@ -243,6 +252,24 @@ func expandPathnames(root, directory string, fragment commandFragment) ([]string
 		words = append(words, matches...)
 	}
 	return words, nil
+}
+
+// unquotedPathnamePattern reports whether any word of command, including
+// words inside substitutions, has an unquoted * ? or [, which bash would treat
+// as a pathname pattern. A command bash can't parse counts as one.
+func unquotedPathnamePattern(command string) bool {
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(command), "")
+	if err != nil {
+		return true
+	}
+	found := false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if word, ok := node.(*syntax.Word); ok && unquotedGlob(word) {
+			found = true
+		}
+		return !found
+	})
+	return found
 }
 
 func unquotedGlob(word *syntax.Word) bool {

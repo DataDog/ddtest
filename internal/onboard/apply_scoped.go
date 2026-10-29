@@ -132,12 +132,12 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 		if !strings.Contains(script, binary) {
 			continue
 		}
-		remaining := 256
+		remaining := &scriptBudget{left: 256}
 		command := script
 		if framework == "cucumber" {
 			command = cucumberDiscoveryScript(command)
 		}
-		resolution := resolveJestSequence(root, root, command, nil, &remaining, framework)
+		resolution := resolveJestSequence(root, root, command, nil, remaining, framework)
 		if resolution.Reason != "" || len(resolution.Tests) != 1 || resolution.OtherFramework || !resolution.SingleJest {
 			return nil, "", &SetupGap{"package.json / scripts / " + name, "Custom framework wrapper requires an explicit scoped initialization; preserve its command."}
 		}

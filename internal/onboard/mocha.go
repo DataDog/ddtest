@@ -19,7 +19,7 @@ import (
 
 // Keep coverage wrappers intact. Unknown options are unresolved rather than
 // guessing which following word is the executable or discarding coverage flags.
-func resolveMochaCoverage(root, directory string, words, stack []string, remaining *int, frameworks ...string) commandResolution {
+func resolveMochaCoverage(root, directory string, words, stack []string, remaining *scriptBudget, frameworks ...string) commandResolution {
 	framework := "mocha"
 	if len(frameworks) > 0 {
 		framework = frameworks[0]
@@ -120,8 +120,8 @@ func MochaValidationCommandInScope(root, command string, scope ValidationScope, 
 			command = item.Command
 		}
 	}
-	remaining := packageScriptExpansionLimit
-	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	resolved := resolveJestSequence(root, root, command, nil, remaining, "mocha")
 	if resolved.Reason != "" || !resolved.SingleJest || len(resolved.Tests) != 1 || len(resolved.Builds) > 0 {
 		return "", fmt.Errorf("mocha validation requires one resolved invocation, preserving coverage and setup: %s. Use --all for separate CI commands; --command is not an implicit shell", resolved.Reason)
 	}
@@ -131,8 +131,8 @@ func MochaValidationCommandInScope(root, command string, scope ValidationScope, 
 // MochaUsesNYC follows resolved package aliases so local validation does not
 // stack a second coverage wrapper around the customer's existing invocation.
 func MochaUsesNYC(root, command string) bool {
-	remaining := packageScriptExpansionLimit
-	result := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	result := resolveJestSequence(root, root, command, nil, remaining, "mocha")
 	return result.Reason == "" && len(result.Tests) == 1 && result.Tests[0].usesNYC
 }
 
@@ -140,8 +140,8 @@ func MochaUsesNYC(root, command string) bool {
 // Mocha runs in parallel mode, and whether its inputs are native ESM, so a
 // missing coverage result can name its cause.
 func MochaCoverageSetup(root, command string) (wrapper string, parallel, esm bool) {
-	remaining := packageScriptExpansionLimit
-	result := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	result := resolveJestSequence(root, root, command, nil, remaining, "mocha")
 	if result.Reason != "" || len(result.Tests) != 1 {
 		return "", false, false
 	}
@@ -207,8 +207,8 @@ func resolveMochaNode(root, directory string, words []string) commandResolution 
 // MochaProbeCommand omits companion lint/assertion checks only for synthetic
 // probes. The paired real-suite runs always execute the entire original alias.
 func MochaProbeCommand(root, command string) string {
-	remaining := packageScriptExpansionLimit
-	result := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	result := resolveJestSequence(root, root, command, nil, remaining, "mocha")
 	if result.Reason == "" && len(result.Tests) == 1 && result.Tests[0].mochaProbeCommand != "" {
 		return result.Tests[0].mochaProbeCommand
 	}
@@ -218,8 +218,8 @@ func MochaProbeCommand(root, command string) string {
 // MochaProbePlan preserves runner cwd and scoped assignments while omitting
 // package lifecycle/companion tools only for synthetic probes.
 func MochaProbePlan(root, command string) TestCommand {
-	remaining := packageScriptExpansionLimit
-	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	resolved := resolveJestSequence(root, root, command, nil, remaining, "mocha")
 	if resolved.Reason == "" && len(resolved.Tests) == 1 {
 		item := resolved.Tests[0]
 		if item.mochaProbeCommand != "" {
@@ -235,8 +235,8 @@ func MochaProbePlan(root, command string) TestCommand {
 }
 
 func MochaRunnerDirectory(root, command string) string {
-	remaining := packageScriptExpansionLimit
-	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	resolved := resolveJestSequence(root, root, command, nil, remaining, "mocha")
 	if resolved.Reason == "" && len(resolved.Tests) == 1 && resolved.Tests[0].mochaLookupDirectory != "" {
 		return filepath.Join(root, resolved.Tests[0].mochaLookupDirectory)
 	}
@@ -306,8 +306,8 @@ func mochaWatchMode(directory string, args []string) bool {
 var mochaWatchSetting = regexp.MustCompile(`(?m)(?:^|[,{\s])"?watch"?\s*:\s*true\b`)
 
 func MochaRunnerArguments(root, command string) []string {
-	remaining := packageScriptExpansionLimit
-	resolved := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	resolved := resolveJestSequence(root, root, command, nil, remaining, "mocha")
 	if resolved.Reason == "" && len(resolved.Tests) == 1 {
 		return resolved.Tests[0].mochaRunnerArgs
 	}

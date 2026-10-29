@@ -152,8 +152,8 @@ func forwardJestScript(root, directory, command string, depth int, count *int, s
 			continue
 		}
 		part := shellCommand(words)
-		remaining := packageScriptExpansionLimit
-		resolution := resolveJestSequence(root, directory, part, nil, &remaining)
+		remaining := &scriptBudget{left: packageScriptExpansionLimit}
+		resolution := resolveJestSequence(root, directory, part, nil, remaining)
 		if resolution.Matched {
 			switch words[0] {
 			case "jest", "./node_modules/.bin/jest", "node_modules/.bin/jest":

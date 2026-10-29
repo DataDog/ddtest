@@ -10,8 +10,8 @@ import (
 func TestParallelScriptDiscoveryKeepsBuildsInTheirOwnBranch(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"test": "npm-run-all --print-label --parallel lint:* --parallel test:*", "lint:js": "eslint .", "test:unit": "vitest run", "pretest:integration": "npm run build", "test:integration": "cucumber-js features", "build": "rollup -c"})
-	remaining := 256
-	result := resolveJestSequence(root, root, "npm test", nil, &remaining, "cucumber")
+	remaining := &scriptBudget{left: 256}
+	result := resolveJestSequence(root, root, "npm test", nil, remaining, "cucumber")
 	require.Empty(t, result.Reason)
 	require.Len(t, result.Tests, 1)
 	require.True(t, result.OtherFramework)
@@ -21,8 +21,8 @@ func TestParallelScriptDiscoveryKeepsBuildsInTheirOwnBranch(t *testing.T) {
 func TestParallelBuildDoesNotBecomeATestPrerequisite(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"build": "rollup -c", "test": "cucumber-js features"})
-	remaining := 256
-	result := resolveJestSequence(root, root, "npm-run-all --parallel build test", nil, &remaining, "cucumber")
+	remaining := &scriptBudget{left: 256}
+	result := resolveJestSequence(root, root, "npm-run-all --parallel build test", nil, remaining, "cucumber")
 	require.Empty(t, result.Reason)
 	require.Len(t, result.Tests, 1)
 	require.Empty(t, result.Tests[0].Prerequisites)
@@ -31,8 +31,8 @@ func TestParallelBuildDoesNotBecomeATestPrerequisite(t *testing.T) {
 func TestScriptSelectorsRespectHierarchyAndManifestOrder(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"build:z":"tsc --outDir z","build:a":"tsc --outDir a","build:a:nested":"tsc --outDir nested"}}`), 0600))
-	remaining := 256
-	result := resolveJestSequence(root, root, "run-s build:*", nil, &remaining, "cucumber")
+	remaining := &scriptBudget{left: 256}
+	result := resolveJestSequence(root, root, "run-s build:*", nil, remaining, "cucumber")
 	require.Empty(t, result.Reason)
 	require.Len(t, result.Builds, 2)
 	require.Equal(t, "tsc --outDir z", result.Builds[0].Command)
@@ -42,8 +42,8 @@ func TestScriptSelectorsRespectHierarchyAndManifestOrder(t *testing.T) {
 func TestCucumberLoggingPrefixAndOrchestratedLifecycleBuild(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"prebuild": "run-s clean", "clean": "rimraf ./lib", "build": "npm-run-all --print-label --parallel build:*", "build:js": "rollup --config", "pretest:integration": "run-s build", "test:integration": "run-s 'test:integration:base -- --profile noWip'", "test:integration:base": `DEBUG="any,$DEBUG" cucumber-js test/integration`})
-	remaining := 256
-	result := resolveJestSequence(root, root, "npm run test:integration", nil, &remaining, "cucumber")
+	remaining := &scriptBudget{left: 256}
+	result := resolveJestSequence(root, root, "npm run test:integration", nil, remaining, "cucumber")
 	require.Empty(t, result.Reason)
 	require.Len(t, result.Tests, 1)
 	require.Empty(t, result.Tests[0].UnvalidatedSetup)
@@ -75,8 +75,8 @@ func TestScriptGroupsCannotForwardJestFlagsDirectly(t *testing.T) {
 func TestNestedCucumberBuildPrerequisitesPreserveExecutionOrder(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"pretest": "tsc --outDir dist", "test": "npm run bdd", "prebdd": "babel dist --out-dir lib", "bdd": "cucumber-js features"})
-	remaining := 256
-	result := resolveJestSequence(root, root, "npm test", nil, &remaining, "cucumber")
+	remaining := &scriptBudget{left: 256}
+	result := resolveJestSequence(root, root, "npm test", nil, remaining, "cucumber")
 	require.Empty(t, result.Reason)
 	require.Len(t, result.Tests, 1)
 	var commands []string

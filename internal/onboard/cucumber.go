@@ -181,8 +181,8 @@ func CucumberExecutionCommand(root, command string) (TestCommand, error) {
 // its npm aliases. Probes use it only to locate the coverage wrapper, the
 // runner and --parallel; an owned config replaces its other Cucumber options.
 func CucumberProbeCommand(root, command string) (string, error) {
-	remaining := 256
-	result := resolveJestSequence(root, root, command, nil, &remaining, "cucumber")
+	remaining := &scriptBudget{left: 256}
+	result := resolveJestSequence(root, root, command, nil, remaining, "cucumber")
 	if result.Reason != "" || len(result.Tests) != 1 || result.Tests[0].cucumberProbeCommand == "" {
 		return "", fmt.Errorf("cucumber probe command could not be resolved: %s", result.Reason)
 	}
@@ -193,8 +193,8 @@ func CucumberProbeCommand(root, command string) (string, error) {
 // keeps after the inherited options, such as `--import tsx`, in their original
 // order. Probes call the runner directly, so they must add them back.
 func CucumberProbeLoaders(root, command string) string {
-	remaining := 256
-	result := resolveJestSequence(root, root, command, nil, &remaining, "cucumber")
+	remaining := &scriptBudget{left: 256}
+	result := resolveJestSequence(root, root, command, nil, remaining, "cucumber")
 	if result.Reason != "" || len(result.Tests) != 1 {
 		return ""
 	}
@@ -230,8 +230,8 @@ type LifecycleScript struct{ Directory, Name string }
 // and after the selected Cucumber leaf, in npm's order. The scripts holding
 // the leaf itself, and the aliases' main scripts, are not included.
 func CucumberProbeLifecycle(root, command string) (before, after []LifecycleScript, err error) {
-	remaining := 256
-	result := resolveJestSequence(root, root, command, nil, &remaining, "cucumber")
+	remaining := &scriptBudget{left: 256}
+	result := resolveJestSequence(root, root, command, nil, remaining, "cucumber")
 	if result.Reason != "" || len(result.Tests) != 1 {
 		return nil, nil, fmt.Errorf("cucumber probe lifecycle could not be resolved: %s", result.Reason)
 	}
@@ -267,8 +267,8 @@ func CucumberCoverageWrapper(root, command string) string {
 func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, commands []TestCommand) string {
 	// Scope checks use the same statically discovered command tree. Unknown
 	// wrappers remain inconclusive rather than being treated as Cucumber-only.
-	remaining := 256
-	resolution := resolveJestSequence(root, filepath.Join(root, stepDirectory(workflow, job, step)), step.Run, nil, &remaining, "cucumber")
+	remaining := &scriptBudget{left: 256}
+	resolution := resolveJestSequence(root, filepath.Join(root, stepDirectory(workflow, job, step)), step.Run, nil, remaining, "cucumber")
 	scoped := ""
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		if value, ok := layer["DD_CUCUMBER_NODE_OPTIONS"]; ok {

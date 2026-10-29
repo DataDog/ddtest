@@ -428,3 +428,11 @@ func persistedNVMRuntime(command string) string {
 	}
 	return ""
 }
+
+// windowsRunner reports whether any row of job may run on Windows, where npm
+// runs package scripts with cmd.exe rather than sh. A runner that can't be
+// resolved statically counts as Windows.
+func windowsRunner(job runtimeJob) bool {
+	windows, _, err := setupWindowsRunner(job)
+	return windows || err != nil || runnerDefaultShell(job, nil) == "pwsh"
+}

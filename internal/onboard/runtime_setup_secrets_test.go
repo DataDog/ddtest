@@ -159,12 +159,12 @@ func TestMochaDefaultCommandAcceptsASimpleCIStep(t *testing.T) {
 func TestPlaywrightInteractiveModesAreRejected(t *testing.T) {
 	root := t.TempDir()
 	for _, command := range []string{"playwright test --ui", "playwright test --ui-port=8080", "playwright test --debug", "npx playwright test --ui-host 0.0.0.0"} {
-		remaining := packageScriptExpansionLimit
-		result := resolveJestSequence(root, root, command, nil, &remaining, "playwright")
+		remaining := &scriptBudget{left: packageScriptExpansionLimit}
+		result := resolveJestSequence(root, root, command, nil, remaining, "playwright")
 		require.Contains(t, result.Reason, "UI and debug modes are interactive", command)
 	}
-	remaining := packageScriptExpansionLimit
-	require.Empty(t, resolveJestSequence(root, root, "playwright test --project chromium", nil, &remaining, "playwright").Reason)
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	require.Empty(t, resolveJestSequence(root, root, "playwright test --project chromium", nil, remaining, "playwright").Reason)
 }
 
 func TestScopeKeepsGuardedAndUnguardedPlaywrightJobsApart(t *testing.T) {

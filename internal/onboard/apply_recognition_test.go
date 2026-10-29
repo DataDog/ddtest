@@ -54,8 +54,8 @@ func TestNpmOwnOptionsAreNotScriptArguments(t *testing.T) {
 		"npm test --prefix packages/a":        "jest",
 		"npm test --loglevel=warn -- --ci":    "jest --ci",
 	} {
-		remaining := 256
-		resolution := resolveJestSequence(root, root, command, nil, &remaining, "jest")
+		remaining := &scriptBudget{left: 256}
+		resolution := resolveJestSequence(root, root, command, nil, remaining, "jest")
 		require.Empty(t, resolution.Reason, command)
 		if want == "" {
 			require.Empty(t, resolution.Tests, command)
@@ -69,11 +69,11 @@ func TestNpmOwnOptionsAreNotScriptArguments(t *testing.T) {
 		"npm test --workspaces":                "npm script arguments without --",
 		"npm test packages/a":                  "npm script arguments without --",
 	} {
-		remaining := 256
-		require.Contains(t, resolveJestSequence(root, root, command, nil, &remaining, "jest").Reason, want, command)
+		remaining := &scriptBudget{left: 256}
+		require.Contains(t, resolveJestSequence(root, root, command, nil, remaining, "jest").Reason, want, command)
 	}
-	remaining := 256
-	resolution := resolveJestSequence(root, root, "npm test -w packages/a", nil, &remaining, "jest")
+	remaining := &scriptBudget{left: 256}
+	resolution := resolveJestSequence(root, root, "npm test -w packages/a", nil, remaining, "jest")
 	require.Equal(t, "packages/a", resolution.Tests[0].Directory)
 }
 
@@ -81,8 +81,8 @@ func TestRetainedNpmSelectionAliasRunsFromCaller(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, filepath.Join(root, "packages/a"), map[string]string{"test": "nyc mocha"})
 	for _, command := range []string{"npm test --workspace packages/a", "npm test --prefix packages/a"} {
-		remaining := 256
-		resolution := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+		remaining := &scriptBudget{left: 256}
+		resolution := resolveJestSequence(root, root, command, nil, remaining, "mocha")
 		require.Empty(t, resolution.Reason, command)
 		require.Len(t, resolution.Tests, 1, command)
 		// npm resolves the selection from the caller; replaying the retained
@@ -188,8 +188,8 @@ func TestNpmWorkspaceSelectorsResolveDeclaredPackageNames(t *testing.T) {
 			"npm test --workspace packages/a": "jest --selected",
 			"npm test --prefix app":           "jest --unrelated",
 		} {
-			remaining := 256
-			resolution := resolveJestSequence(root, root, command, nil, &remaining, "jest")
+			remaining := &scriptBudget{left: 256}
+			resolution := resolveJestSequence(root, root, command, nil, remaining, "jest")
 			require.Empty(t, resolution.Reason, "%s: %s", name, command)
 			require.Len(t, resolution.Tests, 1, "%s: %s", name, command)
 			require.Equal(t, want, resolution.Tests[0].Command, "%s: %s", name, command)

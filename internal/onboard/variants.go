@@ -322,7 +322,7 @@ func localPreparation(root, directory string, words []string) (BuildCommand, boo
 
 // Recognize pnpm's bounded build-script selector while keeping the original
 // command so its ordering, prebuild and postbuild behavior are replayed intact.
-func orchestratedBuild(root, directory, script string, scripts map[string]string, stack []string, remaining *int, frameworks ...string) bool {
+func orchestratedBuild(root, directory, script string, scripts map[string]string, stack []string, remaining *scriptBudget, frameworks ...string) bool {
 	commands, err := staticCommands(script)
 	if err != nil {
 		return false

@@ -114,6 +114,9 @@ type runtimeStep struct {
 	// origin is the provider's private reference to the step's source, for
 	// prescribed edits.
 	origin any
+	// windowsShell marks a step written for a Windows-only shell (Windows
+	// PowerShell) that is resolved as bash: its runner is Windows.
+	windowsShell bool
 }
 
 type runtimeJob struct {
