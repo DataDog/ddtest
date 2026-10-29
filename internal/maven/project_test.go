@@ -8,6 +8,7 @@ package maven
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -283,4 +284,20 @@ func TestPackagedResourcesResolveAbsoluteDirectories(t *testing.T) {
 	require.Len(t, resources, 2)
 	require.Equal(t, ".", resources[0].Directory, "an absolute directory naming the checkout is its root")
 	require.False(t, filepath.IsLocal(resources[1].Directory), "one outside the checkout stays outside")
+}
+
+func TestUpToTestStopsProbeBuildsAfterSurefire(t *testing.T) {
+	for args, want := range map[string]string{
+		"-B verify -Pcoverage":                 "-B test -Pcoverage",
+		"clean package":                        "clean test",
+		"test":                                 "test",
+		"-f pom-ci.xml clean verify":           "-f pom-ci.xml clean test",
+		"test-compile integration-test verify": "test-compile test",
+		"-pl core -am verify":                  "-pl core -am test",
+		"org.apache.maven.plugins:maven-failsafe-plugin:3.5.4:integration-test": "test",
+		"surefire:test failsafe:integration-test":                               "surefire:test",
+		"test surefire:test": "test",
+	} {
+		require.Equal(t, want, strings.Join(UpToTest(strings.Fields(args)), " "), args)
+	}
 }

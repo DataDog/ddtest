@@ -6,8 +6,11 @@
 package onboard
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/kballard/go-shellquote"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // mavenExecutables run a Maven build; anything else is another tool.
@@ -45,6 +49,12 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return unresolvedCommand("CI command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
 	}
 	parts, parseErr := staticCommands(step.Run)
+	// Release steps read project metadata, as in VERSION=$(mvn help:evaluate …),
+	// unless an inherited MAVEN_ARGS adds goals.
+	if parseErr != nil && javaMetadataScript(step.Run) && workflow.Env["MAVEN_ARGS"] == "" && job.Env["MAVEN_ARGS"] == "" && step.Env["MAVEN_ARGS"] == "" &&
+		!javaExportsMavenArgs(job) && !javaConfigGoals(root, directory) {
+		return commandResolution{}
+	}
 	if parseErr != nil {
 		if mavenMention.MatchString(step.Run) {
 			return unresolvedCommand("Maven command could not be resolved statically; ddtest cannot tell which tests it runs: " + step.Run)
@@ -172,6 +182,82 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 	return unresolvedCommand("Test wrapper was not resolved; ddtest cannot tell which " + framework + " tests it runs: " + step.Run)
 }
 
+// javaMetadataScript reports a script whose commands only print or move files
+// and run Maven for help goals, such as help:evaluate, or its version, which
+// read the project without building it.
+func javaMetadataScript(run string) bool {
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(run), "")
+	if err != nil {
+		return false
+	}
+	metadata, readsMaven := true, false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		// MAVEN_ARGS, exported or not, adds goals to every later Maven call.
+		if assign, ok := node.(*syntax.Assign); ok && assign.Name != nil && assign.Name.Value == "MAVEN_ARGS" {
+			metadata = false
+		}
+		call, ok := node.(*syntax.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+		var words []string
+		for _, word := range call.Args {
+			literal := word.Lit()
+			if literal == "" {
+				// Only arguments of printing commands may expand.
+				literal = "\x00"
+			}
+			words = append(words, literal)
+		}
+		switch {
+		case mavenCommand(words):
+			readsMaven = true
+			goals := maven.Goals(words[1:])
+			help := len(goals) > 0 && !slices.ContainsFunc(goals, func(goal string) bool { return !strings.HasPrefix(goal, "help:") })
+			// An assignment such as MAVEN_ARGS=test may add goals.
+			// An alternate POM may select another .mvn/maven.config, which
+			// javaConfigGoals does not read.
+			pom, err := maven.CommandPOM(words[1:])
+			metadata = metadata && err == nil && pom == "pom.xml" && len(call.Assigns) == 0 && !slices.Contains(words, "\x00") && (help || maven.Metadata(words[1:]))
+		case !slices.Contains(javaShellBuiltins, words[0]):
+			metadata = false
+		}
+		return true
+	})
+	return metadata && readsMaven
+}
+
+// javaExportsMavenArgs reports a job step that may set MAVEN_ARGS for later
+// steps through the GITHUB_ENV file.
+func javaExportsMavenArgs(job runtimeJob) bool {
+	return slices.ContainsFunc(job.Steps, func(step runtimeStep) bool {
+		return strings.Contains(step.Run, "MAVEN_ARGS") && strings.Contains(step.Run, "GITHUB_ENV")
+	})
+}
+
+// javaConfigGoals reports goals in the .mvn/maven.config that Maven reads for
+// a command run in directory: the nearest one up to the repository root.
+func javaConfigGoals(root, directory string) bool {
+	for current := directory; ; current = filepath.Dir(current) {
+		if info, err := os.Stat(filepath.Join(root, current, ".mvn")); err == nil && info.IsDir() {
+			data, err := os.ReadFile(filepath.Join(root, current, ".mvn", "maven.config"))
+			if err != nil {
+				return !errors.Is(err, fs.ErrNotExist)
+			}
+			var args []string
+			for _, line := range strings.Split(string(data), "\n") {
+				if line = strings.TrimSpace(line); !strings.HasPrefix(line, "#") {
+					args = append(args, strings.Fields(line)...)
+				}
+			}
+			return len(maven.Goals(args)) > 0
+		}
+		if current == "." {
+			return false
+		}
+	}
+}
+
 // javaRepositoryScript reports a command that runs a script from the
 // repository, such as ./ci/test.sh or ci/test.sh, which may start Maven itself.
 func javaRepositoryScript(words []string) bool {
@@ -256,6 +342,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 				if conditionErr == nil && !active {
 					continue
 				}
+				lastTest := javaLastTestStep(root, workflow, job, row, framework)
 				java, tracer, action, buildSystem := "", "", "", ""
 				var inputs map[string]string
 				skippedAction := false
@@ -312,6 +399,11 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					if !resolution.Matched && resolution.Reason == "" {
 						continue
 					}
+					// Discovery leaves an unresolved step after the job's last
+					// possible test outside the test path, such as a report upload.
+					if !resolution.Matched && i > lastTest && !javaMayStartTests(root, workflow, job, resolved, framework) {
+						continue
+					}
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: java, Action: action, TracerRequested: tracer, setupInputs: inputs, Status: "inconclusive"}
 					runtimeReason, runtimeCode := javaRuntimeProblem(java)
 					switch {
@@ -352,6 +444,27 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 		result.Status, result.Reason = "inconclusive", "Maven CI JDK and dd-java-agent selections need validation."
 	}
 	return result
+}
+
+// javaLastTestStep is the index of the job's last step that runs or may run
+// framework's tests in a matrix row, as discovery finds it; -1 when there is
+// none.
+func javaLastTestStep(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, framework string) int {
+	last := -1
+	for i, step := range job.Steps {
+		resolved, _, _ := resolveVariantStep(workflow, job, step, row, framework)
+		resolution := resolveJavaStep(root, workflow, job, resolved, framework)
+		if !resolution.Review && (resolution.Matched || resolution.Reason != "" && javaMayStartTests(root, workflow, job, resolved, framework)) {
+			last = i
+		}
+	}
+	return last
+}
+
+// javaMayStartTests reports a step that may start tests, including one that
+// runs Maven where discovery cannot follow it, as in find … -exec mvn test.
+func javaMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) bool {
+	return stepMayStartTests(root, workflow, job, step, framework) || mavenMention.MatchString(step.Run)
 }
 
 // javaAgentVariable is where the Datadog action, per its

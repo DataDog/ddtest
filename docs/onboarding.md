@@ -351,14 +351,22 @@ select the framework the project uses (`junit4`, `junit5`, `testng`, `spock`,
 contains a JavaScript, Python or Ruby project keeps that platform by default;
 select Java with `--platform java` or a Maven `--framework`.
 
-JUnit 4 and JUnit 5 support plain `ddtest testdrive --all --check-only --yes`
+JUnit 4, JUnit 5, TestNG, Spock and Cucumber JVM support plain `ddtest testdrive --all --check-only --yes`
 and full `ddtest testdrive --all --yes` validation, or a focused
 `ddtest testdrive --framework junit5 --command './mvnw -B verify' --yes`. Each
 configuration runs in a disposable copy with fresh build output, without and with
 dd-java-agent. Native Surefire/Failsafe results must match (identities, outcomes,
 failure types and messages, exit code), each must match one reported test
 execution, the reporting run must cover repository application sources, and all
-six feature controls run with a probe test in a module of the selected framework.
+six feature controls run with a probe test in a module of the selected framework
+(a Groovy specification for Spock, compiled by the project's GMavenPlus setup).
+For Cucumber JVM the probe is a feature with a step in the glue package of the
+module's runner class (`@RunWith(Cucumber.class)` or a JUnit Platform suite of the
+`cucumber` engine), so the project's own glue, hooks and object factory load;
+the runner is selected with the probe feature in place of the project's. A
+module without such a runner, or a suite that pins its own features or tags,
+leaves the features inconclusive. Probe builds stop at the `test` phase, so
+checks after the tests, such as license headers, do not judge the probe.
 Matching pre-existing failures are permitted; a build that stops for anything
 other than native test failures stays inconclusive.
 
@@ -383,10 +391,10 @@ major is validated on the local JDK as a substitute, recorded in
 a decision for the user, and is then reported as a caveat. Validate that JDK
 instead by running testdrive with `JAVA_HOME` set to it. `ddtest plan` and `ddtest run` do
 not support Java: the agent performs Test Impact Analysis inside the Maven build.
-Other Maven frameworks run reporting-only checks.
+Karate, ScalaTest and MUnit run reporting-only checks.
 
 Coding agents start with `ddtest onboard --agent`, as for Ruby: there is no
-automatic Maven CI edit. Until every discovered JUnit test step runs after a
+automatic Maven CI edit. Until every discovered test step of the framework runs after a
 complete Datadog action, the result is `ci_setup_required` with the CI setup in
 `agent_instruction` and `testdrive --framework <name> --all --agent --yes` as
 `resume_command`; afterwards it is `ready` with that command. A complete action

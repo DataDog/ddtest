@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -250,7 +251,7 @@ func TestJavaTemporaryAgentPathCannotContainWhitespace(t *testing.T) {
 func TestJavaRunsMavenOnlyInADisposableCopy(t *testing.T) {
 	drive := &Testdrive{repositoryRoot: t.TempDir(), framework: framework.NewMaven("junit5", nil)}
 	session := workspace.PlanSession()
-	_, err := drive.runJava(context.Background(), io.Discard, session, "", runSpec{Name: "baseline"})
+	_, err := drive.runJava(context.Background(), io.Discard, session, "", runSpec{Name: "baseline"}, nil)
 	require.ErrorContains(t, err, "disposable copy")
 }
 
@@ -270,13 +271,13 @@ func TestJavaNativeTestsUseTheAgentsModuleNames(t *testing.T) {
 		{Module: "core", Suite: "example.CoreTest", Name: "fails", Status: "failed", Failure: "AssertionError: no\n"},
 		{Module: "a/util", Suite: "example.UtilTest", Name: "works", Status: "passed"},
 		{Module: "core", Suite: javaProbeClass, Name: "ddtestProbe()", Status: "passed"},
-	}, "/copy/core/src/test/java/ddtest/DdtestValidationTest.java")
+	}, true)
 	require.Equal(t, "Customer API / example.ApiTest", tests[0].File, "the agent reports a project's <name>")
 	require.Equal(t, "core / example.CoreTest", tests[1].File, "and otherwise its artifactId")
 	require.Equal(t, "a/util / example.UtilTest", tests[2].File, "a name two projects share cannot identify either")
 	probe := tests[3]
 	require.True(t, probe.probe)
-	require.Equal(t, "/copy/core/src/test/java/ddtest/DdtestValidationTest.java", probe.File, "the probe is matched by its source file")
+	require.Equal(t, "core / "+javaProbeClass, probe.File, "the probe is matched by module, class and name, as other tests")
 	require.Equal(t, "ddtestProbe", *probe.telemetryName)
 }
 
@@ -342,23 +343,55 @@ func TestJavaProbeRunsInAModuleThatRanTests(t *testing.T) {
 
 func TestJavaTestName(t *testing.T) {
 	for native, telemetry := range map[string]string{
-		"works":              "works",
-		"works()":            "works",
-		"check(TestInfo)":    "check",
-		"add(int, int)[2]":   "add[2]",
-		"[1] custom display": "[1] custom display",
+		"works":               "works",
+		"works()":             "works",
+		"check(TestInfo)":     "check",
+		"add(int, int)[2]":    "add[2]",
+		"[1] custom display":  "[1] custom display",
+		"parse[a, 1](2)":      "parse",
+		"parse[[x], (y)](10)": "parse",
 	} {
 		require.Equal(t, telemetry, javaTestName(native), native)
 	}
 }
 
-func TestJavaValidatesJUnitWithPairedFeatureControls(t *testing.T) {
-	for _, name := range []string{"junit4", "junit5"} {
+func TestJavaTelemetryNormalizesOnlyNamesTheAgentRenamed(t *testing.T) {
+	pass := []intake.TestRun{{Status: "pass", SpanID: 1}}
+	// A Spock feature keeps a name that looks like a TestNG invocation.
+	run := javaTelemetryRun([]nativeTest{{File: "service / example.ParseSpec", Name: "parse[a](1)", Status: "passed"}},
+		intake.Test{Module: "service", Suite: "example.ParseSpec", Name: "parse[a](1)", Attempts: pass})
+	run.framework = "testng"
+	require.Empty(t, verifyJavaTelemetry(run).Status, "a name the agent reports as written is compared as written")
+	// JUnit 5 methods in a build whose selected framework is another.
+	run = javaTelemetryRun([]nativeTest{{File: "service / example.ApiTest", Name: "convert(String)[1]", Status: "passed"}, {File: "service / example.ApiTest", Name: "convert(String)[2]", Status: "passed"}},
+		intake.Test{Module: "service", Suite: "example.ApiTest", Name: "convert", Parameters: `{"metadata":{"test_name":"[1] a"}}`, Attempts: pass},
+		intake.Test{Module: "service", Suite: "example.ApiTest", Name: "convert", Parameters: `{"metadata":{"test_name":"[2] b"}}`, Attempts: []intake.TestRun{{Status: "pass", SpanID: 2}}})
+	run.framework = "cucumber-java"
+	require.Empty(t, verifyJavaTelemetry(run).Status, "JUnit signatures are normalized whatever framework was selected")
+	// A custom @ParameterizedTest name keeps the invocation index out of telemetry.
+	custom := func(span uint64) intake.Test {
+		return intake.Test{Module: "service", Suite: "example.ApiTest", Name: "convert", Parameters: `{"metadata":{"test_name":"Missing parameter a"}}`, Attempts: []intake.TestRun{{Status: "pass", SpanID: span}}}
+	}
+	run = javaTelemetryRun([]nativeTest{{File: "service / example.ApiTest", Name: "convert(String)[1]", Status: "passed"}, {File: "service / example.ApiTest", Name: "convert(String)[2]", Status: "passed"}}, custom(1), custom(2))
+	require.Empty(t, verifyJavaTelemetry(run).Status, "invocations still match by count")
+	run = javaTelemetryRun([]nativeTest{{File: "service / example.ApiTest", Name: "convert(String)[1]", Status: "passed"}, {File: "service / example.ApiTest", Name: "convert(String)[2]", Status: "passed"}}, custom(1))
+	require.Equal(t, "inconclusive", verifyJavaTelemetry(run).Status, "a missing invocation is still missing")
+}
+
+func TestJavaValidatesSurefireFrameworksWithPairedFeatureControls(t *testing.T) {
+	for _, name := range javaProbeFrameworks {
 		require.True(t, supportsValidationFramework(name), name)
 		require.Len(t, featurePolicies(name), 6)
+		require.True(t, frameworkFeaturePolicies[name].TestLevelSkipping, "dd-java-agent skips a test by its suite and name")
 		require.Equal(t, "java", languageForFramework(name).name())
 	}
-	require.False(t, supportsValidationFramework("testng"), "other Maven frameworks keep reporting-only checks")
+	for name, source := range javaProbeSources {
+		require.Contains(t, source.source, "ddtest intentional failure", name)
+		require.Contains(t, source.source, "class DdtestValidationTest", "every probe is javaProbeClass")
+	}
+	require.Contains(t, javaProbeSources["testng"].source, "@org.testng.annotations.Test")
+	require.True(t, strings.HasSuffix(javaProbeSources["spock"].path, ".groovy"), "Spock specifications compile from src/test/groovy")
+	require.False(t, supportsValidationFramework("karate"), "other Maven frameworks keep reporting-only checks")
 	require.Equal(t, "java", languageForFramework("testng").name())
 	require.Equal(t, "JUnit 5", displayName("junit5"))
 	require.Equal(t, "Java", displayName("java"))

@@ -36,6 +36,9 @@ type language struct {
 	name   string
 	prefix string
 	marker *regexp.Regexp
+	// shared are terms the language shares with another, such as a framework
+	// both have; its own files may name them.
+	shared *regexp.Regexp
 }
 
 // languages lists the markers that identify each language's code. JavaScript
@@ -48,7 +51,8 @@ var languages = []language{
 	// "java" is a prefix of "javascript": Java files are java_*.go, and its
 	// markers are whole words or Java-only terms. JUnit XML is a report format
 	// every language uses, so only the JVM framework names count.
-	{name: "java", prefix: "java_", marker: regexp.MustCompile(`(?i)\bjava\b|maven|\bmvnw?\b|junit[45]|jupiter|testng|surefire|failsafe|dd-java-agent|pom\.xml`)},
+	// Cucumber JVM shares its name with Cucumber.js.
+	{name: "java", prefix: "java_", marker: regexp.MustCompile(`(?i)\bjava\b|maven|\bmvnw?\b|junit[45]|jupiter|testng|surefire|failsafe|dd-java-agent|pom\.xml`), shared: regexp.MustCompile(`(?i)cucumber`)},
 }
 
 // Check fails t for every token in dir's non-test Go files that names a
@@ -65,7 +69,11 @@ func Check(t testing.TB, dir string) {
 			continue
 		}
 		owner := ownerOf(name)
+		own := languages[slices.IndexFunc(languages, func(language language) bool { return language.name == owner })]
 		scan(t, path, func(literal string, position token.Position) {
+			if own.shared != nil {
+				literal = own.shared.ReplaceAllString(literal, "")
+			}
 			for _, other := range languages {
 				if other.name == owner || owner == "javascript" && other.name == "javascript" {
 					continue

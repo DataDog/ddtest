@@ -207,3 +207,17 @@ func TestSkippingDefaultsTheLevelATracerOmits(t *testing.T) {
 	scenarioHandler(scenario).ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(`{"data":{"attributes":{"test_level":"suite"}}}`)))
 	require.Contains(t, response.Body.String(), `"type":"suite"`)
 }
+
+func TestTestLevelSkippingNeedsNoSourceFile(t *testing.T) {
+	// dd-java-agent reports no source file for a Cucumber scenario.
+	scenario := Scenario{Feature: "skipping", Module: "service", Suite: "classpath:ddtest/DdtestValidation.feature:ddtest.DdtestValidationTest", Test: "ddtestProbe", SkippingLevel: "test"}
+	response := httptest.NewRecorder()
+	scenarioHandler(scenario).ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(`{}`)))
+	var result struct{ Data []json.RawMessage }
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+	require.Len(t, result.Data, 1)
+	require.JSONEq(t, `{"type":"test","attributes":{"suite":"classpath:ddtest/DdtestValidation.feature:ddtest.DdtestValidationTest","name":"ddtestProbe"}}`, string(result.Data[0]))
+	response = httptest.NewRecorder()
+	scenarioHandler(scenario).ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(`{"data":{"attributes":{"test_level":"suite"}}}`)))
+	require.Contains(t, response.Body.String(), `"data":[]`, "a suite still needs its file")
+}

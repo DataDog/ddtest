@@ -185,7 +185,9 @@ func handleSkippableTests(w http.ResponseWriter, r *http.Request, scenario Scena
 	if scenario.SuiteSelector != "" {
 		suite = scenario.SuiteSelector
 	}
-	if scenario.Feature == "skipping" && scenario.SourceFile != "" {
+	// A test-level entry names the test by suite and name; a suite-level one
+	// needs the suite's file.
+	if scenario.Feature == "skipping" && (scenario.SourceFile != "" || level == "test") {
 		if level == "test" && scenario.Suite != "" && scenario.Test != "" {
 			attributes := map[string]any{"suite": scenario.Suite, "name": scenario.Test}
 			if scenario.Parameters != "" {

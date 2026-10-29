@@ -18,7 +18,10 @@ type featurePolicy struct {
 type frameworkPolicy struct {
 	Paired, CheckOnly, ProbeRecovery, Preflight, Configurations bool
 	SourceCoverage, ProbeBodyCounts                             bool
-	ConfigurationFiles                                          []string
+	// TestLevelSkipping skips a test by its suite and name, so skipping needs
+	// no reported source file.
+	TestLevelSkipping  bool
+	ConfigurationFiles []string
 	// Options whose value names a configuration file; nil means --config/-c.
 	ConfigurationOptions []string
 	Features             []featurePolicy

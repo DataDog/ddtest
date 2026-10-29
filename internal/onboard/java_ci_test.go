@@ -399,3 +399,83 @@ func TestJavaCIConfigurationKeepsJavaSetupAcrossOtherDatadogActions(t *testing.T
 	job = JavaCIConfiguration(javaWorkflowFixture(t, strings.Replace(workflow, "SECOND", "java", 1), nil), "junit5", "").Jobs[0]
 	require.Contains(t, job.Reason, "not an exact release", "a later Java action replaces the selection")
 }
+
+func TestJavaCIConfigurationLeavesPostTestStepsOutside(t *testing.T) {
+	workflow := "jobs:\n  tests:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '8'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn test\n      - run: |\n          echo \"coverage = ${{ steps.jacoco.outputs.coverage }}\"\n"
+	ci := JavaCIConfiguration(javaWorkflowFixture(t, workflow, nil), "junit5", "")
+	require.Len(t, ci.Jobs, 1, "discovery reviews the post-test echo outside the test path: %+v", ci.Jobs)
+	require.Equal(t, "not checked", ci.Jobs[0].Status)
+	before := strings.Replace(workflow, "      - run: mvn test\n      - run: |\n          echo \"coverage = ${{ steps.jacoco.outputs.coverage }}\"\n", "      - run: echo ${{ steps.prepare.outputs.flags }}\n      - run: mvn test\n", 1)
+	ci = JavaCIConfiguration(javaWorkflowFixture(t, before, nil), "junit5", "")
+	require.Len(t, ci.Jobs, 2, "an unresolved step before the tests stays in scope")
+}
+
+func TestJavaMetadataScriptsRunNoTests(t *testing.T) {
+	root := javaWorkflowFixture(t, "", nil)
+	metadata := "ARTIFACT_ID=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)\nVERSION=$(./mvnw -q help:evaluate -Dexpression=project.version -DforceStdout)\necho \"zip=target/${ARTIFACT_ID}-${VERSION}.zip\" >> $GITHUB_OUTPUT\n"
+	resolution := javaStep(t, root, metadata)
+	require.False(t, resolution.Matched || resolution.Review, "help goals read the project without building it")
+	require.Empty(t, resolution.Reason)
+	for _, run := range []string{
+		"VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)\nmvn verify -Drevision=$VERSION",
+		"VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)\n./ci/release.sh $VERSION",
+		"GOAL=test\nRESULT=$(mvn $GOAL)",
+		"VERSION=$(mvn help:evaluate test -q)",
+	} {
+		require.NotEmpty(t, javaStep(t, root, run).Reason, "a script that may build or run tests stays unresolved: %s", run)
+	}
+}
+
+func TestJavaPostTestScopeFollowsEachRowAndMavenLaunchers(t *testing.T) {
+	action := "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n"
+	// The test step exists only once the row is expanded; the earlier
+	// unresolved setup stays in scope.
+	matrix := "jobs:\n  tests:\n    strategy:\n      matrix:\n        command: ['mvn test']\n    steps:\n" + action + "      - run: echo \"MAVEN_OPTS=${{ steps.opts.outputs.value }}\" >> $GITHUB_ENV\n      - run: ${{ matrix.command }}\n"
+	ci := JavaCIConfiguration(javaWorkflowFixture(t, matrix, nil), "junit5", "")
+	require.Len(t, ci.Jobs, 2, "the setup before a matrix-selected test step stays in scope: %+v", ci.Jobs)
+	// More Maven runs after the last literal test step stay in scope.
+	launcher := "jobs:\n  tests:\n    steps:\n" + action + "      - run: mvn test\n      - run: find . -name pom.xml -exec mvn -f '{}' test \\;\n"
+	ci = JavaCIConfiguration(javaWorkflowFixture(t, launcher, nil), "junit5", "")
+	require.Len(t, ci.Jobs, 2, "a launcher that runs Maven may run tests: %+v", ci.Jobs)
+	// A Maven call with an assignment may add goals, as MAVEN_ARGS does.
+	require.NotEmpty(t, javaStep(t, javaWorkflowFixture(t, "", nil), "VERSION=$(MAVEN_ARGS=test mvn help:evaluate -Dexpression=project.version -q -DforceStdout)").Reason)
+	for _, run := range []string{"export MAVEN_ARGS=test\nVERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)", "MAVEN_ARGS=test\nexport MAVEN_ARGS\nVERSION=$(mvn help:evaluate -q -DforceStdout)"} {
+		require.NotEmpty(t, javaStep(t, javaWorkflowFixture(t, "", nil), run).Reason, "MAVEN_ARGS set anywhere in the script adds goals: %s", run)
+	}
+}
+
+func TestJavaMetadataScriptsAndLaunchersFollowTheirEnvironmentAndMatrix(t *testing.T) {
+	action := "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n"
+	metadata := "      - run: |\n          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)\n          echo $VERSION\n"
+	for name, env := range map[string]string{"workflow": "env: {MAVEN_ARGS: test}\n", "job": "", "step": ""} {
+		workflow := env + "jobs:\n  tests:\n    steps:\n" + action + metadata
+		switch name {
+		case "job":
+			workflow = "jobs:\n  tests:\n    env: {MAVEN_ARGS: test}\n    steps:\n" + action + metadata
+		case "step":
+			workflow = "jobs:\n  tests:\n    steps:\n" + action + metadata + "        env: {MAVEN_ARGS: test}\n"
+		}
+		scope, err := DiscoverValidationScope(javaWorkflowFixture(t, workflow, nil), "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, "%s MAVEN_ARGS adds goals to the metadata call", name)
+	}
+	launcher := "jobs:\n  tests:\n    strategy:\n      matrix:\n        maven: [mvn]\n    steps:\n" + action + "      - run: mvn test\n      - run: find . -name pom.xml -exec ${{ matrix.maven }} -f '{}' test \\;\n"
+	ci := JavaCIConfiguration(javaWorkflowFixture(t, launcher, nil), "junit5", "")
+	require.Len(t, ci.Jobs, 2, "the expanded launcher runs Maven: %+v", ci.Jobs)
+}
+
+func TestJavaMetadataScriptsYieldToExportedArgsAndConfigGoals(t *testing.T) {
+	metadata := "VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)\necho $VERSION"
+	root := javaWorkflowFixture(t, "", nil)
+	require.Empty(t, javaStep(t, root, metadata).Reason, "metadata alone runs no tests")
+	// An earlier step may export MAVEN_ARGS for later steps.
+	job := runtimeJob{Steps: []runtimeStep{{Run: "echo 'MAVEN_ARGS=test' >> \"$GITHUB_ENV\""}, {Run: metadata}}}
+	require.NotEmpty(t, resolveJavaStep(root, ciWorkflow{}, job, job.Steps[1], "junit5").Reason)
+	// So may the project's Maven configuration.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".mvn"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".mvn", "maven.config"), []byte("# shared\n-B\ntest\n"), 0o644))
+	require.NotEmpty(t, javaStep(t, root, metadata).Reason, "a goal in maven.config runs with every Maven call")
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".mvn", "maven.config"), []byte("-B\n-ntp\n"), 0o644))
+	require.Empty(t, javaStep(t, root, metadata).Reason, "options alone add no goals")
+	require.NotEmpty(t, javaStep(t, root, "VERSION=$(mvn -f module/pom.xml help:evaluate -Dexpression=project.version -q -DforceStdout)").Reason, "an alternate POM may select another maven.config")
+}

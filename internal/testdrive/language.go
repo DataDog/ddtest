@@ -184,6 +184,9 @@ type pairedFramework struct {
 	// telemetry matches native results to reported telemetry; nil uses
 	// defaultTelemetry.
 	telemetry func(validationRun) verdict
+	// probeTelemetry matches a probe control's native result to its
+	// telemetry; nil uses the shared file-based check.
+	probeTelemetry func(validationRun) verdict
 	// preflightAfterInstall runs preflight again once the tracer is
 	// installed, to inspect the dependencies that load it.
 	preflightAfterInstall bool
