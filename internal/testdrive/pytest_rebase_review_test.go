@@ -82,8 +82,8 @@ func TestPytestObserverKeepsBodyAndTeardownFailures(t *testing.T) {
 	if err != nil {
 		t.Skip("Python required")
 	}
-	if err := exec.CommandContext(t.Context(), python, "-c", "import pytest").Run(); err != nil {
-		t.Skip("pytest required")
+	if err := exec.CommandContext(t.Context(), python, "-c", "import pytest, ddtrace").Run(); err != nil {
+		t.Skip("pytest and ddtrace required")
 	}
 	root := t.TempDir()
 	t.Chdir(root)
