@@ -135,8 +135,8 @@ func (pythonLanguage) pairedFrameworks() map[string]pairedFramework {
 }
 func (pythonLanguage) isolatesConfigurations() bool { return true }
 
-func (pythonLanguage) prepareConfiguration(*Testdrive, *configurationResult, string, string) error {
-	return nil
+func (pythonLanguage) prepareConfiguration(t *Testdrive, _ *configurationResult, _, _ string) error {
+	return t.rebasePytestConfiguration()
 }
 func (pythonLanguage) coordinated() bool        { return false }
 func (pythonLanguage) defaultsToCITracer() bool { return false }
