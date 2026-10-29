@@ -10,9 +10,10 @@ depends on are merged.
 
 ## Goal
 
-- `ddtest instrument bazel <dir>` gives Bazel everything it needs to
-  instrument Go tests. It comes from the same ddtest release that customers
-  already install; there is no other artifact.
+- `ddtest instrument bazel <dir>` generates what Bazel needs from ddtest to
+  instrument Go tests: the instrumented SDKs and Mini. It comes from the same
+  ddtest release that customers already install; there is no other
+  artifact. rules_test_optimization owns the Starlark that uses them.
 - rules_test_optimization uses upstream rules_go. It drops Orchestrion, the
   vendored rules_go trees and the pin files.
 - Go tests in Bazel get what `ddtest instrument` gives outside Bazel:
@@ -76,7 +77,7 @@ The user settled these on 2026-10-29.
 | Code checks, not versions | Library gates check the code that each edit needs, in and outside Bazel. Testify v1.3.0 is instrumented when its code fits. |
 | No API key in tests | Tests run in agent mode, with no network and no key; the uploader keeps the key. |
 | Where Bazel is tested | ddtest's CI runs a basic Bazel test. The full Bazel suites live in rules_test_optimization and rules_test_optimization_tests. |
-| The test rule | ddtest generates the Starlark from files in its own repository, and `dd_topt_go_test` wraps it. [Validating the Starlark](#validating-the-starlark) lists the checks. Reopened by open question 1. |
+| The Starlark | rules_test_optimization owns it: the macro, the test rule, the transition, the registration file template and the toolchain declarations. ddtest generates only the SDKs and Mini, behind a contract version that the extension checks when it fetches them. `BUILD` files load the rule in every build, so ordinary builds never need ddtest. Settled on 2026-10-30; [Validating the Starlark](#validating-the-starlark) lists the checks. |
 | Platforms | Every platform with a ddtest release asset: Linux, macOS and Windows on amd64 and arm64, as exec and target platforms, plus remote execution. Every rules_go minor version from 0.60 to the latest, at its latest patch. |
 | WORKSPACE and Bzlmod | Both stay supported. |
 | One Mini per test | The test binary links only the Mini of the ddtest release, as outside Bazel. [Mini from `go_deps`](#mini-from-go_deps) covers tests that use Mini's Go API. |
@@ -234,8 +235,9 @@ already uses: its version, download mirrors, checksums, patches and
   these repositories and change no ordinary action. There is one exception:
   in a workspace that uses Mini's Go API with the override above, targets
   that depend on Mini fetch the Mini repository, which needs only the
-  host's ddtest. Open question 1 covers the Starlark that `BUILD` files
-  load. The full suites check all of this.
+  host's ddtest. The Starlark that `BUILD` files load comes from
+  rules_test_optimization and needs no ddtest. The full suites check all of
+  this.
 
 | rules_go API | Status |
 | --- | --- |
@@ -250,7 +252,7 @@ All of them exist in rules_go 0.60.0, 0.61.1, 0.62.0, 0.63.0 and 0.65.0.
 
 ### The test rule
 
-The Go test rule:
+rules_test_optimization owns the Go test rule. It:
 
 - Transitions `sdk_name` to `"ddto"`.
 - Adds Mini's `testopt` library and the registration file
@@ -281,24 +283,25 @@ with a clear message when it receives a Bazel command such as `test`,
 
 ### Validating the Starlark
 
-ddtest keeps the Starlark as ordinary `.bzl` and `BUILD.bazel` files in its
-repository, embedded in the binary. `ddtest instrument bazel` copies them and
-generates only Mini's `BUILD.bazel` files and a constants file with the
-release version, the `sdk_name` value and a contract version.
+The Starlark lives in rules_test_optimization, so its CI validates it.
+`ddtest instrument bazel` writes only data: the SDKs, Mini's packages with
+their `BUILD.bazel` files, and a `VERSION` file with the release version, the
+`sdk_name` value and the contract version.
 
-- **Format and lint:** buildifier in ddtest's CI, on the source files and on
-  a generated directory.
-- **Generated output:** a Go test compares the command's output with golden
-  files in the repository.
-- **Analysis tests,** with bazel-skylib's `analysistest`:
-  - the transition sets `sdk_name`;
-  - the test gets Mini and the registration file;
-  - the environment is set;
-  - `data` stays outside the transition;
-  - the toolchains never match an empty `sdk_name`, and loading them
-    fetches no SDK repository.
-- **The basic Bazel test** in ddtest's CI uses the generated rule, in Bzlmod
-  and WORKSPACE modes.
+- **In ddtest:**
+  - a Go test compares the command's output with golden files;
+  - buildifier checks the generated `BUILD.bazel` files;
+  - the basic Bazel test uses a minimal test-only rule, in Bzlmod and
+    WORKSPACE modes.
+- **In rules_test_optimization:**
+  - buildifier on its Starlark;
+  - analysis tests, with bazel-skylib's `analysistest`:
+    - the transition sets `sdk_name`;
+    - the test gets Mini and the registration file;
+    - the environment is set;
+    - `data` stays outside the transition;
+    - the toolchains never match an empty `sdk_name`, and loading them
+      fetches no SDK repository.
 - **Cross validation.** rules_test_optimization and
   rules_test_optimization_tests run their full suites on the pinned ddtest
   and on the newest release candidate, over every supported Bazel and
@@ -473,7 +476,9 @@ tested in ddtest without Bazel, with unit tests checked by mutation.
   it.
 - **`ddtest instrument bazel <dir>`** as described above, rejecting Bazel
   commands.
-- **The Starlark checks** in [Validating the Starlark](#validating-the-starlark).
+- **ddtest's checks** in [Validating the Starlark](#validating-the-starlark):
+  golden files, buildifier on the generated files and a minimal test-only
+  rule.
 - **A basic Bazel test in ddtest's CI,** on Linux and macOS, with Go 1.25 to
   1.27, in Bzlmod and WORKSPACE modes. The spikes covered only Go 1.25 and
   1.26. Its fixture covers:
@@ -496,7 +501,10 @@ The new major version, built on the release candidate:
 - **WORKSPACE support:** the same repository rule and toolchain registration in
   `tools/go/workspace_repositories.bzl`, with a WORKSPACE test, before the
   vendored trees that those helpers fetch are removed.
-- **`dd_topt_go_test`** on top of the new test rule.
+- **The Starlark:** the test rule, the transition, the registration file
+  template, the toolchain declarations and `dd_topt_go_test` on top of them,
+  with buildifier and the analysis tests in
+  [Validating the Starlark](#validating-the-starlark).
 - **Removals:** `third_party/rgo`, `third_party/rules_go_orchestrion`, the
   Orchestrion modules, the pin files and `orchestrion_mode`.
 - **Documentation,** onboarding guides and agent skills.
@@ -557,25 +565,10 @@ to that release.
 
 ## Open questions
 
-The dd-source rollout thread reviewed the plan on 2026-10-29. Open problems
-7 to 10, the base SDK, the laziness checks and phase 4's consumer migration
-and acceptance criteria come from that review.
-
-1. **Where the test rule's Starlark lives** (reopened on 2026-10-30).
-   `BUILD` files load the test rule in every build, instrumented or not. If
-   ddtest generates it, loading it needs the ddtest executable, so ordinary
-   builds would download ddtest and run it. That breaks the laziness above.
-   There are two ways out:
-   - **rules_test_optimization owns the Starlark:** the macro, the rule, the
-     transition and the registration file template. ddtest generates only
-     the SDK and Mini, behind a contract version. The rule's CI validates
-     the Starlark, and ddtest's basic Bazel test uses a minimal rule of its
-     own.
-   - **ddtest owns it** but ships the Starlark apart from the executable,
-     which is another download in ordinary builds and another file in each
-     release.
-
-   Recommendation: the first.
+None. The dd-source rollout thread reviewed the plan on 2026-10-29: open
+problems 7 to 10, the base SDK, the laziness checks and phase 4's consumer
+migration and acceptance criteria come from that review. The user settled
+the Starlark's owner on 2026-10-30.
 
 ## Out of scope
 
