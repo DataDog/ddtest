@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
@@ -19,7 +20,7 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 		return nil // Preflight reports unsupported command shapes.
 	}
 	prefix := len(words) - len(args)
-	words = append(slices.Clone(words[:prefix]), rebasePytestPaths(args, t.configurationSourceRoot, t.checkoutRoot())...)
+	words = append(rebaseUVDirectories(words[:prefix], t.configurationSourceRoot, t.checkoutRoot()), rebasePytestPaths(args, t.configurationSourceRoot, t.checkoutRoot())...)
 	t.args = words[1:]
 	files := map[string]bool{}
 	if err := rebasePytestArgumentFiles(words[prefix:], directory, t.configurationSourceRoot, t.checkoutRoot(), files); err != nil {
@@ -41,6 +42,32 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 		t.configurationEnvironment["PYTEST_ADDOPTS"] = shellquote.Join(options...)
 	}
 	return nil
+}
+
+func rebaseUVDirectories(words []string, original, copied string) []string {
+	words = slices.Clone(words)
+	if len(words) == 0 || strings.TrimSuffix(filepath.Base(words[0]), ".exe") != "uv" {
+		return words
+	}
+	for i := 2; i < len(words); i++ {
+		if words[i] == "--" || platform.IsPythonExecutable(words[i]) || strings.TrimSuffix(filepath.Base(words[i]), ".exe") == "pytest" {
+			break
+		}
+		option, value, assigned := strings.Cut(words[i], "=")
+		if option != "--directory" && option != "--project" {
+			if !assigned && slices.Contains([]string{"--package", "--python", "-p", "--group", "--no-group", "--only-group", "--extra", "--no-extra"}, option) {
+				i++
+			}
+			continue
+		}
+		if assigned {
+			words[i] = option + "=" + rebasePytestPaths([]string{value}, original, copied)[0]
+		} else if i+1 < len(words) {
+			i++
+			words[i] = rebasePytestPaths([]string{words[i]}, original, copied)[0]
+		}
+	}
+	return words
 }
 
 func rebasePytestPaths(args []string, original, copied string) []string {

@@ -30,14 +30,28 @@ func TestRebasePytestPathsPreservesExpressionsAndNodeSelectors(t *testing.T) {
 }
 
 func TestPytestAbsolutePathsExecuteOnlyInsideCopy(t *testing.T) {
-	testPytestPathsExecuteOnlyInsideCopy(t, false)
+	testPytestPathsExecuteOnlyInsideCopy(t, "direct")
 }
 
 func TestPytestArgumentFilesExecuteOnlyInsideCopy(t *testing.T) {
-	testPytestPathsExecuteOnlyInsideCopy(t, true)
+	testPytestPathsExecuteOnlyInsideCopy(t, "argument files")
 }
 
-func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, argumentFiles bool) {
+func TestPytestUVDirectoryExecutesOnlyInsideCopy(t *testing.T) {
+	for _, option := range []string{"--directory", "--project"} {
+		t.Run(option, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, option) })
+	}
+}
+
+func TestUVDirectoryRebasingPreservesEnvironmentSelectors(t *testing.T) {
+	original, copied := t.TempDir(), t.TempDir()
+	interpreter := filepath.Join(original, ".venv", "bin", "python")
+	words := []string{"uv", "run", "--python", interpreter, "--group", "python3.10", "--directory", original, "--project=" + original, "python", "-m", "pytest", "--directory", original}
+	want := []string{"uv", "run", "--python", interpreter, "--group", "python3.10", "--directory", copied, "--project=" + copied, "python", "-m", "pytest", "--directory", original}
+	require.Equal(t, want, rebaseUVDirectories(words, original, copied))
+}
+
+func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	t.Helper()
 	python := feedbackPython(t)
 	root := t.TempDir()
@@ -53,20 +67,32 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, argumentFiles bool) {
 	t.Setenv("DD_GIT_BRANCH", "main")
 	t.Setenv("DD_GIT_COMMIT_MESSAGE", "pytest fixture")
 	args := []string{"-m", "pytest", "-c", filepath.Join(root, "pytest.ini"), file + "::test_app"}
+	command := python
 	addopts := "--rootdir=" + root
-	if argumentFiles {
+	environment := map[string]string{}
+	if mode == "argument files" {
 		requireWriteFile(t, "ci-args.txt", "@"+filepath.Join(root, "nested-args.txt")+"\n")
 		requireWriteFile(t, "nested-args.txt", "-c\n"+filepath.Join(root, "pytest.ini")+"\n"+file+"::test_app\n")
 		requireWriteFile(t, "addopts.txt", addopts+"\n")
 		args = []string{"-m", "pytest", "@" + filepath.Join(root, "ci-args.txt")}
 		addopts = "@addopts.txt"
+	} else if mode == "--directory" || mode == "--project" {
+		uv, err := exec.LookPath("uv")
+		if err != nil {
+			t.Skip("uv required")
+		}
+		command = uv
+		args = append([]string{"run", "--no-sync", mode, root, "python"}, args...)
+		requireWriteFile(t, "pyproject.toml", "[project]\nname='ddtest-uv-review'\nversion='0.1.0'\nrequires-python='>=3.9'\n")
+		environment["UV_PROJECT_ENVIRONMENT"] = filepath.Dir(filepath.Dir(python))
 	}
-	drive := &Testdrive{repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()), command: python, args: args, executor: &ext.DefaultCommandExecutor{}, startIntake: func(dir string, scenario intake.Scenario) (localIntake, error) {
+	environment["PYTEST_ADDOPTS"] = addopts
+	drive := &Testdrive{repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()), command: command, args: args, executor: &ext.DefaultCommandExecutor{}, startIntake: func(dir string, scenario intake.Scenario) (localIntake, error) {
 		return intake.StartScenario(dir, scenario)
 	}}
 	drive.preflight = drive.frameworkPreflight()
 	var output bytes.Buffer
-	result, err := drive.runPreparedConfiguration(t.Context(), &output, &configurationResult{TestCommand: onboard.TestCommand{Directory: ".", Environment: map[string]string{"PYTEST_ADDOPTS": addopts}}})
+	result, err := drive.runPreparedConfiguration(t.Context(), &output, &configurationResult{TestCommand: onboard.TestCommand{Directory: ".", Environment: environment}})
 	require.NoError(t, err, output.String())
 	require.Equal(t, "compatible", result.Compatibility.Status, output.String())
 	require.Len(t, result.Features, 6)
@@ -74,7 +100,7 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, argumentFiles bool) {
 		require.Equal(t, "passed", feature.Status, "%s: %s", feature.Name, feature.Reason)
 	}
 	require.NoFileExists(t, filepath.Join(root, "tests", "test_app.executed"))
-	if argumentFiles {
+	if mode == "argument files" {
 		contents, err := os.ReadFile("nested-args.txt")
 		require.NoError(t, err)
 		require.Equal(t, "-c\n"+filepath.Join(root, "pytest.ini")+"\n"+file+"::test_app\n", string(contents))

@@ -36,6 +36,19 @@ func (pythonLanguage) refreshProjectTracer(t *Testdrive, ctx context.Context) {
 	if source == "" {
 		source = "Selected Python configuration"
 	}
+	words := append([]string{t.command}, t.args...)
+	if original := rebaseUVDirectories(words, t.checkoutRoot(), t.configurationSourceRoot); t.configurationSourceRoot != "" && !slices.Equal(original, words) {
+		info, finding := pythonEnvironmentInfo(ctx, original[0], original[1:], source, t.configurationEnvironment, t.commandTimeout)
+		if finding != nil {
+			t.environmentInfo, t.environmentFailure, t.projectTracer = info, finding, ""
+			return
+		}
+		environment := filepath.Dir(info.Executable)
+		if base := filepath.Base(environment); base == "bin" || strings.EqualFold(base, "Scripts") {
+			environment = filepath.Dir(environment)
+		}
+		t.configurationEnvironment["UV_PROJECT_ENVIRONMENT"] = environment
+	}
 	if strings.TrimSuffix(filepath.Base(t.command), ".exe") == "poetry" && t.configurationSourceRoot != "" {
 		relative, err := filepath.Rel(t.checkoutRoot(), t.repositoryRoot)
 		if err == nil {
