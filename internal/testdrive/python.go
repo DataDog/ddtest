@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -54,7 +55,7 @@ func uvLockRoot(root string) string {
 	}
 }
 
-func pythonEnvironmentInfo(ctx context.Context, command string, args []string, source string, environments ...map[string]string) (environmentInfo, *reportCard) {
+func pythonEnvironmentInfo(ctx context.Context, command string, args []string, source string, env map[string]string, timeout time.Duration) (environmentInfo, *reportCard) {
 	info := environmentInfo{Source: source, Runtime: "Python"}
 	probeCommand, prefix, err := pythonProbeCommand(command, args)
 	advice := "Activate the environment used to run your tests, or pass --command with its Python interpreter and pytest arguments. Install the project's test dependencies in that environment, then rerun testdrive."
@@ -73,11 +74,7 @@ func pythonEnvironmentInfo(ctx context.Context, command string, args []string, s
 		Pytest     bool
 		Error      string
 	}
-	var env map[string]string
-	if len(environments) > 0 {
-		env = environments[0]
-	}
-	err = probeEnvironment(ctx, probeCommand, append(prefix, "-c", pythonEnvironmentProbe), env, &result)
+	err = probeEnvironment(ctx, probeCommand, append(prefix, "-c", pythonEnvironmentProbe), env, &result, timeout)
 	if err != nil {
 		return info, environmentFinding("python-environment-unresolved", "Cannot inspect the selected Python environment", err.Error(), advice)
 	}

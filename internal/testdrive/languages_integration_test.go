@@ -31,7 +31,7 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 		name, command string
 		files         map[string]string
 	}{
-		{"pytest", "python -m pytest", map[string]string{"requirements.txt": "pytest==8.4.2\n", "pytest.ini": "[pytest]\n", "test_one.py": "def test_adds():\n    assert 1 + 1 == 2\n"}},
+		{"pytest", "python -m pytest", map[string]string{"requirements.txt": "pytest==8.4.2\n", "pytest.ini": "[pytest]\n", "app.py": "def add(a, b):\n    return a + b\n", "test_one.py": "from app import add\ndef test_adds():\n    assert add(1, 1) == 2\n"}},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "project")

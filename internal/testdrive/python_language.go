@@ -35,7 +35,7 @@ func (pythonLanguage) refreshProjectTracer(t *Testdrive, ctx context.Context) {
 	if source == "" {
 		source = "Selected Python configuration"
 	}
-	t.environmentInfo, t.environmentFailure = pythonEnvironmentInfo(ctx, t.command, t.args, source, t.configurationEnvironment)
+	t.environmentInfo, t.environmentFailure = pythonEnvironmentInfo(ctx, t.command, t.args, source, t.configurationEnvironment, t.commandTimeout)
 	t.projectTracer = ""
 }
 func (pythonLanguage) usesPackageBinaries() bool { return false }
@@ -51,7 +51,7 @@ func (pythonLanguage) installTracer(*Testdrive, context.Context, platform.Tracer
 
 func (pythonLanguage) inspectEnvironment(ctx context.Context, request environmentRequest) (string, []string, environmentInfo, *reportCard) {
 	command, args, source := pythonTestdriveCommand(request.root, request.command, request.args, request.explicit)
-	info, finding := pythonEnvironmentInfo(ctx, command, args, source)
+	info, finding := pythonEnvironmentInfo(ctx, command, args, source, nil, request.timeout)
 	return command, args, info, finding
 }
 

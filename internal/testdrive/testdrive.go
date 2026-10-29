@@ -360,7 +360,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	command, args, environment, preflight := selectedLanguage.inspectEnvironment(ctx, environmentRequest{root: repositoryRoot, command: command, args: args, explicit: strings.TrimSpace(settings.GetCommand()) != "", checkOnly: configurationOnly, discoveryError: discoveryError})
+	command, args, environment, preflight := selectedLanguage.inspectEnvironment(ctx, environmentRequest{root: repositoryRoot, command: command, args: args, explicit: strings.TrimSpace(settings.GetCommand()) != "", checkOnly: configurationOnly, discoveryError: discoveryError, timeout: timeout})
 	scopeCommand := selectedPlan.ScopeCommand
 	if scopeCommand == "" {
 		scopeCommand = originalCommand

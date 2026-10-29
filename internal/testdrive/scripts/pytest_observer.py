@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-_tests = {}
+_tests = []
+_active = {}
 _errors = []
 _coverage_threshold_disabled = False
 _rootpath = Path.cwd()
@@ -53,6 +54,12 @@ def pytest_collectreport(report):
         _errors.append(str(report.longrepr))
 
 
+def pytest_runtest_logstart(nodeid, location):
+    # Each item execution gets its own result, even when selectors repeat a node.
+    # The reports within that execution (phases and tracer retries) share it.
+    _active.pop(nodeid, None)
+
+
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)
 def pytest_runtest_logreport(report):
     yield
@@ -63,10 +70,10 @@ def pytest_runtest_logreport(report):
     if report.when != "call" and report.passed:
         return
     file, _, name = report.nodeid.partition("::")
-    previous = _tests.get(report.nodeid)
+    previous = _active.get(report.nodeid)
     if report.when == "teardown" and report.skipped and previous:
         return
-    _tests[report.nodeid] = {
+    result = {
         "file": str((_rootpath / file).resolve()),
         "name": name,
         "status": report.outcome,
@@ -75,6 +82,11 @@ def pytest_runtest_logreport(report):
             str(report.longrepr) if report.failed else "",
         ))),
     }
+    if previous is None:
+        _tests.append(result)
+        _active[report.nodeid] = result
+    else:
+        previous.update(result)
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -82,7 +94,7 @@ def pytest_sessionfinish(session, exitstatus):
         return
     Path(os.environ["DDTEST_PYTEST_RESULTS"]).write_text(json.dumps({
         "complete": True,
-        "tests": list(_tests.values()),
+        "tests": _tests,
         "errors": _errors,
         "coverage_threshold_disabled": _coverage_threshold_disabled,
     }))

@@ -64,6 +64,10 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	original, copyRoot := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
+	sourceRoot := original
+	if t.lang().isolatesConfigurations() {
+		sourceRoot = checkout
+	}
 	if t.lang().isolatesConfigurations() || !t.checkOnly && (len(item.Prerequisites) > 0 || len(item.Services) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {
 		parent, err := os.MkdirTemp("", "ddtest-configuration-")
 		if err != nil {
@@ -83,14 +87,19 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		if err != nil {
 			return result, err
 		}
-		copyRoot = filepath.Join(parent, "checkout")
+		copyCheckout := filepath.Join(parent, "checkout")
+		relative, err := filepath.Rel(sourceRoot, original)
+		if err != nil || !filepath.IsLocal(relative) {
+			return result, fmt.Errorf("configuration directory is outside the checkout: %s", original)
+		}
+		copyRoot = filepath.Join(copyCheckout, relative)
 		// Without preparation to replay, nothing rebuilds ignored outputs such as
 		// a locally compiled dist/, so the copy keeps the prepared state as is.
 		skipIgnored := skipIgnoredOutput
 		if len(item.Prerequisites) == 0 {
 			skipIgnored = nil
 		}
-		size, err := configurationCopyEstimate(ctx, original, skipIgnored)
+		size, err := configurationCopyEstimate(ctx, sourceRoot, skipIgnored)
 		if err != nil {
 			return result, err
 		}
@@ -98,10 +107,10 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 			return result, err
 		}
 		_, _ = fmt.Fprintf(output, "Isolating configuration: up to %d bytes; copy-on-write when available.\n", size)
-		if err := workspace.Copy(ctx, original, copyRoot, skipIgnored); err != nil {
+		if err := workspace.Copy(ctx, sourceRoot, copyCheckout, skipIgnored); err != nil {
 			return result, err
 		}
-		checkout = copyRoot
+		checkout = copyCheckout
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -112,16 +121,16 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	defer func() { runErr = errors.Join(runErr, os.Chdir(cwd)) }()
 	if filepath.IsAbs(t.command) && copyRoot != original && !t.vitestRunner {
-		if relative, err := filepath.Rel(original, t.command); err == nil && filepath.IsLocal(relative) {
-			t.command = filepath.Join(copyRoot, relative)
+		if relative, err := filepath.Rel(sourceRoot, t.command); err == nil && filepath.IsLocal(relative) {
+			t.command = filepath.Join(checkout, relative)
 		}
 	}
 	t.repositoryRoot, t.configurationRoot = copyRoot, checkout
-	t.configurationSourceRoot = original
+	t.configurationSourceRoot = sourceRoot
 	t.isolated = copyRoot != original
 	executor := t.executor
 	// Earlier setup must not inherit variables declared only on the test step.
-	t.executor = configurationExecutor{executor, isolatedCIEnvironment(nil, original, checkout)}
+	t.executor = configurationExecutor{executor, isolatedCIEnvironment(nil, sourceRoot, checkout)}
 	if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration preparation failed; tests were not started."}
 		return result, err
@@ -146,7 +155,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if err != nil {
 		return result, err
 	}
-	t.configurationEnvironment = isolatedCIEnvironment(onboard.WithCIProviderDefaults(item.Environment), original, checkout)
+	t.configurationEnvironment = isolatedCIEnvironment(onboard.WithCIProviderDefaults(item.Environment), sourceRoot, checkout)
 	if err := t.lang().prepareConfiguration(t, item, original, copyRoot); err != nil {
 		return result, err
 	}
@@ -173,7 +182,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	result, runErr = t.runPreparedChecksOrTests(ctx, output)
 	if copyRoot != original {
-		scrubCopyPaths(&result, copyRoot)
+		scrubCopyPaths(&result, checkout)
 	}
 	return result, runErr
 }

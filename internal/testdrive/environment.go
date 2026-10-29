@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
@@ -40,7 +41,7 @@ func environmentFinding(kind, title, detail, advice string) *reportCard {
 }
 
 // Use a private result file so startup hooks writing to stdout cannot corrupt it.
-func probeEnvironment(ctx context.Context, command string, args []string, env map[string]string, result any) error {
+func probeEnvironment(ctx context.Context, command string, args []string, env map[string]string, result any, timeouts ...time.Duration) error {
 	file, err := os.CreateTemp("", "ddtest-environment-*")
 	if err != nil {
 		return err
@@ -50,6 +51,9 @@ func probeEnvironment(ctx context.Context, command string, args []string, env ma
 		return err
 	}
 	executor := &ext.DefaultCommandExecutor{}
+	if len(timeouts) > 0 {
+		executor.Timeout = timeouts[0]
+	}
 	output, err := executor.CombinedOutput(ctx, command, append(args, file.Name()), env)
 	if err != nil {
 		return fmt.Errorf("%s: %w\n%s", command, err, strings.TrimSpace(string(output)))

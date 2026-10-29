@@ -34,6 +34,8 @@ def test_ddtest_validation_probe():
     attempts = len(path.read_text().splitlines())
     mode = os.environ.get("DDTEST_PROBE_MODE")
     assert not (mode == "fail" or (mode == "fail-once" and attempts == 1)), "ddtest intentional failure"
+
+test_ddtest_validation_probe.__test__ = True
 `
 
 func (t *Testdrive) checkPytestPreflight(ctx context.Context, output io.Writer, result *validationResult) error {
@@ -70,7 +72,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 		env = map[string]string{}
 	}
 	maps.Copy(env, testEnvironment("http://127.0.0.1:1", "pytest-preflight"))
-	if err := probeEnvironment(ctx, command, append(prefix, "-c", script), env, &metadata); err != nil {
+	if err := probeEnvironment(ctx, command, append(prefix, "-c", script), env, &metadata, t.commandTimeout); err != nil {
 		return fmt.Errorf("inspect pytest: %w", err)
 	}
 	check.Version, check.Runtime = metadata.Pytest, metadata.Python
@@ -118,7 +120,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 	} else {
 		check.Verdict.Status, check.Verdict.Reason = onboard.ComparePythonRequirement(metadata.Python, selection.RequiresPython)
 	}
-	ci := onboard.CheckPythonCIRuntimes(ctx, t.repositoryRoot, selection.Version)
+	ci := onboard.CheckPythonCIRuntimes(ctx, t.checkoutRoot(), selection.Version)
 	if previous := result.CIRuntime; previous != nil && slices.ContainsFunc(previous.Review, func(finding onboard.RuntimeFinding) bool { return finding.Code == onboard.CodeNestedCIScope }) {
 		ci.Review = append(ci.Review, previous.Review...)
 		if ci.Status == onboard.StatusCompatible || ci.Status == onboard.StatusNotApplicable {
@@ -178,7 +180,7 @@ func (t *Testdrive) verifyPytestTracer(ctx context.Context, path, expected strin
 	if configured, ok := t.configurationEnvironment["PYTHONPATH"]; ok && path != "" && configured != "" {
 		env["PYTHONPATH"] = path + string(os.PathListSeparator) + configured
 	}
-	if err := probeEnvironment(ctx, command, append(prefix, "-c", script), env, &result); err != nil {
+	if err := probeEnvironment(ctx, command, append(prefix, "-c", script), env, &result, t.commandTimeout); err != nil {
 		return err
 	}
 	if result.Version != expected {
@@ -336,16 +338,54 @@ func (t *Testdrive) runPytest(ctx context.Context, output io.Writer, session *wo
 		run.ProbeExecutions = &count
 	}
 	if instrumented && probePath == "" && run.Facts.TestCount > 0 {
-		status := "observed"
-		if run.Facts.CoveredTestCount == 0 {
-			status = "not observed"
-		}
-		run.Coverage = &coverageSummary{Status: status, CoveredTests: run.Facts.CoveredTestCount, TotalTests: run.Facts.TestCount, Level: run.Facts.CoverageLevel}
+		run.Coverage = pytestSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests)
 	}
 	if run.ExitCode != 0 || run.ResultError != "" {
 		run.Diagnostic = commandDiagnostic(data)
 	}
 	return run, nil
+}
+
+func pytestSourceCoverage(root string, facts intake.Facts, native []nativeTest) *coverageSummary {
+	if canonical, err := filepath.EvalSymlinks(root); err == nil {
+		root = canonical
+	}
+	applicationFiles := func(files []string) []string {
+		// Python sends checkout-relative coverage paths with a leading slash.
+		files = slices.Clone(files)
+		for i := range files {
+			files[i] = strings.TrimPrefix(filepath.ToSlash(files[i]), "/")
+		}
+		return slices.DeleteFunc(files, func(file string) bool {
+			local, valid := repositoryCoverageFile(root, file)
+			if !valid {
+				return false // Preserve invalid paths for the shared coverage check.
+			}
+			parts := strings.Split(filepath.ToSlash(local), "/")
+			base := filepath.Base(local)
+			return slices.ContainsFunc(parts, func(part string) bool {
+				return slices.Contains([]string{"test", "tests", ".venv", "venv", "site-packages"}, part)
+			}) || base == "conftest.py" || strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py")
+		})
+	}
+	facts.Tests = slices.Clone(facts.Tests)
+	for i := range facts.Tests {
+		facts.Tests[i].CoveredFiles = applicationFiles(facts.Tests[i].CoveredFiles)
+	}
+	facts.SuiteCoverages = slices.Clone(facts.SuiteCoverages)
+	for i := range facts.SuiteCoverages {
+		facts.SuiteCoverages[i].Files = applicationFiles(facts.SuiteCoverages[i].Files)
+	}
+	coverage := applicationSourceCoverage(root, facts, native)
+	switch coverage.Status {
+	case "observed":
+		coverage.Reason = "pytest coverage includes existing repository application files."
+	case "invalid":
+		coverage.Reason = "pytest coverage names missing or outside-repository files."
+	default:
+		coverage.Reason = "No repository application source coverage observed. Test files, fixtures and dependencies alone are insufficient."
+	}
+	return coverage
 }
 
 func readPytestResults(path string, run *validationRun) {

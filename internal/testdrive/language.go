@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
@@ -171,6 +172,7 @@ type environmentRequest struct {
 	explicit       bool
 	checkOnly      bool
 	discoveryError error
+	timeout        time.Duration
 }
 
 // pairedFramework is one framework's part of paired validation.
