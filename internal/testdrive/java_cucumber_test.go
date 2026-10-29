@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
@@ -133,4 +134,30 @@ func TestJavaCucumberProbeHonorsTheCommandGlueAndInheritedBackends(t *testing.T)
 	probe, _, err = javaCucumberProbe(root, ".", nil)
 	require.NoError(t, err)
 	require.Contains(t, probe.files[1].source, "@io.cucumber.java.en.When")
+}
+
+func TestJavaCucumberSuiteGlueOutranksTheCommand(t *testing.T) {
+	root := t.TempDir()
+	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "example", "RunCucumberTest.java"), "package example;\n@Suite\n@IncludeEngines(\"cucumber\")\n@ConfigurationParameter(key = GLUE_PROPERTY_NAME, value = \"example.steps\")\npublic class RunCucumberTest {}\n")
+	probe, _, err := javaCucumberProbe(root, ".", []string{"-Dcucumber.glue=example.cli", "test"})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join("src", "test", "java", "example", "steps", "DdtestValidationSteps.java"), probe.files[1].path, "a suite's glue parameter outranks system properties")
+	// A JUnit 4 runner's glue option yields to the command.
+	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "example", "RunCucumberTest.java"), "package example;\n@RunWith(Cucumber.class)\n@CucumberOptions(glue = \"example.steps\")\npublic class RunCucumberTest {}\n")
+	probe, _, err = javaCucumberProbe(root, ".", []string{"-Dcucumber.glue=example.cli", "test"})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join("src", "test", "java", "example", "cli", "DdtestValidationSteps.java"), probe.files[1].path)
+}
+
+func TestJavaCucumberProbeGoesToTheModuleWithTheRunner(t *testing.T) {
+	root := t.TempDir()
+	writeJavaSource(t, filepath.Join(root, "api", "src", "test", "java", "example", "ApiTest.java"), "package example;\npublic class ApiTest {}\n")
+	writeJavaSource(t, filepath.Join(root, "features", "src", "test", "java", "example", "RunCucumberTest.java"), "package example;\n@RunWith(Cucumber.class)\npublic class RunCucumberTest {}\n")
+	projects := []maven.Project{{Directory: ".", Artifact: "parent"}, {Directory: "api", Artifact: "api"}, {Directory: "features", Artifact: "features"}}
+	tests := []nativeTest{{File: "api / example.ApiTest"}, {File: "features / Calculator"}}
+	module, ok := javaCucumberModule(root, projects, tests)
+	require.True(t, ok)
+	require.Equal(t, "features", module, "an earlier module without a runner is passed over")
+	_, ok = javaCucumberModule(root, projects, tests[:1])
+	require.False(t, ok, "only modules whose tests ran qualify")
 }

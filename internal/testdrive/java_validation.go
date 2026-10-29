@@ -537,6 +537,13 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 		unavailableFeatures(result, "No module of the selected Maven command ran native tests, so the controlled probe has nowhere to run.")
 		return nil
 	}
+	if t.framework.Name() == "cucumber-java" {
+		// The probe needs the module that holds a Cucumber runner, which an
+		// inherited dependency hides from reactor order.
+		if owner, found := javaCucumberModule(checkout, projects, baseline.Tests); found {
+			module = owner
+		}
+	}
 	probe, reason, err := javaProbeFor(checkout, module, t.framework.Name(), args)
 	if err != nil {
 		return err

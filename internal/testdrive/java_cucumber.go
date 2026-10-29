@@ -107,7 +107,7 @@ var (
 // so the project's own glue, hooks and object factory still load. The runner
 // alone is selected, with the probe feature in place of the project's.
 func javaCucumberProbe(checkout, module string, args []string) (javaProbe, string, error) {
-	runner, glue, suite, lambdaGlue, err := javaCucumberRunnerClass(filepath.Join(checkout, module))
+	runner, glue, suite, pinned, lambdaGlue, err := javaCucumberRunnerClass(filepath.Join(checkout, module))
 	if err != nil {
 		return javaProbe{}, "", err
 	}
@@ -126,7 +126,8 @@ func javaCucumberProbe(checkout, module string, args []string) (javaProbe, strin
 		case strings.HasPrefix(arg, "-D"):
 			property = strings.TrimPrefix(arg, "-D")
 		}
-		if value, ok := strings.CutPrefix(property, "cucumber.glue="); ok {
+		// A suite's own glue parameter outranks system properties.
+		if value, ok := strings.CutPrefix(property, "cucumber.glue="); ok && !pinned {
 			glue = javaGluePackage(value)
 		}
 	}
@@ -148,8 +149,9 @@ func javaCucumberProbe(checkout, module string, args []string) (javaProbe, strin
 // javaCucumberRunnerClass finds the first Cucumber runner class in a module's
 // test sources, by path, and its glue package: the runner's glue option or
 // configuration parameter, the module's junit-platform.properties, or the
-// runner's own package. suite reports a JUnit Platform suite.
-func javaCucumberRunnerClass(module string) (runner, glue string, suite bool, lambda backendUse, err error) {
+// runner's own package. suite reports a JUnit Platform suite, and pinned a
+// suite glue parameter, which outranks the command's system properties.
+func javaCucumberRunnerClass(module string) (runner, glue string, suite, pinned bool, lambda backendUse, err error) {
 	sources := filepath.Join(module, "src", "test", "java")
 	err = filepath.WalkDir(sources, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -176,14 +178,35 @@ func javaCucumberRunnerClass(module string) (runner, glue string, suite bool, la
 		suite = javaCucumberSuite.MatchString(text)
 		if match := javaCucumberGlue.FindStringSubmatch(text); match != nil {
 			glue = cmp.Or(match[1], match[2], match[3])
+			pinned = match[2] != "" || match[3] != ""
 		}
 		glue = cmp.Or(glue, javaPlatformGlue(module), pkg)
 		return nil
 	})
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", "", false, backendUse{}, nil
+		return "", "", false, false, backendUse{}, nil
 	}
-	return runner, javaGluePackage(glue), suite, lambda, err
+	return runner, javaGluePackage(glue), suite, pinned, lambda, err
+}
+
+// javaCucumberModule picks the first module, in reactor order, whose tests ran
+// in the baseline and that holds a Cucumber runner class.
+func javaCucumberModule(checkout string, projects []maven.Project, tests []nativeTest) (string, bool) {
+	labels := javaModuleLabels(projects)
+	executed := map[string]bool{}
+	for _, test := range tests {
+		module, _, _ := strings.Cut(test.File, " / ")
+		executed[module] = true
+	}
+	for _, project := range projects {
+		if !executed[labels[project.Directory]] {
+			continue
+		}
+		if runner, _, _, _, _, err := javaCucumberRunnerClass(filepath.Join(checkout, project.Directory)); err == nil && runner != "" {
+			return project.Directory, true
+		}
+	}
+	return "", false
 }
 
 // javaGluePackage is the first package of a glue list; a path such as

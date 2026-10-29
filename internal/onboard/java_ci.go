@@ -215,7 +215,10 @@ func javaMetadataScript(run string) bool {
 			goals := maven.Goals(words[1:])
 			help := len(goals) > 0 && !slices.ContainsFunc(goals, func(goal string) bool { return !strings.HasPrefix(goal, "help:") })
 			// An assignment such as MAVEN_ARGS=test may add goals.
-			metadata = metadata && len(call.Assigns) == 0 && !slices.Contains(words, "\x00") && (help || maven.Metadata(words[1:]))
+			// An alternate POM may select another .mvn/maven.config, which
+			// javaConfigGoals does not read.
+			pom, err := maven.CommandPOM(words[1:])
+			metadata = metadata && err == nil && pom == "pom.xml" && len(call.Assigns) == 0 && !slices.Contains(words, "\x00") && (help || maven.Metadata(words[1:]))
 		case !slices.Contains(javaShellBuiltins, words[0]):
 			metadata = false
 		}

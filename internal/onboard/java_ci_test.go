@@ -477,4 +477,5 @@ func TestJavaMetadataScriptsYieldToExportedArgsAndConfigGoals(t *testing.T) {
 	require.NotEmpty(t, javaStep(t, root, metadata).Reason, "a goal in maven.config runs with every Maven call")
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".mvn", "maven.config"), []byte("-B\n-ntp\n"), 0o644))
 	require.Empty(t, javaStep(t, root, metadata).Reason, "options alone add no goals")
+	require.NotEmpty(t, javaStep(t, root, "VERSION=$(mvn -f module/pom.xml help:evaluate -Dexpression=project.version -q -DforceStdout)").Reason, "an alternate POM may select another maven.config")
 }
