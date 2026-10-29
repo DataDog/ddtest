@@ -464,6 +464,12 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						imageRuby = false
 						skippedAction = false
 					}
+					if version, selected := step.Runtime["ruby"]; selected && stepErr == nil {
+						// A known installer selected Ruby, such as the CircleCI Ruby
+						// orb's install; its RubyGems is checked like an image's.
+						ruby, engine = rubyImageRuntime("ruby:" + version)
+						imageRuby = true
+					}
 					if isSetup {
 						tracer, action, actionErr, inputs, setup = "", "", nil, nil, nil
 					}
@@ -520,6 +526,10 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 							if err != nil {
 								reasons = append(reasons, err.Error())
 							}
+						}
+						// Once the step is resolved, its preload must survive too.
+						if reason := rubyRakeOptionsProblem(step.Run); reason != "" {
+							reasons = append(reasons, reason)
 						}
 						finding.Reason = "Ruby CI scope needs review: " + strings.TrimSpace(strings.Join(reasons, "; "))
 					} else if ruby != "" && tracer != "" && action != "" {
@@ -607,6 +617,9 @@ func rubyBootstrapProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 			}
 		}
 	}
+	if reason := rubyRakeOptionsProblem(step.Run); reason != "" {
+		return reason
+	}
 	if options, overridden := env["RUBYOPT"]; overridden {
 		if !strings.Contains(options, "datadog/ci/auto_instrument") && !strings.Contains(options, "${{ env.RUBYOPT }}") && !strings.Contains(options, "${{env.RUBYOPT}}") {
 			if provider := activeOrDefaultCIProvider(); !provider.sharedSyntax() {
@@ -634,6 +647,50 @@ func rubyBootstrapProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 		}
 	}
 	return ""
+}
+
+// rubyRakeOptionsProblem explains a rake invocation whose RUBYOPT=...
+// argument replaces the Datadog preload in the environment of the tests rake
+// runs, as in bundle exec rake RUBYOPT='--enable-frozen-string-literal'.
+// Options that keep the inherited RUBYOPT, or the preload itself, pass.
+func rubyRakeOptionsProblem(command string) string {
+	file, ok := parseCIShell(command)
+	if !ok {
+		return ""
+	}
+	reason := ""
+	syntax.Walk(file, func(node syntax.Node) bool {
+		call, isCall := node.(*syntax.CallExpr)
+		if !isCall || reason != "" {
+			return reason == ""
+		}
+		rake := -1
+		for i, word := range call.Args {
+			if filepath.Base(word.Lit()) == "rake" {
+				rake = i
+				break
+			}
+		}
+		if rake < 0 {
+			return true
+		}
+		for _, word := range call.Args[rake+1:] {
+			text := shellText(word)
+			value, isOption := strings.CutPrefix(text, "RUBYOPT=")
+			if !isOption || strings.Contains(value, "datadog/ci/auto_instrument") || strings.Contains(value, "$RUBYOPT") || strings.Contains(value, "${RUBYOPT}") || strings.Contains(value, "env.RUBYOPT") {
+				continue
+			}
+			var prefix []string
+			for _, earlier := range call.Args[:rake+1] {
+				prefix = append(prefix, earlier.Lit())
+			}
+			options := strings.Trim(value, `'"`)
+			reason = strings.Join(prefix, " ") + " sets " + text + " as a rake argument, which replaces RUBYOPT, and with it the Datadog preload, for the tests rake runs. Keep the preload by extending it: RUBYOPT=\"$RUBYOPT " + options + "\"."
+			return false
+		}
+		return true
+	})
+	return reason
 }
 
 // rubyMissingSetupReason asks for a static Ruby and an exact tracer release

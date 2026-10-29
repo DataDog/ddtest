@@ -75,3 +75,6 @@ func (pythonDiscovery) runtimeVariable(name string) bool {
 func (pythonDiscovery) cacheVariable(name string) bool {
 	return name == "PIP_TARGET" || name == "POETRY_VIRTUALENVS_PATH"
 }
+
+// No CI components are modeled for this language.
+func (pythonDiscovery) ciComponents(string) []ciComponent { return nil }

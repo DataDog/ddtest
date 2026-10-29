@@ -96,8 +96,9 @@ type circleConfig struct {
 	top  map[string]*yaml.Node
 	// orbs are the declared orbs by alias.
 	orbs map[string]circleOrb
-	// pipeline holds the pipeline parameters' defaults.
-	pipeline map[string]string
+	// pipeline holds the pipeline parameters' defaults, pipelineKinds their
+	// declared types.
+	pipeline, pipelineKinds map[string]string
 	// aliased marks nodes some part of the configuration reaches through a
 	// YAML alias (*name), which one edit cannot change for one user only.
 	aliased map[*yaml.Node]bool
@@ -115,8 +116,33 @@ type circleOrb struct {
 	// datadog/test-optimization-circleci-orb@2; path and version are its
 	// parts.
 	reference, path, version string
-	// inline holds an inline orb's definitions.
-	inline map[string]*yaml.Node
+	// inline holds an inline orb's definitions, or the model of a registry
+	// orb a language knows (modeled).
+	inline  map[string]*yaml.Node
+	modeled bool
+}
+
+// circleModel is the model of a registry orb release a language describes
+// (see discoveryLanguage.ciComponents), as inline orb definitions; nil for
+// every other orb or release, which stays unresolved.
+func circleModel(path, version string) (map[string]*yaml.Node, bool) {
+	major, _, _ := strings.Cut(version, ".")
+	if major == "" || strings.Trim(major, "0123456789") != "" {
+		return nil, false
+	}
+	for _, language := range discoveryLanguages {
+		for _, component := range language.ciComponents(circleCIProvider) {
+			if component.Name != path || !slices.Contains(component.Majors, major) {
+				continue
+			}
+			var document yaml.Node
+			if err := yaml.Unmarshal([]byte(component.Definition), &document); err != nil || len(document.Content) == 0 {
+				return nil, false
+			}
+			return gitLabMembers(document.Content[0]), true
+		}
+	}
+	return nil, false
 }
 
 // circleValue is a parameter's value: text, or a list of steps (parameters
@@ -125,6 +151,8 @@ type circleValue struct {
 	text  string
 	steps *yaml.Node
 	scope *circleScope
+	// kind is the parameter's declared type, such as boolean.
+	kind string
 	// unresolved reports a value ddtest cannot know, such as a required
 	// parameter without a value.
 	unresolved bool
@@ -165,7 +193,7 @@ func readCircleConfig(root string) (*circleConfig, error) {
 	if err := yaml.Unmarshal(data, &document); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", circleCIFile, err)
 	}
-	config := &circleConfig{root: root, orbs: map[string]circleOrb{}, pipeline: map[string]string{}, aliased: map[*yaml.Node]bool{}}
+	config := &circleConfig{root: root, orbs: map[string]circleOrb{}, pipeline: map[string]string{}, pipelineKinds: map[string]string{}, aliased: map[*yaml.Node]bool{}}
 	if len(document.Content) == 0 {
 		config.top = map[string]*yaml.Node{}
 		return config, nil
@@ -183,6 +211,7 @@ func readCircleConfig(root string) (*circleConfig, error) {
 		if value := gitLabMembers(definition)["default"]; value != nil {
 			config.pipeline[name] = gitLabScalar(value)
 		}
+		config.pipelineKinds[name] = gitLabScalar(gitLabMembers(definition)["type"])
 	}
 	for alias, value := range gitLabMembers(config.top["orbs"]) {
 		value = gitLabAlias(value)
@@ -192,6 +221,7 @@ func readCircleConfig(root string) (*circleConfig, error) {
 		} else {
 			orb.reference = gitLabScalar(value)
 			orb.path, orb.version, _ = strings.Cut(orb.reference, "@")
+			orb.inline, orb.modeled = circleModel(orb.path, orb.version)
 		}
 		config.orbs[alias] = orb
 	}
@@ -279,10 +309,13 @@ func (c *circleConfig) parameters(definition *yaml.Node, arguments map[string]*y
 		if fallback := gitLabAlias(members["default"]); fallback != nil {
 			value = c.value(fallback, &circleScope{orb: orb})
 		}
+		value.kind = gitLabScalar(members["type"])
 		scope.parameters[name] = value
 	}
 	for name, argument := range arguments {
-		scope.parameters[name] = c.value(gitLabAlias(argument), caller)
+		value := c.value(gitLabAlias(argument), caller)
+		value.kind = scope.parameters[name].kind
+		scope.parameters[name] = value
 	}
 	return scope
 }
@@ -331,11 +364,18 @@ func (c *circleConfig) condition(node *yaml.Node, scope *circleScope, depth int)
 		if circleReads(text) {
 			return circleUnknown
 		}
-		switch strings.TrimSpace(text) {
-		case "", "false", "0", "null", "NaN":
-			return circleFalse
+		// A value's type decides its truth, not its text: the string
+		// "false" is true, the boolean false and the number 0 are false.
+		kind := map[string]string{"!!bool": "boolean", "!!int": "integer", "!!float": "number"}[node.Tag]
+		if node.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) != 0 {
+			kind = "string"
+		} else if match := circleParameter.FindStringSubmatch(strings.TrimSpace(node.Value)); match != nil && match[0] == strings.TrimSpace(node.Value) {
+			kind = c.kind(match[1], scope)
 		}
-		return circleTrue
+		if circleTruthy(kind, text) {
+			return circleTrue
+		}
+		return circleFalse
 	case yaml.SequenceNode:
 		return circleUnknown
 	}
@@ -393,7 +433,8 @@ func (c *circleConfig) condition(node *yaml.Node, scope *circleScope, depth int)
 		case "matches":
 			fields := gitLabMembers(value)
 			pattern, text := c.substitute(gitLabScalar(fields["pattern"]), scope), c.substitute(gitLabScalar(fields["value"]), scope)
-			expression, err := regexp.Compile(pattern)
+			// CircleCI matches the whole value.
+			expression, err := regexp.Compile(`\A(?:` + pattern + `)\z`)
 			if err != nil || circleReads(pattern+text) {
 				return circleUnknown
 			}
@@ -404,6 +445,32 @@ func (c *circleConfig) condition(node *yaml.Node, scope *circleScope, depth int)
 		}
 	}
 	return circleUnknown
+}
+
+// kind is the declared type of a parameter reference: boolean, integer,
+// string, enum and so on; empty when undeclared.
+func (c *circleConfig) kind(name string, scope *circleScope) string {
+	switch {
+	case strings.HasPrefix(name, "pipeline.parameters."):
+		return c.pipelineKinds[strings.TrimPrefix(name, "pipeline.parameters.")]
+	case strings.HasPrefix(name, "parameters.") && scope != nil:
+		return scope.parameters[strings.TrimPrefix(name, "parameters.")].kind
+	}
+	return ""
+}
+
+// circleTruthy is CircleCI's truth of a logic value of a type: false, 0,
+// NaN, null and the empty string are false.
+func circleTruthy(kind, text string) bool {
+	text = strings.TrimSpace(text)
+	switch kind {
+	case "boolean":
+		return text == "true"
+	case "integer", "number":
+		number, err := strconv.ParseFloat(text, 64)
+		return err == nil && number != 0
+	}
+	return text != ""
 }
 
 // circleWhen decides a when or unless clause: when runs on true, unless on
@@ -494,6 +561,11 @@ func (c *circleConfig) invocations() []circleInvocation {
 						for _, key := range slices.Sorted(maps.Keys(row)) {
 							invocation.name += "-" + row[key]
 						}
+					}
+					// override-with runs another job, usually an orb's, under
+					// this name.
+					if override := gitLabScalar(arguments["override-with"]); override != "" {
+						invocation.job = override
 					}
 					invocations = append(invocations, invocation)
 				}
@@ -600,6 +672,8 @@ type circleJob struct {
 	shell     string
 	// keyProblem reports a DD_API_KEY written into the configuration.
 	keyProblem bool
+	// legacy reports a version 2 configuration, where CircleCI rejects orbs.
+	legacy bool
 }
 
 // circleExecutor reads a job's executor: docker, machine or macos keys, or
@@ -690,7 +764,7 @@ func (c *circleConfig) workflow() ciWorkflow {
 		definition, orb, ok := c.circleDefinition("jobs", invocation.job, nil)
 		if !ok {
 			alias, _, fromOrb := strings.Cut(invocation.job, "/")
-			if declared, known := c.orbs[alias]; fromOrb && known && declared.inline == nil {
+			if declared, known := c.orbs[alias]; fromOrb && known && (declared.inline == nil || declared.modeled) {
 				if purpose := circleNonTestOrbs[declared.path]; purpose != "" {
 					c.nonTest = append(c.nonTest, declared.reference)
 					c.review = append(c.review, circleCIFile+": workflow "+invocation.workflow+" runs "+invocation.job+" from "+declared.reference+", the "+purpose+"; it runs no tests and is outside this validation.")
@@ -726,6 +800,12 @@ func (c *circleConfig) workflow() ciWorkflow {
 	return workflow
 }
 
+// circleLegacyVersion reports a version 2 configuration: CircleCI accepts
+// orbs, commands, executors and parameters only in version 2.1.
+func circleLegacyVersion(version string) bool {
+	return version == "2" || version == "2.0"
+}
+
 // circleNonTestOrbs are registry orbs that only notify, scan code or upload
 // coverage reports: none of their commands or jobs runs a project's tests.
 // A use of one is reported, not a blocker; every other registry orb stays
@@ -737,13 +817,14 @@ var circleNonTestOrbs = map[string]string{
 	"sonarsource/sonarcloud": "SonarCloud code analysis orb",
 	"codecov/codecov":        "Codecov coverage upload orb",
 	"coveralls/coveralls":    "Coveralls coverage upload orb",
+	"qltysh/qlty-orb":        "Qlty coverage upload orb",
 }
 
 // convert builds one job of the shared model.
 func (c *circleConfig) convert(invocation circleInvocation, definition *yaml.Node, orb *circleOrb) runtimeJob {
 	fields := gitLabMembers(definition)
 	scope := c.parameters(definition, invocation.arguments, &circleScope{matrix: invocation.matrix}, orb)
-	job := &circleJob{name: invocation.workflow + "/" + invocation.name, env: map[string]string{}, directory: "~/project"}
+	job := &circleJob{name: invocation.workflow + "/" + invocation.name, env: map[string]string{}, directory: "~/project", legacy: circleLegacyVersion(gitLabScalar(c.top["version"]))}
 	c.circleExecutor(job, fields, scope, 0)
 	job.env = mergeEnvironment(job.env, c.environment(fields["environment"], scope, job))
 	if directory := gitLabScalar(fields["working_directory"]); directory != "" {
@@ -754,6 +835,10 @@ func (c *circleConfig) convert(invocation circleInvocation, definition *yaml.Nod
 	}
 	var raw []circleRawStep
 	expander := circleExpander{config: c, job: job, steps: &raw}
+	if orb != nil && orb.modeled {
+		// Steps of a modeled orb's job are written in the workflow's entry.
+		expander.site = &circleRawStep{source: invocation.source, origin: circleStep{owner: circleOwner{kind: "orb job", name: invocation.job}}}
+	}
 	expander.expand(invocation.pre, &circleScope{matrix: invocation.matrix}, circleOwner{kind: "pre-steps"}, "", 0)
 	steps := gitLabAlias(fields["steps"])
 	if steps != nil && steps.Kind != yaml.SequenceNode {
@@ -803,6 +888,8 @@ type circleRawStep struct {
 	// conditional is the when/unless condition ddtest cannot decide.
 	conditional string
 	review      string
+	// runtime holds the runtimes a modeled orb step selects.
+	runtime map[string]string
 }
 
 // circleExpander expands one job's steps.
@@ -812,6 +899,8 @@ type circleExpander struct {
 	steps  *[]circleRawStep
 	// checkout is a checkout path that moves the repository.
 	checkout string
+	// site is the configuration step a modeled orb's steps come from.
+	site *circleRawStep
 }
 
 func (e *circleExpander) add(step circleRawStep) { *e.steps = append(*e.steps, step) }
@@ -835,6 +924,9 @@ func (e *circleExpander) expand(list *yaml.Node, scope *circleScope, owner circl
 		item := gitLabAlias(entry)
 		origin := circleStep{item: item, list: list, owner: owner, aliased: entry.Kind == yaml.AliasNode || e.config.aliased[item] || e.config.aliased[list]}
 		source := circleCIFile + ":" + strconv.Itoa(item.Line)
+		if e.site != nil {
+			origin, source = e.site.origin, e.site.source
+		}
 		base := circleRawStep{origin: origin, source: source, conditional: conditional}
 		if item.Kind == yaml.ScalarNode {
 			name := strings.TrimSpace(item.Value)
@@ -861,6 +953,14 @@ func (e *circleExpander) expand(list *yaml.Node, scope *circleScope, owner circl
 				base.problem = "step " + gitLabDescribe(item) + " is not a step list ddtest can read"
 				e.add(base)
 			}
+		case "ddtest-runtime", "ddtest-review", "ddtest-unresolved":
+			// Only a modeled orb describes its effects with these.
+			if e.site == nil {
+				base.problem = "step " + key + " is not a command the configuration defines"
+				e.add(base)
+				continue
+			}
+			e.modeledEffect(key, value, scope, base)
 		case "checkout":
 			if location := e.config.substitute(gitLabScalar(gitLabMembers(value)["path"]), scope); location != "" && location != "." && location != e.job.directory {
 				e.checkout = location
@@ -887,6 +987,28 @@ func (e *circleExpander) expand(list *yaml.Node, scope *circleScope, owner circl
 			e.named(key, arguments, scope, base, conditional, depth)
 		}
 	}
+}
+
+// modeledEffect records what a modeled orb step does: select a runtime,
+// add a review note, or stay unresolved.
+func (e *circleExpander) modeledEffect(key string, value *yaml.Node, scope *circleScope, step circleRawStep) {
+	switch key {
+	case "ddtest-runtime":
+		step.runtime = map[string]string{}
+		for language, version := range gitLabMembers(value) {
+			text := e.config.substitute(gitLabScalar(version), scope)
+			if circleReads(text) {
+				text = ""
+			}
+			step.runtime[language] = text
+		}
+	case "ddtest-review":
+		e.config.review = append(e.config.review, step.source+": "+e.config.substitute(gitLabScalar(value), scope))
+		return
+	case "ddtest-unresolved":
+		step.problem = e.config.substitute(gitLabScalar(value), scope)
+	}
+	e.add(step)
 }
 
 // stepsParameter expands a reference to a parameter of type steps, and
@@ -920,6 +1042,9 @@ func (e *circleExpander) named(name string, arguments map[string]*yaml.Node, sco
 	}
 	if alias, command, fromOrb := strings.Cut(name, "/"); fromOrb {
 		orb, declared := e.config.orbs[alias]
+		if declared && orb.modeled && gitLabMembers(orb.inline["commands"])[command] == nil {
+			orb.inline = nil // A command the model doesn't describe.
+		}
 		if declared && orb.inline == nil {
 			if orb.path == circleSetupOrb && command == "autoinstrument" {
 				setup := e.config.circleSetup(orb, arguments, scope)
@@ -945,6 +1070,11 @@ func (e *circleExpander) named(name string, arguments map[string]*yaml.Node, sco
 	}
 	inner := e.config.parameters(definition, arguments, scope, orb)
 	owner := circleOwner{kind: "command", name: name, editable: orb == nil}
+	if orb != nil && orb.modeled && e.site == nil {
+		// A modeled orb's steps are the invoking step's: edits go before it.
+		e.site = &base
+		defer func() { e.site = nil }()
+	}
 	e.expand(gitLabMembers(definition)["steps"], inner, owner, conditional, depth+1)
 }
 
@@ -1054,6 +1184,10 @@ func circleTestSplitting(command string) (resolved, review string, err error) {
 	if resolved, files, ok := circleSplitVariable(command); ok {
 		return resolved, "CircleCI test splitting passes each parallel container its share of the test files in $" + files + "; local validation runs the tests once without that list, on every test.", nil
 	}
+	// Only a single pipeline: commands around it (&&, ;) would be lost.
+	if file, ok := parseCIShell(command); !ok || len(file.Stmts) != 1 || !circlePipeline(file.Stmts[0]) {
+		return "", "", fmt.Errorf("the command splits tests across parallel containers with circleci tests in a form ddtest cannot resolve: %s", command)
+	}
 	text := strings.TrimSpace(strings.Join(strings.Fields(strings.ReplaceAll(command, "\\\n", " ")), " "))
 	inner := ""
 	if match := circleSplitRun.FindStringSubmatch(text); match != nil {
@@ -1070,6 +1204,44 @@ func circleTestSplitting(command string) (resolved, review string, err error) {
 	}
 	rest = strings.TrimSpace(rest)
 	return rest, "CircleCI test splitting runs " + rest + " on each parallel container's share of the test files; local validation runs it once on every test.", nil
+}
+
+// circlePipeline reports a statement that is one pipeline of simple
+// commands.
+func circlePipeline(stmt *syntax.Stmt) bool {
+	if stmt.Background || stmt.Negated || len(stmt.Redirs) > 0 {
+		return false
+	}
+	switch command := stmt.Cmd.(type) {
+	case *syntax.BinaryCmd:
+		return command.Op == syntax.Pipe && circlePipeline(command.X) && circlePipeline(command.Y)
+	case *syntax.CallExpr:
+		return true
+	}
+	return false
+}
+
+// circleSafeValue is a value that substitutes into a command as one word.
+var circleSafeValue = regexp.MustCompile(`^[A-Za-z0-9_./@:+=,%-]*$`)
+
+// circleExpandVariables substitutes the shell variables earlier steps
+// assigned in $BASH_ENV into command, as Bash does when the step reads them;
+// problem names a value that cannot be substituted as one word.
+func circleExpandVariables(command string, variables map[string]string) (string, string) {
+	problem := ""
+	for _, name := range slices.Sorted(maps.Keys(variables)) {
+		reads := regexp.MustCompile(`\$(?:` + regexp.QuoteMeta(name) + `\b|\{` + regexp.QuoteMeta(name) + `\})`)
+		if !reads.MatchString(command) {
+			continue
+		}
+		value := variables[name]
+		if !circleSafeValue.MatchString(value) {
+			problem = joinDiagnostic(problem, "the command reads $"+name+", which an earlier step assigned in $BASH_ENV to a value ddtest cannot substitute")
+			continue
+		}
+		command = reads.ReplaceAllLiteralString(command, value)
+	}
+	return command, problem
 }
 
 // circleSplitVariable resolves the documented splitting form that stores
@@ -1128,16 +1300,37 @@ var circleSplitPipeline = regexp.MustCompile(`^circleci tests glob\s+[^|;&$` + "
 // in.
 func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep {
 	state := ciShellState{dialect: circleShellDialect, env: map[string]string{}, references: map[string]string{}, job: job.env}
-	curl := false
+	curl, setupApplied := false, false
+	// variables are plain assignments steps appended to $BASH_ENV: shell
+	// variables later Bash steps can expand, not environment.
+	variables := map[string]string{}
 	var steps []runtimeStep
 	for i, item := range raw {
-		item.origin.setupProblem = circleSetupProblem(job, item.conditional, curl)
-		step := runtimeStep{Number: i + 1, Source: item.source, origin: item.origin, Shell: item.shell, WorkingDirectory: item.workdir}
-		env := mergeEnvironment(item.env, state.env)
+		// An edit moves a version 2 configuration to 2.1 itself.
+		editable := *job
+		editable.legacy = false
+		item.origin.setupProblem = circleSetupProblem(&editable, item.conditional, curl)
+		step := runtimeStep{Number: i + 1, Source: item.source, origin: item.origin, Shell: item.shell, WorkingDirectory: item.workdir, Runtime: item.runtime}
+		// Only Bash reads $BASH_ENV: a step run with sh starts from its own
+		// environment.
+		bash := item.shell != "sh"
+		env := item.env
+		problem := item.problem
+		if bash {
+			env = mergeEnvironment(item.env, state.env)
+		} else if setupApplied {
+			problem = joinDiagnostic(problem, "the step runs with /bin/sh, which does not read $BASH_ENV, so the Datadog orb's exports don't reach it; run it with Bash")
+		}
 		if len(env) > 0 {
 			step.Env = env
 		}
-		step.ResolutionError = joinDiagnostic(state.problem, item.problem)
+		run := item.run
+		if bash && item.setup == nil {
+			var unknown string
+			run, unknown = circleExpandVariables(run, variables)
+			problem = joinDiagnostic(problem, unknown)
+		}
+		step.ResolutionError = joinDiagnostic(state.problem, problem)
 		if step.ResolutionError != "" {
 			step.ResolutionError = "CircleCI job " + job.name + ": " + step.ResolutionError
 		}
@@ -1152,14 +1345,29 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 			step.Setup = &setup
 			if setup.Supported && setup.Problem == "" {
 				state.applySetup(setup, mergeEnvironment(job.env, state.env))
+				setupApplied = true
 			}
 			steps = append(steps, step)
 			continue
 		}
 		curl = curl || installsCurl(item.run)
-		step.Run = item.run
-		if item.problem == "" && circleFollowBashEnv(&state, item.run, mergeEnvironment(mergeEnvironment(job.env, item.env), state.env)) {
-			step.Run = ""
+		step.Run = run
+		if item.conditional != "" && strings.Contains(item.run, "BASH_ENV") {
+			// Later steps differ by a pipeline value ddtest doesn't know.
+			state.problem = joinDiagnostic(state.problem, "a step appends to $BASH_ENV only under a condition ddtest cannot decide ("+item.conditional+"), so later steps' environment depends on the pipeline")
+		} else if problem == "" {
+			before := maps.Clone(state.references)
+			if circleFollowBashEnv(&state, run, mergeEnvironment(mergeEnvironment(job.env, item.env), state.env)) {
+				step.Run = ""
+			}
+			for name, value := range state.references {
+				if previous, ok := before[name]; !ok || previous != value {
+					variables[name] = value
+				}
+			}
+			for name := range state.env {
+				delete(variables, name) // Exported later: environment, not a shell variable.
+			}
 		}
 		steps = append(steps, step)
 	}

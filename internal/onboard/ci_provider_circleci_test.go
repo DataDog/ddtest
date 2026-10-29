@@ -294,7 +294,7 @@ func TestCircleCIUnresolvedConfiguration(t *testing.T) {
 	config := `version: 2.1
 setup: true
 orbs:
-  node: circleci/node@5.2.0
+  node: acme/node@5.2.0
   slack: circleci/slack@4.12.5
   codecov: codecov/codecov@4.0.1
 jobs:
@@ -324,7 +324,7 @@ jobs:
 	workflow := workflows[0]
 	steps := strings.Join(circleRuns(workflow.Jobs["main/test"]), "\n")
 	for _, reason := range []string{
-		"the orb command node/install-packages from circleci/node@5.2.0 runs steps ddtest cannot read",
+		"the orb command node/install-packages from acme/node@5.2.0 runs steps ddtest cannot read",
 		"reads << pipeline.number >>, which only CircleCI knows",
 		"runs in the background",
 		"runs with the shell powershell.exe",
@@ -334,7 +334,7 @@ jobs:
 		require.Contains(t, steps, reason)
 	}
 	require.NotContains(t, steps, "codecov")
-	require.Contains(t, circleRuns(workflow.Jobs["main/node/test"])[0], "runs the orb job node/test from circleci/node@5.2.0")
+	require.Contains(t, circleRuns(workflow.Jobs["main/node/test"])[0], "runs the orb job node/test from acme/node@5.2.0")
 	require.Contains(t, circleRuns(workflow.Jobs["main/undefined-job"])[0], "which the configuration does not define")
 	require.NotContains(t, workflow.Jobs, "main/hold")
 	require.Contains(t, circleRuns(workflow.Jobs["(unresolved configuration 1)"])[0], "setup: true makes this a dynamic configuration")
@@ -487,7 +487,7 @@ func TestCircleCIExecutorProblems(t *testing.T) {
 		"    machine:\n      image: windows-server-2022-gui:current\n":                                              "Windows machine",
 		"    parameters:\n      image:\n        type: string\n    docker:\n      - image: << parameters.image >>\n": "depends on a parameter ddtest cannot resolve",
 	} {
-		config := "version: 2.1\norbs:\n  node: circleci/node@5\n  dd: datadog/test-optimization-circleci-orb@2\njobs:\n  test:\n" + executor + "    steps:\n      - dd/autoinstrument:\n          languages: js\n          js_tracer_version: 5.133.0\n      - run: npm test\n" + circleWorkflow("      - test\n")
+		config := "version: 2.1\norbs:\n  node: acme/node@5\n  dd: datadog/test-optimization-circleci-orb@2\njobs:\n  test:\n" + executor + "    steps:\n      - dd/autoinstrument:\n          languages: js\n          js_tracer_version: 5.133.0\n      - run: npm test\n" + circleWorkflow("      - test\n")
 		job := circleJobs(t, circleRepository(t, config))["main/test"]
 		got := job.Steps[0].Setup.Problem
 		if problem == "" {
@@ -720,4 +720,228 @@ func TestCircleCIJavaScriptFixture(t *testing.T) {
 	_, err = plan.apply(true, os.Rename)
 	require.NoError(t, err)
 	require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", "datadoghq.com"))
+}
+
+// Diagnostic and type-check steps before the tests, as in Patreon/nion's
+// configuration, are outside the test path on every provider: a multi-line
+// version print and a tsd type check never start or prepare a test.
+func TestDiagnosticAndTypeCheckStepsBeforeTestsAreOutsideTheTestPath(t *testing.T) {
+	pkg := `{"scripts":{"test":"jest","typecheck":"tsd","lint:css":"stylelint \"**/*.css\""},"devDependencies":{"jest":"29.7.0","tsd":"0.31.0"}}`
+	steps := []string{"|\n          node --version\n          npm --version\n", "npm ci", "npm run typecheck", "npm run lint:css", "npm test"}
+	for provider, config := range map[string]string{
+		"circleci": "version: 2.1\njobs:\n  test:\n    docker:\n      - image: cimg/node:22.11\n    steps:\n" + circleRunSteps(steps, "      ") + circleWorkflow("      - test\n"),
+		"github":   "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n" + circleRunSteps(steps, "      "),
+	} {
+		t.Run(provider, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, root, "package.json", pkg)
+			path := circleCIFile
+			if provider == "github" {
+				path = ".github/workflows/test.yml"
+			}
+			writeFile(t, root, path, config)
+			useCIProvider(t, provider)
+			scope, err := DiscoverValidationScope(root, "jest")
+			require.NoError(t, err)
+			require.Empty(t, scope.Unresolved)
+			require.Len(t, scope.Commands, 1)
+			require.Empty(t, scope.Commands[0].UnvalidatedSetup)
+		})
+	}
+}
+
+func circleRunSteps(commands []string, indent string) string {
+	var text strings.Builder
+	for _, command := range commands {
+		text.WriteString(indent + "- run: " + command + "\n")
+	}
+	return text.String()
+}
+
+// Qlty's orb only installs its CLI and uploads coverage (coverage_publish,
+// coverage_complete), as in presidentbeef/brakeman's configuration.
+func TestCircleCIQltyCoverageOrbIsNotATest(t *testing.T) {
+	config := "version: 2.1\norbs:\n  qlty: qltysh/qlty-orb@0.1\njobs:\n  upload-coverage:\n    docker:\n      - image: cimg/node:22.11\n    steps:\n      - checkout\n      - qlty/coverage_publish:\n          files: tmp/coverage.json\n" + circleWorkflow("      - upload-coverage\n")
+	root := circleRepository(t, config)
+	workflows, err := circleCI{}.readWorkflows(root)
+	require.NoError(t, err)
+	require.Empty(t, circleRuns(workflows[0].Jobs["main/upload-coverage"]))
+	require.Equal(t, []string{".circleci/config.yml: CircleCI orbs that only notify, scan or upload coverage run no tests and are outside this validation: qltysh/qlty-orb@0.1."}, workflows[0].Caveats)
+	require.False(t, workflowHasTests(root, workflows[0]))
+}
+
+// CircleCI rejects orbs in a version 2 configuration, as Patreon/nion's is:
+// apply moves it to 2.1, which reads version 2 configurations the same way,
+// unless its text holds << >> sequences 2.1 would substitute; a version 2
+// configuration that already declares orbs is reported.
+func TestCircleCIVersion2Configurations(t *testing.T) {
+	job := "jobs:\n  test:\n    docker:\n      - image: cimg/node:22.11\n    steps:\n      - run: npm test\nworkflows:\n  version: 2\n  main:\n    jobs:\n      - test\n"
+	plan, root, err := planCircleCI(t, "jest", "version: 2 # legacy\n"+job, nil)
+	require.NoError(t, err)
+	edited := plannedFile(t, plan, circleCIFile)
+	require.True(t, strings.HasPrefix(edited, "version: 2.1 # legacy\n\norbs:\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\n"), edited)
+	_, err = plan.apply(true, os.Rename)
+	require.NoError(t, err)
+	require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", "datadoghq.com"))
+
+	_, _, err = planCircleCI(t, "jest", "version: \"2.0\"\n"+strings.Replace(job, "npm test", "npm test -- --label='<< not.a.parameter >>' # << parameters.x >>", 1), nil)
+	var gap *EditThenApplyGap
+	require.ErrorAs(t, err, &gap)
+	require.Contains(t, gap.Reason, "version 2.1")
+
+	root = circleRepository(t, "version: 2\norbs:\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\n"+strings.Replace(job, "      - run: npm test\n", circleOrbStep+"      - run: npm test\n", 1))
+	require.False(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
+	workflows, err := circleCI{}.readWorkflows(root)
+	require.NoError(t, err)
+	require.Contains(t, workflows[0].Jobs["main/test"].Steps[0].Setup.Problem, "declares version 2, where CircleCI rejects orbs; set version: 2.1")
+}
+
+// Review findings on the first CircleCI round.
+func TestCircleCIReviewFindings(t *testing.T) {
+	image := "    docker:\n      - image: cimg/node:22.11\n"
+	t.Run("override-with replaces the local job", func(t *testing.T) {
+		config := "version: 2.1\norbs:\n  node: acme/node@5.2.0\n  local:\n    jobs:\n      test:\n        docker:\n          - image: cimg/node:22.11\n        steps:\n          - run: npm run inline\njobs:\n  test:\n" + image + "    steps:\n      - run: npm test\n" + circleWorkflow("      - test:\n          override-with: node/test\n      - test:\n          name: inline\n          override-with: local/test\n")
+		jobs := circleJobs(t, circleRepository(t, config))
+		require.Contains(t, circleRuns(jobs["main/test"])[0], "runs the orb job node/test from acme/node@5.2.0")
+		require.Equal(t, []string{"npm run inline"}, circleRuns(jobs["main/inline"]))
+	})
+	t.Run("plain assignments in $BASH_ENV reach later commands", func(t *testing.T) {
+		config := "version: 2.1\njobs:\n  test:\n" + image + "    steps:\n      - run: echo 'SUITE=integration' >> \"$BASH_ENV\"\n      - run: npm test -- --selectProjects=$SUITE\n      - run: echo 'ODD=\"a b\"' >> \"$BASH_ENV\"\n      - run: npm test -- $ODD\n" + circleWorkflow("      - test\n")
+		jobs := circleJobs(t, circleRepository(t, config))
+		runs := circleRuns(jobs["main/test"])
+		require.Equal(t, "npm test -- --selectProjects=integration", runs[0])
+		require.Contains(t, runs[1], "reads $ODD, which an earlier step assigned in $BASH_ENV")
+	})
+	t.Run("matches needs the whole value", func(t *testing.T) {
+		config := "version: 2.1\njobs:\n  test:\n    parameters:\n      branch:\n        type: string\n        default: feature-main\n" + image + "    steps:\n      - when:\n          condition:\n            matches: { pattern: main, value: << parameters.branch >> }\n          steps:\n            - run: npm run partial\n      - when:\n          condition:\n            matches: { pattern: \"feature-.+\", value: << parameters.branch >> }\n          steps:\n            - run: npm run whole\n" + circleWorkflow("      - test\n")
+		require.Equal(t, []string{"npm run whole"}, circleRuns(circleJobs(t, circleRepository(t, config))["main/test"]))
+	})
+	t.Run("truthiness follows types", func(t *testing.T) {
+		config := "version: 2.1\nparameters:\n  label:\n    type: string\n    default: \"false\"\n  enabled:\n    type: boolean\n    default: false\njobs:\n  test:\n" + image + "    steps:\n      - when:\n          condition: \"false\"\n          steps:\n            - run: npm run quoted\n      - when:\n          condition: false\n          steps:\n            - run: npm run literal\n      - when:\n          condition: << pipeline.parameters.label >>\n          steps:\n            - run: npm run string-parameter\n      - when:\n          condition: << pipeline.parameters.enabled >>\n          steps:\n            - run: npm run boolean-parameter\n      - when:\n          condition: 0\n          steps:\n            - run: npm run zero\n" + circleWorkflow("      - test\n")
+		require.Equal(t, []string{"npm run quoted", "npm run string-parameter"}, circleRuns(circleJobs(t, circleRepository(t, config))["main/test"]))
+	})
+	t.Run("compound splitting commands", func(t *testing.T) {
+		_, _, err := circleTestSplitting(`circleci tests glob "spec/**/*_spec.rb" | circleci tests run --command="xargs bundle exec rspec --tag unit" && bundle exec rspec --tag integration`)
+		require.ErrorContains(t, err, "in a form ddtest cannot resolve")
+		_, _, err = circleTestSplitting(`circleci tests glob "src/*.test.js" | circleci tests split | xargs npx jest; npm run after`)
+		require.ErrorContains(t, err, "in a form ddtest cannot resolve")
+	})
+	t.Run("a step run with sh doesn't read $BASH_ENV", func(t *testing.T) {
+		config := "version: 2.1\norbs:\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\njobs:\n  test:\n" + image + "    steps:\n" + circleOrbStep + "      - run:\n          command: npm test\n          shell: /bin/sh -eo pipefail\n" + circleWorkflow("      - test\n")
+		root := circleRepository(t, config)
+		job := circleJobs(t, root)["main/test"]
+		require.NotContains(t, job.Steps[1].Env, "NODE_OPTIONS")
+		require.Contains(t, job.Steps[1].ResolutionError, "runs with /bin/sh, which does not read $BASH_ENV")
+		require.False(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
+	})
+	t.Run("$BASH_ENV changes under an undecided condition", func(t *testing.T) {
+		config := "version: 2.1\norbs:\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\njobs:\n  test:\n" + image + "    steps:\n" + circleOrbStep + "      - when:\n          condition:\n            equal: [ main, << pipeline.git.branch >> ]\n          steps:\n            - run: " + circlePersist(esmImportCommand) + "\n      - run: npx vitest run\n" + circleWorkflow("      - test\n")
+		job := circleJobs(t, circleRepository(t, config))["main/test"]
+		last := job.Steps[len(job.Steps)-1]
+		require.NotContains(t, last.Env["NODE_OPTIONS"], "--import")
+		require.Contains(t, last.ResolutionError, "appends to $BASH_ENV only under a condition ddtest cannot decide")
+	})
+}
+
+// CircleCI's Node.js and browser-tools orbs are modeled from their source:
+// installs are preparation, node/install selects the runtime, and the
+// node/test and node/run jobs run the package manager's script.
+func TestCircleCINodeOrb(t *testing.T) {
+	image := "    docker:\n      - image: cimg/node:22.11\n"
+	t.Run("commands", func(t *testing.T) {
+		config := "version: 2.1\norbs:\n  node: circleci/node@5.2.0\n  browser-tools: circleci/browser-tools@1.4.8\njobs:\n  test:\n    machine:\n      image: ubuntu-2204:current\n    steps:\n      - checkout\n      - node/install:\n          node-version: \"20.11.1\"\n      - browser-tools/install-chrome\n      - node/install-packages\n      - node/install-packages:\n          pkg-manager: yarn\n          app-dir: ~/project/web\n      - node/install-packages:\n          override-ci-command: npm install --legacy-peer-deps\n      - node/unknown-command\n      - run: npm test\n" + circleWorkflow("      - test\n")
+		root := circleRepository(t, config)
+		workflows, err := circleCI{}.readWorkflows(root)
+		require.NoError(t, err)
+		job := workflows[0].Jobs["main/test"]
+		runs := circleRuns(job)
+		require.Equal(t, []string{"npm ci", "yarn install --frozen-lockfile", "npm install --legacy-peer-deps"}, runs[:3])
+		require.Contains(t, runs[3], "the orb command node/unknown-command from circleci/node@5.2.0 runs steps ddtest cannot read")
+		require.Equal(t, "web", job.Steps[2].WorkingDirectory)
+		require.Equal(t, map[string]string{"js": "20.11.1"}, job.Steps[0].Runtime)
+		require.Equal(t, circleCIFile+":11", job.Steps[0].Source, "a modeled step is the configuration step that runs it")
+		node, err := rowSetupNodeBefore(root, workflows[0], job, nil, len(job.Steps))
+		require.NoError(t, err)
+		require.Equal(t, "20.11.1", node)
+		require.Contains(t, strings.Join(workflows[0].Review, "\n"), "browser-tools/install-chrome installs browsers or drivers on the CI machine")
+	})
+	t.Run("test and run jobs", func(t *testing.T) {
+		config := "version: 2.1\norbs:\n  node: circleci/node@5.2.0\n  node7: circleci/node@7.1.0\njobs:\n  lint:\n" + image + "    steps:\n      - run: echo lint\n" + circleWorkflow("      - node/test:\n          version: \"20.18\"\n          test-results-for: jest\n      - node7/test:\n          name: modern\n          pkg-manager: pnpm\n      - node7/run:\n          npm-run: build\n      - node7/unknown-job\n")
+		root := circleRepository(t, config)
+		jobs := circleJobs(t, root)
+		require.Equal(t, "cimg/node:20.18", jobs["main/node/test"].Image)
+		require.Equal(t, []string{"npm ci", "npm run test -- --reporters=default --reporters=jest-junit"}, circleRuns(jobs["main/node/test"]))
+		require.Equal(t, "cimg/node:lts", jobs["main/modern"].Image)
+		require.Equal(t, []string{"pnpm install --frozen-lockfile", "pnpm run test"}, circleRuns(jobs["main/modern"]))
+		require.Equal(t, []string{"npm ci", "npm run build"}, circleRuns(jobs["main/node7/run"]))
+		require.Contains(t, circleRuns(jobs["main/node7/unknown-job"])[0], "runs the orb job node7/unknown-job from circleci/node@7.1.0")
+		scope, err := DiscoverValidationScope(root, "jest")
+		require.NoError(t, err)
+		var commands []string
+		for _, entry := range scope.Commands {
+			commands = append(commands, entry.Command)
+		}
+		require.Contains(t, commands, "jest --reporters=default --reporters=jest-junit")
+	})
+	t.Run("unmodeled releases stay unresolved", func(t *testing.T) {
+		config := "version: 2.1\norbs:\n  node: circleci/node@3.0.0\njobs:\n  test:\n" + image + "    steps:\n      - node/install-packages\n      - run: npm test\n" + circleWorkflow("      - test\n")
+		require.Contains(t, circleRuns(circleJobs(t, circleRepository(t, config))["main/test"])[0], "runs steps ddtest cannot read")
+	})
+	t.Run("a test in the orb job takes the setup through its steps parameter", func(t *testing.T) {
+		config := "version: 2.1\norbs:\n  node: circleci/node@5.2.0\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\n" + circleWorkflow("      - node/test:\n          version: \"22.11\"\n")
+		_, root, err := planCircleCI(t, "jest", config, nil)
+		var gap *EditThenApplyGap
+		require.ErrorAs(t, err, &gap)
+		require.Contains(t, gap.Reason, "the orb job node/test, which ddtest does not edit")
+		writeFile(t, root, circleCIFile, config+"          post_install_steps:\n            - test-optimization-circleci-orb/autoinstrument:\n                languages: js\n                js_tracer_version: 5.133.0\n")
+		require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", "datadoghq.com"))
+	})
+}
+
+// Patreon/nion's configuration: version 2, a YAML-anchored image, debug,
+// lint, type-check and format steps before the tests, and test splitting
+// through $TESTFILES. Nothing blocks, and apply moves it to version 2.1.
+func TestCircleCINionFixture(t *testing.T) {
+	root := copyFixture(t, "circleci-nion")
+	useCIProvider(t, "circleci")
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "jest --runInBand", scope.Commands[0].Command)
+	require.Empty(t, scope.Commands[0].UnvalidatedSetup)
+	review := strings.Join(scope.Review, "\n")
+	require.Contains(t, review, "Check-only step before the job's jest test")
+	require.Contains(t, review, "review separately: tsd")
+	require.Contains(t, review, "in $TESTFILES")
+	plan, err := PlanJavaScriptSetup(root, "jest", "5.133.0", "datadoghq.com", ">=18")
+	require.NoError(t, err)
+	config := plannedFile(t, plan, circleCIFile)
+	require.Contains(t, config, "version: 2.1\n\norbs:\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\n")
+	require.Contains(t, config, "            - test-optimization-circleci-orb/autoinstrument:\n                  languages: js\n                  site: datadoghq.com\n                  js_tracer_version: 5.133.0\n            - run:\n                  name: Test\n")
+	_, err = plan.apply(true, os.Rename)
+	require.NoError(t, err)
+	require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", "datadoghq.com"))
+}
+
+// presidentbeef/brakeman's configuration: Minitest through rake on
+// cimg/ruby 3.2 to 4.0, jobs sharing steps through a YAML anchor, and Qlty's
+// coverage upload orb. The test-3-2 job's multi-command step stays a scope
+// decision, and its rake RUBYOPT argument is reported with the fix.
+func TestCircleCIBrakemanFixture(t *testing.T) {
+	root := copyFixture(t, "circleci-brakeman")
+	useCIProvider(t, "circleci")
+	scope, err := DiscoverValidationScope(root, "minitest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "bundle exec rake", scope.Commands[0].Command)
+	require.Len(t, scope.Commands[0].locations, 3)
+	require.Len(t, scope.Unresolved, 1)
+	require.Contains(t, scope.Unresolved[0], "tests/test-3-2")
+	require.Contains(t, scope.Caveats, ".circleci/config.yml: CircleCI orbs that only notify, scan or upload coverage run no tests and are outside this validation: qltysh/qlty-orb@0.1.")
+	var reasons []string
+	for _, job := range RubyCIConfigurationForSite(root, "minitest", "").Jobs {
+		reasons = append(reasons, job.Job+": "+job.Reason)
+	}
+	require.Contains(t, strings.Join(reasons, "\n"), "tests/test-3-2: bundle exec rake sets RUBYOPT='--enable-frozen-string-literal --debug-frozen-string-literal' as a rake argument")
 }

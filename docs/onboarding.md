@@ -182,19 +182,38 @@ directory is the checkout), `run` steps (string or map with `command`, `shell`,
 `environment`, `working_directory`, `when`), `when`/`unless` steps and workflows
 (`and`, `or`, `not`, `equal`, `matches` over known values), workflow `matrix`
 (one job per combination without `exclude`d ones, named `<job>-<values>` or by
-its `name`) and `pre-steps`/`post-steps`. `type: approval` jobs are skipped,
+its `name`), `override-with` and `pre-steps`/`post-steps`. Conditions follow
+CircleCI's rules: `matches` must match the whole value, and a value's type
+decides its truth (the string `"false"` is true, the boolean `false` and `0`
+are false). `type: approval` jobs are skipped,
 `when: on_fail` steps never run on a passing path, and cache, workspace,
 artifact and test-result steps run nothing ddtest replays. Run steps don't
 share a shell: only what a step appends to `$BASH_ENV` with `echo` (`echo
-'export NAME=value' >> "$BASH_ENV"`) reaches later steps, overriding their own
-`environment`. Test splitting is resolved to the command each container runs
+'export NAME=value' >> "$BASH_ENV"`) reaches later Bash steps, overriding their
+own `environment`; a plain assignment there is a shell variable later
+commands expand, which ddtest substitutes into them. A step run with
+`/bin/sh` reads none of it, so a test step run with sh after the Datadog orb
+is unresolved, and `$BASH_ENV` changes under a condition ddtest cannot decide
+make later steps unresolved. Test splitting is resolved to the command each container runs
 (`circleci tests glob … | circleci tests run --command="xargs <command>"`,
 `… | circleci tests split | xargs <command>`, and a variable holding the
 split files passed to the command), which local validation runs once on every
 test; other `circleci tests` uses stay unresolved. Orbs that only notify, scan
 or upload coverage run no tests and are reported, not blockers:
 `circleci/slack`, `circleci/jira`, `snyk/snyk`, `sonarsource/sonarcloud`,
-`codecov/codecov` and `coveralls/coveralls` (the list is `circleNonTestOrbs`).
+`codecov/codecov`, `coveralls/coveralls` and `qltysh/qlty-orb` (the list is
+`circleNonTestOrbs`). CircleCI's own Node.js, Ruby and browser-tools orbs are
+modeled from their source for the releases configurations use
+(`circleci/node` 4.x–7.x, `circleci/ruby` 1.x–4.x, `circleci/browser-tools`
+1.x–2.x), through each language's `ciComponents`: `node/install` and
+`ruby/install` select the runtime, `node/install-packages` and
+`ruby/install-deps` run the install command they run (respecting `app-dir`,
+`pkg-manager`, `override-ci-command`), browser installs are reported, the
+`node/test` and `node/run` jobs run `<package manager> run <script>` in
+`app-dir` (with the reporters `test-results-for` adds), `ruby/rspec-test`
+runs RSpec as its script does (1.x–3.x; 4.x's test suites stay unresolved)
+and `ruby/rubocop-check` only lints. A command or release the models don't
+describe stays unresolved.
 Anything ddtest cannot read locally stays an unresolved blocker: every other
 registry orb's commands, jobs and executors, dynamic configuration (`setup:
 true`), jobs the configuration does not define, pipeline values such as `<<
@@ -213,7 +232,10 @@ loader path, `RUBYOPT`) to `$BASH_ENV`. The setup is complete when, in every
 job that runs the tests, the step runs unconditionally before the first test
 step with `languages` naming the language, an exact `<language>_tracer_version`
 (the orb's own default changes with `@2` releases) and a `site` matching the
-selected site (`--site` or `DD_SITE`; default `datadoghq.com`). A person adds
+selected site (`--site` or `DD_SITE`; default `datadoghq.com`). CircleCI
+rejects orbs in a `version: 2` configuration, which is reported; apply moves
+it to `version: 2.1` (which reads the rest the same way) unless it holds
+`<< >>` text 2.1 would substitute. A person adds
 `DD_API_KEY` in the CircleCI project settings or a context; the orb is used as
 is, so a job without the key fails at that step (forked pull requests without
 passed secrets, jobs outside a restricted context), and the human action says
@@ -234,11 +256,15 @@ Vitest and other ESM tests. It keeps every other line. A test step in a
 reusable command is edited there only when every job running it is a test job
 needing the same setup; steps shared through anchors, steps in `pre-steps` or
 inline orbs, and commands a job runs twice are refused, as is an existing
-declaration of an unsupported orb release. Applying again changes nothing.
+declaration of an unsupported orb release; a test in a modeled orb job (such
+as `node/test`) takes the Datadog orb step through that job's steps
+parameter (`post_install_steps`), which ddtest asks for instead of editing.
+The inserted step follows the configuration's indentation. Applying again changes nothing.
 Ruby, Cucumber and WebdriverIO setup is applied by the coding agent from
 `onboard --agent` instructions: for Ruby the orb adds datadog-ci to the CI
 bundle and replaces `RUBYOPT`, so existing Ruby options are re-added after it
-through `$BASH_ENV`; Ruby 2.7 and 3.0 images get a `gem update --system` step,
+through `$BASH_ENV`, and a `rake RUBYOPT=…` argument that would replace the
+preload is reported with the form that keeps it; Ruby 2.7 and 3.0 images get a `gem update --system` step,
 guarded by a `when` on the image where a matrix shares the job.
 
 ## Coverage and local developer commands

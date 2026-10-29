@@ -64,9 +64,23 @@ type jestResults struct {
 
 var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
+// Object addresses differ between processes: Ruby's #<Foo:0x000000010a2b>,
+// Python's <object at 0x7f3a2b48>, Java's com.acme.Widget@1b6d3586. Short
+// hexadecimal values are data and stay.
+var (
+	objectAddress = regexp.MustCompile(`0x[0-9a-fA-F]{6,}`)
+	objectHash    = regexp.MustCompile(`([A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+)@[0-9a-f]{6,8}\b`)
+)
+
+// withoutObjectAddresses replaces object addresses in a failure message,
+// so the same failure compares equal across runs.
+func withoutObjectAddresses(message string) string {
+	return objectHash.ReplaceAllString(objectAddress.ReplaceAllString(message, "0x…"), "$1@…")
+}
+
 func failureSignature(message string) string {
 	var lines []string
-	for _, line := range strings.Split(ansiEscape.ReplaceAllString(message, ""), "\n") {
+	for _, line := range strings.Split(withoutObjectAddresses(ansiEscape.ReplaceAllString(message, "")), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" && !strings.HasPrefix(line, "at ") {
 			lines = append(lines, line)

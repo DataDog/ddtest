@@ -87,6 +87,11 @@ type discoveryLanguage interface {
 	// language engine; empty otherwise. Such a job without the setup keeps
 	// running uninstrumented and is excluded from validation.
 	unsupportedImage(image string) string
+	// ciComponents are the provider's reusable components the language
+	// knows how they run, such as its runtime and dependency installers and
+	// test commands; a provider reads only the versions modeled and leaves
+	// every other component unresolved.
+	ciComponents(provider string) []ciComponent
 	// automaticProviderSetup reports whether onboard --apply writes
 	// framework's setup on such providers.
 	automaticProviderSetup(framework string) bool

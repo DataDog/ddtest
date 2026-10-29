@@ -38,6 +38,9 @@ func (circleCI) planSetupEdits(root string, workflows []ciWorkflow, targets []ci
 		job, step, ok := gitLabTarget(workflows, target)
 		location := target.Workflow + " / " + target.Job
 		origin, isStep := step.origin.(circleStep)
+		if ok && isStep && origin.owner.kind == "orb job" {
+			return nil, nil, &EditThenApplyGap{SetupGap{location, "The test runs in " + circleOwnerDescription(origin.owner) + ", which ddtest does not edit. Add the Datadog orb step before its tests through a steps parameter the orb job offers (such as post_install_steps) in the workflow's entry, or run the tests in a job of the configuration, then rerun ddtest."}}
+		}
 		if !ok || !isStep || origin.item == nil {
 			return nil, nil, &SetupGap{location, "The test step is not a CircleCI step ddtest can edit."}
 		}
@@ -118,7 +121,12 @@ func (circleCI) planSetupEdits(root string, workflows []ciWorkflow, targets []ci
 		request := request
 		request.After = item.after
 		pad := dash[:len(dash)-1]
-		changes = append(changes, change{node.Line - 1, strings.Split(strings.TrimSuffix(circleSetupStep(request, alias, pad), "\n"), "\n")})
+		changes = append(changes, change{node.Line - 1, strings.Split(strings.TrimSuffix(circleSetupStep(request, alias, pad, circleNesting(node)), "\n"), "\n")})
+	}
+	if bump, err := circleVersionBump(edit.before); err != nil {
+		return nil, nil, err
+	} else if bump != nil {
+		lines[bump.line] = bump.text
 	}
 	if !declared {
 		declaration, err := circleOrbDeclaration(edit.before, alias)
@@ -161,6 +169,8 @@ func circleOwnerDescription(owner circleOwner) string {
 		return "the job " + owner.name
 	case "parameter":
 		return "the steps parameter " + owner.name
+	case "orb job":
+		return "the orb job " + owner.name
 	}
 	return "a workflow's " + owner.kind
 }
@@ -206,4 +216,62 @@ func circleOrbDeclaration(data []byte, alias string) (struct {
 	}
 	result.line, result.text = 0, []string{"orbs:", "  " + entry, ""}
 	return result, nil
+}
+
+// circleVersionBump moves a version 2 configuration to 2.1, the only
+// version that accepts orbs. Version 2.1 reads a version 2 configuration
+// the same way (workflows' version key included), except that it
+// substitutes << parameters.x >>-style text, so a configuration holding such
+// text is left for a person. nil when the configuration already is 2.1.
+func circleVersionBump(data []byte) (*struct {
+	line int
+	text string
+}, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil || len(document.Content) == 0 {
+		return nil, nil
+	}
+	top := document.Content[0]
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		key, value := top.Content[i], top.Content[i+1]
+		if key.Value != "version" || value.Kind != yaml.ScalarNode || !circleLegacyVersion(value.Value) {
+			continue
+		}
+		location := circleCIFile + ":" + strconv.Itoa(key.Line)
+		if circleReads(string(data)) {
+			return nil, &EditThenApplyGap{SetupGap{location, "The configuration declares version 2, where CircleCI rejects orbs, and moving it to version 2.1 would substitute the << >> text it holds as parameters. Move it to version 2.1 yourself (escape that text as \\<< where it is literal), then rerun onboard --apply."}}
+		}
+		lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+		if value.Line != key.Line || value.Line > len(lines) {
+			return nil, &EditThenApplyGap{SetupGap{location, "The configuration declares version 2, where CircleCI rejects orbs; set version: 2.1, then rerun onboard --apply."}}
+		}
+		line := lines[value.Line-1]
+		start := value.Column - 1
+		width := len(value.Value)
+		if value.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) != 0 {
+			width += 2
+		}
+		if start < 0 || start+width > len(line) {
+			return nil, &EditThenApplyGap{SetupGap{location, "The configuration declares version 2, where CircleCI rejects orbs; set version: 2.1, then rerun onboard --apply."}}
+		}
+		return &struct {
+			line int
+			text string
+		}{value.Line - 1, line[:start] + "2.1" + line[start+width:]}, nil
+	}
+	return nil, nil
+}
+
+// circleNesting is how many columns deeper than a step's name its
+// parameters are written, as in the step itself (- run: then its command);
+// 2 when the step shows none.
+func circleNesting(item *yaml.Node) int {
+	if item.Kind == yaml.MappingNode && len(item.Content) == 2 {
+		if value := item.Content[1]; value.Kind == yaml.MappingNode && len(value.Content) > 0 && value.Style&yaml.FlowStyle == 0 && value.Content[0].Line > item.Content[0].Line {
+			if nested := value.Content[0].Column - item.Content[0].Column; nested > 0 {
+				return nested
+			}
+		}
+	}
+	return 2
 }

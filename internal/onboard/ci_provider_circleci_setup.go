@@ -57,6 +57,8 @@ func (c *circleConfig) circleSetup(orb circleOrb, arguments map[string]*yaml.Nod
 // installer with curl or wget.
 func circleSetupProblem(job *circleJob, conditional string, curl bool) string {
 	switch {
+	case job.legacy:
+		return "The configuration declares version 2, where CircleCI rejects orbs; set version: 2.1, which reads version 2 configurations the same way."
 	case job.keyProblem:
 		return "The job's configuration sets DD_API_KEY in an environment mapping; never commit the key, and CircleCI sets such values as written: remove it and store DD_API_KEY in the CircleCI project settings or a context."
 	case conditional != "":
@@ -307,17 +309,19 @@ func strconvQuoteYAML(text string) string {
 }
 
 // circleSetupStep is the orb step for request, as list entries indented by
-// indent, under alias: the autoinstrument step, then a step appending the
+// indent with parameters nested nested columns deeper than the step's name,
+// under alias: the autoinstrument step, then a step appending the
 // commands that must follow it to $BASH_ENV.
-func circleSetupStep(request ciSetupRequest, alias, indent string) string {
-	lines := []string{"- " + alias + "/autoinstrument:", "    languages: " + request.Language, "    site: " + request.Site}
+func circleSetupStep(request ciSetupRequest, alias, indent string, nested int) string {
+	child := "  " + strings.Repeat(" ", max(nested, 1))
+	lines := []string{"- " + alias + "/autoinstrument:", child + "languages: " + request.Language, child + "site: " + request.Site}
 	if request.TracerInput != "" {
-		lines = append(lines, "    "+(circleCI{}).setupInput(request.TracerInput)+": "+strconvQuoteYAML(request.TracerVersion))
+		lines = append(lines, child+(circleCI{}).setupInput(request.TracerInput)+": "+strconvQuoteYAML(request.TracerVersion))
 	}
 	if len(request.After) > 0 {
-		lines = append(lines, "- run:", "    name: Configure later steps for Datadog Test Optimization", "    command: |")
+		lines = append(lines, "- run:", child+"name: Configure later steps for Datadog Test Optimization", child+"command: |")
 		for _, command := range request.After {
-			lines = append(lines, "      "+circlePersist(command))
+			lines = append(lines, child+"  "+circlePersist(command))
 		}
 	}
 	return indent + strings.Join(lines, "\n"+indent) + "\n"
@@ -327,9 +331,9 @@ func (c circleCI) setupInstructions(request ciSetupRequest) string {
 	var text strings.Builder
 	text.WriteString("Set up Datadog Test Optimization in CircleCI with Datadog's Test Optimization orb (" + circleSetupReference + "), whose autoinstrument step installs the tracer and exports its configuration to the later steps of the job through $BASH_ENV:\n\n")
 	text.WriteString("1. Ask the user to add DD_API_KEY as an environment variable in the CircleCI project settings (Project Settings > Environment Variables), or in a context every test job uses. Never write the key into the repository or the configuration. " + circleMissingKey + "\n")
-	text.WriteString("2. Declare the orb in .circleci/config.yml, keeping the orbs already declared (an existing declaration of " + circleSetupOrb + " must use @2 or an exact 2.x.y release):\n\n```yaml\norbs:\n  " + circleSetupAlias + ": " + circleSetupReference + "\n```\n\n")
+	text.WriteString("2. Declare the orb in .circleci/config.yml, keeping the orbs already declared (an existing declaration of " + circleSetupOrb + " must use @2 or an exact 2.x.y release). CircleCI accepts orbs only in version 2.1: change version: 2 to version: 2.1, which reads the rest of a version 2 configuration the same way:\n\n```yaml\norbs:\n  " + circleSetupAlias + ": " + circleSetupReference + "\n```\n\n")
 	text.WriteString("3. In every CircleCI job that runs the tests listed above, add this step immediately before the first test step, after checkout, dependency installation and any step that prepares the tests. Keep every existing step, parameter, environment and workflow unchanged; where a reusable command supplies the test step, add it there only when every job using that command runs these tests.\n\n```yaml\n")
-	text.WriteString(circleSetupStep(request, circleSetupAlias, ""))
+	text.WriteString(circleSetupStep(request, circleSetupAlias, "", 2))
 	text.WriteString("```\n")
 	text.WriteString("\nThe step needs Bash and curl or wget in the job's image: CircleCI runs steps with /bin/sh in images without Bash (Alpine variants, BusyBox, distroless), where $BASH_ENV is never read, and official -slim images have neither curl nor wget. Use a cimg/ convenience image or another image with Bash and curl for those jobs.\n")
 	text.WriteString("\n4. Set the environment and working directory the tests depend on before the step. After it, extend the variables it exports instead of replacing them: appended to $BASH_ENV, or inline before the test command; a later step's environment: does not apply to those variables, because $BASH_ENV overrides it.\n")

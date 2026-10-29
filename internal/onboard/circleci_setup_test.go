@@ -17,7 +17,8 @@ import (
 func circleRubyRepository(t *testing.T, config string) string {
 	t.Helper()
 	root := t.TempDir()
-	writeFile(t, root, "Gemfile", "source 'https://rubygems.org'\ngem 'rspec'\n")
+	writeFile(t, root, "Gemfile", "source 'https://rubygems.org'\ngem 'rspec'\ngem 'rake'\n")
+	writeFile(t, root, "Rakefile", "require 'rspec/core/rake_task'\n\nRSpec::Core::RakeTask.new(:spec)\n\ntask default: :spec\n")
 	writeFile(t, root, circleCIFile, config)
 	t.Chdir(root)
 	useCIProvider(t, "circleci")
@@ -55,6 +56,9 @@ func TestCircleCIRubySetupCompleteness(t *testing.T) {
 		// $BASH_ENV overrides a step's environment, so the preload stays.
 		{"step environment after the orb", strings.Replace(complete, "      - run: bundle exec rspec\n", "      - run:\n          command: bundle exec rspec\n          environment:\n            RUBYOPT: -W0\n", 1), "", true, ""},
 		{"job options before the orb", circleRubyJob("cimg/ruby:3.3", "    environment:\n      RUBYOPT: -W0\n", "", ""), "", true, "dropping the job's -W0; restore it after the Datadog orb step with a later step that appends it to $BASH_ENV"},
+		// brakeman runs bundle exec rake RUBYOPT='--enable-frozen-string-literal ...'.
+		{"rake RUBYOPT argument", strings.Replace(complete, "bundle exec rspec\n", "bundle exec rake RUBYOPT='--enable-frozen-string-literal --debug-frozen-string-literal'\n", 1), "", true, "bundle exec rake sets RUBYOPT='--enable-frozen-string-literal --debug-frozen-string-literal' as a rake argument"},
+		{"rake RUBYOPT argument keeping the preload", strings.Replace(complete, "bundle exec rspec\n", "bundle exec rake RUBYOPT=\"$RUBYOPT --enable-frozen-string-literal\"\n", 1), "", true, ""},
 		{"Ruby 3.0 RubyGems", circleRubyJob("cimg/ruby:3.0", "", "", ""), "", true, "Run gem update --system 3.4.22 before it"},
 		{"Ruby 3.0 updated RubyGems", circleRubyJob("cimg/ruby:3.0", "", "      - run: gem update --system 3.4.22\n", ""), "", true, ""},
 		{"JRuby job excluded", strings.Replace(strings.Replace(complete, "\nworkflows:", "  jruby:\n    docker:\n      - image: jruby:9.4\n    steps:\n      - run: bundle exec rspec\n\nworkflows:", 1), "      - rspec\n", "      - rspec\n      - jruby\n", 1), "", true, ""},
@@ -144,4 +148,51 @@ func readFixtureFile(t *testing.T, root, path string) string {
 	data, err := readSetupEdit(root, path)
 	require.NoError(t, err)
 	return string(data.before)
+}
+
+// CircleCI's Ruby orb is modeled from its source: install selects Ruby,
+// install-deps runs bundle install, rspec-test runs RSpec as its script
+// does and rubocop-check only lints.
+func TestCircleCIRubyOrb(t *testing.T) {
+	job := func(orb, steps string) string {
+		return "version: 2.1\norbs:\n  ruby: circleci/ruby@" + orb + "\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\njobs:\n  rspec:\n    executor:\n      name: ruby/default\n      tag: \"3.2\"\n    parallelism: 2\n    steps:\n      - checkout\n      - ruby/install-deps\n      - ruby/rubocop-check\n" + steps + circleWorkflow("      - rspec\n")
+	}
+	const command = "bundle exec rspec --profile 10 --format RspecJunitFormatter --out /tmp/test-results/rspec/results.xml --format progress"
+	for _, tc := range []struct{ name, orb, steps, want string }{
+		{"2.x default", "2.5.3", "      - ruby/rspec-test\n", command},
+		{"2.x order and tag", "2.5.3", "      - ruby/rspec-test:\n          order: rand\n          tag: ~slow\n", command + " --order rand --tag ~slow"},
+		{"1.x order", "1.8.0", "      - ruby/rspec-test\n", command + " --order defined"},
+		{"3.x tag list", "3.0.0", "      - ruby/rspec-test:\n          tag: fast ~slow\n", "<unresolved: CircleCI job main/rspec: ruby/rspec-test passes each tag of fast ~slow separately"},
+		{"other include", "2.5.3", "      - ruby/rspec-test:\n          include: spec/models/**/*_spec.rb\n", "<unresolved: CircleCI job main/rspec: ruby/rspec-test runs the files matching spec/models/**/*_spec.rb"},
+		{"4.x test suite", "4.0.0", "      - ruby/rspec-test:\n          suite-name: unit\n", "<unresolved: CircleCI job main/rspec: the orb command ruby/rspec-test from circleci/ruby@4.0.0 runs steps ddtest cannot read"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := circleRubyRepository(t, job(tc.orb, tc.steps))
+			converted := circleJobs(t, root)["main/rspec"]
+			require.Equal(t, "cimg/ruby:3.2", converted.Image)
+			runs := circleRuns(converted)
+			require.Equal(t, "bundle install", runs[0])
+			require.True(t, strings.HasPrefix(runs[1], tc.want), runs[1])
+		})
+	}
+	root := circleRubyRepository(t, job("2.5.3", circleRubyOrb+"      - ruby/rspec-test\n"))
+	workflows, err := circleCI{}.readWorkflows(root)
+	require.NoError(t, err)
+	review := strings.Join(workflows[0].Review, "\n")
+	require.Contains(t, review, "ruby/rubocop-check runs RuboCop, a linter outside the test path")
+	require.Contains(t, review, "ruby/rspec-test splits spec/**/*_spec.rb across parallel containers by timing")
+	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", "datadoghq.com"))
+	scope, err := DiscoverValidationScope(root, "rspec")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+
+	// ruby/install selects the Ruby the tests run on a machine executor.
+	root = circleRubyRepository(t, "version: 2.1\norbs:\n  ruby: circleci/ruby@2.1.0\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\njobs:\n  rspec:\n    machine:\n      image: ubuntu-2204:current\n    steps:\n      - checkout\n      - ruby/install:\n          version: 3.2.2\n      - ruby/install-deps:\n          gemfile: gemfiles/rails.gemfile\n"+circleRubyOrb+"      - run: bundle exec rspec\n"+circleWorkflow("      - rspec\n"))
+	jobs := RubyCIConfigurationForSite(root, "rspec", "").Jobs
+	require.Len(t, jobs, 2, "the unresolved Bundler configuration stays a finding")
+	require.Equal(t, "bundle exec rspec", jobs[1].Command)
+	require.Equal(t, "3.2.2", jobs[1].Runtime)
+	steps := strings.Join(circleRuns(circleJobs(t, root)["main/rspec"]), "\n")
+	require.Contains(t, steps, "ruby/install-deps configures Bundler to use gemfiles/rails.gemfile in later steps")
 }

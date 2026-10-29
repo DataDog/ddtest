@@ -152,3 +152,6 @@ func (javaDiscovery) runtimeVariable(name string) bool {
 func (javaDiscovery) cacheVariable(name string) bool {
 	return name == "GRADLE_USER_HOME"
 }
+
+// No CI components are modeled for this language.
+func (javaDiscovery) ciComponents(string) []ciComponent { return nil }

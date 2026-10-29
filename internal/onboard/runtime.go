@@ -105,6 +105,11 @@ type runtimeStep struct {
 	// Setup is the Datadog setup this step runs, when its provider recognized
 	// one while reading the configuration (see ciProvider.setupStep).
 	Setup *ciSetup `yaml:"-"`
+	// Runtime holds the runtime versions this step selects for later steps,
+	// keyed by the language's installer token (js, ruby), as a known CI
+	// component such as a runtime installer reads them; an empty version
+	// selects one ddtest cannot tell.
+	Runtime map[string]string `yaml:"-"`
 	// origin is the provider's private reference to the step's source, for
 	// prescribed edits.
 	origin any
@@ -373,6 +378,12 @@ func (state *runtimeState) trackNode(job runtimeJob, step runtimeStep, row map[s
 		state.node = step.With["node-version"]
 		state.source = step.Source
 		state.platform = nodeDistributionPlatform(job.RunsOn, step.With["architecture"], row)
+	} else if node, selected := step.Runtime["js"]; selected {
+		state.node, state.source = imageNode("node:"+node), step.Source
+		state.platform = nodeDistributionPlatform(job.RunsOn, "", row)
+		if state.platform == "" && job.Image != "" {
+			state.platform = "linux-x64"
+		}
 	} else if node := persistedNVMRuntime(step.Run); node != "" {
 		state.node, state.source = node, step.Source
 		state.platform = nodeDistributionPlatform(job.RunsOn, "", row)

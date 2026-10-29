@@ -96,3 +96,24 @@ func TestRepeatedComparisonKeepsRecurringProcessFailuresBesideFlakyTests(t *test
 	require.Equal(t, "inconclusive", got.Status, "a process difference that does not recur stays inconclusive")
 	require.True(t, strings.HasPrefix(got.Reason, "Outcomes changed between repeated runs"), got.Reason)
 }
+
+// brakeman's LoggerTests#test_logger_type fails the same way in every run;
+// only the inspected object's address differs. Failure messages compare
+// without object addresses, while a different assertion stays different.
+func TestFailuresCompareWithoutObjectAddresses(t *testing.T) {
+	failure := func(address, expected string) string {
+		return failureSignature("Expected #<Brakeman::Logger::Plain:" + address + " @options={}> to be an instance of " + expected + ".")
+	}
+	require.Equal(t, failure("0x000000011f3a2b48", "Brakeman::Logger::Console"), failure("0x0000000120c4d9e0", "Brakeman::Logger::Console"))
+	require.NotEqual(t, failure("0x000000011f3a2b48", "Brakeman::Logger::Console"), failure("0x000000011f3a2b48", "Brakeman::Logger::Quiet"))
+	require.Equal(t, failureSignature("<object at 0x7f3a2b48c0d0> is not None"), failureSignature("<object at 0x7f3a2b48e110> is not None"))
+	require.Equal(t, failureSignature("expected com.acme.Widget@1b6d3586 but was null"), failureSignature("expected com.acme.Widget@4554617c but was null"))
+	require.NotEqual(t, failureSignature("expected 0x10 to equal 0x20"), failureSignature("expected 0x10 to equal 0x30"), "short hexadecimal values are data")
+
+	run := func(address string) validationRun {
+		return validationRun{ExitCode: 1, Tests: []jestTest{{File: "/repo/test/logger_test.rb", Name: "test_logger_type", Status: "failed", Failure: failure(address, "Brakeman::Logger::Console")}}}
+	}
+	got := compareRepeatedRuns(run("0x0000000100000001"), run("0x0000000100000002"), run("0x0000000100000003"), run("0x0000000100000004"), func(validationRun) verdict { return verdict{Status: "compatible"} })
+	require.NotEqual(t, "varying_outcomes", got.Code)
+	require.NotEqual(t, "suspected regression", got.Status)
+}

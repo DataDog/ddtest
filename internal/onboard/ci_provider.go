@@ -151,6 +151,21 @@ type ciSetupTerms struct {
 	ImageGuard func(template, image, command string) string
 }
 
+// ciComponent is a reusable CI component a language knows, such as a
+// runtime or dependency installer published for one provider, modeled in the
+// provider's own syntax so the provider reads it like the repository's
+// configuration.
+type ciComponent struct {
+	// Name is the component's registry name, such as an orb's
+	// namespace/name.
+	Name string
+	// Majors are the major versions the model describes.
+	Majors []string
+	// Definition is the model: for CircleCI an inline orb's commands, jobs
+	// and executors.
+	Definition string
+}
+
 // ciSetupTarget is one test step that needs the setup before it.
 type ciSetupTarget struct {
 	Workflow, Job string
