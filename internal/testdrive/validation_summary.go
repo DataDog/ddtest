@@ -389,6 +389,9 @@ func validationHandoff(result validationResult) string {
 	if result.Workflow != nil && len(result.Workflow.EarlierAttempts) > 0 {
 		fmt.Fprintf(&block, "Earlier attempts for this workflow stopped before this run: %s. This run's results stand on their own; the earlier stops are listed so retries stay visible.\n", strings.Join(result.Workflow.EarlierAttempts, ", "))
 	}
+	if result.Workflow != nil && len(result.Workflow.EarlierVaryingTests) > 0 {
+		block.WriteString("Caveat (not a blocker): an earlier attempt saw varying outcomes in: " + reportText(strings.Join(result.Workflow.EarlierVaryingTests, "; ")) + "; they had consistent outcomes in this run's repeated comparison, so they may be flaky.\n")
+	}
 	for _, disabled := range disabledInstrumentations(result) {
 		block.WriteString("Disabled instrumentation: " + disabled + "\n")
 	}
@@ -767,4 +770,30 @@ func reviewedPreparation(result validationResult) []string {
 		}
 	}
 	return commands
+}
+
+// varyingTests lists, once each, the tests a report saw vary between
+// repeated runs.
+func varyingTests(result validationResult) []string {
+	verdicts := []verdict{result.Compatibility}
+	for _, configuration := range result.Configurations {
+		verdicts = append(verdicts, configuration.Compatibility)
+	}
+	var tests []string
+	for _, current := range verdicts {
+		if current.Code != "varying_outcomes" {
+			continue
+		}
+		for _, difference := range current.Differences {
+			label, ok := strings.CutPrefix(difference, "Varies between repeats: ")
+			if !ok {
+				continue
+			}
+			label, _, _ = strings.Cut(label, "; baseline:")
+			if !slices.Contains(tests, label) && len(tests) < maxReportDifferences {
+				tests = append(tests, label)
+			}
+		}
+	}
+	return tests
 }

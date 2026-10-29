@@ -311,7 +311,7 @@ func javaNativeTests(projects []maven.Project, tests []maven.Test, probe bool) [
 	labels := javaModuleLabels(projects)
 	native := make([]nativeTest, 0, len(tests))
 	for _, test := range tests {
-		item := nativeTest{File: labels[test.Module] + " / " + test.Suite, Name: test.Name, Status: test.Status, Failure: test.Failure}
+		item := nativeTest{File: labels[test.Module] + " / " + test.Suite, Name: test.Name, Status: test.Status, Failure: withoutObjectAddresses(test.Failure)}
 		if probe && test.Suite == javaProbeClass {
 			name := javaTestName(test.Name)
 			item.probe, item.telemetryName = true, &name

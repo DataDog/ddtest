@@ -105,6 +105,11 @@ type runtimeStep struct {
 	// Setup is the Datadog setup this step runs, when its provider recognized
 	// one while reading the configuration (see ciProvider.setupStep).
 	Setup *ciSetup `yaml:"-"`
+	// Runtime holds the runtime versions this step selects for later steps,
+	// keyed by the language's installer token (js, ruby), as a known CI
+	// component such as a runtime installer reads them; an empty version
+	// selects one ddtest cannot tell.
+	Runtime map[string]string `yaml:"-"`
 	// origin is the provider's private reference to the step's source, for
 	// prescribed edits.
 	origin any
@@ -373,6 +378,12 @@ func (state *runtimeState) trackNode(job runtimeJob, step runtimeStep, row map[s
 		state.node = step.With["node-version"]
 		state.source = step.Source
 		state.platform = nodeDistributionPlatform(job.RunsOn, step.With["architecture"], row)
+	} else if node, selected := step.Runtime["js"]; selected {
+		state.node, state.source = imageNode("node:"+node), step.Source
+		state.platform = nodeDistributionPlatform(job.RunsOn, "", row)
+		if state.platform == "" && job.Image != "" {
+			state.platform = "linux-x64"
+		}
 	} else if node := persistedNVMRuntime(step.Run); node != "" {
 		state.node, state.source = node, step.Source
 		state.platform = nodeDistributionPlatform(job.RunsOn, "", row)
@@ -433,7 +444,8 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		resolution := resolutions[i]
 		// An unresolved step that can't start a test is setup, not a test entry.
 		test := resolution.Matched || resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, frameworkName(frameworks))
-		if uses != "actions/setup-node" && !isSetup && !changesNodeRuntime(step.Run) && !test {
+		_, selectsNode := step.Runtime["js"]
+		if uses != "actions/setup-node" && !isSetup && !selectsNode && !changesNodeRuntime(step.Run) && !test {
 			continue
 		}
 		finding = RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Source: step.Source, Command: step.Run, Resolution: resolution.Evidence, Node: state.node, NodeSource: state.source, Status: StatusInconclusive}

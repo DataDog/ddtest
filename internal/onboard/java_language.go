@@ -132,7 +132,9 @@ func (javaDiscovery) setupShellExports(map[string]string) (map[string]string, ma
 }
 
 // Setup runs on GitHub Actions only.
-func (javaDiscovery) ciSetupRequest(string, string, string) ciSetupRequest { return ciSetupRequest{} }
+func (javaDiscovery) ciSetupRequest(string, string, string, ciSetupTerms) ciSetupRequest {
+	return ciSetupRequest{}
+}
 
 func (javaDiscovery) automaticProviderSetup(string) bool { return false }
 
@@ -150,3 +152,6 @@ func (javaDiscovery) runtimeVariable(name string) bool {
 func (javaDiscovery) cacheVariable(name string) bool {
 	return name == "GRADLE_USER_HOME"
 }
+
+// No CI components are modeled for this language.
+func (javaDiscovery) ciComponents(string) []ciComponent { return nil }

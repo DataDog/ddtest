@@ -190,7 +190,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 				}
 			}
 		}
-		if parameter, ok := node.(*syntax.ParamExp); ok {
+		if parameter, ok := node.(*syntax.ParamExp); ok && !keptRuntimeRead(parameter) {
 			value, exists := env[parameter.Param.Value]
 			if !exists || parameter.Index != nil || parameter.Slice != nil || parameter.Repl != nil || parameter.Exp != nil || parameter.Excl || parameter.Length || strings.ContainsAny(value, " \t\n*?[") {
 				expansionErr = fmt.Errorf("CI parameter %s requires explicit environment review", parameter.Param.Value)
@@ -218,15 +218,39 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		if binary, ok := stmt.Cmd.(*syntax.BinaryCmd); ok {
 			return binary.Op == syntax.AndStmt && visit(binary.X) && visit(binary.Y)
 		}
+		// A literal export sets the environment of the commands after it,
+		// which the language's resolver reads.
+		if declaration, ok := stmt.Cmd.(*syntax.DeclClause); ok {
+			if declaration.Variant.Value != "export" {
+				return false
+			}
+			for _, assign := range declaration.Args {
+				if assign.Name == nil || assign.Naked || assign.Value == nil || assign.Index != nil || assign.Array != nil || assign.Value.Lit() == "" && len(assign.Value.Parts) > 0 {
+					return false
+				}
+			}
+			commands = append(commands, shellText(declaration))
+			return true
+		}
 		call, ok := stmt.Cmd.(*syntax.CallExpr)
 		if !ok || len(call.Assigns) > 0 || len(call.Args) == 0 {
 			return false
 		}
-		words, err := expand.Fields(&expand.Config{Env: expand.ListEnviron(pairs...)}, call.Args...)
-		if err != nil {
-			return false
+		var words []string
+		for _, arg := range call.Args {
+			// A read of a runtime variable, such as the options validation
+			// sets itself, stays as written for the language's resolver.
+			if readsKeptRuntimeVariable(arg) {
+				words = append(words, "\x00"+shellText(arg))
+				continue
+			}
+			fields, err := expand.Fields(&expand.Config{Env: expand.ListEnviron(pairs...)}, arg)
+			if err != nil {
+				return false
+			}
+			words = append(words, fields...)
 		}
-		commands = append(commands, shellquote.Join(words...))
+		commands = append(commands, joinKeptWords(words))
 		return true
 	}
 	var statements []string
@@ -408,4 +432,44 @@ func remoteGridSecret(key, value string) string {
 // literalRepositoryPath is a relative path without shell syntax or options.
 func literalRepositoryPath(path string) bool {
 	return path != "" && filepath.IsLocal(path) && !strings.HasPrefix(path, "-") && !strings.ContainsAny(path, "$`*?[]{}~\n:")
+}
+
+// keptRuntimeRead reports a plain read ($NAME) of a variable the Datadog
+// installer exports for a language, such as its runtime options: local
+// validation sets those itself, so the read stays for the language to
+// interpret.
+func keptRuntimeRead(parameter *syntax.ParamExp) bool {
+	if parameter.Index != nil || parameter.Slice != nil || parameter.Repl != nil || parameter.Exp != nil || parameter.Excl || parameter.Length {
+		return false
+	}
+	return slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {
+		exported, _ := language.setupShellExports(map[string]string{})
+		_, ok := exported[parameter.Param.Value]
+		return ok
+	})
+}
+
+// readsKeptRuntimeVariable reports a word that reads such a variable.
+func readsKeptRuntimeVariable(word *syntax.Word) bool {
+	found := false
+	syntax.Walk(word, func(node syntax.Node) bool {
+		if parameter, ok := node.(*syntax.ParamExp); ok && keptRuntimeRead(parameter) {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// joinKeptWords quotes expanded words and keeps words marked as written.
+func joinKeptWords(words []string) string {
+	parts := make([]string, len(words))
+	for i, word := range words {
+		if kept, ok := strings.CutPrefix(word, "\x00"); ok {
+			parts[i] = kept
+			continue
+		}
+		parts[i] = shellquote.Join(word)
+	}
+	return strings.Join(parts, " ")
 }

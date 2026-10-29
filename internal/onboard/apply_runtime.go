@@ -114,6 +114,10 @@ func rowSetupNode(root string, workflow ciWorkflow, job runtimeJob, row map[stri
 func rowSetupNodeBefore(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, limit int) (string, error) {
 	node := imageNode(job.Image)
 	for _, step := range job.Steps[:min(limit, len(job.Steps))] {
+		if version, selected := step.Runtime["js"]; selected {
+			node = imageNode("node:" + version)
+			continue
+		}
 		if !strings.HasPrefix(strings.ToLower(step.Uses), "actions/setup-node@") && !strings.Contains(step.Run, "nvm") {
 			continue
 		}

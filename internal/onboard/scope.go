@@ -408,9 +408,24 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					preparation = append(preparation, resolution.Builds...)
 					pendingSetup = append(pendingSetup, resolution.Setup...)
 				}
+				// A job that never runs the framework and has no setup is not
+				// part of this validation; its gaps are reported, not blockers.
+				outsideJob := len(commands) == 0 && !installerActive && discoveryLanguageNamed(language).outsideFrameworkJob(root, workflow, job, row, framework)
+				outsideCaveat := func() {
+					caveat := workflow.Path + " / " + name + ": CI job without the Datadog setup that never runs " + framework + "; it is outside this validation, and any tests it runs are not reported to Datadog."
+					if !slices.Contains(scope.Caveats, caveat) {
+						scope.Caveats = append(scope.Caveats, caveat)
+					}
+				}
 				if allowSetupFacts {
 					for _, build := range preparation {
 						if build.Kind != PreparationNeedsFacts {
+							continue
+						}
+						if outsideJob {
+							// Nothing in this job runs tests the preparation could feed.
+							review = append(review, scopeDiagnostic{commandLocation{Workflow: workflow.Path, Job: name, Matrix: maps.Clone(row)}, "Uninstrumented CI job that never runs " + framework + "; outside this validation: " + build.Command})
+							outsideCaveat()
 							continue
 						}
 						attached := false
@@ -430,16 +445,13 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				// Unknown commands remain in unresolved, even on excluded rows.
 				// A job that never runs the framework and has no setup is not
 				// part of this validation; its gaps are reported, not blockers.
-				if len(commands) == 0 && !installerActive && len(unresolved)+len(setupUnresolved) > 0 && discoveryLanguageNamed(language).outsideFrameworkJob(root, workflow, job, row, framework) {
+				if outsideJob && len(unresolved)+len(setupUnresolved) > 0 {
 					for _, diagnostic := range append(unresolved, setupUnresolved...) {
 						diagnostic.Reason = "Uninstrumented CI job that never runs " + framework + "; outside this validation, and any tests it runs are not reported to Datadog: " + diagnostic.Reason
 						review = append(review, diagnostic)
 					}
 					unresolved, setupUnresolved = nil, nil
-					caveat := workflow.Path + " / " + name + ": CI job without the Datadog setup that never runs " + framework + "; it is outside this validation, and any tests it runs are not reported to Datadog."
-					if !slices.Contains(scope.Caveats, caveat) {
-						scope.Caveats = append(scope.Caveats, caveat)
-					}
+					outsideCaveat()
 				}
 				onlyExcluded := len(commands) > 0 && !slices.ContainsFunc(commands, func(command TestCommand) bool { return !command.CIInstrumentationExcluded })
 				for _, diagnostic := range setupUnresolved {

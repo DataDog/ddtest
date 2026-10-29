@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,18 +33,18 @@ const maxRecordedFailures = 5
 // The attempt counter ignores the reason, but an attempt that repeats the
 // previous failure exactly (same code and reason, same inputs) is marked
 // repeated: rerunning a deterministic failure unchanged cannot progress.
-func (c *workflowCheckpoint) recordFailure(fingerprint, factsHash, code, reason string) error {
+func (c *workflowCheckpoint) recordFailure(fingerprint, factsHash, code, reason string, varying ...string) error {
 	key := fmt.Sprintf("%s\x00%s\x00%s\x00%t\x00%t\x00%s\x00%s\x00%s", c.Root, c.Framework, c.Command, c.Apply, c.All, fingerprint, factsHash, engineIdentity())
 	id := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))[:32]
 	previousID := c.RunID
 	attempts := 1
-	failures := c.Failures
+	failures, earlier := c.Failures, c.VaryingTests
 	signature := fmt.Sprintf("%x", sha256.Sum256([]byte(code+"\x00"+reason)))
 	repeated := false
 	previous, err := readCheckpoint(id)
 	if err == nil {
 		attempts = previous.Attempts + 1
-		failures = previous.Failures
+		failures, earlier = previous.Failures, previous.VaryingTests
 		repeated = previous.FailureSignature == signature
 	} else if !os.IsNotExist(err) {
 		// An expired checkpoint is removed by readCheckpoint. Corruption must not
@@ -60,7 +61,12 @@ func (c *workflowCheckpoint) recordFailure(fingerprint, factsHash, code, reason 
 	if len(failures) > maxRecordedFailures {
 		failures = failures[len(failures)-maxRecordedFailures:]
 	}
-	c.RunID, c.Attempts, c.Failure, c.Failures = id, attempts, code, failures
+	for _, test := range varying {
+		if !slices.Contains(earlier, test) && len(earlier) < maxReportDifferences {
+			earlier = append(earlier, test)
+		}
+	}
+	c.RunID, c.Attempts, c.Failure, c.Failures, c.VaryingTests = id, attempts, code, failures, earlier
 	c.FailureSignature, c.repeated = signature, repeated
 	if err := c.save(); err != nil {
 		return err

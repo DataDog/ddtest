@@ -95,6 +95,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	// checkpoint rewrites --resume, so the offered command never goes stale.
 	acceptFlag := ""
 	turnFinalResponse := ""
+	// attemptStarted is when this attempt's validation began, so a failure
+	// reads only the report it wrote.
+	var attemptStarted time.Time
 	fail := func(status, code, reason, needs string) error {
 		result.Status, result.Code, result.Reason, result.Needs = status, code, reportText(reason), needs
 		if options.Format == "verbose" && result.UndoInstructions != "" {
@@ -104,7 +107,13 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			if checkpoint.FactsSHA256 == "" || (code != "facts_invalid" && code != "facts_refresh_required") {
 				checkpoint.Plan = result.Plan
 			}
-			if err := checkpoint.recordFailure(result.Fingerprint, factsHash, code, result.Reason); err != nil {
+			var varying []string
+			if !attemptStarted.IsZero() {
+				if report, err := readCurrentOnboardingResult(t.repositoryRoot, attemptStarted); err == nil {
+					varying = varyingTests(report)
+				}
+			}
+			if err := checkpoint.recordFailure(result.Fingerprint, factsHash, code, result.Reason, varying...); err != nil {
 				result.Reason += "; checkpoint: " + err.Error()
 			}
 			result.RunID = checkpoint.RunID
@@ -636,6 +645,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		return fail("blocked_environment", "checkpoint_unavailable", err.Error(), "Restore private temporary storage.")
 	}
 	started := time.Now()
+	attemptStarted = started
 	logs := io.Discard
 	if options.Format == "verbose" {
 		logs = output
@@ -702,6 +712,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	workflow := &WorkflowEvidence{ValidationCommand: recoveryCommand, Plan: plan, Fingerprint: before, Node: t.workflowNodeVersion(), Runtime: languageRuntime, FactsSHA256: factsHash, Changes: result.Changes}
 	if checkpoint != nil {
 		workflow.EarlierAttempts = slices.Clone(checkpoint.Failures)
+		workflow.EarlierVaryingTests = slices.Clone(checkpoint.VaryingTests)
 	}
 	workflow.Checks = append(refreshScopeCheck(result.Checks, validation.Scope), t.verifyReportExclusions(ctx)...)
 	after, snapshotErr := workflowFingerprint(ctx, t.repositoryRoot, name)

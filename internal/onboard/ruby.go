@@ -31,6 +31,9 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if rubyMaintenanceStep(step.Run) {
 		return commandResolution{Review: true, Reason: "Documentation, lint or release tooling is maintenance, outside " + framework + " test scope."}
 	}
+	if resolution, handled := resolveRubyStepWithSetup(root, workflow, job, step, framework); handled {
+		return resolution
+	}
 	parts, parseErr := staticCommands(step.Run)
 	matched := environment.LooksLikeTestCommand(filepath.Join(root, directory), step.Run, "ruby", framework)
 	if parseErr == nil && len(parts) == 1 {
@@ -88,6 +91,195 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return unresolvedCommand("Ruby test entry point requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
 	}
 	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(parts[0]...)}}}
+}
+
+// rubyArtifactCommands only create directories, move or copy files, or
+// print: after the tests they handle reports, not the tests.
+var rubyArtifactCommands = []string{"mkdir", "mv", "cp", "echo", "printf", "true"}
+
+// resolveRubyStepWithSetup resolves a step made of literal exports, exactly
+// one test command and then commands that only handle its artifacts, as in
+// export CC_TEST_REPORTER_ID=...; bundle exec rake; mv coverage/... tmp/.
+// The exports become the configuration's environment. A rake
+// RUBYOPT="$RUBYOPT <options>" argument extends the preload for the tests
+// rake runs: locally the options join the configuration's RUBYOPT, which
+// validation extends with its own preload. It handles only steps with more
+// than one statement or such an argument; anything else it can't follow
+// (control flow, computed values, several test commands) stays unresolved.
+func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) (commandResolution, bool) {
+	file, ok := parseCIShell(step.Run)
+	if !ok || len(file.Stmts) == 0 {
+		return commandResolution{}, false
+	}
+	if len(file.Stmts) == 1 {
+		// One statement is the single-command rules' unless it extends RUBYOPT.
+		call, isCall := file.Stmts[0].Cmd.(*syntax.CallExpr)
+		if !isCall || !slices.ContainsFunc(call.Args, func(word *syntax.Word) bool { _, ok := rubyExtendedOptions(word); return ok }) {
+			return commandResolution{}, false
+		}
+	}
+	unresolved := unresolvedCommand("Ruby test entry point requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
+	env := map[string]string{}
+	test := -1
+	var command string
+	extended := false
+	for i, stmt := range file.Stmts {
+		if stmt.Background || stmt.Coprocess || stmt.Negated || len(stmt.Redirs) > 0 {
+			return unresolved, len(file.Stmts) > 1
+		}
+		switch cmd := stmt.Cmd.(type) {
+		case *syntax.DeclClause:
+			if test >= 0 || cmd.Variant.Value != "export" {
+				return unresolved, len(file.Stmts) > 1
+			}
+			for _, assign := range cmd.Args {
+				value, literal := rubyLiteralWord(assign.Value)
+				// An append needs the inherited value; RUBYOPT and Datadog
+				// settings would change the instrumentation unseen.
+				if assign.Name == nil || assign.Naked || assign.Append || assign.Index != nil || assign.Array != nil || !literal || assign.Name.Value == "RUBYOPT" || strings.HasPrefix(assign.Name.Value, "DD_") {
+					return unresolved, true
+				}
+				env[assign.Name.Value] = value
+			}
+		case *syntax.CallExpr:
+			if len(cmd.Args) == 0 || len(cmd.Assigns) > 0 {
+				return unresolved, len(file.Stmts) > 1
+			}
+			name, _ := rubyLiteralWord(cmd.Args[0])
+			if test >= 0 && slices.Contains(rubyArtifactCommands, name) {
+				for _, word := range cmd.Args[1:] {
+					text, literal := rubyLiteralWord(word)
+					// Only report paths: copying other files may prepare a
+					// later test step.
+					if !literal || name != "echo" && name != "printf" && !strings.HasPrefix(text, "-") && !rubyReportPath(text) {
+						return unresolved, true
+					}
+				}
+				continue
+			}
+			if test >= 0 {
+				return unresolved, len(file.Stmts) > 1
+			}
+			var words []string
+			extends := false
+			for j, word := range cmd.Args {
+				if j > 0 {
+					if options, ok := rubyExtendedOptions(word); ok {
+						env["RUBYOPT"], extends = options, true
+						continue
+					}
+				}
+				words = append(words, shellText(word))
+			}
+			// Only a recognized test command ends the setup; any other command
+			// before it is left to the single-command rules.
+			single := step
+			single.Run = strings.Join(words, " ")
+			if candidate := resolveRubyStep(root, workflow, job, single, framework); !candidate.Matched {
+				return commandResolution{}, false
+			}
+			test, command, extended = i, single.Run, extends
+		default:
+			return unresolved, len(file.Stmts) > 1
+		}
+	}
+	if test < 0 || len(file.Stmts) == 1 && !extended {
+		return commandResolution{}, false
+	}
+	single := step
+	single.Run = command
+	resolution := resolveRubyStep(root, workflow, job, single, framework)
+	if !resolution.Matched || resolution.Reason != "" || len(resolution.Tests) != 1 {
+		return unresolved, true
+	}
+	if extra, ok := env["RUBYOPT"]; ok && extended {
+		// The argument extends the RUBYOPT the step inherits: keep the
+		// options it already carries (validation owns the preload).
+		inherited := ""
+		for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+			if value, set := layer["RUBYOPT"]; set {
+				inherited = value
+			}
+		}
+		inherited = strings.Replace(inherited, rubyInstallerPreload, "", 1)
+		inherited = strings.NewReplacer("${{ env.RUBYOPT }}", "", "${{env.RUBYOPT}}", "").Replace(inherited)
+		env["RUBYOPT"] = strings.Join(strings.Fields(inherited+" "+extra), " ")
+	}
+	resolution.Tests[0].Environment = mergeEnvironment(resolution.Tests[0].Environment, env)
+	return resolution, true
+}
+
+// rubyReportPaths are directories that only hold test reports and coverage.
+var rubyReportPaths = []string{"coverage", "report", "reports", "test-results", "test_results", "tmp", "artifacts", "log", "logs", "junit"}
+
+// rubyReportPath reports a path under a report or coverage directory.
+func rubyReportPath(path string) bool {
+	path = strings.TrimPrefix(path, "./")
+	if strings.HasPrefix(path, "/tmp/") {
+		return true
+	}
+	first, _, _ := strings.Cut(path, "/")
+	return slices.Contains(rubyReportPaths, strings.TrimSuffix(first, "/"))
+}
+
+// rubyLiteralWord is a shell word's text when it expands nothing, with its
+// escapes decoded as the shell decodes them.
+func rubyLiteralWord(word *syntax.Word) (string, bool) {
+	if word == nil {
+		return "", true
+	}
+	var text strings.Builder
+	for _, part := range word.Parts {
+		switch part := part.(type) {
+		case *syntax.Lit:
+			text.WriteString(rubyUnescape(part.Value, false))
+		case *syntax.SglQuoted:
+			text.WriteString(part.Value)
+		case *syntax.DblQuoted:
+			for _, inner := range part.Parts {
+				lit, ok := inner.(*syntax.Lit)
+				if !ok {
+					return "", false
+				}
+				text.WriteString(rubyUnescape(lit.Value, true))
+			}
+		default:
+			return "", false
+		}
+	}
+	return text.String(), true
+}
+
+// rubyUnescape decodes backslash escapes: unquoted, a backslash quotes the
+// next character; inside double quotes, only before $, `, " and \.
+func rubyUnescape(value string, quoted bool) string {
+	var text strings.Builder
+	for i := 0; i < len(value); i++ {
+		if value[i] == '\\' && i+1 < len(value) && (!quoted || strings.IndexByte("$`\"\\", value[i+1]) >= 0) {
+			i++
+		}
+		text.WriteByte(value[i])
+	}
+	return text.String()
+}
+
+// rubyExtendedOptions reads a RUBYOPT="$RUBYOPT <literal options>" argument
+// and returns the options it adds.
+func rubyExtendedOptions(word *syntax.Word) (string, bool) {
+	if len(word.Parts) != 2 {
+		return "", false
+	}
+	prefix, ok := word.Parts[0].(*syntax.Lit)
+	quoted, isQuoted := word.Parts[1].(*syntax.DblQuoted)
+	if !ok || prefix.Value != "RUBYOPT=" || !isQuoted || len(quoted.Parts) != 2 {
+		return "", false
+	}
+	read, isRead := quoted.Parts[0].(*syntax.ParamExp)
+	rest, isLit := quoted.Parts[1].(*syntax.Lit)
+	if !isRead || !isLit || read.Param.Value != "RUBYOPT" || read.Exp != nil || read.Index != nil || read.Slice != nil || read.Repl != nil || read.Length || read.Excl || !strings.HasPrefix(rest.Value, " ") {
+		return "", false
+	}
+	return strings.TrimSpace(rest.Value), true
 }
 
 // rubyMaintenanceTools generate documentation, lint or release a gem; they
@@ -464,6 +656,12 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						imageRuby = false
 						skippedAction = false
 					}
+					if version, selected := step.Runtime["ruby"]; selected && stepErr == nil {
+						// A known installer selected Ruby, such as the CircleCI Ruby
+						// orb's install; its RubyGems is checked like an image's.
+						ruby, engine = rubyImageRuntime("ruby:" + version)
+						imageRuby = true
+					}
 					if isSetup {
 						tracer, action, actionErr, inputs, setup = "", "", nil, nil, nil
 					}
@@ -520,6 +718,10 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 							if err != nil {
 								reasons = append(reasons, err.Error())
 							}
+						}
+						// Once the step is resolved, its preload must survive too.
+						if reason := rubyRakeOptionsProblem(step.Run); reason != "" {
+							reasons = append(reasons, reason)
 						}
 						finding.Reason = "Ruby CI scope needs review: " + strings.TrimSpace(strings.Join(reasons, "; "))
 					} else if ruby != "" && tracer != "" && action != "" {
@@ -597,15 +799,23 @@ func rubyBootstrapProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 		for _, layer := range []map[string]string{workflow.Env, job.Env} {
 			for _, option := range strings.Fields(layer["RUBYOPT"]) {
 				if !slices.Contains(strings.Fields(options), option) {
-					return "The Datadog setup script replaces RUBYOPT, dropping the job's " + option + "; restore it after the setup entry with export RUBYOPT=\"$RUBYOPT " + layer["RUBYOPT"] + "\"."
+					provider := activeOrDefaultCIProvider()
+					if provider.sharedSyntax() {
+						return "The Datadog setup script replaces RUBYOPT, dropping the job's " + option + "; restore it after the setup entry with export RUBYOPT=\"$RUBYOPT " + layer["RUBYOPT"] + "\"."
+					}
+					terms := provider.setupTerms()
+					return "The " + provider.setupName() + " replaces RUBYOPT, dropping the job's " + option + "; restore it after " + terms.SetupEntry + " with " + terms.Persist(`export RUBYOPT="$RUBYOPT `+layer["RUBYOPT"]+`"`) + "."
 				}
 			}
 		}
 	}
+	if reason := rubyRakeOptionsProblem(step.Run); reason != "" {
+		return reason
+	}
 	if options, overridden := env["RUBYOPT"]; overridden {
 		if !strings.Contains(options, "datadog/ci/auto_instrument") && !strings.Contains(options, "${{ env.RUBYOPT }}") && !strings.Contains(options, "${{env.RUBYOPT}}") {
 			if provider := activeOrDefaultCIProvider(); !provider.sharedSyntax() {
-				return "The Ruby test environment replaces the RUBYOPT the " + provider.setupName() + " exports, without its Datadog preload. Extend it instead (export RUBYOPT=\"$RUBYOPT ...\"), preserving the customer's Ruby options."
+				return "The Ruby test environment replaces the RUBYOPT the " + provider.setupName() + " exports, without its Datadog preload. Extend it instead (" + provider.setupTerms().Persist(`export RUBYOPT="$RUBYOPT ..."`) + "), preserving the customer's Ruby options."
 			}
 			return "The Ruby test environment overrides the action's RUBYOPT without its Datadog preload. Preserve the instrumentation and the customer's Ruby options."
 		}
@@ -631,6 +841,61 @@ func rubyBootstrapProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 	return ""
 }
 
+// rubyRakeOptions reads a rake invocation's RUBYOPT=... argument that
+// replaces the preload, and returns the options it sets.
+func rubyRakeOptions(command string) (string, bool) {
+	reason := rubyRakeOptionsProblem(command)
+	if reason == "" {
+		return "", false
+	}
+	_, options, _ := strings.Cut(reason, `RUBYOPT="$RUBYOPT `)
+	return strings.TrimSuffix(options, `".`), true
+}
+
+// rubyRakeOptionsProblem explains a rake invocation whose RUBYOPT=...
+// argument replaces the Datadog preload in the environment of the tests rake
+// runs, as in bundle exec rake RUBYOPT='--enable-frozen-string-literal'.
+// Options that keep the inherited RUBYOPT, or the preload itself, pass.
+func rubyRakeOptionsProblem(command string) string {
+	file, ok := parseCIShell(command)
+	if !ok {
+		return ""
+	}
+	reason := ""
+	syntax.Walk(file, func(node syntax.Node) bool {
+		call, isCall := node.(*syntax.CallExpr)
+		if !isCall || reason != "" {
+			return reason == ""
+		}
+		rake := -1
+		for i, word := range call.Args {
+			if filepath.Base(word.Lit()) == "rake" {
+				rake = i
+				break
+			}
+		}
+		if rake < 0 {
+			return true
+		}
+		for _, word := range call.Args[rake+1:] {
+			text := shellText(word)
+			value, isOption := strings.CutPrefix(text, "RUBYOPT=")
+			if !isOption || strings.Contains(value, "datadog/ci/auto_instrument") || strings.Contains(value, "$RUBYOPT") || strings.Contains(value, "${RUBYOPT}") || strings.Contains(value, "env.RUBYOPT") {
+				continue
+			}
+			var prefix []string
+			for _, earlier := range call.Args[:rake+1] {
+				prefix = append(prefix, earlier.Lit())
+			}
+			options := strings.Trim(value, `'"`)
+			reason = strings.Join(prefix, " ") + " sets " + text + " as a rake argument, which replaces RUBYOPT, and with it the Datadog preload, for the tests rake runs. Keep the preload by extending it: RUBYOPT=\"$RUBYOPT " + options + "\"."
+			return false
+		}
+		return true
+	})
+	return reason
+}
+
 // rubyMissingSetupReason asks for a static Ruby and an exact tracer release
 // in the provider's setup before a test step.
 func rubyMissingSetupReason(provider ciProvider) string {
@@ -641,8 +906,9 @@ func rubyMissingSetupReason(provider ciProvider) string {
 }
 
 // rubyImage matches official Ruby images (ruby:3.3, ruby:3.3.6-slim,
-// docker.io/library/ruby:3.2-alpine) and the alternative engines' images.
-var rubyImage = regexp.MustCompile(`^(?:docker\.io/)?(?:library/)?(ruby|jruby|truffleruby|ghcr\.io/graalvm/truffleruby[a-z-]*|flavorjones/truffleruby):([^@]+)(?:@.*)?$`)
+// docker.io/library/ruby:3.2-alpine), CircleCI's (cimg/ruby:3.3.6,
+// circleci/ruby:2.7-node) and the alternative engines' images.
+var rubyImage = regexp.MustCompile(`^(?:cimg/|circleci/|(?:docker\.io/)?(?:library/)?)(ruby|jruby|truffleruby|ghcr\.io/graalvm/truffleruby[a-z-]*|flavorjones/truffleruby):([^@]+)(?:@.*)?$`)
 
 // rubyImageRuntime is the Ruby version a CI job's image selects, or the
 // engine the tracer cannot instrument (JRuby, TruffleRuby, Ruby head). Both

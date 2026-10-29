@@ -52,9 +52,9 @@ func TestCIProviderFlagRejectsUnknownProviders(t *testing.T) {
 		command func() *cobra.Command
 		args    []string
 	}{
-		{"onboard", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "--ci-provider", "circleci"}},
-		{"onboard apply", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--apply", "--yes", "--format", "json", "--ci-provider", "circleci"}},
-		{"testdrive", newTestdriveCommand, []string{"--agent", "--all", "--check-only", "--yes", "--ci-provider", "circleci"}},
+		{"onboard", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "--ci-provider", "jenkins"}},
+		{"onboard apply", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--apply", "--yes", "--format", "json", "--ci-provider", "jenkins"}},
+		{"testdrive", newTestdriveCommand, []string{"--agent", "--all", "--check-only", "--yes", "--ci-provider", "jenkins"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ciProviderFixture(t)
@@ -62,18 +62,18 @@ func TestCIProviderFlagRejectsUnknownProviders(t *testing.T) {
 			require.Error(t, err)
 			require.Equal(t, "invalid_options", result.Code)
 			require.Equal(t, "options", result.Phase)
-			require.Equal(t, `unsupported --ci-provider "circleci"; supported CI providers: github, gitlab`, result.Reason)
+			require.Equal(t, `unsupported --ci-provider "jenkins"; supported CI providers: github, gitlab, circleci`, result.Reason)
 			require.NoDirExists(t, ".testoptimization")
 		})
 	}
 	t.Run("instructions", func(t *testing.T) {
 		ciProviderFixture(t)
 		command := newOnboardCommand(nil)
-		command.SetArgs([]string{"--instructions", "--ci-provider", "circleci"})
+		command.SetArgs([]string{"--instructions", "--ci-provider", "jenkins"})
 		var out bytes.Buffer
 		command.SetOut(&out)
 		command.SetErr(io.Discard)
-		require.EqualError(t, command.ExecuteContext(t.Context()), `unsupported --ci-provider "circleci"; supported CI providers: github, gitlab`)
+		require.EqualError(t, command.ExecuteContext(t.Context()), `unsupported --ci-provider "jenkins"; supported CI providers: github, gitlab, circleci`)
 		require.Empty(t, out.String())
 	})
 }

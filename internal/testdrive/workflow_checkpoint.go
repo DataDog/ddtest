@@ -42,6 +42,8 @@ type workflowCheckpoint struct {
 	// Failures keeps the codes of earlier stopped attempts for this input, so
 	// a later passing run still discloses that it took retries.
 	Failures []string `json:"failures,omitempty"`
+	// VaryingTests are the tests earlier attempts saw vary between repeats.
+	VaryingTests []string `json:"varying_tests,omitempty"`
 	// FailureSignature identifies the last failure's code and reason.
 	FailureSignature string `json:"failure_signature,omitempty"`
 	// repeated reports that this attempt failed exactly like the previous

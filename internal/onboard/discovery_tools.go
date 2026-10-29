@@ -36,6 +36,11 @@ var discoveryTools = map[string]discoveryTool{
 	"eslint":        reviewTool,    // Linter; plugins/configuration need separate review.
 	"standard":      reviewTool,    // Linter; configuration needs separate review.
 	"prettier":      reviewTool,    // Formatter; plugins/configuration need separate review.
+	"stylelint":     reviewTool,    // Style linter; plugins/configuration need separate review.
+	"tsd":           reviewTool,    // Type-definition checker; not a test entry point of a JavaScript framework.
+	"vue-tsc":       reviewTool,    // Type checker; not a test entry point.
+	"attw":          reviewTool,    // Package type-export checker.
+	"depcheck":      reviewTool,    // Dependency metadata checker.
 	"oxlint":        reviewTool,    // Linter; configuration needs separate review.
 	"oxfmt":         reviewTool,    // Common formatter; configuration needs separate review.
 	"flow":          reviewTool,    // Type checker; not a Jest entry point.

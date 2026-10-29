@@ -69,7 +69,7 @@ type discoveryLanguage interface {
 	// framework, reporting to site, on providers without the shared workflow
 	// syntax: its installer token, exact tracer input, commands that must
 	// follow the setup, and its own setup rules.
-	ciSetupRequest(root, framework, site string) ciSetupRequest
+	ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest
 	// cacheVariable reports a variable that locates the language's package
 	// cache or install directory, which CI caches between jobs.
 	cacheVariable(name string) bool
@@ -87,6 +87,11 @@ type discoveryLanguage interface {
 	// language engine; empty otherwise. Such a job without the setup keeps
 	// running uninstrumented and is excluded from validation.
 	unsupportedImage(image string) string
+	// ciComponents are the provider's reusable components the language
+	// knows how they run, such as its runtime and dependency installers and
+	// test commands; a provider reads only the versions modeled and leaves
+	// every other component unresolved.
+	ciComponents(provider string) []ciComponent
 	// automaticProviderSetup reports whether onboard --apply writes
 	// framework's setup on such providers.
 	automaticProviderSetup(framework string) bool

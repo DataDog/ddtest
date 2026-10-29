@@ -29,7 +29,7 @@ func providerSetupInstructions(root string, provider ciProvider, language, frame
 	if automatic {
 		text.WriteString(strings.ReplaceAll(javascriptAutomaticSetup, "ddtest testdrive", "ddtest testdrive --framework "+framework) + "\n\n")
 	}
-	text.WriteString(provider.setupInstructions(registered.ciSetupRequest(root, framework, site)))
+	text.WriteString(provider.setupInstructions(registered.ciSetupRequest(root, framework, site, provider.setupTerms())))
 	if site == defaultDatadogSite && !agent {
 		text.WriteString("\n\nIf the organization uses a Datadog site other than US1, replace " + defaultDatadogSite + " with that site.")
 	}

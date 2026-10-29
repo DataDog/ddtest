@@ -55,7 +55,9 @@ func (pythonDiscovery) setupShellExports(map[string]string) (map[string]string, 
 }
 
 // Setup runs on GitHub Actions only.
-func (pythonDiscovery) ciSetupRequest(string, string, string) ciSetupRequest { return ciSetupRequest{} }
+func (pythonDiscovery) ciSetupRequest(string, string, string, ciSetupTerms) ciSetupRequest {
+	return ciSetupRequest{}
+}
 
 func (pythonDiscovery) automaticProviderSetup(string) bool { return false }
 
@@ -73,3 +75,6 @@ func (pythonDiscovery) runtimeVariable(name string) bool {
 func (pythonDiscovery) cacheVariable(name string) bool {
 	return name == "PIP_TARGET" || name == "POETRY_VIRTUALENVS_PATH"
 }
+
+// No CI components are modeled for this language.
+func (pythonDiscovery) ciComponents(string) []ciComponent { return nil }

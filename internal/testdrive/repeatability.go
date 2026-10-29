@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -55,7 +56,7 @@ func compareRepeatedRuns(baseline, instrumented, baselineAgain, instrumentedAgai
 		}
 		return strings.Compare(a.playwright, b.playwright)
 	})
-	var recurring, variable []string
+	var recurring, variable, unstable []string
 	for _, key := range keys {
 		a, b, c, d := outcomes[0][key], outcomes[1][key], outcomes[2][key], outcomes[3][key]
 		if slices.Equal(a, b) && slices.Equal(a, c) && slices.Equal(a, d) {
@@ -66,6 +67,19 @@ func compareRepeatedRuns(baseline, instrumented, baselineAgain, instrumentedAgai
 			file = relative
 		}
 		label := file + " › " + key.name + key.playwright
+		reported := 0
+		for _, values := range [][]string{a, b, c, d} {
+			if len(values) > 0 {
+				reported++
+			}
+		}
+		if reported == 1 {
+			// A name only one run reports: the test's identity changes
+			// between runs, as when its description embeds generated data.
+			unstable = append(unstable, label)
+			variable = append(variable, "Varies between repeats: "+label+"; baseline: "+outcomeDescription(a)+" -> "+outcomeDescription(c)+"; instrumented: "+outcomeDescription(b)+" -> "+outcomeDescription(d))
+			continue
+		}
 		if slices.Equal(a, c) && slices.Equal(b, d) {
 			recurring = append(recurring, "Recurring difference in both pairs: "+label+"; baseline: "+outcomeDescription(a)+"; instrumented: "+outcomeDescription(b))
 		} else {
@@ -80,6 +94,38 @@ func compareRepeatedRuns(baseline, instrumented, baselineAgain, instrumentedAgai
 	}
 	// Keep exit codes and suite-level differences when no test identity explains
 	// the varying run, rather than pretending a process failure is a test failure.
+	// One-off names are unstable identities only when each is one example's
+	// name in one of several runs; disjoint stable names stay varying.
+	runsNamed := map[string]int{}
+	for _, label := range unstable {
+		runsNamed[generatedName(label)]++
+	}
+	variants := len(unstable) > 0 && !slices.ContainsFunc(unstable, func(label string) bool { return runsNamed[generatedName(label)] < 2 })
+	if variants && len(unstable) == len(variable) && len(recurring) == 0 {
+		// Every difference is a test only one run reported: the set of names
+		// differs, not the outcomes. Each example is listed once, under the
+		// name one run gave it.
+		var examples []string
+		names := map[string]int{}
+		for _, label := range unstable {
+			key := generatedName(label)
+			if names[key] == 0 {
+				examples = append(examples, label)
+			}
+			names[key]++
+		}
+		result.Code = "unstable_test_identities"
+		result.Reason = fmt.Sprintf("%d %s (%d test names across the runs) %s reported by a single run: these test names change between runs, usually because a description the framework generates (such as a one-line example described by its matcher) embeds a temporary file name, a timestamp or another value created at run time. Every run then reports different tests, so outcomes cannot be compared, and Test Optimization cannot track these tests across CI runs either. Give each listed example a static description; ddtest does not rename tests.", len(examples), plural(len(examples), "example", "examples"), len(unstable), plural(len(examples), "is", "are"))
+		result.Differences = nil
+		for i, label := range examples {
+			if i == maxUnstableExamples {
+				result.Differences = append(result.Differences, fmt.Sprintf("... and %d more examples; every test name is in the configuration's native results", len(examples)-i))
+				break
+			}
+			result.Differences = append(result.Differences, "Reported by a single run: "+label)
+		}
+		return result
+	}
 	if len(recurring)+len(variable) > 0 {
 		result.Differences = append(recurring, variable...)
 	}
@@ -125,4 +171,22 @@ func outcomeDescription(values []string) string {
 		descriptions = append(descriptions, status)
 	}
 	return reportText(strings.Join(descriptions, ", "))
+}
+
+// maxUnstableExamples bounds the examples an unstable-identity verdict
+// lists; more are counted.
+const maxUnstableExamples = 50
+
+// generatedValues are the parts of a test name a run generates: quoted
+// strings, file paths holding digits, object addresses, timestamps and long
+// numbers.
+var generatedValues = regexp.MustCompile(`"[^"]*"|'[^']*'|/[^\s>"']*[0-9][^\s>"']*|0x[0-9a-fA-F]+|[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.]+|[0-9]{6,}`)
+
+// generatedName is a test label without the values a run generates, so the
+// names one example takes in different runs read the same. A description
+// a framework truncated in the middle ("...") compares by what precedes the
+// cut, which moves with the generated values.
+func generatedName(label string) string {
+	label, _, _ = strings.Cut(label, "...")
+	return generatedValues.ReplaceAllString(label, "…")
 }
