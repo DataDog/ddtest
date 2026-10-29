@@ -184,12 +184,16 @@ to linker` (`go/tools/builders/importcfg.go`).
 rules_test_optimization's module extension creates three kinds of
 repository, so that a build fetches only what it uses:
 
-- **Registration.** One `toolchain()` per exec platform, gated on
-  `@rules_go//go/toolchain:sdk_name == "ddto"`, so they never match the
-  default empty value. The extension writes them itself, with no download.
-  Bazel loads every registered toolchain declaration, and these load nothing
-  else. Each one points at its implementation in an SDK repository, which
-  Bazel fetches only when it selects that toolchain.
+- **Registration.** One `toolchain()` per supported pair of exec and target
+  platforms, as rules_go declares its own (`go/private/go_toolchain.bzl`):
+  - each carries both platforms' constraints and is gated on
+    `@rules_go//go/toolchain:sdk_name == "ddto"`, so none matches the default
+    empty value;
+  - the extension writes them itself, with no download. Bazel loads every
+    registered toolchain declaration, and these load nothing else;
+  - each points at the implementation for its target platform in the exec
+    platform's SDK repository, which Bazel fetches only when it selects that
+    toolchain.
 - **SDK, one per exec platform.** It downloads, from one ddtest release, the
   host's ddtest executable and that platform's one (`ddtest-<os>-<arch>`,
   checked against `SHA256SUMS`). It takes the workspace's SDK for that
@@ -201,8 +205,8 @@ repository, so that a build fetches only what it uses:
   only for targets that depend on Mini.
 
 Target platforms reuse those SDKs by cross-compiling, as rules_go does with
-its own (`go/private/go_toolchain.bzl`). Only exec platforms need an
-instrumented SDK.
+its own: an SDK repository holds one implementation per target platform. Only
+exec platforms need an instrumented SDK.
 
 rules_test_optimization's `MODULE.bazel` registers those toolchains, so the
 customer registers no extra SDK. rules_go's own toolchain
