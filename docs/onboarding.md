@@ -463,6 +463,16 @@ select the framework the project uses (`junit4`, `junit5`, `testng`, `spock`,
 contains a JavaScript, Python or Ruby project keeps that platform by default;
 select Java with `--platform java` or a Maven `--framework`.
 
+In a Maven repository, CI steps that run Gradle (`./gradlew test`, `gradle
+build`) are discovered too. ddtest reads the build's settings and build files,
+including the default version catalog, without running Gradle. It resolves each
+step to its test tasks, reports the other tasks and the projects of other
+frameworks, and checks that the Datadog action instruments Gradle: by default
+the action adds the agent to `GRADLE_OPTS`, so `java-instrumented-build-system:
+maven` or a step that replaces `GRADLE_OPTS` without `${{ env.GRADLE_OPTS }}`
+leaves it uninstrumented. Gradle configurations are not validated yet; testdrive
+reports them as not validated.
+
 Every Maven framework supports plain `ddtest testdrive --all --check-only --yes`
 and full `ddtest testdrive --all --yes` validation, or a focused
 `ddtest testdrive --framework junit5 --command './mvnw -B verify' --yes`. Each

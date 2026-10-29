@@ -86,6 +86,9 @@ func TestCheckReportsJavaOutsideItsFiles(t *testing.T) {
 		"java_language.go": "package p\n\nconst agent = \"dd-java-agent\"\nconst language = \"java\"\n",
 		// Java's file names JavaScript: rejected.
 		"java_validation.go": "package p\n\nconst runner = \"jest\"\n",
+		// Shared code names Gradle: rejected; Java's own file may.
+		"scope.go":       "package p\n\nconst wrapper = \"./gradlew\"\n",
+		"java_gradle.go": "package p\n\nconst options = \"GRADLE_OPTS\"\n",
 	}
 	for name, source := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600); err != nil {
@@ -95,8 +98,8 @@ func TestCheckReportsJavaOutsideItsFiles(t *testing.T) {
 	var report recorder
 	report.TB = t
 	Check(&report, dir)
-	if len(report.errors) != 2 {
-		t.Fatalf("want 2 violations (jest.go: mvn; java_validation.go: jest), got %d: %s", len(report.errors), strings.Join(report.errors, "; "))
+	if len(report.errors) != 3 {
+		t.Fatalf("want 3 violations (jest.go: mvn; java_validation.go: jest; scope.go: gradlew), got %d: %s", len(report.errors), strings.Join(report.errors, "; "))
 	}
 }
 

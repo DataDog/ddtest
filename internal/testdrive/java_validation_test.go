@@ -170,6 +170,19 @@ func TestJavaRefusesADatadogAgentInJVMConfig(t *testing.T) {
 	require.ErrorContains(t, err, ".mvn/jvm.config attaches dd-java-agent", "the baseline could not run without the agent")
 }
 
+func TestJavaConfigurationRefusesGradleBuilds(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)
+	requireWriteFile(t, filepath.Join(root, "settings.gradle"), "include 'app'\n")
+	for _, command := range []string{"./gradlew", "gradle"} {
+		drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewMaven("junit5", nil), command: command, args: []string{"test"}}
+		err := javaLanguage{}.prepareConfiguration(drive, nil, root, root)
+		require.ErrorIs(t, err, errGradleValidation, "a discovered Gradle configuration is reported, never run as Maven")
+		_, _, err = drive.javaReactor([]string{"test"})
+		require.ErrorIs(t, err, errGradleValidation)
+	}
+}
+
 func TestJavaConfigurationRefusesImplicitPublishingGoalsForEveryFramework(t *testing.T) {
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)

@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/gradle"
 	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/kballard/go-shellquote"
 	"mvdan.cc/sh/v3/syntax"
@@ -59,7 +61,13 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		if mavenMention.MatchString(step.Run) {
 			return unresolvedCommand("Maven command could not be resolved statically; ddtest cannot tell which tests it runs: " + step.Run)
 		}
+		if gradleMention.MatchString(step.Run) {
+			return unresolvedCommand("Gradle command could not be resolved statically; ddtest cannot tell which tests it runs: " + step.Run)
+		}
 		return unresolvedJavaWrapper(root, workflow, job, step, nil, framework)
+	}
+	if slices.ContainsFunc(parts, gradle.Command) {
+		return resolveGradleStep(root, workflow, job, step, directory, parts, framework)
 	}
 	// A command without goals runs the POM's default goal; mvn -v and other
 	// metadata commands, or a POM without one, build nothing.
@@ -169,9 +177,12 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 	if slices.ContainsFunc(parts, javaRepositoryScript) || parts == nil && scriptMention.MatchString(step.Run) {
 		return unresolvedCommand("Repository script may run " + framework + " tests; ddtest cannot tell which ones: " + step.Run)
 	}
-	// Maven hidden behind an assignment or env wrapper may run tests.
+	// Maven or Gradle hidden behind an assignment or env wrapper may run tests.
 	if mavenMention.MatchString(step.Run) && !slices.ContainsFunc(parts, mavenCommand) {
 		return unresolvedCommand("Maven test entry point requires a single explicit command; ddtest cannot replay its environment or shell setup: " + step.Run)
+	}
+	if gradleMention.MatchString(step.Run) && !slices.ContainsFunc(parts, gradle.Command) {
+		return unresolvedCommand("Gradle test entry point requires a single explicit command; ddtest cannot replay its environment or shell setup: " + step.Run)
 	}
 	if !strings.Contains(step.Run, "test") && !strings.Contains(step.Run, "verify") {
 		return commandResolution{}
@@ -319,12 +330,12 @@ func javaRuntimeProblem(version string) (reason, code string) {
 	return "", ""
 }
 
-// JavaCIConfiguration inventories each CI Maven test step's JDK and the
+// JavaCIConfiguration inventories each CI Maven or Gradle test step's JDK and the
 // Datadog action's dd-java-agent selection, per matrix row. A step is complete
 // only when its action is a supported release with an API key that reports to
 // site (empty: any site).
 func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
-	result := RuntimeCheck{Status: "not applicable", Reason: "No candidate Maven CI test commands found."}
+	result := RuntimeCheck{Status: "not applicable", Reason: "No candidate Maven or Gradle CI test commands found."}
 	workflows, err := readWorkflows(root)
 	if err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
@@ -404,17 +415,21 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					if !resolution.Matched && i > lastTest && !javaMayStartTests(root, workflow, job, resolved, framework) {
 						continue
 					}
+					tool := javaStepBuildTool(resolution, resolved.Run)
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: java, Action: action, TracerRequested: tracer, setupInputs: inputs, Status: "inconclusive"}
 					runtimeReason, runtimeCode := javaRuntimeProblem(java)
 					switch {
 					case conditionErr != nil || stepErr != nil || resolveErr != nil || actionErr != nil || resolution.Reason != "":
-						reasons := []string{resolution.Reason}
+						var reasons []string
+						if resolution.Reason != "" {
+							reasons = append(reasons, resolution.Reason)
+						}
 						for _, err := range []error{conditionErr, stepErr, resolveErr, actionErr} {
 							if err != nil {
 								reasons = append(reasons, err.Error())
 							}
 						}
-						finding.Reason = "Maven CI scope needs review: " + strings.TrimSpace(strings.Join(reasons, "; "))
+						finding.Reason = javaBuildToolName(tool) + " CI scope needs review: " + strings.Join(reasons, "; ")
 					case action == "" && skippedAction:
 						finding.Status, finding.Code = "excluded", "excluded_runtime"
 						finding.Reason = "The Datadog action is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."
@@ -432,7 +447,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 						finding.Status, finding.Reason = "not checked", "Validate dd-java-agent "+tracer+" on Java "+java+"; a static selection does not establish that this release supports this JDK."
 					}
 					// An explicitly uninstrumented row has no instrumentation to lose.
-					if reason := javaInstrumentationProblem(workflow, job, step, row, action != "", buildSystem); finding.Status != "excluded" && reason != "" {
+					if reason := javaInstrumentationProblem(workflow, job, step, row, action != "", buildSystem, tool); finding.Status != "excluded" && reason != "" {
 						finding.Status, finding.Code, finding.Reason = "inconclusive", "", reason
 					}
 					result.Jobs = append(result.Jobs, finding)
@@ -441,7 +456,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 		}
 	}
 	if len(result.Jobs) > 0 {
-		result.Status, result.Reason = "inconclusive", "Maven CI JDK and dd-java-agent selections need validation."
+		result.Status, result.Reason = "inconclusive", "Java CI JDK and dd-java-agent selections need validation."
 	}
 	return result
 }
@@ -462,17 +477,26 @@ func javaLastTestStep(root string, workflow ciWorkflow, job runtimeJob, row map[
 }
 
 // javaMayStartTests reports a step that may start tests, including one that
-// runs Maven where discovery cannot follow it, as in find … -exec mvn test.
+// runs Maven or Gradle where discovery cannot follow it, as in
+// find … -exec mvn test.
 func javaMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) bool {
-	return stepMayStartTests(root, workflow, job, step, framework) || mavenMention.MatchString(step.Run)
+	return stepMayStartTests(root, workflow, job, step, framework) || mavenMention.MatchString(step.Run) || gradleMention.MatchString(step.Run)
 }
 
 // javaAgentVariable is where the Datadog action, per its
-// java-instrumented-build-system input, adds -javaagent for a Maven build.
-func javaAgentVariable(buildSystem string) string {
+// java-instrumented-build-system input, adds -javaagent for a build of tool;
+// empty when it does not instrument that tool.
+func javaAgentVariable(tool, buildSystem string) string {
+	// A step that names no build tool keeps the Maven check.
+	tool = cmp.Or(tool, javaMaven)
 	switch buildSystem {
-	case "", "maven":
+	case "":
+		if tool == javaGradle {
+			return "GRADLE_OPTS"
+		}
 		return "MAVEN_OPTS"
+	case tool:
+		return strings.ToUpper(tool) + "_OPTS"
 	case "all":
 		return "JAVA_TOOL_OPTIONS"
 	}
@@ -486,11 +510,11 @@ func javaAgentVariable(buildSystem string) string {
 // and job values are read by the action and kept. A matrix value applies to
 // its row only. dd-java-agent still reports tests with DD_TRACE_ENABLED=false,
 // which only stops tracing.
-func javaInstrumentationProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, instrumented bool, buildSystem string) string {
+func javaInstrumentationProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, instrumented bool, buildSystem, tool string) string {
 	if instrumented {
-		variable := javaAgentVariable(buildSystem)
+		variable := javaAgentVariable(tool, buildSystem)
 		if variable == "" {
-			return "The Datadog action's java-instrumented-build-system " + strconv.Quote(buildSystem) + " does not instrument Maven; this test step runs without the agent."
+			return "The Datadog action's java-instrumented-build-system " + strconv.Quote(buildSystem) + " does not instrument " + javaBuildToolName(cmp.Or(tool, javaMaven)) + "; this test step runs without the agent."
 		}
 		// Another agent, such as JaCoCo's, does not keep the Datadog one, and
 		// step env values are literal: $MAVEN_OPTS is not expanded.

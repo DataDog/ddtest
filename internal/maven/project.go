@@ -175,7 +175,7 @@ func (p Project) Frameworks() []string {
 	}
 	var names []string
 	for _, dependency := range dependencies {
-		if name := dependency.framework(); name != "" && !slices.Contains(names, name) {
+		if name := dependency.Framework(); name != "" && !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}
@@ -183,7 +183,9 @@ func (p Project) Frameworks() []string {
 	return names
 }
 
-func (d Dependency) framework() string {
+// Framework is the supported test framework a dependency's coordinates
+// declare, as Maven and Gradle builds both write them; empty for others.
+func (d Dependency) Framework() string {
 	switch {
 	case d.Group == "junit" && d.Artifact == "junit":
 		return "junit4"
