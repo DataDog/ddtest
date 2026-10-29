@@ -49,13 +49,18 @@ func unresolvedCommand(reason string) commandResolution {
 }
 
 func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, language, framework string) commandResolution {
+	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+	// These actions only upload or expose results in every language, however
+	// their condition reads.
+	if step.Run == "" && slices.Contains([]string{"actions/upload-artifact", "stateful/vscode-server-action", "coverallsapp/github-action"}, uses) {
+		return commandResolution{Review: true, Reason: "Post-test reporting/debug action is outside " + framework + " execution; its condition and implementation require separate review."}
+	}
 	if registered := discoveryLanguageNamed(language); registered != nil {
 		if resolution, ok := registered.resolveStep(root, workflow, job, step, framework); ok {
 			return resolution
 		}
 	}
 
-	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 	if language == "javascript" && uses == "cypress-io/github-action" {
 		if framework == "cypress" {
 			return resolveCypressAction(root, workflow, job, step)
@@ -68,9 +73,6 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	}
 	if words, err := shellquote.Split(strings.TrimSpace(step.Run)); err == nil && len(words) == 2 && words[0] == "exit" && (words[1] == "0" || words[1] == "1") {
 		return commandResolution{Review: true, Reason: "Standalone CI status gate is outside " + framework + " test execution"}
-	}
-	if step.Run == "" && slices.Contains([]string{"actions/upload-artifact", "stateful/vscode-server-action", "coverallsapp/github-action"}, uses) {
-		return commandResolution{Review: true, Reason: "Post-test reporting/debug action is outside " + framework + " execution; its condition and implementation require separate review."}
 	}
 	if step.ResolutionError != "" {
 		return unresolvedCommand(step.ResolutionError)

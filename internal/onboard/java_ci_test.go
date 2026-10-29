@@ -483,3 +483,12 @@ func TestJavaMetadataScriptsYieldToExportedArgsAndConfigGoals(t *testing.T) {
 	require.Empty(t, javaStep(t, root, metadata).Reason, "options alone add no goals")
 	require.NotEmpty(t, javaStep(t, root, "VERSION=$(mvn -f module/pom.xml help:evaluate -Dexpression=project.version -q -DforceStdout)").Reason, "an alternate POM may select another maven.config")
 }
+
+func TestJavaReportingActionsAfterTestsAreReviewed(t *testing.T) {
+	workflow := "jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: 21, distribution: temurin}\n      - run: mvn -B verify\n      - name: Upload test results\n        if: failure()\n        uses: actions/upload-artifact@v4\n        with: {name: test-reports, path: target/surefire-reports/}\n"
+	scope, err := DiscoverValidationScope(javaWorkflowFixture(t, workflow, nil), "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved, "an artifact upload runs no tests, whatever its condition")
+	require.Len(t, scope.Commands, 1)
+	require.Contains(t, strings.Join(scope.Review, "\n"), "Post-test reporting/debug action")
+}
