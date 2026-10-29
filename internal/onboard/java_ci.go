@@ -46,8 +46,9 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return unresolvedCommand("CI command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
 	}
 	parts, parseErr := staticCommands(step.Run)
-	if parseErr != nil && javaMetadataScript(step.Run) {
-		// Release steps read project metadata, as in VERSION=$(mvn help:evaluate …).
+	// Release steps read project metadata, as in VERSION=$(mvn help:evaluate …),
+	// unless an inherited MAVEN_ARGS adds goals.
+	if parseErr != nil && javaMetadataScript(step.Run) && workflow.Env["MAVEN_ARGS"] == "" && job.Env["MAVEN_ARGS"] == "" && step.Env["MAVEN_ARGS"] == "" {
 		return commandResolution{}
 	}
 	if parseErr != nil {
@@ -362,7 +363,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					}
 					// Discovery leaves an unresolved step after the job's last
 					// possible test outside the test path, such as a report upload.
-					if !resolution.Matched && i > lastTest && !javaMayStartTests(root, workflow, job, step, framework) {
+					if !resolution.Matched && i > lastTest && !javaMayStartTests(root, workflow, job, resolved, framework) {
 						continue
 					}
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: java, Action: action, TracerRequested: tracer, setupInputs: inputs, Status: "inconclusive"}
@@ -415,7 +416,7 @@ func javaLastTestStep(root string, workflow ciWorkflow, job runtimeJob, row map[
 	for i, step := range job.Steps {
 		resolved, _, _ := resolveVariantStep(workflow, job, step, row, framework)
 		resolution := resolveJavaStep(root, workflow, job, resolved, framework)
-		if !resolution.Review && (resolution.Matched || resolution.Reason != "" && javaMayStartTests(root, workflow, job, step, framework)) {
+		if !resolution.Review && (resolution.Matched || resolution.Reason != "" && javaMayStartTests(root, workflow, job, resolved, framework)) {
 			last = i
 		}
 	}

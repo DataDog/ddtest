@@ -64,9 +64,13 @@ func javaCucumberSteps(glue string, lambda bool) string {
 `
 }
 
-// javaCucumberLambda reports a module that declares only cucumber-java8, whose
-// lambda backend has no step annotations.
-func javaCucumberLambda(checkout, module string) bool {
+// javaCucumberLambda reports a module whose glue uses only the lambda backend of
+// cucumber-java8, which has no step annotations: as its test sources show, or
+// without glue sources, as its POM declares.
+func javaCucumberLambda(checkout, module string, sources backendUse) bool {
+	if sources.lambda || sources.annotations {
+		return sources.lambda && !sources.annotations
+	}
 	projects, err := maven.ProjectsFrom(checkout, filepath.Join(module, "pom.xml"))
 	if err != nil || len(projects) == 0 {
 		return false
@@ -92,33 +96,42 @@ var (
 	javaCucumberSuite  = regexp.MustCompile(`@(?:[\w.]+\.)?IncludeEngines\(\s*\{?\s*"cucumber"`)
 	// glue = "x" or glue = {"x", ...} in @CucumberOptions, or the suite's
 	// glue configuration parameter.
-	javaCucumberGlue = regexp.MustCompile(`\bglue\s*=\s*\{?\s*"([^"]+)"|key\s*=\s*(?:(?:[\w.]+\.)?GLUE_PROPERTY_NAME|"cucumber\.glue")\s*,\s*value\s*=\s*"([^"]+)"`)
+	javaCucumberGlue = regexp.MustCompile(`\bglue\s*=\s*\{?\s*"([^"]+)"|key\s*=\s*(?:(?:[\w.]+\.)?GLUE_PROPERTY_NAME|"cucumber\.glue")\s*,\s*value\s*=\s*"([^"]+)"|value\s*=\s*"([^"]+)"\s*,\s*key\s*=\s*(?:(?:[\w.]+\.)?GLUE_PROPERTY_NAME|"cucumber\.glue")`)
+	// Step definitions of the lambda backend, and of the annotation one.
+	javaCucumberLambdaGlue     = regexp.MustCompile(`\bio\.cucumber\.java8\.`)
+	javaCucumberAnnotationGlue = regexp.MustCompile(`\bio\.cucumber\.java\.(en|[a-z_]+)\b|\bio\.cucumber\.java\.[A-Z]`)
 )
 
 // javaCucumberProbe places the probe in module: the feature in the test
 // resources, and its step in the glue package of the module's Cucumber runner,
 // so the project's own glue, hooks and object factory still load. The runner
 // alone is selected, with the probe feature in place of the project's.
-func javaCucumberProbe(checkout, module string) (javaProbe, string, error) {
-	runner, glue, suite, err := javaCucumberRunnerClass(filepath.Join(checkout, module))
+func javaCucumberProbe(checkout, module string, args []string) (javaProbe, string, error) {
+	runner, glue, suite, lambdaGlue, err := javaCucumberRunnerClass(filepath.Join(checkout, module))
 	if err != nil {
 		return javaProbe{}, "", err
 	}
 	if runner == "" {
 		return javaProbe{}, "No Cucumber runner class (@RunWith(Cucumber.class) or a JUnit Platform suite of the cucumber engine) was found in " + module + "'s test sources, so the probe feature cannot be selected alone.", nil
 	}
-	args := []string{"-Dtest=" + runner, "-Dcucumber.features=classpath:ddtest/DdtestValidation.feature", "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false", "-DskipITs"}
+	// The selected command's own glue property wins over the runner's.
+	for _, arg := range args {
+		if value, ok := strings.CutPrefix(arg, "-Dcucumber.glue="); ok {
+			glue = javaGluePackage(value)
+		}
+	}
+	selection := []string{"-Dtest=" + runner, "-Dcucumber.features=classpath:ddtest/DdtestValidation.feature", "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false", "-DskipITs"}
 	if suite {
 		// With cucumber.features set, the root Cucumber engine discovers the
 		// probe too; the suite's own engine is the one that runs it.
-		args = append(args, "-Dsurefire.excludeJUnit5Engines=cucumber")
+		selection = append(selection, "-Dsurefire.excludeJUnit5Engines=cucumber")
 	}
 	return javaProbe{
 		files: []javaProbeFile{
 			{filepath.Join(module, "src", "test", "resources", "ddtest", "DdtestValidation.feature"), javaCucumberFeature},
-			{filepath.Join(module, "src", "test", "java", filepath.FromSlash(strings.ReplaceAll(glue, ".", "/")), "DdtestValidationSteps.java"), javaCucumberSteps(glue, javaCucumberLambda(checkout, module))},
+			{filepath.Join(module, "src", "test", "java", filepath.FromSlash(strings.ReplaceAll(glue, ".", "/")), "DdtestValidationSteps.java"), javaCucumberSteps(glue, javaCucumberLambda(checkout, module, lambdaGlue))},
 		},
-		args: args,
+		args: selection,
 	}, "", nil
 }
 
@@ -126,10 +139,10 @@ func javaCucumberProbe(checkout, module string) (javaProbe, string, error) {
 // test sources, by path, and its glue package: the runner's glue option or
 // configuration parameter, the module's junit-platform.properties, or the
 // runner's own package. suite reports a JUnit Platform suite.
-func javaCucumberRunnerClass(module string) (runner, glue string, suite bool, err error) {
+func javaCucumberRunnerClass(module string) (runner, glue string, suite bool, lambda backendUse, err error) {
 	sources := filepath.Join(module, "src", "test", "java")
 	err = filepath.WalkDir(sources, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || runner != "" {
+		if err != nil {
 			return err
 		}
 		if entry.IsDir() || !strings.HasSuffix(path, ".java") || !entry.Type().IsRegular() {
@@ -140,7 +153,9 @@ func javaCucumberRunnerClass(module string) (runner, glue string, suite bool, er
 			return err
 		}
 		text := string(data)
-		if !javaCucumberRunner.MatchString(text) {
+		lambda.lambda = lambda.lambda || javaCucumberLambdaGlue.MatchString(text)
+		lambda.annotations = lambda.annotations || javaCucumberAnnotationGlue.MatchString(text)
+		if runner != "" || !javaCucumberRunner.MatchString(text) {
 			return nil
 		}
 		pkg := ""
@@ -150,18 +165,25 @@ func javaCucumberRunnerClass(module string) (runner, glue string, suite bool, er
 		runner = strings.TrimPrefix(pkg+"."+strings.TrimSuffix(entry.Name(), ".java"), ".")
 		suite = javaCucumberSuite.MatchString(text)
 		if match := javaCucumberGlue.FindStringSubmatch(text); match != nil {
-			glue = cmp.Or(match[1], match[2])
+			glue = cmp.Or(match[1], match[2], match[3])
 		}
 		glue = cmp.Or(glue, javaPlatformGlue(module), pkg)
 		return nil
 	})
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", "", false, nil
+		return "", "", false, backendUse{}, nil
 	}
-	// A glue path such as classpath:com/example names the package com.example.
-	glue = strings.ReplaceAll(strings.Trim(strings.TrimPrefix(strings.TrimSpace(strings.Split(glue, ",")[0]), "classpath:"), "/"), "/", ".")
-	return runner, glue, suite, err
+	return runner, javaGluePackage(glue), suite, lambda, err
 }
+
+// javaGluePackage is the first package of a glue list; a path such as
+// classpath:com/example names the package com.example.
+func javaGluePackage(glue string) string {
+	return strings.ReplaceAll(strings.Trim(strings.TrimPrefix(strings.TrimSpace(strings.Split(glue, ",")[0]), "classpath:"), "/"), "/", ".")
+}
+
+// backendUse records which Cucumber glue backends a module's test sources use.
+type backendUse struct{ lambda, annotations bool }
 
 // javaPlatformGlue is the cucumber.glue of a module's junit-platform.properties.
 func javaPlatformGlue(module string) string {

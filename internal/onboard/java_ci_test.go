@@ -443,3 +443,23 @@ func TestJavaPostTestScopeFollowsEachRowAndMavenLaunchers(t *testing.T) {
 		require.NotEmpty(t, javaStep(t, javaWorkflowFixture(t, "", nil), run).Reason, "MAVEN_ARGS set anywhere in the script adds goals: %s", run)
 	}
 }
+
+func TestJavaMetadataScriptsAndLaunchersFollowTheirEnvironmentAndMatrix(t *testing.T) {
+	action := "      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n"
+	metadata := "      - run: |\n          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)\n          echo $VERSION\n"
+	for name, env := range map[string]string{"workflow": "env: {MAVEN_ARGS: test}\n", "job": "", "step": ""} {
+		workflow := env + "jobs:\n  tests:\n    steps:\n" + action + metadata
+		switch name {
+		case "job":
+			workflow = "jobs:\n  tests:\n    env: {MAVEN_ARGS: test}\n    steps:\n" + action + metadata
+		case "step":
+			workflow = "jobs:\n  tests:\n    steps:\n" + action + metadata + "        env: {MAVEN_ARGS: test}\n"
+		}
+		scope, err := DiscoverValidationScope(javaWorkflowFixture(t, workflow, nil), "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, "%s MAVEN_ARGS adds goals to the metadata call", name)
+	}
+	launcher := "jobs:\n  tests:\n    strategy:\n      matrix:\n        maven: [mvn]\n    steps:\n" + action + "      - run: mvn test\n      - run: find . -name pom.xml -exec ${{ matrix.maven }} -f '{}' test \\;\n"
+	ci := JavaCIConfiguration(javaWorkflowFixture(t, launcher, nil), "junit5", "")
+	require.Len(t, ci.Jobs, 2, "the expanded launcher runs Maven: %+v", ci.Jobs)
+}

@@ -26,6 +26,7 @@ func TestJavaCucumberProbeUsesTheRunnerAndItsGlue(t *testing.T) {
 		{"platform suite", "package com.acme;\n@Suite\n@IncludeEngines(\"cucumber\")\n@ConfigurationParameter(key = GLUE_PROPERTY_NAME, value = \"classpath:com/acme/glue\")\npublic class RunCucumberTest {}\n", "", "com.acme.glue", true},
 		{"qualified suite key", "package com.acme;\n@org.junit.platform.suite.api.Suite\n@org.junit.platform.suite.api.IncludeEngines(\"cucumber\")\n@ConfigurationParameter(key = io.cucumber.junit.platform.engine.Constants.GLUE_PROPERTY_NAME, value = \"com.acme.qualified\")\npublic class RunCucumberTest {}\n", "", "com.acme.qualified", true},
 		{"platform properties", "package com.acme;\n@Suite\n@IncludeEngines(\"cucumber\")\npublic class RunCucumberTest {}\n", "cucumber.glue = com.acme.props\n", "com.acme.props", true},
+		{"value before key", "package com.acme;\n@Suite\n@IncludeEngines(\"cucumber\")\n@ConfigurationParameter(value = \"com.acme.reversed\", key = GLUE_PROPERTY_NAME)\npublic class RunCucumberTest {}\n", "", "com.acme.reversed", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -34,7 +35,7 @@ func TestJavaCucumberProbeUsesTheRunnerAndItsGlue(t *testing.T) {
 			if tc.properties != "" {
 				writeJavaSource(t, filepath.Join(root, "service", "src", "test", "resources", "junit-platform.properties"), tc.properties)
 			}
-			probe, reason, err := javaCucumberProbe(root, "service")
+			probe, reason, err := javaCucumberProbe(root, "service", nil)
 			require.NoError(t, err)
 			require.Empty(t, reason)
 			require.Equal(t, filepath.Join("service", "src", "test", "resources", "ddtest", "DdtestValidation.feature"), probe.files[0].path)
@@ -48,10 +49,10 @@ func TestJavaCucumberProbeUsesTheRunnerAndItsGlue(t *testing.T) {
 	}
 	root := t.TempDir()
 	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "CalcTest.java"), "public class CalcTest {}\n")
-	_, reason, err := javaCucumberProbe(root, ".")
+	_, reason, err := javaCucumberProbe(root, ".", nil)
 	require.NoError(t, err)
 	require.Contains(t, reason, "No Cucumber runner class", "without a runner the probe cannot be selected alone")
-	_, reason, err = javaCucumberProbe(t.TempDir(), ".")
+	_, reason, err = javaCucumberProbe(t.TempDir(), ".", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, reason, "a module without test sources has no runner")
 	require.NoError(t, os.RemoveAll(root))
@@ -102,9 +103,28 @@ func TestJavaCucumberStepsMatchTheGlueBackendAndPackage(t *testing.T) {
 	java8 := "<dependency><groupId>io.cucumber</groupId><artifactId>cucumber-java8</artifactId></dependency>"
 	annotations := "<dependency><groupId>io.cucumber</groupId><artifactId>cucumber-java</artifactId></dependency>"
 	pom(java8)
-	require.True(t, javaCucumberLambda(root, "service"), "only the lambda backend")
+	require.True(t, javaCucumberLambda(root, "service", backendUse{}), "only the lambda backend")
 	pom(java8 + annotations)
-	require.False(t, javaCucumberLambda(root, "service"), "annotations are available")
+	require.False(t, javaCucumberLambda(root, "service", backendUse{}), "annotations are available")
 	pom(annotations)
-	require.False(t, javaCucumberLambda(root, "service"))
+	require.False(t, javaCucumberLambda(root, "service", backendUse{}))
+}
+
+func TestJavaCucumberProbeHonorsTheCommandGlueAndInheritedBackends(t *testing.T) {
+	root := t.TempDir()
+	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "example", "runner", "RunCucumberTest.java"), "package example.runner;\n@RunWith(Cucumber.class)\npublic class RunCucumberTest {}\n")
+	// The step definitions use the lambda backend, which the module inherits
+	// from its parent: its own POM declares no Cucumber dependency.
+	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "example", "steps", "Steps.java"), "package example.steps;\npublic class Steps implements io.cucumber.java8.En {}\n")
+	writeJavaSource(t, filepath.Join(root, "pom.xml"), "<project><parent><artifactId>parent</artifactId></parent><artifactId>service</artifactId></project>")
+	probe, reason, err := javaCucumberProbe(root, ".", []string{"-B", "-Dcucumber.glue=example.steps", "test"})
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	require.Equal(t, filepath.Join("src", "test", "java", "example", "steps", "DdtestValidationSteps.java"), probe.files[1].path, "the command's glue wins over the runner's package")
+	require.Contains(t, probe.files[1].source, "implements io.cucumber.java8.En", "the glue sources show the lambda backend")
+	// Annotated glue elsewhere keeps the annotated probe.
+	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "example", "steps", "More.java"), "package example.steps;\nimport io.cucumber.java.en.When;\npublic class More {}\n")
+	probe, _, err = javaCucumberProbe(root, ".", nil)
+	require.NoError(t, err)
+	require.Contains(t, probe.files[1].source, "@io.cucumber.java.en.When")
 }

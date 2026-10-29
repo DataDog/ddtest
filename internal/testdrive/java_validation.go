@@ -511,9 +511,9 @@ var javaProbeSources = map[string]javaProbeFile{
 var javaProbeFrameworks = []string{"junit4", "junit5", "testng", "spock", "cucumber-java"}
 
 // javaProbeFor returns framework's probe in module, or why it has none.
-func javaProbeFor(checkout, module, framework string) (javaProbe, string, error) {
+func javaProbeFor(checkout, module, framework string, args []string) (javaProbe, string, error) {
 	if framework == "cucumber-java" {
-		return javaCucumberProbe(checkout, module)
+		return javaCucumberProbe(checkout, module, args)
 	}
 	source := javaProbeSources[framework]
 	return javaProbe{files: []javaProbeFile{{filepath.Join(module, source.path), source.source}}, args: javaProbeArguments}, "", nil
@@ -537,7 +537,7 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 		unavailableFeatures(result, "No module of the selected Maven command ran native tests, so the controlled probe has nowhere to run.")
 		return nil
 	}
-	probe, reason, err := javaProbeFor(checkout, module, t.framework.Name())
+	probe, reason, err := javaProbeFor(checkout, module, t.framework.Name(), args)
 	if err != nil {
 		return err
 	}
