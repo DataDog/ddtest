@@ -6,8 +6,10 @@
 package onboard
 
 import (
-	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestShellSetupRejectsOpaqueCommands(t *testing.T) {
@@ -22,6 +24,96 @@ func TestShellSetupRejectsOpaqueCommands(t *testing.T) {
 	}
 	_, err := interpolateMatrix(`npm install ${{ matrix.package }}`, map[string]any{"package": "x; npm test"})
 	require.Error(t, err)
+}
+
+func TestMatrixInterpolationResolvesStaticExpressions(t *testing.T) {
+	row := map[string]any{"node": 20, "version": "20", "shard": "1", "os": "windows-latest", "unsafe": "x; npm test"}
+	for _, tc := range []struct{ command, expected, err string }{
+		{`npm test -- --shard=${{ matrix.shard }}/${{ matrix.node }}`, "npm test -- --shard=1/20", ""},
+		{`npm run ${{ matrix.script || format('test:node{0}', matrix.version) }}`, "npm run test:node20", ""},
+		{`npm run ${{ matrix.os == 'windows-latest' && 'test:win' || 'test' }}`, "npm run test:win", ""},
+		{`npm test${{ matrix.missing }}`, "npm test", ""},
+		// Values render as the runner renders them, and format() casts scalars.
+		{`npm run ${{ format('test:node{0}', matrix.node) }}`, "npm run test:node20", ""},
+		{`npm test --testNamePattern=${{ matrix.name || 1000000 }}`, "npm test --testNamePattern=1000000", ""},
+		// The shell text after an expression keeps its trailing whitespace.
+		{"npm test --shard=${{ matrix.shard }} \\\n", "npm test --shard=1 \\\n", ""},
+		{"npm test ${{ matrix.shard }}  \n", "npm test 1  \n", ""},
+		// GitHub resolves matrix properties case-insensitively.
+		{`npm test -- --shard=${{ matrix.Shard }}`, "npm test -- --shard=1", ""},
+		{`npm run ${{ matrix.OS == 'windows-latest' && 'test:win' || 'test' }}`, "npm run test:win", ""},
+		// Unresolvable expressions stay in place for the caller to report.
+		{`npm test --token ${{ secrets.TOKEN }} --node ${{ matrix.node }}`, "npm test --token ${{ secrets.TOKEN }} --node 20", ""},
+		{`cd ${{ github.workspace }}/app && npm test`, "cd ${{ github.workspace }}/app && npm test", ""},
+		{`npm test ${{ matrix.node`, "npm test ${{ matrix.node", ""},
+		{`npm install ${{ matrix.unsafe }}`, "", "shell quoting review: ${{ matrix.unsafe }}"},
+		{`npm install ${{ matrix.unsafe || 'jest' }}`, "", "shell quoting review"},
+		{`npm test ${{ format('{{{0}}}', matrix.version) }}`, "", "shell quoting review"},
+		{`npm test ${{ fromJSON('["a"]') }}`, "", "must resolve to a scalar"},
+		{"npm test " + strings.Repeat("x", maxInterpolatedCommand), "", "exceeds"},
+	} {
+		t.Run(tc.command[:min(len(tc.command), 80)], func(t *testing.T) {
+			actual, err := interpolateMatrix(tc.command, row)
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, actual)
+		})
+	}
+	// A runtime-computed axis holds a placeholder; it never selects a branch.
+	computed := map[string]any{"suite": computedAxisValue("suite"), "node": 20}
+	for _, command := range []string{
+		`npm test ${{ matrix.suite }}`,
+		`npm run ${{ matrix.suite == 'unit' && 'test:unit' || 'test:integration' }}`,
+		`npm run ${{ format('test:{0}', matrix.suite) }}`,
+		`npm run ${{ matrix.Suite == 'unit' && 'test:unit' || 'test:integration' }}`,
+		// A quoted }} must not hide a later computed-axis read.
+		`npm run ${{ format('{{{0}}}', matrix.suite) == '{unit}' && 'test:unit' || 'test:integration' }}`,
+	} {
+		_, err := interpolateMatrix(command, computed)
+		require.ErrorContains(t, err, "computed at runtime", command)
+	}
+	actual, err := interpolateMatrix(`npm test --node=${{ matrix.node }}`, computed)
+	require.NoError(t, err)
+	require.Equal(t, "npm test --node=20", actual)
+	// Only the complete property name reads the computed axis.
+	computed["suite-name"] = "unit"
+	actual, err = interpolateMatrix(`npm run test:${{ matrix.suite-name }}`, computed)
+	require.NoError(t, err)
+	require.Equal(t, "npm run test:unit", actual)
+	_, err = interpolateMatrix(`npm test ${{ matrix.suite.name || 'unit' }}`, computed)
+	require.ErrorContains(t, err, "computed at runtime")
+	// Keys that differ only by case are ambiguous and stay unresolved.
+	ambiguous := `npm run ${{ matrix.NODE || 'test' }}`
+	actual, err = interpolateMatrix(ambiguous, map[string]any{"node": 20, "Node": 22})
+	require.NoError(t, err)
+	require.Equal(t, ambiguous, actual)
+	// Without a matrix row, commands are left for the caller to report.
+	actual, err = interpolateMatrix(`npm test ${{ matrix.node }}`, nil)
+	require.NoError(t, err)
+	require.Equal(t, `npm test ${{ matrix.node }}`, actual)
+}
+
+func TestMatrixReferencesRenderLikeTheRunner(t *testing.T) {
+	value, err := runtimeValue("${{ matrix.size }}", map[string]any{"size": float64(1000000)})
+	require.NoError(t, err)
+	require.Equal(t, "1000000", value)
+	_, err = runtimeValue("${{ matrix.os }}", map[string]any{"os": []any{"linux"}})
+	require.ErrorContains(t, err, "scalar")
+}
+
+func TestMatrixPropertiesResolveCaseInsensitively(t *testing.T) {
+	row := map[string]any{"node": 20}
+	active, err := runtimeCondition("matrix.NODE == 20", row)
+	require.NoError(t, err)
+	require.True(t, active)
+	value, err := runtimeValue("${{ matrix.Node }}", row)
+	require.NoError(t, err)
+	require.Equal(t, "20", value)
+	_, err = runtimeCondition("matrix.node == 20", map[string]any{"node": 20, "Node": 22})
+	require.ErrorContains(t, err, "ambiguous")
 }
 
 func TestMatrixDiagnosticsRetainCausesAndScope(t *testing.T) {

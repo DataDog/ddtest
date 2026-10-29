@@ -190,6 +190,49 @@ func TestComputedAxisReadByTheTestCommandStaysUnresolved(t *testing.T) {
 	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "matrix.shard")
 }
 
+func TestComputedAxisDoesNotBlockLongerPropertyNames(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  test:
+    runs-on: ${{ matrix.version-name }}-latest
+    strategy:
+      matrix:
+        version: ${{ fromJson(needs.plan.outputs.versions) }}
+        version-name: [ubuntu]
+    steps:
+      - run: npm run test:${{ matrix.version-name }}
+`)
+	writeScripts(t, root, map[string]string{"test:ubuntu": "jest ubuntu"})
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "jest ubuntu", scope.Commands[0].Command)
+}
+
+func TestComputedAxisDoesNotSelectAnExpressionBranch(t *testing.T) {
+	for _, expression := range []string{
+		`matrix.suite == 'unit' && 'test:unit' || 'test:integration'`,
+		`matrix.Suite == 'unit' && 'test:unit' || 'test:integration'`,
+		`format('{{{0}}}', matrix.suite) == '{unit}' && 'test:unit' || 'test:integration'`,
+	} {
+		t.Run(expression, func(t *testing.T) {
+			root := newJestRepository(t, `jobs:
+  test:
+    strategy:
+      matrix:
+        suite: ${{ fromJson(needs.plan.outputs.suites) }}
+    steps:
+      - run: npm run ${{ `+expression+` }}
+`)
+			writeScripts(t, root, map[string]string{"test:unit": "jest unit", "test:integration": "jest integration"})
+			scope, err := DiscoverValidationScope(root, "jest")
+			require.NoError(t, err)
+			require.Empty(t, scope.Commands)
+			require.Contains(t, strings.Join(scope.Unresolved, "\n"), "reads a matrix axis computed at runtime")
+		})
+	}
+}
+
 // Modeled on webdriverio/jasmine-boilerplate and morphatic/astrologyjs: a job
 // guard on the actor or on a paths-filter output only decides whether the job
 // runs at all.

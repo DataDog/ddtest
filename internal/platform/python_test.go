@@ -639,3 +639,12 @@ func TestPythonProbeFailureAttemptsInstall(t *testing.T) {
 	require.Len(t, executor.commands, 2)
 	require.Equal(t, []string{"-m", "venv"}, executor.commands[1].args[:2])
 }
+
+func TestPythonExecutableNamesRejectUnknownWrappers(t *testing.T) {
+	for _, command := range []string{"python", "python3", "python3.12", "/venv/bin/python3.12", `C:\venv\Scripts\python.exe`, "Python3.EXE", "python3.13t", "python3t", `C:\Python313\python3.13t.exe`, `PCbuild\amd64\python_d.exe`, "python3.13t_d.exe", "python3.13d", "python3d", "/venv/bin/python3.13d"} {
+		require.True(t, IsPythonExecutable(command), command)
+	}
+	for _, command := range []string{"python-wrapper", "python3.12-helper", "python...", "python.3", "python3.", "pypy3.11", "pythont", "python3.13tt", "python3.13t-wrapper", "python_dd.exe", "python_d-wrapper", "python_t", "pythond", "python3.13dd", "python3.13d-wrapper"} {
+		require.False(t, IsPythonExecutable(command), command)
+	}
+}

@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"regexp"
@@ -16,25 +17,74 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-var embeddedMatrix = regexp.MustCompile(`\$\{\{\s*matrix\.([a-zA-Z0-9_-]+)\s*\}\}`)
 var shellMatrixScalar = regexp.MustCompile(`^[a-zA-Z0-9_./@:+ -]*$`)
 
-// Substitute only known scalar matrix data, never evaluate workflow or shell
-// code. Reject shell metacharacters rather than changing the command's quoting.
+const maxInterpolatedCommand = 16384
+
+// Substitute expressions that resolve statically from known scalar matrix data,
+// such as ${{ matrix.script || format('test:{0}', matrix.suite) }}, never evaluating
+// shell code. Reject shell metacharacters rather than changing the command's
+// quoting. Other expressions stay in place for the caller to report.
 func interpolateMatrix(command string, row map[string]any) (string, error) {
 	if row == nil {
 		return command, nil
 	}
-	var err error
-	result := embeddedMatrix.ReplaceAllStringFunc(command, func(reference string) string {
-		value, e := runtimeValue(reference, row)
-		if e != nil || !shellMatrixScalar.MatchString(value) {
-			err = fmt.Errorf("matrix substitution requires shell quoting review: %s", reference)
-			return reference
+	if len(command) > maxInterpolatedCommand {
+		return command, fmt.Errorf("CI command exceeds %d characters", maxInterpolatedCommand)
+	}
+	// A runtime-computed axis holds a placeholder, not its value. Never select
+	// a branch by comparing against it.
+	var computed []string
+	for key, value := range row {
+		if value == computedAxisValue(key) {
+			computed = append(computed, key)
 		}
-		return value
-	})
-	return result, err
+	}
+	original := command
+	var result strings.Builder
+	for {
+		literal, expression, found := strings.Cut(command, "${{")
+		result.WriteString(literal)
+		if !found {
+			break
+		}
+		reference := workflowExpression.FindString("${{" + expression)
+		p := conditionParser{rest: expression, row: row}
+		value, err := p.expression(0)
+		closed := err == nil && p.take("}}")
+		// A quoted }} ends the reference early; also check all the parser read.
+		read := "${{" + expression[:len(expression)-len(p.rest)]
+		text := cmp.Or(reference, "${{"+expression)
+		if len(read) > len(text) {
+			text = read
+		}
+		if readsComputedAxis(text, computed, row) || readsComputedAxis(read, computed, row) {
+			return original, fmt.Errorf("CI expression reads a matrix axis computed at runtime: %s", text)
+		}
+		if !closed {
+			if reference == "" {
+				result.WriteString("${{" + expression)
+				break
+			}
+			result.WriteString(reference)
+			command = expression[len(reference)-len("${{"):]
+			continue
+		}
+		// Render values as the runner does, for example 1000000, not 1e+06.
+		rendered, scalar := conditionString(value)
+		if !scalar {
+			return original, fmt.Errorf("CI expression must resolve to a scalar: %s", reference)
+		}
+		if !shellMatrixScalar.MatchString(rendered) {
+			return original, fmt.Errorf("matrix substitution requires shell quoting review: %s", reference)
+		}
+		result.WriteString(rendered)
+		if result.Len() > maxInterpolatedCommand {
+			return original, fmt.Errorf("resolved CI command exceeds %d characters", maxInterpolatedCommand)
+		}
+		command = p.rest
+	}
+	return result.String(), nil
 }
 
 func conditionEnvironment(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) map[string]string {

@@ -190,7 +190,7 @@ const detectPythonTracer = "import importlib.metadata, pathlib, sys; pathlib.Pat
 
 func pythonInterpreter(command string, args []string) (string, []string) {
 	base := strings.ToLower(filepath.Base(strings.ReplaceAll(command, `\`, "/")))
-	if isPythonExecutable(base) {
+	if IsPythonExecutable(base) {
 		return command, nil
 	}
 	if (base == "uv" || base == "poetry") && len(args) > 0 && args[0] == "run" {
@@ -209,17 +209,14 @@ func pythonInterpreter(command string, args []string) (string, []string) {
 	return "python3", nil
 }
 
-func isPythonExecutable(base string) bool {
-	base = strings.TrimSuffix(base, ".exe")
-	if !strings.HasPrefix(base, "python") {
-		return false
-	}
-	for _, character := range strings.TrimPrefix(base, "python") {
-		if (character < '0' || character > '9') && character != '.' {
-			return false
-		}
-	}
-	return true
+var pythonExecutableName = regexp.MustCompile(`^python(?:[0-9]+(?:\.[0-9]+)*[dt]?)?(?:_d)?(?:\.exe)?$`)
+
+// IsPythonExecutable recognizes interpreters, including free-threaded builds
+// such as python3.13t and debug builds such as python3.13d and python_d.exe,
+// without accepting custom wrappers.
+func IsPythonExecutable(command string) bool {
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(command, `\`, "/")))
+	return pythonExecutableName.MatchString(base)
 }
 
 func (p *Python) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {

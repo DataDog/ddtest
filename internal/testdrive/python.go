@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 // Selection only affects testdrive. Production pytest discovery and RunTests
@@ -95,7 +97,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 // or arbitrary wrappers. Keep uv's environment selectors on every probe.
 func pythonProbeCommand(command string, args []string) (string, []string, error) {
 	base := strings.TrimSuffix(filepath.Base(command), ".exe")
-	if strings.HasPrefix(base, "python") {
+	if platform.IsPythonExecutable(command) {
 		if index := slices.Index(args, "-m"); index >= 0 {
 			return command, slices.Clone(args[:index]), nil
 		}
@@ -115,7 +117,7 @@ func pythonProbeCommand(command string, args []string) (string, []string, error)
 				prefix = append(prefix, arg)
 				continue
 			}
-			if strings.HasPrefix(filepath.Base(arg), "python") || strings.TrimSuffix(filepath.Base(arg), ".exe") == "pytest" {
+			if platform.IsPythonExecutable(arg) || strings.TrimSuffix(filepath.Base(arg), ".exe") == "pytest" {
 				interpreter, interpreterArgs, err := pythonProbeCommand(arg, args[i+1:])
 				if strings.TrimSuffix(arg, ".exe") == "pytest" {
 					interpreter = "python" + filepath.Ext(arg)
@@ -130,9 +132,9 @@ func pythonProbeCommand(command string, args []string) (string, []string, error)
 			}
 			option, _, hasValue := strings.Cut(arg, "=")
 			switch option {
-			case "--no-sync", "--locked", "--frozen", "--offline", "--active", "--no-python-downloads":
+			case "--no-sync", "--locked", "--frozen", "--offline", "--active", "--no-python-downloads", "--no-default-groups", "--all-groups", "--no-dev", "--only-dev", "--all-extras":
 				prefix = append(prefix, arg)
-			case "--project", "--directory", "--package", "--python", "-p", "--group", "--extra":
+			case "--project", "--directory", "--package", "--python", "-p", "--group", "--no-group", "--only-group", "--extra", "--no-extra":
 				prefix = append(prefix, arg)
 				if !hasValue && i+1 < len(args) {
 					i++

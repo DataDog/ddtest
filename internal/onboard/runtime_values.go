@@ -165,19 +165,44 @@ func unresolvedCIError(value string) error {
 	return fmt.Errorf("its CI value %s reads values only CI knows (predefined CI variables or command output); ddtest cannot resolve it locally", written)
 }
 
+// matrixProperty looks up key the way GitHub resolves context properties,
+// case-insensitively. Keys that differ only by case are ambiguous.
+func matrixProperty(row map[string]any, key string) (any, bool, error) {
+	var match string
+	for name := range row {
+		if strings.EqualFold(name, key) {
+			if match != "" {
+				return nil, false, fmt.Errorf("matrix property %s is ambiguous: keys differ only by case", key)
+			}
+			match = name
+		}
+	}
+	if match == "" {
+		return nil, false, nil
+	}
+	return row[match], true, nil
+}
+
 func runtimeValue(value string, row map[string]any) (string, error) {
 	if err := unresolvedCIError(value); err != nil {
 		return "", err
 	}
 	if match := matrixReference.FindStringSubmatch(strings.TrimSpace(value)); match != nil {
-		resolved, ok := row[match[1]]
+		resolved, ok, err := matrixProperty(row, match[1])
+		if err != nil {
+			return "", err
+		}
 		if !ok {
 			if row != nil {
 				return "", nil
 			}
 			return "", fmt.Errorf("unknown matrix reference %s", value)
 		}
-		return fmt.Sprint(resolved), nil
+		rendered, scalar := conditionString(resolved)
+		if !scalar {
+			return "", fmt.Errorf("matrix reference %s does not resolve to a scalar", value)
+		}
+		return rendered, nil
 	}
 	if strings.Contains(value, "${{") {
 		return "", fmt.Errorf("cannot statically resolve %s", value)
@@ -237,7 +262,7 @@ func jobMatrix(job runtimeJob) (rows []map[string]any, computed []string, err er
 		return nil, nil, err
 	}
 	for _, axis := range computed {
-		if regexp.MustCompile(`\bmatrix\.` + regexp.QuoteMeta(axis) + `\b`).Match(encoded) {
+		if matrixPropertyReference(axis).Match(encoded) {
 			return nil, nil, err
 		}
 	}
@@ -256,6 +281,13 @@ func jobMatrix(job runtimeJob) (rows []map[string]any, computed []string, err er
 }
 
 const computedAxisSentinel = "\x00computed"
+
+// matrixPropertyReference matches a read of the matrix property axis by its
+// complete name, case-insensitively: matrix.version does not read
+// matrix.version-name, but matrix.version.name does read version.
+func matrixPropertyReference(axis string) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)\bmatrix\.` + regexp.QuoteMeta(axis) + `(?:[^a-zA-Z0-9_-]|$)`)
+}
 
 // The value stays a workflow expression, so any command that reads it remains
 // visibly unresolved instead of running with a guessed value.
