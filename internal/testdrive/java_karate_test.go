@@ -43,6 +43,8 @@ func TestJavaKarateProbeSelectsTheFeatureThroughTheRunner(t *testing.T) {
 func TestJavaKarateProbeNeedsARunner(t *testing.T) {
 	root := t.TempDir()
 	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "example", "CalcTest.java"), "package example;\npublic class CalcTest {}\n")
+	// A helper that calls the Runner outside any test cannot be selected.
+	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "example", "AHelper.java"), "package example;\nclass AHelper {\n    static Results all() { return Runner.path(\"classpath:example\").parallel(4); }\n}\n")
 	// A helper that only imports Karate's types runs no feature.
 	writeJavaSource(t, filepath.Join(root, "src", "test", "java", "example", "Helpers.java"), "package example;\nimport com.intuit.karate.Runner;\nimport com.intuit.karate.junit5.Karate;\npublic class Helpers {}\n")
 	_, reason, err := javaKarateProbe(root, ".")

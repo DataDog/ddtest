@@ -41,10 +41,10 @@ const javaKarateFeature = `Feature: ` + javaProbeClass + `
 // javaKarateProbeFeature is where the probe feature goes, relative to a module.
 var javaKarateProbeFeature = filepath.Join("src", "test", "resources", "ddtest", "DdtestValidation.feature")
 
-// javaKarateRunner is a test class that runs features: a JUnit 5 @Karate.Test,
-// a JUnit 4 runner, or Karate's parallel Runner. Importing Karate's types does
-// not make a class one.
-var javaKarateRunner = regexp.MustCompile(`@(?:[\w.]+\.)?Karate\.Test\b|@(?:[\w.]+\.)?RunWith\(\s*(?:[\w.]+\.)?Karate\.class\s*\)|` + javaKarateParallel.String())
+// javaKarateRunner is a test class that runs features: a JUnit 5 @Karate.Test
+// or a JUnit 4 runner. A class that calls Karate's parallel Runner is one when
+// a test calls it. Importing Karate's types does not make a class one.
+var javaKarateRunner = regexp.MustCompile(`@(?:[\w.]+\.)?Karate\.Test\b|@(?:[\w.]+\.)?RunWith\(\s*(?:[\w.]+\.)?Karate\.class\s*\)`)
 
 // javaKarateParallel is a call of Karate's parallel Runner.
 var javaKarateParallel = regexp.MustCompile(`\bRunner\.(?:path|builder)\(`)
@@ -98,7 +98,9 @@ func javaKarateRunnerClass(module string) (runner, method string, err error) {
 			return err
 		}
 		text := string(data)
-		if !javaKarateRunner.MatchString(text) {
+		method = javaKarateRunnerMethod(text)
+		// A helper that calls the Runner outside any test cannot be selected.
+		if !javaKarateRunner.MatchString(text) && method == "" {
 			return nil
 		}
 		pkg := ""
@@ -106,7 +108,6 @@ func javaKarateRunnerClass(module string) (runner, method string, err error) {
 			pkg = match[1]
 		}
 		runner = strings.TrimPrefix(pkg+"."+strings.TrimSuffix(entry.Name(), ".java"), ".")
-		method = javaKarateRunnerMethod(text)
 		return nil
 	})
 	if errors.Is(err, fs.ErrNotExist) {
