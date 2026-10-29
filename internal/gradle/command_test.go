@@ -32,7 +32,8 @@ func TestTestTasks(t *testing.T) {
 
 func TestSkipsTests(t *testing.T) {
 	require.True(t, SkipsTests(strings.Fields("build -x test")))
-	require.True(t, SkipsTests(strings.Fields("check --exclude-task :app:test")))
+	require.False(t, SkipsTests(strings.Fields("check --exclude-task :app:test")), "a qualified path excludes one project's test; others still run")
+	require.True(t, SkipsTests(strings.Fields("check --exclude-task test")))
 	require.True(t, SkipsTests(strings.Fields("build -xtest")))
 	require.False(t, SkipsTests(strings.Fields("build integrationTest -x test")), "another test task still runs")
 	require.False(t, SkipsTests(strings.Fields("build -x javadoc")))
@@ -48,7 +49,7 @@ func TestProjectDirectory(t *testing.T) {
 	directory, err = ProjectDirectory(strings.Fields("test"))
 	require.NoError(t, err)
 	require.Equal(t, ".", directory)
-	for _, args := range []string{"-b other.gradle test", "--settings-file ci.settings.gradle test", "-I ci.gradle test", "--include-build ../lib test"} {
+	for _, args := range []string{"-b other.gradle test", "--settings-file ci.settings.gradle test", "-I ci.gradle test", "--include-build ../lib test", "-Ici/init.gradle test", "-bci.gradle test", "-cci.settings.gradle test"} {
 		_, err := ProjectDirectory(strings.Fields(args))
 		require.Error(t, err, args)
 	}
@@ -65,4 +66,14 @@ func TestPublishes(t *testing.T) {
 	require.True(t, Publishes(strings.Fields(":lib:publishToMavenLocal")))
 	require.True(t, Publishes(strings.Fields("uploadArchives")))
 	require.False(t, Publishes(strings.Fields("build check")))
+}
+
+func TestHelpTaskSelectorIsNotATask(t *testing.T) {
+	require.Equal(t, []string{"help"}, Tasks(strings.Fields("help --task test")))
+	require.False(t, IsTestCommand(strings.Fields("./gradlew help --task test")))
+}
+
+func TestAttachedShortOptionValuesRoundTrip(t *testing.T) {
+	validated, _ := TestInvocation(strings.Fields("-xjavadoc -Dk=v -Pci test"))
+	require.Equal(t, []string{"-x", "javadoc", "-Dk=v", "-P", "ci", "test"}, validated, "an attached value is kept, written as Gradle reads it")
 }

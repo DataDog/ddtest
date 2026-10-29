@@ -21,12 +21,13 @@ func Command(words []string) bool {
 }
 
 // optionsWithValue are the Gradle CLI options whose next word is their value,
-// never a task, as documented by gradle --help, plus the test task's --tests.
+// never a task, as documented by gradle --help, plus the test task's --tests
+// and help's --task.
 var optionsWithValue = []string{
 	"-b", "--build-file", "-c", "--settings-file", "-D", "--system-prop", "-F", "--dependency-verification",
 	"-g", "--gradle-user-home", "-I", "--init-script", "-M", "--write-verification-metadata", "-P", "--project-prop",
 	"-p", "--project-dir", "-x", "--exclude-task", "--console", "--include-build", "--max-workers", "--priority",
-	"--project-cache-dir", "--warning-mode", "--tests",
+	"--project-cache-dir", "--warning-mode", "--tests", "--task",
 }
 
 // word is one argument of a Gradle command: a task, or an option with its value.
@@ -50,8 +51,9 @@ func parse(args []string) []word {
 			words = append(words, item)
 		case strings.HasPrefix(arg, "-"):
 			option, value, found := strings.Cut(arg, "=")
-			// -Dkey=value, -Pkey=value and -xtest keep their value attached.
-			if !found && len(arg) > 2 && !strings.HasPrefix(arg, "--") && slices.Contains([]string{"-D", "-P", "-x", "-p"}, arg[:2]) {
+			// A short option may keep its value attached, as in -Dkey=value,
+			// -xtest or -Ici/init.gradle.
+			if !found && len(arg) > 2 && !strings.HasPrefix(arg, "--") && slices.Contains(optionsWithValue, arg[:2]) {
 				option, value, found = arg[:2], arg[2:], true
 			}
 			words = append(words, word{option: option, value: value, hasValue: found})
@@ -110,9 +112,11 @@ func IsTestCommand(words []string) bool {
 }
 
 // SkipsTests reports whether a command excludes test while requesting only
-// tasks that run it through their dependencies, as in build -x test.
+// tasks that run it through their dependencies, as in build -x test. Only the
+// unqualified selector test excludes every project's test task; :app:test
+// excludes one project's.
 func SkipsTests(args []string) bool {
-	if !slices.ContainsFunc(excluded(args), func(task string) bool { return taskName(task) == "test" }) {
+	if !slices.Contains(excluded(args), "test") {
 		return false
 	}
 	return !slices.ContainsFunc(Tasks(args), func(task string) bool {
@@ -178,7 +182,7 @@ func render(item word) []string {
 		return []string{item.task}
 	case slices.Contains(optionsWithValue, item.option) && item.hasValue && !strings.Contains(item.value, "="):
 		return []string{item.option, item.value}
-	case item.hasValue && (item.option == "-D" || item.option == "-P" || item.option == "-x" || item.option == "-p"):
+	case item.hasValue && len(item.option) == 2 && slices.Contains(optionsWithValue, item.option):
 		return []string{item.option + item.value}
 	case item.hasValue:
 		return []string{item.option + "=" + item.value}

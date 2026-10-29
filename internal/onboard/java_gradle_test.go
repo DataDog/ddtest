@@ -55,6 +55,8 @@ func TestJavaGradleStepsOutsideOrNeedingReview(t *testing.T) {
 		"./gradlew -b ci.gradle test":      "changes the build Gradle runs",
 		"./gradlew -I ci/init.gradle test": "changes the build Gradle runs",
 		"./gradlew -p ../other test":       "leaves the repository",
+		"./gradlew -p /tmp/other test":     "absolute project directory",
+		"mvn test && ./gradlew assemble":   "runs both Maven and Gradle",
 	} {
 		resolution := javaStep(t, root, run)
 		require.False(t, resolution.Matched, run)
@@ -69,6 +71,10 @@ func TestJavaGradleStepsOutsideOrNeedingReview(t *testing.T) {
 	defaults := javaWorkflowFixture(t, "", files)
 	require.Contains(t, javaStep(t, defaults, "./gradlew").Reason, "default tasks could not be read statically")
 	require.True(t, javaStep(t, root, "./gradlew").Review, "without default tasks, Gradle runs help")
+	files = gradleFixture()
+	files["app/build.gradle.kts"] = "defaultTasks(\"test\")\n"
+	selected := javaWorkflowFixture(t, "", files)
+	require.Contains(t, javaStep(t, selected, "./gradlew -p app").Reason, "default tasks could not be read statically", "the build -p selects declares the default tasks")
 }
 
 func TestJavaCIConfigurationChecksGradleInstrumentation(t *testing.T) {

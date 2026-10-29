@@ -24,10 +24,11 @@ import (
 // maxProjects bounds the projects one settings file may include.
 const maxProjects = 256
 
-// SettingsFiles and BuildFiles are the Kotlin and Groovy names Gradle reads.
+// SettingsFiles and BuildFiles are the Groovy and Kotlin names Gradle reads,
+// in its order of precedence when both exist.
 var (
-	SettingsFiles = []string{"settings.gradle.kts", "settings.gradle"}
-	BuildFiles    = []string{"build.gradle.kts", "build.gradle"}
+	SettingsFiles = []string{"settings.gradle", "settings.gradle.kts"}
+	BuildFiles    = []string{"build.gradle", "build.gradle.kts"}
 )
 
 // Project is one project of a Gradle build, read as written: plugins,
@@ -150,7 +151,9 @@ var (
 	// Anywhere, so that an include inside a block or lambda is not missed;
 	// includeBuild and other names that start with include are not matched.
 	includeStatement = regexp.MustCompile(`\binclude(?:[ \t]*(\()|[ \t]+)`)
-	quoted           = regexp.MustCompile(`^\s*(?:"([^"$]*)"|'([^']*)')\s*`)
+	// A quoted project path; only horizontal space after it, so that the end
+	// of an unparenthesized statement stays visible.
+	quoted = regexp.MustCompile(`^\s*(?:"([^"$]*)"|'([^']*)')[ \t]*`)
 	// project(":a").projectDir = file("dir"), in either quote style.
 	projectDirectory = regexp.MustCompile(`project\(\s*["']([^"']+)["']\s*\)\.projectDir\s*=\s*file\(\s*["']([^"'$]+)["']\s*\)`)
 	otherInclusion   = regexp.MustCompile(`\b(?:includeFlat|projectDir\s*=)`)
@@ -191,7 +194,10 @@ func settingsProjects(settings string) ([]string, map[string]string, error) {
 				}
 				continue
 			}
-			if parenthesized && !strings.HasPrefix(rest, ")") {
+			// The argument list must end here: anything else, such as
+			// ':module-' + name, computes the path.
+			if parenthesized && !strings.HasPrefix(strings.TrimLeft(rest, " \t\r\n"), ")") ||
+				!parenthesized && rest != "" && !strings.ContainsAny(rest[:1], "\r\n;}") {
 				return nil, nil, fmt.Errorf("include lists projects that build logic computes")
 			}
 			break

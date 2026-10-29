@@ -68,6 +68,8 @@ func TestProjectsRejectsProjectListsBuildLogicComputes(t *testing.T) {
 		`include ":${name}"`,
 		`project(':a').projectDir = new File(settingsDir, 'a')` + "\ninclude ':a'\n",
 		`includeFlat 'sibling'`,
+		"include ':module-' + System.getenv('MODULE')\n",
+		`include(":a" + suffix)`,
 	} {
 		root := t.TempDir()
 		writeFile(t, root, "settings.gradle", settings)
@@ -122,4 +124,17 @@ func TestBuildFindsTheNearestSettings(t *testing.T) {
 
 func TestStripCommentsKeepsStrings(t *testing.T) {
 	require.Equal(t, "include \"http://x//y\" \nb\n", stripComments("include \"http://x//y\" // note\nb/* c\n*/"))
+}
+
+func TestProjectsPrefersGroovyFilesLikeGradle(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "settings.gradle", "include 'app'\n")
+	writeFile(t, root, "settings.gradle.kts", "file(\"x\").listFiles().forEach { include(it.name) }\n")
+	writeFile(t, root, "app/build.gradle", "dependencies { testImplementation 'org.testng:testng:7.10.2' }\n")
+	writeFile(t, root, "app/build.gradle.kts", "dependencies { testImplementation(\"org.junit.jupiter:junit-jupiter:5.11.4\") }\n")
+	projects, err := Projects(root, ".")
+	require.NoError(t, err, "the ignored Kotlin settings are not read")
+	require.Len(t, projects, 2)
+	require.Equal(t, filepath.Join("app", "build.gradle"), projects[1].BuildFile)
+	require.Equal(t, []string{"testng"}, projects[1].Frameworks())
 }

@@ -59,16 +59,27 @@ func javaStepBuildTool(resolution commandResolution, run string) string {
 // validates framework: its options and test tasks. One Gradle build runs every
 // framework its projects declare; the projects of other frameworks are reported.
 func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, directory string, parts [][]string, framework string) commandResolution {
+	// One tool's tests are not accounted for by the other's resolution.
+	if slices.ContainsFunc(parts, mavenCommand) {
+		return unresolvedCommand("A step that runs both Maven and Gradle requires explicit review; ddtest cannot tell which tests it runs: " + step.Run)
+	}
 	builds := slices.DeleteFunc(slices.Clone(parts), func(words []string) bool { return !gradle.Command(words) })
 	tests := slices.DeleteFunc(slices.Clone(builds), func(words []string) bool { return !gradle.IsTestCommand(words) })
 	onlyBuilds := !slices.ContainsFunc(parts, func(words []string) bool {
-		return !gradle.Command(words) && !mavenCommand(words) && !slices.Contains(javaShellBuiltins, words[0])
+		return !gradle.Command(words) && !slices.Contains(javaShellBuiltins, words[0])
 	})
 	switch {
 	case len(tests) == 0 && onlyBuilds:
-		// Without tasks, Gradle runs the build's default tasks.
+		// Without tasks, Gradle runs the default tasks of the build it selects.
 		for _, words := range builds {
-			if len(gradle.Tasks(words[1:])) == 0 && gradleDefaultTasks(root, directory) {
+			if len(gradle.Tasks(words[1:])) > 0 {
+				continue
+			}
+			invoked, reason := gradleInvokedDirectory(directory, words[1:])
+			if reason != "" {
+				return unresolvedCommand(reason)
+			}
+			if gradleDefaultTasks(root, invoked) {
 				return unresolvedCommand("Gradle default tasks could not be read statically, so ddtest cannot tell whether this step runs tests: " + step.Run)
 			}
 		}
@@ -82,13 +93,9 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		return commandResolution{Review: true, Reason: "Gradle step excludes the test task, so it is outside " + framework + " test scope: " + step.Run}
 	}
 	words := tests[0]
-	project, err := gradle.ProjectDirectory(words[1:])
-	if err != nil {
-		return unresolvedCommand("Gradle build selection needs review: " + err.Error())
-	}
-	invoked := filepath.Join(directory, project)
-	if !filepath.IsLocal(invoked) && invoked != "." {
-		return unresolvedCommand("Gradle build selection needs review: " + project + " leaves the repository")
+	invoked, reason := gradleInvokedDirectory(directory, words[1:])
+	if reason != "" {
+		return unresolvedCommand(reason)
 	}
 	build, err := gradle.Build(root, invoked)
 	if err != nil {
@@ -108,6 +115,23 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		notes = append(notes, "This Gradle build also has project(s) "+strings.Join(others, ", ")+", which declare other test frameworks and no "+framework+" dependency. Whether this step runs their tests depends on the tasks it selects. Instrumenting this step reports any selected tests to Datadog too; local validation covers only the "+framework+" projects. Report this to the user.")
 	}
 	return commandResolution{Matched: true, ReviewReason: strings.Join(notes, " "), Tests: []TestCommand{{Directory: directory, Command: selected, StepScopeNotes: notes}}}
+}
+
+// gradleInvokedDirectory is the repository directory whose build a Gradle
+// command run in directory selects, or why it needs review.
+func gradleInvokedDirectory(directory string, args []string) (string, string) {
+	project, err := gradle.ProjectDirectory(args)
+	if err != nil {
+		return "", "Gradle build selection needs review: " + err.Error()
+	}
+	if filepath.IsAbs(project) {
+		return "", "Gradle build selection needs review: absolute project directory " + project
+	}
+	invoked := filepath.Join(directory, project)
+	if !filepath.IsLocal(invoked) && invoked != "." {
+		return "", "Gradle build selection needs review: " + project + " leaves the repository"
+	}
+	return invoked, ""
 }
 
 // gradleDefaultTasks reports a build file in directory that declares default
