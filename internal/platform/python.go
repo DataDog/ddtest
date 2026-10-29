@@ -209,11 +209,11 @@ func pythonInterpreter(command string, args []string) (string, []string) {
 	return "python3", nil
 }
 
-var pythonExecutableName = regexp.MustCompile(`^python(?:[0-9]+(?:\.[0-9]+)*t?)?(?:_d)?(?:\.exe)?$`)
+var pythonExecutableName = regexp.MustCompile(`^python(?:[0-9]+(?:\.[0-9]+)*[dt]?)?(?:_d)?(?:\.exe)?$`)
 
 // IsPythonExecutable recognizes interpreters, including free-threaded builds
-// such as python3.13t and Windows debug builds such as python_d.exe, without
-// accepting custom wrappers.
+// such as python3.13t and debug builds such as python3.13d and python_d.exe,
+// without accepting custom wrappers.
 func IsPythonExecutable(command string) bool {
 	base := strings.ToLower(filepath.Base(strings.ReplaceAll(command, `\`, "/")))
 	return pythonExecutableName.MatchString(base)
