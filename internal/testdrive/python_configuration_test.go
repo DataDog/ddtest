@@ -37,6 +37,12 @@ func TestPytestArgumentFilesExecuteOnlyInsideCopy(t *testing.T) {
 	testPytestPathsExecuteOnlyInsideCopy(t, "argument files")
 }
 
+func TestPytestObserverWithEnvironmentIgnored(t *testing.T) {
+	for _, flag := range []string{"-I", "-E", "-bE"} {
+		t.Run(flag, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, flag) })
+	}
+}
+
 func TestPytestUVDirectoryExecutesOnlyInsideCopy(t *testing.T) {
 	for _, option := range []string{"--directory", "--project"} {
 		t.Run(option, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, option) })
@@ -85,6 +91,11 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 		args = append([]string{"run", "--no-sync", mode, root, "python"}, args...)
 		requireWriteFile(t, "pyproject.toml", "[project]\nname='ddtest-uv-review'\nversion='0.1.0'\nrequires-python='>=3.9'\n")
 		environment["UV_PROJECT_ENVIRONMENT"] = filepath.Dir(filepath.Dir(python))
+	} else if mode != "direct" {
+		args = append([]string{mode}, args...)
+		contents, err := os.ReadFile(file)
+		require.NoError(t, err)
+		requireWriteFile(t, file, string(contents)+"    import sys\n    assert sys.flags.ignore_environment\n")
 	}
 	environment["PYTEST_ADDOPTS"] = addopts
 	drive := &Testdrive{repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()), command: command, args: args, executor: &ext.DefaultCommandExecutor{}, startIntake: func(dir string, scenario intake.Scenario) (localIntake, error) {

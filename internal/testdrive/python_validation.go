@@ -177,6 +177,9 @@ func (t *Testdrive) verifyPytestTracer(ctx context.Context, path, expected strin
 	}
 	var result struct{ Version string }
 	script := `import ddtrace, json, pathlib, sys; pathlib.Path(sys.argv[1]).write_text(json.dumps({"version": ddtrace.__version__}))`
+	if path != "" {
+		script = fmt.Sprintf("import sys; sys.path.insert(0, %q)\n", path) + script
+	}
 	env := maps.Clone(t.configurationEnvironment)
 	if env == nil {
 		env = map[string]string{}
@@ -312,6 +315,7 @@ func (t *Testdrive) runPytest(ctx context.Context, output io.Writer, session *wo
 	words = append(slices.Clone(prefix), stripPytestArguments(pytestArgs)...)
 	args = words[1:]
 	args = framework.WithFrameworkOptions(t.command, args, "pytest", flag)
+	args = pytestObserverArguments(t.command, args, directory, preload)
 	run.Command = shellquote.Join(append([]string{t.command}, args...)...)
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
 	data, commandErr := t.executor.CombinedOutput(ctx, t.command, args, env)

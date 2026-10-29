@@ -88,8 +88,16 @@ func TestPytestTracerVerificationChecksImportedVersion(t *testing.T) {
 	}
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "ddtrace.py"), "__version__ = '0.0.0'\n")
-	drive := &Testdrive{language: "python", command: python, args: []string{"-m", "pytest"}}
-	require.ErrorContains(t, drive.verifyPytestTracer(t.Context(), root, "4.16.0"), "test environment loads ddtrace@0.0.0")
+	for _, flag := range []string{"", "-I", "-E"} {
+		t.Run(flag, func(t *testing.T) {
+			args := []string{"-m", "pytest"}
+			if flag != "" {
+				args = append([]string{flag}, args...)
+			}
+			drive := &Testdrive{language: "python", command: python, args: args}
+			require.ErrorContains(t, drive.verifyPytestTracer(t.Context(), root, "4.16.0"), "test environment loads ddtrace@0.0.0")
+		})
+	}
 }
 
 func TestPytestObserverHandlesDisabledAutoload(t *testing.T) {
