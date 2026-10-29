@@ -61,8 +61,9 @@ Bazel has no `-toolexec`, but rules_go always runs the compiler from the SDK:
 
 - **Packages.** `goTool("compile")` resolves
   `$SDK/pkg/tool/<goos_goarch>/compile` (`go/tools/builders/env.go`).
-  `compileGo` passes `-p <importpath> -importcfg <file> -pack` and the sources
-  after `--` (`go/tools/builders/compilepkg.go`).
+  `compileGo` passes `-p <importmap> -importcfg <file> -pack` and the sources
+  after `--` (`go/tools/builders/compilepkg.go`). The `importmap` is the
+  import path unless the library sets another one.
 - **Standard library.** The stdlib action runs
   `go install -toolexec <builder> filterbuildid` (`go/tools/builders/stdlib.go`),
   which reaches the same compiler.
@@ -70,7 +71,10 @@ Bazel has no `-toolexec`, but rules_go always runs the compiler from the SDK:
   (`go/private/BUILD.sdk.bazel`).
 
 The instrumented SDK is therefore the official SDK with ddtest as `compile`
-and the real compiler next to it. ddtest decides from `-p` alone:
+and the real compiler next to it. ddtest decides from `-p`. Gazelle gives
+vendored packages an `importmap` such as `<prefix>/vendor/<import path>`, so
+the wrapper uses the part after the last `/vendor/`. A library with any other
+`importmap` is compiled unmodified.
 
 | Package | Edit |
 | --- | --- |
@@ -86,8 +90,11 @@ SDK guards already work from the arguments alone (`prepareSDKCICompile` in
 `internal/runner/sdk_ci.go`). Library edits only add `//go:linkname`
 declarations and standard-library imports. When an added standard import is
 missing from the package's import configuration, the wrapper adds it next to
-the existing standard entries; any other added import is an error. Support
-follows `ddtest instrument`: the same window in
+the existing standard entries; any other added import is an error.
+
+A compile action does not know module versions, so every version gate becomes
+a check of the APIs that its edit uses, in the package's own files (see open
+problem 3). Otherwise support follows `ddtest instrument`: the same window in
 `scripts/supported_versions.json`, the same nightly check, and the same
 warning when a library is not supported.
 
@@ -105,7 +112,9 @@ rules_test_optimization's module extension:
    empty value.
 
 rules_test_optimization's `MODULE.bazel` registers those toolchains. The
-customer's `MODULE.bazel` has no SDK lines. rules_go's own toolchain
+customer's `MODULE.bazel` has no SDK lines. WORKSPACE mode, which
+rules_test_optimization supports for its first major version, gets a
+repository macro that does the same and registers the toolchains. rules_go's own toolchain
 declarations for a wrapped SDK also match the empty `sdk_name`
 (`match_all_sdks` in `go/private/go_toolchain.bzl`), so they would make the
 instrumented SDK the default for every target; that is why registration goes
@@ -215,19 +224,29 @@ cache entries.
    the libraries define the hook variables, Mini sets them at initialization,
    and unset hooks keep the original behavior. `ParallelStopHook` in
    `internal/instrument/hooks.go` already uses a variable instead of a
-   bodyless function.
+   bodyless function. The CI guards in `internal/instrument/sdk_ci.go` turn
+   CI Visibility off unconditionally, so they must also apply only when Mini
+   is linked, which they have to learn before dd-trace-go reads its
+   configuration.
 2. **Telemetry file names.** In payload-file mode, dd-trace-go v2.11.2 also
    writes its own telemetry to `payloads/telemetry`, with the same file name
    pattern as Mini. In spike 2 both wrote
    `telemetry-00000000000000000001-25.json`, and one replaced the other. A
    new CI guard must stop the application's dd-trace-go from writing payload
    files when Mini is linked.
-3. **The Testify version.** ddto requires Testify v1.4.0 or later. A compile
-   action does not know module versions, and the code cannot tell v1.3.0 from
-   v1.4.0: both run each method with `r.Run(test.Name, test.F)`, and only the
-   placement of `SetupSuite` differs. A version table from `go.mod` would be
-   an input of every compile action, so any change to `go.mod` would rebuild
-   everything.
+3. **Version gates.** A compile action does not know module versions, and a
+   version table from `go.mod` would be an input of every compile action, so
+   any change to `go.mod` would rebuild everything. Each gate therefore checks
+   the code instead:
+   - **goleak:** v1.2.1 has the same `Find` as v1.3.0 but no
+     `IgnoreAnyFunction`, which the edit calls. Without a check, the build
+     fails. The gate checks that the package declares `IgnoreAnyFunction`, as
+     spike 2 did.
+   - **Testify:** ddto requires v1.4.0 or later, but the code cannot tell
+     v1.3.0 from v1.4.0. Both run each method with `r.Run(test.Name, test.F)`,
+     and only the placement of `SetupSuite` differs.
+   - **The Go toolchain:** the instrumented SDK has a known version, and the
+     exit hook keeps its own shape check.
 4. **The test's end line.** Mini cannot open a relative `test.source.file`
    from the test's working directory, so `test.source.end` is missing. Mini
    should resolve it under the runfiles; `stage_sources` puts the files
@@ -254,6 +273,8 @@ cache entries.
 ### Phase 1: prerequisites in ddto
 
 - Inert hooks for `testing` and for the Testify, goleak and span copy hooks.
+  The CI guards apply only when Mini is linked. A fixture without Mini that
+  enables CI Visibility in dd-trace-go checks that it still works.
 - The CI guard for dd-trace-go's payload files, added to the validator and
   the compatibility window.
 - `//line` directives with stable names on every generated and hook file,
@@ -269,6 +290,10 @@ Each change works outside Bazel too and gets unit tests checked by mutation.
   keeps `argv[0]` as `compile` for the real compiler (cmd/go parses
   `compile -V=full`), and accepts sources after `--` or at the end.
 - Import configuration additions for standard packages.
+- Version gates replaced by checks of the APIs each edit uses, with
+  goleak v1.2.1 and Testify v1.3.0 fixtures.
+- Vendored packages identified after the last `/vendor/` in `-p`, with a
+  fixture.
 - `ddtest instrument bazel <dir>` as described above, rejecting Bazel
   commands.
 - A Bazel job in ddtest's CI, on Linux and macOS, over rules_go 0.60.0 and
@@ -290,6 +315,9 @@ with the full compatibility window.
 
 - The module extension and toolchains described above, for the platforms
   chosen for the first release.
+- The same repository rule and toolchain registration for WORKSPACE mode
+  (`tools/go/workspace_repositories.bzl`), with a WORKSPACE test, before the
+  vendored trees that those helpers fetch are removed.
 - `dd_topt_go_test` on top of the new test rule.
 - Removal of `third_party/rgo`, `third_party/rules_go_orchestrion`, the
   Orchestrion modules, the pin files and `orchestrion_mode`.
