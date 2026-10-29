@@ -596,8 +596,10 @@ func javaProbeFor(checkout, module, framework string, args []string) (javaProbe,
 			probe.files[0].source = strings.Replace(source.source, "\nclass ", "\n@org.junit.runner.RunWith(classOf["+runner+"])\nclass ", 1)
 		}
 		// The scalatest-maven-plugin selects suites by its own property;
-		// suites that Surefire runs through JUnit match -Dtest.
-		probe.args = append(slices.Clone(javaProbeArguments), "-Dsuites="+javaProbeClass)
+		// suites that Surefire runs through JUnit match -Dtest. Unlike
+		// suites, wildcardSuites lets the plugin's other modules, which lack
+		// the probe, run nothing.
+		probe.args = append(slices.Clone(javaProbeArguments), "-DwildcardSuites="+javaProbeClass)
 	}
 	return probe, "", nil
 }
@@ -606,8 +608,13 @@ func javaProbeFor(checkout, module, framework string, args []string) (javaProbe,
 // before ScalaTest 3.1.
 var javaScalaTestJUnitRunners = []string{"org.scalatestplus.junit.JUnitRunner", "org.scalatest.junit.JUnitRunner"}
 
+// javaScalaTestRunWith is a @RunWith of a class named JUnitRunner, however
+// imported.
+var javaScalaTestRunWith = regexp.MustCompile(`@(?:[\w.]+\.)?RunWith\(\s*classOf\[\s*(?:[\w.]+\.)?JUnitRunner\s*\]\s*\)`)
+
 // javaScalaTestJUnitRunner is the ScalaTest JUnit runner a module's Scala
-// tests declare with @RunWith, if any.
+// tests declare with @RunWith, if any: the one whose package the source names,
+// as a qualified name or in an import.
 func javaScalaTestJUnitRunner(module string) (string, error) {
 	runner := ""
 	err := filepath.WalkDir(filepath.Join(module, "src", "test", "scala"), func(path string, entry fs.DirEntry, err error) error {
@@ -622,11 +629,11 @@ func javaScalaTestJUnitRunner(module string) (string, error) {
 			return err
 		}
 		text := string(data)
-		if !strings.Contains(text, "RunWith") {
+		if !javaScalaTestRunWith.MatchString(text) {
 			return nil
 		}
 		for _, candidate := range javaScalaTestJUnitRunners {
-			if strings.Contains(text, candidate) {
+			if strings.Contains(text, strings.TrimSuffix(candidate, ".JUnitRunner")) {
 				runner = candidate
 				return nil
 			}
