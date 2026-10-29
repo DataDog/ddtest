@@ -153,16 +153,24 @@ also gets Mini from `go_deps`, with the same import paths. rules_go then stops
 the link with `package conflict error: ...: multiple copies of package passed
 to linker` (`go/tools/builders/importcfg.go`).
 
-- **Bzlmod.** Such a workspace adds one line to its root `MODULE.bazel`:
-  `override_repo(go_deps, com_github_datadog_ddtest_ddto = "<Mini repository>")`.
-  `override_repo` only applies in the root module. The generated `BUILD.bazel`
-  files use the target names that Gazelle gives `go_deps` repositories, a
-  target named after the package plus a `go_default_library` alias, so the
-  API's imports resolve to the generated Mini unchanged.
+- **Bzlmod.** The rule's extension exports Mini under a stable repository
+  name. Such a workspace makes that repository visible to its root module and
+  overrides `go_deps`' copy with it, in its root `MODULE.bazel`:
+
+  ```starlark
+  use_repo(<the rule's Go extension>, "<Mini repository>")
+  override_repo(go_deps, com_github_datadog_ddtest_ddto = "<Mini repository>")
+  ```
+
+  `override_repo` only applies in the root module, and its value must be a
+  repository visible there. The generated `BUILD.bazel` files use the target
+  names that Gazelle gives `go_deps` repositories, a target named after the
+  package plus a `go_default_library` alias, so the API's imports resolve to
+  the generated Mini unchanged.
 - **WORKSPACE.** The rule's repository macro declares the same repository
   name. Phase 3 settles which declaration wins and documents the order.
 - **The error.** `docs/bazel.md` maps rules_go's package conflict for
-  `github.com/DataDog/ddtest/ddto` to that line.
+  `github.com/DataDog/ddtest/ddto` to those lines.
 - **Plain builds.** After the override, builds with the default SDK that use
   the API also link the generated Mini, so Mini must link without the
   instrumented `testing`.
@@ -410,7 +418,9 @@ tested in ddtest without Bazel, with unit tests checked by mutation.
 - **Vendored packages** identified after the last `vendor` element of `-p`,
   with fixtures for a Gazelle prefix and an empty one.
 - **Mini from `go_deps`** as described above. Fixtures cover a test that uses
-  the API, with and without the override, and a plain build that uses it.
+  the API, with the complete recipe in a root module that did not import the
+  Mini repository before, without the override, and a plain build that uses
+  it.
 - **`ddtest instrument bazel <dir>`** as described above, rejecting Bazel
   commands.
 - **The Starlark checks** in [Validating the Starlark](#validating-the-starlark).
