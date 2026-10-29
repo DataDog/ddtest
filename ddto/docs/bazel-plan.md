@@ -72,9 +72,10 @@ Bazel has no `-toolexec`, but rules_go always runs the compiler from the SDK:
 
 The instrumented SDK is therefore the official SDK with ddtest as `compile`
 and the real compiler next to it. ddtest decides from `-p`. Gazelle gives
-vendored packages an `importmap` such as `<prefix>/vendor/<import path>`, so
-the wrapper uses the part after the last `/vendor/`. A library with any other
-`importmap` is compiled unmodified.
+vendored packages an `importmap` such as `<prefix>/vendor/<import path>`, or
+`vendor/<import path>` when the prefix is empty, so the wrapper uses the part
+after the last `vendor` path element. A library with any other `importmap` is
+compiled unmodified.
 
 | Package | Edit |
 | --- | --- |
@@ -292,8 +293,8 @@ Each change works outside Bazel too and gets unit tests checked by mutation.
 - Import configuration additions for standard packages.
 - Version gates replaced by checks of the APIs each edit uses, with
   goleak v1.2.1 and Testify v1.3.0 fixtures.
-- Vendored packages identified after the last `/vendor/` in `-p`, with a
-  fixture.
+- Vendored packages identified after the last `vendor` element of `-p`,
+  with fixtures for a Gazelle prefix and an empty one.
 - `ddtest instrument bazel <dir>` as described above, rejecting Bazel
   commands.
 - A Bazel job in ddtest's CI, on Linux and macOS, over rules_go 0.60.0 and
