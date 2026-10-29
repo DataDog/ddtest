@@ -672,6 +672,14 @@ func javaProbeModule(projects []maven.Project, tests []nativeTest, framework str
 	return candidates[max(declared, 0)].Directory, true
 }
 
+// javaModuleText names a module directory in a message.
+func javaModuleText(module string) string {
+	if module == "." {
+		return "the root module"
+	}
+	return "module " + module
+}
+
 // javaRunners find the runner class of the frameworks whose probe is
 // selected through one, in a module directory.
 var javaRunners = map[string]func(module string) (string, error){

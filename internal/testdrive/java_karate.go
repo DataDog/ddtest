@@ -61,7 +61,7 @@ func javaKarateProbe(checkout, module string) (javaProbe, string, error) {
 		return javaProbe{}, "", err
 	}
 	if runner == "" {
-		return javaProbe{}, "No Karate runner class (@Karate.Test, @RunWith(Karate.class) or Runner.path) was found in " + module + "'s test sources, so the probe feature cannot be selected alone.", nil
+		return javaProbe{}, "No Karate runner class (@Karate.Test, @RunWith(Karate.class) or Runner.path) was found in the test sources of " + javaModuleText(module) + ", so the probe feature cannot be selected alone.", nil
 	}
 	selection := runner
 	if method != "" {

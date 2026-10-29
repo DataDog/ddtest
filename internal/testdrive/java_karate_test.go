@@ -46,6 +46,7 @@ func TestJavaKarateProbeNeedsARunner(t *testing.T) {
 	_, reason, err := javaKarateProbe(root, ".")
 	require.NoError(t, err)
 	require.Contains(t, reason, "No Karate runner class")
+	require.Contains(t, reason, "in the test sources of the root module")
 	_, reason, err = javaKarateProbe(t.TempDir(), ".")
 	require.NoError(t, err)
 	require.Contains(t, reason, "No Karate runner class", "a module without test sources has no runner")

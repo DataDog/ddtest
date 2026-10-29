@@ -112,7 +112,7 @@ func javaCucumberProbe(checkout, module string, args []string) (javaProbe, strin
 		return javaProbe{}, "", err
 	}
 	if runner == "" {
-		return javaProbe{}, "No Cucumber runner class (@RunWith(Cucumber.class) or a JUnit Platform suite of the cucumber engine) was found in " + module + "'s test sources, so the probe feature cannot be selected alone.", nil
+		return javaProbe{}, "No Cucumber runner class (@RunWith(Cucumber.class) or a JUnit Platform suite of the cucumber engine) was found in the test sources of " + javaModuleText(module) + ", so the probe feature cannot be selected alone.", nil
 	}
 	// The selected command's own glue property wins over the runner's.
 	for i := 0; i < len(args); i++ {
