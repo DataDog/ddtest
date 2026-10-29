@@ -3,9 +3,10 @@
 This plan replaces Orchestrion in
 [DataDog/rules_test_optimization](https://github.com/DataDog/rules_test_optimization)
 with `ddtest instrument`. It was written on 2026-10-29, after two
-throwaway spikes on that date, and nothing in it is implemented yet. Each phase
-gets its own pull request. A phase starts only after the plan is agreed and,
-for later phases, after the phases it depends on are merged.
+throwaway spikes on that date, and updated the same day with the user's
+review. Nothing in it is implemented yet. Each phase gets its own pull
+request. A phase starts only after the plan is agreed and the phases it
+depends on are merged.
 
 ## Goal
 
@@ -14,10 +15,18 @@ for later phases, after the phases it depends on are merged.
   already install; there is no other artifact.
 - rules_test_optimization uses upstream rules_go. It drops Orchestrion, the
   vendored rules_go trees and the pin files.
-- Go tests in Bazel get what `ddtest instrument` gives outside Bazel: standard
-  `testing`, Testify suites, goleak, [SDK span copies](sdk-span-mirror.md) and
-  the CI guards that keep the application's dd-trace-go out of CI Visibility
-  mode. Settings come from the rule's sync manifest, as they do today.
+- Go tests in Bazel get what `ddtest instrument` gives outside Bazel:
+  - standard `testing`;
+  - Testify suites and goleak;
+  - [SDK span copies](sdk-span-mirror.md);
+  - the CI guards that keep the application's dd-trace-go out of CI
+    Visibility mode;
+  - automatic retries, early flake detection and test management.
+- **Settings.** The last three follow the backend settings that the rule's
+  sync writes into the manifest. In manifest mode Mini reads
+  `cache/http/settings.json`, `known_tests.json` and `test_management.json`
+  (`internal/thirdparty/dd-trace-go/civisibility/utils/net`). The spikes did
+  not exercise retries, so the Bazel suites cover them.
 
 ## rules_test_optimization today
 
@@ -36,8 +45,13 @@ Read at `eceed1a`, 2026-10-29:
   `orchestrion.tool.go`, `orchestrion.yml`).
 - A repository rule syncs settings, known tests and test management into a
   manifest with `cache/http` JSON files. Tests get no network and no
-  credentials, and they write payload files. A doctor validates the files and an
-  uploader sends them with the API key. This data path stays.
+  credentials, and they write payload files. A doctor validates the files and
+  an uploader sends them with the API key.
+- **This data path stays and must behave the same.** The doctor and the
+  uploader must accept the new files as they accept today's, with the same
+  enrichment.
+- **Consumer validation.** It also runs in the sibling repository
+  `rules_test_optimization_tests` (`AGENTS.md`).
 
 ## Decisions
 
@@ -47,10 +61,17 @@ The user settled these on 2026-10-29.
 | --- | --- |
 | No Orchestrion | No legacy path and no `general` mode; Go tests use `ddtest instrument` only. |
 | One release | The ddtest CLI is the only artifact. There is no Bazel Central Registry module and no patch file in releases. |
+| One binary | The ddtest executable is the compiler wrapper. There is no second, smaller wrapper. |
 | One version | The SDK edits, the compiler wrapper and Mini come from the same ddtest binary, so they never drift. |
-| Inert hooks | A binary built with the instrumented SDK that does not link Mini links and behaves as if nothing were instrumented. |
+| Inert hooks | A binary built with the instrumented SDK that does not link Mini links and behaves as if nothing were instrumented. The same hooks serve `ddtest instrument` outside Bazel. |
 | Full feature set | Testify, goleak, SDK span copies and the CI guards work in Bazel. There are no per-version patches and no Bazel-only variable to activate Mini. |
-| Bazel CI | ddtest's CI runs a real Bazel build end to end. |
+| Code checks, not versions | Library gates check the code that each edit needs, in and outside Bazel. Testify v1.3.0 is instrumented when its code fits. |
+| No API key in tests | Tests run in agent mode, with no network and no key; the uploader keeps the key. |
+| Where Bazel is tested | ddtest's CI runs a basic Bazel test. The full Bazel suites live in rules_test_optimization and rules_test_optimization_tests. |
+| Releases | Neither ddtest nor the rule is released before end-to-end tests pass in the rule's repository, in its test repository and in internal dogfooding. |
+| A major version of the rule | `orchestrion_mode` and the pin file attributes are removed. |
+| Same Bazel behavior as today | `stage_sources` stays opt-in and documented. Support warnings appear only when an action runs, as with Orchestrion, and are documented. |
+| Coverage | Not in the first version. Reporting coverage with Mini in Bazel, not test skipping, is investigated afterwards. |
 | Plan first | No implementation starts before this plan is agreed. |
 
 ## Design
@@ -70,19 +91,19 @@ Bazel has no `-toolexec`, but rules_go always runs the compiler from the SDK:
 - **Toolchain inputs.** The SDK's tool files are `pkg/tool/**`
   (`go/private/BUILD.sdk.bazel`).
 
-The instrumented SDK is therefore the official SDK with ddtest as `compile`
-and the real compiler next to it. ddtest decides from `-p`. Gazelle gives
-vendored packages an `importmap` such as `<prefix>/vendor/<import path>`, or
-`vendor/<import path>` when the prefix is empty, so the wrapper uses the part
-after the last `vendor` path element. A library with any other `importmap` is
-compiled unmodified.
+The instrumented SDK is therefore the official SDK with the ddtest executable
+as `compile` and the real compiler next to it. ddtest decides from `-p`.
+Gazelle gives vendored packages an `importmap` such as
+`<prefix>/vendor/<import path>`, or `vendor/<import path>` when the prefix is
+empty, so the wrapper uses the part after the last `vendor` path element. A
+library with any other `importmap` is compiled unmodified.
 
 | Package | Edit |
 | --- | --- |
 | `testing`, `os/signal` | Test hooks, exit, timeout and signal hooks, as in the `-overlay` of `ddtest instrument` |
 | `github.com/stretchr/testify/suite` | [Suite registration](testify.md) |
 | `go.uber.org/goleak` | [Leak check entry](delivery.md#automatic-goleak-integration) |
-| dd-trace-go v2 `internal/config`, `internal/civisibility/envconfig`, `ddtrace/tracer` | CI guards and span copies |
+| dd-trace-go v2 `internal/config`, `internal/civisibility/envconfig`, `ddtrace/tracer` and the package that writes payload files | CI guards, the telemetry guard and span copies |
 | Mini's packages, with `-race` | `norace` annotations |
 | Anything else | Exec of the real compiler, with no file I/O |
 
@@ -93,11 +114,24 @@ declarations and standard-library imports. When an added standard import is
 missing from the package's import configuration, the wrapper adds it next to
 the existing standard entries; any other added import is an error.
 
-A compile action does not know module versions, so every version gate becomes
-a check of the APIs that its edit uses, in the package's own files (see open
-problem 3). Otherwise support follows `ddtest instrument`: the same window in
+A compile action does not know module versions, so every gate checks the APIs
+that its edit uses, in the package's own files (see open problem 3). Otherwise
+support follows `ddtest instrument`: the same window in
 `scripts/supported_versions.json`, the same nightly check, and the same
 warning when a library is not supported.
+
+### Linking Mini
+
+`ddtest instrument bazel <dir>` writes Mini's packages, from the runtime that
+the binary embeds, with `BUILD.bazel` files that ddtest generates itself;
+Gazelle does not run at fetch time. The test rule adds Mini's `testopt`
+library and the registration file to the `go_test`.
+
+Mini is then an ordinary dependency of the test. It compiles in the
+instrumented configuration and links into the test binary, where it sets the
+hooks that `testing` and the libraries declare. The binary that compiled the
+hooks also wrote Mini's sources, so both sides of every `//go:linkname`
+come from the same release.
 
 ### Registration
 
@@ -113,13 +147,20 @@ rules_test_optimization's module extension:
    empty value.
 
 rules_test_optimization's `MODULE.bazel` registers those toolchains. The
-customer's `MODULE.bazel` has no SDK lines. WORKSPACE mode, which
-rules_test_optimization supports for its first major version, gets a
-repository macro that does the same and registers the toolchains. rules_go's own toolchain
+customer's `MODULE.bazel` has no SDK lines. rules_go's own toolchain
 declarations for a wrapped SDK also match the empty `sdk_name`
 (`match_all_sdks` in `go/private/go_toolchain.bzl`), so they would make the
 instrumented SDK the default for every target; that is why registration goes
 through toolchains of our own.
+
+rules_test_optimization supports WORKSPACE mode in its first major version. If
+the new major version keeps it (open question 3), a repository macro does the
+same and registers the toolchains.
+
+The SDK's Go version follows rules_go's `go_sdk.from_file`: the root module's
+`go.mod` `toolchain` directive, then its `go` directive
+(`go/private/go_mod.bzl`). An extension attribute overrides it for workspaces
+that register their SDK another way.
 
 | rules_go API | Status |
 | --- | --- |
@@ -137,14 +178,13 @@ All of them exist in rules_go 0.60.0, 0.61.1, 0.62.0, 0.63.0 and 0.65.0.
 The Go test rule:
 
 - Transitions `sdk_name` to `"ddto"`.
-- Adds Mini's `testopt` package and the registration file
+- Adds Mini's `testopt` library and the registration file
   `zz_dd_ci_visibility_test.go` with the content `ddtest instrument` writes.
   The file uses the external test package when a source declares it, and the
   internal one otherwise.
 - Sets `DD_CIVISIBILITY_ENABLED=true`,
   `DD_TEST_OPTIMIZATION_PAYLOADS_IN_FILES=true` and
-  `DD_TEST_OPTIMIZATION_MANIFEST_FILE` as an `rlocationpath`. It runs in agent
-  mode without an API key; the uploader keeps the key.
+  `DD_TEST_OPTIMIZATION_MANIFEST_FILE` as an `rlocationpath`.
 - Keeps the user's `data` outside the transition, so binaries the test runs
   build with the default SDK.
 
@@ -156,8 +196,7 @@ The Go test rule:
 The command writes into `<dir>`:
 
 - The instrumented SDK, from the official SDK given with `--goroot`.
-- Mini's packages with `BUILD.bazel` files, from the runtime that the binary
-  embeds.
+- Mini's packages with their `BUILD.bazel` files.
 - The toolchain declarations and, if ddtest owns it, the test rule.
 - A `VERSION` file.
 
@@ -212,154 +251,190 @@ with no disk cache, three runs per configuration.
 | `compile -V=full` | 4.70 ms | 2.52 ms |
 
 The wrapper costs about 8 ms per compile action, and the whole build about
-4% more. The wrapper was an 11 MB binary that links all of ddto's runner.
-Building the plain configuration and then the instrumented one reran all 315
-compile actions, the stdlib and the builder: the two configurations share no
-cache entries.
+4% more. The spike's wrapper was an 11 MB binary that links all of ddto's
+runner; the ddtest executable is larger, and phase 4 measures it. Building
+the plain configuration and then the instrumented one reran all 315 compile
+actions, the stdlib and the builder: the two configurations share no cache
+entries.
 
 ## Open problems
 
 1. **The exec configuration.** `sdk_name` reaches tools built in the exec
    configuration. A tool or a transitioned `data` binary that imports
-   `testing` without Mini failed to link. Inert hooks fix this: `testing` and
-   the libraries define the hook variables, Mini sets them at initialization,
-   and unset hooks keep the original behavior. `ParallelStopHook` in
-   `internal/instrument/hooks.go` already uses a variable instead of a
-   bodyless function. The CI guards in `internal/instrument/sdk_ci.go` turn
-   CI Visibility off unconditionally, so they must also apply only when Mini
-   is linked, which they have to learn before dd-trace-go reads its
-   configuration.
+   `testing` without Mini failed to link.
+   - **Inert hooks fix this.** `testing` and the libraries define the hook
+     variables, Mini sets them at initialization, and unset hooks keep the
+     original behavior. `ParallelStopHook` in `internal/instrument/hooks.go`
+     already uses a variable instead of a bodyless function.
+   - **The CI guards too.** The guards in `internal/instrument/sdk_ci.go` turn
+     CI Visibility off unconditionally. They must also apply only when Mini is
+     linked, which they have to learn before dd-trace-go reads its
+     configuration.
+   - **Outside Bazel.** The same hooks replace the bodyless functions that
+     `ddtest instrument` uses there.
 2. **Telemetry file names.** In payload-file mode, dd-trace-go v2.11.2 also
    writes its own telemetry to `payloads/telemetry`, with the same file name
    pattern as Mini. In spike 2 both wrote
    `telemetry-00000000000000000001-25.json`, and one replaced the other. A
-   new CI guard must stop the application's dd-trace-go from writing payload
-   files when Mini is linked.
-3. **Version gates.** A compile action does not know module versions, and a
-   version table from `go.mod` would be an input of every compile action, so
-   any change to `go.mod` would rebuild everything. Each gate therefore checks
-   the code instead:
+   telemetry guard must stop the application's dd-trace-go from writing
+   payload files when Mini is linked, in and outside Bazel.
+3. **Code checks instead of versions.** A compile action does not know module
+   versions, and a version table from `go.mod` would be an input of every
+   compile action, so any change to `go.mod` would rebuild everything. Each
+   gate therefore checks the code, in and outside Bazel:
    - **goleak:** v1.2.1 has the same `Find` as v1.3.0 but no
      `IgnoreAnyFunction`, which the edit calls. Without a check, the build
      fails. The gate checks that the package declares `IgnoreAnyFunction`, as
      spike 2 did.
-   - **Testify:** ddto requires v1.4.0 or later, but the code cannot tell
-     v1.3.0 from v1.4.0. Both run each method with `r.Run(test.Name, test.F)`,
-     and only the placement of `SetupSuite` differs.
+   - **Testify:** ddto requires v1.4.0 or later today, but v1.3.0 runs each
+     method with `r.Run(test.Name, test.F)` as v1.4.0 does; only the placement
+     of `SetupSuite` differs. The gate checks the code that registration
+     needs, so v1.3.0 is instrumented. [Testify support](testify.md) changes
+     with it.
    - **The Go toolchain:** the instrumented SDK has a known version, and the
      exit hook keeps its own shape check.
 4. **The test's end line.** Mini cannot open a relative `test.source.file`
-   from the test's working directory, so `test.source.end` is missing. Mini
-   should resolve it under the runfiles; `stage_sources` puts the files
-   there.
-5. **Warnings and the action cache.** Bazel shows an action's output only when
-   the action runs, so a support warning disappears after a cache hit.
-6. **Platforms.** Only linux_amd64 ran. Other target and exec platforms,
+   from the test's working directory, so `test.source.end` is missing, as it
+   is with Orchestrion. Mini resolves the path under the runfiles, where the
+   opt-in `stage_sources` puts the files.
+5. **Platforms.** Only linux_amd64 ran. Other target and exec platforms,
    remote execution and Windows are untested.
-7. **API key wording.** [Delivery and offline output](mini-runtime.md#delivery-and-offline-output)
+6. **API key wording.** [Delivery and offline output](mini-runtime.md#delivery-and-offline-output)
    says the settings-cache reader needs a nonempty API key. Both spikes read
    the cache in agent mode without one; the requirement applies to agentless
    mode, and the page needs to say so.
+7. **Mini from `go_deps`.** A test that uses Mini's Go API
+   ([explicit clients](mini-runtime.md#explicit-clients-and-manual-instrumentation))
+   gets a second copy of Mini from `go_deps`, with the same import path.
+   rules_go then fails the link. Phase 2 makes those imports resolve to the
+   generated Mini, or reports the conflict with a clear message.
 
 ## Phases
 
 | Phase | Repository | Work | Done when |
 | --- | --- | --- | --- |
-| 1 | ddtest | Prerequisites in ddto | Existing CI and the full compatibility window pass |
-| 2 | ddtest | Compiler mode and `ddtest instrument bazel` | The Bazel job passes and matches `ddtest instrument` outside Bazel |
-| 3 | ddtest | Release | The release gate runs the Bazel job |
-| 4 | rules_test_optimization | Extension, toolchains, test rule, removal of Orchestrion | Its CI, doctor and uploader dry run pass |
-| 5 | Both | Pilot and measurements | A real repository reports through the new path |
+| 1 | ddtest | Prerequisites in ddto, without Bazel | Existing CI and the full compatibility window pass |
+| 2 | ddtest | Compiler mode, `ddtest instrument bazel`, a basic Bazel test and a release candidate | The basic Bazel test passes |
+| 3 | rules_test_optimization and its test repository | The major version on the release candidate | Both repositories' full Bazel suites pass |
+| 4 | Dogfooding repositories | Internal dogfooding and measurements | They report through the new path |
+| 5 | ddtest, then the rule | Releases | Phases 2–4 pass on the released binary |
 
 ### Phase 1: prerequisites in ddto
 
-- Inert hooks for `testing` and for the Testify, goleak and span copy hooks.
-  The CI guards apply only when Mini is linked. A fixture without Mini that
-  enables CI Visibility in dd-trace-go checks that it still works.
-- The CI guard for dd-trace-go's payload files, added to the validator and
-  the compatibility window.
-- `//line` directives with stable names on every generated and hook file,
-  including the SDK span copy, Testify and goleak hooks.
-- Mini resolves relative source paths under the runfiles.
-- The API key wording in `mini-runtime.md`.
+Each change also applies to `ddtest instrument` outside Bazel. Each one is
+tested in ddtest without Bazel, with unit tests checked by mutation.
 
-Each change works outside Bazel too and gets unit tests checked by mutation.
+- **Inert hooks** for `testing` and for the Testify, goleak and span copy
+  hooks.
+- **CI guards that apply only when Mini is linked.** A fixture without Mini
+  that enables CI Visibility in dd-trace-go checks that it still works.
+- **The telemetry guard** for dd-trace-go's payload files, added to the
+  validator and the compatibility window.
+- **Code checks instead of version gates** for Testify and goleak, with
+  fixtures for goleak v1.2.1 and Testify v1.3.0.
+- **`//line` directives** with stable names on every generated and hook file,
+  including the SDK span copy, Testify and goleak hooks.
+- **Relative source paths:** Mini resolves them under the runfiles.
+- **The API key wording** in `mini-runtime.md`.
 
 ### Phase 2: compiler mode and `ddtest instrument bazel`
 
-- A compiler mode that needs no plan: it decides from `-p` and the arguments,
-  keeps `argv[0]` as `compile` for the real compiler (cmd/go parses
-  `compile -V=full`), and accepts sources after `--` or at the end.
-- Import configuration additions for standard packages.
-- Version gates replaced by checks of the APIs each edit uses, with
-  goleak v1.2.1 and Testify v1.3.0 fixtures.
-- Vendored packages identified after the last `vendor` element of `-p`,
+- **A compiler mode of the ddtest executable that needs no plan.** It
+  decides from `-p` and the arguments. It keeps `argv[0]` as `compile` for
+  the real compiler, because cmd/go parses `compile -V=full`. It accepts
+  sources after `--` or at the end.
+- **Import configuration additions** for standard packages.
+- **Vendored packages** identified after the last `vendor` element of `-p`,
   with fixtures for a Gazelle prefix and an empty one.
-- `ddtest instrument bazel <dir>` as described above, rejecting Bazel
+- **Mini from `go_deps`** (open problem 7).
+- **`ddtest instrument bazel <dir>`** as described above, rejecting Bazel
   commands.
-- A Bazel job in ddtest's CI, on Linux and macOS, over rules_go 0.60.0 and
-  the latest release and Go 1.25 to 1.27. Its fixture covers:
+- **A basic Bazel test in ddtest's CI,** on Linux and macOS. Its fixture
+  covers:
   - standard tests, Testify, goleak and dd-trace-go;
-  - sharding and `-race`;
   - a plain binary that must stay unmodified;
   - an exec tool that imports `testing`;
-  - reproducibility;
-  - an event comparison with the same packages run outside Bazel.
-- A user guide, `docs/bazel.md`, and the README's Bazel row.
+  - an event comparison with the same packages run through
+    `ddtest instrument` outside Bazel.
+- **A user guide,** `docs/bazel.md`, and the README's Bazel row, including
+  `stage_sources` and the warnings that cached actions do not repeat.
+- **A ddtest release candidate** with the subcommand, published by the
+  existing prerelease workflow.
 
-### Phase 3: release
+### Phase 3: rules_test_optimization
 
-A ddtest release with the subcommand. The release gate runs the Bazel job
-with the full compatibility window.
+The new major version, built on the release candidate:
 
-### Phase 4: rules_test_optimization
-
-- The module extension and toolchains described above, for the platforms
+- **The module extension and toolchains** described above, for the platforms
   chosen for the first release.
-- The same repository rule and toolchain registration for WORKSPACE mode
-  (`tools/go/workspace_repositories.bzl`), with a WORKSPACE test, before the
+- **WORKSPACE support,** if the major version keeps it (open question 3): the
+  same repository rule and toolchain registration in
+  `tools/go/workspace_repositories.bzl`, with a WORKSPACE test, before the
   vendored trees that those helpers fetch are removed.
-- `dd_topt_go_test` on top of the new test rule.
-- Removal of `third_party/rgo`, `third_party/rules_go_orchestrion`, the
+- **`dd_topt_go_test`** on top of the new test rule.
+- **Removals:** `third_party/rgo`, `third_party/rules_go_orchestrion`, the
   Orchestrion modules, the pin files and `orchestrion_mode`.
-- Documentation, onboarding guides and agent skills.
-- Its CI, the doctor and the uploader dry run with `--validate-enrichment`.
+- **Documentation,** onboarding guides and agent skills.
+- **The full Bazel suites** in rules_test_optimization and
+  rules_test_optimization_tests. They cover:
+  - retries, early flake detection and test management from the manifest;
+  - sharding and `-race`;
+  - reproducibility;
+  - vendored packages;
+  - the rules_go versions and platforms of the first release;
+  - the doctor and the uploader dry run with `--validate-enrichment`;
+  - a comparison of the payloads with today's Orchestrion path on the same
+    targets, before that path is removed.
 
-### Phase 5: pilot and measurements
+### Phase 4: internal dogfooding and measurements
 
-Run the pilot repository that rules_test_optimization's plan names, and
-compare with today's Orchestrion path:
+Run the dogfooding repositories on the release candidate and the new major
+version, and compare with today's Orchestrion path:
 
 - cold and warm build time;
 - the cost of the split cache;
-- the wrapper's share of compile time;
+- the ddtest executable's share of compile time;
 - payload enrichment.
 
-The results decide whether the wrapper needs the work in open question 2.
+### Phase 5: releases
+
+A ddtest release with the subcommand: its release gate runs the basic Bazel
+test with the full compatibility window. Then the rule's major version,
+pinned to that release.
 
 ## Open questions
 
 1. **Who owns the test rule.** If ddtest generates the Starlark, the rule
-   always matches Mini and the registration file of the same release. If
-   rules_test_optimization owns it, the rule is easier to read and review.
-   Recommendation: ddtest generates it, and `dd_topt_go_test` wraps it.
-2. **The wrapper binary.** The ddtest executable can act as `compile`, or the
-   extension can build a smaller wrapper from the embedded sources with the
-   downloaded SDK. Recommendation: start with the executable, and measure its
-   startup in phase 5.
-3. **The Testify gate.** Decide by code shape in Bazel only, or everywhere,
-   which would accept v1.3.0.
-4. **The old attributes.** Remove `orchestrion_mode` and the pin file
-   attributes, or accept and ignore them with a warning for one release so
-   existing `BUILD` files keep loading.
-5. **The Go version.** Read it from the root module's `go.mod` (`toolchain`,
-   then `go`), or take it from an extension attribute.
-6. **Platforms and rules_go versions** for the first release.
-7. **Warnings after cache hits.** Document them, or have Mini report at run
-   time which libraries the build left uninstrumented.
+   always matches Mini and the registration file of the same release.
+   However, `dd_topt_go_test` lives in another repository, so the two need
+   cross validation:
+   - ddtest's basic Bazel test uses the generated rule;
+   - rules_test_optimization tests its pinned ddtest and the newest release
+     candidate;
+   - the generated repository carries a contract version that the extension
+     checks at fetch time.
+
+   If rules_test_optimization owns the whole rule, the same checks apply to
+   the labels, the registration file and the `sdk_name` value that it must
+   match. Recommendation: ddtest generates the rule, and `dd_topt_go_test`
+   wraps it.
+2. **Platforms and rules_go versions** for the first release. Every target
+   platform and exec platform needs its own instrumented SDK and its own
+   ddtest executable. Proposal:
+   - Linux amd64 and arm64, macOS amd64 and arm64;
+   - remote execution with a Linux exec platform;
+   - Windows later, since rules_test_optimization's CI does not run Go on
+     Windows today;
+   - rules_go 0.60.0 to 0.63.0, which the rule supports today, plus the
+     latest release.
+3. **WORKSPACE in the major version.** Keep it, as the first major version
+   does, or support Bzlmod only.
+4. **The dogfooding repositories** for phase 4.
 
 ## Out of scope
 
 Bazel's offline mode does not do intelligent test skipping or Git uploads
-today, and this plan keeps it that way. Per-test coverage in Bazel needs a
-separate check of rules_go's coverage instrumentation.
+today, and this plan keeps it that way. Coverage is not in the first
+version. Reporting coverage with Mini in Bazel, not test skipping, is
+investigated afterwards; it needs a check of rules_go's coverage
+instrumentation.
