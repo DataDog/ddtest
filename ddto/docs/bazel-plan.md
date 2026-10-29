@@ -52,6 +52,10 @@ Read at `eceed1a`, 2026-10-29:
   enrichment.
 - **Consumer validation.** It also runs in the sibling repository
   `rules_test_optimization_tests` (`AGENTS.md`).
+- **Windows.** The rule's CI has a Windows Go lane,
+  `windows-go-bootstrap-shard`, over WORKSPACE and Bzlmod. It requires test
+  payload files (`.github/workflows/ci.yml`,
+  `tools/tests/integration/run_workspace_go_integration.sh`).
 
 ## Decisions
 
@@ -137,14 +141,22 @@ come from the same release.
 
 rules_test_optimization's module extension:
 
-1. Downloads the official Go SDK, checked against the go.dev checksum, and
-   the ddtest release asset (`ddtest-<os>-<arch>`), checked against
-   `SHA256SUMS`.
-2. Runs `ddtest instrument bazel <dir>`.
+1. Downloads, from one ddtest release, the ddtest executable for the host
+   (`ddtest-<os>-<arch>`, checked against `SHA256SUMS`). This executable runs
+   the next step.
+2. For each exec platform:
+   - downloads the official Go SDK, checked against the go.dev checksum;
+   - downloads that platform's ddtest executable;
+   - runs `ddtest instrument bazel <dir>`, which makes that executable the
+     SDK's `compile`.
 3. Wraps the result with rules_go's `go_wrap_sdk(register_toolchains = False)`.
 4. Declares its own toolchains, gated on
    `@rules_go//go/toolchain:sdk_name == "ddto"`. They never match the default
    empty value.
+
+Target platforms reuse those SDKs by cross-compiling, as rules_go does with
+its own (`go/private/go_toolchain.bzl`). Only exec platforms need an
+instrumented SDK.
 
 rules_test_optimization's `MODULE.bazel` registers those toolchains. The
 customer's `MODULE.bazel` has no SDK lines. rules_go's own toolchain
@@ -317,7 +329,7 @@ entries.
 | 2 | ddtest | Compiler mode, `ddtest instrument bazel`, a basic Bazel test and a release candidate | The basic Bazel test passes |
 | 3 | rules_test_optimization and its test repository | The major version on the release candidate | Both repositories' full Bazel suites pass |
 | 4 | Dogfooding repositories | Internal dogfooding and measurements | They report through the new path |
-| 5 | ddtest, then the rule | Releases | Phases 2–4 pass on the released binary |
+| 5 | ddtest, then the rule | Releases | Built from the release candidate's commit |
 
 ### Phase 1: prerequisites in ddto
 
@@ -381,7 +393,8 @@ The new major version, built on the release candidate:
   - sharding and `-race`;
   - reproducibility;
   - vendored packages;
-  - the rules_go versions and platforms of the first release;
+  - the rules_go versions and platforms of the first release, including a
+    host that differs from the exec platform;
   - the doctor and the uploader dry run with `--validate-enrichment`;
   - a comparison of the payloads with today's Orchestrion path on the same
     targets, before that path is removed.
@@ -398,9 +411,15 @@ version, and compare with today's Orchestrion path:
 
 ### Phase 5: releases
 
-A ddtest release with the subcommand: its release gate runs the basic Bazel
-test with the full compatibility window. Then the rule's major version,
-pinned to that release.
+A ddtest release with the subcommand, then the rule's major version, pinned
+to that release.
+
+- **Same commit.** The release workflow runs only from `main`
+  (`.github/workflows/release.yml`). It is dispatched while `main` is still at
+  the commit of the release candidate that passed phases 3 and 4. Any later
+  change to `main` needs a new candidate and phases 3 and 4 again.
+- **Release gate.** It runs the basic Bazel test with the full compatibility
+  window.
 
 ## Open questions
 
@@ -418,15 +437,18 @@ pinned to that release.
    the labels, the registration file and the `sdk_name` value that it must
    match. Recommendation: ddtest generates the rule, and `dd_topt_go_test`
    wraps it.
-2. **Platforms and rules_go versions** for the first release. Every target
-   platform and exec platform needs its own instrumented SDK and its own
-   ddtest executable. Proposal:
-   - Linux amd64 and arm64, macOS amd64 and arm64;
-   - remote execution with a Linux exec platform;
-   - Windows later, since rules_test_optimization's CI does not run Go on
-     Windows today;
-   - rules_go 0.60.0 to 0.63.0, which the rule supports today, plus the
-     latest release.
+2. **Platforms and rules_go versions** for the first release.
+   - **What each platform needs.** Every exec platform needs an instrumented
+     SDK with that platform's ddtest executable as `compile`. Target
+     platforms reuse those SDKs by cross-compiling. The host needs its own
+     executable to run the generator.
+   - **Proposal:**
+     - Linux amd64 and arm64, macOS amd64 and arm64;
+     - Windows amd64, because the rule's CI already runs a Windows Go lane;
+       the wrapper is untested there;
+     - remote execution with a Linux exec platform;
+     - rules_go 0.60.0 to 0.63.0, which the rule supports today, plus the
+       latest release.
 3. **WORKSPACE in the major version.** Keep it, as the first major version
    does, or support Bzlmod only.
 4. **The dogfooding repositories** for phase 4.
