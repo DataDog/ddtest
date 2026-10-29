@@ -45,18 +45,27 @@ var javaKarateProbeFeature = filepath.Join("src", "test", "resources", "ddtest",
 // a JUnit 4 runner, or Karate's parallel Runner.
 var javaKarateRunner = regexp.MustCompile(`\bcom\.intuit\.karate\.(?:Runner|junit[45]\.Karate)\b|@Karate\.Test\b|@RunWith\(\s*Karate\.class\s*\)|\bRunner\.(?:path|builder)\(`)
 
+// javaKarateMethod is a JUnit 5 @Karate.Test or JUnit @Test method, whose
+// name is the first group.
+var javaKarateMethod = regexp.MustCompile(`@(?:[\w.]+\.)?(?:Karate\.)?Test\b(?:\([^)]*\))?[^{;=]*?\b([\pL_$][\pL\pN_$]*)\s*\(\s*\)`)
+
 // javaKarateProbe places the probe feature in module and selects it through
 // the module's Karate runner: karate.options replaces the runner's features
 // and tags, and keeps its environment and configuration. A runner that runs
 // features in parallel from a JUnit test reports that test too; it is the
-// probe's harness.
+// probe's harness. Each method of a runner runs the probe, so only its first
+// is selected.
 func javaKarateProbe(checkout, module string) (javaProbe, string, error) {
-	runner, err := javaKarateRunnerClass(filepath.Join(checkout, module))
+	runner, method, err := javaKarateRunnerClass(filepath.Join(checkout, module))
 	if err != nil {
 		return javaProbe{}, "", err
 	}
 	if runner == "" {
 		return javaProbe{}, "No Karate runner class (@Karate.Test, @RunWith(Karate.class) or Runner.path) was found in " + module + "'s test sources, so the probe feature cannot be selected alone.", nil
+	}
+	selection := runner
+	if method != "" {
+		selection += "#" + method
 	}
 	feature := filepath.Join(module, javaKarateProbeFeature)
 	// The feature is selected by its file: test resources a POM redefines
@@ -64,15 +73,14 @@ func javaKarateProbe(checkout, module string) (javaProbe, string, error) {
 	return javaProbe{
 		files:   []javaProbeFile{{feature, javaKarateFeature}},
 		harness: runner,
-		args:    []string{"-Dtest=" + runner, "-Dkarate.options=--tags @ddtest file:" + filepath.ToSlash(filepath.Join(checkout, feature)), "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false", "-DskipITs"},
+		args:    []string{"-Dtest=" + selection, "-Dkarate.options=--tags @ddtest file:" + filepath.ToSlash(filepath.Join(checkout, feature)), "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false", "-DskipITs"},
 	}, "", nil
 }
 
 // javaKarateRunnerClass finds the first Karate runner class in a module's test
-// sources, by path.
-func javaKarateRunnerClass(module string) (string, error) {
-	runner := ""
-	err := filepath.WalkDir(filepath.Join(module, "src", "test", "java"), func(path string, entry fs.DirEntry, err error) error {
+// sources, by path, and its first test method; a JUnit 4 runner has none.
+func javaKarateRunnerClass(module string) (runner, method string, err error) {
+	err = filepath.WalkDir(filepath.Join(module, "src", "test", "java"), func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -92,10 +100,13 @@ func javaKarateRunnerClass(module string) (string, error) {
 			pkg = match[1]
 		}
 		runner = strings.TrimPrefix(pkg+"."+strings.TrimSuffix(entry.Name(), ".java"), ".")
+		if match := javaKarateMethod.FindStringSubmatch(text); match != nil {
+			method = match[1]
+		}
 		return nil
 	})
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", nil
+		return "", "", nil
 	}
-	return runner, err
+	return runner, method, err
 }

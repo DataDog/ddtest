@@ -15,20 +15,23 @@ import (
 )
 
 func TestJavaKarateProbeSelectsTheFeatureThroughTheRunner(t *testing.T) {
-	for name, source := range map[string]string{
-		"JUnit 5 runner":  "package example;\nimport com.intuit.karate.junit5.Karate;\nclass CalcTest {\n    @Karate.Test Karate calc() { return Karate.run(\"calc\").relativeTo(getClass()); }\n}\n",
-		"JUnit 4 runner":  "package example;\n@RunWith(Karate.class)\npublic class CalcTest {}\n",
-		"parallel runner": "package example;\nclass CalcTest {\n    @Test void all() { Runner.path(\"classpath:example\").tags(\"@smoke\").parallel(4); }\n}\n",
+	for name, tc := range map[string]struct{ source, selection string }{
+		// Every runner method would run the probe; the first is selected.
+		"JUnit 5 runner":           {"package example;\nimport com.intuit.karate.junit5.Karate;\n@SpringBootTest(webEnvironment = WebEnvironment.DEFINED_PORT)\nclass CalcTest {\n    @Karate.Test\n    Karate calc() { return Karate.run(\"calc\").relativeTo(getClass()); }\n\n    @Karate.Test\n    Karate other() { return Karate.run(\"other\"); }\n}\n", "example.CalcTest#calc"},
+		"qualified JUnit 5 runner": {"package example;\nclass CalcTest {\n    @com.intuit.karate.junit5.Karate.Test com.intuit.karate.junit5.Karate calc() { return null; }\n}\n", "example.CalcTest#calc"},
+		"JUnit 4 runner":           {"package example;\n@RunWith(Karate.class)\n@KarateOptions(features = \"classpath:example\")\npublic class CalcTest {}\n", "example.CalcTest"},
+		"parallel runner":          {"package example;\nclass CalcTest {\n    @Test(timeout = 60000)\n    public void all() { Runner.path(\"classpath:example\").tags(\"@smoke\").parallel(4); }\n}\n", "example.CalcTest#all"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			writeJavaSource(t, filepath.Join(root, "api", "src", "test", "java", "example", "Calc.java"), "package example;\npublic class Calc {}\n")
-			writeJavaSource(t, filepath.Join(root, "api", "src", "test", "java", "example", "CalcTest.java"), source)
+			writeJavaSource(t, filepath.Join(root, "api", "src", "test", "java", "example", "CalcTest.java"), tc.source)
 			probe, reason, err := javaProbeFor(root, "api", "karate", nil)
 			require.NoError(t, err)
 			require.Empty(t, reason)
 			require.Equal(t, []javaProbeFile{{filepath.Join("api", javaKarateProbeFeature), javaKarateFeature}}, probe.files)
-			require.Contains(t, probe.args, "-Dtest=example.CalcTest")
+			require.Contains(t, probe.args, "-Dtest="+tc.selection)
+			require.Equal(t, "example.CalcTest", probe.harness)
 			require.Contains(t, probe.args, "-Dkarate.options=--tags @ddtest file:"+filepath.ToSlash(filepath.Join(root, "api", javaKarateProbeFeature)), "the tag replaces the runner's tags and the file need not be on the classpath")
 		})
 	}

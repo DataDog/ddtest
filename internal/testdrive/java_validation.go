@@ -679,7 +679,10 @@ var javaRunners = map[string]func(module string) (string, error){
 		runner, _, _, _, _, err := javaCucumberRunnerClass(module)
 		return runner, err
 	},
-	"karate": javaKarateRunnerClass,
+	"karate": func(module string) (string, error) {
+		runner, _, err := javaKarateRunnerClass(module)
+		return runner, err
+	},
 }
 
 // javaRunnerModule picks the first module, in reactor order, whose tests ran
