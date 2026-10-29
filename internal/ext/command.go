@@ -73,6 +73,10 @@ func contextCancellationSignal(ctx context.Context) os.Signal {
 }
 
 // applyEnvMap applies environment variables from envMap to the command
+// UnsetEnvironment as a variable's value removes it from a command's
+// environment: it is neither inherited nor set.
+const UnsetEnvironment = "\x00unset"
+
 func applyEnvMap(cmd *exec.Cmd, envMap map[string]string) {
 	if len(envMap) > 0 {
 		cmd.Env = make([]string, 0, len(os.Environ())+len(envMap))
@@ -83,7 +87,9 @@ func applyEnvMap(cmd *exec.Cmd, envMap map[string]string) {
 			}
 		}
 		for key, value := range envMap {
-			cmd.Env = append(cmd.Env, key+"="+value)
+			if value != UnsetEnvironment {
+				cmd.Env = append(cmd.Env, key+"="+value)
+			}
 		}
 	}
 }

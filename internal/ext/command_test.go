@@ -406,3 +406,19 @@ func replaceStdin(t *testing.T, contents string) {
 		_ = stdin.Close()
 	})
 }
+
+func TestApplyEnvMapUnsetsAnInheritedVariable(t *testing.T) {
+	t.Setenv("DDTEST_INHERITED_TOKEN", "host-value")
+	t.Setenv("DDTEST_INHERITED_OTHER", "kept")
+	cmd := exec.Command("true")
+	applyEnvMap(cmd, map[string]string{"DDTEST_INHERITED_TOKEN": UnsetEnvironment, "DDTEST_SET": "value"})
+	for _, entry := range cmd.Env {
+		if strings.HasPrefix(entry, "DDTEST_INHERITED_TOKEN=") {
+			t.Fatalf("unset variable reached the command: %s", entry)
+		}
+	}
+	joined := strings.Join(cmd.Env, "\n")
+	if !strings.Contains(joined, "DDTEST_INHERITED_OTHER=kept") || !strings.Contains(joined, "DDTEST_SET=value") {
+		t.Fatalf("other variables must be kept: %v", cmd.Env)
+	}
+}

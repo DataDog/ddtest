@@ -249,7 +249,7 @@ func (t *Testdrive) selectSetupTracerReporting(ctx context.Context, scope onboar
 		probe.repositoryRoot = directory
 		probe.command, probe.args = probe.configurationExecutable(words[0]), words[1:]
 		probe.tracerVersion = version
-		probe.executor = configurationExecutor{t.executor, entry.Environment}
+		probe.executor = configurationExecutor{commandExecutor: t.executor, environment: entry.Environment, without: entry.WithoutSecrets}
 		probe.configurationEnvironment = entry.Environment
 		// Preflight loads the configuration; never execute one outside the checkout.
 		policy := frameworkFeaturePolicies[probe.framework.Name()]

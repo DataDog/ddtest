@@ -130,8 +130,12 @@ func TestCredentialSecretsAreValidatedWithoutAndReported(t *testing.T) {
 		require.NotContains(t, scope.Commands[0].Environment, "NPM_TOKEN", "no secret reaches validation")
 		require.Contains(t, strings.Join(scope.Caveats, "\n"), "step 2 (npm test): validated without the CI secrets NPM_TOKEN", workflow)
 	}
+	// Identical configurations merge, keeping every location's omitted secrets.
+	scope := discover("jobs:\n  plain:\n    steps:\n      - run: npm test\n  sonar:\n    steps:\n      - run: npm test\n        env: {SONAR_TOKEN: '${{ secrets.SONAR_TOKEN }}'}\n")
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, []string{"SONAR_TOKEN"}, scope.Commands[0].WithoutSecrets)
 	// A secret after the last test can't reach it.
-	scope := discover("jobs:\n  test:\n    steps:\n      - run: npm test\n      - run: npx codecov\n        env: {CODECOV_TOKEN: '${{ secrets.CODECOV_TOKEN }}'}\n")
+	scope = discover("jobs:\n  test:\n    steps:\n      - run: npm test\n      - run: npx codecov\n        env: {CODECOV_TOKEN: '${{ secrets.CODECOV_TOKEN }}'}\n")
 	require.Len(t, scope.Commands, 1)
 	require.Empty(t, scope.Commands[0].WithoutSecrets)
 	// A command that reads the credential, a secret used as a setting and a

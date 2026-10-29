@@ -507,6 +507,10 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						scope.Commands = append(scope.Commands, entry)
 					} else {
 						scope.Commands[index].locations = append(scope.Commands[index].locations, entry.locations...)
+						// Each merged location's omitted secrets stay disclosed.
+						if len(entry.WithoutSecrets) > 0 {
+							scope.Commands[index].WithoutSecrets = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(scope.Commands[index].WithoutSecrets), entry.WithoutSecrets...))))
+						}
 						// Steps merged into one configuration keep every shared-step note.
 						for _, note := range entry.StepScopeNotes {
 							if !slices.Contains(scope.Commands[index].StepScopeNotes, note) {

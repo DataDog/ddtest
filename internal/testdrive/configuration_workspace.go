@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
@@ -20,10 +21,28 @@ import (
 type configurationExecutor struct {
 	commandExecutor
 	environment map[string]string
+	// without names CI secrets the configuration runs without, which a
+	// value inherited from this host must not replace.
+	without []string
+}
+
+// commandEnvironment is a command's environment in the configuration.
+func (e configurationExecutor) commandEnvironment(env map[string]string) map[string]string {
+	merged := mergeConfigurationEnvironment(e.environment, env)
+	if len(e.without) > 0 {
+		merged = maps.Clone(merged)
+		if merged == nil {
+			merged = map[string]string{}
+		}
+		for _, name := range e.without {
+			merged[name] = ext.UnsetEnvironment
+		}
+	}
+	return merged
 }
 
 func (e configurationExecutor) CombinedOutputInDirectory(ctx context.Context, directory, name string, args []string, env map[string]string) ([]byte, error) {
-	merged := mergeConfigurationEnvironment(e.environment, env)
+	merged := e.commandEnvironment(env)
 	executor, ok := e.commandExecutor.(directoryExecutor)
 	if !ok {
 		return nil, fmt.Errorf("command executor cannot set setup working directory")
@@ -32,7 +51,7 @@ func (e configurationExecutor) CombinedOutputInDirectory(ctx context.Context, di
 }
 
 func (e configurationExecutor) CombinedOutput(ctx context.Context, name string, args []string, env map[string]string) ([]byte, error) {
-	merged := mergeConfigurationEnvironment(e.environment, env)
+	merged := e.commandEnvironment(env)
 	return e.commandExecutor.CombinedOutput(ctx, name, args, merged)
 }
 
@@ -121,7 +140,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	t.isolated = copyRoot != original
 	executor := t.executor
 	// Earlier setup must not inherit variables declared only on the test step.
-	t.executor = configurationExecutor{executor, isolatedCIEnvironment(nil, original, checkout)}
+	t.executor = configurationExecutor{commandExecutor: executor, environment: isolatedCIEnvironment(nil, original, checkout), without: item.WithoutSecrets}
 	if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration preparation failed; tests were not started."}
 		return result, err
@@ -150,7 +169,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if err := t.lang().prepareConfiguration(t, item, original, copyRoot); err != nil {
 		return result, err
 	}
-	t.executor = configurationExecutor{executor, t.configurationEnvironment}
+	t.executor = configurationExecutor{commandExecutor: executor, environment: t.configurationEnvironment, without: item.WithoutSecrets}
 	directory, err := localSetupDirectory(copyRoot, item.Directory)
 	if err != nil {
 		return result, err

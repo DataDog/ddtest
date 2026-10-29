@@ -426,8 +426,8 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		drive.executor = &ext.DefaultCommandExecutor{Timeout: timeout}
 	}
 	drive.configurationEnvironment = configurationEnvironment
-	if len(configurationEnvironment) > 0 {
-		drive.executor = configurationExecutor{drive.executor, configurationEnvironment}
+	if len(configurationEnvironment) > 0 || len(selectedPlan.WithoutSecrets) > 0 {
+		drive.executor = configurationExecutor{commandExecutor: drive.executor, environment: configurationEnvironment, without: selectedPlan.WithoutSecrets}
 	}
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		drive.preflight = drive.frameworkPreflight()

@@ -55,7 +55,7 @@ func TestWorkflowPackageCheckUsesPublishabilityAndSeparateOutput(t *testing.T) {
 			t.Chdir(root)
 			requireWriteFile(t, filepath.Join(root, "package.json"), tc.manifest)
 			executor := &packageCheckExecutor{stdout: tc.stdout, stderr: tc.stderr, err: tc.err}
-			drive := &Testdrive{repositoryRoot: root, executor: configurationExecutor{executor, map[string]string{"EXISTING_CI_ENV": "kept"}}}
+			drive := &Testdrive{repositoryRoot: root, executor: configurationExecutor{commandExecutor: executor, environment: map[string]string{"EXISTING_CI_ENV": "kept"}}}
 			checks := drive.verifyReportExclusions(t.Context())
 			require.Equal(t, tc.status, checks[1].Status, checks[1].Reason)
 			require.Equal(t, tc.called, executor.called)
