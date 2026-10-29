@@ -358,9 +358,6 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			preflightEnvironment = mergeConfigurationEnvironment(preflightEnvironment, assignments)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	command, args, environment, preflight := selectedLanguage.inspectEnvironment(ctx, environmentRequest{root: repositoryRoot, command: command, args: args, explicit: strings.TrimSpace(settings.GetCommand()) != "", checkOnly: configurationOnly, discoveryError: discoveryError, timeout: timeout})
 	scopeCommand := selectedPlan.ScopeCommand
 	if scopeCommand == "" {
 		scopeCommand = originalCommand
@@ -389,6 +386,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, selectedPlan.Environment)
 		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, commandAssignments)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	command, args, environment, preflight := selectedLanguage.inspectEnvironment(ctx, environmentRequest{root: repositoryRoot, command: command, args: args, explicit: strings.TrimSpace(settings.GetCommand()) != "", checkOnly: configurationOnly, discoveryError: discoveryError, timeout: timeout, environment: configurationEnvironment})
 	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args, Environment: configurationEnvironment}
 	options.Command, options.Args = selectedLanguage.tracerCommand(environment, options.Command, options.Args)
 	var projectTracer string

@@ -173,6 +173,7 @@ type environmentRequest struct {
 	checkOnly      bool
 	discoveryError error
 	timeout        time.Duration
+	environment    map[string]string
 }
 
 // pairedFramework is one framework's part of paired validation.
