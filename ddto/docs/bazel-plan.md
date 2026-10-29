@@ -76,7 +76,7 @@ The user settled these on 2026-10-29.
 | Code checks, not versions | Library gates check the code that each edit needs, in and outside Bazel. Testify v1.3.0 is instrumented when its code fits. |
 | No API key in tests | Tests run in agent mode, with no network and no key; the uploader keeps the key. |
 | Where Bazel is tested | ddtest's CI runs a basic Bazel test. The full Bazel suites live in rules_test_optimization and rules_test_optimization_tests. |
-| The test rule | ddtest generates the Starlark from files in its own repository, and `dd_topt_go_test` wraps it. [Validating the Starlark](#validating-the-starlark) lists the checks. |
+| The test rule | ddtest generates the Starlark from files in its own repository, and `dd_topt_go_test` wraps it. [Validating the Starlark](#validating-the-starlark) lists the checks. Reopened by open question 1. |
 | Platforms | Every platform with a ddtest release asset: Linux, macOS and Windows on amd64 and arm64, as exec and target platforms, plus remote execution. Every rules_go minor version from 0.60 to the latest, at its latest patch. |
 | WORKSPACE and Bzlmod | Both stay supported. |
 | One Mini per test | The test binary links only the Mini of the ddtest release, as outside Bazel. [Mini from `go_deps`](#mini-from-go_deps) covers tests that use Mini's Go API. |
@@ -181,20 +181,24 @@ to linker` (`go/tools/builders/importcfg.go`).
 
 ### Registration
 
-rules_test_optimization's module extension:
+rules_test_optimization's module extension creates three kinds of
+repository, so that a build fetches only what it uses:
 
-1. Downloads, from one ddtest release, the ddtest executable for the host
-   (`ddtest-<os>-<arch>`, checked against `SHA256SUMS`). This executable runs
-   the next step.
-2. For each exec platform:
-   - takes the workspace's own Go SDK, or downloads the official one;
-   - downloads that platform's ddtest executable;
-   - runs `ddtest instrument bazel <dir>`, which makes that executable the
-     SDK's `compile`.
-3. Wraps the result with rules_go's `go_wrap_sdk(register_toolchains = False)`.
-4. Declares its own toolchains, gated on
-   `@rules_go//go/toolchain:sdk_name == "ddto"`. They never match the default
-   empty value.
+- **Registration.** One `toolchain()` per exec platform, gated on
+  `@rules_go//go/toolchain:sdk_name == "ddto"`, so they never match the
+  default empty value. The extension writes them itself, with no download.
+  Bazel loads every registered toolchain declaration, and these load nothing
+  else. Each one points at its implementation in an SDK repository, which
+  Bazel fetches only when it selects that toolchain.
+- **SDK, one per exec platform.** It downloads, from one ddtest release, the
+  host's ddtest executable and that platform's one (`ddtest-<os>-<arch>`,
+  checked against `SHA256SUMS`). It takes the workspace's SDK for that
+  platform or the official one. It then runs the host's
+  `ddtest instrument bazel`, which makes the platform's executable the SDK's
+  `compile`, and wraps the result with rules_go's
+  `go_wrap_sdk(register_toolchains = False)`.
+- **Mini.** Mini's packages, written by the host's ddtest. Bazel fetches it
+  only for targets that depend on Mini.
 
 Target platforms reuse those SDKs by cross-compiling, as rules_go does with
 its own (`go/private/go_toolchain.bzl`). Only exec platforms need an
@@ -214,17 +218,20 @@ and registers the toolchains.
 already uses: its version, download mirrors, checksums, patches and
 `GOEXPERIMENT` values (`go_wrap_sdk` accepts `experiments`).
 
-- **Named SDK.** A workspace that registers its SDK with
-  `go_sdk.download(name = ...)` can `use_repo` that repository and give the
-  extension its `ROOT` label. The generator then copies that SDK, and the
-  extension declares the same experiments.
+- **Named SDKs.** rules_go keeps one SDK repository per exec platform.
+  A workspace that registers its SDKs with `go_sdk.download(name = ...)`
+  can `use_repo` them. It then gives the extension a map from each exec
+  platform to the `ROOT` label of that platform's SDK. The generator copies
+  the matching SDK, and the extension declares the same experiments.
 - **Default.** Without one, the extension downloads the official SDK. Its
   version follows rules_go's `go_sdk.from_file`: the root module's `go.mod`
   `toolchain` directive, then its `go` directive (`go/private/go_mod.bzl`).
-- **Laziness.** Builds without the instrumented configuration must not fetch
-  the SDK or ddtest, nor change any ordinary action. Toolchain resolution
-  only fetches the repository of a toolchain that it selects, and
-  `sdk_name` keeps ours unselected; the full suites check this.
+- **Laziness.** Builds without the instrumented configuration fetch none of
+  these repositories and change no ordinary action. There is one exception:
+  in a workspace that uses Mini's Go API with the override above, targets
+  that depend on Mini fetch the Mini repository, which needs only the
+  host's ddtest. Open question 1 covers the Starlark that `BUILD` files
+  load. The full suites check all of this.
 
 | rules_go API | Status |
 | --- | --- |
@@ -257,12 +264,11 @@ The Go test rule:
 
 ### `ddtest instrument bazel <dir>`
 
-The command writes into `<dir>`:
+The command writes one of these into `<dir>`, with a `VERSION` file:
 
-- The instrumented SDK, from the official SDK given with `--goroot`.
+- an instrumented SDK, from an SDK given with `--goroot` and a compiler
+  executable for its platform;
 - Mini's packages with their `BUILD.bazel` files.
-- The toolchain declarations and, if ddtest owns it, the test rule.
-- A `VERSION` file.
 
 Today `ddtest instrument bazel test //...` runs `bazel test //...` unchanged.
 The subcommand therefore accepts only its directory and flags, and it fails
@@ -285,7 +291,8 @@ release version, the `sdk_name` value and a contract version.
   - the test gets Mini and the registration file;
   - the environment is set;
   - `data` stays outside the transition;
-  - the toolchains never match an empty `sdk_name`.
+  - the toolchains never match an empty `sdk_name`, and loading them
+    fetches no SDK repository.
 - **The basic Bazel test** in ddtest's CI uses the generated rule, in Bzlmod
   and WORKSPACE modes.
 - **Cross validation.** rules_test_optimization and
@@ -499,10 +506,12 @@ The new major version, built on the release candidate:
     modes;
   - every platform, remote execution, and a host that differs from the exec
     platform;
-  - a named SDK with its own mirrors, patches and experiments;
+  - named SDKs with their own mirrors, patches and experiments, on a host
+    that differs from the exec platform;
   - other SDK and platform transitions, nested data, exec tools and `nogo`;
   - builds without the instrumented configuration: nothing fetched, no
-    metadata requests and unchanged action inputs;
+    metadata requests and unchanged action inputs, and a plain build that
+    uses Mini's API fetching only the Mini repository;
   - the replacement metadata;
   - the doctor and the uploader dry run with `--validate-enrichment`. Checks
     read their reports, because a runner can return the tests' exit status
@@ -544,9 +553,25 @@ to that release.
 
 ## Open questions
 
-None. The dd-source rollout thread reviewed the plan on 2026-10-29. Open
-problems 7 to 10, the base SDK, the laziness checks and phase 4's consumer
-migration and acceptance criteria come from that review.
+The dd-source rollout thread reviewed the plan on 2026-10-29. Open problems
+7 to 10, the base SDK, the laziness checks and phase 4's consumer migration
+and acceptance criteria come from that review.
+
+1. **Where the test rule's Starlark lives** (reopened on 2026-10-30).
+   `BUILD` files load the test rule in every build, instrumented or not. If
+   ddtest generates it, loading it needs the ddtest executable, so ordinary
+   builds would download ddtest and run it. That breaks the laziness above.
+   There are two ways out:
+   - **rules_test_optimization owns the Starlark:** the macro, the rule, the
+     transition and the registration file template. ddtest generates only
+     the SDK and Mini, behind a contract version. The rule's CI validates
+     the Starlark, and ddtest's basic Bazel test uses a minimal rule of its
+     own.
+   - **ddtest owns it** but ships the Starlark apart from the executable,
+     which is another download in ordinary builds and another file in each
+     release.
+
+   Recommendation: the first.
 
 ## Out of scope
 
