@@ -352,7 +352,10 @@ func TestOnboardAsksForAnUnknownCIRuntime(t *testing.T) {
 	_ = StartWithOptions(&output, StartOptions{Format: "agent"})
 	require.NoError(t, json.Unmarshal(output.Bytes(), &result), output.String())
 	require.Equal(t, "ci_setup_required", result.Code)
-	require.Equal(t, []string{"--ci-runtime", "ruby=3.3"}, result.ResumeCommand[len(result.ResumeCommand)-2:])
+	// DD_SITE from the environment adds --site, so look for the pair anywhere.
+	flag := slices.Index(result.ResumeCommand, "--ci-runtime")
+	require.GreaterOrEqual(t, flag, 0, result.ResumeCommand)
+	require.Equal(t, []string{"--ci-runtime", "ruby=3.3"}, result.ResumeCommand[flag:flag+2])
 }
 
 func TestWithImplicitTag(t *testing.T) {
