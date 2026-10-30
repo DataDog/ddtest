@@ -119,3 +119,18 @@ func TestNonTestTasks(t *testing.T) {
 		require.True(t, NonTestTask(task), task)
 	}
 }
+
+func TestValidationArgs(t *testing.T) {
+	require.Equal(t,
+		[]string{"--info", "-Pci=true", "build", "--rerun-tasks", "--no-build-cache", "--continue", "--no-daemon", "-Dorg.gradle.configuration-cache=false"},
+		ValidationArgs(strings.Fields("--info --build-cache --daemon -Pci=true build --configuration-cache --continue")),
+		"every run executes its tests, isolated from the others")
+}
+
+func TestProbeArgs(t *testing.T) {
+	require.Equal(t,
+		[]string{"--info", "-Pci=true", ":app:test", "--tests", "ddtest.DdtestValidationTest", "--rerun-tasks", "--no-build-cache", "--continue", "--no-daemon", "-Dorg.gradle.configuration-cache=false"},
+		ProbeArgs(strings.Fields("--info -Pci=true build test --tests com.example.ApiTest -x test -x javadoc"), ":app", "ddtest.DdtestValidationTest"),
+		"only the probe's project test task runs, with the command's options")
+	require.Equal(t, ":test", ProbeArgs(nil, ":", "ddtest.DdtestValidationTest")[0], "the root project's test task")
+}

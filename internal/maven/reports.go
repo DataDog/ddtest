@@ -96,7 +96,7 @@ func ReadReports(root string, projects []Project) ([]Test, error) {
 				read, feature, err = readKarateReport(path, project.Directory)
 				karate, karatePaths = append(karate, read...), append(karatePaths, feature)
 			} else {
-				read, err = readReport(path, project.Directory)
+				read, err = ReadReport(path, project.Directory)
 				module = append(module, read...)
 			}
 			if err != nil {
@@ -172,7 +172,9 @@ func readKarateReport(path, module string) ([]Test, string, error) {
 	return tests, feature, nil
 }
 
-func readReport(path, module string) ([]Test, error) {
+// ReadReport reads one JUnit XML report, as Surefire, Failsafe, ScalaTest and
+// Gradle write it, attributing its test cases to module.
+func ReadReport(path, module string) ([]Test, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

@@ -20,11 +20,12 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 )
 
 func TestJavaSelectsOnlyLocalMavenTestCommands(t *testing.T) {
-	runner := framework.NewMaven("junit5", nil)
+	runner := framework.NewJVM("junit5", nil)
 	command, args, handled, err := javaLanguage{}.selectCommand(commandRequest{runner: runner, override: "./mvnw -B -f service/pom.xml verify"})
 	require.NoError(t, err)
 	require.True(t, handled)
@@ -36,16 +37,40 @@ func TestJavaSelectsOnlyLocalMavenTestCommands(t *testing.T) {
 	require.False(t, handled, "without --command the framework's default Maven command runs")
 
 	for override, message := range map[string]string{
-		"gradle test":                    "literal mvn or mvnw command",
 		"sh -c 'mvn test'":               "literal mvn or mvnw command",
 		"mvn compile":                    "literal mvn or mvnw command",
 		"mvn test deploy:deploy@publish": "never installs or publishes artifacts",
 		"mvn -f ../other/pom.xml test":   "must stay inside the repository",
-		"mvn test 'unterminated":         "invalid Maven command",
+		"mvn test 'unterminated":         "invalid Java build command",
+		"./gradlew assemble":             "literal gradle or gradlew command that runs test tasks",
+		"./gradlew test publish":         "never publishes artifacts; remove publish",
+		"./gradlew -I ci.gradle test":    "changes the build Gradle runs",
+		"./gradlew -p ../other test":     "must stay inside the repository",
 	} {
 		_, _, _, err := javaLanguage{}.selectCommand(commandRequest{runner: runner, override: override})
 		require.ErrorContains(t, err, message, override)
 	}
+	for _, override := range []string{"gradle test", "./gradlew --no-daemon -p app check", "./gradlew :app:test --tests com.example.ApiTest"} {
+		command, args, handled, err := javaLanguage{}.selectCommand(commandRequest{runner: runner, override: override})
+		require.NoError(t, err, override)
+		require.True(t, handled)
+		words, _ := shellquote.Split(override)
+		require.Equal(t, words[0], command)
+		require.Equal(t, words[1:], args)
+	}
+}
+
+func TestJavaAgentEnvironmentRidesOnGradleOpts(t *testing.T) {
+	t.Setenv("GRADLE_OPTS", "-Xmx1g -javaagent:/ci/dd-java-agent.jar")
+	t.Setenv("MAVEN_OPTS", "")
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "build.gradle"), "")
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewJVM("junit5", nil), command: "./gradlew", args: []string{"test"}}
+	env := javaLanguage{}.runEnvironment(drive, "/tmp/session/dd-java-agent.jar")
+	require.Equal(t, "-Xmx1g -javaagent:/tmp/session/dd-java-agent.jar", env["GRADLE_OPTS"], "the Gradle JVM configures the test JVMs its test tasks fork, with the selected agent only")
+	require.NotContains(t, env, "MAVEN_OPTS")
+	env = javaLanguage{}.runEnvironment(drive, "")
+	require.Equal(t, "-Xmx1g", env["GRADLE_OPTS"], "the baseline runs without the agent CI's action attached")
 }
 
 func TestJavaAgentEnvironmentAttachesTheAgentOnce(t *testing.T) {
@@ -53,7 +78,7 @@ func TestJavaAgentEnvironmentAttachesTheAgentOnce(t *testing.T) {
 	t.Setenv("JAVA_TOOL_OPTIONS", "-Dfile.encoding=UTF-8")
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><dependencies><dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId></dependency></dependencies></project>`)
-	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"verify"}}
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewJVM("junit5", nil), command: "mvn", args: []string{"verify"}}
 	env := javaLanguage{}.runEnvironment(drive, "/tmp/session/dd-java-agent.jar")
 	require.Equal(t, "-Xmx1g -javaagent:/tmp/session/dd-java-agent.jar", env["MAVEN_OPTS"], "the Maven JVM configures the forked test JVMs")
 	require.NotContains(t, env, "JAVA_TOOL_OPTIONS")
@@ -68,7 +93,7 @@ func TestJavaAgentEnvironmentAttachesTheAgentOnce(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><modules><module>scala</module></modules><dependencies><dependency><groupId>junit</groupId><artifactId>junit</artifactId></dependency></dependencies></project>`)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scala"), 0755))
 	requireWriteFile(t, filepath.Join(root, "scala", "pom.xml"), `<project><dependencies><dependency><groupId>org.scalatest</groupId><artifactId>scalatest_2.13</artifactId></dependency></dependencies></project>`)
-	drive.framework, drive.configurationEnvironment = framework.NewMaven("junit4", nil), nil
+	drive.framework, drive.configurationEnvironment = framework.NewJVM("junit4", nil), nil
 	env = javaLanguage{}.runEnvironment(drive, "/tmp/session/dd-java-agent.jar")
 	require.Equal(t, "-Dfile.encoding=UTF-8 -javaagent:/tmp/session/dd-java-agent.jar", env["JAVA_TOOL_OPTIONS"])
 	require.NotContains(t, env, "MAVEN_OPTS")
@@ -85,7 +110,7 @@ func TestJavaRunsRemoveAnInheritedDatadogAgent(t *testing.T) {
 	t.Setenv("JAVA_TOOL_OPTIONS", "-javaagent:"+ciAgent+" -Dfile.encoding=UTF-8")
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>fixture</artifactId></project>`)
-	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"verify"}}
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewJVM("junit5", nil), command: "mvn", args: []string{"verify"}}
 
 	baseline := javaLanguage{}.runEnvironment(drive, "")
 	require.Equal(t, "-Xmx1g -javaagent:/opt/jacoco.jar=destfile=jacoco.exec", baseline["MAVEN_OPTS"], "other agents stay")
@@ -170,23 +195,40 @@ func TestJavaRefusesADatadogAgentInJVMConfig(t *testing.T) {
 	require.ErrorContains(t, err, ".mvn/jvm.config attaches dd-java-agent", "the baseline could not run without the agent")
 }
 
-func TestJavaConfigurationRefusesGradleBuilds(t *testing.T) {
+func TestJavaConfigurationReadsGradleBuilds(t *testing.T) {
 	root := t.TempDir()
-	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)
 	requireWriteFile(t, filepath.Join(root, "settings.gradle"), "include 'app'\n")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "app"), 0700))
+	requireWriteFile(t, filepath.Join(root, "app", "build.gradle"), "dependencies { testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4' }\n")
+	t.Setenv("GRADLE_USER_HOME", t.TempDir())
 	for _, command := range []string{"./gradlew", "gradle"} {
-		drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewMaven("junit5", nil), command: command, args: []string{"test"}}
-		err := javaLanguage{}.prepareConfiguration(drive, nil, root, root)
-		require.ErrorIs(t, err, errGradleValidation, "a discovered Gradle configuration is reported, never run as Maven")
-		_, _, err = drive.javaReactor([]string{"test"})
-		require.ErrorIs(t, err, errGradleValidation)
+		drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewJVM("junit5", nil), command: command, args: []string{"test"}}
+		require.NoError(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "a discovered Gradle configuration runs")
+		build, err := drive.javaBuild([]string{"test"})
+		require.NoError(t, err)
+		require.Equal(t, "Gradle", build.tool())
+		require.Equal(t, []string{"junit5"}, javaFrameworks(build))
 	}
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewJVM("junit5", nil), command: "./gradlew", args: []string{"test", "publish"}}
+	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "never publishes")
+	drive.args = []string{"-I", "ci.gradle", "test"}
+	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "changes the build Gradle runs")
+	// A dd-java-agent that gradle.properties attaches to every build, the
+	// build's own or the user's, would also run in the baseline.
+	drive.args = []string{"test"}
+	requireWriteFile(t, filepath.Join(root, "gradle.properties"), "org.gradle.jvmargs=-Xmx2g -javaagent:/opt/dd-java-agent.jar\n")
+	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "attaches dd-java-agent to every Gradle build")
+	require.NoError(t, os.Remove(filepath.Join(root, "gradle.properties")))
+	home := t.TempDir()
+	t.Setenv("GRADLE_USER_HOME", home)
+	requireWriteFile(t, filepath.Join(home, "gradle.properties"), "org.gradle.jvmargs=-javaagent:/opt/dd-java-agent.jar\n")
+	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "attaches dd-java-agent to every Gradle build")
 }
 
 func TestJavaConfigurationRefusesImplicitPublishingGoalsForEveryFramework(t *testing.T) {
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)
-	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewMaven("testng", nil), command: "mvn", args: []string{"test"}}
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewJVM("testng", nil), command: "mvn", args: []string{"test"}}
 	require.NoError(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root))
 	drive.configurationEnvironment = map[string]string{"MAVEN_ARGS": "deploy"}
 	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "MAVEN_ARGS adds deploy", "reporting-only frameworks never reach runJava")
@@ -196,7 +238,7 @@ func TestJavaConfigurationRefusesImplicitPublishingGoalsForEveryFramework(t *tes
 	require.NoError(t, err)
 	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)
 	require.NoError(t, os.Mkdir(filepath.Join(root, "build"), 0755))
-	drive = &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"-f", "../pom.xml", "verify"}}
+	drive = &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewJVM("junit5", nil), command: "mvn", args: []string{"-f", "../pom.xml", "verify"}}
 	item := &configurationResult{TestCommand: onboard.TestCommand{Directory: "build"}}
 	require.NoError(t, javaLanguage{}.prepareConfiguration(drive, item, root, root))
 	item.Directory = "."
@@ -254,7 +296,7 @@ func TestJavaReactorIncludesMavenArgs(t *testing.T) {
 
 func TestJavaTemporaryAgentPathCannotContainWhitespace(t *testing.T) {
 	_, _, err := javaLanguage{}.installDirectory("/tmp/with space/session", "")
-	require.ErrorContains(t, err, "MAVEN_OPTS cannot carry")
+	require.ErrorContains(t, err, "MAVEN_OPTS and GRADLE_OPTS cannot carry")
 	directory, cleanup, err := javaLanguage{}.installDirectory("/tmp/session", "")
 	require.NoError(t, err)
 	require.Nil(t, cleanup)
@@ -262,7 +304,7 @@ func TestJavaTemporaryAgentPathCannotContainWhitespace(t *testing.T) {
 }
 
 func TestJavaRunsMavenOnlyInADisposableCopy(t *testing.T) {
-	drive := &Testdrive{repositoryRoot: t.TempDir(), framework: framework.NewMaven("junit5", nil)}
+	drive := &Testdrive{repositoryRoot: t.TempDir(), framework: framework.NewJVM("junit5", nil)}
 	session := workspace.PlanSession()
 	_, err := drive.runJava(context.Background(), io.Discard, session, "", runSpec{Name: "baseline"}, javaProbe{})
 	require.ErrorContains(t, err, "disposable copy")
@@ -278,23 +320,28 @@ func javaFixtureProjects() []maven.Project {
 	}
 }
 
-func TestJavaNativeTestsUseTheAgentsModuleNames(t *testing.T) {
-	tests := javaNativeTests(javaFixtureProjects(), []maven.Test{
-		{Module: "api", Suite: "example.ApiTest", Name: "works()", Status: "passed"},
-		{Module: "core", Suite: "example.CoreTest", Name: "fails", Status: "failed", Failure: "AssertionError: no\n"},
-		{Module: "a/util", Suite: "example.UtilTest", Name: "works", Status: "passed"},
-		{Module: "core", Suite: javaProbeClass, Name: "ddtestProbe()", Status: "passed"},
+func TestJavaModuleLabelsUseTheAgentsModuleNames(t *testing.T) {
+	labels := javaModuleLabels(javaFixtureProjects())
+	require.Equal(t, "Customer API", labels["api"], "the agent reports a project's <name>")
+	require.Equal(t, "core", labels["core"], "and otherwise its artifactId")
+	require.Equal(t, "a/util", labels["a/util"], "a name two projects share cannot identify either")
+}
+
+func TestJavaNativeTestsUseTheirModules(t *testing.T) {
+	tests := javaNativeTests([]javaResult{
+		{module: "Customer API", Test: maven.Test{Module: "api", Suite: "example.ApiTest", Name: "works()", Status: "passed"}},
+		{module: ":app:test", Test: maven.Test{Module: "app", Suite: "example.AppTest", Name: "fails()", Status: "failed", Failure: "AssertionError: no\n"}},
+		{module: "core", Test: maven.Test{Module: "core", Suite: javaProbeClass, Name: "ddtestProbe()", Status: "passed"}},
 	}, true)
-	require.Equal(t, "Customer API / example.ApiTest", tests[0].File, "the agent reports a project's <name>")
-	require.Equal(t, "core / example.CoreTest", tests[1].File, "and otherwise its artifactId")
-	require.Equal(t, "a/util / example.UtilTest", tests[2].File, "a name two projects share cannot identify either")
-	probe := tests[3]
+	require.Equal(t, "Customer API / example.ApiTest", tests[0].File)
+	require.Equal(t, ":app:test / example.AppTest", tests[1].File, "a Gradle result is its test task's")
+	probe := tests[2]
 	require.True(t, probe.probe)
 	require.Equal(t, "core / "+javaProbeClass, probe.File, "the probe is matched by module, class and name, as other tests")
 	require.Equal(t, "ddtestProbe", *probe.telemetryName)
-	karate := javaNativeTests(javaFixtureProjects(), []maven.Test{
-		{Module: "core", Suite: "[src/test/resources/ddtest/DdtestValidation] " + javaProbeClass, Name: "ddtestProbe", Status: "passed"},
-		{Module: "core", Suite: "[example/calc] Calculator", Name: "adds", Status: "passed"},
+	karate := javaNativeTests([]javaResult{
+		{module: "core", Test: maven.Test{Module: "core", Suite: "[src/test/resources/ddtest/DdtestValidation] " + javaProbeClass, Name: "ddtestProbe", Status: "passed"}},
+		{module: "core", Test: maven.Test{Module: "core", Suite: "[example/calc] Calculator", Name: "adds", Status: "passed"}},
 	}, true)
 	require.True(t, karate[0].probe, "a Karate probe is its feature's path and name")
 	require.False(t, karate[1].probe)
@@ -358,7 +405,7 @@ func TestJavaTelemetryRejectsUnusableEvidence(t *testing.T) {
 }
 
 func TestJavaProbeRunsInAModuleThatRanTests(t *testing.T) {
-	projects := javaFixtureProjects()
+	projects := newMavenBuild(t.TempDir(), javaFixtureProjects())
 	module, ok := javaProbeModule(projects, []nativeTest{{File: "Customer API / example.ApiTest"}, {File: "core / example.CoreTest"}}, "junit5")
 	require.True(t, ok)
 	require.Equal(t, "core", module, "a module declaring the selected framework is preferred")
@@ -498,7 +545,7 @@ func javaCIFixture(t *testing.T, matrix string) string {
 
 func TestJavaCIRuntimeCertifiesTheValidatedJDKOrAnAcceptedSubstitute(t *testing.T) {
 	root := javaCIFixture(t, "['17', '21', '21.0.4']")
-	drive := &Testdrive{repositoryRoot: root, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"-B", "clean", "verify"}, tracerVersion: "1.67.1"}
+	drive := &Testdrive{repositoryRoot: root, framework: framework.NewJVM("junit5", nil), command: "mvn", args: []string{"-B", "clean", "verify"}, tracerVersion: "1.67.1"}
 	ci, substitutions, err := drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
 	require.Len(t, ci.Jobs, 3, "the CI step validated as mvn -B clean verify matches every row")
@@ -534,7 +581,7 @@ func TestJavaCIRuntimeCertifiesTheValidatedJDKOrAnAcceptedSubstitute(t *testing.
 	require.Empty(t, substitutions)
 
 	single := javaCIFixture(t, "['17']")
-	drive = &Testdrive{repositoryRoot: single, framework: framework.NewMaven("junit5", nil), command: "mvn", args: []string{"-B", "clean", "verify"}, tracerVersion: "1.67.1"}
+	drive = &Testdrive{repositoryRoot: single, framework: framework.NewJVM("junit5", nil), command: "mvn", args: []string{"-B", "clean", "verify"}, tracerVersion: "1.67.1"}
 	ci, substitutions, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
 	require.Equal(t, "compatible", ci.Status)
@@ -590,10 +637,10 @@ func TestJavaPinsTheCITracer(t *testing.T) {
 }
 
 func TestJavaAllConfigurationsComeFromCIDiscovery(t *testing.T) {
-	_, _, handled, err := javaLanguage{}.selectCommand(commandRequest{runner: framework.NewMaven("junit5", nil), override: "", all: true})
+	_, _, handled, err := javaLanguage{}.selectCommand(commandRequest{runner: framework.NewJVM("junit5", nil), override: "", all: true})
 	require.NoError(t, err)
 	require.False(t, handled)
-	_, _, _, err = javaLanguage{}.selectCommand(commandRequest{runner: framework.NewMaven("junit5", nil), override: "mvn -B clean install"})
+	_, _, _, err = javaLanguage{}.selectCommand(commandRequest{runner: framework.NewJVM("junit5", nil), override: "mvn -B clean install"})
 	require.ErrorContains(t, err, "remove install, for example: mvn -B clean verify", "install would overwrite ~/.m2 artifacts")
 }
 

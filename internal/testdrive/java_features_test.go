@@ -28,11 +28,13 @@ import (
 // single-module reactor, relative to the checkout.
 const javaProbeSourceFile = "src/test/java/ddtest/DdtestValidationTest.java"
 
-// simulatedMaven stands in for Maven with dd-java-agent: it writes the
-// Surefire reports and the probe state the real build would, and the telemetry
-// the agent would send for the scenario the intake serves.
-type simulatedMaven struct {
-	root     string
+// simulatedBuild stands in for Maven, or Gradle, with dd-java-agent: it writes
+// the native reports and the probe state the real build would, and the
+// telemetry the agent would send for the scenario the intake serves.
+type simulatedBuild struct {
+	root string
+	// gradle simulates a single-project Gradle build instead of Maven.
+	gradle   bool
 	scenario intake.Scenario
 	facts    intake.Facts
 	// customerFailure makes the customer test fail.
@@ -46,13 +48,13 @@ type simulatedMaven struct {
 	args            [][]string
 }
 
-type simulatedIntake struct{ maven *simulatedMaven }
+type simulatedIntake struct{ maven *simulatedBuild }
 
 func (i simulatedIntake) URL() string                  { return "http://127.0.0.1:1" }
 func (i simulatedIntake) Facts() (intake.Facts, error) { return i.maven.facts, nil }
 func (i simulatedIntake) Close() error                 { return nil }
 
-func (m *simulatedMaven) startIntake(_ string, scenario intake.Scenario) (localIntake, error) {
+func (m *simulatedBuild) startIntake(_ string, scenario intake.Scenario) (localIntake, error) {
 	m.scenario, m.facts = scenario, intake.Facts{}
 	return simulatedIntake{m}, nil
 }
@@ -64,21 +66,32 @@ func exitStatus(t *testing.T, code int) error {
 	return err
 }
 
-func (m *simulatedMaven) report(t *testing.T, class string, cases ...string) {
+func (m *simulatedBuild) report(t *testing.T, class string, cases ...string) {
 	t.Helper()
 	directory := filepath.Join(m.root, "target", "surefire-reports")
+	if m.gradle {
+		directory = filepath.Join(m.root, "build", "test-results", "test")
+	}
 	require.NoError(t, os.MkdirAll(directory, 0755))
 	requireWriteFile(t, filepath.Join(directory, "TEST-"+class+".xml"), `<testsuite name="`+class+`">`+strings.Join(cases, "")+`</testsuite>`)
 }
 
-func (m *simulatedMaven) run(t *testing.T, args []string, env map[string]string) (string, error) {
+func (m *simulatedBuild) run(t *testing.T, args []string, env map[string]string) (string, error) {
 	t.Helper()
 	m.calls, m.args = append(m.calls, env), append(m.args, args)
 	instrumented := env["DD_CIVISIBILITY_ENABLED"] != "false"
 	if m.brokenBuild {
+		if m.gradle {
+			return "* What went wrong:\nExecution failed for task ':compileJava'.\n> Compilation failed; see the compiler error output for details.\n", exitStatus(t, 1)
+		}
 		return "[ERROR] COMPILATION ERROR\n", exitStatus(t, 1)
 	}
-	if !slices.Contains(args, "-Dtest="+javaProbeClass) {
+	probe := slices.Contains(args, "-Dtest="+javaProbeClass)
+	if m.gradle {
+		index := slices.Index(args, "--tests")
+		probe = index >= 0 && index+1 < len(args) && args[index+1] == javaProbeClass
+	}
+	if !probe {
 		testCase := `<testcase classname="example.CalcTest" name="adds()"/>`
 		status := "pass"
 		if m.customerFailure {
@@ -88,12 +101,12 @@ func (m *simulatedMaven) run(t *testing.T, args []string, env map[string]string)
 		m.report(t, "example.CalcTest", testCase)
 		if instrumented {
 			m.facts = intake.Facts{TestEventCount: 1, Tests: []intake.Test{{
-				Module: "fixture maven-surefire-plugin default-test", Suite: "example.CalcTest", Name: "adds",
+				Module: m.module(true), Suite: "example.CalcTest", Name: "adds",
 				Attempts: []intake.TestRun{{Status: status, SpanID: 1}}, CoveredFiles: []string{"src/main/java/example/Calc.java"},
 			}}}
 		}
 		if m.customerFailure {
-			return "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.3:test (default-test) on project fixture: There are test failures.\n", exitStatus(t, 1)
+			return m.testFailure(), exitStatus(t, 1)
 		}
 		return "", nil
 	}
@@ -134,7 +147,7 @@ func (m *simulatedMaven) run(t *testing.T, args []string, env map[string]string)
 		status := body()
 		native = map[string]string{"pass": "", "fail": "fail"}[status]
 		m.facts = intake.Facts{TestEventCount: 1, Tests: []intake.Test{{
-			Module: "fixture", Suite: javaProbeClass, Name: "ddtestProbe", SourceFile: javaProbeSourceFile,
+			Module: m.module(false), Suite: javaProbeClass, Name: "ddtestProbe", SourceFile: javaProbeSourceFile,
 			Attempts: []intake.TestRun{{Status: status, SpanID: 1}},
 		}}}
 		if status == "fail" {
@@ -172,37 +185,123 @@ func (m *simulatedMaven) run(t *testing.T, args []string, env map[string]string)
 		"skip": `<testcase classname="ddtest.DdtestValidationTest" name="ddtestProbe()"><skipped/></testcase>`,
 	}[native])
 	if exit != 0 {
-		return "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.3:test (default-test) on project fixture: There are test failures.\n", exitStatus(t, exit)
+		return m.testFailure(), exitStatus(t, exit)
 	}
 	return "", nil
 }
 
-type simulatedMavenExecutor struct {
-	t     *testing.T
-	maven *simulatedMaven
+// module is the test.module dd-java-agent reports: Gradle's test task path,
+// or the Maven module, with the plugin execution Surefire runs it in.
+func (m *simulatedBuild) module(execution bool) string {
+	switch {
+	case m.gradle:
+		return ":test"
+	case execution:
+		return "fixture maven-surefire-plugin default-test"
+	}
+	return "fixture"
 }
 
-func (e simulatedMavenExecutor) CombinedOutput(_ context.Context, _ string, args []string, env map[string]string) ([]byte, error) {
+// testFailure is how the build reports failing tests.
+func (m *simulatedBuild) testFailure() string {
+	if m.gradle {
+		return "FAILURE: Build failed with an exception.\n\n* What went wrong:\nExecution failed for task ':test'.\n> There were failing tests. See the report at: file:///build/reports/tests/test/index.html\n"
+	}
+	return "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.3:test (default-test) on project fixture: There are test failures.\n"
+}
+
+type simulatedBuildExecutor struct {
+	t     *testing.T
+	maven *simulatedBuild
+}
+
+func (e simulatedBuildExecutor) CombinedOutput(_ context.Context, _ string, args []string, env map[string]string) ([]byte, error) {
 	output, err := e.maven.run(e.t, args, env)
 	return []byte(output), err
 }
 
-func javaSimulation(t *testing.T) (*Testdrive, *simulatedMaven, *workspace.Session) {
+func javaSimulation(t *testing.T) (*Testdrive, *simulatedBuild, *workspace.Session) {
 	t.Helper()
 	root := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(root, ".git"), 0755))
 	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>fixture</artifactId><dependencies><dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId></dependency></dependencies></project>`)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "src/main/java/example"), 0755))
 	requireWriteFile(t, filepath.Join(root, "src/main/java/example/Calc.java"), "package example;\npublic class Calc {}\n")
-	maven := &simulatedMaven{root: root}
+	maven := &simulatedBuild{root: root}
 	session, err := workspace.NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	drive := &Testdrive{
-		repositoryRoot: root, isolated: true, language: "java", framework: framework.NewMaven("junit5", nil),
-		command: "mvn", args: []string{"-B", "test"}, executor: simulatedMavenExecutor{t, maven}, startIntake: maven.startIntake,
+		repositoryRoot: root, isolated: true, language: "java", framework: framework.NewJVM("junit5", nil),
+		command: "mvn", args: []string{"-B", "test"}, executor: simulatedBuildExecutor{t, maven}, startIntake: maven.startIntake,
 	}
 	return drive, maven, session
+}
+
+// gradleSimulation is javaSimulation for a single-project Gradle build that
+// CI runs with the wrapper.
+func gradleSimulation(t *testing.T) (*Testdrive, *simulatedBuild, *workspace.Session) {
+	t.Helper()
+	drive, build, session := javaSimulation(t)
+	require.NoError(t, os.Remove(filepath.Join(drive.repositoryRoot, "pom.xml")))
+	requireWriteFile(t, filepath.Join(drive.repositoryRoot, "settings.gradle"), "rootProject.name = 'fixture'\n")
+	requireWriteFile(t, filepath.Join(drive.repositoryRoot, "build.gradle"), "dependencies { testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4' }\n")
+	t.Setenv("GRADLE_USER_HOME", t.TempDir())
+	build.gradle = true
+	drive.command, drive.args = "./gradlew", []string{"--info", "test"}
+	return drive, build, session
+}
+
+func TestGradleValidationRunsPairedBuildsAndEveryFeatureProbe(t *testing.T) {
+	t.Setenv("GRADLE_OPTS", "-Xmx2g")
+	drive, build, session := gradleSimulation(t)
+	var output bytes.Buffer
+	result := &validationResult{Framework: "junit5"}
+	require.NoError(t, drive.runFrameworkValidation(t.Context(), &output, session, "/agent/dd-java-agent.jar", result), output.String())
+	require.Equal(t, "compatible", result.Compatibility.Status, "%+v", result.Compatibility)
+	require.Len(t, result.Features, 6)
+	for _, feature := range result.Features {
+		require.Equal(t, "passed", feature.Status, "%s: %s", feature.Name, feature.Reason)
+	}
+	require.Equal(t, "observed", result.Runs[1].Coverage.Status)
+
+	flags := []string{"--rerun-tasks", "--no-build-cache", "--continue", "--no-daemon", "-Dorg.gradle.configuration-cache=false"}
+	require.Equal(t, append([]string{"--info", "test"}, flags...), build.args[0], "every run executes its tests, isolated from the others")
+	require.Equal(t, append([]string{"--info", ":test", "--tests", javaProbeClass}, flags...), build.args[2], "the probe runs alone through its project's test task")
+	baseline, instrumented := build.calls[0], build.calls[1]
+	require.Equal(t, "false", baseline["DD_CIVISIBILITY_ENABLED"])
+	require.Equal(t, "-Xmx2g", os.Getenv("GRADLE_OPTS"))
+	require.NotContains(t, baseline["GRADLE_OPTS"], "-javaagent")
+	require.Equal(t, "-Xmx2g -javaagent:/agent/dd-java-agent.jar", instrumented["GRADLE_OPTS"], "the agent rides on the Gradle JVM, as the Datadog action attaches it")
+	require.NotContains(t, instrumented, "MAVEN_SKIP_RC")
+	require.NoFileExists(t, filepath.Join(drive.repositoryRoot, javaProbeSourceFile), "the probe is removed from the copy")
+}
+
+func TestGradleValidationReadsTestFailuresAndBrokenBuilds(t *testing.T) {
+	t.Run("customer failure", func(t *testing.T) {
+		drive, build, session := gradleSimulation(t)
+		build.customerFailure = true
+		result := &validationResult{Framework: "junit5"}
+		require.NoError(t, drive.runFrameworkValidation(t.Context(), &bytes.Buffer{}, session, "/agent/dd-java-agent.jar", result))
+		require.Equal(t, "compatible", result.Compatibility.Status, "matching native failures: %+v", result.Compatibility)
+		require.Len(t, result.Features, 6)
+	})
+	t.Run("broken build", func(t *testing.T) {
+		drive, build, session := gradleSimulation(t)
+		build.brokenBuild = true
+		result := &validationResult{Framework: "junit5"}
+		require.NoError(t, drive.runFrameworkValidation(t.Context(), &bytes.Buffer{}, session, "/agent/dd-java-agent.jar", result))
+		require.Len(t, build.calls, 2, "no probe runs after the build fails")
+		require.Equal(t, "native_startup_failed", result.Compatibility.Code)
+	})
+	t.Run("stale results", func(t *testing.T) {
+		drive, build, session := gradleSimulation(t)
+		build.report(t, "example.StaleTest", `<testcase classname="example.StaleTest" name="old()"/>`)
+		build.brokenBuild = true
+		result := &validationResult{Framework: "junit5"}
+		require.NoError(t, drive.runFrameworkValidation(t.Context(), &bytes.Buffer{}, session, "/agent/dd-java-agent.jar", result))
+		require.Equal(t, "native_startup_failed", result.Compatibility.Code, "an earlier build's results are not this run's")
+	})
 }
 
 func TestJavaValidationRunsPairedBuildsAndEveryFeatureProbe(t *testing.T) {
@@ -272,7 +371,7 @@ func TestJavaValidationNeverRunsPublishingGoalsFromMavenArgs(t *testing.T) {
 
 	drive.configurationEnvironment = map[string]string{"JAVA_HOME": writeJDK(t, "17.0.20")}
 	result = &validationResult{}
-	require.ErrorContains(t, drive.checkJavaPreflight(t.Context(), &bytes.Buffer{}, result), "inspect Maven reactor")
+	require.ErrorContains(t, drive.checkJavaPreflight(t.Context(), &bytes.Buffer{}, result), "inspect the Java build")
 	require.Contains(t, result.Preflight.Verdict.Reason, "MAVEN_ARGS adds install", "the preflight names the inherited goal")
 }
 
@@ -296,15 +395,15 @@ func TestJavaPreflightInspectsTheConfigurationJDKAndReactor(t *testing.T) {
 	require.Contains(t, result.Preflight.Verdict.Reason, "module(s) legacy of other frameworks", "modules of other frameworks are reported")
 	require.Contains(t, output.String(), "JUnit 5 preflight: compatible")
 
-	drive.framework = framework.NewMaven("junit4", nil)
+	drive.framework = framework.NewJVM("junit4", nil)
 	result = &validationResult{}
 	require.NoError(t, drive.checkJavaPreflight(t.Context(), &bytes.Buffer{}, result))
 	require.Contains(t, result.Preflight.Verdict.Reason, "No POM in the repository declares JUnit 4", "an inherited framework is named")
 
 	drive.args = []string{"-f", "missing/pom.xml", "test"}
 	result = &validationResult{}
-	require.ErrorContains(t, drive.checkJavaPreflight(t.Context(), &bytes.Buffer{}, result), "inspect Maven reactor")
-	require.Contains(t, result.Preflight.Verdict.Reason, "reactor cannot be read")
+	require.ErrorContains(t, drive.checkJavaPreflight(t.Context(), &bytes.Buffer{}, result), "inspect the Java build")
+	require.Contains(t, result.Preflight.Verdict.Reason, "build cannot be read")
 }
 
 func TestJavaValidationReportsTheCIPinnedAgent(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/gradle"
 	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -26,8 +27,8 @@ import (
 	"github.com/kballard/go-shellquote"
 )
 
-// javaLanguage validates Maven test suites with dd-java-agent. Until Java
-// joins the agent workflow, it keeps the shared workflow defaults.
+// javaLanguage validates Maven and Gradle test suites with dd-java-agent.
+// Until Java joins the agent workflow, it keeps the shared workflow defaults.
 type javaLanguage struct{ sharedWorkflowHooks }
 
 func (javaLanguage) name() string         { return "java" }
@@ -47,8 +48,9 @@ func (javaLanguage) installedTracerVersion(detected string) string {
 
 func (javaLanguage) prepareStorage() error { return nil }
 
-// A selected command must be a literal Maven test invocation that stays inside
-// the repository and publishes nothing; runs repeat it several times.
+// A selected command must be a literal Maven or Gradle test invocation that
+// stays inside the repository and publishes nothing; runs repeat it several
+// times.
 func (javaLanguage) selectCommand(request commandRequest) (string, []string, bool, error) {
 	// --all validates each discovered CI command in its own copy.
 	if request.all || request.override == "" {
@@ -56,7 +58,10 @@ func (javaLanguage) selectCommand(request commandRequest) (string, []string, boo
 	}
 	words, err := shellquote.Split(request.override)
 	if err != nil || len(words) == 0 {
-		return "", nil, false, fmt.Errorf("invalid Maven command: %s", request.override)
+		return "", nil, false, fmt.Errorf("invalid Java build command: %s", request.override)
+	}
+	if gradle.Command(words) {
+		return selectGradleCommand(request.override, words)
 	}
 	if !maven.IsTestCommand(words[0], words[1:]) {
 		return "", nil, false, fmt.Errorf("select a literal mvn or mvnw command that runs a test phase, such as mvn test or ./mvnw verify: %s", request.override)
@@ -71,6 +76,26 @@ func (javaLanguage) selectCommand(request commandRequest) (string, []string, boo
 		return "", nil, false, err
 	} else if !filepath.IsLocal(pom) {
 		return "", nil, false, fmt.Errorf("maven POM must stay inside the repository: %s", pom)
+	}
+	return words[0], words[1:], true, nil
+}
+
+// selectGradleCommand accepts a literal Gradle command that requests test
+// tasks only: validation never publishes, and other tasks run no tests. Its
+// build stays inside the repository, read from the project's own files.
+func selectGradleCommand(override string, words []string) (string, []string, bool, error) {
+	if !gradle.IsTestCommand(words) {
+		return "", nil, false, fmt.Errorf("select a literal gradle or gradlew command that runs test tasks, such as ./gradlew test or gradle check: %s", override)
+	}
+	if validated, omitted := gradle.TestInvocation(words[1:], gradle.TestTask); len(omitted) > 0 {
+		return "", nil, false, fmt.Errorf("local validation runs only Gradle test tasks and never publishes artifacts; remove %s, for example: %s", strings.Join(omitted, ", "), shellquote.Join(append([]string{words[0]}, validated...)...))
+	}
+	project, err := gradle.ProjectDirectory(words[1:])
+	if err != nil {
+		return "", nil, false, err
+	}
+	if filepath.IsAbs(project) || !filepath.IsLocal(project) && project != "." {
+		return "", nil, false, fmt.Errorf("the Gradle project directory must stay inside the repository: %s", project)
 	}
 	return words[0], words[1:], true, nil
 }
@@ -149,7 +174,7 @@ func (javaLanguage) dependencyChanges(string) ([]string, string) { return []stri
 // MAVEN_OPTS is split on whitespace, so the agent path cannot contain any.
 func (javaLanguage) installDirectory(sessionDirectory, _ string) (string, func() error, error) {
 	if strings.ContainsAny(sessionDirectory, " \t\n") {
-		return "", nil, fmt.Errorf("the temporary directory %q contains whitespace, which MAVEN_OPTS cannot carry in a -javaagent path; set TMPDIR to a directory without spaces", sessionDirectory)
+		return "", nil, fmt.Errorf("the temporary directory %q contains whitespace, which MAVEN_OPTS and GRADLE_OPTS cannot carry in a -javaagent path; set TMPDIR to a directory without spaces", sessionDirectory)
 	}
 	return sessionDirectory, nil, nil
 }
@@ -157,15 +182,19 @@ func (javaLanguage) installDirectory(sessionDirectory, _ string) (string, func()
 func (javaLanguage) projectTracerPath(projectTracer string) string { return projectTracer }
 func (javaLanguage) temporaryTracerSource() string                 { return "temporary installation" }
 
-// The agent rides on the Maven JVM, which configures the test JVMs Surefire
-// and Failsafe fork. ScalaTest's plugin forks its own JVM, which inherits only
-// JAVA_TOOL_OPTIONS, so a reactor with any ScalaTest module uses that instead.
-// A configuration's own options are kept, as the baseline keeps them, except a
-// Datadog agent already attached, as in a CI job after the GitHub action: the
-// baseline must run without it and the reporting run with the selected one only.
+// The agent rides on the build JVM, as the Datadog action attaches it: the
+// Maven JVM, which configures the test JVMs Surefire and Failsafe fork, or the
+// Gradle JVM, which configures those its test tasks fork. ScalaTest's Maven
+// plugin forks its own JVM, which inherits only JAVA_TOOL_OPTIONS, so a reactor
+// with any ScalaTest module uses that instead. A configuration's own options
+// are kept, as the baseline keeps them, except a Datadog agent already
+// attached, as in a CI job after the GitHub action: the baseline must run
+// without it and the reporting run with the selected one only.
 func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string {
 	key := "MAVEN_OPTS"
-	if t.framework.Name() == "scalatest" || t.javaReactorDeclares("scalatest") {
+	if command, _ := t.executionCommand(); gradle.Command([]string{command}) {
+		key = "GRADLE_OPTS"
+	} else if t.framework.Name() == "scalatest" || t.javaReactorDeclares("scalatest") {
 		key = "JAVA_TOOL_OPTIONS"
 	}
 	env := map[string]string{
@@ -173,7 +202,7 @@ func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string 
 		// Leave compiled classes as the uninstrumented build produces them.
 		"DD_CIVISIBILITY_COMPILER_PLUGIN_AUTO_CONFIGURATION_ENABLED": "false",
 	}
-	for _, carrier := range []string{"MAVEN_OPTS", "JAVA_TOOL_OPTIONS"} {
+	for _, carrier := range []string{"MAVEN_OPTS", "GRADLE_OPTS", "JAVA_TOOL_OPTIONS"} {
 		options, configured := t.configurationEnvironment[carrier]
 		if !configured {
 			options = os.Getenv(carrier)
@@ -245,13 +274,13 @@ func (javaLanguage) pairedFrameworks() map[string]pairedFramework {
 	return adapters
 }
 
-// Maven plugins run project code and every run rewrites target directories,
-// so each configuration runs in a disposable copy.
+// Build plugins run project code and every run rewrites build output, so each
+// configuration runs in a disposable copy.
 func (javaLanguage) isolatesConfigurations() bool { return true }
 
 // Every Java framework, reporting-only ones included, runs in a configuration
 // copy: refuse a command that would install, publish or leave the copy before
-// any Maven process starts.
+// any build process starts.
 func (javaLanguage) prepareConfiguration(t *Testdrive, item *configurationResult, _, copyRoot string) error {
 	// The command runs from the configuration's working directory.
 	scoped := *t
@@ -263,7 +292,7 @@ func (javaLanguage) prepareConfiguration(t *Testdrive, item *configurationResult
 		scoped.repositoryRoot = directory
 	}
 	_, args := scoped.executionCommand()
-	_, _, err := scoped.javaCommandPOM(args)
+	_, err := scoped.javaBuild(args)
 	return err
 }
 
@@ -337,7 +366,12 @@ func (t *Testdrive) javaScopePOMs() ([]string, error) {
 	for _, entry := range t.workflowScope.Commands {
 		words, err := shellquote.Split(entry.Command)
 		if err != nil || len(words) == 0 {
-			return nil, fmt.Errorf("invalid Maven command: %s", entry.Command)
+			return nil, fmt.Errorf("invalid Java build command: %s", entry.Command)
+		}
+		// Gradle packages only its source sets' resources, never the
+		// repository root's .testoptimization.
+		if gradle.Command(words) {
+			continue
 		}
 		pom, err := maven.CommandPOM(words[1:])
 		if err != nil {

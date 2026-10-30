@@ -20,7 +20,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/DataDog/ddtest/internal/gradle"
 	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -28,9 +27,6 @@ import (
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
-
-// javaIncompleteBuild explains a failed build that native test failures do not account for.
-const javaIncompleteBuild = "The Maven build stopped for a reason other than native test failures, such as compilation, setup or a later module's failure, so part of the reactor did not run. Inspect the Maven output"
 
 // javaReactor reads the projects the selected Maven command builds. The
 // checkout bounds the reactor, so a command run from a subdirectory may select
@@ -45,16 +41,9 @@ func (t *Testdrive) javaReactor(args []string) (string, []maven.Project, error) 
 	return root, projects, err
 }
 
-// errGradleValidation refuses a Gradle command: discovery finds Gradle test
-// steps and checks their CI setup, but only Maven builds are validated.
-var errGradleValidation = errors.New("ddtest discovers Gradle test steps and checks their CI setup, but validates only Maven builds so far; this Gradle configuration is not validated")
-
 // javaCommandPOM returns the checkout and the POM, relative to it, that the
 // selected Maven command builds once Maven adds its implicit arguments.
 func (t *Testdrive) javaCommandPOM(args []string) (string, string, error) {
-	if command, _ := t.executionCommand(); gradle.Command([]string{command}) {
-		return "", "", errGradleValidation
-	}
 	implicit, err := t.javaImplicitArgs(args)
 	if err != nil {
 		return "", "", err
@@ -165,9 +154,9 @@ func readMavenConfig(path string) ([]string, error) {
 	return args, err
 }
 
-// runJava runs the selected Maven command once in the disposable copy, with
-// fresh build output, and reads its native Surefire/Failsafe reports. A probe
-// run adds the probe's arguments, which select only the probe.
+// runJava runs the selected Maven or Gradle command once in the disposable
+// copy, with fresh build output, and reads its native reports. A probe run is
+// narrowed to the probe's arguments, which select only the probe.
 func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *workspace.Session, agent string, spec runSpec, probe javaProbe) (run validationRun, runErr error) {
 	run.Name, run.Role, run.Instrumented, run.ProbeMode = spec.Name, spec.Role, spec.Instrumented, spec.ProbeMode
 	if spec.ProbePath != "" {
@@ -178,26 +167,15 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 	}
 	run.root, run.checkoutRoot, run.framework = t.repositoryRoot, t.checkoutRoot(), t.framework.Name()
 	if !t.isolated {
-		return run, errors.New("validation runs Maven only in a disposable copy of the repository")
+		return run, errors.New("validation runs the Java build only in a disposable copy of the repository")
 	}
 	command, args := t.executionCommand()
-	checkout, projects, err := t.javaReactor(args)
+	build, err := t.javaBuild(args)
 	if err != nil {
 		return run, err
 	}
-	// Reports from an earlier run would be read as this run's results. Only
-	// the reactor's own target directories are build output; a directory named
-	// target elsewhere is a project input.
-	copyRoot, err := os.OpenRoot(checkout)
-	if err != nil {
-		return run, err
-	}
-	for _, project := range projects {
-		if err := copyRoot.RemoveAll(filepath.Join(project.Directory, "target")); err != nil {
-			return run, errors.Join(err, copyRoot.Close())
-		}
-	}
-	if err := copyRoot.Close(); err != nil {
+	// Reports from an earlier run would be read as this run's results.
+	if err := build.clean(); err != nil {
 		return run, err
 	}
 	directory := filepath.Join(session.Directory(), spec.Name)
@@ -235,18 +213,17 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 	env := t.environment(agent, server.URL(), session.ID()+" "+spec.Name)
 	configureScenarioEnvironment(env, scenario.Feature)
 	env["DD_TRACE_AGENT_URL"] = server.URL()
-	// ~/.mavenrc and /etc/mavenrc may attach agents or change options between runs.
-	env["MAVEN_SKIP_RC"] = "true"
+	build.environment(env)
 	if !spec.Instrumented {
 		env["DD_CIVISIBILITY_ENABLED"] = "false"
 	}
+	var selected *javaProbe
 	if spec.ProbePath != "" {
-		// The probe only needs Surefire: checks after the test phase, such as
-		// license headers or coverage gates, would judge the probe file itself.
-		args = append(maven.UpToTest(args), probe.args...)
+		selected = &probe
 		env["DDTEST_PROBE_MODE"] = spec.ProbeMode
 		env["DDTEST_PROBE_STATE"] = filepath.Join(directory, "probe-state")
 	}
+	args = build.arguments(args, selected)
 	run.Command = shellquote.Join(append([]string{command}, args...)...)
 	_, _ = fmt.Fprintf(output, "Running %s...\n", spec.Name)
 	data, commandErr := t.executor.CombinedOutput(ctx, command, args, env)
@@ -265,24 +242,24 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 	if run.Facts, err = server.Facts(); err != nil {
 		return run, err
 	}
-	tests, err := maven.ReadReports(checkout, projects)
+	results, incomplete, err := build.results(run.ExitCode, string(data))
 	// A skipped or disabled probe never starts, so no test case is reported;
 	// older Surefire releases write no report for a skipped class at all.
-	if (errors.Is(err, maven.ErrNoTestCases) || errors.Is(err, maven.ErrNoReports)) && (scenario.Feature == "skipping" || scenario.Feature == "disabled") {
+	if errors.Is(err, errNoJavaResults) && (scenario.Feature == "skipping" || scenario.Feature == "disabled") {
 		err = nil
 	}
 	switch {
 	case err != nil:
 		run.ResultError = err.Error()
-	case spec.ProbePath == "" && maven.IncompleteBuild(run.ExitCode, projects, tests, string(data)):
-		run.ResultError = javaIncompleteBuild
+	case spec.ProbePath == "" && incomplete != "":
+		run.ResultError = incomplete
 	}
 	if probe.harness != "" {
 		// The runner that starts the probe feature is not a test of its own.
-		tests = slices.DeleteFunc(tests, func(test maven.Test) bool { return test.Suite == probe.harness })
+		results = slices.DeleteFunc(results, func(result javaResult) bool { return result.Suite == probe.harness })
 		run.Facts = withoutSuite(run.Facts, probe.harness)
 	}
-	run.Tests = javaNativeTests(projects, tests, spec.ProbePath != "")
+	run.Tests = javaNativeTests(results, spec.ProbePath != "")
 	if spec.Instrumented && spec.ProbePath == "" {
 		run.Coverage = javaSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests)
 	}
@@ -334,11 +311,10 @@ func javaModuleLabels(projects []maven.Project) map[string]string {
 
 // javaNativeTests identifies each native result as "<module> / <class>", and
 // in a probe run marks the probe.
-func javaNativeTests(projects []maven.Project, tests []maven.Test, probe bool) []nativeTest {
-	labels := javaModuleLabels(projects)
-	native := make([]nativeTest, 0, len(tests))
-	for _, test := range tests {
-		item := nativeTest{File: labels[test.Module] + " / " + test.Suite, Name: test.Name, Status: test.Status, Failure: withoutObjectAddresses(test.Failure)}
+func javaNativeTests(results []javaResult, probe bool) []nativeTest {
+	native := make([]nativeTest, 0, len(results))
+	for _, test := range results {
+		item := nativeTest{File: test.module + " / " + test.Suite, Name: test.Name, Status: test.Status, Failure: withoutObjectAddresses(test.Failure)}
 		// A Karate suite is the probe feature's path and name.
 		if probe && (test.Suite == javaProbeClass || strings.HasSuffix(test.Suite, "] "+javaProbeClass)) {
 			name := javaTestName(test.Name)
@@ -478,7 +454,7 @@ func verifyJavaTelemetry(run validationRun) verdict {
 		}
 	}
 	if len(differences) > 0 {
-		return verdict{Status: "inconclusive", Reason: "Reported telemetry does not match the native Maven results.", Differences: differences[:min(len(differences), maxReportDifferences)]}
+		return verdict{Status: "inconclusive", Reason: "Reported telemetry does not match the native build results.", Differences: differences[:min(len(differences), maxReportDifferences)]}
 	}
 	return verdict{}
 }
@@ -657,27 +633,28 @@ func javaScalaTestJUnitRunner(module string) (string, error) {
 // runJavaFeatures writes the probe into a module whose tests ran in the
 // baseline, inside the copy, then runs the shared feature controls.
 func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, session *workspace.Session, agent string, baseline validationRun, result *validationResult) (runErr error) {
-	// Every probe rebuilds the same reactor, so it would fail the same way.
-	if baseline.ResultError != "" {
-		unavailableFeatures(result, "Feature probes were not run: the uninstrumented Maven build did not produce usable results.")
-		return nil
-	}
+	// Every probe rebuilds the same projects, so it would fail the same way.
 	_, args := t.executionCommand()
-	checkout, projects, err := t.javaReactor(args)
+	build, err := t.javaBuild(args)
 	if err != nil {
 		return err
 	}
-	module, ok := javaProbeModule(projects, baseline.Tests, t.framework.Name())
+	if baseline.ResultError != "" {
+		unavailableFeatures(result, "Feature probes were not run: the uninstrumented "+build.tool()+" build did not produce usable results.")
+		return nil
+	}
+	checkout := build.checkout()
+	module, ok := javaProbeModule(build, baseline.Tests, t.framework.Name())
 	if !ok {
-		unavailableFeatures(result, "No module of the selected Maven command ran native tests, so the controlled probe has nowhere to run.")
+		unavailableFeatures(result, "No project of the selected "+build.tool()+" command ran native tests the probe can join, so the controlled probe has nowhere to run.")
 		return nil
 	}
 	// A Cucumber or Karate probe needs the module that holds the runner,
 	// which an inherited dependency hides from reactor order.
-	if owner, found := javaRunnerModule(checkout, projects, baseline.Tests, t.framework.Name()); found {
+	if owner, found := javaRunnerModule(build, baseline.Tests, t.framework.Name()); found {
 		module = owner
 	}
-	probe, reason, err := javaProbeFor(checkout, module, t.framework.Name(), args)
+	probe, reason, err := build.probe(module, t.framework.Name(), args)
 	if err != nil {
 		return err
 	}
@@ -717,21 +694,30 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 	}, result)
 }
 
-// javaProbeModule picks the first module, in reactor order, whose tests ran
-// in the baseline, preferring one that declares the selected framework.
-func javaProbeModule(projects []maven.Project, tests []nativeTest, framework string) (string, bool) {
-	labels := javaModuleLabels(projects)
-	executed := map[string]bool{}
-	for _, test := range tests {
-		module, _, _ := strings.Cut(test.File, " / ")
-		executed[module] = true
-	}
-	candidates := slices.DeleteFunc(slices.Clone(projects), func(project maven.Project) bool { return !executed[labels[project.Directory]] })
+// javaProbeModule picks the first project, in build order, whose tests ran in
+// the baseline in a module a probe can join, preferring one that declares the
+// selected framework.
+func javaProbeModule(build javaBuild, tests []nativeTest, framework string) (string, bool) {
+	executed := javaExecutedDirectories(build, tests)
+	candidates := slices.DeleteFunc(build.projects(), func(project javaProject) bool { return !executed[project.directory] })
 	if len(candidates) == 0 {
 		return "", false
 	}
-	declared := slices.IndexFunc(candidates, func(project maven.Project) bool { return slices.Contains(project.Frameworks(), framework) })
-	return candidates[max(declared, 0)].Directory, true
+	declared := slices.IndexFunc(candidates, func(project javaProject) bool { return slices.Contains(project.frameworks, framework) })
+	return candidates[max(declared, 0)].directory, true
+}
+
+// javaExecutedDirectories are the project directories whose native results
+// name a module a probe can join.
+func javaExecutedDirectories(build javaBuild, tests []nativeTest) map[string]bool {
+	executed := map[string]bool{}
+	for _, test := range tests {
+		module, _, _ := strings.Cut(test.File, " / ")
+		if directory, ok := build.directory(module); ok {
+			executed[directory] = true
+		}
+	}
+	return executed
 }
 
 // javaModuleText names a module directory in a message.
@@ -755,35 +741,30 @@ var javaRunners = map[string]func(module string) (string, error){
 	},
 }
 
-// javaRunnerModule picks the first module, in reactor order, whose tests ran
+// javaRunnerModule picks the first project, in build order, whose tests ran
 // in the baseline and that holds a runner class of framework.
-func javaRunnerModule(checkout string, projects []maven.Project, tests []nativeTest, framework string) (string, bool) {
+func javaRunnerModule(build javaBuild, tests []nativeTest, framework string) (string, bool) {
 	find, ok := javaRunners[framework]
 	if !ok {
 		return "", false
 	}
-	labels := javaModuleLabels(projects)
-	executed := map[string]bool{}
-	for _, test := range tests {
-		module, _, _ := strings.Cut(test.File, " / ")
-		executed[module] = true
-	}
-	for _, project := range projects {
-		if !executed[labels[project.Directory]] {
+	executed := javaExecutedDirectories(build, tests)
+	for _, project := range build.projects() {
+		if !executed[project.directory] {
 			continue
 		}
-		if runner, err := find(filepath.Join(checkout, project.Directory)); err == nil && runner != "" {
-			return project.Directory, true
+		if runner, err := find(filepath.Join(build.checkout(), project.directory)); err == nil && runner != "" {
+			return project.directory, true
 		}
 	}
 	return "", false
 }
 
-// checkJavaPreflight inspects the JDK Maven runs on, the reactor the selected
-// command builds and the CI JDK and agent selections of this configuration,
-// without running Maven or project code.
+// checkJavaPreflight inspects the JDK the build runs on, the projects the
+// selected command builds and the CI JDK and agent selections of this
+// configuration, without running the build or project code.
 func (t *Testdrive) checkJavaPreflight(_ context.Context, output io.Writer, result *validationResult) error {
-	check := &preflightCheck{Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "The Maven project has not been inspected."}}
+	check := &preflightCheck{Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "The Java build has not been inspected."}}
 	result.Preflight = check
 	info := javaEnvironmentInfo(t.configurationEnvironment)
 	if info.Version == "" {
@@ -791,11 +772,12 @@ func (t *Testdrive) checkJavaPreflight(_ context.Context, output io.Writer, resu
 		return errors.New(check.Verdict.Reason)
 	}
 	check.Runtime, check.Executable = info.Version, info.Executable
-	_, projects, err := t.javaReactor(t.args)
+	build, err := t.javaBuild(t.args)
 	if err != nil {
-		check.Verdict.Reason = "The selected command's Maven reactor cannot be read: " + err.Error()
-		return fmt.Errorf("inspect Maven reactor: %w", err)
+		check.Verdict.Reason = "The selected command's build cannot be read: " + err.Error()
+		return fmt.Errorf("inspect the Java build: %w", err)
 	}
+	projects := build.projects()
 	ci, substitutions, err := t.javaCIRuntime(info.Version)
 	if err != nil {
 		return err
@@ -805,9 +787,9 @@ func (t *Testdrive) checkJavaPreflight(_ context.Context, output io.Writer, resu
 		result.addSubstitution(substitution)
 		_, _ = fmt.Fprintf(output, "Runtime substitution: %s\n", substitution.Reason)
 	}
-	reason := fmt.Sprintf("Java %s; the selected command builds %d Maven %s. Paired execution and feature controls are still required.", info.Version, len(projects), plural(len(projects), "project", "projects"))
-	if !slices.Contains(maven.Frameworks(projects), t.framework.Name()) {
-		reason += " No POM in the repository declares " + displayName(t.framework.Name()) + "; it may come from a parent or BOM outside the repository."
+	reason := fmt.Sprintf("Java %s; the selected command builds %d %s %s. Paired execution and feature controls are still required.", info.Version, len(projects), build.tool(), plural(len(projects), "project", "projects"))
+	if !slices.Contains(javaFrameworks(build), t.framework.Name()) {
+		reason += " No " + build.buildFile() + " in the repository declares " + displayName(t.framework.Name()) + "; it may come from a parent, BOM or build logic outside the files ddtest reads."
 	}
 	if others := javaOtherFrameworkModules(projects, t.framework.Name()); len(others) > 0 {
 		reason += " The build also runs module(s) " + strings.Join(others, ", ") + " of other frameworks; their tests are compared too, and feature probes run in a " + displayName(t.framework.Name()) + " module."
@@ -817,13 +799,13 @@ func (t *Testdrive) checkJavaPreflight(_ context.Context, output io.Writer, resu
 	return nil
 }
 
-// javaOtherFrameworkModules lists the reactor modules that declare test
+// javaOtherFrameworkModules lists the build's projects that declare test
 // frameworks, none of them framework.
-func javaOtherFrameworkModules(projects []maven.Project, framework string) []string {
+func javaOtherFrameworkModules(projects []javaProject, framework string) []string {
 	var modules []string
 	for _, project := range projects {
-		if declared := project.Frameworks(); len(declared) > 0 && !slices.Contains(declared, framework) {
-			modules = append(modules, project.Directory)
+		if len(project.frameworks) > 0 && !slices.Contains(project.frameworks, framework) {
+			modules = append(modules, project.directory)
 		}
 	}
 	return modules

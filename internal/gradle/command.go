@@ -241,3 +241,41 @@ func Publishes(args []string) bool {
 		return slices.ContainsFunc(publishingTasks, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 	})
 }
+
+// validationFlags make every validation run execute its tests: no task is up
+// to date or taken from the build cache, a failing test task does not stop
+// the others, and no daemon outlives the run or serves another one with the
+// agent. The configuration cache is disabled with a system property, which
+// releases without it ignore, so no run reuses another's configuration.
+var validationFlags = []string{"--rerun-tasks", "--no-build-cache", "--continue", "--no-daemon", "-Dorg.gradle.configuration-cache=false"}
+
+// contradictedFlags are options validationFlags override.
+var contradictedFlags = []string{"--build-cache", "--daemon", "--configuration-cache"}
+
+// ValidationArgs are a command's arguments for one validation run: its own,
+// with validationFlags in place of the options they contradict.
+func ValidationArgs(args []string) []string {
+	var result []string
+	for _, item := range parse(args) {
+		if slices.Contains(contradictedFlags, item.option) || slices.Contains(validationFlags, item.option) {
+			continue
+		}
+		result = append(result, render(item)...)
+	}
+	return append(result, validationFlags...)
+}
+
+// ProbeArgs are the arguments of a validation run that executes only the probe
+// class, through the test task of the project at path: the command's options,
+// without its tasks, their options or its exclusions, any of which could
+// select other tests or remove the probe's task.
+func ProbeArgs(args []string, path, class string) []string {
+	var options []string
+	for _, item := range parse(args) {
+		if item.task != "" || item.option == "--tests" || item.option == "-x" || item.option == "--exclude-task" || item.option == "--rerun" {
+			continue
+		}
+		options = append(options, render(item)...)
+	}
+	return ValidationArgs(append(options, TaskPath(path, "test"), "--tests", class))
+}
