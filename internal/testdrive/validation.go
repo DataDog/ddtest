@@ -649,7 +649,7 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	}
 	applyScopeVerdict(result)
 	for _, sub := range result.substitutions() {
-		if !sub.Accepted {
+		if result.runtimeSubstitutionBlocking(sub) {
 			result.Success = false
 		}
 	}

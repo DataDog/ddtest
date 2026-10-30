@@ -938,7 +938,7 @@ func (t *Testdrive) javaCIRuntime(localJava string) (*onboard.RuntimeCheck, []ru
 			ci.Jobs[i].Status, ci.Jobs[i].Reason = "compatible", "dd-java-agent "+tracer+" is validated on this host's Java "+localJava+" as a substitute for Java "+job.Runtime+"."
 			if !slices.ContainsFunc(substitutions, func(existing runtimeSubstitution) bool { return javaMajor(existing.CI) == javaMajor(job.Runtime) }) {
 				substitutions = append(substitutions, runtimeSubstitution{
-					Source: job.Location, CI: job.Runtime, Local: localJava, Accepted: t.acceptSubstituteRuntime, Runtime: "Java",
+					Source: job.Location, CI: job.Runtime, Local: localJava, Accepted: t.acceptSubstituteRuntime, CIOnly: true, Runtime: "Java",
 					Remedy: "set JAVA_HOME to an existing Java " + job.Runtime + " JDK",
 					Reason: "Local Java " + localJava + " runs dd-java-agent " + tracer + " in place of CI's Java " + job.Runtime + "; the agent release, the Maven command and the suite are the same.",
 				})

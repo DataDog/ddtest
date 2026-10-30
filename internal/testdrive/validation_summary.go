@@ -126,12 +126,16 @@ func summarizeValidation(result validationResult) validationSummary {
 			summary.BlockingChecks = append(summary.BlockingChecks, "no current HTML findings report")
 		}
 	}
+	var ciFindings []string
 	for _, sub := range result.substitutions() {
 		if !sub.Accepted && !result.CheckOnly {
-			summary.BlockingChecks = append(summary.BlockingChecks, sub.blocker())
+			if result.runtimeSubstitutionBlocking(sub) {
+				summary.BlockingChecks = append(summary.BlockingChecks, sub.blocker())
+			} else {
+				ciFindings = append(ciFindings, fmt.Sprintf("CI runtime fidelity: %s uses %s %s; the selected command was validated only on %s %s.", sub.Source, sub.name(), sub.CI, sub.name(), sub.Local))
+			}
 		}
 	}
-	var ciFindings []string
 	if result.CISelection != nil && result.CISelection.Status != "compatible" {
 		ciFindings = append(ciFindings, "CI tracer agreement: "+result.CISelection.Status)
 	}

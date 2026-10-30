@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/stretchr/testify/require"
 )
@@ -61,6 +62,61 @@ func TestLocalCommandDoesNotRequireRepositoryCIOnboarding(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLocalMavenCommandKeepsCIJDKDifferencesAdvisory(t *testing.T) {
+	for _, mode := range []string{"local", "all", "coordinator", "check-only", "accepted all"} {
+		t.Run(mode, func(t *testing.T) {
+			root := javaCIFixture(t, "['21']")
+			drive := &Testdrive{repositoryRoot: root, framework: framework.NewJVM("junit5", nil), command: "mvn", args: []string{"-B", "clean", "verify"}, tracerVersion: "1.67.1", checkOnly: mode == "check-only", acceptSubstituteRuntime: mode == "accepted all"}
+			ci, substitutions, err := drive.javaCIRuntime("17.0.20")
+			require.NoError(t, err)
+			result := completeValidationFixture("junit5")
+			result.FocusedCommand = mode == "local" || mode == "coordinator"
+			result.CheckOnly = drive.checkOnly
+			result.CIRuntime = ci
+			if mode == "coordinator" {
+				result.Workflow = &WorkflowEvidence{}
+			}
+			for _, sub := range substitutions {
+				result.addSubstitution(sub)
+			}
+			var output bytes.Buffer
+			err = finishValidation(&output, root, result)
+			report := readValidationReport(t, root)
+			if mode == "local" || mode == "accepted all" {
+				require.NoError(t, err)
+				require.True(t, report.Success)
+				require.Equal(t, "PASSED", report.Summary.Status)
+				require.Empty(t, report.Summary.BlockingChecks)
+				if mode == "local" {
+					require.Contains(t, strings.Join(report.Summary.CIAdvisories, "\n"), "Java 21")
+					require.False(t, report.RuntimeSubstitution.Accepted)
+					require.Contains(t, report.Summary.FinalResponse, "Local testdrive: PASSED (selected command)")
+					require.Equal(t, "not exercised", report.CIExecution.Status)
+				}
+			} else {
+				require.Error(t, err)
+				require.False(t, report.Success)
+				require.Empty(t, report.Summary.CIAdvisories)
+				if mode != "check-only" {
+					require.Contains(t, report.Summary.BlockingChecks, substitutions[0].blocker())
+				}
+			}
+		})
+	}
+}
+
+func TestLocalCommandStillRequiresFrameworkRuntimeSubstitutionAcceptance(t *testing.T) {
+	result := completeValidationFixture("cypress")
+	result.FocusedCommand = true
+	sub := runtimeSubstitution{Source: "cypress-io/github-action@v6", CI: "20", Local: "24.19.0"}
+	result.addSubstitution(sub)
+	root := t.TempDir()
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
+	report := readValidationReport(t, root)
+	require.False(t, report.Success)
+	require.Contains(t, report.Summary.BlockingChecks, sub.blocker())
 }
 
 func TestLocalCommandStillRequiresAllExecutionEvidence(t *testing.T) {

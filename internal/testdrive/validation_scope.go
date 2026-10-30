@@ -8,6 +8,10 @@ func (result validationResult) focusedLocalCommand() bool {
 	return result.FocusedCommand && !result.CheckOnly && result.Workflow == nil
 }
 
+func (result validationResult) runtimeSubstitutionBlocking(sub runtimeSubstitution) bool {
+	return !sub.Accepted && (!result.focusedLocalCommand() || !sub.CIOnly)
+}
+
 func (result validationResult) ciPreservationBlocking() bool {
 	// Unknown CI inventory is advisory for local execution. Keep the saved
 	// baseline so actual matrix removal still blocks when CI can be compared.
