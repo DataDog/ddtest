@@ -60,8 +60,8 @@ Contract 1 covers:
 - the registration that the rule adds to each test, the file that
   `ddtest instrument` writes as `zz_dd_ci_visibility_test.go`. It goes in the
   test's external package when one of its sources declares it, or when Mini
-  imports the package under test, where the package's own name would make an
-  import cycle; otherwise in the package's own name:
+  imports the package under test, which the registration would otherwise
+  import back; elsewhere it goes in the package under test:
 
   ```go
   package <the test package>
