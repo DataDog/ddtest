@@ -298,7 +298,7 @@ func TestPytestArgumentFileCyclesAreRejected(t *testing.T) {
 	for _, content := range []string{"@args.txt\n", "-o\naddopts=@args.txt\n"} {
 		root := t.TempDir()
 		requireWriteFile(t, filepath.Join(root, "args.txt"), content)
-		_, _, err := isolatePytestOptions([]string{"@args.txt"}, root, root, root, map[string]bool{})
+		_, _, err := isolatePytestOptions([]string{"@args.txt"}, root, root, root, map[string]bool{}, nil)
 		require.ErrorContains(t, err, "recursive pytest")
 	}
 }
@@ -318,7 +318,7 @@ func TestPytestArgumentFilesCannotModifyExternalFiles(t *testing.T) {
 				require.NoError(t, os.Symlink(file, link))
 				argument = "@args.txt"
 			}
-			_, err := expandPytestArgumentFiles([]string{argument}, copied, "/original", copied, map[string]bool{})
+			_, err := expandPytestArgumentFiles([]string{argument}, copied, "/original", copied, map[string]bool{}, nil)
 			require.ErrorContains(t, err, "outside checkout")
 			contents, err := os.ReadFile(file)
 			require.NoError(t, err)

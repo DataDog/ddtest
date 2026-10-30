@@ -80,6 +80,11 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 		return fmt.Errorf("inspect pytest: %w", err)
 	}
 	check.Version, check.Runtime = metadata.Pytest, metadata.Python
+	pytestMajor, pytestMinor, pytestKnown := releaseParts(metadata.Pytest)
+	if t.configurationEnvironment[pytestArgumentFilesEnvironment] == "true" && (!pytestKnown || pytestMajor < 8 || pytestMajor == 8 && pytestMinor < 2) {
+		check.Verdict = verdict{Status: "incompatible", Reason: "pytest @argument files require pytest >=8.2; use native selectors or upgrade the selected project environment."}
+		return fmt.Errorf("pytest preflight: %s (selected %s)", check.Verdict.Reason, metadata.Pytest)
+	}
 	directory := metadata.Directory
 	if directory == "" {
 		directory = t.repositoryRoot
@@ -118,7 +123,6 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 		result.TracerSource = "project installation (reused; fallback selector ignored)"
 	}
 	major, minor, known := releaseParts(selection.Version)
-	pytestMajor, pytestMinor, pytestKnown := releaseParts(metadata.Pytest)
 	if !known || !pytestKnown || major < 4 || major == 4 && minor < 11 || pytestMajor < 7 || pytestMajor == 7 && pytestMinor < 2 {
 		check.Verdict = verdict{Status: "incompatible", Reason: "pytest validation requires ddtrace >=4.11 and pytest >=7.2. Preserve the suite and select compatible dependencies."}
 	} else {

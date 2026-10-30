@@ -15,8 +15,12 @@ import (
 	"github.com/kballard/go-shellquote"
 )
 
+const pytestArgumentFilesEnvironment = "DDTEST_PYTEST_ARGUMENT_FILES"
+
 func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 	t.configurationEnvironment["DDTEST_PYTEST_CONFIG_OVERRIDES"] = ext.UnsetEnvironment
+	t.configurationEnvironment[pytestArgumentFilesEnvironment] = ext.UnsetEnvironment
+	usedArgumentFiles := false
 	pythonPath := os.Getenv("PYTHONPATH")
 	if configured, ok := t.configurationEnvironment["PYTHONPATH"]; ok {
 		pythonPath = configured
@@ -59,16 +63,16 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 	if err != nil {
 		return fmt.Errorf("cannot parse PYTEST_ADDOPTS: %w", err)
 	}
-	options, err = expandPytestArgumentFiles(options, directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{})
+	options, err = expandPytestArgumentFiles(options, directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{}, &usedArgumentFiles)
 	if err != nil {
 		return err
 	}
-	args, err = expandPytestArgumentFiles(args, directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{})
+	args, err = expandPytestArgumentFiles(args, directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{}, &usedArgumentFiles)
 	if err != nil {
 		return err
 	}
 	environmentCount := len(options)
-	combined, overridden, err := isolatePytestOptions(append(options, args...), directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{})
+	combined, overridden, err := isolatePytestOptions(append(options, args...), directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{}, &usedArgumentFiles)
 	if err != nil {
 		return err
 	}
@@ -81,7 +85,7 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 		if configErr != nil {
 			return fmt.Errorf("cannot isolate pytest configuration: %w", configErr)
 		}
-		isolated, _, err := isolatePytestOptions(defaults, directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{})
+		isolated, _, err := isolatePytestOptions(defaults, directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{}, &usedArgumentFiles)
 		if err != nil {
 			return err
 		}
@@ -105,6 +109,9 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 			owned = append(owned, "-o", key+"="+value)
 		}
 	}
+	if usedArgumentFiles {
+		t.configurationEnvironment[pytestArgumentFilesEnvironment] = "true"
+	}
 	if len(owned) > 0 {
 		options = append(owned, options...)
 		data, err := json.Marshal(owned)
@@ -121,8 +128,8 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 
 // Expand argument files before finding configuration or applying option
 // precedence. Inline addopts is another source of pytest arguments.
-func isolatePytestOptions(args []string, directory, original, copied string, active map[string]bool) ([]string, bool, error) {
-	args, err := expandPytestArgumentFiles(args, directory, original, copied, active)
+func isolatePytestOptions(args []string, directory, original, copied string, active map[string]bool, used *bool) ([]string, bool, error) {
+	args, err := expandPytestArgumentFiles(args, directory, original, copied, active, used)
 	if err != nil {
 		return nil, false, err
 	}
@@ -190,7 +197,7 @@ func isolatePytestOptions(args []string, directory, original, copied string, act
 		return nil, false, fmt.Errorf("cannot parse inline pytest addopts: %w", err)
 	}
 	active["addopts:"+overrideValue] = true
-	options, _, err = isolatePytestOptions(options, directory, original, copied, active)
+	options, _, err = isolatePytestOptions(options, directory, original, copied, active, used)
 	delete(active, "addopts:"+overrideValue)
 	if err != nil {
 		return nil, false, err
@@ -292,12 +299,15 @@ func rebasePytestPaths(args []string, original, copied string) []string {
 
 // pytest reads one argument per line, including nested @files. Read only
 // the disposable checkout; relative references use pytest's working directory.
-func expandPytestArgumentFiles(args []string, directory, original, copied string, active map[string]bool) ([]string, error) {
+func expandPytestArgumentFiles(args []string, directory, original, copied string, active map[string]bool, used *bool) ([]string, error) {
 	var expanded []string
 	for _, arg := range args {
 		if !strings.HasPrefix(arg, "@") {
 			expanded = append(expanded, arg)
 			continue
+		}
+		if used != nil {
+			*used = true
 		}
 		path := strings.TrimPrefix(rebasePytestPaths([]string{arg}, original, copied)[0], "@")
 		if !filepath.IsAbs(path) {
@@ -323,7 +333,7 @@ func expandPytestArgumentFiles(args []string, directory, original, copied string
 		if len(lines) > 0 && lines[len(lines)-1] == "" {
 			lines = lines[:len(lines)-1]
 		}
-		lines, err = expandPytestArgumentFiles(lines, directory, original, copied, active)
+		lines, err = expandPytestArgumentFiles(lines, directory, original, copied, active, used)
 		delete(active, resolved)
 		if err != nil {
 			return nil, err
