@@ -50,6 +50,23 @@ func TestPytestAttachedModuleKeepsWrapperAndSuiteSeparators(t *testing.T) {
 	require.Equal(t, []string{"run", "--no-sync", "--", "python", "-mpytest", "--no-ddtrace", "--", "test_app.py"}, executor.args)
 }
 
+func TestPytestUVExeDoesNotSync(t *testing.T) {
+	for _, command := range []string{"uv.exe", filepath.Join("tools", "uv.exe")} {
+		t.Run(command, func(t *testing.T) {
+			session := workspace.PlanSession()
+			require.NoError(t, session.Create())
+			t.Cleanup(func() { require.NoError(t, session.Close()) })
+			executor := &fakeTestdriveExecutor{}
+			drive := &Testdrive{repositoryRoot: t.TempDir(), language: "python", command: command, args: []string{"run", "pytest"}, executor: executor, startIntake: func(string, intake.Scenario) (localIntake, error) {
+				return &fakeIntake{url: "http://127.0.0.1:1"}, nil
+			}}
+			_, err := drive.runPytest(t.Context(), io.Discard, session, "", runSpec{Name: "baseline", Role: roleBaseline})
+			require.NoError(t, err)
+			require.Equal(t, []string{"run", "--no-sync", "pytest", "--no-ddtrace"}, executor.args)
+		})
+	}
+}
+
 func TestPytestResultsRequireCompleteNativeEvidence(t *testing.T) {
 	for _, contents := range []string{"", `{}`, `{"complete":false,"tests":[]}`, `{"complete":true,"tests":null}`} {
 		run := validationRun{}

@@ -301,7 +301,7 @@ func (t *Testdrive) runPytest(ctx context.Context, output io.Writer, session *wo
 	env["DDTEST_PYTEST_PROBE"], env["DDTEST_PROBE_MODE"] = probePath, probeMode
 	env["DDTEST_PYTEST_EXECUTIONS"] = filepath.Join(directory, "executions.txt")
 	args := slices.Clone(t.args)
-	if filepath.Base(t.command) == "uv" && len(args) > 0 && args[0] == "run" && !slices.Contains(args, "--no-sync") {
+	if strings.TrimSuffix(filepath.Base(t.command), ".exe") == "uv" && len(args) > 0 && args[0] == "run" && !slices.Contains(args, "--no-sync") {
 		args = slices.Insert(args, 1, "--no-sync")
 	}
 	// Strip explicit tracer enable/disable flags in either mode; append the
