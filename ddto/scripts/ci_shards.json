@@ -69,7 +69,7 @@
       "TestCLIDebugEarlyLocalProvisioning",
       "TestCLIDebugLocalProvisioning",
       "TestExistingOverlay",
-      "TestGoleakCacheAndWarmVersionGuard",
+      "TestGoleakCacheAndAPIGuard",
       "TestInstallScriptsInstallTheReleaseExecutable",
       "TestInvalidRuntimeFailsBeforeGo",
       "TestMiniCLIRuntimeSelectionAndSourceRange",
@@ -99,9 +99,10 @@
       "TestMiniVendorWorkspaceLinksAndReusesBuildCache",
       "TestReleaseExecutableIsSelfContained",
       "TestSDKProvisionProgressUsesStderr",
+      "TestTestifyAPIGuardWithWarmVendoredSources",
       "TestTestifyContractInvalidatesOnlyTestingDependents",
       "TestTestifyMovedCallSitesInFormattedDiagnostics",
-      "TestTestifyVersionGuardWithWarmVendoredSources",
+      "TestTestifyV130IsInstrumentedByItsCode",
       "TestWorkspaceCommandPreservesLogicalWorkingDirectory"
     ],
     "transparency": [
@@ -202,7 +203,7 @@
   },
   "mini": {
     "native": [
-      "TestGoleakCacheAndWarmVersionGuard",
+      "TestGoleakCacheAndAPIGuard",
       "TestMiniChdirSymlinkWithUserTool",
       "TestMiniConsumerAddsOnlyOwnModule",
       "TestMiniContinuesAfterPackageSetupFailures",
