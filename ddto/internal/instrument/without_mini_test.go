@@ -187,10 +187,11 @@ func TestInstrumentedTestingWithoutMiniRunsNatively(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The hooks' variables carry Mini's names, without a value (B, not D);
-	// no Mini code is linked.
-	hook := regexp.MustCompile(`(?m)^\s*[0-9a-f]+ B github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.testingHookTFunc$`)
-	if !hook.Match(symbols) || regexp.MustCompile(`(?m)^\s*[0-9a-f]+ [TD] github.com/DataDog/ddtest/`).Match(symbols) {
+	// The hooks' variables carry Mini's names, and no Mini code is linked.
+	// The output comparison below shows that they hold no value; how nm
+	// classifies a zero variable depends on the toolchain.
+	hook := regexp.MustCompile(`(?m)^\s*[0-9a-f]+ [BD] github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.testingHookTFunc$`)
+	if !hook.Match(symbols) || regexp.MustCompile(`(?m)^\s*[0-9a-f]+ [Tt] github.com/DataDog/ddtest/`).Match(symbols) {
 		t.Fatalf("the edited binary lacks the edits or links Mini:\n%s", regexp.MustCompile(`(?m)^.*DataDog/ddtest.*$`).FindAll(symbols, -1))
 	}
 	normalize := regexp.MustCompile(`\(\d+\.\d+s\)|\s+\d+\s+\d+(\.\d+)? ns/op.*|\t\d+(\.\d+)?s\b`)
