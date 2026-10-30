@@ -120,6 +120,11 @@ type ciSetup struct {
 	// Caveats are what ddtest could not check about the mechanism, for
 	// final_response.
 	Caveats []string
+	// Exports are the loader variables the mechanism sets for the steps
+	// after it besides the action's DD_TRACE_PACKAGE and DD_TRACE_ESM_IMPORT,
+	// such as the Datadog Jenkins plugin's DD_TRACE_PATH. A test step's
+	// NODE_OPTIONS can trust only the variables its own setup exports.
+	Exports []string
 }
 
 // ciSetupRequest is the setup one language asks a provider for: the

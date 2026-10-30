@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"path"
@@ -65,6 +66,16 @@ type jenkinsScope struct {
 	// overrides are variables a narrower scope (stage environment, withEnv)
 	// sets, by where it sets them.
 	overrides map[string]string
+	// shadow are the variables an environment directive, withEnv,
+	// withCredentials or a matrix axis sets around the scope: an env.X
+	// assignment changes the build's value, but the scope still reads theirs.
+	shadow map[string]bool
+	// globals are the build's values env.X assignments set, which outlive
+	// the closure that assigns them; globals["PATH"] describes a PATH change.
+	globals map[string]string
+	// pod names a Kubernetes podTemplate around the scope; podLabel is its
+	// literal label.
+	pod, podLabel string
 }
 
 func (s jenkinsScope) with(change func(*jenkinsScope)) jenkinsScope {
@@ -74,6 +85,14 @@ func (s jenkinsScope) with(change func(*jenkinsScope)) jenkinsScope {
 	next.vars = maps.Clone(s.vars)
 	next.params = maps.Clone(s.params)
 	next.overrides = maps.Clone(s.overrides)
+	next.shadow = maps.Clone(s.shadow)
+	next.globals = maps.Clone(s.globals)
+	if next.shadow == nil {
+		next.shadow = map[string]bool{}
+	}
+	if next.globals == nil {
+		next.globals = map[string]string{}
+	}
 	if next.env == nil {
 		next.env = map[string]string{}
 	}
@@ -110,9 +129,10 @@ type jenkinsSlot struct {
 type jenkinsReader struct {
 	root, file, source string
 	workflow           *ciWorkflow
-	functions          map[string]bool
-	libraries          []string
-	review, nonTest    []string
+	// functions are the Jenkinsfile's Groovy functions, by name.
+	functions       map[string]*groovyBlock
+	libraries       []string
+	review, nonTest []string
 	// workspace is what ${WORKSPACE} reads as: $WORKSPACE in a script, which
 	// the shell reads as the checkout (see jenkinsShellDialect), and the
 	// shared model's checkout expression in an environment value.
@@ -126,34 +146,25 @@ func readJenkinsfile(root, file, source string) (ciWorkflow, error) {
 		return ciWorkflow{}, err
 	}
 	workflow := ciWorkflow{Path: file, Jobs: map[string]runtimeJob{}}
-	r := &jenkinsReader{root: root, file: file, source: source, workflow: &workflow, functions: map[string]bool{}, workspace: "$WORKSPACE"}
+	r := &jenkinsReader{root: root, file: file, source: source, workflow: &workflow, functions: map[string]*groovyBlock{}, workspace: "$WORKSPACE"}
 	for _, statement := range tree.Statements {
 		switch node := statement.(type) {
 		case *groovyFunction:
-			r.functions[node.Name] = true
+			r.functions[node.Name] = cmp.Or(node.Body, &groovyBlock{})
 		case *groovyAnnotation:
 			r.annotation(node)
 		}
 	}
 	scope := jenkinsScope{}.with(func(*jenkinsScope) {})
 	top := &jenkinsSlot{name: "top level", scope: scope}
-	declarative := false
+	// Top-level statements run in order: a declaration before a declarative
+	// pipeline is visible inside it, and one after it is not.
 	for _, statement := range tree.Statements {
 		if call, ok := statement.(*groovyCall); ok && call.Name == "pipeline" && call.Closure != nil && call.Receiver == nil {
-			declarative = true
-			r.pipeline(call.Closure.Body, scope)
+			scope = r.persist(scope, r.pipeline(call.Closure.Body, scope), call.Closure.Body)
+			continue
 		}
-	}
-	if !declarative {
-		r.block(tree, scope, top)
-	} else {
-		// Scripted statements around a declarative pipeline run first.
-		for _, statement := range tree.Statements {
-			if call, ok := statement.(*groovyCall); ok && call.Name == "pipeline" {
-				continue
-			}
-			r.statement(statement, &scope, top)
-		}
+		r.statement(statement, &scope, top)
 	}
 	r.finish(top)
 	slices.Sort(r.review)
@@ -310,8 +321,9 @@ func jenkinsDirectives(body *groovyBlock) map[string]*groovyCall {
 	return directives
 }
 
-// pipeline reads a declarative pipeline.
-func (r *jenkinsReader) pipeline(body *groovyBlock, scope jenkinsScope) {
+// pipeline reads a declarative pipeline, and returns the scope its last
+// statement leaves.
+func (r *jenkinsReader) pipeline(body *groovyBlock, scope jenkinsScope) jenkinsScope {
 	directives := jenkinsDirectives(body)
 	if libraries, ok := directives["libraries"]; ok && libraries.Closure != nil {
 		for _, statement := range libraries.Closure.Body.Statements {
@@ -325,13 +337,14 @@ func (r *jenkinsReader) pipeline(body *groovyBlock, scope jenkinsScope) {
 	}
 	scope = r.directives(directives, scope, true)
 	if stages, ok := directives["stages"]; ok && stages.Closure != nil {
-		r.stages(stages.Closure.Body, scope)
+		scope = r.stages(stages.Closure.Body, scope, false)
 	}
 	if post, ok := directives["post"]; ok {
 		slot := &jenkinsSlot{name: "post", scope: scope}
-		r.post(post, scope, slot)
+		scope = r.post(post, scope, slot)
 		r.finish(slot)
 	}
+	return scope
 }
 
 // directives applies a pipeline's or stage's agent, environment, options,
@@ -421,6 +434,7 @@ func (r *jenkinsReader) environment(body *groovyBlock, scope *jenkinsScope, top 
 			continue
 		}
 		r.assignEnvironment(name.Path[0], assign.Value, scope, "the environment directive at "+r.where(assign), !top)
+		scope.shadow[name.Path[0]] = true
 	}
 }
 
@@ -454,12 +468,18 @@ func (r *jenkinsReader) assignEnvironment(key string, node groovyNode, scope *je
 		value = unresolvedCIValue(r.text(node))
 	}
 	if key == "DD_API_KEY" && problem == "" && value != "" {
-		scope.setupProblem = "DD_API_KEY is written into the Jenkinsfile (" + where + "); never commit the key: configure it as a Jenkins credential in the Datadog plugin's settings, and remove it from the Jenkinsfile."
+		scope.setupProblem = jenkinsLiteralKeyProblem(where)
 	}
 	scope.env[key] = value
 	if narrow {
 		scope.overrides[key] = where
 	}
+}
+
+// jenkinsLiteralKeyProblem refuses a DD_API_KEY written into the
+// Jenkinsfile where it says.
+func jenkinsLiteralKeyProblem(where string) string {
+	return "DD_API_KEY is written into the Jenkinsfile (" + where + "); never commit the key: configure it as a Jenkins credential in the Datadog plugin's settings, and remove it from the Jenkinsfile."
 }
 
 // jenkinsInstallDirectory reports a variable that locates a package cache
@@ -560,13 +580,27 @@ func (r *jenkinsReader) agent(call *groovyCall, scope jenkinsScope) jenkinsAgent
 	return jenkinsAgent{kind: "host", problem: "its agent " + r.text(call) + " is not one ddtest can read"}
 }
 
-// stages reads a stages section.
-func (r *jenkinsReader) stages(body *groovyBlock, scope jenkinsScope) {
+// stages reads a stages section, in order, or a parallel section, whose
+// stages run at the same time; it returns the scope after them.
+func (r *jenkinsReader) stages(body *groovyBlock, scope jenkinsScope, concurrent bool) jenkinsScope {
+	current := scope
+	if concurrent {
+		current = r.invalidate(scope, body)
+	}
+	var paths []jenkinsScope
 	for _, statement := range body.Statements {
 		if call, ok := statement.(*groovyCall); ok && call.Name == "stage" && call.Receiver == nil {
-			r.stage(call, scope)
+			if concurrent {
+				paths = append(paths, r.stage(call, current))
+				continue
+			}
+			current = r.stage(call, current)
 		}
 	}
+	if concurrent && len(paths) > 0 {
+		return r.merge(paths...)
+	}
+	return current
 }
 
 // stageName is a stage's literal name, or its position.
@@ -591,47 +625,57 @@ func jobName(stages []string, name, suffix string) string {
 }
 
 // stage reads a declarative stage: steps, nested stages, parallel stages or
-// a matrix.
-func (r *jenkinsReader) stage(call *groovyCall, scope jenkinsScope) {
+// a matrix. It returns the scope after the stage: what its steps assign to
+// the build's environment reaches the stages after it.
+func (r *jenkinsReader) stage(call *groovyCall, scope jenkinsScope) jenkinsScope {
 	name := r.stageName(call, scope)
 	if call.Closure == nil {
-		return
+		return scope
 	}
 	directives := jenkinsDirectives(call.Closure.Body)
 	inner := r.directives(directives, scope, false)
+	final := inner
 	switch {
 	case directives["steps"] != nil:
 		slot := &jenkinsSlot{name: jobName(scope.stages, name, scope.suffix), scope: inner}
 		if steps := directives["steps"]; steps.Closure != nil {
-			r.block(steps.Closure.Body, inner, slot)
+			final = r.block(steps.Closure.Body, inner, slot)
 		}
 		if post, ok := directives["post"]; ok {
-			r.post(post, inner, slot)
+			final = r.post(post, final, slot)
 		}
 		r.finish(slot)
-		return
 	case directives["matrix"] != nil:
-		r.matrix(directives["matrix"], inner.with(func(next *jenkinsScope) { next.stages = append(next.stages, name) }))
+		final = r.matrix(directives["matrix"], inner.with(func(next *jenkinsScope) { next.stages = append(next.stages, name) }))
 	case directives["stages"] != nil && directives["stages"].Closure != nil:
-		r.stages(directives["stages"].Closure.Body, inner.with(func(next *jenkinsScope) { next.stages = append(next.stages, name) }))
+		final = r.stages(directives["stages"].Closure.Body, inner.with(func(next *jenkinsScope) { next.stages = append(next.stages, name) }), false)
 	case directives["parallel"] != nil && directives["parallel"].Closure != nil:
-		r.stages(directives["parallel"].Closure.Body, inner.with(func(next *jenkinsScope) { next.stages = append(next.stages, name) }))
+		final = r.stages(directives["parallel"].Closure.Body, inner.with(func(next *jenkinsScope) { next.stages = append(next.stages, name) }), true)
 	}
-	if post, ok := directives["post"]; ok {
+	if post, ok := directives["post"]; ok && directives["steps"] == nil {
 		slot := &jenkinsSlot{name: jobName(scope.stages, name, scope.suffix) + " (post)", scope: inner}
-		r.post(post, inner, slot)
+		final = r.post(post, final, slot)
 		r.finish(slot)
 	}
+	switch {
+	case inner.disabled && !scope.disabled:
+		return scope
+	case directives["when"] != nil:
+		// A when ddtest cannot decide may skip the stage.
+		return r.merge(scope, r.persist(scope, final, call.Closure.Body))
+	}
+	return r.persist(scope, final, call.Closure.Body)
 }
 
 // jenkinsPassingPost are the post conditions that run when the build passes.
 var jenkinsPassingPost = []string{"always", "success", "cleanup", "changed", "fixed"}
 
 // post reads a post section: conditions that run on a passing build add
-// their steps to slot; the others are reported.
-func (r *jenkinsReader) post(call *groovyCall, scope jenkinsScope, slot *jenkinsSlot) {
+// their steps to slot; the others are reported. It returns the scope after
+// the section.
+func (r *jenkinsReader) post(call *groovyCall, scope jenkinsScope, slot *jenkinsSlot) jenkinsScope {
 	if call.Closure == nil {
-		return
+		return scope
 	}
 	for _, statement := range call.Closure.Body.Statements {
 		condition, ok := statement.(*groovyCall)
@@ -639,13 +683,19 @@ func (r *jenkinsReader) post(call *groovyCall, scope jenkinsScope, slot *jenkins
 			continue
 		}
 		if slices.Contains(jenkinsPassingPost, condition.Name) {
-			r.block(condition.Closure.Body, scope, slot)
+			final := r.persist(scope, r.block(condition.Closure.Body, scope, slot), condition.Closure.Body)
+			if condition.Name == "changed" || condition.Name == "fixed" {
+				// They run on some passing builds only.
+				final = r.merge(scope, final)
+			}
+			scope = final
 			continue
 		}
 		if jenkinsRunsCommands(condition.Closure.Body) {
 			r.review = append(r.review, r.file+": the post { "+condition.Name+" } block at "+r.where(condition)+" runs only when the build does not pass, so its commands are outside this validation.")
 		}
 	}
+	return scope
 }
 
 // jenkinsRunsCommands reports whether a block calls sh, bat or powershell.
@@ -679,11 +729,12 @@ func jenkinsRunsCommands(body *groovyBlock) bool {
 	return found
 }
 
-// matrix expands a matrix section into one stage set per cell.
-func (r *jenkinsReader) matrix(call *groovyCall, scope jenkinsScope) {
+// matrix expands a matrix section into one stage set per cell; the cells
+// run at the same time. It returns the scope after them.
+func (r *jenkinsReader) matrix(call *groovyCall, scope jenkinsScope) jenkinsScope {
 	where := jobName(scope.stages[:len(scope.stages)-1], scope.stages[len(scope.stages)-1], scope.suffix)
 	if call.Closure == nil {
-		return
+		return scope
 	}
 	directives := jenkinsDirectives(call.Closure.Body)
 	type axis struct {
@@ -752,7 +803,7 @@ func (r *jenkinsReader) matrix(call *groovyCall, scope jenkinsScope) {
 		slot := &jenkinsSlot{name: where, scope: scope}
 		r.unresolved(slot, call, "ddtest cannot expand its matrix ("+problem+"), so it cannot tell which stages it runs")
 		r.finish(slot)
-		return
+		return r.invalidate(scope, call.Closure.Body)
 	}
 	excluded := func(cell map[string]string) bool {
 		section, ok := directives["excludes"]
@@ -798,6 +849,8 @@ func (r *jenkinsReader) matrix(call *groovyCall, scope jenkinsScope) {
 		}
 		return false
 	}
+	start := r.invalidate(scope, call.Closure.Body)
+	var paths []jenkinsScope
 	for _, cell := range cells {
 		if excluded(cell) {
 			continue
@@ -806,8 +859,11 @@ func (r *jenkinsReader) matrix(call *groovyCall, scope jenkinsScope) {
 		for _, current := range axes {
 			values = append(values, cell[current.name])
 		}
-		cellScope := scope.with(func(next *jenkinsScope) {
+		cellScope := start.with(func(next *jenkinsScope) {
 			maps.Copy(next.env, cell)
+			for key := range cell {
+				next.shadow[key] = true
+			}
 			next.suffix = scope.suffix + " (" + strings.Join(values, ", ") + ")"
 		})
 		cellDirectives := map[string]*groovyCall{}
@@ -817,10 +873,16 @@ func (r *jenkinsReader) matrix(call *groovyCall, scope jenkinsScope) {
 			}
 		}
 		cellScope = r.directives(cellDirectives, cellScope, false)
-		if stages, ok := directives["stages"]; ok && stages.Closure != nil {
-			r.stages(stages.Closure.Body, cellScope)
+		if stages, ok := directives["stages"]; ok && stages.Closure != nil && !cellScope.disabled {
+			paths = append(paths, r.persist(start, r.stages(stages.Closure.Body, cellScope, false), call.Closure.Body))
+		} else if stages, ok := directives["stages"]; ok && stages.Closure != nil {
+			r.stages(stages.Closure.Body, cellScope, false)
 		}
 	}
+	if len(paths) == 0 {
+		return scope
+	}
+	return r.merge(append(paths, start)...)
 }
 
 // jenkinsNonCommandSteps run nothing ddtest replays: they check out,
@@ -843,42 +905,72 @@ var jenkinsWrappers = []string{
 	"timeout", "retry", "timestamps", "ansiColor", "lock", "catchError", "warnError", "sshagent", "wrap", "script",
 	"withSonarQubeEnv", "configFileProvider", "withFolderProperties", "throttle", "waitUntil", "withAWS", "withVault",
 	"withDockerRegistry", "withDockerServer", "withKubeConfig", "xvfb", "gitlabCommitStatus", "gitlabBuilds",
-	"withChecks", "podTemplate", "docker.withRegistry", "docker.withServer", "withNPM",
+	"withChecks", "docker.withRegistry", "docker.withServer", "withNPM",
 }
+
+// jenkinsRepeatingWrappers may run their closure more than once, or stop it
+// part way and let the build go on.
+var jenkinsRepeatingWrappers = []string{"retry", "waitUntil", "catchError", "warnError"}
 
 // jenkinsToolWrappers put a Jenkins tool installation on PATH for their
 // closure.
 var jenkinsToolWrappers = []string{"nodejs", "nvm", "rbenv", "rvm", "withAnt", "withGoEnv"}
 
+// jenkinsValueFunctions compute a value and run no step: Groovy functions,
+// and the credential, parameter and property definitions steps take.
+var jenkinsValueFunctions = []string{
+	"sprintf", "libraryResource", "docker.image", "string", "usernamePassword", "usernameColonPassword", "file",
+	"sshUserPrivateKey", "certificate", "dockerCert", "booleanParam", "choice", "text", "password", "credentials",
+	"parameters", "pipelineTriggers", "cron", "pollSCM", "buildDiscarder", "logRotator", "disableConcurrentBuilds",
+}
+
+// jenkinsValueMethods are Groovy and Java methods of strings, numbers and
+// collections: called on a value, they run no step, though a closure they
+// take may run any number of times.
+var jenkinsValueMethods = []string{
+	"equals", "equalsIgnoreCase", "trim", "toString", "startsWith", "endsWith", "contains", "matches", "split",
+	"tokenize", "replace", "replaceAll", "replaceFirst", "toLowerCase", "toUpperCase", "toInteger", "toBoolean",
+	"toLong", "toDouble", "size", "isEmpty", "length", "substring", "take", "drop", "join", "indexOf",
+	"lastIndexOf", "find", "findAll", "findResult", "any", "every", "collect", "collectEntries", "each",
+	"eachWithIndex", "inject", "sort", "unique", "reverse", "first", "last", "get", "getAt", "put", "add",
+	"addAll", "remove", "containsKey", "keySet", "values", "entrySet", "plus", "minus", "format", "padLeft",
+	"padRight", "readLines", "asBoolean", "asType", "isNumber", "isInteger", "stripIndent", "stripMargin",
+	"capitalize", "count", "max", "min", "sum", "flatten", "grep", "toList", "toSet", "subList", "times",
+}
+
 // block reads statements in order: assignments to env and variables reach
-// later statements of the block.
-func (r *jenkinsReader) block(body *groovyBlock, scope jenkinsScope, slot *jenkinsSlot) {
+// later statements of the block. It returns the scope after the block.
+func (r *jenkinsReader) block(body *groovyBlock, scope jenkinsScope, slot *jenkinsSlot) jenkinsScope {
 	current := scope
 	for _, statement := range body.Statements {
 		r.statement(statement, &current, slot)
 	}
+	return current
 }
 
 func (r *jenkinsReader) statement(statement groovyNode, scope *jenkinsScope, slot *jenkinsSlot) {
 	switch node := statement.(type) {
 	case *groovyCall:
-		r.call(node, *scope, slot)
+		r.call(node, scope, slot)
 	case *groovyName:
-		r.call(&groovyCall{groovySpan: node.groovySpan, Name: strings.Join(node.Path, "."), NameStart: node.Start}, *scope, slot)
+		r.call(&groovyCall{groovySpan: node.groovySpan, Name: strings.Join(node.Path, "."), NameStart: node.Start}, scope, slot)
 	case *groovyAssign:
 		r.assign(node, scope, slot)
 	case *groovyControl:
 		r.control(node, scope, slot)
 	case *groovyFunction:
-		r.functions[node.Name] = true
+		r.functions[node.Name] = cmp.Or(node.Body, &groovyBlock{})
 	case *groovyAnnotation:
 		r.annotation(node)
-	case *groovyReturn, *groovyString, *groovyLiteral:
+	case *groovyReturn:
+		// A returned expression still runs: return sh('npm test').
+		r.expression(node.Value, scope, slot)
+	case *groovyString, *groovyLiteral:
 	case *groovyBinary:
 		if node.Op == "++" || node.Op == "--" {
 			return // A counter changes no step.
 		}
-		r.embeddedCommands(node, *scope, slot)
+		r.expression(node, scope, slot)
 		r.unresolved(slot, statement, "the Groovy statement "+r.text(statement)+" is not one ddtest can read")
 	default:
 		r.unresolved(slot, statement, "the Groovy statement "+r.text(statement)+" is not one ddtest can read")
@@ -887,20 +979,16 @@ func (r *jenkinsReader) statement(statement groovyNode, scope *jenkinsScope, slo
 
 // assign records env.X = value and def x = value.
 func (r *jenkinsReader) assign(node *groovyAssign, scope *jenkinsScope, slot *jenkinsSlot) {
-	// A script in the value still runs: def out = sh(…).trim().
-	r.embeddedCommands(node.Value, *scope, slot)
+	// The value still runs: def out = sh(…).trim(), def result = runTests().
+	r.expression(node.Value, scope, slot)
 	target, ok := node.Target.(*groovyName)
 	if !ok {
 		return
 	}
-	next := scope.with(func(next *jenkinsScope) {
+	*scope = scope.with(func(next *jenkinsScope) {
 		switch {
 		case len(target.Path) == 2 && target.Path[0] == "env":
-			if node.Op == "=" {
-				r.assignEnvironment(target.Path[1], node.Value, next, "env."+target.Path[1]+" at "+r.where(node), true)
-			} else {
-				next.env[target.Path[1]] = unresolvedCIValue(r.text(node))
-			}
+			r.assignGlobal(target.Path[1], node, next)
 		case len(target.Path) == 1:
 			value, problem := r.value(node.Value, *next)
 			if node.Op == "=" && problem == "" {
@@ -910,77 +998,294 @@ func (r *jenkinsReader) assign(node *groovyAssign, scope *jenkinsScope, slot *je
 			}
 		}
 	})
-	*scope = next
 }
 
-// embeddedCommands adds the sh calls inside an expression, which run when it
-// is evaluated.
-func (r *jenkinsReader) embeddedCommands(node groovyNode, scope jenkinsScope, slot *jenkinsSlot) {
+// assignGlobal records env.X = value: the build's value of X from then on,
+// which the scope reads unless an environment directive or withEnv around
+// it sets X.
+func (r *jenkinsReader) assignGlobal(key string, node *groovyAssign, next *jenkinsScope) {
+	where := "env." + key + " at " + r.where(node)
+	previous, had := next.env[key]
+	previousOverride, overridden := next.overrides[key]
+	pathChange := next.pathChange
+	if node.Op == "=" {
+		r.assignEnvironment(key, node.Value, next, where, true)
+	} else {
+		next.env[key] = unresolvedCIValue(r.text(node))
+		next.overrides[key] = where
+	}
+	if key == "PATH" {
+		if next.pathChange != pathChange {
+			next.globals[key] = next.pathChange
+		}
+		return
+	}
+	if value, set := next.env[key]; set {
+		next.globals[key] = value
+	}
+	if !next.shadow[key] {
+		return
+	}
+	if had {
+		next.env[key] = previous
+	} else {
+		delete(next.env, key)
+	}
+	if overridden {
+		next.overrides[key] = previousOverride
+	} else {
+		delete(next.overrides, key)
+	}
+}
+
+// persist carries what a closure's statements assign past it: the build's
+// environment (env.X), PATH, and the script variables the closure does not
+// declare.
+func (r *jenkinsReader) persist(outer, inner jenkinsScope, body *groovyBlock) jenkinsScope {
+	declared := map[string]bool{}
+	jenkinsVisit(body, func(node groovyNode) {
+		if assign, ok := node.(*groovyAssign); ok && assign.Declared {
+			if target, ok := assign.Target.(*groovyName); ok && len(target.Path) == 1 {
+				declared[target.Path[0]] = true
+			}
+		}
+	})
+	return outer.with(func(next *jenkinsScope) {
+		for key, value := range inner.globals {
+			if old, known := outer.globals[key]; known && old == value {
+				continue
+			}
+			next.globals[key] = value
+			if key == "PATH" {
+				if value != "" {
+					next.pathChange = value
+				}
+				continue
+			}
+			if key == "DD_API_KEY" && value != "" && !strings.Contains(value, "${{") {
+				next.setupProblem = joinDiagnostic(next.setupProblem, jenkinsLiteralKeyProblem(inner.overrides[key]))
+			}
+			if !outer.shadow[key] {
+				next.env[key] = value
+				next.overrides[key] = cmp.Or(inner.overrides[key], "env."+key)
+			}
+		}
+		for _, name := range slices.Collect(maps.Keys(mergeEnvironment(outer.vars, inner.vars))) {
+			if declared[name] {
+				continue
+			}
+			if value, known := inner.vars[name]; known {
+				next.vars[name] = value
+			} else {
+				delete(next.vars, name)
+			}
+		}
+	})
+}
+
+// merge joins the scopes after paths of which any one may run: a value the
+// paths disagree on is unknown after them.
+func (r *jenkinsReader) merge(paths ...jenkinsScope) jenkinsScope {
+	return paths[0].with(func(next *jenkinsScope) {
+		agree := func(read func(jenkinsScope) (string, bool)) bool {
+			first, firstSet := read(paths[0])
+			for _, path := range paths[1:] {
+				if value, set := read(path); set != firstSet || value != first {
+					return false
+				}
+			}
+			return true
+		}
+		for _, path := range paths {
+			for key := range path.env {
+				if !agree(func(s jenkinsScope) (string, bool) { v, ok := s.env[key]; return v, ok }) {
+					next.env[key] = unresolvedCIValue("env." + key + ", which the Jenkinsfile sets on some paths only")
+					next.overrides[key] = cmp.Or(next.overrides[key], path.overrides[key], "env."+key)
+				}
+			}
+			for key, value := range path.globals {
+				switch {
+				case agree(func(s jenkinsScope) (string, bool) { v, ok := s.globals[key]; return v, ok }):
+				case key == "PATH":
+					next.globals[key] = cmp.Or(next.globals[key], value)
+				default:
+					next.globals[key] = unresolvedCIValue("env." + key + ", which the Jenkinsfile sets on some paths only")
+				}
+			}
+			for name := range path.vars {
+				if !agree(func(s jenkinsScope) (string, bool) { v, ok := s.vars[name]; return v, ok }) {
+					delete(next.vars, name)
+				}
+			}
+			next.pathChange = cmp.Or(next.pathChange, path.pathChange)
+			next.setupProblem = cmp.Or(next.setupProblem, path.setupProblem)
+		}
+	})
+}
+
+// invalidate forgets what blocks may assign: the scope a block starts from
+// when it may run after part of itself or of another block.
+func (r *jenkinsReader) invalidate(scope jenkinsScope, blocks ...*groovyBlock) jenkinsScope {
+	return scope.with(func(next *jenkinsScope) {
+		for _, block := range blocks {
+			jenkinsVisit(block, func(node groovyNode) {
+				assign, ok := node.(*groovyAssign)
+				if !ok {
+					return
+				}
+				target, ok := assign.Target.(*groovyName)
+				switch {
+				case !ok:
+				case len(target.Path) == 2 && target.Path[0] == "env":
+					key := target.Path[1]
+					unknown := unresolvedCIValue(r.text(assign))
+					next.globals[key] = unknown
+					if key == "PATH" {
+						next.globals[key] = "PATH set in " + r.where(assign)
+						next.pathChange = cmp.Or(next.pathChange, next.globals[key])
+					} else if !next.shadow[key] {
+						next.env[key] = unknown
+						next.overrides[key] = "env." + key + " at " + r.where(assign)
+					}
+				case len(target.Path) == 1:
+					delete(next.vars, target.Path[0])
+				}
+			})
+		}
+	})
+}
+
+// jenkinsVisit calls visit on every statement a block runs, in closures and
+// control blocks too, but not in the functions it defines.
+func jenkinsVisit(block *groovyBlock, visit func(groovyNode)) {
+	if block == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		visit(statement)
+		switch node := statement.(type) {
+		case *groovyCall:
+			if node.Closure != nil {
+				jenkinsVisit(node.Closure.Body, visit)
+			}
+			for _, arg := range node.Args {
+				if closure, ok := arg.Value.(*groovyClosure); ok {
+					jenkinsVisit(closure.Body, visit)
+				}
+			}
+		case *groovyControl:
+			for _, inner := range append(append(slices.Clone(node.Blocks), node.Catches...), node.Finally) {
+				jenkinsVisit(inner, visit)
+			}
+		}
+	}
+}
+
+// expression runs the steps evaluating an expression runs: an sh whose
+// output is used, or a step or Groovy function whose result is assigned or
+// returned, which may run tests. A method on a value, such as .trim() or
+// env.BRANCH_NAME.startsWith(…), runs none.
+func (r *jenkinsReader) expression(node groovyNode, scope *jenkinsScope, slot *jenkinsSlot) {
 	switch node := node.(type) {
 	case *groovyCall:
 		if node.Receiver != nil {
-			r.embeddedCommands(node.Receiver, scope, slot)
+			if node.Closure != nil {
+				r.method(node, scope, slot)
+				return
+			}
+			r.expression(node.Receiver, scope, slot)
+			for _, arg := range node.Args {
+				r.expression(arg.Value, scope, slot)
+			}
+			return
 		}
-		if slices.Contains([]string{"sh", "bat", "powershell", "pwsh"}, node.Name) && node.Receiver == nil {
-			r.call(node, scope, slot)
-		}
-		for _, arg := range node.Args {
-			r.embeddedCommands(arg.Value, scope, slot)
-		}
+		r.call(node, scope, slot)
 	case *groovyBinary:
-		r.embeddedCommands(node.Left, scope, slot)
-		r.embeddedCommands(node.Right, scope, slot)
+		r.expression(node.Left, scope, slot)
+		r.expression(node.Right, scope, slot)
 	}
 }
 
+// jenkinsValueMethod reports a call that computes a value: a value function,
+// a method on env, params, currentBuild, scm or a Java class, or a Groovy
+// value method such as tag.trim().
+func jenkinsValueMethod(name string) bool {
+	if slices.Contains(jenkinsValueFunctions, name) {
+		return true
+	}
+	head, _, dotted := strings.Cut(name, ".")
+	if !dotted || head == "" {
+		return false
+	}
+	method := name[strings.LastIndex(name, ".")+1:]
+	return slices.Contains([]string{"env", "params", "currentBuild", "scm", "String", "Integer", "Long", "Double", "Boolean", "Math", "System", "Arrays", "Collections", "UUID", "URLEncoder"}, head) || slices.Contains(jenkinsValueMethods, method)
+}
+
 // control reads if/else, loops, switch and try: every branch that can run on
-// a passing build is a possible path; a catch block is not.
+// a passing build is a possible path, a catch block included, since it can
+// recover.
 func (r *jenkinsReader) control(node *groovyControl, scope *jenkinsScope, slot *jenkinsSlot) {
-	r.embeddedCommands(node.Condition, *scope, slot)
-	blocks := slices.Clone(node.Blocks)
-	if node.Kind == "if" {
-		if literal, ok := node.Condition.(*groovyLiteral); ok {
-			switch literal.Text {
-			case "false":
+	r.expression(node.Condition, scope, slot)
+	before := *scope
+	switch node.Kind {
+	case "if":
+		blocks := slices.Clone(node.Blocks)
+		if literal, ok := node.Condition.(*groovyLiteral); ok && (literal.Text == "true" || literal.Text == "false") {
+			if literal.Text == "false" {
 				blocks = blocks[1:]
-			case "true":
+			} else {
 				blocks = blocks[:1]
 			}
-		}
-	}
-	if node.Finally != nil {
-		blocks = append(blocks, node.Finally)
-	}
-	for _, block := range blocks {
-		r.block(block, *scope, slot)
-	}
-	// What a branch assigns is unknown after it.
-	for _, block := range append(append(slices.Clone(node.Blocks), node.Catches...), node.Finally) {
-		if block == nil {
-			continue
-		}
-		for _, statement := range block.Statements {
-			if assign, ok := statement.(*groovyAssign); ok {
-				if target, ok := assign.Target.(*groovyName); ok {
-					*scope = scope.with(func(next *jenkinsScope) {
-						if len(target.Path) == 2 && target.Path[0] == "env" {
-							next.env[target.Path[1]] = unresolvedCIValue(r.text(assign))
-						} else if len(target.Path) == 1 {
-							delete(next.vars, target.Path[0])
-						}
-					})
-				}
+			for _, block := range blocks {
+				*scope = r.block(block, *scope, slot)
 			}
+			return
+		}
+		var paths []jenkinsScope
+		for _, block := range blocks {
+			paths = append(paths, r.block(block, before, slot))
+		}
+		if len(blocks) < 2 {
+			paths = append(paths, before)
+		}
+		*scope = r.merge(paths...)
+	case "try":
+		paths := []jenkinsScope{r.block(node.Blocks[0], before, slot)}
+		// A catch runs after any statement of the try failed.
+		recovering := r.invalidate(before, node.Blocks[0])
+		for _, block := range node.Catches {
+			paths = append(paths, r.block(block, recovering, slot))
+		}
+		after := r.merge(paths...)
+		if node.Finally != nil {
+			after = r.block(node.Finally, after, slot)
+		}
+		*scope = after
+	default:
+		// A loop's body runs any number of times; a switch runs some of its
+		// cases.
+		for _, block := range node.Blocks {
+			*scope = r.merge(before, r.block(block, r.invalidate(before, block), slot))
 		}
 	}
 }
 
 // call reads one step call.
-func (r *jenkinsReader) call(call *groovyCall, scope jenkinsScope, slot *jenkinsSlot) {
+func (r *jenkinsReader) call(call *groovyCall, scope *jenkinsScope, slot *jenkinsSlot) {
 	positional, named := jenkinsArgs(call)
-	body := func(next jenkinsScope) {
+	outer := *scope
+	// body runs the closure in inner; what it assigns reaches the statements
+	// after the call.
+	body := func(inner jenkinsScope) {
 		if call.Closure != nil {
-			r.block(call.Closure.Body, next, slot)
+			*scope = r.persist(outer, r.block(call.Closure.Body, inner, slot), call.Closure.Body)
+		}
+	}
+	// repeat runs a closure that may run more than once, or not to its end.
+	repeat := func(inner jenkinsScope) {
+		if call.Closure != nil {
+			final := r.block(call.Closure.Body, r.invalidate(inner, call.Closure.Body), slot)
+			*scope = r.merge(outer, r.persist(outer, final, call.Closure.Body))
 		}
 	}
 	if call.Receiver != nil {
@@ -989,26 +1294,26 @@ func (r *jenkinsReader) call(call *groovyCall, scope jenkinsScope, slot *jenkins
 	}
 	switch name := call.Name; {
 	case name == "sh":
-		r.shell(call, scope, slot)
+		r.shell(call, outer, slot)
 	case name == "bat" || name == "powershell" || name == "pwsh":
 		script := ""
 		if len(positional) > 0 {
-			script, _ = r.value(positional[0], scope)
+			script, _ = r.value(positional[0], outer)
 		} else if value, ok := named["script"]; ok {
-			script, _ = r.value(value, scope)
+			script, _ = r.value(value, outer)
 		}
 		r.add(slot, call, runtimeStep{Run: script, ResolutionError: "runs " + name + ", a Windows command; ddtest does not set up or validate Windows agents"})
 	case name == "dir":
 		target := ""
 		problem := "its directory is not literal"
 		if len(positional) == 1 {
-			target, problem = r.value(positional[0], scope)
+			target, problem = r.value(positional[0], outer)
 		}
-		body(scope.with(func(next *jenkinsScope) {
+		body(outer.with(func(next *jenkinsScope) {
 			if rest, ok := strings.CutPrefix(target, "$WORKSPACE"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
 				target = "." + rest
 			}
-			joined := path.Clean(path.Join(scope.dir, target))
+			joined := path.Clean(path.Join(outer.dir, target))
 			switch {
 			case problem != "":
 				next.problem = joinDiagnostic(next.problem, "it runs inside dir("+r.text(call.Args[0].Value)+"), whose directory ddtest cannot resolve")
@@ -1022,12 +1327,12 @@ func (r *jenkinsReader) call(call *groovyCall, scope jenkinsScope, slot *jenkins
 			}
 		}))
 	case name == "withEnv":
-		body(scope.with(func(next *jenkinsScope) {
+		body(outer.with(func(next *jenkinsScope) {
 			items := []string(nil)
 			literal := len(positional) == 1
 			if list, ok := firstNode(positional).(*groovyList); ok {
 				for _, item := range list.Items {
-					text, problem := r.value(item, scope)
+					text, problem := r.value(item, outer)
 					literal = literal && problem == ""
 					items = append(items, text)
 				}
@@ -1045,58 +1350,89 @@ func (r *jenkinsReader) call(call *groovyCall, scope jenkinsScope, slot *jenkins
 					continue
 				}
 				next.env[key] = value
+				next.shadow[key] = true
 				next.overrides[key] = "withEnv at " + r.where(call)
 			}
 		}))
 	case name == "withCredentials":
-		body(scope.with(func(next *jenkinsScope) {
+		body(outer.with(func(next *jenkinsScope) {
 			text := groovyText(r.source, firstNode(positional))
 			for _, match := range jenkinsCredentialVariable.FindAllStringSubmatch(text, -1) {
 				next.env[match[1]] = jenkinsSecret(match[1])
+				next.shadow[match[1]] = true
 				if match[1] == "DD_API_KEY" {
 					r.review = append(r.review, r.file+": withCredentials at "+r.where(call)+" binds DD_API_KEY; the Datadog Jenkins plugin overwrites DD_API_KEY with its own configured key, so this binding is not the key the tests report with.")
 				}
 			}
 		}))
 	case slices.Contains(jenkinsToolWrappers, name):
-		body(scope.with(func(next *jenkinsScope) { next.pathChange = "the Jenkins tool " + r.text(call) }))
+		body(outer.with(func(next *jenkinsScope) { next.pathChange = "the Jenkins tool " + r.text(call) }))
 	case name == "node":
 		label := ""
 		if len(positional) > 0 {
-			label, _ = r.value(positional[0], scope)
+			label, _ = r.value(positional[0], outer)
 		}
 		if value, ok := named["label"]; ok {
-			label, _ = r.value(value, scope)
+			label, _ = r.value(value, outer)
 		}
 		nodeName := "node"
 		if label != "" {
 			nodeName = "node (" + label + ")"
 		}
-		if len(scope.stages) > 0 {
-			nodeName = strings.Join(scope.stages, " / ")
+		if len(outer.stages) > 0 {
+			nodeName = strings.Join(outer.stages, " / ")
 		}
-		inner := scope.with(func(next *jenkinsScope) {
+		inner := outer.with(func(next *jenkinsScope) {
 			next.agent = jenkinsAgent{kind: "host", label: label, describe: "node('" + label + "')"}
 			if label == "" {
 				next.agent.describe = "node"
 			}
+			if outer.pod != "" && (label == "" || label == outer.podLabel) {
+				// node(POD_LABEL): the agent is the template's pod.
+				head := "node"
+				if len(call.Args) > 0 {
+					head = "node(" + r.text(call.Args[0].Value) + ")"
+				}
+				next.agent = jenkinsAgent{kind: "container", describe: head + " of " + outer.pod}
+			}
 		})
 		nodeSlot := &jenkinsSlot{name: nodeName, scope: inner}
 		if call.Closure != nil {
-			r.block(call.Closure.Body, inner, nodeSlot)
+			*scope = r.persist(outer, r.block(call.Closure.Body, inner, nodeSlot), call.Closure.Body)
 		}
 		r.finish(nodeSlot)
+	case name == "podTemplate" || name == "containerTemplate":
+		// A Kubernetes pod template: a node(POD_LABEL) inside runs in a
+		// container of the pod.
+		body(outer.with(func(next *jenkinsScope) {
+			next.pod = "the Kubernetes " + name + " at " + r.where(call)
+			next.podLabel = ""
+			if value, ok := named["label"]; ok {
+				next.podLabel, _ = r.value(value, outer)
+			}
+		}))
 	case name == "stage":
 		if call.Closure == nil {
 			return
 		}
-		stageName := r.stageName(call, scope)
-		inner := scope.with(func(next *jenkinsScope) { next.stages = append(next.stages, stageName) })
-		stageSlot := &jenkinsSlot{name: jobName(scope.stages, stageName, scope.suffix), scope: inner}
-		r.block(call.Closure.Body, inner, stageSlot)
+		stageName := r.stageName(call, outer)
+		inner := outer.with(func(next *jenkinsScope) { next.stages = append(next.stages, stageName) })
+		stageSlot := &jenkinsSlot{name: jobName(outer.stages, stageName, outer.suffix), scope: inner}
+		*scope = r.persist(outer, r.block(call.Closure.Body, inner, stageSlot), call.Closure.Body)
 		r.finish(stageSlot)
 	case name == "parallel":
-		branches := 0
+		// The branches run at the same time.
+		var closures []*groovyBlock
+		for _, arg := range call.Args {
+			if closure, ok := arg.Value.(*groovyClosure); ok && arg.Name != "" {
+				closures = append(closures, closure.Body)
+			}
+		}
+		if call.Closure != nil {
+			closures = append(closures, call.Closure.Body)
+		}
+		start := r.invalidate(outer, closures...)
+		var paths []jenkinsScope
 		for _, arg := range call.Args {
 			closure, ok := arg.Value.(*groovyClosure)
 			if arg.Name == "" || arg.Name == "failFast" {
@@ -1109,34 +1445,38 @@ func (r *jenkinsReader) call(call *groovyCall, scope jenkinsScope, slot *jenkins
 				r.unresolved(slot, call, "the parallel branch "+arg.Name+" is not a closure ddtest can read")
 				continue
 			}
-			branches++
-			inner := scope.with(func(next *jenkinsScope) { next.stages = append(next.stages, arg.Name) })
-			branchSlot := &jenkinsSlot{name: jobName(scope.stages, arg.Name, scope.suffix), scope: inner}
-			r.block(closure.Body, inner, branchSlot)
+			inner := start.with(func(next *jenkinsScope) { next.stages = append(next.stages, arg.Name) })
+			branchSlot := &jenkinsSlot{name: jobName(outer.stages, arg.Name, outer.suffix), scope: inner}
+			paths = append(paths, r.persist(start, r.block(closure.Body, inner, branchSlot), closure.Body))
 			r.finish(branchSlot)
 		}
 		if call.Closure != nil {
 			// A declarative parallel { stage … } inside a script block.
-			r.stages(call.Closure.Body, scope)
+			paths = append(paths, r.stages(call.Closure.Body, start, true))
+		}
+		if len(paths) > 0 {
+			*scope = r.merge(append(paths, start)...)
 		}
 	case name == "container":
 		image := ""
 		if len(positional) > 0 {
-			image, _ = r.value(positional[0], scope)
+			image, _ = r.value(positional[0], outer)
 		}
-		body(scope.with(func(next *jenkinsScope) {
+		body(outer.with(func(next *jenkinsScope) {
 			next.agent = jenkinsAgent{kind: "container", describe: "container('" + image + "') of a Kubernetes pod"}
 		}))
 	case strings.HasSuffix(name, ".inside"):
 		// image.inside { … } on a variable holding docker.image(…) or
 		// docker.build(…).
-		body(scope.with(func(next *jenkinsScope) {
+		body(outer.with(func(next *jenkinsScope) {
 			next.agent = jenkinsAgent{kind: "container", describe: name + " (a Docker container)"}
 		}))
 	case name == "datadog":
-		body(scope.with(func(next *jenkinsScope) { next.setup = r.datadog(call, scope) }))
+		body(outer.with(func(next *jenkinsScope) { next.setup = r.datadog(call, outer) }))
+	case slices.Contains(jenkinsRepeatingWrappers, name):
+		repeat(outer)
 	case slices.Contains(jenkinsWrappers, name):
-		body(scope)
+		body(outer)
 	case name == "pipeline" || slices.Contains(jenkinsNonCommandSteps, name):
 		if name != "pipeline" && name != "echo" && name != "print" && name != "println" && name != "error" {
 			r.nonTest = append(r.nonTest, name)
@@ -1148,17 +1488,26 @@ func (r *jenkinsReader) call(call *groovyCall, scope jenkinsScope, slot *jenkins
 		}
 	case name == "load" || name == "evaluate":
 		r.unresolved(slot, call, name+" runs Groovy code from "+r.text(firstNode(positional))+", which ddtest does not read; its steps may run tests")
+	case name == "docker.build":
+		r.unresolved(slot, call, "docker.build builds a Docker image ("+r.text(call)+"), whose Dockerfile steps ddtest does not read; they may run tests, in a container the Datadog Jenkins plugin does not instrument")
 	case name == "build":
 		r.unresolved(slot, call, "build triggers another Jenkins job ("+r.text(call)+"), whose steps ddtest cannot read; they may run tests. Validate that job's Jenkinsfile separately")
-	case r.functions[name]:
+	case r.functions[name] != nil:
 		r.unresolved(slot, call, "it calls "+name+"(), a Groovy function of the Jenkinsfile, which ddtest does not follow; it may run tests")
-	default:
-		reason := "it calls " + name + ", which is not a Pipeline step ddtest knows; " + r.libraryNote() + ", and may run tests"
-		if call.Closure == nil {
-			r.unresolved(slot, call, reason)
-			return
+		// What the function assigns is unknown after it.
+		*scope = r.invalidate(outer, r.functions[name])
+	case jenkinsValueMethod(name):
+		for _, arg := range call.Args {
+			r.expression(arg.Value, scope, slot)
 		}
-		body(scope.with(func(next *jenkinsScope) {
+		outer = *scope
+		// Such as versions.each { … }: a closure that runs any number of times.
+		repeat(outer.with(func(next *jenkinsScope) {
+			next.problem = joinDiagnostic(next.problem, "it runs inside "+name+" { … }, a Groovy loop ddtest does not expand")
+		}))
+	default:
+		r.unresolved(slot, call, "it calls "+name+", which is not a Pipeline step ddtest knows; "+r.libraryNote()+", and may run tests")
+		repeat(outer.with(func(next *jenkinsScope) {
 			next.problem = joinDiagnostic(next.problem, "it runs inside "+name+"(…), which is not a Pipeline step ddtest knows; "+r.libraryNote())
 		}))
 	}
@@ -1182,13 +1531,14 @@ func firstNode(nodes []groovyNode) groovyNode {
 
 // method reads a call on another call's result, such as
 // docker.image('node:22').inside { … }.
-func (r *jenkinsReader) method(call *groovyCall, scope jenkinsScope, slot *jenkinsSlot) {
+func (r *jenkinsReader) method(call *groovyCall, scope *jenkinsScope, slot *jenkinsSlot) {
 	receiver, _ := call.Receiver.(*groovyCall)
-	r.embeddedCommands(call.Receiver, scope, slot)
+	r.expression(call.Receiver, scope, slot)
+	outer := *scope
 	if receiver != nil && (receiver.Name == "docker.image" || receiver.Name == "docker.build") {
 		image := ""
 		if args, _ := jenkinsArgs(receiver); receiver.Name == "docker.image" && len(args) > 0 {
-			image, _ = r.value(args[0], scope)
+			image, _ = r.value(args[0], outer)
 		}
 		switch call.Name {
 		case "inside":
@@ -1197,15 +1547,15 @@ func (r *jenkinsReader) method(call *groovyCall, scope jenkinsScope, slot *jenki
 				describe = "docker.image('" + image + "').inside"
 			}
 			if call.Closure != nil {
-				r.block(call.Closure.Body, scope.with(func(next *jenkinsScope) {
+				*scope = r.persist(outer, r.block(call.Closure.Body, outer.with(func(next *jenkinsScope) {
 					next.agent = jenkinsAgent{kind: "container", image: image, describe: describe}
-				}), slot)
+				}), slot), call.Closure.Body)
 			}
 			return
 		case "withRun":
 			// A service container; the closure runs on the agent.
 			if call.Closure != nil {
-				r.block(call.Closure.Body, scope, slot)
+				*scope = r.persist(outer, r.block(call.Closure.Body, outer, slot), call.Closure.Body)
 			}
 			return
 		case "pull", "push", "tag":
@@ -1213,9 +1563,17 @@ func (r *jenkinsReader) method(call *groovyCall, scope jenkinsScope, slot *jenki
 		}
 	}
 	if call.Closure != nil {
-		r.block(call.Closure.Body, scope.with(func(next *jenkinsScope) {
+		// Such as items.each { … }: the closure may run any number of times.
+		inner := r.invalidate(outer, call.Closure.Body).with(func(next *jenkinsScope) {
 			next.problem = joinDiagnostic(next.problem, "it runs inside "+r.text(call.Receiver)+"."+call.Name+"(…), which ddtest cannot read")
-		}), slot)
+		})
+		*scope = r.merge(outer, r.persist(outer, r.block(call.Closure.Body, inner, slot), call.Closure.Body))
+		return
+	}
+	if slices.Contains(jenkinsValueMethods, call.Name) {
+		for _, arg := range call.Args {
+			r.expression(arg.Value, scope, slot)
+		}
 		return
 	}
 	r.unresolved(slot, call, "it calls "+r.text(call)+", which ddtest cannot read; it may run tests")
@@ -1299,6 +1657,15 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 		if _, overridden := env[key]; overridden {
 			state.env[key] = env[key]
 		}
+	}
+	// The plugin sets its additionalVariables after the pipeline's
+	// environment, withEnv and withCredentials, and its tracer variables
+	// after them.
+	for key, value := range r.pluginVariables(scope) {
+		if current, set := env[key]; set && current != value {
+			r.review = append(r.review, r.file+": "+key+" set in the Jenkinsfile is overwritten by the additionalVariables of datadog(…) at "+scope.setup.source+", which the Datadog Jenkins plugin sets for every step.")
+		}
+		state.env[key] = value
 	}
 	maps.Copy(state.env, exports)
 	file, parsed := parseCIShell(script)
@@ -1484,6 +1851,15 @@ func jenkinsHost(agent jenkinsAgent, pathChange string) string {
 		host += ", with " + pathChange + " on PATH"
 	}
 	return host
+}
+
+// pluginVariables are the additionalVariables the Datadog Jenkins plugin
+// sets in every step of a job in its scope.
+func (r *jenkinsReader) pluginVariables(scope jenkinsScope) map[string]string {
+	if scope.setup == nil || scope.setup.problem() != "" {
+		return nil
+	}
+	return scope.setup.variables
 }
 
 // pluginExports are the variables the Datadog Jenkins plugin sets in every

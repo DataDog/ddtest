@@ -727,6 +727,9 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		} else {
 			reason = checkTestBootstrap(workflow, job, step, row, resolution.Tests, frameworks...)
 		}
+		if reason == "" {
+			reason = javascriptInstrumentationDisabled(workflow, job, step, row, frameworks...)
+		}
 		if reason != "" {
 			finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedInitialization, reason
 			if reason == unverifiedPreloadReason && stepSetsNoNodeOptions(workflow, job, step) {

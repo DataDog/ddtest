@@ -22,8 +22,8 @@ import (
 const actionPreload = "\x00DD_ACTION_PRELOAD\x00"
 
 // actionImport is the setup's ESM loader: the action's DD_TRACE_ESM_IMPORT,
-// or register.js in the package DD_TRACE_PATH names, which the Datadog
-// Jenkins plugin exports.
+// or register.js in the package DD_TRACE_PATH names, which only a setup
+// that exports it (the Datadog Jenkins plugin) sets.
 const (
 	actionImport      = "\x00DD_ACTION_IMPORT\x00"
 	actionPackagePath = "\x00DD_ACTION_PATH\x00"
@@ -104,6 +104,34 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 				}
 				return reason
 			}
+		}
+	}
+	return ""
+}
+
+// javascriptInstrumentationDisabled explains a test step whose environment
+// turns the tracer, or the framework's integration, off: DD_TRACE_ENABLED or
+// DD_TRACE_<FRAMEWORK>_ENABLED set to false.
+func javascriptInstrumentationDisabled(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {
+	env := map[string]string{}
+	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		maps.Copy(env, layer)
+	}
+	keys := []string{"DD_TRACE_ENABLED"}
+	if len(frameworks) > 0 {
+		keys = append(keys, "DD_TRACE_"+strings.ToUpper(frameworks[0])+"_ENABLED")
+	}
+	for _, key := range keys {
+		raw, set := env[key]
+		if !set {
+			continue
+		}
+		value, err := runtimeValue(raw, row)
+		if err != nil {
+			return "JavaScript CI instrumentation setting " + key + " needs review: " + err.Error()
+		}
+		if value = strings.ToLower(strings.TrimSpace(value)); value == "false" || value == "0" {
+			return "JavaScript CI instrumentation is explicitly disabled by " + key
 		}
 	}
 	return ""
@@ -237,11 +265,26 @@ func (p *conditionParser) format() (any, error) {
 	return result.String(), nil
 }
 
+// setupExports reports whether a setup before step in its job exports
+// variable, such as the Datadog Jenkins plugin's DD_TRACE_PATH.
+func setupExports(job runtimeJob, step runtimeStep, variable string) bool {
+	return slices.ContainsFunc(job.Steps, func(previous runtimeStep) bool {
+		return previous.Number < step.Number && previous.Setup != nil && slices.Contains(previous.Setup.Exports, variable)
+	})
+}
+
 // Resolve expressions with action outputs present only on instrumented entries.
 func effectiveBootstrapOptions(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, actionRan bool) (string, error) {
-	known := map[string]string{"NODE_OPTIONS": "", "DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": actionImport, "DD_TRACE_PATH": actionPackagePath}
+	known := map[string]string{"NODE_OPTIONS": "", "DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": actionImport}
+	trusted := []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT"}
+	if setupExports(job, step, "DD_TRACE_PATH") {
+		known["DD_TRACE_PATH"] = actionPackagePath
+		trusted = append(trusted, "DD_TRACE_PATH")
+	}
 	if !actionRan {
-		known["DD_TRACE_PACKAGE"], known["DD_TRACE_ESM_IMPORT"], known["DD_TRACE_PATH"] = "", "", ""
+		for _, key := range trusted {
+			known[key] = ""
+		}
 	}
 	var options string
 	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
@@ -256,13 +299,13 @@ func effectiveBootstrapOptions(workflow ciWorkflow, job runtimeJob, step runtime
 				continue
 			}
 			delete(known, key)
-			if key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" && key != "DD_TRACE_PATH" && !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
+			if !slices.Contains(trusted, key) && !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
 				known[key] = value
 			}
 		}
 	}
 	for key, value := range conditionEnvironment(workflow, job, step, row) {
-		if key != "NODE_OPTIONS" && key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" && key != "DD_TRACE_PATH" {
+		if key != "NODE_OPTIONS" && !slices.Contains(trusted, key) {
 			known[key] = value
 		}
 	}

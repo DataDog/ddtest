@@ -515,14 +515,26 @@ but every `sh` starts a fresh shell. `sh 'x'`, `sh "x"`, triple-quoted scripts
 and `sh(script: …)` are read when the whole script is literal; a GString reads
 known values only: a literal `environment` value or `env.X =` assignment, a
 literal Groovy variable, a `parameters` default (`${params.X}`) and
-`${WORKSPACE}`. `environment` (pipeline and stage, in any order;
-`credentials()` and computed values are unknown), `withEnv` with a literal
+`${WORKSPACE}`. Top-level statements run in source order, so a literal `def`
+before `pipeline { … }` is visible inside it and one after it is not. An
+`env.X =` assignment changes the build's value for the rest of the build, from
+any closure (`script`, `dir`, `timeout`, a stage), except inside an
+`environment` directive, `withEnv` or `withCredentials` that sets `X`, which
+keep their own value until they end; Groovy variables assigned without `def`
+in a closure reach the statements after it. A value assigned on some paths only
+(a branch, a loop, a `try` that may stop part way, `retry`, a `parallel`
+branch, a stage whose `when` ddtest cannot decide) is unknown after them, and
+a step that reads it is unresolved. `environment` (pipeline and stage, in any
+order; `credentials()` and computed values are unknown), `withEnv` with a literal
 list, `withCredentials` (its variables are unknown), `dir` with a literal path
 inside the checkout, `when { expression { false } }` or `return false` (the
 stage never runs; any other `when` is a possible path), `post` conditions that
 run on a passing build (`always`, `success`, `cleanup`, `changed`, `fixed`:
 after the stage's steps; the others are reported), `if`/`else`, loops and
-`try`/`finally` (possible paths; `catch` is not) and wrappers such as
+`try`/`catch`/`finally` (possible paths: a `catch` can recover, so its steps
+count; what the `try` assigns is unknown in it), the value of an assignment or
+a `return` (`def out = sh(…).trim()` runs that `sh`; a method on a value such
+as `.trim()` runs nothing) and wrappers such as
 `timeout`, `retry`, `timestamps`, `ansiColor`, `lock`, `catchError`,
 `warnError`, `sshagent`, `wrap` and `script` are followed. Steps that only
 check out, archive, publish or notify (`checkout`, `junit`, `stash`,
@@ -530,8 +542,10 @@ check out, archive, publish or notify (`checkout`, `junit`, `stash`,
 `jenkinsNonCommandSteps`) are a caveat. Anything else stays an unresolved
 blocker: a computed script, a step ddtest does not know (from a shared library
 named by `@Library` or `library`, or one Jenkins loads implicitly), a call to a
-Groovy function of the Jenkinsfile, `load`, `evaluate`, `build job:`, an
-unknown wrapper around `sh`, a scripted `parallel` over a computed map, a
+Groovy function of the Jenkinsfile (what it assigns to `env` is unknown
+after it), `load`, `evaluate`, `build job:`, `docker.build`, an unknown call
+with a closure (itself, even when the closure only configures it, and each
+step inside it), a scripted `parallel` over a computed map, a
 matrix ddtest cannot expand, `bat`/`powershell` and Windows agent labels, an
 `sh` outside a `node` or under `agent none`, a script with another
 interpreter's shebang, and `docker run`/`exec` or a Compose `run`/`exec`/`up`
@@ -551,7 +565,14 @@ the option's arguments are literal, `enabled: true`, `languages` names the
 language, `serviceName` is set (otherwise the plugin reports `service: null`),
 `additionalVariables` is a literal map without `DD_API_KEY` (refused: the key
 would be committed) or `DD_CIVISIBILITY_ENABLED=false`, and its `DD_SITE`, or
-the confirmed Agentless site, is the selected site. A `datadog(…)` in a
+the confirmed Agentless site, is the selected site. The plugin sets
+`additionalVariables` in every step after the pipeline's `environment`,
+`withEnv` and `withCredentials` (a value of the Jenkinsfile they replace is
+reported), so ddtest adds them to each test step's environment: local
+validation replays them like any step variable, and one that turns the tracer
+or the framework's integration off (`DD_TRACE_ENABLED`, or
+`DD_TRACE_<FRAMEWORK>_ENABLED` such as `DD_TRACE_RSPEC_ENABLED`, set to
+`false`) is reported, not certified. A `datadog(…)` in a
 stage's `options` is not certified (the plugin documents the top-level option
 only), and a literal `DD_API_KEY` in an `environment` directive is refused; a
 `DD_API_KEY` credential binding, and a `NODE_OPTIONS` or `RUBYOPT` in a stage's
@@ -560,7 +581,8 @@ by the plugin, which sets those once per build. When the setup that is there
 is incomplete, `ci_setup_required` names why.
 
 The plugin does not instrument tests inside containers. Stages that run in
-`agent { docker … }`, `dockerfile`, `kubernetes`, `docker.image(…).inside`, an
+`agent { docker … }`, `dockerfile`, `kubernetes`, a `podTemplate`'s
+`node(POD_LABEL)` (or a `node` on its label), `docker.image(…).inside`, an
 image variable's `.inside` or `container(…)` are unsupported: when every job
 that runs the tests is one, onboarding returns `status: unsupported` with
 `code: ci_setup_unsupported`, naming the jobs and the user's options (run the
@@ -598,7 +620,10 @@ Node against the latest release, validates locally with it, and
 preload to `NODE_OPTIONS` and exports `DD_TRACE_PATH`; for Vitest, Cucumber and
 ESM Mocha, the test's `sh` script registers the loader before the test command
 with `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-}
---import $DD_TRACE_PATH/register.js"; fi`.
+--import $DD_TRACE_PATH/register.js"; fi`. `DD_TRACE_PATH` is a trusted loader
+path only in jobs the plugin sets up: the other providers' setups do not export
+it, so a `--import ${{ env.DD_TRACE_PATH }}/register.js` there is not the
+setup's loader.
 
 Ruby: the plugin uses a `datadog-ci` already in the bundle and otherwise runs
 `bundle config set frozen false` and `bundle add datadog-ci` on the agent, so

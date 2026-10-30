@@ -244,6 +244,7 @@ pipeline {
     stage('Parameter') { steps { sh "npm test -- ${params.SUITE}" } }
     stage('Library') { steps { nodePipeline(node: 22) } }
     stage('Wrapper') { steps { withNpmEnv { sh 'npm test' } } }
+    stage('Configured') { steps { nodePipeline { suite = 'unit' } } }
     stage('Function') { steps { script { runTests('unit') } } }
     stage('Load') { steps { load 'ci/steps.groovy' } }
     stage('Build') { steps { build job: 'downstream' } }
@@ -263,7 +264,12 @@ print("x")
 	require.Contains(t, unresolved("Computed"), "its sh script reads ${env.SHARD}, which only the Jenkins build knows")
 	require.Equal(t, "npm test -- unit", unresolved("Parameter"), "a parameter's default is known")
 	require.Contains(t, unresolved("Library"), "it calls nodePipeline, which is not a Pipeline step ddtest knows; it may come from the shared library ci-lib")
-	require.Contains(t, unresolved("Wrapper"), "it runs inside withNpmEnv(…), which is not a Pipeline step ddtest knows")
+	// The unknown wrapper is a step of its own, and its steps keep why.
+	wrapper := jenkinsRuns(jobs["Wrapper"])
+	require.Len(t, wrapper, 2)
+	require.Contains(t, wrapper[0], "it calls withNpmEnv, which is not a Pipeline step ddtest knows; it may come from the shared library ci-lib, and may run tests")
+	require.Contains(t, wrapper[1], "it runs inside withNpmEnv(…), which is not a Pipeline step ddtest knows")
+	require.Contains(t, unresolved("Configured"), "it calls nodePipeline, which is not a Pipeline step ddtest knows; it may come from the shared library ci-lib", "a closure that only configures the library still runs its steps")
 	require.Contains(t, unresolved("Function"), "it calls runTests(), a Groovy function of the Jenkinsfile")
 	require.Contains(t, unresolved("Load"), "load runs Groovy code from 'ci/steps.groovy'")
 	require.Contains(t, unresolved("Build"), "build triggers another Jenkins job")
@@ -319,7 +325,7 @@ stage('Outside') {
 	require.Equal(t, "web", test.Steps[0].WorkingDirectory)
 	require.Equal(t, "test", test.Steps[0].Env["NODE_ENV"])
 	require.Contains(t, test.SetupUnsupported, "docker.image('node:22').inside")
-	require.Equal(t, []string{"npm run deploy", "npm run flaky", "npm run all"}, jenkinsRuns(jobs["node (linux)"]), "a catch block is not a passing path")
+	require.Equal(t, []string{"npm run deploy", "npm run flaky", "npm run on-failure", "npm run all"}, jenkinsRuns(jobs["node (linux)"]), "a catch block can recover, so it is a possible passing path")
 	require.Equal(t, "the Jenkins agents labeled \"linux\"", jobs["node (linux)"].Host)
 	require.Equal(t, "any Jenkins agent (node, with no label)", jobs["Outside"].Host)
 	require.Equal(t, []string{"checkout"}, jenkinsNonTest(workflow))
@@ -625,6 +631,18 @@ func TestJenkinsJavaScriptFixture(t *testing.T) {
 	caveats := CISetupCaveats(&result)
 	require.Len(t, caveats, 2)
 	require.Contains(t, caveats[1], "dd-trace version: the Datadog Jenkins plugin installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@6.22.0")
+
+	// additionalVariables that turn the Jest integration off reach the test.
+	writeFile(t, root, "Jenkinsfile", strings.Replace(string(jenkinsfile), "    agent { label 'sl7'}\n", "    agent { label 'sl7'}\n  options {\n    datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT'], additionalVariables: [DD_TRACE_JEST_ENABLED: 'false']])\n  }\n", 1))
+	disabled := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "6.22.0", Node: ">=18", Requested: "latest"}, nil
+	}, "jest")
+	require.Equal(t, StatusInconclusive, disabled.Status)
+	for _, finding := range disabled.Jobs {
+		if finding.Job == "Unit Tests" {
+			require.Equal(t, "JavaScript CI instrumentation is explicitly disabled by DD_TRACE_JEST_ENABLED", finding.Reason)
+		}
+	}
 }
 
 // An ESM framework needs the plugin's loader in the test's sh script.
@@ -695,6 +713,11 @@ func TestJenkinsRubyFixture(t *testing.T) {
 	require.Contains(t, finding().Reason, "adds datadog-ci from the checkout root's bundle, but this test command runs in sub")
 	writeFile(t, root, "Jenkinsfile", strings.Replace(wrapped, "sh 'bundle exec rake spec'", "withEnv(['BUNDLE_GEMFILE=gemfiles/rails.gemfile']) { sh 'bundle exec rake spec' }", 1))
 	require.Contains(t, finding().Reason, "selects BUNDLE_GEMFILE=gemfiles/rails.gemfile")
+	// additionalVariables that turn the RSpec integration off reach the test.
+	writeFile(t, root, "Jenkinsfile", strings.Replace(wrapped, "languages: ['RUBY']]", "languages: ['RUBY'], additionalVariables: [DD_TRACE_RSPEC_ENABLED: 'false']]", 1))
+	disabled := finding()
+	require.Equal(t, "Ruby CI instrumentation is explicitly disabled by DD_TRACE_RSPEC_ENABLED", disabled.Reason)
+	require.Equal(t, StatusInconclusive, disabled.Status)
 }
 
 // ${WORKSPACE} is the checkout: in an environment value, the shared model's
@@ -720,4 +743,207 @@ func TestJenkinsAgentInstructionsListTheScope(t *testing.T) {
 	require.NoError(t, run(&guidance, &agentHandoff{}))
 	require.Contains(t, guidance.String(), "jest — Jenkinsfile / Test / step 1 (npm test)")
 	require.Contains(t, guidance.String(), "Unresolved scope: Jenkinsfile / Publish / step 1 (): Jenkinsfile Publish: it calls publishImage, which is not a Pipeline step ddtest knows; it may come from the shared library lib")
+}
+
+// A Kubernetes pod template's node(POD_LABEL) is a pod agent: a container
+// the plugin does not instrument, as agent { kubernetes … } is.
+func TestJenkinsPodTemplatesAreContainers(t *testing.T) {
+	jobs := jenkinsJobs(t, `datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT']]) {
+  podTemplate(yaml: 'pod.yaml') {
+    node(POD_LABEL) {
+      stage('Pod') { sh 'npm test' }
+    }
+  }
+  podTemplate(label: 'mypod', containers: [containerTemplate(name: 'node', image: 'node:22')]) {
+    node('mypod') {
+      stage('Labeled pod') { sh 'npm test' }
+    }
+    node('linux') {
+      stage('Host') { sh 'npm test' }
+    }
+  }
+}`)
+	pod := jobs["Pod"]
+	require.Equal(t, "it runs in node(POD_LABEL) of the Kubernetes podTemplate at Jenkinsfile:2, a container: the Datadog Jenkins plugin installs the tracer on the build agent and does not instrument tests inside containers", pod.SetupUnsupported)
+	require.Contains(t, pod.ImageProblem, "whose image ddtest does not read")
+	require.Empty(t, pod.Host)
+	require.Contains(t, pod.Steps[0].Setup.Problem, "This stage cannot use the Datadog Jenkins plugin: it runs in node(POD_LABEL) of the Kubernetes podTemplate")
+	require.Contains(t, jobs["Labeled pod"].SetupUnsupported, "it runs in node('mypod') of the Kubernetes podTemplate at Jenkinsfile:7")
+	require.Empty(t, jobs["Host"].SetupUnsupported, "a node on another label is a host agent")
+	require.Equal(t, "the Jenkins agents labeled \"linux\"", jobs["Host"].Host)
+
+	root := jenkinsRepository(t, "podTemplate {\n  node(POD_LABEL) {\n    stage('Test') { sh 'npm test' }\n  }\n}\n")
+	var unsupported *CIProviderUnsupportedError
+	require.ErrorAs(t, CheckCIProviderSupport(root, "javascript", "jest"), &unsupported)
+	require.Contains(t, ProviderUnsupportedResult(unsupported).Reason, "Jenkinsfile / Test: it runs in node(POD_LABEL) of the Kubernetes podTemplate at Jenkinsfile:1")
+}
+
+// The plugin sets additionalVariables after the pipeline's environment and
+// withEnv: the test steps, and local validation, see the plugin's values.
+func TestJenkinsAdditionalVariables(t *testing.T) {
+	workflow := jenkinsWorkflow(t, `pipeline {
+  agent any
+  environment { DD_ENV = 'pipeline' }
+  options {
+    datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT'], additionalVariables: [DD_TRACE_JEST_ENABLED: 'false', DD_ENV: 'ci', SUITE: 'unit']])
+  }
+  stages {
+    stage('T') {
+      steps {
+        withEnv(['DD_TRACE_JEST_ENABLED=true']) { sh 'npm test -- "$SUITE"' }
+      }
+    }
+  }
+}`)
+	job := workflow.Jobs["T"]
+	step := job.Steps[1]
+	require.Equal(t, `npm test -- "$SUITE"`, step.Run)
+	require.Equal(t, "false", step.Env["DD_TRACE_JEST_ENABLED"], "additionalVariables apply after withEnv")
+	require.Equal(t, "ci", step.Env["DD_ENV"], "additionalVariables apply after the environment directive")
+	require.Equal(t, "unit", step.Env["SUITE"])
+	review := strings.Join(workflow.Review, "\n")
+	require.Contains(t, review, "DD_ENV set in the Jenkinsfile is overwritten by the additionalVariables of datadog(…) at Jenkinsfile:5")
+	require.Contains(t, review, "DD_TRACE_JEST_ENABLED set in the Jenkinsfile is overwritten by the additionalVariables")
+	// Local validation replays the integration switch.
+	_, env, err := resolveVariantStep(workflow, job, step, nil, "jest")
+	require.NoError(t, err)
+	require.Equal(t, "false", env["DD_TRACE_JEST_ENABLED"])
+
+	// A setup ddtest refuses sets nothing.
+	refused := jenkinsJobs(t, "pipeline {\n  agent any\n  options { datadog(testOptimization: [enabled: true, serviceName: 'a', languages: ['JAVASCRIPT'], additionalVariables: [DD_API_KEY: 'abc', DD_ENV: 'ci']]) }\n  stages { stage('T') { steps { sh 'npm test' } } }\n}\n")
+	require.NotContains(t, refused["T"].Steps[1].Env, "DD_API_KEY")
+	require.NotContains(t, refused["T"].Steps[1].Env, "DD_ENV")
+}
+
+// A catch can recover, so its steps are a possible passing path; a finally
+// runs after either. What the try assigns is unknown in the catch.
+func TestJenkinsCatchAndFinally(t *testing.T) {
+	jobs := jenkinsJobs(t, `node {
+  stage('T') {
+    env.SUITE = 'unit'
+    try {
+      env.SUITE = 'integration'
+      sh 'npm run flaky'
+    } catch (err) {
+      sh "npm run ${env.SUITE}"
+      sh 'npm run fallback'
+    } finally {
+      sh 'npm run cleanup'
+    }
+    sh "npm run ${env.SUITE}"
+  }
+  stage('Finally') {
+    try {
+      env.TARGET = 'e2e'
+    } finally {
+      sh "npm run ${env.TARGET}"
+    }
+  }
+}`)
+	runs := jenkinsRuns(jobs["T"])
+	require.Len(t, runs, 5)
+	require.Equal(t, "npm run flaky", runs[0])
+	require.Contains(t, runs[1], "its sh script reads ${env.SUITE}, which only the Jenkins build knows", "the try may stop before or after its assignment")
+	require.Equal(t, []string{"npm run fallback", "npm run cleanup"}, runs[2:4])
+	require.Contains(t, runs[4], "its sh script reads ${env.SUITE}", "the try and the catch leave different values")
+	require.Equal(t, []string{"npm run e2e"}, jenkinsRuns(jobs["Finally"]), "without a catch, a passing build ran the whole try")
+}
+
+// env.X = … changes the build's environment for the rest of the build, from
+// any closure; withEnv and an environment directive keep their own value
+// inside them, and a value set on some paths only is unknown.
+func TestJenkinsEnvironmentAssignmentsPersist(t *testing.T) {
+	jobs := jenkinsJobs(t, `pipeline {
+  agent any
+  environment { FIXED = 'pipeline' }
+  stages {
+    stage('A') {
+      steps {
+        script { env.SUITE = 'unit' }
+        script { env.SUITE = 'integration'; env.FIXED = 'changed' }
+        sh "npm run ${env.SUITE} ${env.FIXED}"
+        withEnv(['SUITE=scoped']) {
+          sh "npm run ${env.SUITE}"
+          script { env.SUITE = 'after' }
+          sh "npm run ${env.SUITE}"
+        }
+        sh "npm run ${env.SUITE}"
+        dir('web') { timeout(5) { env.SUITE = 'web' } }
+        sh "npm run ${env.SUITE}"
+        script {
+          if (params.ALL) { env.SUITE = 'maybe' }
+        }
+        sh "npm run ${env.SUITE}"
+      }
+    }
+    stage('Set') { steps { script { env.LATER = 'e2e'; suite = 'smoke' } } }
+    stage('Use') { steps { sh "npm run ${env.LATER}"; sh "npm run ${suite}" } }
+  }
+}`)
+	runs := jenkinsRuns(jobs["A"])
+	require.Len(t, runs, 6)
+	require.Equal(t, []string{"npm run integration pipeline", "npm run scoped", "npm run scoped", "npm run after", "npm run web"}, runs[:5])
+	require.Contains(t, runs[5], "its sh script reads ${env.SUITE}, which only the Jenkins build knows")
+	require.Equal(t, []string{"npm run e2e", "npm run smoke"}, jenkinsRuns(jobs["Use"]), "assignments reach later stages")
+	require.Equal(t, "web", jobs["A"].Steps[4].Env["SUITE"], "the step runs with the build's value")
+
+	scripted := jenkinsJobs(t, `node {
+  stage('T') {
+    def suite = 'unit'
+    retry(2) { suite = 'retried' }
+    sh "npm run ${suite}"
+    timeout(5) {
+      suite = 'integration'
+      def local = 'x'
+    }
+    sh "npm run ${suite} ${local}"
+    parallel(a: { env.MODE = 'a' }, b: { env.MODE = 'b' })
+    sh "npm run ${env.MODE}"
+  }
+}`)
+	runs = jenkinsRuns(scripted["T"])
+	require.Len(t, runs, 3)
+	require.Contains(t, runs[0], "its sh script reads ${suite}", "retry may run its closure more than once")
+	require.Contains(t, runs[1], "its sh script reads ${local}", "a closure's def stays in the closure")
+	require.Contains(t, runs[2], "its sh script reads ${env.MODE}", "parallel branches race")
+	scripted = jenkinsJobs(t, "node {\n  stage('T') {\n    def suite = 'unit'\n    timeout(5) { suite = 'integration' }\n    sh \"npm run ${suite}\"\n  }\n}\n")
+	require.Equal(t, []string{"npm run integration"}, jenkinsRuns(scripted["T"]))
+}
+
+// What an assignment or a return evaluates runs: a literal sh is a step,
+// and an unknown call is unresolved. A method on a value runs nothing.
+func TestJenkinsExecutableExpressions(t *testing.T) {
+	jobs := jenkinsJobs(t, `@Library('ci-lib') _
+def runTests() { sh 'npm test' }
+pipeline {
+  agent any
+  stages {
+    stage('Function') { steps { script { def outcome = runTests() } } }
+    stage('Output') { steps { script { def out = sh(script: 'npm test', returnStdout: true).trim() } } }
+    stage('Return') { steps { script { return sh('npm test -- --testPathPattern=integration') } } }
+    stage('Library') { steps { script { def result = nodeTests(suite: 'unit') } } }
+    stage('Library method') { steps { script { results = ci.runTests() } } }
+    stage('Value') { steps { script {
+      def tag = env.BRANCH_NAME.trim()
+      def abbreviated = tag.take(7)
+      def files = ['a', 'b'].collect { it.toUpperCase() }
+      def image = docker.image('node:22')
+    } } }
+  }
+}`)
+	require.Contains(t, strings.Join(jenkinsRuns(jobs["Function"]), "\n"), "it calls runTests(), a Groovy function of the Jenkinsfile")
+	require.Equal(t, []string{"npm test"}, jenkinsRuns(jobs["Output"]))
+	require.Equal(t, []string{"npm test -- --testPathPattern=integration"}, jenkinsRuns(jobs["Return"]))
+	require.Contains(t, strings.Join(jenkinsRuns(jobs["Library"]), "\n"), "it calls nodeTests, which is not a Pipeline step ddtest knows; it may come from the shared library ci-lib")
+	require.Contains(t, strings.Join(jenkinsRuns(jobs["Library method"]), "\n"), "it calls ci.runTests, which is not a Pipeline step ddtest knows")
+	require.NotContains(t, jobs, "Value", "value methods run no step")
+}
+
+// Top-level statements run in order: a declaration before the pipeline is
+// visible in it, one after it is not.
+func TestJenkinsTopLevelDeclarations(t *testing.T) {
+	jobs := jenkinsJobs(t, "def suite = 'unit'\nenv.MODE = 'ci'\npipeline {\n  agent any\n  stages { stage('T') { steps { sh \"npm run ${suite} ${env.MODE}\" } } }\n}\n")
+	require.Equal(t, []string{"npm run unit ci"}, jenkinsRuns(jobs["T"]))
+	jobs = jenkinsJobs(t, "pipeline {\n  agent any\n  stages { stage('T') { steps { sh \"npm run ${later}\" } } }\n}\ndef later = 'unit'\n")
+	require.Contains(t, jenkinsRuns(jobs["T"])[0], "its sh script reads ${later}, which only the Jenkins build knows")
 }

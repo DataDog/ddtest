@@ -7,6 +7,7 @@ package onboard
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -82,8 +83,10 @@ type jenkinsSetup struct {
 	languages []string
 	service   string
 	// site is an additionalVariables DD_SITE.
-	site     string
-	problems []string
+	site string
+	// variables are the additionalVariables the plugin sets for every step.
+	variables map[string]string
+	problems  []string
 }
 
 func (s *jenkinsSetup) problem() string {
@@ -111,7 +114,7 @@ func (r *jenkinsReader) datadog(call *groovyCall, scope jenkinsScope) *jenkinsSe
 	if !ok {
 		return nil
 	}
-	setup := &jenkinsSetup{source: r.where(call)}
+	setup := &jenkinsSetup{source: r.where(call), variables: map[string]string{}}
 	fail := func(problem string) { setup.problems = append(setup.problems, problem) }
 	options, literal := value.(*groovyMap)
 	if !literal {
@@ -159,7 +162,9 @@ func (r *jenkinsReader) datadog(call *groovyCall, scope jenkinsScope) *jenkinsSe
 					fail("The datadog(" + key + ": …) option at " + setup.source + " disables Test Optimization with DD_CIVISIBILITY_ENABLED=" + text + " in additionalVariables; remove it.")
 				case entry.Name == "DD_SITE":
 					setup.site = text
+					setup.variables[entry.Name] = text
 				default:
+					setup.variables[entry.Name] = text
 					if slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {
 						exported, _ := language.ciPluginExports(nil)
 						_, overwritten := exported[entry.Name]
@@ -191,9 +196,16 @@ func (s *jenkinsSetup) ciSetup() ciSetup {
 	if s.site != "" {
 		inputs["site"] = s.site
 	}
+	var exports []string
+	for _, language := range discoveryLanguages {
+		if slices.Contains(s.languages, language.ciPluginLanguage()) {
+			_, references := language.ciPluginExports(nil)
+			exports = append(exports, slices.Sorted(maps.Keys(references))...)
+		}
+	}
 	return ciSetup{
 		Reference: jenkinsPluginReference, Pinned: true, Supported: true, DefaultLatest: true, shaped: true,
-		Floating: true, WorkspaceRoot: true, Problem: s.problem(), Inputs: inputs,
+		Floating: true, WorkspaceRoot: true, Problem: s.problem(), Inputs: inputs, Exports: exports,
 		Confirmations: []string{jenkinsPluginFact, jenkinsModeFact},
 		Caveats:       []string{"The Datadog Jenkins plugin installs the tracer on each build agent when a build runs, with that agent's toolchain; ddtest read the Jenkinsfile, not the plugin's configuration or the agents."},
 	}
@@ -282,7 +294,7 @@ func (j jenkins) setupInstructions(request ciSetupRequest) string {
 	text.WriteString("Set up Datadog Test Optimization in Jenkins with the Datadog Jenkins plugin, enabled for the whole pipeline in the Jenkinsfile. The plugin installs the tracer on each build agent when a build runs and sets its variables for every step, so the Jenkinsfile only enables it.\n\n")
 	text.WriteString("1. Ask the user to have a Jenkins administrator install the Datadog plugin " + jenkinsPluginMinimum + " or newer on the Jenkins controller and configure it in Manage Jenkins > System > Datadog Plugin: Agentless mode with the Datadog API key stored as a Jenkins credential and the site " + request.Site + ", or Agent mode with a Datadog Agent the build agents reach. Never write the key into the repository, the Jenkinsfile or additionalVariables. ddtest cannot read Jenkins' configuration, so after the edit it asks the user to confirm the plugin and its mode (--ci-confirm) before it certifies anything.\n")
 	text.WriteString("2. In every Jenkinsfile that runs the tests listed above, enable Test Optimization for the pipeline. In a declarative pipeline, add the datadog option to the pipeline's top-level options directive (create the directive after agent if there is none; when it already has a datadog(…) call, add testOptimization to it and keep its other settings); stage-level options are not certified:\n\n```groovy\noptions {\n  datadog(testOptimization: [enabled: true, serviceName: '<service>', languages: ['" + token + "']])\n}\n```\n\nIn a scripted pipeline, wrap the node blocks that run the tests in it instead, re-indenting them and keeping every line:\n\n```groovy\ndatadog(testOptimization: [enabled: true, serviceName: '<service>', languages: ['" + token + "']]) {\n  node {\n    // existing stages\n  }\n}\n```\n\nReplace <service> with the service name the test results should report under, such as the repository name. When the pipeline already enables other languages, add '" + token + "' to the existing languages list. Keep every other line, stage, agent and step unchanged.\n")
-	text.WriteString("\n3. The plugin only instruments steps that run on a host agent (agent any, agent { label … }, node(…)). It does not instrument tests inside containers (agent { docker … }, dockerfile, kubernetes, docker.image(…).inside, container(…), or docker run in an sh script): ddtest reports those stages as unsupported. Do not move tests between agents to obtain a pass; tell the user and let them decide.\n")
+	text.WriteString("\n3. The plugin only instruments steps that run on a host agent (agent any, agent { label … }, node(…)). It does not instrument tests inside containers (agent { docker … }, dockerfile, kubernetes, a podTemplate's node(POD_LABEL), docker.image(…).inside, container(…), or docker run in an sh script): ddtest reports those stages as unsupported. Do not move tests between agents to obtain a pass; tell the user and let them decide.\n")
 	if len(request.After) > 0 {
 		text.WriteString("\n4. In the sh script of each stage that runs the tests, add this line before the test command (inside the same sh string, so it runs in the test's shell):\n\n```sh\n" + strings.Join(request.After, "\n") + "\n```\n")
 	}
