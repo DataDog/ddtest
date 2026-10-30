@@ -41,9 +41,9 @@ func (jenkins) environment() map[string]string {
 
 func (jenkins) sharedSyntax() bool { return false }
 
-// Jenkinsfiles are edited by hand: onboarding gives every language
-// instructions.
-func (jenkins) editsSetup() bool { return false }
+// onboard --apply enables the Datadog Jenkins plugin in Jenkinsfiles (see
+// ci_provider_jenkins_edit.go).
+func (jenkins) editsSetup() bool { return true }
 
 // jenkinsDirectories are where Jenkinsfiles conventionally live besides the
 // repository root.
@@ -121,10 +121,4 @@ func (jenkins) setupStep(step runtimeStep) (ciSetup, bool) {
 		return ciSetup{}, false
 	}
 	return *step.Setup, true
-}
-
-// planSetupEdits never edits a Jenkinsfile: the setup is applied from the
-// instructions (see editsSetup).
-func (jenkins) planSetupEdits(string, []ciWorkflow, []ciSetupTarget, ciSetupRequest) ([]setupEdit, []string, error) {
-	return nil, nil, &SetupGap{"Jenkins", "onboard --apply does not edit Jenkinsfiles; add the Datadog Jenkins plugin setup from onboard --agent instructions, then validate with testdrive --all."}
 }

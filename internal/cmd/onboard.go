@@ -61,7 +61,7 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 			}
 			// start returns the onboarding handoff: the next command, or for a
 			// language whose CI setup the agent applies, the setup to apply first.
-			start := func() error {
+			startOptions := func() onboard.StartOptions {
 				selectedFormat := ""
 				if structured {
 					selectedFormat = format
@@ -74,8 +74,9 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 				if cmd.Flags().Changed("timeout") {
 					selectedTimeout = timeout.String()
 				}
-				return onboard.StartWithOptions(cmd.OutOrStdout(), onboard.StartOptions{Timeout: selectedTimeout, AllowReviewedBuilds: reviewed, AcceptSubstituteRuntime: substitute, Format: selectedFormat, Site: site, Tracer: selectedTracer, Facts: facts, Platform: settings.GetPlatform(), Command: settings.GetCommand(), Human: isTerminalWriter(cmd.OutOrStdout()) && !structured})
+				return onboard.StartOptions{Timeout: selectedTimeout, AllowReviewedBuilds: reviewed, AcceptSubstituteRuntime: substitute, Format: selectedFormat, Site: site, Tracer: selectedTracer, Facts: facts, Platform: settings.GetPlatform(), Command: settings.GetCommand(), Human: isTerminalWriter(cmd.OutOrStdout()) && !structured}
 			}
+			start := func() error { return onboard.StartWithOptions(cmd.OutOrStdout(), startOptions()) }
 			if instructions {
 				if structured || facts != "" || site != "" || cmd.Flags().Changed("tracer-version") {
 					return fail("invalid_options", fmt.Errorf("--instructions cannot be combined with structured output or setup options"))
@@ -87,6 +88,14 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 				detected, err := platform.DetectPlatform()
 				if err != nil {
 					return fail("validation_preparation", err)
+				}
+				if detected.Name() != "javascript" && onboard.CIProviderWritesPluginSetup(detected.Name()) {
+					// ddtest writes only the CI provider's plugin setup for this
+					// language; the handoff then gives the rest of its setup.
+					if structured && !yes {
+						return protocolFailure(cmd, "consent", "consent_required", fmt.Errorf("review setup with plain onboard --apply, then confirm with --yes"), confirmedCommand(cmd))
+					}
+					return onboard.ApplyPluginSetup(cmd.OutOrStdout(), startOptions(), onboard.PluginApplyOptions{Preview: !yes, AllowDirty: allowDirty, Text: !structured, Display: testdrive.FrameworkDisplayName})
 				}
 				if detected.Name() != "javascript" && testdrive.Coordinated(detected.Name()) || detected.Name() == "javascript" && !onboard.CIProviderEditsSetup() {
 					// ddtest writes no CI setup for this language, or on this

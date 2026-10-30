@@ -75,7 +75,7 @@ func onboardCI(output io.Writer, provider ciProvider, repositoryRoot, language, 
 		validatesConfigurations = discover || registered.coordinated()
 		// A coding agent applying the setup by hand needs the scope it is for,
 		// unresolved entries included.
-		discover = discover || agent != nil && !provider.sharedSyntax() && !providerAutomaticSetup(provider, registered, name)
+		discover = discover || agent != nil && !provider.sharedSyntax() && !providerAutomaticSetup(repositoryRoot, provider, registered, name)
 	}
 	if discover {
 		discovered, err := DiscoverValidationScope(repositoryRoot, name)
@@ -135,7 +135,7 @@ func onboardCI(output io.Writer, provider ciProvider, repositoryRoot, language, 
 	}
 	text := instructions(language, name)
 	if registered := discoveryLanguageNamed(language); agent != nil && !provider.sharedSyntax() {
-		text = providerSetupInstructions(repositoryRoot, provider, language, name, agent.site, !providerAutomaticSetup(provider, registered, name))
+		text = providerSetupInstructions(repositoryRoot, provider, language, name, agent.site, !providerAutomaticSetup(repositoryRoot, provider, registered, name))
 	} else if agent != nil && registered != nil && registered.agentInstructions(name, agent.site) != "" {
 		text = registered.agentInstructions(name, agent.site)
 	}

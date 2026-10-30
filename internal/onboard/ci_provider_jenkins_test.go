@@ -578,7 +578,8 @@ func TestJenkinsInstructions(t *testing.T) {
 	require.Contains(t, text, "add this line before the test command (inside the same sh string, so it runs in the test's shell):\n\n```sh\n"+pluginESMImportCommand+"\n```")
 	require.Contains(t, text, "installs the latest dd-trace release with the build agent's default npm when each build runs (it cannot pin a release)")
 	require.NotContains(t, text, "Try it locally", "agents run the coordinator")
-	require.NotContains(t, text, "ddtest onboard --framework vitest --apply", "onboard --apply does not edit Jenkinsfiles")
+	require.NotContains(t, text, "ddtest onboard --apply", "no vitest step for onboard --apply to set up")
+	require.Contains(t, providerSetupInstructions(root, jenkins{}, "javascript", "jest", "datadoghq.eu", true), "preview the recognized edits with `ddtest onboard --apply`", "onboard --apply enables the plugin")
 
 	ruby := rubyDiscovery{}.ciSetupRequest(root, "rspec", "datadoghq.com", jenkins{}.setupTerms())
 	notes := strings.Join(ruby.Notes, "\n")
@@ -588,10 +589,11 @@ func TestJenkinsInstructions(t *testing.T) {
 	ruby = rubyDiscovery{}.ciSetupRequest(root, "rspec", "datadoghq.com", jenkins{}.setupTerms())
 	require.Contains(t, ruby.Notes[0], "already pins datadog-ci 1.40.0")
 
-	require.False(t, providerAutomaticSetup(jenkins{}, javascriptDiscovery{}, "jest"), "Jenkins setup is applied from instructions")
-	require.True(t, providerAutomaticSetup(buildkite{}, javascriptDiscovery{}, "jest"))
-	_, err := planProviderJavaScriptSetup(root, jenkins{}, nil, "jest", "5.0.0", "datadoghq.com", "")
-	require.ErrorContains(t, err, "onboard --apply does not edit the Jenkins configuration")
+	require.True(t, providerAutomaticSetup(root, jenkins{}, javascriptDiscovery{}, "jest"), "onboard --apply enables the plugin")
+	require.False(t, providerAutomaticSetup(root, jenkins{}, javascriptDiscovery{}, "cucumber"))
+	require.True(t, providerAutomaticSetup(root, buildkite{}, javascriptDiscovery{}, "jest"))
+	writeFile(t, root, "Jenkinsfile", "@Library('lib') _\npipeline {\n  agent any\n  stages { stage('Test') { steps { sh 'npm test' } } }\n}\n")
+	require.False(t, providerAutomaticSetup(root, jenkins{}, javascriptDiscovery{}, "jest"), "a refused edit leaves the setup to the instructions")
 }
 
 // The committed fixture is ral-facilities/scigateway's declarative

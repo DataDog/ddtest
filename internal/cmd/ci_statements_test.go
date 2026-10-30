@@ -6,6 +6,8 @@
 package cmd
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,20 +79,83 @@ func TestCIStatementsAreForwardedOnce(t *testing.T) {
 	require.Equal(t, "ddtest testdrive --all --ci-runtime node=22 --ci-runtime ruby=3.3 --yes", rerunWithYes(testdrive))
 }
 
-// onboard --apply never edits a Jenkinsfile: JavaScript gets the same setup
-// handoff Ruby gets, here first the runtime question.
-func TestOnboardApplyOnJenkinsHandsOffTheSetup(t *testing.T) {
+// onboard --apply enables the Datadog Jenkins plugin: JavaScript gets the
+// automatic setup, here first the runtime question, then the preview's consent.
+func TestOnboardApplyOnJenkinsRunsTheAutomaticSetup(t *testing.T) {
 	ciProviderFixture(t)
 	t.Cleanup(func() { _ = onboard.UseCIStatements(nil, nil) })
 	require.NoError(t, os.RemoveAll(".github"))
-	require.NoError(t, os.WriteFile("Jenkinsfile", []byte("pipeline {\n  agent { label 'linux' }\n  stages { stage('Test') { steps { sh 'npx vitest run' } } }\n}\n"), 0600))
+	jenkinsfile := "pipeline {\n  agent { label 'linux' }\n  stages { stage('Test') { steps { sh 'npx vitest run' } } }\n}\n"
+	require.NoError(t, os.WriteFile("Jenkinsfile", []byte(jenkinsfile), 0600))
 	result, err := runProtocolCommand(t, newOnboardCommand(nil), "--apply", "--yes", "--format", "json")
 	require.Error(t, err)
 	require.Equal(t, "ci_runtime_required", result.Code)
-	result, err = runProtocolCommand(t, newOnboardCommand(nil), "--apply", "--yes", "--format", "json", "--ci-runtime", "node=22")
+	result, err = runProtocolCommand(t, newOnboardCommand(nil), "--apply", "--format", "json", "--ci-runtime", "node=22")
+	require.Error(t, err)
+	require.Equal(t, "consent_required", result.Code)
+	require.Contains(t, result.NextCommand, "--yes")
+	data, err := os.ReadFile("Jenkinsfile")
+	require.NoError(t, err)
+	require.Equal(t, jenkinsfile, string(data))
+	require.NoDirExists(t, ".testoptimization")
+}
+
+// Ruby's only setup ddtest writes on Jenkins is the plugin's: onboard --apply
+// previews the Jenkinsfile edit, --yes writes it and returns the rest of the
+// setup (the datadog-ci pin), and applying again changes nothing.
+func TestOnboardApplyOnJenkinsWritesThePluginSetupForRuby(t *testing.T) {
+	ciProviderFixture(t)
+	t.Cleanup(func() { _ = onboard.UseCIStatements(nil, nil) })
+	require.NoError(t, os.RemoveAll(".github"))
+	require.NoError(t, os.Remove("package.json"))
+	require.NoError(t, os.WriteFile("Gemfile", []byte("source 'https://rubygems.org'\ngem 'rspec'\n"), 0600))
+	jenkinsfile := "node {\n  stage('Test') {\n    sh 'bundle exec rspec'\n  }\n}\n"
+	require.NoError(t, os.WriteFile("Jenkinsfile", []byte(jenkinsfile), 0600))
+
+	command := newOnboardCommand(nil)
+	command.SetArgs([]string{"--apply", "--ci-runtime", "ruby=3.3"})
+	var preview bytes.Buffer
+	command.SetOut(&preview)
+	command.SetErr(io.Discard)
+	require.NoError(t, command.ExecuteContext(t.Context()))
+	require.Contains(t, preview.String(), "+datadog(testOptimization: [enabled: true, serviceName: '")
+	require.Contains(t, preview.String(), "Preview only; no source files changed and no tests executed. Review this diff, then pass --apply --yes to apply it.")
+	data, err := os.ReadFile("Jenkinsfile")
+	require.NoError(t, err)
+	require.Equal(t, jenkinsfile, string(data), "a preview writes nothing")
+
+	result, err := runProtocolCommand(t, newOnboardCommand(nil), "--apply", "--format", "json", "--ci-runtime", "ruby=3.3")
+	require.Error(t, err)
+	require.Equal(t, "consent_required", result.Code)
+
+	result, err = runProtocolCommand(t, newOnboardCommand(nil), "--apply", "--yes", "--format", "json", "--ci-runtime", "ruby=3.3")
 	require.Error(t, err)
 	require.Equal(t, "ci_setup_required", result.Code)
 	require.Equal(t, "apply_source_edit", result.NextAction)
-	require.Contains(t, result.Instruction, "datadog(testOptimization: [enabled: true, serviceName: '<service>', languages: ['JAVASCRIPT']])")
-	require.NoDirExists(t, ".testoptimization")
+	require.Len(t, result.Changes, 1)
+	require.Equal(t, "Jenkinsfile", result.Changes[0].Path)
+	require.Contains(t, result.SetupDiff, "+datadog(testOptimization:")
+	require.Contains(t, result.UndoInstructions, "git apply -R")
+	require.Contains(t, result.Reason, "onboard --apply wrote the Datadog Jenkins plugin")
+	require.Contains(t, result.Instruction, `Pin datadog-ci in the bundle: add gem "datadog-ci", "<exact datadog-ci release>"`)
+	require.Equal(t, []string{"testdrive", "--framework", "rspec", "--all", "--agent", "--yes"}, result.ResumeCommand[1:7])
+	data, err = os.ReadFile("Jenkinsfile")
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(string(data), "datadog(testOptimization: [enabled: true, serviceName: '"), string(data))
+	require.Contains(t, string(data), "\n  node {\n    stage('Test') {\n      sh 'bundle exec rspec'\n    }\n  }\n}\n")
+
+	result, err = runProtocolCommand(t, newOnboardCommand(nil), "--apply", "--yes", "--format", "json", "--ci-runtime", "ruby=3.3")
+	require.Error(t, err)
+	require.Empty(t, result.Changes, "applying again changes nothing")
+	require.Equal(t, "ci_setup_confirmation_required", result.Code)
+	again, err := os.ReadFile("Jenkinsfile")
+	require.NoError(t, err)
+	require.Equal(t, string(data), string(again))
+
+	command = newOnboardCommand(nil)
+	command.SetArgs([]string{"--apply", "--ci-runtime", "ruby=3.3"})
+	preview.Reset()
+	command.SetOut(&preview)
+	_ = command.ExecuteContext(t.Context())
+	require.True(t, strings.HasPrefix(preview.String(), "RSpec CI setup is already configured; no edits.\n"), preview.String())
 }

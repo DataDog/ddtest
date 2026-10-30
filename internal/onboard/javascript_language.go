@@ -130,7 +130,7 @@ func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ci
 // javascriptPluginSetupRequest is the JavaScript part of a CI server plugin's
 // setup: the plugin installs the latest dd-trace and sets NODE_OPTIONS itself.
 func javascriptPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
-	request := ciSetupRequest{Language: "js", Site: site}
+	request := ciSetupRequest{Language: "js", Site: site, Service: packageName(root)}
 	if setupImportsESM(framework) || framework == "mocha" {
 		request.After = []string{pluginESMImportCommand}
 	}
