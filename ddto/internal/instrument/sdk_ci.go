@@ -41,6 +41,7 @@ func TransformSDKBazelMode(name string, source []byte) ([]byte, bool, error) {
 
 // SDKGuardFile returns the file that declares the guards' variable in the
 // package of a guarded source, under a stable name in that source's directory.
+// name must be absolute, as for HookFileLine.
 func SDKGuardFile(name string, source []byte) (string, error) {
 	file, err := parser.ParseFile(token.NewFileSet(), name, source, parser.PackageClauseOnly)
 	if err != nil {

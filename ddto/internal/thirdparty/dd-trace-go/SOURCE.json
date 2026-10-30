@@ -1736,12 +1736,12 @@
     },
     {
       "path": "civisibility/utils/source_runfiles.go",
-      "sha256": "9dd3d79a2ba6375299d4303d2f34062c13a477c9b1a77a6e9605cbfdf60e6f70",
+      "sha256": "eee8603b4887a1c1f3400618555cadbfbbb3a96341955c0178b0175a35196d2a",
       "role": "local"
     },
     {
       "path": "civisibility/utils/source_runfiles_test.go",
-      "sha256": "cebbfc884c2ac24584171493c9bba35dc95e2d75701085b70dc00321a03b5d23",
+      "sha256": "2848556654ec6ef43f9e6cec4a835c9b347324474c38c1fdda211fe30e4d195d",
       "role": "local"
     },
     {

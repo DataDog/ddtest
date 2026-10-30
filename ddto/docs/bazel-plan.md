@@ -461,6 +461,18 @@ tested in ddtest without Bazel, with unit tests checked by mutation.
 - **Relative source paths:** Mini resolves them under the runfiles.
 - **The API key wording** in `mini-runtime.md`.
 
+**Status.** Implemented in this pull request, after the plan:
+
+- **Inert hooks:** Mini defines statically initialized variables with its
+  functions as values (`internal/instrument/mini_hooks.go`). Preparation
+  checks that a runtime that a client selects declares them with their exact
+  types.
+- **Guards:** the CI guards and the telemetry guard, on
+  `internal/bazel.CurrentMode`, read `minitracer.sdkGuardMiniLinked`.
+- **Not converted:** per-test coverage, context file coverage and
+  `--panic-hook` keep their calls into Mini, because Bazel's first version
+  compiles none of them.
+
 ### Phase 2: compiler mode and `ddtest instrument bazel`
 
 - **A compiler mode of the ddtest executable that needs no plan.** It

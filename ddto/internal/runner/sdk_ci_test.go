@@ -197,3 +197,31 @@ func TestSDKCompilerCacheMarkerKeepsUserFlags(t *testing.T) {
 		}
 	}
 }
+
+// Bazel passes the compiler sources relative to the execution root. The
+// compiler would resolve a relative line directive from the temporary file's
+// directory, so the rewritten file and the guard file name the original
+// directory absolutely; the compiler's -trimpath then rewrites it.
+func TestSDKCIGateNamesRelativeInputsAbsolutely(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", t.TempDir())
+	if err := os.MkdirAll(filepath.Join(dir, "external", "sdk"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "external", "sdk", "env.go"), []byte("package envconfig\ntype EnabledMode int\nconst EnabledModeDisabled=0\nfunc FromEnv()(EnabledMode,bool){return 1,true}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	got, cleanup, err := prepareSDKCICompile([]string{"compile", filepath.Join("external", "sdk", "env.go")}, sdkCIEnvironmentPackage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	original := filepath.ToSlash(filepath.Join(dir, "external", "sdk"))
+	for i, want := range []string{"//line " + original + "/env.go:1:1\n", "//line " + original + "/zz_dd_ci_visibility_sdk_guard.go:1\n"} {
+		data, err := os.ReadFile(got[i+1])
+		if err != nil || !strings.HasPrefix(string(data), want) {
+			t.Fatalf("%s does not start with %q: %v\n%s", got[i+1], want, err, data)
+		}
+	}
+}

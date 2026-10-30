@@ -132,6 +132,13 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 	}
 	found := false
 	var mirrorFound uint8
+	// Line directives name the original files absolutely: the compiler
+	// resolves a relative name from the temporary file's directory, and its
+	// -trimpath rewrites an absolute one as it rewrites the package's files.
+	logical := func(arg string) (string, error) {
+		path, err := filepath.Abs(arg)
+		return filepath.ToSlash(path), err
+	}
 	for i := start; i < len(args); i++ {
 		source, err := os.ReadFile(args[i])
 		if err != nil {
@@ -179,7 +186,12 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 			return nil, nil, err
 		}
 		temporary = append(temporary, file.Name())
-		prefix := fmt.Sprintf("//line %s:1:1\n", filepath.ToSlash(args[i]))
+		name, err := logical(args[i])
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		prefix := fmt.Sprintf("//line %s:1:1\n", name)
 		_, writeErr := file.Write(append([]byte(prefix), rewritten...))
 		closeErr := file.Close()
 		if writeErr != nil {
@@ -194,7 +206,7 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 		if pkg != sdkTracerPackage {
 			// The guards' variable, in a file of its own: the rewritten file
 			// keeps its imports and its line numbers.
-			guard, err := instrument.SDKGuardFile(filepath.ToSlash(args[i]), source)
+			guard, err := instrument.SDKGuardFile(name, source)
 			if err != nil {
 				cleanup()
 				return nil, nil, err
@@ -229,7 +241,10 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 			return nil, nil, err
 		}
 		temporary = append(temporary, file.Name())
-		_, err = file.WriteString(instrument.HookFileLine(filepath.Dir(args[start]), "zz_dd_ci_visibility_sdk_mirror.go") + instrument.SDKMirrorHook(mirrorFound))
+		dir, err := logical(filepath.Dir(args[start]))
+		if err == nil {
+			_, err = file.WriteString(instrument.HookFileLine(dir, "zz_dd_ci_visibility_sdk_mirror.go") + instrument.SDKMirrorHook(mirrorFound))
+		}
 		closeErr := file.Close()
 		if err != nil {
 			cleanup()

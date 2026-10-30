@@ -10,6 +10,8 @@ import (
 // name in its package's directory dir. The compiler records that name instead
 // of the temporary file that holds the hook, so builds stay the same from run
 // to run, and -trimpath rewrites it as it rewrites the package's own files.
+// dir must be absolute: the compiler resolves a relative name from the
+// directory of the file that holds the directive, a temporary one.
 func HookFileLine(dir, name string) string {
 	return "//line " + filepath.ToSlash(filepath.Join(dir, name)) + ":1\n"
 }
