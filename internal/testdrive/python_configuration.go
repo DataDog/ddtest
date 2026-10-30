@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
@@ -14,37 +15,155 @@ import (
 )
 
 func (t *Testdrive) rebasePytestConfiguration(directory string) error {
+	t.configurationEnvironment["DDTEST_PYTEST_CONFIG_ADDOPTS"] = ext.UnsetEnvironment
+	pythonPath := os.Getenv("PYTHONPATH")
+	if configured, ok := t.configurationEnvironment["PYTHONPATH"]; ok {
+		pythonPath = configured
+	}
+	if pythonPath != "" {
+		paths := strings.Split(pythonPath, string(os.PathListSeparator))
+		for i, path := range paths {
+			if filepath.IsAbs(path) {
+				paths[i] = rebasePytestPaths([]string{path}, t.configurationSourceRoot, t.checkoutRoot())[0]
+			}
+		}
+		t.configurationEnvironment["PYTHONPATH"] = strings.Join(paths, string(os.PathListSeparator))
+	}
 	words := append([]string{t.command}, t.args...)
 	args, ok := onboard.PytestArguments(words)
 	if !ok {
 		return nil // Preflight reports unsupported command shapes.
 	}
 	prefix := len(words) - len(args)
-	words = append(rebaseUVDirectories(words[:prefix], t.configurationSourceRoot, t.checkoutRoot()), rebasePytestPaths(args, t.configurationSourceRoot, t.checkoutRoot())...)
-	t.args = words[1:]
-	files := map[string]bool{}
-	if err := rebasePytestArgumentFiles(words[prefix:], directory, t.configurationSourceRoot, t.checkoutRoot(), files); err != nil {
-		return err
+	commandPrefix := mapUVDirectories(words[:prefix], func(option, value string) string {
+		value = rebasePytestPaths([]string{value}, t.configurationSourceRoot, t.checkoutRoot())[0]
+		if option == "--directory" {
+			if filepath.IsAbs(value) {
+				directory = value
+			} else {
+				directory = filepath.Join(directory, value)
+			}
+		}
+		return value
+	})
+	relative, err := filepath.Rel(workspace.CanonicalRoot(t.checkoutRoot()), workspace.CanonicalRoot(directory))
+	if err != nil || !filepath.IsLocal(relative) {
+		return fmt.Errorf("pytest working directory leaves the isolated checkout")
 	}
 	addopts := os.Getenv("PYTEST_ADDOPTS")
 	if value, ok := t.configurationEnvironment["PYTEST_ADDOPTS"]; ok {
 		addopts = value
 	}
-	if addopts != "" {
-		options, err := shellquote.Split(addopts)
-		if err != nil {
-			return fmt.Errorf("cannot parse PYTEST_ADDOPTS: %w", err)
+	options, err := shellquote.Split(addopts)
+	if err != nil {
+		return fmt.Errorf("cannot parse PYTEST_ADDOPTS: %w", err)
+	}
+	options, err = expandPytestArgumentFiles(options, directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{})
+	if err != nil {
+		return err
+	}
+	args, err = expandPytestArgumentFiles(args, directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{})
+	if err != nil {
+		return err
+	}
+	environmentCount := len(options)
+	combined, overridden, err := isolatePytestOptions(append(options, args...), directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{})
+	if err != nil {
+		return err
+	}
+	options, args = combined[:environmentCount], combined[environmentCount:]
+	words = append(commandPrefix, args...)
+	t.args = words[1:]
+	if !overridden {
+		defaults, configErr := onboard.PytestConfigOptions(t.checkoutRoot(), directory, shellquote.Join(options...), words)
+		if configErr == nil {
+			isolated, _, err := isolatePytestOptions(defaults, directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{})
+			if err != nil {
+				return err
+			}
+			if !slices.Equal(defaults, isolated) {
+				// Put the copied defaults before user options so their overrides
+				// retain pytest's normal environment/command precedence.
+				options = append([]string{"-o", "addopts=" + shellquote.Join(isolated...)}, options...)
+				t.configurationEnvironment["DDTEST_PYTEST_CONFIG_ADDOPTS"] = shellquote.Join(isolated...)
+			}
 		}
-		options = rebasePytestPaths(options, t.configurationSourceRoot, t.checkoutRoot())
-		if err := rebasePytestArgumentFiles(options, directory, t.configurationSourceRoot, t.checkoutRoot(), files); err != nil {
-			return err
-		}
+	}
+	if addopts != "" || len(options) > 0 {
 		t.configurationEnvironment["PYTEST_ADDOPTS"] = shellquote.Join(options...)
 	}
 	return nil
 }
 
+// Expand argument files before finding configuration or applying option
+// precedence. Inline addopts is another source of pytest arguments.
+func isolatePytestOptions(args []string, directory, original, copied string, active map[string]bool) ([]string, bool, error) {
+	args, err := expandPytestArgumentFiles(args, directory, original, copied, active)
+	if err != nil {
+		return nil, false, err
+	}
+	args = rebasePytestPaths(args, original, copied)
+	overrideIndex, overrideValue, overrideAttached := -1, "", false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		if slices.Contains([]string{"-k", "-m", "-p", "-c", "--config-file", "--rootdir", "--confcutdir", "--basetemp", "--ignore", "--deselect", "--junitxml", "--junit-xml"}, arg) {
+			i++
+			continue
+		}
+		value, attached := "", false
+		switch {
+		case arg == "-o" || arg == "--override-ini":
+			i++
+			if i >= len(args) {
+				return nil, false, fmt.Errorf("%s requires an ini override", arg)
+			}
+			value = args[i]
+		case strings.HasPrefix(arg, "--override-ini="):
+			value, attached = strings.TrimPrefix(arg, "--override-ini="), true
+		case strings.HasPrefix(arg, "-o") && !strings.HasPrefix(arg, "--"):
+			value, attached = strings.TrimPrefix(strings.TrimPrefix(arg, "-o"), "="), true
+		default:
+			continue
+		}
+		key, value, _ := strings.Cut(value, "=")
+		if key != "addopts" {
+			continue
+		}
+		overrideIndex, overrideValue, overrideAttached = i, value, attached
+	}
+	if overrideIndex < 0 {
+		return args, false, nil
+	}
+	if active["addopts:"+overrideValue] {
+		return nil, false, fmt.Errorf("recursive pytest addopts override")
+	}
+	options, err := shellquote.Split(overrideValue)
+	if err != nil {
+		return nil, false, fmt.Errorf("cannot parse inline pytest addopts: %w", err)
+	}
+	active["addopts:"+overrideValue] = true
+	options, _, err = isolatePytestOptions(options, directory, original, copied, active)
+	delete(active, "addopts:"+overrideValue)
+	if err != nil {
+		return nil, false, err
+	}
+	args[overrideIndex] = "addopts=" + shellquote.Join(options...)
+	if overrideAttached {
+		args[overrideIndex] = "--override-ini=" + args[overrideIndex]
+	}
+	return args, true, nil
+}
+
 func rebaseUVDirectories(words []string, original, copied string) []string {
+	return mapUVDirectories(words, func(_, value string) string {
+		return rebasePytestPaths([]string{value}, original, copied)[0]
+	})
+}
+
+func mapUVDirectories(words []string, transform func(option, value string) string) []string {
 	words = slices.Clone(words)
 	if len(words) == 0 || strings.TrimSuffix(filepath.Base(words[0]), ".exe") != "uv" {
 		return words
@@ -61,10 +180,10 @@ func rebaseUVDirectories(words []string, original, copied string) []string {
 			continue
 		}
 		if assigned {
-			words[i] = option + "=" + rebasePytestPaths([]string{value}, original, copied)[0]
+			words[i] = option + "=" + transform(option, value)
 		} else if i+1 < len(words) {
 			i++
-			words[i] = rebasePytestPaths([]string{words[i]}, original, copied)[0]
+			words[i] = transform(option, words[i])
 		}
 	}
 	return words
@@ -72,6 +191,7 @@ func rebaseUVDirectories(words []string, original, copied string) []string {
 
 func rebasePytestPaths(args []string, original, copied string) []string {
 	args = slices.Clone(args)
+	lexicalOriginal := original
 	if canonical, err := filepath.EvalSymlinks(original); err == nil {
 		original = canonical
 	}
@@ -83,6 +203,8 @@ func rebasePytestPaths(args []string, original, copied string) []string {
 		}
 		if canonical, err := filepath.EvalSymlinks(path); err == nil {
 			path = canonical
+		} else if relative, err := filepath.Rel(lexicalOriginal, path); err == nil && filepath.IsLocal(relative) {
+			path = filepath.Join(original, relative)
 		}
 		relative, err := filepath.Rel(original, path)
 		if err != nil || !filepath.IsLocal(relative) {
@@ -123,40 +245,45 @@ func rebasePytestPaths(args []string, original, copied string) []string {
 	return args
 }
 
-// pytest reads one argument per line, including nested @files. Rewrite only
-// files owned by the disposable checkout; relative references use pytest's cwd.
-func rebasePytestArgumentFiles(args []string, directory, original, copied string, visited map[string]bool) error {
+// pytest reads one argument per line, including nested @files. Read only
+// the disposable checkout; relative references use pytest's working directory.
+func expandPytestArgumentFiles(args []string, directory, original, copied string, active map[string]bool) ([]string, error) {
+	var expanded []string
 	for _, arg := range args {
-		path, fromFile := strings.CutPrefix(arg, "@")
-		if !fromFile {
+		if !strings.HasPrefix(arg, "@") {
+			expanded = append(expanded, arg)
 			continue
 		}
+		path := strings.TrimPrefix(rebasePytestPaths([]string{arg}, original, copied)[0], "@")
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(directory, path)
 		}
 		resolved, err := filepath.EvalSymlinks(path)
 		if err != nil {
-			return fmt.Errorf("pytest argument file unavailable: %w", err)
+			return nil, fmt.Errorf("pytest argument file unavailable: %w", err)
 		}
 		relative, err := filepath.Rel(workspace.CanonicalRoot(copied), resolved)
 		if err != nil || !filepath.IsLocal(relative) {
-			return fmt.Errorf("pytest argument file resolves outside checkout: %s; keep argument files inside the repository", path)
+			return nil, fmt.Errorf("pytest argument file resolves outside checkout: %s; keep argument files inside the repository", path)
 		}
-		if visited[resolved] {
-			continue
+		if active[resolved] {
+			return nil, fmt.Errorf("recursive pytest argument file: %s", path)
 		}
-		visited[resolved] = true
+		active[resolved] = true
 		data, err := os.ReadFile(resolved)
 		if err != nil {
-			return fmt.Errorf("read pytest argument file: %w", err)
+			return nil, fmt.Errorf("read pytest argument file: %w", err)
 		}
-		lines := rebasePytestPaths(strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n"), original, copied)
-		if err := rebasePytestArgumentFiles(lines, directory, original, copied, visited); err != nil {
-			return err
+		lines := strings.Split(strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\r", "\n"), "\n")
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
 		}
-		if err := os.WriteFile(resolved, []byte(strings.Join(lines, "\n")), 0600); err != nil {
-			return fmt.Errorf("write isolated pytest argument file: %w", err)
+		lines, err = expandPytestArgumentFiles(lines, directory, original, copied, active)
+		delete(active, resolved)
+		if err != nil {
+			return nil, err
 		}
+		expanded = append(expanded, lines...)
 	}
-	return nil
+	return expanded, nil
 }

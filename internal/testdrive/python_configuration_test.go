@@ -2,10 +2,12 @@ package testdrive
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/ext"
@@ -23,9 +25,10 @@ func TestRebasePytestPathsPreservesExpressionsAndNodeSelectors(t *testing.T) {
 	requireWriteFile(t, file, "")
 	requireWriteFile(t, config, "")
 	outside := filepath.Join(t.TempDir(), "outside.py")
-	args := []string{"-k", file, "-o", "addopts=" + config, "-c", config, "--config-file=" + config, "-c" + config, "--", file + "::test_app[a/b]", outside}
+	output := filepath.Join(root, "new-report.xml")
+	args := []string{"-k", file, "-o", "addopts=" + config, "-c", config, "--config-file=" + config, "-c" + config, "--junitxml=" + output, "--", file + "::test_app[a/b]", outside}
 	wantFile, wantConfig := filepath.Join(copied, "test_app.py"), filepath.Join(copied, "pytest.ini")
-	want := []string{"-k", file, "-o", "addopts=" + config, "-c", wantConfig, "--config-file=" + wantConfig, "-c" + wantConfig, "--", wantFile + "::test_app[a/b]", outside}
+	want := []string{"-k", file, "-o", "addopts=" + config, "-c", wantConfig, "--config-file=" + wantConfig, "-c" + wantConfig, "--junitxml=" + filepath.Join(copied, "new-report.xml"), "--", wantFile + "::test_app[a/b]", outside}
 	require.Equal(t, want, rebasePytestPaths(args, root, copied))
 }
 
@@ -35,6 +38,12 @@ func TestPytestAbsolutePathsExecuteOnlyInsideCopy(t *testing.T) {
 
 func TestPytestArgumentFilesExecuteOnlyInsideCopy(t *testing.T) {
 	testPytestPathsExecuteOnlyInsideCopy(t, "argument files")
+}
+
+func TestPytestConfiguredArgumentFilesExecuteOnlyInsideCopy(t *testing.T) {
+	for _, mode := range []string{"config pytest.ini", "config tox.ini", "config pyproject.toml", "inline override", "environment override"} {
+		t.Run(mode, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, mode) })
+	}
 }
 
 func TestPytestObserverWithEnvironmentIgnored(t *testing.T) {
@@ -57,6 +66,20 @@ func TestUVDirectoryRebasingPreservesEnvironmentSelectors(t *testing.T) {
 	require.Equal(t, want, rebaseUVDirectories(words, original, copied))
 }
 
+func TestPytestConfigUsesUVWorkingDirectory(t *testing.T) {
+	original, copied := t.TempDir(), t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(original, "suite"), 0755))
+	require.NoError(t, os.Mkdir(filepath.Join(copied, "suite"), 0755))
+	args := filepath.Join(copied, "suite", "args.txt")
+	requireWriteFile(t, args, filepath.Join(original, "test_app.py")+"\n")
+	requireWriteFile(t, filepath.Join(original, "suite", "args.txt"), filepath.Join(original, "test_app.py")+"\n")
+	requireWriteFile(t, filepath.Join(copied, "suite", "pytest.ini"), "[pytest]\naddopts = @"+filepath.Join(original, "suite", "args.txt")+"\n")
+	drive := &Testdrive{repositoryRoot: copied, configurationRoot: copied, configurationSourceRoot: original, command: "uv", args: []string{"run", "--directory", filepath.Join(original, "suite"), "python", "-m", "pytest"}, configurationEnvironment: map[string]string{}}
+	require.NoError(t, drive.rebasePytestConfiguration(copied))
+	require.Contains(t, drive.configurationEnvironment["PYTEST_ADDOPTS"], filepath.Join(copied, "test_app.py"))
+	require.NotContains(t, drive.configurationEnvironment["PYTEST_ADDOPTS"], original)
+}
+
 func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	t.Helper()
 	python := feedbackPython(t)
@@ -76,12 +99,32 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	command := python
 	addopts := "--rootdir=" + root
 	environment := map[string]string{}
+	configuration, configuredContents := "", ""
 	if mode == "argument files" {
 		requireWriteFile(t, "ci-args.txt", "@"+filepath.Join(root, "nested-args.txt")+"\n")
 		requireWriteFile(t, "nested-args.txt", "-c\n"+filepath.Join(root, "pytest.ini")+"\n"+file+"::test_app\n")
 		requireWriteFile(t, "addopts.txt", addopts+"\n")
 		args = []string{"-m", "pytest", "@" + filepath.Join(root, "ci-args.txt")}
 		addopts = "@addopts.txt"
+	} else if strings.HasPrefix(mode, "config ") || strings.HasSuffix(mode, " override") {
+		argumentFile := filepath.Join(root, "ci-args.txt")
+		requireWriteFile(t, argumentFile, file+"::test_app\n")
+		args = []string{"-m", "pytest"}
+		if strings.HasPrefix(mode, "config ") {
+			configuration = strings.TrimPrefix(mode, "config ")
+			configuredContents = "[pytest]\npythonpath = .\naddopts = @" + argumentFile + "\n"
+			if configuration == "pyproject.toml" {
+				configuredContents = fmt.Sprintf("[tool.pytest.ini_options]\npythonpath = ['.']\naddopts = [%q]\n", "@"+argumentFile)
+			}
+			requireWriteFile(t, configuration, configuredContents)
+			if configuration != "pytest.ini" {
+				args = append(args, "-c", filepath.Join(root, configuration))
+			}
+		} else if mode == "inline override" {
+			args = append(args, "-o", "addopts=@"+argumentFile)
+		} else {
+			addopts += " -o addopts=@" + argumentFile
+		}
 	} else if mode == "--directory" || mode == "--project" {
 		uv, err := exec.LookPath("uv")
 		if err != nil {
@@ -91,6 +134,19 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 		args = append([]string{"run", "--no-sync", mode, root, "python"}, args...)
 		requireWriteFile(t, "pyproject.toml", "[project]\nname='ddtest-uv-review'\nversion='0.1.0'\nrequires-python='>=3.9'\n")
 		environment["UV_PROJECT_ENVIRONMENT"] = filepath.Dir(filepath.Dir(python))
+	} else if strings.HasPrefix(mode, "pythonpath ") {
+		require.NoError(t, os.Mkdir("src", 0755))
+		require.NoError(t, os.Remove("app.py"))
+		requireWriteFile(t, "src/app.py", "from pathlib import Path\nfrom external_dependency import EXTRA\ndef add(a,b):\n    Path(__file__).with_suffix('.executed').write_text('ran')\n    return a+b+EXTRA\n")
+		requireWriteFile(t, "pytest.ini", "[pytest]\n")
+		external := t.TempDir()
+		requireWriteFile(t, filepath.Join(external, "external_dependency.py"), "EXTRA=0\n")
+		path := filepath.Join(root, "src") + string(os.PathListSeparator) + external
+		if mode == "pythonpath ambient" {
+			t.Setenv("PYTHONPATH", path)
+		} else {
+			environment["PYTHONPATH"] = path
+		}
 	} else if mode != "direct" {
 		args = append([]string{mode}, args...)
 		contents, err := os.ReadFile(file)
@@ -111,10 +167,52 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 		require.Equal(t, "passed", feature.Status, "%s: %s", feature.Name, feature.Reason)
 	}
 	require.NoFileExists(t, filepath.Join(root, "tests", "test_app.executed"))
+	if strings.HasPrefix(mode, "pythonpath ") {
+		require.NoFileExists(t, filepath.Join(root, "src", "app.executed"))
+	}
+	if configuration != "" {
+		contents, err := os.ReadFile(configuration)
+		require.NoError(t, err)
+		require.Equal(t, configuredContents, string(contents))
+	}
 	if mode == "argument files" {
 		contents, err := os.ReadFile("nested-args.txt")
 		require.NoError(t, err)
 		require.Equal(t, "-c\n"+filepath.Join(root, "pytest.ini")+"\n"+file+"::test_app\n", string(contents))
+	}
+}
+
+func TestPytestAddoptsOverridesDoNotReadUnusedDefaults(t *testing.T) {
+	for _, source := range []string{"command", "environment", "command shadows environment", "last command override", "last environment override"} {
+		t.Run(source, func(t *testing.T) {
+			root := t.TempDir()
+			requireWriteFile(t, filepath.Join(root, "pytest.ini"), "[pytest]\naddopts = @/missing-unused-args.txt\n")
+			drive := &Testdrive{repositoryRoot: root, configurationSourceRoot: root, command: "python", args: []string{"-m", "pytest"}, configurationEnvironment: map[string]string{}}
+			if source == "command" || source == "command shadows environment" || source == "last command override" {
+				switch source {
+				case "command shadows environment":
+					drive.configurationEnvironment["PYTEST_ADDOPTS"] = "-o addopts=@/missing-unused-env.txt"
+				case "last command override":
+					drive.args = append(drive.args, "-oaddopts=@/missing-unused-command.txt")
+				}
+				drive.args = append(drive.args, "-o", "addopts=")
+			} else {
+				drive.configurationEnvironment["PYTEST_ADDOPTS"] = "--override-ini=addopts="
+				if source == "last environment override" {
+					drive.configurationEnvironment["PYTEST_ADDOPTS"] = "-o addopts=@/missing-unused-env.txt --override-ini=addopts="
+				}
+			}
+			require.NoError(t, drive.rebasePytestConfiguration(root))
+		})
+	}
+}
+
+func TestPytestArgumentFileCyclesAreRejected(t *testing.T) {
+	for _, content := range []string{"@args.txt\n", "-o\naddopts=@args.txt\n"} {
+		root := t.TempDir()
+		requireWriteFile(t, filepath.Join(root, "args.txt"), content)
+		_, _, err := isolatePytestOptions([]string{"@args.txt"}, root, root, root, map[string]bool{})
+		require.ErrorContains(t, err, "recursive pytest")
 	}
 }
 
@@ -133,7 +231,7 @@ func TestPytestArgumentFilesCannotModifyExternalFiles(t *testing.T) {
 				require.NoError(t, os.Symlink(file, link))
 				argument = "@args.txt"
 			}
-			err := rebasePytestArgumentFiles([]string{argument}, copied, "/original", copied, map[string]bool{})
+			_, err := expandPytestArgumentFiles([]string{argument}, copied, "/original", copied, map[string]bool{})
 			require.ErrorContains(t, err, "outside checkout")
 			contents, err := os.ReadFile(file)
 			require.NoError(t, err)

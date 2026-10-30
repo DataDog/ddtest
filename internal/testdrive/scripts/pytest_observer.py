@@ -35,6 +35,18 @@ def pytest_addoption(pluginmanager):
     pluginmanager.import_plugin("ddtrace", consider_entry_points=True)
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_load_initial_conftests(early_config, args):
+    owned = os.environ.get("DDTEST_PYTEST_CONFIG_ADDOPTS")
+    if owned is not None:
+        # Our copied defaults were supplied before the user's environment
+        # options. Remove that transport pair after pytest has consumed it;
+        # a -- in the defaults must not reinterpret it as collection paths.
+        start = len(early_config.getini("addopts"))
+        if args[start:start + 2] == ["-o", "addopts=" + owned]:
+            del args[start:start + 2]
+
+
 def pytest_configure(config):
     global _coverage_threshold_disabled, _rootpath
     _rootpath = config.rootpath

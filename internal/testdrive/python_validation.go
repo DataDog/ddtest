@@ -185,8 +185,11 @@ func (t *Testdrive) verifyPytestTracer(ctx context.Context, path, expected strin
 		env = map[string]string{}
 	}
 	maps.Copy(env, t.environment(path, "http://127.0.0.1:1", "pytest-tracer-check"))
-	if configured, ok := t.configurationEnvironment["PYTHONPATH"]; ok && path != "" && configured != "" {
-		env["PYTHONPATH"] = path + string(os.PathListSeparator) + configured
+	if configured, ok := t.configurationEnvironment["PYTHONPATH"]; ok && path != "" {
+		env["PYTHONPATH"] = path
+		if configured != "" {
+			env["PYTHONPATH"] += string(os.PathListSeparator) + configured
+		}
 	}
 	if err := probeEnvironment(ctx, command, append(prefix, "-c", script), env, &result, t.commandTimeout); err != nil {
 		return err
