@@ -99,9 +99,12 @@ never fail onboarding.
 
 Some CI jobs select no runtime ddtest can read: Buildkite steps on the agent
 host, GitLab jobs without an `image`, CircleCI `machine` and `macos`
-executors, GitHub self-hosted runners without `actions/setup-node` or
-`ruby/setup-ruby`, and jobs whose image (such as `ubuntu:22.04`) names no Node
-or Ruby version. For JavaScript and Ruby, `onboard` and `testdrive` then
+executors, GitHub self-hosted runners (a `self-hosted` label in any `runs-on`
+form, including `{group, labels}`) without an `actions/setup-node` or
+`ruby/setup-ruby` step that runs, and jobs whose image (such as
+`ubuntu:22.04`) names no Node or Ruby version. Finding these jobs reads only
+the repository; a Cypress GitHub action job's Node is the action's, not a
+question for the user. For JavaScript and Ruby, `onboard` and `testdrive` then
 return `needs_input` with `code: ci_runtime_required`, `required_input:
 ["ci_runtime:<workflow> / <job>", …]` and `next_action: ask_user` before any
 setup or test runs. The agent asks the user and never guesses the version.
@@ -118,7 +121,10 @@ takes one value for all its rows. A statement only fills an unknown runtime:
 - A statement for a job whose configuration selects a different version (its
   image, including a floating tag such as `node:lts`, a runtime installer step,
   `actions/setup-node` or nvm) stops with `ci_runtime_conflict`. A statement
-  without a job never conflicts.
+  without a job never conflicts. An installer counts only when it runs on
+  every matrix row the job runs: one whose condition skips it (`if: false`,
+  or on some rows) leaves the host's runtime in place, so the statement fills
+  it.
 - GitHub-hosted runners and job containers, and images ddtest cannot resolve,
   keep their own findings: their runtime is in the configuration.
 - The stated version goes through every check an image tag's goes through:

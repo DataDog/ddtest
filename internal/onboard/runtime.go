@@ -336,7 +336,9 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 					for i, step := range rowJob.Steps {
 						uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 
-						if uses == "cypress-io/github-action" && step.With["command"] == "" && cypressInputBool(step.With["runTests"], true) {
+						// Offline, the action's Node stays unknown: it is the
+						// action's, never a host runtime to ask the user for.
+						if uses == "cypress-io/github-action" && step.With["command"] == "" && cypressInputBool(step.With["runTests"], true) && !offlineRuntimeMetadata(ctx) {
 							node, metadataErr := CypressActionNode(ctx, step.Uses)
 							rowJob.Steps[i].ActionNode = node
 							if metadataErr != nil {
@@ -434,6 +436,24 @@ func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) err
 	return err
 }
 
+// runtimeJobActive evaluates whether a job runs on a matrix row, as the Node
+// runtime check does.
+func runtimeJobActive(workflow ciWorkflow, job runtimeJob, row map[string]any) (bool, error) {
+	if job.Context != nil {
+		return runtimeCondition(job.If, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
+	}
+	return possibleJobCondition(job.If, row)
+}
+
+// runtimeStepActive evaluates whether a step runs on a matrix row, as the
+// Node runtime check does.
+func runtimeStepActive(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (bool, error) {
+	if job.Context != nil && len(step.Parents) == 0 {
+		return runtimeCondition(step.If, row, conditionEnvironment(workflow, job, step, row))
+	}
+	return stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
+}
+
 func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
 	finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Status: StatusInconclusive}
 	var findings []RuntimeFinding
@@ -441,10 +461,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		finding.Status, finding.Code, finding.Reason = StatusInconclusive, code, reason
 		return append(findings, finding)
 	}
-	active, err := possibleJobCondition(job.If, row)
-	if job.Context != nil {
-		active, err = runtimeCondition(job.If, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
-	}
+	active, err := runtimeJobActive(workflow, job, row)
 	if err != nil {
 		return fail(CodeUnresolvedCondition, err.Error())
 	}
@@ -484,10 +501,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		if isSetup {
 			finding.Action = setup.Reference
 		}
-		active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
-		if job.Context != nil && len(step.Parents) == 0 {
-			active, err = runtimeCondition(step.If, row, conditionEnvironment(workflow, job, step, row))
-		}
+		active, err := runtimeStepActive(workflow, job, step, row)
 		if err != nil {
 			if uses == "actions/setup-node" || changesNodeRuntime(step.Run) {
 				finding.Node = ""
@@ -744,7 +758,23 @@ func resolveRequirement(ctx context.Context, client *http.Client, action, versio
 	return tracerRequirement{Version: selected.Version, Node: selected.Node, Requested: version}, nil
 }
 
+type offlineRuntimeMetadataKey struct{}
+
+// withOfflineRuntimeMetadata marks a runtime check that reads only the
+// repository: it looks up no action, Node or tracer metadata.
+func withOfflineRuntimeMetadata(ctx context.Context) context.Context {
+	return context.WithValue(ctx, offlineRuntimeMetadataKey{}, true)
+}
+
+func offlineRuntimeMetadata(ctx context.Context) bool {
+	offline, _ := ctx.Value(offlineRuntimeMetadataKey{}).(bool)
+	return offline
+}
+
 func fetchRuntimeMetadata(ctx context.Context, client *http.Client, address string) ([]byte, error) {
+	if offlineRuntimeMetadata(ctx) {
+		return nil, fmt.Errorf("CI runtime metadata from %s is not read offline", address)
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return nil, err

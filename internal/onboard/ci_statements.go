@@ -90,9 +90,11 @@ type statedRuntime struct {
 	// base is the version a job's image selects, or "" (also for an image
 	// of an engine the tracer cannot instrument: it is not unknown).
 	base func(job runtimeJob) string
-	// configured is the first version a job's steps select statically,
-	// such as through a runtime installer, and the step's description.
-	configured func(root string, job runtimeJob) (version, source string)
+	// configured is the version a job's steps select statically, such as
+	// through a runtime installer, and the step's description; "" when a
+	// matrix row the job runs on keeps the host's runtime (see
+	// installedRuntime).
+	configured func(root string, workflow ciWorkflow, job runtimeJob) (version, source string)
 	// check inspects the language's CI findings offline; finding.RuntimeHost
 	// marks a runtime only the user can state.
 	check func(ctx context.Context, root, framework string) RuntimeCheck
@@ -322,15 +324,7 @@ func readProviderWorkflows(provider ciProvider, root string) ([]ciWorkflow, erro
 // own findings.
 func runtimeHost(job runtimeJob, runtime string) string {
 	if activeOrDefaultCIProvider().sharedSyntax() {
-		var labels []string
-		switch runsOn := job.RunsOn.(type) {
-		case string:
-			labels = []string{runsOn}
-		case []any:
-			for _, label := range runsOn {
-				labels = append(labels, fmt.Sprint(label))
-			}
-		}
+		labels := runnerLabels(job.RunsOn)
 		if job.Container != nil || !slices.ContainsFunc(labels, func(label string) bool { return strings.EqualFold(label, "self-hosted") }) {
 			return ""
 		}
@@ -394,7 +388,7 @@ func CheckCIRuntimeStatements(root string) error {
 				runtime := statedRuntimeFor(statement.Runtime)
 				version, source := runtime.base(workflow.Jobs[name]), "image "+workflow.Jobs[name].Image
 				if version == "" {
-					version, source = runtime.configured(root, workflow.Jobs[name])
+					version, source = runtime.configured(root, workflow, workflow.Jobs[name])
 				}
 				if version != "" && !sameVersionLine(version, statement.Version) {
 					conflicts = append(conflicts, fmt.Sprintf("--ci-runtime %s contradicts %s %s, which %s selects in %s / %s", statement, statedRuntimeDisplay(statement.Runtime), version, source, workflow.Path, name))
@@ -406,6 +400,31 @@ func CheckCIRuntimeStatements(root string) error {
 		return &CIRuntimeConflict{Conflicts: conflicts}
 	}
 	return nil
+}
+
+// installedRuntime is the version a job's steps select on every matrix row
+// the job runs on, as rowRuntime reads one row with the conditions the
+// language's runtime check evaluates (active is false for a row the job skips).
+// It is "" when a row selects none, such as one whose installer a condition
+// skips, or when rows select different versions: that job runs on its host's
+// runtime, or a statement for it changes nothing, so neither is a conflict.
+func installedRuntime(rows []map[string]any, err error, rowRuntime func(row map[string]any) (version, source string, active bool)) (string, string) {
+	if err != nil {
+		return "", ""
+	}
+	version, source := "", ""
+	for _, row := range rows {
+		rowVersion, rowSource, active := rowRuntime(row)
+		switch {
+		case !active:
+			continue
+		case rowVersion == "" || version != "" && rowVersion != version:
+			return "", ""
+		case version == "":
+			version, source = rowVersion, rowSource
+		}
+	}
+	return version, source
 }
 
 // CIRuntimeAmbiguity is two statements that give one job different

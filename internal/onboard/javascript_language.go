@@ -142,25 +142,36 @@ var javascriptStatedRuntime = &statedRuntime{
 	Version: regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`),
 	Example: "22, 22.11 or 22.11.0",
 	base:    javascriptImageRuntime,
-	configured: func(root string, job runtimeJob) (string, string) {
-		for _, step := range job.Steps {
-			if version := step.Runtime["js"]; version != "" {
-				return version, step.Source
+	configured: func(root string, workflow ciWorkflow, job runtimeJob) (string, string) {
+		rows, _, err := jobMatrix(job)
+		return installedRuntime(rows, err, func(row map[string]any) (string, string, bool) {
+			if active, err := runtimeJobActive(workflow, job, row); err == nil && !active {
+				return "", "", false
 			}
-			if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "actions/setup-node" {
-				if version, err := setupNodeVersion(root, step, nil); err == nil && version != "" {
-					return version, "actions/setup-node"
+			for _, step := range job.Steps {
+				// A step that may not run selects nothing for certain.
+				if active, err := runtimeStepActive(workflow, job, step, row); err != nil || !active {
+					continue
+				}
+				if version := step.Runtime["js"]; version != "" {
+					return version, step.Source, true
+				}
+				if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "actions/setup-node" {
+					if version, err := setupNodeVersion(root, step, row); err == nil && version != "" {
+						return version, "actions/setup-node", true
+					}
+				}
+				if version := nvmRuntime(step.Run); version != "" {
+					return version, "nvm", true
 				}
 			}
-			if version := nvmRuntime(step.Run); version != "" {
-				return version, "nvm"
-			}
-		}
-		return "", ""
+			return "", "", true
+		})
 	},
 	check: func(ctx context.Context, root, framework string) RuntimeCheck {
-		// Offline: no Node or tracer metadata is needed to find unknown runtimes.
-		return checkCIRuntimes(ctx, root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		// Offline: no Node, tracer or action metadata is needed to find
+		// unknown host runtimes.
+		return checkCIRuntimes(withOfflineRuntimeMetadata(ctx), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
 			return tracerRequirement{}, errors.New("tracer metadata is not read offline")
 		}, framework)
 	},

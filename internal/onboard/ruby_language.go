@@ -417,18 +417,28 @@ var rubyStatedRuntime = &statedRuntime{
 	Version: rubyImageVersion,
 	Example: "3.3 or 3.3.6",
 	base:    rubyImageSelection,
-	configured: func(_ string, job runtimeJob) (string, string) {
-		for _, step := range job.Steps {
-			if version := step.Runtime["ruby"]; version != "" {
-				return version, step.Source
+	configured: func(_ string, workflow ciWorkflow, job runtimeJob) (string, string) {
+		rows, err := runtimeMatrix(job.Strategy.Matrix)
+		return installedRuntime(rows, err, func(row map[string]any) (string, string, bool) {
+			if active, err := rubyJobActive(job, row); err == nil && !active {
+				return "", "", false
 			}
-			if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "ruby/setup-ruby" {
-				if version, err := runtimeValue(step.With["ruby-version"], nil); err == nil && version != "" {
-					return version, "ruby/setup-ruby"
+			for _, step := range job.Steps {
+				// A step that may not run selects nothing for certain.
+				if active, err := rubyStepActive(workflow, job, step, row); err != nil || !active {
+					continue
+				}
+				if version := step.Runtime["ruby"]; version != "" {
+					return version, step.Source, true
+				}
+				if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "ruby/setup-ruby" {
+					if version, err := runtimeValue(step.With["ruby-version"], row); err == nil && version != "" {
+						return version, "ruby/setup-ruby", true
+					}
 				}
 			}
-		}
-		return "", ""
+			return "", "", true
+		})
 	},
 	check: func(_ context.Context, root, framework string) RuntimeCheck {
 		return RubyCIConfiguration(root, framework)

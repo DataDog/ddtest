@@ -602,6 +602,18 @@ func RubyValidationCommand(root, framework, override string) (string, error) {
 	return "", nil
 }
 
+// rubyJobActive evaluates whether a job runs on a matrix row, as the Ruby
+// runtime check does.
+func rubyJobActive(job runtimeJob, row map[string]any) (bool, error) {
+	return possibleJobCondition(job.If, row)
+}
+
+// rubyStepActive evaluates whether a step runs on a matrix row, as the Ruby
+// runtime check does.
+func rubyStepActive(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (bool, error) {
+	return stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
+}
+
 // RubyCIConfiguration inventories static Ruby selections. The caller checks
 // requirements with RubyGems itself, against the actual installed bundle.
 func RubyCIConfiguration(root, framework string) RuntimeCheck {
@@ -630,7 +642,7 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 				continue
 			}
 			for _, row := range rows {
-				active, conditionErr := possibleJobCondition(job.If, row)
+				active, conditionErr := rubyJobActive(job, row)
 				if conditionErr == nil && !active {
 					continue
 				}
@@ -652,7 +664,7 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 				for i, step := range job.Steps {
 					uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
 					current, isSetup := datadogSetup(step)
-					active, stepErr := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
+					active, stepErr := rubyStepActive(workflow, job, step, row)
 					if stepErr == nil && !active {
 						if selected, err := setupSelectsLanguage(current, row, "ruby"); isSetup && current.Pinned && err == nil && selected {
 							skippedAction = true

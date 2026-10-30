@@ -16,6 +16,12 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// fetchCypressActionMetadata reads a Cypress action's action.yml; tests
+// replace it.
+var fetchCypressActionMetadata = func(ctx context.Context, address string) ([]byte, error) {
+	return fetchRuntimeMetadata(ctx, &http.Client{Timeout: 10 * time.Second}, address)
+}
+
 // Cypress.run executes in the JavaScript action's runtime, which can differ
 // from setup-node used by its build/start commands. Never infer it from a major
 // action tag: inspect the exact referenced action metadata.
@@ -26,7 +32,7 @@ func CypressActionNode(ctx context.Context, action string) (string, error) {
 	}
 	address := "https://raw.githubusercontent.com/cypress-io/github-action/" + url.PathEscape(ref) + "/action.yml"
 	data, err := cachedCypressMetadata(ctx, address, func() ([]byte, error) {
-		return fetchRuntimeMetadata(ctx, &http.Client{Timeout: 10 * time.Second}, address)
+		return fetchCypressActionMetadata(ctx, address)
 	})
 	if err != nil {
 		return "", err

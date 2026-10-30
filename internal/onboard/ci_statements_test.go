@@ -365,3 +365,171 @@ func TestWithImplicitTag(t *testing.T) {
 	require.Equal(t, "ruby@sha256:abc", withImplicitTag("ruby@sha256:abc"))
 	require.Empty(t, withImplicitTag(""))
 }
+
+// An installer a condition skips, statically or on a matrix row, selects no
+// runtime for that job: ddtest asks for the host's runtime, and a statement of
+// a different version fills it instead of conflicting with the installer.
+func TestSkippedInstallersDoNotConflictWithRuntimeStatements(t *testing.T) {
+	useCIProvider(t, "github")
+	root := newJestRepository(t, `jobs:
+  disabled:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/setup-node@v4
+        if: false
+        with: {node-version: 20}
+      - run: npm test
+  partial:
+    runs-on: self-hosted
+    strategy:
+      matrix: {runtime: [host, managed]}
+    steps:
+      - uses: actions/setup-node@v4
+        if: matrix.runtime == 'managed'
+        with: {node-version: 20}
+      - run: npm test
+  installed:
+    runs-on: self-hosted
+    strategy:
+      matrix: {shard: [1, 2]}
+    steps:
+      - uses: actions/setup-node@v4
+        if: matrix.shard > 0
+        with: {node-version: 20}
+      - run: npm test
+`)
+	t.Chdir(root)
+	required := RequiredCIRuntimes(t.Context(), root, "javascript", "jest")
+	require.NotNil(t, required)
+	require.Equal(t, []string{".github/workflows/test.yml / disabled", ".github/workflows/test.yml / partial"}, required.Jobs)
+
+	useCIStatements(t, []string{"disabled:node=22", "partial:node=22"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "javascript", "jest"))
+	check := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "5.133.0", Node: ">=18"}, nil
+	}, "jest")
+	nodes := map[string][]string{}
+	for _, finding := range check.Jobs {
+		if finding.UserStated {
+			nodes[finding.Job] = append(nodes[finding.Job], finding.Node)
+		}
+	}
+	require.Equal(t, map[string][]string{"disabled": {"22"}, "partial": {"22"}}, nodes)
+
+	// An installer that runs on every row still decides the job's runtime.
+	useCIStatements(t, []string{"installed:node=22"})
+	require.ErrorContains(t, CheckCIRuntimeStatements(root), "contradicts Node 20, which actions/setup-node selects in .github/workflows/test.yml / installed")
+}
+
+func TestSkippedRubyInstallersDoNotConflictWithRuntimeStatements(t *testing.T) {
+	useCIProvider(t, "github")
+	root := rubyWorkflowFixture(t, `jobs:
+  tests:
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: ruby/setup-ruby@v1
+        if: ${{ false }}
+        with: {ruby-version: '3.2'}
+      - run: bundle exec rspec
+  pinned:
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: ruby/setup-ruby@v1
+        with: {ruby-version: '3.2'}
+      - run: bundle exec rspec
+`)
+	t.Chdir(root)
+	required := RequiredCIRuntimes(t.Context(), root, "ruby", "rspec")
+	require.NotNil(t, required)
+	require.Equal(t, []string{".github/workflows/test.yml / tests"}, required.Jobs)
+
+	useCIStatements(t, []string{"tests:ruby=3.3"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "ruby", "rspec"))
+	check := RubyCIConfiguration(root, "rspec")
+	findings := map[string]RuntimeFinding{}
+	for _, finding := range check.Jobs {
+		findings[finding.Job] = finding
+	}
+	require.Equal(t, "3.3", findings["tests"].Runtime)
+	require.True(t, findings["tests"].UserStated)
+
+	useCIStatements(t, []string{"pinned:ruby=3.3"})
+	require.ErrorContains(t, CheckCIRuntimeStatements(root), "contradicts Ruby 3.2, which ruby/setup-ruby selects")
+}
+
+// A self-hosted runner is recognized in runs-on's list and {group, labels}
+// forms alike.
+func TestSelfHostedRunnerLabelForms(t *testing.T) {
+	useCIProvider(t, "github")
+	root := newJestRepository(t, `jobs:
+  list:
+    runs-on: [self-hosted, linux]
+    steps:
+      - run: npm test
+  group:
+    runs-on: {group: build, labels: self-hosted}
+    steps:
+      - run: npm test
+  labels:
+    runs-on: {group: build, labels: [self-hosted, linux]}
+    steps:
+      - run: npm test
+  hosted:
+    runs-on: {group: larger-runners}
+    steps:
+      - run: npm test
+`)
+	t.Chdir(root)
+	required := RequiredCIRuntimes(t.Context(), root, "javascript", "jest")
+	require.NotNil(t, required)
+	hosts := map[string]string{}
+	for i, job := range required.Jobs {
+		hosts[job] = required.Hosts[i]
+	}
+	require.Equal(t, map[string]string{
+		".github/workflows/test.yml / group":  "the self-hosted runner self-hosted, build",
+		".github/workflows/test.yml / labels": "the self-hosted runner self-hosted, linux, build",
+		".github/workflows/test.yml / list":   "the self-hosted runner self-hosted, linux",
+	}, hosts)
+
+	useCIStatements(t, []string{"node=22"})
+	workflows, err := readWorkflows(root)
+	require.NoError(t, err)
+	for _, job := range []string{"list", "group", "labels"} {
+		require.Equal(t, map[string]string{"js": "22"}, workflows[0].Jobs[job].Stated, job)
+	}
+	require.Nil(t, workflows[0].Jobs["hosted"].Stated)
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "javascript", "jest"))
+}
+
+// The runtime question reads only the repository: a Cypress action job's Node
+// is the action's, not the host's, so its metadata is never fetched there.
+func TestRuntimeQuestionFetchesNoActionMetadata(t *testing.T) {
+	useCIProvider(t, "github")
+	fetched := 0
+	original := fetchCypressActionMetadata
+	fetchCypressActionMetadata = func(context.Context, string) ([]byte, error) {
+		fetched++
+		return []byte("runs:\n  using: node20\n"), nil
+	}
+	t.Cleanup(func() { fetchCypressActionMetadata = original })
+	root := newJestRepository(t, `jobs:
+  e2e:
+    runs-on: self-hosted
+    steps:
+      - uses: cypress-io/github-action@v6
+`)
+	t.Chdir(root)
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "javascript", "cypress"))
+	require.Zero(t, fetched)
+
+	// The full runtime check still reads it.
+	checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "5.133.0", Node: ">=18"}, nil
+	}, "cypress")
+	require.Equal(t, 1, fetched)
+	_, err := fetchRuntimeMetadata(withOfflineRuntimeMetadata(t.Context()), nil, "https://example.invalid/action.yml")
+	require.ErrorContains(t, err, "is not read offline")
+}
