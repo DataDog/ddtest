@@ -614,29 +614,43 @@ Datadog backend processing remain untested.
 
 ## Java validation
 
-Java projects build with Maven. `ddtest onboard --framework junit5` lists the
-Maven CI test commands of the GitHub Actions workflows and prints their setup;
-select the framework the project uses (`junit4`, `junit5`, `testng`, `spock`,
-`cucumber-java`, `karate`, `scalatest` or `munit`). A repository that also
-contains a JavaScript, Python or Ruby project keeps that platform by default;
-select Java with `--platform java` or a Maven `--framework`.
+Java projects build with Maven or Gradle. `ddtest onboard --framework junit5`
+lists the Maven and Gradle CI test commands of the GitHub Actions workflows and
+prints their setup; select the framework the project uses (`junit4`, `junit5`,
+`testng`, `spock`, `cucumber-java`, `karate`, `scalatest` or `munit`). A
+repository with a `pom.xml` or Gradle settings or build files at its root is a
+Java repository; one that also contains a JavaScript, Python or Ruby project
+keeps that platform by default; select Java with `--platform java` or a JVM
+`--framework`.
 
-In a Maven repository, CI steps that run Gradle (`./gradlew test`, `gradle
-build`) are discovered too. ddtest reads the build's settings (and the scripts
-they apply), build files and default version catalog without running Gradle,
-including the test tasks and suites build files declare; a project list or test
-task that build logic computes, such as in buildSrc, leaves the step unresolved
-rather than guessed. It resolves each step to its test tasks, reports the other
+For Gradle, ddtest reads the build's settings (and the scripts they apply),
+build files and default version catalog without running Gradle, including the
+test tasks and suites build files declare; a project list or test task that
+build logic computes, such as in buildSrc, leaves the step unresolved rather
+than guessed. It resolves each CI step to its test tasks, reports the other
 tasks and the projects of other frameworks, and checks that the Datadog action
-instruments Gradle: by default
-the action adds the agent to `GRADLE_OPTS`, so `java-instrumented-build-system:
-maven` or a step that replaces `GRADLE_OPTS` without `${{ env.GRADLE_OPTS }}`
-leaves it uninstrumented. Gradle configurations are not validated yet; testdrive
-reports them as not validated.
+instruments Gradle: by default the action adds the agent to `GRADLE_OPTS`, so
+`java-instrumented-build-system: maven` or a step that replaces `GRADLE_OPTS`
+without `${{ env.GRADLE_OPTS }}` leaves it uninstrumented.
 
-Every Maven framework supports plain `ddtest testdrive --all --check-only --yes`
+Gradle builds are validated like Maven builds, with these differences. Every run
+adds `--rerun-tasks --no-build-cache --continue --no-daemon` and disables the
+configuration cache, so no test task is up to date or cached, a failing test task
+does not stop the others, and no daemon carries the agent from one run into
+another. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it;
+native results come from each project's `build/test-results/<task>` JUnit XML,
+matched to the test task path dd-java-agent reports, such as `:app:test`.
+Validation runs only test tasks: `--command` refuses other tasks, and a
+`gradle.properties` whose `org.gradle.jvmargs` attaches dd-java-agent, the
+build's or the user's, is refused like `.mvn/jvm.config`. The feature probe runs
+alone through its project's `test` task with `--tests`, for JUnit 4, JUnit 5,
+TestNG and Spock; for Cucumber JVM, Karate, ScalaTest and MUnit, Gradle builds
+report the features as not available yet.
+
+Every framework supports plain `ddtest testdrive --all --check-only --yes`
 and full `ddtest testdrive --all --yes` validation, or a focused
-`ddtest testdrive --framework junit5 --command './mvnw -B verify' --yes`. Each
+`ddtest testdrive --framework junit5 --command './mvnw -B verify' --yes` (or
+`--command './gradlew test'`). Each
 configuration runs in a disposable copy with fresh build output, without and with
 dd-java-agent. Native results (Surefire/Failsafe reports, the
 scalatest-maven-plugin's `target/scalatest-reports` and Karate's

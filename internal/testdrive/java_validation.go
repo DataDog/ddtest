@@ -354,17 +354,24 @@ var javaInvocationIndex = regexp.MustCompile(`^\[[0-9]+\]`)
 // javaTelemetryName adds the invocation index the tracer keeps in its
 // parameters metadata, so one invocation cannot stand in for another.
 func javaTelemetryName(test intake.Test) string {
+	if index := javaInvocationIndex.FindString(javaDisplayName(test)); index != "" && !strings.HasSuffix(test.Name, index) {
+		return test.Name + index
+	}
+	return test.Name
+}
+
+// javaDisplayName is the display name the tracer keeps in a test's parameters
+// metadata, as [1] 1 for a parameterized invocation; empty when it has none.
+func javaDisplayName(test intake.Test) string {
 	var parameters struct {
 		Metadata struct {
 			Name string `json:"test_name"`
 		} `json:"metadata"`
 	}
-	if json.Unmarshal([]byte(test.Parameters), &parameters) == nil {
-		if index := javaInvocationIndex.FindString(parameters.Metadata.Name); index != "" && !strings.HasSuffix(test.Name, index) {
-			return test.Name + index
-		}
+	if json.Unmarshal([]byte(test.Parameters), &parameters) != nil {
+		return ""
 	}
-	return test.Name
+	return parameters.Metadata.Name
 }
 
 // javaPluginSuffix is what the agent appends to a module name for each
@@ -410,17 +417,30 @@ func verifyJavaTelemetry(run validationRun) verdict {
 		}
 		return javaPluginSuffix.ReplaceAllString(test.Module, "")
 	}
-	reported := map[string]bool{}
+	// A native report may also name a test by the display name the tracer
+	// keeps, as Gradle names a parameterized invocation [1] 1; each name maps
+	// to the tracer's own, unless two reported tests share it.
+	reported, ambiguous := map[string]string{}, map[string]bool{}
 	for _, test := range run.Facts.Tests {
-		reported[fmt.Sprintf("%q %q %q", telemetryModule(test), javaFeatureURI.ReplaceAllString(test.Suite, ""), javaTelemetryName(test))] = true
+		module, suite, name := telemetryModule(test), javaFeatureURI.ReplaceAllString(test.Suite, ""), javaTelemetryName(test)
+		for _, alias := range slices.Compact([]string{name, javaDisplayName(test)}) {
+			key := fmt.Sprintf("%q %q %q", module, suite, alias)
+			if previous, known := reported[key]; known && previous != name {
+				ambiguous[key] = true
+			}
+			if alias != "" {
+				reported[key] = name
+			}
+		}
 	}
 	for _, test := range run.Tests {
 		module, suite, _ := strings.Cut(test.File, " / ")
 		normalized := javaTestName(test.Name)
 		name := normalized
 		for _, candidate := range []string{test.Name, normalized, javaInvocationSuffix.ReplaceAllString(normalized, "")} {
-			if reported[fmt.Sprintf("%q %q %q", module, suite, candidate)] {
-				name = candidate
+			key := fmt.Sprintf("%q %q %q", module, suite, candidate)
+			if agent, known := reported[key]; known && !ambiguous[key] {
+				name = agent
 				break
 			}
 		}

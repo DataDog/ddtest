@@ -392,6 +392,28 @@ func TestJavaTelemetryAttributesScalaTestSuitesToTheirModule(t *testing.T) {
 	require.Equal(t, "inconclusive", verifyJavaTelemetry(run).Status, "a suite two modules ran cannot be attributed")
 }
 
+func TestJavaTelemetryMatchesGradleDisplayNames(t *testing.T) {
+	// Gradle's JUnit XML names a parameterized invocation by its display name.
+	native := []nativeTest{
+		{File: ":app:test / example.AppTest", Name: "[1] 1", Status: "passed"},
+		{File: ":app:test / example.AppTest", Name: "[2] 2", Status: "passed"},
+		{File: ":app:test / example.AppTest", Name: "passes()", Status: "passed"},
+	}
+	invocation := func(index string, span uint64) intake.Test {
+		return reported(":app:test", "example.AppTest", "positive", `{"metadata":{"test_name":"`+index+`"}}`, intake.TestRun{Status: "pass", SpanID: span})
+	}
+	run := javaTelemetryRun(native, invocation("[1] 1", 1), invocation("[2] 2", 2), reported(":app:test", "example.AppTest", "passes", "", intake.TestRun{Status: "pass", SpanID: 3}))
+	require.Equal(t, verdict{}, verifyJavaTelemetry(run), "each display name maps to the invocation the tracer reported")
+
+	// Two parameterized methods share display names, so they cannot be told apart.
+	other := func(index string, span uint64) intake.Test {
+		return reported(":app:test", "example.AppTest", "negative", `{"metadata":{"test_name":"`+index+`"}}`, intake.TestRun{Status: "pass", SpanID: span})
+	}
+	native = append(native, nativeTest{File: ":app:test / example.AppTest", Name: "[1] 1", Status: "passed"})
+	run = javaTelemetryRun(native, invocation("[1] 1", 1), invocation("[2] 2", 2), other("[1] 1", 4), reported(":app:test", "example.AppTest", "passes", "", intake.TestRun{Status: "pass", SpanID: 3}))
+	require.Equal(t, "inconclusive", verifyJavaTelemetry(run).Status, "an ambiguous display name is not matched")
+}
+
 func TestJavaTelemetryRejectsUnusableEvidence(t *testing.T) {
 	native := []nativeTest{{File: "core / example.CoreTest", Name: "works", Status: "passed"}}
 	require.Contains(t, verifyJavaTelemetry(javaTelemetryRun(native)).Reason, "sent no test events")
