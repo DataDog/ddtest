@@ -18,15 +18,16 @@ func TestPytestConfigPathsPreserveListsAndScalarCacheDirectory(t *testing.T) {
 			if name == "setup.cfg" {
 				section = "tool:pytest"
 			}
-			contents := fmt.Sprintf("[%s]\naddopts=-q\ntestpaths=%q\npythonpath=%q external\ncache_dir=%s\n", section, tests, source, cache)
+			log := filepath.Join(root, "pytest log.txt")
+			contents := fmt.Sprintf("[%s]\naddopts=-q\ntestpaths=%q\npythonpath=%q external\ncache_dir=%s\nlog_file=%s\n", section, tests, source, cache, log)
 			if name == "pyproject.toml" {
-				contents = fmt.Sprintf("[tool.pytest.ini_options]\naddopts=['-q']\ntestpaths=[%q]\npythonpath=[%q, 'external']\ncache_dir=%q\n", tests, source, cache)
+				contents = fmt.Sprintf("[tool.pytest.ini_options]\naddopts=['-q']\ntestpaths=[%q]\npythonpath=[%q, 'external']\ncache_dir=%q\nlog_file=%q\n", tests, source, cache, log)
 			}
 			require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(contents), 0644))
 			words := []string{"pytest", "-c", name}
 			paths, err := PytestConfigPaths(root, root, "", words)
 			require.NoError(t, err)
-			require.Equal(t, map[string][]string{"testpaths": {tests}, "pythonpath": {source, "external"}, "cache_dir": {cache}}, paths)
+			require.Equal(t, map[string][]string{"testpaths": {tests}, "pythonpath": {source, "external"}, "cache_dir": {cache}, "log_file": {log}}, paths)
 			options, err := PytestConfigOptions(root, root, "", words)
 			require.NoError(t, err)
 			require.Equal(t, []string{"-q"}, options)

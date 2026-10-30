@@ -61,14 +61,46 @@ func (t *Testdrive) checkPytestPreflight(ctx context.Context, output io.Writer, 
 	if err != nil {
 		return err
 	}
-	var metadata struct{ Pytest, Python, Tracer, RequiresPython, Executable, Directory string }
-	const script = `import importlib.metadata as m, json, os, pathlib, platform, sys
+	var metadata struct {
+		Pytest, Python, Tracer, RequiresPython, Executable, Directory string
+		EditablePaths                                                 []string
+	}
+	const script = `import importlib.metadata as m, json, os, pathlib, platform, site, sys
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 import pytest
 result = {"pytest": m.version("pytest"), "python": platform.python_version(), "executable": sys.executable, "directory": os.getcwd()}
 try:
     result.update(tracer=m.version("ddtrace"), requiresPython=m.metadata("ddtrace").get("Requires-Python", ""))
 except m.PackageNotFoundError:
     pass
+# Inspect installer metadata and legacy path hooks without importing the app.
+# PEP 660 finders need not expose their source directory on sys.path.
+paths = []
+for distribution in m.distributions():
+    direct = distribution.read_text("direct_url.json")
+    if direct:
+        direct = json.loads(direct)
+        if direct.get("dir_info", {}).get("editable"):
+            url = urlsplit(direct["url"])
+            if url.scheme == "file":
+                paths.append(url2pathname(("//" + url.netloc if url.netloc else "") + url.path))
+directories = site.getsitepackages()
+if site.ENABLE_USER_SITE:
+    directories.append(site.getusersitepackages())
+for directory in directories:
+    directory = pathlib.Path(directory).resolve()
+    for hook in list(directory.glob("*.pth")) + list(directory.glob("*.egg-link")):
+        lines = hook.read_text(encoding="utf-8").splitlines()
+        if hook.suffix == ".egg-link":
+            lines = lines[:1]
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith(("#", "import ", "import\t")):
+                path = (directory / line).resolve()
+                if path != directory and path.is_dir():
+                    paths.append(str(path))
+result["editablePaths"] = paths
 pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 `
 	env := maps.Clone(t.configurationEnvironment)
@@ -80,6 +112,16 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 		return fmt.Errorf("inspect pytest: %w", err)
 	}
 	check.Version, check.Runtime = metadata.Pytest, metadata.Python
+	if t.configurationSourceRoot != "" {
+		source := workspace.CanonicalRoot(t.configurationSourceRoot)
+		for _, path := range metadata.EditablePaths {
+			relative, err := filepath.Rel(source, workspace.CanonicalRoot(path))
+			if err == nil && filepath.IsLocal(relative) {
+				check.Verdict = verdict{Status: "incompatible", Reason: "The selected Python environment has an editable installation or path hook into the original checkout. Testdrive cannot isolate these imports. Prepare a separate environment with the test dependencies and use PYTHONPATH or pytest's pythonpath setting for checkout-local source imports."}
+				return fmt.Errorf("pytest preflight: %s", check.Verdict.Reason)
+			}
+		}
+	}
 	pytestMajor, pytestMinor, pytestKnown := releaseParts(metadata.Pytest)
 	if t.configurationEnvironment[pytestArgumentFilesEnvironment] == "true" && (!pytestKnown || pytestMajor < 8 || pytestMajor == 8 && pytestMinor < 2) {
 		check.Verdict = verdict{Status: "incompatible", Reason: "pytest @argument files require pytest >=8.2; use native selectors or upgrade the selected project environment."}

@@ -100,11 +100,11 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 	if configErr != nil {
 		return fmt.Errorf("cannot isolate pytest configuration: %w", configErr)
 	}
-	for _, key := range []string{"testpaths", "pythonpath", "cache_dir"} {
+	for _, key := range []string{"testpaths", "pythonpath", "cache_dir", "log_file"} {
 		isolated := rebasePytestPaths(paths[key], t.configurationSourceRoot, t.checkoutRoot())
 		if !slices.Equal(paths[key], isolated) {
 			value := shellquote.Join(isolated...)
-			if key == "cache_dir" {
+			if key == "cache_dir" || key == "log_file" {
 				value = isolated[0]
 			}
 			owned = append(owned, "-o", key+"="+value)
@@ -161,9 +161,9 @@ func isolatePytestOptions(args []string, directory, original, copied string, act
 			continue
 		}
 		key, value, _ := strings.Cut(value, "=")
-		if slices.Contains([]string{"testpaths", "pythonpath", "cache_dir"}, key) {
+		if slices.Contains([]string{"testpaths", "pythonpath", "cache_dir", "log_file"}, key) {
 			paths := []string{value}
-			if key != "cache_dir" {
+			if key != "cache_dir" && key != "log_file" {
 				paths, err = shellquote.Split(value)
 				if err != nil {
 					return nil, false, fmt.Errorf("cannot parse inline pytest %s: %w", key, err)
@@ -172,7 +172,7 @@ func isolatePytestOptions(args []string, directory, original, copied string, act
 			isolated := rebasePytestPaths(paths, original, copied)
 			if !slices.Equal(paths, isolated) {
 				value = shellquote.Join(isolated...)
-				if key == "cache_dir" {
+				if key == "cache_dir" || key == "log_file" {
 					value = isolated[0]
 				}
 				args[i] = key + "=" + value
@@ -287,8 +287,23 @@ func rebasePytestPaths(args []string, original, copied string) []string {
 		}
 		if !positional && strings.HasPrefix(arg, "-") {
 			option, value, equal := strings.Cut(arg, "=")
-			if equal && slices.Contains([]string{"--config-file", "--rootdir", "--confcutdir", "--basetemp", "--ignore", "--ignore-glob", "--deselect", "--junitxml", "--junit-xml"}, option) {
+			if equal && slices.Contains([]string{"--config-file", "--rootdir", "--confcutdir", "--basetemp", "--ignore", "--ignore-glob", "--deselect", "--junitxml", "--junit-xml", "--cov", "--cov-config", "--log-file"}, option) {
 				args[i] = option + "=" + rebase(value)
+			} else if option == "--cov-report" {
+				if !equal {
+					if i+1 >= len(args) {
+						continue
+					}
+					i++
+					value = args[i]
+				}
+				if format, path, hasPath := strings.Cut(value, ":"); hasPath {
+					value = format + ":" + rebase(path)
+				}
+				args[i] = value
+				if equal {
+					args[i] = option + "=" + value
+				}
 			} else if strings.HasPrefix(arg, "-c") && arg != "-c" {
 				args[i] = "-c" + rebase(strings.TrimPrefix(strings.TrimPrefix(arg, "-c"), "="))
 			}

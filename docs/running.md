@@ -671,6 +671,11 @@ direct, `uv run`, and `poetry run` commands retain their arguments, configuratio
 fixtures, and matching CI environment. Prepare wrapper environments first;
 `uv run` executes with `--no-sync` to preserve the selected dependencies.
 
+Editable installations and path hooks into the original checkout cannot be
+isolated and block execution. Use a separate environment with the test
+dependencies and select local source through `PYTHONPATH` or pytest's
+`pythonpath` setting; testdrive redirects those paths into the disposable copy.
+
 Each configuration runs in a disposable checkout copy. Testdrive compares native
 test identities, outcomes, failure signatures, and exit codes between an
 uninstrumented baseline and a reporting-only run, then checks test telemetry and

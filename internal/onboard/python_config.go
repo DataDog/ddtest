@@ -30,12 +30,12 @@ func PytestConfigPaths(root, directory, addopts string, words []string) (map[str
 		return nil, err
 	}
 	paths := map[string][]string{}
-	for _, key := range []string{"testpaths", "pythonpath", "cache_dir"} {
+	for _, key := range []string{"testpaths", "pythonpath", "cache_dir", "log_file"} {
 		value := settings[key]
-		if key == "cache_dir" && value != nil {
+		if (key == "cache_dir" || key == "log_file") && value != nil {
 			path, ok := value.(string)
 			if !ok {
-				return nil, fmt.Errorf("pytest configuration cache_dir must be a string")
+				return nil, fmt.Errorf("pytest configuration %s must be a string", key)
 			}
 			paths[key] = []string{path}
 			continue

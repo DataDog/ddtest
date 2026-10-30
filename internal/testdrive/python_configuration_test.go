@@ -33,6 +33,35 @@ func TestRebasePytestPathsPreservesExpressionsAndNodeSelectors(t *testing.T) {
 	require.Equal(t, want, rebasePytestPaths(args, root, copied))
 }
 
+func TestRebasePytestCoverageAndLogPaths(t *testing.T) {
+	original, copied := t.TempDir(), t.TempDir()
+	for _, option := range []string{"--cov", "--cov-config", "--log-file"} {
+		for _, attached := range []bool{false, true} {
+			path := filepath.Join(original, "path with spaces")
+			args, want := []string{option, path}, []string{option, filepath.Join(copied, "path with spaces")}
+			if attached {
+				args, want = []string{option + "=" + args[1]}, []string{option + "=" + want[1]}
+			}
+			require.Equal(t, want, rebasePytestPaths(args, original, copied))
+		}
+	}
+	args := []string{"--cov-report=xml:" + filepath.Join(original, "coverage.xml"), "--cov-report", "json:" + filepath.Join(original, "coverage.json"), "--cov-report=term-missing:skip-covered", "--cov-report=", "--cov=app", "--log-file=relative.log"}
+	want := []string{"--cov-report=xml:" + filepath.Join(copied, "coverage.xml"), "--cov-report", "json:" + filepath.Join(copied, "coverage.json"), "--cov-report=term-missing:skip-covered", "--cov-report=", "--cov=app", "--log-file=relative.log"}
+	require.Equal(t, want, rebasePytestPaths(args, original, copied))
+}
+
+func TestPytestLoggingExecutesOnlyInsideCopy(t *testing.T) {
+	for _, mode := range []string{"logging pytest.ini", "logging tox.ini", "logging pyproject.toml", "logging command override", "logging environment override", "logging command option"} {
+		t.Run(mode, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, mode) })
+	}
+}
+
+func TestPytestCoverageExecutesOnlyInsideCopy(t *testing.T) {
+	for _, mode := range []string{"coverage command", "coverage environment", "coverage configuration", "coverage inline override"} {
+		t.Run(mode, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, mode) })
+	}
+}
+
 func TestPytestAbsolutePathsExecuteOnlyInsideCopy(t *testing.T) {
 	testPytestPathsExecuteOnlyInsideCopy(t, "direct")
 }
@@ -145,7 +174,50 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	addopts := "--rootdir=" + root
 	environment := map[string]string{}
 	configuration, configuredContents := "", ""
-	if strings.HasPrefix(mode, "activation ") {
+	if strings.HasPrefix(mode, "logging ") {
+		log := filepath.Join(root, "pytest log.txt")
+		configuration = strings.TrimPrefix(mode, "logging ")
+		configuredContents = "[pytest]\npythonpath=.\nlog_file=" + log + "\n"
+		switch configuration {
+		case "pytest.ini", "tox.ini":
+		case "pyproject.toml":
+			configuredContents = fmt.Sprintf("[tool.pytest.ini_options]\npythonpath=['.']\nlog_file=%q\n", log)
+		default:
+			configuration, configuredContents = "pytest.ini", "[pytest]\npythonpath=.\n"
+			switch mode {
+			case "logging command override":
+				args = append(args, "-o", "log_file="+log)
+			case "logging environment override":
+				addopts += " " + shellquote.Join("--override-ini=log_file="+log)
+			default:
+				args = append(args, "--log-file="+log)
+			}
+		}
+		requireWriteFile(t, configuration, configuredContents)
+		args[3] = filepath.Join(root, configuration)
+		requireWriteFile(t, file, "from pathlib import Path\nimport logging\nfrom app import add\ndef test_app(request):\n    log = request.config.getoption('log_file') or request.config.getini('log_file')\n    assert Path(log) == Path.cwd() / 'pytest log.txt'\n    logging.warning('copied suite')\n    assert add(1, 2) == 3\n")
+	} else if strings.HasPrefix(mode, "coverage ") {
+		if output, err := exec.CommandContext(t.Context(), python, "-c", "import pytest_cov").CombinedOutput(); err != nil {
+			if os.Getenv("DDTEST_REQUIRE_PROJECT_RUNTIMES") == "1" {
+				t.Fatalf("pytest-cov required: %s", output)
+			}
+			t.Skipf("pytest-cov required: %s", output)
+		}
+		requireWriteFile(t, ".coveragerc", "[run]\nbranch = True\n")
+		options := []string{"--cov=" + root, "--cov-config=" + filepath.Join(root, ".coveragerc"), "--cov-report=xml:" + filepath.Join(root, "coverage.xml"), "--cov-report", "json:" + filepath.Join(root, "coverage.json"), "--cov-fail-under=1"}
+		switch mode {
+		case "coverage command":
+			args = append(args, options...)
+		case "coverage environment":
+			addopts += " " + shellquote.Join(options...)
+		case "coverage configuration":
+			configuration, configuredContents = "pytest.ini", "[pytest]\npythonpath=.\naddopts="+shellquote.Join(options...)+"\n"
+			requireWriteFile(t, configuration, configuredContents)
+		case "coverage inline override":
+			args = append(args, "-o", "addopts="+shellquote.Join(options...))
+		}
+		requireWriteFile(t, file, "from pathlib import Path\nfrom app import add\ndef test_app(request):\n    options = request.config.option\n    assert options.cov_source == [str(Path.cwd())]\n    assert Path(options.cov_config) == Path.cwd() / '.coveragerc'\n    assert Path(options.cov_report['xml']) == Path.cwd() / 'coverage.xml'\n    assert Path(options.cov_report['json']) == Path.cwd() / 'coverage.json'\n    assert add(1, 2) == 3\n")
+	} else if strings.HasPrefix(mode, "activation ") {
 		activation := "--ddtrace --ddtrace-patch-all"
 		configuration = strings.TrimPrefix(mode, "activation ")
 		configuredContents = "[pytest]\npythonpath=.\n"
@@ -283,6 +355,13 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 		require.Equal(t, "passed", feature.Status, "%s: %s", feature.Name, feature.Reason)
 	}
 	require.NoFileExists(t, filepath.Join(root, "tests", "test_app.executed"))
+	if strings.HasPrefix(mode, "logging ") {
+		require.NoFileExists(t, filepath.Join(root, "pytest log.txt"))
+	}
+	if strings.HasPrefix(mode, "coverage ") {
+		require.NoFileExists(t, filepath.Join(root, "coverage.xml"))
+		require.NoFileExists(t, filepath.Join(root, "coverage.json"))
+	}
 	if strings.HasPrefix(mode, "pythonpath ") {
 		require.NoFileExists(t, filepath.Join(root, "src", "app.executed"))
 	}
