@@ -427,7 +427,8 @@ func verifyJavaTelemetry(run validationRun) verdict {
 	reported, ambiguous := map[string]string{}, map[string]bool{}
 	for _, test := range run.Facts.Tests {
 		module, suite, name := telemetryModule(test), javaFeatureURI.ReplaceAllString(test.Suite, ""), javaTelemetryName(test)
-		for _, alias := range slices.Compact([]string{name, javaDisplayName(test)}) {
+		// Native names read object identities as one value; so does the alias.
+		for _, alias := range slices.Compact([]string{name, withoutObjectAddresses(javaDisplayName(test))}) {
 			key := fmt.Sprintf("%q %q %q", module, suite, alias)
 			if previous, known := reported[key]; known && previous != name {
 				ambiguous[key] = true

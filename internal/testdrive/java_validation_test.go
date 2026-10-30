@@ -471,6 +471,12 @@ func TestJavaTelemetryMatchesGradleDisplayNames(t *testing.T) {
 	native = append(native, nativeTest{File: ":app:test / example.AppTest", Name: "[1] 1", Status: "passed"})
 	run = javaTelemetryRun(native, invocation("[1] 1", 1), invocation("[2] 2", 2), other("[1] 1", 4), reported(":app:test", "example.AppTest", "passes", "", intake.TestRun{Status: "pass", SpanID: 3}))
 	require.Equal(t, "inconclusive", verifyJavaTelemetry(run).Status, "an ambiguous display name is not matched")
+
+	// A display name with a lambda's identity, as sshj's ConnectedSocketTest.
+	display := "[1] example.SocketTest$$Lambda$1352/0x000000980176c488@4f3b5c60"
+	lambda := javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "example.SocketTest", Name: display, Status: "passed"}}}, false)
+	run = javaTelemetryRun(lambda, reported(":test", "example.SocketTest", "connects", `{"metadata":{"test_name":"`+display+`"}}`, intake.TestRun{Status: "pass", SpanID: 5}))
+	require.Equal(t, verdict{}, verifyJavaTelemetry(run), "the native name and the tracer's display name read the identity alike")
 }
 
 func TestJavaTelemetryRejectsUnusableEvidence(t *testing.T) {

@@ -111,6 +111,8 @@ func TestFailuresCompareWithoutObjectAddresses(t *testing.T) {
 	require.Equal(t, failureSignature("expected com.acme.Widget@1b6d3586 but was null"), failureSignature("expected com.acme.Widget@4554617c but was null"))
 	require.Equal(t, failureSignature("expected [Ljava.lang.String;@20ca951f"), failureSignature("expected [Ljava.lang.String;@89caf47"))
 	require.Equal(t, failureSignature("expected [I@1b6d3586"), failureSignature("expected [I@4554617c"))
+	require.Equal(t, withoutObjectAddresses("[1] example.SocketTest$$Lambda$1352/0x000000980176c488@4f3b5c60"), withoutObjectAddresses("[1] example.SocketTest$$Lambda$1599/0x00000040019e0f98@55a48d0e"), "a lambda's number and hidden class address differ between runs")
+	require.Equal(t, "[1] example.SocketTest$$Lambda@…", withoutObjectAddresses("[1] example.SocketTest$$Lambda/0x000000980176c488@4f3b5c60"), "Java 21 lambdas have no number")
 	require.NotEqual(t, failureSignature("expected 0x10 to equal 0x20"), failureSignature("expected 0x10 to equal 0x30"), "short hexadecimal values are data")
 	require.NotEqual(t, failureSignature("expected 0xdeadbeef, got 0xcafebabe"), failureSignature("expected 0xdeadbeef, got 0xfeedface"), "bare hexadecimal values are data, whatever their length")
 	require.NotEqual(t, failureSignature("checksum 0x00000000deadbeef differs"), failureSignature("checksum 0x00000000cafebabe differs"))
