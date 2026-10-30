@@ -250,6 +250,37 @@ class RunnerTests(unittest.TestCase):
                 if agent == "codex":
                     self.assertIn('shell_environment_policy.set.VIRTUAL_ENV=' + json.dumps(venv), observed["argv"])
 
+    def test_pytest_requested_version_is_frozen_before_setup(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        self.args.setup_command = [shlex.join(["python", "-c",
+            "import os, pathlib; pathlib.Path(os.environ['VIRTUAL_ENV'], 'setup-finished').touch()"])]
+        execute = FakeContainer.execute
+        for changed in (True, False):
+            with self.subTest(changed=changed):
+                self.args.output = self.root / ("changed-version" if changed else "same-version")
+                version = "0.0.0" if changed else platform.python_version()
+                def replace_runtime(container, argv, cwd, env, timeout, on_line, prompt, executor):
+                    if changed and argv[:2] == ["python", "-c"] and "platform.python_version()" in argv[2] and (Path(env["VIRTUAL_ENV"]) / "setup-finished").exists():
+                        on_line(json.dumps({"executable": str(Path(env["VIRTUAL_ENV"]) / "bin/python"),
+                                            "prefix": env["VIRTUAL_ENV"], "version": version}))
+                        return 0
+                    return execute(container, argv, cwd, env, timeout, on_line, prompt, executor)
+                report = {"summary": {"status": "INCOMPLETE"}, "preflight": {"runtime": version},
+                          "runs": [{"role": "baseline", "command": "python -m pytest", "exit_code": 0}]}
+                with patch.object(FakeContainer, "execute", replace_runtime):
+                    code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps(report), "FAKE_REPORT_PYTHON_ENVIRONMENT": "1"})
+                self.assertEqual(code, 1 if changed else 0)
+                self.assertEqual(manifest["python_runtime"]["requested_version"], platform.python_version())
+                self.assertEqual(manifest["python_runtime"]["version"], version)
+                if changed:
+                    self.assertEqual(manifest["failure_kind"], "evaluator_environment")
+                    self.assertEqual(manifest["failure_stage"], "python_environment")
+                    self.assertFalse(manifest["retry_recommended"])
+                    self.assertFalse((Path(manifest["checkout"]) / "observed.json").exists())
+                else:
+                    self.assertEqual(manifest["ddtest_python_runtime"]["status"], "matched")
+
     def test_pytest_same_version_other_environment_fails_the_trial(self):
         self.args.framework = "pytest"
         self.args.python = Path(sys.executable)

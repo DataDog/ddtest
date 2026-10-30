@@ -753,15 +753,23 @@ def run(args):
                 raise RuntimeError(f"Requested pnpm {pnpm}; pnpm {selected} runs in the checkout")
             manifest["package_manager"] = {"pnpm": selected, "requested": pnpm}
             manifest.pop("failure_stage", None)
+        requested_python_version = None
         if python is not None:
+            manifest["failure_stage"] = "python_environment"
+            requested_python_version = command([str(python), "-c", "import platform; print(platform.python_version())"])
+            manifest["python_runtime"] = {"requested": str(python), "requested_version": requested_python_version}
             command([str(python), "-m", "venv", env["VIRTUAL_ENV"]])
         for setup in setup_commands:
             command(setup, cwd=checkout)
         if framework == "pytest":
+            manifest["failure_stage"] = "python_environment"
             runtime = json.loads(command(["python", "-c", "import json, platform, sys; print(json.dumps({'executable': sys.executable, 'version': platform.python_version(), 'prefix': sys.prefix}))"]))
-            manifest["python_runtime"] = {"requested": str(python) if python else None, **runtime}
+            manifest["python_runtime"] = {"requested": str(python) if python else None, "requested_version": requested_python_version, **runtime}
             if python is not None and Path(runtime["prefix"]) != Path(env["VIRTUAL_ENV"]):
                 raise RuntimeError("Selected Python environment did not run; inspect python_runtime")
+            if python is not None and runtime["version"] != requested_python_version:
+                raise RuntimeError("Dependency setup changed the selected Python version; inspect python_runtime")
+            manifest.pop("failure_stage", None)
         status = command(["git", "status", "--porcelain"], cwd=checkout)
         if status:
             raise RuntimeError("Dependency setup changed the checkout; choose setup that leaves it clean")
@@ -799,7 +807,7 @@ def run(args):
         if manifest.get("failure_stage")=="model_authentication":
             manifest["failure_kind"]="authentication"
             manifest["retry_recommended"]=False
-        elif manifest.get("failure_stage") in ("runtime_readiness","storage_readiness","package_manager"):
+        elif manifest.get("failure_stage") in ("runtime_readiness","storage_readiness","package_manager","python_environment"):
             manifest["failure_kind"]="evaluator_environment"
             manifest["retry_recommended"]=False
         if manifest.get("status")=="preparing" and not manifest.get("failure_kind"):
