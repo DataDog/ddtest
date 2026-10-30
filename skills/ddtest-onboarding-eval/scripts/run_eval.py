@@ -886,6 +886,9 @@ def run(args):
                 if language+"_runtime" not in manifest:
                     continue
                 selected_runtime = manifest[language+"_runtime"]
+                # Setup can fail after recording the request, before probing identity.
+                if language == "python" and not all(selected_runtime.get(key) for key in ("version", "executable", "prefix")):
+                    continue
                 runtime_audit = (report_python_runtime(report, selected_runtime) if language == "python" else
                                  report_preflight_runtime(report, selected_runtime["version"]))
                 manifest["ddtest_"+language+"_runtime"] = runtime_audit

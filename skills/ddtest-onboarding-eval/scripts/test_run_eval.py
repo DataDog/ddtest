@@ -700,6 +700,39 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(manifest["commands"][-1]["exit_code"], 7)
         self.assertFalse((Path(manifest["checkout"]) / "observed.json").exists())
 
+    def test_selected_python_setup_failures_preserve_durable_evidence(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        execute = FakeContainer.execute
+        for stage in ("venv", "dependencies"):
+            with self.subTest(stage=stage):
+                self.args.output = self.root / (stage + "-failure")
+                self.args.setup_command = [shlex.join(["python", "-c", "import sys; sys.exit(7)"])]
+                def fail_venv(container, argv, cwd, env, timeout, on_line, prompt, executor):
+                    if argv[1:3] == ["-m", "venv"]:
+                        self.addCleanup(shutil.rmtree, Path(env["VIRTUAL_ENV"]).parent, ignore_errors=True)
+                        if stage == "venv":
+                            on_line("venv creation failed")
+                            return 7
+                    return execute(container, argv, cwd, env, timeout, on_line, prompt, executor)
+                with patch.object(FakeContainer, "execute", fail_venv):
+                    code, manifest = self.trial()
+                self.assertEqual(code, 1)
+                self.assertEqual(manifest["status"], "failed")
+                self.assertEqual(manifest["failure_kind"], "evaluator_environment")
+                self.assertEqual(manifest["failure_stage"], "python_environment")
+                self.assertFalse(manifest["retry_recommended"])
+                self.assertIn("Command exited 7:", manifest["error"])
+                self.assertEqual(manifest["commands"][-1]["exit_code"], 7)
+                self.assertEqual(manifest["python_runtime"], {
+                    "requested": sys.executable, "requested_version": platform.python_version()})
+                self.assertNotIn("ddtest_python_runtime", manifest)
+                self.assertNotIn("collection_errors", manifest)
+                self.assertEqual(manifest["isolation"]["cleanup"], "removed")
+                self.assertFalse((Path(manifest["checkout"]) / "observed.json").exists())
+                for name in ("activity.jsonl", "changes.patch", "status.txt"):
+                    self.assertTrue((self.args.output / name).is_file(), name)
+
     def test_dirty_setup_does_not_contaminate_trial(self):
         self.args.setup_command = [f"{shlex.quote(sys.executable)} -c 'open(\"setup-file\", \"w\").close()'"]
         code, manifest = self.trial()
