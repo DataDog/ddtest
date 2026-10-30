@@ -734,9 +734,20 @@ written among the sources of that task's source set, the test source set, a JVM
 test suite's own (`integrationTest(JvmTestSuite)`) or the one a `Test` task's
 `testClassesDirs = sourceSets.<name>.output.classesDirs` names, under
 `src/<set>/java` or a literal `srcDirs` that replaces it. Source sets build
-logic computes leave the features inconclusive. The probe covers JUnit 4,
-JUnit 5, TestNG and Spock; for Cucumber JVM, Karate, ScalaTest and MUnit,
-Gradle builds report the features as not available yet.
+logic computes leave the features inconclusive. A Cucumber or Karate probe
+goes through the task's runner, its feature among the source set's resources
+(`src/<set>/resources`); a ScalaTest or MUnit probe goes under `src/<set>/scala`.
+Gradle passes its own system properties to no test JVM, so a probe's own, as
+`cucumber.features` or `karate.options`, reaches the test JVMs through
+`JAVA_TOOL_OPTIONS`. A JUnit Platform suite of the cucumber engine runs the
+probe feature next to its own features, selected by its `@ddtest` tag: with
+`cucumber.features`, Gradle would also run it through the root cucumber
+engine. Gradle names a suite's scenarios after the suite class and a Karate
+runner's after the runner, where dd-java-agent reports each feature; in a test
+task, native classes and reported classes that match no other account for each
+other when their tests, by name and status, are the same. Maven runs set
+`-Duser.home` to `~` in `MAVEN_OPTS` unless the command or its options set
+`user.home` or `maven.repo.local`, for the same reason as Gradle's user home.
 
 Every framework supports plain `ddtest testdrive --all --check-only --yes`
 and full `ddtest testdrive --all --yes` validation, or a focused

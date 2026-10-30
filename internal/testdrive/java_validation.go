@@ -223,6 +223,7 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 		selected = &probe
 		env["DDTEST_PROBE_MODE"] = spec.ProbeMode
 		env["DDTEST_PROBE_STATE"] = filepath.Join(directory, "probe-state")
+		t.addJavaToolOptions(env, probe.properties)
 	}
 	args = build.arguments(args, selected)
 	run.Command = shellquote.Join(append([]string{command}, args...)...)
@@ -255,11 +256,7 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 	case spec.ProbePath == "" && incomplete != "":
 		run.ResultError = incomplete
 	}
-	if probe.harness != "" {
-		// The runner that starts the probe feature is not a test of its own.
-		results = slices.DeleteFunc(results, func(result javaResult) bool { return result.Suite == probe.harness })
-		run.Facts = withoutSuite(run.Facts, probe.harness)
-	}
+	results, run.Facts = probe.selectedResults(results, run.Facts)
 	run.Tests = javaNativeTests(results, spec.ProbePath != "")
 	if spec.Instrumented && spec.ProbePath == "" {
 		run.Coverage = javaSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests)
@@ -270,11 +267,62 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 			count = strings.Count(string(state), "run\n")
 		}
 		run.ProbeExecutions = &count
+		withUnexecutedProbe(run.Tests, count)
 	}
 	if run.ExitCode != 0 || run.ResultError != "" {
 		run.Diagnostic = commandDiagnostic(data)
 	}
 	return run, nil
+}
+
+// selectedResults leaves out the native results and telemetry a probe run has
+// besides the probe's: the runner that starts the probe feature, which is not
+// a test of its own, though Gradle files the probe scenario under it too, and
+// the tests a filtering selection excluded, which never ran.
+func (p javaProbe) selectedResults(results []javaResult, facts intake.Facts) ([]javaResult, intake.Facts) {
+	isProbe := func(result javaResult) bool {
+		return javaTestName(javaKarateScenario.ReplaceAllString(result.Name, "")) == javaProbeMethod
+	}
+	if p.harness != "" {
+		results = slices.DeleteFunc(results, func(result javaResult) bool { return result.Suite == p.harness && !isProbe(result) })
+		facts = withoutSuite(facts, p.harness)
+	}
+	if p.filtered {
+		results = slices.DeleteFunc(results, func(result javaResult) bool { return result.Status == "skipped" && !isProbe(result) })
+		facts = withoutExcludedTests(facts)
+	}
+	return results, facts
+}
+
+// withUnexecutedProbe reports as skipped a passed probe result whose body
+// never ran, count times: it did not pass, as Gradle reports a Karate scenario
+// dd-java-agent skipped as a passed dynamic test.
+func withUnexecutedProbe(tests []nativeTest, count int) {
+	if count != 0 {
+		return
+	}
+	for i := range tests {
+		if tests[i].probe && tests[i].Status == "passed" {
+			tests[i].Status = "skipped"
+		}
+	}
+}
+
+// withoutExcludedTests leaves the skipped tests other than the probe, and
+// their events, out of facts.
+func withoutExcludedTests(facts intake.Facts) intake.Facts {
+	excluded := func(name, status string) bool { return status == "skip" && name != javaProbeMethod }
+	facts.Tests = slices.DeleteFunc(slices.Clone(facts.Tests), func(test intake.Test) bool {
+		if excluded(test.Name, test.Status) {
+			facts.TestEventCount -= len(test.Attempts)
+			return true
+		}
+		return false
+	})
+	facts.Events = slices.DeleteFunc(slices.Clone(facts.Events), func(event intake.Event) bool {
+		return event.Type == "test" && excluded(event.Tags["test.name"], event.Tags["test.status"])
+	})
+	return facts
 }
 
 // withoutSuite leaves a suite's tests and their events out of facts.
@@ -317,16 +365,26 @@ func javaNativeTests(results []javaResult, probe bool) []nativeTest {
 	for _, test := range results {
 		// TestNG names a data-provider invocation with its arguments, whose
 		// default toString differs between runs.
-		item := nativeTest{File: test.module + " / " + test.Suite, Name: withoutObjectAddresses(test.Name), Status: test.Status, Failure: withoutObjectAddresses(test.Failure)}
-		// A Karate suite is the probe feature's path and name.
-		if probe && (test.Suite == javaProbeClass || strings.HasSuffix(test.Suite, "] "+javaProbeClass)) {
-			name := javaTestName(test.Name)
+		item := nativeTest{File: test.module + " / " + test.Suite, Name: javaKarateScenario.ReplaceAllString(withoutObjectAddresses(test.Name), ""), Status: test.Status, Failure: withoutObjectAddresses(test.Failure)}
+		// A Karate suite is the probe feature's path and name. Gradle names a
+		// probe scenario of a Cucumber suite or Karate runner after the runner,
+		// so there the scenario's name identifies it.
+		if probe && (test.Suite == javaProbeClass || strings.HasSuffix(test.Suite, "] "+javaProbeClass) || javaTestName(item.Name) == javaProbeMethod) {
+			name := javaTestName(item.Name)
 			item.probe, item.telemetryName = true, &name
 		}
 		native = append(native, item)
 	}
 	return native
 }
+
+// javaProbeMethod is the probe's test method, Cucumber scenario or Karate
+// scenario.
+const javaProbeMethod = "ddtestProbe"
+
+// javaKarateScenario is the [index:line] Karate puts before a scenario's name
+// in the JUnit 5 display name Gradle reports; dd-java-agent reports the name.
+var javaKarateScenario = regexp.MustCompile(`^\[[0-9]+:[0-9]+\] `)
 
 // Surefire reports JUnit 5 methods with their signature and parameterized
 // invocations with their index, as in check(TestInfo) or add(int, int)[2].
@@ -468,6 +526,7 @@ func verifyJavaTelemetry(run validationRun) verdict {
 			observed[javaExecution{module, suite, name, attempt.Status}]++
 		}
 	}
+	reconcileJavaClasses(expected, observed)
 	reconcileJavaDisplayNames(expected, observed)
 	keys := maps.Clone(expected)
 	maps.Copy(keys, observed)
@@ -495,6 +554,59 @@ func (e javaExecution) String() string {
 // javaMethodName is a name a Java method can have, with a JUnit 5
 // invocation index.
 var javaMethodName = regexp.MustCompile(`^[\pL_$][\pL\pN_$]*(\[[0-9]+\])?$`)
+
+// reconcileJavaClasses matches the native results Gradle files under a class
+// dd-java-agent does not report to the classes it reports in their place: a
+// Cucumber suite's scenarios under the suite class, where the agent reports
+// each feature, and a Karate runner's under the runner. In one module, native
+// classes no execution matched and reported classes no native result matched
+// are the same tests when their tests, by name and status, are the same;
+// executions are still counted by name and status.
+func reconcileJavaClasses(expected, observed map[javaExecution]int) {
+	type class struct{ module, suite string }
+	type test struct{ name, status string }
+	nativeClasses, reportedClasses := map[class]bool{}, map[class]bool{}
+	for key := range expected {
+		nativeClasses[class{key.module, key.suite}] = true
+	}
+	for key := range observed {
+		reportedClasses[class{key.module, key.suite}] = true
+	}
+	native, reported := map[string]map[test]int{}, map[string]map[test]int{}
+	add := func(tests map[string]map[test]int, key javaExecution, count int) {
+		if tests[key.module] == nil {
+			tests[key.module] = map[test]int{}
+		}
+		tests[key.module][test{key.name, key.status}] += count
+	}
+	for key, count := range expected {
+		if !reportedClasses[class{key.module, key.suite}] {
+			add(native, key, count)
+		}
+	}
+	for key, count := range observed {
+		if !nativeClasses[class{key.module, key.suite}] {
+			add(reported, key, count)
+		}
+	}
+	for module, tests := range native {
+		// Gradle's modules are test task paths; Surefire names each result
+		// after its feature, so there another class is another test.
+		if !strings.HasPrefix(module, ":") || !maps.Equal(tests, reported[module]) {
+			continue
+		}
+		for key := range expected {
+			if key.module == module && !reportedClasses[class{key.module, key.suite}] {
+				observed[key] = expected[key]
+			}
+		}
+		for key := range observed {
+			if key.module == module && !nativeClasses[class{key.module, key.suite}] {
+				expected[key] = observed[key]
+			}
+		}
+	}
+}
 
 // reconcileJavaDisplayNames matches native results named by a JUnit 5
 // @DisplayName, as Gradle names them, to the methods dd-java-agent reports for
@@ -618,6 +730,12 @@ type javaProbe struct {
 	files   []javaProbeFile
 	args    []string
 	harness string
+	// properties are system properties every JVM of a probe run gets, for
+	// test JVMs a build forks without the build's own.
+	properties []string
+	// filtered reports a selection that reports the tests it excludes as
+	// skipped, as a Cucumber tag filter does.
+	filtered bool
 }
 
 // javaProbeSources are the probe sources of frameworks whose probe is one
@@ -648,7 +766,7 @@ func javaProbeFor(checkout, module, framework string, args []string) (javaProbe,
 	if framework == "scalatest" {
 		// Surefire runs ScalaTest suites through the JUnit runner they
 		// declare, so the probe declares the module's.
-		runner, err := javaScalaTestJUnitRunner(filepath.Join(checkout, module))
+		runner, err := javaScalaTestJUnitRunner(filepath.Join(checkout, module, "src", "test", "scala"))
 		if err != nil {
 			return javaProbe{}, "", err
 		}
@@ -664,6 +782,28 @@ func javaProbeFor(checkout, module, framework string, args []string) (javaProbe,
 	return probe, "", nil
 }
 
+// addJavaToolOptions appends system properties to the JAVA_TOOL_OPTIONS a run
+// passes on, which every JVM reads, its forked test JVMs included. A property
+// with whitespace is quoted, as the JVM reads the variable.
+func (t *Testdrive) addJavaToolOptions(env map[string]string, properties []string) {
+	if len(properties) == 0 {
+		return
+	}
+	options, ok := env["JAVA_TOOL_OPTIONS"]
+	if !ok {
+		if options, ok = t.configurationEnvironment["JAVA_TOOL_OPTIONS"]; !ok {
+			options = os.Getenv("JAVA_TOOL_OPTIONS")
+		}
+	}
+	for _, property := range properties {
+		if strings.ContainsAny(property, " \t") {
+			property = `"` + property + `"`
+		}
+		options = strings.TrimSpace(options + " " + property)
+	}
+	env["JAVA_TOOL_OPTIONS"] = options
+}
+
 // javaScalaTestJUnitRunners are ScalaTest's JUnit 4 runners, current and
 // before ScalaTest 3.1.
 var javaScalaTestJUnitRunners = []string{"org.scalatestplus.junit.JUnitRunner", "org.scalatest.junit.JUnitRunner"}
@@ -672,12 +812,12 @@ var javaScalaTestJUnitRunners = []string{"org.scalatestplus.junit.JUnitRunner", 
 // imported.
 var javaScalaTestRunWith = regexp.MustCompile(`@(?:[\w.]+\.)?RunWith\(\s*classOf\[\s*(?:[\w.]+\.)?JUnitRunner\s*\]\s*\)`)
 
-// javaScalaTestJUnitRunner is the ScalaTest JUnit runner a module's Scala
-// tests declare with @RunWith, if any: the one whose package the source names,
-// as a qualified name or in an import.
-func javaScalaTestJUnitRunner(module string) (string, error) {
+// javaScalaTestJUnitRunner is the ScalaTest JUnit runner the Scala tests in a
+// source directory declare with @RunWith, if any: the one whose package the
+// source names, as a qualified name or in an import.
+func javaScalaTestJUnitRunner(sources string) (string, error) {
 	runner := ""
-	err := filepath.WalkDir(filepath.Join(module, "src", "test", "scala"), func(path string, entry fs.DirEntry, err error) error {
+	err := filepath.WalkDir(sources, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -824,11 +964,11 @@ func javaModuleText(module string) string {
 // selected through one, in a module directory.
 var javaRunners = map[string]func(module string) (string, error){
 	"cucumber-java": func(module string) (string, error) {
-		runner, _, _, _, _, err := javaCucumberRunnerClass(module)
+		runner, _, _, _, _, err := javaCucumberRunnerClass(filepath.Join(module, "src", "test", "java"), filepath.Join(module, "src", "test", "resources"))
 		return runner, err
 	},
 	"karate": func(module string) (string, error) {
-		runner, _, err := javaKarateRunnerClass(module)
+		runner, _, err := javaKarateRunnerClass(filepath.Join(module, "src", "test", "java"))
 		return runner, err
 	},
 }

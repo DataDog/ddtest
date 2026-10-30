@@ -105,11 +105,11 @@ func TestJavaCucumberStepsMatchTheGlueBackendAndPackage(t *testing.T) {
 	java8 := "<dependency><groupId>io.cucumber</groupId><artifactId>cucumber-java8</artifactId></dependency>"
 	annotations := "<dependency><groupId>io.cucumber</groupId><artifactId>cucumber-java</artifactId></dependency>"
 	pom(java8)
-	require.True(t, javaCucumberLambda(root, "service", backendUse{}), "only the lambda backend")
+	require.True(t, javaCucumberLambda(backendUse{}, javaPOMDependencies(root, "service")), "only the lambda backend")
 	pom(java8 + annotations)
-	require.False(t, javaCucumberLambda(root, "service", backendUse{}), "annotations are available")
+	require.False(t, javaCucumberLambda(backendUse{}, javaPOMDependencies(root, "service")), "annotations are available")
 	pom(annotations)
-	require.False(t, javaCucumberLambda(root, "service", backendUse{}))
+	require.False(t, javaCucumberLambda(backendUse{}, javaPOMDependencies(root, "service")))
 }
 
 func TestJavaCucumberProbeHonorsTheCommandGlueAndInheritedBackends(t *testing.T) {

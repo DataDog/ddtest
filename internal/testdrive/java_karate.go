@@ -60,7 +60,7 @@ var javaKarateMethod = regexp.MustCompile(`@(?:[\w.]+\.)?(?:Karate\.)?Test\b(?:\
 // probe's harness. Each method of a runner runs the probe, so only one is
 // selected.
 func javaKarateProbe(checkout, module string) (javaProbe, string, error) {
-	runner, method, err := javaKarateRunnerClass(filepath.Join(checkout, module))
+	runner, method, err := javaKarateRunnerClass(filepath.Join(checkout, module, "src", "test", "java"))
 	if err != nil {
 		return javaProbe{}, "", err
 	}
@@ -81,12 +81,12 @@ func javaKarateProbe(checkout, module string) (javaProbe, string, error) {
 	}, "", nil
 }
 
-// javaKarateRunnerClass finds the first Karate runner class in a module's test
-// sources, by path, and the test method that runs features: its first
+// javaKarateRunnerClass finds the first Karate runner class in a test source
+// directory, by path, and the test method that runs features: its first
 // @Karate.Test, else the test that calls the parallel Runner. A JUnit 4
 // runner has none.
-func javaKarateRunnerClass(module string) (runner, method string, err error) {
-	err = filepath.WalkDir(filepath.Join(module, "src", "test", "java"), func(path string, entry fs.DirEntry, err error) error {
+func javaKarateRunnerClass(sources string) (runner, method string, err error) {
+	err = filepath.WalkDir(sources, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
