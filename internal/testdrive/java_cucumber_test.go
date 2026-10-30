@@ -155,9 +155,9 @@ func TestJavaCucumberProbeGoesToTheModuleWithTheRunner(t *testing.T) {
 	writeJavaSource(t, filepath.Join(root, "features", "src", "test", "java", "example", "RunCucumberTest.java"), "package example;\n@RunWith(Cucumber.class)\npublic class RunCucumberTest {}\n")
 	projects := []maven.Project{{Directory: ".", Artifact: "parent"}, {Directory: "api", Artifact: "api"}, {Directory: "features", Artifact: "features"}}
 	tests := []nativeTest{{File: "api / example.ApiTest"}, {File: "features / Calculator"}}
-	module, ok := javaRunnerModule(root, projects, tests, "cucumber-java")
+	module, ok := javaRunnerModule(newMavenBuild(root, projects), tests, "cucumber-java")
 	require.True(t, ok)
 	require.Equal(t, "features", module, "an earlier module without a runner is passed over")
-	_, ok = javaRunnerModule(root, projects, tests[:1], "cucumber-java")
+	_, ok = javaRunnerModule(newMavenBuild(root, projects), tests[:1], "cucumber-java")
 	require.False(t, ok, "only modules whose tests ran qualify")
 }

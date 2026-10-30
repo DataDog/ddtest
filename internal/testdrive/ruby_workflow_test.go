@@ -304,7 +304,7 @@ func TestRubyWorkflowPlanBindsTheRubyRuntime(t *testing.T) {
 	require.Equal(t, "bundler", language.packageManager(root))
 	require.Equal(t, "1.42.0", language.ciPinnedTracer(onboard.RuntimeFinding{Status: "not checked", TracerRequested: "1.42.0"}))
 	require.Empty(t, language.ciPinnedTracer(onboard.RuntimeFinding{Status: "excluded", TracerRequested: "1.42.0"}), "an excluded row installs no tracer")
-	require.Contains(t, workflowInitialization("minitest"), "datadog-ci")
+	require.Contains(t, workflowInitialization("", "minitest"), "datadog-ci")
 }
 
 func TestRubyReportsIgnoreTheHostNode(t *testing.T) {

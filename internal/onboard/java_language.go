@@ -147,11 +147,6 @@ func (javaDiscovery) automaticProviderSetup(string) bool { return false }
 
 func (javaDiscovery) unsupportedImage(string) string { return "" }
 
-// Its own step rules decide which uninstrumented commands are outside scope.
-func (javaDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) bool {
-	return false
-}
-
 func (javaDiscovery) runtimeVariable(name string) bool {
 	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"
 }

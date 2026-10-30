@@ -527,7 +527,7 @@ func TestCypressBackgroundPortCheckUsesDeclaredBaseURL(t *testing.T) {
 func TestMissingCypressCoverageAsksForApprovalInsteadOfImprovisedBuildEdits(t *testing.T) {
 	require.Contains(t, cypressMissingCoverageReason, "babel-plugin-istanbul (Babel) or vite-plugin-istanbul (Vite)")
 	require.Contains(t, cypressMissingCoverageReason, "apply it only with their approval")
-	plan := workflowInitialization("cypress")
+	plan := workflowInitialization("", "cypress")
 	require.Contains(t, plan, "any existing Istanbul instrumentation")
 	require.Contains(t, plan, "do not add it yourself")
 }

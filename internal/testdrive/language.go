@@ -110,7 +110,7 @@ type validationLanguage interface {
 	// workflowRuntime is the language runtime, besides Node, that a
 	// coordinated report is bound to; empty binds none. An error means the
 	// runtime running the selected commands cannot be inspected.
-	workflowRuntime(t *Testdrive) (string, error)
+	workflowRuntime(t *Testdrive, scope onboard.ValidationScope) (string, error)
 	// reportRuntimeCurrent reports whether the runtime a saved coordinated
 	// report is bound to still runs on this host.
 	reportRuntimeCurrent(root string, evidence WorkflowEvidence) bool
@@ -128,16 +128,18 @@ type validationLanguage interface {
 	// packageExclusions checks that the language's packages leave out the
 	// reports. handled is false when the shared package check applies.
 	packageExclusions(t *Testdrive, ctx context.Context) (check onboard.WorkflowCheck, handled bool)
-	// initialization describes framework's CI tracer initialization; empty
-	// uses the shared description.
-	initialization(framework string) string
+	// initialization describes framework's CI tracer initialization in the
+	// repository at root; empty uses the shared description.
+	initialization(root, framework string) string
 }
 
 // sharedWorkflowHooks is the coordinated-validation behavior every language
 // gets unless it binds its own runtime, inputs or packaging checks.
 type sharedWorkflowHooks struct{}
 
-func (sharedWorkflowHooks) workflowRuntime(*Testdrive) (string, error) { return "", nil }
+func (sharedWorkflowHooks) workflowRuntime(*Testdrive, onboard.ValidationScope) (string, error) {
+	return "", nil
+}
 func (sharedWorkflowHooks) reportRuntimeCurrent(_ string, evidence WorkflowEvidence) bool {
 	return evidence.Node == currentNodeVersion()
 }
@@ -154,7 +156,7 @@ func (sharedWorkflowHooks) extraInputFingerprint(context.Context, string) (strin
 func (sharedWorkflowHooks) packageExclusions(*Testdrive, context.Context) (onboard.WorkflowCheck, bool) {
 	return onboard.WorkflowCheck{}, false
 }
-func (sharedWorkflowHooks) initialization(string) string { return "" }
+func (sharedWorkflowHooks) initialization(string, string) string { return "" }
 
 // commandRequest is what selectCommand can use to choose a command.
 type commandRequest struct {

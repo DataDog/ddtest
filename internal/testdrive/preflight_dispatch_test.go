@@ -30,14 +30,14 @@ func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 		"cypress":       framework.NewCypress(javascript),
 		"cucumber":      framework.NewCucumber(javascript),
 		"webdriverio":   framework.NewWebdriverIO(javascript),
-		"junit4":        framework.NewMaven("junit4", platform.NewJava()),
-		"junit5":        framework.NewMaven("junit5", platform.NewJava()),
-		"testng":        framework.NewMaven("testng", platform.NewJava()),
-		"spock":         framework.NewMaven("spock", platform.NewJava()),
-		"cucumber-java": framework.NewMaven("cucumber-java", platform.NewJava()),
-		"karate":        framework.NewMaven("karate", platform.NewJava()),
-		"scalatest":     framework.NewMaven("scalatest", platform.NewJava()),
-		"munit":         framework.NewMaven("munit", platform.NewJava()),
+		"junit4":        framework.NewJVM("junit4", platform.NewJava()),
+		"junit5":        framework.NewJVM("junit5", platform.NewJava()),
+		"testng":        framework.NewJVM("testng", platform.NewJava()),
+		"spock":         framework.NewJVM("spock", platform.NewJava()),
+		"cucumber-java": framework.NewJVM("cucumber-java", platform.NewJava()),
+		"karate":        framework.NewJVM("karate", platform.NewJava()),
+		"scalatest":     framework.NewJVM("scalatest", platform.NewJava()),
+		"munit":         framework.NewJVM("munit", platform.NewJava()),
 	}
 	for name, policy := range frameworkFeaturePolicies {
 		if !policy.Preflight {

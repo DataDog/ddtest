@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMavenCommandPrefersTheWrapper(t *testing.T) {
+func TestJVMCommandPrefersTheWrapper(t *testing.T) {
 	t.Cleanup(func() {
 		viper.Reset()
 		settings.Init()
@@ -24,7 +24,7 @@ func TestMavenCommandPrefersTheWrapper(t *testing.T) {
 	viper.Reset()
 	settings.Init()
 	t.Chdir(t.TempDir())
-	maven := NewMaven("junit5", nil)
+	maven := NewJVM("junit5", nil)
 	command, args := maven.Command()
 	require.Equal(t, "mvn", command)
 	require.Equal(t, []string{"test"}, args)
@@ -42,14 +42,35 @@ func TestMavenCommandPrefersTheWrapper(t *testing.T) {
 	require.Equal(t, []string{"-B", "verify"}, args)
 }
 
-func TestMavenRejectsPlanAndRun(t *testing.T) {
-	maven := NewMaven("junit4", nil)
+func TestJVMCommandRunsGradleWithoutAPOM(t *testing.T) {
+	t.Cleanup(func() {
+		viper.Reset()
+		settings.Init()
+	})
+	viper.Reset()
+	settings.Init()
+	t.Chdir(t.TempDir())
+	jvm := NewJVM("junit5", nil)
+	require.NoError(t, os.WriteFile("settings.gradle.kts", []byte("include(\"app\")\n"), 0644))
+	command, args := jvm.Command()
+	require.Equal(t, "gradle", command)
+	require.Equal(t, []string{"test"}, args)
+	require.NoError(t, os.WriteFile("gradlew", []byte("#!/bin/sh\n"), 0755))
+	command, _ = jvm.Command()
+	require.Equal(t, "./gradlew", command, "the Gradle wrapper, as CI usually runs it")
+	require.NoError(t, os.WriteFile("pom.xml", []byte("<project/>\n"), 0644))
+	command, _ = jvm.Command()
+	require.Equal(t, "mvn", command, "a POM keeps Maven")
+}
+
+func TestJVMRejectsPlanAndRun(t *testing.T) {
+	maven := NewJVM("junit4", nil)
 	require.Equal(t, "junit4", maven.Name())
 	require.Nil(t, maven.Platform())
 	require.False(t, maven.SupportsFullTestDiscovery())
 	_, err := maven.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
-	require.ErrorIs(t, err, ErrMavenPlanRun)
+	require.ErrorIs(t, err, ErrJVMPlanRun)
 	_, err = maven.DiscoverTests(context.Background(), discovery.TestFileSet{})
-	require.ErrorIs(t, err, ErrMavenPlanRun)
-	require.ErrorIs(t, maven.RunTests(context.Background(), nil, nil), ErrMavenPlanRun)
+	require.ErrorIs(t, err, ErrJVMPlanRun)
+	require.ErrorIs(t, maven.RunTests(context.Background(), nil, nil), ErrJVMPlanRun)
 }

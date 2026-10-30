@@ -137,9 +137,11 @@ type runtimeJob struct {
 	Defaults  ciDefaults        `yaml:"defaults"`
 	Env       map[string]string `yaml:"env"`
 	If        string            `yaml:"if"`
-	// A job that calls a reusable workflow, and the secrets it passes.
-	Uses     string `yaml:"uses"`
-	Secrets  any    `yaml:"secrets"`
+	// A job that calls a reusable workflow, and the inputs and secrets it
+	// passes.
+	Uses     string         `yaml:"uses"`
+	With     map[string]any `yaml:"with"`
+	Secrets  any            `yaml:"secrets"`
 	Strategy struct {
 		Matrix any `yaml:"matrix"`
 	} `yaml:"strategy"`

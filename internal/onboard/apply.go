@@ -193,7 +193,7 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 				continue
 			}
 			location := workflow.Path + " / " + name
-			if workflowCall(workflow.On) && !reusableSecretForwarded(workflows, workflow) {
+			if workflowCall(workflow.On) && !reusableSecretForwarded(workflows, workflow, "DD_API_KEY") {
 				return nil, &SetupGap{location, "Reusable workflows are applied only when on.workflow_call.secrets declares DD_API_KEY and every caller in this repository passes it (secrets: inherit or secrets: {DD_API_KEY: ...}). Declare and forward the secret, or add the Datadog action to this workflow manually; callers in other repositories can't be verified."}
 			}
 			gap := func(reason string) error { return &SetupGap{location, reason} }
@@ -726,30 +726,39 @@ func WindowsOnlyConfiguration(root string, entry TestCommand) bool {
 	return true
 }
 
-// reusableSecretForwarded reports whether a workflow_call workflow declares
-// DD_API_KEY and at least one local caller exists, each forwarding it.
-func reusableSecretForwarded(workflows []ciWorkflow, workflow ciWorkflow) bool {
+// reusableSecretForwarded reports whether a workflow_call workflow receives
+// secret from every caller in the repository, and at least one exists: with
+// secrets: inherit, or by name, which on.workflow_call.secrets must declare.
+// A required secret a caller omits fails that caller's workflow.
+func reusableSecretForwarded(workflows []ciWorkflow, workflow ciWorkflow, secret string) bool {
 	on, _ := workflow.On.(map[string]any)
 	call, _ := on["workflow_call"].(map[string]any)
 	declared, _ := call["secrets"].(map[string]any)
-	if _, ok := declared["DD_API_KEY"]; !ok {
-		return false
+	_, isDeclared := declared[secret]
+	callers := localCallers(workflows, workflow)
+	for _, job := range callers {
+		secrets, _ := job.Secrets.(map[string]any)
+		if _, forwarded := secrets[secret]; job.Secrets != "inherit" && (!forwarded || !isDeclared) {
+			return false
+		}
 	}
-	callers := 0
+	return len(callers) > 0
+}
+
+// localCallers are the jobs of workflows that call workflow, in workflow and
+// job order.
+func localCallers(workflows []ciWorkflow, workflow ciWorkflow) []runtimeJob {
+	var callers []runtimeJob
 	for _, caller := range workflows {
-		for _, job := range caller.Jobs {
+		for _, name := range slices.Sorted(maps.Keys(caller.Jobs)) {
+			job := caller.Jobs[name]
 			target, _, _ := strings.Cut(job.Uses, "@")
-			if !strings.HasPrefix(target, "./") || filepath.Clean(strings.TrimPrefix(target, "./")) != workflow.Path {
-				continue
-			}
-			callers++
-			secrets, _ := job.Secrets.(map[string]any)
-			if _, forwarded := secrets["DD_API_KEY"]; job.Secrets != "inherit" && !forwarded {
-				return false
+			if strings.HasPrefix(target, "./") && filepath.Clean(strings.TrimPrefix(target, "./")) == workflow.Path {
+				callers = append(callers, job)
 			}
 		}
 	}
-	return callers > 0
+	return callers
 }
 
 func workflowCall(on any) bool {

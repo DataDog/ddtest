@@ -155,8 +155,9 @@ var mavenMention = regexp.MustCompile(`(^|[\s/;&|(])mvnw?(\.cmd)?(\s|$)`)
 // parse, such as ./ci/integration.sh | tee build.log.
 var scriptMention = regexp.MustCompile(`(^\s*|[;&|(]\s*)((\.\.?/)?[\w.-]+/[\w./-]+|[\w.-]+\.sh(\s|$)|(ba)?sh\s+[^-\s])`)
 
-// javaShellBuiltins only print or move files around maintenance goals.
-var javaShellBuiltins = []string{"cd", "cp", "mv", "mkdir", "rm", "ln", "echo", "printf", "cat", "ls", "touch", "tar", "pwd", "true"}
+// javaShellBuiltins only print, move or mark files executable around
+// maintenance goals, as chmod +x gradlew before a build.
+var javaShellBuiltins = []string{"cd", "cp", "mv", "mkdir", "rm", "ln", "chmod", "echo", "printf", "cat", "ls", "touch", "tar", "pwd", "true"}
 
 // otherFrameworkModules lists the reactor modules that declare test
 // frameworks, none of them framework.
@@ -290,7 +291,7 @@ func javaOutsideUninstrumentedJob(root string, workflow ciWorkflow, job runtimeJ
 	sibling := job
 	sibling.Steps = nil
 	for _, step := range job.Steps {
-		if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == githubAction {
+		if javaActionStep(step) {
 			return false
 		}
 		if step.Run != "" && resolveJavaStep(root, workflow, sibling, step, framework).Matched {
@@ -330,6 +331,124 @@ func javaRuntimeProblem(version string) (reason, code string) {
 	return "", ""
 }
 
+// javaCalledWorkflows replaces each workflow that only workflow_call starts by
+// one copy per distinct set of inputs its callers in the repository pass, so
+// a JDK such as java-version: ${{ inputs.java-version }} is the callers'.
+// Callers in other repositories cannot be read.
+func javaCalledWorkflows(workflows []ciWorkflow) []ciWorkflow {
+	var expanded []ciWorkflow
+	for _, workflow := range workflows {
+		for _, inputs := range javaWorkflowCalls(workflows, workflow) {
+			expanded = append(expanded, javaWithInputs(workflow, inputs))
+		}
+	}
+	return expanded
+}
+
+// javaWorkflowCalls are the inputs, defaults included, that each local job
+// calling workflow passes, one map per distinct set. A workflow other events
+// also start, one without a local caller, and one a caller passes an
+// expression keep their inputs unresolved: a single nil map.
+func javaWorkflowCalls(workflows []ciWorkflow, workflow ciWorkflow) []map[string]string {
+	unresolved := []map[string]string{nil}
+	if !onlyWorkflowCall(workflow.On) {
+		return unresolved
+	}
+	defaults := map[string]string{}
+	on, _ := workflow.On.(map[string]any)
+	call, _ := on["workflow_call"].(map[string]any)
+	declared, _ := call["inputs"].(map[string]any)
+	for name, value := range declared {
+		input, _ := value.(map[string]any)
+		if text, scalar := conditionString(input["default"]); scalar && input["default"] != nil && !strings.Contains(text, "${{") {
+			defaults[name] = text
+		}
+	}
+	var calls []map[string]string
+	for _, job := range localCallers(workflows, workflow) {
+		inputs := maps.Clone(defaults)
+		for key, value := range job.With {
+			text, scalar := conditionString(value)
+			if !scalar || strings.Contains(text, "${{") {
+				return unresolved
+			}
+			inputs[key] = text
+		}
+		if !slices.ContainsFunc(calls, func(known map[string]string) bool { return maps.Equal(known, inputs) }) {
+			calls = append(calls, inputs)
+		}
+	}
+	if len(calls) == 0 {
+		return unresolved
+	}
+	return calls
+}
+
+// onlyWorkflowCall reports whether workflow_call is a workflow's only trigger.
+func onlyWorkflowCall(on any) bool {
+	switch value := on.(type) {
+	case string:
+		return value == "workflow_call"
+	case []any:
+		return len(value) == 1 && value[0] == "workflow_call"
+	case map[string]any:
+		_, exists := value["workflow_call"]
+		return exists && len(value) == 1
+	}
+	return false
+}
+
+// javaWithInputs resolves the ${{ inputs.<name> }} references in workflow's
+// step inputs, as setup-java's java-version, from inputs; nil leaves them.
+func javaWithInputs(workflow ciWorkflow, inputs map[string]string) ciWorkflow {
+	if inputs == nil {
+		return workflow
+	}
+	jobs := make(map[string]runtimeJob, len(workflow.Jobs))
+	for name, job := range workflow.Jobs {
+		job.Steps = slices.Clone(job.Steps)
+		for i, step := range job.Steps {
+			with := maps.Clone(step.With)
+			for key, value := range with {
+				with[key] = inputReference.ReplaceAllStringFunc(value, func(reference string) string {
+					if resolved, ok := inputs[inputReference.FindStringSubmatch(reference)[1]]; ok {
+						return resolved
+					}
+					return reference
+				})
+			}
+			job.Steps[i].With = with
+		}
+		jobs[name] = job
+	}
+	workflow.Jobs = jobs
+	return workflow
+}
+
+// javaReusableSecretProblem explains an api_key secret that not every caller
+// of a reusable workflow passes. Without a caller in the repository, one that
+// only workflow_call starts cannot be verified; another runs on its own events.
+func javaReusableSecretProblem(workflows []ciWorkflow, workflow ciWorkflow, apiKey string) string {
+	match := secretName.FindStringSubmatch(apiKey)
+	if !workflowCall(workflow.On) || match == nil || len(localCallers(workflows, workflow)) == 0 && !onlyWorkflowCall(workflow.On) {
+		return ""
+	}
+	if reusableSecretForwarded(workflows, workflow, match[1]) {
+		return ""
+	}
+	name := match[1]
+	return "This reusable workflow's api_key reads secrets." + name + ", which not every caller in this repository passes: pass it from each caller with secrets: inherit, or with secrets: {" + name + ": ${{ secrets." + name + " }}} and declare it under on.workflow_call.secrets. A required secret a caller omits fails that workflow, and callers in other repositories can't be verified."
+}
+
+// secretName is the secret an expression such as ${{ secrets.DD_API_KEY }} reads.
+var secretName = regexp.MustCompile(`^\$\{\{\s*secrets\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$`)
+
+// javaActionStep reports a step that runs the Datadog action.
+func javaActionStep(step runtimeStep) bool {
+	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+	return uses == githubAction
+}
+
 // JavaCIConfiguration inventories each CI Maven or Gradle test step's JDK and the
 // Datadog action's dd-java-agent selection, per matrix row. A step is complete
 // only when its action is a supported release with an API key that reports to
@@ -340,6 +459,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 	if err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
+	workflows = javaCalledWorkflows(workflows)
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
@@ -351,6 +471,12 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 			for _, row := range rows {
 				active, conditionErr := possibleJobCondition(job.If, row)
 				if conditionErr == nil && !active {
+					continue
+				}
+				// As discovery scopes it, a job without the action that never
+				// runs the framework is outside validation; its caveat says so.
+				if !slices.ContainsFunc(job.Steps, javaActionStep) && (javaDiscovery{}).outsideFrameworkJob(root, workflow, job, row, framework) {
+					result.Review = append(result.Review, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "not checked", Reason: "CI job without the Datadog setup that never runs " + framework + "; it is outside this validation."})
 					continue
 				}
 				lastTest := javaLastTestStep(root, workflow, job, row, framework)
@@ -441,6 +567,8 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 						finding.Reason = "The Datadog action's java-tracer-version " + strconv.Quote(tracer) + " is not an exact release; set an exact version such as 1.67.1."
 					case setupActionProblem(finding, site) != "":
 						finding.Code, finding.Reason = CodeIncompleteCISetup, setupActionProblem(finding, site)
+					case javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"]) != "":
+						finding.Code, finding.Reason = CodeIncompleteCISetup, javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"])
 					default:
 						// Release notes, not version numbers, say which JDKs an agent
 						// release supports, so the pair is validated by running it.

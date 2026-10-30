@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/gradle"
 	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -26,8 +27,8 @@ import (
 	"github.com/kballard/go-shellquote"
 )
 
-// javaLanguage validates Maven test suites with dd-java-agent. Until Java
-// joins the agent workflow, it keeps the shared workflow defaults.
+// javaLanguage validates Maven and Gradle test suites with dd-java-agent.
+// Until Java joins the agent workflow, it keeps the shared workflow defaults.
 type javaLanguage struct{ sharedWorkflowHooks }
 
 func (javaLanguage) name() string         { return "java" }
@@ -47,8 +48,9 @@ func (javaLanguage) installedTracerVersion(detected string) string {
 
 func (javaLanguage) prepareStorage() error { return nil }
 
-// A selected command must be a literal Maven test invocation that stays inside
-// the repository and publishes nothing; runs repeat it several times.
+// A selected command must be a literal Maven or Gradle test invocation that
+// stays inside the repository and publishes nothing; runs repeat it several
+// times.
 func (javaLanguage) selectCommand(request commandRequest) (string, []string, bool, error) {
 	// --all validates each discovered CI command in its own copy.
 	if request.all || request.override == "" {
@@ -56,7 +58,12 @@ func (javaLanguage) selectCommand(request commandRequest) (string, []string, boo
 	}
 	words, err := shellquote.Split(request.override)
 	if err != nil || len(words) == 0 {
-		return "", nil, false, fmt.Errorf("invalid Maven command: %s", request.override)
+		return "", nil, false, fmt.Errorf("invalid Java build command: %s", request.override)
+	}
+	// The build the command runs decides which of its tasks run tests, so
+	// its tasks are checked once that build is read.
+	if gradle.Command(words) {
+		return words[0], words[1:], true, nil
 	}
 	if !maven.IsTestCommand(words[0], words[1:]) {
 		return "", nil, false, fmt.Errorf("select a literal mvn or mvnw command that runs a test phase, such as mvn test or ./mvnw verify: %s", request.override)
@@ -94,10 +101,9 @@ func javaEnvironmentInfo(configuration map[string]string) environmentInfo {
 		}
 		return os.Getenv(key)
 	}
-	info := environmentInfo{Source: "Java from PATH", Runtime: "Java"}
-	home := value("JAVA_HOME")
+	source, home := "Java from PATH", value("JAVA_HOME")
 	if home != "" {
-		info.Source = "Java from JAVA_HOME"
+		source = "Java from JAVA_HOME"
 	} else {
 		for _, directory := range filepath.SplitList(value("PATH")) {
 			candidate := filepath.Join(directory, "java")
@@ -110,6 +116,12 @@ func javaEnvironmentInfo(configuration map[string]string) environmentInfo {
 			break
 		}
 	}
+	return javaHomeInfo(home, source)
+}
+
+// javaHomeInfo reads the version of the JDK at home from its release file.
+func javaHomeInfo(home, source string) environmentInfo {
+	info := environmentInfo{Source: source, Runtime: "Java"}
 	data, err := os.ReadFile(filepath.Join(home, "release"))
 	if home == "" || err != nil {
 		return info
@@ -149,7 +161,7 @@ func (javaLanguage) dependencyChanges(string) ([]string, string) { return []stri
 // MAVEN_OPTS is split on whitespace, so the agent path cannot contain any.
 func (javaLanguage) installDirectory(sessionDirectory, _ string) (string, func() error, error) {
 	if strings.ContainsAny(sessionDirectory, " \t\n") {
-		return "", nil, fmt.Errorf("the temporary directory %q contains whitespace, which MAVEN_OPTS cannot carry in a -javaagent path; set TMPDIR to a directory without spaces", sessionDirectory)
+		return "", nil, fmt.Errorf("the temporary directory %q contains whitespace, which MAVEN_OPTS and GRADLE_OPTS cannot carry in a -javaagent path; set TMPDIR to a directory without spaces", sessionDirectory)
 	}
 	return sessionDirectory, nil, nil
 }
@@ -157,15 +169,20 @@ func (javaLanguage) installDirectory(sessionDirectory, _ string) (string, func()
 func (javaLanguage) projectTracerPath(projectTracer string) string { return projectTracer }
 func (javaLanguage) temporaryTracerSource() string                 { return "temporary installation" }
 
-// The agent rides on the Maven JVM, which configures the test JVMs Surefire
-// and Failsafe fork. ScalaTest's plugin forks its own JVM, which inherits only
-// JAVA_TOOL_OPTIONS, so a reactor with any ScalaTest module uses that instead.
-// A configuration's own options are kept, as the baseline keeps them, except a
-// Datadog agent already attached, as in a CI job after the GitHub action: the
-// baseline must run without it and the reporting run with the selected one only.
+// The agent rides on the build JVM, as the Datadog action attaches it: the
+// Maven JVM, which configures the test JVMs Surefire and Failsafe fork, or the
+// Gradle JVM, which configures those its test tasks fork. ScalaTest's Maven
+// plugin forks its own JVM, which inherits only JAVA_TOOL_OPTIONS, so a reactor
+// with any ScalaTest module uses that instead. A configuration's own options
+// are kept, as the baseline keeps them, except a Datadog agent already
+// attached, as in a CI job after the GitHub action, or through JAVA_OPTS,
+// which the Gradle launcher also reads: the baseline must run without it and
+// the reporting run with the selected one only.
 func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string {
 	key := "MAVEN_OPTS"
-	if t.framework.Name() == "scalatest" || t.javaReactorDeclares("scalatest") {
+	if command, _ := t.executionCommand(); gradle.Command([]string{command}) {
+		key = "GRADLE_OPTS"
+	} else if t.framework.Name() == "scalatest" || t.javaReactorDeclares("scalatest") {
 		key = "JAVA_TOOL_OPTIONS"
 	}
 	env := map[string]string{
@@ -173,7 +190,7 @@ func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string 
 		// Leave compiled classes as the uninstrumented build produces them.
 		"DD_CIVISIBILITY_COMPILER_PLUGIN_AUTO_CONFIGURATION_ENABLED": "false",
 	}
-	for _, carrier := range []string{"MAVEN_OPTS", "JAVA_TOOL_OPTIONS"} {
+	for _, carrier := range []string{"MAVEN_OPTS", "GRADLE_OPTS", "JAVA_OPTS", "JAVA_TOOL_OPTIONS"} {
 		options, configured := t.configurationEnvironment[carrier]
 		if !configured {
 			options = os.Getenv(carrier)
@@ -245,13 +262,13 @@ func (javaLanguage) pairedFrameworks() map[string]pairedFramework {
 	return adapters
 }
 
-// Maven plugins run project code and every run rewrites target directories,
-// so each configuration runs in a disposable copy.
+// Build plugins run project code and every run rewrites build output, so each
+// configuration runs in a disposable copy.
 func (javaLanguage) isolatesConfigurations() bool { return true }
 
 // Every Java framework, reporting-only ones included, runs in a configuration
 // copy: refuse a command that would install, publish or leave the copy before
-// any Maven process starts.
+// any build process starts.
 func (javaLanguage) prepareConfiguration(t *Testdrive, item *configurationResult, _, copyRoot string) error {
 	// The command runs from the configuration's working directory.
 	scoped := *t
@@ -263,7 +280,7 @@ func (javaLanguage) prepareConfiguration(t *Testdrive, item *configurationResult
 		scoped.repositoryRoot = directory
 	}
 	_, args := scoped.executionCommand()
-	_, _, err := scoped.javaCommandPOM(args)
+	_, err := scoped.javaBuild(args)
 	return err
 }
 
@@ -304,20 +321,41 @@ func (javaLanguage) mergeCIRuntime(current, next *onboard.RuntimeCheck) *onboard
 // The preflight labels the agent release; there is no registry selection.
 func (javaLanguage) labelsTracerWithoutSelection() bool { return true }
 
-// Reports are bound to the JDK that runs the selected Maven commands.
-func (javaLanguage) workflowRuntime(*Testdrive) (string, error) {
-	version := javaEnvironmentInfo(nil).Version
+// Reports are bound to the JDKs that run the selected builds.
+func (javaLanguage) workflowRuntime(t *Testdrive, scope onboard.ValidationScope) (string, error) {
+	version := javaWorkflowRuntime(t.repositoryRoot, scope)
 	if version == "" {
 		return "", errors.New("no JDK was found: set JAVA_HOME to the JDK the project builds with, or put its java on PATH")
 	}
 	return version, nil
 }
 
-func (javaLanguage) reportRuntimeCurrent(_ string, evidence WorkflowEvidence) bool {
-	return evidence.Runtime != "" && evidence.Runtime == javaEnvironmentInfo(nil).Version
+func (javaLanguage) reportRuntimeCurrent(root string, evidence WorkflowEvidence) bool {
+	var scope onboard.ValidationScope
+	if evidence.Plan != nil {
+		scope = evidence.Plan.Scope
+	}
+	return evidence.Runtime != "" && evidence.Runtime == javaWorkflowRuntime(root, scope)
 }
 
-func (javaLanguage) packageManager(string) string { return "maven" }
+// packageManager names the build tools whose builds the repository root
+// declares, Maven first.
+func (javaLanguage) packageManager(root string) string {
+	return strings.Join(javaBuildTools(root), ", ")
+}
+
+// javaBuildTools are the build tools whose builds the repository root
+// declares: maven for a POM, gradle for Gradle settings or build files.
+func javaBuildTools(root string) []string {
+	var tools []string
+	if info, err := os.Stat(filepath.Join(root, "pom.xml")); err == nil && info.Mode().IsRegular() {
+		tools = append(tools, "maven")
+	}
+	if gradle.Declared(root) {
+		tools = append(tools, "gradle")
+	}
+	return tools
+}
 
 func (javaLanguage) packageExclusions(t *Testdrive, _ context.Context) (onboard.WorkflowCheck, bool) {
 	poms, err := t.javaScopePOMs()
@@ -337,7 +375,12 @@ func (t *Testdrive) javaScopePOMs() ([]string, error) {
 	for _, entry := range t.workflowScope.Commands {
 		words, err := shellquote.Split(entry.Command)
 		if err != nil || len(words) == 0 {
-			return nil, fmt.Errorf("invalid Maven command: %s", entry.Command)
+			return nil, fmt.Errorf("invalid Java build command: %s", entry.Command)
+		}
+		// Gradle packages only its source sets' resources, never the
+		// repository root's .testoptimization.
+		if gradle.Command(words) {
+			continue
 		}
 		pom, err := maven.CommandPOM(words[1:])
 		if err != nil {
@@ -354,8 +397,21 @@ func (t *Testdrive) javaScopePOMs() ([]string, error) {
 	return poms, nil
 }
 
-func (javaLanguage) initialization(string) string {
-	return "Add the Datadog action with an exact java-tracer-version after JDK setup; it attaches dd-java-agent through MAVEN_OPTS, which later steps must extend with ${{ env.MAVEN_OPTS }}. Keep the Maven commands and the reports excluded from Git."
+// initialization names the carriers the action attaches dd-java-agent
+// through for the repository's builds: MAVEN_OPTS, GRADLE_OPTS or both.
+func (javaLanguage) initialization(root, _ string) string {
+	var carriers, extensions, tools []string
+	for _, tool := range javaBuildTools(root) {
+		carrier, name := "MAVEN_OPTS", "Maven"
+		if tool == "gradle" {
+			carrier, name = "GRADLE_OPTS", "Gradle"
+		}
+		carriers, extensions, tools = append(carriers, carrier), append(extensions, "${{ env."+carrier+" }}"), append(tools, name)
+	}
+	if len(tools) == 0 {
+		carriers, extensions, tools = []string{"MAVEN_OPTS"}, []string{"${{ env.MAVEN_OPTS }}"}, []string{"Maven"}
+	}
+	return "Add the Datadog action with an exact java-tracer-version after JDK setup; it attaches dd-java-agent through " + strings.Join(carriers, " and ") + ", which later steps must extend with " + strings.Join(extensions, " and ") + ". Keep the " + strings.Join(tools, " and ") + " commands and the reports excluded from Git."
 }
 
 // javaReports are the retained reports, relative to the repository root.

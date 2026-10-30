@@ -33,6 +33,9 @@ func TestJavaIsDetectedOnlyWhereNoOtherPlatformIs(t *testing.T) {
 		{name: "with a Ruby project", files: map[string]string{"pom.xml": junit5POM, "Gemfile": "gem 'rspec'\n"}, want: "ruby"},
 		{name: "selected platform", platform: "java", files: map[string]string{"pom.xml": junit5POM, "package.json": `{}`}, want: "java"},
 		{name: "selected Maven framework", framework: "junit5", files: map[string]string{"package.json": `{"devDependencies":{"jest":"30"}}`}, want: "java"},
+		{name: "Gradle Kotlin build", files: map[string]string{"settings.gradle.kts": "include(\"app\")\n"}, want: "java"},
+		{name: "Gradle Groovy build", files: map[string]string{"build.gradle": "plugins { id 'java' }\n"}, want: "java"},
+		{name: "Gradle with a JavaScript project", files: map[string]string{"build.gradle.kts": "", "package.json": `{"devDependencies":{"jest":"30"}}`}, want: "javascript"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resetDetectionSettings(t)
@@ -66,7 +69,7 @@ func TestJavaDetectsMavenFrameworks(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "junit5", selected.Name())
 	_, err = selected.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
-	require.ErrorIs(t, err, framework.ErrMavenPlanRun)
+	require.ErrorIs(t, err, framework.ErrJVMPlanRun)
 
 	require.NoError(t, os.WriteFile("pom.xml", []byte(`<project><dependencies><dependency><groupId>junit</groupId><artifactId>junit</artifactId></dependency><dependency><groupId>org.testng</groupId><artifactId>testng</artifactId></dependency></dependencies></project>`), 0600))
 	_, err = NewJava().DetectFramework()
@@ -80,9 +83,28 @@ func TestJavaDetectsMavenFrameworks(t *testing.T) {
 	require.ErrorContains(t, err, "framework 'jest' is not supported by platform 'java'")
 }
 
+func TestJavaDetectsGradleFrameworks(t *testing.T) {
+	resetDetectionSettings(t)
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("settings.gradle", []byte("include 'app'\n"), 0600))
+	require.NoError(t, os.MkdirAll("app", 0700))
+	require.NoError(t, os.WriteFile(filepath.Join("app", "build.gradle"), []byte("dependencies { testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4' }\n"), 0600))
+	selected, err := NewJava().DetectFramework()
+	require.NoError(t, err)
+	require.Equal(t, "junit5", selected.Name())
+	// A repository with both builds declares the frameworks of both.
+	require.NoError(t, os.WriteFile("pom.xml", []byte(`<project><dependencies><dependency><groupId>org.testng</groupId><artifactId>testng</artifactId></dependency></dependencies></project>`), 0600))
+	_, err = NewJava().DetectFramework()
+	require.ErrorContains(t, err, "found multiple test frameworks (junit5, testng)")
+	require.NoError(t, os.Remove("pom.xml"))
+	require.NoError(t, os.WriteFile("settings.gradle", []byte("file('m').eachDir { include it.name }\n"), 0600))
+	_, err = NewJava().DetectFramework()
+	require.Error(t, err, "a project list build logic computes cannot be read")
+}
+
 func TestJavaRejectsPlanAndRun(t *testing.T) {
 	_, err := NewJava().CreateTagsMap(context.Background())
-	require.ErrorIs(t, err, framework.ErrMavenPlanRun)
+	require.ErrorIs(t, err, framework.ErrJVMPlanRun)
 }
 
 func writeAgentJAR(t *testing.T, path, manifest string) {

@@ -25,9 +25,6 @@ func TestTestTasks(t *testing.T) {
 	for _, task := range []string{"assemble", "javadoc", "jacocoTestReport", "publish", "testClasses", "sonar", "dependencies", ":android-test:assembleDebugAndroidTest", "compileTestJava", "bundleReleaseAndroidTest"} {
 		require.False(t, TestTask(task), task)
 	}
-	require.True(t, IsTestCommand([]string{"./gradlew", "--no-daemon", "build"}))
-	require.False(t, IsTestCommand([]string{"./gradlew", "assemble"}))
-	require.False(t, IsTestCommand([]string{"mvn", "test"}))
 }
 
 func TestRunsTests(t *testing.T) {
@@ -89,6 +86,9 @@ func TestTestInvocationKeepsTestTasksAndOptions(t *testing.T) {
 	validated, omitted := TestInvocation(strings.Fields("--no-daemon -Pci=true clean build jacocoTestReport sonar --tests com.example.Ignored publish test --tests com.example.ApiTest -x javadoc"), TestTask)
 	require.Equal(t, []string{"--no-daemon", "-Pci=true", "build", "test", "--tests", "com.example.ApiTest", "-x", "javadoc"}, validated)
 	require.Equal(t, []string{"clean", "jacocoTestReport", "sonar", "publish"}, omitted, "--tests after sonar belongs to sonar")
+	validated, omitted = TestInvocation(strings.Fields("test --fail-fast dependencyUpdates --revision=release --offline"), TestTask)
+	require.Equal(t, []string{"test", "--fail-fast", "--offline"}, validated, "a task's options go with it, Gradle's own stay")
+	require.Equal(t, []string{"dependencyUpdates"}, omitted)
 }
 
 func TestPublishes(t *testing.T) {
@@ -100,7 +100,7 @@ func TestPublishes(t *testing.T) {
 
 func TestHelpTaskSelectorIsNotATask(t *testing.T) {
 	require.Equal(t, []string{"help"}, Tasks(strings.Fields("help --task test")))
-	require.False(t, IsTestCommand(strings.Fields("./gradlew help --task test")))
+	require.False(t, RunsTests(strings.Fields("help --task test"), TestTasks{}))
 }
 
 func TestAttachedShortOptionValuesRoundTrip(t *testing.T) {
@@ -109,7 +109,7 @@ func TestAttachedShortOptionValuesRoundTrip(t *testing.T) {
 }
 
 func TestNonTestTasks(t *testing.T) {
-	for _, task := range []string{"clean", "assemble", "javadoc", "spotlessCheck", "detekt", "ktlintCheck", "sonar", "jacocoTestReport", "publish", "dependencies", "bootJar", ":app:distZip"} {
+	for _, task := range []string{"clean", "assemble", "javadoc", "spotlessCheck", "detekt", "ktlintCheck", "sonar", "jacocoTestReport", "publish", "dependencies", "bootJar", ":app:distZip", "closeSonatypeStagingRepository", "closeAndReleaseRepository", "initializeSonatypeStagingRepository"} {
 		require.True(t, NonTestTask(task), task)
 	}
 	for _, task := range []string{"ciTests", "verifyAll", "test", "e2e", "nativeTest", ":native-image-tests:nativeTest"} {
@@ -118,4 +118,23 @@ func TestNonTestTasks(t *testing.T) {
 	for _, task := range []string{"okcurl:nativeBuild", "nativeCompile", "module-tests:imageRun", "jibDockerBuild", "bootBuildImage", "shadowJar"} {
 		require.True(t, NonTestTask(task), task)
 	}
+}
+
+func TestValidationArgs(t *testing.T) {
+	require.Equal(t,
+		[]string{"--info", "-Pci=true", "build", "--rerun-tasks", "--no-build-cache", "--continue", "--no-daemon", "-Dorg.gradle.configuration-cache=false"},
+		ValidationArgs(strings.Fields("--info --build-cache --daemon -Pci=true build --configuration-cache --continue")),
+		"every run executes its tests, isolated from the others")
+}
+
+func TestProbeArgs(t *testing.T) {
+	require.Equal(t,
+		[]string{"--info", "-Pci=true", ":app:test", "--tests", "ddtest.DdtestValidationTest", "--rerun-tasks", "--no-build-cache", "--continue", "--no-daemon", "-Dorg.gradle.configuration-cache=false"},
+		ProbeArgs(strings.Fields("--info -Pci=true build test --tests com.example.ApiTest -x test -x javadoc"), ":app", "ddtest.DdtestValidationTest"),
+		"only the probe's project test task runs, with the command's options")
+	require.Equal(t,
+		[]string{"-Pci=true", "--info", ":app:test", "--tests", "ddtest.DdtestValidationTest", "--rerun-tasks", "--no-build-cache", "--continue", "--no-daemon", "-Dorg.gradle.configuration-cache=false"},
+		ProbeArgs(strings.Fields("test --fail-fast --rerun -Pci=true integrationTest --debug-jvm --info"), ":app", "ddtest.DdtestValidationTest"),
+		"a task's own options stay with the tasks the probe does not run; Gradle's own options are kept wherever they were")
+	require.Equal(t, ":test", ProbeArgs(nil, ":", "ddtest.DdtestValidationTest")[0], "the root project's test task")
 }

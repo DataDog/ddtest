@@ -231,7 +231,7 @@ func (rubyLanguage) mergeCIRuntime(current, next *onboard.RuntimeCheck) *onboard
 func (rubyLanguage) labelsTracerWithoutSelection() bool { return true }
 
 // Reports are bound to the Ruby that runs the selected commands, not to Node.
-func (rubyLanguage) workflowRuntime(t *Testdrive) (string, error) {
+func (rubyLanguage) workflowRuntime(t *Testdrive, _ onboard.ValidationScope) (string, error) {
 	version := t.workflowRubyVersion()
 	if version == "" {
 		return "", errors.New("the Ruby runtime on PATH could not be inspected; restore the selected Ruby executable before validation")
@@ -275,7 +275,7 @@ func (rubyLanguage) packageExclusions(t *Testdrive, ctx context.Context) (onboar
 	return t.rubyPackageExclusions(ctx), true
 }
 
-func (rubyLanguage) initialization(string) string {
+func (rubyLanguage) initialization(string, string) string {
 	setup := "the Ruby CI action"
 	if name := onboard.CIProviderSetupName(); name != "" {
 		setup = "the " + name

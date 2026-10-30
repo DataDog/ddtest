@@ -687,29 +687,51 @@ Datadog backend processing remain untested.
 
 ## Java validation
 
-Java projects build with Maven. `ddtest onboard --framework junit5` lists the
-Maven CI test commands of the GitHub Actions workflows and prints their setup;
-select the framework the project uses (`junit4`, `junit5`, `testng`, `spock`,
-`cucumber-java`, `karate`, `scalatest` or `munit`). A repository that also
-contains a JavaScript, Python or Ruby project keeps that platform by default;
-select Java with `--platform java` or a Maven `--framework`.
+Java projects build with Maven or Gradle. `ddtest onboard --framework junit5`
+lists the Maven and Gradle CI test commands of the GitHub Actions workflows and
+prints their setup; select the framework the project uses (`junit4`, `junit5`,
+`testng`, `spock`, `cucumber-java`, `karate`, `scalatest` or `munit`). A
+repository with a `pom.xml` or Gradle settings or build files at its root is a
+Java repository; one that also contains a JavaScript, Python or Ruby project
+keeps that platform by default; select Java with `--platform java` or a JVM
+`--framework`.
 
-In a Maven repository, CI steps that run Gradle (`./gradlew test`, `gradle
-build`) are discovered too. ddtest reads the build's settings (and the scripts
-they apply), build files and default version catalog without running Gradle,
-including the test tasks and suites build files declare; a project list or test
-task that build logic computes, such as in buildSrc, leaves the step unresolved
-rather than guessed. It resolves each step to its test tasks, reports the other
-tasks and the projects of other frameworks, and checks that the Datadog action
-instruments Gradle: by default
-the action adds the agent to `GRADLE_OPTS`, so `java-instrumented-build-system:
-maven` or a step that replaces `GRADLE_OPTS` without `${{ env.GRADLE_OPTS }}`
-leaves it uninstrumented. Gradle configurations are not validated yet; testdrive
-reports them as not validated.
+For Gradle, ddtest reads the build's settings (and the scripts they apply),
+build files and default version catalog without running Gradle, including the
+test tasks and suites build files declare; a project list or test task that
+build logic computes, such as in buildSrc, leaves the step unresolved rather
+than guessed, except for tasks the build files declare with another type, such
+as a `JapicmpTask`, which never run tests. It resolves each CI step to its test
+tasks, reports the other tasks and the projects of other frameworks, and
+treats a job without the Datadog action whose commands only sign, download and
+publish, with Maven outside the test lifecycle or Gradle tasks that by
+convention run no tests, as outside validation, reported as a caveat even
+where secrets fill its commands. It checks that the Datadog action
+instruments Gradle: by default the action adds the agent to `GRADLE_OPTS`, so
+`java-instrumented-build-system: maven` or a step that replaces `GRADLE_OPTS`
+without `${{ env.GRADLE_OPTS }}` leaves it uninstrumented.
 
-Every Maven framework supports plain `ddtest testdrive --all --check-only --yes`
+Gradle builds are validated like Maven builds, with these differences. Every run
+adds `--rerun-tasks --no-build-cache --continue --no-daemon` and disables the
+configuration cache, so no test task is up to date or cached, a failing test task
+does not stop the others, and no daemon carries the agent from one run into
+another. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it,
+and an agent already in `JAVA_OPTS`, which the Gradle launcher also reads, is
+removed; native results come from each project's `build/test-results/<task>`
+JUnit XML, matched to the test task path dd-java-agent reports, such as
+`:app:test`. Validation runs only test tasks, conventional ones or `Test` tasks
+the build files declare: `--command` refuses other tasks, and an
+`org.gradle.jvmargs` that attaches dd-java-agent, on the command line or in the
+build's or the user home's `gradle.properties` (`-g` included), is refused like
+`.mvn/jvm.config`. The feature probe runs alone through its project's `test`
+task with `--tests`, for JUnit 4, JUnit 5, TestNG and Spock; for Cucumber JVM,
+Karate, ScalaTest and MUnit, Gradle builds report the features as not available
+yet.
+
+Every framework supports plain `ddtest testdrive --all --check-only --yes`
 and full `ddtest testdrive --all --yes` validation, or a focused
-`ddtest testdrive --framework junit5 --command './mvnw -B verify' --yes`. Each
+`ddtest testdrive --framework junit5 --command './mvnw -B verify' --yes` (or
+`--command './gradlew test'`). Each
 configuration runs in a disposable copy with fresh build output, without and with
 dd-java-agent. Native results (Surefire/Failsafe reports, the
 scalatest-maven-plugin's `target/scalatest-reports` and Karate's
@@ -751,8 +773,14 @@ are reported.
 
 Testdrive uses the dd-java-agent release every instrumented CI job pins
 (`--tracer-version` selects another), or `DD_TRACER_FOLDER`'s agent. A CI matrix
-row is compatible when this run validated its agent release on its JDK major;
-the JDK comes from `JAVA_HOME`, else the `java` on PATH. A row of another JDK
+row is compatible when this run validated its agent release on its JDK major.
+A reusable workflow's JDK, such as `${{ inputs.java-version }}`, is the literal
+input each caller in the repository passes, one row per distinct call. The
+local JDK comes from `JAVA_HOME`, else the `java` on PATH, unless a Gradle
+build selects its own with `org.gradle.java.home`, which also binds saved
+reports. JVMs the build selects for its tests, with a toolchain,
+`Test.javaLauncher` or daemon JVM criteria, are the same in CI; the row names
+those dd-java-agent reported running on. A row of another JDK
 major is validated on the local JDK as a substitute, recorded in
 `runtime_substitutions`, which completes only with `--accept-substitute-runtime`,
 a decision for the user, and is then reported as a caveat. Validate that JDK

@@ -22,12 +22,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Runs Maven and downloads dd-java-agent and Maven Central dependencies; no
-// real Datadog credentials are used.
+// Runs Maven and Gradle and downloads dd-java-agent and Maven Central
+// dependencies; no real Datadog credentials are used.
 // DDTEST_RUN_JAVA_INTEGRATION_TEST=1 go test ./internal/testdrive -run TestJavaValidationIntegration -v
 func TestJavaValidationIntegration(t *testing.T) {
 	if os.Getenv("DDTEST_RUN_JAVA_INTEGRATION_TEST") == "" {
-		t.Skip("set DDTEST_RUN_JAVA_INTEGRATION_TEST=1 with a JDK and mvn on PATH")
+		t.Skip("set DDTEST_RUN_JAVA_INTEGRATION_TEST=1 with a JDK, mvn and gradle on PATH")
 	}
 	tracer := cmp.Or(os.Getenv("DDTEST_JAVA_TRACER_VERSION"), "1.67.1")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
@@ -105,9 +105,9 @@ public class StepDefinitions {
 
 	// CI spreads the scenarios over shards (DDTEST_TEST_SHARD); weights are
 	// relative durations.
-	scenarios := []string{"junit5", "junit4", "testng", "spock", "cucumber junit4 runner", "cucumber java8 lambdas", "cucumber platform suite", "karate parallel runner", "karate junit5 runner", "scalatest", "scalatest junit runner", "munit",
+	scenarios := []string{"junit5", "junit4", "testng", "spock", "cucumber junit4 runner", "cucumber java8 lambdas", "cucumber platform suite", "karate parallel runner", "karate junit5 runner", "scalatest", "scalatest junit runner", "munit", "gradle junit5", "gradle junit4",
 		"no application coverage", "instrumentation-only failure", "incomplete reactor", "publishing goal", "agent workflow"}
-	weights := map[string]int{"junit5": 20, "scalatest": 6, "scalatest junit runner": 2, "munit": 6, "agent workflow": 16, "no application coverage": 6, "instrumentation-only failure": 6, "incomplete reactor": 2, "publishing goal": 1}
+	weights := map[string]int{"junit5": 20, "gradle junit5": 20, "gradle junit4": 8, "scalatest": 6, "scalatest junit runner": 2, "munit": 6, "agent workflow": 16, "no application coverage": 6, "instrumentation-only failure": 6, "incomplete reactor": 2, "publishing goal": 1}
 	selected := shard.SelectedIntegrationScenarios(t, scenarios, weights)
 	run := func(name string, test func(t *testing.T)) {
 		t.Helper()
@@ -252,6 +252,92 @@ class ExampleTest extends spock.lang.Specification {
 		require.Error(t, err, output)
 		require.Contains(t, output, "Compatibility (this invocation): suspected regression")
 		require.False(t, read(t, root).Success)
+	})
+
+	// Gradle builds run through the same paired validation; the fixtures use
+	// the gradle on PATH, as a CI job with gradle/actions/setup-gradle does.
+	gradleBuild := func(dependencies string) string {
+		return "plugins { id 'java' }\nrepositories { mavenCentral() }\ndependencies {\n" + dependencies + "}\ntest { useJUnitPlatform() }\n"
+	}
+	const gradleJupiter = "    testImplementation 'org.junit.jupiter:junit-jupiter:5.12.2'\n    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'\n"
+	gradleRun := func(t *testing.T, root, framework string) javaReport {
+		t.Helper()
+		output, err := testdrive(root, "--framework", framework)
+		require.NoError(t, err, output)
+		require.Contains(t, output, "Local validation: PASSED")
+		require.Contains(t, output, "Gradle project")
+		report := read(t, root)
+		require.True(t, report.Success)
+		require.Equal(t, "compatible", report.Compatibility.Status)
+		require.Len(t, report.Features, 6)
+		for _, feature := range report.Features {
+			require.Equal(t, "passed", feature.Status, feature.Name)
+		}
+		for _, run := range report.Runs[:2] {
+			require.Equal(t, 1, run.TestCounts.Failed, "matching existing failures are acceptable")
+			require.NotZero(t, run.ExitCode)
+		}
+		probes, err := filepath.Glob(filepath.Join(root, "*", "src/test/java/ddtest"))
+		require.NoError(t, err)
+		require.Empty(t, probes, "the probe stays in the disposable copy")
+		require.NoDirExists(t, filepath.Join(root, ".gradle"), "Gradle runs only in disposable copies")
+		return report
+	}
+
+	run("gradle junit5", func(t *testing.T) {
+		root := project(t, "gradle-junit5", map[string]string{
+			"settings.gradle":                     "rootProject.name = 'fixture'\ninclude 'app', 'lib'\n",
+			"app/build.gradle":                    gradleBuild(gradleJupiter),
+			"lib/build.gradle":                    gradleBuild(gradleJupiter),
+			"app/src/main/java/example/Calc.java": calc,
+			"app/src/test/java/example/AppTest.java": `package example;
+public class AppTest {
+    @org.junit.jupiter.api.Test void passes() { org.junit.jupiter.api.Assertions.assertEquals(4, Calc.add(2, 2)); }
+    @org.junit.jupiter.api.Test void existingFailure() { org.junit.jupiter.api.Assertions.assertEquals(5, Calc.add(2, 2), "customer expected failure"); }
+    @org.junit.jupiter.api.Test @org.junit.jupiter.api.Disabled("fixture") void ignored() {}
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2}) void positive(int value) { org.junit.jupiter.api.Assertions.assertTrue(value > 0); }
+}
+`,
+			"lib/src/test/java/example/LibTest.java": "package example;\npublic class LibTest {\n    @org.junit.jupiter.api.Test void works() { org.junit.jupiter.api.Assertions.assertTrue(true); }\n}\n",
+		})
+		gradleRun(t, root, "junit5")
+		require.NoDirExists(t, filepath.Join(root, "app", "build"))
+
+		// Onboarding starts from the CI workflow: --all validates the CI step's
+		// test tasks and certifies its row with the runner's JDK and agent pin.
+		pin := tracer
+		if pin == "latest" {
+			pin = "1.67.1"
+		}
+		workflow := "jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-java@v4\n        with: {distribution: temurin, java-version: '" + localJava(t) + "'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '" + pin + "'}\n      - run: gradle build jacocoTestReport\n"
+		integrationFile(t, root, ".github/workflows/test.yml", workflow)
+		integrationCommand(t, ctx, root, nil, "git", "add", "-A")
+		onboard := integrationCommand(t, ctx, root, nil, binary, "onboard", "--instructions", "--framework", "junit5")
+		require.Contains(t, onboard, "[.] gradle build", "the CI step is validated through its test tasks")
+		require.Contains(t, onboard, "also runs jacocoTestReport")
+		all := exec.CommandContext(ctx, binary, "testdrive", "--framework", "junit5", "--all", "--yes")
+		all.Dir = root
+		data, err := all.CombinedOutput()
+		require.NoError(t, err, string(data))
+		require.Contains(t, string(data), "Validation verdict: PASSED")
+		require.Contains(t, string(data), "dd-java-agent "+pin+" is validated on this host's Java")
+	})
+
+	run("gradle junit4", func(t *testing.T) {
+		root := project(t, "gradle-junit4", map[string]string{
+			"settings.gradle":                 "rootProject.name = 'fixture'\n",
+			"build.gradle":                    "plugins { id 'java' }\nrepositories { mavenCentral() }\ndependencies { testImplementation 'junit:junit:4.13.2' }\n",
+			"src/main/java/example/Calc.java": calc,
+			"src/test/java/example/ExampleTest.java": `package example;
+public class ExampleTest {
+    @org.junit.Test public void passes() { org.junit.Assert.assertEquals(4, Calc.add(2, 2)); }
+    @org.junit.Test public void existingFailure() { org.junit.Assert.assertEquals("customer expected failure", 5, Calc.add(2, 2)); }
+    @org.junit.Ignore("fixture") @org.junit.Test public void ignored() {}
+}
+`,
+		})
+		gradleRun(t, root, "junit4")
+		require.NoDirExists(t, filepath.Join(root, "build"), "the root project's build runs in the copy")
 	})
 
 	run("no application coverage", func(t *testing.T) {

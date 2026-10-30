@@ -282,7 +282,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if t.nodeVersion != nil {
 		runtimeVersion = t.workflowNodeVersion()
 	}
-	plan := &onboard.ExecutionPlan{SchemaVersion: 1, Fingerprint: fingerprint, Framework: name, Site: options.Site, Runtime: runtimeVersion, Initialization: workflowInitialization(name), Scope: scope}
+	plan := &onboard.ExecutionPlan{SchemaVersion: 1, Fingerprint: fingerprint, Framework: name, Site: options.Site, Runtime: runtimeVersion, Initialization: workflowInitialization(t.repositoryRoot, name), Scope: scope}
 	for _, policy := range featurePolicies(name) {
 		switch policy.Status {
 		case "required":
@@ -300,7 +300,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		plan.Site = "datadoghq.com"
 	}
 	plan.PackageManager = t.lang().packageManager(t.repositoryRoot)
-	languageRuntime, err := t.lang().workflowRuntime(t)
+	languageRuntime, err := t.lang().workflowRuntime(t, scope)
 	if err != nil {
 		return fail("blocked_environment", "runtime_unavailable", err.Error(), "Restore the runtime that runs the selected commands first on PATH, then rerun next_command. No tests ran.")
 	}

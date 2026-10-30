@@ -14,10 +14,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/gradle"
 	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/DataDog/ddtest/internal/settings"
 )
@@ -25,7 +27,8 @@ import (
 // javaAgentJAR is the file name of the Datadog Java agent in a tracer folder.
 const javaAgentJAR = "dd-java-agent.jar"
 
-// Java runs JVM test frameworks through Maven with the Datadog Java agent.
+// Java runs JVM test frameworks through Maven or Gradle with the Datadog Java
+// agent.
 type Java struct {
 	executor commandExecutor
 }
@@ -35,28 +38,56 @@ func NewJava() *Java { return &Java{executor: &ext.DefaultCommandExecutor{}} }
 func (j *Java) Name() string { return "java" }
 
 func (j *Java) Detect(repositoryRoot string) (bool, error) {
-	return detectAnyFile(repositoryRoot, "pom.xml")
+	return detectAnyFile(repositoryRoot, append(append([]string{"pom.xml"}, gradle.SettingsFiles...), gradle.BuildFiles...)...)
 }
 
 // Repositories that already contain another supported project keep that
-// project's platform; --platform java or a Maven --framework selects Java.
+// project's platform; --platform java or a JVM --framework selects Java.
 func (j *Java) fallback() bool { return true }
 
 func (j *Java) DetectFramework() (framework.Framework, error) {
 	hint := settings.GetFramework()
 	names := maven.FrameworkNames
 	if hint == "" {
+		var err error
+		if names, err = j.declaredFrameworks(); err != nil {
+			return nil, err
+		}
+	}
+	candidates := make([]framework.Framework, 0, len(names))
+	for _, name := range names {
+		candidates = append(candidates, framework.NewJVM(name, j))
+	}
+	return selectFramework(j.Name(), hint, candidates)
+}
+
+// declaredFrameworks are the frameworks the working directory's Maven
+// reactor and Gradle build declare, each read only when its files exist.
+func (j *Java) declaredFrameworks() ([]string, error) {
+	var names []string
+	if found, err := detectAnyFile(".", "pom.xml"); err != nil {
+		return nil, err
+	} else if found {
 		projects, err := maven.Projects(".")
 		if err != nil {
 			return nil, err
 		}
 		names = maven.Frameworks(projects)
 	}
-	candidates := make([]framework.Framework, 0, len(names))
-	for _, name := range names {
-		candidates = append(candidates, framework.NewMaven(name, j))
+	if found, err := detectAnyFile(".", append(slices.Clone(gradle.SettingsFiles), gradle.BuildFiles...)...); err != nil {
+		return nil, err
+	} else if found {
+		build, err := gradle.Build(".", ".")
+		if err != nil {
+			return nil, err
+		}
+		projects, err := gradle.Projects(".", build)
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, gradle.Frameworks(projects)...)
 	}
-	return selectFramework(j.Name(), hint, candidates)
+	return slices.Compact(slices.Sorted(slices.Values(names))), nil
 }
 
 func (j *Java) TestSkippingLevel() settings.TestSkippingLevel { return settings.TestSkippingLevelTest }
@@ -69,7 +100,7 @@ func (j *Java) SanityCheck(ctx context.Context) error {
 }
 
 func (j *Java) CreateTagsMap(context.Context) (map[string]string, error) {
-	return nil, framework.ErrMavenPlanRun
+	return nil, framework.ErrJVMPlanRun
 }
 
 func (j *Java) RunEnv(options framework.RuntimeOptions) (map[string]string, error) {

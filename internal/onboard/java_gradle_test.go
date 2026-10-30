@@ -6,6 +6,8 @@
 package onboard
 
 import (
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -163,4 +165,109 @@ func TestJavaGradleDefaultTasksOfTheRootBuild(t *testing.T) {
 	files["build.gradle.kts"] = "subprojects { defaultTasks(\"test\") }\n"
 	root := javaWorkflowFixture(t, "", files)
 	require.Contains(t, javaStep(t, root, "./gradlew -p app").Reason, "default tasks could not be read statically")
+}
+
+func TestJavaWrapperPermissionStepRunsNoTests(t *testing.T) {
+	for _, run := range []string{"chmod +x gradlew", "chmod +x ./mvnw", "chmod 755 gradlew && ls -l gradlew"} {
+		resolution := javaStep(t, javaWorkflowFixture(t, "", gradleFixture()), run)
+		require.False(t, resolution.Matched, run)
+		require.Empty(t, resolution.Reason, "making the wrapper executable runs no tests: %s", run)
+	}
+	require.Contains(t, javaStep(t, javaWorkflowFixture(t, "", gradleFixture()), "chmod +x gradlew && ./gradlew test").Reason, "single explicit command", "the build it prepares is still one test step")
+}
+
+func TestJavaGradleTasksDeclaredWithAnotherType(t *testing.T) {
+	files := gradleFixture()
+	files["app/build.gradle.kts"] += "for (version in listOf(11, 17)) { tasks.register(\"testOn$version\", Test) }\n"
+	files["lib/build.gradle"] += "task('apiDiff', type: JapicmpTask, dependsOn: 'jar') { }\n"
+	root := javaWorkflowFixture(t, "", files)
+	resolution := javaStep(t, root, "./gradlew assemble apiDiff check jacocoTestReport --continue")
+	require.True(t, resolution.Matched, "apiDiff is declared as a JapicmpTask, never a test task: %s", resolution.Reason)
+	require.Equal(t, "./gradlew check --continue", resolution.Tests[0].Command)
+	require.Contains(t, javaStep(t, root, "./gradlew verifyAll").Reason, "may be a test task declared by build logic ddtest does not read", "a computed Test task name may still be any undeclared task")
+	require.True(t, javaStep(t, root, "./gradlew publishToSonatype closeSonatypeStagingRepository").Review, "staging repository tasks publish")
+}
+
+func TestJavaGradleReadsFileProjectDirectories(t *testing.T) {
+	root := javaWorkflowFixture(t, "", map[string]string{
+		"settings.gradle":  "include ':java-jwt'\nproject(':java-jwt').projectDir = new File(rootProject.projectDir, '/lib')\n",
+		"gradlew":          "#!/bin/sh\n",
+		"lib/build.gradle": "dependencies { testImplementation 'junit:junit:4.13.2' }\n",
+	})
+	resolution := resolveJavaStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "./gradlew check"}, "junit4")
+	require.True(t, resolution.Matched, resolution.Reason)
+}
+
+// publishJob is a release job without the Datadog action, as jcommander's
+// Maven Central workflow: secrets fill its commands' values.
+const publishJob = `
+  publish:
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          cat <(echo -e "${{ secrets.GPG_SECRET_KEY }}") | gpg --batch --import
+          VERSION=$(head -1 .version)
+          curl -s "https://get.sdkman.io" | bash
+          source "/home/runner/.sdkman/bin/sdkman-init.sh"
+          sdk install java ${{ inputs.java-version }}
+      - run: |
+          ./gradlew --info -Psigning.password="$GPG_PASSPHRASE" -P signing.keyId=${{ secrets.GPG_KEY_ID }} publish closeSonatypeStagingRepository
+          curl -u ${{ secrets.SONATYPE_USER }}:${{ secrets.SONATYPE_PASSWORD }} -X POST https://example.com/upload
+`
+
+func TestJavaPublishJobWithoutTheActionIsOutsideValidation(t *testing.T) {
+	workflow := "jobs:\n  test:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '21'}\n      - run: ./gradlew test\n" + publishJob
+	root := javaWorkflowFixture(t, workflow, gradleFixture())
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved, "a job that only signs, downloads and publishes runs no tests")
+	require.Len(t, scope.Commands, 1)
+	require.Contains(t, strings.Join(scope.Caveats, "\n"), ".github/workflows/test.yml / publish: CI job without the Datadog setup that never runs junit5")
+	// The CI runtime check scopes the job as discovery does.
+	ci := JavaCIConfiguration(root, "junit5", "")
+	require.False(t, slices.ContainsFunc(ci.Jobs, func(job RuntimeFinding) bool { return job.Job == "publish" }), "no runtime finding for a job outside validation: %+v", ci.Jobs)
+	require.True(t, slices.ContainsFunc(ci.Review, func(job RuntimeFinding) bool {
+		return job.Job == "publish" && strings.Contains(job.Reason, "never runs junit5")
+	}))
+
+	// A step that may still run tests keeps the job's gaps in scope.
+	for _, step := range []string{
+		"./gradlew ${{ inputs.tasks }}",
+		"./gradlew publish test",
+		"mvn -B deploy",
+		"./ci/release.sh",
+		"cat ci/test.sh | bash",
+		"git submodule foreach './gradlew test'",
+		"git rebase --exec './gradlew test' HEAD~3",
+		"curl -s https://example.com/install | bash -c \"$(cat ci/test.sh)\"",
+		"source ci/env.sh",
+		"make release",
+		"${{ inputs.command }}",
+		"find . -name '*.sh' -exec sh {} +",
+	} {
+		job := strings.Replace(publishJob, "      - uses: actions/checkout@v4\n", "      - uses: actions/checkout@v4\n      - run: "+step+"\n", 1)
+		scope, err := DiscoverValidationScope(javaWorkflowFixture(t, "jobs:\n  test:\n    steps:\n      - run: ./gradlew test\n"+job, gradleFixture()), "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, "%s may run tests", step)
+	}
+	require.False(t, javaMayRunTests("git fetch --tags && git tag -l", false), "other git commands run nothing")
+
+	// Goals MAVEN_ARGS or .mvn/maven.config add may make a metadata command run tests.
+	metadata := strings.Replace(publishJob, "          VERSION=$(head -1 .version)\n", "          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)\n", 1)
+	maven := map[string]string{"pom.xml": javaJUnit5POM}
+	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, "jobs:\n  test:\n    steps:\n      - run: mvn verify\n"+metadata, maps.Clone(maven)), "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved, "help:evaluate reads the project")
+	for name, files := range map[string]map[string]string{
+		"MAVEN_ARGS":   maven,
+		"maven.config": {"pom.xml": javaJUnit5POM, ".mvn/maven.config": "verify\n"},
+	} {
+		job := metadata
+		if name == "MAVEN_ARGS" {
+			job = strings.Replace(metadata, "  publish:\n", "  publish:\n    env: {MAVEN_ARGS: test}\n", 1)
+		}
+		scope, err := DiscoverValidationScope(javaWorkflowFixture(t, "jobs:\n  test:\n    steps:\n      - run: mvn verify\n"+job, maps.Clone(files)), "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, "%s adds goals to the metadata command", name)
+	}
 }

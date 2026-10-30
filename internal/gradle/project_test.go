@@ -66,7 +66,7 @@ func TestProjectsRejectsProjectListsBuildLogicComputes(t *testing.T) {
 		`file("modules").listFiles().forEach { include(":${it.name}") }`,
 		`include(*modules.toTypedArray())`,
 		`include ":${name}"`,
-		`project(':a').projectDir = new File(settingsDir, 'a')` + "\ninclude ':a'\n",
+		`project(':a').projectDir = new File(parentDir, 'a')` + "\ninclude ':a'\n",
 		`includeFlat 'sibling'`,
 		"include ':module-' + System.getenv('MODULE')\n",
 		`include(":a" + suffix)`,
@@ -208,6 +208,56 @@ func TestDeclaredTestTasks(t *testing.T) {
 	writeFile(t, root, "app/build.gradle", "")
 	writeFile(t, root, "buildSrc/src/main/kotlin/conventions.gradle.kts", "")
 	require.True(t, DeclaredTestTasks(root, ".", projects).Unread, "convention plugins ddtest does not read may declare some")
+}
+
+func TestTasksDeclaredWithAnotherTypeRunNoTests(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "settings.gradle", "include 'lib'\n")
+	writeFile(t, root, "lib/build.gradle", `for (version in versions) {
+    tasks.register("testInJava-${version}", Test) { }
+}
+task('apiDiff', type: JapicmpTask, dependsOn: 'jar') { }
+task jmh(type: me.champeau.jmh.JMHTask) { }
+tasks.register('runJMH', JavaExec) { }
+tasks.register<Jar>("sourcesJar")
+tasks.register("slowTest", Test) { }
+tasks.register("ciTests") { dependsOn(test) }
+tasks.register<SmokeTest>("smoke")
+tasks.register('ci', com.example.CustomTest)
+`)
+	projects, err := Projects(root, ".")
+	require.NoError(t, err)
+	tasks := DeclaredTestTasks(root, ".", projects)
+	require.True(t, tasks.Unread, "a computed Test task name")
+	require.Equal(t, []string{"apiDiff", "jmh", "runJMH", "sourcesJar"}, tasks.Other)
+	for _, task := range []string{"apiDiff", ":lib:apiDiff", "jmh", "javadoc", "closeSonatypeStagingRepository"} {
+		require.True(t, tasks.NonTest(task), task)
+	}
+	for _, task := range []string{"slowTest", "ciTests", "testInJava-11", "check", "smoke", "ci"} {
+		require.False(t, tasks.NonTest(task), "%s may run tests", task)
+	}
+}
+
+func TestProjectsReadsFileProjectDirectories(t *testing.T) {
+	for _, tc := range []struct{ name, settings string }{
+		{"settings.gradle", "include ':java-jwt'\nproject(':java-jwt').projectDir = new File(rootProject.projectDir, '/lib')\n"},
+		{"settings.gradle", "include ':java-jwt'\nproject(':java-jwt').projectDir = new java.io.File(settingsDir, 'lib')\n"},
+		{"settings.gradle.kts", "include(\":java-jwt\")\nproject(\":java-jwt\").projectDir = File(rootDir, \"lib\")\n"},
+	} {
+		root := t.TempDir()
+		writeFile(t, root, tc.name, tc.settings)
+		writeFile(t, root, "lib/build.gradle", "dependencies { testImplementation 'junit:junit:4.13.2' }\n")
+		projects, err := Projects(root, ".")
+		require.NoError(t, err, tc.settings)
+		require.Len(t, projects, 2)
+		require.Equal(t, ":java-jwt", projects[1].Path)
+		require.Equal(t, "lib", projects[1].Directory, tc.settings)
+		require.Equal(t, []string{"junit4"}, Frameworks(projects))
+	}
+	root := t.TempDir()
+	writeFile(t, root, "settings.gradle", "include 'lib'\nproject(':lib').projectDir = new File(rootDir, '../shared/lib')\n")
+	_, err := Projects(root, ".")
+	require.Error(t, err, "a directory outside the build")
 }
 
 func TestProjectsRejectsComputedOrAbsoluteProjectDirectories(t *testing.T) {

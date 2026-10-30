@@ -31,6 +31,14 @@ var (
 	BuildFiles    = []string{"build.gradle", "build.gradle.kts"}
 )
 
+// Declared reports whether directory holds a Gradle settings or build file.
+func Declared(directory string) bool {
+	return slices.ContainsFunc(append(slices.Clone(SettingsFiles), BuildFiles...), func(name string) bool {
+		info, err := os.Stat(filepath.Join(directory, name))
+		return err == nil && info.Mode().IsRegular()
+	})
+}
+
 // Project is one project of a Gradle build, read as written: plugins,
 // convention plugins and other build logic are not evaluated, so dependencies
 // they add are not seen.
@@ -194,6 +202,53 @@ var testTaskNames = []*regexp.Regexp{
 	regexp.MustCompile(`\b(\w+)\s*\(\s*JvmTestSuite\s*\)`),
 }
 
+// typedTasks capture the name and type of a task a build file declares with a
+// literal name and type: task('apiDiff', type: JapicmpTask), task
+// apiDiff(type: JapicmpTask), tasks.register("apiDiff", JapicmpTask) or
+// tasks.register<JapicmpTask>("apiDiff"). The name is group 1 and the type
+// group 2, except in the last, where they are swapped.
+var typedTasks = []*regexp.Regexp{
+	regexp.MustCompile(`\btask\s*\(\s*["'](\w+)["']\s*,\s*type\s*:\s*([\w.]+)`),
+	regexp.MustCompile(`\btask\s+(\w+)\s*\(\s*type\s*:\s*([\w.]+)`),
+	regexp.MustCompile(`(?:register|create|maybeCreate)\s*\(\s*["'](\w+)["']\s*,\s*([\w.]+?)(?:::class(?:\.java)?)?\s*[,){]`),
+}
+
+var typedTaskGeneric = regexp.MustCompile(`(?:register|create|maybeCreate)\s*<\s*([\w.]+)\s*>\s*\(\s*["'](\w+)["']`)
+
+// nonTestTaskTypes are task types that run no tests: Gradle's own archive,
+// copy, compile, documentation, analysis, publishing and execution types, and
+// those of common plugins. Any other type, such as one buildSrc declares, may
+// extend Test.
+var nonTestTaskTypes = []string{
+	"Jar", "Zip", "Tar", "War", "Ear", "Copy", "Sync", "Delete", "Exec", "JavaExec", "Javadoc", "Groovydoc", "ScalaDoc",
+	"JavaCompile", "GroovyCompile", "ScalaCompile", "AntlrTask", "ProcessResources", "WriteProperties", "Wrapper",
+	"Checkstyle", "Pmd", "CodeNarc", "JacocoReport", "JacocoCoverageVerification", "Sign",
+	"GenerateMavenPom", "GenerateModuleMetadata", "PublishToMavenRepository", "PublishToMavenLocal",
+	"JapicmpTask", "ShadowJar", "BootJar", "BootWar", "BootRun", "BootBuildImage", "SpotBugsTask", "DokkaTask", "JMHTask",
+}
+
+// otherTypedTasks returns the tasks a build file's source declares with a
+// literal name and one of nonTestTaskTypes. Such a task is never a test task,
+// whatever other declarations compute.
+func otherTypedTasks(source string) []string {
+	var names []string
+	add := func(name, kind string) {
+		kind = kind[strings.LastIndex(kind, ".")+1:]
+		if slices.Contains(nonTestTaskTypes, kind) && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	for _, pattern := range typedTasks {
+		for _, match := range pattern.FindAllStringSubmatch(source, -1) {
+			add(match[1], match[2])
+		}
+	}
+	for _, match := range typedTaskGeneric.FindAllStringSubmatch(source, -1) {
+		add(match[2], match[1])
+	}
+	return names
+}
+
 // declaredTestTasks returns the test task names a build file's source declares
 // literally, and whether it has a declaration whose name is computed.
 func declaredTestTasks(source string) (names []string, computed bool) {
@@ -222,11 +277,24 @@ func declaredTestTasks(source string) (names []string, computed bool) {
 type TestTasks struct {
 	Declared []string
 	Unread   bool
+	// Other are tasks the build declares with a type that runs no tests, such
+	// as a JapicmpTask apiDiff.
+	Other []string
 }
 
 // Runs reports whether a task runs tests: TestTask, or a declared test task.
 func (t TestTasks) Runs(task string) bool {
 	return TestTask(task) || slices.Contains(t.Declared, taskName(task))
+}
+
+// NonTest reports whether a task runs no tests: NonTestTask, or a task the
+// build declares with a type that runs none, unless it also declares a test
+// task of that name.
+func (t TestTasks) NonTest(task string) bool {
+	if t.Runs(task) {
+		return false
+	}
+	return NonTestTask(task) || slices.Contains(t.Other, taskName(task))
 }
 
 // Others reports whether the build may have test tasks besides test, which a
@@ -253,15 +321,22 @@ func DeclaredTestTasks(root, build string, projects []Project) TestTasks {
 			tasks.Unread = true
 			continue
 		}
-		names, computed := declaredTestTasks(stripComments(string(data)))
+		source := stripComments(string(data))
+		names, computed := declaredTestTasks(source)
 		tasks.Unread = tasks.Unread || computed
 		for _, name := range names {
 			if !slices.Contains(tasks.Declared, name) {
 				tasks.Declared = append(tasks.Declared, name)
 			}
 		}
+		for _, name := range otherTypedTasks(source) {
+			if !slices.Contains(tasks.Other, name) {
+				tasks.Other = append(tasks.Other, name)
+			}
+		}
 	}
 	slices.Sort(tasks.Declared)
+	slices.Sort(tasks.Other)
 	return tasks
 }
 
@@ -343,9 +418,12 @@ var (
 	// A quoted project path; only horizontal space after it, so that the end
 	// of an unparenthesized statement stays visible.
 	quoted = regexp.MustCompile(`^\s*(?:"([^"$]*)"|'([^']*)')[ \t]*`)
-	// project(":a").projectDir = file("dir"), in either quote style.
-	projectDirectory = regexp.MustCompile(`project\(\s*["']([^"']+)["']\s*\)\.projectDir\s*=\s*file\(\s*["']([^"'$]+)["']\s*\)`)
-	otherInclusion   = regexp.MustCompile(`\b(?:includeFlat|projectDir\s*=)`)
+	// project(":a").projectDir = file("dir"), or a File of the build's root
+	// directory and "dir", as new File(rootProject.projectDir, "dir") or
+	// Kotlin's File(rootDir, "dir"), in either quote style.
+	projectDirectory = regexp.MustCompile(`project\(\s*["']([^"']+)["']\s*\)\.projectDir\s*=\s*` +
+		`(?:file\(\s*["']([^"'$]+)["']\s*\)|(?:new\s+)?(?:java\.io\.)?File\(\s*(?:rootProject\.projectDir|rootProject\.rootDir|rootDir|settingsDir)\s*,\s*["']([^"'$]+)["']\s*\))`)
+	otherInclusion = regexp.MustCompile(`\b(?:includeFlat|projectDir\s*=)`)
 	// apply from: 'projects.gradle' or apply(from = "projects.gradle.kts")
 	// runs another script, which may include projects; buildFileName renames
 	// a project's build file.
@@ -405,17 +483,24 @@ func settingsProjects(settings string) ([]string, map[string]string, error) {
 			return nil, nil, fmt.Errorf("settings include more than %d projects", maxProjects)
 		}
 	}
-	for _, index := range projectDirectory.FindAllStringSubmatchIndex(settings, -1) {
-		match := []string{settings[index[0]:index[1]], settings[index[2]:index[3]], settings[index[4]:index[5]]}
-		// The assignment must end with file(...), as in file("modules").resolve("app") it does not.
-		if rest := strings.TrimLeft(settings[index[1]:], " \t"); rest != "" && !strings.ContainsAny(rest[:1], "\r\n;}") {
+	for _, match := range projectDirectory.FindAllStringSubmatchIndex(settings, -1) {
+		// The assignment must end with the directory, as in
+		// file("modules").resolve("app") it does not.
+		if rest := strings.TrimLeft(settings[match[1]:], " \t"); rest != "" && !strings.ContainsAny(rest[:1], "\r\n;}") {
 			return nil, nil, fmt.Errorf("project directories that build logic computes")
 		}
-		path := ":" + strings.TrimPrefix(match[1], ":")
+		path := ":" + strings.TrimPrefix(settings[match[2]:match[3]], ":")
 		if _, known := directories[path]; !known {
 			return nil, nil, fmt.Errorf("projectDir is set for %s, which settings do not include", path)
 		}
-		directories[path] = filepath.Clean(match[2])
+		// File(parent, child) resolves a child that starts with / under parent.
+		directory := ""
+		if match[4] >= 0 {
+			directory = settings[match[4]:match[5]]
+		} else {
+			directory = strings.TrimLeft(settings[match[6]:match[7]], "/")
+		}
+		directories[path] = filepath.Clean(directory)
 	}
 	if remaining := projectDirectory.ReplaceAllString(settings, ""); otherInclusion.MatchString(remaining) {
 		return nil, nil, fmt.Errorf("project directories that build logic computes")
