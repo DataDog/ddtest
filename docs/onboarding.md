@@ -532,7 +532,11 @@ branch, a stage whose `when` ddtest cannot decide, a `switch` case) is unknown
 after them, and a step that reads it is unresolved. An environment variable
 whose name ddtest cannot tell (`env[name] =`) makes the build's environment
 unknown, so every `sh` after it is unresolved. `environment` (pipeline and stage, in any
-order; `credentials()` and computed values are unknown), `withEnv` with a literal
+order; `credentials()` and computed values are unknown; what a value runs,
+such as `X = sh(script: 'git show …', returnStdout: true).trim()` or an `sh`
+in its GString, is read like any expression's, at the point Jenkins runs it:
+before a stage's steps, in its job, and for the pipeline, a stage of stages or
+a matrix cell, in a job of its own, `environment` or `<stage> (environment)`), `withEnv` with a literal
 list, `withCredentials` (its variables are unknown), `dir` with a literal path
 inside the checkout, `when { expression { false } }` or `return false` (the
 stage never runs; any other `when` is a possible path), `post` conditions that

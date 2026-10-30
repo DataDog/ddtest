@@ -124,7 +124,8 @@ func TestJenkinsDeclarativeStages(t *testing.T) {
     }
   }
 }`)
-	require.Equal(t, []string{"Checks / Lint", "Checks / Unit", "Install", "Maybe", "Nested / Inner", "Never"}, slices.Sorted(maps.Keys(jobs)))
+	require.Equal(t, []string{"Checks / Lint", "Checks / Unit", "Install", "Maybe", "Nested / Inner", "Never", "environment"}, slices.Sorted(maps.Keys(jobs)))
+	require.Equal(t, []string{"git rev-parse HEAD"}, jenkinsRuns(jobs["environment"]), "Jenkins runs the environment's sh on the pipeline's agent before the stages")
 	unit := jobs["Checks / Unit"]
 	require.Equal(t, "the Jenkins agents labeled \"linux\"", unit.Host)
 	require.Equal(t, "true", unit.Env["CI"])
@@ -1479,4 +1480,106 @@ func TestJenkinsStepsInExpressions(t *testing.T) {
 	require.Contains(t, opaque[2], "the Groovy expression /${sh(script: 'npm test', returnStdout: true)}/ is not one ddtest can read, and it calls sh")
 	require.Contains(t, opaque[3], "the Groovy expression a; sh('npm test') is not one ddtest can read, and it calls sh")
 	require.NotContains(t, jobs, "Values", "constructors and value methods run no step")
+}
+
+// Jenkins runs what an environment value calls when it enters the scope,
+// before the scope's steps: a command there is a step of the scope's job,
+// classified as any other, and the variable it sets is unknown.
+func TestJenkinsEnvironmentValuesRunSteps(t *testing.T) {
+	jobs := jenkinsJobs(t, `def suite() { return sh(script: 'npm test', returnStdout: true) }
+pipeline {
+  agent { label 'linux' }
+  environment {
+    TOKEN = credentials('npm-token')
+    AUTHOR = sh(returnStdout: true, script: 'git show -s --pretty=%an').trim()
+    HASH = """${sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()}"""
+    MODE = 'ci'
+  }
+  stages {
+    stage('Unit') {
+      environment {
+        VERSION = sh(script: "node -p -e \"require('./package.json').version\"", returnStdout: true).trim()
+        OUTPUT = suite()
+        LIBRARY = libraryValue()
+      }
+      steps { sh 'npm run unit' }
+    }
+    stage('Group') {
+      environment { RECIPIENTS = "${sh(returnStdout: true, script: 'echo $DEFAULT_RECIPIENTS').trim()}" }
+      stages { stage('Inner') { steps { sh 'npm run inner' } } }
+    }
+    stage('Matrix') {
+      matrix {
+        axes { axis { name 'NODE'; values '20', '22' } }
+        environment { LABEL = sh(script: "echo node-$NODE", returnStdout: true) }
+        stages { stage('Cell') { steps { sh 'npm run cell' } } }
+      }
+    }
+  }
+}`)
+	require.Equal(t, []string{"Group (environment)", "Group / Inner", "Matrix (20) (environment)", "Matrix (22) (environment)", "Matrix / Cell (20)", "Matrix / Cell (22)", "Unit", "environment"}, slices.Sorted(maps.Keys(jobs)))
+	require.Equal(t, []string{"git show -s --pretty=%an", "git rev-parse --short HEAD"}, jenkinsRuns(jobs["environment"]), "the pipeline's environment runs once, on its agent, before the stages")
+	require.Equal(t, "the Jenkins agents labeled \"linux\"", jobs["environment"].Host)
+	unit := jenkinsRuns(jobs["Unit"])
+	require.Len(t, unit, 4)
+	require.Equal(t, `node -p -e "require('./package.json').version"`, unit[0], "the stage's environment runs before its steps")
+	require.Contains(t, unit[1], "it calls suite(), a Groovy function of the Jenkinsfile", "a Jenkinsfile function in a value is reported as in a step")
+	require.Contains(t, unit[2], "it calls libraryValue, which is not a Pipeline step ddtest knows")
+	require.Equal(t, "npm run unit", unit[3])
+	require.Equal(t, []string{"echo $DEFAULT_RECIPIENTS"}, jenkinsRuns(jobs["Group (environment)"]))
+	require.Equal(t, []string{"npm run inner"}, jenkinsRuns(jobs["Group / Inner"]))
+	require.Equal(t, []string{"echo node-20"}, jenkinsRuns(jobs["Matrix (20) (environment)"]))
+	require.Equal(t, "${{ secrets.TOKEN }}", jobs["Unit"].Env["TOKEN"], "a credential is still a secret only the build has")
+	for _, key := range []string{"AUTHOR", "HASH", "VERSION", "OUTPUT"} {
+		require.Error(t, unresolvedCIError(jobs["Unit"].Env[key]), key)
+	}
+	require.Equal(t, "ci", jobs["Unit"].Env["MODE"])
+
+	// Commands that run no tests stay outside validation, as reviews: the
+	// test job is the only one whose runtime the user states. A test
+	// command there is validated.
+	root := jenkinsRepository(t, "pipeline {\n  agent { label 'linux' }\n"+jenkinsDatadogOption+`  environment {
+    AUTHOR = sh(returnStdout: true, script: 'git show -s --pretty=%an').trim()
+  }
+  stages {
+    stage('Version') {
+      environment { VERSION = sh(script: "node -p -e \"require('./package.json').version\"", returnStdout: true).trim() }
+      steps { echo 'version' }
+    }
+    stage('Test') { steps { sh 'npm test' } }
+  }
+}
+`)
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, []string{"Jenkinsfile / Test / step 2 (npm test)"}, scope.Commands[0].Locations)
+	for _, unresolved := range scope.Unresolved {
+		require.True(t, strings.HasPrefix(unresolved, "Jenkinsfile / Test / "), "only the test job's own variable needs review: %s", unresolved)
+	}
+	review := strings.Join(scope.Review, "\n")
+	require.Contains(t, review, "Not a jest test consumer: Jenkinsfile / environment / step 2 (git show -s --pretty=%an)")
+	require.Contains(t, review, "Not a jest test consumer: Jenkinsfile / Version / step 2 (node -p -e")
+	required := RequiredCIRuntimes(t.Context(), root, "javascript", "jest")
+	require.NotNil(t, required)
+	require.Equal(t, []string{"Jenkinsfile / Test"}, required.Jobs)
+
+	for _, environment := range []string{"\n  environment { OUTPUT = sh(script: 'npm test', returnStdout: true) }\n  stages {\n    stage('Test') {\n", "\n  stages {\n    stage('Test') {\n      environment { OUTPUT = sh(script: 'npm test', returnStdout: true) }\n"} {
+		source := "pipeline {\n  agent { label 'linux' }\n" + jenkinsDatadogOption + environment + "      steps { echo 'done' }\n    }\n  }\n}\n"
+		writeFile(t, root, "Jenkinsfile", source)
+		scope, err = DiscoverValidationScope(root, "jest")
+		require.NoError(t, err)
+		require.Len(t, scope.Commands, 1)
+		require.Equal(t, "jest", scope.Commands[0].Command)
+		tests := 0
+		for _, job := range jenkinsJobs(t, source) {
+			for _, step := range job.Steps {
+				if step.Run == "npm test" {
+					tests++
+					require.NotEmpty(t, step.Env["NODE_OPTIONS"], "the plugin's variables reach the environment's steps")
+				}
+			}
+		}
+		require.Equal(t, 1, tests)
+	}
 }
