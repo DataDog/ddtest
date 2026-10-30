@@ -178,8 +178,8 @@ func (pythonLanguage) standaloneReport(root string, validation *validationResult
 		validation = validation.Retained.Result
 	}
 	result := onboard.AgentResult{Status: "historical_report", Phase: "report", Code: "freshness_unverified",
-		Reason:     "Saved pytest evidence is historical. Source, dependencies and the Python runtime have not been revalidated; rerun testdrive before claiming current success.",
-		NextAction: "run_command", NextCommand: onboard.DDTestCommand("testdrive", "--framework", "pytest", "--yes"), JSONReport: validationPath(root),
+		Reason:     "Saved pytest evidence is historical. Source, dependencies and the Python runtime have not been revalidated; rerun the original testdrive invocation with the same command, environment and validation options before claiming current success.",
+		NextAction: "report_result", JSONReport: validationPath(root),
 		FinalResponse: fmt.Sprintf("Historical pytest evidence: saved execution %s; %d recorded runs. No tests or configuration checks were rerun.", executionStatus(validation), len(validation.Runs))}
 	if info, err := os.Stat(htmlReportPath(root)); validation.HTMLReportCurrent && err == nil && info.Mode().IsRegular() {
 		result.HTMLReport = htmlReportPath(root)

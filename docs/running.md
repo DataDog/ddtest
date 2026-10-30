@@ -710,7 +710,8 @@ the baseline and is advisory only for a standalone command.
 
 `ddtest testdrive --report` reads saved pytest evidence without executing Python
 or changing reports. It returns `historical_report` with `freshness_unverified`;
-source, dependencies and runtime have not been revalidated. Rerun full testdrive
+source, dependencies and runtime have not been revalidated. Rerun the original
+testdrive invocation with the same command, environment and validation options
 before claiming current success.
 
 ### Vitest testdrive validation

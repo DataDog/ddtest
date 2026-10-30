@@ -80,6 +80,7 @@ func TestPythonReportsExposeHistoricalEvidence(t *testing.T) {
 			require.NoError(t, json.Unmarshal(output.Bytes(), &result))
 			require.Equal(t, "historical_report", result.Status)
 			require.Equal(t, "freshness_unverified", result.Code)
+			require.Empty(t, result.NextCommand, "missing command metadata must not fall back to a default test selection")
 			require.NotContains(t, output.String(), "INCOMPLETE")
 		})
 	}

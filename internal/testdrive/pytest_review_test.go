@@ -67,6 +67,8 @@ func TestPytestReportsAreReadOnlyHistoricalEvidence(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)
 			validation := completeValidationFixture("pytest")
+			validation.Preflight.Command = "uv run --no-sync pytest tests/unit"
+			validation.CommandEnvironment = map[string]string{"PYTEST_ADDOPTS": "-k selected"}
 			root = workspace.CanonicalRoot(root)
 			validation.Success, validation.LocalSuccess = true, true
 			if checkOnly {
@@ -90,7 +92,9 @@ func TestPytestReportsAreReadOnlyHistoricalEvidence(t *testing.T) {
 					require.NoError(t, json.Unmarshal(output.Bytes(), &result))
 					require.Equal(t, "historical_report", result.Status)
 					require.Equal(t, "freshness_unverified", result.Code)
-					require.Equal(t, "run_command", result.NextAction)
+					require.Equal(t, "report_result", result.NextAction)
+					require.Empty(t, result.NextCommand, "saved execution metadata is not a complete rerun invocation")
+					require.Contains(t, result.Reason, "original testdrive invocation")
 				}
 			}
 			after, err := os.ReadFile(validationPath(root))
