@@ -26,14 +26,18 @@ func TestRebasePytestPathsPreservesExpressionsAndNodeSelectors(t *testing.T) {
 	requireWriteFile(t, config, "")
 	outside := filepath.Join(t.TempDir(), "outside.py")
 	output := filepath.Join(root, "new-report.xml")
-	args := []string{"-k", file, "-o", "addopts=" + config, "-c", config, "--config-file=" + config, "-c" + config, "--junitxml=" + output, "--", file + "::test_app[a/b]", outside}
+	args := []string{"-k", file, "-o", "addopts=" + config, "-c", config, "--config-file=" + config, "-c" + config, "-c=" + config, "--junitxml=" + output, "--", file + "::test_app[a/b]", outside}
 	wantFile, wantConfig := filepath.Join(copied, "test_app.py"), filepath.Join(copied, "pytest.ini")
-	want := []string{"-k", file, "-o", "addopts=" + config, "-c", wantConfig, "--config-file=" + wantConfig, "-c" + wantConfig, "--junitxml=" + filepath.Join(copied, "new-report.xml"), "--", wantFile + "::test_app[a/b]", outside}
+	want := []string{"-k", file, "-o", "addopts=" + config, "-c", wantConfig, "--config-file=" + wantConfig, "-c" + wantConfig, "-c" + wantConfig, "--junitxml=" + filepath.Join(copied, "new-report.xml"), "--", wantFile + "::test_app[a/b]", outside}
 	require.Equal(t, want, rebasePytestPaths(args, root, copied))
 }
 
 func TestPytestAbsolutePathsExecuteOnlyInsideCopy(t *testing.T) {
 	testPytestPathsExecuteOnlyInsideCopy(t, "direct")
+}
+
+func TestPytestEqualsConfigPathExecutesOnlyInsideCopy(t *testing.T) {
+	testPytestPathsExecuteOnlyInsideCopy(t, "equals config")
 }
 
 func TestPytestArgumentFilesExecuteOnlyInsideCopy(t *testing.T) {
@@ -110,7 +114,9 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	addopts := "--rootdir=" + root
 	environment := map[string]string{}
 	configuration, configuredContents := "", ""
-	if mode == "environment separator" || mode == "config separator" {
+	if mode == "equals config" {
+		args = []string{"-m", "pytest", "-c=" + filepath.Join(root, "pytest.ini"), file + "::test_app"}
+	} else if mode == "environment separator" || mode == "config separator" {
 		args = []string{"-m", "pytest"}
 		if mode == "environment separator" {
 			addopts = "-- " + file + "::test_app"

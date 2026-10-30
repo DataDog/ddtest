@@ -236,7 +236,7 @@ func rebasePytestPaths(args []string, original, copied string) []string {
 			if equal && slices.Contains([]string{"--config-file", "--rootdir", "--confcutdir", "--basetemp", "--ignore", "--ignore-glob", "--deselect", "--junitxml", "--junit-xml"}, option) {
 				args[i] = option + "=" + rebase(value)
 			} else if strings.HasPrefix(arg, "-c") && arg != "-c" {
-				args[i] = "-c" + rebase(strings.TrimPrefix(arg, "-c"))
+				args[i] = "-c" + rebase(strings.TrimPrefix(strings.TrimPrefix(arg, "-c"), "="))
 			}
 			continue
 		}
