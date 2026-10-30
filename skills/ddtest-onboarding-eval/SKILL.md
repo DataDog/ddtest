@@ -28,7 +28,9 @@ the container.
 For pytest trials, use `--framework pytest --python /absolute/image/path/to/python`
 with a trusted image containing Python and venv support. The runner creates a
 private environment before dependency setup, preserves it for the agent, and
-checks the final report's Python version. Prepare the project's test dependencies;
+checks the final report's Python version, interpreter location and environment
+prefix. Current execution with missing or different environment evidence fails
+the trial. Prepare the project's test dependencies;
 editable installs of the tested checkout block testdrive isolation. Use
 checkout-local `PYTHONPATH` or pytest `pythonpath` imports instead.
 

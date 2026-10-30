@@ -52,7 +52,8 @@ class ProductContractTests(unittest.TestCase):
                 runtime=run_eval.report_runtime(report,'24.19.0')
                 self.assertEqual(runtime['status'],'matched',runtime)
                 if report['framework']=='pytest':
-                    self.assertEqual(run_eval.report_preflight_runtime(report,'3.12.8')['status'],'matched')
+                    selected={'version':'3.12.8','executable':'/trial/venv/bin/python','prefix':'/trial/venv'}
+                    self.assertEqual(run_eval.report_python_runtime(report,selected)['status'],'matched')
                 self.assertEqual(run_eval.reporting_verdict(summary['final_response']+'\nOnboarding is complete.',report)['status'],'fail')
                 for claim in ('Blockers: none','Onboarding successfully completed.','Status: COMPLETE LOCALLY'):
                     expected='pass' if claim=='Blockers: none' and not summary['blocking_checks'] else 'fail'

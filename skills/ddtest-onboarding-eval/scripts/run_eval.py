@@ -9,8 +9,9 @@ import hashlib
 import math
 import json
 import os
+import posixpath
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shlex
 import shutil
 import selectors
@@ -374,6 +375,30 @@ def report_preflight_runtime(report, requested):
         if isinstance(preflight, dict) and isinstance(preflight.get("runtime"), str) and preflight.get("runtime")})
     return {"requested_version": requested, "observed_versions": observed,
             "status": "not observed" if not observed else "matched" if observed == [requested] else "mismatch"}
+
+
+def report_python_runtime(report, requested):
+    audit = report_preflight_runtime(report, requested["version"])
+    environments = [{"executable": preflight.get("executable"), "prefix": preflight.get("prefix")}
+        for preflight in [report.get("preflight"),
+            *[configuration.get("preflight") for configuration in report.get("configurations") or []]]
+        if isinstance(preflight, dict) and any(preflight.get(key) for key in ("runtime", "executable", "prefix"))]
+    audit.update(requested_executable=requested["executable"], requested_prefix=requested["prefix"],
+                 observed_environments=environments)
+    if audit["status"] == "matched":
+        if not environments or any(not isinstance(item[key], str) or not item[key]
+                                   for item in environments for key in ("executable", "prefix")):
+            audit["status"] = "not observed"
+        else:
+            # Venv interpreters commonly symlink to the base interpreter. Compare
+            # container paths lexically, allowing python/python3 in the same bin.
+            executable = PurePosixPath(posixpath.normpath(requested["executable"]))
+            prefix = PurePosixPath(posixpath.normpath(requested["prefix"]))
+            if any(PurePosixPath(posixpath.normpath(item["prefix"])) != prefix or
+                   PurePosixPath(posixpath.normpath(item["executable"])).parent != executable.parent
+                   for item in environments):
+                audit["status"] = "mismatch"
+    return audit
 
 
 def agent_command(agent, model):
@@ -852,7 +877,9 @@ def run(args):
             for language, name in (("ruby", "Ruby"), ("java", "Java"), ("python", "Python")):
                 if language+"_runtime" not in manifest:
                     continue
-                runtime_audit = report_preflight_runtime(report, manifest[language+"_runtime"]["version"])
+                selected_runtime = manifest[language+"_runtime"]
+                runtime_audit = (report_python_runtime(report, selected_runtime) if language == "python" else
+                                 report_preflight_runtime(report, selected_runtime["version"]))
                 manifest["ddtest_"+language+"_runtime"] = runtime_audit
                 missing_python_runtime = (
                     language == "python" and runtime_audit["status"] == "not observed"
@@ -861,7 +888,7 @@ def run(args):
                 if runtime_audit["status"] == "mismatch" or missing_python_runtime:
                     manifest["status"], manifest["failure_kind"] = "failed", "evaluator_environment"
                     manifest["failure_stage"] = "ddtest_"+language+"_runtime"
-                    manifest["error"] = ("Final ddtest Python runtime is missing from current execution evidence"
+                    manifest["error"] = ("Final ddtest Python runtime identity is missing from current execution evidence"
                                          if missing_python_runtime else
                                          "Final ddtest "+name+" runtime differs from the selected image runtime")
                     manifest["retry_recommended"] = False
