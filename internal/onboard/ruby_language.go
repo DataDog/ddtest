@@ -53,10 +53,10 @@ func (rubyDiscovery) coordinated() bool { return true }
 func (rubyDiscovery) automaticCISetup() bool { return false }
 
 // Ruby setup uses the Datadog GitHub Actions setup action, the Datadog
-// GitLab setup script, the Datadog CircleCI orb or, on Buildkite, the Datadog
-// installer.
+// GitLab setup script, the Datadog CircleCI orb, on Buildkite the Datadog
+// installer, or the Datadog Jenkins plugin.
 func (rubyDiscovery) supportsCIProvider(provider string) bool {
-	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider
+	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider || provider == jenkinsProvider
 }
 
 // The installer adds datadog-ci to the bundle and replaces RUBYOPT with its
@@ -200,6 +200,9 @@ func (rubyDiscovery) jobConsumer(string, ciWorkflow, runtimeJob, string) (bool, 
 const rubyBootstrap = "The action installs datadog-ci into the CI bundle and exports RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument. Preserve RUBYOPT on the RSpec or Minitest step and merge any existing Ruby options. Keep the existing bundle exec or binstub entry point."
 
 func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
+	if terms.Plugin {
+		return rubyPluginSetupRequest(root, framework, site, terms)
+	}
 	request := ciSetupRequest{Language: "ruby", Site: site, TracerInput: "ruby-tracer-version", TracerVersion: "<exact datadog-ci release>"}
 	request.Notes = []string{
 		"Replace <exact datadog-ci release> with an exact datadog-ci release compatible with every instrumented Ruby, such as 1.42.0; when the bundle already locks datadog-ci, use that release. Keep the existing Gemfile, lockfile, Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments: the " + terms.Installer + " adds datadog-ci to the CI bundle itself, so do not edit the Gemfile. In a mixed RSpec/Minitest repository, scope this change to " + framework + ".",
@@ -208,6 +211,31 @@ func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 		rubyRakeOptionsNote(root),
 		setupImageNote(root, "ruby", framework),
 		"If a job or matrix entry runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), keep its tests running uninstrumented in a job without " + terms.Entry + "; ddtest reports such jobs as excluded. To split a shared matrix, exclude those entries from the instrumented job " + terms.MatrixExclusion + " and run them in that separate job. Report each exclusion and its reason; do not drop entries, guard the tests or change Ruby versions to obtain a pass. At least one compatible instrumented job is required.",
+		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
+	}
+	request.Notes = slices.DeleteFunc(request.Notes, func(note string) bool { return note == "" })
+	if framework == "minitest" {
+		request.Notes = append(request.Notes, rubyShellForkSetup(terms))
+	}
+	return request
+}
+
+// rubyPluginSetupRequest is the Ruby part of a CI server plugin's setup: the
+// plugin uses the datadog-ci the root bundle pins, so the bundle pins it.
+func rubyPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
+	request := ciSetupRequest{Language: "ruby", Site: site}
+	pin := "Pin datadog-ci in the bundle: add gem \"datadog-ci\", \"<exact datadog-ci release>\", group: :test to the Gemfile at the checkout root (in a group the tests load; keep every other line) and run bundle lock, so Gemfile.lock pins it, then commit both. Use an exact release compatible with every instrumented Ruby, such as 1.42.0; when Gemfile.lock already locks datadog-ci, keep that release. The " + terms.Installer + " uses a datadog-ci the bundle already has; without one it runs bundle config set frozen false and bundle add datadog-ci on the agent, installing the latest release, which ddtest cannot validate."
+	if locked := rubyLockedTracer(root); locked != "" {
+		pin = "The Gemfile.lock at the checkout root already pins datadog-ci " + locked + ", which the " + terms.Installer + " uses as is and ddtest validates; keep it pinned, and keep the Gemfile and Gemfile.lock unchanged."
+	}
+	request.Notes = []string{
+		pin,
+		"The " + terms.Installer + " configures datadog-ci from the checkout root with the build agent's default ruby and bundle, so keep the Gemfile at the checkout root and run the " + framework + " tests from there: not inside dir(…), and without BUNDLE_GEMFILE. Keep the existing bundle exec/binstub/Rake/Rails entry points and test arguments.",
+		"The " + terms.Installer + " replaces RUBYOPT with -rbundler/setup -rdatadog/ci/auto_instrument for " + terms.Later + ". When a stage sets RUBYOPT, re-add its options with " + terms.Persist(`export RUBYOPT="$RUBYOPT <existing options>"`) + "; never replace RUBYOPT there.",
+		"The " + terms.Installer + " refuses Ruby older than 2.7 and RubyGems older than 3.3.22: on agents with Ruby 2.7 or 3.0, run gem update --system 3.4.22 on the agent (or in an earlier step) before the tests.",
+		rubyRakeOptionsNote(root),
+		setupUnsupportedNote(root, "ruby", framework),
+		"If a stage runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), tell the user: the " + terms.Installer + " instruments every stage of the pipeline, so it cannot leave that stage out. Report it; do not drop stages or change Ruby versions to obtain a pass.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
 	}
 	request.Notes = slices.DeleteFunc(request.Notes, func(note string) bool { return note == "" })
@@ -448,6 +476,14 @@ var rubyStatedRuntime = &statedRuntime{
 }
 
 func (rubyDiscovery) statedRuntime() *statedRuntime { return rubyStatedRuntime }
+
+func (rubyDiscovery) ciPluginLanguage() string { return "RUBY" }
+
+// The Datadog Jenkins plugin replaces RUBYOPT with the datadog-ci preload,
+// as the installer does.
+func (rubyDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
+	return map[string]string{"RUBYOPT": rubyInstallerPreload}, nil
+}
 
 // rubyTestStep reports whether step is a test step of any Ruby framework on a
 // matrix row, as RubyCIConfiguration identifies them: a statement is checked

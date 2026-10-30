@@ -709,6 +709,10 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 								action = current.Reference
 								setup = &current
 								tracer, _ = runtimeValue(current.Inputs["ruby-tracer-version"], row)
+								if current.Floating && tracer == "" {
+									// The mechanism uses a datadog-ci the bundle already pins.
+									tracer = rubyLockedTracer(root)
+								}
 								inputs = map[string]string{}
 								for key, value := range current.Inputs {
 									inputs[key], _ = runtimeValue(value, row)
@@ -733,6 +737,9 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: ruby, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive", Reason: rubyMissingSetupReason(provider)}
 					if setup != nil {
 						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem
+						if setup.Floating && tracer != "" {
+							finding.SetupCaveats = append(slices.Clone(setup.Caveats), "datadog-ci version: the "+setup.Reference+" uses the datadog-ci release the repository's Gemfile.lock pins ("+tracer+"), which ddtest validated; it installs the latest release instead if that pin is removed.")
+						}
 					}
 					if hostRuby {
 						finding.RuntimeHost, finding.UserStated = runtimeHost(job, row, "Ruby"), statedRuby
@@ -752,9 +759,13 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 							reasons = append(reasons, reason)
 						}
 						finding.Reason = "Ruby CI scope needs review: " + strings.TrimSpace(strings.Join(reasons, "; "))
+					} else if action != "" && setup != nil && setup.Floating && setup.Problem == "" && tracer == "" {
+						finding.Code, finding.Reason = CodeIncompleteCISetup, rubyFloatingTracerReason(provider)
 					} else if ruby != "" && tracer != "" && action != "" {
 						finding.Status, finding.Reason = "not checked", "Check the selected Ruby with the bundled tracer's RubyGems requirements and compare tracer releases."
 						if reason := rubyActionProblem(finding, site); reason != "" {
+							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
+						} else if reason := rubyWorkspaceRootProblem(root, workflow, job, resolved, setup, provider); reason != "" {
 							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
 						} else if reason := rubyGemsResolverProblem(ruby, rubygems, row); !imageRuby && reason != "" {
 							finding.Status, finding.Reason = "inconclusive", reason
@@ -924,6 +935,52 @@ func rubyRakeOptionsProblem(command string) string {
 		return true
 	})
 	return reason
+}
+
+// rubyLockedTracer is the datadog-ci release the Gemfile.lock at the checkout
+// root pins, or empty.
+func rubyLockedTracer(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, "Gemfile.lock"))
+	if err != nil {
+		return ""
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if version, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), "    datadog-ci ("); ok {
+			version = strings.TrimSuffix(version, ")")
+			if exactRubyRelease.MatchString(version) {
+				return version
+			}
+		}
+	}
+	return ""
+}
+
+// rubyFloatingTracerReason asks to pin datadog-ci in the bundle, which a
+// setup that cannot pin the tracer itself (the Datadog Jenkins plugin) uses.
+func rubyFloatingTracerReason(provider ciProvider) string {
+	return "The " + provider.setupName() + " runs bundle add datadog-ci, which unfreezes the bundle and installs the latest datadog-ci release when each build runs, unless the bundle already has datadog-ci. Pin it: add gem \"datadog-ci\", \"<exact release>\" (such as 1.42.0) to the Gemfile at the checkout root and run bundle lock, so Gemfile.lock pins the release ddtest validates."
+}
+
+// rubyWorkspaceRootProblem explains why a setup that configures the tracer
+// from the checkout root (the Datadog Jenkins plugin runs bundle show
+// datadog-ci there) does not reach the bundle a test step uses: tests in
+// another directory, a BUNDLE_GEMFILE, or no Gemfile at the root.
+func rubyWorkspaceRootProblem(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, setup *ciSetup, provider ciProvider) string {
+	if setup == nil || !setup.WorkspaceRoot {
+		return ""
+	}
+	if directory := stepDirectory(workflow, job, step); directory != "" && directory != "." {
+		return "The " + provider.setupName() + " adds datadog-ci from the checkout root's bundle, but this test command runs in " + directory + "; run the tests from the checkout root with its Gemfile, or set up Test Optimization for them manually."
+	}
+	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		if gemfile, set := env["BUNDLE_GEMFILE"]; set {
+			return "The " + provider.setupName() + " adds datadog-ci from the checkout root's Gemfile, but this test command selects BUNDLE_GEMFILE=" + gemfile + "; run the tests with the root Gemfile, or set up Test Optimization for them manually."
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "Gemfile")); err != nil {
+		return "The " + provider.setupName() + " adds datadog-ci from a Gemfile at the checkout root, and this repository has none."
+	}
+	return ""
 }
 
 // rubyMissingSetupReason asks for a static Ruby and an exact tracer release

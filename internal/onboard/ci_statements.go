@@ -67,11 +67,14 @@ type ciFactDefinition struct {
 	valid func(string) bool
 	// Statement describes the confirmed fact in final_response.
 	Statement func(value string) string
+	// Question asks the user for the fact, and Remedy says what to do when
+	// it does not hold.
+	Question, Remedy string
 }
 
 // ciProviderFacts lists the facts each provider (by --ci-provider name) may
-// ask the user to confirm. None does yet.
-var ciProviderFacts = map[string][]ciFactDefinition{}
+// ask the user to confirm.
+var ciProviderFacts = map[string][]ciFactDefinition{jenkinsProvider: jenkinsFacts}
 
 // statedRuntimeSource is the NodeSource of a runtime the user stated.
 const statedRuntimeSource = "stated by the user (--ci-runtime)"
@@ -238,6 +241,16 @@ func currentStatements() ciStatements {
 	return statements
 }
 
+// statedFact is the value of a fact the user confirmed, and whether they did.
+func statedFact(key string) (string, bool) {
+	for _, fact := range currentStatements().facts {
+		if fact.Key == key {
+			return fact.Value, true
+		}
+	}
+	return "", false
+}
+
 // CIStatementArguments are the --ci-runtime and --ci-confirm arguments that
 // follow-up commands repeat, in the order given.
 func CIStatementArguments() []string {
@@ -351,6 +364,8 @@ func runtimeHost(job runtimeJob, row map[string]any, runtime string) string {
 		return ""
 	case job.Image != "":
 		return "image " + job.Image + ", whose name selects no " + runtime + " version"
+	case job.Host != "":
+		return job.Host
 	}
 	return "the " + activeOrDefaultCIProvider().displayName() + " " + agentHost
 }
@@ -635,6 +650,127 @@ func RequiredCIRuntimes(ctx context.Context, root, language, framework string) *
 		return nil
 	}
 	return required
+}
+
+// CIConfirmationRequired lists the provider facts the user must confirm
+// before ddtest certifies the setup of these CI jobs.
+type CIConfirmationRequired struct {
+	// Provider names the CI provider.
+	Provider string
+	// Facts are the facts to confirm, in the provider's order.
+	Facts []ciFactDefinition
+	// Jobs are the job keys (workflow / job) whose setup depends on them.
+	Jobs []string
+}
+
+func (e *CIConfirmationRequired) Error() string {
+	var keys []string
+	for _, fact := range e.Facts {
+		keys = append(keys, fact.Key)
+	}
+	return "The " + e.Provider + " setup of these CI jobs depends on facts no CI configuration shows, so ddtest cannot certify it until the user confirms them (" + strings.Join(keys, ", ") + "): " + strings.Join(e.Jobs, "; ") + "."
+}
+
+// CIConfirmationRequiredResult asks the user to confirm those facts.
+func CIConfirmationRequiredResult(err *CIConfirmationRequired) AgentResult {
+	var required, questions, flags []string
+	for _, fact := range err.Facts {
+		flag := fact.Key
+		if fact.Values != "" {
+			flag += "=" + fact.Values
+		}
+		required = append(required, "ci_confirm:"+flag)
+		questions = append(questions, strings.TrimSpace(fact.Key+": "+fact.Question+" "+fact.Remedy))
+		flags = append(flags, "--ci-confirm "+flag)
+	}
+	return AgentResult{
+		Status: "needs_input", Phase: "discovery", Code: "ci_setup_confirmation_required", NextAction: "ask_user",
+		Reason: err.Error(), Location: strings.Join(err.Jobs, "; "), RequiredInput: required,
+		Instruction: "Stop and ask the user to confirm each fact; run no other ddtest command until they answer, and never assume, guess or check it from this machine. " + strings.Join(questions, " ") + " After their answer, rerun the same command adding " + strings.Join(flags, " ") + " with the values they confirmed. ddtest reports each confirmation as stated by the user, not verified.",
+	}
+}
+
+// RequiredCIConfirmations returns the facts the user has not confirmed that
+// a setup before framework's tests depends on (see ciSetup.Confirmations),
+// or nil. Only a setup without another problem asks: a problem is reported
+// first. It reads the configuration offline.
+func RequiredCIConfirmations(root, language, framework string) *CIConfirmationRequired {
+	provider, err := currentCIProvider(root)
+	if err != nil {
+		return nil
+	}
+	definitions := ciProviderFacts[provider.name()]
+	if len(definitions) == 0 {
+		return nil
+	}
+	workflows, err := readProviderWorkflows(provider, root)
+	if err != nil {
+		return nil
+	}
+	token := setupActionLanguage(language)
+	needed := map[string]bool{}
+	var jobs []string
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if disabledCondition(job.If) {
+				continue
+			}
+			var setup *ciSetup
+			for _, step := range job.Steps {
+				if current, ok := datadogSetup(step); ok {
+					if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
+						setup = &current
+					}
+				}
+				resolution := resolveTestStep(root, workflow, job, step, language, framework)
+				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
+					continue
+				}
+				if setup == nil || setup.Problem != "" {
+					break
+				}
+				missing := false
+				for _, key := range setup.Confirmations {
+					if _, stated := statedFact(key); !stated {
+						needed[key], missing = true, true
+					}
+				}
+				if key := workflow.Path + " / " + name; missing && !slices.Contains(jobs, key) {
+					jobs = append(jobs, key)
+				}
+				break
+			}
+		}
+	}
+	if len(needed) == 0 {
+		return nil
+	}
+	required := &CIConfirmationRequired{Provider: provider.displayName(), Jobs: jobs}
+	for _, definition := range definitions {
+		if needed[definition.Key] {
+			required.Facts = append(required.Facts, definition)
+		}
+	}
+	return required
+}
+
+// CISetupCaveats lists, for final_response, what ddtest could not check about
+// the setup mechanism of the validated CI jobs (see ciSetup.Caveats), such as
+// a tracer release the mechanism cannot pin.
+func CISetupCaveats(check *RuntimeCheck) []string {
+	var caveats []string
+	if check == nil {
+		return nil
+	}
+	for _, finding := range check.Jobs {
+		for _, caveat := range finding.SetupCaveats {
+			if !slices.Contains(caveats, caveat) {
+				caveats = append(caveats, caveat)
+			}
+		}
+	}
+	return caveats
 }
 
 // StatedFacts lists, for final_response, what the user stated and ddtest

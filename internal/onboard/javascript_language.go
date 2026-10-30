@@ -36,9 +36,9 @@ func (javascriptDiscovery) coordinated() bool { return true }
 func (javascriptDiscovery) automaticCISetup() bool { return true }
 
 // JavaScript setup edits and checks GitHub Actions workflows, GitLab CI,
-// CircleCI and Buildkite.
+// CircleCI and Buildkite, and checks Jenkinsfiles.
 func (javascriptDiscovery) supportsCIProvider(provider string) bool {
-	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider
+	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider || provider == jenkinsProvider
 }
 
 // Outside GitHub Actions the installer appends its require preload to the
@@ -100,7 +100,15 @@ const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set 
 // or after a failed install, a bare --import would stop Node.
 const esmImportCommand = `if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --import $DD_TRACE_ESM_IMPORT"; fi`
 
+// pluginESMImportCommand registers the ESM loader of the dd-trace the
+// Datadog Jenkins plugin installs, which exports its package path as
+// DD_TRACE_PATH; without the plugin's setup it adds nothing.
+const pluginESMImportCommand = `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --import $DD_TRACE_PATH/register.js"; fi`
+
 func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
+	if terms.Plugin {
+		return javascriptPluginSetupRequest(root, framework, site, terms)
+	}
 	request := ciSetupRequest{Language: "js", Site: site, TracerInput: "js-tracer-version", TracerVersion: "<exact dd-trace release>"}
 	if setupImportsESM(framework) || framework == "mocha" {
 		request.After = []string{esmImportCommand}
@@ -110,6 +118,27 @@ func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ci
 		request.Notes = append(request.Notes, "Keep the export after "+terms.Entry+" only for Mocha ESM test files; CommonJS suites need only the preload.")
 	}
 	if note := setupImageNote(root, "javascript", framework); note != "" {
+		request.Notes = append(request.Notes, note)
+	}
+	if framework == "cucumber" {
+		request.Notes = append(request.Notes, "For Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false in "+terms.Variables+". This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected.")
+	}
+	return request
+}
+
+// javascriptPluginSetupRequest is the JavaScript part of a CI server plugin's
+// setup: the plugin installs the latest dd-trace and sets NODE_OPTIONS itself.
+func javascriptPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
+	request := ciSetupRequest{Language: "js", Site: site}
+	if setupImportsESM(framework) || framework == "mocha" {
+		request.After = []string{pluginESMImportCommand}
+	}
+	request.Notes = append(request.Notes, "The "+terms.Installer+" installs the latest dd-trace release with the build agent's default npm when each build runs (it cannot pin a release) and prepends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". ddtest validates locally with the latest release and reports that it floats. The agents need npm on their default PATH, and the tests Node.js 18 or newer.",
+		"Set Node options inside the sh script that runs the tests (export NODE_OPTIONS=\"$NODE_OPTIONS ...\" before the test command): the "+terms.Installer+" sets NODE_OPTIONS once per build, so a NODE_OPTIONS in a stage's environment directive or withEnv is overwritten.")
+	if framework == "mocha" {
+		request.Notes = append(request.Notes, "Keep the ESM line only for Mocha ESM test files; CommonJS suites need only the preload.")
+	}
+	if note := setupUnsupportedNote(root, "javascript", framework); note != "" {
 		request.Notes = append(request.Notes, note)
 	}
 	if framework == "cucumber" {
@@ -190,6 +219,16 @@ var javascriptStatedRuntime = &statedRuntime{
 }
 
 func (javascriptDiscovery) statedRuntime() *statedRuntime { return javascriptStatedRuntime }
+
+func (javascriptDiscovery) ciPluginLanguage() string { return "JAVASCRIPT" }
+
+// The Datadog Jenkins plugin prepends its dd-trace preload to NODE_OPTIONS
+// and exports DD_TRACE_PATH, the installed dd-trace package, whose
+// register.js is the ESM loader.
+func (javascriptDiscovery) ciPluginExports(current map[string]string) (map[string]string, map[string]string) {
+	options := strings.TrimSpace("-r ${{ env.DD_TRACE_PACKAGE }} " + current["NODE_OPTIONS"])
+	return map[string]string{"NODE_OPTIONS": options}, map[string]string{"DD_TRACE_PATH": "${{ env.DD_TRACE_PATH }}"}
+}
 
 // javascriptTestStep reports whether step may start a test of any JavaScript
 // framework on a matrix row, as checkCIRuntimes identifies test steps: a

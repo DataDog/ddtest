@@ -21,6 +21,19 @@ import (
 // matrix values so only a known action reference can produce these symbols.
 const actionPreload = "\x00DD_ACTION_PRELOAD\x00"
 
+// actionImport is the setup's ESM loader: the action's DD_TRACE_ESM_IMPORT,
+// or register.js in the package DD_TRACE_PATH names, which the Datadog
+// Jenkins plugin exports.
+const (
+	actionImport      = "\x00DD_ACTION_IMPORT\x00"
+	actionPackagePath = "\x00DD_ACTION_PATH\x00"
+)
+
+// isActionImport reports a module that is the setup's ESM loader.
+func isActionImport(module string) bool {
+	return module == actionImport || module == actionPackagePath+"/register.js"
+}
+
 func symbolicConditionValue(value any) bool {
 	text, ok := value.(string)
 	return ok && strings.ContainsRune(text, 0)
@@ -68,7 +81,7 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 				}
 				module = words[i]
 			}
-			if (key == "-r" || key == "--require") && module == actionPreload || key == "--import" && module == "\x00DD_ACTION_IMPORT\x00" {
+			if (key == "-r" || key == "--require") && module == actionPreload || key == "--import" && isActionImport(module) {
 				continue
 			}
 			return "Custom ddtest worker preload requires review. Use the action's DD_TRACE_PACKAGE/DD_TRACE_ESM_IMPORT exports; local replacement does not prove this CI module resolves: " + module
@@ -109,7 +122,7 @@ func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		if err == nil {
 			requireFound, importFound := false, false
 			for i, word := range words {
-				if word == "--import=\x00DD_ACTION_IMPORT\x00" || (word == "--import" && i+1 < len(words) && words[i+1] == "\x00DD_ACTION_IMPORT\x00") {
+				if value, ok := strings.CutPrefix(word, "--import="); ok && isActionImport(value) || word == "--import" && i+1 < len(words) && isActionImport(words[i+1]) {
 					importFound = true
 				}
 				if word == "--require="+actionPreload || ((word == "-r" || word == "--require") && i+1 < len(words) && words[i+1] == actionPreload) {
@@ -226,9 +239,9 @@ func (p *conditionParser) format() (any, error) {
 
 // Resolve expressions with action outputs present only on instrumented entries.
 func effectiveBootstrapOptions(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, actionRan bool) (string, error) {
-	known := map[string]string{"NODE_OPTIONS": "", "DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": "\x00DD_ACTION_IMPORT\x00"}
+	known := map[string]string{"NODE_OPTIONS": "", "DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": actionImport, "DD_TRACE_PATH": actionPackagePath}
 	if !actionRan {
-		known["DD_TRACE_PACKAGE"], known["DD_TRACE_ESM_IMPORT"] = "", ""
+		known["DD_TRACE_PACKAGE"], known["DD_TRACE_ESM_IMPORT"], known["DD_TRACE_PATH"] = "", "", ""
 	}
 	var options string
 	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
@@ -243,13 +256,13 @@ func effectiveBootstrapOptions(workflow ciWorkflow, job runtimeJob, step runtime
 				continue
 			}
 			delete(known, key)
-			if key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" && !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
+			if key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" && key != "DD_TRACE_PATH" && !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
 				known[key] = value
 			}
 		}
 	}
 	for key, value := range conditionEnvironment(workflow, job, step, row) {
-		if key != "NODE_OPTIONS" && key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" {
+		if key != "NODE_OPTIONS" && key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" && key != "DD_TRACE_PATH" {
 			known[key] = value
 		}
 	}

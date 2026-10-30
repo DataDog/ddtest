@@ -111,3 +111,10 @@ func (pythonDiscovery) ciComponents(string) []ciComponent { return nil }
 
 // No CI runtime statements yet.
 func (pythonDiscovery) statedRuntime() *statedRuntime { return nil }
+
+func (pythonDiscovery) ciPluginLanguage() string { return "PYTHON" }
+
+// Python has no CI plugin setup yet.
+func (pythonDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
+	return nil, nil
+}

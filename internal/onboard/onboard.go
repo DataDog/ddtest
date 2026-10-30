@@ -56,6 +56,9 @@ func run(output io.Writer, agent *agentHandoff) error {
 	if !languageSupportsCIProvider(detectedPlatform.Name(), provider) {
 		return &CIProviderUnsupportedError{Language: detectedPlatform.Name(), Framework: frameworkName, Provider: provider.displayName()}
 	}
+	if reason := unsupportedTestJobs(repositoryRoot, provider, detectedPlatform.Name(), frameworkName); reason != "" {
+		return &CIProviderUnsupportedError{Language: detectedPlatform.Name(), Framework: frameworkName, Provider: provider.displayName(), Reason: reason, Setup: provider.setupName()}
+	}
 	return onboardCI(output, provider, repositoryRoot, detectedPlatform.Name(), frameworkName, agent)
 }
 
@@ -129,7 +132,7 @@ func onboardCI(output io.Writer, provider ciProvider, repositoryRoot, language, 
 	}
 	text := instructions(language, name)
 	if registered := discoveryLanguageNamed(language); agent != nil && !provider.sharedSyntax() {
-		text = providerSetupInstructions(repositoryRoot, provider, language, name, agent.site, !registered.automaticProviderSetup(name))
+		text = providerSetupInstructions(repositoryRoot, provider, language, name, agent.site, !providerAutomaticSetup(provider, registered, name))
 	} else if agent != nil && registered != nil && registered.agentInstructions(name, agent.site) != "" {
 		text = registered.agentInstructions(name, agent.site)
 	}

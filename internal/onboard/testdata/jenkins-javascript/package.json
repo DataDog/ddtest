@@ -1,0 +1,12 @@
+{
+  "name": "jenkins-javascript-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "jest",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "jest": "29.7.0"
+  }
+}

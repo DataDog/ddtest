@@ -166,7 +166,7 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	stated, unused := onboard.StatedFacts(result.CIRuntime, language)
 	summary.UserStated = stated
-	for _, caveat := range unused {
+	for _, caveat := range append(onboard.CISetupCaveats(result.CIRuntime), unused...) {
 		if !slices.Contains(caveats, caveat) {
 			caveats = append(caveats, caveat)
 		}

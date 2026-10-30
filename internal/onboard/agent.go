@@ -251,11 +251,18 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 			}
 			return errors.Join(required, WriteAgentResult(output, CIRuntimeRequiredResult(required)))
 		}
+		// Facts only the CI server shows come next, once the setup is there.
+		if required := RequiredCIConfirmations(root, detected.Name(), frameworkName); required != nil {
+			if options.Human {
+				return fmt.Errorf("%w Rerun with --ci-confirm <fact>[=<value>] for each fact once you know it", required)
+			}
+			return errors.Join(required, WriteAgentResult(output, CIConfirmationRequiredResult(required)))
+		}
 	}
 	automatic := discoveryLanguageAutomaticSetup(detected.Name())
 	if root, err := os.Getwd(); err == nil && automatic {
 		if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
-			automatic = discoveryLanguageNamed(detected.Name()).automaticProviderSetup(frameworkName)
+			automatic = providerAutomaticSetup(provider, discoveryLanguageNamed(detected.Name()), frameworkName)
 		}
 	}
 	if !automatic && options.Site == "" {
@@ -357,6 +364,9 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "scope_unresolved", Reason: err.Error(), NextAction: "supply_input"}))
 	}
 	reason := "CI does not yet run the " + setup + " before every discovered " + framework + " test step. Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
+	if problems := existingSetupProblems(root, language, framework, options.Site); len(problems) > 0 {
+		reason += "The existing setup needs changes; fix it as the instructions show: " + strings.Join(problems, " ") + " "
+	}
 	if len(unresolved) > 0 {
 		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers; tell the user now that they need a scope decision. ", len(unresolved))
 	}
