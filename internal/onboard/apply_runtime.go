@@ -38,8 +38,8 @@ func setupRuntimeCondition(root string, workflow ciWorkflow, job runtimeJob, req
 			if esmStatus != StatusCompatible && (strings.Count(strings.TrimPrefix(node, "v"), ".") < 2 || strings.ContainsAny(node, "x*")) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				platform := nodeDistributionPlatform(job.RunsOn, "", row)
-				if platform == "" && job.Image != "" {
-					platform = "linux-x64" // Container images run Linux.
+				if platform == "" && (job.Image != "" || job.Stated["js"] != "") {
+					platform = "linux-x64" // Container images run Linux; a stated host version resolves like an image tag.
 				}
 				resolved, err := setupNodeResolver(&http.Client{Timeout: 10 * time.Second})(ctx, node, platform)
 				cancel()
@@ -112,7 +112,7 @@ func rowSetupNode(root string, workflow ciWorkflow, job runtimeJob, row map[stri
 // rowSetupNodeBefore is the Node a row's steps select before step limit: the
 // runtime active when that step runs, since a later setup-node can switch it.
 func rowSetupNodeBefore(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, limit int) (string, error) {
-	node := imageNode(job.Image)
+	node, _ := jobBaseNode(job, row)
 	for _, step := range job.Steps[:min(limit, len(job.Steps))] {
 		if version, selected := step.Runtime["js"]; selected {
 			node = imageNode("node:" + version)
@@ -129,8 +129,13 @@ func rowSetupNodeBefore(root string, workflow ciWorkflow, job runtimeJob, row ma
 			continue
 		}
 		if strings.HasPrefix(strings.ToLower(step.Uses), "actions/setup-node@") {
-			if node, err = setupNodeVersion(root, step, row); err != nil {
+			version, err := setupNodeVersion(root, step, row)
+			if err != nil {
 				return "", err
+			}
+			if version != "" {
+				// A setup-node without a version keeps the Node on PATH.
+				node = version
 			}
 			continue
 		}

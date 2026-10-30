@@ -95,6 +95,77 @@ Other CI files (Jenkins and others) are never parsed: when
 they mention the framework they are listed as outside this validation, and they
 never fail onboarding.
 
+### Runtimes and facts only the user can state
+
+Some CI jobs select no runtime ddtest can read: Buildkite steps on the agent
+host, GitLab jobs without an `image`, CircleCI `machine` and `macos`
+executors, GitHub self-hosted runners (a `self-hosted` label in any `runs-on`
+form, including `{group, labels}` and a runner a matrix row selects, such as
+`runs-on: ${{ matrix.os }}` with `os: [self-hosted, ubuntu-latest]`) without
+an `actions/setup-node` or `ruby/setup-ruby` step that runs before their
+tests and selects a version, and jobs whose image (such as
+`ubuntu:22.04`) names no Node or Ruby version. Finding these jobs reads only
+the repository; a Cypress GitHub action job's Node is the action's, not a
+question for the user. For JavaScript and Ruby, `onboard` and `testdrive` then
+return `needs_input` with `code: ci_runtime_required`, `required_input:
+["ci_runtime:<workflow> / <job>", …]` and `next_action: ask_user` before any
+setup or test runs. The agent asks the user and never guesses the version.
+
+The answer comes back as `--ci-runtime [<job>:]<runtime>=<version>`,
+repeatable: `node` (or `js`) with `22`, `22.11` or `22.11.0`, or `ruby` with
+`3.3` or `3.3.6`. Without `<job>`, it applies to every job whose runtime is
+unknown; `<job>` is the printed key (`.buildkite/pipeline.yml / :jest: Tests`)
+or the job name alone, and wins over a statement without one. Two statements that name the same job (by
+either key) with different versions are `invalid_options`; the same
+statement twice is accepted once. A matrix job
+takes one value for all its rows that run on a host whose runtime ddtest
+cannot read; in a matrix that mixes self-hosted and GitHub-hosted runners, it
+applies to the self-hosted rows only. A runner ddtest cannot resolve (such as
+`runs-on: ${{ inputs.runner }}`) is read as written: without a `self-hosted`
+label it is not asked about, its unknown runtime stays inconclusive, and a
+statement naming only that job is reported as unused. A statement only fills
+an unknown runtime:
+
+- A statement for a job whose configuration selects a different version (its
+  image, including a floating tag such as `node:lts`, a runtime installer step,
+  `actions/setup-node` or nvm) stops with `ci_runtime_conflict`. A statement
+  without a job never conflicts. An installer counts only when it runs on
+  every matrix row the job runs, by the job's first test step: one whose
+  condition skips it (`if: false`, or on some rows) or that runs after the
+  tests leaves the host's runtime in place for them, so the statement fills
+  it. So does an `actions/setup-node` step with neither `node-version` nor
+  `node-version-file` (for example one that only sets `cache: npm`): it
+  installs nothing, and the Node on PATH stays. A job ddtest recognizes no
+  test step in keeps every installer.
+- An `actions/setup-node` version is compared as setup-node reads it: a
+  statement agrees when the selector can pick a release of the stated line, so
+  `20.18.0` or `20` agrees with `20.x`, `20.X`, `20.*`, `^20`, `~20.18`, `v20`
+  or `=20.18.0`, and `22` conflicts with `20.x`. A selector ddtest cannot
+  evaluate (a range such as `>=18 <21`, `lts/*`, `node`, `latest`, `current`,
+  `*`) is not claimed as a conflict: the statement is accepted and reported as
+  unused, naming that selector. Image tags, other Node installers (a runtime
+  installer step, nvm) and Ruby installers are compared by their numeric
+  components, as before.
+- GitHub-hosted runners and job containers, and images ddtest cannot resolve,
+  keep their own findings: their runtime is in the configuration.
+- The stated version goes through every check an image tag's goes through:
+  the tracer's Node range (a major such as `22` resolves to its latest release,
+  as `node:22` does), the ESM loader's Node range, the Ruby tracer's RubyGems
+  requirements, and the RubyGems update Ruby 2.7 and 3.0 need.
+- On the agent or runner host, the Bash and curl or wget the setup script needs
+  are not checked, as before; `final_response` says so next to the statement.
+
+`--ci-confirm <fact>[=<value>]`, repeatable, states a fact the selected
+provider defines because its configuration cannot show it (such as a plugin
+installed on the CI server). No provider defines one yet; any other key is
+rejected with the provider's list.
+
+Both flags are forwarded into every follow-up command, like `--ci-provider`,
+and are part of the input fingerprint, so `testdrive --report` must repeat
+them. `final_response` lists each used statement on a "Stated by the user, not
+read from CI configuration or verified" line, naming the jobs; a statement no
+validated job used is a caveat.
+
 ### GitLab CI
 
 ddtest reads `.gitlab-ci.yml` and every local file it includes (`include:
@@ -328,8 +399,9 @@ checkout through the volume mounting a repository directory (relative to the
 Compose file, as Compose reads it) or, without one, through the
 Dockerfile's `COPY . <destination>` of the build context, and one outside a
 mounted checkout is unresolved), and steps without either run on
-the agent host, whose runtime ddtest cannot know: the runtime check reports
-them for review instead of certifying them. Plugins that only fetch secrets,
+the agent host, whose runtime ddtest cannot know: onboarding asks the user for
+it (`ci_runtime_required`, answered with `--ci-runtime`) instead of certifying
+it. Plugins that only fetch secrets,
 artifacts or caches, log in to registries or annotate results run no tests
 and are reported, not blockers: `artifacts`, `cache`, `docker-login`, `ecr`,
 `junit-annotate`, `test-collector`, `secrets`, `vault-secrets`,
@@ -389,7 +461,8 @@ on images ddtest cannot resolve are refused with that reason, which names
 the Dockerfile and the fix (install curl in it, or build from the full
 image); the setup instructions name those steps before the snippet is
 written, since changing an image needs the person's approval. The agent host
-is assumed to have them. A job whose Ruby or Node is unknown because its image
+is assumed to have them, and `final_response` says so next to its stated
+runtime. A job whose Ruby or Node is unknown because its image
 cannot be resolved is reported with that cause, and the release of manual
 setup edits for steps ddtest could not resolve is the newest one every known
 CI Node runs (`DD_SET_TRACER_VERSION_JS="5.133.0"` on `node:18`).

@@ -162,3 +162,6 @@ func (javaDiscovery) cacheVariable(name string) bool {
 
 // No CI components are modeled for this language.
 func (javaDiscovery) ciComponents(string) []ciComponent { return nil }
+
+// No CI runtime statements yet.
+func (javaDiscovery) statedRuntime() *statedRuntime { return nil }

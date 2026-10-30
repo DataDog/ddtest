@@ -6,6 +6,9 @@
 package onboard
 
 import (
+	"context"
+	"errors"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -130,4 +133,111 @@ func (javascriptDiscovery) runtimeVariable(name string) bool {
 
 func (javascriptDiscovery) cacheVariable(name string) bool {
 	return slices.Contains([]string{"npm_config_store_dir", "PNPM_STORE_DIR", "PNPM_HOME"}, name)
+}
+
+// setupNodeSource is the source of a Node actions/setup-node selects.
+const setupNodeSource = "actions/setup-node"
+
+// A stated Node is compared like a node:<version> image tag's.
+var javascriptStatedRuntime = &statedRuntime{
+	Names:   []string{"node", "js"},
+	Display: "Node",
+	Version: regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`),
+	Example: "22, 22.11 or 22.11.0",
+	base:    javascriptImageRuntime,
+	// setup-node (also through a node-version-file) takes node-semver
+	// selectors; an image tag, a node step or nvm is compared as written.
+	compare: func(configured, source, stated string) (bool, bool) {
+		if source == setupNodeSource {
+			return nodeSelectorAgrees(configured, stated)
+		}
+		return sameVersionLine(configured, stated), true
+	},
+	configured: func(root string, workflow ciWorkflow, job runtimeJob) (string, string) {
+		rows, _, err := jobMatrix(job)
+		return installedRuntime(rows, err, func(row map[string]any) (string, string, bool) {
+			if active, err := runtimeJobActive(workflow, job, row); err == nil && !active {
+				return "", "", false
+			}
+			// The tests run on the last selection before them.
+			version, source := "", ""
+			for _, step := range stepsThroughFirstTest(job.Steps, func(step runtimeStep) bool { return javascriptTestStep(root, workflow, job, step, row) }) {
+				// A step that may not run selects nothing for certain.
+				if active, err := runtimeStepActive(workflow, job, step, row); err != nil || !active {
+					continue
+				}
+				if selected := step.Runtime["js"]; selected != "" {
+					version, source = selected, step.Source
+				} else if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "actions/setup-node" {
+					if selected, err := setupNodeVersion(root, step, row); err == nil && selected != "" {
+						version, source = selected, setupNodeSource
+					}
+				} else if selected := nvmRuntime(step.Run); selected != "" {
+					version, source = selected, "nvm"
+				}
+			}
+			return version, source, true
+		})
+	},
+	check: func(ctx context.Context, root, framework string) RuntimeCheck {
+		// Offline: no Node, tracer or action metadata is needed to find
+		// unknown host runtimes.
+		return checkCIRuntimes(withOfflineRuntimeMetadata(ctx), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+			return tracerRequirement{}, errors.New("tracer metadata is not read offline")
+		}, framework)
+	},
+	runtime: func(finding RuntimeFinding) string { return finding.Node },
+}
+
+func (javascriptDiscovery) statedRuntime() *statedRuntime { return javascriptStatedRuntime }
+
+// javascriptTestStep reports whether step may start a test of any JavaScript
+// framework on a matrix row, as checkCIRuntimes identifies test steps: a
+// statement is checked before the framework is known. A step a condition
+// skips on the row is not one.
+func javascriptTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) bool {
+	if active, err := runtimeStepActive(workflow, job, step, row); err == nil && !active {
+		return false
+	}
+	for _, framework := range (javascriptDiscovery{}).frameworks() {
+		resolved, _, err := resolveVariantStep(workflow, job, step, row, framework)
+		if err != nil {
+			resolved = step
+		}
+		resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+		if !resolution.Review && startsTests(root, workflow, job, resolved, resolution, framework) {
+			return true
+		}
+	}
+	return false
+}
+
+// jobBaseNode is the Node a job starts with on a matrix row (nil: the job
+// without a row): its image's, else the one the user stated for the row's
+// host, else "". A GitHub-hosted row of a matrix that also runs on
+// self-hosted runners keeps GitHub's runtime.
+func jobBaseNode(job runtimeJob, row map[string]any) (node, source string) {
+	if node := imageNode(job.Image); node != "" {
+		return node, "image " + job.Image
+	}
+	if node := job.Stated["js"]; node != "" && runtimeHost(job, row, "Node") != "" {
+		return node, statedRuntimeSource
+	}
+	return "", ""
+}
+
+// nodeImageTag reads the tag of a Node image, numeric or not.
+var nodeImageTag = regexp.MustCompile(`^(?:(?:docker\.io/)?(?:library/)?node|cimg/node|circleci/node):([^@]+)`)
+
+// javascriptImageRuntime is the Node version a job's image selects, or a
+// Node image's floating tag (lts, current, or none): that image's runtime is
+// not the user's to state.
+func javascriptImageRuntime(job runtimeJob) string {
+	if node := imageNode(job.Image); node != "" {
+		return node
+	}
+	if match := nodeImageTag.FindStringSubmatch(withImplicitTag(job.Image)); match != nil {
+		return match[1]
+	}
+	return ""
 }

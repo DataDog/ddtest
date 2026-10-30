@@ -67,6 +67,13 @@ type RuntimeFinding struct {
 	Status          string          `json:"status"`
 	Reason          string          `json:"reason"`
 	Code            string          `json:"code,omitempty"`
+	// RuntimeHost describes where the test runs when its runtime is the job's
+	// own and no image selects it, such as an agent host: only the user can
+	// tell that runtime (see --ci-runtime).
+	RuntimeHost string `json:"runtime_host,omitempty"`
+	// UserStated reports a runtime the user stated with --ci-runtime, which
+	// ddtest checks but cannot verify.
+	UserStated bool `json:"user_stated,omitempty"`
 	// setupInputs are the inputs of the Datadog setup action that precedes
 	// this entry, for a language's own setup checks. Not serialized.
 	setupInputs map[string]string
@@ -150,6 +157,10 @@ type runtimeJob struct {
 	// provider's setup, such as an image without curl, before any setup is
 	// written; empty when it can or the provider does not check.
 	SetupImageProblem string `yaml:"-"`
+	// Stated holds the runtime versions the user stated for this job, by
+	// installer token, when its image selects none (see --ci-runtime). They
+	// apply only on matrix rows whose runtimeHost is not empty.
+	Stated map[string]string `yaml:"-"`
 }
 
 type tracerRequirement struct{ Version, Node, Requested string }
@@ -326,7 +337,9 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 					for i, step := range rowJob.Steps {
 						uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 
-						if uses == "cypress-io/github-action" && step.With["command"] == "" && cypressInputBool(step.With["runTests"], true) {
+						// Offline, the action's Node stays unknown: it is the
+						// action's, never a host runtime to ask the user for.
+						if uses == "cypress-io/github-action" && step.With["command"] == "" && cypressInputBool(step.With["runTests"], true) && !offlineRuntimeMetadata(ctx) {
 							node, metadataErr := CypressActionNode(ctx, step.Uses)
 							rowJob.Steps[i].ActionNode = node
 							if metadataErr != nil {
@@ -391,6 +404,13 @@ type runtimeState struct {
 func (state *runtimeState) trackNode(job runtimeJob, step runtimeStep, row map[string]any) {
 	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 	if uses == "actions/setup-node" {
+		if step.With["node-version"] == "" {
+			// node-version holds the resolved version (checkCIRuntimes).
+			// Without one, from node-version or node-version-file, setup-node
+			// installs nothing, as when it only caches: the Node on PATH,
+			// and what the job knows of it, stays.
+			return
+		}
 		state.node = step.With["node-version"]
 		state.source = step.Source
 		state.platform = nodeDistributionPlatform(job.RunsOn, step.With["architecture"], row)
@@ -424,6 +444,24 @@ func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) err
 	return err
 }
 
+// runtimeJobActive evaluates whether a job runs on a matrix row, as the Node
+// runtime check does.
+func runtimeJobActive(workflow ciWorkflow, job runtimeJob, row map[string]any) (bool, error) {
+	if job.Context != nil {
+		return runtimeCondition(job.If, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
+	}
+	return possibleJobCondition(job.If, row)
+}
+
+// runtimeStepActive evaluates whether a step runs on a matrix row, as the
+// Node runtime check does.
+func runtimeStepActive(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (bool, error) {
+	if job.Context != nil && len(step.Parents) == 0 {
+		return runtimeCondition(step.If, row, conditionEnvironment(workflow, job, step, row))
+	}
+	return stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
+}
+
 func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
 	finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Status: StatusInconclusive}
 	var findings []RuntimeFinding
@@ -431,10 +469,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		finding.Status, finding.Code, finding.Reason = StatusInconclusive, code, reason
 		return append(findings, finding)
 	}
-	active, err := possibleJobCondition(job.If, row)
-	if job.Context != nil {
-		active, err = runtimeCondition(job.If, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
-	}
+	active, err := runtimeJobActive(workflow, job, row)
 	if err != nil {
 		return fail(CodeUnresolvedCondition, err.Error())
 	}
@@ -443,8 +478,14 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		return []RuntimeFinding{finding}
 	}
 	state := runtimeState{}
-	if node := imageNode(job.Image); node != "" {
-		state.node, state.source, state.platform = node, "image "+job.Image, "linux-x64"
+	if node, source := jobBaseNode(job, row); node != "" {
+		state.node, state.source, state.platform = node, source, "linux-x64"
+		if source == statedRuntimeSource {
+			// A host's platform is unknown: resolve the selector like an image tag's.
+			if platform := nodeDistributionPlatform(job.RunsOn, "", row); platform != "" {
+				state.platform = platform
+			}
+		}
 	}
 	if len(frameworks) > 0 && frameworks[0] == "cypress" {
 		// A job image (GitLab) already selected the runtime when there is no
@@ -459,7 +500,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		setup, isSetup := datadogSetup(step)
 		resolution := resolutions[i]
 		// An unresolved step that can't start a test is setup, not a test entry.
-		test := resolution.Matched || resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, frameworkName(frameworks))
+		test := startsTests(root, workflow, job, step, resolution, frameworkName(frameworks))
 		_, selectsNode := step.Runtime["js"]
 		if uses != "actions/setup-node" && !isSetup && !selectsNode && !changesNodeRuntime(step.Run) && !test {
 			continue
@@ -468,10 +509,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		if isSetup {
 			finding.Action = setup.Reference
 		}
-		active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
-		if job.Context != nil && len(step.Parents) == 0 {
-			active, err = runtimeCondition(step.If, row, conditionEnvironment(workflow, job, step, row))
-		}
+		active, err := runtimeStepActive(workflow, job, step, row)
 		if err != nil {
 			if uses == "actions/setup-node" || changesNodeRuntime(step.Run) {
 				finding.Node = ""
@@ -526,6 +564,11 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 			continue
 		}
 		finding.Node, finding.NodeSource = state.node, state.source
+		if state.source == "" && javascriptImageRuntime(job) == "" || state.source == statedRuntimeSource {
+			// No image or step selected the runtime: it is the host's.
+			finding.RuntimeHost = runtimeHost(job, row, "Node")
+			finding.UserStated = finding.RuntimeHost != "" && state.source == statedRuntimeSource
+		}
 		if resolution.Reason != "" {
 			// A row on a Node no dd-trace release supports is never tried, so
 			// its unresolved steps can't block.
@@ -551,10 +594,18 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 	return findings
 }
 
+// startsTests reports whether a step the runtime check resolved for framework
+// is a test step: a matched test command, or an unresolved step that can
+// start one. Setup that can't start a test is not a test entry.
+func startsTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, resolution commandResolution, framework string) bool {
+	return resolution.Matched || resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, framework)
+}
+
 func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, resolution commandResolution, state runtimeState, finding RuntimeFinding, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) RuntimeFinding {
 	finding.Code = ""
 	if len(resolution.Tests) > 0 && resolution.Tests[0].Cypress != nil && resolution.Tests[0].Cypress.Action != "" {
 		finding.Node, finding.NodeSource = step.ActionNode, step.Uses+" / runs.using"
+		finding.RuntimeHost, finding.UserStated = "", false
 	}
 	if len(frameworks) > 0 && frameworks[0] == "mocha" && mochaInstrumentationDisabled(workflow, job, step, row) {
 		finding.Status, finding.Code = StatusExcluded, CodeExcludedRuntime
@@ -612,6 +663,7 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		words, _ := shellquote.Split(entry.Command)
 		if len(words) > 0 && !slices.Contains([]string{"node", "node.exe"}, words[0]) && (filepath.Base(words[0]) == "node" || filepath.Base(words[0]) == "node.exe") {
 			finding.Node, finding.NodeResolution = "", nil
+			finding.RuntimeHost, finding.UserStated = "", false
 			finding.Code, finding.Reason = CodeRuntimeUnknown, "The test command selects an explicit Node executable; its CI version cannot be inferred from setup-node."
 			return finding
 		}
@@ -626,6 +678,9 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		finding.Code, finding.Reason = CodeRuntimeUnknown, "The CI Node runtime is unknown after setup; preserve the workflow and resolve it before claiming compatibility."
 		if job.ImageProblem != "" {
 			finding.Reason = "The CI Node runtime is unknown: " + job.ImageProblem + ". Preserve the workflow and resolve it before claiming compatibility."
+		}
+		if finding.RuntimeHost != "" {
+			finding.Reason = "The CI Node runtime is unknown: it comes from " + finding.RuntimeHost + ", and the configuration selects no Node version. Ask the user which Node version it runs, then rerun with --ci-runtime; never guess it."
 		}
 		return finding
 	}
@@ -718,7 +773,23 @@ func resolveRequirement(ctx context.Context, client *http.Client, action, versio
 	return tracerRequirement{Version: selected.Version, Node: selected.Node, Requested: version}, nil
 }
 
+type offlineRuntimeMetadataKey struct{}
+
+// withOfflineRuntimeMetadata marks a runtime check that reads only the
+// repository: it looks up no action, Node or tracer metadata.
+func withOfflineRuntimeMetadata(ctx context.Context) context.Context {
+	return context.WithValue(ctx, offlineRuntimeMetadataKey{}, true)
+}
+
+func offlineRuntimeMetadata(ctx context.Context) bool {
+	offline, _ := ctx.Value(offlineRuntimeMetadataKey{}).(bool)
+	return offline
+}
+
 func fetchRuntimeMetadata(ctx context.Context, client *http.Client, address string) ([]byte, error) {
+	if offlineRuntimeMetadata(ctx) {
+		return nil, fmt.Errorf("CI runtime metadata from %s is not read offline", address)
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return nil, err

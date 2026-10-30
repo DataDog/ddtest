@@ -115,7 +115,7 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 	if err != nil {
 		return nil, err
 	}
-	workflows, err := provider.readWorkflows(root)
+	workflows, err := readProviderWorkflows(provider, root)
 	if err != nil {
 		return nil, err
 	}

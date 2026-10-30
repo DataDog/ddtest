@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/kballard/go-shellquote"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -366,7 +367,7 @@ func readWorkflows(root string) ([]ciWorkflow, error) {
 	if err != nil {
 		return nil, err
 	}
-	return provider.readWorkflows(root)
+	return readProviderWorkflows(provider, root)
 }
 
 // WithCIProviderDefaults adds the variables the selected CI provider sets in
@@ -405,6 +406,19 @@ func CIConfigurationFiles(root string) []string {
 // commands need: only when several providers have configuration in root, so
 // a rerun would ask again.
 func ciProviderFollowUpFlag(root string) string {
+	return ciProviderFlag(root) + ciStatementsFollowUp()
+}
+
+// ciStatementsFollowUp repeats the user's CI statements in a human follow-up
+// command, which reports are bound to.
+func ciStatementsFollowUp() string {
+	if arguments := CIStatementArguments(); len(arguments) > 0 {
+		return " " + shellquote.Join(arguments...)
+	}
+	return ""
+}
+
+func ciProviderFlag(root string) string {
 	selected := ActiveCIProvider()
 	if selected == "" {
 		return ""

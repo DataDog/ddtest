@@ -108,3 +108,6 @@ func (pythonDiscovery) cacheVariable(name string) bool {
 
 // No CI components are modeled for this language.
 func (pythonDiscovery) ciComponents(string) []ciComponent { return nil }
+
+// No CI runtime statements yet.
+func (pythonDiscovery) statedRuntime() *statedRuntime { return nil }

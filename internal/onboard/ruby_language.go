@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"maps"
@@ -262,7 +263,7 @@ func rubyGemsNote(root, framework string, terms ciSetupTerms) string {
 	if err != nil {
 		return generic
 	}
-	workflows, err := provider.readWorkflows(root)
+	workflows, err := readProviderWorkflows(provider, root)
 	if err != nil {
 		return generic
 	}
@@ -307,7 +308,7 @@ func rubyRakeOptionsNote(root string) string {
 	if err != nil {
 		return ""
 	}
-	workflows, err := provider.readWorkflows(root)
+	workflows, err := readProviderWorkflows(provider, root)
 	if err != nil {
 		return ""
 	}
@@ -406,4 +407,75 @@ func (rubyDiscovery) runtimeVariable(name string) bool {
 
 func (rubyDiscovery) cacheVariable(name string) bool {
 	return slices.Contains([]string{"BUNDLE_PATH", "GEM_HOME"}, name)
+}
+
+// A stated Ruby is compared like a ruby:<version> image tag's, so it needs a
+// minor version.
+var rubyStatedRuntime = &statedRuntime{
+	Names:   []string{"ruby"},
+	Display: "Ruby",
+	Version: rubyImageVersion,
+	Example: "3.3 or 3.3.6",
+	base:    rubyImageSelection,
+	configured: func(root string, workflow ciWorkflow, job runtimeJob) (string, string) {
+		rows, err := runtimeMatrix(job.Strategy.Matrix)
+		return installedRuntime(rows, err, func(row map[string]any) (string, string, bool) {
+			if active, err := rubyJobActive(job, row); err == nil && !active {
+				return "", "", false
+			}
+			// The tests run on the last selection before them.
+			version, source := "", ""
+			for _, step := range stepsThroughFirstTest(job.Steps, func(step runtimeStep) bool { return rubyTestStep(root, workflow, job, step, row) }) {
+				// A step that may not run selects nothing for certain.
+				if active, err := rubyStepActive(workflow, job, step, row); err != nil || !active {
+					continue
+				}
+				if selected := step.Runtime["ruby"]; selected != "" {
+					version, source = selected, step.Source
+				} else if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "ruby/setup-ruby" {
+					if selected, err := runtimeValue(step.With["ruby-version"], row); err == nil && selected != "" {
+						version, source = selected, "ruby/setup-ruby"
+					}
+				}
+			}
+			return version, source, true
+		})
+	},
+	check: func(_ context.Context, root, framework string) RuntimeCheck {
+		return RubyCIConfiguration(root, framework)
+	},
+	runtime: func(finding RuntimeFinding) string { return finding.Runtime },
+}
+
+func (rubyDiscovery) statedRuntime() *statedRuntime { return rubyStatedRuntime }
+
+// rubyTestStep reports whether step is a test step of any Ruby framework on a
+// matrix row, as RubyCIConfiguration identifies them: a statement is checked
+// before the framework is known. A step a condition skips on the row is not
+// one.
+func rubyTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) bool {
+	if active, err := rubyStepActive(workflow, job, step, row); err == nil && !active {
+		return false
+	}
+	for _, framework := range (rubyDiscovery{}).frameworks() {
+		resolved, _, _ := resolveVariantStep(workflow, job, step, row, framework)
+		resolution := resolveRubyStep(root, workflow, job, resolved, framework)
+		if !resolution.Review && (resolution.Matched || resolution.Reason != "") {
+			return true
+		}
+	}
+	return false
+}
+
+// rubyImageSelection is the Ruby version or engine a job's image selects, or
+// a Ruby image's floating tag (latest, current, or none): that image's runtime
+// is not the user's to state.
+func rubyImageSelection(job runtimeJob) string {
+	if version, engine := rubyImageRuntime(job.Image); version+engine != "" {
+		return version + engine
+	}
+	if match := rubyImage.FindStringSubmatch(withImplicitTag(job.Image)); match != nil {
+		return match[2]
+	}
+	return ""
 }
