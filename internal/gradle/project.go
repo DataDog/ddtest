@@ -31,6 +31,14 @@ var (
 	BuildFiles    = []string{"build.gradle", "build.gradle.kts"}
 )
 
+// Declared reports whether directory holds a Gradle settings or build file.
+func Declared(directory string) bool {
+	return slices.ContainsFunc(append(slices.Clone(SettingsFiles), BuildFiles...), func(name string) bool {
+		info, err := os.Stat(filepath.Join(directory, name))
+		return err == nil && info.Mode().IsRegular()
+	})
+}
+
 // Project is one project of a Gradle build, read as written: plugins,
 // convention plugins and other build logic are not evaluated, so dependencies
 // they add are not seen.

@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,4 +77,32 @@ func TestGradleProbeCoversClassFrameworksOnly(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, reason, "not available for Gradle builds yet", name)
 	}
+}
+
+func TestGradlePreflightCertifiesTheJDKGradleSelects(t *testing.T) {
+	drive, root := gradleFixture(t)
+	drive.configurationEnvironment = map[string]string{"JAVA_HOME": writeJDK(t, "17.0.20")}
+	preflight := func() *preflightCheck {
+		t.Helper()
+		result := &validationResult{}
+		require.NoError(t, drive.checkJavaPreflight(t.Context(), &bytes.Buffer{}, result))
+		return result.Preflight
+	}
+	require.Equal(t, "17.0.20", preflight().Runtime, "without org.gradle.java.home, Gradle runs on JAVA_HOME")
+
+	requireWriteFile(t, filepath.Join(root, "gradle.properties"), "org.gradle.java.home = "+writeJDK(t, "21.0.5")+"\n")
+	check := preflight()
+	require.Equal(t, "21.0.5", check.Runtime, "Gradle runs, and forks test JVMs, on the JDK the build selects")
+	require.Contains(t, check.Verdict.Reason, "Java 21.0.5 (Java from org.gradle.java.home in "+filepath.Join(root, "gradle.properties")+")")
+
+	requireWriteFile(t, filepath.Join(os.Getenv("GRADLE_USER_HOME"), "gradle.properties"), "org.gradle.java.home: "+writeJDK(t, "11.0.25")+"\n")
+	require.Equal(t, "11.0.25", preflight().Runtime, "the user home's gradle.properties takes precedence over the build's")
+
+	drive.args = []string{"build", "-Dorg.gradle.java.home=" + writeJDK(t, "25.0.1")}
+	require.Equal(t, "25.0.1", preflight().Runtime, "the command line takes precedence over both")
+
+	drive.args = []string{"build", "-Dorg.gradle.java.home=" + t.TempDir()}
+	result := &validationResult{}
+	require.ErrorContains(t, drive.checkJavaPreflight(t.Context(), &bytes.Buffer{}, result), "which is not a JDK")
+	require.Equal(t, "inconclusive", result.Preflight.Verdict.Status)
 }

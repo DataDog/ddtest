@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"slices"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/gradle"
@@ -42,7 +41,7 @@ func (j *JVM) Command() (string, []string) {
 	if override := loadCommandOverride(); len(override) > 0 {
 		return override[0], override[1:]
 	}
-	if !regularFile("pom.xml") && slices.ContainsFunc(append(slices.Clone(gradle.SettingsFiles), gradle.BuildFiles...), regularFile) {
+	if !regularFile("pom.xml") && gradle.Declared(".") {
 		if regularFile("gradlew") {
 			return "./gradlew", []string{"test"}
 		}

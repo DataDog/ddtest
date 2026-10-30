@@ -275,7 +275,7 @@ func (rubyLanguage) packageExclusions(t *Testdrive, ctx context.Context) (onboar
 	return t.rubyPackageExclusions(ctx), true
 }
 
-func (rubyLanguage) initialization(string) string {
+func (rubyLanguage) initialization(string, string) string {
 	setup := "the Ruby CI action"
 	if name := onboard.CIProviderSetupName(); name != "" {
 		setup = "the " + name

@@ -20,21 +20,38 @@ func Command(words []string) bool {
 	return len(words) > 0 && slices.Contains(Executables, filepath.Base(words[0]))
 }
 
-// optionsWithValue are the Gradle CLI options whose next word is their value,
-// never a task, as documented by gradle --help, plus the test task's --tests
-// and help's --task.
-var optionsWithValue = []string{
-	"-b", "--build-file", "-c", "--settings-file", "-D", "--system-prop", "-F", "--dependency-verification",
-	"-g", "--gradle-user-home", "-I", "--init-script", "-M", "--write-verification-metadata", "-P", "--project-prop",
-	"-p", "--project-dir", "-x", "--exclude-task", "--console", "--include-build", "--max-workers", "--priority",
-	"--project-cache-dir", "--warning-mode", "--configuration-cache-problems", "--update-locks", "--tests", "--task",
-}
+var (
+	// globalOptionsWithValue are Gradle's own options whose next word is their
+	// value, never a task, as documented by gradle --help.
+	globalOptionsWithValue = []string{
+		"-b", "--build-file", "-c", "--settings-file", "-D", "--system-prop", "-F", "--dependency-verification",
+		"-g", "--gradle-user-home", "-I", "--init-script", "-M", "--write-verification-metadata", "-P", "--project-prop",
+		"-p", "--project-dir", "-x", "--exclude-task", "--console", "--include-build", "--max-workers", "--priority",
+		"--project-cache-dir", "--warning-mode", "--configuration-cache-problems", "--update-locks",
+	}
+	// globalFlags are Gradle's own options without a value.
+	globalFlags = []string{
+		"-?", "-h", "--help", "-a", "--no-rebuild", "--build-cache", "--no-build-cache", "--configuration-cache", "--no-configuration-cache",
+		"--configure-on-demand", "--no-configure-on-demand", "--continue", "--no-continue", "-d", "--debug", "--daemon", "--no-daemon",
+		"--export-keys", "--foreground", "-i", "--info", "-m", "--dry-run", "--offline", "--parallel", "--no-parallel", "--profile",
+		"-q", "--quiet", "--refresh-keys", "--rerun-tasks", "-s", "--stacktrace", "-S", "--full-stacktrace", "--scan", "--no-scan",
+		"--status", "--stop", "-t", "--continuous", "-U", "--refresh-dependencies", "-v", "--version", "-V", "--show-version",
+		"-w", "--warn", "--watch-fs", "--no-watch-fs", "--write-locks", "--problems-report", "--no-problems-report",
+		"--property-upgrade-report", "--task-graph",
+	}
+	// optionsWithValue are also the test task's --tests and help's --task.
+	optionsWithValue = append(slices.Clone(globalOptionsWithValue), "--tests", "--task")
+)
 
-// word is one argument of a Gradle command: a task, or an option with its value.
+// word is one argument of a Gradle command: a task, or an option with its
+// value. An option after a task that is not one of Gradle's own belongs to
+// that task, as --tests or --fail-fast to test.
 type word struct {
 	task          string
 	option, value string
 	hasValue      bool
+	// of is the task an option belongs to.
+	of string
 }
 
 func parse(args []string) []word {
@@ -49,16 +66,23 @@ func parse(args []string) []word {
 				i++
 			}
 			words = append(words, item)
+		// A short option may keep its value attached, as in -Dkey=value,
+		// -xtest or -Ici/init.gradle.
+		case len(arg) > 2 && !strings.HasPrefix(arg, "--") && slices.Contains(optionsWithValue, arg[:2]):
+			words = append(words, word{option: arg[:2], value: arg[2:], hasValue: true})
 		case strings.HasPrefix(arg, "-"):
 			option, value, found := strings.Cut(arg, "=")
-			// A short option may keep its value attached, as in -Dkey=value,
-			// -xtest or -Ici/init.gradle.
-			if !found && len(arg) > 2 && !strings.HasPrefix(arg, "--") && slices.Contains(optionsWithValue, arg[:2]) {
-				option, value, found = arg[:2], arg[2:], true
-			}
 			words = append(words, word{option: option, value: value, hasValue: found})
 		default:
 			words = append(words, word{task: arg})
+		}
+	}
+	task := ""
+	for i := range words {
+		if words[i].task != "" {
+			task = words[i].task
+		} else if task != "" && !slices.Contains(globalOptionsWithValue, words[i].option) && !slices.Contains(globalFlags, words[i].option) {
+			words[i].of = task
 		}
 	}
 	return words
@@ -122,12 +146,6 @@ func NonTestTask(task string) bool {
 	return slices.Contains(nonTestTasks, name) || slices.ContainsFunc(nonTestPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 }
 
-// IsTestCommand reports whether a literal Gradle invocation requests a task
-// that runs tests.
-func IsTestCommand(words []string) bool {
-	return Command(words) && slices.ContainsFunc(Tasks(words[1:]), TestTask)
-}
-
 // excludes reports whether a -x selector removes a requested task: the same
 // path, or an unqualified name, which selects the task of every project.
 func excludes(selectors []string, task string) bool {
@@ -164,6 +182,35 @@ func DryRun(args []string) bool {
 	return slices.ContainsFunc(parse(args), func(item word) bool { return item.option == "-m" || item.option == "--dry-run" })
 }
 
+// SystemProperties are the system properties a command sets with -D or
+// --system-prop; a later value replaces an earlier one.
+func SystemProperties(args []string) map[string]string {
+	properties := map[string]string{}
+	for _, item := range parse(args) {
+		if item.option == "-D" || item.option == "--system-prop" {
+			key, value, _ := strings.Cut(item.value, "=")
+			properties[key] = value
+		}
+	}
+	return properties
+}
+
+// UserHomes are the Gradle user homes a command names, with -g,
+// --gradle-user-home or the gradle.user.home system property, relative to the
+// directory it runs in; none when the environment selects it.
+func UserHomes(args []string) []string {
+	var homes []string
+	for _, item := range parse(args) {
+		if item.option == "-g" || item.option == "--gradle-user-home" {
+			homes = append(homes, item.value)
+		}
+	}
+	if home, ok := SystemProperties(args)["gradle.user.home"]; ok {
+		homes = append(homes, home)
+	}
+	return homes
+}
+
 // reviewedOptions change which build, settings or logic a command runs, so
 // a command that uses them needs review.
 var reviewedOptions = []string{"-b", "--build-file", "-c", "--settings-file", "-I", "--init-script", "--include-build"}
@@ -190,8 +237,8 @@ func ProjectDirectory(args []string) (string, error) {
 
 // TestInvocation splits a command into what validation runs, its options and
 // the tasks runsTests accepts, and the other tasks it omits, such as
-// publishing, reporting or analysis. A task option such as --tests is kept
-// with its task.
+// publishing, reporting or analysis. A task's options, such as --tests, are
+// kept or omitted with it.
 func TestInvocation(args []string, runsTests func(string) bool) (validated, omitted []string) {
 	keep := true
 	for _, item := range parse(args) {
@@ -203,8 +250,7 @@ func TestInvocation(args []string, runsTests func(string) bool) (validated, omit
 			} else {
 				omitted = append(omitted, item.task)
 			}
-		case item.option == "--tests" || item.option == "--rerun":
-			// Options after a task belong to it.
+		case item.of != "":
 			if keep {
 				validated = append(validated, render(item)...)
 			}
@@ -266,13 +312,14 @@ func ValidationArgs(args []string) []string {
 }
 
 // ProbeArgs are the arguments of a validation run that executes only the probe
-// class, through the test task of the project at path: the command's options,
-// without its tasks, their options or its exclusions, any of which could
-// select other tests or remove the probe's task.
+// class, through the test task of the project at path: the command's own
+// Gradle options, without its tasks, their options or its exclusions, any of
+// which could select other tests, remove the probe's task or, moved before
+// it, not be an option Gradle accepts.
 func ProbeArgs(args []string, path, class string) []string {
 	var options []string
 	for _, item := range parse(args) {
-		if item.task != "" || item.option == "--tests" || item.option == "-x" || item.option == "--exclude-task" || item.option == "--rerun" {
+		if item.task != "" || item.of != "" || item.option == "-x" || item.option == "--exclude-task" {
 			continue
 		}
 		options = append(options, render(item)...)

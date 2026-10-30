@@ -278,7 +278,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if t.nodeVersion != nil {
 		runtimeVersion = t.workflowNodeVersion()
 	}
-	plan := &onboard.ExecutionPlan{SchemaVersion: 1, Fingerprint: fingerprint, Framework: name, Site: options.Site, Runtime: runtimeVersion, Initialization: workflowInitialization(name), Scope: scope}
+	plan := &onboard.ExecutionPlan{SchemaVersion: 1, Fingerprint: fingerprint, Framework: name, Site: options.Site, Runtime: runtimeVersion, Initialization: workflowInitialization(t.repositoryRoot, name), Scope: scope}
 	for _, policy := range featurePolicies(name) {
 		switch policy.Status {
 		case "required":

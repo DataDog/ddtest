@@ -58,6 +58,9 @@ type javaBuild interface {
 	results(exitCode int, output string) (results []javaResult, incomplete string, err error)
 	// directory is the project directory whose tests a module label names.
 	directory(module string) (string, bool)
+	// javaHome is the JDK the build tool selects for itself in place of
+	// JAVA_HOME or PATH, and where that is set; empty when it selects none.
+	javaHome() (home, source string)
 }
 
 // errNoJavaResults wraps a build that wrote no native result: a skipped or
@@ -153,6 +156,8 @@ func (b *mavenBuild) results(exitCode int, output string) ([]javaResult, string,
 	}
 	return results, incomplete, nil
 }
+
+func (b *mavenBuild) javaHome() (string, string) { return "", "" }
 
 func (b *mavenBuild) directory(module string) (string, bool) {
 	for directory, label := range b.labels {

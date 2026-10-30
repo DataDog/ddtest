@@ -6,7 +6,6 @@
 package testdrive
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -16,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/gradle"
+	"github.com/kballard/go-shellquote"
 )
 
 // gradleProbeFrameworks are the frameworks whose probe class a Gradle test
@@ -27,12 +27,16 @@ type gradleBuild struct {
 	root    string
 	all     []gradle.Project
 	byPaths map[string]gradle.Project
+	// home is the JDK org.gradle.java.home selects, set where source says.
+	home, homeSource string
 }
 
 // gradleBuild reads the Gradle build the selected command runs, as Gradle
-// finds it from the working directory and -p. A command that selects other
-// build or settings files, adds init scripts or publishes is refused, and so
-// is a dd-java-agent that gradle.properties attaches to every build.
+// finds it from the working directory and -p. The command must request test
+// tasks only, conventional or declared by the build: validation never
+// publishes, and other tasks run no tests. A command that selects other build
+// or settings files or adds init scripts is refused, and so is a
+// dd-java-agent that org.gradle.jvmargs attaches to every build.
 func (t *Testdrive) gradleBuild(args []string) (*gradleBuild, error) {
 	root := t.checkoutRoot()
 	directory, err := filepath.Rel(root, t.repositoryRoot)
@@ -47,9 +51,6 @@ func (t *Testdrive) gradleBuild(args []string) (*gradleBuild, error) {
 	if filepath.IsAbs(project) || !filepath.IsLocal(invoked) && invoked != "." {
 		return nil, fmt.Errorf("the Gradle project directory must stay inside the repository: %s", project)
 	}
-	if gradle.Publishes(args) {
-		return nil, errors.New("local validation runs only Gradle test tasks and never publishes, uploads or installs artifacts; remove those tasks")
-	}
 	build, err := gradle.Build(root, invoked)
 	if err != nil {
 		return nil, err
@@ -58,20 +59,99 @@ func (t *Testdrive) gradleBuild(args []string) (*gradleBuild, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := gradleAgentProperties(filepath.Join(root, build), t.configurationEnvironment); err != nil {
+	command, _ := t.executionCommand()
+	tasks := gradle.DeclaredTestTasks(root, build, projects)
+	if !gradle.RunsTests(args, tasks) {
+		return nil, fmt.Errorf("select a literal gradle or gradlew command that runs test tasks, such as ./gradlew test or gradle check: %s", shellquote.Join(append([]string{command}, args...)...))
+	}
+	if validated, omitted := gradle.TestInvocation(args, tasks.Runs); len(omitted) > 0 {
+		return nil, fmt.Errorf("local validation runs only Gradle test tasks and never publishes artifacts; remove %s, for example: %s", strings.Join(omitted, ", "), shellquote.Join(append([]string{command}, validated...)...))
+	}
+	// A test task the build declares may still be named like a publishing one.
+	if gradle.Publishes(args) {
+		return nil, errors.New("local validation runs only Gradle test tasks and never publishes, uploads or installs artifacts; remove those tasks")
+	}
+	if err := gradleAgentProperties(t.repositoryRoot, filepath.Join(root, build), args, t.configurationEnvironment); err != nil {
+		return nil, err
+	}
+	home, source, err := gradleJavaHome(t.repositoryRoot, filepath.Join(root, build), args, t.configurationEnvironment)
+	if err != nil {
 		return nil, err
 	}
 	byPaths := map[string]gradle.Project{}
 	for _, project := range projects {
 		byPaths[project.Path] = project
 	}
-	return &gradleBuild{root: root, all: projects, byPaths: byPaths}, nil
+	return &gradleBuild{root: root, all: projects, byPaths: byPaths, home: home, homeSource: source}, nil
 }
 
-// gradleAgentProperties refuses a dd-java-agent that the build's or the user's
-// gradle.properties attach to every build through org.gradle.jvmargs: the
+// gradleJavaHome is the JDK org.gradle.java.home selects for the build of the
+// command run from directory, in Gradle's precedence: its command line, the
+// user home's gradle.properties, then the build's. Gradle runs on that JDK,
+// in a single-use daemon even with --no-daemon, and forks test JVMs from it.
+func gradleJavaHome(directory, build string, args []string, configuration map[string]string) (home, source string, err error) {
+	if home, ok := gradle.SystemProperties(args)["org.gradle.java.home"]; ok {
+		return home, "Java from -Dorg.gradle.java.home", nil
+	}
+	var files []string
+	for _, home := range gradleUserHomes(directory, args, configuration) {
+		files = append(files, filepath.Join(home, "gradle.properties"))
+	}
+	for _, path := range append(files, filepath.Join(build, "gradle.properties")) {
+		properties, err := gradle.ReadProperties(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", "", err
+		}
+		if home := properties["org.gradle.java.home"]; home != "" {
+			return home, "Java from org.gradle.java.home in " + path, nil
+		}
+	}
+	return "", "", nil
+}
+
+// gradleAgentProperties refuses a dd-java-agent that org.gradle.jvmargs
+// attaches to every build of the command run from directory: set on its
+// command line, or in the build's or the user home's gradle.properties. The
 // baseline could not run without it.
-func gradleAgentProperties(build string, configuration map[string]string) error {
+func gradleAgentProperties(directory, build string, args []string, configuration map[string]string) error {
+	const remedy = "so validation cannot run the build without it; remove that -javaagent option, as CI attaches the agent with the GitHub action"
+	if value, ok := gradle.SystemProperties(args)["org.gradle.jvmargs"]; ok && withoutDatadogAgent(value) != value {
+		return errors.New("the command attaches dd-java-agent to the Gradle build through -Dorg.gradle.jvmargs, " + remedy)
+	}
+	files := []string{filepath.Join(build, "gradle.properties")}
+	for _, home := range gradleUserHomes(directory, args, configuration) {
+		files = append(files, filepath.Join(home, "gradle.properties"))
+	}
+	for _, path := range files {
+		properties, err := gradle.ReadProperties(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if value, ok := properties["org.gradle.jvmargs"]; ok && withoutDatadogAgent(value) != value {
+			return fmt.Errorf("%s attaches dd-java-agent to every Gradle build through org.gradle.jvmargs, %s", path, remedy)
+		}
+	}
+	return nil
+}
+
+// gradleUserHomes are the Gradle user homes a command run from directory may
+// use: those its arguments name, else GRADLE_USER_HOME, else ~/.gradle.
+func gradleUserHomes(directory string, args []string, configuration map[string]string) []string {
+	homes := gradle.UserHomes(args)
+	for i, home := range homes {
+		if !filepath.IsAbs(home) {
+			homes[i] = filepath.Join(directory, home)
+		}
+	}
+	if len(homes) > 0 {
+		return homes
+	}
 	home, configured := configuration["GRADLE_USER_HOME"]
 	if !configured {
 		home = os.Getenv("GRADLE_USER_HOME")
@@ -81,27 +161,7 @@ func gradleAgentProperties(build string, configuration map[string]string) error 
 			home = filepath.Join(user, ".gradle")
 		}
 	}
-	for _, path := range []string{filepath.Join(build, "gradle.properties"), filepath.Join(home, "gradle.properties")} {
-		file, err := os.Open(path)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			key, value, found := strings.Cut(scanner.Text(), "=")
-			if found && strings.TrimSpace(key) == "org.gradle.jvmargs" && withoutDatadogAgent(value) != value {
-				_ = file.Close()
-				return fmt.Errorf("%s attaches dd-java-agent to every Gradle build through org.gradle.jvmargs, so validation cannot run the build without it; remove that -javaagent option, as CI attaches the agent with the GitHub action", path)
-			}
-		}
-		if err := errors.Join(scanner.Err(), file.Close()); err != nil {
-			return err
-		}
-	}
-	return nil
+	return []string{home}
 }
 
 func (b *gradleBuild) tool() string      { return "Gradle" }
@@ -141,6 +201,8 @@ func (b *gradleBuild) arguments(args []string, probe *javaProbe) []string {
 }
 
 func (b *gradleBuild) environment(map[string]string) {}
+
+func (b *gradleBuild) javaHome() (string, string) { return b.home, b.homeSource }
 
 // probe writes the framework's probe class in the project at directory, run
 // alone through that project's test task.

@@ -637,15 +637,18 @@ Gradle builds are validated like Maven builds, with these differences. Every run
 adds `--rerun-tasks --no-build-cache --continue --no-daemon` and disables the
 configuration cache, so no test task is up to date or cached, a failing test task
 does not stop the others, and no daemon carries the agent from one run into
-another. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it;
-native results come from each project's `build/test-results/<task>` JUnit XML,
-matched to the test task path dd-java-agent reports, such as `:app:test`.
-Validation runs only test tasks: `--command` refuses other tasks, and a
-`gradle.properties` whose `org.gradle.jvmargs` attaches dd-java-agent, the
-build's or the user's, is refused like `.mvn/jvm.config`. The feature probe runs
-alone through its project's `test` task with `--tests`, for JUnit 4, JUnit 5,
-TestNG and Spock; for Cucumber JVM, Karate, ScalaTest and MUnit, Gradle builds
-report the features as not available yet.
+another. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it,
+and an agent already in `JAVA_OPTS`, which the Gradle launcher also reads, is
+removed; native results come from each project's `build/test-results/<task>`
+JUnit XML, matched to the test task path dd-java-agent reports, such as
+`:app:test`. Validation runs only test tasks, conventional ones or `Test` tasks
+the build files declare: `--command` refuses other tasks, and an
+`org.gradle.jvmargs` that attaches dd-java-agent, on the command line or in the
+build's or the user home's `gradle.properties` (`-g` included), is refused like
+`.mvn/jvm.config`. The feature probe runs alone through its project's `test`
+task with `--tests`, for JUnit 4, JUnit 5, TestNG and Spock; for Cucumber JVM,
+Karate, ScalaTest and MUnit, Gradle builds report the features as not available
+yet.
 
 Every framework supports plain `ddtest testdrive --all --check-only --yes`
 and full `ddtest testdrive --all --yes` validation, or a focused
@@ -693,7 +696,8 @@ are reported.
 Testdrive uses the dd-java-agent release every instrumented CI job pins
 (`--tracer-version` selects another), or `DD_TRACER_FOLDER`'s agent. A CI matrix
 row is compatible when this run validated its agent release on its JDK major;
-the JDK comes from `JAVA_HOME`, else the `java` on PATH. A row of another JDK
+the JDK comes from `JAVA_HOME`, else the `java` on PATH, unless a Gradle build
+selects its own with `org.gradle.java.home`. A row of another JDK
 major is validated on the local JDK as a substitute, recorded in
 `runtime_substitutions`, which completes only with `--accept-substitute-runtime`,
 a decision for the user, and is then reported as a caveat. Validate that JDK

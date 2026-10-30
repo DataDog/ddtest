@@ -28,8 +28,8 @@ func workflowPackageManager(root string) string {
 	return "unresolved"
 }
 
-func workflowInitialization(framework string) string {
-	if text := languageOrUnsupported(framework).initialization(framework); text != "" {
+func workflowInitialization(root, framework string) string {
+	if text := languageOrUnsupported(framework).initialization(root, framework); text != "" {
 		return text
 	}
 	switch framework {

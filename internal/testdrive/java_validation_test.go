@@ -42,10 +42,6 @@ func TestJavaSelectsOnlyLocalMavenTestCommands(t *testing.T) {
 		"mvn test deploy:deploy@publish": "never installs or publishes artifacts",
 		"mvn -f ../other/pom.xml test":   "must stay inside the repository",
 		"mvn test 'unterminated":         "invalid Java build command",
-		"./gradlew assemble":             "literal gradle or gradlew command that runs test tasks",
-		"./gradlew test publish":         "never publishes artifacts; remove publish",
-		"./gradlew -I ci.gradle test":    "changes the build Gradle runs",
-		"./gradlew -p ../other test":     "must stay inside the repository",
 	} {
 		_, _, _, err := javaLanguage{}.selectCommand(commandRequest{runner: runner, override: override})
 		require.ErrorContains(t, err, message, override)
@@ -62,6 +58,7 @@ func TestJavaSelectsOnlyLocalMavenTestCommands(t *testing.T) {
 
 func TestJavaAgentEnvironmentRidesOnGradleOpts(t *testing.T) {
 	t.Setenv("GRADLE_OPTS", "-Xmx1g -javaagent:/ci/dd-java-agent.jar")
+	t.Setenv("JAVA_OPTS", "-Dfile.encoding=UTF-8 -javaagent:/opt/dd-java-agent.jar")
 	t.Setenv("MAVEN_OPTS", "")
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "build.gradle"), "")
@@ -69,8 +66,10 @@ func TestJavaAgentEnvironmentRidesOnGradleOpts(t *testing.T) {
 	env := javaLanguage{}.runEnvironment(drive, "/tmp/session/dd-java-agent.jar")
 	require.Equal(t, "-Xmx1g -javaagent:/tmp/session/dd-java-agent.jar", env["GRADLE_OPTS"], "the Gradle JVM configures the test JVMs its test tasks fork, with the selected agent only")
 	require.NotContains(t, env, "MAVEN_OPTS")
+	require.Equal(t, "-Dfile.encoding=UTF-8", env["JAVA_OPTS"], "the Gradle launcher reads JAVA_OPTS too, so an agent there is removed")
 	env = javaLanguage{}.runEnvironment(drive, "")
 	require.Equal(t, "-Xmx1g", env["GRADLE_OPTS"], "the baseline runs without the agent CI's action attached")
+	require.Equal(t, "-Dfile.encoding=UTF-8", env["JAVA_OPTS"])
 }
 
 func TestJavaAgentEnvironmentAttachesTheAgentOnce(t *testing.T) {
@@ -211,8 +210,26 @@ func TestJavaConfigurationReadsGradleBuilds(t *testing.T) {
 	}
 	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewJVM("junit5", nil), command: "./gradlew", args: []string{"test", "publish"}}
 	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "never publishes")
-	drive.args = []string{"-I", "ci.gradle", "test"}
-	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "changes the build Gradle runs")
+	for _, tc := range []struct {
+		args    []string
+		message string
+	}{
+		{[]string{"-I", "ci.gradle", "test"}, "changes the build Gradle runs"},
+		{[]string{"assemble"}, "literal gradle or gradlew command that runs test tasks"},
+		{[]string{"-x", "test", "test"}, "literal gradle or gradlew command that runs test tasks"},
+		{[]string{"test", "javadoc"}, "never publishes artifacts; remove javadoc, for example: ./gradlew test"},
+		{[]string{"-p", "../other", "test"}, "must stay inside the repository"},
+		{[]string{"ciTests"}, "literal gradle or gradlew command that runs test tasks"},
+	} {
+		drive.args = tc.args
+		require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), tc.message, tc.args)
+	}
+	// A Test task the build declares runs tests, as CI discovery reads it.
+	requireWriteFile(t, filepath.Join(root, "app", "build.gradle"), "dependencies { testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4' }\ntasks.register('ciTests', Test)\n")
+	for _, args := range [][]string{{"ciTests"}, {"test", ":app:ciTests", "--tests", "example.AppTest"}} {
+		drive.args = args
+		require.NoError(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), args)
+	}
 	// A dd-java-agent that gradle.properties attaches to every build, the
 	// build's own or the user's, would also run in the baseline.
 	drive.args = []string{"test"}
@@ -223,6 +240,42 @@ func TestJavaConfigurationReadsGradleBuilds(t *testing.T) {
 	t.Setenv("GRADLE_USER_HOME", home)
 	requireWriteFile(t, filepath.Join(home, "gradle.properties"), "org.gradle.jvmargs=-javaagent:/opt/dd-java-agent.jar\n")
 	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "attaches dd-java-agent to every Gradle build")
+	// The user home the command names replaces the environment's.
+	for _, args := range [][]string{{"-g", "ci-home", "test"}, {"--gradle-user-home=ci-home", "test"}, {"-Dgradle.user.home=ci-home", "test"}} {
+		drive.args = args
+		require.NoError(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "%v leaves the environment's user home unused", args)
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "ci-home"), 0700))
+	requireWriteFile(t, filepath.Join(root, "ci-home", "gradle.properties"), "org.gradle.jvmargs: -javaagent:/opt/dd-java-agent.jar\n")
+	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), filepath.Join(root, "ci-home", "gradle.properties")+" attaches dd-java-agent")
+	drive.args = []string{"test", "-Dorg.gradle.jvmargs=-Xmx2g -javaagent:/opt/dd-java-agent.jar"}
+	t.Setenv("GRADLE_USER_HOME", t.TempDir())
+	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "through -Dorg.gradle.jvmargs")
+}
+
+func TestGradlePropertiesFollowJavaSyntax(t *testing.T) {
+	root := t.TempDir()
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, framework: framework.NewJVM("junit5", nil), command: "./gradlew", args: []string{"test"}}
+	requireWriteFile(t, filepath.Join(root, "build.gradle"), "")
+	t.Setenv("GRADLE_USER_HOME", t.TempDir())
+	for _, properties := range []string{
+		"org.gradle.jvmargs: -javaagent:/opt/dd-java-agent.jar\n",
+		"org.gradle.jvmargs -javaagent:/opt/dd-java-agent.jar\n",
+		"org.gradle.jvmargs=-Xmx2g \\\n    -javaagent:/opt/dd-java-agent.jar\n",
+		"org.gradle.jvmargs=-Xmx2g \\\r\n    -javaagent:/opt/dd-java-agent.jar\r\n",
+		"org.gradle.jvm\\\n  args=-javaagent:/opt/dd-java-agent.jar\n",
+	} {
+		requireWriteFile(t, filepath.Join(root, "gradle.properties"), properties)
+		require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "attaches dd-java-agent to every Gradle build", "%q", properties)
+	}
+	for _, properties := range []string{
+		"# org.gradle.jvmargs=-javaagent:/opt/dd-java-agent.jar\n",
+		"org.gradle.jvmargs=-Xmx2g\nother=-javaagent:/opt/dd-java-agent.jar\n",
+		"! comment \\\norg.gradle.jvmargs=-Xmx2g\n",
+	} {
+		requireWriteFile(t, filepath.Join(root, "gradle.properties"), properties)
+		require.NoError(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "%q", properties)
+	}
 }
 
 func TestJavaConfigurationRefusesImplicitPublishingGoalsForEveryFramework(t *testing.T) {
@@ -447,6 +500,8 @@ func TestJavaTestName(t *testing.T) {
 		"[1] custom display":  "[1] custom display",
 		"parse[a, 1](2)":      "parse",
 		"parse[[x], (y)](10)": "parse",
+		"length[0](hello, 5)": "length",
+		"length[1]([x], (y))": "length",
 	} {
 		require.Equal(t, telemetry, javaTestName(native), native)
 	}
@@ -702,9 +757,26 @@ func TestJavaWorkflowIsBoundToTheJDK(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	_, err = javaLanguage{}.workflowRuntime(&Testdrive{})
 	require.ErrorContains(t, err, "no JDK was found")
-	require.Equal(t, "maven", javaLanguage{}.packageManager(""))
-	require.Contains(t, javaLanguage{}.initialization("junit5"), "${{ env.MAVEN_OPTS }}")
 	require.True(t, Coordinated("java"))
+}
+
+func TestJavaWorkflowPlanNamesTheBuildTools(t *testing.T) {
+	maven, gradle, both := t.TempDir(), t.TempDir(), t.TempDir()
+	requireWriteFile(t, filepath.Join(maven, "pom.xml"), "<project/>")
+	requireWriteFile(t, filepath.Join(gradle, "settings.gradle.kts"), "")
+	requireWriteFile(t, filepath.Join(both, "pom.xml"), "<project/>")
+	requireWriteFile(t, filepath.Join(both, "build.gradle"), "")
+	for _, tc := range []struct{ root, tool, carriers, commands string }{
+		{maven, "maven", "MAVEN_OPTS, which later steps must extend with ${{ env.MAVEN_OPTS }}", "the Maven commands"},
+		{gradle, "gradle", "GRADLE_OPTS, which later steps must extend with ${{ env.GRADLE_OPTS }}", "the Gradle commands"},
+		{both, "maven, gradle", "MAVEN_OPTS and GRADLE_OPTS, which later steps must extend with ${{ env.MAVEN_OPTS }} and ${{ env.GRADLE_OPTS }}", "the Maven and Gradle commands"},
+	} {
+		require.Equal(t, tc.tool, javaLanguage{}.packageManager(tc.root))
+		initialization := javaLanguage{}.initialization(tc.root, "junit5")
+		require.Contains(t, initialization, "attaches dd-java-agent through "+tc.carriers, tc.tool)
+		require.Contains(t, initialization, tc.commands, tc.tool)
+	}
+	require.NotContains(t, javaLanguage{}.initialization(gradle, "junit5"), "MAVEN_OPTS", "a Gradle build carries the agent in GRADLE_OPTS only")
 }
 
 func TestJavaPackageCheckInspectsTheReactorsCommandsSelect(t *testing.T) {

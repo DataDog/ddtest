@@ -329,12 +329,13 @@ func javaNativeTests(results []javaResult, probe bool) []nativeTest {
 // invocations with their index, as in check(TestInfo) or add(int, int)[2].
 var javaSignature = regexp.MustCompile(`^([\pL_$][\pL\pN_$]*)\([^)]*\)(\[[0-9]+\])?$`)
 
-// testNGInvocation is how Surefire reports a TestNG data-provider invocation,
-// as in parse[a, 1](2); dd-java-agent reports the method name.
-var testNGInvocation = regexp.MustCompile(`^([\pL_$][\pL\pN_$]*)\[.*\]\([0-9]+\)$`)
+// testNGInvocation is how Surefire and Gradle report a TestNG data-provider
+// invocation, as in parse[a, 1](2) and parse[0](a, 1); dd-java-agent reports
+// the method name.
+var testNGInvocation = regexp.MustCompile(`^([\pL_$][\pL\pN_$]*)\[.*\]\(.*\)$`)
 
 // javaTestName is how the agent names a JUnit method or TestNG invocation
-// that Surefire reports with its signature or arguments.
+// that Surefire or Gradle reports with its signature or arguments.
 func javaTestName(name string) string {
 	if parts := javaSignature.FindStringSubmatch(name); parts != nil {
 		return parts[1] + parts[2]
@@ -786,17 +787,25 @@ func javaRunnerModule(build javaBuild, tests []nativeTest, framework string) (st
 func (t *Testdrive) checkJavaPreflight(_ context.Context, output io.Writer, result *validationResult) error {
 	check := &preflightCheck{Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "The Java build has not been inspected."}}
 	result.Preflight = check
-	info := javaEnvironmentInfo(t.configurationEnvironment)
-	if info.Version == "" {
-		check.Verdict.Reason = "No JDK was found: set JAVA_HOME to the JDK the project builds with, or put its java on PATH."
-		return errors.New(check.Verdict.Reason)
-	}
-	check.Runtime, check.Executable = info.Version, info.Executable
 	build, err := t.javaBuild(t.args)
 	if err != nil {
 		check.Verdict.Reason = "The selected command's build cannot be read: " + err.Error()
 		return fmt.Errorf("inspect the Java build: %w", err)
 	}
+	// CI rows are certified on the JDK the build runs on, which the build
+	// tool may select itself.
+	info := javaEnvironmentInfo(t.configurationEnvironment)
+	if home, source := build.javaHome(); home != "" {
+		if info = javaHomeInfo(home, source); info.Version == "" {
+			check.Verdict.Reason = source + " selects " + home + ", which is not a JDK with a readable release file."
+			return errors.New(check.Verdict.Reason)
+		}
+	}
+	if info.Version == "" {
+		check.Verdict.Reason = "No JDK was found: set JAVA_HOME to the JDK the project builds with, or put its java on PATH."
+		return errors.New(check.Verdict.Reason)
+	}
+	check.Runtime, check.Executable = info.Version, info.Executable
 	projects := build.projects()
 	ci, substitutions, err := t.javaCIRuntime(info.Version)
 	if err != nil {
@@ -807,7 +816,11 @@ func (t *Testdrive) checkJavaPreflight(_ context.Context, output io.Writer, resu
 		result.addSubstitution(substitution)
 		_, _ = fmt.Fprintf(output, "Runtime substitution: %s\n", substitution.Reason)
 	}
-	reason := fmt.Sprintf("Java %s; the selected command builds %d %s %s. Paired execution and feature controls are still required.", info.Version, len(projects), build.tool(), plural(len(projects), "project", "projects"))
+	runtime := "Java " + info.Version
+	if home, _ := build.javaHome(); home != "" {
+		runtime += " (" + info.Source + ")"
+	}
+	reason := fmt.Sprintf("%s; the selected command builds %d %s %s. Paired execution and feature controls are still required.", runtime, len(projects), build.tool(), plural(len(projects), "project", "projects"))
 	if !slices.Contains(javaFrameworks(build), t.framework.Name()) {
 		reason += " No " + build.buildFile() + " in the repository declares " + displayName(t.framework.Name()) + "; it may come from a parent, BOM or build logic outside the files ddtest reads."
 	}
