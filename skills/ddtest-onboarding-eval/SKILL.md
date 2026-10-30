@@ -25,6 +25,13 @@ the container.
 
 ## Prepare
 
+For pytest trials, use `--framework pytest --python /absolute/image/path/to/python`
+with a trusted image containing Python and venv support. The runner creates a
+private environment before dependency setup, preserves it for the agent, and
+checks the final report's Python version. Prepare the project's test dependencies;
+editable installs of the tested checkout block testdrive isolation. Use
+checkout-local `PYTHONPATH` or pytest `pythonpath` imports instead.
+
 Use Python 3.9+, Git, Go for building ddtest, and Docker with the trial root
 shared into its VM. On macOS the default root is `~/.dde`, created private:
 Colima shares only `$HOME` by default and Docker Desktop shares `/Users`. On Linux

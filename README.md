@@ -409,6 +409,13 @@ of `releases/latest/download/` in the URL.
 - [Running locally with CI skippable tests and runtime tags](docs/local-ci-skippable-tests.md)
 - [DDTest 1.0 upgrade guide](docs/upgrade-1.0.md)
 
+For Python/pytest, `ddtest onboard --framework pytest` prints CI setup guidance
+and discovered test configurations. `ddtest testdrive --framework pytest --yes`
+compares the local suite with and without instrumentation and checks all six
+feature controls. Use `--all` to validate discovered configurations, and rerun
+full validation before claiming current success. See
+[pytest validation](docs/running.md#pytest-testdrive-validation).
+
 Vitest testdrive supports baseline/reporting comparison and controlled retries,
 early flake detection, skipping, quarantine, disabled tests and attempt-to-fix.
 Use `ddtest testdrive --framework vitest --all --check-only --yes` before

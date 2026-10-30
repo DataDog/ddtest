@@ -199,9 +199,10 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if all && !frameworkFeaturePolicies[runner.Name()].Configurations {
 		return nil, fmt.Errorf("--all currently validates %s only", frameworkNamesWith(func(policy frameworkPolicy) bool { return policy.Configurations }))
 	}
-	// Focused and --all runs both consult the selected provider's CI
-	// configuration, so the provider must support the language.
-	if err := onboard.CheckCIProviderSupport(repositoryRoot, language, runner.Name()); err != nil {
+	// Standalone commands can run locally while unsupported CI stays advisory.
+	policy := frameworkFeaturePolicies[runner.Name()]
+	focused := policy.Configurations && !all && !configurationOnly && (strings.TrimSpace(settings.GetCommand()) != "" || policy.DefaultFocusedCommand)
+	if err := onboard.CheckCIProviderSupport(repositoryRoot, language, runner.Name()); err != nil && !focused {
 		return nil, err
 	}
 
@@ -636,7 +637,8 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer, recoverStor
 		result, runErr = t.run(ctx, output)
 	}
 	result.Framework = t.framework.Name()
-	result.FocusedCommand = frameworkFeaturePolicies[t.framework.Name()].Configurations && strings.TrimSpace(settings.GetCommand()) != ""
+	policy := frameworkFeaturePolicies[t.framework.Name()]
+	result.FocusedCommand = policy.Configurations && (strings.TrimSpace(settings.GetCommand()) != "" || policy.DefaultFocusedCommand)
 	result.CommandEnvironment = reportedEnvironment(t.commandAssignments)
 	if frameworkFeaturePolicies[t.framework.Name()].Configurations {
 		prepareValidationResult(t.repositoryRoot, &result)
@@ -648,7 +650,10 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer, recoverStor
 			scope, err = onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		}
 		if err != nil {
-			runErr = errors.Join(runErr, err)
+			result.Scope = &onboard.ValidationScope{Unresolved: []string{err.Error()}}
+			if !result.focusedLocalCommand() {
+				runErr = errors.Join(runErr, err)
+			}
 		} else {
 			t.setConfigurationScope(&result, scope)
 			if prepared != nil {

@@ -51,9 +51,12 @@ class ProductContractTests(unittest.TestCase):
                 self.assertEqual(result['status'],'pass',result)
                 runtime=run_eval.report_runtime(report,'24.19.0')
                 self.assertEqual(runtime['status'],'matched',runtime)
+                if report['framework']=='pytest':
+                    self.assertEqual(run_eval.report_preflight_runtime(report,'3.12.8')['status'],'matched')
                 self.assertEqual(run_eval.reporting_verdict(summary['final_response']+'\nOnboarding is complete.',report)['status'],'fail')
                 for claim in ('Blockers: none','Onboarding successfully completed.','Status: COMPLETE LOCALLY'):
-                    self.assertEqual(run_eval.reporting_verdict(summary['final_response']+'\n'+claim,report)['status'],'fail',claim)
+                    expected='pass' if claim=='Blockers: none' and not summary['blocking_checks'] else 'fail'
+                    self.assertEqual(run_eval.reporting_verdict(summary['final_response']+'\n'+claim,report)['status'],expected,claim)
                 self.assertEqual(run_eval.reporting_verdict(summary['final_response']+'\nI have fully onboarded this repository.',report)['status'],'review')
                 # On a stale report a count stated as current is a contradiction, not just unsupported.
                 expected='review' if report['last_execution']['current'] else 'fail'

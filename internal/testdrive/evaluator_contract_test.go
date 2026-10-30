@@ -22,6 +22,9 @@ func TestExportEvaluatorReportContract(t *testing.T) {
 		root := t.TempDir()
 		result := focusedValidationFixture(framework)
 		result.Preflight.Node = "24.19.0"
+		if framework == "pytest" {
+			result.Preflight.Runtime = "3.12.8"
+		}
 		result.Configurations[0].Preflight = result.Preflight
 		result.Runs[0].FrameworkNode = "22.0.0"
 		identities := 32

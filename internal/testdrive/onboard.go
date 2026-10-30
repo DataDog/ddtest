@@ -1144,6 +1144,9 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 	if validation == nil {
 		return renderReportFailure(output, format, fmt.Errorf("no saved validation report"))
 	}
+	if result, handled := languageOrUnsupported(validation.Framework).standaloneReport(root, validation); handled {
+		return onboard.RenderAgentResult(output, result, format)
+	}
 	if !supportsValidationFramework(validation.Framework) || !languageOrUnsupported(validation.Framework).coordinated() {
 		result := onboard.AgentResult{Status: "unsupported", Phase: "report", Code: "framework_unsupported", Reason: "Structured onboarding reports are not available for this framework. Inspect the saved standalone HTML/JSON as historical evidence, or rerun standalone testdrive.", NextAction: "report_result"}
 		return errors.Join(fmt.Errorf("%s", result.Reason), onboard.RenderAgentResult(output, result, format))

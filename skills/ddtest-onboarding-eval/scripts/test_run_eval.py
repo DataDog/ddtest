@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import platform
 import getpass
 from pathlib import Path
 import shlex
@@ -217,6 +218,48 @@ class RunnerTests(unittest.TestCase):
                             f"print(json.dumps({{'executable':str(pathlib.Path(__file__).resolve()), 'version':'v{version}', 'requested_executable':str(pathlib.Path(__file__).resolve())}}) if '-p' in sys.argv else 'v{version}')\n")
         selected.chmod(0o755)
         return selected
+
+    def test_pytest_uses_private_python_and_audits_the_final_report(self):
+        for agent in ("codex", "claude"):
+            with self.subTest(agent=agent):
+                self.args.agent = agent
+                self.args.python = Path(sys.executable)
+                self.args.framework = "pytest"
+                self.args.output = self.root / (agent + "-python-evidence")
+                report = {"summary": {"status": "INCOMPLETE"},
+                          "preflight": {"runtime": platform.python_version()},
+                          "retained_execution": {"result": {"preflight": {"runtime": "0.0.0"}}}}
+                code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps(report)})
+                self.assertEqual(code, 0, manifest)
+                venv = str(Path(manifest["trial_directory"]) / "venv")
+                self.assertEqual(manifest["python_runtime"]["prefix"], venv)
+                self.assertEqual(manifest["ddtest_python_runtime"]["status"], "matched")
+                observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())
+                self.assertEqual(observed["environment"]["VIRTUAL_ENV"], venv)
+                self.assertEqual(observed["environment"]["UV_PROJECT_ENVIRONMENT"], venv)
+                self.assertIn(venv + "/bin", observed["environment"]["PATH"].split(os.pathsep))
+                self.assertIn("for pytest only", observed["prompt"])
+                for key in ("PIP_CACHE_DIR", "UV_CACHE_DIR"):
+                    self.assertTrue(Path(manifest["private_caches"][key]).is_dir())
+                if agent == "codex":
+                    self.assertIn('shell_environment_policy.set.VIRTUAL_ENV=' + json.dumps(venv), observed["argv"])
+
+    def test_pytest_runtime_mismatch_fails_the_trial(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps({"summary": {"status": "INCOMPLETE"}, "preflight": {"runtime": "0.0.0"}})})
+        self.assertEqual(code, 1)
+        self.assertEqual(manifest["failure_stage"], "ddtest_python_runtime")
+        self.assertFalse(manifest["retry_recommended"])
+
+    def test_python_selection_rejects_ambiguous_or_non_image_paths(self):
+        for python, framework, node in ((Path("python"), "pytest", None), (Path("/usr/../bin/python"), "pytest", None),
+                                        (Path(sys.executable), "jest", None), (Path(sys.executable), "pytest", Path("/usr/bin/node"))):
+            with self.subTest(python=python, framework=framework, node=node):
+                self.args.python, self.args.framework, self.args.node = python, framework, node
+                with self.assertRaisesRegex(ValueError, "--python"):
+                    run_eval.run(self.args)
+                self.assertFalse(self.args.output.exists())
 
     def test_fresh_trials_minimal_prompt_and_independent_evaluation(self):
         checkouts = []

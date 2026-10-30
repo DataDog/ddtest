@@ -450,6 +450,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	if len(result.Summary.BlockingChecks) > 0 {
 		_, _ = fmt.Fprintf(output, "Blocking checks: %s\n", strings.Join(result.Summary.BlockingChecks, "; "))
 	}
+	for _, reason := range result.Summary.CIAdvisories {
+		_, _ = fmt.Fprintf(output, "CI advisory (outside selected command): %s\n", reason)
+	}
 	for _, reason := range result.Summary.NotExercised {
 		_, _ = fmt.Fprintf(output, "Not exercised: %s\n", reason)
 	}
@@ -582,11 +585,8 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	if supportsValidationFramework(result.Framework) {
 		result.Success = result.Success && result.HTMLReportCurrent && result.Cleanup != nil && result.Cleanup.Status == "passed"
 	}
-	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
-		result.Success = false
-	}
 	result.ChecksPassed = workflowChecksPassed(result.Workflow) && result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
-	if result.Scope != nil {
+	if result.Scope != nil && !result.focusedLocalCommand() {
 		_, fidelityBlockers := ciFidelity(result)
 		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved)+len(fidelityBlockers) == 0
 		for _, command := range result.Scope.Commands {
@@ -596,17 +596,19 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0 && (!result.CheckOnly || len(command.Prerequisites) == 0 || len(result.Configurations) > 0)
 		}
 	}
-	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
+	if result.ciPreservationBlocking() {
 		result.Success, result.ChecksPassed = false, false
 	}
-	if result.CISelection != nil {
+	if result.CISelection != nil && !result.focusedLocalCommand() {
 		result.Success = result.Success && result.CISelection.Status == "compatible"
 		result.ChecksPassed = result.ChecksPassed && result.CISelection.Status == "compatible"
 	}
 	if result.CIRuntime != nil {
 		ciOK := result.CIRuntime.Status == "compatible" || result.CIRuntime.Status == "not applicable"
-		result.Success = result.Success && ciOK
-		result.ChecksPassed = result.ChecksPassed && ciOK
+		if !result.focusedLocalCommand() {
+			result.Success = result.Success && ciOK
+			result.ChecksPassed = result.ChecksPassed && ciOK
+		}
 		check := *result.CIRuntime
 		check.Reason = reportText(check.Reason)
 		check.Jobs = slices.Clone(check.Jobs)

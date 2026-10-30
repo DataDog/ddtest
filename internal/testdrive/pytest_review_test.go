@@ -76,23 +76,29 @@ func TestPytestReportsAreReadOnlyHistoricalEvidence(t *testing.T) {
 			before, err := json.Marshal(validation)
 			require.NoError(t, err)
 			require.NoError(t, writeValidation(validationPath(root), before))
+			info, err := os.Stat(validationPath(root))
+			require.NoError(t, err)
 			requireWriteFile(t, htmlReportPath(root), "saved HTML")
 			t.Setenv("PATH", root) // Report readback must not require Node or Python.
 			for _, format := range []string{"json", "verbose"} {
 				var output bytes.Buffer
-				require.Error(t, RenderReport(t.Context(), &output, format))
-				require.Contains(t, output.String(), "framework_unsupported")
+				require.NoError(t, RenderReport(t.Context(), &output, format))
+				require.Contains(t, output.String(), "historical")
 				require.NotContains(t, output.String(), "Local testdrive: PASSED")
 				if format == "json" {
 					var result onboard.AgentResult
 					require.NoError(t, json.Unmarshal(output.Bytes(), &result))
-					require.Equal(t, "unsupported", result.Status)
-					require.Empty(t, result.NextCommand)
+					require.Equal(t, "historical_report", result.Status)
+					require.Equal(t, "freshness_unverified", result.Code)
+					require.Equal(t, "run_command", result.NextAction)
 				}
 			}
 			after, err := os.ReadFile(validationPath(root))
 			require.NoError(t, err)
 			require.Equal(t, before, after)
+			afterInfo, err := os.Stat(validationPath(root))
+			require.NoError(t, err)
+			require.Equal(t, info.ModTime(), afterInfo.ModTime())
 			html, err := os.ReadFile(htmlReportPath(root))
 			require.NoError(t, err)
 			require.Equal(t, "saved HTML", string(html))
