@@ -30,10 +30,11 @@ func TestPytestKeepsWrapperSeparatorsAndCIOptions(t *testing.T) {
 	drive := &Testdrive{repositoryRoot: t.TempDir(), language: "python", command: "uv", args: []string{"run", "--", "python", "-m", "pytest", "--", "test_app.py"}, executor: executor, configurationEnvironment: map[string]string{"PYTEST_ADDOPTS": "--ddtrace -q --cov=app", "PYTHONPATH": "custom-packages", "APP_MODE": "ci"}, startIntake: func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{url: "http://127.0.0.1:1"}, nil }}
 	_, err := drive.runPytest(t.Context(), io.Discard, session, "", runSpec{Name: "baseline", Role: roleBaseline})
 	require.NoError(t, err)
-	require.Equal(t, []string{"run", "--no-sync", "--", "python", "-m", "pytest", "--no-ddtrace", "--", "test_app.py"}, executor.args)
+	require.Equal(t, []string{"run", "--no-sync", "--", "python", "-m", "pytest", "--", "test_app.py"}, executor.args)
 	require.Contains(t, executor.env["PYTEST_ADDOPTS"], "-q --cov=app")
 	require.NotContains(t, executor.env["PYTEST_ADDOPTS"], "ignored")
-	require.Contains(t, executor.env["PYTEST_ADDOPTS"], "--no-ddtrace")
+	require.Equal(t, "false", executor.env["DDTEST_PYTEST_INSTRUMENTED"])
+	require.Contains(t, executor.env["PYTEST_PLUGINS"], "ddtest_pytest_observer")
 	require.Contains(t, executor.env["PYTHONPATH"], "custom-packages")
 	require.Equal(t, "ci", executor.env["APP_MODE"])
 	require.Equal(t, "false", executor.env["DD_TRACE_ENABLED"])
@@ -47,7 +48,7 @@ func TestPytestAttachedModuleKeepsWrapperAndSuiteSeparators(t *testing.T) {
 	drive := &Testdrive{repositoryRoot: t.TempDir(), command: "uv", args: []string{"run", "--", "python", "-mpytest", "--", "test_app.py"}, executor: executor, startIntake: func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{url: "http://127.0.0.1:1"}, nil }}
 	_, err := drive.runPytest(t.Context(), io.Discard, session, "", runSpec{Name: "baseline", Role: roleBaseline})
 	require.NoError(t, err)
-	require.Equal(t, []string{"run", "--no-sync", "--", "python", "-mpytest", "--no-ddtrace", "--", "test_app.py"}, executor.args)
+	require.Equal(t, []string{"run", "--no-sync", "--", "python", "-mpytest", "--", "test_app.py"}, executor.args)
 }
 
 func TestPytestUVExeDoesNotSync(t *testing.T) {
@@ -62,9 +63,22 @@ func TestPytestUVExeDoesNotSync(t *testing.T) {
 			}}
 			_, err := drive.runPytest(t.Context(), io.Discard, session, "", runSpec{Name: "baseline", Role: roleBaseline})
 			require.NoError(t, err)
-			require.Equal(t, []string{"run", "--no-sync", "pytest", "--no-ddtrace"}, executor.args)
+			require.Equal(t, []string{"run", "--no-sync", "pytest"}, executor.args)
 		})
 	}
+}
+
+func TestPytestWrapperGroupDoesNotReceiveTracerOptions(t *testing.T) {
+	session := workspace.PlanSession()
+	require.NoError(t, session.Create())
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
+	executor := &fakeTestdriveExecutor{}
+	drive := &Testdrive{repositoryRoot: t.TempDir(), command: "uv", args: []string{"run", "--group", "pytest", "--", "python", "-m", "pytest"}, executor: executor, configurationEnvironment: map[string]string{"PYTEST_PLUGINS": "application_plugin"}, startIntake: func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{url: "http://127.0.0.1:1"}, nil }}
+	_, err := drive.runPytest(t.Context(), io.Discard, session, "", runSpec{Name: "reporting-only", Instrumented: true})
+	require.NoError(t, err)
+	require.Equal(t, []string{"run", "--no-sync", "--group", "pytest", "--", "python", "-m", "pytest"}, executor.args)
+	require.Equal(t, "true", executor.env["DDTEST_PYTEST_INSTRUMENTED"])
+	require.Equal(t, "application_plugin,ddtest_pytest_observer", executor.env["PYTEST_PLUGINS"])
 }
 
 func TestPytestResultsRequireCompleteNativeEvidence(t *testing.T) {

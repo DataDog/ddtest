@@ -14,6 +14,12 @@ _rootpath = Path.cwd()
 
 def pytest_addoption(pluginmanager):
     config = pluginmanager.get_plugin("pytestconfig")
+    controlled = os.environ.get("DDTEST_PYTEST_INSTRUMENTED")
+    if controlled is not None:
+        # Configure the registered options directly: inherited -- markers and
+        # wrapper arguments must not turn our control flags into test paths.
+        config.option.ddtrace = controlled == "true"
+        setattr(config.option, "no-ddtrace", controlled != "true")
     options = getattr(config, "known_args_namespace", None)
     disabled = os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD") or getattr(
         options, "disable_plugin_autoload", False

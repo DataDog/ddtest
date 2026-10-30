@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
@@ -288,17 +287,21 @@ func (t *Testdrive) runPytest(ctx context.Context, output io.Writer, session *wo
 	if err != nil {
 		return run, err
 	}
-	flag := "--no-ddtrace"
+	env["DDTEST_PYTEST_INSTRUMENTED"] = "false"
 	if instrumented {
-		flag = "--ddtrace"
+		env["DDTEST_PYTEST_INSTRUMENTED"] = "true"
 	} else {
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
-	optionWords, err := shellquote.Split(options)
-	if err != nil {
-		return run, err
+	plugins := os.Getenv("PYTEST_PLUGINS")
+	if configured, ok := t.configurationEnvironment["PYTEST_PLUGINS"]; ok {
+		plugins = configured
 	}
-	env["PYTEST_ADDOPTS"] = shellquote.Join(framework.WithFrameworkOptions("pytest", optionWords, "pytest", "-p", "ddtest_pytest_observer", flag)...)
+	if plugins != "" {
+		plugins += ","
+	}
+	env["PYTEST_PLUGINS"] = plugins + "ddtest_pytest_observer"
+	env["PYTEST_ADDOPTS"] = options
 	env["PYTHONDONTWRITEBYTECODE"] = "1"
 	env["DDTEST_PYTEST_RESULTS"] = filepath.Join(directory, "results.json")
 	env["DDTEST_PYTEST_PROBE"], env["DDTEST_PROBE_MODE"] = probePath, probeMode
@@ -317,7 +320,6 @@ func (t *Testdrive) runPytest(ctx context.Context, output io.Writer, session *wo
 	prefix := words[:len(words)-len(pytestArgs)]
 	words = append(slices.Clone(prefix), stripPytestArguments(pytestArgs)...)
 	args = words[1:]
-	args = framework.WithFrameworkOptions(t.command, args, "pytest", flag)
 	args = pytestObserverArguments(t.command, args, directory, preload)
 	run.Command = shellquote.Join(append([]string{t.command}, args...)...)
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)

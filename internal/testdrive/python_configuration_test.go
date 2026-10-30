@@ -46,6 +46,16 @@ func TestPytestConfiguredArgumentFilesExecuteOnlyInsideCopy(t *testing.T) {
 	}
 }
 
+func TestPytestInheritedEndOfOptions(t *testing.T) {
+	for _, mode := range []string{"environment separator", "config separator"} {
+		t.Run(mode, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, mode) })
+	}
+}
+
+func TestPytestControlledModeWithDisabledAutoload(t *testing.T) {
+	testPytestPathsExecuteOnlyInsideCopy(t, "disabled autoload")
+}
+
 func TestPytestObserverWithEnvironmentIgnored(t *testing.T) {
 	for _, flag := range []string{"-I", "-E", "-bE"} {
 		t.Run(flag, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, flag) })
@@ -53,7 +63,7 @@ func TestPytestObserverWithEnvironmentIgnored(t *testing.T) {
 }
 
 func TestPytestUVDirectoryExecutesOnlyInsideCopy(t *testing.T) {
-	for _, option := range []string{"--directory", "--project"} {
+	for _, option := range []string{"--directory", "--project", "uv pytest group"} {
 		t.Run(option, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, option) })
 	}
 }
@@ -100,7 +110,17 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	addopts := "--rootdir=" + root
 	environment := map[string]string{}
 	configuration, configuredContents := "", ""
-	if mode == "argument files" {
+	if mode == "environment separator" || mode == "config separator" {
+		args = []string{"-m", "pytest"}
+		if mode == "environment separator" {
+			addopts = "-- " + file + "::test_app"
+		} else {
+			addopts = ""
+			configuration = "pytest.ini"
+			configuredContents = "[pytest]\npythonpath = .\naddopts = -- " + file + "::test_app\n"
+			requireWriteFile(t, configuration, configuredContents)
+		}
+	} else if mode == "argument files" {
 		requireWriteFile(t, "ci-args.txt", "@"+filepath.Join(root, "nested-args.txt")+"\n")
 		requireWriteFile(t, "nested-args.txt", "-c\n"+filepath.Join(root, "pytest.ini")+"\n"+file+"::test_app\n")
 		requireWriteFile(t, "addopts.txt", addopts+"\n")
@@ -125,15 +145,20 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 		} else {
 			addopts += " -o addopts=@" + argumentFile
 		}
-	} else if mode == "--directory" || mode == "--project" {
+	} else if mode == "--directory" || mode == "--project" || mode == "uv pytest group" {
 		uv, err := exec.LookPath("uv")
 		if err != nil {
 			t.Skip("uv required")
 		}
 		command = uv
 		args = append([]string{"run", "--no-sync", mode, root, "python"}, args...)
-		requireWriteFile(t, "pyproject.toml", "[project]\nname='ddtest-uv-review'\nversion='0.1.0'\nrequires-python='>=3.9'\n")
+		if mode == "uv pytest group" {
+			args = append([]string{"run", "--no-sync", "--group", "pytest", "--", "python"}, args[5:]...)
+		}
+		requireWriteFile(t, "pyproject.toml", "[project]\nname='ddtest-uv-review'\nversion='0.1.0'\nrequires-python='>=3.9'\n[dependency-groups]\npytest=[]\n")
 		environment["UV_PROJECT_ENVIRONMENT"] = filepath.Dir(filepath.Dir(python))
+	} else if mode == "disabled autoload" {
+		environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
 	} else if strings.HasPrefix(mode, "pythonpath ") {
 		require.NoError(t, os.Mkdir("src", 0755))
 		require.NoError(t, os.Remove("app.py"))
