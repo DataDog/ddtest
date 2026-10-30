@@ -7,39 +7,32 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/DataDog/ddtest/ddto/internal/instrument"
 )
 
-// prepareGoleak returns a warning instead of an entry when the selected goleak
-// is unsupported; its checks then run without the CI worker filters.
+// prepareGoleak returns a warning instead of an entry when the selected
+// goleak's code lacks what the edit needs; its checks then run without the CI
+// worker filters. The code decides, not the version.
 func prepareGoleak(pkg *goPackage, replacements map[string]string, temp string) (*LibraryEntry, string, error) {
 	if pkg == nil {
 		return nil, "", nil
 	}
-	version := libraryVersion(pkg)
-	reason := "requires v1.3.0 or a later v1 release"
-	entry, err := (*LibraryEntry)(nil), error(nil)
-	if supportedGoleakVersion(version) {
-		entry, err = prepareGoleakEntry(pkg, replacements, temp)
-		if errors.Is(err, instrument.ErrUnsupportedAPI) {
-			reason, err = err.Error(), nil
-		}
+	entry, err := prepareGoleakEntry(pkg, replacements, temp)
+	if !errors.Is(err, instrument.ErrUnsupportedAPI) {
+		return entry, "", err
 	}
-	if entry == nil && err == nil {
-		if pkg.Module != nil && pkg.Module.Replace != nil {
-			replacement := pkg.Module.Replace
-			if replacement.Path != "" && replacement.Path != pkg.Module.Path {
-				reason += "; replacement " + replacement.Path
-				if replacement.Version != "" {
-					reason += " " + replacement.Version
-				}
+	reason := err.Error()
+	if pkg.Module != nil && pkg.Module.Replace != nil {
+		replacement := pkg.Module.Replace
+		if replacement.Path != "" && replacement.Path != pkg.Module.Path {
+			reason += "; replacement " + replacement.Path
+			if replacement.Version != "" {
+				reason += " " + replacement.Version
 			}
 		}
-		return nil, fmt.Sprintf("goleak %s is not instrumented (%s); its leak checks run without CI goroutine filters and can report CI workers", version, reason), nil
 	}
-	return entry, "", err
+	return nil, fmt.Sprintf("goleak %s is not instrumented (%s); its leak checks run without CI goroutine filters and can report CI workers", libraryVersion(pkg), reason), nil
 }
 
 func prepareGoleakEntry(pkg *goPackage, replacements map[string]string, temp string) (*LibraryEntry, error) {
@@ -50,6 +43,7 @@ func prepareGoleakEntry(pkg *goPackage, replacements map[string]string, temp str
 	hash.Write([]byte(hook))
 	names := append([]string(nil), pkg.GoFiles...)
 	sort.Strings(names)
+	sources, actuals := map[string][]byte{}, map[string]string{}
 	for _, name := range names {
 		logical := filepath.Join(pkg.Dir, name)
 		actual := logical
@@ -63,6 +57,18 @@ func prepareGoleakEntry(pkg *goPackage, replacements map[string]string, temp str
 		if err != nil {
 			return nil, err
 		}
+		sources[logical], actuals[logical] = src, actual
+	}
+	if err := instrument.GoleakAPI(sources); err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		logical := filepath.Join(pkg.Dir, name)
+		src, ok := sources[logical]
+		if !ok {
+			continue
+		}
+		actual := actuals[logical]
 		out, found, err := instrument.TransformGoleakEntry(logical, src)
 		if err != nil {
 			return nil, err
@@ -85,14 +91,6 @@ func prepareGoleakEntry(pkg *goPackage, replacements map[string]string, temp str
 	}
 	tool.Fingerprint = fmt.Sprintf("%x", hash.Sum(nil))
 	return tool, nil
-}
-
-func supportedGoleakVersion(version string) bool {
-	var minor, patch int
-	if _, err := fmt.Sscanf(strings.TrimPrefix(version, "v1."), "%d.%d", &minor, &patch); err != nil || !strings.HasPrefix(version, "v1.") {
-		return false
-	}
-	return minor > 3 || minor == 3 && (patch > 0 || !strings.Contains(version, "-"))
 }
 
 // Goleak does not import testing, so its cache key cannot inherit our testing

@@ -389,10 +389,12 @@ queue bounds, deferred groups, leak checks and payload metadata.
 Bazel payload-file mode writes JSON under
 `TEST_UNDECLARED_OUTPUTS_DIR/payloads/tests/`, with corresponding coverage and
 telemetry directories. Manifest mode uses the SDK's offline read cache. The
-test-cycle file writer needs no HTTP credentials and sends no event requests;
-the settings-cache reader still requires a nonempty API key. The offline
-comparison uses a synthetic key and checks that no HTTP request is sent. It
-checks the file contract; no real Bazel build runs.
+test-cycle file writer needs no HTTP credentials and sends no event requests.
+The settings-cache reader needs an API key only in agentless mode, where Mini
+creates no client without `DD_API_KEY`; in Agent mode, as in Bazel tests
+without network, it needs none. The offline comparison runs in agentless mode
+with a synthetic key and checks that no HTTP request is sent. It checks the
+file contract; no real Bazel build runs.
 
 Mini retains CI telemetry and diagnostics. It excludes APM sampling, profiling,
 security, remote configuration, heartbeats and dependency/endpoint inventories.

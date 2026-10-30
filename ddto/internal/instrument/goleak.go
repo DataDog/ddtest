@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"sort"
 	"strings"
 )
 
@@ -87,6 +88,37 @@ func TransformGoleakEntry(name string, src []byte) ([]byte, bool, error) {
 		return out, true, err
 	}
 	return nil, false, nil
+}
+
+// GoleakAPI checks the rest of the package for what the Find edit calls: a
+// top-level IgnoreAnyFunction(string) Option. goleak v1.2.1 has the same Find
+// but no IgnoreAnyFunction, so the edit would not compile there. The code
+// decides, not the version: a Bazel compile does not know module versions.
+func GoleakAPI(files map[string][]byte) error {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		file, err := parser.ParseFile(token.NewFileSet(), name, files[name], parser.SkipObjectResolution)
+		if err != nil {
+			return err
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || fn.Name.Name != "IgnoreAnyFunction" {
+				continue
+			}
+			params, results := fn.Type.Params, fn.Type.Results
+			if fn.Type.TypeParams == nil && params != nil && len(params.List) == 1 && len(params.List[0].Names) <= 1 && isIdent(params.List[0].Type, "string") &&
+				results != nil && len(results.List) == 1 && len(results.List[0].Names) == 0 && isIdent(results.List[0].Type, "Option") {
+				return nil
+			}
+			return fmt.Errorf("%s: %w: unsupported goleak.IgnoreAnyFunction signature", name, ErrUnsupportedAPI)
+		}
+	}
+	return fmt.Errorf("%w: goleak.IgnoreAnyFunction(string) Option is missing", ErrUnsupportedAPI)
 }
 
 // No runtime import is inserted into goleak's module dependency graph.

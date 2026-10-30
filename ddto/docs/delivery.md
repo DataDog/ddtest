@@ -134,20 +134,18 @@ When the selected Mini test graph reaches `go.uber.org/goleak`, `ddtest instrume
 its `Find` entry. This is automatic in both ordinary and deferred delivery.
 Calling `VerifyNone`, `VerifyTestMain` or a helper in another module reaches
 that same entry. An unused requirement in `go.mod` does not activate the integration.
-The minimum supported version is v1.3.0, the first with `IgnoreAnyFunction`;
-v2 needs a separate review. Preparation checks the selected version and entry
-signature before a warm cache can skip compilation. An unsupported version or
-entry produces a warning and the build continues without the integration; its
-leak checks can then report CI workers. The entry also ignores the test's own
+The code decides, not the version: preparation checks the selected sources
+for the `Find` entry and for `IgnoreAnyFunction(string) Option`, which the edit
+calls and which v1.3.0 added, before a warm cache can skip compilation. v1.2.1
+has the same `Find` but no `IgnoreAnyFunction`. v2 needs a separate review. A
+package without either produces a warning and the build continues without the
+integration; its leak checks can then report CI workers. The entry also ignores the test's own
 goroutine while an Auto Test Retries or Early Flake Detection attempt runs in
 another; a goroutine that the test starts is still reported.
 
-For a replacement with a different module path, the minimum-version check uses
-`go.uber.org/goleak`'s effective original version from `go list`, because a
-fork can have an independent version scheme. For a versioned replacement within
-`go.uber.org/goleak`, the replacement version applies; a downgrade below v1.3.0
-still warns. A local replacement uses the original version. This is the same
-policy used for Testify.
+Replacements follow their code too, whatever their version, as for Testify:
+a fork with an independent version scheme is instrumented when it has both
+APIs, and a downgrade to v1.2.1 warns.
 
 For example, this replacement is supported:
 
@@ -317,12 +315,12 @@ invalid options, parallel TestMain, explicit delivery, race and library coverage
 with per-test coverage enabled by the local settings endpoint.
 `TestMiniGoleakForkReplacement` runs the same cases against the replacement above
 with `GODEBUG=tracebackancestors=10`, including detection of user goroutines and
-HTTP connections. Unit tests cover other fork version schemes, upstream
+HTTP connections. Unit tests cover forks with other version schemes, upstream
 upgrades/downgrades, local replacements and incompatible entries or overlays.
 Both integration tests run in the cross-platform Go instrumentation workflow.
-`TestGoleakCacheAndWarmVersionGuard` checks unchanged cache reuse, a changed
-goleak source with unrelated standard packages still cached, and rejection of an
-unsupported version with unchanged cached source.
+`TestGoleakCacheAndAPIGuard` checks unchanged cache reuse, a changed goleak
+source with unrelated standard packages still cached, and a vendored goleak
+without `IgnoreAnyFunction`, which warns and links no hook.
 `TestDeferredDeliveryParityMatrix` compares 16 CI feature combinations against
 the SDK/Orchestrion reference; `TestDeferredDeliveryTestifyParity` adds seven
 Testify combinations. Queue tests check order, payload limits, retained failures,

@@ -10,7 +10,7 @@ import (
 	"github.com/DataDog/ddtest/ddto/internal/version"
 )
 
-func TestGoleakCacheAndWarmVersionGuard(t *testing.T) {
+func TestGoleakCacheAndAPIGuard(t *testing.T) {
 	driver := sharedDriver(t, "..")
 	root, err := filepath.Abs("..")
 	if err != nil {
@@ -58,26 +58,39 @@ func TestGoleakCacheAndWarmVersionGuard(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"go.mod", "vendor/modules.txt"} {
-		path := filepath.Join(dir, filepath.FromSlash(name))
+	// The code decides, not the version: give the vendored v1.3.0 the API of
+	// v1.2.1, which lacks IgnoreAnyFunction. The check runs before the build:
+	// goleak builds without the integration and nothing links the hook.
+	vendored := filepath.Join(dir, "vendor", "go.uber.org", "goleak")
+	entries, err := os.ReadDir(vendored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := false
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		path := filepath.Join(vendored, entry.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		changed := strings.ReplaceAll(string(data), "=> go.uber.org/goleak v1.3.0", "=> go.uber.org/goleak v1.2.1")
+		changed := strings.ReplaceAll(string(data), "IgnoreAnyFunction(", "ignoreAnyFunctionUnexported(")
 		if changed == string(data) {
-			t.Fatal("replacement metadata absent", name)
+			continue
 		}
+		renamed = true
 		if err := os.WriteFile(path, []byte(changed), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// The version check runs before the build, even with unchanged cached
-	// sources: the unsupported version builds without the integration, and the
-	// cached instrumented object is not reused.
+	if !renamed {
+		t.Fatal("vendored goleak has no IgnoreAnyFunction")
+	}
 	out, stderr, code = command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, args...)
-	if code != 0 || !strings.Contains(stderr, version.BuildLogPrefix+" WARN: goleak v1.2.1 is not instrumented") || ddtoToolexec(stderr) {
-		t.Fatalf("cached unsupported version: exit=%d\n%s\n%s", code, out, stderr)
+	if code != 0 || !strings.Contains(stderr, version.BuildLogPrefix+" WARN: goleak v1.3.0 is not instrumented") || !strings.Contains(stderr, "IgnoreAnyFunction") || ddtoToolexec(stderr) {
+		t.Fatalf("goleak without IgnoreAnyFunction: exit=%d\n%s\n%s", code, out, stderr)
 	}
 	symbols, stderr, code := command(t, dir, testEnv(), "go", "tool", "nm", filepath.Join(dir, executableName("fixture.test")))
 	if code != 0 || strings.Contains(symbols, "PrepareLeakCheck") {

@@ -2,6 +2,7 @@ package instrument
 
 import (
 	"bytes"
+	"errors"
 	"go/parser"
 	"go/token"
 	"strings"
@@ -35,5 +36,31 @@ func TestGoleakEntryKeepsFindAndOptions(t *testing.T) {
 	}
 	if strings.Contains(GoleakEntryHook(), `"github.com/DataDog/ddtest/ddto`) {
 		t.Fatal("runtime import added to library graph")
+	}
+}
+
+func TestGoleakAPIRequiresIgnoreAnyFunction(t *testing.T) {
+	const find = "package goleak\ntype Option interface{}\nfunc Find(options ...Option) error { return nil }\n"
+	ok := map[string][]byte{"leaks.go": []byte(find), "options.go": []byte("package goleak\nfunc IgnoreAnyFunction(f string) Option { return nil }\n")}
+	if err := GoleakAPI(ok); err != nil {
+		t.Fatal(err)
+	}
+	for name, options := range map[string]string{
+		"v1.2.1":       "package goleak\nfunc IgnoreTopFunction(f string) Option { return nil }\n",
+		"method":       "package goleak\ntype opts struct{}\nfunc (opts) IgnoreAnyFunction(f string) Option { return nil }\n",
+		"generic":      "package goleak\nfunc IgnoreAnyFunction[T any](f string) Option { return nil }\n",
+		"two params":   "package goleak\nfunc IgnoreAnyFunction(f, g string) Option { return nil }\n",
+		"variadic":     "package goleak\nfunc IgnoreAnyFunction(f ...string) Option { return nil }\n",
+		"other result": "package goleak\nfunc IgnoreAnyFunction(f string) error { return nil }\n",
+		"named result": "package goleak\nfunc IgnoreAnyFunction(f string) (o Option) { return nil }\n",
+		"two results":  "package goleak\nfunc IgnoreAnyFunction(f string) (Option, error) { return nil, nil }\n",
+	} {
+		err := GoleakAPI(map[string][]byte{"leaks.go": []byte(find), "options.go": []byte(options)})
+		if !errors.Is(err, ErrUnsupportedAPI) {
+			t.Errorf("%s: accepted or wrong error: %v", name, err)
+		}
+	}
+	if err := GoleakAPI(map[string][]byte{"leaks.go": []byte("package goleak\nfunc (")}); err == nil || errors.Is(err, ErrUnsupportedAPI) {
+		t.Fatalf("a syntax error must fail the preparation, not warn: %v", err)
 	}
 }

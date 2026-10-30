@@ -556,10 +556,10 @@ instrumented object. `coverContractVersion` in
 Prepared content fingerprints omit temporary paths. Preserve native compiler
 and linker `-V=full` responses and check unchanged builds avoid both tools.
 
-Run [`TestTestifyVersionGuardWithWarmVendoredSources`](../integration/vendor_cache_test.go)
-when changing detection or version validation. Its source bytes stay constant
-while module/vendor metadata changes, so compile-time-only guards cannot pass
-it. Also run [`TestTestifyContractInvalidatesOnlyTestingDependents`](../integration/selective_tools_test.go)
+Run [`TestTestifyAPIGuardWithWarmVendoredSources`](../integration/vendor_cache_test.go)
+when changing detection or API validation. It warms the cache with vendored
+sources, then changes their `Run` entry: preparation must warn and the build
+must not reuse the instrumented archive. Also run [`TestTestifyContractInvalidatesOnlyTestingDependents`](../integration/selective_tools_test.go)
 when changing the marker or tool identity: Testify must rebuild while unrelated
 standard-library packages remain cached. These assertions use
 `compilerTraceLines` to recognize native `go test -x` commands, including quoted

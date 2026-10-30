@@ -17,24 +17,26 @@ The scope follows Testify's serial method runner, so concurrent `suite.Run`
 calls sharing the same parent `*testing.T` are unsupported, as they are in
 Testify, whose own suite state assumes serial use.
 
-The minimum supported upstream version is Testify v1.4.0: from that release
-on, `Run(*testing.T, TestingSuite)` runs each suite method as `t.Run(method)`,
-which is all the registration needs. Releases v1.4.0 through v1.12.1 produced
-identical events for the same suite. The compatibility suite runs v1.10.0, v1.11.1 and
-v1.12.1; its fixture itself needs v1.6.0 or later. Preparation checks the
-selected version and the actual `Run` signature, including versioned and local
-replacements. A v2 module needs a separate review.
+The code decides, not the version. Preparation checks the selected sources'
+`Run(*testing.T, TestingSuite)` entry, including versioned and local
+replacements and overlays, and no longer compares versions: a Bazel compile
+does not know module versions, and a fork can keep the entry under any version.
+From v1.2.0 on, `Run` runs each suite method as a `t.Run` subtest, which is all
+the registration needs; v1.1.x and older ran them through `testing.RunTests`.
+`TestTestifyV130IsInstrumentedByItsCode` checks v1.3.0, the release before the
+former v1.4.0 minimum. The compatibility suite runs v1.10.0, v1.11.1 and
+v1.12.1; its fixture itself needs v1.6.0 or later. A v2 module needs a separate
+review.
 
-An older or newer major version, an unknown version, or an unrecognized `Run`
-entry does not stop the build. `ddtest instrument` prints a warning and leaves Testify
-uninstrumented; its suite methods are still reported as ordinary subtests,
-without Testify suite metadata. Unreadable sources and reserved-name collisions
-remain errors.
+An unrecognized `Run` entry does not stop the build. `ddtest instrument` prints
+a warning and leaves Testify uninstrumented; its suite methods are still
+reported as ordinary subtests, without Testify suite metadata. Unreadable
+sources and reserved-name collisions remain errors.
 
 ## Replacement forks
 
-Both runtimes use the original module's version for forks with a different
-module path, then validate the selected runner's API. For example:
+Both runtimes validate the selected runner's API, whatever the replacement's
+version. For example:
 
 ```go
 require github.com/stretchr/testify v1.12.1
@@ -43,31 +45,18 @@ replace github.com/stretchr/testify => github.com/DataDog/testify v1.1.5-0.20250
 ```
 
 This fork's `suite/suite.go` matches upstream v1.10.0 byte for byte. Its
-pseudo-version starts with v1.1.5, so comparing that number with the upstream
-minimum would reject a compatible runner.
+pseudo-version starts with v1.1.5, which says nothing about its runner.
 
-Preparation uses the effective module metadata returned by `go list`:
-
-- For a replacement with a different module path, use the original Testify
-  version for the minimum-version check. Forks have independent version schemes;
-  their release numbers do not identify an upstream Testify release.
-- For a versioned replacement within `github.com/stretchr/testify`, check the
-  replacement version. Replacing v1.12.1 with upstream v1.3.0 still warns.
-- For a local replacement, check the original module version.
-
-This policy supports forks without a module allowlist or a pinned revision.
-The original version is the client's declared compatibility contract, but Go
-does not verify that a fork preserves it, so preparation still validates
-`Run(*testing.T, TestingSuite)` in the effective selected sources before the
-build can use its cache. Overlays participate in that check. An incompatible
+Preparation validates `Run(*testing.T, TestingSuite)` in the effective
+selected sources before the build can use its cache. This supports forks
+without a module allowlist or a pinned revision. Overlays participate in that check. An incompatible
 entry produces a warning naming both the original version and the replacement.
 The prepared-source fingerprint continues to protect the compiler cache; no
 new subprocess, cache or runtime dependency is needed.
 
 `TestTestifyDataDogReplacement` checks this replacement for Mini and SDK.
-`TestTestifyReplacementVersionPolicy` covers independent fork versions,
-upstream upgrades and downgrades, local replacements, and unsupported original
-versions. `TestTestifyForkReplacementGuards` checks incompatible entries and
+`TestTestifyReplacementsFollowTheirCode` covers independent fork versions,
+upstream downgrades and local replacements. `TestTestifyForkReplacementGuards` checks incompatible entries and
 overlays for both runtimes. The `DataDog-fork` case of
 `TestTestifySupportedVersionsAndNativeSemantics` compiles the actual replacement
 with native Go, SDK and Mini, including race and coverage. It checks native
@@ -112,11 +101,10 @@ Testify and goleak share this discovery query. When reachability is known and
 no unknown test imports remain, the package query, `go list -deps`, has already
 listed the selected library with its metadata, and no other query runs. Unknown
 test imports require `-deps`, including when the suite is already known, so a
-helper's goleak import remains visible. Version and API validation therefore
-happens before the build, even when Go can recover the suite from its cache;
-in the compile wrapper, it would miss version changes on a warm cache.
-[`TestTestifyVersionGuardWithWarmVendoredSources`](../integration/vendor_cache_test.go)
-checks that warm-cache counterexample. The [performance guide](performance.md)
+helper's goleak import remains visible. API validation therefore happens
+before the build, even when Go can recover the suite from its cache.
+[`TestTestifyAPIGuardWithWarmVendoredSources`](../integration/vendor_cache_test.go)
+checks that a changed vendored entry is not hidden by a warm cache. The [performance guide](performance.md)
 records the discovery and cache constraints.
 
 Preparation reads only the selected Testify sources. It validates the entry,

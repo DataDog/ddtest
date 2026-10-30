@@ -30,19 +30,6 @@ func TestTestifyLibraryNameCollision(t *testing.T) {
 	}
 }
 
-func TestTestifyMinimumVersion(t *testing.T) {
-	for _, v := range []string{"v1.4.0", "v1.4.1-0.20190101000000-abcdefabcdef", "v1.8.4", "v1.10.0", "v1.11.0", "v1.11.1", "v1.12.0", "v1.12.1", "v1.13.0-rc.1", "v1.11.1+metadata"} {
-		if !SupportsTestifyVersion(v) {
-			t.Errorf("supported version rejected: %s", v)
-		}
-	}
-	for _, v := range []string{"", "v1.3.0", "v1.4.0-rc.1", "v2.0.0", "1.11.1", "v1.11", "v1.-1.2"} {
-		if SupportsTestifyVersion(v) {
-			t.Errorf("unsupported version accepted: %s", v)
-		}
-	}
-}
-
 func FuzzTransformTestify(f *testing.F) {
 	f.Add(`package suite; import "testing"; type TestingSuite interface{};func Run(t *testing.T,s TestingSuite){}`)
 	f.Add("//line /original/suite.go:1:1\npackage suite;import \"testing\";type TestingSuite interface{};func Run(t *testing.T,s TestingSuite){}")

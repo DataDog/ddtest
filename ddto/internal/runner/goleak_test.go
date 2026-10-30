@@ -37,16 +37,6 @@ func TestGoleakCacheFlagPreservesEffectiveCompilerFlags(t *testing.T) {
 			t.Fatal(tc, flag, err)
 		}
 	}
-	for _, version := range []string{"v1.3.0", "v1.3.1", "v1.4.0", "v1.4.0-rc.1"} {
-		if !supportedGoleakVersion(version) {
-			t.Fatal(version)
-		}
-	}
-	for _, version := range []string{"", "v1.2.1", "v1.3.0-rc.1", "v2.0.0", "v1.13"} {
-		if supportedGoleakVersion(version) {
-			t.Fatal(version)
-		}
-	}
 }
 
 func TestGoleakCacheFlagIgnoresRelativePatternsOutsideTheTree(t *testing.T) {
@@ -88,7 +78,10 @@ func TestGoleakToolDispatch(t *testing.T) {
 	}
 }
 
-const goleakFindSource = "package goleak\ntype Option interface{}\nfunc Find(options ...Option) error { return nil }\n"
+const goleakFindSource = "package goleak\ntype Option interface{}\nfunc Find(options ...Option) error { return nil }\nfunc IgnoreAnyFunction(f string) Option { return nil }\n"
+
+// goleak v1.2.1 has the same Find but no IgnoreAnyFunction, which the edit calls.
+const goleakV121Source = "package goleak\ntype Option interface{}\nfunc Find(options ...Option) error { return nil }\nfunc IgnoreTopFunction(f string) Option { return nil }\n"
 const goleakForkVersion = "v0.0.0-20260702071827-065a2facff42"
 
 func goleakPackage(t *testing.T, version, source string) *goPackage {
@@ -118,28 +111,28 @@ func TestGoleakForkReplacement(t *testing.T) {
 	}
 }
 
-func TestGoleakReplacementVersionPolicy(t *testing.T) {
+func TestGoleakReplacementsFollowTheirCode(t *testing.T) {
 	for _, tc := range []struct {
-		name, required, path, version string
-		want                          bool
+		name, required, path, version, source string
+		want                                  bool
 	}{
-		{"fork independent pseudo-version", "v1.3.0", "github.com/tonyredondo/goleak", goleakForkVersion, true},
-		{"other fork independent version", "v1.3.0", "example.com/goleak", "v0.1.0", true},
-		{"fork independent major", "v1.3.0", "example.com/goleak/v2", "v2.0.0", true},
-		{"fork original too old", "v1.2.1", "example.com/goleak", "v1.3.0", false},
-		{"fork unknown original", "", "example.com/goleak", "v1.3.0", false},
-		{"fork unsupported original major", "v2.0.0", "example.com/goleak", "v1.3.0", false},
-		{"same module downgrade", "v1.3.0", "go.uber.org/goleak", "v1.2.1", false},
-		{"same module upgrade", "v1.2.1", "go.uber.org/goleak", "v1.3.0", true},
-		{"local replacement", "v1.3.0", "../goleak", "", true},
-		{"local old original", "v1.2.1", "../goleak", "", false},
+		{"fork independent pseudo-version", "v1.3.0", "github.com/tonyredondo/goleak", goleakForkVersion, goleakFindSource, true},
+		{"fork independent major", "v1.3.0", "example.com/goleak/v2", "v2.0.0", goleakFindSource, true},
+		{"fork of an older original", "v1.2.1", "example.com/goleak", "v1.3.0", goleakFindSource, true},
+		{"fork of an unknown original", "", "example.com/goleak", "v1.3.0", goleakFindSource, true},
+		{"same module upgrade", "v1.2.1", "go.uber.org/goleak", "v1.3.0", goleakFindSource, true},
+		{"same module downgrade", "v1.3.0", "go.uber.org/goleak", "v1.2.1", goleakV121Source, false},
+		{"local replacement without IgnoreAnyFunction", "v1.3.0", "../goleak", "", goleakV121Source, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			pkg := goleakPackage(t, tc.required, goleakFindSource)
+			pkg := goleakPackage(t, tc.required, tc.source)
 			pkg.Module.Replace = &struct{ Path, Dir, Version string }{Path: tc.path, Version: tc.version}
 			entry, warning, err := prepareGoleak(pkg, nil, t.TempDir())
 			if err != nil || (entry != nil) != tc.want || (warning == "") != tc.want {
-				t.Fatalf("want supported=%t: entry=%v warning=%q err=%v", tc.want, entry, warning, err)
+				t.Fatalf("want instrumented=%t: entry=%v warning=%q err=%v", tc.want, entry, warning, err)
+			}
+			if !tc.want && !strings.Contains(warning, "IgnoreAnyFunction") {
+				t.Fatalf("warning does not name the missing API: %s", warning)
 			}
 		})
 	}

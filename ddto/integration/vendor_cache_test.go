@@ -11,8 +11,8 @@ import (
 )
 
 // A compile-only guard cannot validate a package recovered from Go's cache.
-// Keep selected-version validation before the build, including patched vendors.
-func TestTestifyVersionGuardWithWarmVendoredSources(t *testing.T) {
+// Keep the API validation before the build, including patched vendors.
+func TestTestifyAPIGuardWithWarmVendoredSources(t *testing.T) {
 	_, driver := prepareMiniFixture(t)
 	root, err := filepath.Abs("..")
 	if err != nil {
@@ -51,26 +51,23 @@ func TestSuite(t *testing.T) {suite.Run(t, new(ExampleSuite))}
 			t.Fatal("unchanged vendor sources did not reuse cache", stderr)
 		}
 	}
-	// Consistent metadata with unchanged vendored sources is a supported Go
-	// build input. Even if the API happens to fit, our minimum-version guard
-	// applies: the suite builds without instrumentation and the cached
-	// instrumented object is not reused.
-	for _, name := range []string{"go.mod", "vendor/modules.txt"} {
-		path := filepath.Join(dir, filepath.FromSlash(name))
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		edited := strings.ReplaceAll(string(data), "=> github.com/stretchr/testify v1.11.1", "=> github.com/stretchr/testify v1.3.0")
-		if edited == string(data) {
-			t.Fatal("versioned replacement missing", name)
-		}
-		if err := os.WriteFile(path, []byte(edited), 0600); err != nil {
-			t.Fatal(err)
-		}
+	// The code decides, not the version: a vendored Testify whose Run entry
+	// changed builds without the integration, and the cached instrumented
+	// object is not reused.
+	path := filepath.Join(dir, "vendor", "github.com", "stretchr", "testify", "suite", "suite.go")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := strings.Replace(string(data), "func Run(t *testing.T, suite TestingSuite) {", "func Run(t *testing.T, suite TestingSuite, _ ...struct{}) {", 1)
+	if edited == string(data) {
+		t.Fatal("vendored Testify has no Run entry")
+	}
+	if err := os.WriteFile(path, []byte(edited), 0600); err != nil {
+		t.Fatal(err)
 	}
 	out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, args...)
-	if code != 0 || !strings.Contains(stderr, version.BuildLogPrefix+" WARN: Testify v1.3.0 is not instrumented") || ddtoToolexec(stderr) {
-		t.Fatalf("cached unsupported vendor: exit=%d\n%s\n%s", code, out, stderr)
+	if code != 0 || !strings.Contains(stderr, version.BuildLogPrefix+" WARN: Testify v1.11.1 is not instrumented") || !strings.Contains(stderr, "unsupported library API") || ddtoToolexec(stderr) {
+		t.Fatalf("changed vendored entry: exit=%d\n%s\n%s", code, out, stderr)
 	}
 }
