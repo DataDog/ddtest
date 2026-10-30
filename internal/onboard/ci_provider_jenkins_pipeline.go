@@ -151,6 +151,8 @@ type jenkinsReader struct {
 	// the shell reads as the checkout (see jenkinsShellDialect), and the
 	// shared model's checkout expression in an environment value.
 	workspace string
+	// setups are the datadog(…) options whose scope includes container jobs.
+	setups []*jenkinsSetup
 }
 
 // readJenkinsfile reads one Jenkinsfile into a workflow.
@@ -181,6 +183,15 @@ func readJenkinsfile(root, file, source string) (ciWorkflow, error) {
 		r.statement(statement, &scope, top)
 	}
 	r.finish(top)
+	// The plugin's variables reach every job in an option's scope, so one
+	// container job there leaves the option uncertified for all of them.
+	for _, setup := range r.setups {
+		for _, step := range setup.steps {
+			if step.Problem == "" {
+				step.Problem = setup.containerProblem()
+			}
+		}
+	}
 	slices.Sort(r.review)
 	workflow.Review = slices.Compact(r.review)
 	if len(r.nonTest) > 0 {
@@ -2155,6 +2166,7 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 		if job.pathChange != "" {
 			current.Confirmations = append(current.Confirmations, jenkinsRuntimeMatches)
 		}
+		setup.steps = append(setup.steps, &current)
 		steps = append([]runtimeStep{{Source: setup.source, Setup: &current}}, steps...)
 	} else if scope.setupProblem != "" {
 		steps = append([]runtimeStep{{Source: r.file, Setup: &ciSetup{Reference: jenkinsPluginReference, Pinned: true, Problem: scope.setupProblem, Inputs: map[string]string{}}}}, steps...)
@@ -2171,6 +2183,12 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 		name = job.name + " [" + strconv.Itoa(i) + "]"
 	}
 	r.workflow.Jobs[name] = result
+	if setup := scope.setup; setup != nil && result.SetupUnsupported != "" && !scope.disabled && len(job.steps) > 0 {
+		setup.containers = append(setup.containers, r.file+" / "+name)
+		if !slices.Contains(r.setups, setup) {
+			r.setups = append(r.setups, setup)
+		}
+	}
 }
 
 // jenkinsHost describes a host agent for the user who knows its runtime.

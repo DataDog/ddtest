@@ -601,8 +601,7 @@ The plugin does not instrument tests inside containers. Stages that run in
 image variable's `.inside` or `container(…)` are unsupported. A container
 block in a job on a host agent runs only its own steps in the container: they
 become a job of their own, named after the job and the container
-(`Test (docker.image('node:22').inside)`), so a host `sh 'npm test'` next to a
-packaging container stays instrumentable, and a test inside the container is
+(`Test (docker.image('node:22').inside)`), and a test inside the container is
 reported, naming the job it splits from. When every job that runs the tests
 is unsupported, onboarding returns `status: unsupported` with
 `code: ci_setup_unsupported`, naming the jobs and the user's options (run the
@@ -611,6 +610,21 @@ which ddtest cannot validate), with an instruction for the coding agent to
 report it and stop; otherwise the instructions name them and validation keeps
 them as blockers. An installer fallback for containers is not part of
 this provider.
+
+The plugin's tracer variables still reach container steps: its step
+environment contributor configures every step in the option's scope for the
+build agent the step runs on, which a container step still is, and adds the
+variables (`NODE_OPTIONS` with `-r` and the dd-trace it installed in the
+agent's workspace, `DD_TRACE_PATH`, `RUBYOPT=-rbundler/setup
+-rdatadog/ci/auto_instrument`) to its environment, while it installs the tracer
+(for Ruby, `bundle add` on the workspace Gemfile) only with the agent's own
+toolchain. In a container without that tracer or gem, any Node or Ruby process
+then fails to load it, tests or not. So a setup whose scope includes a job that
+runs steps in a container (an `agent { docker … }` stage, a container block,
+a `podTemplate` node) is a setup problem for every job in that scope, naming
+those jobs: run them on a host agent, or keep them out of the option's scope
+(in a scripted pipeline, wrap only the `node` blocks on host agents). A
+container stage that runs no steps does not count.
 
 A host agent's runtime is never in the Jenkinsfile, so ddtest asks for it
 (`ci_runtime_required`, answered with `--ci-runtime`, naming the agent label

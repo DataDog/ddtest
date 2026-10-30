@@ -1209,3 +1209,36 @@ func TestJenkinsNodeOptionsUnderAStageOverride(t *testing.T) {
 	require.Contains(t, review, "ddtest validates with the pipeline's NODE_OPTIONS")
 	require.Contains(t, review, "NODE_OPTIONS set in withEnv at Jenkinsfile:12")
 }
+
+// The plugin sets its tracer variables in every step of the option's scope,
+// container steps too, so an option whose scope includes a job that runs
+// steps in a container is certified for none of its jobs; a container job
+// that runs no steps, or one outside a scripted wrap, does not count.
+func TestJenkinsPluginScopeWithContainerJobs(t *testing.T) {
+	setupProblem := func(source, job string) string {
+		t.Helper()
+		found := jenkinsJobs(t, source)[job]
+		require.NotEmpty(t, found.Steps, job)
+		require.NotNil(t, found.Steps[0].Setup, job)
+		return found.Steps[0].Setup.Problem
+	}
+	mixed := "pipeline {\n  agent none\n" + jenkinsDatadogOption + "  stages {\n    stage('Docker') { agent { docker { image 'node:22' } }\n      steps { sh 'npm run package' } }\n    stage('Host') { agent any\n      steps { sh 'npm test' } }\n  }\n}\n"
+	problem := setupProblem(mixed, "Host")
+	require.Contains(t, problem, "The datadog(testOptimization: …) option at Jenkinsfile:4 also applies to Jenkinsfile / Docker, which run steps in a container.")
+	require.Contains(t, problem, "sets its tracer variables (DD_TRACE_PATH, NODE_OPTIONS) in every step of its scope, container steps included, but installs the tracer only on the build agent")
+	require.Contains(t, problem, "tests or not")
+	require.Contains(t, problem, "run those stages on a host agent, or keep them out of the option's scope")
+
+	split := "pipeline {\n  agent any\n" + jenkinsDatadogOption + "  stages {\n    stage('Test') { steps {\n      sh 'npm ci'\n      script { docker.image('node:22').inside { sh 'npm test' } }\n    } }\n  }\n}\n"
+	require.Contains(t, setupProblem(split, "Test"), "also applies to Jenkinsfile / Test (docker.image('node:22').inside)", "a container block inside a host stage counts too")
+
+	noSteps := "pipeline {\n  agent none\n" + jenkinsDatadogOption + "  stages {\n    stage('Docker') { agent { docker { image 'node:22' } }\n      steps { echo 'nothing to run' } }\n    stage('Host') { agent any\n      steps { sh 'npm test' } }\n  }\n}\n"
+	require.Empty(t, setupProblem(noSteps, "Host"))
+
+	scripted := "datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT']]) {\n  node {\n    stage('Test') { sh 'npm test' }\n  }\n}\nnode {\n  stage('Package') { docker.image('node:22').inside { sh 'npm pack' } }\n}\n"
+	require.Empty(t, setupProblem(scripted, "Test"), "the container block is outside the wrap")
+
+	root := jenkinsRepository(t, mixed)
+	require.False(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
+	require.Contains(t, strings.Join(existingSetupProblems(root, "javascript", "jest", ""), "\n"), "Jenkinsfile / Host: The datadog(testOptimization: …) option at Jenkinsfile:4 also applies to Jenkinsfile / Docker")
+}

@@ -87,6 +87,34 @@ type jenkinsSetup struct {
 	// variables are the additionalVariables the plugin sets for every step.
 	variables map[string]string
 	problems  []string
+	// containers are the jobs in the option's scope that run steps in a
+	// container, and steps the setup steps of every job in its scope.
+	containers []string
+	steps      []*ciSetup
+}
+
+// containerProblem explains why a setup whose scope includes jobs that run
+// steps in containers is not certified: the plugin sets its tracer
+// variables in every step of its scope, container steps too, but installs
+// the tracer on the build agent only. Empty when its scope has none.
+func (s *jenkinsSetup) containerProblem() string {
+	if len(s.containers) == 0 {
+		return ""
+	}
+	var variables []string
+	for _, language := range discoveryLanguages {
+		if !slices.Contains(s.languages, language.ciPluginLanguage()) {
+			continue
+		}
+		exported, referenced := language.ciPluginExports(nil)
+		variables = append(append(variables, slices.Collect(maps.Keys(exported))...), slices.Collect(maps.Keys(referenced))...)
+	}
+	slices.Sort(variables)
+	set := "its tracer variables"
+	if variables = slices.Compact(variables); len(variables) > 0 {
+		set += " (" + strings.Join(variables, ", ") + ")"
+	}
+	return "The datadog(testOptimization: …) option at " + s.source + " also applies to " + strings.Join(s.containers, ", ") + ", which run steps in a container. The Datadog Jenkins plugin sets " + set + " in every step of its scope, container steps included, but installs the tracer only on the build agent, so in those containers every process of the languages it enables, tests or not, loads a tracer the container may not have and can fail to start. ddtest does not certify a setup whose scope includes container stages: run those stages on a host agent, or keep them out of the option's scope (in a scripted pipeline, wrap only the node blocks that run on host agents)."
 }
 
 func (s *jenkinsSetup) problem() string {
@@ -294,7 +322,7 @@ func (j jenkins) setupInstructions(request ciSetupRequest) string {
 	text.WriteString("Set up Datadog Test Optimization in Jenkins with the Datadog Jenkins plugin, enabled for the whole pipeline in the Jenkinsfile. The plugin installs the tracer on each build agent when a build runs and sets its variables for every step, so the Jenkinsfile only enables it.\n\n")
 	text.WriteString("1. Ask the user to have a Jenkins administrator install the Datadog plugin " + jenkinsPluginMinimum + " or newer on the Jenkins controller and configure it in Manage Jenkins > System > Datadog Plugin: Agentless mode with the Datadog API key stored as a Jenkins credential and the site " + request.Site + ", or Agent mode with a Datadog Agent the build agents reach. Never write the key into the repository, the Jenkinsfile or additionalVariables. ddtest cannot read Jenkins' configuration, so after the edit it asks the user to confirm the plugin and its mode (--ci-confirm) before it certifies anything.\n")
 	text.WriteString("2. In every Jenkinsfile that runs the tests listed above, enable Test Optimization for the pipeline. In a declarative pipeline, add the datadog option to the pipeline's top-level options directive (create the directive after agent if there is none; when it already has a datadog(…) call, add testOptimization to it and keep its other settings); stage-level options are not certified:\n\n```groovy\noptions {\n  datadog(testOptimization: [enabled: true, serviceName: '<service>', languages: ['" + token + "']])\n}\n```\n\nIn a scripted pipeline, wrap the node blocks that run the tests in it instead, re-indenting them and keeping every line:\n\n```groovy\ndatadog(testOptimization: [enabled: true, serviceName: '<service>', languages: ['" + token + "']]) {\n  node {\n    // existing stages\n  }\n}\n```\n\nReplace <service> with the service name the test results should report under, such as the repository name. When the pipeline already enables other languages, add '" + token + "' to the existing languages list. Keep every other line, stage, agent and step unchanged.\n")
-	text.WriteString("\n3. The plugin only instruments steps that run on a host agent (agent any, agent { label … }, node(…)). It does not instrument tests inside containers (agent { docker … }, dockerfile, kubernetes, a podTemplate's node(POD_LABEL), docker.image(…).inside, container(…), or docker run in an sh script): ddtest reports those stages as unsupported. Do not move tests between agents to obtain a pass; tell the user and let them decide.\n")
+	text.WriteString("\n3. The plugin only instruments steps that run on a host agent (agent any, agent { label … }, node(…)). It does not instrument tests inside containers (agent { docker … }, dockerfile, kubernetes, a podTemplate's node(POD_LABEL), docker.image(…).inside, container(…), or docker run in an sh script): ddtest reports those stages as unsupported. The plugin still sets its tracer variables in container steps within its scope, where the tracer it installed on the agent may be missing, so ddtest does not certify a datadog option whose scope includes a stage that runs steps in a container, tests or not: such stages run on a host agent, or stay out of the option's scope (in a scripted pipeline, wrap only the node blocks on host agents). Do not move tests between agents to obtain a pass; tell the user and let them decide.\n")
 	if len(request.After) > 0 {
 		text.WriteString("\n4. In the sh script of each stage that runs the tests, add this line before the test command (inside the same sh string, so it runs in the test's shell):\n\n```sh\n" + strings.Join(request.After, "\n") + "\n```\n")
 	}
