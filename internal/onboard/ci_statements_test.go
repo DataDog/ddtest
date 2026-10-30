@@ -761,3 +761,174 @@ func TestRubyMatrixRunnersTakeRuntimeStatementsPerRow(t *testing.T) {
 	require.True(t, strings.HasPrefix(stated[0], "Ruby 3.3 for .github/workflows/test.yml / mixed (--ci-runtime)."), stated)
 	require.Empty(t, unused)
 }
+
+// A setup-node without a version installs nothing (it only caches here): the
+// Node on PATH stays, so a self-hosted runner's is still the user's to state,
+// and a stated one reaches the tests. A setup-node with a version, or a
+// version file, still selects it, and a GitHub-hosted job is unchanged.
+func TestVersionlessSetupNodeKeepsTheHostRuntime(t *testing.T) {
+	useCIProvider(t, "github")
+	steps := func(with string) string {
+		return `    steps:
+      - uses: actions/setup-node@v4
+        with: {` + with + `}
+      - uses: datadog/test-visibility-github-action@v3
+        with:
+          languages: js
+      - run: npm test
+        env: {NODE_OPTIONS: "-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}"}
+`
+	}
+	root := newJestRepository(t, "jobs:\n  own:\n    runs-on: [self-hosted, linux]\n"+steps("cache: npm")+
+		"  hosted:\n    runs-on: ubuntu-latest\n"+steps("cache: npm")+
+		"  pinned:\n    runs-on: [self-hosted, linux]\n"+steps("node-version: 20, cache: npm")+
+		"  file:\n    runs-on: [self-hosted, linux]\n"+steps("node-version-file: .nvmrc, cache: npm"))
+	writeFile(t, root, ".nvmrc", "v20.11.0\n")
+	t.Chdir(root)
+	required := RequiredCIRuntimes(t.Context(), root, "javascript", "jest")
+	require.NotNil(t, required)
+	require.Equal(t, []string{".github/workflows/test.yml / own"}, required.Jobs)
+	require.Equal(t, []string{"the self-hosted runner self-hosted, linux"}, required.Hosts)
+
+	check := func() map[string]RuntimeFinding {
+		result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+			return tracerRequirement{Version: "5.133.0", Node: ">=18"}, nil
+		}, "jest")
+		findings := map[string]RuntimeFinding{}
+		for _, finding := range result.Jobs {
+			findings[finding.Job] = finding
+		}
+		return findings
+	}
+	findings := check()
+	require.Equal(t, CodeRuntimeUnknown, findings["own"].Code)
+	require.Contains(t, findings["own"].Reason, "Ask the user which Node version it runs")
+	// A GitHub-hosted runner's preinstalled Node stays unknown, as without
+	// the step.
+	require.Equal(t, CodeRuntimeUnknown, findings["hosted"].Code)
+	require.Empty(t, findings["hosted"].RuntimeHost)
+	require.Empty(t, findings["hosted"].NodeSource)
+	require.Equal(t, "The CI Node runtime is unknown after setup; preserve the workflow and resolve it before claiming compatibility.", findings["hosted"].Reason)
+	require.Equal(t, "20", findings["pinned"].Node)
+	require.Equal(t, "20.11.0", findings["file"].Node)
+
+	useCIStatements(t, []string{"own:node=22"})
+	require.NoError(t, CheckCIRuntimeStatements(root), "a versionless setup-node selects no version to contradict")
+	useCIStatements(t, []string{"node=22"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "javascript", "jest"))
+	findings = check()
+	require.Equal(t, StatusCompatible, findings["own"].Status, findings["own"])
+	require.Equal(t, "22", findings["own"].Node)
+	require.Equal(t, statedRuntimeSource, findings["own"].NodeSource)
+	require.True(t, findings["own"].UserStated)
+	require.Equal(t, CodeRuntimeUnknown, findings["hosted"].Code)
+	require.False(t, findings["hosted"].UserStated)
+	require.Equal(t, "20", findings["pinned"].Node)
+	require.False(t, findings["pinned"].UserStated)
+	require.Equal(t, "20.11.0", findings["file"].Node)
+	require.False(t, findings["file"].UserStated)
+
+	// Apply partitions rows on the same runtime.
+	workflows, err := readWorkflows(root)
+	require.NoError(t, err)
+	for job, want := range map[string]string{"own": "22", "hosted": "", "pinned": "20", "file": "20.11.0"} {
+		node, err := rowSetupNode(root, workflows[0], workflows[0].Jobs[job], nil)
+		require.NoError(t, err)
+		require.Equal(t, want, node, job)
+	}
+}
+
+// setup-node takes node-semver selectors: a statement in the line they select
+// agrees, one outside it conflicts, and one ddtest cannot evaluate is
+// accepted and reported unused with that selector.
+func TestSetupNodeSelectorsAgreeWithStatedVersions(t *testing.T) {
+	for _, tc := range []struct {
+		selector, stated  string
+		agree, comparable bool
+	}{
+		{"20.x", "20.18.0", true, true},
+		{"20.X", "20", true, true},
+		{"20.*", "20.18", true, true},
+		{"20.18.x", "20.18.1", true, true},
+		{"20.x", "22", false, true},
+		{"20.18.x", "20.17", false, true},
+		{"^20", "20.18.0", true, true},
+		{"^20.18", "20.19.1", true, true},
+		{"^20.18", "20.17.0", false, true},
+		{"^20.18", "21", false, true},
+		{"^0.10", "0.10.5", true, true},
+		{"^0.10", "0.11", false, true},
+		{"~20.18", "20", true, true},
+		{"~20.18", "20.18.3", true, true},
+		{"~20.18", "20.19", false, true},
+		{"~20", "20.1", true, true},
+		{"~>20.18", "20.18", true, true},
+		{"=20.18.0", "20.18.0", true, true},
+		{"=20.18.0", "20.18.1", false, true},
+		{"v20", "20.18.0", true, true},
+		{"v22", "20", false, true},
+		{"20", "20.18.0", true, true},
+		{"20.18.0", "20", true, true},
+		{"20", "22", false, true},
+		{">=18 <21", "20", false, false},
+		{"18 || 20", "20", false, false},
+		{">=18", "20", false, false},
+		{"lts/*", "20", false, false},
+		{"lts/iron", "20", false, false},
+		{"node", "22", false, false},
+		{"latest", "22", false, false},
+		{"current", "22", false, false},
+		{"*", "22", false, false},
+		{"x", "22", false, false},
+		{"20.0.0-rc.1", "20", false, false},
+	} {
+		agree, comparable := nodeSelectorAgrees(tc.selector, tc.stated)
+		require.Equal(t, tc.comparable, comparable, "%s vs %s", tc.selector, tc.stated)
+		require.Equal(t, tc.agree, agree, "%s vs %s", tc.selector, tc.stated)
+	}
+
+	useCIProvider(t, "github")
+	root := newJestRepository(t, `jobs:
+  wildcard:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '20.x'}
+      - run: npm test
+  range:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '>=18 <21'}
+      - run: npm test
+  lts:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: 'lts/*'}
+      - run: npm test
+`)
+	t.Chdir(root)
+	for _, statement := range []string{"wildcard:node=20.18.0", "wildcard:node=20"} {
+		useCIStatements(t, []string{statement})
+		require.NoError(t, CheckCIRuntimeStatements(root), statement)
+	}
+	useCIStatements(t, []string{"wildcard:node=22"})
+	err := CheckCIRuntimeStatements(root)
+	var conflict *CIRuntimeConflict
+	require.True(t, errors.As(err, &conflict), err)
+	require.ErrorContains(t, err, "--ci-runtime wildcard:node=22 contradicts Node 20.x, which actions/setup-node selects in .github/workflows/test.yml / wildcard")
+
+	useCIStatements(t, []string{"range:node=20", "lts:node=22"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	_, unused := StatedFacts(nil, "javascript")
+	require.Equal(t, []string{
+		"--ci-runtime range:node=20 was not used: no validated Node CI job it names has a runtime ddtest could not read. actions/setup-node selects Node >=18 <21 in .github/workflows/test.yml / range: a selector ddtest cannot compare with a stated version, so the statement was accepted without checking that it agrees.",
+		"--ci-runtime lts:node=22 was not used: no validated Node CI job it names has a runtime ddtest could not read. actions/setup-node selects Node lts/* in .github/workflows/test.yml / lts: a selector ddtest cannot compare with a stated version, so the statement was accepted without checking that it agrees.",
+	}, unused)
+	// A new set of statements starts without those notes.
+	useCIStatements(t, []string{"range:node=20"})
+	_, unused = StatedFacts(nil, "javascript")
+	require.Equal(t, []string{"--ci-runtime range:node=20 was not used: no validated Node CI job it names has a runtime ddtest could not read."}, unused)
+}

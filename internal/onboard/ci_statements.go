@@ -11,6 +11,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 )
@@ -90,6 +91,11 @@ type statedRuntime struct {
 	// base is the version a job's image selects, or "" (also for an image
 	// of an engine the tracer cannot instrument: it is not unknown).
 	base func(job runtimeJob) string
+	// compare reports whether a version configured (by source) agrees with
+	// a stated one, and false comparable when ddtest cannot evaluate the
+	// configured selector; nil compares them like image tags
+	// (sameVersionLine).
+	compare func(configured, source, stated string) (agree, comparable bool)
 	// configured is the version a job's steps select statically by its
 	// first test step, such as through a runtime installer, and the step's
 	// description; "" when a matrix row the job runs on keeps the host's
@@ -172,6 +178,9 @@ func ParseCIConfirm(value string) (CIFact, error) {
 type ciStatements struct {
 	runtimes []CIRuntimeStatement
 	facts    []CIFact
+	// uncompared names, by statement, the configured selectors
+	// CheckCIRuntimeStatements could not compare with it.
+	uncompared map[string][]string
 }
 
 var activeStatements atomic.Value
@@ -401,6 +410,7 @@ func CheckCIRuntimeStatements(root string) error {
 		}
 	}
 	var conflicts []string
+	uncompared := map[string][]string{}
 	for _, statement := range scoped {
 		for _, workflow := range workflows {
 			for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
@@ -412,11 +422,28 @@ func CheckCIRuntimeStatements(root string) error {
 				if version == "" {
 					version, source = runtime.configured(root, workflow, workflow.Jobs[name])
 				}
-				if version != "" && !sameVersionLine(version, statement.Version) {
+				if version == "" {
+					continue
+				}
+				agree, comparable := sameVersionLine(version, statement.Version), true
+				if runtime.compare != nil {
+					agree, comparable = runtime.compare(version, source, statement.Version)
+				}
+				switch {
+				case !comparable:
+					// Not a conflict ddtest can show: the statement is
+					// accepted, and reported unused with this selector.
+					uncompared[statement.String()] = append(uncompared[statement.String()], fmt.Sprintf("%s selects %s %s in %s / %s", source, statedRuntimeDisplay(statement.Runtime), version, workflow.Path, name))
+				case !agree:
 					conflicts = append(conflicts, fmt.Sprintf("--ci-runtime %s contradicts %s %s, which %s selects in %s / %s", statement, statedRuntimeDisplay(statement.Runtime), version, source, workflow.Path, name))
 				}
 			}
 		}
+	}
+	if len(uncompared) > 0 {
+		statements := currentStatements()
+		statements.uncompared = uncompared
+		activeStatements.Store(statements)
 	}
 	if len(conflicts) > 0 {
 		return &CIRuntimeConflict{Conflicts: conflicts}
@@ -486,6 +513,70 @@ func sameVersionLine(a, b string) bool {
 	return true
 }
 
+// nodeSelector reads a setup-node version selector in the single-term forms
+// ddtest evaluates: a version whose components may be wildcards (x, X or *),
+// after an optional ^, ~, ~> or = and a v, such as 20.x, ^20, ~20.18,
+// =20.18.0 or v20.
+var nodeSelector = regexp.MustCompile(`^(\^|~>?|=)?[v=]*([0-9]+|[xX*])(?:\.([0-9]+|[xX*]))?(?:\.([0-9]+|[xX*]))?$`)
+
+// nodeSelectorAgrees reports whether a setup-node selector, which follows
+// node-semver, can select a release of a stated version's line (22 is any
+// 22.x.y). comparable is false for a selector it cannot evaluate: a range
+// (>=18 <21, 18 || 20), an alias (lts/*, node, latest, current) or one that
+// takes the latest release (*, x).
+func nodeSelectorAgrees(selector, stated string) (agree, comparable bool) {
+	match := nodeSelector.FindStringSubmatch(strings.TrimSpace(selector))
+	if match == nil {
+		return false, false
+	}
+	// A wildcard component makes those after it wildcards too.
+	var named []int
+	for _, component := range match[2:] {
+		value, err := strconv.Atoi(component)
+		if err != nil {
+			break
+		}
+		named = append(named, value)
+	}
+	if len(named) == 0 {
+		return false, false
+	}
+	lower, upper := versionRange(named)
+	switch match[1] {
+	case "~", "~>":
+		// A tilde allows patch releases, or minor ones when only the major
+		// is named.
+		_, upper = versionRange(named[:min(len(named), 2)])
+	case "^":
+		// A caret allows changes right of the first non-zero component.
+		position := slices.IndexFunc(named, func(value int) bool { return value != 0 })
+		if position < 0 {
+			position = len(named) - 1
+		}
+		_, upper = versionRange(named[:position+1])
+	}
+	var line []int
+	for _, component := range strings.Split(stated, ".") {
+		value, err := strconv.Atoi(component)
+		if err != nil {
+			return false, false
+		}
+		line = append(line, value)
+	}
+	statedLower, statedUpper := versionRange(line)
+	return slices.Compare(statedLower, upper) < 0 && slices.Compare(lower, statedUpper) < 0, true
+}
+
+// versionRange is the half-open range of releases a version's named
+// components select: [20.18.0, 20.19.0) for 20.18.
+func versionRange(named []int) (lower, upper []int) {
+	lower, upper = make([]int, 3), make([]int, 3)
+	copy(lower, named)
+	copy(upper, named)
+	upper[len(named)-1]++
+	return lower, upper
+}
+
 // CIRuntimeRequired lists the CI jobs whose runtime only the user can tell.
 type CIRuntimeRequired struct {
 	// Runtime names it, such as Node.
@@ -501,7 +592,7 @@ func (e *CIRuntimeRequired) Error() string {
 	for i, job := range e.Jobs {
 		jobs = append(jobs, job+" ("+e.Hosts[i]+")")
 	}
-	return "ddtest cannot read which " + e.Runtime + " version these CI jobs run: their configuration selects none (no runtime image or installer step): " + strings.Join(jobs, "; ") + "."
+	return "ddtest cannot read which " + e.Runtime + " version these CI jobs run: their configuration selects none (no runtime image, or installer step that selects a version): " + strings.Join(jobs, "; ") + "."
 }
 
 // CIRuntimeRequiredResult asks the user for the runtime of those jobs.
@@ -593,7 +684,11 @@ func StatedFacts(check *RuntimeCheck, language string) (stated, unused []string)
 	}
 	for _, statement := range statements.runtimes {
 		if !used[statement.String()] {
-			unused = append(unused, "--ci-runtime "+statement.String()+" was not used: no validated "+statedRuntimeDisplay(statement.Runtime)+" CI job it names has a runtime ddtest could not read.")
+			line := "--ci-runtime " + statement.String() + " was not used: no validated " + statedRuntimeDisplay(statement.Runtime) + " CI job it names has a runtime ddtest could not read."
+			if selectors := statements.uncompared[statement.String()]; len(selectors) > 0 {
+				line += " " + strings.Join(selectors, "; ") + ": a selector ddtest cannot compare with a stated version, so the statement was accepted without checking that it agrees."
+			}
+			unused = append(unused, line)
 		}
 	}
 	definitions := ciProviderFacts[activeOrDefaultCIProvider().name()]

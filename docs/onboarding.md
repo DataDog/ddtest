@@ -103,7 +103,7 @@ executors, GitHub self-hosted runners (a `self-hosted` label in any `runs-on`
 form, including `{group, labels}` and a runner a matrix row selects, such as
 `runs-on: ${{ matrix.os }}` with `os: [self-hosted, ubuntu-latest]`) without
 an `actions/setup-node` or `ruby/setup-ruby` step that runs before their
-tests, and jobs whose image (such as
+tests and selects a version, and jobs whose image (such as
 `ubuntu:22.04`) names no Node or Ruby version. Finding these jobs reads only
 the repository; a Cypress GitHub action job's Node is the action's, not a
 question for the user. For JavaScript and Ruby, `onboard` and `testdrive` then
@@ -133,7 +133,19 @@ an unknown runtime:
   every matrix row the job runs, by the job's first test step: one whose
   condition skips it (`if: false`, or on some rows) or that runs after the
   tests leaves the host's runtime in place for them, so the statement fills
-  it. A job ddtest recognizes no test step in keeps every installer.
+  it. So does an `actions/setup-node` step with neither `node-version` nor
+  `node-version-file` (for example one that only sets `cache: npm`): it
+  installs nothing, and the Node on PATH stays. A job ddtest recognizes no
+  test step in keeps every installer.
+- An `actions/setup-node` version is compared as setup-node reads it: a
+  statement agrees when the selector can pick a release of the stated line, so
+  `20.18.0` or `20` agrees with `20.x`, `20.X`, `20.*`, `^20`, `~20.18`, `v20`
+  or `=20.18.0`, and `22` conflicts with `20.x`. A selector ddtest cannot
+  evaluate (a range such as `>=18 <21`, `lts/*`, `node`, `latest`, `current`,
+  `*`) is not claimed as a conflict: the statement is accepted and reported as
+  unused, naming that selector. Image tags, other Node installers (a runtime
+  installer step, nvm) and Ruby installers are compared by their numeric
+  components, as before.
 - GitHub-hosted runners and job containers, and images ddtest cannot resolve,
   keep their own findings: their runtime is in the configuration.
 - The stated version goes through every check an image tag's goes through:

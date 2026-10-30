@@ -135,6 +135,9 @@ func (javascriptDiscovery) cacheVariable(name string) bool {
 	return slices.Contains([]string{"npm_config_store_dir", "PNPM_STORE_DIR", "PNPM_HOME"}, name)
 }
 
+// setupNodeSource is the source of a Node actions/setup-node selects.
+const setupNodeSource = "actions/setup-node"
+
 // A stated Node is compared like a node:<version> image tag's.
 var javascriptStatedRuntime = &statedRuntime{
 	Names:   []string{"node", "js"},
@@ -142,6 +145,14 @@ var javascriptStatedRuntime = &statedRuntime{
 	Version: regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`),
 	Example: "22, 22.11 or 22.11.0",
 	base:    javascriptImageRuntime,
+	// setup-node (also through a node-version-file) takes node-semver
+	// selectors; an image tag, a node step or nvm is compared as written.
+	compare: func(configured, source, stated string) (bool, bool) {
+		if source == setupNodeSource {
+			return nodeSelectorAgrees(configured, stated)
+		}
+		return sameVersionLine(configured, stated), true
+	},
 	configured: func(root string, workflow ciWorkflow, job runtimeJob) (string, string) {
 		rows, _, err := jobMatrix(job)
 		return installedRuntime(rows, err, func(row map[string]any) (string, string, bool) {
@@ -159,7 +170,7 @@ var javascriptStatedRuntime = &statedRuntime{
 					version, source = selected, step.Source
 				} else if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "actions/setup-node" {
 					if selected, err := setupNodeVersion(root, step, row); err == nil && selected != "" {
-						version, source = selected, "actions/setup-node"
+						version, source = selected, setupNodeSource
 					}
 				} else if selected := nvmRuntime(step.Run); selected != "" {
 					version, source = selected, "nvm"

@@ -129,8 +129,13 @@ func rowSetupNodeBefore(root string, workflow ciWorkflow, job runtimeJob, row ma
 			continue
 		}
 		if strings.HasPrefix(strings.ToLower(step.Uses), "actions/setup-node@") {
-			if node, err = setupNodeVersion(root, step, row); err != nil {
+			version, err := setupNodeVersion(root, step, row)
+			if err != nil {
 				return "", err
+			}
+			if version != "" {
+				// A setup-node without a version keeps the Node on PATH.
+				node = version
 			}
 			continue
 		}

@@ -404,6 +404,13 @@ type runtimeState struct {
 func (state *runtimeState) trackNode(job runtimeJob, step runtimeStep, row map[string]any) {
 	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 	if uses == "actions/setup-node" {
+		if step.With["node-version"] == "" {
+			// node-version holds the resolved version (checkCIRuntimes).
+			// Without one, from node-version or node-version-file, setup-node
+			// installs nothing, as when it only caches: the Node on PATH,
+			// and what the job knows of it, stays.
+			return
+		}
 		state.node = step.With["node-version"]
 		state.source = step.Source
 		state.platform = nodeDistributionPlatform(job.RunsOn, step.With["architecture"], row)
