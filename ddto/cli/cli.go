@@ -44,7 +44,7 @@ func Main(args []string, name string) {
 	// The compiler of an instrumented Go SDK, for every compilation of a Bazel
 	// build: it decides first, before any other work.
 	if len(args) > 0 && runner.RunsAsBazelCompiler(args[0]) {
-		os.Exit(runner.RunBazelCompiler(args))
+		runner.Exit(runner.RunBazelCompiler(args))
 	}
 	argv, prog := args, name
 	if len(args) > 0 {

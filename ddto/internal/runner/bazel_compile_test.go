@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -191,5 +192,21 @@ func TestRunBazelRejectsBazelCommands(t *testing.T) {
 	stderr.Reset()
 	if code := RunBazel("ddtest instrument", []string{"--mini", dir}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "not empty") {
 		t.Fatalf("a directory that is not empty: exit %d: %s", code, stderr.String())
+	}
+}
+
+// A compiler killed by a signal, as the kernel does when memory runs out,
+// says so and ends the edited compilation with 128+N.
+func TestBazelCompilerKilledBySignal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no signals")
+	}
+	real := filepath.Join(t.TempDir(), "compile.real")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\nkill -9 $$\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	if code := runBazelCompiler(real, []string{"compile"}, &stderr); code != 128+9 || !strings.Contains(stderr.String(), "killed") {
+		t.Fatalf("exit %d, %q", code, stderr.String())
 	}
 }

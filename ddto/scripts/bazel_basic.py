@@ -269,7 +269,8 @@ def compare_with_cli(args, workspace, summaries):
     # the workspace (docs/bazel-plan.md); go test names them absolutely.
     # Goroutine numbers depend on what the process started before the test.
     def message(text):
-        for root in {str(workspace), os.path.realpath(workspace)}:
+        # The longer root first: on macOS /var/... is a suffix of /private/var/...
+        for root in sorted({str(workspace), os.path.realpath(workspace)}, key=len, reverse=True):
             text = text.replace(root + os.sep, "")
         return re.sub(r"([Gg]oroutine) \d+", r"\1 N", text)
 
