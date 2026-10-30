@@ -52,7 +52,7 @@ var languages = []language{
 	// markers are whole words or Java-only terms. JUnit XML is a report format
 	// every language uses, so only the JVM framework names count.
 	// Cucumber JVM shares its name with Cucumber.js.
-	{name: "java", prefix: "java_", marker: regexp.MustCompile(`(?i)\bjava\b|maven|\bmvnw?\b|junit[45]|jupiter|testng|surefire|failsafe|dd-java-agent|pom\.xml`), shared: regexp.MustCompile(`(?i)cucumber`)},
+	{name: "java", prefix: "java_", marker: regexp.MustCompile(`(?i)\bjava\b|maven|\bmvnw?\b|gradle|junit[45]|jupiter|testng|surefire|failsafe|dd-java-agent|pom\.xml`), shared: regexp.MustCompile(`(?i)cucumber`)},
 }
 
 // Check fails t for every token in dir's non-test Go files that names a

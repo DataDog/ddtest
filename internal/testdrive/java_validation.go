@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/gradle"
 	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -44,9 +45,16 @@ func (t *Testdrive) javaReactor(args []string) (string, []maven.Project, error) 
 	return root, projects, err
 }
 
+// errGradleValidation refuses a Gradle command: discovery finds Gradle test
+// steps and checks their CI setup, but only Maven builds are validated.
+var errGradleValidation = errors.New("ddtest discovers Gradle test steps and checks their CI setup, but validates only Maven builds so far; this Gradle configuration is not validated")
+
 // javaCommandPOM returns the checkout and the POM, relative to it, that the
 // selected Maven command builds once Maven adds its implicit arguments.
 func (t *Testdrive) javaCommandPOM(args []string) (string, string, error) {
+	if command, _ := t.executionCommand(); gradle.Command([]string{command}) {
+		return "", "", errGradleValidation
+	}
 	implicit, err := t.javaImplicitArgs(args)
 	if err != nil {
 		return "", "", err

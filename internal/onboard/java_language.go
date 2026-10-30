@@ -14,7 +14,8 @@ import (
 	"github.com/DataDog/ddtest/internal/maven"
 )
 
-// javaDiscovery discovers the Maven CI test steps of JVM test frameworks.
+// javaDiscovery discovers the Maven and Gradle CI test steps of JVM test
+// frameworks.
 type javaDiscovery struct{}
 
 func (javaDiscovery) name() string { return "java" }
@@ -87,7 +88,7 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 	if slices.Contains(javaDeployCredentials(job), key) {
 		return "", true, nil
 	}
-	if key != "MAVEN_OPTS" && key != "JAVA_TOOL_OPTIONS" {
+	if key != "MAVEN_OPTS" && key != "GRADLE_OPTS" && key != "JAVA_TOOL_OPTIONS" {
 		return value, false, nil
 	}
 	inherited := strings.NewReplacer("${{ env."+key+" }}", "", "${{env."+key+"}}", "").Replace(value)
@@ -130,7 +131,7 @@ func (javaDiscovery) onboardingScope(string) (discover, instructionsWhenConfigur
 	return true, true
 }
 
-const javaBootstrap = "Place the action after the JDK setup step. By default it adds dd-java-agent to MAVEN_OPTS; a later step that sets MAVEN_OPTS must include `${{ env.MAVEN_OPTS }}` to keep the agent. Keep the existing Maven commands, profiles, modules, JVM options and matrices unchanged, and use Maven 3.2.1 or newer. One Maven command runs every framework the project declares: selecting a framework does not filter the suite."
+const javaBootstrap = "Place the action after the JDK setup step. By default it adds dd-java-agent to MAVEN_OPTS and GRADLE_OPTS; a later step that sets either must include `${{ env.MAVEN_OPTS }}` or `${{ env.GRADLE_OPTS }}` to keep the agent. Keep the existing Maven or Gradle commands, profiles, modules, tasks, JVM options and matrices unchanged, and use Maven 3.2.1 or newer. One Maven or Gradle command runs every framework the build declares: selecting a framework does not filter the suite."
 
 // Setup runs on GitHub Actions only, whose steps don't share a shell.
 func (javaDiscovery) setupShellExports(map[string]string) (map[string]string, map[string]string) {
