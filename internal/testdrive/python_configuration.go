@@ -78,29 +78,31 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 	var owned []string
 	if !overridden {
 		defaults, configErr := onboard.PytestConfigOptions(t.checkoutRoot(), directory, shellquote.Join(options...), words)
-		if configErr == nil {
-			isolated, _, err := isolatePytestOptions(defaults, directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{})
-			if err != nil {
-				return err
-			}
-			if !slices.Equal(defaults, isolated) {
-				// Put the copied defaults before user options so their overrides
-				// retain pytest's normal environment/command precedence.
-				owned = append(owned, "-o", "addopts="+shellquote.Join(isolated...))
-			}
+		if configErr != nil {
+			return fmt.Errorf("cannot isolate pytest configuration: %w", configErr)
+		}
+		isolated, _, err := isolatePytestOptions(defaults, directory, t.configurationSourceRoot, t.checkoutRoot(), map[string]bool{})
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(defaults, isolated) {
+			// Put the copied defaults before user options so their overrides
+			// retain pytest's normal environment/command precedence.
+			owned = append(owned, "-o", "addopts="+shellquote.Join(isolated...))
 		}
 	}
 	paths, configErr := onboard.PytestConfigPaths(t.checkoutRoot(), directory, shellquote.Join(options...), words)
-	if configErr == nil {
-		for _, key := range []string{"testpaths", "pythonpath", "cache_dir"} {
-			isolated := rebasePytestPaths(paths[key], t.configurationSourceRoot, t.checkoutRoot())
-			if !slices.Equal(paths[key], isolated) {
-				value := shellquote.Join(isolated...)
-				if key == "cache_dir" {
-					value = isolated[0]
-				}
-				owned = append(owned, "-o", key+"="+value)
+	if configErr != nil {
+		return fmt.Errorf("cannot isolate pytest configuration: %w", configErr)
+	}
+	for _, key := range []string{"testpaths", "pythonpath", "cache_dir"} {
+		isolated := rebasePytestPaths(paths[key], t.configurationSourceRoot, t.checkoutRoot())
+		if !slices.Equal(paths[key], isolated) {
+			value := shellquote.Join(isolated...)
+			if key == "cache_dir" {
+				value = isolated[0]
 			}
+			owned = append(owned, "-o", key+"="+value)
 		}
 	}
 	if len(owned) > 0 {

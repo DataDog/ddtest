@@ -101,6 +101,24 @@ func TestPytestConfigUsesUVWorkingDirectory(t *testing.T) {
 	require.NotContains(t, drive.configurationEnvironment["PYTEST_ADDOPTS"], original)
 }
 
+func TestPytestUnresolvedNestedConfigurationRequiresExplicitConfig(t *testing.T) {
+	for _, override := range []bool{false, true} {
+		t.Run(fmt.Sprint(override), func(t *testing.T) {
+			original, copied := t.TempDir(), t.TempDir()
+			require.NoError(t, os.Mkdir(filepath.Join(copied, "tests"), 0755))
+			requireWriteFile(t, filepath.Join(copied, "pytest.ini"), "[pytest]\n")
+			requireWriteFile(t, filepath.Join(copied, "tests", "pytest.ini"), "[pytest]\npythonpath="+filepath.Join(original, "src")+"\n")
+			drive := &Testdrive{repositoryRoot: copied, configurationSourceRoot: original, command: "python", args: []string{"-m", "pytest", "tests"}, configurationEnvironment: map[string]string{}}
+			if override {
+				drive.args = append(drive.args, "-o", "addopts=")
+			}
+			err := drive.rebasePytestConfiguration(copied)
+			require.ErrorContains(t, err, "cannot isolate pytest configuration")
+			require.ErrorContains(t, err, "explicitly with -c")
+		})
+	}
+}
+
 func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	t.Helper()
 	python := feedbackPython(t)
