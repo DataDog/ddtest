@@ -20,10 +20,6 @@ import (
 	"github.com/kballard/go-shellquote"
 )
 
-// gradleProbeFrameworks are the frameworks whose probe class a Gradle test
-// task selects with --tests.
-var gradleProbeFrameworks = []string{"junit4", "junit5", "testng", "spock"}
-
 // gradleBuild is the build the selected Gradle command runs.
 type gradleBuild struct {
 	root    string
@@ -309,29 +305,151 @@ func (b *gradleBuild) environment(env map[string]string) {
 
 func (b *gradleBuild) javaHome() (string, string) { return b.home, b.homeSource }
 
-// gradleProbeLanguages are the source languages of probes other than Java's.
-var gradleProbeLanguages = map[string]string{"spock": "groovy"}
+// gradleProbeLanguages are the source languages of class probes other than
+// Java's.
+var gradleProbeLanguages = map[string]string{"spock": "groovy", "scalatest": "scala", "munit": "scala"}
 
-// probe writes the framework's probe class among the sources of the test task
-// whose results it joins, run alone through that task.
+// probe writes the framework's probe among the sources of the test task whose
+// results it joins, run alone through that task. Gradle passes its own system
+// properties to no test JVM, so a probe that needs some, as Cucumber's
+// features or Karate's options, gets them through JAVA_TOOL_OPTIONS.
 func (b *gradleBuild) probe(target javaProbeTarget, framework string, args []string) (javaProbe, string, error) {
-	if !slices.Contains(gradleProbeFrameworks, framework) {
-		return javaProbe{}, "The " + displayName(framework) + " probe is not available for Gradle builds yet, so its features are not validated; the Gradle probe covers " + strings.Join(gradleProbeFrameworks, ", ") + ".", nil
-	}
 	project, task, ok := b.task(target.module)
 	if !ok {
 		return javaProbe{}, "", fmt.Errorf("no Gradle test task %s", target.module)
 	}
-	language := cmp.Or(gradleProbeLanguages[framework], "java")
 	set, ok := gradle.TestSourceSet(b.root, project, task)
-	directory, found := gradle.SourceDirectory(b.root, project, set, language)
-	if !ok || !found {
-		return javaProbe{}, "The " + language + " sources of " + target.module + " are set by build logic ddtest does not read, so the probe cannot be placed and its features are not validated.", nil
+	directory := func(language string) (string, string) {
+		if !ok {
+			return "", "The sources of " + target.module + " are set by build logic ddtest does not read, so the probe cannot be placed and its features are not validated."
+		}
+		directory, found := gradle.SourceDirectory(b.root, project, set, language)
+		if !found {
+			return "", "The " + language + " sources of " + target.module + " are set by build logic ddtest does not read, so the probe cannot be placed and its features are not validated."
+		}
+		return filepath.Join(project.Directory, directory), ""
+	}
+	switch framework {
+	case "cucumber-java":
+		return b.cucumberProbe(target, project, directory, args)
+	case "karate":
+		return b.karateProbe(target, directory, args)
+	}
+	language := cmp.Or(gradleProbeLanguages[framework], "java")
+	sources, reason := directory(language)
+	if reason != "" {
+		return javaProbe{}, reason, nil
 	}
 	source := javaProbeSources[framework]
-	return javaProbe{
-		files: []javaProbeFile{{filepath.Join(project.Directory, directory, "ddtest", filepath.Base(source.path)), source.source}},
+	probe := javaProbe{
+		files: []javaProbeFile{{filepath.Join(sources, "ddtest", filepath.Base(source.path)), source.source}},
 		args:  gradle.ProbeArgs(args, target.module, javaProbeClass),
+	}
+	if framework == "scalatest" {
+		// Suites a JUnit runner starts declare it; so does the probe.
+		runner, err := javaScalaTestJUnitRunner(filepath.Join(b.root, sources))
+		if err != nil {
+			return javaProbe{}, "", err
+		}
+		if runner != "" {
+			probe.files[0].source = strings.Replace(source.source, "\nclass ", "\n@org.junit.runner.RunWith(classOf["+runner+"])\nclass ", 1)
+		}
+	}
+	return probe, "", nil
+}
+
+// cucumberProbe writes the probe feature among the task's test resources and
+// its step in the glue package of the task's Cucumber runner, selected alone
+// with the probe feature in place of the project's.
+func (b *gradleBuild) cucumberProbe(target javaProbeTarget, project gradle.Project, directory func(string) (string, string), args []string) (javaProbe, string, error) {
+	sources, reason := directory("java")
+	resources, resourceReason := directory("resources")
+	if reason = cmp.Or(reason, resourceReason); reason != "" {
+		return javaProbe{}, reason, nil
+	}
+	runner, glue, suite, _, lambda, err := javaCucumberRunnerClass(filepath.Join(b.root, sources), filepath.Join(b.root, resources))
+	if err != nil {
+		return javaProbe{}, "", err
+	}
+	if runner == "" {
+		return javaProbe{}, "No Cucumber runner class (@RunWith(Cucumber.class) or a JUnit Platform suite of the cucumber engine) was found in the test sources of " + target.module + ", so the probe feature cannot be selected alone.", nil
+	}
+	steps := javaProbeFile{filepath.Join(sources, filepath.FromSlash(strings.ReplaceAll(glue, ".", "/")), "DdtestValidationSteps.java"), javaCucumberSteps(glue, javaCucumberLambda(lambda, project.Dependencies))}
+	if !suite {
+		return javaProbe{
+			files:      []javaProbeFile{{filepath.Join(resources, "ddtest", "DdtestValidation.feature"), javaCucumberFeature}, steps},
+			args:       gradle.ProbeArgs(args, target.module, runner),
+			properties: []string{"-Dcucumber.features=classpath:ddtest/DdtestValidation.feature"},
+		}, "", nil
+	}
+	// With cucumber.features, the root cucumber engine, which Gradle runs
+	// and no command line excludes, would run the probe beside the suite's.
+	// The probe joins the suite's own features instead, selected by its tag,
+	// so only the suite runs it, with its glue and configuration.
+	features, err := javaFeatureDirectory(filepath.Join(b.root, resources))
+	if err != nil {
+		return javaProbe{}, "", err
+	}
+	if features == "" {
+		return javaProbe{}, "No Cucumber feature file was found in the test resources of " + target.module + ", so the probe feature cannot join the features the suite selects.", nil
+	}
+	return javaProbe{
+		files:      []javaProbeFile{{filepath.Join(resources, features, "DdtestValidation.feature"), javaCucumberTaggedFeature}, steps},
+		args:       gradle.ProbeArgs(args, target.module, runner),
+		properties: []string{"-Dcucumber.filter.tags=@ddtest"},
+		filtered:   true,
+	}, "", nil
+}
+
+// javaCucumberTaggedFeature is the probe feature with the tag that selects it
+// among a suite's features.
+var javaCucumberTaggedFeature = strings.Replace(javaCucumberFeature, "  Scenario:", "  @ddtest\n  Scenario:", 1)
+
+// javaFeatureDirectory is the directory, relative to resources, of the first
+// Cucumber feature file in it, by path; empty when it has none.
+func javaFeatureDirectory(resources string) (string, error) {
+	directory := ""
+	err := filepath.WalkDir(resources, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if directory != "" || entry.IsDir() || !strings.HasSuffix(path, ".feature") || !entry.Type().IsRegular() {
+			return nil
+		}
+		directory, err = filepath.Rel(resources, filepath.Dir(path))
+		return err
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	return directory, err
+}
+
+// karateProbe writes the probe feature among the task's test resources and
+// selects it through the task's Karate runner, as javaKarateProbe does.
+func (b *gradleBuild) karateProbe(target javaProbeTarget, directory func(string) (string, string), args []string) (javaProbe, string, error) {
+	sources, reason := directory("java")
+	resources, resourceReason := directory("resources")
+	if reason = cmp.Or(reason, resourceReason); reason != "" {
+		return javaProbe{}, reason, nil
+	}
+	runner, method, err := javaKarateRunnerClass(filepath.Join(b.root, sources))
+	if err != nil {
+		return javaProbe{}, "", err
+	}
+	if runner == "" {
+		return javaProbe{}, "No Karate runner class (@Karate.Test, @RunWith(Karate.class) or Runner.path) was found in the test sources of " + target.module + ", so the probe feature cannot be selected alone.", nil
+	}
+	selection := runner
+	if method != "" {
+		selection += "." + method
+	}
+	feature := filepath.Join(resources, "ddtest", "DdtestValidation.feature")
+	return javaProbe{
+		files:      []javaProbeFile{{feature, javaKarateFeature}},
+		harness:    runner,
+		args:       gradle.ProbeArgs(args, target.module, selection),
+		properties: []string{"-Dkarate.options=--tags @ddtest file:" + filepath.ToSlash(filepath.Join(b.root, feature))},
 	}, "", nil
 }
 

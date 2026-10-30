@@ -98,24 +98,95 @@ testing {
 	require.Contains(t, reason, "java sources of :app:integrationTest are set by build logic ddtest does not read")
 }
 
-func TestGradleProbeCoversClassFrameworksOnly(t *testing.T) {
-	drive, _ := gradleFixture(t)
+func TestGradleProbeCoversEveryFramework(t *testing.T) {
+	drive, root := gradleFixture(t)
 	build, err := drive.javaBuild(drive.args)
 	require.NoError(t, err)
 	app := javaProbeTarget{directory: "app", module: ":app:test"}
-	for _, name := range gradleProbeFrameworks {
-		probe, reason, err := build.probe(app, name, nil)
+	for name, path := range map[string]string{
+		"junit4":    "app/src/test/java/ddtest/DdtestValidationTest.java",
+		"junit5":    "app/src/test/java/ddtest/DdtestValidationTest.java",
+		"testng":    "app/src/test/java/ddtest/DdtestValidationTest.java",
+		"spock":     "app/src/test/groovy/ddtest/DdtestValidationTest.groovy",
+		"scalatest": "app/src/test/scala/ddtest/DdtestValidationTest.scala",
+		"munit":     "app/src/test/scala/ddtest/DdtestValidationTest.scala",
+	} {
+		probe, reason, err := build.probe(app, name, []string{"test"})
 		require.NoError(t, err)
 		require.Empty(t, reason, name)
-		if name == "spock" {
-			require.Equal(t, filepath.Join("app", "src", "test", "groovy", "ddtest", "DdtestValidationTest.groovy"), probe.files[0].path)
-		}
+		require.Equal(t, filepath.FromSlash(path), probe.files[0].path, name)
+		require.Equal(t, []string{":app:test", "--tests", javaProbeClass}, probe.args[:3], name)
+		require.Empty(t, probe.properties, name)
 	}
-	for _, name := range []string{"cucumber-java", "karate", "scalatest", "munit"} {
+	// ScalaTest suites a JUnit runner starts make the probe declare it.
+	writeJavaSource(t, filepath.Join(root, "app/src/test/scala/example/CalcSpec.scala"), "package example\nimport org.scalatestplus.junit.JUnitRunner\n@org.junit.runner.RunWith(classOf[JUnitRunner])\nclass CalcSpec\n")
+	probe, _, err := build.probe(app, "scalatest", nil)
+	require.NoError(t, err)
+	require.Contains(t, probe.files[0].source, "@org.junit.runner.RunWith(classOf[org.scalatestplus.junit.JUnitRunner])")
+
+	// Cucumber and Karate select the probe feature through the task's runner.
+	for name, runner := range map[string]string{"cucumber-java": "Cucumber runner class", "karate": "Karate runner class"} {
 		_, reason, err := build.probe(app, name, nil)
 		require.NoError(t, err)
-		require.Contains(t, reason, "not available for Gradle builds yet", name)
+		require.Contains(t, reason, "No "+runner, name)
+		require.Contains(t, reason, "test sources of :app:test", name)
 	}
+	writeJavaSource(t, filepath.Join(root, "app/src/test/java/example/RunCucumberTest.java"), "package example;\n@org.junit.runner.RunWith(io.cucumber.junit.Cucumber.class)\n@io.cucumber.junit.CucumberOptions(glue = \"example.steps\")\npublic class RunCucumberTest {}\n")
+	probe, reason, err := build.probe(app, "cucumber-java", []string{"test"})
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	require.Equal(t, filepath.Join("app", "src", "test", "resources", "ddtest", "DdtestValidation.feature"), probe.files[0].path)
+	require.Equal(t, filepath.Join("app", "src", "test", "java", "example", "steps", "DdtestValidationSteps.java"), probe.files[1].path, "the step joins the runner's glue")
+	require.Equal(t, []string{":app:test", "--tests", "example.RunCucumberTest"}, probe.args[:3])
+	require.Equal(t, []string{"-Dcucumber.features=classpath:ddtest/DdtestValidation.feature"}, probe.properties, "Gradle passes its own system properties to no test JVM")
+	require.False(t, probe.filtered)
+
+	// A JUnit Platform suite runs the probe beside its own features, by tag:
+	// with cucumber.features, the root cucumber engine would run it too.
+	writeJavaSource(t, filepath.Join(root, "app/src/test/java/example/RunCucumberTest.java"), "package example;\n@org.junit.platform.suite.api.Suite\n@org.junit.platform.suite.api.IncludeEngines(\"cucumber\")\n@org.junit.platform.suite.api.SelectClasspathResource(\"example\")\npublic class RunCucumberTest {}\n")
+	_, reason, err = build.probe(app, "cucumber-java", nil)
+	require.NoError(t, err)
+	require.Contains(t, reason, "No Cucumber feature file was found in the test resources of :app:test")
+	writeJavaSource(t, filepath.Join(root, "app/src/test/resources/example/calc.feature"), "Feature: Calculator\n")
+	probe, _, err = build.probe(app, "cucumber-java", nil)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join("app", "src", "test", "resources", "example", "DdtestValidation.feature"), probe.files[0].path)
+	require.Contains(t, probe.files[0].source, "  @ddtest\n  Scenario: ddtestProbe")
+	require.Equal(t, []string{"-Dcucumber.filter.tags=@ddtest"}, probe.properties)
+	require.True(t, probe.filtered, "the suite reports the scenarios the tag excludes as skipped")
+
+	writeJavaSource(t, filepath.Join(root, "app/src/test/java/example/KarateTest.java"), "package example;\nclass KarateTest {\n    @com.intuit.karate.junit5.Karate.Test com.intuit.karate.junit5.Karate calc() { return com.intuit.karate.junit5.Karate.run(\"classpath:example\"); }\n}\n")
+	probe, reason, err = build.probe(app, "karate", []string{"test"})
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	feature := filepath.Join("app", "src", "test", "resources", "ddtest", "DdtestValidation.feature")
+	require.Equal(t, feature, probe.files[0].path)
+	require.Equal(t, []string{":app:test", "--tests", "example.KarateTest.calc"}, probe.args[:3], "Gradle selects a method with a dot")
+	require.Equal(t, []string{"-Dkarate.options=--tags @ddtest file:" + filepath.ToSlash(filepath.Join(root, feature))}, probe.properties)
+	require.Equal(t, "example.KarateTest", probe.harness)
+}
+
+func TestGradleProbeFeaturesFollowTheTaskSourceSet(t *testing.T) {
+	drive, root := gradleFixture(t)
+	requireWriteFile(t, filepath.Join(root, "app", "build.gradle.kts"), `testing {
+    suites {
+        val integrationTest by registering(JvmTestSuite::class) {
+            sources {
+                java { setSrcDirs(listOf("src/it/java")) }
+                resources { setSrcDirs(listOf("src/it/features")) }
+            }
+        }
+    }
+}
+`)
+	writeJavaSource(t, filepath.Join(root, "app/src/it/java/example/KarateIT.java"), "package example;\nclass KarateIT {\n    @com.intuit.karate.junit5.Karate.Test com.intuit.karate.junit5.Karate all() { return com.intuit.karate.junit5.Karate.run(\"classpath:example\"); }\n}\n")
+	build, err := drive.javaBuild(drive.args)
+	require.NoError(t, err)
+	probe, reason, err := build.probe(javaProbeTarget{directory: "app", module: ":app:integrationTest"}, "karate", nil)
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	require.Equal(t, filepath.Join("app", "src", "it", "features", "ddtest", "DdtestValidation.feature"), probe.files[0].path, "the feature goes among the suite's own resources")
+	require.Equal(t, []string{":app:integrationTest", "--tests", "example.KarateIT.all"}, probe.args[:3])
 }
 
 func TestGradlePreflightCertifiesTheJDKGradleSelects(t *testing.T) {
