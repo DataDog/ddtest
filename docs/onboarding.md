@@ -92,7 +92,8 @@ one to configure before discovery, edits or validation (agents receive
 `ci_provider_required` with `next_action: ask_user`), and follow-up commands
 keep the selected `--ci-provider`. A language without setup support on the
 selected provider gets `ci_provider_unsupported` instead of instructions:
-JavaScript and Ruby support every provider, Python and Java GitHub Actions only.
+JavaScript and Ruby support every provider, Java every provider but Jenkins, and
+Python GitHub Actions only.
 Other CI files (Travis CI, Azure Pipelines and others) are never parsed: when
 they mention the framework they are listed as outside this validation, and they
 never fail onboarding.
@@ -907,13 +908,27 @@ Datadog backend processing remain untested.
 ## Java validation
 
 Java projects build with Maven or Gradle. `ddtest onboard --framework junit5`
-lists the Maven and Gradle CI test commands of the GitHub Actions workflows and
-prints their setup; select the framework the project uses (`junit4`, `junit5`,
+lists the Maven and Gradle CI test commands of the selected CI provider's
+configuration (GitHub Actions, GitLab CI, CircleCI or Buildkite) and prints
+their setup; select the framework the project uses (`junit4`, `junit5`,
 `testng`, `spock`, `cucumber-java`, `karate`, `scalatest` or `munit`). A
 repository with a `pom.xml` or Gradle settings or build files at its root is a
 Java repository; one that also contains a JavaScript, Python or Ruby project
 keeps that platform by default; select Java with `--platform java` or a JVM
 `--framework`.
+
+On GitLab CI, CircleCI and Buildkite the setup is the provider's Datadog
+mechanism (the GitLab setup script, the CircleCI orb, or on Buildkite the
+installer in the test step's commands), which runs the same installer as the
+GitHub action: it adds `-javaagent` to `MAVEN_OPTS` and `GRADLE_OPTS` in the
+job's shell, before the job's own options (the orb, to `JAVA_TOOL_OPTIONS` for
+every Java process, unless `java_instrumented_build_system` names Maven or
+Gradle). A later command that replaces that variable instead of extending it
+(`export MAVEN_OPTS="$MAVEN_OPTS …"`) leaves the tests uninstrumented. The JDK a
+row is certified on is the one its job image names, such as
+`maven:3.9-eclipse-temurin-21`, `gradle:8.10-jdk17`, `eclipse-temurin:17-jdk` or
+`cimg/openjdk:17.0`; a job on the build agent's own JDK, or in an image whose
+name selects no JDK version, stays inconclusive.
 
 For Gradle, ddtest reads the build's settings (and the scripts they apply),
 build files and default version catalog without running Gradle, including the
@@ -983,7 +998,7 @@ Validation runs only the Maven test lifecycle up to `verify`: a CI step such as
 and left out, and `--command` refuses `install`, `deploy` and other goals, as
 validation does for goals in `MAVEN_ARGS` or `.mvn/maven.config`, so `~/.m2`
 artifacts are never overwritten and nothing is published. A dd-java-agent that
-`MAVEN_OPTS` or `JAVA_TOOL_OPTIONS` already attaches, as after the GitHub action,
+`MAVEN_OPTS` or `JAVA_TOOL_OPTIONS` already attaches, as after the Datadog setup,
 is removed from both runs; the reporting run attaches only the selected agent.
 Validation refuses a dd-java-agent in `.mvn/jvm.config`, which no run could
 remove. One Maven

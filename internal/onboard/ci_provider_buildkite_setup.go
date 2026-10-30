@@ -40,6 +40,7 @@ const buildkiteMissingKeyMessage = "DD_API_KEY is not set; Datadog Test Optimiza
 const buildkiteFailedInstallMessage = "Datadog Test Optimization could not be installed; the tests run without it."
 
 var (
+	buildkiteBuildSystem       = regexp.MustCompile(`^DD_INSTRUMENTATION_BUILD_SYSTEM_([A-Z]+)$`)
 	buildkiteInstallerURL      = regexp.MustCompile(`https://install\.datadoghq\.com/scripts/(install_test_visibility_v[0-9]+\.sh)`)
 	buildkiteInstallerSum      = regexp.MustCompile(`echo "([0-9a-f]*)  ` + regexp.QuoteMeta(buildkiteInstallerFile) + `"`)
 	buildkiteTracerVariable    = regexp.MustCompile(`^DD_SET_TRACER_VERSION_([A-Z]+)$`)
@@ -47,7 +48,8 @@ var (
 )
 
 // buildkiteSetupInput maps the installer's variables to the setup action's
-// input names; DD_SET_TRACER_VERSION_X becomes x-tracer-version.
+// input names; DD_SET_TRACER_VERSION_X becomes x-tracer-version, and
+// DD_INSTRUMENTATION_BUILD_SYSTEM_X x-instrumented-build-system.
 func buildkiteSetupInput(variable string) (string, bool) {
 	switch variable {
 	case "DD_CIVISIBILITY_INSTRUMENTATION_LANGUAGES":
@@ -57,6 +59,9 @@ func buildkiteSetupInput(variable string) (string, bool) {
 	}
 	if match := buildkiteTracerVariable.FindStringSubmatch(variable); match != nil {
 		return strings.ToLower(match[1]) + "-tracer-version", true
+	}
+	if match := buildkiteBuildSystem.FindStringSubmatch(variable); match != nil {
+		return strings.ToLower(match[1]) + "-instrumented-build-system", true
 	}
 	return "", false
 }
@@ -77,6 +82,9 @@ func (buildkite) setupInput(name string) string {
 	}
 	if language, ok := strings.CutSuffix(name, "-tracer-version"); ok {
 		return "DD_SET_TRACER_VERSION_" + strings.ToUpper(language)
+	}
+	if language, ok := strings.CutSuffix(name, "-instrumented-build-system"); ok {
+		return "DD_INSTRUMENTATION_BUILD_SYSTEM_" + strings.ToUpper(language)
 	}
 	return strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 }

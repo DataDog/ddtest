@@ -34,7 +34,8 @@ const (
 var circleSetupVersion = regexp.MustCompile(`^2(?:\.[0-9]+\.[0-9]+)?$`)
 
 // circleSetup reads the orb step's parameters as setup inputs: languages,
-// site, service and <language>_tracer_version as <language>-tracer-version.
+// site, service, <language>_tracer_version as <language>-tracer-version and
+// <language>_instrumented_build_system as <language>-instrumented-build-system.
 // A parameter ddtest cannot resolve stays unresolved.
 func (c *circleConfig) circleSetup(orb circleOrb, arguments map[string]*yaml.Node, scope *circleScope) ciSetup {
 	setup := ciSetup{Reference: orb.reference, Pinned: orb.version != "", Supported: circleSetupVersion.MatchString(orb.version), shaped: true, Inputs: map[string]string{}}
@@ -46,6 +47,9 @@ func (c *circleConfig) circleSetup(orb circleOrb, arguments map[string]*yaml.Nod
 		input := key
 		if language, ok := strings.CutSuffix(key, "_tracer_version"); ok && language != "" {
 			input = language + "-tracer-version"
+		}
+		if language, ok := strings.CutSuffix(key, "_instrumented_build_system"); ok && language != "" {
+			input = language + "-instrumented-build-system"
 		}
 		setup.Inputs[input] = text
 	}

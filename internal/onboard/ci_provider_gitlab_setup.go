@@ -34,7 +34,8 @@ var (
 )
 
 // gitLabSetupInput maps the script's variables to the setup action's input
-// names; X_TRACER_VERSION becomes x-tracer-version.
+// names; X_TRACER_VERSION becomes x-tracer-version, and
+// X_INSTRUMENTED_BUILD_SYSTEM x-instrumented-build-system.
 func gitLabSetupInput(variable string) (string, bool) {
 	switch variable {
 	case "LANGUAGES":
@@ -48,6 +49,9 @@ func gitLabSetupInput(variable string) (string, bool) {
 	}
 	if language, ok := strings.CutSuffix(variable, "_TRACER_VERSION"); ok && language != "" {
 		return strings.ToLower(language) + "-tracer-version", true
+	}
+	if language, ok := strings.CutSuffix(variable, "_INSTRUMENTED_BUILD_SYSTEM"); ok && language != "" {
+		return strings.ToLower(language) + "-instrumented-build-system", true
 	}
 	return "", false
 }
