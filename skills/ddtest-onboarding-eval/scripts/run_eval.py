@@ -852,11 +852,18 @@ def run(args):
             for language, name in (("ruby", "Ruby"), ("java", "Java"), ("python", "Python")):
                 if language+"_runtime" not in manifest:
                     continue
-                manifest["ddtest_"+language+"_runtime"] = report_preflight_runtime(report, manifest[language+"_runtime"]["version"])
-                if manifest["ddtest_"+language+"_runtime"]["status"] == "mismatch":
+                runtime_audit = report_preflight_runtime(report, manifest[language+"_runtime"]["version"])
+                manifest["ddtest_"+language+"_runtime"] = runtime_audit
+                missing_python_runtime = (
+                    language == "python" and runtime_audit["status"] == "not observed"
+                    and bool(report.get("runs")) and not report.get("check_only")
+                    and (report.get("last_execution") or {}).get("current", True))
+                if runtime_audit["status"] == "mismatch" or missing_python_runtime:
                     manifest["status"], manifest["failure_kind"] = "failed", "evaluator_environment"
                     manifest["failure_stage"] = "ddtest_"+language+"_runtime"
-                    manifest["error"] = "Final ddtest "+name+" runtime differs from the selected image runtime"
+                    manifest["error"] = ("Final ddtest Python runtime is missing from current execution evidence"
+                                         if missing_python_runtime else
+                                         "Final ddtest "+name+" runtime differs from the selected image runtime")
                     manifest["retry_recommended"] = False
                     code = 1
         except (AttributeError, TypeError, ValueError) as error:

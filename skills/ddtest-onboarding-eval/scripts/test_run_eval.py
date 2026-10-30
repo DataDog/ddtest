@@ -228,6 +228,7 @@ class RunnerTests(unittest.TestCase):
                 self.args.output = self.root / (agent + "-python-evidence")
                 report = {"summary": {"status": "INCOMPLETE"},
                           "preflight": {"runtime": platform.python_version()},
+                          "runs": [{"role": "baseline", "command": "python -m pytest", "exit_code": 0}],
                           "retained_execution": {"result": {"preflight": {"runtime": "0.0.0"}}}}
                 code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps(report)})
                 self.assertEqual(code, 0, manifest)
@@ -251,6 +252,42 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(manifest["failure_stage"], "ddtest_python_runtime")
         self.assertFalse(manifest["retry_recommended"])
+
+    def test_pytest_execution_without_runtime_fails_the_trial(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        handoff = "Local validation: PASSED."
+        for name, preflight in (("missing", None), ("empty", {"runtime": ""})):
+            with self.subTest(name=name):
+                self.args.output = self.root / (name + "-runtime-evidence")
+                report = {"summary": {"status": "PASSED", "local_validation": "PASSED", "final_response": handoff},
+                          "preflight": preflight,
+                          "runs": [{"role": "baseline", "command": "python -m pytest", "exit_code": 0}],
+                          "retained_execution": {"result": {"preflight": {"runtime": platform.python_version()}}}}
+                code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps(report), "FAKE_RESPONSE": handoff})
+                self.assertEqual(code, 1, manifest)
+                self.assertEqual(manifest["agent_reporting"]["status"], "pass")
+                self.assertEqual(manifest["ddtest_python_runtime"]["status"], "not observed")
+                self.assertEqual(manifest["status"], "failed")
+                self.assertEqual(manifest["failure_kind"], "evaluator_environment")
+                self.assertEqual(manifest["failure_stage"], "ddtest_python_runtime")
+                self.assertIn("missing", manifest["error"])
+                self.assertFalse(manifest["retry_recommended"])
+
+    def test_pytest_without_current_execution_does_not_require_runtime(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        runs = [{"role": "baseline", "command": "python -m pytest", "exit_code": 0}]
+        for name, evidence in (("not run", {}), ("check only", {"check_only": True, "runs": runs}),
+                               ("historical", {"runs": runs, "last_execution": {"current": False}})):
+            with self.subTest(name=name):
+                self.args.output = self.root / (name.replace(" ", "-") + "-runtime-evidence")
+                report = {"summary": {"status": "INCOMPLETE"}, **evidence,
+                          "retained_execution": {"result": {"preflight": {"runtime": platform.python_version()}, "runs": runs}}}
+                code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps(report)})
+                self.assertEqual(code, 0, manifest)
+                self.assertEqual(manifest["status"], "completed")
+                self.assertEqual(manifest["ddtest_python_runtime"]["status"], "not observed")
 
     def test_python_selection_rejects_ambiguous_or_non_image_paths(self):
         for python, framework, node in ((Path("python"), "pytest", None), (Path("/usr/../bin/python"), "pytest", None),
