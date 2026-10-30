@@ -401,7 +401,7 @@ func verifyJavaTelemetry(run validationRun) verdict {
 		return verdict{Status: "inconclusive", Reason: "dd-java-agent reported configuration errors: " + strings.Join(run.Facts.ConfigurationErrors, ", ")}
 	}
 	statuses := map[string]string{"passed": "pass", "failed": "fail", "skipped": "skip"}
-	expected, observed := map[string]int{}, map[string]int{}
+	expected, observed := map[javaExecution]int{}, map[javaExecution]int{}
 	// One build may run several frameworks, so a native name is compared as
 	// written when the agent reported it so, else without its JUnit signature
 	// or TestNG arguments, else also without the invocation index, which a
@@ -449,7 +449,7 @@ func verifyJavaTelemetry(run validationRun) verdict {
 				break
 			}
 		}
-		expected[fmt.Sprintf("module %q, class %q, test %q, status %q", module, suite, name, statuses[test.Status])]++
+		expected[javaExecution{module, suite, name, statuses[test.Status]}]++
 	}
 	for _, test := range run.Facts.Tests {
 		module := telemetryModule(test)
@@ -465,13 +465,14 @@ func verifyJavaTelemetry(run validationRun) verdict {
 				continue
 			}
 			spans[attempt.SpanID] = true
-			observed[fmt.Sprintf("module %q, class %q, test %q, status %q", module, suite, name, attempt.Status)]++
+			observed[javaExecution{module, suite, name, attempt.Status}]++
 		}
 	}
+	reconcileJavaDisplayNames(expected, observed)
 	keys := maps.Clone(expected)
 	maps.Copy(keys, observed)
 	var differences []string
-	for _, key := range slices.Sorted(maps.Keys(keys)) {
+	for _, key := range slices.SortedFunc(maps.Keys(keys), func(a, b javaExecution) int { return strings.Compare(a.String(), b.String()) }) {
 		if difference := expected[key] - observed[key]; difference > 0 {
 			differences = append(differences, fmt.Sprintf("Missing telemetry: %s (count %d)", key, difference))
 		} else if difference < 0 {
@@ -482,6 +483,56 @@ func verifyJavaTelemetry(run validationRun) verdict {
 		return verdict{Status: "inconclusive", Reason: "Reported telemetry does not match the native build results.", Differences: differences[:min(len(differences), maxReportDifferences)]}
 	}
 	return verdict{}
+}
+
+// javaExecution is one test outcome, native or reported, as compared.
+type javaExecution struct{ module, suite, name, status string }
+
+func (e javaExecution) String() string {
+	return fmt.Sprintf("module %q, class %q, test %q, status %q", e.module, e.suite, e.name, e.status)
+}
+
+// javaMethodName is a name a Java method can have, with a JUnit 5
+// invocation index.
+var javaMethodName = regexp.MustCompile(`^[\pL_$][\pL\pN_$]*(\[[0-9]+\])?$`)
+
+// reconcileJavaDisplayNames matches native results named by a JUnit 5
+// @DisplayName, as Gradle names them, to the methods dd-java-agent reports for
+// them without the display name. In one class and status, display names no
+// execution matched and reported methods no native result matched are the
+// same tests when they are as many; executions are still counted per class
+// and status, so a test that ran in one run only still differs.
+func reconcileJavaDisplayNames(expected, observed map[javaExecution]int) {
+	type group struct{ module, suite, status string }
+	missing, unexpected := map[group][]javaExecution{}, map[group][]javaExecution{}
+	for key, count := range expected {
+		if count > observed[key] && !javaMethodName.MatchString(key.name) {
+			missing[group{key.module, key.suite, key.status}] = append(missing[group{key.module, key.suite, key.status}], key)
+		}
+	}
+	for key, count := range observed {
+		if count > expected[key] && javaMethodName.MatchString(key.name) {
+			unexpected[group{key.module, key.suite, key.status}] = append(unexpected[group{key.module, key.suite, key.status}], key)
+		}
+	}
+	for at, names := range missing {
+		missed, extra := 0, 0
+		for _, key := range names {
+			missed += expected[key] - observed[key]
+		}
+		for _, key := range unexpected[at] {
+			extra += observed[key] - expected[key]
+		}
+		if missed != extra {
+			continue
+		}
+		for _, key := range names {
+			observed[key] = expected[key]
+		}
+		for _, key := range unexpected[at] {
+			expected[key] = observed[key]
+		}
+	}
 }
 
 // javaProbeClass is the probe's fully qualified class name.

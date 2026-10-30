@@ -464,19 +464,42 @@ func TestJavaTelemetryMatchesGradleDisplayNames(t *testing.T) {
 	run := javaTelemetryRun(native, invocation("[1] 1", 1), invocation("[2] 2", 2), reported(":app:test", "example.AppTest", "passes", "", intake.TestRun{Status: "pass", SpanID: 3}))
 	require.Equal(t, verdict{}, verifyJavaTelemetry(run), "each display name maps to the invocation the tracer reported")
 
-	// Two parameterized methods share display names, so they cannot be told apart.
+	// Two parameterized methods share display names, so neither is matched by
+	// name; the class's executions still account for each other by status.
 	other := func(index string, span uint64) intake.Test {
 		return reported(":app:test", "example.AppTest", "negative", `{"metadata":{"test_name":"`+index+`"}}`, intake.TestRun{Status: "pass", SpanID: span})
 	}
 	native = append(native, nativeTest{File: ":app:test / example.AppTest", Name: "[1] 1", Status: "passed"})
 	run = javaTelemetryRun(native, invocation("[1] 1", 1), invocation("[2] 2", 2), other("[1] 1", 4), reported(":app:test", "example.AppTest", "passes", "", intake.TestRun{Status: "pass", SpanID: 3}))
-	require.Equal(t, "inconclusive", verifyJavaTelemetry(run).Status, "an ambiguous display name is not matched")
+	require.Equal(t, verdict{}, verifyJavaTelemetry(run), "an ambiguous display name is accounted for by its class's executions")
+	run = javaTelemetryRun(native, invocation("[1] 1", 1), invocation("[2] 2", 2), reported(":app:test", "example.AppTest", "passes", "", intake.TestRun{Status: "pass", SpanID: 3}))
+	require.Equal(t, "inconclusive", verifyJavaTelemetry(run).Status, "an execution the tracer did not report still differs")
 
 	// A display name with a lambda's identity, as sshj's ConnectedSocketTest.
 	display := "[1] example.SocketTest$$Lambda$1352/0x000000980176c488@4f3b5c60"
 	lambda := javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "example.SocketTest", Name: display, Status: "passed"}}}, false)
 	run = javaTelemetryRun(lambda, reported(":test", "example.SocketTest", "connects", `{"metadata":{"test_name":"`+display+`"}}`, intake.TestRun{Status: "pass", SpanID: 5}))
 	require.Equal(t, verdict{}, verifyJavaTelemetry(run), "the native name and the tracer's display name read the identity alike")
+}
+
+func TestJavaTelemetryMatchesDisplayNamesTheTracerDoesNotReport(t *testing.T) {
+	// Gradle names a test by its @DisplayName; dd-java-agent reports its method.
+	native := []nativeTest{
+		{File: ":test / example.TokenTest", Name: "Refreshes an expired token", Status: "passed"},
+		{File: ":test / example.TokenTest", Name: "Rejects a bad token", Status: "failed"},
+		{File: ":test / example.TokenTest", Name: "plain()", Status: "passed"},
+	}
+	refresh := reported(":test", "example.TokenTest", "refreshes", "", intake.TestRun{Status: "pass", SpanID: 1})
+	reject := reported(":test", "example.TokenTest", "rejects", "", intake.TestRun{Status: "fail", SpanID: 2})
+	plain := reported(":test", "example.TokenTest", "plain", "", intake.TestRun{Status: "pass", SpanID: 3})
+	require.Equal(t, verdict{}, verifyJavaTelemetry(javaTelemetryRun(native, refresh, reject, plain)), "unmatched display names and methods of one class and status are the same tests")
+	for name, reportedTests := range map[string][]intake.Test{
+		"a display-named test the tracer did not report": {refresh, plain},
+		"a status that differs":                          {refresh, reported(":test", "example.TokenTest", "rejects", "", intake.TestRun{Status: "pass", SpanID: 2}), plain},
+		"another class's method":                         {refresh, reported(":test", "example.OtherTest", "rejects", "", intake.TestRun{Status: "fail", SpanID: 2}), plain},
+	} {
+		require.Equal(t, "inconclusive", verifyJavaTelemetry(javaTelemetryRun(native, reportedTests...)).Status, name)
+	}
 }
 
 func TestJavaTelemetryRejectsUnusableEvidence(t *testing.T) {
