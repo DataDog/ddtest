@@ -156,6 +156,10 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.NextAction = "run_command"
 			case "ci_edit_required":
 				result.NextAction = "apply_source_edit"
+			case "ci_runtime_required":
+				// Only the user's answer, added to the same command, continues.
+				result.NextAction = "ask_user"
+				result.ResumeCommand = nil
 			default:
 				result.NextAction = "supply_input"
 			}
@@ -172,7 +176,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			invalidatePriorWorkflow(t.repositoryRoot, name, result)
 		}
 		switch result.NextAction {
-		case "report_result", "supply_input", "apply_source_edit", "wait":
+		case "report_result", "supply_input", "apply_source_edit", "wait", "ask_user":
 			result.NextCommand = nil
 		case "request_capability":
 			// Without a checkpoint there is nothing to resume; rerun from the start.
@@ -304,6 +308,13 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		plan.Runtime = languageRuntime
 	}
 	result.Plan = plan
+	// A CI job's runtime that neither its configuration nor a statement
+	// names is the user's answer to give; nothing is set up or run before it.
+	if required := onboard.RequiredCIRuntimes(ctx, t.repositoryRoot, t.language, name); required != nil {
+		asked := onboard.CIRuntimeRequiredResult(required)
+		result.Location, result.RequiredInput, result.Instruction = asked.Location, asked.RequiredInput, asked.Instruction
+		return fail("needs_input", asked.Code, asked.Reason, asked.Instruction)
+	}
 	if options.FactsFile != "" {
 		factsFingerprint := fingerprint
 		// Built before facts touch the scope: rejected facts are rewritten from it.
@@ -1243,6 +1254,7 @@ func (t *Testdrive) workflowValidationResume(executable, name, selected string, 
 			command = append(command, "--"+flag.name, flag.value)
 		}
 	}
+	command = append(command, onboard.CIStatementArguments()...)
 	if t.commandTimeout > 0 {
 		command = append(command, "--timeout", t.commandTimeout.String())
 	}

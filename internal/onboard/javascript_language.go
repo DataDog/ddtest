@@ -6,6 +6,9 @@
 package onboard
 
 import (
+	"context"
+	"errors"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -130,4 +133,66 @@ func (javascriptDiscovery) runtimeVariable(name string) bool {
 
 func (javascriptDiscovery) cacheVariable(name string) bool {
 	return slices.Contains([]string{"npm_config_store_dir", "PNPM_STORE_DIR", "PNPM_HOME"}, name)
+}
+
+// A stated Node is compared like a node:<version> image tag's.
+var javascriptStatedRuntime = &statedRuntime{
+	Names:   []string{"node", "js"},
+	Display: "Node",
+	Version: regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`),
+	Example: "22, 22.11 or 22.11.0",
+	base:    javascriptImageRuntime,
+	configured: func(root string, job runtimeJob) (string, string) {
+		for _, step := range job.Steps {
+			if version := step.Runtime["js"]; version != "" {
+				return version, step.Source
+			}
+			if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "actions/setup-node" {
+				if version, err := setupNodeVersion(root, step, nil); err == nil && version != "" {
+					return version, "actions/setup-node"
+				}
+			}
+			if version := nvmRuntime(step.Run); version != "" {
+				return version, "nvm"
+			}
+		}
+		return "", ""
+	},
+	check: func(ctx context.Context, root, framework string) RuntimeCheck {
+		// Offline: no Node or tracer metadata is needed to find unknown runtimes.
+		return checkCIRuntimes(ctx, root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+			return tracerRequirement{}, errors.New("tracer metadata is not read offline")
+		}, framework)
+	},
+	runtime: func(finding RuntimeFinding) string { return finding.Node },
+}
+
+func (javascriptDiscovery) statedRuntime() *statedRuntime { return javascriptStatedRuntime }
+
+// jobBaseNode is the Node a job starts with: its image's, else the one the
+// user stated for it, else "".
+func jobBaseNode(job runtimeJob) (node, source string) {
+	if node := imageNode(job.Image); node != "" {
+		return node, "image " + job.Image
+	}
+	if node := job.Stated["js"]; node != "" {
+		return node, statedRuntimeSource
+	}
+	return "", ""
+}
+
+// nodeImageTag reads the tag of a Node image, numeric or not.
+var nodeImageTag = regexp.MustCompile(`^(?:(?:docker\.io/)?(?:library/)?node|cimg/node|circleci/node):([^@]+)`)
+
+// javascriptImageRuntime is the Node version a job's image selects, or a
+// Node image's floating tag (lts, current, or none): that image's runtime is
+// not the user's to state.
+func javascriptImageRuntime(job runtimeJob) string {
+	if node := imageNode(job.Image); node != "" {
+		return node
+	}
+	if match := nodeImageTag.FindStringSubmatch(withImplicitTag(job.Image)); match != nil {
+		return match[1]
+	}
+	return ""
 }

@@ -617,7 +617,7 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 	if err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
-	workflows, err := provider.readWorkflows(root)
+	workflows, err := readProviderWorkflows(provider, root)
 	if err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
@@ -636,6 +636,14 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 				}
 				ruby, engine := rubyImageRuntime(job.Image)
 				imageRuby := ruby != ""
+				// The runtime stays the job's own (its host's) until a step
+				// selects one; the user may have stated it.
+				hostRuby := rubyImageSelection(job) == "" && runtimeHost(job, "Ruby") != ""
+				statedRuby := hostRuby && job.Stated["ruby"] != ""
+				if statedRuby {
+					// Its RubyGems is checked like an image's of that Ruby.
+					ruby, imageRuby = job.Stated["ruby"], true
+				}
 				tracer, action, rubygems, gemsAtSetup := "", "", "", ""
 				var setup *ciSetup
 				var inputs map[string]string
@@ -655,12 +663,14 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						ruby, engine, tracer, action, actionErr, inputs, rubygems, setup = "", "", "", "", nil, nil, "", nil
 						imageRuby = false
 						skippedAction = false
+						hostRuby, statedRuby = false, false
 					}
 					if version, selected := step.Runtime["ruby"]; selected && stepErr == nil {
 						// A known installer selected Ruby, such as the CircleCI Ruby
 						// orb's install; its RubyGems is checked like an image's.
 						ruby, engine = rubyImageRuntime("ruby:" + version)
 						imageRuby = true
+						hostRuby, statedRuby = false, false
 					}
 					if isSetup {
 						tracer, action, actionErr, inputs, setup = "", "", nil, nil, nil
@@ -712,6 +722,9 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 					if setup != nil {
 						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem
 					}
+					if hostRuby {
+						finding.RuntimeHost, finding.UserStated = runtimeHost(job, "Ruby"), statedRuby
+					}
 					if ruby == "" && engine == "" && job.ImageProblem != "" {
 						finding.Reason = rubyUnknownImageReason(provider, job.ImageProblem, setup != nil)
 					}
@@ -736,6 +749,8 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						} else if reason := rubyImageGemsProblem(ruby, gemsAtSetup, provider); imageRuby && reason != "" {
 							finding.Status, finding.Reason = "inconclusive", reason
 						}
+					} else if ruby == "" && hostRuby && action != "" {
+						finding.Reason = "The CI Ruby runtime is unknown: it comes from " + finding.RuntimeHost + ", and the configuration selects no Ruby version. Ask the user which Ruby version it runs, then rerun with --ci-runtime; never guess it."
 					} else if action == "" && skippedAction {
 						finding.Status, finding.Code = "excluded", "excluded_runtime"
 						finding.Reason = "The Datadog action is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."

@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"maps"
@@ -262,7 +263,7 @@ func rubyGemsNote(root, framework string, terms ciSetupTerms) string {
 	if err != nil {
 		return generic
 	}
-	workflows, err := provider.readWorkflows(root)
+	workflows, err := readProviderWorkflows(provider, root)
 	if err != nil {
 		return generic
 	}
@@ -307,7 +308,7 @@ func rubyRakeOptionsNote(root string) string {
 	if err != nil {
 		return ""
 	}
-	workflows, err := provider.readWorkflows(root)
+	workflows, err := readProviderWorkflows(provider, root)
 	if err != nil {
 		return ""
 	}
@@ -406,4 +407,46 @@ func (rubyDiscovery) runtimeVariable(name string) bool {
 
 func (rubyDiscovery) cacheVariable(name string) bool {
 	return slices.Contains([]string{"BUNDLE_PATH", "GEM_HOME"}, name)
+}
+
+// A stated Ruby is compared like a ruby:<version> image tag's, so it needs a
+// minor version.
+var rubyStatedRuntime = &statedRuntime{
+	Names:   []string{"ruby"},
+	Display: "Ruby",
+	Version: rubyImageVersion,
+	Example: "3.3 or 3.3.6",
+	base:    rubyImageSelection,
+	configured: func(_ string, job runtimeJob) (string, string) {
+		for _, step := range job.Steps {
+			if version := step.Runtime["ruby"]; version != "" {
+				return version, step.Source
+			}
+			if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "ruby/setup-ruby" {
+				if version, err := runtimeValue(step.With["ruby-version"], nil); err == nil && version != "" {
+					return version, "ruby/setup-ruby"
+				}
+			}
+		}
+		return "", ""
+	},
+	check: func(_ context.Context, root, framework string) RuntimeCheck {
+		return RubyCIConfiguration(root, framework)
+	},
+	runtime: func(finding RuntimeFinding) string { return finding.Runtime },
+}
+
+func (rubyDiscovery) statedRuntime() *statedRuntime { return rubyStatedRuntime }
+
+// rubyImageSelection is the Ruby version or engine a job's image selects, or
+// a Ruby image's floating tag (latest, current, or none): that image's runtime
+// is not the user's to state.
+func rubyImageSelection(job runtimeJob) string {
+	if version, engine := rubyImageRuntime(job.Image); version+engine != "" {
+		return version + engine
+	}
+	if match := rubyImage.FindStringSubmatch(withImplicitTag(job.Image)); match != nil {
+		return match[2]
+	}
+	return ""
 }

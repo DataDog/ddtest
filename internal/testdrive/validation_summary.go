@@ -32,6 +32,9 @@ type validationSummary struct {
 	// Caveats name CI values this run could not reproduce exactly; they never
 	// block completion.
 	Caveats []string `json:"caveats,omitempty"`
+	// UserStated lists what the user stated about CI (--ci-runtime,
+	// --ci-confirm) and this run relied on without verifying it.
+	UserStated []string `json:"user_stated,omitempty"`
 	// ReviewedPreparation lists preparation run only because the run opted
 	// in with --allow-reviewed-builds.
 	ReviewedPreparation []string `json:"reviewed_preparation,omitempty"`
@@ -155,6 +158,17 @@ func summarizeValidation(result validationResult) validationSummary {
 			if !slices.Contains(caveats, note) {
 				caveats = append(caveats, note)
 			}
+		}
+	}
+	language := ""
+	if registered := languageForFramework(result.Framework); registered != nil {
+		language = registered.name()
+	}
+	stated, unused := onboard.StatedFacts(result.CIRuntime, language)
+	summary.UserStated = stated
+	for _, caveat := range unused {
+		if !slices.Contains(caveats, caveat) {
+			caveats = append(caveats, caveat)
 		}
 	}
 	summary.Caveats = caveats
@@ -379,6 +393,9 @@ func validationHandoff(result validationResult) string {
 		for _, job := range scope.NotTried {
 			fmt.Fprintf(&block, "Not tried: %s (below Node 18, the oldest dd-trace major ddtest supports; ddtest skipped them on its own, no approval needed).\n", job)
 		}
+	}
+	for _, stated := range summary.UserStated {
+		block.WriteString("Stated by the user, not read from CI configuration or verified: " + stated + "\n")
 	}
 	for _, caveat := range summary.Caveats {
 		block.WriteString("Caveat (not a blocker): " + caveat + "\n")

@@ -25,6 +25,7 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 	var version, facts, site, format, resume, ciProvider string
 	var timeout time.Duration
 	var reviewed, substitute bool
+	var ciRuntimes, ciFacts []string
 	command := &cobra.Command{
 		Use:   "onboard",
 		Short: "Start here: onboard this repository to Test Optimization",
@@ -54,6 +55,9 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 			if err := resolveCIProvider(cmd, ciProvider); err != nil {
 				// Without --instructions, onboarding answers non-terminals in the agent protocol.
 				return ciProviderFailure(cmd, structured || (!instructions && !apply && !isTerminalWriter(cmd.OutOrStdout())), err)
+			}
+			if err := resolveCIStatements(ciRuntimes, ciFacts); err != nil {
+				return ciStatementFailure(cmd, structured || (!instructions && !apply && !isTerminalWriter(cmd.OutOrStdout())), err)
 			}
 			// start returns the onboarding handoff: the next command, or for a
 			// language whose CI setup the agent applies, the setup to apply first.
@@ -134,6 +138,7 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 	command.Flags().StringVar(&site, "site", "", "Datadog site for a new action (default DD_SITE, otherwise datadoghq.com)")
 	command.Flags().StringVar(&format, "format", "agent", "Result rendering: agent or json for direct host consumption")
 	command.Flags().StringVar(&ciProvider, "ci-provider", "", ciProviderFlagUsage())
+	ciStatementFlags(command, &ciRuntimes, &ciFacts)
 
 	command.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Explicitly extend uncommitted target-file edits after showing their exact diff")
 	agentHelp(command)

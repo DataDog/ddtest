@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -241,6 +242,16 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		err := fmt.Errorf("--command selects one suite, but onboarding applies and validates every discovered CI configuration")
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input", RequiredInput: []string{"Omit --command to onboard every discovered configuration, or validate one suite with testdrive --framework " + frameworkName + " --command <command>."}}))
 	}
+	if root, err := os.Getwd(); err == nil {
+		// Only the user can tell a CI job's runtime its configuration doesn't
+		// name; ask before any setup is prescribed for it.
+		if required := RequiredCIRuntimes(context.Background(), root, detected.Name(), frameworkName); required != nil {
+			if options.Human {
+				return fmt.Errorf("%w Rerun with --ci-runtime %s=<version> (or <job>:%s=<version> per job) once you know it", required, required.Flag, required.Flag)
+			}
+			return errors.Join(required, WriteAgentResult(output, CIRuntimeRequiredResult(required)))
+		}
+	}
 	automatic := discoveryLanguageAutomaticSetup(detected.Name())
 	if root, err := os.Getwd(); err == nil && automatic {
 		if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
@@ -425,6 +436,10 @@ func DDTestCommand(args ...string) []string {
 	// Follow-up commands keep the selected CI provider.
 	if provider := ActiveCIProvider(); provider != "" && len(args) > 0 && (args[0] == "onboard" || args[0] == "testdrive") && !slices.Contains(args, "--ci-provider") {
 		command = append(command, "--ci-provider", provider)
+	}
+	// And the user's statements about CI, which reports are bound to.
+	if len(args) > 0 && (args[0] == "onboard" || args[0] == "testdrive") && !slices.Contains(args, "--ci-runtime") && !slices.Contains(args, "--ci-confirm") {
+		command = append(command, CIStatementArguments()...)
 	}
 	return command
 }

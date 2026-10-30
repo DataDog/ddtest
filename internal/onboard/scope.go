@@ -160,7 +160,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 	if err != nil {
 		return scope, err
 	}
-	workflows, err := provider.readWorkflows(root)
+	workflows, err := readProviderWorkflows(provider, root)
 	if err != nil {
 		return scope, err
 	}

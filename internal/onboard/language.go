@@ -108,6 +108,11 @@ type discoveryLanguage interface {
 	// keepsCISetting reports whether a DD_* CI setting reaches local replay.
 	// Other DD_* settings configure CI's agent, intake or session.
 	keepsCISetting(key string) bool
+
+	// statedRuntime is how the language takes the user's statement of a CI
+	// job's runtime its configuration does not select (--ci-runtime); nil
+	// when it takes none.
+	statedRuntime() *statedRuntime
 }
 
 // discoveryLanguageFor returns the language that discovers framework's CI, or nil.

@@ -40,8 +40,8 @@ func confirmedCommand(cmd *cobra.Command) []string {
 		return nil
 	}
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
-		// DDTestCommand already forwards the selected CI provider.
-		if flag.Name != "yes" && flag.Name != "ci-provider" {
+		// DDTestCommand already forwards the selected CI provider and statements.
+		if flag.Name != "yes" && flag.Name != "ci-provider" && flag.Name != "ci-runtime" && flag.Name != "ci-confirm" {
 			words = append(words, "--"+flag.Name+"="+flag.Value.String())
 		}
 	})

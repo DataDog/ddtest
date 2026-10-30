@@ -67,6 +67,13 @@ type RuntimeFinding struct {
 	Status          string          `json:"status"`
 	Reason          string          `json:"reason"`
 	Code            string          `json:"code,omitempty"`
+	// RuntimeHost describes where the test runs when its runtime is the job's
+	// own and no image selects it, such as an agent host: only the user can
+	// tell that runtime (see --ci-runtime).
+	RuntimeHost string `json:"runtime_host,omitempty"`
+	// UserStated reports a runtime the user stated with --ci-runtime, which
+	// ddtest checks but cannot verify.
+	UserStated bool `json:"user_stated,omitempty"`
 	// setupInputs are the inputs of the Datadog setup action that precedes
 	// this entry, for a language's own setup checks. Not serialized.
 	setupInputs map[string]string
@@ -150,6 +157,9 @@ type runtimeJob struct {
 	// provider's setup, such as an image without curl, before any setup is
 	// written; empty when it can or the provider does not check.
 	SetupImageProblem string `yaml:"-"`
+	// Stated holds the runtime versions the user stated for this job, by
+	// installer token, when its image selects none (see --ci-runtime).
+	Stated map[string]string `yaml:"-"`
 }
 
 type tracerRequirement struct{ Version, Node, Requested string }
@@ -443,8 +453,14 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		return []RuntimeFinding{finding}
 	}
 	state := runtimeState{}
-	if node := imageNode(job.Image); node != "" {
-		state.node, state.source, state.platform = node, "image "+job.Image, "linux-x64"
+	if node, source := jobBaseNode(job); node != "" {
+		state.node, state.source, state.platform = node, source, "linux-x64"
+		if source == statedRuntimeSource {
+			// A host's platform is unknown: resolve the selector like an image tag's.
+			if platform := nodeDistributionPlatform(job.RunsOn, "", row); platform != "" {
+				state.platform = platform
+			}
+		}
 	}
 	if len(frameworks) > 0 && frameworks[0] == "cypress" {
 		// A job image (GitLab) already selected the runtime when there is no
@@ -526,6 +542,11 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 			continue
 		}
 		finding.Node, finding.NodeSource = state.node, state.source
+		if state.source == "" && javascriptImageRuntime(job) == "" || state.source == statedRuntimeSource {
+			// No image or step selected the runtime: it is the host's.
+			finding.RuntimeHost = runtimeHost(job, "Node")
+			finding.UserStated = finding.RuntimeHost != "" && state.source == statedRuntimeSource
+		}
 		if resolution.Reason != "" {
 			// A row on a Node no dd-trace release supports is never tried, so
 			// its unresolved steps can't block.
@@ -555,6 +576,7 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	finding.Code = ""
 	if len(resolution.Tests) > 0 && resolution.Tests[0].Cypress != nil && resolution.Tests[0].Cypress.Action != "" {
 		finding.Node, finding.NodeSource = step.ActionNode, step.Uses+" / runs.using"
+		finding.RuntimeHost, finding.UserStated = "", false
 	}
 	if len(frameworks) > 0 && frameworks[0] == "mocha" && mochaInstrumentationDisabled(workflow, job, step, row) {
 		finding.Status, finding.Code = StatusExcluded, CodeExcludedRuntime
@@ -612,6 +634,7 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		words, _ := shellquote.Split(entry.Command)
 		if len(words) > 0 && !slices.Contains([]string{"node", "node.exe"}, words[0]) && (filepath.Base(words[0]) == "node" || filepath.Base(words[0]) == "node.exe") {
 			finding.Node, finding.NodeResolution = "", nil
+			finding.RuntimeHost, finding.UserStated = "", false
 			finding.Code, finding.Reason = CodeRuntimeUnknown, "The test command selects an explicit Node executable; its CI version cannot be inferred from setup-node."
 			return finding
 		}
@@ -626,6 +649,9 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		finding.Code, finding.Reason = CodeRuntimeUnknown, "The CI Node runtime is unknown after setup; preserve the workflow and resolve it before claiming compatibility."
 		if job.ImageProblem != "" {
 			finding.Reason = "The CI Node runtime is unknown: " + job.ImageProblem + ". Preserve the workflow and resolve it before claiming compatibility."
+		}
+		if finding.RuntimeHost != "" {
+			finding.Reason = "The CI Node runtime is unknown: it comes from " + finding.RuntimeHost + ", and the configuration selects no Node version. Ask the user which Node version it runs, then rerun with --ci-runtime; never guess it."
 		}
 		return finding
 	}

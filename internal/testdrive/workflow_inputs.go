@@ -48,6 +48,10 @@ func InputFingerprint(ctx context.Context, root string) (string, error) {
 	if provider := onboard.ActiveCIProvider(); err == nil && provider != "" {
 		fingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte("ci-provider="+provider+"\x00"+fingerprint)))
 	}
+	// Reports certify what the user stated too: other statements need a new run.
+	if statements := onboard.CIStatementsFingerprint(); err == nil && statements != "" {
+		fingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte("ci-statements="+statements+"\x00"+fingerprint)))
+	}
 	return fingerprint, err
 }
 

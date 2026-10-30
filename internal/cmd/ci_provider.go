@@ -92,3 +92,59 @@ func ciProviderFailure(cmd *cobra.Command, structured bool, err error) error {
 		return protocolFailure(cmd, "discovery", "ci_discovery", err, nil)
 	}
 }
+
+// ciStatementFlags adds --ci-runtime and --ci-confirm, which state what the
+// CI configuration cannot show ddtest.
+func ciStatementFlags(command *cobra.Command, runtimes, facts *[]string) {
+	command.Flags().StringArrayVar(runtimes, "ci-runtime", nil, "Runtime of CI jobs whose configuration names none, as [<job>:]<runtime>=<version> (node, ruby); repeatable; only the user can state it")
+	command.Flags().StringArrayVar(facts, "ci-confirm", nil, "CI fact the selected provider asks the user to confirm, as <fact>[=<value>]; repeatable")
+}
+
+// invalidCIStatement is a --ci-runtime or --ci-confirm value ddtest rejects.
+type invalidCIStatement struct{ error }
+
+// resolveCIStatements records the user's statements for the selected
+// provider, after resolveCIProvider, and rejects a statement that
+// contradicts the CI configuration.
+func resolveCIStatements(runtimes, facts []string) error {
+	var statedRuntimes []onboard.CIRuntimeStatement
+	for _, value := range runtimes {
+		statement, err := onboard.ParseCIRuntime(value)
+		if err != nil {
+			return invalidCIStatement{err}
+		}
+		statedRuntimes = append(statedRuntimes, statement)
+	}
+	var statedFacts []onboard.CIFact
+	for _, value := range facts {
+		fact, err := onboard.ParseCIConfirm(value)
+		if err != nil {
+			return invalidCIStatement{err}
+		}
+		statedFacts = append(statedFacts, fact)
+	}
+	if err := onboard.UseCIStatements(statedRuntimes, statedFacts); err != nil {
+		return invalidCIStatement{err}
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("find repository root: %w", err)
+	}
+	return onboard.CheckCIRuntimeStatements(root)
+}
+
+// ciStatementFailure renders a resolveCIStatements error.
+func ciStatementFailure(cmd *cobra.Command, structured bool, err error) error {
+	var invalid invalidCIStatement
+	var conflict *onboard.CIRuntimeConflict
+	switch {
+	case !structured:
+		return err
+	case errors.As(err, &invalid):
+		return protocolFailure(cmd, "options", "invalid_options", invalid.error, nil)
+	case errors.As(err, &conflict):
+		return protocolFailure(cmd, "discovery", "ci_runtime_conflict", err, nil)
+	default:
+		return protocolFailure(cmd, "discovery", "ci_discovery", err, nil)
+	}
+}

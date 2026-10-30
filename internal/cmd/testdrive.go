@@ -38,6 +38,7 @@ func newTestdriveCommand() *cobra.Command {
 	var version, facts, format, resume, detail, site, ciProvider string
 	var checkOnly, agent, report bool
 	var all bool
+	var ciRuntimes, ciFacts []string
 	var allowReviewedBuilds, acceptSubstituteRuntime bool
 	var timeout time.Duration
 	command.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "Maximum duration of each subprocess, including each full test-suite run")
@@ -55,6 +56,7 @@ func newTestdriveCommand() *cobra.Command {
 	command.Flags().StringVar(&facts, "facts", "", "JSON build/service facts bound to input_fingerprint (requires --all)")
 	command.Flags().StringVar(&site, "site", "", "Datadog site retained in the resolved validation plan")
 	command.Flags().StringVar(&ciProvider, "ci-provider", "", ciProviderFlagUsage())
+	ciStatementFlags(command, &ciRuntimes, &ciFacts)
 
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
 		structured := agent || cmd.Flags().Changed("format")
@@ -83,6 +85,9 @@ func newTestdriveCommand() *cobra.Command {
 		// Reports are bound to the provider they validated, so --report resolves it too.
 		if err := resolveCIProvider(cmd, ciProvider); err != nil {
 			return ciProviderFailure(cmd, structured, err)
+		}
+		if err := resolveCIStatements(ciRuntimes, ciFacts); err != nil {
+			return ciStatementFailure(cmd, structured, err)
 		}
 		if report {
 			cmd.SilenceErrors = true
@@ -152,6 +157,10 @@ func rerunWithYes(cmd *cobra.Command) string {
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
 		switch {
 		case flag.Name == "yes":
+		case flag.Value.Type() == "stringArray":
+			for _, value := range flag.Value.(pflag.SliceValue).GetSlice() {
+				words = append(words, "--"+flag.Name, value)
+			}
 		case flag.Value.Type() == "bool" && flag.Value.String() == "true":
 			words = append(words, "--"+flag.Name)
 		case flag.Value.Type() == "bool":

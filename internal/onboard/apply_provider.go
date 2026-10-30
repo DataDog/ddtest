@@ -73,7 +73,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			}
 			// The runtime the tests run on: the image's, or one a modeled
 			// installer selects before them.
-			node := imageNode(job.Image)
+			node, _ := jobBaseNode(job)
 			if selected, err := rowSetupNodeBefore(root, workflow, job, nil, first); err == nil {
 				node = selected
 			}
@@ -151,7 +151,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 // runs framework's tests, with at least one such job. A test command ddtest
 // cannot resolve keeps the setup incomplete.
 func providerSetupConfigured(root string, provider ciProvider, language, framework, site, tracerInput string, exact func(string) bool) bool {
-	workflows, err := provider.readWorkflows(root)
+	workflows, err := readProviderWorkflows(provider, root)
 	if err != nil {
 		return false
 	}
@@ -194,7 +194,7 @@ func setupImageNote(root, language, framework string) string {
 	if err != nil {
 		return ""
 	}
-	workflows, err := provider.readWorkflows(root)
+	workflows, err := readProviderWorkflows(provider, root)
 	if err != nil {
 		return ""
 	}
