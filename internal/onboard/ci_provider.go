@@ -276,7 +276,7 @@ type CIProviderUnsupportedError struct {
 
 func (e *CIProviderUnsupportedError) Error() string {
 	if e.Reason != "" {
-		return fmt.Sprintf("ddtest cannot set up %s CI for %s on %s in this repository: every CI job that runs the tests is outside what the %s instruments. %s It will not prescribe CI edits or validate this CI configuration.", e.Framework, e.Language, e.Provider, e.Setup, e.Reason)
+		return fmt.Sprintf("ddtest cannot set up %s CI for %s on %s in this repository: every CI job that runs the tests is outside what the %s instruments. %s The user's options are to run those tests where the %s instruments them, or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate. ddtest will not prescribe CI edits or validate this CI configuration.", e.Framework, e.Language, e.Provider, e.Setup, e.Reason, e.Setup)
 	}
 	return fmt.Sprintf("ddtest does not support %s CI setup for %s on %s; it will not prescribe CI edits or validate this CI configuration. Rerun with --ci-provider <provider> to choose another provider.", e.Framework, e.Language, e.Provider)
 }
@@ -579,11 +579,12 @@ func ProviderChoiceResult(choice *CIProviderChoice) AgentResult {
 // ProviderUnsupportedResult reports a language/provider combination ddtest
 // does not set up.
 func ProviderUnsupportedResult(err *CIProviderUnsupportedError) AgentResult {
-	code := "ci_provider_unsupported"
+	result := AgentResult{Status: "unsupported", Phase: "onboarding", Code: "ci_provider_unsupported", Reason: err.Error(), NextAction: "report_result"}
 	if err.Reason != "" {
-		code = "ci_setup_unsupported"
+		result.Code = "ci_setup_unsupported"
+		result.Instruction = "Report this result to the user with its reason and stop. Do not move tests between agents, edit CI, add a tracer or set up Test Optimization by hand: those are the user's decisions, and ddtest cannot validate a manual setup."
 	}
-	return AgentResult{Status: "unsupported", Phase: "onboarding", Code: code, Reason: err.Error(), NextAction: "report_result"}
+	return result
 }
 
 // CIProviderEditsSetup reports whether onboard --apply writes the selected

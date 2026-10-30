@@ -1439,7 +1439,7 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 		if job.image == "" {
 			result.ImageProblem = "the job runs in " + job.container + ", whose image ddtest does not read"
 		}
-		result.SetupUnsupported = "it runs in " + job.container + ": the Datadog Jenkins plugin installs the tracer on the build agent and does not instrument tests inside containers. Run these tests on a host agent (agent { label … }), or set up Test Optimization in the container yourself (ddtest cannot validate that)"
+		result.SetupUnsupported = "it runs in " + job.container + ", a container: the Datadog Jenkins plugin installs the tracer on the build agent and does not instrument tests inside containers"
 	case scope.agent.kind == "host":
 		result.Host = jenkinsHost(scope.agent, job.pathChange)
 	}
@@ -1448,7 +1448,7 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 		current := setup.ciSetup()
 		problem := scope.setupProblem
 		if result.SetupUnsupported != "" {
-			problem = joinDiagnostic(problem, "This stage cannot use the Datadog Jenkins plugin: "+result.SetupUnsupported+".")
+			problem = joinDiagnostic(problem, "This stage cannot use the Datadog Jenkins plugin: "+result.SetupUnsupported+". The user's options are to run its tests on a host agent (agent { label … }), or to set up Test Optimization in the container by hand, outside ddtest, which ddtest cannot validate.")
 		}
 		if problem != "" && current.Problem == "" {
 			current.Problem = problem

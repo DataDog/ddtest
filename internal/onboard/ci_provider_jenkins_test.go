@@ -221,7 +221,7 @@ func TestJenkinsAgentsAndContainers(t *testing.T) {
 }`)
 	docker := jobs["Docker"]
 	require.Equal(t, "node:22-alpine", docker.Image)
-	require.Contains(t, docker.SetupUnsupported, "it runs in agent { docker { image 'node:22-alpine' } }: the Datadog Jenkins plugin installs the tracer on the build agent and does not instrument tests inside containers")
+	require.Contains(t, docker.SetupUnsupported, "it runs in agent { docker { image 'node:22-alpine' } }, a container: the Datadog Jenkins plugin installs the tracer on the build agent and does not instrument tests inside containers")
 	require.Contains(t, jobs["Dockerfile"].ImageProblem, "agent { dockerfile … }")
 	require.NotEmpty(t, jobs["Kubernetes"].SetupUnsupported)
 	require.Empty(t, jobs["Host"].SetupUnsupported)
@@ -528,7 +528,8 @@ func TestJenkinsContainerTestJobsAreUnsupported(t *testing.T) {
 	require.Equal(t, "unsupported", result.Status)
 	require.Equal(t, "ci_setup_unsupported", result.Code)
 	require.Contains(t, result.Reason, "every CI job that runs the tests is outside what the Datadog Jenkins plugin instruments. Jenkinsfile / Test: it runs in agent { docker { image 'node:22' } }")
-	require.Contains(t, result.Reason, "Run these tests on a host agent (agent { label … }), or set up Test Optimization in the container yourself")
+	require.Contains(t, result.Reason, "The user's options are to run those tests where the Datadog Jenkins plugin instruments them, or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate.")
+	require.Contains(t, result.Instruction, "Report this result to the user with its reason and stop. Do not move tests between agents, edit CI, add a tracer or set up Test Optimization by hand")
 
 	var out bytes.Buffer
 	require.Error(t, StartWithOptions(&out, StartOptions{Format: "json"}))
@@ -708,4 +709,15 @@ func TestJenkinsWorkspace(t *testing.T) {
 	require.Equal(t, "web", job.Steps[0].WorkingDirectory)
 	require.Equal(t, []string{"npm test"}, jenkinsRuns(job))
 	require.Equal(t, "web", job.Steps[1].WorkingDirectory)
+}
+
+// A coding agent that applies the setup by hand gets the validation scope,
+// unresolved entries included, even for frameworks whose automatic setup
+// prints none.
+func TestJenkinsAgentInstructionsListTheScope(t *testing.T) {
+	jenkinsRepository(t, "@Library('lib') _\npipeline {\n  agent any\n  stages {\n    stage('Test') { steps { sh 'npm test' } }\n    stage('Publish') { steps { publishImage() } }\n  }\n}\n")
+	var guidance bytes.Buffer
+	require.NoError(t, run(&guidance, &agentHandoff{}))
+	require.Contains(t, guidance.String(), "jest — Jenkinsfile / Test / step 1 (npm test)")
+	require.Contains(t, guidance.String(), "Unresolved scope: Jenkinsfile / Publish / step 1 (): Jenkinsfile Publish: it calls publishImage, which is not a Pipeline step ddtest knows; it may come from the shared library lib")
 }

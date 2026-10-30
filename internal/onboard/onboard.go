@@ -73,6 +73,9 @@ func onboardCI(output io.Writer, provider ciProvider, repositoryRoot, language, 
 	if registered := discoveryLanguageNamed(language); registered != nil {
 		discover, instructionsWhenConfigured = registered.onboardingScope(name)
 		validatesConfigurations = discover || registered.coordinated()
+		// A coding agent applying the setup by hand needs the scope it is for,
+		// unresolved entries included.
+		discover = discover || agent != nil && !provider.sharedSyntax() && !providerAutomaticSetup(provider, registered, name)
 	}
 	if discover {
 		discovered, err := DiscoverValidationScope(repositoryRoot, name)
