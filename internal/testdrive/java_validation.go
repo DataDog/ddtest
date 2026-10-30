@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/maven"
@@ -656,6 +657,7 @@ func javaScalaTestJUnitRunner(module string) (string, error) {
 // runJavaFeatures writes the probe into a module whose tests ran in the
 // baseline, inside the copy, then runs the shared feature controls.
 func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, session *workspace.Session, agent string, baseline validationRun, result *validationResult) (runErr error) {
+	noteJavaTestRuntimes(result)
 	// Every probe rebuilds the same projects, so it would fail the same way.
 	_, args := t.executionCommand()
 	build, err := t.javaBuild(args)
@@ -923,6 +925,52 @@ func (t *Testdrive) javaRuntimeLocations() ([]string, error) {
 }
 
 // javaMajor is a Java version's major release, reading 1.8 as 8.
+// noteJavaTestRuntimes names, in each compatible CI row, the JVMs the
+// instrumented runs' tests ran on besides this host's JDK, as dd-java-agent
+// reported them. The build selects those itself, with a toolchain,
+// Test.javaLauncher or daemon JVM criteria, from its own files, so it selects
+// them in CI too; JVMs selected outside the build, as org.gradle.java.home in
+// the user's gradle.properties, are this host's JDK for the preflight.
+func noteJavaTestRuntimes(result *validationResult) {
+	if result.CIRuntime == nil || result.Preflight == nil {
+		return
+	}
+	local := javaMajor(result.Preflight.Runtime)
+	var others []string
+	ranLocally := false
+	for _, run := range result.Runs {
+		if !run.Instrumented || run.Role != roleReporting && run.Role != roleRepeat {
+			continue
+		}
+		for _, version := range run.Runtimes {
+			if major := javaMajor(version); major == local {
+				ranLocally = true
+			} else if !slices.Contains(others, major) {
+				others = append(others, major)
+			}
+		}
+	}
+	if len(others) == 0 {
+		return
+	}
+	slices.SortFunc(others, func(a, b string) int { return cmp.Compare(javaMajorNumber(a), javaMajorNumber(b)) })
+	note := " Its tests also ran on Java " + strings.Join(others, ", ") + ", which the build selects itself, as with a toolchain, Test.javaLauncher or daemon JVM criteria, in CI too; dd-java-agent was validated on them as well."
+	if !ranLocally {
+		note = " No test ran on Java " + local + ": they ran on Java " + strings.Join(others, ", ") + ", which the build selects itself, as with a toolchain, Test.javaLauncher or daemon JVM criteria, in CI too; dd-java-agent was validated on them."
+	}
+	for i := range result.CIRuntime.Jobs {
+		if result.CIRuntime.Jobs[i].Status == "compatible" && !strings.HasSuffix(result.CIRuntime.Jobs[i].Reason, note) {
+			result.CIRuntime.Jobs[i].Reason += note
+		}
+	}
+}
+
+// javaMajorNumber orders Java majors numerically; an unreadable one sorts first.
+func javaMajorNumber(major string) int {
+	number, _ := strconv.Atoi(major)
+	return number
+}
+
 func javaMajor(version string) string {
 	major, rest, _ := strings.Cut(version, ".")
 	if major == "1" {

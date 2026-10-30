@@ -751,6 +751,44 @@ func TestJavaPackageCheckFindsResourcesThatPackageTheReports(t *testing.T) {
 	require.Equal(t, "failed", javaPackageExclusions(root, nil).Status, "a module can package its parent directory")
 }
 
+func TestJavaWorkflowIsBoundToTheJDKGradleSelects(t *testing.T) {
+	t.Setenv("JAVA_HOME", writeJDK(t, "17.0.20"))
+	home := t.TempDir()
+	t.Setenv("GRADLE_USER_HOME", home)
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "build.gradle"), "")
+	runtime, err := javaLanguage{}.workflowRuntime(&Testdrive{repositoryRoot: root})
+	require.NoError(t, err)
+	require.Equal(t, "17.0.20", runtime)
+	require.True(t, javaLanguage{}.reportRuntimeCurrent(root, WorkflowEvidence{Runtime: "17.0.20"}))
+	// Selecting another JDK in the user's gradle.properties makes a saved report stale.
+	requireWriteFile(t, filepath.Join(home, "gradle.properties"), "org.gradle.java.home="+writeJDK(t, "21.0.5")+"\n")
+	require.False(t, javaLanguage{}.reportRuntimeCurrent(root, WorkflowEvidence{Runtime: "17.0.20"}), "Gradle runs on the JDK it selects")
+	runtime, err = javaLanguage{}.workflowRuntime(&Testdrive{repositoryRoot: root})
+	require.NoError(t, err)
+	require.Equal(t, "21.0.5", runtime)
+}
+
+func TestJavaCIRowsNameTheJVMsTestsRanOn(t *testing.T) {
+	result := func(runtimes ...string) *validationResult {
+		return &validationResult{
+			Preflight: &preflightCheck{Runtime: "17.0.20"},
+			CIRuntime: &onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Status: "compatible", Reason: "dd-java-agent 1.67.1 is validated on Java 17."}, {Status: "inconclusive", Reason: "needs review"}}},
+			Runs:      []runSummary{{Role: roleBaseline}, {Role: roleReporting, Instrumented: true, Runtimes: runtimes}},
+		}
+	}
+	same := result("17.0.20")
+	noteJavaTestRuntimes(same)
+	require.Equal(t, "dd-java-agent 1.67.1 is validated on Java 17.", same.CIRuntime.Jobs[0].Reason, "tests on this host's JDK need no note")
+	toolchains := result("17.0.20", "21.0.5", "1.8.0_442")
+	noteJavaTestRuntimes(toolchains)
+	require.Contains(t, toolchains.CIRuntime.Jobs[0].Reason, "Its tests also ran on Java 8, 21, which the build selects itself")
+	require.Equal(t, "needs review", toolchains.CIRuntime.Jobs[1].Reason, "only certified rows are annotated")
+	elsewhere := result("21.0.5")
+	noteJavaTestRuntimes(elsewhere)
+	require.Contains(t, elsewhere.CIRuntime.Jobs[0].Reason, "No test ran on Java 17: they ran on Java 21")
+}
+
 func TestJavaWorkflowIsBoundToTheJDK(t *testing.T) {
 	t.Setenv("JAVA_HOME", writeJDK(t, "17.0.20"))
 	runtime, err := javaLanguage{}.workflowRuntime(&Testdrive{})

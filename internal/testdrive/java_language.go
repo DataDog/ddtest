@@ -321,17 +321,17 @@ func (javaLanguage) mergeCIRuntime(current, next *onboard.RuntimeCheck) *onboard
 // The preflight labels the agent release; there is no registry selection.
 func (javaLanguage) labelsTracerWithoutSelection() bool { return true }
 
-// Reports are bound to the JDK that runs the selected Maven commands.
-func (javaLanguage) workflowRuntime(*Testdrive) (string, error) {
-	version := javaEnvironmentInfo(nil).Version
+// Reports are bound to the JDK that runs the selected builds.
+func (javaLanguage) workflowRuntime(t *Testdrive) (string, error) {
+	version := javaWorkflowRuntime(t.repositoryRoot)
 	if version == "" {
 		return "", errors.New("no JDK was found: set JAVA_HOME to the JDK the project builds with, or put its java on PATH")
 	}
 	return version, nil
 }
 
-func (javaLanguage) reportRuntimeCurrent(_ string, evidence WorkflowEvidence) bool {
-	return evidence.Runtime != "" && evidence.Runtime == javaEnvironmentInfo(nil).Version
+func (javaLanguage) reportRuntimeCurrent(root string, evidence WorkflowEvidence) bool {
+	return evidence.Runtime != "" && evidence.Runtime == javaWorkflowRuntime(root)
 }
 
 // packageManager names the build tools whose builds the repository root

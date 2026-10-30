@@ -702,7 +702,10 @@ Testdrive uses the dd-java-agent release every instrumented CI job pins
 (`--tracer-version` selects another), or `DD_TRACER_FOLDER`'s agent. A CI matrix
 row is compatible when this run validated its agent release on its JDK major;
 the JDK comes from `JAVA_HOME`, else the `java` on PATH, unless a Gradle build
-selects its own with `org.gradle.java.home`. A row of another JDK
+selects its own with `org.gradle.java.home`, which also binds saved reports.
+JVMs the build selects for its tests, with a toolchain, `Test.javaLauncher` or
+daemon JVM criteria, are the same in CI; the row names those dd-java-agent
+reported running on. A row of another JDK
 major is validated on the local JDK as a substitute, recorded in
 `runtime_substitutions`, which completes only with `--accept-substitute-runtime`,
 a decision for the user, and is then reported as a caveat. Validate that JDK

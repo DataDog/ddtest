@@ -176,11 +176,13 @@ type runSummary struct {
 	TestCounts                      testCounts          `json:"test_counts"`
 	SuiteErrorCount                 int                 `json:"suite_error_count"`
 	TestEventCount                  int                 `json:"test_event_count"`
+	// Runtimes are the runtime versions the tracer reported running on.
+	Runtimes []string `json:"runtimes,omitempty"`
 }
 
 func (r validationRun) summary() runSummary {
 	summary := runSummary{Coverage: r.Coverage, FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
-		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), Timeout: r.Timeout, ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), NotExercised: r.NotExercised, SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
+		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), Timeout: r.Timeout, ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), NotExercised: r.NotExercised, SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount, Runtimes: r.Facts.RuntimeVersions}
 	if r.framework == "cucumber" || r.framework == "webdriverio" {
 		summary.NativeResults = "observed"
 		if r.ResultError != "" {

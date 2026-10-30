@@ -82,10 +82,12 @@ type SlowSuite struct {
 
 // Facts contains the facts shown in the testdrive report.
 type Facts struct {
-	SettingsRequests           int
-	SkippableRequests          int
-	Events                     []Event
-	ConfigurationErrors        []string
+	SettingsRequests    int
+	SkippableRequests   int
+	Events              []Event
+	ConfigurationErrors []string
+	// RuntimeVersions are the runtime versions the tracer reported running on.
+	RuntimeVersions            []string
 	EmptyCoverageEntryCount    int
 	MissingCoverage            bool
 	BrowserCoverageUnavailable bool
@@ -146,6 +148,10 @@ func (s *Server) Facts() (Facts, error) {
 	findings.MissingCoverage = findings.MissingCoverage && !expectedMissingCoverage
 	findings.BroadCoverage, findings.CoveredFilesMedian = analyzeCoverage(tests, coverages, findings.CoverageLevel)
 	findings.ConfigurationErrors, err = s.configurationErrors()
+	if err != nil {
+		return findings, err
+	}
+	findings.RuntimeVersions, err = s.runtimeVersions()
 	if err != nil {
 		return findings, err
 	}
@@ -548,34 +554,25 @@ func sortTests(findings []Test) {
 	})
 }
 
-// Configuration errors can be attached to session/suite events or shared metadata,
-// not just individual tests. Keep them separate from application test failures.
-func (s *Server) configurationErrors() ([]string, error) {
-	var failures []string
-	collect := func(metadata map[string]any) {
-		for key, value := range metadata {
-			feature, ok := strings.CutPrefix(key, "_dd.ci.library_configuration_error.")
-			if ok && (value == true || value == "true") {
-				failures = append(failures, feature)
-			}
-		}
-	}
+// eachPayloadTags calls visit with every tag set of the captured test-cycle
+// payloads: their shared metadata and each event's meta.
+func (s *Server) eachPayloadTags(visit func(map[string]any)) error {
 	for _, request := range s.Requests() {
 		if request.Method != http.MethodPost || request.Path != constants.TestCycleURLPath {
 			continue
 		}
 		body, err := uncompressRequestBody(request)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		payload, _, err := msgp.ReadMapStrIntfBytes(body, nil)
 		if err != nil {
-			return nil, fmt.Errorf("read tracer configuration errors: %w", err)
+			return err
 		}
 		if metadata, ok := payload["metadata"].(map[string]any); ok {
 			for _, value := range metadata {
 				if tags, ok := value.(map[string]any); ok {
-					collect(tags)
+					visit(tags)
 				}
 			}
 		}
@@ -584,10 +581,44 @@ func (s *Server) configurationErrors() ([]string, error) {
 				event, _ := value.(map[string]any)
 				content, _ := event["content"].(map[string]any)
 				metadata, _ := content["meta"].(map[string]any)
-				collect(metadata)
+				visit(metadata)
 			}
 		}
 	}
+	return nil
+}
+
+// Configuration errors can be attached to session/suite events or shared metadata,
+// not just individual tests. Keep them separate from application test failures.
+func (s *Server) configurationErrors() ([]string, error) {
+	var failures []string
+	err := s.eachPayloadTags(func(metadata map[string]any) {
+		for key, value := range metadata {
+			feature, ok := strings.CutPrefix(key, "_dd.ci.library_configuration_error.")
+			if ok && (value == true || value == "true") {
+				failures = append(failures, feature)
+			}
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read tracer configuration errors: %w", err)
+	}
 	slices.Sort(failures)
 	return slices.Compact(failures), nil
+}
+
+// runtimeVersions are the language runtime versions the tracer reports it ran
+// on, such as the JVM a Gradle toolchain selects for a test task.
+func (s *Server) runtimeVersions() ([]string, error) {
+	var versions []string
+	err := s.eachPayloadTags(func(metadata map[string]any) {
+		if version, ok := metadata["runtime.version"].(string); ok && version != "" {
+			versions = append(versions, version)
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read tracer runtime versions: %w", err)
+	}
+	slices.Sort(versions)
+	return slices.Compact(versions), nil
 }

@@ -85,6 +85,18 @@ func (t *Testdrive) gradleBuild(args []string) (*gradleBuild, error) {
 	return &gradleBuild{root: root, all: projects, byPaths: byPaths, home: home, homeSource: source}, nil
 }
 
+// javaWorkflowRuntime is the version of the JDK the repository's builds run
+// on: the one org.gradle.java.home selects for its root Gradle build, in the
+// build's or the user's gradle.properties, else JAVA_HOME's or PATH's.
+func javaWorkflowRuntime(root string) string {
+	if gradle.Declared(root) {
+		if home, source, err := gradleJavaHome(root, root, nil, nil); err == nil && home != "" {
+			return javaHomeInfo(home, source).Version
+		}
+	}
+	return javaEnvironmentInfo(nil).Version
+}
+
 // gradleJavaHome is the JDK org.gradle.java.home selects for the build of the
 // command run from directory, in Gradle's precedence: its command line, the
 // user home's gradle.properties, then the build's. Gradle runs on that JDK,

@@ -242,9 +242,9 @@ func TestCoverageFilesMergeDuplicatesAndSortOnce(t *testing.T) {
 
 func TestFindingsIncludeConfigurationErrorsAcrossEventLevels(t *testing.T) {
 	payload, err := msgp.AppendIntf(nil, map[string]any{
-		"metadata": map[string]any{"*": map[string]any{"_dd.ci.library_configuration_error.settings": "true"}},
+		"metadata": map[string]any{"*": map[string]any{"_dd.ci.library_configuration_error.settings": "true", "runtime.version": "17.0.13"}},
 		"events": []any{
-			map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{"test.name": "passes", "test.status": "pass"}}},
+			map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{"test.name": "passes", "test.status": "pass", "runtime.version": "21.0.5"}}},
 			map[string]any{"type": "test_session_end", "content": map[string]any{"meta": map[string]any{"_dd.ci.library_configuration_error.skippable_tests": "true"}}},
 			map[string]any{"type": "test_suite_end", "content": map[string]any{"meta": map[string]any{"_dd.ci.library_configuration_error.skippable_tests": true, "_dd.ci.library_configuration_error.known_tests": "false"}}},
 		},
@@ -256,6 +256,7 @@ func TestFindingsIncludeConfigurationErrorsAcrossEventLevels(t *testing.T) {
 	require.Equal(t, 1, findings.TestCount)
 	require.Empty(t, findings.FailedTests)
 	require.Equal(t, []string{"settings", "skippable_tests"}, findings.ConfigurationErrors)
+	require.Equal(t, []string{"17.0.13", "21.0.5"}, findings.RuntimeVersions, "shared metadata and event tags both name runtimes")
 }
 
 func TestFindingsSeparatesTestIdentitiesAndTheirCoverage(t *testing.T) {
