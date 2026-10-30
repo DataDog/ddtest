@@ -282,7 +282,7 @@ func TestJavaGradleChainsWithOneTestCommand(t *testing.T) {
 		resolution := javaStep(t, root, run)
 		require.True(t, resolution.Matched, "%s: %s", run, resolution.Reason)
 		require.Equal(t, command, resolution.Tests[0].Command, run)
-		require.Contains(t, strings.Join(resolution.Tests[0].StepScopeNotes, " "), "which run no tests", run)
+		require.Contains(t, strings.Join(resolution.Tests[0].StepScopeNotes, " "), "also runs Gradle commands that run no tests: ./gradlew ", run)
 	}
 	for _, run := range []string{
 		"./gradlew test && ./gradlew integrationTest",
