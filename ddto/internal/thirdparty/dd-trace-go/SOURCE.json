@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "64ce7ee348d27d2eb0b367d174c098b42be640391be42269e3d6c6d53e799969",
+      "sha256": "9caddd5071da1f0571e72916e0be10bf93f935794cbbb734b24b8bfc5f972fd5",
       "role": "local"
     },
     {
@@ -58,6 +58,16 @@
       "role": "adapted",
       "source_path": "internal/bazel/mode.go",
       "source_sha256": "249618f87a1becf7b49504ac177310d9344e8aa89945c4d32c67fcb71f51fc43"
+    },
+    {
+      "path": "bazel/runfiles.go",
+      "sha256": "c18302f90193c3ddd73b311b49bbd46a94a6910dc8dbbf31b66d75591884e0cd",
+      "role": "local"
+    },
+    {
+      "path": "bazel/runfiles_test.go",
+      "sha256": "c52c3f37bc6ca5ec0efa18cbc2880d05588569053a2df0df223e2bca6ff7494c",
+      "role": "local"
     },
     {
       "path": "civisibility/civisibility.go",
@@ -1705,7 +1715,7 @@
     },
     {
       "path": "civisibility/utils/source_paths.go",
-      "sha256": "1919eba5f1e5f2d6fd6e42ffe0b0f619511e8fb635c8796414531bbf9f236c52",
+      "sha256": "d851582286afa4343b2c637aaeb9b94505dd871e8c873d039531f90c6bb39c12",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/source_paths.go",
       "source_sha256": "82f757acb1badb3771793af823081cf3e9ec8a35d7e3b8c7617fda379d10513a"
@@ -1723,6 +1733,16 @@
       "role": "adapted",
       "source_path": "internal/civisibility/utils/source_paths_windows_test.go",
       "source_sha256": "8115fc517b693f779f8c5c34df1197696ee2818b469d3d31e8a1cfdba200dbf5"
+    },
+    {
+      "path": "civisibility/utils/source_runfiles.go",
+      "sha256": "9dd3d79a2ba6375299d4303d2f34062c13a477c9b1a77a6e9605cbfdf60e6f70",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/source_runfiles_test.go",
+      "sha256": "cebbfc884c2ac24584171493c9bba35dc95e2d75701085b70dc00321a03b5d23",
+      "role": "local"
     },
     {
       "path": "civisibility/utils/telemetry/telemetry.go",

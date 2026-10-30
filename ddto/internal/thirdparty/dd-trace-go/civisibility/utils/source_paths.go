@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
@@ -33,7 +34,7 @@ type SourceFilePath struct {
 
 // ResolveSourceFilePathFromCITags resolves a runtime source path into tag and filesystem forms.
 func ResolveSourceFilePathFromCITags(sourcePath string) SourceFilePath {
-	return resolveSourceFilePath(sourcePath, GetCITagsReadOnly(), buildInfoMainModulePath())
+	return withRunfilesSource(resolveSourceFilePath(sourcePath, GetCITagsReadOnly(), buildInfoMainModulePath()), bazel.SourceRlocation)
 }
 
 // resolveSourceFilePath resolves a runtime source path with injectable inputs for deterministic tests.

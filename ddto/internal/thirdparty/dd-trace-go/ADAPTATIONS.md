@@ -1290,6 +1290,21 @@ If upstream adds semantic identifier inspection, reassess this flag. Preserve
 the source-cache tests for named functions, adjacent literals, missing/invalid
 files and ITR comments, and the CI matrix's source/coverage comparisons.
 
+## Test sources from Bazel runfiles
+
+rules_go compiles with `-trimpath`, so a test's source path is relative to the
+execution root, and the test runs in its package's directory, where that path
+does not open: the test's end line and source parsing are lost.
+[`civisibility/utils/source_paths.go`](civisibility/utils/source_paths.go)
+passes a relative path that no workspace tag resolved to
+[`source_runfiles.go`](civisibility/utils/source_runfiles.go), which looks it
+up with [`bazel/runfiles.go`](bazel/runfiles.go) among the test's runfiles,
+under `TEST_WORKSPACE` or, for `external/<repository>/`, under that
+repository, through `RUNFILES_DIR`, `TEST_SRCDIR` or `RUNFILES_MANIFEST_FILE`.
+The build stages the sources only on request, as rules_test_optimization's
+`stage_sources` does. Check: `TestSourceRlocation` and
+`TestWithRunfilesSource`.
+
 ## Build information read once
 
 [`civisibility/utils/source_paths.go`](civisibility/utils/source_paths.go)
