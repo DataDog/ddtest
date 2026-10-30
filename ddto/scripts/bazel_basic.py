@@ -88,7 +88,8 @@ EXPECTED_SPANS = {
 }
 
 # Test metadata that Bazel and ddtest instrument go test must agree on. Paths,
-# commands and session names differ by design (see docs/bazel-plan.md).
+# commands and session names differ by design: Bazel compiles with -trimpath
+# and runs its own test binaries.
 COMPARED_META = ("test.status", "test.framework", "test.type", "test.skip_reason", "error.type", "error.message")
 
 RACE_TARGETS = ("//basic:basic_test", "//suite:suite_test")
@@ -266,7 +267,7 @@ def compare_with_cli(args, workspace, summaries):
         check(code == want, "ddtest instrument go test exited with %d, want %d" % (code, want))
     tests, spans, _ = summarize(payload_events(outputs))
     # Bazel compiles with -trimpath, so its messages name sources relative to
-    # the workspace (docs/bazel-plan.md); go test names them absolutely.
+    # the workspace (docs/bazel.md#tests); go test names them absolutely.
     # Goroutine numbers depend on what the process started before the test.
     def message(text):
         # The longer root first: on macOS /var/... is a suffix of /private/var/...
