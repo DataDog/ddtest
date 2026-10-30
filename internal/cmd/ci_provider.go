@@ -137,11 +137,14 @@ func resolveCIStatements(runtimes, facts []string) error {
 func ciStatementFailure(cmd *cobra.Command, structured bool, err error) error {
 	var invalid invalidCIStatement
 	var conflict *onboard.CIRuntimeConflict
+	var ambiguity *onboard.CIRuntimeAmbiguity
 	switch {
 	case !structured:
 		return err
 	case errors.As(err, &invalid):
 		return protocolFailure(cmd, "options", "invalid_options", invalid.error, nil)
+	case errors.As(err, &ambiguity):
+		return protocolFailure(cmd, "options", "invalid_options", err, nil)
 	case errors.As(err, &conflict):
 		return protocolFailure(cmd, "discovery", "ci_runtime_conflict", err, nil)
 	default:

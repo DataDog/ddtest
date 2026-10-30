@@ -204,14 +204,21 @@ func UseCIStatements(runtimes []CIRuntimeStatement, facts []CIFact) error {
 		}
 		seen[fact.Key] = true
 	}
-	for i, statement := range runtimes {
-		for _, other := range runtimes[:i] {
-			if other.Job == statement.Job && other.Runtime == statement.Runtime {
-				return fmt.Errorf("--ci-runtime %s and %s state the same runtime twice", other, statement)
-			}
+	// The same statement twice is one statement; two versions for the same
+	// key are an error, never the last one silently.
+	var unique []CIRuntimeStatement
+	for _, statement := range runtimes {
+		index := slices.IndexFunc(unique, func(other CIRuntimeStatement) bool {
+			return other.Job == statement.Job && other.Runtime == statement.Runtime
+		})
+		switch {
+		case index < 0:
+			unique = append(unique, statement)
+		case unique[index].Version != statement.Version:
+			return fmt.Errorf("--ci-runtime %s and %s state different versions for the same job", unique[index], statement)
 		}
 	}
-	activeStatements.Store(ciStatements{runtimes: slices.Clone(runtimes), facts: slices.Clone(facts)})
+	activeStatements.Store(ciStatements{runtimes: unique, facts: slices.Clone(facts)})
 	return nil
 }
 
@@ -364,6 +371,19 @@ func CheckCIRuntimeStatements(root string) error {
 	if err != nil {
 		return nil // Reading reports the configuration error itself.
 	}
+	// Different keys can name the same job (workflow / job, or the job name
+	// alone): their versions must agree.
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			for i, statement := range scoped {
+				for _, other := range scoped[:i] {
+					if other.Runtime == statement.Runtime && other.Version != statement.Version && other.jobMatches(workflow.Path, name) && statement.jobMatches(workflow.Path, name) {
+						return &CIRuntimeAmbiguity{fmt.Errorf("--ci-runtime %s and %s state different versions for the same job, %s / %s", other, statement, workflow.Path, name)}
+					}
+				}
+			}
+		}
+	}
 	var conflicts []string
 	for _, statement := range scoped {
 		for _, workflow := range workflows {
@@ -387,6 +407,10 @@ func CheckCIRuntimeStatements(root string) error {
 	}
 	return nil
 }
+
+// CIRuntimeAmbiguity is two statements that give one job different
+// versions: an invalid option, not a conflict with the configuration.
+type CIRuntimeAmbiguity struct{ error }
 
 // CIRuntimeConflict is a statement that contradicts the CI configuration.
 type CIRuntimeConflict struct{ Conflicts []string }

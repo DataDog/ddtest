@@ -110,7 +110,9 @@ The answer comes back as `--ci-runtime [<job>:]<runtime>=<version>`,
 repeatable: `node` (or `js`) with `22`, `22.11` or `22.11.0`, or `ruby` with
 `3.3` or `3.3.6`. Without `<job>`, it applies to every job whose runtime is
 unknown; `<job>` is the printed key (`.buildkite/pipeline.yml / :jest: Tests`)
-or the job name alone, and wins over a statement without one. A matrix job
+or the job name alone, and wins over a statement without one. Two statements that name the same job (by
+either key) with different versions are `invalid_options`; the same
+statement twice is accepted once. A matrix job
 takes one value for all its rows. A statement only fills an unknown runtime:
 
 - A statement for a job whose configuration selects a different version (its

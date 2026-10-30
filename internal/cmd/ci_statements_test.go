@@ -25,6 +25,8 @@ func TestCIStatementFlagsRejectInvalidValues(t *testing.T) {
 	}{
 		{"onboard runtime", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "--ci-runtime", "python=3.12"}, `--ci-runtime "python=3.12" names runtime "python"; supported runtimes: node, ruby`},
 		{"testdrive version", newTestdriveCommand, []string{"--agent", "--all", "--yes", "--ci-runtime", "node=lts"}, `--ci-runtime "node=lts": the Node version must be numeric, such as 22, 22.11 or 22.11.0`},
+		{"same job twice", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "--ci-runtime", "test:node=20", "--ci-runtime", ".github/workflows/ci.yml / test:node=22"}, "--ci-runtime test:node=20 and .github/workflows/ci.yml / test:node=22 state different versions for the same job, .github/workflows/ci.yml / test"},
+		{"same key twice", newTestdriveCommand, []string{"--agent", "--all", "--yes", "--ci-runtime", "test:node=20", "--ci-runtime", "test:node=22"}, "--ci-runtime test:node=20 and test:node=22 state different versions for the same job"},
 		{"undefined fact", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "--ci-confirm", "plugin"}, "--ci-confirm plugin: GitHub Actions defines no facts to confirm"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

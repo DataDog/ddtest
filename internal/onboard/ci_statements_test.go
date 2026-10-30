@@ -130,9 +130,33 @@ func TestCIStatementsAreForwarded(t *testing.T) {
 	require.NotContains(t, DDTestCommand("instrument"), "--ci-runtime", "only onboard and testdrive take statements")
 	require.NotEmpty(t, CIStatementsFingerprint())
 	require.Equal(t, " --ci-runtime node=22 --ci-runtime lint:node=20", ciProviderFollowUpFlag(t.TempDir()))
-	statement, err := ParseCIRuntime("node=20")
-	require.NoError(t, err)
-	require.ErrorContains(t, UseCIStatements([]CIRuntimeStatement{statement, statement}, nil), "state the same runtime twice")
+	// The same statement twice is one; the same key with two versions is an error.
+	parse := func(values ...string) []CIRuntimeStatement {
+		var statements []CIRuntimeStatement
+		for _, value := range values {
+			statement, err := ParseCIRuntime(value)
+			require.NoError(t, err)
+			statements = append(statements, statement)
+		}
+		return statements
+	}
+	require.NoError(t, UseCIStatements(parse("lint:node=20", "lint:js=20"), nil))
+	require.Equal(t, []string{"--ci-runtime", "lint:node=20"}, CIStatementArguments())
+	require.EqualError(t, UseCIStatements(parse("lint:node=20", "lint:node=22"), nil), "--ci-runtime lint:node=20 and lint:node=22 state different versions for the same job")
+	require.ErrorContains(t, UseCIStatements(parse("node=20", "node=22"), nil), "--ci-runtime node=20 and node=22 state different versions")
+	require.Empty(t, CIStatementArguments(), "a rejected statement is not kept")
+}
+
+// Two keys naming the same job must agree; agreeing ones are accepted.
+func TestCIRuntimeStatementsForOneJobMustAgree(t *testing.T) {
+	root := buildkiteRepository(t, "steps:\n  - label: unit\n    commands:\n      - npm test\n")
+	useCIStatements(t, []string{"unit:node=22", ".buildkite/pipeline.yml / unit:node=22"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	useCIStatements(t, []string{"unit:node=22", ".buildkite/pipeline.yml / unit:node=20", "unit:ruby=3.3"})
+	err := CheckCIRuntimeStatements(root)
+	var ambiguity *CIRuntimeAmbiguity
+	require.True(t, errors.As(err, &ambiguity), err)
+	require.EqualError(t, err, "--ci-runtime unit:node=22 and .buildkite/pipeline.yml / unit:node=20 state different versions for the same job, .buildkite/pipeline.yml / unit")
 }
 
 // A Buildkite step without an image runs on the agent host: ddtest asks for
