@@ -1865,6 +1865,19 @@ hook keeps its call, because ddto installs it only when `-coverpkg` leaves
 Mini's coverage package alone. The SDK mirror's hook also keeps its call:
 Mini's tracer initializes before the SDK's in the tested graphs, so that call
 never ran first.
+
+Every other call that ddto's edits make into Mini goes through a variable.
+[`testing_hooks.go`](civisibility/integrations/gotesting/testing_hooks.go)
+defines the testing overlay's and Testify's hooks, and
+[`forced_exit_hook.go`](civisibility/integrations/forced_exit_hook.go) the exit
+hook's, each with the function as its value and with the exact type that
+`internal/instrument/mini_hooks.go` checks. The edited packages declare the
+same variables with no value and call them only when they are not nil. The
+linker keeps the definition that has a value, which is data in the executable,
+so the hooks work before any package initializes. A binary that does not link
+Mini, such as a tool that Bazel builds with the instrumented SDK, keeps only
+the declarations without a value and runs as native. The functions stay
+linkname targets for released CLIs.
 `beginRootParallelSchedulerTransfer` marks attempts that go parallel after the
 lease moved, and `finalizeFreshRetryAttempt` records their end before it
 publishes the result, as `tRunner` does before it releases its caller. Both

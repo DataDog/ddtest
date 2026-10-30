@@ -212,11 +212,13 @@ func TestSDKMirrorHookCompiles(t *testing.T) {
 		write("ddtrace/"+name+"/sdk.go", string(got))
 		write("ddtrace/"+name+"/hook.go", SDKMirrorHook(hooks))
 	}
-	cmd := exec.Command("go", "build", "./ddtrace/...")
+	// Without Mini, the edited SDK links and initializes, and starts no mirror.
+	write("cmd/withoutmini/main.go", "package main\nimport (\n_ \"github.com/DataDog/dd-trace-go/v2/ddtrace/adoption\"\n_ \"github.com/DataDog/dd-trace-go/v2/ddtrace/before_v2_11\"\n_ \"github.com/DataDog/dd-trace-go/v2/ddtrace/without_trace\"\n)\nfunc main() {}\n")
+	cmd := exec.Command("go", "run", "./cmd/withoutmini")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=", "GOTOOLCHAIN=local")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the edited SDK and its hook file must compile: %v\n%s", err, output)
+		t.Fatalf("the edited SDK and its hook file must compile, and link and run without Mini: %v\n%s", err, output)
 	}
 }
 

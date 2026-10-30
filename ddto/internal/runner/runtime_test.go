@@ -15,10 +15,12 @@ func TestFuzzHookTargetsSelectedRuntime(t *testing.T) {
 		hooks := hooksForRuntime(runtime, false, false)
 		prefix := "github.com/DataDog/dd-trace-go/v2/internal/civisibility/"
 		other := "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/"
-		if runtime == Mini {
-			prefix, other = other, prefix
-		}
 		target := prefix + "integrations/gotesting.instrumentTestingFuzzFunc"
+		if runtime == Mini {
+			// Mini's hook is a variable that only a binary with Mini sets.
+			prefix, other = other, prefix
+			target = prefix + "integrations/gotesting.testingHookFuzzFunc"
+		}
 		if strings.Count(hooks, target) != 1 || strings.Contains(hooks, other) {
 			t.Fatalf("%s fuzz hook linked to the wrong runtime", runtime)
 		}

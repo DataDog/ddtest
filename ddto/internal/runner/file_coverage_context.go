@@ -104,7 +104,7 @@ func prepareSingleflight(pkg *goPackage, replacements map[string]string, temp st
 		return nil, toolwrap.SingleflightImport + ": " + err.Error(), nil
 	}
 	entry := &LibraryEntry{Package: toolwrap.SingleflightImport, Sources: map[string]string{}, HookFile: filepath.Join(temp, "singleflight-hook.go")}
-	hook := instrument.ContextSingleflightHook("singleflight", instrument.FileCoveragePackage)
+	hook := instrument.HookFileLine(pkg.Dir, "zz_dd_ci_visibility_singleflight.go") + instrument.ContextSingleflightHook("singleflight", instrument.FileCoveragePackage)
 	hash := sha256.New()
 	hash.Write([]byte("ddto-singleflight-v1"))
 	hash.Write([]byte(hook))

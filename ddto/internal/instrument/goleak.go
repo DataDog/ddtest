@@ -70,11 +70,13 @@ func TransformGoleakEntry(name string, src []byte) ([]byte, bool, error) {
 		options := arg.Names[0].Name
 		// Find also accepts a caller-owned variadic slice with spare capacity.
 		// Keep its backing storage intact while reserving space for our filters.
-		code := fmt.Sprintf("__ddtoResume := %s(); defer __ddtoResume(); __ddtoOptions := make([]Option, len(%s), len(%s)+%d); copy(__ddtoOptions, %s); %s = append(__ddtoOptions", GoleakHookName, options, options, len(filters), options, options)
+		// Without Mini, the hook's variable is nil: Find neither pauses CI
+		// delivery nor filters CI goroutines, and runs as native.
+		code := fmt.Sprintf("if __ddtoPrepare := %s; __ddtoPrepare != nil { __ddtoResume := __ddtoPrepare(); defer __ddtoResume(); __ddtoOptions := make([]Option, len(%s), len(%s)+%d); copy(__ddtoOptions, %s); %s = append(__ddtoOptions", GoleakHookName, options, options, len(filters), options, options)
 		for _, filter := range filters {
 			code += fmt.Sprintf(", IgnoreAnyFunction(%q)", filter)
 		}
-		code += ");"
+		code += ") };"
 		pos := fs.PositionFor(fn.Body.Lbrace, false).Offset + 1
 		edits := []edit{{pos, pos, code}}
 		if fs.Position(file.Package).Filename == name {
@@ -121,7 +123,8 @@ func GoleakAPI(files map[string][]byte) error {
 	return fmt.Errorf("%w: goleak.IgnoreAnyFunction(string) Option is missing", ErrUnsupportedAPI)
 }
 
-// No runtime import is inserted into goleak's module dependency graph.
+// No runtime import is inserted into goleak's module dependency graph. The
+// hook is miniGoleakHook's variable, which only a binary with Mini sets.
 func GoleakEntryHook() string {
-	return "package goleak\nimport _ \"unsafe\"\n//go:linkname " + GoleakHookName + " github.com/DataDog/ddtest/ddto/internal/cidelivery.PrepareLeakCheck\nfunc " + GoleakHookName + "() func()\n"
+	return "package goleak\nimport _ \"unsafe\"\n//go:linkname " + GoleakHookName + " " + miniGoleakHook.Package + "." + miniGoleakHook.Variable + "\nvar " + GoleakHookName + " func() func()\n"
 }

@@ -14,7 +14,7 @@ import (
 )
 
 // Bump when compiler-side edits change without changing prepared inputs.
-const testifyContractVersion = "ddto-testify-entry-v2"
+const testifyContractVersion = "ddto-testify-entry-v3"
 
 // LibraryEntry contains the inputs for one selected library entry. Other packages never
 // need to read the tool plan. Covered sources are transformed after go cover.
@@ -80,7 +80,7 @@ func prepareTestifyEntry(suite *goPackage, replacements map[string]string, runti
 		hook = strings.Replace(hook, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/", 1)
 	}
 	tool := &LibraryEntry{ScopedTestify: runtime == Mini, Sources: map[string]string{}, HookFile: filepath.Join(temp, "testify-hook.go")}
-	hookSource := instrument.TestifyEntryHook(hook, runtime == Mini)
+	hookSource := instrument.HookFileLine(suite.Dir, "zz_dd_ci_visibility_testify.go") + instrument.TestifyEntryHook(hook, runtime == Mini)
 	hash := sha256.New()
 	hash.Write([]byte(testifyContractVersion))
 	hash.Write([]byte(hookSource))

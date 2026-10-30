@@ -115,7 +115,10 @@ func transform(files map[string][]byte, fuzz, timeout bool) (TestingSources, err
 				// A TestMain that returns without os.Exit exits with
 				// m.exitCode, which Go's generated main reads: it gets the
 				// same status as M.Run's result.
+				// Without a runtime, as in a binary that does not link Mini,
+				// the hook returns no exit function and M.Run runs as native.
 				prefix = fmt.Sprintf(`__dd_ci_proceed, __dd_ci_exit := __dd_civisibility_instrumentTestingMWithControl(%[1]s)
+if __dd_ci_exit != nil {
 if !__dd_ci_proceed { %[1]s.exitCode = __dd_ci_exit(1); return %[1]s.exitCode }
 defer func() {
  if __dd_ci_panic := recover(); __dd_ci_panic != nil {
@@ -124,7 +127,8 @@ defer func() {
  }
  %[2]s = __dd_ci_exit(%[2]s)
  %[1]s.exitCode = %[2]s
-}()`, recv, resultName)
+}()
+}`, recv, resultName)
 			case "T.Run":
 				f, err := arg(1)
 				if err != nil {

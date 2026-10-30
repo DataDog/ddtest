@@ -39,7 +39,7 @@ func sdkCompilePackage(importPath string) (pkg string, own bool) {
 // Bump these contracts when the corresponding compiler edits change.
 func sdkCompilerCacheMarker(pkg string) string {
 	if pkg == sdkTracerPackage {
-		return "-I=ddto-sdk-span-mirror-v8"
+		return "-I=ddto-sdk-span-mirror-v9"
 	}
 	return "-I=ddto-sdk-ci-guard-v7"
 }
@@ -229,7 +229,7 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 			return nil, nil, err
 		}
 		temporary = append(temporary, file.Name())
-		_, err = file.WriteString(instrument.SDKMirrorHook(mirrorFound))
+		_, err = file.WriteString(instrument.HookFileLine(filepath.Dir(args[start]), "zz_dd_ci_visibility_sdk_mirror.go") + instrument.SDKMirrorHook(mirrorFound))
 		closeErr := file.Close()
 		if err != nil {
 			cleanup()

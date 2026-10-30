@@ -119,8 +119,8 @@ func TestTimeoutHookIsOptional(t *testing.T) {
 	}
 }
 
-// TimeoutHook's linkname names Mini's gotesting.instrumentTestTimeout, which
-// takes and returns the panic's message.
+// The timeout hook's linkname names Mini's gotesting.testingHookTestTimeout,
+// whose function takes and returns the panic's message.
 func TestTimeoutHookMatchesMiniRegistration(t *testing.T) {
 	dir := filepath.Join("..", "thirdparty", "dd-trace-go", "civisibility", "integrations", "gotesting")
 	entries, err := os.ReadDir(dir)
@@ -138,23 +138,27 @@ func TestTimeoutHookMatchesMiniRegistration(t *testing.T) {
 	if err := TimeoutHookRuntimeError(sources); err != nil {
 		t.Fatal(err)
 	}
-	hook, err := sourceDeclarations(map[string][]byte{"hooks.go": []byte("package testing\n" + TimeoutHook)})
+	hook, err := sourceDeclarations(map[string][]byte{"hooks.go": []byte(MiniHooks(false, true))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hook["func __dd_civisibility_instrumentTestTimeout(string) string"] || !hook["linkname __dd_civisibility_instrumentTestTimeout github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.instrumentTestTimeout"] {
-		t.Error("TimeoutHook does not link Mini's gotesting.instrumentTestTimeout")
+	if !hook["func __dd_civisibility_instrumentTestTimeout(string) string"] || !hook["var __dd_civisibility_testingHookTestTimeout func(string) string"] || !hook["linkname __dd_civisibility_testingHookTestTimeout github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.testingHookTestTimeout"] {
+		t.Error("the timeout hook does not read Mini's gotesting.testingHookTestTimeout")
+	}
+	if _, without := sourceDeclarations(map[string][]byte{"hooks.go": []byte(MiniHooks(false, false))}); without != nil || strings.Contains(MiniHooks(false, false), "TestTimeout") {
+		t.Error("the timeout hook is declared without the alarm's edit")
 	}
 }
 
 // A runtime without the function, as the released ones, builds without the
 // hook instead of failing to link.
 func TestTimeoutHookRejectsOtherRuntimes(t *testing.T) {
-	const runtime = "package gotesting\nimport _ \"unsafe\"\n//go:linkname instrumentTestTimeout\nfunc instrumentTestTimeout(message string) string { return message }\n"
+	const runtime = "package gotesting\nimport _ \"unsafe\"\nfunc instrumentTestTimeout(message string) string { return message }\n//go:linkname testingHookTestTimeout\nvar testingHookTestTimeout func(string) string = instrumentTestTimeout\n"
 	for name, source := range map[string]string{
 		"missing":  "package gotesting\nfunc other() {}\n",
-		"linkname": "package gotesting\nfunc instrumentTestTimeout(message string) string { return message }\n",
-		"result":   strings.Replace(runtime, "(message string) string { return message }", "(message string) {}", 1),
+		"released": "package gotesting\nimport _ \"unsafe\"\n//go:linkname instrumentTestTimeout\nfunc instrumentTestTimeout(message string) string { return message }\n",
+		"linkname": strings.Replace(runtime, "//go:linkname testingHookTestTimeout\n", "", 1),
+		"type":     strings.Replace(runtime, "var testingHookTestTimeout func(string) string", "var testingHookTestTimeout func(string)", 1),
 	} {
 		if err := TimeoutHookRuntimeError(map[string][]byte{"crash.go": []byte(source)}); err == nil {
 			t.Errorf("%s: accepted", name)

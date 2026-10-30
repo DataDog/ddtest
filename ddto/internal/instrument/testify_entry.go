@@ -106,12 +106,13 @@ func transformTestifyEntry(name string, src []byte, fs *token.FileSet, file *ast
 
 // TestifyEntryHook uses testing, which suite already imports, and an unsafe
 // linkname declaration. No CI runtime import is added to the library's graph.
+// The SDK's hook is a function; Mini's scoped hook is miniTestifyHook's
+// variable, so that a binary without Mini links and registers nothing.
 func TestifyEntryHook(hook string, scoped bool) string {
-	result := ""
 	if scoped {
-		result = " func()"
+		return "package suite\nimport (\"testing\"; _ \"unsafe\")\n" + miniTestifyHook.source()
 	}
-	return "package suite\nimport (\"testing\"; _ \"unsafe\")\n//go:linkname " + TestifyRegisterName + " " + hook + "\nfunc " + TestifyRegisterName + "(*testing.T, interface{})" + result + "\n"
+	return "package suite\nimport (\"testing\"; _ \"unsafe\")\n//go:linkname " + TestifyRegisterName + " " + hook + "\nfunc " + TestifyRegisterName + "(*testing.T, interface{})\n"
 }
 
 // TestifyCacheMarker must be exported: an unused private constant need not

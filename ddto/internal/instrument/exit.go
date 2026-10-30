@@ -11,17 +11,16 @@ import "fmt"
 // after every package has initialized.
 //
 // os.Exit(0) during a test already panics in testing and takes the panic path.
-// A signal or a crash ends the process without exit hooks.
-const ExitHook = `package testing
+// A signal or a crash ends the process without exit hooks. The hook calls Mini
+// through miniExitHook's variable: in a binary without Mini it does nothing.
+var ExitHook = `package testing
 
 import (
 	"internal/runtime/exithook"
 	_ "unsafe"
 )
 
-//go:linkname __dd_civisibility_forcedExit github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.forcedExit
-func __dd_civisibility_forcedExit()
-
+` + miniExitHook.source() + `
 func init() {
 	exithook.Add(exithook.Hook{F: __dd_civisibility_forcedExit, RunOnFailure: true})
 }
@@ -37,7 +36,7 @@ var exitHookAPI = []string{
 
 // exitRuntimeAPI is what ExitHook's linkname names in Mini's integrations
 // package.
-var exitRuntimeAPI = []string{"func forcedExit()", "linkname forcedExit"}
+var exitRuntimeAPI = miniExitHook.runtimeAPI()
 
 // ExitHookToolchainError reports why the toolchain's internal/runtime/exithook,
 // given as the sources that the build compiles, cannot build ExitHook, or nil.

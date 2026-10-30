@@ -516,6 +516,12 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	}
 	timeoutRefusal := "the SDK runtime"
 	if plan.mini {
+		// testing calls Mini through variables that only Mini sets. A client
+		// can select a released runtime without them, whose binaries would
+		// link and silently report nothing: go test then runs natively.
+		if refusal := miniHooksRefusal(listed, replacements, miniGotestingPackage, instrument.TestingHooksRuntimeError); refusal != "" {
+			return plan, &nativeGoError{"runtime_hooks", fmt.Errorf("the selected runtime cannot receive testing's hooks: %s; use the runtime of the CLI's revision", refusal)}
+		}
 		timeoutRefusal = timeoutHookRefusal(listed, replacements)
 	}
 	rewritten, e := transformTesting(native, replacements, timeoutRefusal == "", debug)
@@ -572,7 +578,10 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	plan.sdkCI = plan.mini && (plan.orchestrion || sdkCI)
 	hooks := hooksForRuntime(runtime, rewritten.ParallelStop, rewritten.Timeout)
 	if plan.sdkCI {
-		if warning, apm := preflightSDKMirror(libraries[sdkTracerPackage], replacements); warning != "" {
+		if refusal := miniHooksRefusal(listed, replacements, miniTracerPackage, instrument.SDKMirrorRuntimeError); refusal != "" {
+			plan.sdkMirrorDisabled = true
+			plan.Warnings = append(plan.Warnings, "SDK span copies disabled: "+refusal)
+		} else if warning, apm := preflightSDKMirror(libraries[sdkTracerPackage], replacements); warning != "" {
 			plan.sdkMirrorDisabled = true
 			plan.Warnings = append(plan.Warnings, warning)
 		} else if apm != "" {
@@ -669,7 +678,16 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	}
 	debug.printf("runtime imports internal_test_packages=%d external_test_packages=%d", internalImports, plan.TestPackages-internalImports)
 	testifyPhase := debug.start("instrument testify")
-	testify, warning, e := prepareTestifyPackage(libraries[instrument.TestifySuiteImport], replacements, runtime, temp)
+	var testify *LibraryEntry
+	var warning string
+	if suite := libraries[instrument.TestifySuiteImport]; suite != nil && runtime == Mini {
+		if refusal := miniHooksRefusal(listed, replacements, miniGotestingPackage, instrument.TestifyHookRuntimeError); refusal != "" {
+			warning = fmt.Sprintf("Testify %s is not instrumented (%s); its suites run as ordinary tests without Testify suite metadata", libraryVersion(suite), refusal)
+		}
+	}
+	if warning == "" {
+		testify, warning, e = prepareTestifyPackage(libraries[instrument.TestifySuiteImport], replacements, runtime, temp)
+	}
 	testifyPhase.finish(e)
 	debug.printf("testify detected=%t instrumented=%t warning=%t", libraries[instrument.TestifySuiteImport] != nil, testify != nil, warning != "")
 	if e != nil {
@@ -699,7 +717,15 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	var goleak, singleflight *LibraryEntry
 	if runtime == Mini {
 		goleakPhase := debug.start("instrument goleak")
-		goleak, warning, e = prepareGoleak(libraries[instrument.GoleakImport], replacements, temp)
+		warning = ""
+		if pkg := libraries[instrument.GoleakImport]; pkg != nil {
+			if refusal := miniHooksRefusal(listed, replacements, miniCIDeliveryPackage, instrument.GoleakHookRuntimeError); refusal != "" {
+				warning = fmt.Sprintf("goleak %s is not instrumented (%s); its leak checks run without CI goroutine filters and can report CI workers", libraryVersion(pkg), refusal)
+			}
+		}
+		if warning == "" {
+			goleak, warning, e = prepareGoleak(libraries[instrument.GoleakImport], replacements, temp)
+		}
 		goleakPhase.finish(e)
 		debug.printf("goleak detected=%t instrumented=%t warning=%t", libraries[instrument.GoleakImport] != nil, goleak != nil, warning != "")
 		if e != nil {

@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "719774096c50bb4c96abeaa57789f3c3acc1181d2e10f15744d96d7a25a2bd77",
+      "sha256": "64ce7ee348d27d2eb0b367d174c098b42be640391be42269e3d6c6d53e799969",
       "role": "local"
     },
     {
@@ -255,6 +255,11 @@
     {
       "path": "civisibility/integrations/common_metadata_test.go",
       "sha256": "1a0d2758e36cb7c348377c651a77a7cafbfbcf54477dc033d25e74a8604217ca",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/integrations/forced_exit_hook.go",
+      "sha256": "e9d073bd2f156559ba173e1caf166801db1cd24640ccecc1d61f801e63e8efef",
       "role": "local"
     },
     {
@@ -847,6 +852,11 @@
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/testingT.go",
       "source_sha256": "79ca5b226980f279f9fc224f27583f1c479ef8bb3ae1d2b087ef071dda45ec4c"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/testing_hooks.go",
+      "sha256": "df64056bf85e7d2f50776cbee37aec630dd67ae08fafc0285663b4bacfc8b6e5",
+      "role": "local"
     },
     {
       "path": "civisibility/integrations/gotesting/testing_logs_test.go",

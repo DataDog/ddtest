@@ -38,8 +38,8 @@ func prepareGoleak(pkg *goPackage, replacements map[string]string, temp string) 
 func prepareGoleakEntry(pkg *goPackage, replacements map[string]string, temp string) (*LibraryEntry, error) {
 	tool := &LibraryEntry{Package: instrument.GoleakImport, Sources: map[string]string{}, HookFile: filepath.Join(temp, "goleak-hook.go")}
 	hash := sha256.New()
-	hash.Write([]byte("ddto-goleak-find-v1"))
-	hook := instrument.GoleakEntryHook()
+	hash.Write([]byte("ddto-goleak-find-v2"))
+	hook := instrument.HookFileLine(pkg.Dir, "zz_dd_ci_visibility_goleak.go") + instrument.GoleakEntryHook()
 	hash.Write([]byte(hook))
 	names := append([]string(nil), pkg.GoFiles...)
 	sort.Strings(names)
