@@ -820,7 +820,12 @@ as `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` or a `SONAR_TOKEN` set on the tes
 step, its job or an earlier setup step, is a caveat as well: local validation
 runs without it (a value the host exports is unset too) and names it. A
 credential is a variable whose name ends with TOKEN, SECRET, PASSWORD,
-PASSPHRASE, API_KEY, ACCESS_KEY, SECRET_KEY, PRIVATE_KEY, CREDENTIALS or AUTH.
+PASSPHRASE, API_KEY, ACCESS_KEY, SECRET_KEY, PRIVATE_KEY, CREDENTIALS or AUTH,
+a deploy login (USER, USERNAME, LOGIN) or a signing key (PGP_KEY, GPG_KEY,
+SIGNING_KEY, SSH_KEY), optionally followed by qualifiers that keep the value a
+credential: a rotation (NEW, OLD, NEXT, PREV, CURRENT, PRIMARY, SECONDARY,
+BACKUP), a version (V2, 2), an environment (PROD, STAGING, DEV, TEST, CI) or an
+encoding (B64, BASE64, ENC, RAW), as in `MAVEN_CENTRAL_PASSWORD_NEW`.
 A command that reads such a variable, a secret used as a setting (such as
 `AUTH_MODE` or a URL) and a remote grid's key outside WebdriverIO still
 require review. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step

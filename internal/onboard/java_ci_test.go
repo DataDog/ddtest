@@ -381,8 +381,15 @@ func TestJavaDeployCredentialsDoNotBlockValidation(t *testing.T) {
 	require.Equal(t, "mvn --batch-mode verify --file pom.xml", scope.Commands[0].Command)
 	require.Empty(t, scope.Commands[0].Environment["MAVEN_PASSWORD"], "no secret reaches validation")
 
-	// Without a server-id, setup-java writes no credentials: a secret may feed the tests.
+	// Without a server-id, setup-java writes no credentials: the login and
+	// password may feed the tests, which are validated without them and the
+	// report says so.
 	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, strings.Replace(workflow, "server-id: central, ", "", 1), nil), "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Equal(t, []string{"MAVEN_PASSWORD", "MAVEN_USERNAME"}, scope.Commands[0].WithoutSecrets)
+	// A secret no credential name describes may feed the tests as a setting.
+	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, strings.NewReplacer("server-id: central, ", "", "MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}", "MAVEN_REPOSITORY: ${{ secrets.MAVEN_REPOSITORY }}").Replace(workflow), nil), "junit5")
 	require.NoError(t, err)
 	require.NotEmpty(t, scope.Unresolved)
 	// A token under the action's default names, such as GITHUB_TOKEN, is a
@@ -394,6 +401,41 @@ func TestJavaDeployCredentialsDoNotBlockValidation(t *testing.T) {
 	require.Len(t, scope.Commands, 1)
 	require.Equal(t, []string{"GITHUB_TOKEN"}, scope.Commands[0].WithoutSecrets)
 	require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI secrets GITHUB_TOKEN")
+}
+
+// publishingCredentials are the job secrets of graphql-java's publishing
+// workflows: deploy logins and passwords, rotated with a _NEW suffix, and a
+// signing key.
+const publishingCredentials = `    env:
+      MAVEN_CENTRAL_USER: ${{ secrets.MAVEN_CENTRAL_USER }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      MAVEN_CENTRAL_USER_NEW: ${{ secrets.MAVEN_CENTRAL_USER_NEW }}
+      MAVEN_CENTRAL_PASSWORD_NEW: ${{ secrets.MAVEN_CENTRAL_PASSWORD_NEW }}
+      MAVEN_CENTRAL_PGP_KEY: ${{ secrets.MAVEN_CENTRAL_PGP_KEY }}
+`
+
+func TestJavaPublishingCredentialsAreValidatedWithout(t *testing.T) {
+	for _, tc := range []struct {
+		run, command string
+		files        map[string]string
+	}{
+		{"./gradlew check --info", "./gradlew check --info", gradleFixture()},
+		{"mvn -B verify", "mvn -B verify", nil},
+	} {
+		workflow := "jobs:\n  buildAndPublish:\n" + publishingCredentials + "    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - run: " + tc.run + "\n"
+		scope, err := DiscoverValidationScope(javaWorkflowFixture(t, workflow, tc.files), "junit5")
+		require.NoError(t, err)
+		require.Empty(t, scope.Unresolved, tc.run)
+		require.Len(t, scope.Commands, 1, tc.run)
+		require.Equal(t, tc.command, scope.Commands[0].Command)
+		require.Equal(t, []string{"MAVEN_CENTRAL_PASSWORD", "MAVEN_CENTRAL_PASSWORD_NEW", "MAVEN_CENTRAL_PGP_KEY", "MAVEN_CENTRAL_USER", "MAVEN_CENTRAL_USER_NEW"}, scope.Commands[0].WithoutSecrets, tc.run)
+		require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI secrets MAVEN_CENTRAL_PASSWORD, MAVEN_CENTRAL_PASSWORD_NEW", tc.run)
+	}
+	// A rotated secret used as a setting still needs review.
+	workflow := "jobs:\n  test:\n    env:\n      PASSWORD_POLICY_NEW: ${{ secrets.PASSWORD_POLICY_NEW }}\n    steps:\n      - run: mvn -B verify\n"
+	scope, err := DiscoverValidationScope(javaWorkflowFixture(t, workflow, nil), "junit5")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved)
 }
 
 func TestJavaCIConfigurationKeepsJavaSetupAcrossOtherDatadogActions(t *testing.T) {

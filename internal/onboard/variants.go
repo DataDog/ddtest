@@ -417,9 +417,17 @@ func TracerPluginSetting(key string) bool {
 }
 
 // credentialName is a variable name that ends with a credential, as in
-// GITHUB_TOKEN, SONAR_LOGIN_PASSWORD or NPM_AUTH. A name that only contains
-// one, such as AUTH_MODE or PASSWORD_POLICY, is a setting.
-var credentialName = regexp.MustCompile(`(?i)(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|SECRET_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH)$`)
+// GITHUB_TOKEN, SONAR_LOGIN_PASSWORD or NPM_AUTH, a deploy login, as in
+// MAVEN_CENTRAL_USER, or a signing key, as in MAVEN_CENTRAL_PGP_KEY. Only
+// qualifiers that keep the value a credential may follow it: a rotation
+// (NEW, OLD, NEXT, PREV, PREVIOUS, CURRENT, PRIMARY, SECONDARY, BACKUP), a
+// version or ordinal (V2, 2), an environment (PROD, PRODUCTION, STAGING,
+// STAGE, DEV, TEST, CI) or an encoding (B64, BASE64, ENC, ENCODED, RAW), as
+// in MAVEN_CENTRAL_PASSWORD_NEW. A credential followed by anything else, such
+// as AUTH_MODE, PASSWORD_POLICY, TOKEN_URL or USER_ID, names a setting.
+var credentialName = regexp.MustCompile(`(?i)(?:^|_)` +
+	`(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|SECRET_?KEY|PRIVATE_?KEY|(?:PGP|GPG|SIGNING|SSH)_?KEY|CREDENTIALS?|AUTH|USER|USERNAME|LOGIN)` +
+	`(?:_(?:NEW|OLD|NEXT|PREV|PREVIOUS|CURRENT|PRIMARY|SECONDARY|BACKUP|V?[0-9]+|PROD|PRODUCTION|STAGING|STAGE|DEV|TEST|CI|B64|BASE64|ENC|ENCODED|RAW))*$`)
 
 // ciCredential reports a CI variable that only carries a credential secret.
 // Datadog's own settings and remote grid keys are not.

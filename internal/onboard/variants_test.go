@@ -163,10 +163,19 @@ func TestCredentialSecretsAreValidatedWithoutAndReported(t *testing.T) {
 }
 
 func TestCredentialNamesEndWithACredential(t *testing.T) {
-	for _, name := range []string{"GITHUB_TOKEN", "SONAR_TOKEN", "NPM_AUTH", "AUTH", "SONAR_LOGIN_PASSWORD", "AWS_SECRET_ACCESS_KEY", "CLIENT_SECRET", "GPG_PASSPHRASE", "OPENAI_API_KEY", "DJANGO_SECRET_KEY", "GOOGLE_CREDENTIALS"} {
+	for _, name := range []string{"GITHUB_TOKEN", "SONAR_TOKEN", "NPM_AUTH", "AUTH", "SONAR_LOGIN_PASSWORD", "AWS_SECRET_ACCESS_KEY", "CLIENT_SECRET", "GPG_PASSPHRASE", "OPENAI_API_KEY", "DJANGO_SECRET_KEY", "GOOGLE_CREDENTIALS",
+		// Deploy logins and signing keys, as graphql-java's publishing jobs set.
+		"MAVEN_CENTRAL_USER", "SONATYPE_USERNAME", "SONAR_LOGIN", "MAVEN_CENTRAL_PGP_KEY", "GPG_KEY", "SIGNING_KEY", "DEPLOY_SSH_KEY",
+		// Qualifiers that keep the value a credential.
+		"MAVEN_CENTRAL_PASSWORD_NEW", "MAVEN_CENTRAL_USER_NEW", "NPM_TOKEN_OLD", "API_KEY_V2", "SONAR_TOKEN_2", "AWS_SECRET_ACCESS_KEY_PROD",
+		"SIGNING_KEY_BASE64", "GPG_PRIVATE_KEY_B64", "DB_PASSWORD_STAGING_ENCODED", "TOKEN_CI"} {
 		require.True(t, credentialName.MatchString(name), name)
 	}
-	for _, name := range []string{"AUTH_MODE", "PASSWORD_POLICY", "TOKEN_URL", "API_URL", "OAUTH", "SECRETS_DIR"} {
+	for _, name := range []string{"AUTH_MODE", "PASSWORD_POLICY", "TOKEN_URL", "API_URL", "OAUTH", "SECRETS_DIR",
+		// A credential followed by a setting word names a setting.
+		"TOKEN_TYPE", "SECRET_PATH", "USER_ID", "USER_AGENT", "LOGIN_URL", "PGP_KEY_ID", "API_KEY_FILE", "PASSWORD_NEW_POLICY", "TOKEN_V2_URL",
+		// Words that only end like a credential.
+		"CACHE_KEY", "MONKEY", "SUPERUSER", "AUTH_V"} {
 		require.False(t, credentialName.MatchString(name), name)
 	}
 }
