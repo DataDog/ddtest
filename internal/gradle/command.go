@@ -27,7 +27,7 @@ var optionsWithValue = []string{
 	"-b", "--build-file", "-c", "--settings-file", "-D", "--system-prop", "-F", "--dependency-verification",
 	"-g", "--gradle-user-home", "-I", "--init-script", "-M", "--write-verification-metadata", "-P", "--project-prop",
 	"-p", "--project-dir", "-x", "--exclude-task", "--console", "--include-build", "--max-workers", "--priority",
-	"--project-cache-dir", "--warning-mode", "--tests", "--task",
+	"--project-cache-dir", "--warning-mode", "--configuration-cache-problems", "--update-locks", "--tests", "--task",
 }
 
 // word is one argument of a Gradle command: a task, or an option with its value.
@@ -108,12 +108,16 @@ func TestTask(task string) bool {
 // nonTestPrefixes and nonTestTasks name tasks that, by convention, run no
 // tests: cleaning, building, documentation, analysis and publishing.
 var (
-	nonTestPrefixes = append([]string{"clean", "javadoc", "dokka", "spotless", "ktlint", "detekt", "checkstyle", "pmd", "spotbugs", "sonar", "jacoco", "license", "dist", "publish", "install", "upload", "release"}, buildingPrefixes...)
-	nonTestTasks    = []string{"dependencies", "help", "tasks", "properties", "projects", "wrapper", "buildenvironment", "init", "bootjar", "shadowjar", "bootrun", "run"}
+	nonTestPrefixes = append([]string{"clean", "javadoc", "dokka", "spotless", "ktlint", "detekt", "checkstyle", "pmd", "spotbugs", "sonar", "jacoco", "license", "dist", "publish", "install", "upload", "release", "native", "image", "jib", "docker", "shadow", "boot"}, buildingPrefixes...)
+	nonTestTasks    = []string{"dependencies", "help", "tasks", "properties", "projects", "wrapper", "buildenvironment", "init", "run"}
 )
 
-// NonTestTask reports whether a task, by convention, runs no tests.
+// NonTestTask reports whether a task, by convention, runs no tests. A task
+// TestTask accepts, such as nativeTest, never is.
 func NonTestTask(task string) bool {
+	if TestTask(task) {
+		return false
+	}
 	name := strings.ToLower(taskName(task))
 	return slices.Contains(nonTestTasks, name) || slices.ContainsFunc(nonTestPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 }
@@ -124,19 +128,40 @@ func IsTestCommand(words []string) bool {
 	return Command(words) && slices.ContainsFunc(Tasks(words[1:]), TestTask)
 }
 
-// SkipsTests reports whether a command excludes test while requesting only
-// tasks that run it through their dependencies, as in build -x test. Only the
-// unqualified selector test excludes every project's test task; :app:test
-// excludes one project's. A build whose lifecycle tasks run other test tasks
-// still runs them; see OtherTestTasks.
-func SkipsTests(args []string) bool {
-	if !slices.Contains(excluded(args), "test") {
-		return false
-	}
-	return !slices.ContainsFunc(Tasks(args), func(task string) bool {
-		name := strings.ToLower(taskName(task))
-		return strings.HasSuffix(name, "test") && name != "test"
+// excludes reports whether a -x selector removes a requested task: the same
+// path, or an unqualified name, which selects the task of every project.
+func excludes(selectors []string, task string) bool {
+	return slices.ContainsFunc(selectors, func(selector string) bool {
+		return selector == task || !strings.Contains(selector, ":") && selector == taskName(task)
 	})
+}
+
+// RunsTests reports whether a command still runs a test task once its -x
+// selectors apply: a requested test task they do not remove, or a lifecycle
+// task, check or build, whose project's test task they do not remove, or
+// whose build has other test tasks, which it runs regardless. :app:test is
+// one project's task; an unqualified test selects every project's.
+func RunsTests(args []string, tasks TestTasks) bool {
+	selectors := excluded(args)
+	for _, task := range Tasks(args) {
+		if !tasks.Runs(task) || excludes(selectors, task) {
+			continue
+		}
+		name := strings.ToLower(taskName(task))
+		if name != "check" && name != "build" {
+			return true
+		}
+		// build or :app:build runs test or :app:test.
+		if tasks.Others() || !excludes(selectors, task[:len(task)-len(taskName(task))]+"test") {
+			return true
+		}
+	}
+	return false
+}
+
+// DryRun reports whether a command runs with every task action disabled.
+func DryRun(args []string) bool {
+	return slices.ContainsFunc(parse(args), func(item word) bool { return item.option == "-m" || item.option == "--dry-run" })
 }
 
 // reviewedOptions change which build, settings or logic a command runs, so

@@ -135,3 +135,32 @@ func TestJavaGradleCustomTestTaskNames(t *testing.T) {
 	require.Contains(t, javaStep(t, conventions, "./gradlew verifyAll").Reason, "may be a test task declared by build logic ddtest does not read")
 	require.True(t, javaStep(t, conventions, "./gradlew spotlessCheck").Review, "conventional non-test tasks need no build read")
 }
+
+func TestJavaGradleStepsThatRunNoTests(t *testing.T) {
+	files := gradleFixture()
+	files["app/build.gradle.kts"] += "tasks.register<Test>(\"integrationTest\")\n"
+	root := javaWorkflowFixture(t, "", files)
+	for _, run := range []string{"./gradlew test --dry-run", "./gradlew -m build", "./gradlew integrationTest -x integrationTest", "./gradlew :app:test -x :app:test"} {
+		resolution := javaStep(t, root, run)
+		require.True(t, resolution.Review, "%s: %s", run, resolution.Reason)
+		require.False(t, resolution.Matched, run)
+	}
+	require.Contains(t, javaStep(t, root, "./gradlew integrationTest -x integrationTest").Reason, "excludes the test tasks it requests")
+}
+
+func TestJavaGradleCompoundStepsReadEachBuild(t *testing.T) {
+	files := gradleFixture()
+	files["standalone/settings.gradle"] = "rootProject.name = 'standalone'\n"
+	files["standalone/build.gradle"] = "task ciTests(type: Test)\n"
+	root := javaWorkflowFixture(t, "", files)
+	resolution := javaStep(t, root, "./gradlew assemble && ./gradlew -p standalone ciTests")
+	require.False(t, resolution.Review, "the second command's own build declares ciTests")
+	require.Contains(t, resolution.Reason, "single explicit command")
+}
+
+func TestJavaGradleDefaultTasksOfTheRootBuild(t *testing.T) {
+	files := gradleFixture()
+	files["build.gradle.kts"] = "subprojects { defaultTasks(\"test\") }\n"
+	root := javaWorkflowFixture(t, "", files)
+	require.Contains(t, javaStep(t, root, "./gradlew -p app").Reason, "default tasks could not be read statically")
+}

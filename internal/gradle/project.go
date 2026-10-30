@@ -97,6 +97,9 @@ func Projects(root, build string) ([]Project, error) {
 	if err != nil {
 		return nil, err
 	}
+	if settings, err = appliedSettings(root, build, settings, 0); err != nil {
+		return nil, fmt.Errorf("gradle settings in %s: %w", build, err)
+	}
 	paths, directories, err := settingsProjects(settings)
 	if err != nil {
 		return nil, fmt.Errorf("gradle settings in %s: %w", build, err)
@@ -117,7 +120,7 @@ func Projects(root, build string) ([]Project, error) {
 		project := Project{Path: path, Directory: directory}
 		for _, name := range BuildFiles {
 			file := filepath.Join(directory, name)
-			data, err := os.ReadFile(filepath.Join(root, file))
+			data, err := readInside(root, file)
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
@@ -133,8 +136,22 @@ func Projects(root, build string) ([]Project, error) {
 	return projects, nil
 }
 
-// insideRoot checks that directory, relative to root, stays inside root once
-// symlinks resolve. A directory that does not exist reads no build file.
+// readInside reads a file, relative to root, that stays inside root once
+// symlinks resolve: a build file that links outside the repository is not
+// read.
+func readInside(root, file string) ([]byte, error) {
+	if err := insideRoot(root, file); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(filepath.Join(root, file))
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// insideRoot checks that a directory or file, relative to root, stays inside
+// root once symlinks resolve. One that does not exist reads no build file.
 func insideRoot(root, directory string) error {
 	if !filepath.IsLocal(directory) && directory != "." {
 		return fmt.Errorf("leaves the repository: %s", directory)
@@ -156,20 +173,47 @@ func insideRoot(root, directory string) error {
 	return nil
 }
 
-// testTaskNames capture the name of a Test task or JVM test suite a build file
-// declares, as tasks.register<Test>("integrationTest"), task it(type: Test)
-// or val integrationTest by registering(JvmTestSuite::class).
+// testTaskDeclarations declare a Test task or JVM test suite, as opposed to
+// configuring existing ones with withType<Test>, named or testing { suites {
+// test { … } } }.
+var testTaskDeclarations = regexp.MustCompile(`(?:register|create|maybeCreate)\s*<\s*(?:Test|JvmTestSuite)\s*>|` +
+	`(?:register|create|maybeCreate)\s*\([^()]*?,\s*(?:Test|JvmTestSuite)(?:::class(?:\.java)?)?\s*[,)]|` +
+	`\btype\s*:\s*Test\b|` +
+	`(?:registering|creating)\s*\(\s*(?:Test|JvmTestSuite)::class|` +
+	`\(\s*JvmTestSuite\s*\)`)
+
+// testTaskNames capture the name of a declaration testTaskDeclarations finds,
+// when it is a literal: tasks.register<Test>("integrationTest"),
+// register("it", Test), task it(type: Test), val it by registering(Test::class)
+// or integrationTest(JvmTestSuite).
 var testTaskNames = []*regexp.Regexp{
-	regexp.MustCompile(`(?:register|create|maybeCreate)<(?:Test|JvmTestSuite)>\(\s*["'](\w+)["']`),
-	regexp.MustCompile(`(?:register|create|maybeCreate)\(\s*["'](\w+)["']\s*,\s*(?:Test|JvmTestSuite)\b`),
+	regexp.MustCompile(`(?:register|create|maybeCreate)\s*<\s*(?:Test|JvmTestSuite)\s*>\s*\(\s*["'](\w+)["']`),
+	regexp.MustCompile(`(?:register|create|maybeCreate)\s*\(\s*["'](\w+)["']\s*,\s*(?:Test|JvmTestSuite)(?:::class(?:\.java)?)?\s*[,)]`),
 	regexp.MustCompile(`\btask\s+(\w+)\s*\(\s*type\s*:\s*Test\b`),
-	regexp.MustCompile(`\bval\s+(\w+)\s+by\s+(?:tasks\.)?(?:registering|creating)\(\s*(?:Test|JvmTestSuite)::class`),
+	regexp.MustCompile(`\bval\s+(\w+)\s+by\s+(?:tasks\.)?(?:registering|creating)\s*\(\s*(?:Test|JvmTestSuite)::class`),
 	regexp.MustCompile(`\b(\w+)\s*\(\s*JvmTestSuite\s*\)`),
 }
 
-// testTaskDeclaration is any declaration of a Test task or test suite, named
-// or not.
-var testTaskDeclaration = regexp.MustCompile(`type\s*:\s*Test\b|<(?:Test|JvmTestSuite)>|\b(?:Test|JvmTestSuite)::class\b|,\s*(?:Test|JvmTestSuite)\s*[,)]|\bsuites\s*\{`)
+// declaredTestTasks returns the test task names a build file's source declares
+// literally, and whether it has a declaration whose name is computed.
+func declaredTestTasks(source string) (names []string, computed bool) {
+	var spans [][]int
+	for _, pattern := range testTaskNames {
+		for _, match := range pattern.FindAllStringSubmatchIndex(source, -1) {
+			spans = append(spans, match)
+			if name := source[match[2]:match[3]]; !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	// Every declaration must be one a literal name was read from.
+	for _, declaration := range testTaskDeclarations.FindAllStringIndex(source, -1) {
+		if !slices.ContainsFunc(spans, func(span []int) bool { return span[0] <= declaration[0] && declaration[1] <= span[1] }) {
+			computed = true
+		}
+	}
+	return names, computed
+}
 
 // TestTasks are the test tasks a build declares besides test, by name, and
 // whether it may declare others ddtest cannot name: in build logic ddtest
@@ -204,33 +248,81 @@ func DeclaredTestTasks(root, build string, projects []Project) TestTasks {
 		if project.BuildFile == "" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(root, project.BuildFile))
+		data, err := readInside(root, project.BuildFile)
 		if err != nil {
 			tasks.Unread = true
 			continue
 		}
-		source := stripComments(string(data))
-		named := false
-		for _, pattern := range testTaskNames {
-			for _, match := range pattern.FindAllStringSubmatch(source, -1) {
-				named = true
-				if !slices.Contains(tasks.Declared, match[1]) {
-					tasks.Declared = append(tasks.Declared, match[1])
-				}
+		names, computed := declaredTestTasks(stripComments(string(data)))
+		tasks.Unread = tasks.Unread || computed
+		for _, name := range names {
+			if !slices.Contains(tasks.Declared, name) {
+				tasks.Declared = append(tasks.Declared, name)
 			}
-		}
-		if !named && testTaskDeclaration.MatchString(source) {
-			tasks.Unread = true
 		}
 	}
 	slices.Sort(tasks.Declared)
 	return tasks
 }
 
+// maxAppliedDepth bounds scripts that settings apply from applied scripts.
+const maxAppliedDepth = 3
+
+// appliedSettings replaces each script the settings apply, at a literal path
+// inside the repository, with its contents, so the projects it includes are
+// read. A script at a path ddtest cannot locate is left for settingsProjects
+// to reject.
+func appliedSettings(root, build, settings string, depth int) (string, error) {
+	var failure error
+	expanded := appliedScript.ReplaceAllStringFunc(settings, func(statement string) string {
+		match := appliedScript.FindStringSubmatch(statement)
+		path := match[1] + match[2]
+		for _, prefix := range []string{"$rootDir/", "${rootDir}/", "$settingsDir/", "${settingsDir}/"} {
+			path = strings.TrimPrefix(path, prefix)
+		}
+		if strings.ContainsAny(path, "$") || strings.Contains(path, "://") || filepath.IsAbs(path) || depth >= maxAppliedDepth {
+			return statement
+		}
+		data, err := readInside(root, filepath.Join(build, filepath.FromSlash(path)))
+		if err != nil {
+			failure = errors.Join(failure, fmt.Errorf("apply %s: %w", path, err))
+			return statement
+		}
+		nested, err := appliedSettings(root, build, stripComments(string(data)), depth+1)
+		failure = errors.Join(failure, err)
+		return "\n" + nested + "\n"
+	})
+	return expanded, failure
+}
+
+// DefaultTasks reports whether a command without tasks, run in directory, may
+// run default tasks: its project's build file declares them, or its build's
+// root build file does, as in subprojects { defaultTasks("test") }. A file
+// that cannot be read counts as declaring them.
+func DefaultTasks(root, directory string) bool {
+	build, err := Build(root, directory)
+	if err != nil {
+		return true
+	}
+	for _, current := range slices.Compact([]string{filepath.Clean(directory), build}) {
+		for _, name := range BuildFiles {
+			data, err := readInside(root, filepath.Join(current, name))
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil || strings.Contains(stripComments(string(data)), "defaultTasks") {
+				return true
+			}
+			break
+		}
+	}
+	return false
+}
+
 // readFirst reads the first of names in directory that exists; empty when none does.
 func readFirst(root, directory string, names []string) (string, error) {
 	for _, name := range names {
-		data, err := os.ReadFile(filepath.Join(root, directory, name))
+		data, err := readInside(root, filepath.Join(directory, name))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -254,11 +346,21 @@ var (
 	// project(":a").projectDir = file("dir"), in either quote style.
 	projectDirectory = regexp.MustCompile(`project\(\s*["']([^"']+)["']\s*\)\.projectDir\s*=\s*file\(\s*["']([^"'$]+)["']\s*\)`)
 	otherInclusion   = regexp.MustCompile(`\b(?:includeFlat|projectDir\s*=)`)
+	// apply from: 'projects.gradle' or apply(from = "projects.gradle.kts")
+	// runs another script, which may include projects; buildFileName renames
+	// a project's build file.
+	settingsDelegation = regexp.MustCompile(`\bapply\s*\(?\s*from\s*[:=]|\bbuildFileName\s*=`)
+	// An applied script ddtest can locate: a literal path, relative to the
+	// settings or to $rootDir.
+	appliedScript = regexp.MustCompile(`\bapply\s*\(?\s*from\s*[:=]\s*(?:"([^"]*)"|'([^']*)')\s*\)?`)
 )
 
 // settingsProjects lists the project paths a settings file includes, with
 // each project's directory relative to the build, implicit parents included.
 func settingsProjects(settings string) ([]string, map[string]string, error) {
+	if match := settingsDelegation.FindString(settings); match != "" {
+		return nil, nil, fmt.Errorf("settings %s, which ddtest does not read", map[bool]string{true: "rename project build files", false: "apply a script ddtest cannot locate"}[strings.Contains(match, "buildFileName")])
+	}
 	var paths []string
 	directories := map[string]string{":": "."}
 	add := func(path string) {
@@ -420,7 +522,7 @@ const catalogFile = "gradle/libs.versions.toml"
 // readCatalog maps each accessor of the build's default version catalog, as
 // libs.junit.jupiter or libs.bundles.testing, to the coordinates it names.
 func readCatalog(root, build string) (map[string][]maven.Dependency, error) {
-	data, err := os.ReadFile(filepath.Join(root, build, filepath.FromSlash(catalogFile)))
+	data, err := readInside(root, filepath.Join(build, filepath.FromSlash(catalogFile)))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}

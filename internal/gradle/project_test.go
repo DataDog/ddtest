@@ -181,8 +181,30 @@ func TestDeclaredTestTasks(t *testing.T) {
 	projects, err := Projects(root, ".")
 	require.NoError(t, err)
 	require.False(t, DeclaredTestTasks(root, ".", projects).Others(), "configuring test tasks declares none")
-	writeFile(t, root, "app/build.gradle", "def kind = Test\ntasks.register(name(), kind)\nsuites { }\n")
-	require.True(t, DeclaredTestTasks(root, ".", projects).Unread, "a declaration ddtest cannot name")
+	// Configuring existing test tasks or the default suite declares none.
+	for _, build := range []string{
+		"tasks.withType<Test> { useJUnitPlatform() }\n",
+		"tasks.named<Test>(\"test\") { maxParallelForks = 2 }\n",
+		"testing {\n    suites {\n        val test by getting(JvmTestSuite::class) { useJUnitJupiter() }\n    }\n}\n",
+		"tasks.withType(Test::class.java) { }\n",
+	} {
+		writeFile(t, root, "app/build.gradle.kts", build)
+		projects, err := Projects(root, ".")
+		require.NoError(t, err)
+		require.False(t, DeclaredTestTasks(root, ".", projects).Others(), build)
+	}
+	require.NoError(t, os.Remove(filepath.Join(root, "app", "build.gradle.kts")))
+	// A computed name is unread, even next to a literal one.
+	for _, build := range []string{
+		"tasks.register<Test>(\"smokeTest\")\ntasks.register<Test>(computedName)\n",
+		"tasks.register(suiteName, Test) { }\n",
+	} {
+		writeFile(t, root, "app/build.gradle", build)
+		tasks := DeclaredTestTasks(root, ".", projects)
+		require.True(t, tasks.Unread, build)
+	}
+	writeFile(t, root, "app/build.gradle", "tasks.register<Test>(\"smokeTest\")\ntasks.register<Test>(computedName)\n")
+	require.Equal(t, []string{"smokeTest"}, DeclaredTestTasks(root, ".", projects).Declared, "the literal name is still read")
 	writeFile(t, root, "app/build.gradle", "")
 	writeFile(t, root, "buildSrc/src/main/kotlin/conventions.gradle.kts", "")
 	require.True(t, DeclaredTestTasks(root, ".", projects).Unread, "convention plugins ddtest does not read may declare some")
@@ -198,4 +220,65 @@ func TestProjectsRejectsComputedOrAbsoluteProjectDirectories(t *testing.T) {
 		_, err := Projects(root, ".")
 		require.Error(t, err, settings)
 	}
+}
+
+func TestProjectsReadsNoFileThatLinksOutsideTheRepository(t *testing.T) {
+	outside := t.TempDir()
+	writeFile(t, outside, "build.gradle", "task ciTests(type: Test)\n")
+	writeFile(t, outside, "settings.gradle", "include 'other'\n")
+	root := t.TempDir()
+	writeFile(t, root, "settings.gradle", "include 'app'\n")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "app"), 0700))
+	require.NoError(t, os.Symlink(filepath.Join(outside, "build.gradle"), filepath.Join(root, "app", "build.gradle")))
+	_, err := Projects(root, ".")
+	require.ErrorContains(t, err, "leaves the repository through a symlink", "a build file that links outside the checkout")
+	linked := t.TempDir()
+	require.NoError(t, os.Symlink(filepath.Join(outside, "settings.gradle"), filepath.Join(linked, "settings.gradle")))
+	_, err = Projects(linked, ".")
+	require.ErrorContains(t, err, "leaves the repository through a symlink", "a settings file that links outside the checkout")
+}
+
+func TestProjectsRejectsDelegatedSettings(t *testing.T) {
+	for settings, reason := range map[string]string{
+		"apply from: \"$projectsFile\"\n":                               "apply a script ddtest cannot locate",
+		"apply(from = uri(\"https://example.com/projects.gradle\"))\n":  "apply a script ddtest cannot locate",
+		"apply from: 'gradle/missing.gradle'\n":                         "apply gradle/missing.gradle",
+		"include 'app'\nproject(':app').buildFileName = 'app.gradle'\n": "rename project build files",
+	} {
+		root := t.TempDir()
+		writeFile(t, root, "settings.gradle", settings)
+		_, err := Projects(root, ".")
+		require.ErrorContains(t, err, reason, settings)
+	}
+}
+
+func TestDefaultTasksIncludeTheRootBuild(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "settings.gradle", "include 'app'\n")
+	writeFile(t, root, "app/build.gradle", "")
+	require.False(t, DefaultTasks(root, "app"))
+	writeFile(t, root, "build.gradle", "subprojects { defaultTasks 'test' }\n")
+	require.True(t, DefaultTasks(root, "app"), "the root build configures the project's defaults")
+	writeFile(t, root, "build.gradle", "// defaultTasks 'test'\n")
+	require.False(t, DefaultTasks(root, "app"), "a comment declares nothing")
+	writeFile(t, root, "app/build.gradle", "defaultTasks 'check'\n")
+	require.True(t, DefaultTasks(root, "app"))
+}
+
+func TestProjectsFollowsAppliedSettingsScripts(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "settings.gradle.kts", "apply(from = \"$rootDir/gradle/develocity.gradle\")\napply(from = \"gradle/projects.gradle.kts\")\ninclude(\"core\")\n")
+	writeFile(t, root, "gradle/develocity.gradle", "develocity { buildScan { publishing.onlyIf { false } } }\n")
+	writeFile(t, root, "gradle/projects.gradle.kts", "include(\"app\", \"lib\")\napply(from = \"gradle/more.gradle\")\n")
+	writeFile(t, root, "gradle/more.gradle", "include 'tools'\n")
+	projects, err := Projects(root, ".")
+	require.NoError(t, err, "a script that includes nothing, and scripts that include projects, are read")
+	var paths []string
+	for _, project := range projects {
+		paths = append(paths, project.Path)
+	}
+	require.ElementsMatch(t, []string{":", ":core", ":app", ":lib", ":tools"}, paths)
+	writeFile(t, root, "gradle/more.gradle", "file('m').eachDir { include it.name }\n")
+	_, err = Projects(root, ".")
+	require.Error(t, err, "an applied script's computed includes are unreadable too")
 }

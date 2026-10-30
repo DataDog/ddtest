@@ -30,13 +30,43 @@ func TestTestTasks(t *testing.T) {
 	require.False(t, IsTestCommand([]string{"mvn", "test"}))
 }
 
-func TestSkipsTests(t *testing.T) {
-	require.True(t, SkipsTests(strings.Fields("build -x test")))
-	require.False(t, SkipsTests(strings.Fields("check --exclude-task :app:test")), "a qualified path excludes one project's test; others still run")
-	require.True(t, SkipsTests(strings.Fields("check --exclude-task test")))
-	require.True(t, SkipsTests(strings.Fields("build -xtest")))
-	require.False(t, SkipsTests(strings.Fields("build integrationTest -x test")), "another test task still runs")
-	require.False(t, SkipsTests(strings.Fields("build -x javadoc")))
+func TestRunsTests(t *testing.T) {
+	none := TestTasks{}
+	declared := TestTasks{Declared: []string{"integrationTest"}}
+	for args, runs := range map[string]bool{
+		"test":                               true,
+		"build":                              true,
+		"build -x test":                      false,
+		"build -xtest":                       false,
+		"check --exclude-task test":          false,
+		"check --exclude-task :app:test":     true,  // other projects' test still runs
+		":app:build -x :app:test":            false, // the project's own test is removed
+		":app:build -x test":                 false, // an unqualified selector removes every project's
+		"build integrationTest -x test":      true,  // another requested test task still runs
+		"integrationTest -x integrationTest": false,
+		":app:test -x :app:test":             false,
+		":app:test -x test":                  false,
+		"test -x :app:test":                  true, // other projects' test still runs
+		"build -x javadoc":                   true,
+		"assemble":                           false,
+	} {
+		require.Equal(t, runs, RunsTests(strings.Fields(args), none), args)
+	}
+	require.True(t, RunsTests(strings.Fields("check -x test"), declared), "check runs the build's other test tasks")
+	require.True(t, RunsTests(strings.Fields("check -x test"), TestTasks{Unread: true}), "build logic ddtest does not read may add test tasks")
+	require.False(t, RunsTests(strings.Fields("integrationTest -x integrationTest"), declared))
+}
+
+func TestDryRun(t *testing.T) {
+	require.True(t, DryRun(strings.Fields("test --dry-run")))
+	require.True(t, DryRun(strings.Fields("-m build")))
+	require.False(t, DryRun(strings.Fields("test")))
+}
+
+func TestConfigurationCacheProblemsTakesAValue(t *testing.T) {
+	validated, omitted := TestInvocation(strings.Fields("--configuration-cache-problems warn --update-locks org.example:lib test"), TestTask)
+	require.Equal(t, []string{"--configuration-cache-problems", "warn", "--update-locks", "org.example:lib", "test"}, validated)
+	require.Empty(t, omitted, "warn is the option's value, not a task")
 }
 
 func TestProjectDirectory(t *testing.T) {
@@ -82,7 +112,10 @@ func TestNonTestTasks(t *testing.T) {
 	for _, task := range []string{"clean", "assemble", "javadoc", "spotlessCheck", "detekt", "ktlintCheck", "sonar", "jacocoTestReport", "publish", "dependencies", "bootJar", ":app:distZip"} {
 		require.True(t, NonTestTask(task), task)
 	}
-	for _, task := range []string{"ciTests", "verifyAll", "test", "e2e"} {
+	for _, task := range []string{"ciTests", "verifyAll", "test", "e2e", "nativeTest", ":native-image-tests:nativeTest"} {
 		require.False(t, NonTestTask(task), task)
+	}
+	for _, task := range []string{"okcurl:nativeBuild", "nativeCompile", "module-tests:imageRun", "jibDockerBuild", "bootBuildImage", "shadowJar"} {
+		require.True(t, NonTestTask(task), task)
 	}
 }

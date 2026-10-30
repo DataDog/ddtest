@@ -6,7 +6,6 @@
 package onboard
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -55,6 +54,14 @@ func javaStepBuildTool(resolution commandResolution, run string) string {
 	return ""
 }
 
+// gradleRun is one Gradle command of a step that runs tests, with the build it
+// selects.
+type gradleRun struct {
+	words    []string
+	projects []gradle.Project
+	tasks    gradle.TestTasks
+}
+
 // resolveGradleStep resolves a CI step that runs Gradle into the command that
 // validates framework: its options and test tasks. One Gradle build runs every
 // framework its projects declare; the projects of other frameworks are reported.
@@ -67,81 +74,89 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 	onlyBuilds := !slices.ContainsFunc(parts, func(words []string) bool {
 		return !gradle.Command(words) && !slices.Contains(javaShellBuiltins, words[0])
 	})
-	// Tasks named like tests, or by convention not, need no build read.
-	var tasks []string
+	// Each command is classified against the build it selects.
+	var tests []gradleRun
+	excluded := false
 	for _, words := range builds {
-		tasks = append(tasks, gradle.Tasks(words[1:])...)
-	}
-	if !slices.ContainsFunc(tasks, gradle.TestTask) && !slices.ContainsFunc(tasks, func(task string) bool { return !gradle.NonTestTask(task) }) {
-		return gradleNonTestStep(root, step, directory, builds, framework, onlyBuilds, workflow, job, parts)
-	}
-	// Otherwise the build's declared test tasks decide.
-	invoked, reason := gradleInvokedDirectory(directory, builds[0][1:])
-	if reason != "" {
-		return unresolvedCommand(reason)
-	}
-	build, err := gradle.Build(root, invoked)
-	if err != nil {
-		return unresolvedCommand("Gradle build selection needs review: " + err.Error())
-	}
-	projects, err := gradle.Projects(root, build)
-	if err != nil {
-		return unresolvedCommand("Gradle build could not be read statically, so the projects this step tests are unknown: " + err.Error())
-	}
-	testTasks := gradle.DeclaredTestTasks(root, build, projects)
-	tests := slices.DeleteFunc(slices.Clone(builds), func(words []string) bool {
-		return !slices.ContainsFunc(gradle.Tasks(words[1:]), testTasks.Runs)
-	})
-	if len(tests) == 0 {
-		// A task that is neither a known test task nor conventionally free of
-		// tests may be one that build logic ddtest does not read declares.
-		if unknown := slices.DeleteFunc(slices.Clone(tasks), gradle.NonTestTask); len(unknown) > 0 && testTasks.Unread {
-			return unresolvedCommand("Gradle task " + strings.Join(unknown, ", ") + " may be a test task declared by build logic ddtest does not read: " + step.Run)
+		args := words[1:]
+		requested := gradle.Tasks(args)
+		// A dry run executes no task action, and tasks that are by convention
+		// free of tests need no build read; a command without tasks runs the
+		// default tasks gradleNonTestStep checks.
+		if gradle.DryRun(args) || !slices.ContainsFunc(requested, func(task string) bool { return !gradle.NonTestTask(task) }) {
+			continue
 		}
-		return gradleNonTestStep(root, step, directory, builds, framework, onlyBuilds, workflow, job, parts)
+		invoked, reason := gradleInvokedDirectory(directory, args)
+		if reason != "" {
+			return unresolvedCommand(reason)
+		}
+		build, err := gradle.Build(root, invoked)
+		if err != nil {
+			return unresolvedCommand("Gradle build selection needs review: " + err.Error())
+		}
+		projects, err := gradle.Projects(root, build)
+		if err != nil {
+			return unresolvedCommand("Gradle build could not be read statically, so the projects this step tests are unknown: " + err.Error())
+		}
+		testTasks := gradle.DeclaredTestTasks(root, build, projects)
+		switch {
+		case gradle.RunsTests(args, testTasks):
+			tests = append(tests, gradleRun{words: words, projects: projects, tasks: testTasks})
+		case slices.ContainsFunc(requested, testTasks.Runs):
+			// Every test task it requests is excluded.
+			excluded = true
+		default:
+			// A task that is neither a known test task nor conventionally free
+			// of tests may be one that build logic ddtest does not read declares.
+			if unknown := slices.DeleteFunc(slices.Clone(requested), gradle.NonTestTask); len(unknown) > 0 && testTasks.Unread {
+				return unresolvedCommand("Gradle task " + strings.Join(unknown, ", ") + " may be a test task declared by build logic ddtest does not read: " + step.Run)
+			}
+		}
+	}
+	if len(tests) == 0 {
+		reason := "Gradle tasks outside testing, such as assembly, documentation, analysis or publishing, are outside " + framework + " test scope."
+		if excluded {
+			reason = "Gradle step excludes the test tasks it requests, so it is outside " + framework + " test scope: " + step.Run
+		}
+		return gradleNonTestStep(root, step, directory, builds, framework, onlyBuilds, workflow, job, parts, reason)
 	}
 	if len(parts) != 1 {
 		return unresolvedCommand("Gradle test step requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
 	}
-	words := tests[0]
-	// With test excluded, check or build still runs the build's other test
-	// tasks, such as an integrationTest wired to check.
-	if gradle.SkipsTests(words[1:]) && !testTasks.Others() {
-		return commandResolution{Review: true, Reason: "Gradle step excludes the test task, so it is outside " + framework + " test scope: " + step.Run}
-	}
-	validated, omitted := gradle.TestInvocation(words[1:], testTasks.Runs)
-	selected := shellquote.Join(append([]string{words[0]}, validated...)...)
+	run := tests[0]
+	validated, omitted := gradle.TestInvocation(run.words[1:], run.tasks.Runs)
+	selected := shellquote.Join(append([]string{run.words[0]}, validated...)...)
 	var notes []string
 	if len(omitted) > 0 {
 		notes = append(notes, "This CI step also runs "+strings.Join(omitted, ", ")+". Local validation runs only "+selected+", its test tasks, and never publishes artifacts. Report this to the user.")
 	}
-	if others := otherGradleFrameworkProjects(projects, framework); len(others) > 0 {
+	if others := otherGradleFrameworkProjects(run.projects, framework); len(others) > 0 {
 		notes = append(notes, "This Gradle build also has project(s) "+strings.Join(others, ", ")+", which declare other test frameworks and no "+framework+" dependency. Whether this step runs their tests depends on the tasks it selects. Instrumenting this step reports any selected tests to Datadog too; local validation covers only the "+framework+" projects. Report this to the user.")
 	}
 	return commandResolution{Matched: true, ReviewReason: strings.Join(notes, " "), Tests: []TestCommand{{Directory: directory, Command: selected, StepScopeNotes: notes}}}
 }
 
-// gradleNonTestStep classifies a step whose Gradle commands request no test
-// task: outside test scope, unless a taskless command runs default tasks or
-// another command in the sequence may run tests.
-func gradleNonTestStep(root string, step runtimeStep, directory string, builds [][]string, framework string, onlyBuilds bool, workflow ciWorkflow, job runtimeJob, parts [][]string) commandResolution {
+// gradleNonTestStep classifies a step whose Gradle commands run no test task:
+// outside test scope, for reason, unless a taskless command may run default
+// tasks or another command in the sequence may run tests.
+func gradleNonTestStep(root string, step runtimeStep, directory string, builds [][]string, framework string, onlyBuilds bool, workflow ciWorkflow, job runtimeJob, parts [][]string, reason string) commandResolution {
 	if !onlyBuilds {
 		return unresolvedJavaWrapper(root, workflow, job, step, parts, framework)
 	}
-	// Without tasks, Gradle runs the default tasks of the build it selects.
+	// Without tasks, Gradle runs the default tasks of the project it selects.
 	for _, words := range builds {
-		if len(gradle.Tasks(words[1:])) > 0 {
+		if len(gradle.Tasks(words[1:])) > 0 || gradle.DryRun(words[1:]) {
 			continue
 		}
-		invoked, reason := gradleInvokedDirectory(directory, words[1:])
-		if reason != "" {
-			return unresolvedCommand(reason)
+		invoked, problem := gradleInvokedDirectory(directory, words[1:])
+		if problem != "" {
+			return unresolvedCommand(problem)
 		}
-		if gradleDefaultTasks(root, invoked) {
+		if gradle.DefaultTasks(root, invoked) {
 			return unresolvedCommand("Gradle default tasks could not be read statically, so ddtest cannot tell whether this step runs tests: " + step.Run)
 		}
 	}
-	return commandResolution{Review: true, Reason: "Gradle tasks outside testing, such as assembly, documentation, analysis or publishing, are outside " + framework + " test scope."}
+	return commandResolution{Review: true, Reason: reason}
 }
 
 // gradleInvokedDirectory is the repository directory whose build a Gradle
@@ -159,18 +174,6 @@ func gradleInvokedDirectory(directory string, args []string) (string, string) {
 		return "", "Gradle build selection needs review: " + project + " leaves the repository"
 	}
 	return invoked, ""
-}
-
-// gradleDefaultTasks reports a build file in directory that declares default
-// tasks, which a command without tasks runs.
-func gradleDefaultTasks(root, directory string) bool {
-	for _, name := range gradle.BuildFiles {
-		data, err := os.ReadFile(filepath.Join(root, directory, name))
-		if err == nil && strings.Contains(string(data), "defaultTasks") {
-			return true
-		}
-	}
-	return false
 }
 
 // otherGradleFrameworkProjects lists the build's projects that declare test
