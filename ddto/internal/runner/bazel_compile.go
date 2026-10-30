@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DataDog/ddtest/ddto/internal/bazelgen"
 	"github.com/DataDog/ddtest/ddto/internal/instrument"
 	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
 	"github.com/DataDog/ddtest/ddto/internal/version"
@@ -113,6 +114,9 @@ func readBazelConfig(arg0 string) (bazelConfig, error) {
 	data, err := os.ReadFile(filepath.Join(filepath.Dir(arg0), bazelCompilerConfig))
 	if err == nil {
 		err = json.Unmarshal(data, &config)
+	}
+	if err == nil && config.Contract != bazelgen.Contract {
+		err = fmt.Errorf("contract %d, while this ddtest writes contract %d", config.Contract, bazelgen.Contract)
 	}
 	if err != nil {
 		return config, fmt.Errorf("the instrumented SDK's compiler configuration: %w", err)

@@ -35,9 +35,40 @@ ddtest instrument bazel --mini [--rules-go=<name>] <dir>
   because rules_go applies the build constraints itself.
 
 Both write `<dir>`, which must be empty or missing, and a `DDTEST_INSTRUMENT`
-file with the release, the contract version that the rule checks, and the
-`sdk_name` value that selects the SDK's toolchains (`ddto`). The SDK keeps
-Go's own `VERSION` file, which rules_go reads.
+file at its root, with one `key=value` per line:
+
+- `version`: the runtime's SemVer version. A release's tag, such as `v1.14.0`,
+  stays as it is; any other name gets `v0.0.0-` before it, so the pre-release
+  `pre-release-fbbc65e`, which `ddtest --version` prints, writes
+  `v0.0.0-pre-release-fbbc65e`.
+- `contract`: the contract version that the rule checks, `1`.
+- `sdk_name`: the value of `@io_bazel_rules_go//go/toolchain:sdk_name` that
+  selects the SDK's toolchains, `ddto`.
+
+The SDK also has `pkg/tool/<goos_goarch>/ddtest-instrument.json`, with the
+same `version` and `contract` and the `panicHook` setting. It keeps Go's own
+`VERSION` file, which rules_go reads.
+
+Contract 1 covers:
+
+- the SDK's layout: `compile`, `compile.real` and `ddtest-instrument.json` in
+  `pkg/tool/<goos_goarch>`, and the original SDK's other files where it has
+  them;
+- the Mini repository's layout: a package per directory of Mini's import path,
+  `github.com/DataDog/ddtest/ddto`, its target names, and the `testopt` target
+  that the rule adds to each test;
+- the registration that the rule adds to each test, the file that
+  `ddtest instrument` writes as `zz_dd_ci_visibility_test.go`, in the test's
+  external package when one of its sources declares it and in its own package
+  otherwise:
+
+  ```go
+  package <the test package>
+  import __dd_ci_runtime "github.com/DataDog/ddtest/ddto/testopt"
+  func init() { __dd_ci_runtime.RegisterTestPackage() }
+  ```
+
+A change to any of them takes a new contract version.
 
 The command runs no Bazel command. `ddtest instrument bazel test //...`, which
 used to run Bazel unchanged, now fails with a message that says so.
@@ -46,7 +77,9 @@ used to run Bazel unchanged, now fails with a message that says so.
 
 rules_go runs the SDK's `compile` for every package, and for the standard
 library through `go install -toolexec`. The ddtest executable decides from
-the arguments alone, with no other input:
+the arguments and, for `runtime`, from `ddtest-instrument.json` next to it. A
+missing or unreadable configuration, or one with another contract, stops that
+compilation with an error:
 
 | Package | Edit |
 | --- | --- |
