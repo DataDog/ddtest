@@ -212,13 +212,17 @@ func stripPytestInstrumentation(value string) (string, error) {
 }
 
 func stripPytestArguments(words []string) []string {
+	return stripPytestFlags(words, "--ddtrace", "--no-ddtrace", "--ddtrace-patch-all")
+}
+
+func stripPytestFlags(words []string, flags ...string) []string {
 	kept := make([]string, 0, len(words))
 	for i := 0; i < len(words); i++ {
 		word := words[i]
 		if word == "--" {
 			return append(kept, words[i:]...)
 		}
-		if word == "--ddtrace" || word == "--no-ddtrace" || word == "--ddtrace-patch-all" {
+		if slices.Contains(flags, word) {
 			continue
 		}
 		kept = append(kept, word)

@@ -89,6 +89,7 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 		if err != nil {
 			return err
 		}
+		isolated = stripPytestFlags(isolated, "--ddtrace", "--ddtrace-patch-all")
 		if !slices.Equal(defaults, isolated) {
 			// Put the copied defaults before user options so their overrides
 			// retain pytest's normal environment/command precedence.
@@ -202,6 +203,7 @@ func isolatePytestOptions(args []string, directory, original, copied string, act
 	if err != nil {
 		return nil, false, err
 	}
+	options = stripPytestFlags(options, "--ddtrace", "--ddtrace-patch-all")
 	args[overrideIndex] = "addopts=" + shellquote.Join(options...)
 	if overrideAttached {
 		args[overrideIndex] = "--override-ini=" + args[overrideIndex]

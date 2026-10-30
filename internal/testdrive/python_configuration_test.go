@@ -47,6 +47,12 @@ func TestPytestNativeConfigurationPathsExecuteOnlyInsideCopy(t *testing.T) {
 	}
 }
 
+func TestPytestConfiguredActivationIsControlled(t *testing.T) {
+	for _, mode := range []string{"activation pytest.ini", "activation tox.ini", "activation pyproject.toml", "activation command override", "activation environment override"} {
+		t.Run(mode, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, mode) })
+	}
+}
+
 func TestPytestArgumentFilesExecuteOnlyInsideCopy(t *testing.T) {
 	testPytestPathsExecuteOnlyInsideCopy(t, "argument files")
 }
@@ -139,7 +145,27 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	addopts := "--rootdir=" + root
 	environment := map[string]string{}
 	configuration, configuredContents := "", ""
-	if mode == "equals config" {
+	if strings.HasPrefix(mode, "activation ") {
+		activation := "--ddtrace --ddtrace-patch-all"
+		configuration = strings.TrimPrefix(mode, "activation ")
+		configuredContents = "[pytest]\npythonpath=.\n"
+		switch configuration {
+		case "pytest.ini", "tox.ini":
+			configuredContents += "addopts=" + activation + "\n"
+		case "pyproject.toml":
+			configuredContents = "[tool.pytest.ini_options]\npythonpath=['.']\naddopts=['--ddtrace', '--ddtrace-patch-all']\n"
+		default:
+			configuration = "pytest.ini"
+			if mode == "activation command override" {
+				args = append(args, "-o", "addopts="+activation)
+			} else {
+				addopts += " " + shellquote.Join("-o", "addopts="+activation)
+			}
+		}
+		requireWriteFile(t, configuration, configuredContents)
+		args[3] = filepath.Join(root, configuration)
+		requireWriteFile(t, file, "import os\nfrom app import add\ndef test_app(request):\n    expected = os.environ['DDTEST_PYTEST_INSTRUMENTED'] == 'true'\n    assert request.config.getoption('ddtrace') == expected\n    assert not request.config.getoption('ddtrace-patch-all')\n    assert add(1, 2) == 3\n")
+	} else if mode == "equals config" {
 		args = []string{"-m", "pytest", "-c=" + filepath.Join(root, "pytest.ini"), file + "::test_app"}
 	} else if strings.HasPrefix(mode, "native ") {
 		require.NoError(t, os.Mkdir("src", 0755))
@@ -246,6 +272,13 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	require.NoError(t, err, output.String())
 	require.Equal(t, "compatible", result.Compatibility.Status, output.String())
 	require.Len(t, result.Features, 6)
+	if strings.HasPrefix(mode, "activation ") {
+		for _, run := range result.Runs {
+			if run.Role == roleBaseline {
+				require.Zero(t, run.TestEventCount)
+			}
+		}
+	}
 	for _, feature := range result.Features {
 		require.Equal(t, "passed", feature.Status, "%s: %s", feature.Name, feature.Reason)
 	}
