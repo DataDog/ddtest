@@ -428,3 +428,46 @@ func persistedNVMRuntime(command string) string {
 	}
 	return ""
 }
+
+const (
+	rowWindows = "windows"
+	rowOther   = "other"
+)
+
+// windowsRunner reports whether step may run on Windows, where npm runs
+// package scripts with cmd.exe rather than sh. A step resolved for one matrix
+// row follows that row's runner; otherwise any Windows row of job counts, and
+// so does a runner that can't be resolved statically.
+func windowsRunner(job runtimeJob, step runtimeStep) bool {
+	if step.windowsShell || step.rowRunner == rowWindows {
+		return true
+	}
+	if step.rowRunner == rowOther {
+		return false
+	}
+	windows, _, err := setupWindowsRunner(job)
+	return windows || err != nil || runnerDefaultShell(job, nil) == "pwsh"
+}
+
+// matrixRowRunner resolves job's runner for one matrix row: rowWindows,
+// rowOther, or empty when there is no row or a label can't be resolved.
+func matrixRowRunner(job runtimeJob, row map[string]any) string {
+	if row == nil {
+		return ""
+	}
+	labels := runnerLabels(job.RunsOn)
+	if len(labels) == 0 {
+		return ""
+	}
+	runner := rowOther
+	for _, label := range labels {
+		resolved, err := runtimeValue(label, row)
+		if err != nil || resolved == "" {
+			return ""
+		}
+		if strings.Contains(strings.ToLower(resolved), "windows") {
+			runner = rowWindows
+		}
+	}
+	return runner
+}

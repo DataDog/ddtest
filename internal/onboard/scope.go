@@ -543,8 +543,8 @@ func ValidationCommands(root, command, framework string) []TestCommand {
 			return commands
 		}
 	}
-	remaining := packageScriptExpansionLimit
-	return resolveJestSequence(root, root, command, nil, &remaining, framework).Tests
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	return resolveJestSequence(root, root, command, nil, remaining, framework).Tests
 }
 
 // File rewrites in earlier CI steps change what the same test command executes.

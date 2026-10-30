@@ -15,15 +15,15 @@ import (
 func TestDiscardedDependencyCheckDoesNotHideCucumber(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"test": "npm-run-all --parallel lint:* test:*", "lint:peer": "npm ls >/dev/null", "test:integration": "cucumber-js test/integration"})
-	remaining := 256
-	result := resolveJestSequence(root, root, "npm test", nil, &remaining, "cucumber")
+	remaining := &scriptBudget{left: 256}
+	result := resolveJestSequence(root, root, "npm test", nil, remaining, "cucumber")
 	require.Empty(t, result.Reason)
 	require.Len(t, result.Tests, 1)
 	require.Contains(t, result.ReviewReason, "Dependency inspection")
 	require.Equal(t, "npm test", result.Tests[0].Command)
 	for _, command := range []string{"jest >/dev/null", "npm ls > file", "npm ls >$(npm test)", "npm ls </dev/null", "npm ls 3>/dev/null", "npm ls 2>&1", "npm ls >/dev/null && node hidden.js"} {
-		remaining = 256
-		resolution := resolveJestSequence(root, root, command, nil, &remaining, "cucumber")
+		*remaining = scriptBudget{left: 256}
+		resolution := resolveJestSequence(root, root, command, nil, remaining, "cucumber")
 		require.NotEmpty(t, resolution.Reason, command)
 	}
 }
@@ -31,8 +31,8 @@ func TestDiscardedDependencyCheckDoesNotHideCucumber(t *testing.T) {
 func TestMultipleWDIOAliasesRetainOrderedLeaves(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"first": "wdio run ./wdio.conf.js --spec first.js", "second": "wdio run ./wdio.conf.js --spec second.js", "test": "run-s first second"})
-	remaining := 256
-	result := resolveJestSequence(root, root, "npm test", nil, &remaining, "webdriverio")
+	remaining := &scriptBudget{left: 256}
+	result := resolveJestSequence(root, root, "npm test", nil, remaining, "webdriverio")
 	require.Empty(t, result.Reason)
 	require.Equal(t, []string{"npm run first", "npm run second"}, commandNames(result.Tests))
 	_, err := WebdriverIOValidationCommand(root, "npm test")
@@ -137,15 +137,15 @@ func TestNpmDependencyVariantsAreExplicitPreparation(t *testing.T) {
 func TestWDIOAliasSpecGlobKeepsOriginalExecution(t *testing.T) {
 	root := t.TempDir()
 	writeScripts(t, root, map[string]string{"test": "cross-env EXAMPLE_RECIPE=api wdio run ./wdio.conf.js --spec ./api/*.js"})
-	remaining := 256
-	result := resolveJestSequence(root, root, "npm test", nil, &remaining, "webdriverio")
+	remaining := &scriptBudget{left: 256}
+	result := resolveJestSequence(root, root, "npm test", nil, remaining, "webdriverio")
 	require.Empty(t, result.Reason)
 	require.Len(t, result.Tests, 1)
 	require.Equal(t, "npm test", result.Tests[0].Command)
 	for _, script := range []string{"wdio run $CONFIG --spec ./api/*.js", "wdio run ./wdio.conf.js --spec $(npm test)", "wdio run ./wdio.conf.js --spec ../*.js", "wdio run ./wdio.conf.js --spec ./api/*.js && node hidden.js"} {
 		writeScripts(t, root, map[string]string{"test": script})
-		remaining = 256
-		result = resolveJestSequence(root, root, "npm test", nil, &remaining, "webdriverio")
+		*remaining = scriptBudget{left: 256}
+		result = resolveJestSequence(root, root, "npm test", nil, remaining, "webdriverio")
 		require.NotEmpty(t, result.Reason, script)
 	}
 }

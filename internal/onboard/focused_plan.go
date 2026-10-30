@@ -12,8 +12,8 @@ import (
 // with different preparation are ambiguous; an agent must select their scope.
 func cucumberFocusedPlan(root, command string) (TestCommand, error) {
 	framework := "cucumber"
-	remaining := packageScriptExpansionLimit
-	resolution := resolveJestSequence(root, root, command, nil, &remaining, framework)
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	resolution := resolveJestSequence(root, root, command, nil, remaining, framework)
 	entries := resolution.Tests
 	if len(entries) != 1 || len(entries[0].UnvalidatedSetup) > 0 || filepath.Clean(entries[0].Directory) != "." {
 		return TestCommand{}, focusedPlanError(framework, resolution.Reason, entries)

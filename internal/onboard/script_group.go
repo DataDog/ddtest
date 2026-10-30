@@ -13,7 +13,7 @@ import (
 
 // Expand only literal npm-run-all selectors. Parallel branches never acquire
 // ordering dependencies on one another; unknown branches remain unresolved.
-func resolveScriptGroup(root, directory string, words, stack []string, remaining *int, framework string) commandResolution {
+func resolveScriptGroup(root, directory string, words, stack []string, remaining *scriptBudget, framework string) commandResolution {
 	if len(words) < 2 {
 		return unresolvedCommand("Missing script selectors")
 	}

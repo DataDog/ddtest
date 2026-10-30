@@ -32,8 +32,8 @@ func classifyFactPrerequisites(root, directory, command, framework string, resol
 	var prerequisites [][]BuildCommand
 	reason := ""
 	for _, words := range fragments {
-		remaining := 256
-		part := resolveJestSequence(root, directory, shellquote.Join(words...), nil, &remaining, framework)
+		remaining := &scriptBudget{left: 256}
+		part := resolveJestSequence(root, directory, shellquote.Join(words...), nil, remaining, framework)
 		if part.Reason != "" {
 			if !localNodeSetup(root, directory, words, 0) {
 				return resolution

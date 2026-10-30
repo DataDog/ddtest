@@ -54,8 +54,8 @@ func CypressExecutionCommand(root, command string) (TestCommand, error) {
 // CypressExecutionCommandInScope selects from an already discovered scope.
 func CypressExecutionCommandInScope(root, command string, scope ValidationScope, scopeErr error) (TestCommand, error) {
 	if command != "" {
-		remaining := 256
-		resolution := resolveJestSequence(root, root, command, nil, &remaining, "cypress")
+		remaining := &scriptBudget{left: 256}
+		resolution := resolveJestSequence(root, root, command, nil, remaining, "cypress")
 		if resolution.Reason != "" {
 			return TestCommand{}, fmt.Errorf("cypress command requires review: %s", resolution.Reason)
 		}
@@ -114,7 +114,7 @@ func CypressExecutionCommandInScope(root, command string, scope ValidationScope,
 	return TestCommand{}, fmt.Errorf("no Cypress command found")
 }
 
-func resolveCypressOrchestration(root, directory string, words, stack []string, remaining *int) commandResolution {
+func resolveCypressOrchestration(root, directory string, words, stack []string, remaining *scriptBudget) commandResolution {
 	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
 	var pkg struct{ Scripts map[string]string }
 	if err != nil || json.Unmarshal(data, &pkg) != nil {

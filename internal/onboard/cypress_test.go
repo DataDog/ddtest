@@ -16,8 +16,8 @@ func TestCypressDiscoveryPreservesServerAliases(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "npm run local:run", entry.Command, "server orchestration stays in the original alias")
 	for _, command := range []string{"npm run local:run", "npm run test:ci", "npx --no-install cypress run --browser chrome", "node -C development node_modules/cypress/bin/cypress run", "node --conditions=development --require ./setup.cjs node_modules/.bin/cypress run"} {
-		remaining := 256
-		result := resolveJestSequence(root, root, command, nil, &remaining, "cypress")
+		remaining := &scriptBudget{left: 256}
+		result := resolveJestSequence(root, root, command, nil, remaining, "cypress")
 		require.Empty(t, result.Reason)
 		require.Len(t, result.Tests, 1)
 		if command[:3] == "npm" {

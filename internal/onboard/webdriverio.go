@@ -106,8 +106,8 @@ func WebdriverIOValidationCommand(root, command string) (string, error) {
 		}
 		command = scope.Commands[0].Command
 	}
-	remaining := webdriverIOScriptBudget
-	resolution := resolveJestSequence(root, root, command, nil, &remaining, "webdriverio")
+	remaining := &scriptBudget{left: webdriverIOScriptBudget}
+	resolution := resolveJestSequence(root, root, command, nil, remaining, "webdriverio")
 	commands := resolution.Tests
 	if resolution.Reason != "" || resolution.OtherFramework || len(commands) != 1 || len(commands[0].UnvalidatedSetup) > 0 {
 		return "", fmt.Errorf("WebdriverIO validation requires one resolved wdio run invocation; preserve configuration and setup")

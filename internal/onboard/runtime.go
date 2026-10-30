@@ -114,6 +114,13 @@ type runtimeStep struct {
 	// origin is the provider's private reference to the step's source, for
 	// prescribed edits.
 	origin any
+	// windowsShell marks a step written for a Windows-only shell (Windows
+	// PowerShell) that is resolved as bash: its runner is Windows.
+	windowsShell bool
+	// rowRunner is set when the step was resolved for one matrix row whose
+	// runner is known: rowWindows or rowOther. Empty means the job's runner
+	// as a whole decides.
+	rowRunner string
 }
 
 type runtimeJob struct {

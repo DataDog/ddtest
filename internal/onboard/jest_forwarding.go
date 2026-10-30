@@ -33,7 +33,7 @@ func ForwardJestExecution(root, command string) (TestCommand, error) {
 	if !resolution.Matched || resolution.Reason != "" {
 		return plan(command, false), nil // Explicit custom commands remain the caller's choice.
 	}
-	commands, err := staticCommands(command)
+	commands, err := expandedStaticCommands(root, root, command)
 	if err != nil {
 		return TestCommand{}, err
 	}
@@ -74,6 +74,27 @@ func ForwardJestExecution(root, command string) (TestCommand, error) {
 	return plan(shellquote.Join("sh", "-c", body, "ddtest-jest"), skippedLint), nil
 }
 
+// expandedStaticCommands is staticCommands for a command run from directory:
+// unquoted pathname patterns are replaced by the files the shell would pass.
+func expandedStaticCommands(root, directory, command string) ([][]string, error) {
+	fragments, err := discoverCommands(command)
+	if err != nil {
+		return nil, err
+	}
+	var commands [][]string
+	for _, fragment := range fragments {
+		if fragment.Reason != "" {
+			return nil, fmt.Errorf("%s", fragment.Reason)
+		}
+		words, err := expandPathnames(root, directory, fragment)
+		if err != nil {
+			return nil, err
+		}
+		commands = append(commands, words)
+	}
+	return commands, nil
+}
+
 // Package managers append forwarded options to the raw script text. A comment
 // or separator there turns probe options into prose or a separate command.
 func appendsToRunner(directory string, words []string, depth int) bool {
@@ -106,7 +127,7 @@ func appendsToRunner(directory string, words []string, depth int) bool {
 	if !ok || strings.ContainsAny(script, "#;\n&|<>()`$") {
 		return false
 	}
-	commands, err := staticCommands(script)
+	commands, err := expandedStaticCommands(directory, directory, script)
 	if err != nil || len(commands) != 1 {
 		return false
 	}
@@ -121,16 +142,27 @@ func forwardJestScript(root, directory, command string, depth int, count *int, s
 	if depth >= 16 || strings.ContainsAny(command, ";\n") {
 		return "", fmt.Errorf("only bounded literal && sequences can be forwarded")
 	}
-	commands, err := staticCommands(command)
+	fragments, err := discoverCommands(command)
 	if err != nil {
 		return "", err
 	}
-	var parts []string
-	for _, words := range commands {
-		for _, word := range words {
-			if strings.ContainsAny(word, "*?[") {
+	for _, fragment := range fragments {
+		if fragment.Reason != "" {
+			return "", fmt.Errorf("%s", fragment.Reason)
+		}
+		for i, word := range fragment.Words {
+			if !slices.Contains(fragment.Patterns, i) && strings.ContainsAny(word, "*?[") {
 				return "", fmt.Errorf("shell glob expansion requires review")
 			}
+		}
+	}
+	var parts []string
+	for _, fragment := range fragments {
+		// Expand patterns where the shell would, after any preceding cd, so
+		// the forwarded command passes the runner the same file list.
+		words, err := expandPathnames(root, directory, fragment)
+		if err != nil {
+			return "", err
 		}
 		prefix := []string{}
 		for len(words) > 0 && strings.Contains(words[0], "=") {
@@ -152,8 +184,8 @@ func forwardJestScript(root, directory, command string, depth int, count *int, s
 			continue
 		}
 		part := shellCommand(words)
-		remaining := packageScriptExpansionLimit
-		resolution := resolveJestSequence(root, directory, part, nil, &remaining)
+		remaining := &scriptBudget{left: packageScriptExpansionLimit}
+		resolution := resolveJestSequence(root, directory, part, nil, remaining)
 		if resolution.Matched {
 			switch words[0] {
 			case "jest", "./node_modules/.bin/jest", "node_modules/.bin/jest":

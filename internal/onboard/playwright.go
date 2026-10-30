@@ -81,8 +81,8 @@ func PlaywrightValidationCommandInScope(root, command string, scope ValidationSc
 		}
 		return "", nil
 	}
-	remaining := 256
-	resolution := resolveJestSequence(root, root, command, nil, &remaining, "playwright")
+	remaining := &scriptBudget{left: 256}
+	resolution := resolveJestSequence(root, root, command, nil, remaining, "playwright")
 	if resolution.Reason != "" || !resolution.SingleJest || len(resolution.Tests) != 1 || filepath.Clean(resolution.Tests[0].Directory) != "." || len(resolution.Tests[0].Prerequisites) > 0 {
 		reason := resolution.Reason
 		if reason == "" {
@@ -96,7 +96,7 @@ func PlaywrightValidationCommandInScope(root, command string, scope ValidationSc
 // Scope unrelated Turbo jobs only when a literal task has no dependencies and
 // every workspace script can be inspected. Never assume an opaque wrapper is
 // unrelated, and never replace a Turbo test task with a guessed execution plan.
-func reviewPlaywrightTurbo(root, directory string, words, stack []string, remaining *int) commandResolution {
+func reviewPlaywrightTurbo(root, directory string, words, stack []string, remaining *scriptBudget) commandResolution {
 	unresolved := func() commandResolution {
 		return unresolvedCommand("Turbo task requires separate scope/setup review: " + shellquote.Join(words...))
 	}

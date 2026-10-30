@@ -67,8 +67,8 @@ func reviewMochaBrowserStep(root, directory, command string) (commandResolution,
 		}
 		commands = append(commands, shellquote.Join(words...))
 	}
-	remaining := packageScriptExpansionLimit
-	result := resolveJestSequence(root, directory, strings.Join(commands, "\n"), nil, &remaining, "mocha")
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	result := resolveJestSequence(root, directory, strings.Join(commands, "\n"), nil, remaining, "mocha")
 	if result.Matched || result.Reason != "" || !strings.Contains(result.ReviewReason, "browser") {
 		return commandResolution{}, false
 	}
