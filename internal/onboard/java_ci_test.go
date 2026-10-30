@@ -529,3 +529,32 @@ jobs:
 	require.Equal(t, []string{" inconclusive"}, runtimes("on: push\njobs:\n  build:\n    steps:\n      - run: echo\n", scan), "without a local caller, callers elsewhere choose it")
 	require.Equal(t, []string{" inconclusive"}, runtimes("on: push\njobs:\n"+call("release", "'11'"), strings.Replace(scan, "on:\n  workflow_call:", "on:\n  push:\n  workflow_call:", 1)), "other triggers run it without inputs")
 }
+
+func TestJavaCIConfigurationRequiresCallersToPassTheAPIKey(t *testing.T) {
+	scan := func(declared string) string {
+		return "on:\n  workflow_call:\n    secrets:\n" + declared + "      SCANNER: {required: true}\njobs:\n  scan:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '11'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}\n      - run: mvn verify\n"
+	}
+	declared := "      DD_API_KEY: {required: true}\n"
+	for _, tc := range []struct {
+		name, declared, secrets string
+		passes                  bool
+	}{
+		{"inherited", "", "inherit", true},
+		{"passed by name", declared, "{SCANNER: x, DD_API_KEY: '${{ secrets.DD_API_KEY }}'}", true},
+		{"omitted, as java-jwt's release.yml", declared, "{SCANNER: x}", false},
+		{"passed without a declaration", "", "{SCANNER: x, DD_API_KEY: '${{ secrets.DD_API_KEY }}'}", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			callers := "on: push\njobs:\n  release:\n    uses: ./.github/workflows/scan.yml\n    secrets: " + tc.secrets + "\n"
+			root := javaWorkflowFixture(t, callers, map[string]string{"pom.xml": javaJUnit5POM, ".github/workflows/scan.yml": scan(tc.declared)})
+			jobs := JavaCIConfiguration(root, "junit5", "").Jobs
+			require.Len(t, jobs, 1)
+			if tc.passes {
+				require.Equal(t, "not checked", jobs[0].Status, jobs[0].Reason)
+				return
+			}
+			require.Equal(t, CodeIncompleteCISetup, jobs[0].Code)
+			require.Contains(t, jobs[0].Reason, "api_key reads secrets.DD_API_KEY, which not every caller in this repository passes")
+		})
+	}
+}

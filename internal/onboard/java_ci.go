@@ -365,24 +365,17 @@ func javaWorkflowCalls(workflows []ciWorkflow, workflow ciWorkflow) []map[string
 		}
 	}
 	var calls []map[string]string
-	for _, caller := range workflows {
-		for _, name := range slices.Sorted(maps.Keys(caller.Jobs)) {
-			job := caller.Jobs[name]
-			target, _, _ := strings.Cut(job.Uses, "@")
-			if !strings.HasPrefix(target, "./") || filepath.Clean(strings.TrimPrefix(target, "./")) != workflow.Path {
-				continue
+	for _, job := range localCallers(workflows, workflow) {
+		inputs := maps.Clone(defaults)
+		for key, value := range job.With {
+			text, scalar := conditionString(value)
+			if !scalar || strings.Contains(text, "${{") {
+				return unresolved
 			}
-			inputs := maps.Clone(defaults)
-			for key, value := range job.With {
-				text, scalar := conditionString(value)
-				if !scalar || strings.Contains(text, "${{") {
-					return unresolved
-				}
-				inputs[key] = text
-			}
-			if !slices.ContainsFunc(calls, func(known map[string]string) bool { return maps.Equal(known, inputs) }) {
-				calls = append(calls, inputs)
-			}
+			inputs[key] = text
+		}
+		if !slices.ContainsFunc(calls, func(known map[string]string) bool { return maps.Equal(known, inputs) }) {
+			calls = append(calls, inputs)
 		}
 	}
 	if len(calls) == 0 {
@@ -431,6 +424,24 @@ func javaWithInputs(workflow ciWorkflow, inputs map[string]string) ciWorkflow {
 	workflow.Jobs = jobs
 	return workflow
 }
+
+// javaReusableSecretProblem explains an api_key secret that not every caller
+// of a reusable workflow passes. Without a caller in the repository, one that
+// only workflow_call starts cannot be verified; another runs on its own events.
+func javaReusableSecretProblem(workflows []ciWorkflow, workflow ciWorkflow, apiKey string) string {
+	match := secretName.FindStringSubmatch(apiKey)
+	if !workflowCall(workflow.On) || match == nil || len(localCallers(workflows, workflow)) == 0 && !onlyWorkflowCall(workflow.On) {
+		return ""
+	}
+	if reusableSecretForwarded(workflows, workflow, match[1]) {
+		return ""
+	}
+	name := match[1]
+	return "This reusable workflow's api_key reads secrets." + name + ", which not every caller in this repository passes: pass it from each caller with secrets: inherit, or with secrets: {" + name + ": ${{ secrets." + name + " }}} and declare it under on.workflow_call.secrets. A required secret a caller omits fails that workflow, and callers in other repositories can't be verified."
+}
+
+// secretName is the secret an expression such as ${{ secrets.DD_API_KEY }} reads.
+var secretName = regexp.MustCompile(`^\$\{\{\s*secrets\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$`)
 
 // javaActionStep reports a step that runs the Datadog action.
 func javaActionStep(step runtimeStep) bool {
@@ -556,6 +567,8 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 						finding.Reason = "The Datadog action's java-tracer-version " + strconv.Quote(tracer) + " is not an exact release; set an exact version such as 1.67.1."
 					case setupActionProblem(finding, site) != "":
 						finding.Code, finding.Reason = CodeIncompleteCISetup, setupActionProblem(finding, site)
+					case javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"]) != "":
+						finding.Code, finding.Reason = CodeIncompleteCISetup, javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"])
 					default:
 						// Release notes, not version numbers, say which JDKs an agent
 						// release supports, so the pair is validated by running it.
