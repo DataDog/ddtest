@@ -221,8 +221,8 @@ func pluginSetupRefusal(root, framework string) string {
 
 // PlanProviderSetup plans enabling the selected CI provider's plugin setup
 // (see providerWritesPluginSetup) for every job that runs framework's tests,
-// reporting to site (empty: any), without changing the repository. A job whose setup is
-// already complete keeps it; one that differs is completed.
+// reporting to site (empty: any), without changing the repository. A job
+// whose setup is already complete keeps it; one that differs is completed.
 func PlanProviderSetup(root, framework, site string) (*SetupPlan, error) {
 	provider, err := currentCIProvider(root)
 	if err != nil {

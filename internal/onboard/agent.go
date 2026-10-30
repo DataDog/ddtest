@@ -298,7 +298,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		if flag.value != "" && (automatic || flag.name != "format" || flag.value != "agent") {
 			command = append(command, "--"+flag.name, flag.value)
 		}
-		if flag.value != "" && flag.name != "tracer-version" && flag.name != "facts" && flag.name != "command" {
+		if flag.value != "" {
 			apply = append(apply, "--"+flag.name, flag.value)
 		}
 	}

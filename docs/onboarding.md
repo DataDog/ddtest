@@ -701,7 +701,7 @@ RubyGems before 3.3.22.
 jobs run the tests; the only language input is the plugin's language token
 (`'JAVASCRIPT'`, `'RUBY'`). `serviceName` is the project's name (the
 `package.json` `name`, or the name the only root gemspec sets), otherwise the
-checkout directory's. In a declarative pipeline it adds
+repository's (its `origin` remote's name, or the checkout directory's). In a declarative pipeline it adds
 `datadog(testOptimization: [enabled: true, serviceName: '<service>', languages: [...]])`
 to the top-level `options` directive, creating the directive on its own lines
 after `agent` or `environment` (whichever comes last); an `options` written on

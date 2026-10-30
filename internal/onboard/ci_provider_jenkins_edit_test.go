@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -95,7 +96,10 @@ func providerJobsMissingSetup(t *testing.T, root, framework string) bool {
 	workflows, err := readProviderWorkflows(jenkins{}, root)
 	require.NoError(t, err)
 	for _, workflow := range workflows {
-		for name := range workflow.Jobs {
+		for name, job := range workflow.Jobs {
+			if job.SetupUnsupported != "" {
+				continue // The plugin does not instrument it; it stays reported.
+			}
 			if problem := providerJobSetupProblem(root, jenkins{}, workflow, name, discoveryLanguageName(framework), framework, "datadoghq.com"); problem != "" {
 				t.Log(name, problem)
 				return true
@@ -208,4 +212,26 @@ func TestJenkinsJavaScriptPlanCompletesTheOption(t *testing.T) {
 
 	_, err = plan("jest", "pipeline {\n  agent any\n  stages {\n    stage('Test') {\n      options { datadog(testOptimization: [enabled: true, serviceName: 'web', languages: ['JAVASCRIPT']]) }\n      steps { sh 'npm test' }\n    }\n  }\n}\n")
 	require.ErrorContains(t, err, "is in a stage's options", "a stage-level option is never certified, so the edit is refused")
+}
+
+// Without a project name, serviceName is the repository's: its origin
+// remote's name, otherwise the checkout directory's.
+func TestJenkinsServiceNameFallsBackToTheRepository(t *testing.T) {
+	root := jenkinsApplyRepository(t, "jest", "node {\n  sh 'npm test'\n}\n")
+	writeFile(t, root, "package.json", `{"scripts": {"test": "jest"}, "devDependencies": {"jest": "30.0.0"}}`)
+	service := func() string {
+		plan, err := PlanProviderSetup(root, "jest", "")
+		require.NoError(t, err)
+		require.Len(t, plan.edits, 1)
+		after := string(plan.edits[0].after)
+		start := strings.Index(after, "serviceName: '") + len("serviceName: '")
+		return after[start : start+strings.Index(after[start:], "'")]
+	}
+	require.Equal(t, filepath.Base(root), service())
+	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "git@github.com:acme/web-app.git"}} {
+		command := exec.Command("git", args...)
+		command.Dir = root
+		require.NoError(t, command.Run())
+	}
+	require.Equal(t, "web-app", service())
 }

@@ -7,6 +7,7 @@ package onboard
 
 import (
 	"maps"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -28,6 +29,20 @@ import (
 
 // jenkinsServiceName is a service name the edit writes as a literal.
 var jenkinsServiceName = regexp.MustCompile(`^[A-Za-z0-9@][A-Za-z0-9@._/-]*$`)
+
+// repositoryName is the name of the repository at root: its origin
+// remote's last path segment, otherwise the checkout directory's name.
+func repositoryName(root string) string {
+	command := exec.Command("git", "config", "--get", "remote.origin.url")
+	command.Dir = root
+	if output, err := command.Output(); err == nil {
+		url := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(string(output)), "/"), ".git")
+		if name := url[strings.LastIndexAny(url, "/:")+1:]; jenkinsServiceName.MatchString(name) {
+			return name
+		}
+	}
+	return filepath.Base(root)
+}
 
 // jenkinsEdit replaces source[start:end] with text.
 type jenkinsEdit struct {
@@ -63,7 +78,7 @@ type jenkinsShTarget struct {
 func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []ciSetupTarget, request ciSetupRequest) ([]setupEdit, []string, error) {
 	service := request.Service
 	if !jenkinsServiceName.MatchString(service) {
-		service = filepath.Base(root)
+		service = repositoryName(root)
 	}
 	if !jenkinsServiceName.MatchString(service) {
 		return nil, nil, &SetupGap{"Jenkins", "ddtest could not derive a service name for serviceName from the project or the checkout directory (" + strconv.Quote(service) + "); add the Datadog Jenkins plugin setup by hand with a serviceName of your choice, as onboard --instructions shows, then validate with testdrive --all."}
