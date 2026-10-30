@@ -44,7 +44,7 @@ class InstallTests(unittest.TestCase):
         self.dir = self.root / "bin"
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Recording, directory=self.assets))
         server.paths = self.paths = []
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         self.url = f"http://127.0.0.1:{server.server_port}"
