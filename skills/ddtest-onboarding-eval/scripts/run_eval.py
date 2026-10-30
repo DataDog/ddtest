@@ -9,8 +9,9 @@ import hashlib
 import math
 import json
 import os
+import posixpath
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shlex
 import shutil
 import selectors
@@ -368,12 +369,36 @@ JAVA_RUNTIME_SCRIPT = (
 
 
 def report_preflight_runtime(report, requested):
-    # Ruby and Java reports serialize the interpreter or JDK as preflight.runtime.
+    # Non-Node reports serialize the selected interpreter or JDK as preflight.runtime.
     observed = sorted({preflight["runtime"] for preflight in [report.get("preflight") or {},
         *[(configuration.get("preflight") or {}) for configuration in report.get("configurations") or []]]
         if isinstance(preflight, dict) and isinstance(preflight.get("runtime"), str) and preflight.get("runtime")})
     return {"requested_version": requested, "observed_versions": observed,
             "status": "not observed" if not observed else "matched" if observed == [requested] else "mismatch"}
+
+
+def report_python_runtime(report, requested):
+    audit = report_preflight_runtime(report, requested["version"])
+    environments = [{"executable": preflight.get("executable"), "prefix": preflight.get("prefix")}
+        for preflight in [report.get("preflight"),
+            *[configuration.get("preflight") for configuration in report.get("configurations") or []]]
+        if isinstance(preflight, dict) and any(preflight.get(key) for key in ("runtime", "executable", "prefix"))]
+    audit.update(requested_executable=requested["executable"], requested_prefix=requested["prefix"],
+                 observed_environments=environments)
+    if audit["status"] == "matched":
+        if not environments or any(not isinstance(item[key], str) or not item[key]
+                                   for item in environments for key in ("executable", "prefix")):
+            audit["status"] = "not observed"
+        else:
+            # Venv interpreters commonly symlink to the base interpreter. Compare
+            # container paths lexically, allowing python/python3 in the same bin.
+            executable = PurePosixPath(posixpath.normpath(requested["executable"]))
+            prefix = PurePosixPath(posixpath.normpath(requested["prefix"]))
+            if any(PurePosixPath(posixpath.normpath(item["prefix"])) != prefix or
+                   PurePosixPath(posixpath.normpath(item["executable"])).parent != executable.parent
+                   for item in environments):
+                audit["status"] = "mismatch"
+    return audit
 
 
 def agent_command(agent, model):
@@ -457,6 +482,12 @@ def run(args):
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError("--ddtest must be an executable file")
     node = getattr(args, "node", None)
+    python = getattr(args, "python", None)
+    if python is not None:
+        if node is not None or getattr(args, "framework", None) != "pytest":
+            raise ValueError("--python requires --framework pytest and cannot be combined with --node")
+        if not python.is_absolute() or ".." in python.parts:
+            raise ValueError("--python must be an absolute executable path inside the image")
     if node is not None:
         if args.agent != "codex":
             raise ValueError("--node currently requires --agent codex")
@@ -501,7 +532,8 @@ def run(args):
                       ("PNPM_HOME", "pnpm-home"), ("TMPDIR", "tmp"),
                       ("CYPRESS_CACHE_FOLDER", "cypress"),
                       ("PLAYWRIGHT_BROWSERS_PATH", "playwright"),
-                      ("PUPPETEER_CACHE_DIR", "puppeteer")):
+                      ("PUPPETEER_CACHE_DIR", "puppeteer"),
+                      ("PIP_CACHE_DIR", "pip"), ("UV_CACHE_DIR", "uv")):
         directory = trial / name if key == "XDG_STATE_HOME" else trial / "caches" / name
         directory.mkdir(parents=True, exist_ok=True)
         env[key] = str(directory)
@@ -521,6 +553,10 @@ def run(args):
     pnpm_config.write_text(f"store-dir={inside(pnpm_store)}\ncache-dir={inside(pnpm_cache)}\n")
     pnpm_config.with_name("config.yaml").write_text(
         f"storeDir: {json.dumps(inside(pnpm_store))}\ncacheDir: {json.dumps(inside(pnpm_cache))}\n")
+    if python is not None:
+        env["VIRTUAL_ENV"] = inside(trial / "venv")
+        env["UV_PROJECT_ENVIRONMENT"] = env["VIRTUAL_ENV"]
+        env["PATH"] = inside(trial / "venv" / "bin") + os.pathsep + env.get("PATH", "")
     if node is not None:
         (bin_dir / "node").symlink_to(node)
         zdotdir = trial / "zsh"
@@ -535,13 +571,16 @@ def run(args):
         env["PATH"] = str(tools / "node_modules" / ".bin") + os.pathsep + env.get("PATH", "")
     env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
     agent_argv = agent_command(args.agent, args.model)
-    if node is not None:
+    if (node is not None or python is not None) and args.agent == "codex":
         # .zshenv also runs in non-login shells. Isolate it and disable shell
         # snapshots so neither host startup files nor an old snapshot reset PATH.
         agent_argv[2:2] = ["-c", "allow_login_shell=false", "-c",
                            "features.shell_snapshot=false", "-c",
                            "shell_environment_policy.set.PATH=" + json.dumps(env["PATH"]), "-c",
                            "shell_environment_policy.set.ZDOTDIR=" + json.dumps(env["ZDOTDIR"])]
+        if python is not None:
+            for key in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT"):
+                agent_argv[2:2] = ["-c", "shell_environment_policy.set." + key + "=" + json.dumps(env[key])]
     framework = getattr(args, "framework", None)
     scope = f" for {framework} only" if framework else ""
     prompt = f"Use ddtest in {bin_dir} and onboard this repository to test-optimization{scope}."
@@ -555,11 +594,11 @@ def run(args):
     manifest["private_caches"] = {key: env[key] for key in (
         "npm_config_cache", "YARN_CACHE_FOLDER", "XDG_CACHE_HOME", "XDG_DATA_HOME",
         "XDG_STATE_HOME", "XDG_CONFIG_HOME", "PNPM_HOME", "TMPDIR",
-        "CYPRESS_CACHE_FOLDER", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR")}
+        "CYPRESS_CACHE_FOLDER", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR", "PIP_CACHE_DIR", "UV_CACHE_DIR")}
     manifest["private_caches"]["pnpm_store"] = str(pnpm_store)
     manifest["private_caches"]["pnpm_cache"] = str(pnpm_cache)
-    if node is not None:
-        manifest["shell_isolation"] = {"zdotdir": env["ZDOTDIR"], "login_shell": False, "shell_snapshot": False}
+    if node is not None or python is not None:
+        manifest["shell_isolation"] = {"zdotdir": env["ZDOTDIR"], "login_shell": False if args.agent == "codex" else "CLI default", "shell_snapshot": False if args.agent == "codex" else "not applicable"}
     activity = (output / "activity.jsonl").open("w")
     agent_failed = False
     agent_completed = False
@@ -714,8 +753,23 @@ def run(args):
                 raise RuntimeError(f"Requested pnpm {pnpm}; pnpm {selected} runs in the checkout")
             manifest["package_manager"] = {"pnpm": selected, "requested": pnpm}
             manifest.pop("failure_stage", None)
+        requested_python_version = None
+        if python is not None:
+            manifest["failure_stage"] = "python_environment"
+            requested_python_version = command([str(python), "-c", "import platform; print(platform.python_version())"])
+            manifest["python_runtime"] = {"requested": str(python), "requested_version": requested_python_version}
+            command([str(python), "-m", "venv", env["VIRTUAL_ENV"]])
         for setup in setup_commands:
             command(setup, cwd=checkout)
+        if framework == "pytest":
+            manifest["failure_stage"] = "python_environment"
+            runtime = json.loads(command(["python", "-c", "import json, platform, sys; print(json.dumps({'executable': sys.executable, 'version': platform.python_version(), 'prefix': sys.prefix}))"]))
+            manifest["python_runtime"] = {"requested": str(python) if python else None, "requested_version": requested_python_version, **runtime}
+            if python is not None and Path(runtime["prefix"]) != Path(env["VIRTUAL_ENV"]):
+                raise RuntimeError("Selected Python environment did not run; inspect python_runtime")
+            if python is not None and runtime["version"] != requested_python_version:
+                raise RuntimeError("Dependency setup changed the selected Python version; inspect python_runtime")
+            manifest.pop("failure_stage", None)
         status = command(["git", "status", "--porcelain"], cwd=checkout)
         if status:
             raise RuntimeError("Dependency setup changed the checkout; choose setup that leaves it clean")
@@ -753,7 +807,7 @@ def run(args):
         if manifest.get("failure_stage")=="model_authentication":
             manifest["failure_kind"]="authentication"
             manifest["retry_recommended"]=False
-        elif manifest.get("failure_stage") in ("runtime_readiness","storage_readiness","package_manager"):
+        elif manifest.get("failure_stage") in ("runtime_readiness","storage_readiness","package_manager","python_environment"):
             manifest["failure_kind"]="evaluator_environment"
             manifest["retry_recommended"]=False
         if manifest.get("status")=="preparing" and not manifest.get("failure_kind"):
@@ -828,14 +882,26 @@ def run(args):
         try:
             manifest["agent_reporting"] = reporting_verdict(final_response, report)
             manifest["ddtest_runtime"] = report_runtime(report, manifest.get("node_runtime", {}).get("version"))
-            for language, name in (("ruby", "Ruby"), ("java", "Java")):
+            for language, name in (("ruby", "Ruby"), ("java", "Java"), ("python", "Python")):
                 if language+"_runtime" not in manifest:
                     continue
-                manifest["ddtest_"+language+"_runtime"] = report_preflight_runtime(report, manifest[language+"_runtime"]["version"])
-                if manifest["ddtest_"+language+"_runtime"]["status"] == "mismatch":
+                selected_runtime = manifest[language+"_runtime"]
+                # Setup can fail after recording the request, before probing identity.
+                if language == "python" and not all(selected_runtime.get(key) for key in ("version", "executable", "prefix")):
+                    continue
+                runtime_audit = (report_python_runtime(report, selected_runtime) if language == "python" else
+                                 report_preflight_runtime(report, selected_runtime["version"]))
+                manifest["ddtest_"+language+"_runtime"] = runtime_audit
+                missing_python_runtime = (
+                    language == "python" and runtime_audit["status"] == "not observed"
+                    and bool(report.get("runs")) and not report.get("check_only")
+                    and (report.get("last_execution") or {}).get("current", True))
+                if runtime_audit["status"] == "mismatch" or missing_python_runtime:
                     manifest["status"], manifest["failure_kind"] = "failed", "evaluator_environment"
                     manifest["failure_stage"] = "ddtest_"+language+"_runtime"
-                    manifest["error"] = "Final ddtest "+name+" runtime differs from the selected image runtime"
+                    manifest["error"] = ("Final ddtest Python runtime identity is missing from current execution evidence"
+                                         if missing_python_runtime else
+                                         "Final ddtest "+name+" runtime differs from the selected image runtime")
                     manifest["retry_recommended"] = False
                     code = 1
         except (AttributeError, TypeError, ValueError) as error:
@@ -899,7 +965,8 @@ def main():
     parser.add_argument("--agent", choices=("codex", "claude"))
     parser.add_argument("--node", type=Path,
                         help="Absolute Node executable for setup and Codex non-login shells; Codex only")
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio", *RUBY_FRAMEWORKS, *JAVA_FRAMEWORKS),
+    parser.add_argument("--python", type=Path, help="Absolute Python executable inside the image; create and activate a private trial venv before setup")
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio", "pytest", *RUBY_FRAMEWORKS, *JAVA_FRAMEWORKS),
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--readiness-command", action="append", default=[], help="Repeatable native runtime/browser readiness checks before the uncoached agent")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")

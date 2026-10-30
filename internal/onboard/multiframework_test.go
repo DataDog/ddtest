@@ -53,6 +53,8 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 				require.Contains(t, output.String(), "`js-tracer-version`")
 			case "vitest", "playwright", "cypress":
 				require.Contains(t, output.String(), "js-tracer-version: <resolved-release>")
+			case "pytest":
+				require.Contains(t, output.String(), "python-tracer-version: '<resolved-release>'")
 			default:
 				require.Contains(t, output.String(), language+"-tracer-version: '' # Latest release")
 			}

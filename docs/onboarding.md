@@ -16,8 +16,9 @@ ddtest onboard --framework vitest --apply --yes
 ```
 
 Use the selected framework name for Jest, Mocha, Playwright, Cucumber or
-WebdriverIO. Cypress hooks still require explicit setup. Python retains its
-existing instructions and testdrive behavior. Ruby supports plain and coordinated
+WebdriverIO. Cypress hooks still require explicit setup. Python/pytest provides
+manual CI guidance and [controlled local validation](running.md#pytest-testdrive-validation).
+Ruby supports plain and coordinated
 RSpec/Minitest validation as described below, and Java supports plain and
 coordinated Maven validation as described in [Java validation](#java-validation);
 automatic apply is JavaScript only. For Ruby and Java, `onboard --apply` returns
