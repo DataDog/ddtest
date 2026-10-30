@@ -56,7 +56,7 @@ func TestProjectDirectory(t *testing.T) {
 }
 
 func TestTestInvocationKeepsTestTasksAndOptions(t *testing.T) {
-	validated, omitted := TestInvocation(strings.Fields("--no-daemon -Pci=true clean build jacocoTestReport sonar --tests com.example.Ignored publish test --tests com.example.ApiTest -x javadoc"))
+	validated, omitted := TestInvocation(strings.Fields("--no-daemon -Pci=true clean build jacocoTestReport sonar --tests com.example.Ignored publish test --tests com.example.ApiTest -x javadoc"), TestTask)
 	require.Equal(t, []string{"--no-daemon", "-Pci=true", "build", "test", "--tests", "com.example.ApiTest", "-x", "javadoc"}, validated)
 	require.Equal(t, []string{"clean", "jacocoTestReport", "sonar", "publish"}, omitted, "--tests after sonar belongs to sonar")
 }
@@ -74,6 +74,15 @@ func TestHelpTaskSelectorIsNotATask(t *testing.T) {
 }
 
 func TestAttachedShortOptionValuesRoundTrip(t *testing.T) {
-	validated, _ := TestInvocation(strings.Fields("-xjavadoc -Dk=v -Pci test"))
+	validated, _ := TestInvocation(strings.Fields("-xjavadoc -Dk=v -Pci test"), TestTask)
 	require.Equal(t, []string{"-x", "javadoc", "-Dk=v", "-P", "ci", "test"}, validated, "an attached value is kept, written as Gradle reads it")
+}
+
+func TestNonTestTasks(t *testing.T) {
+	for _, task := range []string{"clean", "assemble", "javadoc", "spotlessCheck", "detekt", "ktlintCheck", "sonar", "jacocoTestReport", "publish", "dependencies", "bootJar", ":app:distZip"} {
+		require.True(t, NonTestTask(task), task)
+	}
+	for _, task := range []string{"ciTests", "verifyAll", "test", "e2e"} {
+		require.False(t, NonTestTask(task), task)
+	}
 }

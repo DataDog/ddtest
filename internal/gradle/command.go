@@ -105,6 +105,19 @@ func TestTask(task string) bool {
 	return strings.HasSuffix(name, "test") && !slices.ContainsFunc(buildingPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 }
 
+// nonTestPrefixes and nonTestTasks name tasks that, by convention, run no
+// tests: cleaning, building, documentation, analysis and publishing.
+var (
+	nonTestPrefixes = append([]string{"clean", "javadoc", "dokka", "spotless", "ktlint", "detekt", "checkstyle", "pmd", "spotbugs", "sonar", "jacoco", "license", "dist", "publish", "install", "upload", "release"}, buildingPrefixes...)
+	nonTestTasks    = []string{"dependencies", "help", "tasks", "properties", "projects", "wrapper", "buildenvironment", "init", "bootjar", "shadowjar", "bootrun", "run"}
+)
+
+// NonTestTask reports whether a task, by convention, runs no tests.
+func NonTestTask(task string) bool {
+	name := strings.ToLower(taskName(task))
+	return slices.Contains(nonTestTasks, name) || slices.ContainsFunc(nonTestPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+}
+
 // IsTestCommand reports whether a literal Gradle invocation requests a task
 // that runs tests.
 func IsTestCommand(words []string) bool {
@@ -151,14 +164,15 @@ func ProjectDirectory(args []string) (string, error) {
 }
 
 // TestInvocation splits a command into what validation runs, its options and
-// test tasks, and the other tasks it omits, such as publishing, reporting or
-// analysis. A task option such as --tests is kept with its task.
-func TestInvocation(args []string) (validated, omitted []string) {
+// the tasks runsTests accepts, and the other tasks it omits, such as
+// publishing, reporting or analysis. A task option such as --tests is kept
+// with its task.
+func TestInvocation(args []string, runsTests func(string) bool) (validated, omitted []string) {
 	keep := true
 	for _, item := range parse(args) {
 		switch {
 		case item.task != "":
-			keep = TestTask(item.task)
+			keep = runsTests(item.task)
 			if keep {
 				validated = append(validated, item.task)
 			} else {

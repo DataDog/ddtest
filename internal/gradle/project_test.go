@@ -155,26 +155,47 @@ func TestProjectsStayInsideTheRepositoryThroughSymlinks(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestOtherTestTasks(t *testing.T) {
-	for name, build := range map[string]string{
-		"Kotlin registration": `tasks.register<Test>("integrationTest") { }`,
-		"Groovy task":         `task integrationTest(type: Test) { }`,
-		"register with class": `tasks.register("integrationTest", Test) { }`,
-		"test suites":         "testing {\n    suites {\n        val integrationTest by registering(JvmTestSuite::class)\n    }\n}",
+func TestDeclaredTestTasks(t *testing.T) {
+	for build, name := range map[string]string{
+		`tasks.register<Test>("integrationTest") { }`:                                                   "integrationTest",
+		`task ciTests(type: Test) { }`:                                                                  "ciTests",
+		`tasks.register("slowTest", Test) { }`:                                                          "slowTest",
+		`val e2eTest by tasks.registering(Test::class)`:                                                 "e2eTest",
+		"testing {\n    suites {\n        val functional by registering(JvmTestSuite::class)\n    }\n}": "functional",
+		"testing {\n    suites {\n        acceptance(JvmTestSuite) { }\n    }\n}":                       "acceptance",
 	} {
 		root := t.TempDir()
 		writeFile(t, root, "settings.gradle", "include 'app'\n")
 		writeFile(t, root, "app/build.gradle.kts", build)
 		projects, err := Projects(root, ".")
 		require.NoError(t, err)
-		require.True(t, OtherTestTasks(root, ".", projects), name)
+		tasks := DeclaredTestTasks(root, ".", projects)
+		require.Equal(t, []string{name}, tasks.Declared, build)
+		require.False(t, tasks.Unread, build)
+		require.True(t, tasks.Others())
+		require.True(t, tasks.Runs(":app:"+name))
 	}
 	root := t.TempDir()
 	writeFile(t, root, "settings.gradle", "include 'app'\n")
 	writeFile(t, root, "app/build.gradle", "tasks.withType(Test) { useJUnitPlatform() }\n")
 	projects, err := Projects(root, ".")
 	require.NoError(t, err)
-	require.False(t, OtherTestTasks(root, ".", projects), "configuring test tasks declares none")
+	require.False(t, DeclaredTestTasks(root, ".", projects).Others(), "configuring test tasks declares none")
+	writeFile(t, root, "app/build.gradle", "def kind = Test\ntasks.register(name(), kind)\nsuites { }\n")
+	require.True(t, DeclaredTestTasks(root, ".", projects).Unread, "a declaration ddtest cannot name")
+	writeFile(t, root, "app/build.gradle", "")
 	writeFile(t, root, "buildSrc/src/main/kotlin/conventions.gradle.kts", "")
-	require.True(t, OtherTestTasks(root, ".", projects), "convention plugins ddtest does not read may declare some")
+	require.True(t, DeclaredTestTasks(root, ".", projects).Unread, "convention plugins ddtest does not read may declare some")
+}
+
+func TestProjectsRejectsComputedOrAbsoluteProjectDirectories(t *testing.T) {
+	for _, settings := range []string{
+		"include(\":app\")\nproject(\":app\").projectDir = file(\"modules\").resolve(\"app\")\n",
+		"include 'lib'\nproject(':lib').projectDir = file('/shared/lib')\n",
+	} {
+		root := t.TempDir()
+		writeFile(t, root, "settings.gradle.kts", settings)
+		_, err := Projects(root, ".")
+		require.Error(t, err, settings)
+	}
 }

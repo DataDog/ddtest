@@ -107,6 +107,9 @@ func Projects(root, build string) ([]Project, error) {
 	}
 	projects := make([]Project, 0, len(paths)+1)
 	for _, path := range append([]string{":"}, paths...) {
+		if filepath.IsAbs(directories[path]) {
+			return nil, fmt.Errorf("gradle project %s is outside the repository: %s", path, directories[path])
+		}
 		directory := filepath.Join(build, directories[path])
 		if err := insideRoot(root, directory); err != nil {
 			return nil, fmt.Errorf("gradle project %s %w", path, err)
@@ -153,32 +156,75 @@ func insideRoot(root, directory string) error {
 	return nil
 }
 
-// otherTestTask declares a Test task besides test, or a JVM test suite, as
-// tasks.register<Test>("integrationTest"), task it(type: Test) or
-// testing { suites { … } }.
-var otherTestTask = regexp.MustCompile(`type\s*:\s*Test\b|<Test>|\bTest::class\b|,\s*Test\s*[,)]|\bsuites\s*\{`)
+// testTaskNames capture the name of a Test task or JVM test suite a build file
+// declares, as tasks.register<Test>("integrationTest"), task it(type: Test)
+// or val integrationTest by registering(JvmTestSuite::class).
+var testTaskNames = []*regexp.Regexp{
+	regexp.MustCompile(`(?:register|create|maybeCreate)<(?:Test|JvmTestSuite)>\(\s*["'](\w+)["']`),
+	regexp.MustCompile(`(?:register|create|maybeCreate)\(\s*["'](\w+)["']\s*,\s*(?:Test|JvmTestSuite)\b`),
+	regexp.MustCompile(`\btask\s+(\w+)\s*\(\s*type\s*:\s*Test\b`),
+	regexp.MustCompile(`\bval\s+(\w+)\s+by\s+(?:tasks\.)?(?:registering|creating)\(\s*(?:Test|JvmTestSuite)::class`),
+	regexp.MustCompile(`\b(\w+)\s*\(\s*JvmTestSuite\s*\)`),
+}
 
-// OtherTestTasks reports whether the build may have test tasks besides
-// test, which a lifecycle task such as check can run even with -x test: a
-// project declares one, or build logic ddtest does not read, such as buildSrc
-// or an included build, may.
-func OtherTestTasks(root, build string, projects []Project) bool {
+// testTaskDeclaration is any declaration of a Test task or test suite, named
+// or not.
+var testTaskDeclaration = regexp.MustCompile(`type\s*:\s*Test\b|<(?:Test|JvmTestSuite)>|\b(?:Test|JvmTestSuite)::class\b|,\s*(?:Test|JvmTestSuite)\s*[,)]|\bsuites\s*\{`)
+
+// TestTasks are the test tasks a build declares besides test, by name, and
+// whether it may declare others ddtest cannot name: in build logic ddtest
+// does not read, such as buildSrc or an included build, or in a declaration
+// it cannot follow.
+type TestTasks struct {
+	Declared []string
+	Unread   bool
+}
+
+// Runs reports whether a task runs tests: TestTask, or a declared test task.
+func (t TestTasks) Runs(task string) bool {
+	return TestTask(task) || slices.Contains(t.Declared, taskName(task))
+}
+
+// Others reports whether the build may have test tasks besides test, which a
+// lifecycle task such as check runs even with -x test.
+func (t TestTasks) Others() bool {
+	return len(t.Declared) > 0 || t.Unread
+}
+
+// DeclaredTestTasks reads the test tasks a build's projects declare.
+func DeclaredTestTasks(root, build string, projects []Project) TestTasks {
+	var tasks TestTasks
 	if info, err := os.Stat(filepath.Join(root, build, "buildSrc")); err == nil && info.IsDir() {
-		return true
+		tasks.Unread = true
 	}
 	if settings, err := readFirst(root, build, SettingsFiles); err != nil || strings.Contains(settings, "includeBuild") {
-		return true
+		tasks.Unread = true
 	}
 	for _, project := range projects {
 		if project.BuildFile == "" {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(root, project.BuildFile))
-		if err != nil || otherTestTask.MatchString(stripComments(string(data))) {
-			return true
+		if err != nil {
+			tasks.Unread = true
+			continue
+		}
+		source := stripComments(string(data))
+		named := false
+		for _, pattern := range testTaskNames {
+			for _, match := range pattern.FindAllStringSubmatch(source, -1) {
+				named = true
+				if !slices.Contains(tasks.Declared, match[1]) {
+					tasks.Declared = append(tasks.Declared, match[1])
+				}
+			}
+		}
+		if !named && testTaskDeclaration.MatchString(source) {
+			tasks.Unread = true
 		}
 	}
-	return false
+	slices.Sort(tasks.Declared)
+	return tasks
 }
 
 // readFirst reads the first of names in directory that exists; empty when none does.
@@ -257,7 +303,12 @@ func settingsProjects(settings string) ([]string, map[string]string, error) {
 			return nil, nil, fmt.Errorf("settings include more than %d projects", maxProjects)
 		}
 	}
-	for _, match := range projectDirectory.FindAllStringSubmatch(settings, -1) {
+	for _, index := range projectDirectory.FindAllStringSubmatchIndex(settings, -1) {
+		match := []string{settings[index[0]:index[1]], settings[index[2]:index[3]], settings[index[4]:index[5]]}
+		// The assignment must end with file(...), as in file("modules").resolve("app") it does not.
+		if rest := strings.TrimLeft(settings[index[1]:], " \t"); rest != "" && !strings.ContainsAny(rest[:1], "\r\n;}") {
+			return nil, nil, fmt.Errorf("project directories that build logic computes")
+		}
 		path := ":" + strings.TrimPrefix(match[1], ":")
 		if _, known := directories[path]; !known {
 			return nil, nil, fmt.Errorf("projectDir is set for %s, which settings do not include", path)

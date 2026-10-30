@@ -116,3 +116,22 @@ func TestJavaGradleTestExclusionKeepsOtherTestTasksInScope(t *testing.T) {
 	require.Equal(t, "./gradlew check -x test", resolution.Tests[0].Command)
 	require.True(t, javaStep(t, javaWorkflowFixture(t, "", gradleFixture()), "./gradlew check -x test").Review, "without other test tasks, excluding test skips the tests")
 }
+
+func TestJavaGradleCustomTestTaskNames(t *testing.T) {
+	files := gradleFixture()
+	files["app/build.gradle.kts"] += "tasks.register<Test>(\"ciTests\")\n"
+	root := javaWorkflowFixture(t, "", files)
+	resolution := javaStep(t, root, "./gradlew ciTests spotlessCheck")
+	require.True(t, resolution.Matched, "a declared Test task runs tests: %s", resolution.Reason)
+	require.Equal(t, "./gradlew ciTests", resolution.Tests[0].Command)
+	require.Contains(t, strings.Join(resolution.Tests[0].StepScopeNotes, " "), "also runs spotlessCheck")
+	// Without the declaration, an unknown task is outside testing...
+	plain := javaWorkflowFixture(t, "", gradleFixture())
+	require.True(t, javaStep(t, plain, "./gradlew verifyAll").Review)
+	// ...unless build logic ddtest does not read may declare it.
+	files = gradleFixture()
+	files["buildSrc/src/main/kotlin/conventions.gradle.kts"] = ""
+	conventions := javaWorkflowFixture(t, "", files)
+	require.Contains(t, javaStep(t, conventions, "./gradlew verifyAll").Reason, "may be a test task declared by build logic ddtest does not read")
+	require.True(t, javaStep(t, conventions, "./gradlew spotlessCheck").Review, "conventional non-test tasks need no build read")
+}
