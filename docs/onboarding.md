@@ -723,10 +723,15 @@ JUnit XML, matched to the test task path dd-java-agent reports, such as
 the build files declare: `--command` refuses other tasks, and an
 `org.gradle.jvmargs` that attaches dd-java-agent, on the command line or in the
 build's or the user home's `gradle.properties` (`-g` included), is refused like
-`.mvn/jvm.config`. The feature probe runs alone through its project's `test`
-task with `--tests`, for JUnit 4, JUnit 5, TestNG and Spock; for Cucumber JVM,
-Karate, ScalaTest and MUnit, Gradle builds report the features as not available
-yet.
+`.mvn/jvm.config`. The feature probe runs alone, with `--tests`, through a test
+task that ran in the baseline, preferring a project's `test` task: the probe is
+written among the sources of that task's source set, the test source set, a JVM
+test suite's own (`integrationTest(JvmTestSuite)`) or the one a `Test` task's
+`testClassesDirs = sourceSets.<name>.output.classesDirs` names, under
+`src/<set>/java` or a literal `srcDirs` that replaces it. Source sets build
+logic computes leave the features inconclusive. The probe covers JUnit 4,
+JUnit 5, TestNG and Spock; for Cucumber JVM, Karate, ScalaTest and MUnit,
+Gradle builds report the features as not available yet.
 
 Every framework supports plain `ddtest testdrive --all --check-only --yes`
 and full `ddtest testdrive --all --yes` validation, or a focused

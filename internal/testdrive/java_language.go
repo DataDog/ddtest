@@ -146,8 +146,8 @@ func (javaLanguage) installPreview(label string) string {
 
 func (javaLanguage) previewNotes() []string {
 	return []string{
-		"compare native Surefire/Failsafe results without and with dd-java-agent, then feature controls, in a disposable copy; the checkout's target directories are neither read nor changed",
-		"selecting a framework labels the validation; the Maven command still runs every framework the project declares",
+		"compare native Surefire/Failsafe or Gradle test results without and with dd-java-agent, then feature controls, in a disposable copy; the checkout's build output is neither read nor changed",
+		"selecting a framework labels the validation; the Maven or Gradle command still runs every framework the project declares",
 	}
 }
 
@@ -253,7 +253,7 @@ func (javaLanguage) pairedFrameworks() map[string]pairedFramework {
 		// The agent reports no source file for some frameworks, such as
 		// Cucumber, so the probe is matched by module, class and name.
 		probeTelemetry:  verifyJavaTelemetry,
-		missingCoverage: "Java application coverage was not observed. dd-java-agent reports per-test coverage of the classes each test runs; inspect the selected Maven command and its JDK, and check that tests execute application classes from the repository.",
+		missingCoverage: "Java application coverage was not observed. dd-java-agent reports per-test coverage of the classes each test runs; inspect the selected Maven or Gradle command and its JDK, and check that tests execute application classes from the repository.",
 	}
 	adapters := map[string]pairedFramework{}
 	for _, name := range javaProbeFrameworks {
@@ -362,7 +362,24 @@ func (javaLanguage) packageExclusions(t *Testdrive, _ context.Context) (onboard.
 	if err != nil {
 		return onboard.WorkflowCheck{Name: "package_report_exclusions", Status: "failed", Reason: "Cannot read the reactor of a discovered Maven command: " + reportText(err.Error())}, true
 	}
-	return javaPackageExclusions(t.repositoryRoot, poms), true
+	check := javaPackageExclusions(t.repositoryRoot, poms)
+	if check.Status == "passed" && t.javaScopeRunsGradle() {
+		gradleReason := "Gradle commands package only their source sets' resource directories, which do not hold the repository root's .testoptimization/."
+		if len(poms) == 0 {
+			check.Reason = gradleReason
+		} else {
+			check.Reason += " " + gradleReason
+		}
+	}
+	return check, true
+}
+
+// javaScopeRunsGradle reports whether a discovered command runs Gradle.
+func (t *Testdrive) javaScopeRunsGradle() bool {
+	return t.workflowScope != nil && slices.ContainsFunc(t.workflowScope.Commands, func(entry onboard.TestCommand) bool {
+		words, err := shellquote.Split(entry.Command)
+		return err == nil && gradle.Command(words)
+	})
 }
 
 // javaScopePOMs are the POMs, relative to the repository root, of the reactors

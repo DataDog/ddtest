@@ -130,11 +130,11 @@ func TestValidationArgs(t *testing.T) {
 func TestProbeArgs(t *testing.T) {
 	require.Equal(t,
 		[]string{"--info", "-Pci=true", ":app:test", "--tests", "ddtest.DdtestValidationTest", "--rerun-tasks", "--no-build-cache", "--continue", "--no-daemon", "-Dorg.gradle.configuration-cache=false"},
-		ProbeArgs(strings.Fields("--info -Pci=true build test --tests com.example.ApiTest -x test -x javadoc"), ":app", "ddtest.DdtestValidationTest"),
+		ProbeArgs(strings.Fields("--info -Pci=true build test --tests com.example.ApiTest -x test -x javadoc"), ":app:test", "ddtest.DdtestValidationTest"),
 		"only the probe's project test task runs, with the command's options")
 	require.Equal(t,
 		[]string{"-Pci=true", "--info", ":app:test", "--tests", "ddtest.DdtestValidationTest", "--rerun-tasks", "--no-build-cache", "--continue", "--no-daemon", "-Dorg.gradle.configuration-cache=false"},
-		ProbeArgs(strings.Fields("test --fail-fast --rerun -Pci=true integrationTest --debug-jvm --info"), ":app", "ddtest.DdtestValidationTest"),
+		ProbeArgs(strings.Fields("test --fail-fast --rerun -Pci=true integrationTest --debug-jvm --info"), ":app:test", "ddtest.DdtestValidationTest"),
 		"a task's own options stay with the tasks the probe does not run; Gradle's own options are kept wherever they were")
-	require.Equal(t, ":test", ProbeArgs(nil, ":", "ddtest.DdtestValidationTest")[0], "the root project's test task")
+	require.Equal(t, []string{":app:integrationTest", "--tests", "ddtest.DdtestValidationTest"}, ProbeArgs([]string{"integrationTest"}, ":app:integrationTest", "ddtest.DdtestValidationTest")[:3], "the probe runs through the task whose results it joins")
 }

@@ -42,3 +42,17 @@ func TestJavaOnboardIsCoordinated(t *testing.T) {
 	require.Equal(t, "java", discoveryLanguageName("cucumber-java"), "Cucumber JVM is not Cucumber.js")
 	require.Equal(t, "javascript", discoveryLanguageName("cucumber"))
 }
+
+func TestJavaInstructionsDescribeGradleBuilds(t *testing.T) {
+	for name, text := range map[string]string{
+		"agent":  javaDiscovery{}.agentInstructions("junit5", "datadoghq.com"),
+		"manual": javaDiscovery{}.instructions("junit5"),
+	} {
+		for _, phrase := range []string{"Gradle settings and build scripts", "Maven goals or Gradle tasks", "One Maven or Gradle command runs every framework", "GRADLE_OPTS"} {
+			require.Contains(t, text, phrase, name)
+		}
+		require.NotContains(t, text, "One Maven command", name)
+	}
+	require.Contains(t, javaDiscovery{}.instructions("junit5"), "or only Gradle test tasks, and never installs or publishes artifacts")
+	require.Contains(t, javaDiscovery{}.agentInstructions("junit5", ""), "Maven test lifecycle or Gradle test tasks and never installs or publishes")
+}

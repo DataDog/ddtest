@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -282,20 +283,29 @@ func (b *gradleBuild) environment(map[string]string) {}
 
 func (b *gradleBuild) javaHome() (string, string) { return b.home, b.homeSource }
 
-// probe writes the framework's probe class in the project at directory, run
-// alone through that project's test task.
-func (b *gradleBuild) probe(directory, framework string, args []string) (javaProbe, string, error) {
+// gradleProbeLanguages are the source languages of probes other than Java's.
+var gradleProbeLanguages = map[string]string{"spock": "groovy"}
+
+// probe writes the framework's probe class among the sources of the test task
+// whose results it joins, run alone through that task.
+func (b *gradleBuild) probe(target javaProbeTarget, framework string, args []string) (javaProbe, string, error) {
 	if !slices.Contains(gradleProbeFrameworks, framework) {
 		return javaProbe{}, "The " + displayName(framework) + " probe is not available for Gradle builds yet, so its features are not validated; the Gradle probe covers " + strings.Join(gradleProbeFrameworks, ", ") + ".", nil
 	}
-	index := slices.IndexFunc(b.all, func(project gradle.Project) bool { return project.Directory == directory })
-	if index < 0 {
-		return javaProbe{}, "", fmt.Errorf("no Gradle project in %s", directory)
+	project, task, ok := b.task(target.module)
+	if !ok {
+		return javaProbe{}, "", fmt.Errorf("no Gradle test task %s", target.module)
+	}
+	language := cmp.Or(gradleProbeLanguages[framework], "java")
+	set, ok := gradle.TestSourceSet(b.root, project, task)
+	directory, found := gradle.SourceDirectory(b.root, project, set, language)
+	if !ok || !found {
+		return javaProbe{}, "The " + language + " sources of " + target.module + " are set by build logic ddtest does not read, so the probe cannot be placed and its features are not validated.", nil
 	}
 	source := javaProbeSources[framework]
 	return javaProbe{
-		files: []javaProbeFile{{filepath.Join(directory, source.path), source.source}},
-		args:  gradle.ProbeArgs(args, b.all[index].Path, javaProbeClass),
+		files: []javaProbeFile{{filepath.Join(project.Directory, directory, "ddtest", filepath.Base(source.path)), source.source}},
+		args:  gradle.ProbeArgs(args, target.module, javaProbeClass),
 	}, "", nil
 }
 
@@ -318,21 +328,31 @@ func (b *gradleBuild) results(exitCode int, output string) ([]javaResult, string
 	return results, incomplete, nil
 }
 
-// directory is the project whose test task a module label names: a probe in
-// it runs through that task. Other test tasks, such as integrationTest, run
-// other source sets than the probe's.
+// directory is the project whose test task a module label names, when the
+// task's source set is one ddtest reads: a probe among its sources runs
+// through that task.
 func (b *gradleBuild) directory(module string) (string, bool) {
-	path, found := strings.CutSuffix(module, ":test")
-	if !found {
+	project, task, ok := b.task(module)
+	if !ok {
 		return "", false
 	}
-	// The root project's test task is :test.
+	if _, ok := gradle.TestSourceSet(b.root, project, task); !ok {
+		return "", false
+	}
+	return project.Directory, true
+}
+
+// task is the project and task name of a task path, as :app:integrationTest;
+// the root project's tasks are :test and the like.
+func (b *gradleBuild) task(module string) (gradle.Project, string, bool) {
+	index := strings.LastIndex(module, ":")
+	if index < 0 || index == len(module)-1 {
+		return gradle.Project{}, "", false
+	}
+	path := module[:index]
 	if path == "" {
 		path = ":"
 	}
 	project, known := b.byPaths[path]
-	if !known {
-		return "", false
-	}
-	return project.Directory, true
+	return project, module[index+1:], known
 }

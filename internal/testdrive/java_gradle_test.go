@@ -40,9 +40,9 @@ func TestGradleBuildMapsTestTasksToProjects(t *testing.T) {
 		require.True(t, ok, module)
 		require.Equal(t, want, directory, module)
 	}
-	for _, module := range []string{":app:integrationTest", ":missing:test", "app"} {
+	for _, module := range []string{":app:integrationTest", ":missing:test", "app", ":app:"} {
 		_, ok := build.directory(module)
-		require.False(t, ok, "a probe in src/test joins only its project's test task: %s", module)
+		require.False(t, ok, "%s is no test task whose sources ddtest reads", module)
 	}
 }
 
@@ -52,7 +52,7 @@ func TestGradleProbeRunsInTheProjectThatDeclaresTheFramework(t *testing.T) {
 	require.NoError(t, err)
 	module, ok := javaProbeModule(build, []nativeTest{{File: ":lib:test / example.LibTest"}, {File: ":app:test / example.AppTest"}}, "junit5")
 	require.True(t, ok)
-	require.Equal(t, "app", module, "the project declaring JUnit 5 is preferred")
+	require.Equal(t, javaProbeTarget{directory: "app", module: ":app:test"}, module, "the project declaring JUnit 5 is preferred")
 	probe, reason, err := build.probe(module, "junit5", drive.args)
 	require.NoError(t, err)
 	require.Empty(t, reason)
@@ -60,20 +60,59 @@ func TestGradleProbeRunsInTheProjectThatDeclaresTheFramework(t *testing.T) {
 	require.Equal(t, ":app:test", probe.args[0])
 	require.Equal(t, []string{"--tests", javaProbeClass}, probe.args[1:3])
 	_, ok = javaProbeModule(build, []nativeTest{{File: ":app:integrationTest / example.AppIT"}}, "junit5")
-	require.False(t, ok, "no project ran its test task")
+	require.False(t, ok, "no project ran a test task whose sources ddtest reads")
+}
+
+func TestGradleProbeJoinsTheTestTaskThatRan(t *testing.T) {
+	drive, root := gradleFixture(t)
+	requireWriteFile(t, filepath.Join(root, "app", "build.gradle.kts"), `dependencies { testImplementation("org.junit.jupiter:junit-jupiter:5.11.4") }
+testing {
+    suites {
+        val integrationTest by registering(JvmTestSuite::class) {
+            sources { java { setSrcDirs(listOf("src/itest/java")) } }
+        }
+    }
+}
+`)
+	build, err := drive.javaBuild(drive.args)
+	require.NoError(t, err)
+	// A CI step that runs only the suite, as ./gradlew integrationTest.
+	target, ok := javaProbeModule(build, []nativeTest{{File: ":app:integrationTest / example.AppIT"}}, "junit5")
+	require.True(t, ok)
+	require.Equal(t, javaProbeTarget{directory: "app", module: ":app:integrationTest"}, target)
+	probe, reason, err := build.probe(target, "junit5", []string{"integrationTest"})
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	require.Equal(t, filepath.Join("app", "src", "itest", "java", "ddtest", "DdtestValidationTest.java"), probe.files[0].path, "the probe is compiled with the suite's own sources")
+	require.Equal(t, []string{":app:integrationTest", "--tests", javaProbeClass}, probe.args[:3], "and run through the suite's task")
+	// Where both ran, the test task is preferred.
+	target, ok = javaProbeModule(build, []nativeTest{{File: ":app:integrationTest / example.AppIT"}, {File: ":app:test / example.AppTest"}}, "junit5")
+	require.True(t, ok)
+	require.Equal(t, ":app:test", target.module)
+	// Sources build logic computes leave the probe nowhere to go.
+	requireWriteFile(t, filepath.Join(root, "app", "build.gradle.kts"), "testing { suites { val integrationTest by registering(JvmTestSuite::class) { sources { java { setSrcDirs(generatedDirs) } } } } }\n")
+	build, err = drive.javaBuild(drive.args)
+	require.NoError(t, err)
+	_, reason, err = build.probe(javaProbeTarget{directory: "app", module: ":app:integrationTest"}, "junit5", nil)
+	require.NoError(t, err)
+	require.Contains(t, reason, "java sources of :app:integrationTest are set by build logic ddtest does not read")
 }
 
 func TestGradleProbeCoversClassFrameworksOnly(t *testing.T) {
 	drive, _ := gradleFixture(t)
 	build, err := drive.javaBuild(drive.args)
 	require.NoError(t, err)
+	app := javaProbeTarget{directory: "app", module: ":app:test"}
 	for _, name := range gradleProbeFrameworks {
-		_, reason, err := build.probe("app", name, nil)
+		probe, reason, err := build.probe(app, name, nil)
 		require.NoError(t, err)
 		require.Empty(t, reason, name)
+		if name == "spock" {
+			require.Equal(t, filepath.Join("app", "src", "test", "groovy", "ddtest", "DdtestValidationTest.groovy"), probe.files[0].path)
+		}
 	}
 	for _, name := range []string{"cucumber-java", "karate", "scalatest", "munit"} {
-		_, reason, err := build.probe("app", name, nil)
+		_, reason, err := build.probe(app, name, nil)
 		require.NoError(t, err)
 		require.Contains(t, reason, "not available for Gradle builds yet", name)
 	}

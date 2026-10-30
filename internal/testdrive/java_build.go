@@ -49,19 +49,23 @@ type javaBuild interface {
 	arguments(args []string, probe *javaProbe) []string
 	// environment prepares a run's environment.
 	environment(env map[string]string)
-	// probe is framework's controlled probe in the project at directory, or
-	// why it has none.
-	probe(directory, framework string, args []string) (javaProbe, string, error)
+	// probe is framework's controlled probe at target, or why it has none.
+	probe(target javaProbeTarget, framework string, args []string) (javaProbe, string, error)
 	// results reads a run's native results. Missing results are an error
 	// errNoJavaResults wraps; incomplete explains a build that stopped for a
 	// reason other than native test failures.
 	results(exitCode int, output string) (results []javaResult, incomplete string, err error)
-	// directory is the project directory whose tests a module label names.
+	// directory is the project directory whose tests a module label names,
+	// when a probe there can join them.
 	directory(module string) (string, bool)
 	// javaHome is the JDK the build tool selects for itself in place of
 	// JAVA_HOME or PATH, and where that is set; empty when it selects none.
 	javaHome() (home, source string)
 }
+
+// javaProbeTarget is where a probe runs: a project directory, and the module
+// label whose native results it joins there, such as a Gradle test task path.
+type javaProbeTarget struct{ directory, module string }
 
 // errNoJavaResults wraps a build that wrote no native result: a skipped or
 // disabled probe never starts, so its run reports none.
@@ -134,8 +138,8 @@ func (b *mavenBuild) environment(env map[string]string) {
 	env["MAVEN_SKIP_RC"] = "true"
 }
 
-func (b *mavenBuild) probe(directory, framework string, args []string) (javaProbe, string, error) {
-	return javaProbeFor(b.root, directory, framework, args)
+func (b *mavenBuild) probe(target javaProbeTarget, framework string, args []string) (javaProbe, string, error) {
+	return javaProbeFor(b.root, target.directory, framework, args)
 }
 
 func (b *mavenBuild) results(exitCode int, output string) ([]javaResult, string, error) {
