@@ -533,3 +533,231 @@ func TestRuntimeQuestionFetchesNoActionMetadata(t *testing.T) {
 	_, err := fetchRuntimeMetadata(withOfflineRuntimeMetadata(t.Context()), nil, "https://example.invalid/action.yml")
 	require.ErrorContains(t, err, "is not read offline")
 }
+
+// Conflicts follow the runtime the tests start on: an installer after the
+// first test step selects nothing they run on, and one before it still does.
+func TestInstallersAfterTheTestsDoNotConflictWithRuntimeStatements(t *testing.T) {
+	useCIProvider(t, "github")
+	root := newJestRepository(t, `jobs:
+  after:
+    runs-on: self-hosted
+    steps:
+      - run: npm ci
+      - run: npm test
+      - uses: actions/setup-node@v4
+        with: {node-version: 20}
+      - run: nvm install 18
+  before:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: 18}
+      - uses: actions/setup-node@v4
+        with: {node-version: 20}
+      - run: npm ci
+      - run: npm test
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+  skipped-test:
+    runs-on: self-hosted
+    steps:
+      - run: npm test
+        if: false
+      - uses: actions/setup-node@v4
+        with: {node-version: 20}
+      - run: npm test
+`)
+	t.Chdir(root)
+	required := RequiredCIRuntimes(t.Context(), root, "javascript", "jest")
+	require.NotNil(t, required)
+	require.Equal(t, []string{".github/workflows/test.yml / after"}, required.Jobs)
+
+	useCIStatements(t, []string{"after:node=22"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "javascript", "jest"))
+
+	// The tests run on the last selection before them.
+	useCIStatements(t, []string{"before:node=22"})
+	require.ErrorContains(t, CheckCIRuntimeStatements(root), "contradicts Node 20, which actions/setup-node selects in .github/workflows/test.yml / before")
+	useCIStatements(t, []string{"before:node=20"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+
+	// A test step a condition skips is not where the tests start.
+	useCIStatements(t, []string{"skipped-test:node=22"})
+	require.ErrorContains(t, CheckCIRuntimeStatements(root), "contradicts Node 20, which actions/setup-node selects in .github/workflows/test.yml / skipped-test")
+}
+
+func TestRubyInstallersAfterTheTestsDoNotConflictWithRuntimeStatements(t *testing.T) {
+	useCIProvider(t, "github")
+	root := rubyWorkflowFixture(t, `jobs:
+  after:
+    runs-on: [self-hosted, linux]
+    steps:
+      - run: bundle install
+      - run: bundle exec rspec
+      - uses: ruby/setup-ruby@v1
+        with: {ruby-version: '3.2'}
+  before:
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: ruby/setup-ruby@v1
+        with: {ruby-version: '3.2'}
+      - run: bundle install
+      - run: bundle exec rspec
+`)
+	t.Chdir(root)
+	required := RequiredCIRuntimes(t.Context(), root, "ruby", "rspec")
+	require.NotNil(t, required)
+	require.Equal(t, []string{".github/workflows/test.yml / after"}, required.Jobs)
+
+	useCIStatements(t, []string{"after:ruby=3.3"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "ruby", "rspec"))
+
+	useCIStatements(t, []string{"before:ruby=3.3"})
+	require.ErrorContains(t, CheckCIRuntimeStatements(root), "contradicts Ruby 3.2, which ruby/setup-ruby selects in .github/workflows/test.yml / before")
+}
+
+// A job whose tests ddtest cannot recognize keeps every installer: a
+// statement contradicting one is still a conflict.
+func TestInstallersOfAJobWithoutRecognizedTestsStillConflict(t *testing.T) {
+	useCIProvider(t, "github")
+	root := newJestRepository(t, `jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - run: npm ci
+      - uses: actions/setup-node@v4
+        with: {node-version: 20}
+`)
+	t.Chdir(root)
+	useCIStatements(t, []string{"build:node=22"})
+	require.ErrorContains(t, CheckCIRuntimeStatements(root), "contradicts Node 20, which actions/setup-node selects in .github/workflows/test.yml / build")
+}
+
+// A runner from the matrix is resolved per row: a job whose rows all run on
+// self-hosted runners takes a statement like any self-hosted job; in a mixed
+// matrix it applies only to the self-hosted rows, and GitHub-hosted rows keep
+// their own findings. A runner ddtest cannot resolve is taken as written.
+func TestMatrixRunnersTakeRuntimeStatementsPerRow(t *testing.T) {
+	useCIProvider(t, "github")
+	root := newJestRepository(t, `jobs:
+  own:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix: {runner: [self-hosted]}
+    steps:
+      - uses: DataDog/test-visibility-github-action@v2
+        with: {languages: js, api_key: "${{ secrets.DD_API_KEY }}"}
+      - run: npm test
+  mixed:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix: {os: [self-hosted, ubuntu-latest]}
+    steps:
+      - uses: DataDog/test-visibility-github-action@v2
+        with: {languages: js, api_key: "${{ secrets.DD_API_KEY }}"}
+      - run: npm test
+  unresolved:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: DataDog/test-visibility-github-action@v2
+        with: {languages: js, api_key: "${{ secrets.DD_API_KEY }}"}
+      - run: npm test
+`)
+	t.Chdir(root)
+	requirement := func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "5.133.0", Node: ">=18"}, nil
+	}
+	required := RequiredCIRuntimes(t.Context(), root, "javascript", "jest")
+	require.NotNil(t, required)
+	require.Equal(t, []string{".github/workflows/test.yml / mixed", ".github/workflows/test.yml / own"}, required.Jobs)
+	require.Equal(t, []string{"the self-hosted runner self-hosted", "the self-hosted runner self-hosted"}, required.Hosts)
+
+	useCIStatements(t, []string{"node=22"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "javascript", "jest"))
+	workflows, err := readWorkflows(root)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"js": "22"}, workflows[0].Jobs["own"].Stated)
+	require.Equal(t, map[string]string{"js": "22"}, workflows[0].Jobs["mixed"].Stated)
+	require.Nil(t, workflows[0].Jobs["unresolved"].Stated)
+
+	check := checkCIRuntimes(t.Context(), root, nil, requirement, "jest")
+	findings := map[string][]RuntimeFinding{}
+	for _, finding := range check.Jobs {
+		findings[finding.Job] = append(findings[finding.Job], finding)
+	}
+	require.Len(t, findings["own"], 1)
+	require.Equal(t, CodeMissingInitialization, findings["own"][0].Code, findings["own"][0])
+	require.Equal(t, "22", findings["own"][0].Node)
+	require.True(t, findings["own"][0].UserStated)
+
+	// The self-hosted row runs the stated Node; the GitHub-hosted row's Node
+	// stays GitHub's, unknown to ddtest, and is reported, not filled.
+	require.Len(t, findings["mixed"], 2)
+	var stated, hosted RuntimeFinding
+	for _, finding := range findings["mixed"] {
+		if finding.UserStated {
+			stated = finding
+		} else {
+			hosted = finding
+		}
+	}
+	require.Equal(t, "22", stated.Node)
+	require.Equal(t, "the self-hosted runner self-hosted", stated.RuntimeHost)
+	require.Equal(t, CodeMissingInitialization, stated.Code, stated)
+	require.Empty(t, hosted.Node)
+	require.Empty(t, hosted.RuntimeHost)
+	require.Equal(t, StatusInconclusive, hosted.Status)
+	require.Equal(t, CodeRuntimeUnknown, hosted.Code)
+
+	// An unresolvable runner is GitHub's as written: its unknown runtime is
+	// reported as inconclusive, never asked for or filled.
+	require.Len(t, findings["unresolved"], 1)
+	require.Equal(t, StatusInconclusive, findings["unresolved"][0].Status)
+	require.Equal(t, CodeRuntimeUnknown, findings["unresolved"][0].Code)
+	require.False(t, findings["unresolved"][0].UserStated)
+	require.NotEqual(t, StatusCompatible, check.Status)
+
+	statedFacts, unused := StatedFacts(&check, "javascript")
+	require.Equal(t, []string{"Node 22 for .github/workflows/test.yml / mixed, .github/workflows/test.yml / own (--ci-runtime). ddtest checked the tracer against it as it checks a CI image's version."}, statedFacts)
+	require.Empty(t, unused)
+
+	// A statement naming only the unresolvable job is reported as unused.
+	useCIStatements(t, []string{"unresolved:node=22"})
+	check = checkCIRuntimes(t.Context(), root, nil, requirement, "jest")
+	statedFacts, unused = StatedFacts(&check, "javascript")
+	require.Empty(t, statedFacts)
+	require.Equal(t, []string{"--ci-runtime unresolved:node=22 was not used: no validated Node CI job it names has a runtime ddtest could not read."}, unused)
+}
+
+func TestRubyMatrixRunnersTakeRuntimeStatementsPerRow(t *testing.T) {
+	useCIProvider(t, "github")
+	root := rubyWorkflowFixture(t, `jobs:
+  mixed:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix: {os: [self-hosted, ubuntu-latest]}
+    steps:
+      - run: bundle exec rspec
+`)
+	t.Chdir(root)
+	required := RequiredCIRuntimes(t.Context(), root, "ruby", "rspec")
+	require.NotNil(t, required)
+	require.Equal(t, []string{".github/workflows/test.yml / mixed"}, required.Jobs)
+
+	useCIStatements(t, []string{"mixed:ruby=3.3"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "ruby", "rspec"))
+	check := RubyCIConfiguration(root, "rspec")
+	runtimes := map[bool][]string{}
+	for _, finding := range check.Jobs {
+		runtimes[finding.UserStated] = append(runtimes[finding.UserStated], finding.Runtime)
+	}
+	require.Equal(t, map[bool][]string{true: {"3.3"}, false: {""}}, runtimes)
+	stated, unused := StatedFacts(&check, "ruby")
+	require.Len(t, stated, 1)
+	require.True(t, strings.HasPrefix(stated[0], "Ruby 3.3 for .github/workflows/test.yml / mixed (--ci-runtime)."), stated)
+	require.Empty(t, unused)
+}

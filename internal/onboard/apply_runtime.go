@@ -112,7 +112,7 @@ func rowSetupNode(root string, workflow ciWorkflow, job runtimeJob, row map[stri
 // rowSetupNodeBefore is the Node a row's steps select before step limit: the
 // runtime active when that step runs, since a later setup-node can switch it.
 func rowSetupNodeBefore(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, limit int) (string, error) {
-	node, _ := jobBaseNode(job)
+	node, _ := jobBaseNode(job, row)
 	for _, step := range job.Steps[:min(limit, len(job.Steps))] {
 		if version, selected := step.Runtime["js"]; selected {
 			node = imageNode("node:" + version)

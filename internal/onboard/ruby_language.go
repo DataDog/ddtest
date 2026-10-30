@@ -417,27 +417,28 @@ var rubyStatedRuntime = &statedRuntime{
 	Version: rubyImageVersion,
 	Example: "3.3 or 3.3.6",
 	base:    rubyImageSelection,
-	configured: func(_ string, workflow ciWorkflow, job runtimeJob) (string, string) {
+	configured: func(root string, workflow ciWorkflow, job runtimeJob) (string, string) {
 		rows, err := runtimeMatrix(job.Strategy.Matrix)
 		return installedRuntime(rows, err, func(row map[string]any) (string, string, bool) {
 			if active, err := rubyJobActive(job, row); err == nil && !active {
 				return "", "", false
 			}
-			for _, step := range job.Steps {
+			// The tests run on the last selection before them.
+			version, source := "", ""
+			for _, step := range stepsThroughFirstTest(job.Steps, func(step runtimeStep) bool { return rubyTestStep(root, workflow, job, step, row) }) {
 				// A step that may not run selects nothing for certain.
 				if active, err := rubyStepActive(workflow, job, step, row); err != nil || !active {
 					continue
 				}
-				if version := step.Runtime["ruby"]; version != "" {
-					return version, step.Source, true
-				}
-				if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "ruby/setup-ruby" {
-					if version, err := runtimeValue(step.With["ruby-version"], row); err == nil && version != "" {
-						return version, "ruby/setup-ruby", true
+				if selected := step.Runtime["ruby"]; selected != "" {
+					version, source = selected, step.Source
+				} else if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "ruby/setup-ruby" {
+					if selected, err := runtimeValue(step.With["ruby-version"], row); err == nil && selected != "" {
+						version, source = selected, "ruby/setup-ruby"
 					}
 				}
 			}
-			return "", "", true
+			return version, source, true
 		})
 	},
 	check: func(_ context.Context, root, framework string) RuntimeCheck {
@@ -447,6 +448,24 @@ var rubyStatedRuntime = &statedRuntime{
 }
 
 func (rubyDiscovery) statedRuntime() *statedRuntime { return rubyStatedRuntime }
+
+// rubyTestStep reports whether step is a test step of any Ruby framework on a
+// matrix row, as RubyCIConfiguration identifies them: a statement is checked
+// before the framework is known. A step a condition skips on the row is not
+// one.
+func rubyTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) bool {
+	if active, err := rubyStepActive(workflow, job, step, row); err == nil && !active {
+		return false
+	}
+	for _, framework := range (rubyDiscovery{}).frameworks() {
+		resolved, _, _ := resolveVariantStep(workflow, job, step, row, framework)
+		resolution := resolveRubyStep(root, workflow, job, resolved, framework)
+		if !resolution.Review && (resolution.Matched || resolution.Reason != "") {
+			return true
+		}
+	}
+	return false
+}
 
 // rubyImageSelection is the Ruby version or engine a job's image selects, or
 // a Ruby image's floating tag (latest, current, or none): that image's runtime

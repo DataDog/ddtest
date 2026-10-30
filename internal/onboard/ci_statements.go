@@ -90,10 +90,10 @@ type statedRuntime struct {
 	// base is the version a job's image selects, or "" (also for an image
 	// of an engine the tracer cannot instrument: it is not unknown).
 	base func(job runtimeJob) string
-	// configured is the version a job's steps select statically, such as
-	// through a runtime installer, and the step's description; "" when a
-	// matrix row the job runs on keeps the host's runtime (see
-	// installedRuntime).
+	// configured is the version a job's steps select statically by its
+	// first test step, such as through a runtime installer, and the step's
+	// description; "" when a matrix row the job runs on keeps the host's
+	// runtime (see installedRuntime and stepsThroughFirstTest).
 	configured func(root string, workflow ciWorkflow, job runtimeJob) (version, source string)
 	// check inspects the language's CI findings offline; finding.RuntimeHost
 	// marks a runtime only the user can state.
@@ -273,9 +273,10 @@ func (s CIRuntimeStatement) jobMatches(workflow, job string) bool {
 	return s.Job == "" || s.Job == job || s.Job == workflow+" / "+job
 }
 
-// fillStatedRuntimes records, on each job whose image selects no runtime,
-// the version the user stated for it: a statement for the job wins over one
-// for every job.
+// fillStatedRuntimes records, on each job whose image selects no runtime and
+// that runs on a host the user can describe on some matrix row, the version
+// the user stated for it: a statement for the job wins over one for every
+// job. The checks apply it only on those rows (runtimeHost).
 func fillStatedRuntimes(workflows []ciWorkflow) {
 	statements := currentStatements().runtimes
 	if len(statements) == 0 {
@@ -286,7 +287,7 @@ func fillStatedRuntimes(workflows []ciWorkflow) {
 			job.Stated = nil
 			for _, language := range statedRuntimeLanguages() {
 				token, runtime := language.actionLanguage(), language.statedRuntime()
-				if runtime.base(job) != "" || runtimeHost(job, runtime.Display) == "" {
+				if runtime.base(job) != "" || jobRuntimeHost(job, runtime.Display) == "" {
 					continue
 				}
 				version := ""
@@ -318,13 +319,18 @@ func readProviderWorkflows(provider ciProvider, root string) ([]ciWorkflow, erro
 }
 
 // runtimeHost describes where a job whose configuration selects no runtime
-// runs, for a person who knows that host's runtime; empty when ddtest does not
-// take the user's statement for it: a GitHub-hosted runner or job container,
-// whose runtime GitHub defines, and an image ddtest cannot resolve keep their
-// own findings.
-func runtimeHost(job runtimeJob, runtime string) string {
+// runs on a matrix row (nil: the job without a row), for a person who knows
+// that host's runtime; empty when ddtest does not take the user's statement
+// for it: a GitHub-hosted runner or job container, whose runtime GitHub
+// defines, and an image ddtest cannot resolve keep their own findings.
+func runtimeHost(job runtimeJob, row map[string]any, runtime string) string {
 	if activeOrDefaultCIProvider().sharedSyntax() {
-		labels := runnerLabels(job.RunsOn)
+		// A runner from the matrix is the row's; one ddtest cannot resolve is
+		// taken as written, as GitHub-hosted unless a label says otherwise.
+		labels, resolved := rowRunnerLabels(job, row)
+		if !resolved {
+			labels = runnerLabels(job.RunsOn)
+		}
 		if job.Container != nil || !slices.ContainsFunc(labels, func(label string) bool { return strings.EqualFold(label, "self-hosted") }) {
 			return ""
 		}
@@ -338,6 +344,22 @@ func runtimeHost(job runtimeJob, runtime string) string {
 		return "image " + job.Image + ", whose name selects no " + runtime + " version"
 	}
 	return "the " + activeOrDefaultCIProvider().displayName() + " " + agentHost
+}
+
+// jobRuntimeHost is the runtimeHost of the job's first matrix row that has
+// one: a statement for the job fills only those rows (see runtimeHost), and a
+// matrix ddtest cannot expand keeps the job's runner as written.
+func jobRuntimeHost(job runtimeJob, runtime string) string {
+	rows, _, err := jobMatrix(job)
+	if err != nil || len(rows) == 0 {
+		return runtimeHost(job, nil, runtime)
+	}
+	for _, row := range rows {
+		if host := runtimeHost(job, row, runtime); host != "" {
+			return host
+		}
+	}
+	return ""
 }
 
 // agentHost ends the runtimeHost of a job without an image: its commands run
@@ -425,6 +447,20 @@ func installedRuntime(rows []map[string]any, err error, rowRuntime func(row map[
 		}
 	}
 	return version, source
+}
+
+// stepsThroughFirstTest are a row's steps up to and including its first test
+// step, as isTest identifies them: the runtime those tests start on is the
+// one selected by then, and an installer after them selects nothing they run
+// on. It is every step when isTest identifies none, so a job whose tests
+// ddtest cannot recognize keeps every installer.
+func stepsThroughFirstTest(steps []runtimeStep, isTest func(runtimeStep) bool) []runtimeStep {
+	for i, step := range steps {
+		if isTest(step) {
+			return steps[:i+1]
+		}
+	}
+	return steps
 }
 
 // CIRuntimeAmbiguity is two statements that give one job different

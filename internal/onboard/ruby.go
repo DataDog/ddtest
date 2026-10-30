@@ -650,7 +650,7 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 				imageRuby := ruby != ""
 				// The runtime stays the job's own (its host's) until a step
 				// selects one; the user may have stated it.
-				hostRuby := rubyImageSelection(job) == "" && runtimeHost(job, "Ruby") != ""
+				hostRuby := rubyImageSelection(job) == "" && runtimeHost(job, row, "Ruby") != ""
 				statedRuby := hostRuby && job.Stated["ruby"] != ""
 				if statedRuby {
 					// Its RubyGems is checked like an image's of that Ruby.
@@ -735,7 +735,7 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem
 					}
 					if hostRuby {
-						finding.RuntimeHost, finding.UserStated = runtimeHost(job, "Ruby"), statedRuby
+						finding.RuntimeHost, finding.UserStated = runtimeHost(job, row, "Ruby"), statedRuby
 					}
 					if ruby == "" && engine == "" && job.ImageProblem != "" {
 						finding.Reason = rubyUnknownImageReason(provider, job.ImageProblem, setup != nil)

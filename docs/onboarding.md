@@ -100,8 +100,10 @@ never fail onboarding.
 Some CI jobs select no runtime ddtest can read: Buildkite steps on the agent
 host, GitLab jobs without an `image`, CircleCI `machine` and `macos`
 executors, GitHub self-hosted runners (a `self-hosted` label in any `runs-on`
-form, including `{group, labels}`) without an `actions/setup-node` or
-`ruby/setup-ruby` step that runs, and jobs whose image (such as
+form, including `{group, labels}` and a runner a matrix row selects, such as
+`runs-on: ${{ matrix.os }}` with `os: [self-hosted, ubuntu-latest]`) without
+an `actions/setup-node` or `ruby/setup-ruby` step that runs before their
+tests, and jobs whose image (such as
 `ubuntu:22.04`) names no Node or Ruby version. Finding these jobs reads only
 the repository; a Cypress GitHub action job's Node is the action's, not a
 question for the user. For JavaScript and Ruby, `onboard` and `testdrive` then
@@ -116,15 +118,22 @@ unknown; `<job>` is the printed key (`.buildkite/pipeline.yml / :jest: Tests`)
 or the job name alone, and wins over a statement without one. Two statements that name the same job (by
 either key) with different versions are `invalid_options`; the same
 statement twice is accepted once. A matrix job
-takes one value for all its rows. A statement only fills an unknown runtime:
+takes one value for all its rows that run on a host whose runtime ddtest
+cannot read; in a matrix that mixes self-hosted and GitHub-hosted runners, it
+applies to the self-hosted rows only. A runner ddtest cannot resolve (such as
+`runs-on: ${{ inputs.runner }}`) is read as written: without a `self-hosted`
+label it is not asked about, its unknown runtime stays inconclusive, and a
+statement naming only that job is reported as unused. A statement only fills
+an unknown runtime:
 
 - A statement for a job whose configuration selects a different version (its
   image, including a floating tag such as `node:lts`, a runtime installer step,
   `actions/setup-node` or nvm) stops with `ci_runtime_conflict`. A statement
   without a job never conflicts. An installer counts only when it runs on
-  every matrix row the job runs: one whose condition skips it (`if: false`,
-  or on some rows) leaves the host's runtime in place, so the statement fills
-  it.
+  every matrix row the job runs, by the job's first test step: one whose
+  condition skips it (`if: false`, or on some rows) or that runs after the
+  tests leaves the host's runtime in place for them, so the statement fills
+  it. A job ddtest recognizes no test step in keeps every installer.
 - GitHub-hosted runners and job containers, and images ddtest cannot resolve,
   keep their own findings: their runtime is in the configuration.
 - The stated version goes through every check an image tag's goes through:

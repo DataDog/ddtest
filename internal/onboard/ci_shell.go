@@ -455,19 +455,34 @@ func matrixRowRunner(job runtimeJob, row map[string]any) string {
 	if row == nil {
 		return ""
 	}
-	labels := runnerLabels(job.RunsOn)
-	if len(labels) == 0 {
+	labels, ok := rowRunnerLabels(job, row)
+	if !ok {
 		return ""
 	}
 	runner := rowOther
 	for _, label := range labels {
-		resolved, err := runtimeValue(label, row)
-		if err != nil || resolved == "" {
-			return ""
-		}
-		if strings.Contains(strings.ToLower(resolved), "windows") {
+		if strings.Contains(strings.ToLower(label), "windows") {
 			runner = rowWindows
 		}
 	}
 	return runner
+}
+
+// rowRunnerLabels resolves job's runs-on labels for one matrix row (nil: the
+// job without a row); ok is false when there is none or a label can't be
+// resolved statically.
+func rowRunnerLabels(job runtimeJob, row map[string]any) ([]string, bool) {
+	labels := runnerLabels(job.RunsOn)
+	if len(labels) == 0 {
+		return nil, false
+	}
+	resolved := make([]string, 0, len(labels))
+	for _, label := range labels {
+		value, err := runtimeValue(label, row)
+		if err != nil || value == "" {
+			return nil, false
+		}
+		resolved = append(resolved, value)
+	}
+	return resolved, true
 }

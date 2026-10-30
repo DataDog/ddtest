@@ -73,7 +73,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			}
 			// The runtime the tests run on: the image's, or one a modeled
 			// installer selects before them.
-			node, _ := jobBaseNode(job)
+			node, _ := jobBaseNode(job, nil)
 			if selected, err := rowSetupNodeBefore(root, workflow, job, nil, first); err == nil {
 				node = selected
 			}

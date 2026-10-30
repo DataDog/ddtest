@@ -148,24 +148,24 @@ var javascriptStatedRuntime = &statedRuntime{
 			if active, err := runtimeJobActive(workflow, job, row); err == nil && !active {
 				return "", "", false
 			}
-			for _, step := range job.Steps {
+			// The tests run on the last selection before them.
+			version, source := "", ""
+			for _, step := range stepsThroughFirstTest(job.Steps, func(step runtimeStep) bool { return javascriptTestStep(root, workflow, job, step, row) }) {
 				// A step that may not run selects nothing for certain.
 				if active, err := runtimeStepActive(workflow, job, step, row); err != nil || !active {
 					continue
 				}
-				if version := step.Runtime["js"]; version != "" {
-					return version, step.Source, true
-				}
-				if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "actions/setup-node" {
-					if version, err := setupNodeVersion(root, step, row); err == nil && version != "" {
-						return version, "actions/setup-node", true
+				if selected := step.Runtime["js"]; selected != "" {
+					version, source = selected, step.Source
+				} else if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == "actions/setup-node" {
+					if selected, err := setupNodeVersion(root, step, row); err == nil && selected != "" {
+						version, source = selected, "actions/setup-node"
 					}
-				}
-				if version := nvmRuntime(step.Run); version != "" {
-					return version, "nvm", true
+				} else if selected := nvmRuntime(step.Run); selected != "" {
+					version, source = selected, "nvm"
 				}
 			}
-			return "", "", true
+			return version, source, true
 		})
 	},
 	check: func(ctx context.Context, root, framework string) RuntimeCheck {
@@ -180,13 +180,36 @@ var javascriptStatedRuntime = &statedRuntime{
 
 func (javascriptDiscovery) statedRuntime() *statedRuntime { return javascriptStatedRuntime }
 
-// jobBaseNode is the Node a job starts with: its image's, else the one the
-// user stated for it, else "".
-func jobBaseNode(job runtimeJob) (node, source string) {
+// javascriptTestStep reports whether step may start a test of any JavaScript
+// framework on a matrix row, as checkCIRuntimes identifies test steps: a
+// statement is checked before the framework is known. A step a condition
+// skips on the row is not one.
+func javascriptTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) bool {
+	if active, err := runtimeStepActive(workflow, job, step, row); err == nil && !active {
+		return false
+	}
+	for _, framework := range (javascriptDiscovery{}).frameworks() {
+		resolved, _, err := resolveVariantStep(workflow, job, step, row, framework)
+		if err != nil {
+			resolved = step
+		}
+		resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+		if !resolution.Review && startsTests(root, workflow, job, resolved, resolution, framework) {
+			return true
+		}
+	}
+	return false
+}
+
+// jobBaseNode is the Node a job starts with on a matrix row (nil: the job
+// without a row): its image's, else the one the user stated for the row's
+// host, else "". A GitHub-hosted row of a matrix that also runs on
+// self-hosted runners keeps GitHub's runtime.
+func jobBaseNode(job runtimeJob, row map[string]any) (node, source string) {
 	if node := imageNode(job.Image); node != "" {
 		return node, "image " + job.Image
 	}
-	if node := job.Stated["js"]; node != "" {
+	if node := job.Stated["js"]; node != "" && runtimeHost(job, row, "Node") != "" {
 		return node, statedRuntimeSource
 	}
 	return "", ""

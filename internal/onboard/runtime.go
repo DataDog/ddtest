@@ -158,7 +158,8 @@ type runtimeJob struct {
 	// written; empty when it can or the provider does not check.
 	SetupImageProblem string `yaml:"-"`
 	// Stated holds the runtime versions the user stated for this job, by
-	// installer token, when its image selects none (see --ci-runtime).
+	// installer token, when its image selects none (see --ci-runtime). They
+	// apply only on matrix rows whose runtimeHost is not empty.
 	Stated map[string]string `yaml:"-"`
 }
 
@@ -470,7 +471,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		return []RuntimeFinding{finding}
 	}
 	state := runtimeState{}
-	if node, source := jobBaseNode(job); node != "" {
+	if node, source := jobBaseNode(job, row); node != "" {
 		state.node, state.source, state.platform = node, source, "linux-x64"
 		if source == statedRuntimeSource {
 			// A host's platform is unknown: resolve the selector like an image tag's.
@@ -492,7 +493,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		setup, isSetup := datadogSetup(step)
 		resolution := resolutions[i]
 		// An unresolved step that can't start a test is setup, not a test entry.
-		test := resolution.Matched || resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, frameworkName(frameworks))
+		test := startsTests(root, workflow, job, step, resolution, frameworkName(frameworks))
 		_, selectsNode := step.Runtime["js"]
 		if uses != "actions/setup-node" && !isSetup && !selectsNode && !changesNodeRuntime(step.Run) && !test {
 			continue
@@ -558,7 +559,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		finding.Node, finding.NodeSource = state.node, state.source
 		if state.source == "" && javascriptImageRuntime(job) == "" || state.source == statedRuntimeSource {
 			// No image or step selected the runtime: it is the host's.
-			finding.RuntimeHost = runtimeHost(job, "Node")
+			finding.RuntimeHost = runtimeHost(job, row, "Node")
 			finding.UserStated = finding.RuntimeHost != "" && state.source == statedRuntimeSource
 		}
 		if resolution.Reason != "" {
@@ -584,6 +585,13 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		return fail(CodeUnresolvedCommand, "No active test step could be checked.")
 	}
 	return findings
+}
+
+// startsTests reports whether a step the runtime check resolved for framework
+// is a test step: a matched test command, or an unresolved step that can
+// start one. Setup that can't start a test is not a test entry.
+func startsTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, resolution commandResolution, framework string) bool {
+	return resolution.Matched || resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, framework)
 }
 
 func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, resolution commandResolution, state runtimeState, finding RuntimeFinding, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) RuntimeFinding {
