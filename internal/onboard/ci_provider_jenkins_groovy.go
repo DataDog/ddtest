@@ -452,10 +452,12 @@ type groovyCall struct {
 	NameStart int
 }
 
-// groovyArg is a positional argument (Name empty) or a named one.
+// groovyArg is a positional argument (Name empty) or a named one, whose
+// name starts at NameStart.
 type groovyArg struct {
-	Name  string
-	Value groovyNode
+	Name      string
+	Value     groovyNode
+	NameStart int
 }
 
 type groovyClosure struct {
@@ -1238,7 +1240,7 @@ func (p *groovyParser) argument() groovyArg {
 		p.advance()
 		p.advance()
 		p.skipNewlines()
-		return groovyArg{Name: name, Value: p.expression()}
+		return groovyArg{Name: name, Value: p.expression(), NameStart: token.start}
 	}
 	return groovyArg{Value: p.expression()}
 }

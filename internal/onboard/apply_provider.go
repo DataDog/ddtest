@@ -26,7 +26,10 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 		return nil, &SetupGap{"CI initialization", framework + " initializes the tracer through package scripts, which onboard --apply does not edit on " + provider.displayName() + ". Add the setup from onboard --instructions manually, then validate with testdrive --all."}
 	}
 	request := language.ciSetupRequest(root, framework, site, provider.setupTerms())
-	request.TracerVersion = version
+	request.TracerVersion, request.Framework = version, framework
+	// A CI server plugin's setup is one option the provider merges into, so
+	// one that differs is completed instead of left for review.
+	plugin := provider.setupTerms().Plugin
 	var targets []ciSetupTarget
 	configured := 0
 	for _, workflow := range workflows {
@@ -111,17 +114,23 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 					return nil, &SetupGap{location, err.Error()}
 				}
 			}
-			if setupIndex >= 0 {
-				setup, _ := datadogSetup(job.Steps[setupIndex])
-				if problem := provider.setupProblem(setup, request.TracerInput, func(value string) bool { return value == version }, version, site); problem != "" {
-					return nil, &SetupGap{location, "Existing Datadog setup differs: " + problem + " Otherwise review it manually without adding a second setup."}
-				}
-				configured++
-				continue
-			}
 			target := ciSetupTarget{Workflow: workflow.Path, Job: name, Step: first}
 			if framework == "mocha" && !esm {
 				target.After = []string{}
+			}
+			if setupIndex >= 0 {
+				setup, _ := datadogSetup(job.Steps[setupIndex])
+				problem := provider.setupProblem(setup, request.TracerInput, func(value string) bool { return value == version }, version, site)
+				switch {
+				case plugin && (problem != "" || esm):
+					// The provider completes the option and adds the commands
+					// that follow it, keeping what is already there.
+				case problem != "":
+					return nil, &SetupGap{location, "Existing Datadog setup differs: " + problem + " Otherwise review it manually without adding a second setup."}
+				default:
+					configured++
+					continue
+				}
 			}
 			targets = append(targets, target)
 		}
@@ -146,6 +155,149 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 		return &SetupPlan{root: root, impact: impact}, nil
 	}
 	return &SetupPlan{root: root, edits: append(edits, ignored...), impact: impact}, nil
+}
+
+// providerWritesPluginSetup reports whether onboard --apply writes the
+// provider's setup for every language it supports: a CI server plugin that
+// the configuration only enables, whose one language input is the plugin's
+// language token (see discoveryLanguage.ciPluginLanguage). The language's
+// other setup, such as pinning its tracer in the project, stays
+// instructions.
+func providerWritesPluginSetup(provider ciProvider) bool {
+	return provider.editsSetup() && provider.setupTerms().Plugin
+}
+
+// CIProviderWritesPluginSetup reports whether onboard --apply writes the
+// selected CI provider's plugin setup for language, which has no automatic
+// setup of its own (see providerWritesPluginSetup).
+func CIProviderWritesPluginSetup(language string) bool {
+	return writesPluginSetup(activeOrDefaultCIProvider(), language)
+}
+
+// writesPluginSetup reports whether onboard --apply writes provider's plugin
+// setup for language, which has no automatic setup of its own.
+func writesPluginSetup(provider ciProvider, language string) bool {
+	registered := discoveryLanguageNamed(language)
+	return registered != nil && !registered.automaticCISetup() && languageSupportsCIProvider(language, provider) && providerWritesPluginSetup(provider)
+}
+
+// pluginSetupApplies reports whether the selected provider's plugin setup
+// can be written for framework in root: the edit is planned, or needs one
+// source edit first that its refusal names (see EditThenApplyGap). A refusal
+// leaves the setup to the instructions.
+func pluginSetupApplies(root, framework string) bool {
+	_, err := PlanProviderSetup(root, framework, "")
+	var edit *EditThenApplyGap
+	return err == nil || errors.As(err, &edit)
+}
+
+// pluginSetupWritable reports whether onboard --apply would write the
+// selected provider's plugin setup for a language without automatic setup
+// of its own (see CIProviderWritesPluginSetup): it plans at least one edit.
+func pluginSetupWritable(root, language, framework, site string) bool {
+	if provider, err := currentCIProvider(root); err != nil || !writesPluginSetup(provider, language) {
+		return false
+	}
+	plan, err := PlanProviderSetup(root, framework, site)
+	return err == nil && !plan.Configured()
+}
+
+// pluginSetupRefusal is why onboard --apply cannot write the selected
+// provider's plugin setup for framework in root; empty when it can, or the
+// provider has none.
+func pluginSetupRefusal(root, framework string) string {
+	provider, err := currentCIProvider(root)
+	if err != nil || !providerWritesPluginSetup(provider) {
+		return ""
+	}
+	_, err = PlanProviderSetup(root, framework, "")
+	var gap *SetupGap
+	var edit *EditThenApplyGap
+	if errors.As(err, &gap) && !errors.As(err, &edit) {
+		return gap.Error()
+	}
+	return ""
+}
+
+// PlanProviderSetup plans enabling the selected CI provider's plugin setup
+// (see providerWritesPluginSetup) for every job that runs framework's tests,
+// reporting to site (empty: any), without changing the repository. A job whose setup is
+// already complete keeps it; one that differs is completed.
+func PlanProviderSetup(root, framework, site string) (*SetupPlan, error) {
+	provider, err := currentCIProvider(root)
+	if err != nil {
+		return nil, err
+	}
+	language := discoveryLanguageFor(framework)
+	if language == nil || !providerWritesPluginSetup(provider) {
+		return nil, &SetupGap{provider.displayName(), "onboard --apply does not edit the " + provider.displayName() + " configuration for " + framework + ". Add the setup from onboard --agent instructions, then validate with testdrive --all."}
+	}
+	workflows, err := readProviderWorkflows(provider, root)
+	if err != nil {
+		return nil, err
+	}
+	// An empty site accepts any the setup reports to.
+	request := language.ciSetupRequest(root, framework, site, provider.setupTerms())
+	request.Framework = framework
+	var targets []ciSetupTarget
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if disabledCondition(job.If) {
+				continue
+			}
+			for i, step := range job.Steps {
+				if resolveTestStep(root, workflow, job, step, language.name(), framework).Matched {
+					targets = append(targets, ciSetupTarget{Workflow: workflow.Path, Job: name, Step: i})
+					break
+				}
+			}
+		}
+	}
+	if len(targets) == 0 {
+		return nil, &SetupGap{provider.displayName(), "No literal " + framework + " CI step found. Identify its real CI entry point before applying onboarding."}
+	}
+	edits, impact, err := provider.planSetupEdits(root, workflows, targets, request)
+	if err != nil {
+		return nil, err
+	}
+	return &SetupPlan{root: root, edits: edits, impact: impact}, nil
+}
+
+// providerJobSetupProblem explains why a job of workflow does not run a
+// complete setup for language (see ciProvider.setupProblem, with site)
+// before its first command that runs framework's tests; empty when it does,
+// or runs none.
+func providerJobSetupProblem(root string, provider ciProvider, workflow ciWorkflow, name, language, framework, site string) string {
+	job, ok := workflow.Jobs[name]
+	if !ok {
+		return "the job is missing."
+	}
+	token := setupActionLanguage(language)
+	var setup, other *ciSetup
+	for _, step := range job.Steps {
+		if current, ok := datadogSetup(step); ok {
+			if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
+				setup = &current
+			} else if current.Problem != "" {
+				other = &current
+			}
+		}
+		resolution := resolveTestStep(root, workflow, job, step, language, framework)
+		if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
+			continue
+		}
+		switch {
+		case resolution.Reason != "":
+			return resolution.Reason
+		case setup == nil && other != nil:
+			return other.Problem
+		case setup == nil:
+			return "no " + provider.setupName() + " for the language runs before its tests."
+		}
+		return provider.setupProblem(*setup, "", func(string) bool { return true }, "", site)
+	}
+	return ""
 }
 
 // providerSetupConfigured reports whether, on a provider without the shared

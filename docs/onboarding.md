@@ -23,7 +23,8 @@ RSpec/Minitest validation as described below, and Java supports plain and
 coordinated Maven validation as described in [Java validation](#java-validation);
 automatic apply is JavaScript only. For Ruby and Java, `onboard --apply` returns
 the same handoff as `onboard --agent`: the CI setup for the agent to apply, then
-coordinated validation.
+coordinated validation. On Jenkins, `onboard --apply` also writes Ruby's
+Jenkinsfile edit (see [Jenkins](#jenkins)).
 
 The editor preserves existing project and CI tracer selections, including tracers
 installed in workspace packages. It resolves one exact release for the actual
@@ -696,10 +697,51 @@ one with `BUNDLE_GEMFILE`, or a repository without a root Gemfile is a setup
 problem. The plugin replaces `RUBYOPT`, and refuses Ruby before 2.7 and
 RubyGems before 3.3.22.
 
-`onboard --apply` does not edit Jenkinsfiles: for every language,
-`onboard --agent` and `onboard --apply` return `ci_setup_required` with the
-instructions, and the coding agent applies them before the coordinated
-validation.
+`onboard --apply` enables the plugin in every Jenkinsfile whose host-agent
+jobs run the tests; the only language input is the plugin's language token
+(`'JAVASCRIPT'`, `'RUBY'`). `serviceName` is the project's name (the
+`package.json` `name`, or the name the only root gemspec sets), otherwise the
+checkout directory's. In a declarative pipeline it adds
+`datadog(testOptimization: [enabled: true, serviceName: '<service>', languages: [...]])`
+to the top-level `options` directive, creating the directive on its own lines
+after `agent` or `environment` (whichever comes last); an `options` written on
+one line takes it after a `;`. In a scripted pipeline it wraps each outermost
+`node` block that runs the tests in `datadog(testOptimization: […]) { … }`,
+indenting the block one step; lines inside multi-line strings keep their
+bytes. An existing `datadog(…)` call, in `options` or around the `node`, is
+merged instead: `testOptimization` is added, or in it (or in a legacy
+`testVisibility:`) `enabled` becomes `true` and the language joins
+`languages`, keeping `serviceName`, `additionalVariables`, `collectLogs`,
+`tags` and every other argument. For Vitest and ESM Mocha it also adds the
+`DD_TRACE_PATH` loader line at the start of the test's `sh` script when that
+script is a single-quoted literal; otherwise the result asks for that line
+(`ci_edit_required`) and resumes with `onboard --apply`. Edits use the parser's
+byte spans and keep the file's indentation (tabs or spaces, and their width)
+and line endings; every other byte is unchanged. The edited Jenkinsfile is read
+again and must read as the same jobs, each with a complete setup, or nothing is
+written. Applying again changes nothing (`… CI setup is already configured; no
+edits.`). It refuses, and onboarding gives the instructions instead with the
+reason: a Jenkinsfile that loads a shared library (`@Library`, `library …` or a
+`libraries` directive), test jobs that only run in containers, a computed
+`options`, `datadog` or `testOptimization` argument (or a computed `enabled` or
+`languages` it would change), a `node` block with shell steps inside a `def`
+function of a scripted pipeline, several `datadog(…)` calls that differ in one
+`options` or that enclose the same tests, and a result that is still incomplete,
+such as one with `DD_API_KEY` in `additionalVariables` or a stage-level
+`datadog(…)`.
+
+JavaScript gets the automatic setup: `onboard --agent` hands off
+`onboard --apply --yes`, which previews nothing, writes the edit, and asks the
+user to confirm the plugin (`ci_setup_confirmation_required`) before anything
+runs; the same command with `--ci-confirm` then validates. Ruby's own setup
+stays the agent's (pinning `datadog-ci` needs Bundler), so on Jenkins only, its
+`onboard --agent` returns `ci_setup_required` with `next_action: run_command`
+and `onboard --apply --yes` as `next_command`. That command writes the
+Jenkinsfile edit, lists it in `changes` and `setup_diff` with an undo command,
+and returns the rest of the setup (the `datadog-ci` pin, the report exclusion)
+with the validation command as `resume_command`; validation then asks for the
+confirmations. Plain `onboard --apply` previews the Jenkinsfile diff and writes
+nothing; `--yes` writes it and prints the remaining instructions.
 
 ## Coverage and local developer commands
 
