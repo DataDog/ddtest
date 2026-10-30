@@ -73,3 +73,34 @@ func TestValidationSummaryShowsUserStatements(t *testing.T) {
 	require.Contains(t, handoff, "Stated by the user, not read from CI configuration or verified: Node 22 for .github/workflows/test.yml / test (--ci-runtime).")
 	require.Contains(t, handoff, "Caveat (not a blocker): --ci-runtime ruby=3.3 was not used")
 }
+
+// With the Datadog Jenkins plugin in the Jenkinsfile, the coordinator asks
+// the user to confirm the plugin before anything runs.
+func TestWorkflowAsksToConfirmTheJenkinsPlugin(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"jest"},"devDependencies":{"jest":"29.7.0"}}`)
+	requireWriteFile(t, filepath.Join(root, "Jenkinsfile"), "pipeline {\n  agent { label 'linux' }\n  options { datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT']]) }\n  stages { stage('Test') { steps { sh 'npx jest' } } }\n}\n")
+	onboard.UseCIProvider("jenkins")
+	t.Cleanup(func() { onboard.UseCIProvider("") })
+	stateCIRuntimes(t, "node=22")
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Jest{}, language: "javascript"}
+	var output bytes.Buffer
+	require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Apply: true, Format: "json"}), "ci_setup_confirmation_required")
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result), output.String())
+	require.Equal(t, "needs_input", result.Status)
+	require.Equal(t, "ask_user", result.NextAction)
+	require.Equal(t, []string{"ci_confirm:jenkins-plugin", "ci_confirm:jenkins-plugin-mode=agentless:<site>|agent"}, result.RequiredInput)
+	require.Empty(t, result.NextCommand)
+	require.Empty(t, result.ResumeCommand)
+	require.NoFileExists(t, filepath.Join(root, ".testoptimization", "testdrive.json"), "nothing ran")
+}
+
+// A setup ddtest could not check fully is a caveat of final_response.
+func TestValidationSummaryShowsSetupCaveats(t *testing.T) {
+	result := completeValidationFixture("jest")
+	result.CIRuntime = &onboard.RuntimeCheck{Status: "compatible", Jobs: []onboard.RuntimeFinding{{Workflow: "Jenkinsfile", Job: "Test", Node: "22", Status: "compatible", SetupCaveats: []string{"dd-trace version: latest."}}}}
+	summary := summarizeValidation(result)
+	require.Contains(t, summary.Caveats, "dd-trace version: latest.")
+}

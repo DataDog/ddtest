@@ -67,11 +67,14 @@ type ciFactDefinition struct {
 	valid func(string) bool
 	// Statement describes the confirmed fact in final_response.
 	Statement func(value string) string
+	// Question asks the user for the fact, and Remedy says what to do when
+	// it does not hold.
+	Question, Remedy string
 }
 
 // ciProviderFacts lists the facts each provider (by --ci-provider name) may
-// ask the user to confirm. None does yet.
-var ciProviderFacts = map[string][]ciFactDefinition{}
+// ask the user to confirm.
+var ciProviderFacts = map[string][]ciFactDefinition{jenkinsProvider: jenkinsFacts}
 
 // statedRuntimeSource is the NodeSource of a runtime the user stated.
 const statedRuntimeSource = "stated by the user (--ci-runtime)"
@@ -106,6 +109,19 @@ type statedRuntime struct {
 	check func(ctx context.Context, root, framework string) RuntimeCheck
 	// runtime is the version a finding records.
 	runtime func(finding RuntimeFinding) string
+	// testStep reports a step that runs the language's tests on a matrix
+	// row (nil: the job without a row).
+	testStep func(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) bool
+	// shellSelection reads a shell command, by its words, that only selects
+	// one of the language's runtimes for the rest of its shell, such as nvm
+	// use 22: version is the version it names, or "" for one it reads from
+	// versionFile (in the directory it runs in; "" when none or when ddtest
+	// cannot tell). ok is false for any other command, including one that
+	// also runs something, such as nvm exec 20 npm test.
+	shellSelection func(words []string) (version, versionFile string, ok bool)
+	// fileVersion is the version a version file's line names, such as an
+	// .nvmrc's v22, or "" for one it cannot compare.
+	fileVersion func(line string) string
 }
 
 // statedRuntimeLanguages lists the languages that take runtime statements.
@@ -238,6 +254,16 @@ func currentStatements() ciStatements {
 	return statements
 }
 
+// statedFact is the value of a fact the user confirmed, and whether they did.
+func statedFact(key string) (string, bool) {
+	for _, fact := range currentStatements().facts {
+		if fact.Key == key {
+			return fact.Value, true
+		}
+	}
+	return "", false
+}
+
 // CIStatementArguments are the --ci-runtime and --ci-confirm arguments that
 // follow-up commands repeat, in the order given.
 func CIStatementArguments() []string {
@@ -282,6 +308,21 @@ func (s CIRuntimeStatement) jobMatches(workflow, job string) bool {
 	return s.Job == "" || s.Job == job || s.Job == workflow+" / "+job
 }
 
+// jobRuntimeStatement is the statement of a job's runtime for the installer
+// token: the last one for the job, else the first one for every job.
+func jobRuntimeStatement(statements []CIRuntimeStatement, workflow, job, token string) (CIRuntimeStatement, bool) {
+	var found *CIRuntimeStatement
+	for i, statement := range statements {
+		if statement.Runtime == token && statement.jobMatches(workflow, job) && (found == nil || statement.Job != "") {
+			found = &statements[i]
+		}
+	}
+	if found == nil {
+		return CIRuntimeStatement{}, false
+	}
+	return *found, true
+}
+
 // fillStatedRuntimes records, on each job whose image selects no runtime and
 // that runs on a host the user can describe on some matrix row, the version
 // the user stated for it: a statement for the job wins over one for every
@@ -299,13 +340,8 @@ func fillStatedRuntimes(workflows []ciWorkflow) {
 				if runtime.base(job) != "" || jobRuntimeHost(job, runtime.Display) == "" {
 					continue
 				}
-				version := ""
-				for _, statement := range statements {
-					if statement.Runtime == token && statement.jobMatches(workflow.Path, name) && (version == "" || statement.Job != "") {
-						version = statement.Version
-					}
-				}
-				if version != "" {
+				if statement, found := jobRuntimeStatement(statements, workflow.Path, name, token); found {
+					version := statement.Version
 					if job.Stated == nil {
 						job.Stated = map[string]string{}
 					}
@@ -351,6 +387,8 @@ func runtimeHost(job runtimeJob, row map[string]any, runtime string) string {
 		return ""
 	case job.Image != "":
 		return "image " + job.Image + ", whose name selects no " + runtime + " version"
+	case job.Host != "":
+		return job.Host
 	}
 	return "the " + activeOrDefaultCIProvider().displayName() + " " + agentHost
 }
@@ -377,24 +415,38 @@ const agentHost = "runner or agent environment, with no image in the configurati
 
 // CheckCIRuntimeStatements rejects a statement for a named job whose runtime
 // the configuration already selects with a different version. A statement
-// for every job never conflicts: it fills only unknown runtimes.
+// for every job never conflicts: it fills only unknown runtimes. Either
+// conflicts with a version manager that selects another version for the
+// job's tests in their shell (runtimeStep.ShellRuntime): the statement
+// states the runtime the manager selects.
 func CheckCIRuntimeStatements(root string) error {
+	statements := currentStatements().runtimes
 	var scoped []CIRuntimeStatement
-	for _, statement := range currentStatements().runtimes {
+	for _, statement := range statements {
 		if statement.Job != "" {
 			scoped = append(scoped, statement)
 		}
 	}
-	if len(scoped) == 0 {
+	if len(statements) == 0 {
 		return nil
 	}
 	provider, err := currentCIProvider(root)
 	if err != nil {
+		if len(scoped) == 0 {
+			return nil // A statement for every job names no job to find.
+		}
 		return err
 	}
 	workflows, err := provider.readWorkflows(root)
 	if err != nil {
 		return nil // Reading reports the configuration error itself.
+	}
+	shell := shellRuntimeConflicts(root, workflows, statements)
+	if len(scoped) == 0 {
+		if len(shell) > 0 {
+			return &CIRuntimeConflict{Conflicts: shell}
+		}
+		return nil
 	}
 	// Different keys can name the same job (workflow / job, or the job name
 	// alone): their versions must agree.
@@ -445,10 +497,48 @@ func CheckCIRuntimeStatements(root string) error {
 		statements.uncompared = uncompared
 		activeStatements.Store(statements)
 	}
-	if len(conflicts) > 0 {
+	if conflicts = append(conflicts, shell...); len(conflicts) > 0 {
 		return &CIRuntimeConflict{Conflicts: conflicts}
 	}
 	return nil
+}
+
+// shellRuntimeConflicts lists the statements that contradict the version a
+// version manager selects in the shell of a job's test step, such as nvm use
+// 20 before npm test in a Jenkins sh, for a job the statement states.
+func shellRuntimeConflicts(root string, workflows []ciWorkflow, statements []CIRuntimeStatement) []string {
+	var conflicts []string
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			for _, language := range statedRuntimeLanguages() {
+				token, runtime := language.actionLanguage(), language.statedRuntime()
+				if runtime.testStep == nil || runtime.base(job) != "" || jobRuntimeHost(job, runtime.Display) == "" {
+					continue
+				}
+				statement, found := jobRuntimeStatement(statements, workflow.Path, name, token)
+				if !found {
+					continue
+				}
+				var sources []string
+				for _, step := range job.Steps {
+					selection := step.ShellRuntime[token]
+					if selection.Version == "" || slices.Contains(sources, selection.Source) || !runtime.testStep(root, workflow, job, step, nil) {
+						continue
+					}
+					agree, comparable := sameVersionLine(selection.Version, statement.Version), true
+					if runtime.compare != nil {
+						agree, comparable = runtime.compare(selection.Version, selection.Source, statement.Version)
+					}
+					if comparable && !agree {
+						sources = append(sources, selection.Source)
+						conflicts = append(conflicts, fmt.Sprintf("--ci-runtime %s contradicts %s %s, which %s selects for the tests in %s / %s", statement, runtime.Display, selection.Version, selection.Source, workflow.Path, name))
+					}
+				}
+			}
+		}
+	}
+	return conflicts
 }
 
 // installedRuntime is the version a job's steps select on every matrix row
@@ -635,6 +725,127 @@ func RequiredCIRuntimes(ctx context.Context, root, language, framework string) *
 		return nil
 	}
 	return required
+}
+
+// CIConfirmationRequired lists the provider facts the user must confirm
+// before ddtest certifies the setup of these CI jobs.
+type CIConfirmationRequired struct {
+	// Provider names the CI provider.
+	Provider string
+	// Facts are the facts to confirm, in the provider's order.
+	Facts []ciFactDefinition
+	// Jobs are the job keys (workflow / job) whose setup depends on them.
+	Jobs []string
+}
+
+func (e *CIConfirmationRequired) Error() string {
+	var keys []string
+	for _, fact := range e.Facts {
+		keys = append(keys, fact.Key)
+	}
+	return "The " + e.Provider + " setup of these CI jobs depends on facts no CI configuration shows, so ddtest cannot certify it until the user confirms them (" + strings.Join(keys, ", ") + "): " + strings.Join(e.Jobs, "; ") + "."
+}
+
+// CIConfirmationRequiredResult asks the user to confirm those facts.
+func CIConfirmationRequiredResult(err *CIConfirmationRequired) AgentResult {
+	var required, questions, flags []string
+	for _, fact := range err.Facts {
+		flag := fact.Key
+		if fact.Values != "" {
+			flag += "=" + fact.Values
+		}
+		required = append(required, "ci_confirm:"+flag)
+		questions = append(questions, strings.TrimSpace(fact.Key+": "+fact.Question+" "+fact.Remedy))
+		flags = append(flags, "--ci-confirm "+flag)
+	}
+	return AgentResult{
+		Status: "needs_input", Phase: "discovery", Code: "ci_setup_confirmation_required", NextAction: "ask_user",
+		Reason: err.Error(), Location: strings.Join(err.Jobs, "; "), RequiredInput: required,
+		Instruction: "Stop and ask the user to confirm each fact; run no other ddtest command until they answer, and never assume, guess or check it from this machine. " + strings.Join(questions, " ") + " After their answer, rerun the same command adding " + strings.Join(flags, " ") + " with the values they confirmed. ddtest reports each confirmation as stated by the user, not verified.",
+	}
+}
+
+// RequiredCIConfirmations returns the facts the user has not confirmed that
+// a setup before framework's tests depends on (see ciSetup.Confirmations),
+// or nil. Only a setup without another problem asks: a problem is reported
+// first. It reads the configuration offline.
+func RequiredCIConfirmations(root, language, framework string) *CIConfirmationRequired {
+	provider, err := currentCIProvider(root)
+	if err != nil {
+		return nil
+	}
+	definitions := ciProviderFacts[provider.name()]
+	if len(definitions) == 0 {
+		return nil
+	}
+	workflows, err := readProviderWorkflows(provider, root)
+	if err != nil {
+		return nil
+	}
+	token := setupActionLanguage(language)
+	needed := map[string]bool{}
+	var jobs []string
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if disabledCondition(job.If) {
+				continue
+			}
+			var setup *ciSetup
+			for _, step := range job.Steps {
+				if current, ok := datadogSetup(step); ok {
+					if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
+						setup = &current
+					}
+				}
+				resolution := resolveTestStep(root, workflow, job, step, language, framework)
+				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
+					continue
+				}
+				if setup == nil || setup.Problem != "" {
+					break
+				}
+				missing := false
+				for _, key := range setup.Confirmations {
+					if _, stated := statedFact(key); !stated {
+						needed[key], missing = true, true
+					}
+				}
+				if key := workflow.Path + " / " + name; missing && !slices.Contains(jobs, key) {
+					jobs = append(jobs, key)
+				}
+				break
+			}
+		}
+	}
+	if len(needed) == 0 {
+		return nil
+	}
+	required := &CIConfirmationRequired{Provider: provider.displayName(), Jobs: jobs}
+	for _, definition := range definitions {
+		if needed[definition.Key] {
+			required.Facts = append(required.Facts, definition)
+		}
+	}
+	return required
+}
+
+// CISetupCaveats lists, for final_response, what ddtest could not check about
+// the setup mechanism of the validated CI jobs (see ciSetup.Caveats), such as
+// a tracer release the mechanism cannot pin.
+func CISetupCaveats(check *RuntimeCheck) []string {
+	var caveats []string
+	if check == nil {
+		return nil
+	}
+	for _, finding := range check.Jobs {
+		for _, caveat := range finding.SetupCaveats {
+			if !slices.Contains(caveats, caveat) {
+				caveats = append(caveats, caveat)
+			}
+		}
+	}
+	return caveats
 }
 
 // StatedFacts lists, for final_response, what the user stated and ddtest

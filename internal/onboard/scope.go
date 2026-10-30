@@ -659,7 +659,7 @@ func readsComputedAxis(command string, axes []string, row map[string]any) bool {
 }
 
 // CI configuration of providers ddtest does not read, by conventional path.
-var otherCIFiles = []string{".circleci/config.yml", "circle.yml", ".gitlab-ci.yml", "azure-pipelines.yml", ".travis.yml", "Jenkinsfile", "bitbucket-pipelines.yml", ".buildkite/pipeline.yml", "appveyor.yml", ".drone.yml"}
+var otherCIFiles = []string{".circleci/config.yml", "circle.yml", ".gitlab-ci.yml", "azure-pipelines.yml", ".travis.yml", "bitbucket-pipelines.yml", ".buildkite/pipeline.yml", "appveyor.yml", ".drone.yml"}
 
 // otherCIReview names the CI files outside the selected provider that mention
 // the framework: other providers' conventional files and the configuration of

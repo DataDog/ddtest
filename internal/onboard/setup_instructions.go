@@ -25,7 +25,7 @@ func providerSetupInstructions(root string, provider ciProvider, language, frame
 	}
 	var text strings.Builder
 	_, _ = fmt.Fprintf(&text, "\n# Enable Datadog Test Optimization for %s on %s\n\n", framework, provider.displayName())
-	automatic := registered.automaticProviderSetup(framework)
+	automatic := providerAutomaticSetup(provider, registered, framework)
 	if automatic {
 		text.WriteString(strings.ReplaceAll(javascriptAutomaticSetup, "ddtest testdrive", "ddtest testdrive --framework "+framework) + "\n\n")
 	}

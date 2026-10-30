@@ -113,3 +113,15 @@ func (pythonDiscovery) ciComponents(string) []ciComponent { return nil }
 
 // No CI runtime statements yet.
 func (pythonDiscovery) statedRuntime() *statedRuntime { return nil }
+
+func (pythonDiscovery) ciPluginLanguage() string { return "PYTHON" }
+
+// Python has no CI plugin setup yet.
+func (pythonDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
+	return nil, nil
+}
+
+func (pythonDiscovery) ciPluginComposes(string) string { return "" }
+
+// No shell runtime selection is modeled for this language.
+func (pythonDiscovery) selectsShellRuntime([]string) bool { return false }

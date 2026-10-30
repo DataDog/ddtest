@@ -74,6 +74,9 @@ type RuntimeFinding struct {
 	// UserStated reports a runtime the user stated with --ci-runtime, which
 	// ddtest checks but cannot verify.
 	UserStated bool `json:"user_stated,omitempty"`
+	// SetupCaveats are what ddtest could not check about the setup that
+	// precedes this entry, such as a tracer release it cannot pin.
+	SetupCaveats []string `json:"setup_caveats,omitempty"`
 	// setupInputs are the inputs of the Datadog setup action that precedes
 	// this entry, for a language's own setup checks. Not serialized.
 	setupInputs map[string]string
@@ -118,6 +121,12 @@ type runtimeStep struct {
 	// component such as a runtime installer reads them; an empty version
 	// selects one ddtest cannot tell.
 	Runtime map[string]string `yaml:"-"`
+	// ShellRuntime holds, on a provider whose script statements share one
+	// shell (a Jenkins sh), the runtimes a version manager earlier in that
+	// shell selects for this step, keyed like Runtime. They change no
+	// runtime the checks track: the job's stays its host's, which the user
+	// states for the host with the manager (see CheckCIRuntimeStatements).
+	ShellRuntime map[string]ciShellRuntime `yaml:"-"`
 	// origin is the provider's private reference to the step's source, for
 	// prescribed edits.
 	origin any
@@ -128,6 +137,12 @@ type runtimeStep struct {
 	// runner is known: rowWindows or rowOther. Empty means the job's runner
 	// as a whole decides.
 	rowRunner string
+}
+
+// ciShellRuntime is a version manager's selection in a shell: the version
+// it selects ("" when ddtest cannot tell) and the command that selects it.
+type ciShellRuntime struct {
+	Version, Source string
 }
 
 type runtimeJob struct {
@@ -159,6 +174,14 @@ type runtimeJob struct {
 	// provider's setup, such as an image without curl, before any setup is
 	// written; empty when it can or the provider does not check.
 	SetupImageProblem string `yaml:"-"`
+	// SetupUnsupported explains why the provider's setup mechanism cannot
+	// instrument the job at all, such as a container the Datadog Jenkins
+	// plugin does not reach; such a job is never certified.
+	SetupUnsupported string `yaml:"-"`
+	// Host describes the agent a job without an image runs on, such as a
+	// Jenkins agent label, for the user who knows its runtime; empty uses
+	// the provider's generic description.
+	Host string `yaml:"-"`
 	// Stated holds the runtime versions the user stated for this job, by
 	// installer token, when its image selects none (see --ci-runtime). They
 	// apply only on matrix rows whose runtimeHost is not empty.
@@ -401,6 +424,10 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 type runtimeState struct {
 	node, source, platform, action, tracer string
 	skippedAction                          bool
+	// floating marks a setup that cannot pin the tracer, and caveats what
+	// ddtest could not check about it.
+	floating bool
+	caveats  []string
 }
 
 func (state *runtimeState) trackNode(job runtimeJob, step runtimeStep, row map[string]any) {
@@ -439,6 +466,7 @@ func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) err
 	}
 	setup, _ := datadogSetup(step)
 	state.action = setup.Reference
+	state.floating, state.caveats = setup.Floating, setup.Caveats
 	state.tracer, err = runtimeValue(setup.Inputs["js-tracer-version"], row)
 	if _, explicit := setup.Inputs["js-tracer-version"]; (explicit || setup.DefaultLatest) && state.tracer == "" {
 		state.tracer = "latest"
@@ -661,6 +689,10 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	}
 	finding.TracerFloating = finding.TracerRequested != "" && strings.TrimPrefix(finding.TracerRequested, "v") != requirement.Version
 	finding.Requirement = requirement.Node
+	if state.floating {
+		// The exception to an exact release: the mechanism cannot pin one.
+		finding.SetupCaveats = append(slices.Clone(state.caveats), "dd-trace version: the "+state.action+" installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@"+requirement.Version+", the latest release when it ran. A later release can change behavior or drop support for the CI Node version.")
+	}
 	for _, entry := range resolution.Tests {
 		words, _ := shellquote.Split(entry.Command)
 		if len(words) > 0 && !slices.Contains([]string{"node", "node.exe"}, words[0]) && (filepath.Base(words[0]) == "node" || filepath.Base(words[0]) == "node.exe") {
@@ -708,6 +740,9 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 			reason = checkWebdriverIOBootstrap(root, workflow, job, step, row)
 		} else {
 			reason = checkTestBootstrap(workflow, job, step, row, resolution.Tests, frameworks...)
+		}
+		if reason == "" {
+			reason = javascriptInstrumentationDisabled(workflow, job, step, row, frameworks...)
 		}
 		if reason != "" {
 			finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedInitialization, reason

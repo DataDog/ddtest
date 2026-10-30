@@ -40,6 +40,10 @@ type ciProvider interface {
 	// environment holds the variables the provider sets in every job.
 	environment() map[string]string
 
+	// editsSetup reports whether onboard --apply writes the provider's setup
+	// with planSetupEdits; otherwise every language gets instructions that a
+	// person or coding agent applies.
+	editsSetup() bool
 	// sharedSyntax reports whether the configuration is written in the shared
 	// workflow model's own syntax, so the shared workflow editor and setup
 	// instructions apply to it directly; otherwise setupInstructions and
@@ -101,6 +105,26 @@ type ciSetup struct {
 	// names: languages, api_key, site and <language>-tracer-version. Values
 	// are verbatim; unresolved references stay as written.
 	Inputs map[string]string
+	// Floating reports a mechanism that cannot pin the tracer: it installs
+	// the latest release when the build runs, unless the project's own
+	// dependencies already pin one. Each language decides which applies and
+	// reports the floating release as a caveat.
+	Floating bool
+	// WorkspaceRoot reports a mechanism that configures the tracer from the
+	// checkout root with the build agent's own toolchain, so a tracer that
+	// joins the project's dependencies must join the root ones.
+	WorkspaceRoot bool
+	// Confirmations are the facts (--ci-confirm keys, see ciProviderFacts)
+	// the user must state before ddtest certifies this setup.
+	Confirmations []string
+	// Caveats are what ddtest could not check about the mechanism, for
+	// final_response.
+	Caveats []string
+	// Exports are the loader variables the mechanism sets for the steps
+	// after it besides the action's DD_TRACE_PACKAGE and DD_TRACE_ESM_IMPORT,
+	// such as the Datadog Jenkins plugin's DD_TRACE_PATH. A test step's
+	// NODE_OPTIONS can trust only the variables its own setup exports.
+	Exports []string
 }
 
 // ciSetupRequest is the setup one language asks a provider for: the
@@ -150,6 +174,11 @@ type ciSetupTerms struct {
 	// image, written as template, is image; empty when the template selects
 	// no image through a variable or parameter.
 	ImageGuard func(template, image, command string) string
+	// Plugin reports a setup that is a CI server plugin, enabled in the
+	// configuration, that installs the tracers on the build agent and sets
+	// their variables for every step (the Datadog Jenkins plugin), instead of
+	// an installer the job runs: languages describe that mechanism.
+	Plugin bool
 }
 
 // ciComponent is a reusable CI component a language knows, such as a
@@ -216,8 +245,11 @@ func CIProviderSetupName() string {
 func CIProviderTracerSetting(language, version string) string {
 	provider := activeOrDefaultCIProvider()
 	input := provider.setupInput(language + "-tracer-version")
-	if provider.name() == buildkiteProvider {
+	switch provider.name() {
+	case buildkiteProvider:
 		return input + `="` + version + `"`
+	case jenkinsProvider:
+		return "release " + version + " where the CI setup can pin it (the " + input + ")"
 	}
 	return input + ": " + version
 }
@@ -237,12 +269,20 @@ func (e *CIProviderChoice) Error() string {
 }
 
 // CIProviderUnsupportedError reports a language without CI setup support on
-// the selected provider. ddtest prescribes nothing for that combination.
+// the selected provider, or (Reason) a repository whose every test job is
+// outside what the provider's setup mechanism instruments. ddtest
+// prescribes nothing for that combination.
 type CIProviderUnsupportedError struct {
 	Language, Framework, Provider string
+	// Reason names the jobs the provider's setup cannot instrument, and
+	// why; Setup names that setup.
+	Reason, Setup string
 }
 
 func (e *CIProviderUnsupportedError) Error() string {
+	if e.Reason != "" {
+		return fmt.Sprintf("ddtest cannot set up %s CI for %s on %s in this repository: every CI job that runs the tests is outside what the %s instruments. %s The user's options are to run those tests where the %s instruments them, or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate. ddtest will not prescribe CI edits or validate this CI configuration.", e.Framework, e.Language, e.Provider, e.Setup, e.Reason, e.Setup)
+	}
 	return fmt.Sprintf("ddtest does not support %s CI setup for %s on %s; it will not prescribe CI edits or validate this CI configuration. Rerun with --ci-provider <provider> to choose another provider.", e.Framework, e.Language, e.Provider)
 }
 
@@ -459,7 +499,41 @@ func CheckCIProviderSupport(root, language, framework string) error {
 	if !languageSupportsCIProvider(language, provider) {
 		return &CIProviderUnsupportedError{Language: language, Framework: framework, Provider: provider.displayName()}
 	}
+	if reason := unsupportedTestJobs(root, provider, language, framework); reason != "" {
+		return &CIProviderUnsupportedError{Language: language, Framework: framework, Provider: provider.displayName(), Reason: reason, Setup: provider.setupName()}
+	}
 	return nil
+}
+
+// unsupportedTestJobs explains, when every CI job that runs framework's
+// tests is one the provider's setup mechanism cannot instrument (see
+// runtimeJob.SetupUnsupported), why; empty when any can, or none runs them.
+func unsupportedTestJobs(root string, provider ciProvider, language, framework string) string {
+	workflows, err := readProviderWorkflows(provider, root)
+	if err != nil {
+		return ""
+	}
+	var reasons []string
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if disabledCondition(job.If) {
+				continue
+			}
+			tests := slices.ContainsFunc(job.Steps, func(step runtimeStep) bool {
+				resolution := resolveTestStep(root, workflow, job, step, language, framework)
+				return !resolution.Review && (resolution.Matched || resolution.Reason != "" && step.ResolutionError == "" && stepMayStartTests(root, workflow, job, step, framework))
+			})
+			if !tests {
+				continue
+			}
+			if job.SetupUnsupported == "" {
+				return ""
+			}
+			reasons = append(reasons, workflow.Path+" / "+name+": "+job.SetupUnsupported+".")
+		}
+	}
+	return strings.Join(reasons, " ")
 }
 
 // workflowHasTests reports whether any active step of workflow may run tests
@@ -510,7 +584,23 @@ func ProviderChoiceResult(choice *CIProviderChoice) AgentResult {
 // ProviderUnsupportedResult reports a language/provider combination ddtest
 // does not set up.
 func ProviderUnsupportedResult(err *CIProviderUnsupportedError) AgentResult {
-	return AgentResult{Status: "unsupported", Phase: "onboarding", Code: "ci_provider_unsupported", Reason: err.Error(), NextAction: "report_result"}
+	result := AgentResult{Status: "unsupported", Phase: "onboarding", Code: "ci_provider_unsupported", Reason: err.Error(), NextAction: "report_result"}
+	if err.Reason != "" {
+		result.Code = "ci_setup_unsupported"
+		result.Instruction = "Report this result to the user with its reason and stop. Do not move tests between agents, edit CI, add a tracer or set up Test Optimization by hand: those are the user's decisions, and ddtest cannot validate a manual setup."
+	}
+	return result
+}
+
+// CIProviderEditsSetup reports whether onboard --apply writes the selected
+// CI provider's setup; otherwise every language gets instructions.
+func CIProviderEditsSetup() bool { return activeOrDefaultCIProvider().editsSetup() }
+
+// providerAutomaticSetup reports whether onboard --apply writes framework's
+// setup on provider: the provider edits its configuration and the language
+// writes that framework's setup there.
+func providerAutomaticSetup(provider ciProvider, language discoveryLanguage, framework string) bool {
+	return provider.editsSetup() && language.automaticProviderSetup(framework)
 }
 
 // testWorkflowsWithSetup lists the workflows whose jobs run framework's tests

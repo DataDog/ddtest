@@ -89,6 +89,8 @@ func (gitHubActions) findTestWorkflows(root, language, framework string) ([]stri
 	return environment.NewGitHub().FindTestWorkflows(root, language, framework)
 }
 
+func (gitHubActions) editsSetup() bool { return true }
+
 func (gitHubActions) sharedSyntax() bool { return true }
 
 // The Datadog setup action, at any ref; Pinned when the ref is present.

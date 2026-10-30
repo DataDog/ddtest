@@ -160,3 +160,15 @@ func (javaDiscovery) ciComponents(string) []ciComponent { return nil }
 
 // No CI runtime statements yet.
 func (javaDiscovery) statedRuntime() *statedRuntime { return nil }
+
+func (javaDiscovery) ciPluginLanguage() string { return "JAVA" }
+
+// Java has no CI plugin setup yet.
+func (javaDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
+	return nil, nil
+}
+
+func (javaDiscovery) ciPluginComposes(string) string { return "" }
+
+// No shell runtime selection is modeled for this language.
+func (javaDiscovery) selectsShellRuntime([]string) bool { return false }

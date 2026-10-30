@@ -45,6 +45,8 @@ func (buildkite) environment() map[string]string {
 	return map[string]string{"CI": "true", "BUILDKITE": "true"}
 }
 
+func (buildkite) editsSetup() bool { return true }
+
 func (buildkite) sharedSyntax() bool { return false }
 
 // buildkiteRootFiles are the pipeline files Buildkite looks for at the

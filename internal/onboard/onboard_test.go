@@ -163,7 +163,7 @@ func TestRunRequiresGitHubJestWorkflow(t *testing.T) {
 func TestRunRequiresRepositoryCIConfiguration(t *testing.T) {
 	root := newJestRepository(t, "jobs:\n  test:\n    steps:\n      - run: npm test\n")
 	require.NoError(t, os.RemoveAll(filepath.Join(root, ".github")))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "Jenkinsfile"), []byte("pipeline { stages { stage('test') { steps { sh 'npm test' } } } }\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".travis.yml"), []byte("script: npm test\n"), 0644))
 	t.Setenv("GITHUB_ACTIONS", "true")
 	t.Chdir(root)
 	var output bytes.Buffer

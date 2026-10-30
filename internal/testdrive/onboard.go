@@ -156,7 +156,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.NextAction = "run_command"
 			case "ci_edit_required":
 				result.NextAction = "apply_source_edit"
-			case "ci_runtime_required":
+			case "ci_runtime_required", "ci_setup_confirmation_required":
 				// Only the user's answer, added to the same command, continues.
 				result.NextAction = "ask_user"
 				result.ResumeCommand = nil
@@ -312,6 +312,11 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	// names is the user's answer to give; nothing is set up or run before it.
 	if required := onboard.RequiredCIRuntimes(ctx, t.repositoryRoot, t.language, name); required != nil {
 		asked := onboard.CIRuntimeRequiredResult(required)
+		result.Location, result.RequiredInput, result.Instruction = asked.Location, asked.RequiredInput, asked.Instruction
+		return fail("needs_input", asked.Code, asked.Reason, asked.Instruction)
+	}
+	if required := onboard.RequiredCIConfirmations(t.repositoryRoot, t.language, name); required != nil {
+		asked := onboard.CIConfirmationRequiredResult(required)
 		result.Location, result.RequiredInput, result.Instruction = asked.Location, asked.RequiredInput, asked.Instruction
 		return fail("needs_input", asked.Code, asked.Reason, asked.Instruction)
 	}
