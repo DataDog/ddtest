@@ -702,7 +702,9 @@ test tasks and suites build files declare; a project list or test task that
 build logic computes, such as in buildSrc, leaves the step unresolved rather
 than guessed, except for tasks the build files declare with another type, such
 as a `JapicmpTask`, which never run tests. It resolves each CI step to its test
-tasks, reports the other tasks and the projects of other frameworks, and
+tasks, reports the other tasks and the projects of other frameworks, resolves
+a step that chains Gradle commands, as `./gradlew assemble && ./gradlew
+check`, to its one test command when the others run no tests, and
 treats a job without the Datadog action whose commands only sign, download and
 publish, with Maven outside the test lifecycle or Gradle tasks that by
 convention run no tests, as outside validation, reported as a caveat even

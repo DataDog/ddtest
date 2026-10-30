@@ -156,8 +156,8 @@ func TestJavaGradleCompoundStepsReadEachBuild(t *testing.T) {
 	files["standalone/build.gradle"] = "task ciTests(type: Test)\n"
 	root := javaWorkflowFixture(t, "", files)
 	resolution := javaStep(t, root, "./gradlew assemble && ./gradlew -p standalone ciTests")
-	require.False(t, resolution.Review, "the second command's own build declares ciTests")
-	require.Contains(t, resolution.Reason, "single explicit command")
+	require.True(t, resolution.Matched, "the second command's own build declares ciTests: %s", resolution.Reason)
+	require.Equal(t, "./gradlew -p standalone ciTests", resolution.Tests[0].Command)
 }
 
 func TestJavaGradleDefaultTasksOfTheRootBuild(t *testing.T) {
@@ -269,5 +269,30 @@ func TestJavaPublishJobWithoutTheActionIsOutsideValidation(t *testing.T) {
 		scope, err := DiscoverValidationScope(javaWorkflowFixture(t, "jobs:\n  test:\n    steps:\n      - run: mvn verify\n"+job, maps.Clone(files)), "junit5")
 		require.NoError(t, err)
 		require.NotEmpty(t, scope.Unresolved, "%s adds goals to the metadata command", name)
+	}
+}
+
+func TestJavaGradleChainsWithOneTestCommand(t *testing.T) {
+	root := javaWorkflowFixture(t, "", gradleFixture())
+	for run, command := range map[string]string{
+		"./gradlew assemble && ./gradlew check --info --stacktrace":                                                               "./gradlew check --info --stacktrace",
+		"./gradlew clean; ./gradlew test && ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -x check --info": "./gradlew test",
+		"./gradlew spotlessCheck && ./gradlew --dry-run build && ./gradlew :app:test":                                             "./gradlew :app:test",
+	} {
+		resolution := javaStep(t, root, run)
+		require.True(t, resolution.Matched, "%s: %s", run, resolution.Reason)
+		require.Equal(t, command, resolution.Tests[0].Command, run)
+		require.Contains(t, strings.Join(resolution.Tests[0].StepScopeNotes, " "), "which run no tests", run)
+	}
+	for _, run := range []string{
+		"./gradlew test && ./gradlew integrationTest",
+		"./gradlew assemble && ./gradlew check && ./gradlew jcstress",
+		"cd app && ./gradlew test",
+		"./gradlew && ./gradlew test",
+		"./gradlew assemble && make test",
+	} {
+		resolution := javaStep(t, root, run)
+		require.False(t, resolution.Matched, run)
+		require.NotEmpty(t, resolution.Reason, run)
 	}
 }
