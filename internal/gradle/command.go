@@ -129,10 +129,12 @@ func TestTask(task string) bool {
 	return strings.HasSuffix(name, "test") && !slices.ContainsFunc(buildingPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 }
 
-// nonTestPrefixes and nonTestTasks name tasks that, by convention, run no
-// tests: cleaning, building, documentation, analysis and publishing.
+// nonTestPrefixes, nonTestSuffixes and nonTestTasks name tasks that, by
+// convention, run no tests: cleaning, building, documentation, analysis and
+// publishing, including staging repositories as closeSonatypeStagingRepository.
 var (
-	nonTestPrefixes = append([]string{"clean", "javadoc", "dokka", "spotless", "ktlint", "detekt", "checkstyle", "pmd", "spotbugs", "sonar", "jacoco", "license", "dist", "publish", "install", "upload", "release", "native", "image", "jib", "docker", "shadow", "boot"}, buildingPrefixes...)
+	nonTestPrefixes = append([]string{"clean", "javadoc", "dokka", "spotless", "ktlint", "detekt", "checkstyle", "pmd", "spotbugs", "sonar", "jacoco", "license", "dist", "publish", "install", "upload", "release", "close", "native", "image", "jib", "docker", "shadow", "boot"}, buildingPrefixes...)
+	nonTestSuffixes = []string{"stagingrepository", "stagingrepositories"}
 	nonTestTasks    = []string{"dependencies", "help", "tasks", "properties", "projects", "wrapper", "buildenvironment", "init", "run"}
 )
 
@@ -143,7 +145,8 @@ func NonTestTask(task string) bool {
 		return false
 	}
 	name := strings.ToLower(taskName(task))
-	return slices.Contains(nonTestTasks, name) || slices.ContainsFunc(nonTestPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+	return slices.Contains(nonTestTasks, name) || slices.ContainsFunc(nonTestPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) }) ||
+		slices.ContainsFunc(nonTestSuffixes, func(suffix string) bool { return strings.HasSuffix(name, suffix) })
 }
 
 // excludes reports whether a -x selector removes a requested task: the same

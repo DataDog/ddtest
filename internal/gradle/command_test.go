@@ -109,7 +109,7 @@ func TestAttachedShortOptionValuesRoundTrip(t *testing.T) {
 }
 
 func TestNonTestTasks(t *testing.T) {
-	for _, task := range []string{"clean", "assemble", "javadoc", "spotlessCheck", "detekt", "ktlintCheck", "sonar", "jacocoTestReport", "publish", "dependencies", "bootJar", ":app:distZip"} {
+	for _, task := range []string{"clean", "assemble", "javadoc", "spotlessCheck", "detekt", "ktlintCheck", "sonar", "jacocoTestReport", "publish", "dependencies", "bootJar", ":app:distZip", "closeSonatypeStagingRepository", "closeAndReleaseRepository", "initializeSonatypeStagingRepository"} {
 		require.True(t, NonTestTask(task), task)
 	}
 	for _, task := range []string{"ciTests", "verifyAll", "test", "e2e", "nativeTest", ":native-image-tests:nativeTest"} {

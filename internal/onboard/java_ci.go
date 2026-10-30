@@ -155,8 +155,9 @@ var mavenMention = regexp.MustCompile(`(^|[\s/;&|(])mvnw?(\.cmd)?(\s|$)`)
 // parse, such as ./ci/integration.sh | tee build.log.
 var scriptMention = regexp.MustCompile(`(^\s*|[;&|(]\s*)((\.\.?/)?[\w.-]+/[\w./-]+|[\w.-]+\.sh(\s|$)|(ba)?sh\s+[^-\s])`)
 
-// javaShellBuiltins only print or move files around maintenance goals.
-var javaShellBuiltins = []string{"cd", "cp", "mv", "mkdir", "rm", "ln", "echo", "printf", "cat", "ls", "touch", "tar", "pwd", "true"}
+// javaShellBuiltins only print, move or mark files executable around
+// maintenance goals, as chmod +x gradlew before a build.
+var javaShellBuiltins = []string{"cd", "cp", "mv", "mkdir", "rm", "ln", "chmod", "echo", "printf", "cat", "ls", "touch", "tar", "pwd", "true"}
 
 // otherFrameworkModules lists the reactor modules that declare test
 // frameworks, none of them framework.

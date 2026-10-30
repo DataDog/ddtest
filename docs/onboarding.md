@@ -627,8 +627,13 @@ For Gradle, ddtest reads the build's settings (and the scripts they apply),
 build files and default version catalog without running Gradle, including the
 test tasks and suites build files declare; a project list or test task that
 build logic computes, such as in buildSrc, leaves the step unresolved rather
-than guessed. It resolves each CI step to its test tasks, reports the other
-tasks and the projects of other frameworks, and checks that the Datadog action
+than guessed, except for tasks the build files declare with another type, such
+as a `JapicmpTask`, which never run tests. It resolves each CI step to its test
+tasks, reports the other tasks and the projects of other frameworks, and
+treats a job without the Datadog action whose commands only sign, download and
+publish, with Maven outside the test lifecycle or Gradle tasks that by
+convention run no tests, as outside validation, reported as a caveat even
+where secrets fill its commands. It checks that the Datadog action
 instruments Gradle: by default the action adds the agent to `GRADLE_OPTS`, so
 `java-instrumented-build-system: maven` or a step that replaces `GRADLE_OPTS`
 without `${{ env.GRADLE_OPTS }}` leaves it uninstrumented.

@@ -108,7 +108,7 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		default:
 			// A task that is neither a known test task nor conventionally free
 			// of tests may be one that build logic ddtest does not read declares.
-			if unknown := slices.DeleteFunc(slices.Clone(requested), gradle.NonTestTask); len(unknown) > 0 && testTasks.Unread {
+			if unknown := slices.DeleteFunc(slices.Clone(requested), testTasks.NonTest); len(unknown) > 0 && testTasks.Unread {
 				return unresolvedCommand("Gradle task " + strings.Join(unknown, ", ") + " may be a test task declared by build logic ddtest does not read: " + step.Run)
 			}
 		}
