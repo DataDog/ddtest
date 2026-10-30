@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -16,6 +17,60 @@ import (
 // instead of guessing which file pytest will select. Version-dependent native
 // TOML and config-based Datadog activation remain unverified.
 func PytestConfigOptions(root, directory, addopts string, words []string) ([]string, error) {
+	settings, err := pytestConfigSettings(root, directory, addopts, words)
+	if err != nil {
+		return nil, err
+	}
+	return pytestConfigList(settings["addopts"], "addopts")
+}
+
+// PytestConfigPaths reads the native path settings from the selected configuration.
+func PytestConfigPaths(root, directory, addopts string, words []string) (map[string][]string, error) {
+	settings, err := pytestConfigSettings(root, directory, addopts, words)
+	if err != nil {
+		return nil, err
+	}
+	paths := map[string][]string{}
+	for _, key := range []string{"testpaths", "pythonpath", "cache_dir", "log_file"} {
+		value := settings[key]
+		if (key == "cache_dir" || key == "log_file") && value != nil {
+			path, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("pytest configuration %s must be a string", key)
+			}
+			paths[key] = []string{path}
+			continue
+		}
+		paths[key], err = pytestConfigList(value, key)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return paths, nil
+}
+
+func pytestConfigList(value any, key string) ([]string, error) {
+	switch value := value.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		return shellquote.Split(value)
+	case []any:
+		var options []string
+		for _, item := range value {
+			word, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("pytest configuration %s must contain strings", key)
+			}
+			options = append(options, word)
+		}
+		return options, nil
+	default:
+		return nil, fmt.Errorf("pytest configuration %s must be a string or string array", key)
+	}
+}
+
+func pytestConfigSettings(root, directory, addopts string, words []string) (map[string]any, error) {
 	args, ok := pythonRunnerArguments(words, "pytest")
 	if !ok {
 		return nil, fmt.Errorf("cannot identify pytest configuration arguments")
@@ -49,7 +104,7 @@ func PytestConfigOptions(root, directory, addopts string, words []string) ([]str
 			config = strings.TrimPrefix(options[i][2:], "=")
 			continue
 		}
-		if !positional && (option == "-k" || option == "-m" || option == "-o" || option == "--override-ini" || option == "-p" || option == "--rootdir") {
+		if !positional && slices.Contains([]string{"-k", "-m", "-o", "--override-ini", "-p", "--rootdir", "--ignore", "--ignore-glob", "--confcutdir", "--basetemp", "--deselect", "--junitxml", "--junit-xml", "--log-file", "--cov", "--cov-config", "--cov-report"}, option) {
 			if !assigned {
 				i++
 			}
@@ -79,7 +134,7 @@ func PytestConfigOptions(root, directory, addopts string, words []string) ([]str
 		if !filepath.IsAbs(config) {
 			config = filepath.Join(directory, config)
 		}
-		options, _, err := readPytestConfigOptions(root, config)
+		options, _, err := readPytestConfigSettings(root, config)
 		return options, err
 	}
 	selected, defaults, err := findPytestConfig(root, directory)
@@ -115,7 +170,7 @@ func PytestConfigOptions(root, directory, addopts string, words []string) ([]str
 	return defaults, nil
 }
 
-func findPytestConfig(root, directory string) (string, []string, error) {
+func findPytestConfig(root, directory string) (string, map[string]any, error) {
 	directory, err := filepath.EvalSymlinks(directory)
 	if err != nil {
 		return "", nil, err
@@ -126,7 +181,7 @@ func findPytestConfig(root, directory string) (string, []string, error) {
 	for current := directory; ; current = filepath.Dir(current) {
 		for _, name := range []string{"pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"} {
 			path := filepath.Join(current, name)
-			options, matched, err := readPytestConfigOptions(root, path)
+			options, matched, err := readPytestConfigSettings(root, path)
 			if os.IsNotExist(err) {
 				continue
 			}
@@ -146,7 +201,7 @@ func findPytestConfig(root, directory string) (string, []string, error) {
 	}
 }
 
-func readPytestConfigOptions(root, path string) ([]string, bool, error) {
+func readPytestConfigSettings(root, path string) (map[string]any, bool, error) {
 	canonical, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return nil, false, err
@@ -191,25 +246,7 @@ func readPytestConfigOptions(root, path string) ([]string, bool, error) {
 				return nil, false, fmt.Errorf("pytest config-based Datadog activation requires runtime validation")
 			}
 		}
-		switch value := settings["addopts"].(type) {
-		case nil:
-			return nil, matched, nil
-		case string:
-			options, err := shellquote.Split(value)
-			return options, matched, err
-		case []any:
-			var options []string
-			for _, item := range value {
-				word, ok := item.(string)
-				if !ok {
-					return nil, false, fmt.Errorf("pytest configuration addopts must contain strings")
-				}
-				options = append(options, word)
-			}
-			return options, matched, nil
-		default:
-			return nil, false, fmt.Errorf("pytest configuration addopts must be a string or string array")
-		}
+		return settings, matched, nil
 	case ".ini", ".cfg":
 		sections, err := pytestINISections(string(data))
 		if err != nil {
@@ -227,8 +264,11 @@ func readPytestConfigOptions(root, path string) ([]string, bool, error) {
 				return nil, false, fmt.Errorf("pytest config-based Datadog activation requires runtime validation")
 			}
 		}
-		options, err := shellquote.Split(sections[section]["addopts"])
-		return options, sections[section] != nil || filepath.Base(path) == "pytest.ini", err
+		settings := map[string]any{}
+		for key, value := range sections[section] {
+			settings[key] = value
+		}
+		return settings, sections[section] != nil || filepath.Base(path) == "pytest.ini", nil
 	default:
 		return nil, false, fmt.Errorf("unsupported pytest configuration format")
 	}

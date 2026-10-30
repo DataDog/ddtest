@@ -478,13 +478,14 @@ func TestPreviewChoosesTracerBeforeConfirmation(t *testing.T) {
 }
 
 func TestPythonTemporaryEnvironmentCleanup(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // This cleanup test must not inspect a real runtime.
 	for _, outcome := range []string{"success", "install failure", "intake failure", "test failure", "canceled"} {
 		t.Run(outcome, func(t *testing.T) {
 			root := t.TempDir()
 			installer := &fakeTracer{}
 			executor := &fakeTestdriveExecutor{}
 			drive := &Testdrive{
-				repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()),
+				repositoryRoot: root, language: "python", framework: &telemetryOnlyFramework{},
 				command: "python", args: []string{"-m", "pytest"}, platform: installer, executor: executor,
 				session: workspace.PlanSession(),
 			}
@@ -505,7 +506,8 @@ func TestPythonTemporaryEnvironmentCleanup(t *testing.T) {
 				}
 				return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
 			}
-			err := drive.Run(t.Context(), &bytes.Buffer{})
+			result, err := drive.run(t.Context(), &bytes.Buffer{})
+			err = errors.Join(err, finishValidation(&bytes.Buffer{}, root, result))
 			if (err == nil) != (outcome == "success") {
 				t.Fatalf("Run() error = %v", err)
 			}

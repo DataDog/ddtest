@@ -9,7 +9,9 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 )
 
@@ -53,7 +55,7 @@ func uvLockRoot(root string) string {
 	}
 }
 
-func pythonEnvironmentInfo(ctx context.Context, command string, args []string, source string) (environmentInfo, *reportCard) {
+func pythonEnvironmentInfo(ctx context.Context, command string, args []string, source string, env map[string]string, timeout time.Duration) (environmentInfo, *reportCard) {
 	info := environmentInfo{Source: source, Runtime: "Python"}
 	probeCommand, prefix, err := pythonProbeCommand(command, args)
 	advice := "Activate the environment used to run your tests, or pass --command with its Python interpreter and pytest arguments. Install the project's test dependencies in that environment, then rerun testdrive."
@@ -66,13 +68,35 @@ func pythonEnvironmentInfo(ctx context.Context, command string, args []string, s
 			return info, environmentFinding("uv-not-found", "uv is not available", err.Error(), "Install uv and prepare the project's test environment, or pass --command with an existing test environment's Python interpreter and pytest arguments.")
 		}
 	}
+	if strings.TrimSuffix(filepath.Base(command), ".exe") == "poetry" {
+		env, err = pythonPoetryEnvironment(ctx, command, "", env, timeout)
+		if err != nil {
+			return info, environmentFinding("python-environment-unresolved", "Cannot inspect the selected Poetry environment", err.Error(), advice)
+		}
+		if selected := env["VIRTUAL_ENV"]; selected != "" {
+			// Probe the resolved interpreter directly: Poetry can prefer its
+			// original project-cache entry over an activated environment.
+			for i, arg := range prefix {
+				if platform.IsPythonExecutable(arg) {
+					probeCommand, prefix = arg, prefix[i+1:]
+					if filepath.Base(arg) == arg {
+						candidate := filepath.Join(filepath.Dir(environmentPython(selected)), arg)
+						if _, err := os.Stat(candidate); err == nil {
+							probeCommand = candidate
+						}
+					}
+					break
+				}
+			}
+		}
+	}
 	var result struct {
 		Executable string
 		Version    string
 		Pytest     bool
 		Error      string
 	}
-	err = probeEnvironment(ctx, probeCommand, append(prefix, "-c", pythonEnvironmentProbe), nil, &result)
+	err = probeEnvironment(ctx, probeCommand, append(prefix, "-c", pythonEnvironmentProbe), env, &result, timeout)
 	if err != nil {
 		return info, environmentFinding("python-environment-unresolved", "Cannot inspect the selected Python environment", err.Error(), advice)
 	}
@@ -98,7 +122,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 func pythonProbeCommand(command string, args []string) (string, []string, error) {
 	base := strings.TrimSuffix(filepath.Base(command), ".exe")
 	if platform.IsPythonExecutable(command) {
-		if index := slices.Index(args, "-m"); index >= 0 {
+		if index, _ := onboard.PythonModule(args); index >= 0 {
 			return command, slices.Clone(args[:index]), nil
 		}
 		return command, nil, nil

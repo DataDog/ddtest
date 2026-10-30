@@ -656,6 +656,48 @@ repeat pairs, while aggregate execution counts include each primary run once.
 Configuration runs remain sequential while platform detection uses a scoped
 process working directory; changing all adapters to explicit working directories
 belongs to the after-stack refactor.
+### pytest testdrive validation
+
+Prepare the same Python environment and project dependencies used by CI, then run:
+
+```bash
+ddtest testdrive --framework pytest --command "python -m pytest" --yes
+```
+
+The selected environment needs pytest >=7.2. Testdrive reuses its installed
+ddtrace >=4.11, or installs the requested `--tracer-version` in temporary storage.
+It verifies which tracer the selected interpreter actually imports. Supported
+direct, `uv run`, and `poetry run` commands retain their arguments, configuration,
+fixtures, and matching CI environment. Prepare wrapper environments first;
+`uv run` executes with `--no-sync` to preserve the selected dependencies.
+
+Editable installations and path hooks into the original checkout cannot be
+isolated and block execution. Use a separate environment with the test
+dependencies and select local source through `PYTHONPATH` or pytest's
+`pythonpath` setting; testdrive redirects those paths into the disposable copy.
+
+Each configuration runs in a disposable checkout copy. Testdrive compares native
+test identities, outcomes, failure signatures, and exit codes between an
+uninstrumented baseline and a reporting-only run, then checks test telemetry and
+source coverage. Existing failures may match successfully. Six isolated probe
+controls exercise retries, early flake detection, skipping, quarantine, disabled
+tests, and attempt-to-fix. Probe runs preserve project fixtures and plugins;
+coverage thresholds are relaxed only for these small probes.
+
+Use `--all --check-only` to inspect discovered configurations without running
+tests, or `--all` to validate supported configurations separately. Unresolved tox
+environments and CI setup remain visible as unvalidated. Local suite compatibility
+does not certify unrelated CI configurations or remote Datadog processing.
+Blocked tracer plugins, missing native results, and failed controls prevent a
+pass. Python tracers that exclude parameterized tests from early flake detection
+leave that control unvalidated when autouse fixtures parameterize the probe.
+
+Keep `.testoptimization/testdrive.json` and `.testoptimization/report.html` for
+the result. Owned copies, tracer installations, and probes are removed after the
+run. Validation uses a local intake and needs no Datadog credentials. Python
+coding-agent onboarding coordination is a separate follow-up; standalone paired
+testdrive does not enable `--agent`, `--apply`, or `--resume`.
+
 ### Vitest testdrive validation
 
 Run `ddtest testdrive --framework vitest --all --check-only --yes` to inspect

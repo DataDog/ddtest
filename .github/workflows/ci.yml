@@ -54,7 +54,7 @@ jobs:
         run: go mod verify
 
       - name: Install Python test dependencies
-        run: python -m pip install "ddtrace>=4.11.0" pytest
+        run: python -m pip install "ddtrace>=4.11.0" pytest pytest-cov pytest-xdist
 
       - name: Install evaluator package-manager fixture
         run: npm install --global pnpm@12.14.0
@@ -93,7 +93,7 @@ jobs:
           service: ddtest
 
       - name: Run tests
-        run: go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -timeout=20m -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
         env:
           DD_ENV: ci
           DDTEST_REQUIRE_PROJECT_RUNTIMES: "1"
@@ -160,7 +160,7 @@ jobs:
         run: go mod verify
 
       - name: Install Python test dependencies
-        run: python -m pip install "ddtrace>=4.11.0" pytest
+        run: python -m pip install "ddtrace>=4.11.0" pytest pytest-cov pytest-xdist
 
       - name: Install evaluator package-manager fixture
         run: npm install --global pnpm@12.14.0
@@ -179,7 +179,7 @@ jobs:
           "$RUNNER_TEMP/bin/ddtest" instrument --version
 
       - name: Run tests
-        run: ddtest instrument go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
+        run: ddtest instrument go test -timeout=20m -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
         env:
           DD_CIVISIBILITY_ENABLED: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' && 'parent' || 'false' }}
           DD_CIVISIBILITY_AGENTLESS_ENABLED: "true"
@@ -285,11 +285,13 @@ jobs:
 
       - name: Test pytest adapter
         run: |
-          python -m pip install "ddtrace==${{ matrix.ddtrace }}" "pytest==${{ matrix.pytest }}"
+          python -m pip install "ddtrace==${{ matrix.ddtrace }}" "pytest==${{ matrix.pytest }}" pytest-cov pytest-xdist
           DDTEST_PYTHON_BINARY="$(command -v python)" \
             go test -v ./internal/compatibility -run '^TestPyTest(AdapterIntegration|SuiteModeSelectorBatches)$'
           DDTEST_PYTHON_PLATFORM_INTEGRATION=1 \
             go test -v ./internal/compatibility -run '^TestPythonPlatformIntegration$'
+          DDTEST_PYTEST_PYTHON="$(command -v python)" \
+            go test -v ./internal/testdrive -run '^TestPytest(RealValidation|CoverageExecutesOnlyInsideCopy|LoggingExecutesOnlyInsideCopy|RejectsEditableImportsFromOriginalCheckout|CoverageDataExecutesOnlyInsideCopy|IgnoredConfigurationUsesRoot|ObserverKeepsConcurrentDuplicateExecutions)$'
 
   javascript-platform-compatibility:
     runs-on: ubuntu-latest

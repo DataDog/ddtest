@@ -139,11 +139,8 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 			drive.Preview(&output)
 			err = drive.Run(t.Context(), &output)
 			if outcome == "ready" {
-				require.NoError(t, err)
-				require.NotContains(t, output.String(), "INCOMPLETE")
-				require.Equal(t, python, installer.options.Command)
-				require.Equal(t, "uv", executor.command)
-				require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest"}, executor.args)
+				require.Error(t, err, "availability alone is not paired validation evidence")
+				require.False(t, readValidationReport(t, root).Success)
 			} else {
 				require.Error(t, err)
 				require.Empty(t, installer.options.Directory)
@@ -154,15 +151,14 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 					require.Contains(t, output.String(), "error: selected Python is unavailable")
 				}
 			}
-			data, err := os.ReadFile(htmlReportPath(root))
-			require.NoError(t, err)
-			require.Contains(t, string(data), "uv project (uv.lock)")
 			if outcome != "ready" {
+				data, err := os.ReadFile(htmlReportPath(root))
+				require.NoError(t, err)
+				require.Contains(t, string(data), "uv project (uv.lock)")
 				require.Contains(t, string(data), drive.environmentFailure.Title)
 				require.Contains(t, string(data), "Troubleshooting")
 			}
-			require.DirExists(t, drive.session.Directory())
-			require.FileExists(t, filepath.Join(drive.session.Directory(), testOutputFilename))
+			require.NoDirExists(t, drive.session.Directory())
 
 		})
 	}

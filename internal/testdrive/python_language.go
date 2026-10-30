@@ -3,6 +3,8 @@ package testdrive
 import (
 	"context"
 	"fmt"
+	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,21 +30,61 @@ func (pythonLanguage) prepareStorage() error                         { return ni
 func (pythonLanguage) selectCommand(commandRequest) (string, []string, bool, error) {
 	return "", nil, false, nil
 }
-func (pythonLanguage) detectsTracerInPreparation() bool                 { return true }
-func (pythonLanguage) refreshProjectTracer(*Testdrive, context.Context) {}
-func (pythonLanguage) usesPackageBinaries() bool                        { return true }
-func (pythonLanguage) previewNotes() []string                           { return nil }
+func (pythonLanguage) detectsTracerInPreparation() bool { return true }
+func (pythonLanguage) refreshProjectTracer(t *Testdrive, ctx context.Context) {
+	source := t.environmentInfo.Source
+	if source == "" {
+		source = "Selected Python configuration"
+	}
+	words := append([]string{t.command}, t.args...)
+	if original := rebaseUVDirectories(words, t.checkoutRoot(), t.configurationSourceRoot); t.configurationSourceRoot != "" && !slices.Equal(original, words) {
+		info, finding := pythonEnvironmentInfo(ctx, original[0], original[1:], source, t.configurationEnvironment, t.commandTimeout)
+		if finding != nil {
+			t.environmentInfo, t.environmentFailure, t.projectTracer = info, finding, ""
+			return
+		}
+		environment := filepath.Dir(info.Executable)
+		if base := filepath.Base(environment); base == "bin" || strings.EqualFold(base, "Scripts") {
+			environment = filepath.Dir(environment)
+		}
+		t.configurationEnvironment["UV_PROJECT_ENVIRONMENT"] = environment
+	}
+	if strings.TrimSuffix(filepath.Base(t.command), ".exe") == "poetry" && t.configurationSourceRoot != "" {
+		relative, err := filepath.Rel(t.checkoutRoot(), t.repositoryRoot)
+		if err == nil {
+			var pinned map[string]string
+			pinned, err = pythonPoetryEnvironment(ctx, t.command, filepath.Join(t.configurationSourceRoot, relative), t.configurationEnvironment, t.commandTimeout)
+			if err == nil {
+				maps.Copy(t.configurationEnvironment, pinned)
+			}
+		}
+		if err != nil {
+			t.environmentFailure = environmentFinding("python-environment-unresolved", "Cannot retain the selected Poetry environment", err.Error(), "Prepare the Poetry environment with the project's test dependencies, then rerun testdrive.")
+			t.projectTracer = ""
+			return
+		}
+	}
+	t.environmentInfo, t.environmentFailure = pythonEnvironmentInfo(ctx, t.command, t.args, source, t.configurationEnvironment, t.commandTimeout)
+	t.projectTracer = ""
+}
+func (pythonLanguage) usesPackageBinaries() bool { return false }
+func (pythonLanguage) previewNotes() []string {
+	return []string{
+		"check GitHub Actions Python runtimes and tracer release agreement using action and PyPI metadata",
+		"disable coverage thresholds only for isolated probes, preserving collection and full-suite thresholds",
+	}
+}
 func (pythonLanguage) installTracer(*Testdrive, context.Context, platform.TracerOptions) (platform.TracerInstallation, bool, error) {
 	return platform.TracerInstallation{}, false, nil
 }
 
 func (pythonLanguage) inspectEnvironment(ctx context.Context, request environmentRequest) (string, []string, environmentInfo, *reportCard) {
 	command, args, source := pythonTestdriveCommand(request.root, request.command, request.args, request.explicit)
-	info, finding := pythonEnvironmentInfo(ctx, command, args, source)
+	info, finding := pythonEnvironmentInfo(ctx, command, args, source, request.environment, request.timeout)
 	return command, args, info, finding
 }
 
-func (pythonLanguage) parsesCommandAssignments() bool { return false }
+func (pythonLanguage) parsesCommandAssignments() bool { return true }
 
 // The tracer installer inspects the selected interpreter, not a wrapper.
 func (pythonLanguage) tracerCommand(info environmentInfo, command string, args []string) (string, []string) {
@@ -106,11 +148,28 @@ func (pythonLanguage) noResultsFinding(runtime reportRuntime, noEvents, commandF
 	}
 }
 
-func (pythonLanguage) pairedFrameworks() map[string]pairedFramework { return nil }
-func (pythonLanguage) isolatesConfigurations() bool                 { return false }
+func (pythonLanguage) pairedFrameworks() map[string]pairedFramework {
+	return map[string]pairedFramework{"pytest": {
+		run:      (*Testdrive).runPytest,
+		features: (*Testdrive).runPytestFeatures,
+		preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
+			return t.checkPytestPreflight
+		},
+		telemetry:      verifyPytestTelemetry,
+		probeTelemetry: verifyPytestTelemetry,
+		verifyInstallation: func(t *Testdrive, ctx context.Context, path string) error {
+			return t.verifyPytestTracer(ctx, path, t.tracerVersion)
+		},
+	}}
+}
+func (pythonLanguage) isolatesConfigurations() bool { return true }
 
-func (pythonLanguage) prepareConfiguration(*Testdrive, *configurationResult, string, string) error {
-	return nil
+func (pythonLanguage) prepareConfiguration(t *Testdrive, item *configurationResult, _, _ string) error {
+	directory, err := localSetupDirectory(t.repositoryRoot, item.Directory)
+	if err != nil {
+		return err
+	}
+	return t.rebasePytestConfiguration(directory)
 }
 func (pythonLanguage) coordinated() bool        { return false }
 func (pythonLanguage) defaultsToCITracer() bool { return false }
@@ -128,4 +187,10 @@ func (pythonLanguage) mergeCIRuntime(_, next *onboard.RuntimeCheck) *onboard.Run
 	return next
 }
 
-func (pythonLanguage) labelsTracerWithoutSelection() bool { return false }
+func (pythonLanguage) labelsTracerWithoutSelection() bool { return true }
+
+func init() {
+	frameworkFeaturePolicies["pytest"] = frameworkPolicy{SourceCoverage: true, ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"}, ConfigurationOptions: []string{"-c", "--config-file"}, Features: []featurePolicy{
+		{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "required"}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
+	}}
+}
