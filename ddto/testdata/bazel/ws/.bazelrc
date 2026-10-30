@@ -1,0 +1,7 @@
+# Payload files stay readable in bazel-testlogs.
+test --nozip_undeclared_test_outputs
+test --test_output=errors
+test --sandbox_default_allow_network=false
+test --test_env=DD_SERVICE=ddtest-bazel-basic
+# WORKSPACE mode: bazel --bazelrc=... or the driver's --config=workspace.
+common:workspace --noenable_bzlmod --enable_workspace

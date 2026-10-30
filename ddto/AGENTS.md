@@ -186,8 +186,8 @@ goroutines for every goleak check.
 
 | Project | What to do |
 | --- | --- |
-| Testify suites, v1.4.0 or newer v1 | Nothing. An unsupported version warns and its methods report as ordinary subtests. |
-| goleak, v1.3.0 or newer v1 | Nothing. |
+| Testify suites, v1.2.0 or newer v1 | Nothing. A release whose `suite.Run` entry differs warns and its methods report as ordinary subtests. |
+| goleak, v1.3.0 or newer v1 | Nothing. An older release, without `IgnoreAnyFunction`, warns and its checks run without the CI filters. |
 | dd-trace-go v2.10.0 or newer for APM in tests | Nothing: Mini stays the only CI reporter. Spans that the SDK tracer starts from `t.Context()` appear under the test and are not sent to APM; spans outside tests keep APM delivery. Set `DD_CIVISIBILITY_APM_SPANS_ENABLED=true` only if the project also needs the spans under tests in APM. |
 | Orchestrion builds | `ddtest instrument orchestrion go test ...`, `ddtest instrument go tool orchestrion go test ...`, or keep `-toolexec="orchestrion toolexec"` after `ddtest instrument test`. See [Orchestrion](docs/orchestrion.md) for toolchain requirements. |
 | A `toolchain` line that makes Go download a newer toolchain | Nothing. The first run builds a mirror of that toolchain and relinks, so it is slower. |
@@ -199,7 +199,7 @@ goroutines for every goleak check.
 | A large repository whose Git upload is slow | `--git-upload-timeout=2m` after `ddtest instrument test`. |
 | Fuzzing with `-fuzz` | Nothing: fuzz roots and seeds report, generated inputs do not. |
 | `go test file_test.go` or standard-library packages | Not instrumented: name packages instead of files. |
-| Bazel | The payload-file and manifest modes have not been tested with a real Bazel build; see [Mini runtime](docs/mini-runtime.md#delivery-and-offline-output). |
+| Bazel | `ddtest instrument bazel` writes the instrumented Go SDK and Mini's repository that rules_test_optimization's next major version, in development, uses; see [Bazel](docs/bazel.md). |
 
 ### Turn features off
 

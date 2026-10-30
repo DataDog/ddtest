@@ -171,11 +171,11 @@ took about 250 ms with hard links, against 400 ms with symbolic links and
 700 ms or more with copies. Copies are made only where hard links fail, as
 across filesystems.
 
-Selected-version validation must run before compilation: cached archives can
-remain usable when vendor metadata changes but source bytes do not.
-[`TestTestifyVersionGuardWithWarmVendoredSources`](../integration/vendor_cache_test.go)
-checks that case. Testify and goleak share the lookup; both libraries' versions
-and APIs are validated even on an unchanged build.
+API validation runs before compilation, on the selected sources and overlays,
+so a warm cache never hides a changed entry.
+[`TestTestifyAPIGuardWithWarmVendoredSources`](../integration/vendor_cache_test.go)
+checks that case. Testify and goleak share the lookup; both libraries' APIs are
+validated even on an unchanged build.
 
 Compiler/linker version identities stay native. The exported suite fingerprint
 in `testing` carries instrumentation inputs into Go's package keys. Go owns

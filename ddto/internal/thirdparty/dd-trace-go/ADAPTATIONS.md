@@ -1290,6 +1290,21 @@ If upstream adds semantic identifier inspection, reassess this flag. Preserve
 the source-cache tests for named functions, adjacent literals, missing/invalid
 files and ITR comments, and the CI matrix's source/coverage comparisons.
 
+## Test sources from Bazel runfiles
+
+rules_go compiles with `-trimpath`, so a test's source path is relative to the
+execution root, and the test runs in its package's directory, where that path
+does not open: the test's end line and source parsing are lost.
+[`civisibility/utils/source_paths.go`](civisibility/utils/source_paths.go)
+passes a relative path that no workspace tag resolved to
+[`source_runfiles.go`](civisibility/utils/source_runfiles.go), which looks it
+up with [`bazel/runfiles.go`](bazel/runfiles.go) among the test's runfiles,
+under `TEST_WORKSPACE` or, for `external/<repository>/`, under that
+repository, through `RUNFILES_DIR`, `TEST_SRCDIR` or `RUNFILES_MANIFEST_FILE`.
+The build stages the sources only on request, as rules_test_optimization's
+`stage_sources` does. Check: `TestSourceRlocation` and
+`TestWithRunfilesSource`.
+
 ## Build information read once
 
 [`civisibility/utils/source_paths.go`](civisibility/utils/source_paths.go)
@@ -1865,6 +1880,19 @@ hook keeps its call, because ddto installs it only when `-coverpkg` leaves
 Mini's coverage package alone. The SDK mirror's hook also keeps its call:
 Mini's tracer initializes before the SDK's in the tested graphs, so that call
 never ran first.
+
+Every other call that ddto's edits make into Mini goes through a variable.
+[`testing_hooks.go`](civisibility/integrations/gotesting/testing_hooks.go)
+defines the testing overlay's and Testify's hooks, and
+[`forced_exit_hook.go`](civisibility/integrations/forced_exit_hook.go) the exit
+hook's, each with the function as its value and with the exact type that
+`internal/instrument/mini_hooks.go` checks. The edited packages declare the
+same variables with no value and call them only when they are not nil. The
+linker keeps the definition that has a value, which is data in the executable,
+so the hooks work before any package initializes. A binary that does not link
+Mini, such as a tool that Bazel builds with the instrumented SDK, keeps only
+the declarations without a value and runs as native. The functions stay
+linkname targets for released CLIs.
 `beginRootParallelSchedulerTransfer` marks attempts that go parallel after the
 lease moved, and `finalizeFreshRetryAttempt` records their end before it
 publishes the result, as `tRunner` does before it releases its caller. Both

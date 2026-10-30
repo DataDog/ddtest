@@ -213,9 +213,41 @@ func sdkImports(file *ast.File, path string) bool {
 	return false
 }
 
+// The span mirror's calls into Mini. Without Mini, a span gets no mirror
+// state, so nothing is copied, adopted or withheld.
+func mirrorHook(call, variable string, params, results []string, miniType, native string) miniHook {
+	return miniHook{Call: call, Local: call + "Hook", Package: miniTracerPackage, Variable: variable, Params: params, Results: results, MiniType: miniType, Native: native}
+}
+
+var miniMirrorCopyHooks = []miniHook{
+	mirrorHook("__ddtoMirrorEnable", "sdkMirrorEnableHook", nil, nil, "func()", ""),
+	mirrorHook("__ddtoMirrorStart", "sdkMirrorStartHook", []string{"context.Context", "any", "string"}, []string{"any"}, "func(context.Context, any, string) any", "nil"),
+	mirrorHook("__ddtoMirrorContext", "sdkMirrorContextHook", []string{"context.Context", "any"}, []string{"context.Context"}, "func(context.Context, any) context.Context", "a0"),
+	mirrorHook("__ddtoMirrorCapture", "sdkMirrorCaptureHook", []string{"any", "string", "string", "string", "string", "int64", "int64", "int32", "func(func(string, string) bool)", "map[string]float64", "[16]byte", "uint64"}, []string{"any"}, "func(any, string, string, string, string, int64, int64, int32, func(func(string, string) bool), map[string]float64, [16]byte, uint64) any", "nil"),
+	mirrorHook("__ddtoMirrorDeliver", "sdkMirrorDeliverHook", []string{"any"}, nil, "func(any)", ""),
+}
+
+var miniMirrorAdoptionHooks = []miniHook{
+	mirrorHook("__ddtoMirrorAdopt", "sdkMirrorAdoptHook", []string{"any", "any", "uint64", "bool"}, []string{"[16]byte", "bool"}, "func(any, any, uint64, bool) ([16]byte, bool)", "[16]byte{}, false"),
+	mirrorHook("__ddtoMirrorAdopted", "sdkMirrorAdoptedHook", []string{"any"}, []string{"bool"}, "func(any) bool", "false"),
+	mirrorHook("__ddtoMirrorReport", "sdkMirrorWithheldHook", []string{"int", "int"}, nil, "func(int, int)", ""),
+}
+
+// SDKMirrorRuntimeError reports why the selected runtime's minitracer package,
+// given as the sources that the build compiles, cannot receive the span
+// mirror's calls, or nil.
+func SDKMirrorRuntimeError(sources map[string][]byte) error {
+	var want []string
+	for _, h := range append(append([]miniHook(nil), miniMirrorCopyHooks...), miniMirrorAdoptionHooks...) {
+		want = append(want, h.runtimeAPI()...)
+	}
+	return declarationsError(sources, want, "the runtime's minitracer package lacks %s")
+}
+
 // SDKMirrorHook is the SDK file that connects the edits that found names to
 // Mini's mirror. Adoption's functions do nothing unless every adoption edit
-// was found.
+// was found. Every call goes through a variable that only a binary with Mini
+// sets.
 func SDKMirrorHook(found uint8) string {
 	adoption := found&SDKMirrorAdoption == SDKMirrorAdoption
 	var source strings.Builder
@@ -223,19 +255,11 @@ func SDKMirrorHook(found uint8) string {
 	if adoption {
 		source.WriteString(" \"encoding/binary\"\n \"" + sdkExtImport + "\"\n \"" + sdkSamplerNamesImport + "\"\n")
 	}
-	source.WriteString(`)
-//go:linkname __ddtoMirrorEnable github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorEnable
-func __ddtoMirrorEnable()
-func init(){ __ddtoMirrorEnable() }
-//go:linkname __ddtoMirrorStart github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorStart
-func __ddtoMirrorStart(context.Context,any,string) any
-//go:linkname __ddtoMirrorContext github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorContext
-func __ddtoMirrorContext(context.Context,any) context.Context
-//go:linkname __ddtoMirrorCapture github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorCapture
-func __ddtoMirrorCapture(any,string,string,string,string,int64,int64,int32,func(func(string,string)bool),map[string]float64,[16]byte,uint64) any
-//go:linkname __ddtoMirrorDeliver github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorDeliver
-func __ddtoMirrorDeliver(any)
-`)
+	source.WriteString(")\n")
+	for _, h := range miniMirrorCopyHooks {
+		source.WriteString(h.source())
+	}
+	source.WriteString("func init(){ __ddtoMirrorEnable() }\n")
 	if !adoption {
 		source.WriteString("func __ddtoMirrorAdoptSpan(*Span, any, *SpanContext) {}\n")
 		if found&SDKMirrorSubmit != 0 {
@@ -246,13 +270,10 @@ func __ddtoMirrorDeliver(any)
 		}
 		return source.String()
 	}
-	source.WriteString(`//go:linkname __ddtoMirrorAdopt github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorAdopt
-func __ddtoMirrorAdopt(any,any,uint64,bool) ([16]byte, bool)
-//go:linkname __ddtoMirrorAdopted github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorAdopted
-func __ddtoMirrorAdopted(any) bool
-//go:linkname __ddtoMirrorReport github.com/DataDog/ddtest/ddto/internal/minitracer.sdkMirrorWithheld
-func __ddtoMirrorReport(int,int)
-// A root SDK span under a test takes the test's trace ID, the ciapp-test
+	for _, h := range miniMirrorAdoptionHooks {
+		source.WriteString(h.source())
+	}
+	source.WriteString(`// A root SDK span under a test takes the test's trace ID, the ciapp-test
 // origin, which its children and propagation inherit, and keep priority. As in
 // spanStart, a span is a root without a parent or under a baggage-only one;
 // any other parent, even a remote one with span ID 0, keeps its trace.

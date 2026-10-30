@@ -211,6 +211,10 @@ families and tip:
 | macOS | 1.27 | Normal suite |
 | Windows | 1.27 | Normal suite |
 
+The basic Bazel test runs on Linux with Go 1.25, 1.26 and 1.27 and on macOS
+with Go 1.27, each in Bzlmod and WORKSPACE modes, with the ddtest executable
+that the newest Go builds, as releases are built ([Bazel](bazel.md#validation)).
+
 The first job reads go.dev's release list and picks the newest release of each
 family, and every job of the run installs that release. While GitHub updates
 its runner images, some carry an older patch release, and `setup-go` would use
@@ -361,10 +365,10 @@ deferred Testify cases against the full SDK/Orchestrion reference, within the
 and runtime evidence; the Go instrumentation workflow checks native macOS/Windows
 execution separately.
 
-[`TestTestifyVersionGuardWithWarmVendoredSources`](../integration/vendor_cache_test.go)
-warms the build cache with supported vendored sources, then changes consistent
-replacement metadata to an unsupported release while keeping source bytes
-identical. Preparation must reject it even if Go would reuse the suite archive.
+[`TestTestifyAPIGuardWithWarmVendoredSources`](../integration/vendor_cache_test.go)
+warms the build cache with supported vendored sources, then changes their
+`Run` entry. Preparation must warn, and the build must not reuse the
+instrumented suite archive.
 Other [selective-tool tests](../integration/selective_tools_test.go) check native
 compiler/linker identities, bypass exit status, Unix process replacement,
 coverage, workspaces and fingerprint invalidation. The compile-only matrix

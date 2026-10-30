@@ -4,3 +4,6 @@ internal/thirdparty/**/*.zip -text
 
 # Fixture manifests also hash the original LF source bytes.
 testdata/fuzzexamples/** text=auto eol=lf
+
+# Golden files compare the generated LF bytes.
+internal/bazelgen/testdata/** text eol=lf

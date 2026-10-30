@@ -3,6 +3,9 @@ package instrument
 import (
 	"go/parser"
 	"go/token"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -67,5 +70,40 @@ func TestScopedTestifyEntryPreservesLinesAndUsesCleanupContract(t *testing.T) {
 	}
 	if _, err := parser.ParseFile(token.NewFileSet(), "hook.go", hook, 0); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Without Mini, the scoped registration registers nothing and releases
+// nothing: the suite runs natively.
+func TestTestifyEntryWithoutMiniRunsNatively(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go test")
+	}
+	root := t.TempDir()
+	suite := "package suite\nimport \"testing\"\ntype TestingSuite interface{ TestPass(t *testing.T) }\nfunc Run(t *testing.T, suite TestingSuite) {\n\tt.Run(\"TestPass\", suite.TestPass)\n}\n"
+	edited, err := TransformTestifyPackage(map[string][]byte{filepath.Join(root, "suite", "suite.go"): []byte(suite)}, true)
+	if err != nil || len(edited) != 1 {
+		t.Fatal(edited, err)
+	}
+	for name, data := range map[string]string{
+		"go.mod":           "module example.com/testify\n\ngo 1.25.0\n",
+		"suite/suite.go":   string(edited[filepath.Join(root, "suite", "suite.go")]),
+		"suite/hook.go":    TestifyEntryHook("", true),
+		"client/a_test.go": "package client\nimport (\"testing\";\"example.com/testify/suite\")\ntype s struct{}\nfunc (s) TestPass(t *testing.T) { t.Log(\"ran\") }\nfunc TestSuite(t *testing.T) { suite.Run(t, s{}) }\n",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("go", "test", "-v", "-count=1", "./client")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=", "GOTOOLCHAIN=local")
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "--- PASS: TestSuite/TestPass") || !strings.Contains(string(out), "ran") {
+		t.Fatalf("the edited suite must link and run without Mini: %v\n%s", err, out)
 	}
 }

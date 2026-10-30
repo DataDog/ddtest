@@ -1,10 +1,6 @@
 package runner
 
-import (
-	"strings"
-
-	"github.com/DataDog/ddtest/ddto/internal/instrument"
-)
+import "github.com/DataDog/ddtest/ddto/internal/instrument"
 
 // Runtime selects the test event implementation. Mini is the default.
 type Runtime string
@@ -19,16 +15,7 @@ const (
 // that its -timeout alarm calls Mini's.
 func hooksForRuntime(runtime Runtime, parallelStop, timeout bool) string {
 	if runtime == Mini {
-		hooks := strings.ReplaceAll(instrument.Hooks+instrument.FuzzHook, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/")
-		hooks = strings.Replace(hooks, instrument.OrchestrionMarkCall, instrument.MiniOrchestrionMark, 1)
-		hooks = strings.Replace(hooks, "import _ \"unsafe\"\n", "import (\n\t\"sync/atomic\"\n\t_ \"unsafe\"\n)\n", 1)
-		if parallelStop {
-			hooks += instrument.ParallelStopHook
-		}
-		if timeout {
-			hooks += instrument.TimeoutHook
-		}
-		return hooks
+		return instrument.MiniHooks(parallelStop, timeout)
 	}
 	return instrument.Hooks + instrument.FuzzHook
 }

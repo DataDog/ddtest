@@ -11,6 +11,8 @@ const (
 	miniIntegrationsPackage = miniModule + "/internal/thirdparty/dd-trace-go/civisibility/integrations"
 	miniGotestingPackage    = miniIntegrationsPackage + "/gotesting"
 	miniUtilsPackage        = miniModule + "/internal/thirdparty/dd-trace-go/civisibility/utils"
+	miniCIDeliveryPackage   = miniModule + "/internal/cidelivery"
+	miniTracerPackage       = miniModule + "/internal/minitracer"
 )
 
 // Overlay files that ddto adds to os/signal and testing for Mini's forced
@@ -133,6 +135,17 @@ func timeoutHookRefusal(listed []goPackage, replacements map[string]string) stri
 		return "the runtime's gotesting package not listed"
 	}
 	return checkSources(gotesting, replacements, instrument.TimeoutHookRuntimeError)
+}
+
+// miniHooksRefusal returns why the selected Mini runtime's package path cannot
+// receive a set of edits' calls, or "": check looks for the variables that
+// the edits call. The CLI's own runtime passes, as for every runtime check.
+func miniHooksRefusal(listed []goPackage, replacements map[string]string, path string, check func(map[string][]byte) error) string {
+	p := findPackage(listed, path)
+	if p == nil {
+		return "the runtime's " + path + " package not listed"
+	}
+	return checkSources(p, replacements, check)
 }
 
 // findPackage returns the listed package path that go list resolved without

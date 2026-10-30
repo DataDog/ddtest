@@ -32,7 +32,7 @@ func TestSDKCIGateDispatch(t *testing.T) {
 	}
 	// Go applies a package's gcflags, and so the cache marker, to its test
 	// variants: each must reach the wrapper, which removes the marker.
-	for _, pkg := range []string{sdkCIEnvironmentPackage, sdkCIConfigPackage, sdkTracerPackage} {
+	for _, pkg := range []string{sdkCIEnvironmentPackage, sdkCIConfigPackage, sdkCIBazelPackage, sdkTracerPackage} {
 		for _, variant := range []string{pkg + " [" + pkg + ".test]", pkg + "_test [" + pkg + ".test]", pkg + ".test"} {
 			if !ToolNeedsPlan("mini-sdk", []string{"compile", "file.go"}, variant) {
 				t.Fatal("test variant bypassed:", variant)
@@ -150,9 +150,21 @@ func TestSDKCIGateCompilerInputs(t *testing.T) {
 	if err != nil || string(unchanged) != string(source) {
 		t.Fatal("SDK original changed", err)
 	}
+	// The guards' variable comes in a file of its own, named in the package's
+	// directory so that the compiled names stay the same from run to run.
+	// The cache marker is gone and the guard file is added.
+	if len(got) != len(args) || !strings.HasPrefix(filepath.Base(got[4]), "_") {
+		t.Fatal("guard file missing", got)
+	}
+	guard, err := os.ReadFile(got[4])
+	if err != nil || !strings.HasPrefix(string(guard), "//line "+filepath.ToSlash(filepath.Join(dir, "zz_dd_ci_visibility_sdk_guard.go"))+":1\npackage envconfig\n") || !strings.Contains(string(guard), "var __ddtoMiniLinked bool") {
+		t.Fatalf("%s %v", guard, err)
+	}
 	cleanup()
-	if _, err := os.Stat(got[3]); !os.IsNotExist(err) {
-		t.Fatal("temporary source retained", err)
+	for _, path := range got[3:] {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("temporary source retained", err)
+		}
 	}
 	if _, _, err := prepareSDKCICompile([]string{"compile", original, original}, sdkCIEnvironmentPackage); err == nil {
 		t.Fatal("ambiguous sources accepted")
@@ -168,7 +180,7 @@ func TestSDKCIGateCompilerInputs(t *testing.T) {
 
 func TestSDKCompilerCacheMarkerKeepsUserFlags(t *testing.T) {
 	t.Setenv("GOFLAGS", "-gcflags=all=-N")
-	for _, path := range []string{sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkTracerPackage} {
+	for _, path := range []string{sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkCIBazelPackage, sdkTracerPackage} {
 		opts, err := parseOptions([]string{"-gcflags=" + path + "=-l", "."}, os.Getenv("GOFLAGS"))
 		if err != nil {
 			t.Fatal(err)
@@ -182,6 +194,34 @@ func TestSDKCompilerCacheMarkerKeepsUserFlags(t *testing.T) {
 		got := removeCompilerCacheMarker(append([]string(nil), args...), marker)
 		if !reflect.DeepEqual(got, []string{"compile", "-l", "-I=client-path", "source.go"}) || args[2] != marker {
 			t.Fatal(got, args)
+		}
+	}
+}
+
+// Bazel passes the compiler sources relative to the execution root. The
+// compiler would resolve a relative line directive from the temporary file's
+// directory, so the rewritten file and the guard file name the original
+// directory absolutely; the compiler's -trimpath then rewrites it.
+func TestSDKCIGateNamesRelativeInputsAbsolutely(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", t.TempDir())
+	if err := os.MkdirAll(filepath.Join(dir, "external", "sdk"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "external", "sdk", "env.go"), []byte("package envconfig\ntype EnabledMode int\nconst EnabledModeDisabled=0\nfunc FromEnv()(EnabledMode,bool){return 1,true}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	got, cleanup, err := prepareSDKCICompile([]string{"compile", filepath.Join("external", "sdk", "env.go")}, sdkCIEnvironmentPackage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	original := filepath.ToSlash(filepath.Join(dir, "external", "sdk"))
+	for i, want := range []string{"//line " + original + "/env.go:1:1\n", "//line " + original + "/zz_dd_ci_visibility_sdk_guard.go:1\n"} {
+		data, err := os.ReadFile(got[i+1])
+		if err != nil || !strings.HasPrefix(string(data), want) {
+			t.Fatalf("%s does not start with %q: %v\n%s", got[i+1], want, err, data)
 		}
 	}
 }

@@ -13,10 +13,8 @@ import (
 	"github.com/DataDog/ddtest/ddto/internal/toolwrap"
 )
 
-const minimumTestifyVersion = "v1.4.0"
-
 // Bump when compiler-side edits change without changing prepared inputs.
-const testifyContractVersion = "ddto-testify-entry-v2"
+const testifyContractVersion = "ddto-testify-entry-v3"
 
 // LibraryEntry contains the inputs for one selected library entry. Other packages never
 // need to read the tool plan. Covered sources are transformed after go cover.
@@ -29,14 +27,15 @@ type LibraryEntry struct {
 }
 
 // prepareTestifyPackage returns a warning instead of an entry when the selected
-// Testify is unsupported; its suites then run as ordinary tests.
+// Testify's code does not have the entry that the edit needs; its suites then
+// run as ordinary tests. The code decides, not the version: a Bazel compile
+// does not know module versions, and a fork keeps the entry under any version.
 func prepareTestifyPackage(suite *goPackage, replacements map[string]string, runtime Runtime, temp string) (*LibraryEntry, string, error) {
 	if suite == nil {
 		return nil, "", nil
 	}
 	entry, err := prepareTestifyEntry(suite, replacements, runtime, temp)
-	var unsupported unsupportedLibrary
-	if errors.As(err, &unsupported) || errors.Is(err, instrument.ErrUnsupportedAPI) {
+	if errors.Is(err, instrument.ErrUnsupportedAPI) {
 		reason := err.Error()
 		if suite.Module != nil && suite.Module.Replace != nil {
 			replacement := suite.Module.Replace
@@ -52,15 +51,7 @@ func prepareTestifyPackage(suite *goPackage, replacements map[string]string, run
 	return entry, "", err
 }
 
-// unsupportedLibrary reports a selected library version outside the supported range.
-type unsupportedLibrary struct{ message string }
-
-func (u unsupportedLibrary) Error() string { return u.message }
-
 func prepareTestifyEntry(suite *goPackage, replacements map[string]string, runtime Runtime, temp string) (*LibraryEntry, error) {
-	if !instrument.SupportsTestifyVersion(libraryVersion(suite)) {
-		return nil, unsupportedLibrary{fmt.Sprintf("requires %s or a later v1 release", minimumTestifyVersion)}
-	}
 	files := map[string][]byte{}
 	actualPaths := map[string]string{}
 	for _, name := range suite.GoFiles {
@@ -89,7 +80,7 @@ func prepareTestifyEntry(suite *goPackage, replacements map[string]string, runti
 		hook = strings.Replace(hook, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/", 1)
 	}
 	tool := &LibraryEntry{ScopedTestify: runtime == Mini, Sources: map[string]string{}, HookFile: filepath.Join(temp, "testify-hook.go")}
-	hookSource := instrument.TestifyEntryHook(hook, runtime == Mini)
+	hookSource := instrument.HookFileLine(suite.Dir, "zz_dd_ci_visibility_testify.go") + instrument.TestifyEntryHook(hook, runtime == Mini)
 	hash := sha256.New()
 	hash.Write([]byte(testifyContractVersion))
 	hash.Write([]byte(hookSource))

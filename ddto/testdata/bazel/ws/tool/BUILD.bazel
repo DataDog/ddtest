@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary")
+
+# A binary that imports testing outside a test, as some helpers do.
+go_binary(
+    name = "tool",
+    srcs = ["main.go"],
+    visibility = ["//visibility:public"],
+)
+
+# The tool in the exec configuration, which sdk_name reaches.
+genrule(
+    name = "gen",
+    outs = ["gen.txt"],
+    cmd = "$(execpath :tool) $@",
+    tools = [":tool"],
+    visibility = ["//visibility:public"],
+)

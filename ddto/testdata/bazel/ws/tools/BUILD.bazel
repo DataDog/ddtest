@@ -1,0 +1,18 @@
+load("@ddtest_bazel_test//:defs.bzl", "ddtest_go_test")
+
+# The tool built with the instrumented SDK, as data and as an exec tool.
+ddtest_go_test(
+    name = "tools_test",
+    srcs = ["tools_test.go"],
+    env = {
+        "GEN": "$(rootpath //tool:gen)",
+        "TOOL": "$(rootpath //tool)",
+    },
+    importpath = "example.com/basic/tools",
+    instrumented_data = [
+        "//tool",
+        "//tool:gen",
+    ],
+    # rootpath is relative to the runfiles root.
+    rundir = ".",
+)

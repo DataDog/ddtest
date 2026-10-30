@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary")
+
+# A plain build that uses Mini's Go API: with the override, it links the
+# generated Mini with the default SDK.
+go_binary(
+    name = "apibin",
+    srcs = ["main.go"],
+    tags = ["manual"],
+    deps = [
+        "@com_github_datadog_ddtest_ddto//propagation",
+        "@com_github_datadog_ddtest_ddto//testopt",
+    ],
+)

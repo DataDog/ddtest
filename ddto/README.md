@@ -257,10 +257,10 @@ for another platform; then the CLI warns and runs it without its `go`.
 | Fuzz and Examples | Fuzz roots, executed seeds and executable examples; active fuzz mutations are not individual CI tests. [Details](docs/fuzz-examples.md) |
 | Test Optimization | Automatic retries, early flake detection, intelligent test skipping, impacted tests and test management, according to backend settings. [Feature matrix](docs/ci-parity.md) |
 | Coverage | Aggregate coverage and per-test count/atomic coverage, including parallel tests, cleanup and retries. [Validation](docs/validation.md#mini-runtime-contracts) |
-| Testify suites | v1.4.0 and newer v1 releases, including external callers and compatible forks. Unsupported entries warn and run as ordinary subtests. [Details](docs/testify.md) |
-| Goleak | Automatic Mini integration for v1.3.0 and newer v1 releases, including compatible forks; real test leaks remain visible. [Details](docs/delivery.md#automatic-goleak-integration) |
+| Testify suites | Any release or compatible fork whose `suite.Run(*testing.T, TestingSuite)` runs each method with `t.Run`, from v1.2.0; v1.3.0 and v1.10.0 to v1.12.1 are tested. The code decides, not the version; an unrecognized entry warns and its methods run as ordinary subtests. [Details](docs/testify.md) |
+| Goleak | Automatic Mini integration for any release or compatible fork with `IgnoreAnyFunction`, which v1.3.0 added; real test leaks remain visible. [Details](docs/delivery.md#automatic-goleak-integration) |
 | Orchestrion and APM | Combined builds; SDK spans under context-associated Mini tests report to Test Optimization, not APM. [Build commands](docs/orchestrion.md), [span association](docs/sdk-span-mirror.md) |
-| Bazel | Offline manifest and payload-file contracts; a real Bazel toolchain invocation is not part of the validation. [Details](docs/mini-runtime.md#delivery-and-offline-output) |
+| Bazel | `ddtest instrument bazel` writes an instrumented Go SDK and Mini's repository for rules_go; the rules_test_optimization version that uses them is in development. A basic Bazel test runs on Linux and macOS in Bzlmod and WORKSPACE modes. [Details](docs/bazel.md) |
 | Platforms | Linux with Go 1.25/1.26/1.27 and tip, macOS and Windows with Go 1.27; Linux also runs Go 1.25 and 1.27 with `-race`. [CI matrix](docs/validation.md#go-instrumentation-workflow) |
 
 With `ddtest instrument`, a client's `go.mod` can declare Go 1.21 or newer; the

@@ -1,0 +1,41 @@
+# WORKSPACE mode of the basic Bazel test: bazel --config=workspace.
+workspace(name = "ddtest_bazel_basic")
+
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "io_bazel_rules_go",
+    integrity = "sha256-O/Op06kKENlOC+u/5uq+6f04zccjl6f0j8cFkpDMJFM=",
+    urls = ["https://github.com/bazel-contrib/rules_go/releases/download/v0.64.0/rules_go-v0.64.0.zip"],
+)
+
+http_archive(
+    name = "bazel_gazelle",
+    integrity = "sha256-na6HwD6gaymQuINiVpCaGDZ+GR+IXVux0DDouoBJG0I=",
+    urls = ["https://github.com/bazel-contrib/bazel-gazelle/releases/download/v0.54.0/bazel-gazelle-v0.54.0.tar.gz"],
+)
+
+load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies")
+load("@io_bazel_rules_go//go:deps.bzl", "go_register_toolchains", "go_rules_dependencies")
+load("//:deps.bzl", "go_dependencies")
+
+# scripts/bazel_basic.py writes deps.bzl from go.mod with gazelle update-repos.
+# gazelle:repository_macro deps.bzl%go_dependencies
+go_dependencies()
+
+go_rules_dependencies()
+
+go_register_toolchains(go_version = "host")
+
+gazelle_dependencies(go_repository_default_config = "//:WORKSPACE.bazel")
+
+local_repository(
+    name = "ddtest_bazel_test",
+    path = "../rule",
+)
+
+load("@ddtest_bazel_test//:repositories.bzl", "ddtest_repositories")
+
+ddtest_repositories()
+
+register_toolchains("@ddtest_go_toolchains//:all")

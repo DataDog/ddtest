@@ -32,6 +32,10 @@ func TestMiniRuntimePassesEveryRuntimeCheck(t *testing.T) {
 		"FileCoverageRuntimeError":        {"integrations/gotesting/coverage", instrument.FileCoverageRuntimeError},
 		"FileCoverageContextRuntimeError": {"integrations/gotesting/coverage", instrument.FileCoverageContextRuntimeError},
 		"CoverageHookRuntimeError":        {"integrations/gotesting/coverage", instrument.CoverageHookRuntimeError},
+		"TestingHooksRuntimeError":        {"integrations/gotesting", instrument.TestingHooksRuntimeError},
+		"TestifyHookRuntimeError":         {"integrations/gotesting", instrument.TestifyHookRuntimeError},
+		"GoleakHookRuntimeError":          {"../../../cidelivery", instrument.GoleakHookRuntimeError},
+		"SDKMirrorRuntimeError":           {"../../../minitracer", instrument.SDKMirrorRuntimeError},
 	}
 	for name := range runtimeChecksUsed(t) {
 		if _, ok := checks[name]; !ok {

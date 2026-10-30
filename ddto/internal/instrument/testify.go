@@ -9,7 +9,6 @@ import (
 	"go/token"
 	"sort"
 	"strconv"
-	"strings"
 )
 
 const TestifySuiteImport = "github.com/stretchr/testify/suite"
@@ -122,32 +121,4 @@ func validateTestifyAPI(files []*ast.File) error {
 		return fmt.Errorf("%w: expected Testify suite.Run(*testing.T, TestingSuite)", ErrUnsupportedAPI)
 	}
 	return nil
-}
-
-// SupportsTestifyVersion accepts Testify v1.4.0 and later v1 releases: every
-// one runs each suite method as t.Run(method) from Run(*testing.T, TestingSuite).
-// Local replacements use their declared version plus TestifyAPI.
-func SupportsTestifyVersion(version string) bool {
-	if !strings.HasPrefix(version, "v") {
-		return false
-	}
-	core, _, _ := strings.Cut(strings.TrimPrefix(version, "v"), "+")
-	core, suffix, pre := strings.Cut(core, "-")
-	parts := strings.Split(core, ".")
-	if len(parts) != 3 {
-		return false
-	}
-	values := [3]int{}
-	for i, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil || n < 0 {
-			return false
-		}
-		values[i] = n
-	}
-	if values[0] != 1 || values[1] < 4 {
-		return false
-	}
-	// A pre-release of the minimum version precedes it.
-	return !(values[1] == 4 && values[2] == 0 && pre && suffix != "")
 }

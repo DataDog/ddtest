@@ -147,18 +147,18 @@ func TestDeclaredName(t *testing.T) {
 // one is parsed as before.
 func TestDeclaringSourcesParsesOnlyNamingFiles(t *testing.T) {
 	sources := map[string][]byte{
-		"declares.go": []byte("package p\n\n//go:linkname forcedExit\nfunc forcedExit() {}\n"),
+		"declares.go": []byte("package p\n\n//go:linkname forcedExitHook\nvar forcedExitHook func() = forcedExit\n"),
 		"broken.go":   []byte("package p\n\nfunc broken( {\n"),
 	}
 	if err := ExitHookRuntimeError(sources); err != nil {
 		t.Fatalf("an unrelated broken file refused the hook: %v", err)
 	}
-	sources["broken.go"] = []byte("package p\n\n// forcedExit\nfunc broken( {\n")
+	sources["broken.go"] = []byte("package p\n\n// forcedExitHook\nfunc broken( {\n")
 	if err := ExitHookRuntimeError(sources); err == nil {
 		t.Fatal("a broken file that names the declaration was not parsed")
 	}
 	delete(sources, "broken.go")
-	sources["declares.go"] = []byte("package p\n\n// forcedExit is gone.\n")
+	sources["declares.go"] = []byte("package p\n\n// forcedExitHook is gone.\n")
 	if err := ExitHookRuntimeError(sources); err == nil {
 		t.Fatal("a file that only mentions the name declared it")
 	}
@@ -169,20 +169,20 @@ func TestDeclaringSourcesParsesOnlyNamingFiles(t *testing.T) {
 // parse reads it. CRLF files keep matching too.
 func TestDeclaringSourcesIgnoresCarriageReturns(t *testing.T) {
 	sources := map[string][]byte{
-		"api.go":  []byte("package integrations\nfunc forcedExit() {}\n"),
-		"link.go": []byte("package integrations\nimport _ \"unsafe\"\n//go:linkname f\rorcedExit\nfunc f() {}\n"),
+		"api.go":  []byte("package integrations\nvar forcedExitHook func() = forcedExit\n"),
+		"link.go": []byte("package integrations\nimport _ \"unsafe\"\n//go:linkname f\rorcedExitHook\nvar f func()\n"),
 	}
 	full, err := sourceDeclarations(sources)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !full["linkname forcedExit"] {
+	if !full["linkname forcedExitHook"] {
 		t.Fatal("a full parse no longer reads the split directive; review this test")
 	}
 	if err := ExitHookRuntimeError(sources); err != nil {
 		t.Fatalf("the split directive's file was left out: %v", err)
 	}
-	crlf := map[string][]byte{"crlf.go": []byte("package integrations\r\n\r\n//go:linkname forcedExit\r\nfunc forcedExit() {}\r\n")}
+	crlf := map[string][]byte{"crlf.go": []byte("package integrations\r\n\r\n//go:linkname forcedExitHook\r\nvar forcedExitHook func() = forcedExit\r\n")}
 	if err := ExitHookRuntimeError(crlf); err != nil {
 		t.Fatalf("a CRLF file was left out: %v", err)
 	}

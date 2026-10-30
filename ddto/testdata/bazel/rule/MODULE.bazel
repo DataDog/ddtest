@@ -1,0 +1,20 @@
+"""A minimal, test-only Bazel rule for ddtest instrument's basic Bazel test.
+
+rules_test_optimization owns the real rule. This one only wires what
+`ddtest instrument bazel` writes into rules_go, so that ddtest's CI can check
+the compiler mode, the instrumented SDK and Mini's repository in Bazel.
+"""
+
+module(
+    name = "ddtest_bazel_test",
+    version = "0.0.0",
+)
+
+# The SDK BUILD template that go_wrap_sdk writes loads @io_bazel_rules_go.
+bazel_dep(name = "rules_go", version = "0.60.0", repo_name = "io_bazel_rules_go")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+ddtest = use_extension("//:extensions.bzl", "ddtest")
+use_repo(ddtest, "ddtest_go_toolchains", "ddtest_mini")
+
+register_toolchains("@ddtest_go_toolchains//:all")

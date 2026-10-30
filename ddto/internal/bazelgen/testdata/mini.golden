@@ -1,0 +1,156 @@
+== BUILD.bazel
+# Mini, the runtime of ddtest instrument, written by ddtest instrument bazel.
+== DDTEST_INSTRUMENT
+version=v1.2.3
+contract=1
+sdk_name=ddto
+== LICENSE
+license
+== REPO.bazel
+== internal/common/BUILD.bazel
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "common",
+    srcs = [
+        "c.go",
+    ],
+    importpath = "github.com/DataDog/ddtest/ddto/internal/common",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "go_default_library",
+    actual = ":common",
+    visibility = ["//visibility:public"],
+)
+== internal/common/c.go
+package common
+== internal/racy/BUILD.bazel
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "racy",
+    srcs = [
+        "r.go",
+    ],
+    importpath = "github.com/DataDog/ddtest/ddto/internal/racy",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "go_default_library",
+    actual = ":racy",
+    visibility = ["//visibility:public"],
+)
+== internal/racy/r.go
+package racy
+== internal/unixonly/BUILD.bazel
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "unixonly",
+    srcs = [
+        "u.go",
+    ],
+    importpath = "github.com/DataDog/ddtest/ddto/internal/unixonly",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "go_default_library",
+    actual = ":unixonly",
+    visibility = ["//visibility:public"],
+)
+== internal/unixonly/u.go
+//go:build !windows
+
+package unixonly
+== propagation/BUILD.bazel
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "propagation",
+    srcs = [
+        "p.go",
+    ],
+    importpath = "github.com/DataDog/ddtest/ddto/propagation",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "go_default_library",
+    actual = ":propagation",
+    visibility = ["//visibility:public"],
+)
+== propagation/p.go
+package propagation
+== testopt/BUILD.bazel
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testopt",
+    srcs = [
+        "new.go",
+        "purego.go",
+        "race.go",
+        "testopt.go",
+        "unix.go",
+    ],
+    importpath = "github.com/DataDog/ddtest/ddto/testopt",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/common",
+        "//internal/racy",
+    ] + select({
+        "@rules_go//go/platform:darwin_amd64": [
+            "//internal/unixonly",
+        ],
+        "@rules_go//go/platform:darwin_arm64": [
+            "//internal/unixonly",
+        ],
+        "@rules_go//go/platform:linux_386": [
+            "//internal/unixonly",
+        ],
+        "@rules_go//go/platform:linux_amd64": [
+            "//internal/unixonly",
+        ],
+        "@rules_go//go/platform:linux_arm64": [
+            "//internal/unixonly",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+alias(
+    name = "go_default_library",
+    actual = ":testopt",
+    visibility = ["//visibility:public"],
+)
+== testopt/new.go
+//go:build go1.1 && !go1.26
+
+package testopt
+== testopt/purego.go
+//go:build purego && !unsafe
+
+package testopt
+== testopt/race.go
+//go:build race
+
+package testopt
+
+import _ "github.com/DataDog/ddtest/ddto/internal/racy"
+== testopt/testopt.go
+package testopt
+
+import (
+	_ "github.com/DataDog/ddtest/ddto/internal/common"
+	_ "fmt"
+)
+== testopt/unix.go
+//go:build !windows
+
+package testopt
+
+import _ "github.com/DataDog/ddtest/ddto/internal/unixonly"

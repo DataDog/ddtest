@@ -385,8 +385,9 @@ telemetry. It reads the supported configuration from environment variables.
 APM YAML/Fleet configuration, telemetry heartbeats, dependency inventories,
 profiling, security and the general APM tracer are excluded from the port.
 
-Public-intake acceptance, actual Bazel toolchain execution, full fuzz campaigns
-and arbitrary downstream projects require separate evidence. See the
+Public-intake acceptance, the full Bazel suites of rules_test_optimization,
+full fuzz campaigns and arbitrary downstream projects require separate
+evidence. See the
 [validation contract](validation.md) for exercised cases and
 [maintenance guide](maintenance.md) for upgrade requirements.
 

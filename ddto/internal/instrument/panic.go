@@ -17,7 +17,8 @@ import (
 //     while it initializes; before that, or in a binary without Mini, it stays
 //     nil. Like the os/signal hook, the runtime sets nothing in Mini and calls
 //     Mini only through the variable;
-//   - the function that copies a fatal error's message to the crash output
+//   - the function that copies a fatal error's message to the crash output,
+//     in a binary whose Mini has set the variable above
 //     (runtime/debug.SetCrashOutput). The runtime prints that message before
 //     it starts copying its output there, so the crash output otherwise starts
 //     with the goroutine. TransformPanic's fatal and throw pass the message to
@@ -36,7 +37,9 @@ const __dd_civisibility_fatalPrefix = "fatal error: "
 
 //go:nosplit
 func __dd_civisibility_copyFatal(s string) {
-	if fd := crashFD.Load(); fd != ^uintptr(0) {
+	// Only a binary whose Mini set the hook copies the message, so that one
+	// without Mini keeps the native crash output.
+	if fd := crashFD.Load(); fd != ^uintptr(0) && __dd_civisibility_unhandledPanic != nil {
 		write(fd, unsafe.Pointer(unsafe.StringData(__dd_civisibility_fatalPrefix)), int32(len(__dd_civisibility_fatalPrefix)))
 		write(fd, unsafe.Pointer(unsafe.StringData(s)), int32(len(s)))
 		write(fd, unsafe.Pointer(unsafe.StringData("\n")), 1)

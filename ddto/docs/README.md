@@ -38,6 +38,7 @@ lists the other names that changed. The optimization plan and backlog keep the
 | Profile CPU, allocations or build time | [Performance and profiling](performance.md) |
 | Choose a focused performance change | [Optimization backlog](optimization-backlog.md) |
 | See what the October 2026 optimization phases measured and changed | [Optimization plan](optimization-plan.md) |
+| Instrument Go tests in Bazel with rules_test_optimization | [Bazel](bazel.md) |
 | Read the retained measurements | [Build, runtime and memory comparison](benchmarks.md) |
 | Collect builds or regenerate tables | [Benchmark runner](build-benchmarks.md) |
 | Compare Go's counters with experimental file coverage | [Per-test coverage modes](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/file-coverage-20261017-linux-go1.27/README.md) |

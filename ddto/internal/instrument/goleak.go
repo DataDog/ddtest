@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"sort"
 	"strings"
 )
 
@@ -69,11 +70,13 @@ func TransformGoleakEntry(name string, src []byte) ([]byte, bool, error) {
 		options := arg.Names[0].Name
 		// Find also accepts a caller-owned variadic slice with spare capacity.
 		// Keep its backing storage intact while reserving space for our filters.
-		code := fmt.Sprintf("__ddtoResume := %s(); defer __ddtoResume(); __ddtoOptions := make([]Option, len(%s), len(%s)+%d); copy(__ddtoOptions, %s); %s = append(__ddtoOptions", GoleakHookName, options, options, len(filters), options, options)
+		// Without Mini, the hook's variable is nil: Find neither pauses CI
+		// delivery nor filters CI goroutines, and runs as native.
+		code := fmt.Sprintf("if __ddtoPrepare := %s; __ddtoPrepare != nil { __ddtoResume := __ddtoPrepare(); defer __ddtoResume(); __ddtoOptions := make([]Option, len(%s), len(%s)+%d); copy(__ddtoOptions, %s); %s = append(__ddtoOptions", GoleakHookName, options, options, len(filters), options, options)
 		for _, filter := range filters {
 			code += fmt.Sprintf(", IgnoreAnyFunction(%q)", filter)
 		}
-		code += ");"
+		code += ") };"
 		pos := fs.PositionFor(fn.Body.Lbrace, false).Offset + 1
 		edits := []edit{{pos, pos, code}}
 		if fs.Position(file.Package).Filename == name {
@@ -89,7 +92,39 @@ func TransformGoleakEntry(name string, src []byte) ([]byte, bool, error) {
 	return nil, false, nil
 }
 
-// No runtime import is inserted into goleak's module dependency graph.
+// GoleakAPI checks the rest of the package for what the Find edit calls: a
+// top-level IgnoreAnyFunction(string) Option. goleak v1.2.1 has the same Find
+// but no IgnoreAnyFunction, so the edit would not compile there. The code
+// decides, not the version: a Bazel compile does not know module versions.
+func GoleakAPI(files map[string][]byte) error {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		file, err := parser.ParseFile(token.NewFileSet(), name, files[name], parser.SkipObjectResolution)
+		if err != nil {
+			return err
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || fn.Name.Name != "IgnoreAnyFunction" {
+				continue
+			}
+			params, results := fn.Type.Params, fn.Type.Results
+			if fn.Type.TypeParams == nil && params != nil && len(params.List) == 1 && len(params.List[0].Names) <= 1 && isIdent(params.List[0].Type, "string") &&
+				results != nil && len(results.List) == 1 && len(results.List[0].Names) == 0 && isIdent(results.List[0].Type, "Option") {
+				return nil
+			}
+			return fmt.Errorf("%s: %w: unsupported goleak.IgnoreAnyFunction signature", name, ErrUnsupportedAPI)
+		}
+	}
+	return fmt.Errorf("%w: goleak.IgnoreAnyFunction(string) Option is missing", ErrUnsupportedAPI)
+}
+
+// No runtime import is inserted into goleak's module dependency graph. The
+// hook is miniGoleakHook's variable, which only a binary with Mini sets.
 func GoleakEntryHook() string {
-	return "package goleak\nimport _ \"unsafe\"\n//go:linkname " + GoleakHookName + " github.com/DataDog/ddtest/ddto/internal/cidelivery.PrepareLeakCheck\nfunc " + GoleakHookName + "() func()\n"
+	return "package goleak\nimport _ \"unsafe\"\n//go:linkname " + GoleakHookName + " " + miniGoleakHook.Package + "." + miniGoleakHook.Variable + "\nvar " + GoleakHookName + " func() func()\n"
 }

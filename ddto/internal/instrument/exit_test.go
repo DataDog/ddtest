@@ -88,19 +88,21 @@ func TestExitHookMatchesMiniRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hook["func __dd_civisibility_forcedExit()"] || !hook["linkname __dd_civisibility_forcedExit github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.forcedExit"] {
-		t.Error("ExitHook does not link Mini's integrations.forcedExit")
+	if !hook["func __dd_civisibility_forcedExit()"] || !hook["var __dd_civisibility_forcedExitHook func()"] || !hook["linkname __dd_civisibility_forcedExitHook github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations.forcedExitHook"] {
+		t.Error("ExitHook does not read Mini's integrations.forcedExitHook")
 	}
 }
 
-// A runtime without forcedExit builds without the hook instead of failing to
-// link, and so does a toolchain whose exithook differs.
+// A runtime without forcedExitHook, as the released ones, builds without the
+// hook instead of linking a hook that does nothing, and so does a toolchain
+// whose exithook differs.
 func TestExitHookRejectsOtherRuntimesAndToolchains(t *testing.T) {
-	const runtime = "package integrations\nimport _ \"unsafe\"\n//go:linkname forcedExit\nfunc forcedExit() {}\n"
+	const runtime = "package integrations\nimport _ \"unsafe\"\nfunc forcedExit() {}\n//go:linkname forcedExitHook\nvar forcedExitHook func() = forcedExit\n"
 	for name, source := range map[string]string{
 		"missing":   "package integrations\nfunc other() {}\n",
-		"linkname":  "package integrations\nfunc forcedExit() {}\n",
-		"parameter": strings.Replace(runtime, "forcedExit() {}", "forcedExit(code int) {}", 1),
+		"released":  "package integrations\nimport _ \"unsafe\"\n//go:linkname forcedExit\nfunc forcedExit() {}\n",
+		"linkname":  strings.Replace(runtime, "//go:linkname forcedExitHook\n", "", 1),
+		"parameter": strings.Replace(runtime, "var forcedExitHook func()", "var forcedExitHook func(code int)", 1),
 	} {
 		if err := ExitHookRuntimeError(map[string][]byte{"civisibility.go": []byte(source)}); err == nil {
 			t.Errorf("runtime %s: accepted", name)

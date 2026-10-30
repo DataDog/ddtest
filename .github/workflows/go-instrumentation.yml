@@ -486,6 +486,85 @@ jobs:
           path: ddto/artifacts/
           retention-days: 7
 
+  # The basic Bazel test: ddtest instrument bazel's SDK and Mini, wired into
+  # rules_go by a minimal test-only rule (ddto/testdata/bazel). The Bazel
+  # suites of rules_test_optimization own the rest.
+  bazel:
+    name: bazel (${{ matrix.os }}, ${{ matrix.go }}, ${{ matrix.mode }})
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux runs every supported Go release in both modes; macOS, the newest.
+        include:
+          - {os: ubuntu-latest, go: '1.25.x', mode: bzlmod}
+          - {os: ubuntu-latest, go: '1.25.x', mode: workspace}
+          - {os: ubuntu-latest, go: '1.26.x', mode: bzlmod}
+          - {os: ubuntu-latest, go: '1.26.x', mode: workspace}
+          # buildifier's checks do not depend on the configuration.
+          - {os: ubuntu-latest, go: '1.27.x', mode: bzlmod, buildifier: true}
+          - {os: ubuntu-latest, go: '1.27.x', mode: workspace}
+          - {os: macos-latest, go: '1.27.x', mode: bzlmod}
+          - {os: macos-latest, go: '1.27.x', mode: workspace}
+    runs-on: ${{ matrix.os }}
+    # ddto's scripts and test groups live in ddto.
+    defaults:
+      run:
+        working-directory: ddto
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # Releases are built with the newest Go, whose ddtest then writes Mini's
+      # repository and the SDK of every Go release.
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: ${{ fromJSON(needs.plan.outputs.go-versions)['1.27.x'] }}
+          cache: false
+      - name: Build ddtest
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+        run: go build -o "$RUNNER_TEMP/ddtest" .
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: ${{ fromJSON(needs.plan.outputs.go-versions)[matrix.go] }}
+          cache: false
+      # Bazel, rules_go, Gazelle and the fixture's modules.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cache
+        with:
+          path: ~/.cache/ddtest-bazel
+          key: bazel-${{ runner.os }}-${{ hashFiles('ddto/testdata/bazel/**') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-
+      - name: Run the basic Bazel test
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+          MODE: ${{ matrix.mode }}
+          BUILDIFIER: ${{ matrix.buildifier }}
+        run: |
+          export BAZELISK_HOME="$HOME/.cache/ddtest-bazel/bazelisk"
+          flags=()
+          if [[ "$BUILDIFIER" == true ]]; then
+            # buildtools has no module releases; this is its 2026-09-04 commit.
+            GOBIN="$RUNNER_TEMP/bin" python scripts/ci_shards.py retry -- \
+              go install github.com/bazelbuild/buildtools/buildifier@v0.0.0-20260904073137-eaa4d125b423
+            flags+=(--buildifier "$RUNNER_TEMP/bin/buildifier")
+          fi
+          python scripts/bazel_basic.py --ddtest "$RUNNER_TEMP/ddtest" --goroot "$(go env GOROOT)" \
+            --mode "$MODE" --repository-cache "$HOME/.cache/ddtest-bazel/repository" "${flags[@]}"
+      # One job per operating system saves the cache, as the other jobs do.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: >-
+          success() && matrix.go == '1.27.x' && matrix.mode == 'workspace' && steps.cache.outputs.cache-hit != 'true' &&
+          (github.event_name != 'pull_request' || steps.cache.outputs.cache-matched-key == '')
+        with:
+          path: ~/.cache/ddtest-bazel
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
   tip:
     name: mini (Linux, tip, normal)
     needs: [plan, go-tip]
@@ -574,7 +653,7 @@ jobs:
   evidence:
     name: Complete compatibility evidence
     if: ${{ !cancelled() }}
-    needs: [plan, lint, differential, mini, go-tip, tip]
+    needs: [plan, lint, differential, mini, bazel, go-tip, tip]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -642,7 +721,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         shell: bash
         env:
-          RESULTS: ${{ needs.differential.result }} ${{ needs.mini.result }}
+          RESULTS: ${{ needs.differential.result }} ${{ needs.mini.result }} ${{ needs.bazel.result }}
           TIP: ${{ needs.plan.outputs.tip-enabled }}
           TIP_RESULTS: ${{ needs.go-tip.result }} ${{ needs.tip.result }}
         run: |

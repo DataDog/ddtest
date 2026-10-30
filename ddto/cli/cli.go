@@ -22,7 +22,7 @@ func Handles(args []string, name string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if runner.RunsAsGoShim(args[0]) {
+	if runner.RunsAsGoShim(args[0]) || runner.RunsAsBazelCompiler(args[0]) {
 		return true
 	}
 	if len(args) < 2 {
@@ -41,6 +41,11 @@ func KeepCallerEnvironment() { globalconfig.KeepCallerEnvironment() }
 // stays as the process received it, so a command that ddto runs unchanged
 // keeps the caller's exact command line on Windows.
 func Main(args []string, name string) {
+	// The compiler of an instrumented Go SDK, for every compilation of a Bazel
+	// build: it decides first, before any other work.
+	if len(args) > 0 && runner.RunsAsBazelCompiler(args[0]) {
+		runner.Exit(runner.RunBazelCompiler(args))
+	}
 	argv, prog := args, name
 	if len(args) > 0 {
 		prog = strings.TrimSuffix(filepath.Base(args[0]), ".exe") + " " + name
@@ -64,6 +69,10 @@ func Main(args []string, name string) {
 	// $GOROOT/bin on the program's PATH.
 	if len(argv) >= 3 && argv[1] == runner.GoShimExecMode {
 		os.Exit(runner.ExecWithGoShim(argv[2:]))
+	}
+	// ddtest instrument bazel writes what Bazel needs to instrument Go tests.
+	if len(argv) >= 2 && argv[1] == "bazel" {
+		os.Exit(runner.RunBazel(prog, argv[2:], os.Stdout, os.Stderr))
 	}
 	// The Git worker that ddto test starts once per invocation.
 	if len(argv) >= 3 && len(argv) <= 5 && argv[1] == "ci-git-worker" {
@@ -108,6 +117,7 @@ func Main(args []string, name string) {
 		fmt.Fprintln(os.Stderr, "usage: "+prog+" [go | orchestrion go | go tool orchestrion go] test [--runtime=mini|sdk] [--git-upload-timeout=1m] [--keep-ci-state[=file.zip]] [--panic-hook] [--session-per-binary] [--experimental-file-coverage] [go test flags] [packages] (default: mini)")
 		fmt.Fprintln(os.Stderr, "       "+prog+" gotestsum [gotestsum flags] [-- go test flags]: reports the tests of gotestsum's go test, also with go tool gotestsum or go run gotest.tools/gotestsum")
 		fmt.Fprintln(os.Stderr, "       "+prog+" --go-shim command [arguments]: reports the go test that command, or a command it starts, runs")
+		fmt.Fprintln(os.Stderr, "       "+prog+" bazel --mini DIR | --goroot=SDK --compiler=EXECUTABLE DIR: writes what Bazel needs to instrument Go tests")
 		fmt.Fprintln(os.Stderr, "       "+prog+" command [arguments]: runs any other command unchanged, such as "+prog+" go build ./...")
 		fmt.Fprintln(os.Stderr, "       "+prog+" --version: prints the version")
 		if len(args) == 0 {
