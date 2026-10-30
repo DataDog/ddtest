@@ -314,7 +314,9 @@ func javaModuleLabels(projects []maven.Project) map[string]string {
 func javaNativeTests(results []javaResult, probe bool) []nativeTest {
 	native := make([]nativeTest, 0, len(results))
 	for _, test := range results {
-		item := nativeTest{File: test.module + " / " + test.Suite, Name: test.Name, Status: test.Status, Failure: withoutObjectAddresses(test.Failure)}
+		// TestNG names a data-provider invocation with its arguments, whose
+		// default toString differs between runs.
+		item := nativeTest{File: test.module + " / " + test.Suite, Name: withoutObjectAddresses(test.Name), Status: test.Status, Failure: withoutObjectAddresses(test.Failure)}
 		// A Karate suite is the probe feature's path and name.
 		if probe && (test.Suite == javaProbeClass || strings.HasSuffix(test.Suite, "] "+javaProbeClass)) {
 			name := javaTestName(test.Name)

@@ -291,7 +291,7 @@ func javaOutsideUninstrumentedJob(root string, workflow ciWorkflow, job runtimeJ
 	sibling := job
 	sibling.Steps = nil
 	for _, step := range job.Steps {
-		if uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@"); uses == githubAction {
+		if javaActionStep(step) {
 			return false
 		}
 		if step.Run != "" && resolveJavaStep(root, workflow, sibling, step, framework).Matched {
@@ -331,6 +331,12 @@ func javaRuntimeProblem(version string) (reason, code string) {
 	return "", ""
 }
 
+// javaActionStep reports a step that runs the Datadog action.
+func javaActionStep(step runtimeStep) bool {
+	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+	return uses == githubAction
+}
+
 // JavaCIConfiguration inventories each CI Maven or Gradle test step's JDK and the
 // Datadog action's dd-java-agent selection, per matrix row. A step is complete
 // only when its action is a supported release with an API key that reports to
@@ -352,6 +358,12 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 			for _, row := range rows {
 				active, conditionErr := possibleJobCondition(job.If, row)
 				if conditionErr == nil && !active {
+					continue
+				}
+				// As discovery scopes it, a job without the action that never
+				// runs the framework is outside validation; its caveat says so.
+				if !slices.ContainsFunc(job.Steps, javaActionStep) && (javaDiscovery{}).outsideFrameworkJob(root, workflow, job, row, framework) {
+					result.Review = append(result.Review, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "not checked", Reason: "CI job without the Datadog setup that never runs " + framework + "; it is outside this validation."})
 					continue
 				}
 				lastTest := javaLastTestStep(root, workflow, job, row, framework)

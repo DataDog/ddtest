@@ -398,6 +398,12 @@ func TestJavaNativeTestsUseTheirModules(t *testing.T) {
 	}, true)
 	require.True(t, karate[0].probe, "a Karate probe is its feature's path and name")
 	require.False(t, karate[1].probe)
+	// Gradle names a TestNG data-provider invocation with its arguments' toString.
+	invocation := func(address string) string {
+		return javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "com.beust.jcommander.CmdTest", Name: "testArgsWithDefaultCmd[0](--cmd-one, false, [Ljava.lang.String;@" + address + ")", Status: "passed"}}}, false)[0].Name
+	}
+	require.Equal(t, invocation("20ca951f"), invocation("89caf47"), "one invocation has one name in every run")
+	require.Equal(t, "testArgsWithDefaultCmd", javaTestName(invocation("20ca951f")))
 }
 
 func javaTelemetryRun(native []nativeTest, reported ...intake.Test) validationRun {

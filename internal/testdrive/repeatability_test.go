@@ -109,6 +109,8 @@ func TestFailuresCompareWithoutObjectAddresses(t *testing.T) {
 	require.NotEqual(t, failure("0x000000011f3a2b48", "Brakeman::Logger::Console"), failure("0x000000011f3a2b48", "Brakeman::Logger::Quiet"))
 	require.Equal(t, failureSignature("<app.Widget object at 0x7f3a2b48c0d0> is not None"), failureSignature("<app.Widget object at 0x7f3a2b48e110> is not None"))
 	require.Equal(t, failureSignature("expected com.acme.Widget@1b6d3586 but was null"), failureSignature("expected com.acme.Widget@4554617c but was null"))
+	require.Equal(t, failureSignature("expected [Ljava.lang.String;@20ca951f"), failureSignature("expected [Ljava.lang.String;@89caf47"))
+	require.Equal(t, failureSignature("expected [I@1b6d3586"), failureSignature("expected [I@4554617c"))
 	require.NotEqual(t, failureSignature("expected 0x10 to equal 0x20"), failureSignature("expected 0x10 to equal 0x30"), "short hexadecimal values are data")
 	require.NotEqual(t, failureSignature("expected 0xdeadbeef, got 0xcafebabe"), failureSignature("expected 0xdeadbeef, got 0xfeedface"), "bare hexadecimal values are data, whatever their length")
 	require.NotEqual(t, failureSignature("checksum 0x00000000deadbeef differs"), failureSignature("checksum 0x00000000cafebabe differs"))

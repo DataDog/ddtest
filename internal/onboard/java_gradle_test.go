@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -215,11 +216,18 @@ const publishJob = `
 
 func TestJavaPublishJobWithoutTheActionIsOutsideValidation(t *testing.T) {
 	workflow := "jobs:\n  test:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '21'}\n      - run: ./gradlew test\n" + publishJob
-	scope, err := DiscoverValidationScope(javaWorkflowFixture(t, workflow, gradleFixture()), "junit5")
+	root := javaWorkflowFixture(t, workflow, gradleFixture())
+	scope, err := DiscoverValidationScope(root, "junit5")
 	require.NoError(t, err)
 	require.Empty(t, scope.Unresolved, "a job that only signs, downloads and publishes runs no tests")
 	require.Len(t, scope.Commands, 1)
 	require.Contains(t, strings.Join(scope.Caveats, "\n"), ".github/workflows/test.yml / publish: CI job without the Datadog setup that never runs junit5")
+	// The CI runtime check scopes the job as discovery does.
+	ci := JavaCIConfiguration(root, "junit5", "")
+	require.False(t, slices.ContainsFunc(ci.Jobs, func(job RuntimeFinding) bool { return job.Job == "publish" }), "no runtime finding for a job outside validation: %+v", ci.Jobs)
+	require.True(t, slices.ContainsFunc(ci.Review, func(job RuntimeFinding) bool {
+		return job.Job == "publish" && strings.Contains(job.Reason, "never runs junit5")
+	}))
 
 	// A step that may still run tests keeps the job's gaps in scope.
 	for _, step := range []string{
