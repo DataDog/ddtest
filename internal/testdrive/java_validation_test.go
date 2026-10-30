@@ -251,6 +251,12 @@ func TestJavaConfigurationReadsGradleBuilds(t *testing.T) {
 	drive.args = []string{"test", "-Dorg.gradle.jvmargs=-Xmx2g -javaagent:/opt/dd-java-agent.jar"}
 	t.Setenv("GRADLE_USER_HOME", t.TempDir())
 	require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "through -Dorg.gradle.jvmargs")
+	drive.args = []string{"test"}
+	for _, carrier := range []string{"GRADLE_OPTS", "JAVA_OPTS"} {
+		drive.configurationEnvironment = map[string]string{carrier: `-Xmx1g "-Dorg.gradle.jvmargs=-Xmx2g -javaagent:/opt/dd-java-agent.jar"`}
+		require.ErrorContains(t, javaLanguage{}.prepareConfiguration(drive, nil, root, root), "GRADLE_OPTS or JAVA_OPTS attaches dd-java-agent", carrier)
+	}
+	drive.configurationEnvironment = nil
 }
 
 func TestGradlePropertiesFollowJavaSyntax(t *testing.T) {
@@ -710,6 +716,11 @@ func TestJavaRuntimeChecksMergeAcrossConfigurations(t *testing.T) {
 	merged := mergeJavaRuntimeChecks(first, second)
 	require.Equal(t, "compatible", merged.Status)
 	require.Len(t, merged.Jobs, 2)
+	// A reusable workflow called with two JDKs has two rows at one location.
+	calls := &onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Location: "scan", Runtime: "11", Status: "not checked"}, {Location: "scan", Runtime: "17", Status: "not checked"}}}
+	calls = mergeJavaRuntimeChecks(calls, &onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Location: "scan", Runtime: "11", Status: "compatible"}, {Location: "scan", Runtime: "17", Status: "compatible"}}})
+	require.Len(t, calls.Jobs, 2)
+	require.Equal(t, "compatible", calls.Status, "each call's row is checked")
 	excluded := &onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Location: "c", Status: "excluded"}}}
 	summarizeJavaRuntime(excluded)
 	require.Equal(t, "inconclusive", excluded.Status, "an instrumented consumer is required")

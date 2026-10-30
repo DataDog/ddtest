@@ -134,11 +134,15 @@ func javaCommandRuntime(root string, entry onboard.TestCommand) string {
 
 // gradleJavaHome is the JDK org.gradle.java.home selects for the build of the
 // command run from directory, in Gradle's precedence: its command line, the
-// user home's gradle.properties, then the build's. Gradle runs on that JDK,
-// in a single-use daemon even with --no-daemon, and forks test JVMs from it.
+// JVM options of the Gradle launcher, the user home's gradle.properties, then
+// the build's. Gradle runs on that JDK, in a single-use daemon even with
+// --no-daemon, and forks test JVMs from it.
 func gradleJavaHome(directory, build string, args []string, configuration map[string]string) (home, source string, err error) {
 	if home, ok := gradle.SystemProperties(args)["org.gradle.java.home"]; ok {
 		return home, "Java from -Dorg.gradle.java.home", nil
+	}
+	if home, ok := gradleLauncherProperties(configuration)["org.gradle.java.home"]; ok {
+		return home, "Java from -Dorg.gradle.java.home in GRADLE_OPTS or JAVA_OPTS", nil
 	}
 	var files []string
 	for _, home := range gradleUserHomes(directory, args, configuration) {
@@ -159,14 +163,41 @@ func gradleJavaHome(directory, build string, args []string, configuration map[st
 	return "", "", nil
 }
 
+// gradleLauncherProperties are the system properties the Gradle launcher's
+// JVM options set: JAVA_OPTS, then GRADLE_OPTS, which the gradlew script
+// passes after it, with a configuration's own values first.
+func gradleLauncherProperties(configuration map[string]string) map[string]string {
+	properties := map[string]string{}
+	for _, carrier := range []string{"JAVA_OPTS", "GRADLE_OPTS"} {
+		options, configured := configuration[carrier]
+		if !configured {
+			options = os.Getenv(carrier)
+		}
+		words, err := shellquote.Split(options)
+		if err != nil {
+			words = strings.Fields(options)
+		}
+		for _, word := range words {
+			if property, ok := strings.CutPrefix(word, "-D"); ok {
+				key, value, _ := strings.Cut(property, "=")
+				properties[key] = value
+			}
+		}
+	}
+	return properties
+}
+
 // gradleAgentProperties refuses a dd-java-agent that org.gradle.jvmargs
 // attaches to every build of the command run from directory: set on its
-// command line, or in the build's or the user home's gradle.properties. The
-// baseline could not run without it.
+// command line, in the launcher's JVM options, or in the build's or the user
+// home's gradle.properties. The baseline could not run without it.
 func gradleAgentProperties(directory, build string, args []string, configuration map[string]string) error {
 	const remedy = "so validation cannot run the build without it; remove that -javaagent option, as CI attaches the agent with the GitHub action"
 	if value, ok := gradle.SystemProperties(args)["org.gradle.jvmargs"]; ok && withoutDatadogAgent(value) != value {
 		return errors.New("the command attaches dd-java-agent to the Gradle build through -Dorg.gradle.jvmargs, " + remedy)
+	}
+	if value, ok := gradleLauncherProperties(configuration)["org.gradle.jvmargs"]; ok && withoutDatadogAgent(value) != value {
+		return errors.New("GRADLE_OPTS or JAVA_OPTS attaches dd-java-agent to the Gradle build through -Dorg.gradle.jvmargs, " + remedy)
 	}
 	files := []string{filepath.Join(build, "gradle.properties")}
 	for _, home := range gradleUserHomes(directory, args, configuration) {

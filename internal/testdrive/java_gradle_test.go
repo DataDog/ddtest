@@ -98,6 +98,8 @@ func TestGradlePreflightCertifiesTheJDKGradleSelects(t *testing.T) {
 	requireWriteFile(t, filepath.Join(os.Getenv("GRADLE_USER_HOME"), "gradle.properties"), "org.gradle.java.home: "+writeJDK(t, "11.0.25")+"\n")
 	require.Equal(t, "11.0.25", preflight().Runtime, "the user home's gradle.properties takes precedence over the build's")
 
+	drive.configurationEnvironment["GRADLE_OPTS"] = "-Xmx1g -Dorg.gradle.java.home=" + writeJDK(t, "23.0.2")
+	require.Equal(t, "23.0.2", preflight().Runtime, "the launcher's JVM options take precedence over gradle.properties")
 	drive.args = []string{"build", "-Dorg.gradle.java.home=" + writeJDK(t, "25.0.1")}
 	require.Equal(t, "25.0.1", preflight().Runtime, "the command line takes precedence over both")
 

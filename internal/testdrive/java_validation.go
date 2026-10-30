@@ -1057,8 +1057,10 @@ func mergeJavaRuntimeChecks(current, next *onboard.RuntimeCheck) *onboard.Runtim
 		return next
 	}
 	for _, finding := range next.Jobs {
+		// A reusable workflow called with several JDKs has one row per JDK at
+		// the same location.
 		index := slices.IndexFunc(current.Jobs, func(job onboard.RuntimeFinding) bool {
-			return finding.Location != "" && job.Location == finding.Location
+			return finding.Location != "" && job.Location == finding.Location && job.Runtime == finding.Runtime
 		})
 		if index >= 0 {
 			current.Jobs[index] = finding
