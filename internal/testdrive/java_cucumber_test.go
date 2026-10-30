@@ -157,7 +157,7 @@ func TestJavaCucumberProbeGoesToTheModuleWithTheRunner(t *testing.T) {
 	tests := []nativeTest{{File: "api / example.ApiTest"}, {File: "features / Calculator"}}
 	module, ok := javaRunnerModule(newMavenBuild(root, projects), tests, "cucumber-java")
 	require.True(t, ok)
-	require.Equal(t, "features", module, "an earlier module without a runner is passed over")
+	require.Equal(t, javaProbeTarget{directory: "features", module: "features"}, module, "an earlier module without a runner is passed over")
 	_, ok = javaRunnerModule(newMavenBuild(root, projects), tests[:1], "cucumber-java")
 	require.False(t, ok, "only modules whose tests ran qualify")
 }

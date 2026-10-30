@@ -703,7 +703,9 @@ test tasks and suites build files declare; a project list or test task that
 build logic computes, such as in buildSrc, leaves the step unresolved rather
 than guessed, except for tasks the build files declare with another type, such
 as a `JapicmpTask`, which never run tests. It resolves each CI step to its test
-tasks, reports the other tasks and the projects of other frameworks, and
+tasks, reports the other tasks and the projects of other frameworks, resolves
+a step that chains Gradle commands, as `./gradlew assemble && ./gradlew
+check`, to its one test command when the others run no tests, and
 treats a job without the Datadog action whose commands only sign, download and
 publish, with Maven outside the test lifecycle or Gradle tasks that by
 convention run no tests, as outside validation, reported as a caveat even
@@ -716,7 +718,10 @@ Gradle builds are validated like Maven builds, with these differences. Every run
 adds `--rerun-tasks --no-build-cache --continue --no-daemon` and disables the
 configuration cache, so no test task is up to date or cached, a failing test task
 does not stop the others, and no daemon carries the agent from one run into
-another. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it,
+another. Without a Gradle user home of their own, runs use `~/.gradle`, the home
+whose `gradle.properties` validation reads, rather than the JVM's `user.home`,
+which a container user without a passwd entry resolves to a directory inside
+the build. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it,
 and an agent already in `JAVA_OPTS`, which the Gradle launcher also reads, is
 removed; native results come from each project's `build/test-results/<task>`
 JUnit XML, matched to the test task path dd-java-agent reports, such as
@@ -724,10 +729,15 @@ JUnit XML, matched to the test task path dd-java-agent reports, such as
 the build files declare: `--command` refuses other tasks, and an
 `org.gradle.jvmargs` that attaches dd-java-agent, on the command line or in the
 build's or the user home's `gradle.properties` (`-g` included), is refused like
-`.mvn/jvm.config`. The feature probe runs alone through its project's `test`
-task with `--tests`, for JUnit 4, JUnit 5, TestNG and Spock; for Cucumber JVM,
-Karate, ScalaTest and MUnit, Gradle builds report the features as not available
-yet.
+`.mvn/jvm.config`. The feature probe runs alone, with `--tests`, through a test
+task that ran in the baseline, preferring a project's `test` task: the probe is
+written among the sources of that task's source set, the test source set, a JVM
+test suite's own (`integrationTest(JvmTestSuite)`) or the one a `Test` task's
+`testClassesDirs = sourceSets.<name>.output.classesDirs` names, under
+`src/<set>/java` or a literal `srcDirs` that replaces it. Source sets build
+logic computes leave the features inconclusive. The probe covers JUnit 4,
+JUnit 5, TestNG and Spock; for Cucumber JVM, Karate, ScalaTest and MUnit,
+Gradle builds report the features as not available yet.
 
 Every framework supports plain `ddtest testdrive --all --check-only --yes`
 and full `ddtest testdrive --all --yes` validation, or a focused

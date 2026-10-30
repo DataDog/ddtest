@@ -721,7 +721,7 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 		return nil
 	}
 	checkout := build.checkout()
-	module, ok := javaProbeModule(build, baseline.Tests, t.framework.Name())
+	target, ok := javaProbeModule(build, baseline.Tests, t.framework.Name())
 	if !ok {
 		unavailableFeatures(result, "No project of the selected "+build.tool()+" command ran native tests the probe can join, so the controlled probe has nowhere to run.")
 		return nil
@@ -729,9 +729,9 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 	// A Cucumber or Karate probe needs the module that holds the runner,
 	// which an inherited dependency hides from reactor order.
 	if owner, found := javaRunnerModule(build, baseline.Tests, t.framework.Name()); found {
-		module = owner
+		target = owner
 	}
-	probe, reason, err := build.probe(module, t.framework.Name(), args)
+	probe, reason, err := build.probe(target, t.framework.Name(), args)
 	if err != nil {
 		return err
 	}
@@ -773,28 +773,43 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 
 // javaProbeModule picks the first project, in build order, whose tests ran in
 // the baseline in a module a probe can join, preferring one that declares the
-// selected framework.
-func javaProbeModule(build javaBuild, tests []nativeTest, framework string) (string, bool) {
-	executed := javaExecutedDirectories(build, tests)
-	candidates := slices.DeleteFunc(build.projects(), func(project javaProject) bool { return !executed[project.directory] })
+// selected framework, and its first such module.
+func javaProbeModule(build javaBuild, tests []nativeTest, framework string) (javaProbeTarget, bool) {
+	executed := javaExecutedModules(build, tests)
+	candidates := slices.DeleteFunc(build.projects(), func(project javaProject) bool { return len(executed[project.directory]) == 0 })
 	if len(candidates) == 0 {
-		return "", false
+		return javaProbeTarget{}, false
 	}
 	declared := slices.IndexFunc(candidates, func(project javaProject) bool { return slices.Contains(project.frameworks, framework) })
-	return candidates[max(declared, 0)].directory, true
+	directory := candidates[max(declared, 0)].directory
+	return javaProbeTarget{directory: directory, module: executed[directory][0]}, true
 }
 
-// javaExecutedDirectories are the project directories whose native results
-// name a module a probe can join.
-func javaExecutedDirectories(build javaBuild, tests []nativeTest) map[string]bool {
-	executed := map[string]bool{}
+// javaExecutedModules are, by project directory, the modules a probe can join
+// whose native results the baseline has. A Gradle project's test task comes
+// first, as most of its tests run there; the others follow by name.
+func javaExecutedModules(build javaBuild, tests []nativeTest) map[string][]string {
+	executed := map[string][]string{}
 	for _, test := range tests {
 		module, _, _ := strings.Cut(test.File, " / ")
-		if directory, ok := build.directory(module); ok {
-			executed[directory] = true
+		if directory, ok := build.directory(module); ok && !slices.Contains(executed[directory], module) {
+			executed[directory] = append(executed[directory], module)
 		}
 	}
+	for _, modules := range executed {
+		slices.SortFunc(modules, func(a, b string) int {
+			return cmp.Or(cmp.Compare(javaTestTaskRank(a), javaTestTaskRank(b)), strings.Compare(a, b))
+		})
+	}
 	return executed
+}
+
+// javaTestTaskRank orders a Gradle project's test task before its others.
+func javaTestTaskRank(module string) int {
+	if strings.HasSuffix(module, ":test") {
+		return 0
+	}
+	return 1
 }
 
 // javaModuleText names a module directory in a message.
@@ -820,21 +835,21 @@ var javaRunners = map[string]func(module string) (string, error){
 
 // javaRunnerModule picks the first project, in build order, whose tests ran
 // in the baseline and that holds a runner class of framework.
-func javaRunnerModule(build javaBuild, tests []nativeTest, framework string) (string, bool) {
+func javaRunnerModule(build javaBuild, tests []nativeTest, framework string) (javaProbeTarget, bool) {
 	find, ok := javaRunners[framework]
 	if !ok {
-		return "", false
+		return javaProbeTarget{}, false
 	}
-	executed := javaExecutedDirectories(build, tests)
+	executed := javaExecutedModules(build, tests)
 	for _, project := range build.projects() {
-		if !executed[project.directory] {
+		if len(executed[project.directory]) == 0 {
 			continue
 		}
 		if runner, err := find(filepath.Join(build.checkout(), project.directory)); err == nil && runner != "" {
-			return project.directory, true
+			return javaProbeTarget{directory: project.directory, module: executed[project.directory][0]}, true
 		}
 	}
-	return "", false
+	return javaProbeTarget{}, false
 }
 
 // checkJavaPreflight inspects the JDK the build runs on, the projects the
@@ -916,7 +931,7 @@ func (t *Testdrive) javaCIRuntime(localJava string) (*onboard.RuntimeCheck, []ru
 	}
 	ci.Jobs = slices.DeleteFunc(ci.Jobs, func(job onboard.RuntimeFinding) bool { return !slices.Contains(locations, job.Location) })
 	if len(ci.Jobs) == 0 {
-		ci.Status, ci.Reason = "inconclusive", "No CI consumer matches this Maven command and working directory; validate the discovered configurations with --all."
+		ci.Status, ci.Reason = "inconclusive", "No CI consumer matches this command and working directory; validate the discovered configurations with --all."
 		return &ci, nil, nil
 	}
 	tracer := t.tracerVersion
@@ -940,7 +955,7 @@ func (t *Testdrive) javaCIRuntime(localJava string) (*onboard.RuntimeCheck, []ru
 				substitutions = append(substitutions, runtimeSubstitution{
 					Source: job.Location, CI: job.Runtime, Local: localJava, Accepted: t.acceptSubstituteRuntime, CIOnly: true, Runtime: "Java",
 					Remedy: "set JAVA_HOME to an existing Java " + job.Runtime + " JDK",
-					Reason: "Local Java " + localJava + " runs dd-java-agent " + tracer + " in place of CI's Java " + job.Runtime + "; the agent release, the Maven command and the suite are the same.",
+					Reason: "Local Java " + localJava + " runs dd-java-agent " + tracer + " in place of CI's Java " + job.Runtime + "; the agent release, the build command and the suite are the same.",
 				})
 			}
 		default:

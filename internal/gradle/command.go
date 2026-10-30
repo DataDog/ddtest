@@ -315,11 +315,11 @@ func ValidationArgs(args []string) []string {
 }
 
 // ProbeArgs are the arguments of a validation run that executes only the probe
-// class, through the test task of the project at path: the command's own
-// Gradle options, without its tasks, their options or its exclusions, any of
-// which could select other tests, remove the probe's task or, moved before
-// it, not be an option Gradle accepts.
-func ProbeArgs(args []string, path, class string) []string {
+// class, through the test task at path, as :app:integrationTest: the
+// command's own Gradle options, without its tasks, their options or its
+// exclusions, any of which could select other tests, remove the probe's task
+// or, moved before it, not be an option Gradle accepts.
+func ProbeArgs(args []string, task, class string) []string {
 	var options []string
 	for _, item := range parse(args) {
 		if item.task != "" || item.of != "" || item.option == "-x" || item.option == "--exclude-task" {
@@ -327,5 +327,5 @@ func ProbeArgs(args []string, path, class string) []string {
 		}
 		options = append(options, render(item)...)
 	}
-	return ValidationArgs(append(options, TaskPath(path, "test"), "--tests", class))
+	return ValidationArgs(append(options, task, "--tests", class))
 }

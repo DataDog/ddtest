@@ -524,10 +524,10 @@ func TestJavaProbeRunsInAModuleThatRanTests(t *testing.T) {
 	projects := newMavenBuild(t.TempDir(), javaFixtureProjects())
 	module, ok := javaProbeModule(projects, []nativeTest{{File: "Customer API / example.ApiTest"}, {File: "core / example.CoreTest"}}, "junit5")
 	require.True(t, ok)
-	require.Equal(t, "core", module, "a module declaring the selected framework is preferred")
+	require.Equal(t, javaProbeTarget{directory: "core", module: "core"}, module, "a module declaring the selected framework is preferred")
 	module, ok = javaProbeModule(projects, []nativeTest{{File: "Customer API / example.ApiTest"}}, "junit5")
 	require.True(t, ok)
-	require.Equal(t, "api", module, "an inherited framework dependency still runs the probe")
+	require.Equal(t, javaProbeTarget{directory: "api", module: "Customer API"}, module, "an inherited framework dependency still runs the probe")
 	_, ok = javaProbeModule(projects, nil, "junit5")
 	require.False(t, ok)
 }
@@ -707,7 +707,7 @@ func TestJavaCIRuntimeCertifiesTheValidatedJDKOrAnAcceptedSubstitute(t *testing.
 	drive.args = []string{"test"}
 	ci, _, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
-	require.Contains(t, ci.Reason, "No CI consumer matches this Maven command", "a local command that CI does not run certifies no CI row")
+	require.Contains(t, ci.Reason, "No CI consumer matches this command", "a local command that CI does not run certifies no CI row")
 }
 
 func TestJavaRuntimeChecksMergeAcrossConfigurations(t *testing.T) {
@@ -901,4 +901,15 @@ func TestJavaPackageCheckInspectsTheReactorsCommandsSelect(t *testing.T) {
 	drive.workflowScope.Commands[0].Command = "mvn -f missing.xml verify"
 	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
 	require.Equal(t, "failed", check.Status, "an unreadable reactor cannot be ruled out")
+
+	// Gradle packages its source sets' resources, never the repository root's.
+	drive.workflowScope.Commands = []onboard.TestCommand{{Directory: ".", Command: "./gradlew check"}}
+	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
+	require.Equal(t, "passed", check.Status)
+	require.Equal(t, "Gradle commands package only their source sets' resource directories, which do not hold the repository root's .testoptimization/.", check.Reason, "no Maven resources are claimed for a Gradle scope")
+	requireWriteFile(t, filepath.Join(root, "pom-ci.xml"), `<project><artifactId>ci</artifactId></project>`)
+	drive.workflowScope.Commands = append(drive.workflowScope.Commands, onboard.TestCommand{Directory: ".", Command: "mvn -B -f pom-ci.xml verify"})
+	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
+	require.Equal(t, "passed", check.Status)
+	require.Contains(t, check.Reason, "Maven resource declarations; none packages the reports. Gradle commands package only")
 }

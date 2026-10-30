@@ -74,9 +74,12 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 	onlyBuilds := !slices.ContainsFunc(parts, func(words []string) bool {
 		return !gradle.Command(words) && !slices.Contains(javaShellBuiltins, words[0])
 	})
-	// Each command is classified against the build it selects.
+	// Each command is classified against the build it selects. The commands
+	// that run no tests are kept, and uncertain notes one that may: a command
+	// without tasks, or one that requests tasks not known to run no tests.
 	var tests []gradleRun
-	excluded := false
+	var others []string
+	excluded, uncertain := false, false
 	for _, words := range builds {
 		args := words[1:]
 		requested := gradle.Tasks(args)
@@ -84,6 +87,8 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		// free of tests need no build read; a command without tasks runs the
 		// default tasks gradleNonTestStep checks.
 		if gradle.DryRun(args) || !slices.ContainsFunc(requested, func(task string) bool { return !gradle.NonTestTask(task) }) {
+			uncertain = uncertain || len(requested) == 0 && !gradle.DryRun(args)
+			others = append(others, shellquote.Join(words...))
 			continue
 		}
 		invoked, reason := gradleInvokedDirectory(directory, args)
@@ -102,16 +107,20 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		switch {
 		case gradle.RunsTests(args, testTasks):
 			tests = append(tests, gradleRun{words: words, projects: projects, tasks: testTasks})
+			continue
 		case slices.ContainsFunc(requested, testTasks.Runs):
 			// Every test task it requests is excluded.
 			excluded = true
 		default:
 			// A task that is neither a known test task nor conventionally free
 			// of tests may be one that build logic ddtest does not read declares.
-			if unknown := slices.DeleteFunc(slices.Clone(requested), testTasks.NonTest); len(unknown) > 0 && testTasks.Unread {
+			unknown := slices.DeleteFunc(slices.Clone(requested), testTasks.NonTest)
+			if len(unknown) > 0 && testTasks.Unread {
 				return unresolvedCommand("Gradle task " + strings.Join(unknown, ", ") + " may be a test task declared by build logic ddtest does not read: " + step.Run)
 			}
+			uncertain = uncertain || len(unknown) > 0
 		}
+		others = append(others, shellquote.Join(words...))
 	}
 	if len(tests) == 0 {
 		reason := "Gradle tasks outside testing, such as assembly, documentation, analysis or publishing, are outside " + framework + " test scope."
@@ -120,7 +129,9 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		}
 		return gradleNonTestStep(root, step, directory, builds, framework, onlyBuilds, workflow, job, parts, reason)
 	}
-	if len(parts) != 1 {
+	// A sequence of Gradle commands, as ./gradlew assemble && ./gradlew check,
+	// is validated by its one test command when the others run no tests.
+	if len(parts) != 1 && (len(tests) != 1 || len(builds) != len(parts) || uncertain) {
 		return unresolvedCommand("Gradle test step requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
 	}
 	run := tests[0]
@@ -129,6 +140,9 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 	var notes []string
 	if len(omitted) > 0 {
 		notes = append(notes, "This CI step also runs "+strings.Join(omitted, ", ")+". Local validation runs only "+selected+", its test tasks, and never publishes artifacts. Report this to the user.")
+	}
+	if len(others) > 0 {
+		notes = append(notes, "This CI step also runs Gradle commands that run no tests: "+strings.Join(others, "; ")+". Local validation runs only "+selected+" and never publishes artifacts. Report this to the user.")
 	}
 	if others := otherGradleFrameworkProjects(run.projects, framework); len(others) > 0 {
 		notes = append(notes, "This Gradle build also has project(s) "+strings.Join(others, ", ")+", which declare other test frameworks and no "+framework+" dependency. Whether this step runs their tests depends on the tasks it selects. Instrumenting this step reports any selected tests to Datadog too; local validation covers only the "+framework+" projects. Report this to the user.")

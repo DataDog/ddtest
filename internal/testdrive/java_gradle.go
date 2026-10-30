@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -30,6 +31,9 @@ type gradleBuild struct {
 	byPaths map[string]gradle.Project
 	// home is the JDK org.gradle.java.home selects, set where source says.
 	home, homeSource string
+	// userHome is the Gradle user home validation runs set, when nothing
+	// else selects one.
+	userHome string
 }
 
 // gradleBuild reads the Gradle build the selected command runs, as Gradle
@@ -83,7 +87,7 @@ func (t *Testdrive) gradleBuild(args []string) (*gradleBuild, error) {
 	for _, project := range projects {
 		byPaths[project.Path] = project
 	}
-	return &gradleBuild{root: root, all: projects, byPaths: byPaths, home: home, homeSource: source}, nil
+	return &gradleBuild{root: root, all: projects, byPaths: byPaths, home: home, homeSource: source, userHome: gradleDefaultUserHome(args, t.configurationEnvironment)}, nil
 }
 
 // javaWorkflowRuntime are the versions of the JDKs a scope's commands run on,
@@ -230,16 +234,31 @@ func gradleUserHomes(directory string, args []string, configuration map[string]s
 	if len(homes) > 0 {
 		return homes
 	}
+	if home := gradleDefaultUserHome(args, configuration); home != "" {
+		return []string{home}
+	}
 	home, configured := configuration["GRADLE_USER_HOME"]
 	if !configured {
 		home = os.Getenv("GRADLE_USER_HOME")
 	}
-	if home == "" {
-		if user, err := os.UserHomeDir(); err == nil {
-			home = filepath.Join(user, ".gradle")
-		}
-	}
 	return []string{home}
+}
+
+// gradleDefaultUserHome is ~/.gradle when neither the command nor the
+// environment selects a Gradle user home; empty otherwise.
+func gradleDefaultUserHome(args []string, configuration map[string]string) string {
+	home, configured := configuration["GRADLE_USER_HOME"]
+	if !configured {
+		home = os.Getenv("GRADLE_USER_HOME")
+	}
+	if len(gradle.UserHomes(args)) > 0 || home != "" {
+		return ""
+	}
+	user, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(user, ".gradle")
 }
 
 func (b *gradleBuild) tool() string      { return "Gradle" }
@@ -278,24 +297,41 @@ func (b *gradleBuild) arguments(args []string, probe *javaProbe) []string {
 	return gradle.ValidationArgs(args)
 }
 
-func (b *gradleBuild) environment(map[string]string) {}
+// environment runs Gradle with the user home whose gradle.properties
+// validation reads. Gradle's default follows the JVM's user.home instead,
+// which a user without a passwd entry, as in a container, resolves to "?": a
+// directory inside the build that then holds every download.
+func (b *gradleBuild) environment(env map[string]string) {
+	if b.userHome != "" {
+		env["GRADLE_USER_HOME"] = b.userHome
+	}
+}
 
 func (b *gradleBuild) javaHome() (string, string) { return b.home, b.homeSource }
 
-// probe writes the framework's probe class in the project at directory, run
-// alone through that project's test task.
-func (b *gradleBuild) probe(directory, framework string, args []string) (javaProbe, string, error) {
+// gradleProbeLanguages are the source languages of probes other than Java's.
+var gradleProbeLanguages = map[string]string{"spock": "groovy"}
+
+// probe writes the framework's probe class among the sources of the test task
+// whose results it joins, run alone through that task.
+func (b *gradleBuild) probe(target javaProbeTarget, framework string, args []string) (javaProbe, string, error) {
 	if !slices.Contains(gradleProbeFrameworks, framework) {
 		return javaProbe{}, "The " + displayName(framework) + " probe is not available for Gradle builds yet, so its features are not validated; the Gradle probe covers " + strings.Join(gradleProbeFrameworks, ", ") + ".", nil
 	}
-	index := slices.IndexFunc(b.all, func(project gradle.Project) bool { return project.Directory == directory })
-	if index < 0 {
-		return javaProbe{}, "", fmt.Errorf("no Gradle project in %s", directory)
+	project, task, ok := b.task(target.module)
+	if !ok {
+		return javaProbe{}, "", fmt.Errorf("no Gradle test task %s", target.module)
+	}
+	language := cmp.Or(gradleProbeLanguages[framework], "java")
+	set, ok := gradle.TestSourceSet(b.root, project, task)
+	directory, found := gradle.SourceDirectory(b.root, project, set, language)
+	if !ok || !found {
+		return javaProbe{}, "The " + language + " sources of " + target.module + " are set by build logic ddtest does not read, so the probe cannot be placed and its features are not validated.", nil
 	}
 	source := javaProbeSources[framework]
 	return javaProbe{
-		files: []javaProbeFile{{filepath.Join(directory, source.path), source.source}},
-		args:  gradle.ProbeArgs(args, b.all[index].Path, javaProbeClass),
+		files: []javaProbeFile{{filepath.Join(project.Directory, directory, "ddtest", filepath.Base(source.path)), source.source}},
+		args:  gradle.ProbeArgs(args, target.module, javaProbeClass),
 	}, "", nil
 }
 
@@ -318,21 +354,31 @@ func (b *gradleBuild) results(exitCode int, output string) ([]javaResult, string
 	return results, incomplete, nil
 }
 
-// directory is the project whose test task a module label names: a probe in
-// it runs through that task. Other test tasks, such as integrationTest, run
-// other source sets than the probe's.
+// directory is the project whose test task a module label names, when the
+// task's source set is one ddtest reads: a probe among its sources runs
+// through that task.
 func (b *gradleBuild) directory(module string) (string, bool) {
-	path, found := strings.CutSuffix(module, ":test")
-	if !found {
+	project, task, ok := b.task(module)
+	if !ok {
 		return "", false
 	}
-	// The root project's test task is :test.
+	if _, ok := gradle.TestSourceSet(b.root, project, task); !ok {
+		return "", false
+	}
+	return project.Directory, true
+}
+
+// task is the project and task name of a task path, as :app:integrationTest;
+// the root project's tasks are :test and the like.
+func (b *gradleBuild) task(module string) (gradle.Project, string, bool) {
+	index := strings.LastIndex(module, ":")
+	if index < 0 || index == len(module)-1 {
+		return gradle.Project{}, "", false
+	}
+	path := module[:index]
 	if path == "" {
 		path = ":"
 	}
 	project, known := b.byPaths[path]
-	if !known {
-		return "", false
-	}
-	return project.Directory, true
+	return project, module[index+1:], known
 }

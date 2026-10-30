@@ -332,3 +332,19 @@ func TestProjectsFollowsAppliedSettingsScripts(t *testing.T) {
 	_, err = Projects(root, ".")
 	require.Error(t, err, "an applied script's computed includes are unreadable too")
 }
+
+func TestProjectsReadTestFrameworkSelections(t *testing.T) {
+	for build, frameworks := range map[string][]string{
+		sshjBuild: {"junit5"},
+		"testing { suites { test { useJUnit('4.13.2') } } }":                                         {"junit4"},
+		"testing { suites { val it by registering(JvmTestSuite::class) { useSpock() } } }":           {"spock"},
+		"tasks.test { useTestNG() }\ndependencies { testImplementation 'org.testng:testng:7.10.2' }": {"testng"},
+		"tasks.test { useJUnitPlatform() }":                                                          nil,
+	} {
+		root := t.TempDir()
+		writeFile(t, root, "build.gradle", build)
+		projects, err := Projects(root, ".")
+		require.NoError(t, err)
+		require.Equal(t, frameworks, Frameworks(projects), build)
+	}
+}

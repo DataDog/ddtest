@@ -63,7 +63,7 @@ func TestJavaKarateProbeGoesToTheModuleWithTheRunner(t *testing.T) {
 	projects := []maven.Project{{Directory: "api", Artifact: "api"}, {Directory: "e2e", Artifact: "e2e"}}
 	module, ok := javaRunnerModule(newMavenBuild(root, projects), []nativeTest{{File: "api / example.ApiTest"}, {File: "e2e / [example/calc] Calculator"}}, "karate")
 	require.True(t, ok)
-	require.Equal(t, "e2e", module)
+	require.Equal(t, javaProbeTarget{directory: "e2e", module: "e2e"}, module)
 	_, ok = javaRunnerModule(newMavenBuild(root, projects), []nativeTest{{File: "api / example.ApiTest"}}, "junit5")
 	require.False(t, ok, "a class probe goes to any module that ran tests")
 }
