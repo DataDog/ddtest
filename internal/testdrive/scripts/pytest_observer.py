@@ -1,6 +1,8 @@
 """Native pytest outcomes, independent of Datadog's event intake."""
 import json
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -53,6 +55,19 @@ def pytest_load_initial_conftests(early_config, args):
         if args[start:start + len(overrides)] == overrides:
             del args[start:start + len(overrides)]
 
+    if early_config.pluginmanager.hasplugin("cacheprovider"):
+        # Seed each run independently: --lf/--ff/--nf must observe the same
+        # starting state, including when --cache-clear is requested.
+        cache = Path(os.path.expandvars(os.path.expanduser(early_config.getini("cache_dir"))))
+        if not cache.is_absolute():
+            cache = early_config.rootpath / cache
+        isolated = tempfile.mkdtemp(prefix="pytest-cache-", dir=Path(os.environ["DDTEST_PYTEST_RESULTS"]).parent)
+        # Preserve cache values and cache.mkdir data, without copying unrelated
+        # files when cache_dir points at an existing project directory.
+        for name in ("v", "d"):
+            if (cache / name).is_dir():
+                shutil.copytree(cache / name, Path(isolated) / name)
+        early_config._inicache["cache_dir"] = isolated
 
 
 def pytest_configure(config):
