@@ -58,9 +58,10 @@ Contract 1 covers:
   `github.com/DataDog/ddtest/ddto`, its target names, and the `testopt` target
   that the rule adds to each test;
 - the registration that the rule adds to each test, the file that
-  `ddtest instrument` writes as `zz_dd_ci_visibility_test.go`, in the test's
-  external package when one of its sources declares it and in its own package
-  otherwise:
+  `ddtest instrument` writes as `zz_dd_ci_visibility_test.go`. It goes in the
+  test's external package when one of its sources declares it, or when Mini
+  imports the package under test, where the package's own name would make an
+  import cycle; otherwise in the package's own name:
 
   ```go
   package <the test package>
