@@ -147,3 +147,24 @@ func TestGradlePreflightCertifiesTheJDKGradleSelects(t *testing.T) {
 	require.ErrorContains(t, drive.checkJavaPreflight(t.Context(), &bytes.Buffer{}, result), "which is not a JDK")
 	require.Equal(t, "inconclusive", result.Preflight.Verdict.Status)
 }
+
+func TestGradleRunsUseTheUserHomeValidationReads(t *testing.T) {
+	drive, _ := gradleFixture(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GRADLE_USER_HOME", "")
+	environment := func() map[string]string {
+		t.Helper()
+		build, err := drive.javaBuild(drive.args)
+		require.NoError(t, err)
+		env := map[string]string{}
+		build.environment(env)
+		return env
+	}
+	require.Equal(t, filepath.Join(home, ".gradle"), environment()["GRADLE_USER_HOME"], "Gradle uses the home whose gradle.properties was read, not the JVM's user.home")
+	t.Setenv("GRADLE_USER_HOME", "/ci/gradle")
+	require.NotContains(t, environment(), "GRADLE_USER_HOME", "an environment's own home is kept")
+	t.Setenv("GRADLE_USER_HOME", "")
+	drive.args = []string{"build", "-g", "ci-home"}
+	require.NotContains(t, environment(), "GRADLE_USER_HOME", "a command's own home is kept")
+}

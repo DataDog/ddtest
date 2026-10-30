@@ -717,7 +717,10 @@ Gradle builds are validated like Maven builds, with these differences. Every run
 adds `--rerun-tasks --no-build-cache --continue --no-daemon` and disables the
 configuration cache, so no test task is up to date or cached, a failing test task
 does not stop the others, and no daemon carries the agent from one run into
-another. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it,
+another. Without a Gradle user home of their own, runs use `~/.gradle`, the home
+whose `gradle.properties` validation reads, rather than the JVM's `user.home`,
+which a container user without a passwd entry resolves to a directory inside
+the build. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it,
 and an agent already in `JAVA_OPTS`, which the Gradle launcher also reads, is
 removed; native results come from each project's `build/test-results/<task>`
 JUnit XML, matched to the test task path dd-java-agent reports, such as

@@ -31,6 +31,9 @@ type gradleBuild struct {
 	byPaths map[string]gradle.Project
 	// home is the JDK org.gradle.java.home selects, set where source says.
 	home, homeSource string
+	// userHome is the Gradle user home validation runs set, when nothing
+	// else selects one.
+	userHome string
 }
 
 // gradleBuild reads the Gradle build the selected command runs, as Gradle
@@ -84,7 +87,7 @@ func (t *Testdrive) gradleBuild(args []string) (*gradleBuild, error) {
 	for _, project := range projects {
 		byPaths[project.Path] = project
 	}
-	return &gradleBuild{root: root, all: projects, byPaths: byPaths, home: home, homeSource: source}, nil
+	return &gradleBuild{root: root, all: projects, byPaths: byPaths, home: home, homeSource: source, userHome: gradleDefaultUserHome(args, t.configurationEnvironment)}, nil
 }
 
 // javaWorkflowRuntime are the versions of the JDKs a scope's commands run on,
@@ -231,16 +234,31 @@ func gradleUserHomes(directory string, args []string, configuration map[string]s
 	if len(homes) > 0 {
 		return homes
 	}
+	if home := gradleDefaultUserHome(args, configuration); home != "" {
+		return []string{home}
+	}
 	home, configured := configuration["GRADLE_USER_HOME"]
 	if !configured {
 		home = os.Getenv("GRADLE_USER_HOME")
 	}
-	if home == "" {
-		if user, err := os.UserHomeDir(); err == nil {
-			home = filepath.Join(user, ".gradle")
-		}
-	}
 	return []string{home}
+}
+
+// gradleDefaultUserHome is ~/.gradle when neither the command nor the
+// environment selects a Gradle user home; empty otherwise.
+func gradleDefaultUserHome(args []string, configuration map[string]string) string {
+	home, configured := configuration["GRADLE_USER_HOME"]
+	if !configured {
+		home = os.Getenv("GRADLE_USER_HOME")
+	}
+	if len(gradle.UserHomes(args)) > 0 || home != "" {
+		return ""
+	}
+	user, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(user, ".gradle")
 }
 
 func (b *gradleBuild) tool() string      { return "Gradle" }
@@ -279,7 +297,15 @@ func (b *gradleBuild) arguments(args []string, probe *javaProbe) []string {
 	return gradle.ValidationArgs(args)
 }
 
-func (b *gradleBuild) environment(map[string]string) {}
+// environment runs Gradle with the user home whose gradle.properties
+// validation reads. Gradle's default follows the JVM's user.home instead,
+// which a user without a passwd entry, as in a container, resolves to "?": a
+// directory inside the build that then holds every download.
+func (b *gradleBuild) environment(env map[string]string) {
+	if b.userHome != "" {
+		env["GRADLE_USER_HOME"] = b.userHome
+	}
+}
 
 func (b *gradleBuild) javaHome() (string, string) { return b.home, b.homeSource }
 
