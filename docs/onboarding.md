@@ -81,8 +81,9 @@ review it before executing it if you have made further edits since apply.
 `onboard` and `testdrive` read one CI provider's configuration: GitHub Actions
 (`--ci-provider github`, `.github/workflows`), GitLab CI (`--ci-provider
 gitlab`, `.gitlab-ci.yml`), CircleCI (`--ci-provider circleci`,
-`.circleci/config.yml`) or Buildkite (`--ci-provider buildkite`,
-`buildkite.yml` and `.buildkite/`). The provider whose configuration exists is selected
+`.circleci/config.yml`), Buildkite (`--ci-provider buildkite`,
+`buildkite.yml` and `.buildkite/`) or Jenkins (`--ci-provider jenkins`,
+`Jenkinsfile`). The provider whose configuration exists is selected
 automatically; any other value is rejected with the list of supported
 providers. When several supported providers contain tests (documentation, lint and
 release tooling, such as `bundle exec yard doc`, does not count), ddtest asks which
@@ -91,14 +92,14 @@ one to configure before discovery, edits or validation (agents receive
 keep the selected `--ci-provider`. A language without setup support on the
 selected provider gets `ci_provider_unsupported` instead of instructions:
 JavaScript and Ruby support every provider, Python and Java GitHub Actions only.
-Other CI files (Jenkins and others) are never parsed: when
+Other CI files (Travis CI, Azure Pipelines and others) are never parsed: when
 they mention the framework they are listed as outside this validation, and they
 never fail onboarding.
 
 ### Runtimes and facts only the user can state
 
-Some CI jobs select no runtime ddtest can read: Buildkite steps on the agent
-host, GitLab jobs without an `image`, CircleCI `machine` and `macos`
+Some CI jobs select no runtime ddtest can read: Jenkins stages on a host
+agent, Buildkite steps on the agent host, GitLab jobs without an `image`, CircleCI `machine` and `macos`
 executors, GitHub self-hosted runners (a `self-hosted` label in any `runs-on`
 form, including `{group, labels}` and a runner a matrix row selects, such as
 `runs-on: ${{ matrix.os }}` with `os: [self-hosted, ubuntu-latest]`) without
@@ -157,8 +158,13 @@ an unknown runtime:
 
 `--ci-confirm <fact>[=<value>]`, repeatable, states a fact the selected
 provider defines because its configuration cannot show it (such as a plugin
-installed on the CI server). No provider defines one yet; any other key is
-rejected with the provider's list.
+installed on the CI server). Only Jenkins defines facts (see
+[Jenkins](#jenkins)); any other key, or a value outside the fact's form, is
+rejected with the provider's list. A setup that depends on facts the user has
+not stated returns `needs_input` with `code: ci_setup_confirmation_required`,
+`required_input: ["ci_confirm:<fact>[=<values>]", …]` and `next_action:
+ask_user`, after any runtime question and only once the setup is otherwise
+complete; the agent asks the user and never assumes the answer.
 
 Both flags are forwarded into every follow-up command, like `--ci-provider`,
 and are part of the input fingerprint, so `testdrive --report` must repeat
@@ -481,6 +487,132 @@ by the coding agent from `onboard --agent` instructions; for Ruby the installer
 adds datadog-ci to the CI bundle and replaces `RUBYOPT`, so existing Ruby
 options are re-added after it, and Ruby 2.7 and 3.0 images get a `gem update
 --system` command, guarded on the image where a matrix shares the step.
+
+### Jenkins
+
+Which Jenkinsfile a Jenkins job runs (its Script Path) is configured in
+Jenkins, so ddtest reads every Jenkinsfile candidate: `Jenkinsfile`,
+`Jenkinsfile.*`, `*.Jenkinsfile` and `*.jenkinsfile` at the repository root and
+in `jenkins/`, `.jenkins/`, `ci/`, `.ci/`, `jenkinsfiles/` and `pipelines/`;
+with several, a caveat asks the user which ones their jobs run. ddtest never
+runs the Groovy: a parser written for the Pipeline subset (limits of 2 MiB and
+100,000 tokens; every node keeps its byte span) reads the declarative
+`pipeline { … }` in full and the literal subset of scripted pipelines, and
+turns everything else into an explicit unknown node that is reported, never
+guessed. A file it cannot tokenize (an unterminated string or comment) fails
+the read, so Jenkins is not a provider candidate; when selected, it reports the
+error.
+
+Each leaf stage becomes one job, named by its stage path (`Checks / Unit`),
+with matrix values appended (`Test / Run (22, linux)`): declarative `steps`,
+nested `stages`, `parallel` stages, `matrix` cells (literal `axes`, with
+`excludes` and `notValues`, at most 200 cells) and scripted `stage` blocks; a
+scripted `node` without stages is one job, as is a scripted `parallel` branch.
+These names are the job keys `--ci-runtime` takes. Each top-level statement of
+a literal `sh` script is one step: the statements of one script share its
+shell, so literal `export`s, assignments and `cd` carry into later statements,
+but every `sh` starts a fresh shell. `sh 'x'`, `sh "x"`, triple-quoted scripts
+and `sh(script: …)` are read when the whole script is literal; a GString reads
+known values only: a literal `environment` value or `env.X =` assignment, a
+literal Groovy variable, a `parameters` default (`${params.X}`) and
+`${WORKSPACE}`. `environment` (pipeline and stage, in any order;
+`credentials()` and computed values are unknown), `withEnv` with a literal
+list, `withCredentials` (its variables are unknown), `dir` with a literal path
+inside the checkout, `when { expression { false } }` or `return false` (the
+stage never runs; any other `when` is a possible path), `post` conditions that
+run on a passing build (`always`, `success`, `cleanup`, `changed`, `fixed`:
+after the stage's steps; the others are reported), `if`/`else`, loops and
+`try`/`finally` (possible paths; `catch` is not) and wrappers such as
+`timeout`, `retry`, `timestamps`, `ansiColor`, `lock`, `catchError`,
+`warnError`, `sshagent`, `wrap` and `script` are followed. Steps that only
+check out, archive, publish or notify (`checkout`, `junit`, `stash`,
+`archiveArtifacts`, `cleanWs`, `slackSend` and the like; the list is
+`jenkinsNonCommandSteps`) are a caveat. Anything else stays an unresolved
+blocker: a computed script, a step ddtest does not know (from a shared library
+named by `@Library` or `library`, or one Jenkins loads implicitly), a call to a
+Groovy function of the Jenkinsfile, `load`, `evaluate`, `build job:`, an
+unknown wrapper around `sh`, a scripted `parallel` over a computed map, a
+matrix ddtest cannot expand, `bat`/`powershell` and Windows agent labels, an
+`sh` outside a `node` or under `agent none`, a script with another
+interpreter's shebang, and `docker run`/`exec` or a Compose `run`/`exec`/`up`
+inside `sh`, whose tests run in a container ddtest cannot validate.
+
+The setup is the [Datadog Jenkins
+plugin](https://github.com/jenkinsci/datadog-plugin#test-optimization-configuration),
+enabled for the whole pipeline in the Jenkinsfile: `datadog(testOptimization:
+[enabled: true, serviceName: '<service>', languages: ['JAVASCRIPT']])` (or
+`'RUBY'`; `testVisibility:` is its legacy name) in the declarative top-level
+`options`, or wrapping a scripted pipeline's `node` blocks. The plugin installs
+the tracer on the build agent when each step runs, with the agent's own
+toolchain, and sets the tracer's variables, `DD_API_KEY` and the site from its
+global configuration; the Jenkinsfile only enables it, so ddtest models it as a
+setup step at the start of every job in its scope. The setup is complete when
+the option's arguments are literal, `enabled: true`, `languages` names the
+language, `serviceName` is set (otherwise the plugin reports `service: null`),
+`additionalVariables` is a literal map without `DD_API_KEY` (refused: the key
+would be committed) or `DD_CIVISIBILITY_ENABLED=false`, and its `DD_SITE`, or
+the confirmed Agentless site, is the selected site. A `datadog(…)` in a
+stage's `options` is not certified (the plugin documents the top-level option
+only), and a literal `DD_API_KEY` in an `environment` directive is refused; a
+`DD_API_KEY` credential binding, and a `NODE_OPTIONS` or `RUBYOPT` in a stage's
+`environment`, `withEnv` or `additionalVariables`, are reported as overwritten
+by the plugin, which sets those once per build. When the setup that is there
+is incomplete, `ci_setup_required` names why.
+
+The plugin does not instrument tests inside containers. Stages that run in
+`agent { docker … }`, `dockerfile`, `kubernetes`, `docker.image(…).inside`, an
+image variable's `.inside` or `container(…)` are unsupported: when every job
+that runs the tests is one, onboarding returns `status: unsupported` with
+`code: ci_setup_unsupported`, naming the jobs and the remedy (run the tests on
+a host agent, or set up Test Optimization in the container by hand, which
+ddtest cannot validate); otherwise the instructions name them and validation
+keeps them as blockers. An installer fallback for containers is not part of
+this provider.
+
+A host agent's runtime is never in the Jenkinsfile, so ddtest asks for it
+(`ci_runtime_required`, answered with `--ci-runtime`, naming the agent label
+and any Jenkins tool on PATH). With the setup in place, it then asks the user
+to confirm what only Jenkins shows (`ci_setup_confirmation_required`):
+
+- `jenkins-plugin`: the Datadog plugin 5.6.2 or newer is installed on the
+  controller.
+- `jenkins-plugin-mode=agentless:<site>` (an API key credential and that site)
+  or `jenkins-plugin-mode=agent` (a Datadog Agent the build agents reach). An
+  Agentless site other than the selected one is a setup problem.
+- `jenkins-agent-runtime-matches`, only for jobs whose PATH a `tools`
+  directive, `nodejs(…)`/`nvm(…)`/`rbenv(…)`, `withEnv(['PATH+…'])`, a PATH
+  `environment` value or a PATH assignment in `sh` changes: the plugin installs
+  the tracer with the agent's default toolchain, which must be the one the
+  tests use.
+
+`final_response` lists each confirmation as stated by the user, not verified,
+next to the stated runtime and the caveat that ddtest read the Jenkinsfile, not
+the plugin's configuration or the agents.
+
+JavaScript: the plugin runs `npm install -g dd-trace` on every build and
+nothing can pin the release, so the JavaScript setup floats at the latest
+release, the one exception to the exact-release rule: ddtest checks the stated
+Node against the latest release, validates locally with it, and
+`final_response` names that release as a caveat. The plugin prepends its
+preload to `NODE_OPTIONS` and exports `DD_TRACE_PATH`; for Vitest, Cucumber and
+ESM Mocha, the test's `sh` script registers the loader before the test command
+with `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-}
+--import $DD_TRACE_PATH/register.js"; fi`.
+
+Ruby: the plugin uses a `datadog-ci` already in the bundle and otherwise runs
+`bundle config set frozen false` and `bundle add datadog-ci` on the agent, so
+the setup is complete only when the Gemfile.lock at the checkout root pins
+`datadog-ci` exactly, which local validation uses (the instructions prescribe
+`gem "datadog-ci", "<exact release>", group: :test` and `bundle lock`). The
+plugin configures it from the checkout root, so a test step inside `dir(…)`,
+one with `BUNDLE_GEMFILE`, or a repository without a root Gemfile is a setup
+problem. The plugin replaces `RUBYOPT`, and refuses Ruby before 2.7 and
+RubyGems before 3.3.22.
+
+`onboard --apply` does not edit Jenkinsfiles: for every language,
+`onboard --agent` and `onboard --apply` return `ci_setup_required` with the
+instructions, and the coding agent applies them before the coordinated
+validation.
 
 ## Coverage and local developer commands
 
