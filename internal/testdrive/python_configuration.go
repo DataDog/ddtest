@@ -1,6 +1,7 @@
 package testdrive
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 )
 
 func (t *Testdrive) rebasePytestConfiguration(directory string) error {
-	t.configurationEnvironment["DDTEST_PYTEST_CONFIG_ADDOPTS"] = ext.UnsetEnvironment
+	t.configurationEnvironment["DDTEST_PYTEST_CONFIG_OVERRIDES"] = ext.UnsetEnvironment
 	pythonPath := os.Getenv("PYTHONPATH")
 	if configured, ok := t.configurationEnvironment["PYTHONPATH"]; ok {
 		pythonPath = configured
@@ -74,6 +75,7 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 	options, args = combined[:environmentCount], combined[environmentCount:]
 	words = append(commandPrefix, args...)
 	t.args = words[1:]
+	var owned []string
 	if !overridden {
 		defaults, configErr := onboard.PytestConfigOptions(t.checkoutRoot(), directory, shellquote.Join(options...), words)
 		if configErr == nil {
@@ -84,10 +86,30 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 			if !slices.Equal(defaults, isolated) {
 				// Put the copied defaults before user options so their overrides
 				// retain pytest's normal environment/command precedence.
-				options = append([]string{"-o", "addopts=" + shellquote.Join(isolated...)}, options...)
-				t.configurationEnvironment["DDTEST_PYTEST_CONFIG_ADDOPTS"] = shellquote.Join(isolated...)
+				owned = append(owned, "-o", "addopts="+shellquote.Join(isolated...))
 			}
 		}
+	}
+	paths, configErr := onboard.PytestConfigPaths(t.checkoutRoot(), directory, shellquote.Join(options...), words)
+	if configErr == nil {
+		for _, key := range []string{"testpaths", "pythonpath", "cache_dir"} {
+			isolated := rebasePytestPaths(paths[key], t.configurationSourceRoot, t.checkoutRoot())
+			if !slices.Equal(paths[key], isolated) {
+				value := shellquote.Join(isolated...)
+				if key == "cache_dir" {
+					value = isolated[0]
+				}
+				owned = append(owned, "-o", key+"="+value)
+			}
+		}
+	}
+	if len(owned) > 0 {
+		options = append(owned, options...)
+		data, err := json.Marshal(owned)
+		if err != nil {
+			return err
+		}
+		t.configurationEnvironment["DDTEST_PYTEST_CONFIG_OVERRIDES"] = string(data)
 	}
 	if addopts != "" || len(options) > 0 {
 		t.configurationEnvironment["PYTEST_ADDOPTS"] = shellquote.Join(options...)
@@ -129,6 +151,27 @@ func isolatePytestOptions(args []string, directory, original, copied string, act
 			continue
 		}
 		key, value, _ := strings.Cut(value, "=")
+		if slices.Contains([]string{"testpaths", "pythonpath", "cache_dir"}, key) {
+			paths := []string{value}
+			if key != "cache_dir" {
+				paths, err = shellquote.Split(value)
+				if err != nil {
+					return nil, false, fmt.Errorf("cannot parse inline pytest %s: %w", key, err)
+				}
+			}
+			isolated := rebasePytestPaths(paths, original, copied)
+			if !slices.Equal(paths, isolated) {
+				value = shellquote.Join(isolated...)
+				if key == "cache_dir" {
+					value = isolated[0]
+				}
+				args[i] = key + "=" + value
+				if attached {
+					args[i] = "--override-ini=" + args[i]
+				}
+			}
+			continue
+		}
 		if key != "addopts" {
 			continue
 		}

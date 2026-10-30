@@ -1,12 +1,38 @@
 package onboard
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestPytestConfigPathsPreserveListsAndScalarCacheDirectory(t *testing.T) {
+	for _, name := range []string{"pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			tests, source, cache := filepath.Join(root, "tests"), filepath.Join(root, "src dir"), filepath.Join(root, "cache dir")
+			section := "pytest"
+			if name == "setup.cfg" {
+				section = "tool:pytest"
+			}
+			contents := fmt.Sprintf("[%s]\naddopts=-q\ntestpaths=%q\npythonpath=%q external\ncache_dir=%s\n", section, tests, source, cache)
+			if name == "pyproject.toml" {
+				contents = fmt.Sprintf("[tool.pytest.ini_options]\naddopts=['-q']\ntestpaths=[%q]\npythonpath=[%q, 'external']\ncache_dir=%q\n", tests, source, cache)
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(contents), 0644))
+			words := []string{"pytest", "-c", name}
+			paths, err := PytestConfigPaths(root, root, "", words)
+			require.NoError(t, err)
+			require.Equal(t, map[string][]string{"testpaths": {tests}, "pythonpath": {source, "external"}, "cache_dir": {cache}}, paths)
+			options, err := PytestConfigOptions(root, root, "", words)
+			require.NoError(t, err)
+			require.Equal(t, []string{"-q"}, options)
+		})
+	}
+}
 
 func TestPytestConfigSelectionStaysInsideRepository(t *testing.T) {
 	parent := t.TempDir()

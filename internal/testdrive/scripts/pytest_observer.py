@@ -43,14 +43,16 @@ def pytest_addoption(pluginmanager):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_load_initial_conftests(early_config, args):
-    owned = os.environ.get("DDTEST_PYTEST_CONFIG_ADDOPTS")
+    owned = os.environ.get("DDTEST_PYTEST_CONFIG_OVERRIDES")
     if owned is not None:
         # Our copied defaults were supplied before the user's environment
         # options. Remove that transport pair after pytest has consumed it;
-        # a -- in the defaults must not reinterpret it as collection paths.
+        # a -- in the defaults must not reinterpret overrides as collection paths.
         start = len(early_config.getini("addopts"))
-        if args[start:start + 2] == ["-o", "addopts=" + owned]:
-            del args[start:start + 2]
+        overrides = json.loads(owned)
+        if args[start:start + len(overrides)] == overrides:
+            del args[start:start + len(overrides)]
+
 
 
 def pytest_configure(config):

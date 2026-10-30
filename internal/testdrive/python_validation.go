@@ -310,8 +310,7 @@ func (t *Testdrive) runPytest(ctx context.Context, output io.Writer, session *wo
 	if strings.TrimSuffix(filepath.Base(t.command), ".exe") == "uv" && len(args) > 0 && args[0] == "run" && !slices.Contains(args, "--no-sync") {
 		args = slices.Insert(args, 1, "--no-sync")
 	}
-	// Strip explicit tracer enable/disable flags in either mode; append the
-	// controlled flag after ini/environment defaults so config addopts agree.
+	// Strip explicit tracer flags without changing wrapper or suite arguments.
 	words := append([]string{t.command}, args...)
 	pytestArgs, ok := onboard.PytestArguments(words)
 	if !ok {

@@ -15,6 +15,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,6 +39,12 @@ func TestPytestAbsolutePathsExecuteOnlyInsideCopy(t *testing.T) {
 
 func TestPytestEqualsConfigPathExecutesOnlyInsideCopy(t *testing.T) {
 	testPytestPathsExecuteOnlyInsideCopy(t, "equals config")
+}
+
+func TestPytestNativeConfigurationPathsExecuteOnlyInsideCopy(t *testing.T) {
+	for _, mode := range []string{"native pytest.ini", "native pyproject.toml", "native command override", "native environment override"} {
+		t.Run(mode, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, mode) })
+	}
 }
 
 func TestPytestArgumentFilesExecuteOnlyInsideCopy(t *testing.T) {
@@ -116,6 +123,33 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	configuration, configuredContents := "", ""
 	if mode == "equals config" {
 		args = []string{"-m", "pytest", "-c=" + filepath.Join(root, "pytest.ini"), file + "::test_app"}
+	} else if strings.HasPrefix(mode, "native ") {
+		require.NoError(t, os.Mkdir("src", 0755))
+		require.NoError(t, os.Remove("app.py"))
+		requireWriteFile(t, "src/app.py", "from pathlib import Path\ndef add(a,b):\n    Path(__file__).with_suffix('.executed').write_text('ran')\n    return a+b\n")
+		args = []string{"-m", "pytest"}
+		settings := []string{"testpaths=" + filepath.Dir(file), "pythonpath=" + filepath.Join(root, "src"), "cache_dir=" + filepath.Join(root, "suite-cache")}
+		configuration = strings.TrimPrefix(mode, "native ")
+		switch configuration {
+		case "pytest.ini":
+			configuredContents = "[pytest]\n" + strings.Join(settings, "\n") + "\n"
+		case "pyproject.toml":
+			configuredContents = fmt.Sprintf("[tool.pytest.ini_options]\ntestpaths=[%q]\npythonpath=[%q]\ncache_dir=%q\n", filepath.Dir(file), filepath.Join(root, "src"), filepath.Join(root, "suite-cache"))
+			args = append(args, "-c", filepath.Join(root, configuration))
+		default:
+			configuration = "pytest.ini"
+			configuredContents = "[pytest]\n"
+			var overrides []string
+			for _, setting := range settings {
+				overrides = append(overrides, "-o", setting)
+			}
+			if mode == "native command override" {
+				args = append(args, overrides...)
+			} else {
+				addopts += " " + shellquote.Join(overrides...)
+			}
+		}
+		requireWriteFile(t, configuration, configuredContents)
 	} else if mode == "environment separator" || mode == "config separator" {
 		args = []string{"-m", "pytest"}
 		if mode == "environment separator" {
@@ -200,6 +234,10 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	require.NoFileExists(t, filepath.Join(root, "tests", "test_app.executed"))
 	if strings.HasPrefix(mode, "pythonpath ") {
 		require.NoFileExists(t, filepath.Join(root, "src", "app.executed"))
+	}
+	if strings.HasPrefix(mode, "native ") {
+		require.NoFileExists(t, filepath.Join(root, "src", "app.executed"))
+		require.NoDirExists(t, filepath.Join(root, "suite-cache"))
 	}
 	if configuration != "" {
 		contents, err := os.ReadFile(configuration)
