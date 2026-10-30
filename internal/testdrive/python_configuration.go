@@ -21,6 +21,13 @@ func (t *Testdrive) rebasePytestConfiguration(directory string) error {
 	t.configurationEnvironment["DDTEST_PYTEST_CONFIG_OVERRIDES"] = ext.UnsetEnvironment
 	t.configurationEnvironment[pytestArgumentFilesEnvironment] = ext.UnsetEnvironment
 	usedArgumentFiles := false
+	coverageFile := os.Getenv("COVERAGE_FILE")
+	if configured, ok := t.configurationEnvironment["COVERAGE_FILE"]; ok {
+		coverageFile = configured
+	}
+	if coverageFile != "" {
+		t.configurationEnvironment["COVERAGE_FILE"] = rebasePytestPaths([]string{coverageFile}, t.configurationSourceRoot, t.checkoutRoot())[0]
+	}
 	pythonPath := os.Getenv("PYTHONPATH")
 	if configured, ok := t.configurationEnvironment["PYTHONPATH"]; ok {
 		pythonPath = configured

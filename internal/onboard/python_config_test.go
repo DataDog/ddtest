@@ -49,3 +49,33 @@ func TestPytestConfigSelectionStaysInsideRepository(t *testing.T) {
 	_, err = PytestConfigOptions(root, root, "", []string{"pytest"})
 	require.ErrorContains(t, err, "leaves the repository")
 }
+
+func TestPytestNonCollectionOptionValuesDoNotSelectConfiguration(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "legacy")
+	require.NoError(t, os.Mkdir(nested, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pytest.ini"), []byte("[pytest]\naddopts=-q\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(nested, "pytest.ini"), []byte("[pytest]\naddopts=-v\n"), 0644))
+	for _, option := range []string{"--ignore", "--ignore-glob", "--confcutdir", "--basetemp", "--deselect", "--junitxml", "--junit-xml", "--log-file", "--cov", "--cov-config", "--cov-report"} {
+		for _, attached := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/attached=%t", option, attached), func(t *testing.T) {
+				value := nested
+				if option == "--ignore-glob" {
+					value += string(filepath.Separator) + "**"
+				}
+				if option == "--cov-report" {
+					value = "html:" + nested
+				}
+				args := []string{option, value}
+				if attached {
+					args = []string{option + "=" + value}
+				}
+				options, err := PytestConfigOptions(root, root, "", append([]string{"pytest"}, args...))
+				require.NoError(t, err)
+				require.Equal(t, []string{"-q"}, options)
+				_, err = PytestConfigOptions(root, root, "", append(append([]string{"pytest"}, args...), "--", nested))
+				require.ErrorContains(t, err, "explicitly with -c", "actual collection paths must still be checked")
+			})
+		}
+	}
+}

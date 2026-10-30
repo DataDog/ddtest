@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -103,7 +104,7 @@ func pytestConfigSettings(root, directory, addopts string, words []string) (map[
 			config = strings.TrimPrefix(options[i][2:], "=")
 			continue
 		}
-		if !positional && (option == "-k" || option == "-m" || option == "-o" || option == "--override-ini" || option == "-p" || option == "--rootdir") {
+		if !positional && slices.Contains([]string{"-k", "-m", "-o", "--override-ini", "-p", "--rootdir", "--ignore", "--ignore-glob", "--confcutdir", "--basetemp", "--deselect", "--junitxml", "--junit-xml", "--log-file", "--cov", "--cov-config", "--cov-report"}, option) {
 			if !assigned {
 				i++
 			}

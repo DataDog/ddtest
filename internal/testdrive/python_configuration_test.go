@@ -62,6 +62,16 @@ func TestPytestCoverageExecutesOnlyInsideCopy(t *testing.T) {
 	}
 }
 
+func TestPytestCoverageDataExecutesOnlyInsideCopy(t *testing.T) {
+	for _, mode := range []string{"coverage ambient data", "coverage configured data", "coverage unset data"} {
+		t.Run(mode, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, mode) })
+	}
+}
+
+func TestPytestIgnoredConfigurationUsesRoot(t *testing.T) {
+	testPytestPathsExecuteOnlyInsideCopy(t, "ignored config")
+}
+
 func TestPytestAbsolutePathsExecuteOnlyInsideCopy(t *testing.T) {
 	testPytestPathsExecuteOnlyInsideCopy(t, "direct")
 }
@@ -174,7 +184,14 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	addopts := "--rootdir=" + root
 	environment := map[string]string{}
 	configuration, configuredContents := "", ""
-	if strings.HasPrefix(mode, "logging ") {
+	coverageDataPath := ""
+	var coverageData []byte
+	if mode == "ignored config" {
+		legacy := filepath.Join(root, "tests", "legacy")
+		require.NoError(t, os.Mkdir(legacy, 0755))
+		requireWriteFile(t, filepath.Join(legacy, "pytest.ini"), "[pytest]\naddopts=--ddtrace\n")
+		args = []string{"-m", "pytest", "--ignore", legacy, file + "::test_app"}
+	} else if strings.HasPrefix(mode, "logging ") {
 		log := filepath.Join(root, "pytest log.txt")
 		configuration = strings.TrimPrefix(mode, "logging ")
 		configuredContents = "[pytest]\npythonpath=.\nlog_file=" + log + "\n"
@@ -215,6 +232,21 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 			requireWriteFile(t, configuration, configuredContents)
 		case "coverage inline override":
 			args = append(args, "-o", "addopts="+shellquote.Join(options...))
+		case "coverage ambient data", "coverage configured data", "coverage unset data":
+			args = append(args, options...)
+			coverageDataPath = filepath.Join(root, "coverage data.sqlite")
+			output, err := exec.CommandContext(t.Context(), python, "-c", "import coverage, sys; data=coverage.CoverageData(basename=sys.argv[1]); data.add_lines({'app.py': {1, 2}}); data.write()", coverageDataPath).CombinedOutput()
+			require.NoError(t, err, string(output))
+			coverageData, err = os.ReadFile(coverageDataPath)
+			require.NoError(t, err)
+			t.Setenv("COVERAGE_FILE", coverageDataPath)
+			switch mode {
+			case "coverage configured data":
+				t.Setenv("COVERAGE_FILE", filepath.Join(root, "unused-coverage.sqlite"))
+				environment["COVERAGE_FILE"] = coverageDataPath
+			case "coverage unset data":
+				environment["COVERAGE_FILE"] = ext.UnsetEnvironment
+			}
 		}
 		requireWriteFile(t, file, "from pathlib import Path\nfrom app import add\ndef test_app(request):\n    options = request.config.option\n    assert options.cov_source == [str(Path.cwd())]\n    assert Path(options.cov_config) == Path.cwd() / '.coveragerc'\n    assert Path(options.cov_report['xml']) == Path.cwd() / 'coverage.xml'\n    assert Path(options.cov_report['json']) == Path.cwd() / 'coverage.json'\n    assert add(1, 2) == 3\n")
 	} else if strings.HasPrefix(mode, "activation ") {
@@ -361,6 +393,12 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 	if strings.HasPrefix(mode, "coverage ") {
 		require.NoFileExists(t, filepath.Join(root, "coverage.xml"))
 		require.NoFileExists(t, filepath.Join(root, "coverage.json"))
+		if coverageDataPath != "" {
+			after, err := os.ReadFile(coverageDataPath)
+			require.NoError(t, err)
+			require.Equal(t, coverageData, after, "feature probes must not overwrite existing suite coverage")
+			require.NoFileExists(t, filepath.Join(root, "unused-coverage.sqlite"))
+		}
 	}
 	if strings.HasPrefix(mode, "pythonpath ") {
 		require.NoFileExists(t, filepath.Join(root, "src", "app.executed"))

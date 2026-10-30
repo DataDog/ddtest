@@ -133,6 +133,67 @@ func TestPytestObserverKeepsDuplicateExecutions(t *testing.T) {
 	require.Equal(t, "suspected regression", compareJest(runs[0], runs[1]).Status)
 }
 
+func TestPytestObserverKeepsConcurrentDuplicateExecutions(t *testing.T) {
+	python := feedbackPython(t)
+	if output, err := exec.CommandContext(t.Context(), python, "-c", "import xdist").CombinedOutput(); err != nil {
+		if os.Getenv("DDTEST_REQUIRE_PROJECT_RUNTIMES") == "1" {
+			t.Fatalf("pytest-xdist required: %s", output)
+		}
+		t.Skip("pytest-xdist required")
+	}
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, "ddtest_pytest_observer.py", pytestObserver)
+	requireWriteFile(t, "test_app.py", `import os, time
+from pathlib import Path
+attempts = 0
+def test_duplicate():
+    global attempts
+    attempts += 1
+    worker = os.environ['PYTEST_XDIST_WORKER']
+    barrier = Path(os.environ['BARRIER'])
+    (barrier / (str(attempts) + '-' + worker)).touch()
+    deadline = time.monotonic() + 10
+    while len(list(barrier.glob(str(attempts) + '-*'))) < 2:
+        assert time.monotonic() < deadline, 'worker barrier timed out'
+        time.sleep(0.01)
+    if worker == 'gw1':
+        time.sleep(0.2)
+    assert worker != 'gw0', os.environ['FAILURE_TEXT']
+`)
+	t.Setenv("PYTHONPATH", root)
+	t.Setenv("PYTEST_ADDOPTS", "")
+	t.Setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+	t.Setenv("DD_TRACE_ENABLED", "false")
+	t.Setenv("DD_CIVISIBILITY_ENABLED", "false")
+	var runs []validationRun
+	for _, failure := range []string{"before", "after"} {
+		t.Setenv("FAILURE_TEXT", failure)
+		t.Setenv("BARRIER", t.TempDir())
+		path := filepath.Join(root, failure+".json")
+		t.Setenv("DDTEST_PYTEST_RESULTS", path)
+		output, err := exec.CommandContext(t.Context(), python, "-m", "pytest", "-p", "xdist.plugin", "-p", "ddtest_pytest_observer", "-n", "2", "--keep-duplicates", "test_app.py", "test_app.py", "test_app.py", "test_app.py", "-q").CombinedOutput()
+		require.Error(t, err, "%s", output)
+		run := validationRun{framework: "pytest", root: root, ExitCode: 1}
+		readPytestResults(path, &run)
+		require.Empty(t, run.ResultError)
+		require.Len(t, run.Tests, 4, "%s", output)
+		failed := 0
+		for _, test := range run.Tests {
+			if test.Status == "failed" {
+				failed++
+				require.Contains(t, test.Failure, failure)
+			} else {
+				require.Equal(t, "passed", test.Status)
+			}
+		}
+		require.Equal(t, 2, failed)
+		require.Equal(t, 4, nativeExecutionCounts(run).TestExecutions)
+		runs = append(runs, run)
+	}
+	require.Equal(t, "suspected regression", compareJest(runs[0], runs[1]).Status)
+}
+
 func TestPytestNestedCopyPreservesAncestorFixturesAndNaming(t *testing.T) {
 	python := feedbackPython(t)
 	root := t.TempDir()

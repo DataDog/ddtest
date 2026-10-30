@@ -92,7 +92,7 @@ def pytest_collectreport(report):
 def pytest_runtest_logstart(nodeid, location):
     # Each item execution gets its own result, even when selectors repeat a node.
     # The reports within that execution (phases and tracer retries) share it.
-    _active.pop(nodeid, None)
+    _active.pop((nodeid, None, None), None)
 
 
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)
@@ -105,7 +105,10 @@ def pytest_runtest_logreport(report):
     if report.when != "call" and report.passed:
         return
     file, _, name = report.nodeid.partition("::")
-    previous = _active.get(report.nodeid)
+    # xdist's controller reports identify both the worker and collection item;
+    # duplicate node IDs can overlap, and each worker can execute several copies.
+    key = (report.nodeid, getattr(report, "worker_id", None), getattr(report, "item_index", None))
+    previous = _active.get(key)
     if report.when == "teardown" and report.skipped and previous:
         return
     result = {
@@ -119,7 +122,7 @@ def pytest_runtest_logreport(report):
     }
     if previous is None:
         _tests.append(result)
-        _active[report.nodeid] = result
+        _active[key] = result
     else:
         previous.update(result)
 
