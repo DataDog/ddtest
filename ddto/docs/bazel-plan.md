@@ -270,11 +270,14 @@ rules_test_optimization owns the Go test rule. It:
 
 ### `ddtest instrument bazel <dir>`
 
-The command writes one of these into `<dir>`, with a `VERSION` file:
+The command writes one of these into `<dir>`, which must be empty or
+missing, with a `DDTEST_INSTRUMENT` file. The SDK's own `VERSION` file is
+Go's, which rules_go reads.
 
-- an instrumented SDK, from an SDK given with `--goroot` and a compiler
-  executable for its platform;
-- Mini's packages with their `BUILD.bazel` files.
+- `--goroot=<SDK> --compiler=<executable> [--panic-hook]`: an instrumented
+  SDK, from an SDK and the ddtest executable for its platform;
+- `--mini [--rules-go=<name>]`: Mini's packages with their `BUILD.bazel`
+  files, which load rules_go as `@<name>` (`io_bazel_rules_go` by default).
 
 Today `ddtest instrument bazel test //...` runs `bazel test //...` unchanged.
 The subcommand therefore accepts only its directory and flags, and it fails
@@ -285,8 +288,8 @@ with a clear message when it receives a Bazel command such as `test`,
 
 The Starlark lives in rules_test_optimization, so its CI validates it.
 `ddtest instrument bazel` writes only data: the SDKs, Mini's packages with
-their `BUILD.bazel` files, and a `VERSION` file with the release version, the
-`sdk_name` value and the contract version.
+their `BUILD.bazel` files, and a `DDTEST_INSTRUMENT` file with the release
+version, the contract version and the `sdk_name` value.
 
 - **In ddtest:**
   - a Go test compares the command's output with golden files;
