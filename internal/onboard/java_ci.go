@@ -331,6 +331,107 @@ func javaRuntimeProblem(version string) (reason, code string) {
 	return "", ""
 }
 
+// javaCalledWorkflows replaces each workflow that only workflow_call starts by
+// one copy per distinct set of inputs its callers in the repository pass, so
+// a JDK such as java-version: ${{ inputs.java-version }} is the callers'.
+// Callers in other repositories cannot be read.
+func javaCalledWorkflows(workflows []ciWorkflow) []ciWorkflow {
+	var expanded []ciWorkflow
+	for _, workflow := range workflows {
+		for _, inputs := range javaWorkflowCalls(workflows, workflow) {
+			expanded = append(expanded, javaWithInputs(workflow, inputs))
+		}
+	}
+	return expanded
+}
+
+// javaWorkflowCalls are the inputs, defaults included, that each local job
+// calling workflow passes, one map per distinct set. A workflow other events
+// also start, one without a local caller, and one a caller passes an
+// expression keep their inputs unresolved: a single nil map.
+func javaWorkflowCalls(workflows []ciWorkflow, workflow ciWorkflow) []map[string]string {
+	unresolved := []map[string]string{nil}
+	if !onlyWorkflowCall(workflow.On) {
+		return unresolved
+	}
+	defaults := map[string]string{}
+	on, _ := workflow.On.(map[string]any)
+	call, _ := on["workflow_call"].(map[string]any)
+	declared, _ := call["inputs"].(map[string]any)
+	for name, value := range declared {
+		input, _ := value.(map[string]any)
+		if text, scalar := conditionString(input["default"]); scalar && input["default"] != nil && !strings.Contains(text, "${{") {
+			defaults[name] = text
+		}
+	}
+	var calls []map[string]string
+	for _, caller := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(caller.Jobs)) {
+			job := caller.Jobs[name]
+			target, _, _ := strings.Cut(job.Uses, "@")
+			if !strings.HasPrefix(target, "./") || filepath.Clean(strings.TrimPrefix(target, "./")) != workflow.Path {
+				continue
+			}
+			inputs := maps.Clone(defaults)
+			for key, value := range job.With {
+				text, scalar := conditionString(value)
+				if !scalar || strings.Contains(text, "${{") {
+					return unresolved
+				}
+				inputs[key] = text
+			}
+			if !slices.ContainsFunc(calls, func(known map[string]string) bool { return maps.Equal(known, inputs) }) {
+				calls = append(calls, inputs)
+			}
+		}
+	}
+	if len(calls) == 0 {
+		return unresolved
+	}
+	return calls
+}
+
+// onlyWorkflowCall reports whether workflow_call is a workflow's only trigger.
+func onlyWorkflowCall(on any) bool {
+	switch value := on.(type) {
+	case string:
+		return value == "workflow_call"
+	case []any:
+		return len(value) == 1 && value[0] == "workflow_call"
+	case map[string]any:
+		_, exists := value["workflow_call"]
+		return exists && len(value) == 1
+	}
+	return false
+}
+
+// javaWithInputs resolves the ${{ inputs.<name> }} references in workflow's
+// step inputs, as setup-java's java-version, from inputs; nil leaves them.
+func javaWithInputs(workflow ciWorkflow, inputs map[string]string) ciWorkflow {
+	if inputs == nil {
+		return workflow
+	}
+	jobs := make(map[string]runtimeJob, len(workflow.Jobs))
+	for name, job := range workflow.Jobs {
+		job.Steps = slices.Clone(job.Steps)
+		for i, step := range job.Steps {
+			with := maps.Clone(step.With)
+			for key, value := range with {
+				with[key] = inputReference.ReplaceAllStringFunc(value, func(reference string) string {
+					if resolved, ok := inputs[inputReference.FindStringSubmatch(reference)[1]]; ok {
+						return resolved
+					}
+					return reference
+				})
+			}
+			job.Steps[i].With = with
+		}
+		jobs[name] = job
+	}
+	workflow.Jobs = jobs
+	return workflow
+}
+
 // javaActionStep reports a step that runs the Datadog action.
 func javaActionStep(step runtimeStep) bool {
 	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
@@ -347,6 +448,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 	if err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
+	workflows = javaCalledWorkflows(workflows)
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]

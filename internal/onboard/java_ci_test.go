@@ -493,3 +493,39 @@ func TestJavaReportingActionsAfterTestsAreReviewed(t *testing.T) {
 	require.Len(t, scope.Commands, 1)
 	require.Contains(t, strings.Join(scope.Review, "\n"), "Post-test reporting/debug action")
 }
+
+func TestJavaCIConfigurationReadsReusableWorkflowInputsFromLocalCallers(t *testing.T) {
+	scan := `on:
+  workflow_call:
+    inputs:
+      java-version: {required: true, type: string}
+      distribution: {type: string, default: temurin}
+jobs:
+  scan:
+    steps:
+      - uses: actions/setup-java@v4
+        with: {java-version: '${{ inputs.java-version }}', distribution: '${{ inputs.distribution }}'}
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.67.1'}
+      - run: mvn verify
+`
+	runtimes := func(callers string, workflow string) []string {
+		t.Helper()
+		root := javaWorkflowFixture(t, callers, map[string]string{"pom.xml": javaJUnit5POM, ".github/workflows/scan.yml": workflow})
+		var found []string
+		for _, job := range JavaCIConfiguration(root, "junit5", "").Jobs {
+			if job.Workflow == ".github/workflows/scan.yml" {
+				found = append(found, job.Runtime+" "+job.Status)
+			}
+		}
+		return found
+	}
+	call := func(name, version string) string {
+		return "  " + name + ":\n    uses: ./.github/workflows/scan.yml\n    with: {java-version: " + version + "}\n    secrets: inherit\n"
+	}
+	require.Equal(t, []string{"11 not checked"}, runtimes("on: push\njobs:\n"+call("release", "'11'"), scan), "the local caller's input selects the JDK")
+	require.ElementsMatch(t, []string{"11 not checked", "17 not checked"}, runtimes("on: push\njobs:\n"+call("old", "11")+call("new", "17")+call("again", "17"), scan), "one row per distinct call")
+	require.Equal(t, []string{" inconclusive"}, runtimes("on: push\njobs:\n"+call("release", "'11'")+call("matrix", "'${{ matrix.java }}'"), scan), "a caller's expression leaves the input unresolved")
+	require.Equal(t, []string{" inconclusive"}, runtimes("on: push\njobs:\n  build:\n    steps:\n      - run: echo\n", scan), "without a local caller, callers elsewhere choose it")
+	require.Equal(t, []string{" inconclusive"}, runtimes("on: push\njobs:\n"+call("release", "'11'"), strings.Replace(scan, "on:\n  workflow_call:", "on:\n  push:\n  workflow_call:", 1)), "other triggers run it without inputs")
+}
