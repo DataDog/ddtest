@@ -264,22 +264,24 @@ func goMinors(src fs.FS) ([]int, error) {
 	return minors, nil
 }
 
+// miniTags are the build tags whose files Mini's repository also carries: the
+// race detector's, and purego, which msgp's sources select.
+var miniTags = [][]string{nil, {"race"}, {"purego"}}
+
 // miniContexts returns the build contexts of goos and goarch for each Go
-// release in minors, with and without the race detector. rules_go applies the
-// build constraints itself, so the repository carries the files and
-// dependencies of every one of them.
+// release in minors and each set of miniTags. rules_go applies the build
+// constraints itself, so the repository carries the files and dependencies
+// of every one of them.
 func miniContexts(src fs.FS, goos, goarch string, minors []int) []build.Context {
 	var contexts []build.Context
 	for _, minor := range minors {
-		for _, race := range []bool{false, true} {
+		for _, tags := range miniTags {
 			context := fsContext(src, goos, goarch)
 			context.ReleaseTags = nil
 			for n := 1; n <= minor; n++ {
 				context.ReleaseTags = append(context.ReleaseTags, fmt.Sprintf("go1.%d", n))
 			}
-			if race {
-				context.BuildTags = []string{"race"}
-			}
+			context.BuildTags = tags
 			contexts = append(contexts, context)
 		}
 	}
@@ -374,9 +376,16 @@ func WriteSDK(dir string, options SDKOptions) error {
 	if err != nil {
 		return err
 	}
-	// The copy follows symbolic links: rules_go's local and wrapped SDKs link
-	// their top-level directories to another GOROOT, and distributions link
-	// some of theirs.
+	target := func(name string) string {
+		if name == filepath.Join(relativeTools, compiler) {
+			return filepath.Join(dir, relativeTools, executable(toolDir, "compile.real"))
+		}
+		return filepath.Join(dir, name)
+	}
+	// The copy follows links: rules_go's local and wrapped SDKs link their
+	// top-level directories to another GOROOT, distributions link some of
+	// theirs, and on Windows junctions, which Go reports as irregular files,
+	// can lead to an SDK. Opening a link follows it.
 	var copyDir func(source, rel string) error
 	copyDir = func(source, rel string) error {
 		if err := os.MkdirAll(filepath.Join(dir, rel), 0755); err != nil {
@@ -387,23 +396,21 @@ func WriteSDK(dir string, options SDKOptions) error {
 			return err
 		}
 		for _, entry := range entries {
-			name := filepath.Join(rel, entry.Name())
-			resolved := filepath.Join(source, entry.Name())
-			info, err := entry.Info()
-			// Links, and on Windows junctions, which Go reports as irregular.
-			if err == nil && !entry.IsDir() && !entry.Type().IsRegular() {
-				if resolved, err = filepath.EvalSymlinks(resolved); err == nil {
-					info, err = os.Stat(resolved)
-				}
-			}
+			path, name := filepath.Join(source, entry.Name()), filepath.Join(rel, entry.Name())
 			switch {
-			case err != nil:
-			case info.IsDir():
-				err = copyDir(resolved, name)
-			case name == filepath.Join(relativeTools, compiler):
-				err = linkOrCopy(resolved, filepath.Join(dir, relativeTools, executable(toolDir, "compile.real")))
+			case entry.IsDir():
+				err = copyDir(path, name)
+			case entry.Type().IsRegular():
+				err = linkOrCopy(path, target(name))
 			default:
-				err = linkOrCopy(resolved, filepath.Join(dir, name))
+				// A hard link would link the link itself, so a linked file is
+				// copied.
+				var info fs.FileInfo
+				if info, err = os.Stat(path); err == nil && info.IsDir() {
+					err = copyDir(path, name)
+				} else if err == nil {
+					err = copyExecutable(path, target(name))
+				}
 			}
 			if err != nil {
 				return err
@@ -411,11 +418,7 @@ func WriteSDK(dir string, options SDKOptions) error {
 		}
 		return nil
 	}
-	root, err := filepath.EvalSymlinks(options.GOROOT)
-	if err != nil {
-		return err
-	}
-	if err := copyDir(root, "."); err != nil {
+	if err := copyDir(options.GOROOT, "."); err != nil {
 		return err
 	}
 	if err := copyExecutable(options.Compiler, filepath.Join(dir, relativeTools, compiler)); err != nil {

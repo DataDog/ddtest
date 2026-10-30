@@ -32,8 +32,8 @@ ddtest instrument bazel --mini [--rules-go=<name>] <dir>
   package. The files load rules_go as `@<name>`, `io_bazel_rules_go` by
   default. Targets have Gazelle's names, the package's directory and a
   `go_default_library` alias, and their `srcs` and `deps` cover every
-  supported platform, Go release and the race detector, because rules_go
-  applies the build constraints itself.
+  supported platform and Go release, the race detector and the `purego` tag,
+  because rules_go applies the build constraints itself.
 
 Both write `<dir>`, which must be empty or missing, and a `DDTEST_INSTRUMENT`
 file with the release, the contract version that the rule checks, and the
@@ -137,9 +137,10 @@ test-only rule in `testdata/bazel`: Bazel 8.8.2, rules_go 0.64.0 and Gazelle
 0.54.0, on Linux with Go 1.25, 1.26 and 1.27 and on macOS with Go 1.27, in
 Bzlmod and WORKSPACE modes. It checks:
 
-- the statuses and suites of standard tests, Testify suites and goleak;
-- the span copies of dd-trace-go v2 and v1.74, and one session per test
-  binary;
+- the statuses and suites of standard tests, Testify suites and goleak, with
+  the targets whose tests all pass exiting successfully;
+- the span copies of dd-trace-go v2 and v1.74 with their parents, and one
+  session per test binary;
 - a tool that imports `testing`, built with the instrumented SDK as an exec
   tool and as data;
 - a `go_binary` that keeps the default SDK and has none of ddtest's symbols;

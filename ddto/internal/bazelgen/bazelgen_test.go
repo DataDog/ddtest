@@ -32,7 +32,7 @@ func TestMiniPackagesMatchGoList(t *testing.T) {
 	for _, platform := range platforms {
 		key := platform.goos + "_" + platform.goarch
 		listed := map[string][]string{}
-		for _, tags := range []string{"", "race"} {
+		for _, tags := range []string{"", "race", "purego"} {
 			cmd := exec.Command("go", "list", "-deps", "-tags="+tags, "-f", "{{.ImportPath}} {{join .Imports \",\"}} {{join .GoFiles \",\"}},{{join .SFiles \",\"}}", "./testopt", "./propagation")
 			cmd.Dir = root
 			cmd.Env = append(os.Environ(), "GOOS="+platform.goos, "GOARCH="+platform.goarch, "CGO_ENABLED=0", "GOWORK=off", "GOFLAGS=", "GOTOOLCHAIN=local")
@@ -100,6 +100,7 @@ func TestMiniBuildFileGolden(t *testing.T) {
 		"testopt/unix.go":        {Data: []byte("//go:build !windows\n\npackage testopt\n\nimport _ \"" + MiniModule + "/internal/unixonly\"\n")},
 		"testopt/old.go":         {Data: []byte("//go:build !go1.25\n\npackage testopt\n\nimport _ \"" + MiniModule + "/internal/old\"\n")},
 		"testopt/race.go":        {Data: []byte("//go:build race\n\npackage testopt\n\nimport _ \"" + MiniModule + "/internal/racy\"\n")},
+		"testopt/purego.go":      {Data: []byte("//go:build purego && !unsafe\n\npackage testopt\n")},
 		"testopt/new.go":         {Data: []byte("//go:build go1.1 && !go1.26\n\npackage testopt\n")},
 		"internal/old/o.go":      {Data: []byte("package old\n")},
 		"internal/racy/r.go":     {Data: []byte("package racy\n")},
@@ -230,5 +231,40 @@ func TestWriteSDK(t *testing.T) {
 	}
 	if info, err := os.Lstat(filepath.Join(dir, "src")); err != nil || !info.IsDir() {
 		t.Fatal("a linked directory is not copied", err)
+	}
+}
+
+// A junction above GOROOT, which Go reports as an irregular file, as the
+// Windows runners' toolcache and Bazel's linked repositories have.
+func TestWriteSDKThroughJunction(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("junctions are Windows'")
+	}
+	goroot := filepath.Join(t.TempDir(), "go")
+	for name, data := range map[string]string{"VERSION": "go1.26.7\n", "src/testing/testing.go": "package testing\n", "pkg/tool/windows_amd64/compile.exe": "real compiler"} {
+		file := filepath.Join(goroot, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(data), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	junction := filepath.Join(t.TempDir(), "junction")
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", junction, filepath.Dir(goroot)).CombinedOutput(); err != nil {
+		t.Fatal(string(out), err)
+	}
+	compiler := filepath.Join(t.TempDir(), "ddtest.exe")
+	if err := os.WriteFile(compiler, []byte("ddtest"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "sdk")
+	if err := WriteSDK(dir, SDKOptions{GOROOT: filepath.Join(junction, "go"), Compiler: compiler}); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"pkg/tool/windows_amd64/compile.exe": "ddtest", "pkg/tool/windows_amd64/compile.real.exe": "real compiler", "src/testing/testing.go": "package testing\n"} {
+		if data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name))); err != nil || string(data) != want {
+			t.Errorf("%s: %q, %v", name, data, err)
+		}
 	}
 }

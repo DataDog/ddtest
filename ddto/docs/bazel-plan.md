@@ -519,9 +519,10 @@ tested in ddtest without Bazel, with unit tests checked by mutation.
   runtime's compile instead of dropping the panic hook.
 - **Generator:** `internal/bazelgen`. Mini's repository carries the files and
   dependencies of every supported platform, Go release from Mini's `go`
-  directive to the one that built ddtest, and the race detector, because
-  rules_go applies build constraints itself. The SDK copy follows symbolic
-  links, as rules_go's local and wrapped SDKs use them.
+  directive to the one that built ddtest, the race detector and `purego`,
+  because rules_go applies build constraints itself. The SDK copy follows
+  symbolic links and Windows junctions, as rules_go's local and wrapped SDKs
+  and the runners' toolcache use them.
 - **Panic hook:** `--panic-hook` on the SDK. Its fatal-error copy acts only
   when Mini set the hook.
 - **Basic Bazel test:** `scripts/bazel_basic.py` with the test-only rule and

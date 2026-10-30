@@ -92,6 +92,7 @@ go_library(
     name = "testopt",
     srcs = [
         "new.go",
+        "purego.go",
         "race.go",
         "testopt.go",
         "unix.go",
@@ -128,6 +129,10 @@ alias(
 )
 == testopt/new.go
 //go:build go1.1 && !go1.26
+
+package testopt
+== testopt/purego.go
+//go:build purego && !unsafe
 
 package testopt
 == testopt/race.go

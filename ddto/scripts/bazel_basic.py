@@ -3,9 +3,10 @@
 It copies testdata/bazel, a minimal test-only rule and a workspace, to a
 temporary directory and runs Bazel there with the ddtest executable under
 test, in Bzlmod or WORKSPACE mode. It then checks:
-  - every test's status and suite, Testify's suites and goleak's leak;
-  - the span copies of dd-trace-go v2 and v1.74, and one session per test
-    binary, which the CI guards leave to Mini;
+  - every test's status and suite, Testify's suites and goleak's leak, and
+    that targets whose tests all pass succeed;
+  - the span copies of dd-trace-go v2 and v1.74 with their parents, and one
+    session per test binary, which the CI guards leave to Mini;
   - a tool built with the instrumented SDK, in the exec configuration and as
     data, which imports testing without Mini;
   - a go_binary that keeps the default SDK and has none of ddtest's code;
@@ -71,19 +72,19 @@ EXPECTED = {
     }),
 }
 
-# The application's spans that Mini copies, by the test whose context they
-# come from.
+# The application's spans that Mini copies: the test whose trace they join,
+# their name and resource, and their parent, a span or the test.
 EXPECTED_SPANS = {
-    "//traced:traced_test": {
-        ("TestWork", "work.parent", "parent"),
-        ("TestWork", "work.child", "child"),
-        ("TestManualSpan", "manual.parent", "manual.parent"),
-        ("TestManualSpan", "manual.child", "manual.child"),
-    },
-    "//tracedv1:tracedv1_test": {
-        ("TestManualSpanV1", "manual.v1.parent", "manual.v1.parent"),
-        ("TestManualSpanV1", "manual.v1.child", "manual.v1.child"),
-    },
+    "//traced:traced_test": [
+        ("TestWork", "work.parent", "parent", "TestWork"),
+        ("TestWork", "work.child", "child", "work.parent"),
+        ("TestManualSpan", "manual.parent", "manual.parent", "TestManualSpan"),
+        ("TestManualSpan", "manual.child", "manual.child", "manual.parent"),
+    ],
+    "//tracedv1:tracedv1_test": [
+        ("TestManualSpanV1", "manual.v1.parent", "manual.v1.parent", "TestManualSpanV1"),
+        ("TestManualSpanV1", "manual.v1.child", "manual.v1.child", "manual.v1.parent"),
+    ],
 }
 
 # Test metadata that Bazel and ddtest instrument go test must agree on. Paths,
@@ -164,9 +165,10 @@ def payload_events(directory):
 
 
 def summarize(events):
-    """Tests by (suite, name), with compared metadata, and copied spans by test."""
-    tests, spans, sessions = {}, set(), 0
-    by_span = {}
+    """Tests by (suite, name), with compared metadata; copied spans, sorted, by
+    test and parent; and the number of sessions."""
+    tests, sessions = {}, 0
+    test_by_trace, names = {}, {}
     for event in events:
         content = event["content"]
         meta = content.get("meta") or {}
@@ -174,16 +176,21 @@ def summarize(events):
             key = (meta.get("test.suite"), meta.get("test.name"))
             check(key not in tests, "test %s reported twice" % (key,))
             tests[key] = {name: meta.get(name) for name in COMPARED_META}
-            by_span[content.get("trace_id")] = meta.get("test.name")
+            test_by_trace[content.get("trace_id")] = meta.get("test.name")
         elif event["type"] == "test_session_end":
             sessions += 1
+        if event["type"] in ("test", "span"):
+            check(content.get("span_id") not in names, "span id %s reported twice" % content.get("span_id"))
+            names[content.get("span_id")] = meta.get("test.name") if event["type"] == "test" else content.get("name")
+    spans = []
     for event in events:
         content = event["content"]
         if event["type"] == "span":
             meta = content.get("meta") or {}
             check(meta.get("_dd.origin") == "ciapp-test", "span %s has origin %s" % (content.get("name"), meta.get("_dd.origin")))
-            spans.add((by_span.get(content.get("trace_id")), content.get("name"), content.get("resource")))
-    return tests, spans, sessions
+            spans.append((test_by_trace.get(content.get("trace_id")), content.get("name"), content.get("resource"),
+                          names.get(content.get("parent_id"), "missing parent %s" % content.get("parent_id"))))
+    return tests, sorted(spans), sessions
 
 
 def check_bazel_events(testlogs, targets=EXPECTED):
@@ -196,9 +203,19 @@ def check_bazel_events(testlogs, targets=EXPECTED):
         check(statuses == expected, "%s: tests %s, want %s" % (target, statuses, expected))
         # dd-trace-go's own CI Visibility would add a session of its own.
         check(sessions == 1, "%s: %d sessions, want 1" % (target, sessions))
-        check(spans == EXPECTED_SPANS.get(target, set()), "%s: spans %s, want %s" % (target, spans, EXPECTED_SPANS.get(target, set())))
+        expected_spans = sorted(EXPECTED_SPANS.get(target, []))
+        check(spans == expected_spans, "%s: spans %s, want %s" % (target, spans, expected_spans))
         summaries[target] = (tests, spans)
     return summaries
+
+
+def failing(targets):
+    """The targets with a test that fails on purpose."""
+    return [target for target, (_, tests) in targets.items() if "fail" in tests.values()]
+
+
+def passing(targets):
+    return [target for target in targets if target not in failing(targets)]
 
 
 def check_no_compiler_temp(binaries):
@@ -239,11 +256,14 @@ def compare_with_cli(args, workspace, summaries):
     go = str(Path(args.goroot) / "bin" / "go")
     subprocess.run([go, "mod", "edit", "-replace=github.com/DataDog/ddtest/ddto=" + str(FIXTURE.parent.parent)],
                    cwd=workspace, env=env, check=True)
-    packages = ["./" + target[2:].split(":")[0] for target in EXPECTED if target != "//tools:tools_test"]
-    argv = [args.ddtest, "instrument", "go", "test", "-count=1"] + packages
-    print("+", " ".join(argv), flush=True)
-    code = subprocess.run(argv, cwd=workspace, env=env).returncode
-    check(code == 1, "ddtest instrument go test exited with %d, want 1" % code)
+    # Packages whose tests all pass must exit 0, so that an unexpected failure
+    # cannot hide behind the intended ones.
+    for targets, want in ((failing(EXPECTED), 1), (passing(EXPECTED), 0)):
+        packages = ["./" + target[2:].split(":")[0] for target in targets if target != "//tools:tools_test"]
+        argv = [args.ddtest, "instrument", "go", "test", "-count=1"] + packages
+        print("+", " ".join(argv), flush=True)
+        code = subprocess.run(argv, cwd=workspace, env=env).returncode
+        check(code == want, "ddtest instrument go test exited with %d, want %d" % (code, want))
     tests, spans, _ = summarize(payload_events(outputs))
     # Bazel compiles with -trimpath, so its messages name sources relative to
     # the workspace (docs/bazel-plan.md); go test names them absolutely.
@@ -265,7 +285,7 @@ def compare_with_cli(args, workspace, summaries):
         cli_tests = {key: meta for key, meta in tests.items() if key in names}
         check(cli_tests == bazel_tests, "%s: Bazel reports\n%s\nddtest instrument go test reports\n%s" % (target, bazel_tests, cli_tests))
     # check_bazel_events found these spans in Bazel.
-    expected = set().union(*EXPECTED_SPANS.values())
+    expected = sorted(sum(EXPECTED_SPANS.values(), []))
     check(spans == expected, "ddtest instrument go test copies spans %s, Bazel %s" % (spans, expected))
 
 
@@ -326,8 +346,10 @@ def main():
                 check(anchor in deps, "deps.bzl declares no " + name)
                 deps = deps.replace(anchor, anchor + '        build_directives = ["gazelle:go_visibility %s"],\n' % label)
             (workspace / "deps.bzl").write_text(deps)
-        # Bazel exits with 3 when tests fail, as some do on purpose.
-        bazel.run("test", "--keep_going", "//...", codes=(3,))
+        # Bazel exits with 3 when a test fails, as some do on purpose; the
+        # others must pass, so that an unexpected failure cannot hide.
+        bazel.run("test", "--keep_going", *failing(EXPECTED), codes=(3,))
+        bazel.run("test", "--keep_going", "--", "//...", *("-" + target for target in failing(EXPECTED)))
         summaries = check_bazel_events(bazel.info("bazel-testlogs"))
         # rules_go strips binaries in fastbuild; relinking keeps the symbols
         # and the debug information that the checks read.
