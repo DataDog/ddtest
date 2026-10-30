@@ -109,7 +109,7 @@ type validationLanguage interface {
 	// workflowRuntime is the language runtime, besides Node, that a
 	// coordinated report is bound to; empty binds none. An error means the
 	// runtime running the selected commands cannot be inspected.
-	workflowRuntime(t *Testdrive) (string, error)
+	workflowRuntime(t *Testdrive, scope onboard.ValidationScope) (string, error)
 	// reportRuntimeCurrent reports whether the runtime a saved coordinated
 	// report is bound to still runs on this host.
 	reportRuntimeCurrent(root string, evidence WorkflowEvidence) bool
@@ -136,7 +136,9 @@ type validationLanguage interface {
 // gets unless it binds its own runtime, inputs or packaging checks.
 type sharedWorkflowHooks struct{}
 
-func (sharedWorkflowHooks) workflowRuntime(*Testdrive) (string, error) { return "", nil }
+func (sharedWorkflowHooks) workflowRuntime(*Testdrive, onboard.ValidationScope) (string, error) {
+	return "", nil
+}
 func (sharedWorkflowHooks) reportRuntimeCurrent(_ string, evidence WorkflowEvidence) bool {
 	return evidence.Node == currentNodeVersion()
 }

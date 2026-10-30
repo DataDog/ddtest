@@ -20,8 +20,9 @@ import (
 // tests skipped, and Gradle tasks that by convention run none. Expressions
 // choose values there, such as secrets or versions, so each is read as a plain
 // word; one that chooses a command or task leaves an unknown word, which may
-// run tests. Actions are not read, as resolveJavaStep reads none as a test step.
-func (javaDiscovery) outsideFrameworkJob(_ string, workflow ciWorkflow, job runtimeJob, row map[string]any, _ string) bool {
+// run tests. Maven may also run goals MAVEN_ARGS or .mvn/maven.config add.
+// Actions are not read, as resolveJavaStep reads none as a test step.
+func (javaDiscovery) outsideFrameworkJob(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, _ string) bool {
 	for _, step := range job.Steps {
 		if active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row)); err == nil && !active {
 			continue
@@ -29,7 +30,9 @@ func (javaDiscovery) outsideFrameworkJob(_ string, workflow ciWorkflow, job runt
 		if step.ResolutionError != "" {
 			return false
 		}
-		if strings.TrimSpace(step.Run) != "" && javaMayRunTests(workflowExpression.ReplaceAllString(step.Run, "expression")) {
+		implicitGoals := workflow.Env["MAVEN_ARGS"] != "" || job.Env["MAVEN_ARGS"] != "" || step.Env["MAVEN_ARGS"] != "" ||
+			javaExportsMavenArgs(job) || javaConfigGoals(root, filepath.Clean(stepDirectory(workflow, job, step)))
+		if strings.TrimSpace(step.Run) != "" && javaMayRunTests(workflowExpression.ReplaceAllString(step.Run, "expression"), implicitGoals) {
 			return false
 		}
 	}
@@ -47,9 +50,9 @@ var javaReleaseTools = append(slices.Clone(javaShellBuiltins),
 // javaWrappers run the command that follows their own options and assignments.
 var javaWrappers = []string{"env", "time", "nohup", "sudo", "exec", "command"}
 
-// javaMayRunTests reports whether shell text may start Java tests. Text it
-// cannot parse may.
-func javaMayRunTests(text string) bool {
+// javaMayRunTests reports whether shell text may start Java tests; with
+// implicitGoals, any Maven command may. Text it cannot parse may.
+func javaMayRunTests(text string, implicitGoals bool) bool {
 	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(text), "")
 	if err != nil {
 		return true
@@ -76,7 +79,7 @@ func javaMayRunTests(text string) bool {
 			for _, word := range node.Args {
 				words = append(words, shellWord(word))
 			}
-			runs = javaCommandMayRunTests(words, installers[node])
+			runs = javaCommandMayRunTests(words, installers[node], implicitGoals)
 		}
 		return !runs
 	})
@@ -115,8 +118,9 @@ func shellWord(word *syntax.Word) string {
 }
 
 // javaCommandMayRunTests reports whether one command, as words, may start Java
-// tests; installer marks a shell that reads a downloaded script from a pipe.
-func javaCommandMayRunTests(words []string, installer bool) bool {
+// tests; installer marks a shell that reads a downloaded script from a pipe,
+// and implicitGoals Maven goals the command line does not show.
+func javaCommandMayRunTests(words []string, installer, implicitGoals bool) bool {
 	for len(words) > 0 && slices.Contains(javaWrappers, filepath.Base(words[0])) {
 		words = words[1:]
 		for len(words) > 0 && (strings.HasPrefix(words[0], "-") || strings.Contains(words[0], "=")) {
@@ -134,12 +138,20 @@ func javaCommandMayRunTests(words []string, installer bool) bool {
 		// Without tasks, Gradle runs the project's default tasks.
 		return !gradle.DryRun(args) && (len(tasks) == 0 || slices.ContainsFunc(tasks, func(task string) bool { return !gradle.NonTestTask(task) }))
 	case mavenCommand(words):
+		if implicitGoals {
+			return true
+		}
 		if len(maven.Goals(args)) == 0 {
 			return !maven.Metadata(args)
 		}
 		return maven.IsTestCommand(words[0], args) && !maven.SkipsTests(args)
 	case javaRepositoryScript(words):
 		return true
+	// Git runs commands for git submodule foreach, git bisect run and
+	// git rebase --exec.
+	case name == "git":
+		return slices.Contains(args, "foreach") || slices.Contains(args, "bisect") && slices.Contains(args, "run") ||
+			slices.Contains(args, "rebase") && slices.ContainsFunc(args, func(arg string) bool { return arg == "-x" || strings.HasPrefix(arg, "--exec") })
 	case name == "source" || name == ".":
 		// A file the runner provides, outside the checkout, as SDKMAN's init script.
 		return len(args) == 0 || !filepath.IsAbs(args[0])

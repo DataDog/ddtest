@@ -215,14 +215,26 @@ var typedTasks = []*regexp.Regexp{
 
 var typedTaskGeneric = regexp.MustCompile(`(?:register|create|maybeCreate)\s*<\s*([\w.]+)\s*>\s*\(\s*["'](\w+)["']`)
 
+// nonTestTaskTypes are task types that run no tests: Gradle's own archive,
+// copy, compile, documentation, analysis, publishing and execution types, and
+// those of common plugins. Any other type, such as one buildSrc declares, may
+// extend Test.
+var nonTestTaskTypes = []string{
+	"Jar", "Zip", "Tar", "War", "Ear", "Copy", "Sync", "Delete", "Exec", "JavaExec", "Javadoc", "Groovydoc", "ScalaDoc",
+	"JavaCompile", "GroovyCompile", "ScalaCompile", "AntlrTask", "ProcessResources", "WriteProperties", "Wrapper",
+	"Checkstyle", "Pmd", "CodeNarc", "JacocoReport", "JacocoCoverageVerification", "Sign",
+	"GenerateMavenPom", "GenerateModuleMetadata", "PublishToMavenRepository", "PublishToMavenLocal",
+	"JapicmpTask", "ShadowJar", "BootJar", "BootWar", "BootRun", "BootBuildImage", "SpotBugsTask", "DokkaTask", "JMHTask",
+}
+
 // otherTypedTasks returns the tasks a build file's source declares with a
-// literal name and a type other than Test or JvmTestSuite. Such a task is
-// never a test task, whatever other declarations compute.
+// literal name and one of nonTestTaskTypes. Such a task is never a test task,
+// whatever other declarations compute.
 func otherTypedTasks(source string) []string {
 	var names []string
 	add := func(name, kind string) {
 		kind = kind[strings.LastIndex(kind, ".")+1:]
-		if kind != "Test" && kind != "JvmTestSuite" && !slices.Contains(names, name) {
+		if slices.Contains(nonTestTaskTypes, kind) && !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}
@@ -265,8 +277,8 @@ func declaredTestTasks(source string) (names []string, computed bool) {
 type TestTasks struct {
 	Declared []string
 	Unread   bool
-	// Other are tasks the build declares with another type, such as a
-	// JapicmpTask apiDiff.
+	// Other are tasks the build declares with a type that runs no tests, such
+	// as a JapicmpTask apiDiff.
 	Other []string
 }
 
@@ -276,7 +288,7 @@ func (t TestTasks) Runs(task string) bool {
 }
 
 // NonTest reports whether a task runs no tests: NonTestTask, or a task the
-// build declares with another type than Test, unless it also declares a test
+// build declares with a type that runs none, unless it also declares a test
 // task of that name.
 func (t TestTasks) NonTest(task string) bool {
 	if t.Runs(task) {

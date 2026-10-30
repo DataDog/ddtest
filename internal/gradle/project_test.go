@@ -222,6 +222,8 @@ tasks.register('runJMH', JavaExec) { }
 tasks.register<Jar>("sourcesJar")
 tasks.register("slowTest", Test) { }
 tasks.register("ciTests") { dependsOn(test) }
+tasks.register<SmokeTest>("smoke")
+tasks.register('ci', com.example.CustomTest)
 `)
 	projects, err := Projects(root, ".")
 	require.NoError(t, err)
@@ -231,7 +233,7 @@ tasks.register("ciTests") { dependsOn(test) }
 	for _, task := range []string{"apiDiff", ":lib:apiDiff", "jmh", "javadoc", "closeSonatypeStagingRepository"} {
 		require.True(t, tasks.NonTest(task), task)
 	}
-	for _, task := range []string{"slowTest", "ciTests", "testInJava-11", "check"} {
+	for _, task := range []string{"slowTest", "ciTests", "testInJava-11", "check", "smoke", "ci"} {
 		require.False(t, tasks.NonTest(task), "%s may run tests", task)
 	}
 }

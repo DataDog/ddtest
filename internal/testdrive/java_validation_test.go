@@ -786,16 +786,37 @@ func TestJavaWorkflowIsBoundToTheJDKGradleSelects(t *testing.T) {
 	t.Setenv("GRADLE_USER_HOME", home)
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "build.gradle"), "")
-	runtime, err := javaLanguage{}.workflowRuntime(&Testdrive{repositoryRoot: root})
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), "<project/>")
+	scope := func(commands ...string) onboard.ValidationScope {
+		var scope onboard.ValidationScope
+		for _, command := range commands {
+			scope.Commands = append(scope.Commands, onboard.TestCommand{Directory: ".", Command: command})
+		}
+		return scope
+	}
+	evidence := func(runtime string, scope onboard.ValidationScope) WorkflowEvidence {
+		return WorkflowEvidence{Runtime: runtime, Plan: &onboard.ExecutionPlan{Scope: scope}}
+	}
+	gradleTest := scope("./gradlew test")
+	runtime, err := javaLanguage{}.workflowRuntime(&Testdrive{repositoryRoot: root}, gradleTest)
 	require.NoError(t, err)
 	require.Equal(t, "17.0.20", runtime)
-	require.True(t, javaLanguage{}.reportRuntimeCurrent(root, WorkflowEvidence{Runtime: "17.0.20"}))
+	require.True(t, javaLanguage{}.reportRuntimeCurrent(root, evidence("17.0.20", gradleTest)))
 	// Selecting another JDK in the user's gradle.properties makes a saved report stale.
 	requireWriteFile(t, filepath.Join(home, "gradle.properties"), "org.gradle.java.home="+writeJDK(t, "21.0.5")+"\n")
-	require.False(t, javaLanguage{}.reportRuntimeCurrent(root, WorkflowEvidence{Runtime: "17.0.20"}), "Gradle runs on the JDK it selects")
-	runtime, err = javaLanguage{}.workflowRuntime(&Testdrive{repositoryRoot: root})
+	require.False(t, javaLanguage{}.reportRuntimeCurrent(root, evidence("17.0.20", gradleTest)), "Gradle runs on the JDK it selects")
+	runtime, err = javaLanguage{}.workflowRuntime(&Testdrive{repositoryRoot: root}, gradleTest)
 	require.NoError(t, err)
 	require.Equal(t, "21.0.5", runtime)
+	// A selected command's own -D takes precedence; Maven in the same root
+	// runs on JAVA_HOME whatever Gradle selects; each JDK binds the report.
+	selected := scope("./gradlew test -Dorg.gradle.java.home="+writeJDK(t, "25.0.1"), "mvn verify")
+	runtime, err = javaLanguage{}.workflowRuntime(&Testdrive{repositoryRoot: root}, selected)
+	require.NoError(t, err)
+	require.Equal(t, "17.0.20, 25.0.1", runtime)
+	require.True(t, javaLanguage{}.reportRuntimeCurrent(root, evidence(runtime, selected)))
+	t.Setenv("JAVA_HOME", writeJDK(t, "11.0.25"))
+	require.False(t, javaLanguage{}.reportRuntimeCurrent(root, evidence(runtime, selected)), "the Maven command's JAVA_HOME changed")
 }
 
 func TestJavaCIRowsNameTheJVMsTestsRanOn(t *testing.T) {
@@ -820,7 +841,7 @@ func TestJavaCIRowsNameTheJVMsTestsRanOn(t *testing.T) {
 
 func TestJavaWorkflowIsBoundToTheJDK(t *testing.T) {
 	t.Setenv("JAVA_HOME", writeJDK(t, "17.0.20"))
-	runtime, err := javaLanguage{}.workflowRuntime(&Testdrive{})
+	runtime, err := javaLanguage{}.workflowRuntime(&Testdrive{}, onboard.ValidationScope{})
 	require.NoError(t, err)
 	require.Equal(t, "17.0.20", runtime)
 	require.True(t, javaLanguage{}.reportRuntimeCurrent("", WorkflowEvidence{Runtime: "17.0.20"}))
@@ -828,7 +849,7 @@ func TestJavaWorkflowIsBoundToTheJDK(t *testing.T) {
 	require.False(t, javaLanguage{}.reportRuntimeCurrent("", WorkflowEvidence{Node: currentNodeVersion()}), "Node does not stand in for the JDK")
 	t.Setenv("JAVA_HOME", t.TempDir())
 	t.Setenv("PATH", t.TempDir())
-	_, err = javaLanguage{}.workflowRuntime(&Testdrive{})
+	_, err = javaLanguage{}.workflowRuntime(&Testdrive{}, onboard.ValidationScope{})
 	require.ErrorContains(t, err, "no JDK was found")
 	require.True(t, Coordinated("java"))
 }

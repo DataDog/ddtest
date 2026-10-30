@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/gradle"
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -85,16 +86,50 @@ func (t *Testdrive) gradleBuild(args []string) (*gradleBuild, error) {
 	return &gradleBuild{root: root, all: projects, byPaths: byPaths, home: home, homeSource: source}, nil
 }
 
-// javaWorkflowRuntime is the version of the JDK the repository's builds run
-// on: the one org.gradle.java.home selects for its root Gradle build, in the
-// build's or the user's gradle.properties, else JAVA_HOME's or PATH's.
-func javaWorkflowRuntime(root string) string {
-	if gradle.Declared(root) {
-		if home, source, err := gradleJavaHome(root, root, nil, nil); err == nil && home != "" {
+// javaWorkflowRuntime are the versions of the JDKs a scope's commands run on,
+// distinct and sorted: the one org.gradle.java.home selects for a Gradle
+// command, on its command line or in gradle.properties, else its
+// configuration's JAVA_HOME or PATH. Empty when one cannot be read; a scope
+// without commands runs on JAVA_HOME's or PATH's.
+func javaWorkflowRuntime(root string, scope onboard.ValidationScope) string {
+	var versions []string
+	for _, entry := range scope.Commands {
+		version := javaCommandRuntime(root, entry)
+		if version == "" {
+			return ""
+		}
+		if !slices.Contains(versions, version) {
+			versions = append(versions, version)
+		}
+	}
+	if len(versions) == 0 {
+		return javaEnvironmentInfo(nil).Version
+	}
+	slices.Sort(versions)
+	return strings.Join(versions, ", ")
+}
+
+// javaCommandRuntime is the version of the JDK one scope command runs on.
+func javaCommandRuntime(root string, entry onboard.TestCommand) string {
+	words, err := shellquote.Split(entry.Command)
+	if err == nil && gradle.Command(words) {
+		project, err := gradle.ProjectDirectory(words[1:])
+		if err != nil {
+			return ""
+		}
+		build, err := gradle.Build(root, filepath.Join(entry.Directory, project))
+		if err != nil {
+			return ""
+		}
+		home, source, err := gradleJavaHome(filepath.Join(root, entry.Directory), filepath.Join(root, build), words[1:], entry.Environment)
+		if err != nil {
+			return ""
+		}
+		if home != "" {
 			return javaHomeInfo(home, source).Version
 		}
 	}
-	return javaEnvironmentInfo(nil).Version
+	return javaEnvironmentInfo(entry.Environment).Version
 }
 
 // gradleJavaHome is the JDK org.gradle.java.home selects for the build of the

@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -236,6 +237,8 @@ func TestJavaPublishJobWithoutTheActionIsOutsideValidation(t *testing.T) {
 		"mvn -B deploy",
 		"./ci/release.sh",
 		"cat ci/test.sh | bash",
+		"git submodule foreach './gradlew test'",
+		"git rebase --exec './gradlew test' HEAD~3",
 		"curl -s https://example.com/install | bash -c \"$(cat ci/test.sh)\"",
 		"source ci/env.sh",
 		"make release",
@@ -246,5 +249,25 @@ func TestJavaPublishJobWithoutTheActionIsOutsideValidation(t *testing.T) {
 		scope, err := DiscoverValidationScope(javaWorkflowFixture(t, "jobs:\n  test:\n    steps:\n      - run: ./gradlew test\n"+job, gradleFixture()), "junit5")
 		require.NoError(t, err)
 		require.NotEmpty(t, scope.Unresolved, "%s may run tests", step)
+	}
+	require.False(t, javaMayRunTests("git fetch --tags && git tag -l", false), "other git commands run nothing")
+
+	// Goals MAVEN_ARGS or .mvn/maven.config add may make a metadata command run tests.
+	metadata := strings.Replace(publishJob, "          VERSION=$(head -1 .version)\n", "          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)\n", 1)
+	maven := map[string]string{"pom.xml": javaJUnit5POM}
+	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, "jobs:\n  test:\n    steps:\n      - run: mvn verify\n"+metadata, maps.Clone(maven)), "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved, "help:evaluate reads the project")
+	for name, files := range map[string]map[string]string{
+		"MAVEN_ARGS":   maven,
+		"maven.config": {"pom.xml": javaJUnit5POM, ".mvn/maven.config": "verify\n"},
+	} {
+		job := metadata
+		if name == "MAVEN_ARGS" {
+			job = strings.Replace(metadata, "  publish:\n", "  publish:\n    env: {MAVEN_ARGS: test}\n", 1)
+		}
+		scope, err := DiscoverValidationScope(javaWorkflowFixture(t, "jobs:\n  test:\n    steps:\n      - run: mvn verify\n"+job, maps.Clone(files)), "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, "%s adds goals to the metadata command", name)
 	}
 }
