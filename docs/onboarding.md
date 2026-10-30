@@ -563,10 +563,11 @@ The plugin does not instrument tests inside containers. Stages that run in
 `agent { docker … }`, `dockerfile`, `kubernetes`, `docker.image(…).inside`, an
 image variable's `.inside` or `container(…)` are unsupported: when every job
 that runs the tests is one, onboarding returns `status: unsupported` with
-`code: ci_setup_unsupported`, naming the jobs and the remedy (run the tests on
-a host agent, or set up Test Optimization in the container by hand, which
-ddtest cannot validate); otherwise the instructions name them and validation
-keeps them as blockers. An installer fallback for containers is not part of
+`code: ci_setup_unsupported`, naming the jobs and the user's options (run the
+tests on a host agent, or set up Test Optimization in the container by hand,
+which ddtest cannot validate), with an instruction for the coding agent to
+report it and stop; otherwise the instructions name them and validation keeps
+them as blockers. An installer fallback for containers is not part of
 this provider.
 
 A host agent's runtime is never in the Jenkinsfile, so ddtest asks for it
