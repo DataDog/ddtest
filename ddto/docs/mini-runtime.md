@@ -394,7 +394,8 @@ The settings-cache reader needs an API key only in agentless mode, where Mini
 creates no client without `DD_API_KEY`; in Agent mode, as in Bazel tests
 without network, it needs none. The offline comparison runs in agentless mode
 with a synthetic key and checks that no HTTP request is sent. It checks the
-file contract; no real Bazel build runs.
+file contract; the [basic Bazel test](bazel.md#validation) checks it in a real
+Bazel build.
 
 Mini retains CI telemetry and diagnostics. It excludes APM sampling, profiling,
 security, remote configuration, heartbeats and dependency/endpoint inventories.
@@ -480,7 +481,7 @@ detector, which would report races that do not exist.
 
 The [validation guide](validation.md) lists loopback wire checks, imported SDK
 assertions, concurrency and platform coverage. Workflow results are evidence
-for their exact inputs only. Live intake/UI acceptance, real Bazel execution
+for their exact inputs only. Live intake/UI acceptance, the full Bazel suites
 and long-running fuzz campaigns need separate validation. The
 [benchmark report](benchmarks.md) retains timings for its recorded revision.
 

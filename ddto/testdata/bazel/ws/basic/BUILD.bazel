@@ -1,0 +1,14 @@
+load("@ddtest_bazel_test//:defs.bzl", "ddtest_go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "basic",
+    srcs = ["basic.go"],
+    importpath = "example.com/basic/basic",
+)
+
+ddtest_go_test(
+    name = "basic_test",
+    srcs = ["basic_test.go"],
+    embed = [":basic"],
+)

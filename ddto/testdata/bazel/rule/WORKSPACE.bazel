@@ -1,0 +1,1 @@
+workspace(name = "ddtest_bazel_test")

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -118,6 +119,10 @@ type miniPackage struct {
 // miniPackages returns, by directory relative to the module, every package
 // that miniRoots import on some platform.
 func miniPackages(src fs.FS) (map[string]*miniPackage, error) {
+	minors, err := goMinors(src)
+	if err != nil {
+		return nil, err
+	}
 	packages := map[string]*miniPackage{}
 	queue := slices.Clone(miniRoots)
 	for len(queue) > 0 {
@@ -129,32 +134,35 @@ func miniPackages(src fs.FS) (map[string]*miniPackage, error) {
 		p := &miniPackage{deps: map[string][]string{}}
 		files := map[string]bool{}
 		for _, platform := range platforms {
-			context := fsContext(src, platform.goos, platform.goarch)
-			pkg, err := context.ImportDir(rel, 0)
-			var noGo *build.NoGoError
-			if errors.As(err, &noGo) {
-				continue
-			}
-			if err != nil {
-				return nil, fmt.Errorf("%s on %s/%s: %w", rel, platform.goos, platform.goarch, err)
-			}
-			if len(pkg.EmbedPatterns) != 0 || len(pkg.CgoFiles) != 0 {
-				return nil, fmt.Errorf("%s: embedded files and cgo are not supported in Mini's Bazel repository", rel)
-			}
-			for _, group := range [][]string{pkg.GoFiles, pkg.SFiles, pkg.HFiles} {
-				for _, file := range group {
-					files[file] = true
+			deps, found := map[string]bool{}, false
+			for _, context := range miniContexts(src, platform.goos, platform.goarch, minors) {
+				pkg, err := context.ImportDir(rel, 0)
+				var noGo *build.NoGoError
+				if errors.As(err, &noGo) {
+					continue
 				}
-			}
-			var deps []string
-			for _, imported := range pkg.Imports {
-				if dep, ok := strings.CutPrefix(imported, MiniModule+"/"); ok {
-					deps = append(deps, dep)
-					queue = append(queue, dep)
+				if err != nil {
+					return nil, fmt.Errorf("%s on %s/%s: %w", rel, platform.goos, platform.goarch, err)
 				}
+				if len(pkg.EmbedPatterns) != 0 || len(pkg.CgoFiles) != 0 {
+					return nil, fmt.Errorf("%s: embedded files and cgo are not supported in Mini's Bazel repository", rel)
+				}
+				for _, group := range [][]string{pkg.GoFiles, pkg.SFiles, pkg.HFiles} {
+					for _, file := range group {
+						files[file] = true
+					}
+				}
+				for _, imported := range pkg.Imports {
+					if dep, ok := strings.CutPrefix(imported, MiniModule+"/"); ok {
+						deps[dep] = true
+						queue = append(queue, dep)
+					}
+				}
+				found = true
 			}
-			sort.Strings(deps)
-			p.deps[platform.goos+"_"+platform.goarch] = deps
+			if found {
+				p.deps[platform.goos+"_"+platform.goarch] = sortedKeys(deps)
+			}
 		}
 		if len(files) == 0 {
 			return nil, fmt.Errorf("%s: no Go files for any platform", rel)
@@ -223,8 +231,59 @@ func (p *miniPackage) build(rel, rulesGo string) string {
 	return b.String()
 }
 
+// label is a package's target in buildifier's short form: the target has the
+// directory's name.
 func label(rel string) string {
-	return "//" + rel + ":" + path.Base(rel)
+	return "//" + rel
+}
+
+// goMinors returns the Go releases whose release tags decide Mini's files:
+// from its go directive to the release that built this executable, the
+// newest that a ddtest release supports.
+func goMinors(src fs.FS) ([]int, error) {
+	data, err := fs.ReadFile(src, "go.mod")
+	if err != nil {
+		return nil, fmt.Errorf("Mini's go.mod: %w", err)
+	}
+	first := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if version, ok := strings.CutPrefix(strings.TrimSpace(line), "go 1."); ok {
+			minor, _, _ := strings.Cut(version, ".")
+			first, _ = strconv.Atoi(minor)
+		}
+	}
+	tags := build.Default.ReleaseTags
+	last, _ := strconv.Atoi(strings.TrimPrefix(tags[len(tags)-1], "go1."))
+	if first == 0 || first > last {
+		return nil, fmt.Errorf("Mini's go.mod has no go directive from go 1.1 to go 1.%d", last)
+	}
+	var minors []int
+	for minor := first; minor <= last; minor++ {
+		minors = append(minors, minor)
+	}
+	return minors, nil
+}
+
+// miniContexts returns the build contexts of goos and goarch for each Go
+// release in minors, with and without the race detector. rules_go applies the
+// build constraints itself, so the repository carries the files and
+// dependencies of every one of them.
+func miniContexts(src fs.FS, goos, goarch string, minors []int) []build.Context {
+	var contexts []build.Context
+	for _, minor := range minors {
+		for _, race := range []bool{false, true} {
+			context := fsContext(src, goos, goarch)
+			context.ReleaseTags = nil
+			for n := 1; n <= minor; n++ {
+				context.ReleaseTags = append(context.ReleaseTags, fmt.Sprintf("go1.%d", n))
+			}
+			if race {
+				context.BuildTags = []string{"race"}
+			}
+			contexts = append(contexts, context)
+		}
+	}
+	return contexts
 }
 
 // fsContext is build.Default for goos and goarch, without cgo, reading src.
@@ -315,31 +374,48 @@ func WriteSDK(dir string, options SDKOptions) error {
 	if err != nil {
 		return err
 	}
-	err = filepath.WalkDir(options.GOROOT, func(source string, entry fs.DirEntry, err error) error {
+	// The copy follows symbolic links: rules_go's local and wrapped SDKs link
+	// their top-level directories to another GOROOT, and distributions link
+	// some of theirs.
+	var copyDir func(source, rel string) error
+	copyDir = func(source, rel string) error {
+		if err := os.MkdirAll(filepath.Join(dir, rel), 0755); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(source)
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(options.GOROOT, source)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dir, rel)
-		switch {
-		case entry.IsDir():
-			return os.MkdirAll(target, 0755)
-		case entry.Type()&fs.ModeSymlink != 0:
-			link, err := os.Readlink(source)
+		for _, entry := range entries {
+			name := filepath.Join(rel, entry.Name())
+			resolved := filepath.Join(source, entry.Name())
+			info, err := entry.Info()
+			// Links, and on Windows junctions, which Go reports as irregular.
+			if err == nil && !entry.IsDir() && !entry.Type().IsRegular() {
+				if resolved, err = filepath.EvalSymlinks(resolved); err == nil {
+					info, err = os.Stat(resolved)
+				}
+			}
+			switch {
+			case err != nil:
+			case info.IsDir():
+				err = copyDir(resolved, name)
+			case name == filepath.Join(relativeTools, compiler):
+				err = linkOrCopy(resolved, filepath.Join(dir, relativeTools, executable(toolDir, "compile.real")))
+			default:
+				err = linkOrCopy(resolved, filepath.Join(dir, name))
+			}
 			if err != nil {
 				return err
 			}
-			return os.Symlink(link, target)
-		case rel == filepath.Join(relativeTools, compiler):
-			return linkOrCopy(source, filepath.Join(dir, relativeTools, executable(toolDir, "compile.real")))
-		default:
-			return linkOrCopy(source, target)
 		}
-	})
+		return nil
+	}
+	root, err := filepath.EvalSymlinks(options.GOROOT)
 	if err != nil {
+		return err
+	}
+	if err := copyDir(root, "."); err != nil {
 		return err
 	}
 	if err := copyExecutable(options.Compiler, filepath.Join(dir, relativeTools, compiler)); err != nil {

@@ -1,0 +1,11 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary")
+
+# Built with the default SDK: it must have none of ddtest's code.
+go_binary(
+    name = "plainbin",
+    srcs = ["main.go"],
+    deps = [
+        "@com_github_datadog_dd_trace_go_v2//ddtrace/tracer",
+        "@com_github_stretchr_testify//assert",
+    ],
+)

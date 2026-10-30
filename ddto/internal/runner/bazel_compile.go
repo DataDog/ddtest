@@ -66,7 +66,12 @@ func RunBazelCompiler(argv []string) int {
 	real := bazelRealCompilerPath(argv[0])
 	args := argv[1:]
 	pkg := bazelCanonicalPackage(compilerFlag(args, "-p"))
-	if !bazelEdits(pkg, compilerBoolFlag(args, "-race"), argv[0]) {
+	edits, err := bazelEdits(pkg, compilerBoolFlag(args, "-race"), argv[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s ERROR: %s: %v\n", version.BuildLogPrefix, pkg, err)
+		return 2
+	}
+	if !edits {
 		return execBazelCompiler(real, argv)
 	}
 	return runBazelEdits(real, argv, pkg, os.Stderr)
@@ -86,25 +91,33 @@ func bazelCanonicalPackage(importmap string) string {
 }
 
 // bazelEdits reports whether ddto edits pkg's compilation.
-func bazelEdits(pkg string, race bool, arg0 string) bool {
+func bazelEdits(pkg string, race bool, arg0 string) (bool, error) {
 	switch pkg {
 	case "testing", "os/signal", instrument.TestifySuiteImport, instrument.GoleakImport:
-		return true
+		return true, nil
 	case "runtime":
-		return readBazelConfig(arg0).PanicHook
+		config, err := readBazelConfig(arg0)
+		return config.PanicHook, err
 	}
 	if sdk, own := toolwrap.SDKCompilePackage(pkg); sdk != "" && own {
-		return true
+		return true, nil
 	}
-	return race && strings.HasPrefix(pkg, miniModule+"/")
+	return race && strings.HasPrefix(pkg, miniModule+"/"), nil
 }
 
-func readBazelConfig(arg0 string) bazelConfig {
+// readBazelConfig reads the configuration that ddtest instrument bazel wrote
+// next to the compiler. Without it the SDK is incomplete, and the runtime
+// would silently compile without a panic hook that it may have asked for.
+func readBazelConfig(arg0 string) (bazelConfig, error) {
 	var config bazelConfig
-	if data, err := os.ReadFile(filepath.Join(filepath.Dir(arg0), bazelCompilerConfig)); err == nil {
-		_ = json.Unmarshal(data, &config)
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(arg0), bazelCompilerConfig))
+	if err == nil {
+		err = json.Unmarshal(data, &config)
 	}
-	return config
+	if err != nil {
+		return config, fmt.Errorf("the instrumented SDK's compiler configuration: %w", err)
+	}
+	return config, nil
 }
 
 func compilerFlag(args []string, name string) string {
@@ -211,8 +224,11 @@ func runBazelEdits(real string, argv []string, pkg string, stderr io.Writer) int
 	return runBazelCompiler(real, forwarded, stderr)
 }
 
-// sources reads the compilation's Go files, keyed by their names on the
-// command line, and returns each name's index.
+// sources reads the compilation's Go files, keyed by their absolute names,
+// and returns each name's index. The edits' //line directives name the
+// files: the compiler resolves a relative name against the directory of the
+// edited copy, which is temporary, and rewrites an absolute one with
+// -trimpath as it rewrites the original.
 func (c *bazelCompile) sources() (map[string][]byte, map[string]int, error) {
 	files, index := map[string][]byte{}, map[string]int{}
 	for i := c.start; i < len(c.argv); i++ {
@@ -220,7 +236,11 @@ func (c *bazelCompile) sources() (map[string][]byte, map[string]int, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		files[c.argv[i]], index[c.argv[i]] = data, i
+		name, err := filepath.Abs(c.argv[i])
+		if err != nil {
+			return nil, nil, err
+		}
+		files[name], index[name] = data, i
 	}
 	if len(files) == 0 {
 		return nil, nil, errors.New("no Go sources on the command line")
@@ -409,9 +429,10 @@ func (c *bazelCompile) sdk(pkg string) error {
 }
 
 // finish writes the edited and generated files and returns the compiler's
-// arguments. Generated files take a name in the package's directory, made
-// absolute so that the compiler's -trimpath rewrites it as it rewrites the
-// package's own files.
+// arguments. Each edited copy starts with a //line directive that names the
+// original file, and generated files take a name in the package's
+// directory, both absolute so that the compiler's -trimpath rewrites them as
+// it rewrites the package's own files.
 func (c *bazelCompile) finish() ([]string, error) {
 	out := append([]string(nil), c.argv...)
 	var contents [][]byte
@@ -421,7 +442,11 @@ func (c *bazelCompile) finish() ([]string, error) {
 	}
 	sort.Ints(indexes)
 	for _, i := range indexes {
-		data := c.replaced[i]
+		original, err := filepath.Abs(c.argv[i])
+		if err != nil {
+			return nil, err
+		}
+		data := append([]byte("//line "+original+":1\n"), c.replaced[i]...)
 		path := filepath.Join(c.temp, fmt.Sprintf("%03d_%s", i, filepath.Base(c.argv[i])))
 		if err := os.WriteFile(path, data, 0600); err != nil {
 			return nil, err

@@ -154,9 +154,11 @@ the CLI's Mini also replaces the version that a module requires
 ([runtime provisioning](mini-runtime.md#runtime-provisioning)). A workspace
 whose tests use Mini's Go API
 ([explicit clients](mini-runtime.md#explicit-clients-and-manual-instrumentation))
-also gets Mini from `go_deps`, with the same import paths. rules_go then stops
-the link with `package conflict error: ...: multiple copies of package passed
-to linker` (`go/tools/builders/importcfg.go`).
+also gets Mini from `go_deps`, with the same import paths. Such a test links two
+copies of Mini's packages, and rules_go 0.64 reports no error: its
+`package conflict error` in `go/tools/builders/importcfg.go` does not fire, and
+the order of its archives decides which copy of each package the binary gets.
+Phase 2's basic Bazel test found this.
 
 - **Bzlmod.** The rule's extension exports Mini under a stable repository
   name. Such a workspace makes that repository visible to its root module and
@@ -174,8 +176,10 @@ to linker` (`go/tools/builders/importcfg.go`).
   the generated Mini unchanged.
 - **WORKSPACE.** The rule's repository macro declares the same repository
   name. Phase 3 settles which declaration wins and documents the order.
-- **The error.** `docs/bazel.md` maps rules_go's package conflict for
-  `github.com/DataDog/ddtest/ddto` to those lines.
+- **The check.** rules_test_optimization's rule fails at analysis when a
+  package of `github.com/DataDog/ddtest/ddto` reaches an instrumented test
+  from a repository other than the Mini repository, and its message shows
+  the lines above.
 - **Plain builds.** After the override, builds with the default SDK that use
   the API also link the generated Mini, so Mini must link without the
   instrumented `testing`.
@@ -487,8 +491,8 @@ tested in ddtest without Bazel, with unit tests checked by mutation.
   with fixtures for a Gazelle prefix and an empty one.
 - **Mini from `go_deps`** as described above. Fixtures cover a test that uses
   the API, with the complete recipe in a root module that did not import the
-  Mini repository before, without the override, and a plain build that uses
-  it.
+  Mini repository before, and a plain build that uses it. The case without
+  the override belongs to phase 3, with the rule's check.
 - **`ddtest instrument bazel <dir>`** as described above, rejecting Bazel
   commands.
 - **ddtest's checks** in [Validating the Starlark](#validating-the-starlark):
@@ -506,6 +510,36 @@ tested in ddtest without Bazel, with unit tests checked by mutation.
   `stage_sources` and the warnings that cached actions do not repeat.
 - **A ddtest release candidate** with the subcommand, published by the
   existing prerelease workflow.
+
+**Status.** Implemented in this pull request, except the release candidate:
+
+- **Compiler mode:** `internal/runner/bazel_compile.go`. An edited file keeps
+  its original's absolute name through a `//line` directive, so test binaries
+  name no temporary file. A missing or unreadable SDK configuration stops the
+  runtime's compile instead of dropping the panic hook.
+- **Generator:** `internal/bazelgen`. Mini's repository carries the files and
+  dependencies of every supported platform, Go release from Mini's `go`
+  directive to the one that built ddtest, and the race detector, because
+  rules_go applies build constraints itself. The SDK copy follows symbolic
+  links, as rules_go's local and wrapped SDKs use them.
+- **Panic hook:** `--panic-hook` on the SDK. Its fatal-error copy acts only
+  when Mini set the hook.
+- **Basic Bazel test:** `scripts/bazel_basic.py` with the test-only rule and
+  workspace in `testdata/bazel`, in the `bazel` job of the Go instrumentation
+  workflow. Its fixture uses dd-trace-go v2.10.1, the oldest release in the
+  window, because v2.11 requires Go 1.26, and rules_go 0.64.0, because
+  0.65.0's `go.mod` raises `golang.org/x/mod` and `golang.org/x/sys` in
+  `go_deps` to releases that need Go 1.26. Linux runs Go 1.25 to 1.27 in both
+  modes, and macOS runs Go 1.27 in both modes. WORKSPACE mode writes
+  `deps.bzl` with `gazelle update-repos` at test time, instead of a generated
+  file in the repository. The `go_deps` fixture runs only in Bzlmod, since
+  `override_repo` is Bzlmod's; phase 3 settles WORKSPACE. After the
+  override, the API's labels are Mini's, so the test-only macro adds Mini
+  only when the test's `deps` do not name it; rules_test_optimization's
+  macro must do the same, because Bazel rejects a duplicated label. Without
+  the override, the test linked two copies of Mini's packages with no error,
+  so the check moved to the rule (see [Mini from `go_deps`](#mini-from-go_deps)).
+- **Guide:** [Bazel](bazel.md).
 
 ### Phase 3: rules_test_optimization
 
@@ -528,7 +562,8 @@ The new major version, built on the release candidate:
   - retries, early flake detection and test management from the manifest;
   - sharding and `-race`;
   - reproducibility;
-  - vendored packages and Mini from `go_deps`;
+  - vendored packages and Mini from `go_deps`, including the analysis error
+    without the override;
   - every supported Bazel and rules_go version, in Bzlmod and WORKSPACE
     modes;
   - every platform, remote execution, and a host that differs from the exec

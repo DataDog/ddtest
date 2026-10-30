@@ -1,0 +1,8 @@
+load("@ddtest_bazel_test//:defs.bzl", "ddtest_go_test")
+
+ddtest_go_test(
+    name = "suite_test",
+    srcs = ["suite_test.go"],
+    importpath = "example.com/basic/suite",
+    deps = ["@com_github_stretchr_testify//suite"],
+)

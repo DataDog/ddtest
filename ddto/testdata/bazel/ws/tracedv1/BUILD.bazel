@@ -1,0 +1,8 @@
+load("@ddtest_bazel_test//:defs.bzl", "ddtest_go_test")
+
+ddtest_go_test(
+    name = "tracedv1_test",
+    srcs = ["tracedv1_test.go"],
+    importpath = "example.com/basic/tracedv1",
+    deps = ["@in_gopkg_datadog_dd_trace_go_v1//ddtrace/tracer"],
+)

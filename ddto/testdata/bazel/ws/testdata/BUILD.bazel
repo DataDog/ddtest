@@ -1,0 +1,7 @@
+exports_files(["manifest.txt"])
+
+filegroup(
+    name = "manifest",
+    srcs = ["manifest.txt"] + glob(["cache/**"]),
+    visibility = ["//visibility:public"],
+)

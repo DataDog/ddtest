@@ -531,7 +531,8 @@ nightly and manual runs, and Go 1.27 on macOS/Windows. Linux also runs `-race`. 
 current head and PR merge checks after publication and verify that their
 checked-out inputs match the proposed change. Cross-compiling another
 architecture establishes build compatibility only. Actual intake acceptance and
-a real Bazel compiler invocation are separate verification tasks.
+the full Bazel suites of rules_test_optimization are separate verification
+tasks.
 
 For a docs-only change, check local links, code paths, command examples and
 Mermaid rendering. Diagrams are editable `mermaid` fences rendered by

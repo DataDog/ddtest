@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -16,7 +17,9 @@ import (
 var update = flag.Bool("update", false, "rewrite the golden files")
 
 // Every package and dependency of Mini's repository is what the go command
-// lists for the same platform, so rules_go compiles what go test compiles.
+// lists for the same platform, with and without the race detector, so
+// rules_go compiles what go test compiles. The files also include those of
+// older Go releases.
 func TestMiniPackagesMatchGoList(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -28,28 +31,35 @@ func TestMiniPackagesMatchGoList(t *testing.T) {
 	}
 	for _, platform := range platforms {
 		key := platform.goos + "_" + platform.goarch
-		cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}} {{join .Imports \",\"}}", "./testopt", "./propagation")
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "GOOS="+platform.goos, "GOARCH="+platform.goarch, "CGO_ENABLED=0", "GOWORK=off", "GOFLAGS=", "GOTOOLCHAIN=local")
-		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("%s: %v", key, err)
-		}
 		listed := map[string][]string{}
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			importPath, imports, _ := strings.Cut(line, " ")
-			rel, ok := strings.CutPrefix(importPath, MiniModule+"/")
-			if !ok {
-				continue
+		for _, tags := range []string{"", "race"} {
+			cmd := exec.Command("go", "list", "-deps", "-tags="+tags, "-f", "{{.ImportPath}} {{join .Imports \",\"}} {{join .GoFiles \",\"}},{{join .SFiles \",\"}}", "./testopt", "./propagation")
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "GOOS="+platform.goos, "GOARCH="+platform.goarch, "CGO_ENABLED=0", "GOWORK=off", "GOFLAGS=", "GOTOOLCHAIN=local")
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("%s %s: %v", key, tags, err)
 			}
-			deps := []string{}
-			for _, imported := range strings.Split(imports, ",") {
-				if dep, ok := strings.CutPrefix(imported, MiniModule+"/"); ok {
-					deps = append(deps, dep)
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				fields := strings.Split(line, " ")
+				rel, ok := strings.CutPrefix(fields[0], MiniModule+"/")
+				if !ok {
+					continue
+				}
+				deps := append([]string{}, listed[rel]...)
+				for _, imported := range strings.Split(fields[1], ",") {
+					if dep, ok := strings.CutPrefix(imported, MiniModule+"/"); ok && !slices.Contains(deps, dep) {
+						deps = append(deps, dep)
+					}
+				}
+				sort.Strings(deps)
+				listed[rel] = deps
+				for _, file := range strings.Split(fields[2], ",") {
+					if file != "" && (packages[rel] == nil || !slices.Contains(packages[rel].files, file)) {
+						t.Errorf("%s %s: %s/%s is not generated", key, tags, rel, file)
+					}
 				}
 			}
-			sort.Strings(deps)
-			listed[rel] = deps
 		}
 		// The packages that the roots reach on the platform, as go list lists.
 		generated := map[string][]string{}
@@ -75,6 +85,10 @@ func TestMiniPackagesMatchGoList(t *testing.T) {
 			}
 		}
 	}
+	// A release built with the newest Go also serves older ones.
+	if !slices.Contains(packages["internal/citransport"].files, "http2_go125.go") {
+		t.Error("the Go 1.25 variant of internal/citransport is not generated")
+	}
 }
 
 // The BUILD file format, on a module whose dependencies differ by platform.
@@ -84,6 +98,11 @@ func TestMiniBuildFileGolden(t *testing.T) {
 		"LICENSE":                {Data: []byte("license\n")},
 		"testopt/testopt.go":     {Data: []byte("package testopt\n\nimport (\n\t_ \"" + MiniModule + "/internal/common\"\n\t_ \"fmt\"\n)\n")},
 		"testopt/unix.go":        {Data: []byte("//go:build !windows\n\npackage testopt\n\nimport _ \"" + MiniModule + "/internal/unixonly\"\n")},
+		"testopt/old.go":         {Data: []byte("//go:build !go1.25\n\npackage testopt\n\nimport _ \"" + MiniModule + "/internal/old\"\n")},
+		"testopt/race.go":        {Data: []byte("//go:build race\n\npackage testopt\n\nimport _ \"" + MiniModule + "/internal/racy\"\n")},
+		"testopt/new.go":         {Data: []byte("//go:build go1.1 && !go1.26\n\npackage testopt\n")},
+		"internal/old/o.go":      {Data: []byte("package old\n")},
+		"internal/racy/r.go":     {Data: []byte("package racy\n")},
 		"testopt/doc_test.go":    {Data: []byte("package testopt\n")},
 		"propagation/p.go":       {Data: []byte("package propagation\n")},
 		"internal/common/c.go":   {Data: []byte("package common\n")},
@@ -129,7 +148,7 @@ func TestMiniRejectsEmbedAndCgo(t *testing.T) {
 		"embed": "package testopt\n\nimport _ \"embed\"\n\n//go:embed data.txt\nvar data string\n",
 		"cgo":   "package testopt\n\nimport \"C\"\n",
 	} {
-		src := fstest.MapFS{"testopt/t.go": {Data: []byte(source)}, "testopt/data.txt": {}, "propagation/p.go": {Data: []byte("package propagation\n")}}
+		src := fstest.MapFS{"go.mod": {Data: []byte("module " + MiniModule + "\n\ngo 1.25.0\n")}, "testopt/t.go": {Data: []byte(source)}, "testopt/data.txt": {}, "propagation/p.go": {Data: []byte("package propagation\n")}}
 		if err := WriteMini(t.TempDir(), src, MiniOptions{RulesGo: "rules_go"}); err == nil {
 			t.Errorf("%s accepted", name)
 		}
@@ -180,10 +199,36 @@ func TestWriteSDK(t *testing.T) {
 	if read(ContractFile) != "version=v1.2.3\ncontract=1\nsdk_name=ddto\n" {
 		t.Fatal(read(ContractFile))
 	}
-	if info, err := os.Stat(filepath.Join(dir, "pkg", "tool", "linux_amd64", "compile")); err != nil || info.Mode().Perm()&0100 == 0 {
+	// Windows has no executable bit.
+	if info, err := os.Stat(filepath.Join(dir, "pkg", "tool", "linux_amd64", "compile")); err != nil || runtime.GOOS != "windows" && info.Mode().Perm()&0100 == 0 {
 		t.Fatal("the compiler is not executable", err)
 	}
 	if err := WriteSDK(filepath.Join(t.TempDir(), "sdk"), SDKOptions{GOROOT: t.TempDir(), Compiler: compiler}); err == nil {
 		t.Fatal("a directory without a compiler accepted as an SDK")
+	}
+	// rules_go's local and wrapped SDKs link their top-level entries to
+	// another GOROOT; here the compiler is a link too.
+	linked := t.TempDir()
+	for _, name := range []string{"VERSION", "bin", "src", "pkg"} {
+		if err := os.Symlink(filepath.Join(goroot, name), filepath.Join(linked, name)); err != nil {
+			t.Skip("no symbolic links:", err)
+		}
+	}
+	tools := filepath.Join(goroot, "pkg", "tool", "linux_amd64")
+	if err := os.Rename(filepath.Join(tools, "compile"), filepath.Join(tools, "compile.orig")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("compile.orig", filepath.Join(tools, "compile")); err != nil {
+		t.Fatal(err)
+	}
+	dir = filepath.Join(t.TempDir(), "sdk")
+	if err := WriteSDK(dir, SDKOptions{GOROOT: linked, Compiler: compiler, Version: "v1.2.3"}); err != nil {
+		t.Fatal(err)
+	}
+	if read("pkg/tool/linux_amd64/compile") != "ddtest" || read("pkg/tool/linux_amd64/compile.real") != "real compiler" || read("src/testing/testing.go") != "package testing\n" {
+		t.Fatal("the linked SDK's files")
+	}
+	if info, err := os.Lstat(filepath.Join(dir, "src")); err != nil || !info.IsDir() {
+		t.Fatal("a linked directory is not copied", err)
 	}
 }

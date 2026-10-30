@@ -26,6 +26,25 @@ alias(
 )
 == internal/common/c.go
 package common
+== internal/racy/BUILD.bazel
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "racy",
+    srcs = [
+        "r.go",
+    ],
+    importpath = "github.com/DataDog/ddtest/ddto/internal/racy",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "go_default_library",
+    actual = ":racy",
+    visibility = ["//visibility:public"],
+)
+== internal/racy/r.go
+package racy
 == internal/unixonly/BUILD.bazel
 load("@rules_go//go:def.bzl", "go_library")
 
@@ -72,28 +91,31 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "testopt",
     srcs = [
+        "new.go",
+        "race.go",
         "testopt.go",
         "unix.go",
     ],
     importpath = "github.com/DataDog/ddtest/ddto/testopt",
     visibility = ["//visibility:public"],
     deps = [
-        "//internal/common:common",
+        "//internal/common",
+        "//internal/racy",
     ] + select({
         "@rules_go//go/platform:darwin_amd64": [
-            "//internal/unixonly:unixonly",
+            "//internal/unixonly",
         ],
         "@rules_go//go/platform:darwin_arm64": [
-            "//internal/unixonly:unixonly",
+            "//internal/unixonly",
         ],
         "@rules_go//go/platform:linux_386": [
-            "//internal/unixonly:unixonly",
+            "//internal/unixonly",
         ],
         "@rules_go//go/platform:linux_amd64": [
-            "//internal/unixonly:unixonly",
+            "//internal/unixonly",
         ],
         "@rules_go//go/platform:linux_arm64": [
-            "//internal/unixonly:unixonly",
+            "//internal/unixonly",
         ],
         "//conditions:default": [],
     }),
@@ -104,6 +126,16 @@ alias(
     actual = ":testopt",
     visibility = ["//visibility:public"],
 )
+== testopt/new.go
+//go:build go1.1 && !go1.26
+
+package testopt
+== testopt/race.go
+//go:build race
+
+package testopt
+
+import _ "github.com/DataDog/ddtest/ddto/internal/racy"
 == testopt/testopt.go
 package testopt
 

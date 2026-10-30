@@ -29,24 +29,80 @@ func TestBazelCanonicalPackage(t *testing.T) {
 func TestBazelEditsDispatch(t *testing.T) {
 	dir := t.TempDir()
 	compiler := filepath.Join(dir, "compile")
+	edits := func(pkg string, race bool) bool {
+		t.Helper()
+		edits, err := bazelEdits(pkg, race, compiler)
+		if err != nil {
+			t.Fatal(pkg, err)
+		}
+		return edits
+	}
 	for _, pkg := range []string{"testing", "os/signal", instrument.TestifySuiteImport, instrument.GoleakImport, sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkCIBazelPackage, sdkTracerPackage} {
-		if !bazelEdits(pkg, false, compiler) {
+		if !edits(pkg, false) {
 			t.Errorf("%s is not edited", pkg)
 		}
 	}
-	for _, pkg := range []string{"runtime", "fmt", "example.com/app", miniPackage, sdkTracerPackage + "_test", "github.com/stretchr/testify/assert"} {
-		if bazelEdits(pkg, false, compiler) {
+	for _, pkg := range []string{"fmt", "example.com/app", miniPackage, sdkTracerPackage + "_test", "github.com/stretchr/testify/assert"} {
+		if edits(pkg, false) {
 			t.Errorf("%s is edited", pkg)
 		}
 	}
-	if !bazelEdits(miniPackage, true, compiler) || bazelEdits("example.com/app", true, compiler) {
+	if !edits(miniPackage, true) || edits("example.com/app", true) {
 		t.Error("-race edits Mini's packages, and only them")
 	}
-	if err := os.WriteFile(filepath.Join(dir, bazelCompilerConfig), []byte(`{"contract":1,"panicHook":true}`), 0600); err != nil {
+	// The runtime follows the SDK's configuration, which must be readable.
+	for _, config := range []string{"", `{"contract":1`, `{"contract":1,"panicHook":false}`, `{"contract":1,"panicHook":true}`} {
+		if config != "" {
+			if err := os.WriteFile(filepath.Join(dir, bazelCompilerConfig), []byte(config), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		runtime, err := bazelEdits("runtime", false, compiler)
+		if (err == nil) != strings.HasSuffix(config, "}") || runtime != strings.Contains(config, `"panicHook":true`) {
+			t.Errorf("%q: edits the runtime %v, error %v", config, runtime, err)
+		}
+	}
+}
+
+// Edited copies keep the names of the files that rules_go gives relative to
+// its execution root, so that -trimpath rewrites them as the originals.
+func TestBazelEditedCopiesNameTheOriginals(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join("external", "pkg"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if !bazelEdits("runtime", false, compiler) {
-		t.Error("the panic hook's configuration does not edit the runtime")
+	if err := os.WriteFile(filepath.Join("external", "pkg", "a.go"), []byte("package pkg\n\nfunc A() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("importcfg", []byte("packagefile fmt=/sdk/pkg/fmt.a\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := &bazelCompile{argv: []string{"compile", "-p", miniPackage, "-importcfg", "importcfg", "--", filepath.Join("external", "pkg", "a.go")}, start: 6, temp: t.TempDir(), replaced: map[int][]byte{}, added: map[string]string{}}
+	// The transforms write //line directives with these names.
+	files, _, err := c.sources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range files {
+		if name != filepath.Join(root, "external", "pkg", "a.go") {
+			t.Fatalf("source name %s", name)
+		}
+	}
+	if err := c.norace(); err != nil {
+		t.Fatal(err)
+	}
+	args, err := c.finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(args[6])
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := filepath.Join(root, "external", "pkg", "a.go")
+	if args[6] == c.argv[6] || !strings.HasPrefix(string(data), "//line "+original+":1\npackage pkg\n") || !strings.Contains(string(data), "//go:norace\n/*line :3:1*/func A") {
+		t.Fatalf("%s:\n%s", args[6], data)
 	}
 }
 

@@ -1,0 +1,15 @@
+load("@ddtest_bazel_test//:defs.bzl", "ddtest_go_test")
+
+# A test that uses Mini's Go API from go_deps. Only Bzlmod overrides go_deps'
+# copy with the Mini that ddtest instrument bazel writes; scripts/bazel_basic.py
+# runs it there, and without the override.
+ddtest_go_test(
+    name = "api_test",
+    srcs = ["api_test.go"],
+    importpath = "example.com/basic/api",
+    tags = ["manual"],
+    deps = [
+        "@com_github_datadog_ddtest_ddto//propagation",
+        "@com_github_datadog_ddtest_ddto//testopt",
+    ],
+)

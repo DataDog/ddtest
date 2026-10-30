@@ -1,0 +1,11 @@
+load("@ddtest_bazel_test//:defs.bzl", "ddtest_go_test")
+
+ddtest_go_test(
+    name = "leak_test",
+    srcs = [
+        "leak_test.go",
+        "verify_test.go",
+    ],
+    importpath = "example.com/basic/leak",
+    deps = ["@org_uber_go_goleak//:goleak"],
+)

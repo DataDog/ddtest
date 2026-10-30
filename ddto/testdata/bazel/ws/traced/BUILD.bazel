@@ -1,0 +1,16 @@
+load("@ddtest_bazel_test//:defs.bzl", "ddtest_go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "traced",
+    srcs = ["traced.go"],
+    importpath = "example.com/basic/traced",
+    deps = ["@com_github_datadog_dd_trace_go_v2//ddtrace/tracer"],
+)
+
+ddtest_go_test(
+    name = "traced_test",
+    srcs = ["traced_test.go"],
+    embed = [":traced"],
+    deps = ["@com_github_datadog_dd_trace_go_v2//ddtrace/tracer"],
+)

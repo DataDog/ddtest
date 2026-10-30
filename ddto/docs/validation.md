@@ -211,6 +211,10 @@ families and tip:
 | macOS | 1.27 | Normal suite |
 | Windows | 1.27 | Normal suite |
 
+The basic Bazel test runs on Linux with Go 1.25, 1.26 and 1.27 and on macOS
+with Go 1.27, each in Bzlmod and WORKSPACE modes, with the ddtest executable
+that the newest Go builds, as releases are built ([Bazel](bazel.md#validation)).
+
 The first job reads go.dev's release list and picks the newest release of each
 family, and every job of the run installs that release. While GitHub updates
 its runner images, some carry an older patch release, and `setup-go` would use
