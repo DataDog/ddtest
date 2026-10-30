@@ -77,7 +77,7 @@ func moduleDir(t *testing.T, module, version string) string {
 }
 
 // sdkEditedPackages are the SDK packages that the CLI edits.
-var sdkEditedPackages = []string{"internal/config", "internal/civisibility/envconfig", "ddtrace/tracer"}
+var sdkEditedPackages = []string{"internal/config", "internal/civisibility/envconfig", "internal/bazel", "ddtrace/tracer"}
 
 // sdkFingerprint hashes what the CLI's SDK edits and their behavior depend on:
 // the non-test Go files of the packages they edit, and the module's go.mod.

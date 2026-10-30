@@ -5,12 +5,52 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path"
+	"strings"
 )
+
+// SDKMiniLinkedSymbol is a Mini variable whose value is true. Each guarded SDK
+// package declares a variable under the same name with no value, in the file
+// that SDKGuardFile writes, and its guards act only when that variable is
+// true. The linker keeps the definition with a value over one without, so a
+// binary that links Mini reads true before any package initializes, and a
+// binary without Mini, such as a Bazel tool built with the instrumented SDK,
+// keeps the SDK's own behavior.
+const SDKMiniLinkedSymbol = "github.com/DataDog/ddtest/ddto/internal/minitracer.sdkGuardMiniLinked"
+
+// sdkMiniLinked is the guarded package's name for SDKMiniLinkedSymbol.
+const sdkMiniLinked = "__ddtoMiniLinked"
+
+// SDKGuardFileName is the logical name of the file that SDKGuardFile writes,
+// in the guarded package's directory.
+const SDKGuardFileName = "zz_dd_ci_visibility_sdk_guard.go"
 
 // TransformSDKCIEnvironment keeps manual SDK testing shims inactive in a
 // Mini-owned binary. It does not change the process environment used by Mini.
 func TransformSDKCIEnvironment(name string, source []byte) ([]byte, bool, error) {
 	return transformSDKCIGates(name, source, []sdkCIGate{{name: "FromEnv", results: []string{"EnabledMode", "bool"}, result: "EnabledModeDisabled, false"}})
+}
+
+// TransformSDKBazelMode keeps the application's SDK from reading Bazel's
+// manifest or writing payload files when Mini is linked: Mini owns them, and
+// the SDK's telemetry would otherwise take the same file names as Mini's.
+// Every accessor of the mode goes through CurrentMode.
+func TransformSDKBazelMode(name string, source []byte) ([]byte, bool, error) {
+	return transformSDKCIGates(name, source, []sdkCIGate{{name: "CurrentMode", results: []string{"Mode"}, result: "Mode{}"}})
+}
+
+// SDKGuardFile returns the file that declares the guards' variable in the
+// package of a guarded source, under a stable name in that source's directory.
+func SDKGuardFile(name string, source []byte) (string, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), name, source, parser.PackageClauseOnly)
+	if err != nil {
+		return "", err
+	}
+	logical := path.Join(path.Dir(strings.ReplaceAll(name, "\\", "/")), SDKGuardFileName)
+	if strings.ContainsAny(logical, "\r\n") {
+		return "", fmt.Errorf("%s: filename cannot be encoded in a line directive", name)
+	}
+	return "//line " + logical + ":1\npackage " + file.Name.Name + "\n\nimport _ \"unsafe\"\n\n//go:linkname " + sdkMiniLinked + " " + SDKMiniLinkedSymbol + "\nvar " + sdkMiniLinked + " bool\n", nil
 }
 
 // TransformSDKCIConfig keeps the full SDK tracer on its APM transport. The SDK
@@ -51,8 +91,12 @@ func transformSDKCIGates(name string, source []byte, gates []sdkCIGate) ([]byte,
 			if found[gate.name] || !validSDKCIGate(fn, gate) {
 				return nil, false, fmt.Errorf("%w: SDK CI %s signature changed or ambiguous", ErrUnsupportedAPI, gate.name)
 			}
+			if strings.Contains(string(source), sdkMiniLinked) {
+				return nil, false, fmt.Errorf("%s: reserved SDK guard name %s", name, sdkMiniLinked)
+			}
 			found[gate.name] = true
-			edits = append(edits, edit{fset.PositionFor(fn.Body.Lbrace, false).Offset + 1, "\nif true { return " + gate.result + " }\n"})
+			// One line keeps the file's other line numbers.
+			edits = append(edits, edit{fset.PositionFor(fn.Body.Lbrace, false).Offset + 1, "if " + sdkMiniLinked + " { return " + gate.result + " };"})
 		}
 	}
 	if len(edits) == 0 {

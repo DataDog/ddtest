@@ -61,7 +61,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 		libraries = append(libraries, path)
 	}
 	if sdkCI || isOrchestrionToolexec(opts.toolexec) {
-		libraries = append(libraries, sdkTracerPackage, sdkCIConfigPackage, sdkCIEnvironmentPackage)
+		libraries = append(libraries, sdkTracerPackage, sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkCIBazelPackage)
 	}
 	for _, path := range libraries {
 		if selected[path] != nil {

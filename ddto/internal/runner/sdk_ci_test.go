@@ -32,7 +32,7 @@ func TestSDKCIGateDispatch(t *testing.T) {
 	}
 	// Go applies a package's gcflags, and so the cache marker, to its test
 	// variants: each must reach the wrapper, which removes the marker.
-	for _, pkg := range []string{sdkCIEnvironmentPackage, sdkCIConfigPackage, sdkTracerPackage} {
+	for _, pkg := range []string{sdkCIEnvironmentPackage, sdkCIConfigPackage, sdkCIBazelPackage, sdkTracerPackage} {
 		for _, variant := range []string{pkg + " [" + pkg + ".test]", pkg + "_test [" + pkg + ".test]", pkg + ".test"} {
 			if !ToolNeedsPlan("mini-sdk", []string{"compile", "file.go"}, variant) {
 				t.Fatal("test variant bypassed:", variant)
@@ -150,9 +150,21 @@ func TestSDKCIGateCompilerInputs(t *testing.T) {
 	if err != nil || string(unchanged) != string(source) {
 		t.Fatal("SDK original changed", err)
 	}
+	// The guards' variable comes in a file of its own, named in the package's
+	// directory so that the compiled names stay the same from run to run.
+	// The cache marker is gone and the guard file is added.
+	if len(got) != len(args) || !strings.HasPrefix(filepath.Base(got[4]), "_") {
+		t.Fatal("guard file missing", got)
+	}
+	guard, err := os.ReadFile(got[4])
+	if err != nil || !strings.HasPrefix(string(guard), "//line "+filepath.ToSlash(filepath.Join(dir, "zz_dd_ci_visibility_sdk_guard.go"))+":1\npackage envconfig\n") || !strings.Contains(string(guard), "var __ddtoMiniLinked bool") {
+		t.Fatalf("%s %v", guard, err)
+	}
 	cleanup()
-	if _, err := os.Stat(got[3]); !os.IsNotExist(err) {
-		t.Fatal("temporary source retained", err)
+	for _, path := range got[3:] {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("temporary source retained", err)
+		}
 	}
 	if _, _, err := prepareSDKCICompile([]string{"compile", original, original}, sdkCIEnvironmentPackage); err == nil {
 		t.Fatal("ambiguous sources accepted")
@@ -168,7 +180,7 @@ func TestSDKCIGateCompilerInputs(t *testing.T) {
 
 func TestSDKCompilerCacheMarkerKeepsUserFlags(t *testing.T) {
 	t.Setenv("GOFLAGS", "-gcflags=all=-N")
-	for _, path := range []string{sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkTracerPackage} {
+	for _, path := range []string{sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkCIBazelPackage, sdkTracerPackage} {
 		opts, err := parseOptions([]string{"-gcflags=" + path + "=-l", "."}, os.Getenv("GOFLAGS"))
 		if err != nil {
 			t.Fatal(err)

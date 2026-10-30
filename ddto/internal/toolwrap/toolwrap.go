@@ -36,6 +36,7 @@ const (
 	// The SDK packages whose compiles carry ddto's guards.
 	SDKCIConfigPackage      = "github.com/DataDog/dd-trace-go/v2/internal/config"
 	SDKCIEnvironmentPackage = "github.com/DataDog/dd-trace-go/v2/internal/civisibility/envconfig"
+	SDKCIBazelPackage       = "github.com/DataDog/dd-trace-go/v2/internal/bazel"
 	SDKTracerPackage        = "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
 	// KeyFlag makes the wrapper executable print its key, which ddto checks
 	// before it uses the executable.
@@ -141,7 +142,7 @@ func NeedsPlan(mode string, args []string, importPath string) bool {
 
 // IsSDKCIPackage reports whether pkg is an SDK package that ddto guards.
 func IsSDKCIPackage(pkg string) bool {
-	return pkg == SDKCIEnvironmentPackage || pkg == SDKCIConfigPackage
+	return pkg == SDKCIEnvironmentPackage || pkg == SDKCIConfigPackage || pkg == SDKCIBazelPackage
 }
 
 // SDKCompilePackage returns the guarded SDK package whose compiler cache

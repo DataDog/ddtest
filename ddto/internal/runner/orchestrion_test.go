@@ -29,7 +29,7 @@ func TestOrchestrionPackageOwnershipAndProbes(t *testing.T) {
 		pkg  string
 		skip bool
 	}{
-		{sdkCIEnvironmentPackage, true}, {sdkCIConfigPackage, true}, {"testing", true}, {"testing [client.test]", true}, {"github.com/stretchr/testify/suite", true},
+		{sdkCIEnvironmentPackage, true}, {sdkCIConfigPackage, true}, {sdkCIBazelPackage, true}, {"testing", true}, {"testing [client.test]", true}, {"github.com/stretchr/testify/suite", true},
 		{miniModule + "/testopt", true}, {miniModule + "/internal/minitracer", true},
 		{miniModule + "-other/testopt", false}, {"example.com/client", false}, {"net/http", false},
 		{"github.com/DataDog/dd-trace-go/v2/ddtrace/tracer", false}, {"", false},
@@ -52,7 +52,7 @@ func TestOrchestrionPackageOwnershipAndProbes(t *testing.T) {
 		}
 	}
 	t.Setenv(orchestrionBypassEnv, string(SDK))
-	for _, pkg := range []string{sdkCIEnvironmentPackage, sdkCIConfigPackage, miniModule, miniModule + "/testopt", "example.com/client"} {
+	for _, pkg := range []string{sdkCIEnvironmentPackage, sdkCIConfigPackage, sdkCIBazelPackage, miniModule, miniModule + "/testopt", "example.com/client"} {
 		t.Setenv("TOOLEXEC_IMPORTPATH", pkg)
 		if bypassOrchestrionPackage([]string{"compile", "input.go"}) {
 			t.Fatal("SDK backend bypassed", pkg)

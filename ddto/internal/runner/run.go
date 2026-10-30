@@ -578,7 +578,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		} else if apm != "" {
 			plan.Warnings = append(plan.Warnings, apm)
 		}
-		for _, path := range []string{sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkTracerPackage} {
+		for _, path := range []string{sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkCIBazelPackage, sdkTracerPackage} {
 			if path == sdkTracerPackage && plan.sdkMirrorDisabled {
 				continue
 			}

@@ -603,11 +603,23 @@ detection in the shared dependency query; it needs no extra Go command. A client
 that merely requires an unused SDK keeps the wrapper disabled.
 
 The Mini-specific SDK guard rewrites `envconfig.FromEnv`,
-`Config.CIVisibilityEnabled` and `Config.CIVisibilityAgentlessActive` in temporary
-compiler inputs. Both CI initialization and transport selection must stay
-inactive in the full SDK while Mini owns reporting. Check the SDK consumers
-when these private APIs change. Do not disable CI by changing the process
+`Config.CIVisibilityEnabled`, `Config.CIVisibilityAgentlessActive` and
+`bazel.CurrentMode` in temporary compiler inputs. Both CI initialization and
+transport selection must stay inactive in the full SDK while Mini owns
+reporting, and the SDK must not read Bazel's manifest or write payload files,
+whose telemetry names would collide with Mini's. Check the SDK consumers when
+these private APIs change. Do not disable CI by changing the process
 environment: Mini needs it, and runtime mutation could race with tests.
+
+The guards act only in a binary that links Mini. Each guarded package also
+compiles `zz_dd_ci_visibility_sdk_guard.go`, which declares a variable with no
+value under the name of Mini's `minitracer.sdkGuardMiniLinked`, whose value is
+`true`. The linker keeps the definition that has a value, so the guards read
+`true` before any package initializes when Mini is linked, and `false`, the
+SDK's own behavior, otherwise: Bazel builds tools and other binaries without
+Mini with the same SDK. Only Mini may give the variable a value; two values
+would be a duplicate definition. `TestSDKCIGuardsActOnlyWithMini` builds a
+stand-in SDK with and without Mini.
 
 Bump the contracts in `sdkCompilerCacheMarker` when the guard semantics change.
 Verify both build orders against SDK mode, and retain the actual APM HTTP test,

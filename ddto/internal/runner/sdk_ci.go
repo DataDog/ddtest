@@ -16,6 +16,7 @@ import (
 const (
 	sdkCIConfigPackage      = toolwrap.SDKCIConfigPackage
 	sdkCIEnvironmentPackage = toolwrap.SDKCIEnvironmentPackage
+	sdkCIBazelPackage       = toolwrap.SDKCIBazelPackage
 	sdkTracerPackage        = toolwrap.SDKTracerPackage
 )
 
@@ -40,7 +41,7 @@ func sdkCompilerCacheMarker(pkg string) string {
 	if pkg == sdkTracerPackage {
 		return "-I=ddto-sdk-span-mirror-v8"
 	}
-	return "-I=ddto-sdk-ci-guard-v6"
+	return "-I=ddto-sdk-ci-guard-v7"
 }
 
 // Mirror hooks are optional. CI ownership guards remain mandatory so an APM
@@ -95,7 +96,7 @@ func sdkMirrorEdits(pkg *goPackage, replacements map[string]string) (uint8, erro
 // compatibility tests check every supported SDK version with it.
 func SDKEdits(dir string) (uint8, error) {
 	var tracer *goPackage
-	for _, pkg := range []string{sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkTracerPackage} {
+	for _, pkg := range []string{sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkCIBazelPackage, sdkTracerPackage} {
 		relative := strings.TrimPrefix(pkg, "github.com/DataDog/dd-trace-go/v2/")
 		source, err := build.Default.ImportDir(filepath.Join(dir, filepath.FromSlash(relative)), 0)
 		if err != nil {
@@ -138,8 +139,11 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 			return nil, nil, err
 		}
 		transform := instrument.TransformSDKCIEnvironment
-		if pkg == sdkCIConfigPackage {
+		switch pkg {
+		case sdkCIConfigPackage:
 			transform = instrument.TransformSDKCIConfig
+		case sdkCIBazelPackage:
+			transform = instrument.TransformSDKBazelMode
 		}
 		var rewritten []byte
 		var changed bool
@@ -187,6 +191,32 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 			return nil, nil, closeErr
 		}
 		forwarded[i] = file.Name()
+		if pkg != sdkTracerPackage {
+			// The guards' variable, in a file of its own: the rewritten file
+			// keeps its imports and its line numbers.
+			guard, err := instrument.SDKGuardFile(filepath.ToSlash(args[i]), source)
+			if err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+			file, err := os.CreateTemp("", "_ddtest-instrument-ci-guard-*.go")
+			if err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+			temporary = append(temporary, file.Name())
+			_, writeErr := file.WriteString(guard)
+			closeErr := file.Close()
+			if writeErr != nil {
+				cleanup()
+				return nil, nil, writeErr
+			}
+			if closeErr != nil {
+				cleanup()
+				return nil, nil, closeErr
+			}
+			forwarded = append(forwarded, file.Name())
+		}
 	}
 	if pkg == sdkTracerPackage {
 		if mirrorFound&instrument.SDKMirrorCopies != instrument.SDKMirrorCopies {
