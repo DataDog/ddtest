@@ -86,7 +86,7 @@ func (t *Testdrive) javaImplicitArgs(args []string) ([]string, error) {
 			return nil, err
 		}
 		if options := string(data); withoutDatadogAgent(options) != options {
-			return nil, errors.New(".mvn/jvm.config attaches dd-java-agent to every Maven build, so validation cannot run the build without it; remove the -javaagent option from .mvn/jvm.config, as CI attaches the agent with the GitHub action")
+			return nil, errors.New(".mvn/jvm.config attaches dd-java-agent to every Maven build, so validation cannot run the build without it; remove the -javaagent option from .mvn/jvm.config, as CI attaches the agent with the Datadog setup")
 		}
 	}
 	value, configured := t.configurationEnvironment["MAVEN_ARGS"]
