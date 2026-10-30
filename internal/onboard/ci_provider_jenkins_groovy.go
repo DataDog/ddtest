@@ -27,6 +27,9 @@ const (
 	// groovyDepthLimit bounds nesting, so a hostile file cannot exhaust the
 	// stack.
 	groovyDepthLimit = 200
+	// groovyInterpolationLimit bounds GStrings nested in interpolations,
+	// whose source each level reads again.
+	groovyInterpolationLimit = 8
 )
 
 type groovyTokenKind int
@@ -60,9 +63,12 @@ type groovyStr struct {
 
 type groovyStrPart struct {
 	text string
-	// expr is an interpolation's source, without ${ and }.
+	// expr is an interpolation's source, without ${ and }; braced marks a
+	// ${…} one, whose source starts at exprStart in the file.
 	expr         string
 	interpolated bool
+	braced       bool
+	exprStart    int
 }
 
 // literal is the string's value when nothing is interpolated.
@@ -287,13 +293,15 @@ func (l *groovyLexer) quoted(quote string) error {
 			continue
 		}
 		if c == '$' && gstring {
+			at := l.pos
 			expr, ok, err := l.interpolation()
 			if err != nil {
 				return err
 			}
 			if ok {
 				flush()
-				str.parts = append(str.parts, groovyStrPart{expr: expr, interpolated: true})
+				braced := l.source[at+1] == '{'
+				str.parts = append(str.parts, groovyStrPart{expr: expr, interpolated: true, braced: braced, exprStart: at + 2})
 				continue
 			}
 		}
@@ -459,6 +467,10 @@ type groovyClosure struct {
 type groovyString struct {
 	groovySpan
 	Value *groovyStr
+	// Interpolations are the expressions of its ${…} interpolations, which
+	// run when the string is evaluated; one ddtest cannot read is a
+	// groovyUnknown.
+	Interpolations []groovyNode
 }
 
 // groovyLiteral is a number, true, false or null.
@@ -555,6 +567,20 @@ type groovyBinary struct {
 	Left, Right groovyNode
 }
 
+// groovyAssert is assert condition [: message], or throw value: an
+// expression that runs, after which the path may fail.
+type groovyAssert struct {
+	groovySpan
+	Kind           string
+	Value, Message groovyNode
+}
+
+// groovyTernary is condition ? then : otherwise; either branch may run.
+type groovyTernary struct {
+	groovySpan
+	Condition, Then, Else groovyNode
+}
+
 // groovyUnknown is syntax ddtest does not interpret.
 type groovyUnknown struct {
 	groovySpan
@@ -565,6 +591,8 @@ type groovyParser struct {
 	pos    int
 	depth  int
 	source string
+	// nested counts the interpolations around the tokens.
+	nested int
 }
 
 // parseGroovy reads a Jenkinsfile into its syntax tree.
@@ -741,9 +769,15 @@ func (p *groovyParser) statement() groovyNode {
 			p.recover(start)
 			return &groovyJump{groovySpan: groovySpan{start, p.lastEnd()}, Kind: token.text}
 		case "throw", "assert":
-			// They run no step: a failure.
-			p.recover(start)
-			return nil
+			// Their expressions run: assert sh(script: …, returnStatus: true) == 0.
+			p.advance()
+			node := &groovyAssert{groovySpan: groovySpan{Start: start}, Kind: token.text, Value: p.expression()}
+			if token.text == "assert" && p.take(":") {
+				p.skipNewlines()
+				node.Message = p.expression()
+			}
+			node.End = p.lastEnd()
+			return p.finish(node, start)
 		case "static", "final", "private", "public", "protected":
 			// A modifier before a declaration.
 			p.advance()
@@ -1286,13 +1320,14 @@ func (p *groovyParser) expression() groovyNode {
 			// a ? b : c
 			p.advance()
 			p.skipNewlines()
-			p.expression()
+			then := p.expression()
 			p.skipNewlines()
-			if p.take(":") {
-				p.skipNewlines()
-				p.expression()
+			if !p.take(":") {
+				return &groovyUnknown{groovySpan{start, p.lastEnd()}}
 			}
-			return &groovyUnknown{groovySpan{start, p.lastEnd()}}
+			p.skipNewlines()
+			otherwise := p.expression()
+			return &groovyTernary{groovySpan: groovySpan{start, p.lastEnd()}, Condition: left, Then: then, Else: otherwise}
 		}
 		return left
 	}
@@ -1313,7 +1348,7 @@ func (p *groovyParser) primary() groovyNode {
 	switch token.kind {
 	case groovyStringToken:
 		p.advance()
-		return &groovyString{groovySpan: groovySpan{token.start, token.end}, Value: token.str}
+		return &groovyString{groovySpan: groovySpan{token.start, token.end}, Value: token.str, Interpolations: p.interpolations(token.str)}
 	case groovyNumber:
 		p.advance()
 		return &groovyLiteral{groovySpan: groovySpan{token.start, token.end}, Text: token.text}
@@ -1349,6 +1384,46 @@ func (p *groovyParser) primary() groovyNode {
 		}
 	}
 	return &groovyUnknown{groovySpan{token.start, token.start}}
+}
+
+// interpolations parses the expressions of a GString's ${…} interpolations.
+func (p *groovyParser) interpolations(str *groovyStr) []groovyNode {
+	var nodes []groovyNode
+	for _, part := range str.parts {
+		if !part.braced || strings.TrimSpace(part.expr) == "" {
+			continue
+		}
+		start, end := part.exprStart, part.exprStart+len(part.expr)
+		unknown := &groovyUnknown{groovySpan{start, end}}
+		if p.depth > groovyDepthLimit || p.nested >= groovyInterpolationLimit {
+			nodes = append(nodes, unknown)
+			continue
+		}
+		tokens, err := lexGroovy(part.expr)
+		if err != nil {
+			nodes = append(nodes, unknown)
+			continue
+		}
+		for i := range tokens {
+			tokens[i].start += start
+			tokens[i].end += start
+			if tokens[i].str != nil {
+				for j := range tokens[i].str.parts {
+					tokens[i].str.parts[j].exprStart += start
+				}
+			}
+		}
+		inner := &groovyParser{tokens: tokens, source: p.source, depth: p.depth + 1, nested: p.nested + 1}
+		inner.skipNewlines()
+		node := inner.expression()
+		inner.skipNewlines()
+		if inner.peek().kind != groovyEOF {
+			// More than one expression, such as ${a; b}.
+			node = unknown
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes
 }
 
 // postfix reads property access, calls, indexes and closure arguments.

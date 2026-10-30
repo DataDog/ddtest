@@ -506,7 +506,9 @@ error.
 Each leaf stage becomes one job, named by its stage path (`Checks / Unit`),
 with matrix values appended (`Test / Run (22, linux)`): declarative `steps`,
 nested `stages`, `parallel` stages, `matrix` cells (literal `axes`, with
-`excludes` and `notValues`, at most 200 cells) and scripted `stage` blocks; a
+`excludes` and `notValues`, at most 200 cells and 32 axes per matrix and 1,000
+cells in all of a Jenkinsfile's matrices, counted before any cell is built)
+and scripted `stage` blocks; a
 scripted `node` without stages is one job, as is a scripted `parallel` branch.
 These names are the job keys `--ci-runtime` takes. Each top-level statement of
 a literal `sh` script is one step: the statements of one script share its
@@ -539,9 +541,14 @@ its steps count; what the `try` assigns is unknown in it; any `switch` case may
 be where it starts, falling through to the next case until a `break`; a loop's
 body may run any number of times, and the variable its header binds, as in
 `for (suite in [...])`, is unknown in it; a loop header ddtest cannot read is
-unresolved), the value of an assignment or a `return` (`def out =
-sh(…).trim()` runs that `sh`; a method on a value such as `.trim()` runs
-nothing), the arguments of steps that run no command (`echo sh(script: …,
+unresolved), the value of an assignment, a `return`, an `assert` (with its
+message) or a `throw` (`def out = sh(…).trim()` and `assert sh(script: …,
+returnStatus: true) == 0` run that `sh`; a method on a value such as `.trim()`
+runs nothing), both branches of a ternary (`cond ? sh('a') : sh('b')`, possible
+paths like an `if`/`else`), the `${…}` interpolations of a GString wherever it
+is evaluated (`echo "${sh(script: …, returnStdout: true)}"` and
+`sh "x ${sh(…)}"` run the inner `sh`; a value longer than 64 KiB is unknown),
+the `sh` calls in the arguments of other steps (`dir(sh(…).trim())`), the arguments of steps that run no command (`echo sh(script: …,
 returnStdout: true)` runs that `sh`; in `checkout`, `properties`, `junit`,
 `recordIssues` and the other configuration steps, a call such as `esLint()` or
 `scmGit(…)` names a plugin component and runs nothing) and wrappers such as
@@ -556,7 +563,10 @@ Groovy function of the Jenkinsfile (what it assigns to `env` is unknown
 after it), `load`, `evaluate`, `build job:`, `docker.build`, an unknown call
 with a closure (itself, even when the closure only configures it, and each
 step inside it), a scripted `parallel` over a computed map, a
-matrix ddtest cannot expand, `bat`/`powershell` and Windows agent labels, an
+matrix ddtest cannot expand, Groovy ddtest cannot read (a constructor such
+as `new File(…)`, a slashy string's interpolation, `${a; b}`) that calls `sh`,
+`bat`, `powershell`, `load`, a Groovy function of the Jenkinsfile or a step
+ddtest does not know, `bat`/`powershell` and Windows agent labels, an
 `sh` outside a `node` or under `agent none`, a script with another
 interpreter's shebang, and `docker run`/`exec` or a Compose `run`/`exec`/`up`
 inside `sh`, whose tests run in a container ddtest cannot validate.
@@ -643,6 +653,20 @@ to confirm what only Jenkins shows (`ci_setup_confirmation_required`):
   `chruby`, `asdf`, `mise`, or sourcing `nvm.sh` or RVM's script) changes: the
   plugin installs the tracer with the agent's default toolchain, which must be
   the one the tests use.
+
+The job's host description names such a version manager, so the runtime the
+user states for the job is the one the tests run on after it. A statement in
+`sh` that only selects a runtime for the rest of its script (`nvm use 22`,
+`nvm install`, `fnm use`, `n 22`, `nodenv shell`, `rbenv shell 3.3`,
+`rvm use 3.3`, `chruby 3.3`, `eval "$(rbenv init -)"`, sourcing `nvm.sh`)
+keeps the stated runtime for the statements after it, and one that names a
+version, or reads one ddtest can compare from `.nvmrc` (`nvm use` without a
+version) or `.ruby-version` (`rbenv init`, chruby's `auto.sh`), must agree
+with the statement for the tests that run after it in the same script:
+otherwise the command fails with `ci_runtime_conflict`. A command that also
+runs something is no selection: `nvm exec 22 npm test`, `rvm use 3.3 do …`,
+and `nvm use 22 && npm test`, which, as in any provider's run step, is one
+command the shared resolver does not read (write the two on separate lines).
 
 `final_response` lists each confirmation as stated by the user, not verified,
 next to the stated runtime and the caveat that ddtest read the Jenkinsfile, not

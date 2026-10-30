@@ -218,9 +218,13 @@ x ? a : b
 	require.NotNil(t, try.Finally)
 	require.Equal(t, "for", statements[6].(*groovyControl).Kind)
 	require.Equal(t, "switch", statements[7].(*groovyControl).Kind)
-	require.IsType(t, &groovyBinary{}, statements[8], "counter++")
-	require.IsType(t, &groovyUnknown{}, statements[9], "a ternary is unknown")
-	require.Len(t, statements, 10, "imports and throw run nothing")
+	require.Equal(t, "throw", statements[8].(*groovyAssert).Kind, "a throw's value runs")
+	require.IsType(t, &groovyBinary{}, statements[9], "counter++")
+	ternary := statements[10].(*groovyTernary)
+	require.Equal(t, []string{"x"}, ternary.Condition.(*groovyName).Path)
+	require.Equal(t, []string{"a"}, ternary.Then.(*groovyName).Path)
+	require.Equal(t, []string{"b"}, ternary.Else.(*groovyName).Path)
+	require.Len(t, statements, 11, "imports run nothing")
 }
 
 func TestGroovyParserRecoversWithUnknownNodes(t *testing.T) {
@@ -265,6 +269,8 @@ func FuzzParseGroovy(f *testing.F) {
 		"if (a) b else { c }; try { } catch (e) { } finally { }",
 		"\"${\"${'}'}\"}\"",
 		"switch (x) { case 1: case 'a': break\n default: sh 'b' }\nfor (int i = 0; i < 2; i++) {}\nfor (a in b) {}\nfor (;;) {}\nenv['A'] = env[x]",
+		"assert sh(script: 'npm test', returnStatus: true) == 0 : \"m ${x}\"\nthrow new Exception(sh('x'))\ndef r = a ? sh('b') : c ?: d",
+		"echo \"${sh(script: \"x ${y ? 'a' : sh('z')}\", returnStdout: true)} ${a; b} ${\"${\"${q}\"}\"}\"\ndef p = /${sh('x')}/",
 	} {
 		f.Add(seed)
 	}

@@ -168,11 +168,14 @@ func (javascriptDiscovery) cacheVariable(name string) bool {
 // setupNodeSource is the source of a Node actions/setup-node selects.
 const setupNodeSource = "actions/setup-node"
 
+// javascriptStatedVersion is a stated Node version.
+var javascriptStatedVersion = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`)
+
 // A stated Node is compared like a node:<version> image tag's.
 var javascriptStatedRuntime = &statedRuntime{
 	Names:   []string{"node", "js"},
 	Display: "Node",
-	Version: regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`),
+	Version: javascriptStatedVersion,
 	Example: "22, 22.11 or 22.11.0",
 	base:    javascriptImageRuntime,
 	// setup-node (also through a node-version-file) takes node-semver
@@ -216,7 +219,79 @@ var javascriptStatedRuntime = &statedRuntime{
 			return tracerRequirement{}, errors.New("tracer metadata is not read offline")
 		}, framework)
 	},
-	runtime: func(finding RuntimeFinding) string { return finding.Node },
+	runtime:        func(finding RuntimeFinding) string { return finding.Node },
+	testStep:       javascriptTestStep,
+	shellSelection: javascriptShellSelection,
+	fileVersion: func(line string) string {
+		if version := strings.TrimPrefix(line, "v"); javascriptStatedVersion.MatchString(version) {
+			return version
+		}
+		return ""
+	},
+}
+
+// javascriptShellSelection reads a Node version manager's selection: nvm,
+// fnm or nodenv's use, install or shell, n <version>, and the scripts and
+// init commands that load a manager, which select its default.
+func javascriptShellSelection(words []string) (version, versionFile string, ok bool) {
+	if len(words) == 0 {
+		return "", "", false
+	}
+	var flags, positional []string
+	for _, word := range words[min(2, len(words)):] {
+		if strings.HasPrefix(word, "-") {
+			flags = append(flags, word)
+		} else {
+			positional = append(positional, word)
+		}
+	}
+	named := func(file string) (string, string, bool) {
+		if slices.ContainsFunc(flags, func(flag string) bool { return strings.HasPrefix(flag, "--lts") }) {
+			return "", "", true
+		}
+		switch {
+		case len(positional) == 0:
+			return "", file, true
+		case len(positional) == 1 && javascriptStatedVersion.MatchString(strings.TrimPrefix(positional[0], "v")):
+			return strings.TrimPrefix(positional[0], "v"), "", true
+		}
+		// An alias, such as default or lts/*: a version ddtest cannot tell.
+		return "", "", true
+	}
+	sub := ""
+	if len(words) > 1 {
+		sub = words[1]
+	}
+	switch path.Base(words[0]) {
+	case "nvm":
+		if sub == "use" || sub == "install" {
+			return named(".nvmrc")
+		}
+	case "fnm":
+		if sub == "use" || sub == "install" {
+			return named("")
+		}
+		if sub == "env" {
+			return "", "", true
+		}
+	case "nodenv":
+		if sub == "shell" || sub == "local" || sub == "global" {
+			return named("")
+		}
+		if sub == "init" {
+			return "", ".node-version", true
+		}
+	case "n":
+		if len(words) == 2 && !strings.HasPrefix(sub, "-") && !slices.Contains([]string{"run", "exec", "which", "rm", "ls", "lsr", "prune", "uninstall", "doctor", "help"}, sub) {
+			positional, flags = []string{sub}, nil
+			return named("")
+		}
+	case "source", ".":
+		if sub != "" && path.Base(sub) == "nvm.sh" && len(words) == 2 {
+			return "", "", true
+		}
+	}
+	return "", "", false
 }
 
 func (javascriptDiscovery) statedRuntime() *statedRuntime { return javascriptStatedRuntime }

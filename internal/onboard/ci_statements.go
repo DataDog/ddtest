@@ -109,6 +109,19 @@ type statedRuntime struct {
 	check func(ctx context.Context, root, framework string) RuntimeCheck
 	// runtime is the version a finding records.
 	runtime func(finding RuntimeFinding) string
+	// testStep reports a step that runs the language's tests on a matrix
+	// row (nil: the job without a row).
+	testStep func(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) bool
+	// shellSelection reads a shell command, by its words, that only selects
+	// one of the language's runtimes for the rest of its shell, such as nvm
+	// use 22: version is the version it names, or "" for one it reads from
+	// versionFile (in the directory it runs in; "" when none or when ddtest
+	// cannot tell). ok is false for any other command, including one that
+	// also runs something, such as nvm exec 20 npm test.
+	shellSelection func(words []string) (version, versionFile string, ok bool)
+	// fileVersion is the version a version file's line names, such as an
+	// .nvmrc's v22, or "" for one it cannot compare.
+	fileVersion func(line string) string
 }
 
 // statedRuntimeLanguages lists the languages that take runtime statements.
@@ -295,6 +308,21 @@ func (s CIRuntimeStatement) jobMatches(workflow, job string) bool {
 	return s.Job == "" || s.Job == job || s.Job == workflow+" / "+job
 }
 
+// jobRuntimeStatement is the statement of a job's runtime for the installer
+// token: the last one for the job, else the first one for every job.
+func jobRuntimeStatement(statements []CIRuntimeStatement, workflow, job, token string) (CIRuntimeStatement, bool) {
+	var found *CIRuntimeStatement
+	for i, statement := range statements {
+		if statement.Runtime == token && statement.jobMatches(workflow, job) && (found == nil || statement.Job != "") {
+			found = &statements[i]
+		}
+	}
+	if found == nil {
+		return CIRuntimeStatement{}, false
+	}
+	return *found, true
+}
+
 // fillStatedRuntimes records, on each job whose image selects no runtime and
 // that runs on a host the user can describe on some matrix row, the version
 // the user stated for it: a statement for the job wins over one for every
@@ -312,13 +340,8 @@ func fillStatedRuntimes(workflows []ciWorkflow) {
 				if runtime.base(job) != "" || jobRuntimeHost(job, runtime.Display) == "" {
 					continue
 				}
-				version := ""
-				for _, statement := range statements {
-					if statement.Runtime == token && statement.jobMatches(workflow.Path, name) && (version == "" || statement.Job != "") {
-						version = statement.Version
-					}
-				}
-				if version != "" {
+				if statement, found := jobRuntimeStatement(statements, workflow.Path, name, token); found {
+					version := statement.Version
 					if job.Stated == nil {
 						job.Stated = map[string]string{}
 					}
@@ -392,24 +415,38 @@ const agentHost = "runner or agent environment, with no image in the configurati
 
 // CheckCIRuntimeStatements rejects a statement for a named job whose runtime
 // the configuration already selects with a different version. A statement
-// for every job never conflicts: it fills only unknown runtimes.
+// for every job never conflicts: it fills only unknown runtimes. Either
+// conflicts with a version manager that selects another version for the
+// job's tests in their shell (runtimeStep.ShellRuntime): the statement
+// states the runtime the manager selects.
 func CheckCIRuntimeStatements(root string) error {
+	statements := currentStatements().runtimes
 	var scoped []CIRuntimeStatement
-	for _, statement := range currentStatements().runtimes {
+	for _, statement := range statements {
 		if statement.Job != "" {
 			scoped = append(scoped, statement)
 		}
 	}
-	if len(scoped) == 0 {
+	if len(statements) == 0 {
 		return nil
 	}
 	provider, err := currentCIProvider(root)
 	if err != nil {
+		if len(scoped) == 0 {
+			return nil // A statement for every job names no job to find.
+		}
 		return err
 	}
 	workflows, err := provider.readWorkflows(root)
 	if err != nil {
 		return nil // Reading reports the configuration error itself.
+	}
+	shell := shellRuntimeConflicts(root, workflows, statements)
+	if len(scoped) == 0 {
+		if len(shell) > 0 {
+			return &CIRuntimeConflict{Conflicts: shell}
+		}
+		return nil
 	}
 	// Different keys can name the same job (workflow / job, or the job name
 	// alone): their versions must agree.
@@ -460,10 +497,48 @@ func CheckCIRuntimeStatements(root string) error {
 		statements.uncompared = uncompared
 		activeStatements.Store(statements)
 	}
-	if len(conflicts) > 0 {
+	if conflicts = append(conflicts, shell...); len(conflicts) > 0 {
 		return &CIRuntimeConflict{Conflicts: conflicts}
 	}
 	return nil
+}
+
+// shellRuntimeConflicts lists the statements that contradict the version a
+// version manager selects in the shell of a job's test step, such as nvm use
+// 20 before npm test in a Jenkins sh, for a job the statement states.
+func shellRuntimeConflicts(root string, workflows []ciWorkflow, statements []CIRuntimeStatement) []string {
+	var conflicts []string
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			for _, language := range statedRuntimeLanguages() {
+				token, runtime := language.actionLanguage(), language.statedRuntime()
+				if runtime.testStep == nil || runtime.base(job) != "" || jobRuntimeHost(job, runtime.Display) == "" {
+					continue
+				}
+				statement, found := jobRuntimeStatement(statements, workflow.Path, name, token)
+				if !found {
+					continue
+				}
+				var sources []string
+				for _, step := range job.Steps {
+					selection := step.ShellRuntime[token]
+					if selection.Version == "" || slices.Contains(sources, selection.Source) || !runtime.testStep(root, workflow, job, step, nil) {
+						continue
+					}
+					agree, comparable := sameVersionLine(selection.Version, statement.Version), true
+					if runtime.compare != nil {
+						agree, comparable = runtime.compare(selection.Version, selection.Source, statement.Version)
+					}
+					if comparable && !agree {
+						sources = append(sources, selection.Source)
+						conflicts = append(conflicts, fmt.Sprintf("--ci-runtime %s contradicts %s %s, which %s selects for the tests in %s / %s", statement, runtime.Display, selection.Version, selection.Source, workflow.Path, name))
+					}
+				}
+			}
+		}
+	}
+	return conflicts
 }
 
 // installedRuntime is the version a job's steps select on every matrix row

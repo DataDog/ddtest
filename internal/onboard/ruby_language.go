@@ -473,7 +473,62 @@ var rubyStatedRuntime = &statedRuntime{
 	check: func(_ context.Context, root, framework string) RuntimeCheck {
 		return RubyCIConfiguration(root, framework)
 	},
-	runtime: func(finding RuntimeFinding) string { return finding.Runtime },
+	runtime:        func(finding RuntimeFinding) string { return finding.Runtime },
+	testStep:       rubyTestStep,
+	shellSelection: rubyShellSelection,
+	fileVersion:    rubyNamedVersion,
+}
+
+// rubyNamedVersion is the Ruby version a version manager's argument or a
+// .ruby-version line names, such as 3.3 or ruby-3.3.6; "" for another
+// engine or one ddtest cannot compare.
+func rubyNamedVersion(word string) string {
+	if value := strings.TrimPrefix(word, "ruby-"); rubyImageVersion.MatchString(value) {
+		return value
+	}
+	return ""
+}
+
+// rubyShellSelection reads a Ruby version manager's selection: rbenv's
+// shell, local or global, rvm use without a command to run, chruby
+// <version>, and the scripts and init commands that load a manager, which
+// select its default or, for rbenv and chruby's auto.sh, .ruby-version.
+func rubyShellSelection(words []string) (version, versionFile string, ok bool) {
+	if len(words) == 0 {
+		return "", "", false
+	}
+	named := rubyNamedVersion
+	sub := ""
+	if len(words) > 1 {
+		sub = words[1]
+	}
+	switch path.Base(words[0]) {
+	case "rbenv":
+		if (sub == "shell" || sub == "local" || sub == "global") && len(words) == 3 {
+			return named(words[2]), "", true
+		}
+		if sub == "init" {
+			return "", ".ruby-version", true
+		}
+	case "rvm":
+		if sub == "use" && len(words) >= 3 && !slices.Contains(words, "do") {
+			return named(words[2]), "", true
+		}
+	case "chruby":
+		if len(words) == 2 {
+			return named(sub), "", true
+		}
+	case "source", ".":
+		if len(words) == 2 {
+			switch path.Base(sub) {
+			case "rvm", "rvm.sh", "chruby.sh":
+				return "", "", true
+			case "auto.sh":
+				return "", ".ruby-version", true
+			}
+		}
+	}
+	return "", "", false
 }
 
 func (rubyDiscovery) statedRuntime() *statedRuntime { return rubyStatedRuntime }

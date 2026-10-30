@@ -8,8 +8,11 @@ package onboard
 import (
 	"cmp"
 	"fmt"
+	"io"
 	"maps"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -24,8 +27,21 @@ import (
 // pipelines. They thread an immutable jenkinsScope, so what a stage selects
 // (agent, environment, directory, setup) never leaks to its siblings.
 
-// jenkinsMatrixLimit bounds the cells of one matrix.
-const jenkinsMatrixLimit = 200
+const (
+	// jenkinsMatrixLimit bounds the cells of one matrix, and
+	// jenkinsMatrixBudget those of all of a Jenkinsfile's matrices, nested
+	// ones included.
+	jenkinsMatrixLimit  = 200
+	jenkinsMatrixBudget = 1000
+	// jenkinsValueLimit bounds a value ddtest evaluates, such as a GString
+	// that interpolates others.
+	jenkinsValueLimit = 1 << 16
+	// jenkinsNameLimit bounds a stage's name and a matrix axis's value,
+	// which the names of the jobs inside repeat, and jenkinsAxisLimit the
+	// axes of one matrix.
+	jenkinsNameLimit = 256
+	jenkinsAxisLimit = 32
+)
 
 // jenkinsAgent is where a scope's steps run.
 type jenkinsAgent struct {
@@ -153,6 +169,8 @@ type jenkinsReader struct {
 	workspace string
 	// setups are the datadog(…) options whose scope includes container jobs.
 	setups []*jenkinsSetup
+	// cells counts the matrix cells expanded so far.
+	cells int
 }
 
 // readJenkinsfile reads one Jenkinsfile into a workflow.
@@ -383,6 +401,9 @@ func (r *jenkinsReader) interpolate(node *groovyString, scope jenkinsScope) (str
 		value, problem := r.reference(part.expr, scope)
 		if problem != "" {
 			return "", problem
+		}
+		if text.Len()+len(value) > jenkinsValueLimit {
+			return "", fmt.Sprintf("the string %s, whose value is longer than %d bytes", r.text(node), jenkinsValueLimit)
 		}
 		text.WriteString(value)
 	}
@@ -710,12 +731,12 @@ func (r *jenkinsReader) stages(body *groovyBlock, scope jenkinsScope, concurrent
 func (r *jenkinsReader) stageName(call *groovyCall, scope jenkinsScope) string {
 	positional, named := jenkinsArgs(call)
 	if len(positional) > 0 {
-		if name, problem := r.value(positional[0], scope); problem == "" {
+		if name, problem := r.value(positional[0], scope); problem == "" && len(name) <= jenkinsNameLimit {
 			return name
 		}
 	}
 	if value, ok := named["name"]; ok {
-		if name, problem := r.value(value, scope); problem == "" {
+		if name, problem := r.value(value, scope); problem == "" && len(name) <= jenkinsNameLimit {
 			return name
 		}
 	}
@@ -867,8 +888,11 @@ func (r *jenkinsReader) matrix(call *groovyCall, scope jenkinsScope) jenkinsScop
 				case "values":
 					for _, value := range positional {
 						text, valueProblem := r.value(value, scope)
-						if valueProblem != "" {
+						switch {
+						case valueProblem != "":
 							problem = "the axis values " + r.text(field) + " are not literal"
+						case len(text) > jenkinsNameLimit:
+							problem = fmt.Sprintf("an axis value is longer than %d bytes", jenkinsNameLimit)
 						}
 						current.values = append(current.values, text)
 					}
@@ -880,15 +904,42 @@ func (r *jenkinsReader) matrix(call *groovyCall, scope jenkinsScope) jenkinsScop
 			axes = append(axes, current)
 		}
 	}
+	if len(axes) > jenkinsAxisLimit {
+		problem = fmt.Sprintf("it has more than %d axes", jenkinsAxisLimit)
+	}
 	if len(axes) == 0 {
 		problem = "it has no axes ddtest can read"
 		if _, ok := directives["axes"]; ok {
 			problem = "its axes are not literal"
 		}
 	}
+	// The product is bounded before it is built, and with the cells the
+	// Jenkinsfile's other matrices expand, since each cell reads its stages
+	// again.
+	count := 1
+	for _, current := range axes {
+		if len(current.values) == 0 || problem != "" {
+			break // Reported as an axis without values.
+		}
+		if len(current.values) > jenkinsMatrixLimit/count {
+			count = jenkinsMatrixLimit + 1
+			break
+		}
+		count *= len(current.values)
+	}
+	switch {
+	case problem != "":
+	case count > jenkinsMatrixLimit:
+		problem = fmt.Sprintf("it has more than %d cells", jenkinsMatrixLimit)
+	case r.cells+count > jenkinsMatrixBudget:
+		problem = fmt.Sprintf("with the Jenkinsfile's other matrices, it has more than %d cells", jenkinsMatrixBudget)
+	}
 	cells := []map[string]string{{}}
 	for _, current := range axes {
-		var next []map[string]string
+		if problem != "" {
+			break
+		}
+		next := make([]map[string]string, 0, len(cells)*len(current.values))
 		for _, cell := range cells {
 			for _, value := range current.values {
 				combined := maps.Clone(cell)
@@ -897,10 +948,6 @@ func (r *jenkinsReader) matrix(call *groovyCall, scope jenkinsScope) jenkinsScop
 			}
 		}
 		cells = next
-		if len(cells) > jenkinsMatrixLimit {
-			problem = fmt.Sprintf("it has more than %d cells", jenkinsMatrixLimit)
-			break
-		}
 	}
 	if problem != "" {
 		slot := &jenkinsSlot{name: where, scope: scope}
@@ -952,6 +999,7 @@ func (r *jenkinsReader) matrix(call *groovyCall, scope jenkinsScope) jenkinsScop
 		}
 		return false
 	}
+	r.cells += len(cells)
 	start := r.invalidate(scope, call.Closure.Body)
 	var paths []jenkinsScope
 	for _, cell := range cells {
@@ -1017,7 +1065,7 @@ var jenkinsConfigurationSteps = []string{
 func (r *jenkinsReader) configuration(node groovyNode, scope *jenkinsScope, slot *jenkinsSlot) {
 	switch node := node.(type) {
 	case *groovyCall:
-		step := slices.Contains([]string{"sh", "bat", "powershell", "pwsh", "load", "evaluate", "build"}, node.Name) || r.functions[node.Name] != nil || strings.Contains(node.Name, ".")
+		step := slices.Contains(jenkinsExecutableSteps, node.Name) || r.functions[node.Name] != nil || strings.Contains(node.Name, ".")
 		if node.Receiver != nil || node.Closure != nil || step {
 			r.expression(node, scope, slot)
 			return
@@ -1104,7 +1152,14 @@ func (r *jenkinsReader) statement(statement groovyNode, scope *jenkinsScope, slo
 	case *groovyReturn:
 		// A returned expression still runs: return sh('npm test').
 		r.expression(node.Value, scope, slot)
-	case *groovyString, *groovyLiteral, *groovyJump:
+	case *groovyAssert:
+		// assert sh(script: 'npm test', returnStatus: true) == 0 runs the
+		// sh; a passing build passes the assertion.
+		r.expression(node.Value, scope, slot)
+		r.expression(node.Message, scope, slot)
+	case *groovyTernary, *groovyString:
+		r.expression(node, scope, slot)
+	case *groovyLiteral, *groovyJump:
 	case *groovyBinary:
 		if node.Op == "++" || node.Op == "--" {
 			return // A counter changes no step.
@@ -1382,6 +1437,108 @@ func (r *jenkinsReader) expression(node groovyNode, scope *jenkinsScope, slot *j
 		for _, entry := range node.Entries {
 			r.expression(entry.Value, scope, slot)
 		}
+	case *groovyTernary:
+		// Either branch may run, as an if/else's.
+		r.expression(node.Condition, scope, slot)
+		then, otherwise := *scope, *scope
+		r.expression(node.Then, &then, slot)
+		r.expression(node.Else, &otherwise, slot)
+		*scope = r.merge(then, otherwise)
+	case *groovyString:
+		// "${sh(script: 'npm test', returnStdout: true)}" runs the sh.
+		for _, interpolation := range node.Interpolations {
+			r.expression(interpolation, scope, slot)
+		}
+		if quote := node.Value.quote; (quote == "/" || quote == "$/") && len(node.Value.parts) == 1 && node.Value.parts[0].interpolated {
+			// A slashy string's interpolations are not read.
+			r.opaque(node, node.Value.parts[0].text, slot)
+		}
+	case *groovyUnknown:
+		r.opaque(node, groovyText(r.source, node), slot)
+	}
+}
+
+// jenkinsExecutableSteps run commands or code ddtest may not read.
+var jenkinsExecutableSteps = []string{"sh", "bat", "powershell", "pwsh", "load", "evaluate", "build"}
+
+// jenkinsShellStepName finds a shell step's name in text.
+var jenkinsShellStepName = regexp.MustCompile(`\b(?:sh|bat|powershell|pwsh)\b`)
+
+// opaque reports syntax ddtest cannot read, node with source text, that
+// calls a step which may run tests, such as sh in new File(sh(…)), as
+// unresolved: it is never dropped.
+func (r *jenkinsReader) opaque(node groovyNode, text string, slot *jenkinsSlot) {
+	if called := r.opaqueCall(text); called != "" {
+		r.unresolved(slot, node, "the Groovy expression "+r.text(node)+" is not one ddtest can read, and it calls "+called+", which may run tests")
+	}
+}
+
+// opaqueCall is the first step text calls that may run tests: sh, bat,
+// powershell, load, a Groovy function of the Jenkinsfile, or a step ddtest
+// does not know; a method on a value or a constructor (new File(…)) is
+// none. Empty when it calls none.
+func (r *jenkinsReader) opaqueCall(text string) string {
+	tokens, err := lexGroovy(text)
+	if err != nil {
+		// Text ddtest cannot even split: any shell step name in it may run.
+		return jenkinsShellStepName.FindString(text)
+	}
+	for i, token := range tokens {
+		if token.kind != groovyIdent || i+1 >= len(tokens) {
+			continue
+		}
+		next := tokens[i+1]
+		calls := next.kind == groovyPunct && (next.text == "(" || next.text == "{") || next.kind == groovyStringToken && next.spaced
+		if !calls || i > 0 && (tokens[i-1].kind == groovyPunct && slices.Contains([]string{".", "?.", "*.", ".&", "@"}, tokens[i-1].text) || tokens[i-1].kind == groovyIdent && slices.Contains([]string{"new", "def", "void"}, tokens[i-1].text)) {
+			continue
+		}
+		name := token.text
+		switch {
+		case slices.Contains(jenkinsExecutableSteps, name) || r.functions[name] != nil:
+			return name
+		case name == "$", name[0] >= 'A' && name[0] <= 'Z', slices.Contains([]string{"if", "for", "while", "switch", "catch", "return", "assert", "throw"}, name):
+		case slices.Contains(jenkinsNonCommandSteps, name), slices.Contains(jenkinsValueFunctions, name), slices.Contains(jenkinsValueMethods, name), slices.Contains(jenkinsWrappers, name), slices.Contains(jenkinsToolWrappers, name):
+		default:
+			return name
+		}
+	}
+	return ""
+}
+
+// argumentSteps runs what a step's arguments run before the step, for the
+// steps that read their arguments as values: the interpolations of their
+// strings, and the calls among them that run steps, such as
+// dir(sh(script: …, returnStdout: true).trim()). A call among them that
+// runs none, such as configFile(…), names a plugin component.
+func (r *jenkinsReader) argumentSteps(node groovyNode, scope *jenkinsScope, slot *jenkinsSlot) {
+	switch node := node.(type) {
+	case *groovyString, *groovyTernary, *groovyUnknown:
+		r.expression(node, scope, slot)
+	case *groovyList:
+		for _, item := range node.Items {
+			r.argumentSteps(item, scope, slot)
+		}
+	case *groovyMap:
+		for _, entry := range node.Entries {
+			r.argumentSteps(entry.Value, scope, slot)
+		}
+	case *groovyBinary:
+		r.argumentSteps(node.Left, scope, slot)
+		r.argumentSteps(node.Right, scope, slot)
+	case *groovyIndex:
+		r.argumentSteps(node.Receiver, scope, slot)
+		r.argumentSteps(node.Index, scope, slot)
+	case *groovyCall:
+		if node.Receiver == nil && (slices.Contains(jenkinsExecutableSteps, node.Name) || r.functions[node.Name] != nil) {
+			r.expression(node, scope, slot)
+			return
+		}
+		if node.Receiver != nil {
+			r.argumentSteps(node.Receiver, scope, slot)
+		}
+		for _, arg := range node.Args {
+			r.argumentSteps(arg.Value, scope, slot)
+		}
 	}
 }
 
@@ -1536,6 +1693,13 @@ func jenkinsJumpsInside(block *groovyBlock) bool {
 
 // call reads one step call.
 func (r *jenkinsReader) call(call *groovyCall, scope *jenkinsScope, slot *jenkinsSlot) {
+	if call.Receiver == nil && call.Name != "pipeline" && !slices.Contains(jenkinsEnvMethods, call.Name) && !slices.Contains(jenkinsNonCommandSteps, call.Name) && (r.functions[call.Name] != nil || !jenkinsValueMethod(call.Name)) {
+		// The steps that read their arguments as values still run what
+		// the arguments run first: sh "${sh(script: …, returnStdout: true)}".
+		for _, arg := range call.Args {
+			r.argumentSteps(arg.Value, scope, slot)
+		}
+	}
 	positional, named := jenkinsArgs(call)
 	outer := *scope
 	// body runs the closure in inner; what it assigns reaches the statements
@@ -1974,6 +2138,7 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 		return
 	}
 	pathChange := scope.pathChange
+	selected := map[string]ciShellRuntime{}
 	for i, stmt := range file.Stmts {
 		known := mergeEnvironment(mergeEnvironment(env, state.env), state.references)
 		statement := strings.TrimSpace(jenkinsStatementText(script, file.Stmts, i))
@@ -1996,6 +2161,18 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 			// Such as nvm use 20: the tests run on another runtime than
 			// the agent's default.
 			pathChange = "the runtime " + manager + " (sh script at " + r.where(call) + ") selects"
+		}
+		if token, selection, ok := r.shellSelection(stmt, state.directory, call); ok && stepReason == "" {
+			// Such as nvm use 22: the job's host description names it, so
+			// the runtime the user states for the host (--ci-runtime) is the
+			// one it selects, and the later statements of this shell check
+			// that statement against it.
+			selected[token] = selection
+			r.add(slot, call, step)
+			continue
+		}
+		if len(selected) > 0 {
+			step.ShellRuntime = maps.Clone(selected)
 		}
 		step.Run = command
 		step.ResolutionError = stepReason
@@ -2109,6 +2286,115 @@ func jenkinsRuntimeManager(stmt *syntax.Stmt) string {
 		return found == ""
 	})
 	return found
+}
+
+// shellSelection reads a statement that only selects a runtime for the rest
+// of its shell (see statedRuntime.shellSelection), run in directory: the
+// language's installer token and its selection. A version the manager reads
+// from a version file in the checkout is that file's.
+func (r *jenkinsReader) shellSelection(stmt *syntax.Stmt, directory string, call *groovyCall) (string, ciShellRuntime, bool) {
+	command, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || stmt.Negated || stmt.Background || stmt.Coprocess || len(command.Assigns) > 0 {
+		return "", ciShellRuntime{}, false
+	}
+	for _, redirect := range stmt.Redirs {
+		// Only output it discards: nvm use 22 > /dev/null.
+		if redirect.Word == nil || redirect.Hdoc != nil {
+			return "", ciShellRuntime{}, false
+		}
+		if target := redirect.Word.Lit(); target != "/dev/null" && (redirect.Op != syntax.DplOut || target != "1" && target != "2") {
+			return "", ciShellRuntime{}, false
+		}
+	}
+	words, ok := jenkinsCommandWords(command)
+	if len(command.Args) == 2 && command.Args[0].Lit() == "eval" {
+		// eval "$(rbenv init -)"
+		words, ok = jenkinsEvaluatedWords(command.Args[1])
+	}
+	if !ok {
+		return "", ciShellRuntime{}, false
+	}
+	for _, language := range statedRuntimeLanguages() {
+		runtime := language.statedRuntime()
+		if runtime.shellSelection == nil {
+			continue
+		}
+		version, versionFile, selects := runtime.shellSelection(words)
+		if !selects {
+			continue
+		}
+		source := shellText(command) + " in the sh script at " + r.where(call)
+		if version == "" && versionFile != "" && runtime.fileVersion != nil {
+			if value := jenkinsVersionFile(r.root, path.Join(directory, versionFile), runtime); value != "" {
+				version, source = value, source+" (from "+path.Join(directory, versionFile)+")"
+			}
+		}
+		return language.actionLanguage(), ciShellRuntime{Version: version, Source: source}, true
+	}
+	return "", ciShellRuntime{}, false
+}
+
+// jenkinsCommandWords are a command's words, quotes removed, when none
+// substitutes a command's output.
+func jenkinsCommandWords(command *syntax.CallExpr) ([]string, bool) {
+	var words []string
+	for _, word := range command.Args {
+		substitutes := false
+		syntax.Walk(word, func(node syntax.Node) bool {
+			switch node.(type) {
+			case *syntax.CmdSubst, *syntax.ProcSubst:
+				substitutes = true
+			}
+			return !substitutes
+		})
+		if substitutes {
+			return nil, false
+		}
+		words = append(words, cmp.Or(word.Lit(), strings.Trim(shellText(word), `"'`)))
+	}
+	return words, len(words) > 0
+}
+
+// jenkinsEvaluatedWords are the literal words of the single command a word
+// substitutes, such as "$(rbenv init -)".
+func jenkinsEvaluatedWords(word *syntax.Word) ([]string, bool) {
+	parts := word.Parts
+	if len(parts) == 1 {
+		if quoted, ok := parts[0].(*syntax.DblQuoted); ok {
+			parts = quoted.Parts
+		}
+	}
+	if len(parts) != 1 {
+		return nil, false
+	}
+	substitution, ok := parts[0].(*syntax.CmdSubst)
+	if !ok || len(substitution.Stmts) != 1 || len(substitution.Stmts[0].Redirs) > 0 {
+		return nil, false
+	}
+	command, ok := substitution.Stmts[0].Cmd.(*syntax.CallExpr)
+	if !ok || len(command.Assigns) > 0 {
+		return nil, false
+	}
+	return jenkinsCommandWords(command)
+}
+
+// jenkinsVersionFile is the version a version file in the checkout names,
+// such as .nvmrc's 22, or "" when it names none ddtest can compare.
+func jenkinsVersionFile(root, name string, runtime *statedRuntime) string {
+	if !filepath.IsLocal(name) {
+		return ""
+	}
+	file, err := os.Open(filepath.Join(root, filepath.FromSlash(name)))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+	content, err := io.ReadAll(io.LimitReader(file, 256))
+	if err != nil {
+		return ""
+	}
+	line, _, _ := strings.Cut(strings.TrimSpace(string(content)), "\n")
+	return runtime.fileVersion(strings.TrimSpace(line))
 }
 
 // jenkinsChangesPath reports a statement that assigns PATH.

@@ -121,6 +121,12 @@ type runtimeStep struct {
 	// component such as a runtime installer reads them; an empty version
 	// selects one ddtest cannot tell.
 	Runtime map[string]string `yaml:"-"`
+	// ShellRuntime holds, on a provider whose script statements share one
+	// shell (a Jenkins sh), the runtimes a version manager earlier in that
+	// shell selects for this step, keyed like Runtime. They change no
+	// runtime the checks track: the job's stays its host's, which the user
+	// states for the host with the manager (see CheckCIRuntimeStatements).
+	ShellRuntime map[string]ciShellRuntime `yaml:"-"`
 	// origin is the provider's private reference to the step's source, for
 	// prescribed edits.
 	origin any
@@ -131,6 +137,12 @@ type runtimeStep struct {
 	// runner is known: rowWindows or rowOther. Empty means the job's runner
 	// as a whole decides.
 	rowRunner string
+}
+
+// ciShellRuntime is a version manager's selection in a shell: the version
+// it selects ("" when ddtest cannot tell) and the command that selects it.
+type ciShellRuntime struct {
+	Version, Source string
 }
 
 type runtimeJob struct {

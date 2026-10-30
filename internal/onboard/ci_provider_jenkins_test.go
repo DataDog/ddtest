@@ -12,7 +12,9 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1241,4 +1243,238 @@ func TestJenkinsPluginScopeWithContainerJobs(t *testing.T) {
 	root := jenkinsRepository(t, mixed)
 	require.False(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
 	require.Contains(t, strings.Join(existingSetupProblems(root, "javascript", "jest", ""), "\n"), "Jenkinsfile / Host: The datadog(testOptimization: …) option at Jenkinsfile:4 also applies to Jenkinsfile / Docker")
+}
+
+// A version manager that selects a runtime for the rest of its sh, such as
+// nvm use 22 before npm test, keeps the runtime the user states for the
+// job's host, whose description names the manager: the statement is the
+// runtime the manager selects, and one the manager contradicts conflicts.
+func TestJenkinsVersionManagersKeepTheStatedRuntime(t *testing.T) {
+	confirmed := []string{"jenkins-plugin", "jenkins-plugin-mode=agentless:datadoghq.com", "jenkins-agent-runtime-matches"}
+	check := func(t *testing.T, root string) RuntimeCheck {
+		t.Helper()
+		return checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+			return tracerRequirement{Version: "6.22.0", Node: ">=18"}, nil
+		}, "jest")
+	}
+	unit := func(t *testing.T, result RuntimeCheck) RuntimeFinding {
+		t.Helper()
+		require.Len(t, result.Jobs, 1, result)
+		return result.Jobs[0]
+	}
+	pipeline := func(steps string) string {
+		return "pipeline {\n  agent any\n" + jenkinsDatadogOption + "  stages { stage('Test') { steps {\n" + steps + "\n  } } }\n}\n"
+	}
+
+	for _, script := range []string{"nvm use 22\nnpm test", ". \"$NVM_DIR/nvm.sh\"\nnvm use 22 > /dev/null\nnpm test", "nvm install 22\nnpm test", "nvm use\nnpm test", "fnm use 22\nnpm test", "n 22\nnpm test"} {
+		t.Run(script, func(t *testing.T) {
+			root := jenkinsRepository(t, pipeline("sh '''"+script+"'''"))
+			useCIStatements(t, []string{"node=22"}, confirmed...)
+			require.NoError(t, CheckCIRuntimeStatements(root))
+			result := check(t, root)
+			require.Equal(t, StatusCompatible, result.Status, result)
+			finding := unit(t, result)
+			require.Equal(t, "22", finding.Node)
+			require.True(t, finding.UserStated)
+		})
+	}
+
+	jobs := jenkinsJobs(t, pipeline("sh '''nvm use 20\nnpm test'''"))
+	require.Equal(t, []string{"SETUP", "npm test"}, jenkinsRuns(jobs["Test"]), "the selection is the host's, which its description names")
+	require.Equal(t, map[string]ciShellRuntime{"js": {Version: "20", Source: "nvm use 20 in the sh script at Jenkinsfile:7"}}, jobs["Test"].Steps[2].ShellRuntime)
+	require.Contains(t, jobs["Test"].Host, "with the runtime nvm use 20 (sh script at Jenkinsfile:7) selects on PATH")
+
+	// A version the manager names that the statement contradicts conflicts,
+	// stated for every job or for this one.
+	root := jenkinsRepository(t, pipeline("sh '''nvm use 20\nnpm test'''"))
+	for _, statement := range []string{"node=22", "Test:node=22"} {
+		useCIStatements(t, []string{statement}, confirmed...)
+		var conflict *CIRuntimeConflict
+		require.ErrorAs(t, CheckCIRuntimeStatements(root), &conflict, statement)
+		require.Equal(t, []string{"--ci-runtime " + statement + " contradicts Node 20, which nvm use 20 in the sh script at Jenkinsfile:7 selects for the tests in Jenkinsfile / Test"}, conflict.Conflicts)
+	}
+	// A selection in another sh ends with its shell; one after the tests
+	// selects nothing they run on.
+	writeFile(t, root, "Jenkinsfile", pipeline("sh 'nvm use 20'\nsh 'npm test'\nsh '''npm test\nnvm use 18\nnpm ci'''"))
+	useCIStatements(t, []string{"node=22"}, confirmed...)
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	require.Equal(t, StatusCompatible, check(t, root).Status)
+
+	// nvm use without a version reads .nvmrc.
+	writeFile(t, root, "Jenkinsfile", pipeline("dir('web') { sh '''nvm use\nnpm test''' }"))
+	writeFile(t, root, "web/.nvmrc", "v20.11.1\n")
+	var conflict *CIRuntimeConflict
+	require.ErrorAs(t, CheckCIRuntimeStatements(root), &conflict)
+	require.Contains(t, conflict.Conflicts[0], "contradicts Node 20.11.1, which nvm use in the sh script at Jenkinsfile:7 (from web/.nvmrc) selects")
+	writeFile(t, root, "web/.nvmrc", "lts/iron\n")
+	require.NoError(t, CheckCIRuntimeStatements(root), "an alias is a version ddtest cannot compare")
+
+	// Without a statement, the user is asked for the host's runtime.
+	writeFile(t, root, "Jenkinsfile", pipeline("sh '''nvm use 22\nnpm test'''"))
+	useCIStatements(t, nil, confirmed...)
+	required := RequiredCIRuntimes(t.Context(), root, "javascript", "jest")
+	require.NotNil(t, required)
+	require.Equal(t, []string{"Jenkinsfile / Test"}, required.Jobs)
+
+	// A command that also runs something is no selection: nvm exec runs the
+	// tests, and nvm use 22 && npm test is one command the shared resolver
+	// does not read (as in any provider's run step).
+	jobs = jenkinsJobs(t, pipeline("sh '''nvm exec 22 npm test\nnvm use 22 && npm test\nnvm use $(cat .version)\nnpm test'''"))
+	require.Equal(t, []string{"SETUP", "nvm exec 22 npm test", "nvm use 22 && npm test", "nvm use $(cat .version)", "npm test"}, jenkinsRuns(jobs["Test"]))
+	require.Empty(t, jobs["Test"].Steps[4].ShellRuntime)
+}
+
+// Ruby's version managers keep the stated Ruby the same way.
+func TestJenkinsRubyVersionManagersKeepTheStatedRuntime(t *testing.T) {
+	root := copyFixture(t, "jenkins-ruby")
+	t.Chdir(root)
+	useCIProvider(t, "jenkins")
+	pipeline := func(script string) string {
+		return "datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['RUBY']]) {\n  node {\n    stage('Test') {\n      sh '''" + script + "'''\n    }\n  }\n}\n"
+	}
+	useCIStatements(t, []string{"ruby=3.3"}, "jenkins-plugin", "jenkins-plugin-mode=agentless:datadoghq.com", "jenkins-agent-runtime-matches")
+	for _, script := range []string{"rbenv shell 3.3\nbundle exec rake spec", "rvm use 3.3.6 --default\nbundle exec rake spec", "eval \"$(rbenv init -)\"\nbundle exec rake spec", "source ~/.rvm/scripts/rvm\nchruby ruby-3.3\nbundle exec rake spec"} {
+		writeFile(t, root, "Jenkinsfile", pipeline(script))
+		require.NoError(t, CheckCIRuntimeStatements(root), script)
+		jobs := RubyCIConfigurationForSite(root, "rspec", "datadoghq.com").Jobs
+		require.Len(t, jobs, 1, script)
+		require.Equal(t, "3.3", jobs[0].Runtime, script)
+		require.True(t, jobs[0].UserStated, script)
+	}
+	writeFile(t, root, "Jenkinsfile", pipeline("rvm use 3.2\nbundle exec rake spec"))
+	var conflict *CIRuntimeConflict
+	require.ErrorAs(t, CheckCIRuntimeStatements(root), &conflict)
+	require.Equal(t, []string{"--ci-runtime ruby=3.3 contradicts Ruby 3.2, which rvm use 3.2 in the sh script at Jenkinsfile:4 selects for the tests in Jenkinsfile / Test"}, conflict.Conflicts)
+	// rbenv reads .ruby-version.
+	writeFile(t, root, "Jenkinsfile", pipeline("eval \"$(rbenv init -)\"\nbundle exec rake spec"))
+	writeFile(t, root, ".ruby-version", "ruby-3.2.4\n")
+	require.ErrorAs(t, CheckCIRuntimeStatements(root), &conflict)
+	require.Contains(t, conflict.Conflicts[0], "contradicts Ruby 3.2.4, which eval \"$(rbenv init -)\" in the sh script at Jenkinsfile:4 (from .ruby-version) selects")
+	// rvm use … do runs the tests: no selection.
+	writeFile(t, root, "Jenkinsfile", pipeline("rvm use 3.2 do bundle exec rake spec"))
+	require.NoError(t, CheckCIRuntimeStatements(root))
+}
+
+// Expansions are bounded before they are built: a matrix's product, the
+// cells of all of a Jenkinsfile's matrices, and a value that interpolates
+// others.
+func TestJenkinsExpansionsAreBounded(t *testing.T) {
+	values := func(n int) string {
+		var items []string
+		for i := range n {
+			items = append(items, "'"+strconv.Itoa(i)+"'")
+		}
+		return strings.Join(items, ", ")
+	}
+	matrix := func(name, axes, stages string) string {
+		return "stage('" + name + "') {\n  matrix {\n    axes {\n" + axes + "    }\n    stages {\n" + stages + "\n    }\n  }\n}\n"
+	}
+	huge := "pipeline {\n  agent any\n  stages {\n" + matrix("M", "      axis { name 'A'; values "+values(200)+" }\n      axis { name 'B'; values "+values(1000)+" }\n", "stage('t') { steps { sh 'npm test' } }") + "  }\n}\n"
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	workflow, err := readJenkinsfile(t.TempDir(), "Jenkinsfile", huge)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	require.Equal(t, []string{"UNRESOLVED Jenkinsfile M: ddtest cannot expand its matrix (it has more than 200 cells), so it cannot tell which stages it runs"}, jenkinsRuns(workflow.Jobs["M"]))
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20), "200,000 cells are never built")
+
+	// Nested matrices multiply: past the Jenkinsfile's budget, each is
+	// unresolved.
+	inner := matrix("Inner", "      axis { name 'B'; values "+values(10)+" }\n", "stage('t') { steps { sh 'npm test' } }")
+	nested := jenkinsJobs(t, "pipeline {\n  agent any\n  stages {\n"+matrix("Outer", "      axis { name 'A'; values "+values(200)+" }\n", inner)+"  }\n}\n")
+	var tests, unresolved int
+	for _, job := range nested {
+		for _, run := range jenkinsRuns(job) {
+			switch {
+			case run == "npm test":
+				tests++
+			case strings.Contains(run, "with the Jenkinsfile's other matrices, it has more than 1000 cells"):
+				unresolved++
+			}
+		}
+	}
+	require.Equal(t, jenkinsMatrixBudget-200, tests, "the outer cells and the inner ones within the budget")
+	require.Equal(t, 200-(jenkinsMatrixBudget-200)/10, unresolved)
+
+	// A string that doubles a variable at each step stops at the limit.
+	doubling := "def v0 = 'xxxxxxxxxxxxxxxx'\n"
+	for i := 1; i <= 30; i++ {
+		doubling += "def v" + strconv.Itoa(i) + " = \"${v" + strconv.Itoa(i-1) + "}${v" + strconv.Itoa(i-1) + "}\"\n"
+	}
+	doubling += "node { stage('T') { sh \"echo ${v30}\"\nsh 'npm test' } }\n"
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	jobs := jenkinsJobs(t, doubling)
+	runtime.ReadMemStats(&after)
+	runs := jenkinsRuns(jobs["T"])
+	require.Len(t, runs, 2)
+	require.Contains(t, runs[0], "UNRESOLVED Jenkinsfile T: its sh script reads ${v30}, which only the Jenkins build knows")
+	require.Equal(t, "npm test", runs[1])
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(16<<20), "a 16 GiB string is never built")
+
+	// Nested stages repeat their names in the jobs inside: a long one is
+	// named by its line.
+	jobs = jenkinsJobs(t, "def name = '"+strings.Repeat("x", jenkinsNameLimit+1)+"'\nnode {\n  stage(name) { stage('Unit') { sh 'npm test' } }\n}\n")
+	require.Contains(t, jobs, "stage at line 3 / Unit")
+	axes := ""
+	for i := range jenkinsAxisLimit + 1 {
+		axes += "      axis { name 'A" + strconv.Itoa(i) + "'; values '1' }\n"
+	}
+	jobs = jenkinsJobs(t, "pipeline {\n  agent any\n  stages {\n"+matrix("Wide", axes, "stage('t') { steps { sh 'npm test' } }")+"  }\n}\n")
+	require.Contains(t, jenkinsRuns(jobs["Wide"])[0], "it has more than 32 axes")
+}
+
+// Expressions run the steps they call: an assertion's, a ternary's
+// branches, and a GString's interpolations. Syntax ddtest cannot read that
+// calls a step is unresolved, never dropped.
+func TestJenkinsStepsInExpressions(t *testing.T) {
+	jobs := jenkinsJobs(t, `pipeline {
+  agent any
+  stages {
+    stage('Assert') { steps { script {
+      assert sh(script: 'npm test', returnStatus: true) == 0
+      assert true : sh(script: 'npm run explain', returnStdout: true)
+    } } }
+    stage('Ternary') { steps { script {
+      def result = params.FAST ? sh('npm test') : sh('npm test -- --runInBand')
+      params.E2E ? sh('npm run e2e') : echo('skipped')
+    } } }
+    stage('Ternary scope') { steps { script {
+      def mode = params.FAST ? 'fast' : 'full'
+      sh "npm run test:${mode}"
+    } } }
+    stage('Interpolation') { steps {
+      echo "result: ${sh(script: 'npm test', returnStdout: true)}"
+      sh "echo ${sh(script: 'npm run unit', returnStdout: true).trim()}"
+      dir(sh(script: 'npm run where', returnStdout: true).trim()) { sh 'npm run inside' }
+    } }
+    stage('Opaque') { steps { script {
+      throw new Exception(sh(script: 'npm test', returnStdout: true))
+      def file = new File(runSuite())
+      def pattern = /${sh(script: 'npm test', returnStdout: true)}/
+      echo "${a; sh('npm test')}"
+    } } }
+    stage('Values') { steps { script {
+      def year = "${new Date().format('yyyy')}"
+      def file = new File(pwd(), 'out.txt')
+      echo "${env.BRANCH_NAME == 'main' ? 'release' : 'snapshot'} ${params.X?.trim()}"
+    } } }
+  }
+}`)
+	require.Equal(t, []string{"npm test", "npm run explain"}, jenkinsRuns(jobs["Assert"]))
+	require.Equal(t, []string{"npm test", "npm test -- --runInBand", "npm run e2e"}, jenkinsRuns(jobs["Ternary"]))
+	require.Contains(t, jenkinsRuns(jobs["Ternary scope"])[0], "its sh script reads ${mode}, which only the Jenkins build knows", "a branch-dependent value is unknown after it")
+	interpolation := jenkinsRuns(jobs["Interpolation"])
+	require.Equal(t, []string{"npm test", "npm run unit"}, interpolation[:2])
+	require.Contains(t, interpolation[2], "UNRESOLVED")
+	require.Equal(t, "npm run where", interpolation[3])
+	require.Contains(t, interpolation[4], "it runs inside dir(sh(script: 'npm run where', returnStdout: true).trim()), whose directory ddtest cannot resolve")
+	opaque := jenkinsRuns(jobs["Opaque"])
+	require.Len(t, opaque, 4)
+	require.Contains(t, opaque[0], "the Groovy expression new Exception(sh(script: 'npm test', returnStdout: true)) is not one ddtest can read, and it calls sh, which may run tests")
+	require.Contains(t, opaque[1], "it calls runSuite")
+	require.Contains(t, opaque[2], "the Groovy expression /${sh(script: 'npm test', returnStdout: true)}/ is not one ddtest can read, and it calls sh")
+	require.Contains(t, opaque[3], "the Groovy expression a; sh('npm test') is not one ddtest can read, and it calls sh")
+	require.NotContains(t, jobs, "Values", "constructors and value methods run no step")
 }
