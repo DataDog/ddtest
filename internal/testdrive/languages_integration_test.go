@@ -60,7 +60,9 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 				for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json", "telemetry_only", "UNVALIDATED", "INCOMPLETE", "--agent", "--format", "summary.final_response", "scratch files"} {
 					require.NotContains(t, instructions, invalid)
 				}
-				require.Contains(t, instructions, "Run the local, credential-free setup check")
+				require.Contains(t, instructions, "Required local validation configurations")
+				require.Contains(t, instructions, "python-tracer-version")
+				require.Contains(t, instructions, "--all --check-only")
 			}
 			for _, mode := range []struct {
 				name string
