@@ -351,15 +351,21 @@ chain such as `pnpm test:unit && pnpm test:bdd` resolves to its Cucumber leaf
 when that leaf is the chain's only and last link. An unquoted pathname pattern
 in a JavaScript test command, such as `"test": "mocha *.test.js"`, is expanded
 as `sh` expands it in that command's directory (no globstar, so `**` matches
-like `*`; no dot files) and probes receive those files, while full-suite runs
-keep the original alias; a quoted pattern stays a runner argument. A pattern
-with a variable, braces, `~` or an escape, one matching no repository files,
-one reaching through a symlink outside the repository and one expanding to more
+like `*`; no dot files) and probes receive those files, including Jest probes
+of an explicit `--command`, while full-suite runs keep the original alias; a
+quoted pattern stays a runner argument. A pattern with a variable, braces, `~`
+or an escape, one matching no repository files, one matching a file that
+resolves outside the repository through a symlink and one expanding to more
 than 1000 files stay unresolved, except in a companion tool such as Prettier
 that starts no tests. On a Windows runner, npm runs package scripts with
 `cmd.exe`, which leaves the pattern to the runner, so a pattern inside a package
-script stays unresolved there; a PowerShell step's own unquoted pattern stays
-unresolved too, while a quoted one resolves. CI files of other providers
+script stays unresolved there, per matrix row: the Linux rows of a mixed-OS
+matrix still resolve. A pattern inside a package script also stays unresolved
+when the project's `.npmrc` (at the repository root or in the package
+directory) sets `script-shell` to a shell other than `sh`, `bash` or `dash`;
+ddtest can't see a user or global npmrc, so a `script-shell` set there goes
+unnoticed. A PowerShell step's own unquoted pattern stays unresolved too, while
+a quoted one resolves. CI files of other providers
 (`circle.yml`, `.gitlab-ci.yml` when GitHub Actions is selected, and the like)
 that mention the framework are listed for review; they are not analyzed. A job guard that reads only
 runtime context (`github.actor`, `github.event_name`, `github.run_number`,

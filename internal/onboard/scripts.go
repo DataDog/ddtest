@@ -154,7 +154,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			return result
 		}
 	}
-	remaining := &scriptBudget{left: packageScriptExpansionLimit, cmdScripts: step.windowsShell || windowsRunner(job)}
+	remaining := &scriptBudget{left: packageScriptExpansionLimit, cmdScripts: windowsRunner(job, step)}
 	result := resolveJestSequence(root, resolvedDirectory, step.Run, nil, remaining, framework)
 
 	if _, err := staticCommands(step.Run); err != nil {
@@ -184,6 +184,30 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 // Bound package script and composite expansion so a cyclic or very large
 // alias graph cannot hang discovery.
 const packageScriptExpansionLimit = 256
+
+// npmScriptShell returns the script-shell a project .npmrc (at the
+// repository root or in the package directory) sets to a shell other than sh,
+// bash or dash, whose pathname expansion ddtest doesn't model: zsh, for
+// example, expands ** recursively. A user or global npmrc isn't visible.
+func npmScriptShell(root, directory string) string {
+	for _, dir := range slices.Compact([]string{root, directory}) {
+		data, err := os.ReadFile(filepath.Join(dir, ".npmrc"))
+		if err != nil {
+			continue
+		}
+		for line := range strings.Lines(string(data)) {
+			key, value, ok := strings.Cut(line, "=")
+			if !ok || strings.TrimSpace(key) != "script-shell" {
+				continue
+			}
+			value = strings.Trim(strings.TrimSpace(value), `"'`)
+			if value != "" && !slices.Contains([]string{"sh", "bash", "dash"}, filepath.Base(value)) {
+				return value
+			}
+		}
+	}
+	return ""
+}
 
 // scriptBudget is shared by one resolution and every package script it
 // reaches. left bounds the remaining alias expansions; cmdScripts reports that
@@ -235,6 +259,8 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 		if len(fragment.Patterns) > 0 && len(stack) > 0 && remaining.cmdScripts {
 			// cmd.exe leaves the pattern to the runner, whose glob rules differ.
 			err = fmt.Errorf("npm runs package scripts with cmd.exe on Windows, which passes unquoted pathname patterns to the runner unexpanded")
+		} else if shell := npmScriptShell(root, directory); len(fragment.Patterns) > 0 && len(stack) > 0 && shell != "" {
+			err = fmt.Errorf("the project .npmrc sets script-shell=%s, whose pathname expansion may differ from sh", shell)
 		} else {
 			words, err = expandPathnames(root, directory, fragment)
 		}

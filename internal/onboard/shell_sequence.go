@@ -2,7 +2,6 @@ package onboard
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -201,24 +200,16 @@ func expandPathnames(root, directory string, fragment commandFragment) ([]string
 	if err != nil {
 		return nil, err
 	}
-	// The glob skips a directory whose read fails, as if it held no match, so
-	// a directory outside the repository is recorded here and fails the whole
-	// expansion instead of silently narrowing it.
-	var outside error
+	// The traversal reads every directory the shell would, including ones
+	// outside the repository: the glob probes each symlinked entry before
+	// matching its name, so refusing them here would either reject a pattern
+	// over an unrelated linked directory or silently drop matches beneath a
+	// selected one. The repository boundary is checked on the final matches
+	// instead. Without globstar each pattern part reads one directory level,
+	// so following outside links cannot recurse without bound.
 	config := &expand.Config{
-		Env: expand.ListEnviron("PWD=" + canonicalDirectory),
-		ReadDir2: func(path string) ([]fs.DirEntry, error) {
-			canonical, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				return nil, err
-			}
-			if relative, err := filepath.Rel(canonicalRoot, canonical); err != nil || !filepath.IsLocal(relative) && relative != "." {
-				link, _ := filepath.Rel(canonicalRoot, path)
-				outside = fmt.Errorf("pathname expansion through %s, which leaves the repository, requires review", filepath.ToSlash(link))
-				return nil, outside
-			}
-			return os.ReadDir(path)
-		},
+		Env:      expand.ListEnviron("PWD=" + canonicalDirectory),
+		ReadDir2: os.ReadDir,
 	}
 	var words []string
 	total := 0
@@ -239,11 +230,13 @@ func expandPathnames(root, directory string, fragment commandFragment) ([]string
 		if err != nil {
 			return nil, err
 		}
-		if outside != nil {
-			return nil, outside
-		}
 		if len(matches) == 1 && matches[0] == word {
 			return nil, fmt.Errorf("unquoted shell pathname pattern %s matches no files in %s; the runner would expand it with different rules", word, repositoryPath(root, directory))
+		}
+		for _, match := range matches {
+			if err := insideRepository(canonicalRoot, canonicalDirectory, match); err != nil {
+				return nil, err
+			}
 		}
 		total += len(matches)
 		if total > pathnameExpansionLimit {
@@ -252,6 +245,24 @@ func expandPathnames(root, directory string, fragment commandFragment) ([]string
 		words = append(words, matches...)
 	}
 	return words, nil
+}
+
+// insideRepository rejects a pathname match whose target, after following
+// every symlink in it (the match itself or any parent directory), lies outside
+// the repository.
+func insideRepository(canonicalRoot, canonicalDirectory, match string) error {
+	path := match
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(canonicalDirectory, path)
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("pathname expansion matches %s, which cannot be resolved: %w", filepath.ToSlash(match), err)
+	}
+	if relative, err := filepath.Rel(canonicalRoot, canonical); err != nil || !filepath.IsLocal(relative) && relative != "." {
+		return fmt.Errorf("pathname expansion matches %s, which leaves the repository, requires review", filepath.ToSlash(match))
+	}
+	return nil
 }
 
 // unquotedPathnamePattern reports whether any word of command, including

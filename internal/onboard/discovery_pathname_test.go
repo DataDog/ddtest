@@ -220,8 +220,8 @@ func TestWindowsPackageScriptPathnamePatternsStayUnresolved(t *testing.T) {
 	require.Equal(t, []string{"test/a.test.js"}, result.Tests[0].mochaRunnerArgs)
 }
 
-// The glob skips a directory it can't read; a symlink leaving the repository
-// must fail the expansion rather than drop that directory's files.
+// A match reached through a directory symlink leaving the repository fails
+// the expansion rather than being accepted or dropped.
 func TestPathnameExpansionThroughOutsideSymlinkFails(t *testing.T) {
 	outside := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(outside, "y.test.js"), nil, 0600))
@@ -229,7 +229,7 @@ func TestPathnameExpansionThroughOutsideSymlinkFails(t *testing.T) {
 	require.NoError(t, os.Symlink(outside, filepath.Join(root, "test", "ext")))
 	remaining := &scriptBudget{left: packageScriptExpansionLimit}
 	resolved := resolveJestSequence(root, root, "npm test", nil, remaining, "mocha")
-	require.Contains(t, resolved.Reason, "test/ext, which leaves the repository")
+	require.Contains(t, resolved.Reason, "test/ext/y.test.js, which leaves the repository")
 	require.Empty(t, resolved.Tests)
 
 	// A symlink to a directory inside the repository expands like the shell.
@@ -239,4 +239,132 @@ func TestPathnameExpansionThroughOutsideSymlinkFails(t *testing.T) {
 	resolved = resolveJestSequence(root, root, "npm test", nil, remaining, "mocha")
 	require.Empty(t, resolved.Reason)
 	require.Equal(t, []string{"test/alias/x.test.js", "test/unit/x.test.js"}, resolved.Tests[0].mochaRunnerArgs)
+}
+
+// A match that is itself a symlink to a file outside the repository fails the
+// expansion.
+func TestPathnameExpansionOfOutsideFileSymlinkFails(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "external.test.js")
+	require.NoError(t, os.WriteFile(outside, nil, 0600))
+	root := writePathnameFixture(t, map[string]string{"test": "mocha *.test.js"}, "a.test.js")
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "external.test.js")))
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	resolved := resolveJestSequence(root, root, "npm test", nil, remaining, "mocha")
+	require.Contains(t, resolved.Reason, "external.test.js, which leaves the repository")
+	require.Empty(t, resolved.Tests)
+}
+
+// The glob probes every symlinked entry while matching a directory part, so
+// an unrelated link outside the repository, such as a linked node_modules,
+// must not block a pattern that selects only repository files.
+func TestPathnameExpansionIgnoresUnselectedOutsideSymlink(t *testing.T) {
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "dep.test.js"), nil, 0600))
+	root := writePathnameFixture(t, map[string]string{"test": "mocha test*/*.test.js"}, "test/a.test.js", "test-unit/b.test.js")
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "node_modules")))
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	resolved := resolveJestSequence(root, root, "npm test", nil, remaining, "mocha")
+	require.Empty(t, resolved.Reason)
+	require.Equal(t, []string{"test-unit/b.test.js", "test/a.test.js"}, resolved.Tests[0].mochaRunnerArgs)
+}
+
+// In a matrix mixing Linux and Windows runners, each row follows its own
+// runner: Linux rows expand package-script patterns with sh, Windows rows
+// stay unresolved because npm runs the script with cmd.exe there.
+func TestMixedMatrixPackageScriptPathnamePatterns(t *testing.T) {
+	root := writePathnameFixture(t, map[string]string{"test": "mocha test/*.test.js"}, "test/a.test.js")
+	job := runtimeJob{RunsOn: "${{ matrix.os }}", Steps: []runtimeStep{{Run: "npm test"}}}
+	job.Strategy.Matrix = map[string]any{"os": []any{"ubuntu-latest", "windows-latest"}}
+	rows, err := runtimeMatrix(job.Strategy.Matrix)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		step, _, err := resolveVariantStep(ciWorkflow{}, job, job.Steps[0], row, "mocha")
+		require.NoError(t, err)
+		result := resolveTestStep(root, ciWorkflow{}, job, step, "javascript", "mocha")
+		if row["os"] == "windows-latest" {
+			require.Contains(t, result.Reason, "cmd.exe")
+			require.Empty(t, result.Tests)
+			continue
+		}
+		require.Empty(t, result.Reason)
+		require.Len(t, result.Tests, 1)
+		require.Equal(t, []string{"test/a.test.js"}, result.Tests[0].mochaRunnerArgs)
+	}
+
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".github", "workflows", "test.yml"), []byte("on: push\njobs:\n  test:\n    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest, windows-latest]\n    steps:\n      - run: npm test\n"), 0600))
+	scope, err := DiscoverValidationScope(root, "mocha")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, []string{"test/a.test.js"}, scope.Commands[0].mochaRunnerArgs)
+	require.Equal(t, []string{`.github/workflows/test.yml / test (os: "ubuntu-latest") / step 1 (npm test)`}, scope.Commands[0].Locations)
+	require.Len(t, scope.Unresolved, 1)
+	require.Contains(t, scope.Unresolved[0], "cmd.exe")
+	require.Contains(t, scope.Unresolved[0], `os: "windows-latest"`)
+}
+
+// Jest forwarding passes the runner the files the shell would, from the
+// explicit command and from package scripts.
+func TestJestForwardingExpandsPathnamePatterns(t *testing.T) {
+	root := writePathnameFixture(t, map[string]string{"test": "jest src/*.test.js", "lint": "eslint .", "ci": "npm run lint && jest src/*.test.js", "sub": "cd src && jest *.test.js"}, "src/a.test.js", "src/b.test.js", "src/c.js")
+	plan, err := ForwardJestExecution(root, "npx jest src/*.test.js")
+	require.NoError(t, err)
+	require.Equal(t, "npx jest src/a.test.js src/b.test.js", plan.Command)
+	require.Equal(t, "npx jest src/*.test.js", plan.ScopeCommand)
+	require.Empty(t, plan.ReviewReason)
+
+	// A package script whose text npm forwards options to keeps the alias.
+	plan, err = ForwardJestExecution(root, "npm test")
+	require.NoError(t, err)
+	require.Equal(t, "npm test --", plan.Command)
+
+	for script, runner := range map[string]string{"ci": "jest src/a.test.js src/b.test.js", "sub": "jest a.test.js b.test.js"} {
+		plan, err = ForwardJestExecution(root, "npm run "+script)
+		require.NoError(t, err, script)
+		require.Contains(t, plan.Command, runner, script)
+	}
+
+	// A pattern matching nothing stays the caller's explicit command, as before.
+	plan, err = ForwardJestExecution(root, "npx jest missing/*.test.js")
+	require.NoError(t, err)
+	require.Equal(t, "npx jest missing/*.test.js", plan.Command)
+	require.Contains(t, plan.ReviewReason, "matches no files")
+}
+
+// A project .npmrc may run package scripts with a shell whose pathname
+// expansion differs from sh, such as zsh's recursive **.
+func TestNpmrcScriptShellPathnamePatterns(t *testing.T) {
+	root := writePathnameFixture(t, map[string]string{"test": "mocha test/**/*.test.js"}, "test/unit/a.test.js", "test/unit/deep/b.test.js")
+	for npmrc, unresolved := range map[string]string{
+		"script-shell=/usr/bin/zsh\n":         "script-shell=/usr/bin/zsh",
+		"; comment\nscript-shell = \"zsh\"\n": "script-shell=zsh",
+		"script-shell=/bin/bash\n":            "",
+		"registry=https://example.test/\n":    "",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, ".npmrc"), []byte(npmrc), 0600))
+		remaining := &scriptBudget{left: packageScriptExpansionLimit}
+		resolved := resolveJestSequence(root, root, "npm test", nil, remaining, "mocha")
+		if unresolved != "" {
+			require.Contains(t, resolved.Reason, unresolved, npmrc)
+			require.Empty(t, resolved.Tests, npmrc)
+			continue
+		}
+		require.Empty(t, resolved.Reason, npmrc)
+		require.Equal(t, []string{"test/unit/a.test.js"}, resolved.Tests[0].mochaRunnerArgs, npmrc)
+	}
+
+	// The step's own patterns still expand with the CI shell.
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".npmrc"), []byte("script-shell=zsh\n"), 0600))
+	remaining := &scriptBudget{left: packageScriptExpansionLimit}
+	resolved := resolveJestSequence(root, root, "npx mocha test/*/*.test.js", nil, remaining, "mocha")
+	require.Empty(t, resolved.Reason)
+
+	// A package directory's own .npmrc counts too.
+	root = writePathnameFixture(t, nil, "app/test/a.test.js")
+	writeScripts(t, filepath.Join(root, "app"), map[string]string{"test": "mocha test/*.test.js"})
+	require.NoError(t, os.WriteFile(filepath.Join(root, "app", ".npmrc"), []byte("script-shell=fish\n"), 0600))
+	*remaining = scriptBudget{left: packageScriptExpansionLimit}
+	resolved = resolveJestSequence(root, filepath.Join(root, "app"), "npm test", nil, remaining, "mocha")
+	require.Contains(t, resolved.Reason, "script-shell=fish")
 }

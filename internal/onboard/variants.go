@@ -41,6 +41,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	if step.Shell == "" && job.Defaults.Run.Shell == "" && workflow.Defaults.Run.Shell == "" {
 		step.Shell = runnerDefaultShell(job, row)
 	}
+	step.rowRunner = matrixRowRunner(job, row)
 
 	if len(frameworks) > 0 && frameworks[0] == "webdriverio" {
 		step.WorkingDirectory, err = runtimeValue(stepDirectory(workflow, job, step), row)
