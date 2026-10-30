@@ -517,24 +517,34 @@ known values only: a literal `environment` value or `env.X =` assignment, a
 literal Groovy variable, a `parameters` default (`${params.X}`) and
 `${WORKSPACE}`. Top-level statements run in source order, so a literal `def`
 before `pipeline { … }` is visible inside it and one after it is not. An
-`env.X =` assignment changes the build's value for the rest of the build, from
+`env.X =` assignment (or `env['X'] =`, `env.setProperty('X', …)`) changes the
+build's value for the rest of the build, from
 any closure (`script`, `dir`, `timeout`, a stage), except inside an
 `environment` directive, `withEnv` or `withCredentials` that sets `X`, which
 keep their own value until they end; Groovy variables assigned without `def`
 in a closure reach the statements after it. A value assigned on some paths only
 (a branch, a loop, a `try` that may stop part way, `retry`, a `parallel`
-branch, a stage whose `when` ddtest cannot decide) is unknown after them, and
-a step that reads it is unresolved. `environment` (pipeline and stage, in any
+branch, a stage whose `when` ddtest cannot decide, a `switch` case) is unknown
+after them, and a step that reads it is unresolved. An environment variable
+whose name ddtest cannot tell (`env[name] =`) makes the build's environment
+unknown, so every `sh` after it is unresolved. `environment` (pipeline and stage, in any
 order; `credentials()` and computed values are unknown), `withEnv` with a literal
 list, `withCredentials` (its variables are unknown), `dir` with a literal path
 inside the checkout, `when { expression { false } }` or `return false` (the
 stage never runs; any other `when` is a possible path), `post` conditions that
 run on a passing build (`always`, `success`, `cleanup`, `changed`, `fixed`:
-after the stage's steps; the others are reported), `if`/`else`, loops and
-`try`/`catch`/`finally` (possible paths: a `catch` can recover, so its steps
-count; what the `try` assigns is unknown in it), the value of an assignment or
-a `return` (`def out = sh(…).trim()` runs that `sh`; a method on a value such
-as `.trim()` runs nothing) and wrappers such as
+after the stage's steps; the others are reported), `if`/`else`, loops,
+`switch` and `try`/`catch`/`finally` (possible paths: a `catch` can recover, so
+its steps count; what the `try` assigns is unknown in it; any `switch` case may
+be where it starts, falling through to the next case until a `break`; a loop's
+body may run any number of times, and the variable its header binds, as in
+`for (suite in [...])`, is unknown in it; a loop header ddtest cannot read is
+unresolved), the value of an assignment or a `return` (`def out =
+sh(…).trim()` runs that `sh`; a method on a value such as `.trim()` runs
+nothing), the arguments of steps that run no command (`echo sh(script: …,
+returnStdout: true)` runs that `sh`; in `checkout`, `properties`, `junit`,
+`recordIssues` and the other configuration steps, a call such as `esLint()` or
+`scmGit(…)` names a plugin component and runs nothing) and wrappers such as
 `timeout`, `retry`, `timestamps`, `ansiColor`, `lock`, `catchError`,
 `warnError`, `sshagent`, `wrap` and `script` are followed. Steps that only
 check out, archive, publish or notify (`checkout`, `junit`, `stash`,
@@ -576,15 +586,25 @@ or the framework's integration off (`DD_TRACE_ENABLED`, or
 stage's `options` is not certified (the plugin documents the top-level option
 only), and a literal `DD_API_KEY` in an `environment` directive is refused; a
 `DD_API_KEY` credential binding, and a `NODE_OPTIONS` or `RUBYOPT` in a stage's
-`environment`, `withEnv` or `additionalVariables`, are reported as overwritten
-by the plugin, which sets those once per build. When the setup that is there
+`environment`, `withEnv`, an `env.X =` assignment or `additionalVariables`, are
+reported as overwritten by the plugin. The plugin replaces `RUBYOPT`; on each
+agent it sets `NODE_OPTIONS` for every step to its preload followed by the
+`NODE_OPTIONS` of the first step it configures there, so a narrower value is
+lost, or, when its step is that first one, reaches every later step. ddtest
+composes the preload with the pipeline's `environment` value and reports the
+narrower one. When the setup that is there
 is incomplete, `ci_setup_required` names why.
 
 The plugin does not instrument tests inside containers. Stages that run in
 `agent { docker … }`, `dockerfile`, `kubernetes`, a `podTemplate`'s
 `node(POD_LABEL)` (or a `node` on its label), `docker.image(…).inside`, an
-image variable's `.inside` or `container(…)` are unsupported: when every job
-that runs the tests is one, onboarding returns `status: unsupported` with
+image variable's `.inside` or `container(…)` are unsupported. A container
+block in a job on a host agent runs only its own steps in the container: they
+become a job of their own, named after the job and the container
+(`Test (docker.image('node:22').inside)`), so a host `sh 'npm test'` next to a
+packaging container stays instrumentable, and a test inside the container is
+reported, naming the job it splits from. When every job that runs the tests
+is unsupported, onboarding returns `status: unsupported` with
 `code: ci_setup_unsupported`, naming the jobs and the user's options (run the
 tests on a host agent, or set up Test Optimization in the container by hand,
 which ddtest cannot validate), with an instruction for the coding agent to
@@ -604,9 +624,11 @@ to confirm what only Jenkins shows (`ci_setup_confirmation_required`):
   Agentless site other than the selected one is a setup problem.
 - `jenkins-agent-runtime-matches`, only for jobs whose PATH a `tools`
   directive, `nodejs(…)`/`nvm(…)`/`rbenv(…)`, `withEnv(['PATH+…'])`, a PATH
-  `environment` value or a PATH assignment in `sh` changes: the plugin installs
-  the tracer with the agent's default toolchain, which must be the one the
-  tests use.
+  `environment` value, a PATH assignment in `sh` or a version manager in `sh`
+  (`nvm use`, `fnm use`, `n <version>`, `volta`, `nodenv`, `rbenv`, `rvm`,
+  `chruby`, `asdf`, `mise`, or sourcing `nvm.sh` or RVM's script) changes: the
+  plugin installs the tracer with the agent's default toolchain, which must be
+  the one the tests use.
 
 `final_response` lists each confirmation as stated by the user, not verified,
 next to the stated runtime and the caveat that ddtest read the Jenkinsfile, not

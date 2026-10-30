@@ -8,6 +8,7 @@ package onboard
 import (
 	"context"
 	"errors"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -225,6 +226,35 @@ func (javascriptDiscovery) ciPluginLanguage() string { return "JAVASCRIPT" }
 // The Datadog Jenkins plugin prepends its dd-trace preload to NODE_OPTIONS
 // and exports DD_TRACE_PATH, the installed dd-trace package, whose
 // register.js is the ESM loader.
+// The Datadog Jenkins plugin's JavascriptConfigurator prepends its preload
+// to the NODE_OPTIONS of the first step it configures on an agent, and
+// DatadogTracerConfigurator reuses that value for every later step there.
+func (javascriptDiscovery) ciPluginComposes(key string) string {
+	if key != "NODE_OPTIONS" {
+		return ""
+	}
+	return "on each agent it sets NODE_OPTIONS for every step to its preload followed by the NODE_OPTIONS of the first step it configures there, so this value is lost, or, when its step is that first one, it reaches every later step on the agent. ddtest validates with the pipeline's NODE_OPTIONS"
+}
+
+// Node version managers: n 20, nvm use, fnm use, volta, nodenv, and
+// sourcing nvm.sh, which selects nvm's default.
+func (javascriptDiscovery) selectsShellRuntime(words []string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	switch name := path.Base(words[0]); name {
+	case "n":
+		return len(words) > 1 // n alone opens an interactive menu.
+	case "nvm", "fnm":
+		return len(words) > 1 && slices.Contains([]string{"use", "install", "exec", "run", "env", "alias"}, words[1])
+	case "volta", "nodenv":
+		return true
+	case "source", ".":
+		return len(words) > 1 && path.Base(words[1]) == "nvm.sh"
+	}
+	return false
+}
+
 func (javascriptDiscovery) ciPluginExports(current map[string]string) (map[string]string, map[string]string) {
 	options := strings.TrimSpace("-r ${{ env.DD_TRACE_PACKAGE }} " + current["NODE_OPTIONS"])
 	return map[string]string{"NODE_OPTIONS": options}, map[string]string{"DD_TRACE_PATH": "${{ env.DD_TRACE_PATH }}"}

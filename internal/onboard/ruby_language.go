@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -481,6 +482,24 @@ func (rubyDiscovery) ciPluginLanguage() string { return "RUBY" }
 
 // The Datadog Jenkins plugin replaces RUBYOPT with the datadog-ci preload,
 // as the installer does.
+// The Datadog Jenkins plugin replaces RUBYOPT.
+func (rubyDiscovery) ciPluginComposes(string) string { return "" }
+
+// Ruby version managers: rbenv, rvm, chruby, and sourcing the scripts that
+// load RVM or chruby.
+func (rubyDiscovery) selectsShellRuntime(words []string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	switch name := path.Base(words[0]); name {
+	case "rbenv", "rvm", "chruby":
+		return true
+	case "source", ".":
+		return len(words) > 1 && slices.Contains([]string{"rvm", "rvm.sh", "chruby.sh", "auto.sh"}, path.Base(words[1]))
+	}
+	return false
+}
+
 func (rubyDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
 	return map[string]string{"RUBYOPT": rubyInstallerPreload}, nil
 }

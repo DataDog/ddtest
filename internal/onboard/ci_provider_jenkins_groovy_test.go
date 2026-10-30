@@ -264,6 +264,7 @@ func FuzzParseGroovy(f *testing.F) {
 		"def f(a) { [a: { -> }, (b): c] }\n@Library('x') _\nx = /re/ + $/re/$",
 		"if (a) b else { c }; try { } catch (e) { } finally { }",
 		"\"${\"${'}'}\"}\"",
+		"switch (x) { case 1: case 'a': break\n default: sh 'b' }\nfor (int i = 0; i < 2; i++) {}\nfor (a in b) {}\nfor (;;) {}\nenv['A'] = env[x]",
 	} {
 		f.Add(seed)
 	}
@@ -273,4 +274,48 @@ func FuzzParseGroovy(f *testing.F) {
 			_, _ = readJenkinsfile(t.TempDir(), "Jenkinsfile", source)
 		}
 	})
+}
+
+// Loop headers, switch labels, jumps and indexes keep what the interpreter
+// needs.
+func TestGroovyParserControlDetails(t *testing.T) {
+	source := `for (def suite in ['unit', 'e2e']) { sh 'a' }
+for (int i = 0; i < n; i++) sh 'b'
+for (String name : names) { }
+for (a, b in pairs) { }
+switch (kind) {
+  case 'unit':
+  case 'integration': sh 'u'
+    break
+  default:
+    sh 'd'
+}
+env['SUITE'] = 'x'
+`
+	statements := groovyStatements(t, source)
+	forIn := statements[0].(*groovyControl)
+	require.Equal(t, []string{"suite"}, forIn.Variables)
+	require.IsType(t, &groovyList{}, forIn.Condition)
+	require.Nil(t, forIn.Init)
+	classic := statements[1].(*groovyControl)
+	require.Equal(t, []string{"i", "i"}, classic.Variables)
+	require.IsType(t, &groovyAssign{}, classic.Init)
+	require.IsType(t, &groovyBinary{}, classic.Condition)
+	require.Equal(t, "++", classic.Update.(*groovyBinary).Op)
+	require.Len(t, classic.Blocks[0].Statements, 1)
+	require.Equal(t, []string{"name"}, statements[2].(*groovyControl).Variables)
+	unreadable := statements[3].(*groovyControl)
+	require.IsType(t, &groovyUnknown{}, unreadable.Init)
+	require.Empty(t, unreadable.Variables)
+	switchStatement := statements[4].(*groovyControl)
+	require.Len(t, switchStatement.Blocks, 3)
+	require.Len(t, switchStatement.Labels, 3)
+	require.Equal(t, "'unit'", groovyText(source, switchStatement.Labels[0]))
+	require.Nil(t, switchStatement.Labels[2], "default")
+	require.Empty(t, switchStatement.Blocks[0].Statements, "an empty case falls through")
+	require.Len(t, switchStatement.Blocks[1].Statements, 2)
+	require.Equal(t, "break", switchStatement.Blocks[1].Statements[1].(*groovyJump).Kind)
+	index := statements[5].(*groovyAssign).Target.(*groovyIndex)
+	require.Equal(t, []string{"env"}, index.Receiver.(*groovyName).Path)
+	require.IsType(t, &groovyString{}, index.Index)
 }

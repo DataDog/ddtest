@@ -117,6 +117,14 @@ type discoveryLanguage interface {
 	// environment current, in the workflow model's syntax; references can
 	// only be expanded by commands.
 	ciPluginExports(current map[string]string) (environment, references map[string]string)
+	// ciPluginComposes explains how the CI server plugin composes one of its
+	// exports with the job's own value, for a value a scope narrower than
+	// the pipeline sets; empty when the plugin replaces it.
+	ciPluginComposes(key string) string
+	// selectsShellRuntime reports a shell command, by its words, that
+	// selects another of the language's runtimes than the one on PATH, such
+	// as a version manager or the script that loads one.
+	selectsShellRuntime(words []string) bool
 
 	// statedRuntime is how the language takes the user's statement of a CI
 	// job's runtime its configuration does not select (--ci-runtime); nil

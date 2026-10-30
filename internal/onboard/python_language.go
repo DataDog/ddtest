@@ -118,3 +118,8 @@ func (pythonDiscovery) ciPluginLanguage() string { return "PYTHON" }
 func (pythonDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
 	return nil, nil
 }
+
+func (pythonDiscovery) ciPluginComposes(string) string { return "" }
+
+// No shell runtime selection is modeled for this language.
+func (pythonDiscovery) selectsShellRuntime([]string) bool { return false }

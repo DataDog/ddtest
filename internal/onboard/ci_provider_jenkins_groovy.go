@@ -500,15 +500,39 @@ type groovyFunction struct {
 }
 
 // groovyControl is if/else, for, while, switch or try/catch/finally.
-// Blocks are, by Kind: if: then[, else]; for, while and switch: the body;
-// try: the body, then Catches, then Finally.
+// Blocks are, by Kind: if: then[, else]; for and while: the body; switch:
+// one block per case, in order; try: the body, then Catches, then Finally.
 type groovyControl struct {
 	groovySpan
-	Kind      string
+	Kind string
+	// Condition is an if's or while's condition, a for loop's iterable (for
+	// x in items) or condition (for (init; condition; update)), or a
+	// switch's subject.
 	Condition groovyNode
 	Blocks    []*groovyBlock
-	Catches   []*groovyBlock
-	Finally   *groovyBlock
+	// Labels are a switch's case labels, one per block: nil for default.
+	Labels  []groovyNode
+	Catches []*groovyBlock
+	Finally *groovyBlock
+	// Init and Update are a for (init; condition; update) loop's statement
+	// and update expression; an Init that is a groovyUnknown is a loop
+	// header ddtest cannot read.
+	Init, Update groovyNode
+	// Variables are the names a for loop's header binds or changes on every
+	// iteration.
+	Variables []string
+}
+
+// groovyJump is break or continue.
+type groovyJump struct {
+	groovySpan
+	Kind string
+}
+
+// groovyIndex is receiver[index], such as env['SUITE'].
+type groovyIndex struct {
+	groovySpan
+	Receiver, Index groovyNode
 }
 
 // groovyReturn is return [value].
@@ -686,17 +710,15 @@ func (p *groovyParser) statement() groovyNode {
 			return p.declaration(start)
 		case "if":
 			return p.ifStatement()
-		case "for", "while":
-			p.advance()
-			p.parenthesized()
-			body := p.body()
-			return &groovyControl{groovySpan: groovySpan{start, p.lastEnd()}, Kind: token.text, Blocks: []*groovyBlock{body}}
-		case "switch":
+		case "for":
+			return p.forStatement()
+		case "while":
 			p.advance()
 			condition := p.parenthesized()
-			p.skipNewlines()
 			body := p.body()
-			return &groovyControl{groovySpan: groovySpan{start, p.lastEnd()}, Kind: "switch", Condition: condition, Blocks: []*groovyBlock{body}}
+			return &groovyControl{groovySpan: groovySpan{start, p.lastEnd()}, Kind: "while", Condition: condition, Blocks: []*groovyBlock{body}}
+		case "switch":
+			return p.switchStatement()
 		case "case", "default":
 			// A switch label: skip to its colon.
 			p.advance()
@@ -715,8 +737,11 @@ func (p *groovyParser) statement() groovyNode {
 			}
 			control.End = p.lastEnd()
 			return control
-		case "throw", "break", "continue", "assert":
-			// They run no step: a failure or a jump.
+		case "break", "continue":
+			p.recover(start)
+			return &groovyJump{groovySpan: groovySpan{start, p.lastEnd()}, Kind: token.text}
+		case "throw", "assert":
+			// They run no step: a failure.
 			p.recover(start)
 			return nil
 		case "static", "final", "private", "public", "protected":
@@ -875,6 +900,167 @@ func (p *groovyParser) ifStatement() groovyNode {
 			control.Blocks = append(control.Blocks, p.body())
 		}
 	}
+	control.End = p.lastEnd()
+	return control
+}
+
+// forStatement reads for (x in items), for (Type x : items) and
+// for (init; condition; update) loops. A header it cannot read becomes an
+// unknown Init.
+func (p *groovyParser) forStatement() groovyNode {
+	start := p.advance().start
+	control := &groovyControl{groovySpan: groovySpan{Start: start}, Kind: "for"}
+	p.skipNewlines()
+	open, openStart := p.pos, p.peek().start
+	if !p.take("(") {
+		control.Init = &groovyUnknown{groovySpan{start, p.lastEnd()}}
+	} else if !p.forInHeader(control) && !p.forClassicHeader(control) {
+		// Skip to the closing parenthesis; the loop reads an unknown header.
+		p.pos = open
+		p.parenthesized()
+		control.Init, control.Condition, control.Update, control.Variables = &groovyUnknown{groovySpan{openStart, p.lastEnd()}}, nil, nil, nil
+	}
+	control.Blocks = []*groovyBlock{p.body()}
+	control.End = p.lastEnd()
+	return control
+}
+
+// forInHeader reads x in items) or Type x : items), after the (.
+func (p *groovyParser) forInHeader(control *groovyControl) bool {
+	before := p.pos
+	p.skipNewlines()
+	offset := 0
+	if p.peek().kind == groovyIdent && p.peekAt(1).kind == groovyIdent && p.peekAt(1).text != "in" {
+		offset = 1 // def x, String x
+	}
+	name, separator := p.peekAt(offset), p.peekAt(offset+1)
+	in := separator.kind == groovyIdent && separator.text == "in" || separator.kind == groovyPunct && separator.text == ":"
+	if name.kind != groovyIdent || !in {
+		p.pos = before
+		return false
+	}
+	p.pos += offset + 2
+	p.skipNewlines()
+	control.Variables = []string{name.text}
+	control.Condition = p.expression()
+	p.skipNewlines()
+	if !p.take(")") {
+		p.pos = before
+		control.Variables, control.Condition = nil, nil
+		return false
+	}
+	return true
+}
+
+// forClassicHeader reads init; condition; update), after the (.
+func (p *groovyParser) forClassicHeader(control *groovyControl) bool {
+	before := p.pos
+	p.skipNewlines()
+	if !p.is(";") {
+		control.Init = p.statement()
+	}
+	if !p.take(";") {
+		p.pos = before
+		return false
+	}
+	p.skipNewlines()
+	if !p.is(";") {
+		control.Condition = p.expression()
+	}
+	if !p.take(";") {
+		p.pos = before
+		return false
+	}
+	p.skipNewlines()
+	if !p.is(")") {
+		control.Update = p.expression()
+	}
+	p.skipNewlines()
+	if !p.take(")") {
+		p.pos = before
+		return false
+	}
+	// The loop's counters: what the init declares or assigns, and what the
+	// update changes.
+	if assign, ok := control.Init.(*groovyAssign); ok {
+		if target, ok := assign.Target.(*groovyName); ok && len(target.Path) == 1 {
+			control.Variables = append(control.Variables, target.Path[0])
+		}
+	}
+	if update, ok := control.Update.(*groovyBinary); ok && (update.Op == "++" || update.Op == "--") {
+		for _, operand := range []groovyNode{update.Left, update.Right} {
+			if target, ok := operand.(*groovyName); ok && len(target.Path) == 1 {
+				control.Variables = append(control.Variables, target.Path[0])
+			}
+		}
+	}
+	if control.Update != nil && len(control.Variables) == 0 {
+		// An update ddtest cannot tell the changes of.
+		p.pos = before
+		return false
+	}
+	return true
+}
+
+// switchStatement reads switch (subject) { case label: … default: … }:
+// one block per label, holding the statements up to the next label.
+func (p *groovyParser) switchStatement() groovyNode {
+	start := p.advance().start
+	control := &groovyControl{groovySpan: groovySpan{Start: start}, Kind: "switch", Condition: p.parenthesized()}
+	p.skipNewlines()
+	if !p.is("{") {
+		// Not a switch body ddtest reads: one case it cannot tell.
+		body := p.body()
+		control.Blocks, control.Labels = []*groovyBlock{body}, []groovyNode{&groovyUnknown{groovySpan{body.Start, body.Start}}}
+		control.End = p.lastEnd()
+		return control
+	}
+	p.advance()
+	var current *groovyBlock
+	open := func(label groovyNode, at int) {
+		if current != nil {
+			current.End = at
+		}
+		current = &groovyBlock{groovySpan: groovySpan{Start: at}}
+		control.Blocks = append(control.Blocks, current)
+		control.Labels = append(control.Labels, label)
+	}
+	for {
+		p.skipNewlines()
+		token := p.peek()
+		if token.kind == groovyEOF || p.is("}") {
+			break
+		}
+		if token.kind == groovyIdent && (token.text == "case" || token.text == "default") {
+			p.advance()
+			var label groovyNode
+			if token.text == "case" {
+				label = p.expression()
+			}
+			for !p.is(":") && p.peek().kind != groovyNewline && p.peek().kind != groovyEOF {
+				p.advance()
+			}
+			p.take(":")
+			open(label, token.start)
+			continue
+		}
+		if current == nil {
+			// Statements before any label: a case ddtest cannot tell.
+			open(&groovyUnknown{groovySpan{token.start, token.start}}, token.start)
+		}
+		before := p.pos
+		if statement := p.statement(); statement != nil {
+			current.Statements = append(current.Statements, statement)
+		}
+		if p.pos == before {
+			skipped := p.advance()
+			current.Statements = append(current.Statements, &groovyUnknown{groovySpan{skipped.start, skipped.end}})
+		}
+	}
+	if current != nil {
+		current.End = p.peek().start
+	}
+	p.take("}")
 	control.End = p.lastEnd()
 	return control
 }
@@ -1245,8 +1431,12 @@ func (p *groovyParser) postfix(node groovyNode) groovyNode {
 			call.End = p.lastEnd()
 			node = call
 		case token.kind == groovyPunct && token.text == "[" && !token.spaced:
-			p.collection()
-			node = &groovyUnknown{groovySpan{start, p.lastEnd()}}
+			list, isList := p.collection().(*groovyList)
+			if !isList || len(list.Items) != 1 {
+				node = &groovyUnknown{groovySpan{start, p.lastEnd()}}
+				continue
+			}
+			node = &groovyIndex{groovySpan: groovySpan{start, p.lastEnd()}, Receiver: node, Index: list.Items[0]}
 		case token.kind == groovyPunct && (token.text == "++" || token.text == "--"):
 			p.advance()
 			node = &groovyBinary{groovySpan: groovySpan{start, p.lastEnd()}, Op: token.text, Left: node}

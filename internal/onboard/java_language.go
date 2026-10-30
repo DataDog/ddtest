@@ -172,3 +172,8 @@ func (javaDiscovery) ciPluginLanguage() string { return "JAVA" }
 func (javaDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
 	return nil, nil
 }
+
+func (javaDiscovery) ciPluginComposes(string) string { return "" }
+
+// No shell runtime selection is modeled for this language.
+func (javaDiscovery) selectsShellRuntime([]string) bool { return false }
