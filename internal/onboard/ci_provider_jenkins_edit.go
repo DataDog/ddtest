@@ -149,6 +149,18 @@ func checkJenkinsfileSetup(root string, provider ciProvider, workflows []ciWorkf
 			return gap("the edited Jenkinsfile reads as other jobs than the original.")
 		}
 	}
+	// The plugin's variables reach every step in the option's scope, so a
+	// job there that runs steps in a container refuses the edit.
+	var containers []string
+	for _, name := range slices.Sorted(maps.Keys(edited.Jobs)) {
+		job := edited.Jobs[name]
+		if job.SetupUnsupported != "" && !disabledCondition(job.If) && len(job.Steps) > 1 && job.Steps[0].Setup != nil {
+			containers = append(containers, file+" / "+name)
+		}
+	}
+	if len(containers) > 0 {
+		return &SetupGap{file, "ddtest does not enable the Datadog Jenkins plugin here: its option would also apply to " + strings.Join(containers, ", ") + ", which run steps in a container. The plugin sets its tracer variables in every step of its scope, container steps included, but installs the tracer only on the build agent, so processes in those containers, tests or not, can fail to load it. The user's options are to run those stages on a host agent, or to keep them out of the option's scope (in a scripted pipeline, a node block of their own outside the wrap), then rerun onboard --apply; or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate. Do not move stages without the user's approval."}
+	}
 	language := discoveryLanguageName(request.Framework)
 	for _, name := range jobs {
 		if problem := providerJobSetupProblem(root, provider, edited, name, language, request.Framework, request.Site); problem != "" {

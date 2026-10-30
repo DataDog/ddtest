@@ -722,7 +722,8 @@ again and must read as the same jobs, each with a complete setup, or nothing is
 written. Applying again changes nothing (`… CI setup is already configured; no
 edits.`). It refuses, and onboarding gives the instructions instead with the
 reason: a Jenkinsfile that loads a shared library (`@Library`, `library …` or a
-`libraries` directive), test jobs that only run in containers, a computed
+`libraries` directive), a job that runs steps in a container within the
+option's scope (a whole declarative pipeline, or a wrapped `node`), a computed
 `options`, `datadog` or `testOptimization` argument (or a computed `enabled` or
 `languages` it would change), a `node` block with shell steps inside a `def`
 function of a scripted pipeline, several `datadog(…)` calls that differ in one

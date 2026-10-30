@@ -1,0 +1,1 @@
+its option would also apply to Jenkinsfile / Package (docker.image('ruby:3.3').inside), which run steps in a container
