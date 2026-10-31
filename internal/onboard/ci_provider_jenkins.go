@@ -23,7 +23,7 @@ const jenkinsProvider = "jenkins"
 // a matrix cell, or a scripted stage) becomes one job of the shared model,
 // and each top-level statement of a literal sh script one step; each sh
 // starts a fresh shell. Its setup mechanism is the Datadog Jenkins plugin,
-// enabled for the whole pipeline with datadog(testOptimization: …) (see
+// enabled for a pipeline or its stages with datadog(testOptimization: …) (see
 // ci_provider_jenkins_setup.go). Anything ddtest cannot read statically, such
 // as shared library steps, computed scripts, Groovy functions or tests started
 // in containers, becomes an unresolved step: it is reported, never dropped or
