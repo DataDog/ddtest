@@ -70,6 +70,26 @@ pathlib.Path("observed.json").write_text(json.dumps({
         os.path.join(os.environ.get("CODEX_HOME", "/nonexistent"), "auth.json"),
         os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", "/nonexistent"), ".credentials.json")) if os.path.isfile(name)},
 }))
+if os.environ.get("FAKE_ASK_USER"):
+    resumed = "--resume" in sys.argv or sys.argv[1:3] == ["exec", "resume"]
+    with pathlib.Path("turns.jsonl").open("a") as stream:
+        stream.write(json.dumps({"argv": sys.argv[1:], "stdin": prompt}) + "\\n")
+    if not resumed or os.environ.get("FAKE_ASK_AGAIN"):
+        asked = "Exit code 1\\n" + os.environ["FAKE_ASK_USER"]
+        question = "Which Ruby version does the Jenkinsfile / Run Tests job run?"
+        if pathlib.Path(sys.argv[0]).name == "codex":
+            events = [{"type": "thread.started", "thread_id": "thread-1"},
+                      {"type": "item.completed", "item": {"type": "command_execution", "command": "/trial/bin/ddtest onboard", "exit_code": 1, "aggregated_output": asked}},
+                      {"type": "item.completed", "item": {"type": "agent_message", "text": question}},
+                      {"type": "turn.completed"}]
+        else:
+            events = [{"type": "system", "subtype": "init", "session_id": "session-1"},
+                      {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": "ask", "input": {"command": "/trial/bin/ddtest onboard"}}]}},
+                      {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "ask", "is_error": True, "content": asked}]}},
+                      {"type": "result", "result": question, "session_id": "session-1"}]
+        for event in events:
+            print(json.dumps(event))
+        sys.exit(0)
 if os.environ.get("FAKE_RUNTIME_SHELL"):
     settings = {}
     for index, arg in enumerate(sys.argv[:-1]):
@@ -795,8 +815,8 @@ class RunnerTests(unittest.TestCase):
         result, = run_eval.public_events(event, "codex")
         self.assertEqual(result["command"], "npm test")
         self.assertEqual(result["exit_code"], 1)
-        self.assertLess(len(result["output"]), 4100)
-        self.assertTrue(result["output"].startswith("[truncated]"))
+        self.assertLess(len(result["output"]), run_eval.EXCERPT_LIMIT + 100)
+        self.assertIn("characters omitted]", result["output"])
 
 
 class FrameworkEnvironmentTests(unittest.TestCase):
