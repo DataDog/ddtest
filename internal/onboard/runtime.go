@@ -86,6 +86,9 @@ type RuntimeFinding struct {
 	setupSupported bool
 	// setupReadProblem is why the provider found the setup cannot run there.
 	setupReadProblem string
+	// handWritten is the setup the job writes by hand before this entry,
+	// when no provider setup precedes it (see handWrittenSetup).
+	handWritten *handWrittenSetup
 }
 
 // A composite call's condition sees the caller's environment and string inputs,
@@ -182,6 +185,12 @@ type runtimeJob struct {
 	// it is not its provider's own, such as Datadog's installer in a Jenkins
 	// stage that runs in a container (see setupProviderFor); nil otherwise.
 	SetupProvider ciProvider `yaml:"-"`
+	// KeyProblem explains why the DD_API_KEY a provider stores for its jobs
+	// does not reach this job's commands as written, such as a key the
+	// configuration writes or a container that does not receive it; empty
+	// when the configuration shows no such problem. A setup written by hand
+	// reads the key there (see handWrittenSetup).
+	KeyProblem string `yaml:"-"`
 	// Host describes the agent a job without an image runs on, such as a
 	// Jenkins agent label, for the user who knows its runtime; empty uses
 	// the provider's generic description.
@@ -620,7 +629,25 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 				continue
 			}
 		}
-		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, step, row, resolution, state, finding, resolveNode, resolve, frameworks...))
+		// Without a provider setup, the job may set up the tracer by hand; a
+		// complete one is checked like the setup's preload.
+		var handWritten *handWrittenSetup
+		checked, checkedState := step, state
+		if state.action == "" && !state.skippedAction && resolution.Matched {
+			if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
+				handWritten, checked = javascriptHandWrittenSetup(root, provider, workflow, job, i, frameworkName(frameworks), "")
+			}
+		}
+		if handWritten != nil {
+			finding.Action, finding.TracerRequested = handWritten.Reference, handWritten.Tracer
+			if problem := handWritten.problem(); problem != "" {
+				finding.Status, finding.Code, finding.Reason = StatusInconclusive, handWritten.code(), problem
+				findings = append(findings, finding)
+				continue
+			}
+			checkedState.action, checkedState.tracer = handWritten.Reference, handWritten.Tracer
+		}
+		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, checked, row, resolution, checkedState, finding, resolveNode, resolve, frameworks...))
 	}
 	if len(findings) == 0 && skippedTest {
 		// The row runs the job without its tests, e.g. `if: matrix.node != '20'`.
@@ -762,6 +789,11 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		if reason == "" {
 			reason = javascriptInstrumentationDisabled(workflow, job, step, row, frameworks...)
 		}
+		if reason != "" && readsActionPackage(workflow, job, step) {
+			// Only the Datadog GitHub action exports DD_TRACE_PACKAGE; elsewhere
+			// the setup appends its preload to NODE_OPTIONS itself.
+			reason = "This test step's NODE_OPTIONS reads $DD_TRACE_PACKAGE, which only the Datadog GitHub Actions setup exports: here it is empty, so Node gets -r without a module and fails to start. Remove -r $DD_TRACE_PACKAGE; the " + activeOrDefaultCIProvider().setupName() + " already appends its preload to NODE_OPTIONS."
+		}
 		if reason != "" {
 			finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedInitialization, reason
 			if reason == unverifiedPreloadReason && stepSetsNoNodeOptions(workflow, job, step) {
@@ -800,6 +832,17 @@ var floatingTracerRequirement = func(ctx context.Context) (tracerRequirement, er
 	return cachedCIRequirement("floating\nlatest", func() (tracerRequirement, error) {
 		return resolveRequirement(ctx, client, "floating", "latest", platform.NewJavaScript().ResolveRegistryTracer)
 	})
+}
+
+// readsActionPackage reports, on a provider without the shared workflow
+// syntax, a test step whose NODE_OPTIONS reads $DD_TRACE_PACKAGE, which no
+// setup outside GitHub Actions exports.
+func readsActionPackage(workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	if activeOrDefaultCIProvider().sharedSyntax() {
+		return false
+	}
+	options := handWrittenEnvironment(workflow, job, step)["NODE_OPTIONS"]
+	return strings.Contains(options, "$DD_TRACE_PACKAGE") || strings.Contains(options, "${DD_TRACE_PACKAGE")
 }
 
 func changesNodeRuntime(command string) bool {

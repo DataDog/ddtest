@@ -991,6 +991,70 @@ stops and leaves that job for review. A job that sets `DD_CUCUMBER_NODE_OPTIONS`
 `DD_WDIO_NODE_OPTIONS` itself is left for review. Jenkins jobs keep the
 manual setup until `onboard --apply` edits Jenkinsfiles.
 
+### Hand-written setups outside GitHub Actions
+
+On GitLab CI, CircleCI, Buildkite and Jenkins, a JavaScript or Ruby job that
+already sets up Test Optimization by hand, without the provider's setup
+mechanism, keeps that setup. Where no provider setup precedes a test command,
+ddtest reads the command's environment (the job's variables, a CircleCI
+`environment`, a Buildkite `env` or a Jenkins `environment` directive, and
+what earlier commands export) and recognizes the setups the tracers document:
+
+- JavaScript: `NODE_OPTIONS` preloads `-r dd-trace/ci/init` (also
+  `--require=…` or `-rdd-trace/ci/init`), with `--import dd-trace/register.js`
+  for Vitest and Cucumber, and dd-trace comes from the project: an exact release
+  in the `package.json` that resolves it from the test's directory, the single
+  release its lockfile (`package-lock.json`, `npm-shrinkwrap.json`,
+  `yarn.lock` or `pnpm-lock.yaml`) locks, or an exact `npm install
+  dd-trace@<release>` earlier in the job. Cypress, which loads dd-trace
+  through its configuration, is not read this way.
+- Ruby: `RUBYOPT` preloads `-rdatadog/ci/auto_instrument` (after
+  `-rbundler/setup`, or for a test command run with `bundle exec` or a binstub)
+  with `DD_CIVISIBILITY_ENABLED=true`; or an RSpec helper that `.rspec` loads
+  (`--require spec_helper`) requires `datadog/ci` at top level and configures
+  it in a `Datadog.configure do |c|` block with `c.ci.enabled = true` (or
+  `DD_CIVISIBILITY_ENABLED=true`) and `c.ci.instrument :rspec`. The
+  datadog-ci release is the one the selected bundle's `Gemfile.lock` locks.
+
+Such a setup is certified with the same rules as the provider's own: an exact
+tracer release; `DD_API_KEY` from the provider's secret store (a GitLab CI/CD
+variable, CircleCI project settings or a context, a Buildkite agent hook,
+secrets plugin or UI environment, a Jenkins credential), never a literal in the
+configuration, and reaching a container that runs the tests; `DD_SITE` (or the
+default `datadoghq.com`) matching the selected site; a preload that reaches the
+test process; and agentless reporting (`DD_CIVISIBILITY_AGENTLESS_ENABLED=true`
+or `c.ci.agentless_mode_enabled = true`) or a Datadog Agent the user confirms.
+No CI configuration shows an Agent (whether it runs where the tests do, at
+`DD_TRACE_AGENT_URL`, `DD_AGENT_HOST` or `localhost:8126`, with a key and the
+selected site), so a setup that reports through one returns
+`ci_setup_confirmation_required` for `--ci-confirm datadog-agent` on GitLab
+CI, CircleCI, Buildkite and Jenkins; ddtest never asks to switch it to
+agentless, and reports the confirmation in `final_response` as stated by the
+user. A complete setup counts as configured:
+`onboard --apply` writes no second setup, the agent handoff goes straight to
+validation, and validation checks the CI runtime against the release it pins,
+validates locally with that release, and names storing `DD_API_KEY` in the
+provider's secret store as the human action. A setup missing a piece is reported
+with that piece (`incomplete_ci_setup`) and kept: `onboard --apply` returns a
+setup gap naming the change, and the instructions list each such job with its
+changes instead of prescribing the provider's setup for it. What ddtest cannot
+read statically stays unresolved (`unverified_initialization`) and is never
+certified: an Agent the user has not confirmed, a value only CI knows, a test helper inside other code or with
+settings ddtest does not evaluate, and a Minitest helper, which no
+configuration shows every test file loads. Assignments of tracer variables
+(`NODE_OPTIONS`, `RUBYOPT`, `DD_*`) that prefix a test command, as in
+dd-trace's documented `NODE_OPTIONS="-r dd-trace/ci/init" DD_ENV=ci yarn
+test`, are that command's environment, also after the provider's setup
+(`NODE_OPTIONS="$NODE_OPTIONS …" npx jest`). Python and Java set up Test Optimization on GitHub Actions only.
+
+The GitLab setup script, the CircleCI orb and the Buildkite snippet run the
+installer outside GitHub Actions, where it appends its preload to
+`NODE_OPTIONS` and exports `DD_TRACE_ESM_IMPORT` but never `DD_TRACE_PACKAGE`.
+ddtest models those exports, so a test command whose `NODE_OPTIONS` reads
+`$DD_TRACE_PACKAGE` (as GitHub Actions setups do) is reported as a preload
+Node cannot start with, never certified; the same applies to a hand-written
+`NODE_OPTIONS` that preloads it.
+
 ## Coverage and local developer commands
 
 Mocha CI commands without Istanbul coverage are wrapped with the project's NYC.

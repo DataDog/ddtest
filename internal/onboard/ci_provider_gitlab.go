@@ -1411,6 +1411,8 @@ func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image 
 		step.Run = command
 		if consumed := strings.TrimSpace(command) == "" || state.apply(command, current); consumed {
 			step.Run = ""
+		} else if run, assigned, ok := foldCommandEnvironment(command, mergeEnvironment(mergeEnvironment(env, state.env), state.references), gitLabShellDialect.projectVariable); ok {
+			step.Run, step.Env = run, mergeEnvironment(step.Env, assigned)
 		}
 		steps = append(steps, step)
 	}

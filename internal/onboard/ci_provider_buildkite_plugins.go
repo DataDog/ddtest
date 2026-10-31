@@ -665,6 +665,21 @@ func (executor *buildkiteExecutor) setupProblem(curl bool) string {
 	return ""
 }
 
+// keyReachProblem explains why the DD_API_KEY the agent provides does not
+// reach the step's commands as configured: a key the pipeline writes, an
+// empty one that replaces it, or a container that does not receive it.
+func (executor *buildkiteExecutor) keyReachProblem() string {
+	switch {
+	case executor.keyProblem:
+		return "The pipeline sets DD_API_KEY in its configuration; never commit the key, and pipeline upload bakes interpolated values into the uploaded pipeline: remove it and provide DD_API_KEY from " + buildkiteKeySources + "."
+	case executor.keyEmpty:
+		return "The step's container receives DD_API_KEY set to an empty value, which replaces the agent's key: list DD_API_KEY without a value so the agent's key passes through."
+	case executor.container && !executor.keyPassed && !executor.propagate:
+		return "The step runs its commands in a container, which receives only the environment its plugin lists, so DD_API_KEY never reaches the tests: add DD_API_KEY to the plugin's environment list."
+	}
+	return ""
+}
+
 // imageSetupProblem explains why the step's container cannot run the
 // Datadog installer, which needs Bash and curl or wget: an image ddtest
 // cannot resolve, or one known to lack them. curl reports an earlier

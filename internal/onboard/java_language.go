@@ -168,6 +168,12 @@ func (javaDiscovery) setupShellExports(current map[string]string) (map[string]st
 	return exported, nil
 }
 
+// Java's CI check reads only its provider's setup: there is no
+// hand-written setup to read yet.
+func (javaDiscovery) handWrittenSetup(string, ciProvider, ciWorkflow, runtimeJob, int, map[string]any, string, string) *handWrittenSetup {
+	return nil
+}
+
 // ciSetupRequest is the Java part of a provider's setup: an exact agent
 // release, the build JVM options that carry it, and a JDK ddtest can read.
 func (javaDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
@@ -188,6 +194,8 @@ func (javaDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 func (javaDiscovery) automaticProviderSetup(string) bool { return false }
 
 func (javaDiscovery) unsupportedImage(string) string { return "" }
+
+func (javaDiscovery) preloadVariable(string) bool { return false }
 
 func (javaDiscovery) runtimeVariable(name string) bool {
 	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"

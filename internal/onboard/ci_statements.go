@@ -74,7 +74,14 @@ type ciFactDefinition struct {
 
 // ciProviderFacts lists the facts each provider (by --ci-provider name) may
 // ask the user to confirm.
-var ciProviderFacts = map[string][]ciFactDefinition{jenkinsProvider: jenkinsFacts}
+// A setup written by hand that reports through a Datadog Agent depends on
+// handWrittenAgentFact on every provider whose setups ddtest reads by hand.
+var ciProviderFacts = map[string][]ciFactDefinition{
+	jenkinsProvider:   append(slices.Clone(jenkinsFacts), handWrittenAgentFact),
+	gitLabCIProvider:  {handWrittenAgentFact},
+	circleCIProvider:  {handWrittenAgentFact},
+	buildkiteProvider: {handWrittenAgentFact},
+}
 
 // statedRuntimeSource is the NodeSource of a runtime the user stated.
 const statedRuntimeSource = "stated by the user (--ci-runtime)"
@@ -792,7 +799,7 @@ func RequiredCIConfirmations(root, language, framework string) *CIConfirmationRe
 				continue
 			}
 			var setup *ciSetup
-			for _, step := range job.Steps {
+			for i, step := range job.Steps {
 				if current, ok := datadogSetup(step); ok {
 					if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
 						setup = &current
@@ -802,11 +809,19 @@ func RequiredCIConfirmations(root, language, framework string) *CIConfirmationRe
 				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
 					continue
 				}
-				if setup == nil || setup.Problem != "" {
-					break
+				confirmations := []string(nil)
+				switch {
+				case setup != nil && setup.Problem == "":
+					confirmations = setup.Confirmations
+				case setup == nil && resolution.Matched:
+					// A setup the job writes by hand depends on facts too, once
+					// nothing else is missing.
+					if handWritten := handWrittenCISetup(root, workflow, job, i, nil, language, framework, ""); handWritten != nil {
+						confirmations = handWritten.unconfirmed()
+					}
 				}
 				missing := false
-				for _, key := range setup.Confirmations {
+				for _, key := range confirmations {
 					if _, stated := statedFact(key); !stated {
 						needed[key], missing = true, true
 					}

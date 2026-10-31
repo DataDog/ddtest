@@ -70,6 +70,16 @@ type discoveryLanguage interface {
 	// syntax: its installer token, exact tracer input, commands that must
 	// follow the setup, and its own setup rules.
 	ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest
+	// handWrittenSetup recognizes the language's hand-written setup (see
+	// handWrittenSetup) of the test command at index of job on row, on
+	// provider, which no provider setup precedes; nil when the command's
+	// environment and the framework's configuration load no tracer.
+	handWrittenSetup(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, index int, row map[string]any, framework, site string) *handWrittenSetup
+	// preloadVariable reports the variable through which a setup written by
+	// hand loads the language's tracer into a process, such as a Node
+	// options variable; a command prefix that sets it is the command's
+	// environment (see foldCommandEnvironment).
+	preloadVariable(name string) bool
 	// cacheVariable reports a variable that locates the language's package
 	// cache or install directory, which CI caches between jobs.
 	cacheVariable(name string) bool

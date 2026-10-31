@@ -116,9 +116,17 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			if resolution.OtherFramework && scoped == "NODE_OPTIONS" {
 				return nil, &SetupGap{location, "The test command also runs another framework; initialize only the selected framework explicitly."}
 			}
+			// A job that sets up the tracer by hand keeps that setup.
+			var handWritten *handWrittenSetup
+			if setupIndex < 0 {
+				handWritten = handWrittenCISetup(root, workflow, job, first, nil, "javascript", framework, site)
+			}
 			inherited := []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT", "DD_CIVISIBILITY_ENABLED", "DD_TRACE_ENABLED"}
 			if scoped != "NODE_OPTIONS" && setupIndex < 0 {
 				inherited = append(inherited, scoped)
+			}
+			if handWritten != nil {
+				inherited = nil
 			}
 			for _, layer := range []map[string]string{workflow.Env, job.Env, job.Steps[first].Env} {
 				for _, key := range inherited {
@@ -136,7 +144,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			if UnsupportedNode(node) {
 				continue // No tracer release runs here; validation reports it as not tried.
 			}
-			if plugin && node != "" && job.SetupUnsupported == "" {
+			if plugin && node != "" && job.SetupUnsupported == "" && handWritten == nil {
 				// The plugin installs the latest dd-trace whatever the Node.
 				if err := floatingNodeGap(root, provider, workflow, job, location, node); err != nil {
 					return nil, err
@@ -150,7 +158,11 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 					if !command.usesNYC && !command.mochaIstanbul && (setupIndex < 0 || uncovered) {
 						// The GitHub Actions editor wraps the command with NYC; this
 						// editor only inserts the setup, so stop before any edit.
-						return nil, &EditThenApplyGap{SetupGap{location, MochaCoverageGap + command.Command + ". Wrap it with npx --no-install nyc -- in CI (adding nyc as a dev dependency if the project does not declare it), then rerun onboard --apply, which adds the Datadog setup."}}
+						next := "then rerun onboard --apply, which adds the Datadog setup."
+						if handWritten != nil {
+							next = "then rerun onboard --apply; the job's hand-written setup stays."
+						}
+						return nil, &EditThenApplyGap{SetupGap{location, MochaCoverageGap + command.Command + ". Wrap it with npx --no-install nyc -- in CI (adding nyc as a dev dependency if the project does not declare it), " + next}}
 					}
 				}
 			}
@@ -169,6 +181,13 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 					}
 					return nil, &SetupGap{location, err.Error()}
 				}
+			}
+			if handWritten != nil {
+				if problem := handWritten.problem(); problem != "" {
+					return nil, &SetupGap{location, problem + " Then rerun onboard --apply."}
+				}
+				configured++
+				continue
 			}
 			target := ciSetupTarget{Workflow: workflow.Path, Job: name, Step: first}
 			if framework == "mocha" && !esm {
@@ -529,7 +548,7 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 			}
 			var setup *ciSetup
 			var setupStep runtimeStep
-			for _, step := range job.Steps {
+			for i, step := range job.Steps {
 				if current, ok := datadogSetup(step); ok {
 					if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
 						setup, setupStep = &current, step
@@ -538,6 +557,13 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 				resolution := resolveTestStep(root, workflow, job, step, language, framework)
 				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
 					continue
+				}
+				if setup == nil && resolution.Reason == "" {
+					// A complete setup the job writes by hand counts as its own.
+					if handWritten := handWrittenCISetup(root, workflow, job, i, nil, language, framework, site); handWritten != nil && handWritten.complete() {
+						instrumented = true
+						break
+					}
 				}
 				if resolution.Reason != "" || setup == nil || setup.shellLocal && !sameShell(setupStep, step) || provider.setupProblem(*setup, tracerInput, exact, "", site) != "" {
 					return false
@@ -577,7 +603,7 @@ func existingSetupProblems(root, language, framework, site string) []string {
 				continue
 			}
 			var setup *ciSetup
-			for _, step := range job.Steps {
+			for i, step := range job.Steps {
 				if current, ok := datadogSetup(step); ok {
 					if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
 						setup = &current
@@ -587,10 +613,16 @@ func existingSetupProblems(root, language, framework, site string) []string {
 				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
 					continue
 				}
+				problem := ""
 				if setup == nil {
-					break
+					// A setup the job writes by hand is reported with what it lacks.
+					if handWritten := handWrittenCISetup(root, workflow, job, i, nil, language, framework, site); handWritten != nil {
+						problem = handWritten.problem()
+					}
+				} else {
+					problem = provider.setupProblem(*setup, "", func(string) bool { return true }, "", site)
 				}
-				if problem := provider.setupProblem(*setup, "", func(string) bool { return true }, "", site); problem != "" {
+				if problem != "" {
 					if _, seen := jobs[problem]; !seen {
 						problems = append(problems, problem)
 					}

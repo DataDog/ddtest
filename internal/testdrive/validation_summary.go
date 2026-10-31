@@ -45,15 +45,33 @@ type validationSummary struct {
 // in the selected CI provider's settings. What happens until it exists
 // depends on how the configuration guards the Datadog step: skipped by an
 // env.DD_API_KEY guard (the Cypress setup) or kept with continue-on-error.
+// Jobs that set up the tracer by hand read the key where the provider
+// stores secrets, without its setup.
 func apiKeyHumanAction(check *onboard.RuntimeCheck) string {
+	handWritten := false
+	// The provider's own setups decide its key action: a hand-written job's
+	// key reference is not one of its setup mechanisms.
+	var setups *onboard.RuntimeCheck
 	if check != nil {
+		filtered := *check
+		filtered.Jobs = slices.DeleteFunc(slices.Clone(check.Jobs), func(job onboard.RuntimeFinding) bool { return onboard.HandWrittenSetupAction(job.Action) })
+		setups = &filtered
 		for _, job := range check.Jobs {
 			if job.Reason == onboard.GuardedActionBranch {
-				return onboard.CIProviderAPIKeyActionFor(check, true)
+				return onboard.CIProviderAPIKeyActionFor(setups, true)
+			}
+			if job.Status != "excluded" {
+				if !onboard.HandWrittenSetupAction(job.Action) {
+					return onboard.CIProviderAPIKeyActionFor(setups, false)
+				}
+				handWritten = true
 			}
 		}
 	}
-	return onboard.CIProviderAPIKeyActionFor(check, false)
+	if handWritten {
+		return onboard.CIProviderHandWrittenKeyAction()
+	}
+	return onboard.CIProviderAPIKeyActionFor(setups, false)
 }
 
 // featureCoverageBlocker is the summary line for incomplete feature results.

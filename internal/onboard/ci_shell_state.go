@@ -86,6 +86,50 @@ func (s *ciShellState) apply(command string, current map[string]string) bool {
 	return onlyState
 }
 
+// foldCommandEnvironment reads a command that is one simple statement whose
+// variable assignments prefix it and set a tracer variable (a language's
+// preloadVariable or DD_*), as in NODE_OPTIONS='-r dd-trace/ci/init' yarn test: the
+// shell sets them for that command alone, as a step's environment does, so
+// they become the step's environment and the command runs without them.
+// Values read known like exports; one ddtest cannot evaluate stays
+// unresolved. ok is false for any other command.
+func foldCommandEnvironment(command string, known map[string]string, project string) (run string, env map[string]string, ok bool) {
+	file, parsed := parseCIShell(command)
+	if !parsed || len(file.Stmts) != 1 {
+		return "", nil, false
+	}
+	stmt := file.Stmts[0]
+	call, isCall := stmt.Cmd.(*syntax.CallExpr)
+	if stmt.Background || stmt.Negated || stmt.Coprocess || len(stmt.Redirs) > 0 || !isCall || len(call.Assigns) == 0 || len(call.Args) == 0 {
+		return "", nil, false
+	}
+	tracer := false
+	env = map[string]string{}
+	for _, assign := range call.Assigns {
+		if assign.Name == nil || assign.Index != nil || assign.Array != nil || assign.Append || assign.Naked {
+			return "", nil, false
+		}
+		name := assign.Name.Value
+		tracer = tracer || strings.HasPrefix(name, "DD_") || slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool { return language.preloadVariable(name) })
+		value, literal := "", true
+		if assign.Value != nil {
+			value, literal = ciShellWord(assign.Value, mergeEnvironment(known, env), name, project)
+		}
+		if !literal {
+			value = unresolvedCIValue(value)
+		}
+		env[name] = value
+	}
+	if !tracer {
+		return "", nil, false
+	}
+	var text strings.Builder
+	if err := syntax.NewPrinter().Print(&text, &syntax.CallExpr{Args: call.Args}); err != nil {
+		return "", nil, false
+	}
+	return strings.TrimSpace(text.String()), env, true
+}
+
 // ciShellWord evaluates a shell word: literal text and $NAME/${NAME} reads of
 // known values. self is the variable being assigned; reading it while unset
 // is empty. Other unknown reads stay as written and make the value dynamic.
