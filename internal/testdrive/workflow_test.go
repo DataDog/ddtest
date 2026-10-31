@@ -55,7 +55,7 @@ func TestSharedWorkflowAcrossFrameworksPreservesAssertionsAndPackagingFailures(t
 			t.Run(runner.Name()+map[bool]string{true: "/package-leak", false: "/pass"}[leak], func(t *testing.T) {
 				root := t.TempDir()
 				t.Chdir(root)
-				requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"fixture"}`)
+				requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"fixture","version":"1.0.0"}`)
 				drive := &Testdrive{repositoryRoot: root, framework: runner, language: "javascript", tracerVersion: "latest", executor: workflowCheckExecutor{leak}, command: "vitest", nodeVersion: func() string { return "v24.0.0" }}
 				calls := 0
 				drive.workflowRun = func(ctx context.Context, out io.Writer) error {

@@ -87,10 +87,9 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	original, copyRoot := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
-	sourceRoot := original
-	if t.lang().isolatesConfigurations() {
-		sourceRoot = checkout
-	}
+	// The copy is the whole checkout, as CI checks it out, with the package
+	// as the working directory: tests may read files outside their package.
+	sourceRoot := checkout
 	if t.lang().isolatesConfigurations() || !t.checkOnly && (len(item.Prerequisites) > 0 || len(item.Services) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {
 		parent, err := os.MkdirTemp("", "ddtest-configuration-")
 		if err != nil {

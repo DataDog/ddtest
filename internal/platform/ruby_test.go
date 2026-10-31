@@ -467,7 +467,7 @@ func TestDetectPlatform_Unsupported(t *testing.T) {
 		t.Error("expected nil platform for unsupported platform")
 	}
 
-	expectedError := "unsupported platform: go"
+	expectedError := "unsupported platform: go; supported platforms: javascript, python, ruby, java"
 	if err.Error() != expectedError {
 		t.Errorf("expected error %q, got %q", expectedError, err.Error())
 	}

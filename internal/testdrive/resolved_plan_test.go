@@ -154,7 +154,7 @@ func TestResumeAlwaysExecutesNewPairAndStopsIdenticalFailures(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	root := t.TempDir()
 	t.Chdir(root)
-	requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"fixture"}`)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"fixture","version":"1.0.0"}`)
 	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript", tracerVersion: "latest", executor: workflowCheckExecutor{true}, command: "vitest", nodeVersion: func() string { return "v24.0.0" }}
 	calls := 0
 	drive.workflowRun = func(ctx context.Context, out io.Writer) error {

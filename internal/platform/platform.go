@@ -61,6 +61,48 @@ func isFallback(p Platform) bool {
 	return ok && fallback.fallback()
 }
 
+// packageDirectory is the JavaScript package, relative to the working
+// directory, that onboarding selected when the package is below the
+// repository root that holds the CI configuration. Empty is the working
+// directory itself.
+var packageDirectory string
+
+// detectionHint explains, when no platform is detected, where the projects
+// below the working directory are and how to select one.
+var detectionHint string
+
+// UsePackageDirectory selects the JavaScript package below the working
+// directory that platform and framework detection read; empty restores the
+// working directory.
+func UsePackageDirectory(directory string) { packageDirectory = directory }
+
+// PackageDirectory is the directory platform and framework detection read for
+// a JavaScript package: "." unless UsePackageDirectory selected another.
+func PackageDirectory() string {
+	if packageDirectory == "" {
+		return "."
+	}
+	return filepath.FromSlash(packageDirectory)
+}
+
+// UseDetectionHint adds hint to the error returned when no platform is
+// detected; empty removes it.
+func UseDetectionHint(hint string) { detectionHint = hint }
+
+// HasProjectManifest reports whether any platform detects a project in root.
+func HasProjectManifest(root string) (bool, error) {
+	for _, p := range []Platform{NewJavaScript(), NewPython(), NewRuby(settings.GetTestSkippingLevel()), NewJava()} {
+		found, err := p.Detect(root)
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
+}
+
+// platformAliases names the platform a common alternative spelling means.
+var platformAliases = map[string]string{"node": "javascript", "nodejs": "javascript", "js": "javascript", "typescript": "javascript", "py": "python", "rb": "ruby"}
+
 // DetectPlatform selects a platform without running commands or checking installed
 // runtimes/tracers. Selection uses the current directory and settings.
 func DetectPlatform() (Platform, error) {
@@ -69,12 +111,29 @@ func DetectPlatform() (Platform, error) {
 	platformHint := settings.GetPlatform()
 	platforms := []Platform{NewJavaScript(), NewPython(), NewRuby(settings.GetTestSkippingLevel()), NewJava()}
 	if platformHint != "" {
-		for _, p := range platforms {
+		names := make([]string, len(platforms))
+		for i, p := range platforms {
 			if p.Name() == platformHint {
 				return p, nil
 			}
+			names[i] = p.Name()
 		}
-		return nil, fmt.Errorf("unsupported platform: %s", platformHint)
+		if alias := platformAliases[strings.ToLower(platformHint)]; alias != "" {
+			return nil, fmt.Errorf("unsupported platform: %s; use --platform %s (supported platforms: %s)", platformHint, alias, strings.Join(names, ", "))
+		}
+		return nil, fmt.Errorf("unsupported platform: %s; supported platforms: %s", platformHint, strings.Join(names, ", "))
+	}
+	if packageDirectory != "" {
+		// Onboarding selected a JavaScript package below the repository root,
+		// which may hold another platform's manifest of its own.
+		javascript := platforms[0]
+		if frameworkHint != "" {
+			if _, err := javascript.DetectFramework(); err == nil {
+				return javascript, nil
+			}
+		} else if found, err := javascript.Detect(PackageDirectory()); err != nil || found {
+			return javascript, err
+		}
 	}
 	var candidates []Platform
 	for _, p := range platforms {
@@ -97,6 +156,9 @@ func DetectPlatform() (Platform, error) {
 	if len(candidates) == 0 {
 		if frameworkHint != "" {
 			return nil, fmt.Errorf("unsupported framework: %s", frameworkHint)
+		}
+		if detectionHint != "" {
+			return nil, fmt.Errorf("could not detect a supported platform: %s", detectionHint)
 		}
 		return nil, fmt.Errorf("could not detect a supported platform; inspect package.json, Python project configuration, Gemfile, or pom.xml, or specify --platform")
 	}

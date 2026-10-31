@@ -53,7 +53,7 @@ func (j *JavaScript) Detect(repositoryRoot string) (bool, error) {
 }
 
 func (j *JavaScript) DetectFramework() (framework.Framework, error) {
-	root := "."
+	root := PackageDirectory()
 	hint := settings.GetFramework()
 	if hint == "wdio" {
 		hint = "webdriverio"

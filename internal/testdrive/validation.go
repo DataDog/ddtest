@@ -24,6 +24,7 @@ import (
 	"github.com/DataDog/ddtest/internal/platform"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 type verdict struct {
@@ -318,7 +319,35 @@ func reportText(value string) string {
 const validationFilename = "testdrive.json"
 
 func validationPath(repositoryRoot string) string {
-	return filepath.Join(repositoryRoot, constants.PlanDirectory, validationFilename)
+	return filepath.Join(reportRoot(repositoryRoot), constants.PlanDirectory, validationFilename)
+}
+
+// reportRedirect keeps the reports of a run in a package below the
+// repository root at that root, where onboarding of the same package keeps
+// them (see UseReportRoot).
+var reportRedirect struct{ from, to string }
+
+// UseReportRoot keeps the reports of runs whose working root is from in the
+// repository root to: a focused run in a package directory reports where
+// onboarding of that package does. Empty arguments remove the redirect.
+func UseReportRoot(from, to string) {
+	reportRedirect.from, reportRedirect.to = from, to
+	if from != "" {
+		reportRedirect.from = workspace.CanonicalRoot(from)
+	}
+}
+
+// reportRoot is the directory whose .testoptimization holds the reports of a
+// run rooted at root. An empty root names the relative report location the
+// working directory displays.
+func reportRoot(root string) string {
+	if reportRedirect.from == "" {
+		return root
+	}
+	if root == "" || workspace.CanonicalRoot(root) == reportRedirect.from {
+		return reportRedirect.to
+	}
+	return root
 }
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {

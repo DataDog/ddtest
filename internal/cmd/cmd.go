@@ -202,6 +202,9 @@ func runPersistentPreRun(cmd *cobra.Command, _ []string) error {
 			return errcode.WithCode(errorCode, err)
 		})
 	}
+	if cmd.Name() == "onboard" || cmd.Name() == "testdrive" {
+		return locatePackage(cmd)
+	}
 	return nil
 }
 
