@@ -223,8 +223,12 @@ def failure_kind(messages, timed_out=False):
 CLI_STARTUP_TIMEOUT = 15
 
 
-def reporting_verdict(text, report):
-    """Require the product's copyable handoff; audit extra claims independently."""
+def reporting_verdict(text, report, report_directory=None):
+    """Require the product's copyable handoff; audit extra claims independently.
+
+    report_directory is the checkout root, as the agent sees it, whose
+    .testoptimization holds the report read here; links must name that
+    report. Without it, the report's working directory stands in."""
     report = report if isinstance(report, dict) else {}
     summary = report.get("summary") if isinstance(report.get("summary"),dict) else {}
     canonical = summary.get("final_response")
@@ -316,7 +320,9 @@ def reporting_verdict(text, report):
                 break
     if summary.get("blocking_checks") and re.search(r"\b(?:no|zero|0)\s+(?:blocking checks|blockers)\b|\b(?:blocking checks|blockers):\s*(?:none|no|zero|0)\b", plain):
         differences.append("Agent dismissed the reported blocking_checks.")
-    directory = report.get("working_directory")
+    # ddtest keeps one report pair at the repository root, also for runs in a
+    # package below it; a link elsewhere names a report the evaluator never read.
+    directory = report_directory or report.get("working_directory")
     if directory:
         for a,b in re.findall(r"\[[^\]]+\]\((?:<([^>]+)>|([^\s)]+))\)", text):
             link = unquote(a or b)
@@ -880,7 +886,7 @@ def run(args):
         except (OSError, ValueError) as error:
             code = finalization_failed(str(error))
         try:
-            manifest["agent_reporting"] = reporting_verdict(final_response, report)
+            manifest["agent_reporting"] = reporting_verdict(final_response, report, inside(checkout))
             manifest["ddtest_runtime"] = report_runtime(report, manifest.get("node_runtime", {}).get("version"))
             for language, name in (("ruby", "Ruby"), ("java", "Java"), ("python", "Python")):
                 if language+"_runtime" not in manifest:

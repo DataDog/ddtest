@@ -97,6 +97,46 @@ Other CI files (Travis CI, Azure Pipelines and others) are never parsed: when
 they mention the framework they are listed as outside this validation, and they
 never fail onboarding.
 
+### JavaScript packages below the repository root
+
+CI checks out the whole repository and runs a package's steps in its directory
+(`cd test`, `npm --prefix test`, a GitHub `working-directory`, a Docker Compose
+`working_dir` or Dockerfile `WORKDIR`, a Jenkins `dir('test')`). Onboarding
+does the same, wherever it starts:
+
+- From the package directory, when the package has no CI configuration of
+  its own and the Git root has one, `onboard` and `testdrive --all`/`--report`
+  run from the Git root with that package selected for platform and framework
+  detection; ddtest says so on stderr. CI discovery maps each step's working
+  directory to its package, so the result is the same as starting at the root.
+- At a root without `package.json`, Python project configuration, `Gemfile`
+  or `pom.xml`, the one package below it that the CI configuration names as a
+  path or working directory is selected. Otherwise the `platform_unresolved`
+  reason lists the packages, those CI names first, and what to run
+  (`cd <package> && ddtest onboard`, or `--platform javascript --framework
+  <framework>` at the root). `--platform node` and similar spellings name
+  `--platform javascript`.
+- A focused `testdrive` (`--command`, `--check-only` or a plain run) started
+  in the package still runs its command there.
+- Validation copies the whole checkout, not only the package, so tests that
+  read files outside their package (`require('../schema.json')`) run as in CI.
+  The copy follows the existing rules: `.testoptimization` is skipped, Git
+  metadata and installed dependencies are kept, ignored outputs are skipped
+  only when preparation rebuilds them, and free space is checked first. It is
+  copy-on-write where the filesystem supports it (APFS, Btrfs, XFS); elsewhere
+  it costs the size of the checkout per configuration.
+- Reports are kept once, in the Git root's `.testoptimization`, for every run
+  above, so the root `.gitignore` entry `/.testoptimization/` covers them.
+  `package_report_exclusions` is `not applicable` when that root has no
+  `package.json`, when its `package.json` has no name or version (npm cannot
+  pack it), when it is private, and for a package below the root, whose
+  tarball cannot contain the root's reports.
+
+A package with CI configuration of its own (for example its own Jenkinsfile),
+or a repository without CI configuration at the Git root, is onboarded in the
+current directory as before. Ruby, Python and Java projects in a subdirectory
+are not moved to the root.
+
 ### Runtimes and facts only the user can state
 
 Some CI jobs select no runtime ddtest can read: Jenkins stages on a host

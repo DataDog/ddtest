@@ -465,7 +465,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 		if !t.checkOnly {
 			needsCopy := slices.ContainsFunc(scope.Commands, func(c onboard.TestCommand) bool { return len(c.Prerequisites) > 0 })
 			if needsCopy {
-				if size, err := configurationCopyEstimate(context.Background(), t.repositoryRoot, skipIgnoredOutput); err == nil {
+				if size, err := configurationCopyEstimate(context.Background(), t.checkoutRoot(), skipIgnoredOutput); err == nil {
 					_, _ = fmt.Fprintf(output, "Estimated copy per prepared configuration: up to %d bytes; ignored outputs excluded, dependencies and Git metadata retained. Copy-on-write when available.\n", size)
 				} else {
 					_, _ = fmt.Fprintf(output, "Copy estimate unavailable: %s\n", err)

@@ -164,7 +164,9 @@ Neither inherits the evaluator's CLI profile. Flag references:
 ## Grade independently
 
 Read `run.json`, `activity.jsonl`, `changes.patch`, `status.txt`, the final answer,
-and both retained ddtest reports. Public tool activity includes file, web and MCP
+and both retained ddtest reports, which ddtest keeps in the checkout root's
+`.testoptimization` also for a package below the root; the reporting check reads
+that pair and fails links to any other. Public tool activity includes file, web and MCP
 targets; reasoning is excluded. Text is redacted before bounded excerpts. Treat
 redaction as a precaution: inspect evidence before sharing it, and do not archive
 credentials, raw telemetry streams or dependency trees.

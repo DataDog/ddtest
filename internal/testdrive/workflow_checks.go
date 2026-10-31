@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 type separateOutputExecutor interface {
@@ -44,6 +45,16 @@ type WorkflowEvidence struct {
 
 func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.WorkflowCheck {
 	reports := []string{".testoptimization/testdrive.json", ".testoptimization/report.html"}
+	// A run in a package below the repository root keeps its reports at the
+	// root (see UseReportRoot); Git checks them there.
+	redirected := reportRoot(t.repositoryRoot) != t.repositoryRoot
+	if redirected {
+		for i, report := range []string{validationPath(t.repositoryRoot), htmlReportPath(t.repositoryRoot)} {
+			if relative, err := filepath.Rel(workspace.CanonicalRoot(t.repositoryRoot), report); err == nil {
+				reports[i] = filepath.ToSlash(relative)
+			}
+		}
+	}
 	git := onboard.WorkflowCheck{Name: "git_report_exclusions", Status: "passed", Command: append([]string{"git", "check-ignore", "--no-index", "--"}, reports...)}
 	data, err := t.executor.CombinedOutput(ctx, "git", git.Command[1:], map[string]string{"NODE_OPTIONS": ""})
 	ignored := strings.Fields(string(data))
@@ -62,19 +73,11 @@ func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.Workfl
 	pack := onboard.WorkflowCheck{Name: "package_report_exclusions", Status: "passed"}
 	// Reports live at the root. A private root is not a publish target, and
 	// workspace packages cannot package files from their parent directory.
-	var manifest struct {
-		Private bool `json:"private"`
-	}
-	manifestData, manifestErr := os.ReadFile(filepath.Join(t.repositoryRoot, "package.json"))
-	if manifestErr == nil {
-		manifestErr = json.Unmarshal(manifestData, &manifest)
-	}
-	if manifestErr != nil {
-		pack.Status, pack.Reason = "failed", "Cannot determine package publishability: "+reportText(manifestErr.Error())
+	if reason, err := unpackableReportPackage(t.repositoryRoot, redirected); err != nil {
+		pack.Status, pack.Reason = "failed", "Cannot determine package publishability: "+reportText(err.Error())
 		return []onboard.WorkflowCheck{git, pack}
-	}
-	if manifest.Private {
-		pack.Status, pack.Reason = "not applicable", "Root package is private; root reports have no publish target. Git exclusions are checked separately."
+	} else if reason != "" {
+		pack.Status, pack.Reason = "not applicable", reason
 		return []onboard.WorkflowCheck{git, pack, {Name: "package_check_cleanup", Status: "not applicable", Reason: "No package-check storage or process was created."}}
 	}
 	directory, err := os.MkdirTemp("", "ddtest-package-check-")
@@ -127,6 +130,35 @@ func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.Workfl
 		cleanup.Reason = reportText(err.Error())
 	}
 	return []onboard.WorkflowCheck{git, pack, cleanup}
+}
+
+// unpackableReportPackage explains why npm cannot pack the reports kept at
+// root, or returns empty when the package there must be checked.
+func unpackableReportPackage(root string, redirected bool) (string, error) {
+	if redirected {
+		return "Reports are kept at the repository root, outside this package; npm pack cannot include files from a parent directory. Git exclusions are checked separately.", nil
+	}
+	var manifest struct {
+		Name    *string `json:"name"`
+		Version *string `json:"version"`
+		Private bool    `json:"private"`
+	}
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if os.IsNotExist(err) {
+		return "No package.json at the repository root; root reports belong to no package and packages below the root cannot include them. Git exclusions are checked separately.", nil
+	}
+	if err == nil {
+		err = json.Unmarshal(data, &manifest)
+	}
+	switch {
+	case err != nil:
+		return "", err
+	case manifest.Private:
+		return "Root package is private; root reports have no publish target. Git exclusions are checked separately.", nil
+	case manifest.Name == nil || strings.TrimSpace(*manifest.Name) == "" || manifest.Version == nil || strings.TrimSpace(*manifest.Version) == "":
+		return "Root package.json has no name or version, so npm cannot pack or publish it; root reports have no publish target. Git exclusions are checked separately.", nil
+	}
+	return "", nil
 }
 
 // exclusionAndCleanupChecksPassed covers only the report-exclusion and owned

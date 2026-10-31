@@ -15,7 +15,7 @@ import (
 )
 
 func htmlReportPath(root string) string {
-	return filepath.Join(root, constants.PlanDirectory, reportFilename)
+	return filepath.Join(reportRoot(root), constants.PlanDirectory, reportFilename)
 }
 
 // Keep the upstream renderer unchanged. Only link artifacts that survive our

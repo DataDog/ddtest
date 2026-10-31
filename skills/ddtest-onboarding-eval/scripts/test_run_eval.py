@@ -897,6 +897,17 @@ class VerdictTests(unittest.TestCase):
                 self.assertEqual(result["status"], "fail")
                 self.assertTrue(result["differences"])
 
+    def test_report_links_must_name_the_checkout_root_report(self):
+        # A run in a package below the root keeps its reports at the root.
+        report = self.compact_report()
+        report["working_directory"] = "/customer/repo/test"
+        answer = self.compact_answer()
+        self.assertEqual(run_eval.reporting_verdict(answer, report, "/customer/repo")["differences"], [])
+        nested = answer.replace("/customer/repo/.testoptimization/", "/customer/repo/test/.testoptimization/")
+        result = run_eval.reporting_verdict(nested, report, "/customer/repo")
+        self.assertEqual(result["status"], "fail")
+        self.assertTrue(any("report path" in difference for difference in result["differences"]), result)
+
     def test_ci_opt_outs_are_not_counted_as_unvalidated(self):
         report = self.compact_report()
         report["summary"]["configuration_coverage"].update(discovered=9, excluded=1)
