@@ -44,6 +44,9 @@ func TestTestSourceSets(t *testing.T) {
 		"Test task of a source set": {"tasks.register<Test>(\"integration\") {\n  testClassesDirs = sourceSets[\"it\"].output.classesDirs\n  classpath = sourceSets[\"it\"].runtimeClasspath\n}", "integration", "it"},
 		"Groovy Test task":          {"task slow(type: Test) {\n  testClassesDirs = sourceSets.slow.output.classesDirs\n}", "slow", "slow"},
 		"configured elsewhere":      {"tasks.register('e2e', Test)\ntasks.named('e2e') { testClassesDirs = sourceSets.getByName('e2e').output.classesDirs }", "e2e", "e2e"},
+		"test task reconfigured":    {"tasks.test {\n  testClassesDirs = sourceSets.integrationTest.output.classesDirs\n}", "test", "integrationTest"},
+		"Groovy test block":         {"test {\n  useJUnitPlatform()\n  testClassesDirs = sourceSets.it.output.classesDirs\n}", "test", "it"},
+		"suite named test":          {sshjBuild, "test", "test"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -79,6 +82,8 @@ func TestSourceDirectories(t *testing.T) {
 		"Kotlin setSrcDirs":      {"sourceSets { create(\"it\") { java { setSrcDirs(listOf(\"src/it-java\")) } } }", "it", "java", "src/it-java"},
 		"one-line srcDirs":       {"sourceSets.it.java.srcDirs = ['tests/it']", "it", "java", filepath.Join("tests", "it")},
 		"brace inside a literal": {"sourceSets { it { java { srcDirs = ['src/{it}/java'] } } }", "it", "java", filepath.Join("src", "{it}", "java")},
+		"last replacement wins":  {"sourceSets.test.java.srcDirs = ['src/old/java']\nsourceSets { test { java { srcDirs = ['src/test/java'] } } }", "test", "java", filepath.Join("src", "test", "java")},
+		"in file order":          {"sourceSets { test { java { srcDirs = ['src/test/java'] } } }\nsourceSets.test.java.srcDirs = ['src/old/java']", "test", "java", filepath.Join("src", "old", "java")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, ok := directory(tc.build, tc.set, tc.language)

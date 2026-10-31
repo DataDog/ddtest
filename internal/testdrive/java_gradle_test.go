@@ -168,3 +168,21 @@ func TestGradleRunsUseTheUserHomeValidationReads(t *testing.T) {
 	drive.args = []string{"build", "-g", "ci-home"}
 	require.NotContains(t, environment(), "GRADLE_USER_HOME", "a command's own home is kept")
 }
+
+func TestGradleProbeFallsBackToATargetWhoseSourcesItReads(t *testing.T) {
+	drive, root := gradleFixture(t)
+	// app declares JUnit 5 and ran only a suite whose sources build logic sets.
+	requireWriteFile(t, filepath.Join(root, "app", "build.gradle.kts"), "dependencies { testImplementation(\"org.junit.jupiter:junit-jupiter:5.11.4\") }\ntesting { suites { val integrationTest by registering(JvmTestSuite::class) { sources { java { setSrcDirs(generatedDirs) } } } } }\n")
+	build, err := drive.javaBuild(drive.args)
+	require.NoError(t, err)
+	tests := []nativeTest{{File: ":app:integrationTest / example.AppIT"}, {File: ":lib:test / example.LibTest"}}
+	targets := javaProbeTargets(build, tests, "junit5")
+	require.Equal(t, []javaProbeTarget{{directory: "app", module: ":app:integrationTest"}, {directory: "lib", module: ":lib:test"}}, targets, "the project declaring JUnit 5 comes first")
+	probe, reason, err := placeJavaProbe(build, targets, "junit5", nil)
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	require.Equal(t, ":lib:test", probe.args[0], "lib's test task takes the probe app's suite cannot")
+	_, reason, err = placeJavaProbe(build, targets[:1], "junit5", nil)
+	require.NoError(t, err)
+	require.Contains(t, reason, "set by build logic ddtest does not read", "without another target, the first one's reason is reported")
+}

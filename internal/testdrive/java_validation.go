@@ -721,17 +721,17 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 		return nil
 	}
 	checkout := build.checkout()
-	target, ok := javaProbeModule(build, baseline.Tests, t.framework.Name())
-	if !ok {
+	targets := javaProbeTargets(build, baseline.Tests, t.framework.Name())
+	if len(targets) == 0 {
 		unavailableFeatures(result, "No project of the selected "+build.tool()+" command ran native tests the probe can join, so the controlled probe has nowhere to run.")
 		return nil
 	}
 	// A Cucumber or Karate probe needs the module that holds the runner,
 	// which an inherited dependency hides from reactor order.
 	if owner, found := javaRunnerModule(build, baseline.Tests, t.framework.Name()); found {
-		target = owner
+		targets = []javaProbeTarget{owner}
 	}
-	probe, reason, err := build.probe(target, t.framework.Name(), args)
+	probe, reason, err := placeJavaProbe(build, targets, t.framework.Name(), args)
 	if err != nil {
 		return err
 	}
@@ -775,14 +775,50 @@ func (t *Testdrive) runJavaFeatures(ctx context.Context, output io.Writer, sessi
 // the baseline in a module a probe can join, preferring one that declares the
 // selected framework, and its first such module.
 func javaProbeModule(build javaBuild, tests []nativeTest, framework string) (javaProbeTarget, bool) {
-	executed := javaExecutedModules(build, tests)
-	candidates := slices.DeleteFunc(build.projects(), func(project javaProject) bool { return len(executed[project.directory]) == 0 })
-	if len(candidates) == 0 {
+	targets := javaProbeTargets(build, tests, framework)
+	if len(targets) == 0 {
 		return javaProbeTarget{}, false
 	}
-	declared := slices.IndexFunc(candidates, func(project javaProject) bool { return slices.Contains(project.frameworks, framework) })
-	directory := candidates[max(declared, 0)].directory
-	return javaProbeTarget{directory: directory, module: executed[directory][0]}, true
+	return targets[0], true
+}
+
+// placeJavaProbe is framework's probe at the first target whose sources take
+// it; a target whose sources build logic sets gives way to the next. Without
+// one, the reason is the first target's.
+func placeJavaProbe(build javaBuild, targets []javaProbeTarget, framework string, args []string) (javaProbe, string, error) {
+	reason := ""
+	for i, target := range targets {
+		probe, why, err := build.probe(target, framework, args)
+		if err != nil || why == "" {
+			return probe, "", err
+		}
+		if i == 0 {
+			reason = why
+		}
+	}
+	return javaProbe{}, reason, nil
+}
+
+// javaProbeTargets are every module a probe can join whose native results the
+// baseline has, in preference order: projects that declare the selected
+// framework first, then the others, in build order, and in each project its
+// modules as javaExecutedModules orders them.
+func javaProbeTargets(build javaBuild, tests []nativeTest, framework string) []javaProbeTarget {
+	executed := javaExecutedModules(build, tests)
+	projects := slices.DeleteFunc(build.projects(), func(project javaProject) bool { return len(executed[project.directory]) == 0 })
+	declares := func(project javaProject) bool { return slices.Contains(project.frameworks, framework) }
+	var targets []javaProbeTarget
+	for _, preferred := range []bool{true, false} {
+		for _, project := range projects {
+			if declares(project) != preferred {
+				continue
+			}
+			for _, module := range executed[project.directory] {
+				targets = append(targets, javaProbeTarget{directory: project.directory, module: module})
+			}
+		}
+	}
+	return targets
 }
 
 // javaExecutedModules are, by project directory, the modules a probe can join

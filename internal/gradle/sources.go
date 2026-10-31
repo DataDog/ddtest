@@ -8,35 +8,29 @@ package gradle
 import (
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
 // TestSourceSet is the source set whose classes the test task task of
-// project runs, as its build file declares it literally: test for the test
-// task, a JVM test suite's own for the suite's task, or the one a Test task
-// names in testClassesDirs = sourceSets.<name>.output.classesDirs. A task
+// project runs, as its build file declares it literally: the one a Test task
+// names in testClassesDirs = sourceSets.<name>.output.classesDirs, else test
+// for the test task and a JVM test suite's own for the suite's task. A task
 // whose source set ddtest cannot follow has none.
 func TestSourceSet(root string, project Project, task string) (string, bool) {
-	if task == "test" {
-		return "test", true
-	}
 	source, ok := buildSource(root, project)
 	if !ok {
 		return "", false
 	}
 	name := regexp.QuoteMeta(task)
-	if regexp.MustCompile(`\b` + name + `\s*\(\s*JvmTestSuite\s*\)|` +
-		`\bval\s+` + name + `\s+by\s+(?:registering|creating|getting)\s*\(\s*JvmTestSuite::class|` +
-		`(?:register|create|maybeCreate)\s*<\s*JvmTestSuite\s*>\s*\(\s*["']` + name + `["']|` +
-		`(?:register|create|maybeCreate)\s*\(\s*["']` + name + `["']\s*,\s*JvmTestSuite\b`).MatchString(source) {
-		return task, true
-	}
-	// The source set is named in the task's declaration or configuration.
+	// The source set is named in the task's declaration or configuration,
+	// which may also reconfigure the test task, as tasks.test { … }.
 	declaration := regexp.MustCompile(`(?:register|create|maybeCreate)\s*<\s*Test\s*>\s*\(\s*["']` + name + `["'][^{\n]*\{|` +
-		`(?:register|create|maybeCreate|named)\s*\(\s*["']` + name + `["'][^{\n]*\{|` +
+		`(?:register|create|maybeCreate|named|getByName)\s*\(\s*["']` + name + `["'][^{\n]*\{|` +
 		`(?:named|getByName)\s*<\s*Test\s*>\s*\(\s*["']` + name + `["'][^{\n]*\{|` +
 		`\btask\s+` + name + `\s*\(\s*type\s*:\s*Test\b[^{\n]*\{|` +
-		`\bval\s+` + name + `\s+by\s+(?:tasks\.)?(?:registering|creating|existing)\s*\(\s*Test::class[^{\n]*\{`)
+		`\bval\s+` + name + `\s+by\s+(?:tasks\.)?(?:registering|creating|existing|getting)\s*\(\s*Test::class[^{\n]*\{|` +
+		`\btasks\.` + name + `\s*\{|(?m:^[ \t]*` + name + `\s*\{)`)
 	for _, match := range declaration.FindAllStringIndex(source, -1) {
 		body, ok := block(source, match[1]-1)
 		if !ok {
@@ -45,6 +39,15 @@ func TestSourceSet(root string, project Project, task string) (string, bool) {
 		if set := classesSourceSet.FindStringSubmatch(body); set != nil {
 			return set[1] + set[2] + set[3], true
 		}
+	}
+	if task == "test" {
+		return "test", true
+	}
+	if regexp.MustCompile(`\b` + name + `\s*\(\s*JvmTestSuite\s*\)|` +
+		`\bval\s+` + name + `\s+by\s+(?:registering|creating|getting)\s*\(\s*JvmTestSuite::class|` +
+		`(?:register|create|maybeCreate)\s*<\s*JvmTestSuite\s*>\s*\(\s*["']` + name + `["']|` +
+		`(?:register|create|maybeCreate)\s*\(\s*["']` + name + `["']\s*,\s*JvmTestSuite\b`).MatchString(source) {
+		return task, true
 	}
 	return "", false
 }
@@ -57,9 +60,9 @@ var classesSourceSet = regexp.MustCompile(`testClassesDirs\s*(?:=|\.from\(|\.set
 
 // SourceDirectory is the directory, relative to the project's, of the
 // language sources of source set set: src/<set>/<language>, unless the build
-// file replaces the set's srcDirs, whose first literal directory it is then.
-// srcDirs that build logic computes, or that leave the project, are not
-// followed.
+// file replaces the set's srcDirs, whose first literal directory it is then;
+// as in Gradle, the last replacement in the file wins. srcDirs that build
+// logic computes, or that leave the project, are not followed.
 func SourceDirectory(root string, project Project, set, language string) (string, bool) {
 	directory := filepath.Join("src", set, language)
 	source, ok := buildSource(root, project)
@@ -67,22 +70,30 @@ func SourceDirectory(root string, project Project, set, language string) (string
 		return "", false
 	}
 	name, lang := regexp.QuoteMeta(set), regexp.QuoteMeta(language)
-	var bodies []string
+	// Each language configuration of the set, at its offset in the file.
+	type configuration struct {
+		offset int
+		body   string
+	}
+	var configurations []configuration
 	// A set's block, as integrationTest(JvmTestSuite) { … } or sourceSets { integrationTest { … } }.
 	for _, match := range regexp.MustCompile(`(?:\b`+name+`\b|["']`+name+`["'])[^{}\n]*\{`).FindAllStringIndex(source, -1) {
 		if set, ok := block(source, match[1]-1); ok {
 			for _, language := range regexp.MustCompile(`\b`+lang+`\s*\{`).FindAllStringIndex(set, -1) {
 				if body, ok := block(set, language[1]-1); ok {
-					bodies = append(bodies, body)
+					configurations = append(configurations, configuration{match[1] + language[0], body})
 				}
 			}
 		}
 	}
 	// sourceSets.integrationTest.java.srcDirs = […] on one line.
-	for _, match := range regexp.MustCompile(`\b`+name+`\.`+lang+`\.(?:srcDirs\s*=|setSrcDirs\()[^\n]*`).FindAllString(source, -1) {
-		bodies = append(bodies, match[strings.Index(match, lang+".")+len(lang)+1:])
+	for _, match := range regexp.MustCompile(`\b`+name+`\.`+lang+`\.(?:srcDirs\s*=|setSrcDirs\()[^\n]*`).FindAllStringIndex(source, -1) {
+		line := source[match[0]:match[1]]
+		configurations = append(configurations, configuration{match[0], line[strings.Index(line, lang+".")+len(lang)+1:]})
 	}
-	for _, body := range bodies {
+	slices.SortStableFunc(configurations, func(a, b configuration) int { return a.offset - b.offset })
+	for _, configuration := range configurations {
+		body := configuration.body
 		replaced := srcDirsAssignment.FindStringIndex(body)
 		if replaced == nil {
 			// srcDir adds a directory and keeps the default.
