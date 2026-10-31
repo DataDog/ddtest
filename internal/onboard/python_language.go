@@ -29,9 +29,11 @@ func (pythonDiscovery) coordinated() bool { return false }
 
 func (pythonDiscovery) automaticCISetup() bool { return false }
 
-// Python setup uses the Datadog GitHub Actions setup action only.
+// Python setup uses the Datadog GitHub Actions setup action, the Datadog
+// GitLab setup script, the Datadog CircleCI orb, on Buildkite the Datadog
+// installer, or the Datadog Jenkins plugin (see python_providers.go).
 func (pythonDiscovery) supportsCIProvider(provider string) bool {
-	return provider == gitHubActionsProvider
+	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider || provider == jenkinsProvider
 }
 
 func (pythonDiscovery) ciSetupConfigured(string, string, string) bool { return false }
@@ -81,19 +83,26 @@ func (pythonDiscovery) keepsCISetting(key string) bool {
 
 const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtrace for pytest. Preserve these variables on the existing test step; do not replace its current arguments. Activate the same Python environment used for the tests before the action. If CI uses tox or nox, pass DD_*, PYTHONPATH, and PYTEST_ADDOPTS into the test environment."
 
-// Setup runs on GitHub Actions only, whose steps don't share a shell.
-func (pythonDiscovery) setupShellExports(map[string]string) (map[string]string, map[string]string) {
-	return nil, nil
+// The installer puts its tracer before the job's PYTHONPATH and --ddtrace
+// before its pytest options.
+func (pythonDiscovery) setupShellExports(current map[string]string) (map[string]string, map[string]string) {
+	return pythonSetupExports(current)
 }
 
-// Setup runs on GitHub Actions only.
-func (pythonDiscovery) ciSetupRequest(string, string, string, ciSetupTerms) ciSetupRequest {
-	return ciSetupRequest{}
+func (pythonDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
+	if terms.Plugin {
+		return pythonPluginSetupRequest(root, framework, site, terms)
+	}
+	return pythonSetupRequest(root, framework, site, terms)
 }
 
 func (pythonDiscovery) automaticProviderSetup(string) bool { return false }
 
-func (pythonDiscovery) unsupportedImage(string) string { return "" }
+// PyPy images run an engine ddtrace does not instrument.
+func (pythonDiscovery) unsupportedImage(image string) string {
+	_, engine := pythonImageRuntime(image)
+	return engine
+}
 
 // Its own step rules decide which uninstrumented commands are outside scope.
 func (pythonDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) bool {
@@ -111,17 +120,25 @@ func (pythonDiscovery) cacheVariable(name string) bool {
 // No CI components are modeled for this language.
 func (pythonDiscovery) ciComponents(string) []ciComponent { return nil }
 
-// No CI runtime statements yet.
-func (pythonDiscovery) statedRuntime() *statedRuntime { return nil }
+func (pythonDiscovery) statedRuntime() *statedRuntime { return pythonStatedRuntime }
 
 func (pythonDiscovery) ciPluginLanguage() string { return "PYTHON" }
 
-// Python has no CI plugin setup yet.
-func (pythonDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
-	return nil, nil
+// The Datadog Jenkins plugin prepends its tracer to PYTHONPATH and --ddtrace
+// to PYTEST_ADDOPTS, each joined to the existing value with a space.
+func (pythonDiscovery) ciPluginExports(current map[string]string) (map[string]string, map[string]string) {
+	return pythonPluginExports(current)
 }
 
-func (pythonDiscovery) ciPluginComposes(string) string { return "" }
+// The Datadog Jenkins plugin computes its variables once per agent, from the
+// first step it configures there, and sets them on every later step.
+func (pythonDiscovery) ciPluginComposes(key string) string {
+	if key != "PYTHONPATH" && key != "PYTEST_ADDOPTS" {
+		return ""
+	}
+	return "on each agent it sets " + key + " for every step to its own value followed by a space and the " + key + " of the first step it configures there, so this value is lost, or, when its step is that first one, it reaches every later step on the agent. ddtest validates with the pipeline's " + key
+}
 
-// No shell runtime selection is modeled for this language.
-func (pythonDiscovery) selectsShellRuntime([]string) bool { return false }
+func (pythonDiscovery) selectsShellRuntime(words []string) bool {
+	return pythonSelectsShellRuntime(words)
+}

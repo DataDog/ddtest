@@ -699,7 +699,7 @@ func TestCircleCILanguageSupport(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, circleCIFile, "version: 2.1\njobs:\n  test:\n    docker:\n      - image: cimg/python:3.12\n    steps:\n      - run: pytest\n"+circleWorkflow("      - test\n"))
 	useCIProvider(t, "circleci")
-	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": false, "java": false} {
+	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": true, "java": false} {
 		err := CheckCIProviderSupport(root, language, "framework")
 		if supported {
 			require.NoError(t, err, language)

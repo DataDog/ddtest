@@ -637,7 +637,7 @@ func TestBuildkiteLanguageSupport(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, buildkiteFile, "steps:\n  - command: pytest\n")
 	useCIProvider(t, "buildkite")
-	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": false, "java": false} {
+	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": true, "java": false} {
 		err := CheckCIProviderSupport(root, language, "framework")
 		if supported {
 			require.NoError(t, err, language)

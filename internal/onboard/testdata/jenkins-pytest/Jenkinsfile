@@ -1,0 +1,52 @@
+#!groovy
+// From restalion/python-jenkins-pipeline@703a96a0 (Apache-2.0), Jenkinsfile:
+// its environment preparation, compile and unit-test stages, unchanged; its
+// environment block (proxies, a VENV_DIR under the workspace no stage reads,
+// image names), Docker image stages and integration tests against the
+// running container are left out, and the repository is a plain pytest
+// project instead of the Flask service.
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Environment preparation') {
+            steps {
+                echo "-=- preparing project environment -=-"
+                // Python dependencies
+                sh '''
+                    # 创建虚拟环境
+                    python3 -m venv venv
+                    
+                    # 激活虚拟环境
+                    . venv/bin/activate
+                    
+                    # 升级 pip
+                    pip install --upgrade pip
+                    
+                    # 安装依赖
+                    pip install -r requirements.txt
+                '''
+            }
+        }
+        stage('Compile') {
+            steps {
+                echo "-=- compiling project -=-"
+                sh '''
+                . venv/bin/activate
+                python -m compileall .
+                '''
+            }
+        }
+
+        stage('Unit tests') {
+            steps {
+                echo "-=- execute unit tests -=-"
+                sh '''
+                . venv/bin/activate
+                pytest -v test
+                '''
+            }
+        }
+    }
+}
