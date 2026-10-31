@@ -364,7 +364,7 @@ test:
   script: [npm test]
 `)
 	jobs, _ := gitLabJobs(t, root)
-	require.Equal(t, map[string]string{"BASE": "base", "DERIVED": "base/derived", "LITERAL": "$BASE", "DESCRIBED": "described", "WORKSPACE": "${{ github.workspace }}/build", "UNKNOWN": unresolvedCIValue("$CI_COMMIT_SHA")}, jobs["test"].Env, "an unknown read stays unresolved; expand: false stays literal")
+	require.Equal(t, map[string]string{"BASE": "base", "DERIVED": "base/derived", "LITERAL": "$BASE", "DESCRIBED": "described", "WORKSPACE": "${{ github.workspace }}/build", "UNKNOWN": unresolvedCIProvidedValue("$CI_COMMIT_SHA")}, jobs["test"].Env, "an unknown read stays unresolved; expand: false stays literal")
 }
 
 // A variable that only locates a declared cache directory configures the
@@ -664,7 +664,7 @@ func TestGitLabCIVariableReadsAreValidatedWithout(t *testing.T) {
 	root := newJestRepository(t, jestWorkflow)
 	writeFile(t, root, ".gitlab-ci.yml", "test:\n  image: node:22\n  variables:\n    TEST_MODE: $CI_PIPELINE_SOURCE\n    API_KEY: $DD_API_KEY\n  script:\n    - npx jest\n")
 	jobs, _ := gitLabJobs(t, root)
-	require.Equal(t, unresolvedCIValue("$CI_PIPELINE_SOURCE"), jobs["test"].Env["TEST_MODE"])
+	require.Equal(t, unresolvedCIProvidedValue("$CI_PIPELINE_SOURCE"), jobs["test"].Env["TEST_MODE"])
 	require.Equal(t, "$DD_API_KEY", jobs["test"].Env["API_KEY"], "setup inputs stay as written")
 	useCIProvider(t, "gitlab")
 	scope, err := DiscoverValidationScope(root, "jest")

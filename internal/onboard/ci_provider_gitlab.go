@@ -979,7 +979,11 @@ func gitLabExpandInto(env, added map[string]string) map[string]string {
 	for key, value := range added {
 		value = gitLabExpand(value, scope)
 		if _, input := gitLabSetupInput(key); !input && gitLabReadsUnknown(value) {
-			value = unresolvedCIValue(strings.ReplaceAll(value, "$$", "$"))
+			if ciPredefinedReads(value, "CI_", "GITLAB_") {
+				value = unresolvedCIProvidedValue(strings.ReplaceAll(value, "$$", "$"))
+			} else {
+				value = unresolvedCIValue(strings.ReplaceAll(value, "$$", "$"))
+			}
 		}
 		expanded[key] = strings.ReplaceAll(value, "$$", "$")
 	}

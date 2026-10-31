@@ -94,8 +94,9 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
 		if err := unresolvedCIError(value); err != nil && !strings.HasPrefix(key, "DD_") {
-			// What the job's own commands compute is its setup, not a CI value.
-			if unresolvedCommandOutput(value) {
+			// Only a value the provider says CI defines is left out: what the
+			// job's own commands or build logic compute is its setup.
+			if !unresolvedCIProvided(value) {
 				return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
 			}
 			if err := withoutCIValue(key, err); err != nil {
@@ -430,11 +431,11 @@ func TracerPluginSetting(key string) bool {
 
 // ciControlVariable reports a variable whose CI value decides how the
 // runtime, the build and test tools or the tracer run, so a local run without
-// it would validate something else: PATH, HOME, the dynamic linker's
-// variables, Datadog settings, and the variables a language's runtime, caches
-// and tools read.
+// it would validate something else: PATH, HOME, the startup files Bash and sh
+// source (BASH_ENV, ENV), the dynamic linker's variables, Datadog settings,
+// and the variables a language's runtime, caches and tools read.
 func ciControlVariable(key string) bool {
-	if slices.Contains([]string{"PATH", "HOME", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH"}, key) || strings.HasPrefix(key, "DD_") {
+	if slices.Contains([]string{"PATH", "HOME", "BASH_ENV", "ENV", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH"}, key) || strings.HasPrefix(key, "DD_") {
 		return true
 	}
 	return slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {

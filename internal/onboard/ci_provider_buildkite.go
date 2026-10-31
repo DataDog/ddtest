@@ -243,7 +243,7 @@ func (c *buildkiteConfig) workflow(file string, body *yaml.Node) ciWorkflow {
 		for _, key := range gitLabKeys(envNode) {
 			value, unknown := buildkiteInterpolate(gitLabScalar(gitLabMembers(envNode)[key]), scope.known)
 			if len(unknown) > 0 && !strings.HasPrefix(key, "DD_") {
-				value = unresolvedCIValue(value)
+				value = buildkiteUnresolved(value, unknown)
 			} else {
 				scope.known[key] = value
 			}
@@ -414,7 +414,11 @@ func (c *buildkiteConfig) command(workflow *ciWorkflow, item *yaml.Node, fields 
 				keyProblem = true
 			}
 			if (len(unknown) > 0 || problem != "") && !strings.HasPrefix(key, "DD_") {
-				value = unresolvedCIValue(value)
+				if problem != "" {
+					value = unresolvedCIValue(value)
+				} else {
+					value = buildkiteUnresolved(value, unknown)
+				}
 			}
 			env[key] = value
 		}
@@ -796,6 +800,15 @@ var buildkiteBuildVariables = []string{
 // own variables stay reads. unknown lists every other variable read: upload
 // replaces it with the upload step's environment, which ddtest cannot know
 // and which never holds the step's own env.
+// buildkiteUnresolved marks a value that reads unknown variables: one only
+// Buildkite's predefined BUILDKITE_ variables provide, or another unresolved.
+func buildkiteUnresolved(value string, unknown []string) string {
+	if !slices.ContainsFunc(unknown, func(name string) bool { return !strings.HasPrefix(name, "BUILDKITE_") }) {
+		return unresolvedCIProvidedValue(value)
+	}
+	return unresolvedCIValue(value)
+}
+
 func buildkiteInterpolate(text string, known map[string]string) (string, []string) {
 	var unknown []string
 	result := buildkiteVariable.ReplaceAllStringFunc(text, func(match string) string {

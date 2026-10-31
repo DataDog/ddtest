@@ -150,21 +150,36 @@ func unresolvedCIValue(written string) string {
 	return "${{ unresolved " + strconv.Quote(written) + " }}"
 }
 
-var unresolvedCIMarker = regexp.MustCompile(`\$\{\{ unresolved ("(?:[^"\\]|\\.)*") \}\}`)
+// unresolvedCIProvidedValue marks a value that reads only variables the CI
+// provider defines for every job, as GitLab's renewedtab@$CI_COMMIT_TAG: a
+// value only CI provides, which local validation leaves out and reports.
+func unresolvedCIProvidedValue(written string) string {
+	return "${{ unresolved ci " + strconv.Quote(written) + " }}"
+}
 
-// unresolvedCommandOutput reports a value holding an unresolvedCIValue marker
-// for the output of a command the job runs, as $(cat ci/suite): the job's own
-// logic computes it, unlike a value only CI provides.
-func unresolvedCommandOutput(value string) bool {
-	match := unresolvedCIMarker.FindStringSubmatch(value)
-	if match == nil {
+var unresolvedCIMarker = regexp.MustCompile(`\$\{\{ unresolved (?:ci )?("(?:[^"\\]|\\.)*") \}\}`)
+
+// unresolvedCIProvided reports a value whose every unresolvedCIValue marker
+// is an unresolvedCIProvidedValue one.
+func unresolvedCIProvided(value string) bool {
+	markers := unresolvedCIMarker.FindAllString(value, -1)
+	return len(markers) > 0 && !slices.ContainsFunc(markers, func(marker string) bool { return !strings.HasPrefix(marker, "${{ unresolved ci ") })
+}
+
+// ciVariableRead is a $NAME or ${NAME…} read.
+var ciVariableRead = regexp.MustCompile(`\$(?:\{([A-Za-z_][A-Za-z0-9_]*)|([A-Za-z_][A-Za-z0-9_]*))`)
+
+// ciPredefinedReads reports a value whose every variable read names a
+// variable the provider predefines, by its prefixes, and that runs no command.
+func ciPredefinedReads(value string, prefixes ...string) bool {
+	if strings.Contains(value, "$(") || strings.Contains(value, "`") {
 		return false
 	}
-	written, err := strconv.Unquote(match[1])
-	if err != nil {
-		written = match[1]
-	}
-	return strings.Contains(written, "$(") || strings.Contains(written, "`")
+	reads := ciVariableRead.FindAllStringSubmatch(strings.ReplaceAll(value, "$$", ""), -1)
+	return len(reads) > 0 && !slices.ContainsFunc(reads, func(read []string) bool {
+		name := read[1] + read[2]
+		return !slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+	})
 }
 
 // unresolvedCIError explains a value holding an unresolvedCIValue marker.

@@ -152,7 +152,7 @@ func (javaDiscovery) runtimeVariable(name string) bool {
 }
 
 func (javaDiscovery) toolVariable(name string) bool {
-	return slices.Contains([]string{"MAVEN_ARGS", "MAVEN_OPTS", "MAVEN_CONFIG", "GRADLE_OPTS", "JAVA_OPTS"}, name)
+	return slices.Contains([]string{"MAVEN_ARGS", "MAVEN_OPTS", "MAVEN_CONFIG", "GRADLE_OPTS", "JAVA_OPTS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"}, name)
 }
 
 func (javaDiscovery) cacheVariable(name string) bool {
