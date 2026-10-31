@@ -1,0 +1,17 @@
+stages: [lint, test]
+
+default:
+  image: node:22
+  before_script:
+    - npm ci
+
+lint:
+  stage: lint
+  script:
+    - npm run lint
+
+e2e:
+  stage: test
+  image: cimg/node:22.11-browsers
+  script:
+    - npm run test:e2e

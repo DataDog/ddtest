@@ -1,0 +1,14 @@
+{
+  "name": "buildkite-cucumber-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "lint": "echo linted",
+    "build": "echo built",
+    "test": "cucumber-js"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber": "11.0.1",
+    "nyc": "17.1.0"
+  }
+}
