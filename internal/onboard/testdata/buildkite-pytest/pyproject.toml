@@ -1,0 +1,9 @@
+[project]
+name = "pybuildkite"
+version = "1.0.0"
+
+[project.optional-dependencies]
+dev = ["pytest", "black", "mypy"]
+
+[tool.setuptools]
+packages = ["pybuildkite"]

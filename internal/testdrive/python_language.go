@@ -188,8 +188,11 @@ func (pythonLanguage) standaloneReport(root string, validation *validationResult
 }
 
 func (pythonLanguage) defaultsToCITracer() bool { return false }
-func (pythonLanguage) ciRuntimes(ctx context.Context, root, framework string) onboard.RuntimeCheck {
-	return onboard.CheckCIRuntimes(ctx, root, framework)
+
+// Until preflight knows the local release, the pytest CI check runs without
+// comparing it; preflight then replaces it with the full check.
+func (pythonLanguage) ciRuntimes(ctx context.Context, root, _ string) onboard.RuntimeCheck {
+	return onboard.CheckPythonCIRuntimes(ctx, root, "")
 }
 
 func (pythonLanguage) ciRuntimeName() string { return "Python" }

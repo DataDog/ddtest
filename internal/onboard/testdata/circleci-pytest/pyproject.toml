@@ -1,0 +1,12 @@
+[project]
+name = "einsteinpy"
+version = "1.0.0"
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-xdist", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

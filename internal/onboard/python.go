@@ -272,8 +272,9 @@ func pythonPathReference(value string) bool {
 	return strings.Join(strings.Fields(value), "") == "${{env.PYTHONPATH}}"
 }
 
-// Replace the action's CI-only path with the application's declared paths.
-// Local validation supplies its own tracer path. Empty reference expansions
+// Replace the action's CI-only path, and the tracer path a provider's setup
+// adds, with the application's declared paths. Local validation supplies its
+// own tracer path. Empty reference expansions
 // must not introduce a new current-directory component into PYTHONPATH.
 func pythonApplicationPath(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) string {
 	separator := ":"
@@ -287,14 +288,20 @@ func pythonApplicationPath(workflow ciWorkflow, job runtimeJob, step runtimeStep
 			continue
 		}
 		var parts []string
+		afterTracer := false
 		for _, part := range strings.Split(value, separator) {
-			if pythonPathReference(part) {
+			switch {
+			case pythonPathReference(part):
 				if result != "" {
 					parts = append(parts, result)
 				}
-			} else {
+			case part == pythonTracerPath, part == "" && afterTracer:
+				// The installer's or CI plugin's tracer path, and the empty
+				// entry the plugin's trailing separator adds, are CI's own.
+			default:
 				parts = append(parts, part)
 			}
+			afterTracer = part == pythonTracerPath
 		}
 		result = strings.Join(parts, separator)
 	}
@@ -511,6 +518,80 @@ func pythonIgnoresEnvironment(words []string) bool {
 	return false
 }
 
+// pythonNonTestTools are linters, type checkers, formatters, builders and
+// uploaders Python CI runs beside pytest, which never start it.
+var pythonNonTestTools = []string{"flake8", "black", "isort", "mypy", "ruff", "pylint", "bandit", "safety", "pyright", "pydocstyle", "pre-commit", "twine", "sphinx-build", "mkdocs", "codecov", "coveralls", "check-manifest", "pip-audit", "build"}
+
+// pythonSetupCommands are setup.py commands that build or check a
+// distribution; setup.py test runs tests.
+var pythonSetupCommands = []string{"sdist", "bdist", "bdist_wheel", "bdist_egg", "build", "build_py", "build_ext", "egg_info", "check"}
+
+// pythonNonTestTool reports a command that runs one of those tools, or
+// coverage's reporting commands, which read results a test run left.
+func pythonNonTestTool(words []string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	if platform.IsPythonExecutable(words[0]) && len(words) > 2 && filepath.Base(words[1]) == "setup.py" {
+		return !slices.ContainsFunc(words[2:], func(command string) bool {
+			return !strings.HasPrefix(command, "-") && !slices.Contains(pythonSetupCommands, command)
+		})
+	}
+	name := filepath.Base(words[0])
+	if platform.IsPythonExecutable(words[0]) {
+		index, module := PythonModule(words[1:])
+		if index < 0 || len(module) == 0 {
+			return false
+		}
+		name, words = module[0], module
+	}
+	if name == "coverage" {
+		return len(words) > 1 && slices.Contains([]string{"report", "xml", "html", "json", "lcov", "combine", "erase", "debug"}, words[1])
+	}
+	return slices.Contains(pythonNonTestTools, name)
+}
+
+// pythonStaticCommands is staticCommands, except that a dependency
+// installation may name extras (pip install .[dev]), an unquoted bracket the
+// shell leaves as written unless a file matches it, and a tool that runs no
+// tests may take patterns (twine upload dist/*): neither is replayed.
+func pythonStaticCommands(command string) ([][]string, error) {
+	fragments, err := discoverCommands(command)
+	if err != nil {
+		return nil, err
+	}
+	var commands [][]string
+	for _, fragment := range fragments {
+		if fragment.Reason != "" {
+			return nil, fmt.Errorf("%s", fragment.Reason)
+		}
+		if len(fragment.Patterns) > 0 && !pythonInstallation(fragment.Words) && !pythonNonTestTool(fragment.Words) {
+			return nil, fmt.Errorf("%s", "Unvalidated setup or command with dynamic shell syntax: "+fragment.Text)
+		}
+		commands = append(commands, fragment.Words)
+	}
+	return commands, nil
+}
+
+// pythonInstallation reports a pip or uv pip command that installs
+// dependencies.
+func pythonInstallation(words []string) bool {
+	words, _, err := commandEnvironment(words)
+	if err != nil || len(words) < 2 {
+		return false
+	}
+	switch base := filepath.Base(words[0]); {
+	case base == "pip" || base == "pip3":
+		return words[1] == "install"
+	case base == "uv":
+		return len(words) > 2 && words[1] == "pip" && words[2] == "install"
+	case platform.IsPythonExecutable(words[0]):
+		index, module := PythonModule(words[1:])
+		return index >= 0 && len(module) > 1 && module[0] == "pip" && module[1] == "install"
+	}
+	return false
+}
+
 func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) commandResolution {
 	if step.ResolutionError != "" {
 		return unresolvedCommand(step.ResolutionError)
@@ -518,7 +599,13 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 	if strings.TrimSpace(step.Run) == "" {
 		return commandResolution{}
 	}
-	commands, err := staticCommands(step.Run)
+	// Activating a virtual environment selects where later commands run;
+	// the CI check follows which Python it runs (see pythonVenvs).
+	run, activated := pythonWithoutActivations(step.Run)
+	if len(activated) > 0 && strings.TrimSpace(run) == "" {
+		return commandResolution{Review: true, Reason: pythonActivationReview}
+	}
+	commands, err := pythonStaticCommands(run)
 	if err != nil {
 		return unresolvedCommand("Python shell command requires review: " + err.Error())
 	}
@@ -587,7 +674,7 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 			directory = filepath.Join(directory, words[1])
 			continue
 		}
-		setup := base == "pip" || base == "pip3" || (base == "uv" && len(words) > 1 && slices.Contains([]string{"sync", "pip"}, words[1]))
+		setup := base == "pip" || base == "pip3" || base == "virtualenv" || (base == "uv" && len(words) > 1 && slices.Contains([]string{"sync", "pip", "venv"}, words[1]))
 		if platform.IsPythonExecutable(words[0]) {
 			if index, module := PythonModule(words[1:]); index >= 0 && slices.Contains([]string{"pip", "venv"}, module[0]) {
 				setup = true
@@ -597,7 +684,15 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 			result.ReviewReason = "Prepare the same Python dependencies as CI before local validation; dependency installation is not replayed."
 			continue
 		}
+		if platform.IsPythonExecutable(words[0]) && len(words) == 2 && slices.Contains([]string{"--version", "-V", "-VV"}, words[1]) {
+			result.ReviewReason = joinDiagnostic(result.ReviewReason, "Prints the Python version; it runs no tests.")
+			continue
+		}
 		if checkOnlyStep(shellquote.Join(words...)) {
+			continue
+		}
+		if pythonNonTestTool(words) {
+			result.ReviewReason = joinDiagnostic(result.ReviewReason, words[0]+" runs no tests; it is outside this validation.")
 			continue
 		}
 		if !environment.LooksLikeTestCommand(root, shellquote.Join(words...), "python", "pytest") && (slices.Contains(words, "tox") || slices.Contains(words, "nox")) {
@@ -614,9 +709,16 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 // CheckPythonCIRuntimes inventories every static matrix entry independently of
 // the evaluator's Python. It never executes workflows or installs dependencies.
 func CheckPythonCIRuntimes(ctx context.Context, root, localVersion string) RuntimeCheck {
+	return CheckPythonCIRuntimesForSite(ctx, root, localVersion, "")
+}
+
+// CheckPythonCIRuntimesForSite is CheckPythonCIRuntimes that also requires,
+// outside GitHub Actions, each instrumented entry's setup to report to the
+// selected site (empty: any site).
+func CheckPythonCIRuntimesForSite(ctx context.Context, root, localVersion, site string) RuntimeCheck {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	return checkPythonCIRuntimes(ctx, root, localVersion, ResolvePythonRelease, pythonActionVersion)
+	return checkPythonCIRuntimes(ctx, root, localVersion, site, ResolvePythonRelease, pythonActionVersion)
 }
 
 func pythonActionVersion(ctx context.Context, action string) (string, error) {
@@ -639,16 +741,41 @@ func pythonActionVersion(ctx context.Context, action string) (string, error) {
 	return definition.Inputs["python-tracer-version"].Default, nil
 }
 
-func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resolve func(context.Context, string) (PythonRelease, error), actionDefault func(context.Context, string) (string, error)) RuntimeCheck {
-	result := RuntimeCheck{Status: "not applicable", Reason: "No GitHub Actions pytest commands found; CI was not exercised."}
+// pythonProviderSetup is what a provider's setup (outside GitHub Actions)
+// selects for Python on one matrix row: its step, its inputs resolved for the
+// row, and the requested ddtrace release ("latest" for a setup that cannot
+// pin one).
+type pythonProviderSetup struct {
+	setup     ciSetup
+	inputs    map[string]string
+	requested string
+}
+
+func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string, resolve func(context.Context, string) (PythonRelease, error), actionDefault func(context.Context, string) (string, error)) RuntimeCheck {
 	if err := CheckCIProviderSupport(root, "python", "pytest"); err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
-	workflows, err := readWorkflows(root)
+	provider, err := currentCIProvider(root)
 	if err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
+	result := RuntimeCheck{Status: "not applicable", Reason: "No " + provider.displayName() + " pytest commands found; CI was not exercised."}
+	workflows, err := readProviderWorkflows(provider, root)
+	if err != nil {
+		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
+	}
+	shared := provider.sharedSyntax()
 	cache := map[string]PythonRelease{}
+	selectRelease := func(requested string) (PythonRelease, error) {
+		if selection, ok := cache[requested]; ok {
+			return selection, nil
+		}
+		selection, err := resolve(ctx, requested)
+		if err == nil {
+			cache[requested] = selection
+		}
+		return selection, err
+	}
 	defaults := map[string]string{}
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
@@ -666,12 +793,31 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 				if conditionErr == nil && !active {
 					continue
 				}
-				var python, action, requested string
+				var venvs pythonVenvs
+				var python, action, requested, engine, host string
 				var pythonErr, actionErr error
+				var selected *pythonProviderSetup
+				skipped, stated := false, false
+				if !shared {
+					// Outside GitHub Actions the job's image selects its Python,
+					// or the user states its host's.
+					python, engine = pythonImageRuntime(job.Image)
+					if pythonImageSelection(job) == "" {
+						host = runtimeHost(job, row, "Python")
+						if version := job.Stated["python"]; host != "" && version != "" {
+							python, stated = version, true
+						}
+					}
+				}
 				for i, step := range job.Steps {
 					uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+					current, isSetup := datadogSetup(step)
+					isSetup = isSetup && !shared
 					active, stepErr := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
 					if stepErr == nil && !active {
+						if chosen, err := setupSelectsLanguage(current, row, "python"); isSetup && current.Pinned && err == nil && chosen {
+							skipped = true
+						}
 						continue
 					}
 					if uses == "actions/setup-python" {
@@ -711,12 +857,45 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 							}
 						}
 					}
+					if isSetup {
+						// A setup for other languages leaves Python's in place.
+						chosen, err := setupSelectsLanguage(current, row, "python")
+						if err != nil || chosen {
+							action, requested, actionErr, selected, skipped = "", "", err, nil, false
+						}
+						if err == nil && chosen && stepErr != nil {
+							actionErr = stepErr
+						}
+						if err == nil && chosen && stepErr == nil && current.Pinned {
+							action, selected = current.Reference, &pythonProviderSetup{setup: current, inputs: map[string]string{}}
+							for key, value := range current.Inputs {
+								selected.inputs[key], _ = runtimeValue(value, row)
+								if selected.inputs[key] == "" && strings.Contains(value, "${{") {
+									// A secret or other expression is set even
+									// though its value is unknown statically.
+									selected.inputs[key] = value
+								}
+							}
+							requested = selected.inputs["python-tracer-version"]
+							if _, set := current.Inputs["python-tracer-version"]; !set && current.Floating {
+								requested = "latest"
+							}
+							selected.requested = requested
+						}
+					}
 					resolved, environment, envErr := resolveVariantStep(workflow, job, step, row, "pytest")
+					venvs.step(step.Run, python, stepDirectory(workflow, job, step), environment)
 					r := resolvePythonStep(root, workflow, job, resolved)
 					if !r.Matched && (r.Review || r.Reason == "" || checkOnlyStep(resolved.Run)) {
 						continue
 					}
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: python, Action: action, Status: "inconclusive"}
+					if !shared {
+						finding.setupProvider = provider
+						if host != "" {
+							finding.RuntimeHost, finding.UserStated = host, stated
+						}
+					}
 					commands, _ := staticCommands(resolved.Run)
 					switch {
 					case conditionErr != nil:
@@ -731,35 +910,78 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 						finding.Reason = envErr.Error()
 					case r.Reason != "":
 						finding.Reason = r.Reason
+					case action == "" && !shared && (skipped || engine != ""):
+						finding.Status, finding.Code = "excluded", CodeExcludedRuntime
+						finding.Reason = "The " + provider.setupName() + " is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."
+						if !skipped {
+							finding.Reason = "This job runs " + engine + " (image " + job.Image + "), which the tracer cannot instrument, without the " + provider.setupName() + ". Its tests still run without instrumentation; this runtime is not validated with the tracer."
+						}
+					case action == "" && !shared && python != "" && pythonUnsupportedRuntime(python, localVersion, selectRelease):
+						selection, _ := selectRelease(localVersion)
+						finding.Status, finding.Code = "excluded", CodeExcludedRuntime
+						finding.Reason = "This job runs Python " + python + ", which ddtrace@" + selection.Version + " does not support (" + selection.RequiresPython + "), without the " + provider.setupName() + ". Its tests still run without instrumentation; this runtime is not validated with the tracer."
 					case action == "":
-						finding.Status, finding.Code, finding.Reason = "incompatible", "missing_instrumentation", "No Datadog Python action runs before this pytest step. Preserve the test command and add instrumentation."
+						finding.Status, finding.Code, finding.Reason = "incompatible", "missing_instrumentation", pythonMissingSetupReason(provider)
+					case !shared && engine != "":
+						finding.Status = "incompatible"
+						finding.Reason = "This job runs " + engine + " (image " + job.Image + "), which the tracer cannot instrument; keep its tests in a job without the " + provider.setupName() + "."
+					case selected != nil && pythonSetupProblem(provider, selected.setup, selected.inputs, requested, site) != "":
+						finding.Code, finding.Reason = CodeIncompleteCISetup, pythonSetupProblem(provider, selected.setup, selected.inputs, requested, site)
+					case selected != nil && pythonConfirmationProblem(provider, selected.setup) != "":
+						// Ask for every answer the user owes at once.
+						finding.Code, finding.Reason = "ci_setup_confirmation_required", pythonConfirmationProblem(provider, selected.setup)
+						if python == "" {
+							finding.Reason += " " + pythonUnknownRuntimeReason(provider, job, host)
+						}
+					case !shared && python == "":
+						finding.Reason = pythonUnknownRuntimeReason(provider, job, host)
+					case venvs.reason() != "" && (selected == nil || !slices.Contains(selected.setup.Confirmations, jenkinsRuntimeMatches)):
+						// The user confirmed that a plugin's toolchain is the
+						// tests' Python, which covers the environment they run in.
+						finding.Reason = venvs.reason()
 					case slices.ContainsFunc(commands, func(words []string) bool {
 						words, assignments, err := pythonCommandEnvironment(words)
 						return err == nil && pythonRuntimeOverride(words, python, mergeEnvironment(environment, assignments))
 					}):
 						finding.Reason = "The CI command selects its own Python interpreter; setup-python does not establish that runtime's compatibility. Validate the selected environment separately."
-					default:
-						selection, ok := cache[requested]
-						var selectionErr error
-						if !ok {
-							selection, selectionErr = resolve(ctx, requested)
-							if selectionErr == nil {
-								cache[requested] = selection
-							}
+						if !shared {
+							finding.Reason = "The CI command selects its own Python interpreter; the job's Python does not establish that runtime's compatibility. Validate the selected environment separately."
 						}
+					default:
+						selection, selectionErr := selectRelease(requested)
 						if selectionErr != nil {
 							finding.Reason = selectionErr.Error()
 						} else {
 							finding.Tracer = "ddtrace@" + selection.Version
+							if selected != nil {
+								finding.TracerRequested = requested
+							}
 							finding.Requirement = selection.RequiresPython
 							finding.Status, finding.Reason = ComparePythonRequirement(python, selection.RequiresPython)
-							if selection.Version != localVersion {
+							if selected != nil && selected.setup.Floating {
+								finding.TracerFloating = true
+								finding.SetupCaveats = pythonFloatingCaveat(selected.setup, selection.Version)
+							}
+							if localVersion != "" && selection.Version != localVersion {
 								pythonFindingProblem(&finding, "incompatible", fmt.Sprintf("CI selects ddtrace@%s; local validation selected ddtrace@%s. Align selections or validate the CI release separately.", selection.Version, localVersion))
 							}
-							if value, ok := step.Env["PYTHONPATH"]; ok && !slices.ContainsFunc(strings.FieldsFunc(value, func(r rune) bool { return r == ':' || r == ';' }), pythonPathReference) {
-								pythonFindingProblem(&finding, "incompatible", "The test step replaces the action's PYTHONPATH; preserve the injected tracer package path.")
+							plugin := ""
+							if selected != nil && provider.setupTerms().Plugin {
+								plugin = pythonPluginEnvironmentProblem(provider, workflow, job, step)
+							}
+							if plugin != "" {
+								pythonFindingProblem(&finding, "incompatible", plugin)
+							} else if value, ok := step.Env["PYTHONPATH"]; ok && !pythonKeepsTracerPath(value) {
+								reason := "The test step replaces the action's PYTHONPATH; preserve the injected tracer package path."
+								if !shared {
+									reason = "This test command's PYTHONPATH replaces the one the " + provider.setupName() + " exported, which carries the tracer. Extend it instead, with " + provider.setupTerms().Persist(`export PYTHONPATH="$PYTHONPATH:<paths>"`) + "."
+								}
+								pythonFindingProblem(&finding, "incompatible", reason)
 							}
 							if status, reason := pythonInstrumentationOptions(root, workflow, job, resolved, row, python); status != "" {
+								if !shared {
+									reason = strings.ReplaceAll(reason, "the action's", "the "+provider.setupName()+"'s")
+								}
 								pythonFindingProblem(&finding, status, reason)
 							}
 						}
@@ -773,7 +995,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 		result.Status = "compatible"
 		result.Reason = "Every identified pytest CI entry selects the validated ddtrace release and satisfies its Python requirement. CI execution and environment provisioning remain untested."
 		for _, finding := range result.Jobs {
-			if finding.Status != "compatible" {
+			if finding.Status != "compatible" && finding.Status != "excluded" {
 				result.Status = finding.Status
 				result.Reason = "Python CI configuration is incomplete or incompatible; inspect each entry and preserve the test matrix."
 				if finding.Status == "incompatible" {
@@ -781,8 +1003,25 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 				}
 			}
 		}
+		if result.Status == "compatible" && !slices.ContainsFunc(result.Jobs, func(finding RuntimeFinding) bool { return finding.Status == "compatible" }) {
+			result.Status, result.Reason = "incompatible", "Every identified pytest CI entry is excluded from instrumentation; at least one must run the Datadog setup."
+		}
 	}
 	return result
+}
+
+// pythonUnsupportedRuntime reports a static Python the release local
+// validation selected does not support, such as 3.15 for ddtrace 4.16.
+func pythonUnsupportedRuntime(python, localVersion string, selectRelease func(string) (PythonRelease, error)) bool {
+	if localVersion == "" {
+		return false
+	}
+	selection, err := selectRelease(localVersion)
+	if err != nil {
+		return false
+	}
+	status, _ := ComparePythonRequirement(python, selection.RequiresPython)
+	return status == "incompatible"
 }
 
 func pythonFindingProblem(finding *RuntimeFinding, status, reason string) {

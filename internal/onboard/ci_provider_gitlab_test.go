@@ -529,18 +529,16 @@ func TestGitLabTestWorkflowsNeedTheSetupBeforeTests(t *testing.T) {
 	require.Equal(t, []string{".gitlab-ci.yml"}, configured)
 }
 
-// Python and Java keep GitHub Actions only.
+// Java keeps GitHub Actions only.
 func TestGitLabLanguageSupport(t *testing.T) {
-	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": false, "java": false} {
+	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": true, "java": false} {
 		require.Equal(t, supported, languageSupportsCIProvider(language, gitLabCI{}), language)
 	}
 	root := t.TempDir()
 	writeFile(t, root, "pyproject.toml", "[project]\nname = 'demo'\n")
 	writeFile(t, root, ".gitlab-ci.yml", "test:\n  script: [pytest]\n")
 	useCIProvider(t, "")
-	var unsupported *CIProviderUnsupportedError
-	require.ErrorAs(t, CheckCIProviderSupport(root, "python", "pytest"), &unsupported)
-	require.Equal(t, "GitLab CI", unsupported.Provider)
+	require.NoError(t, CheckCIProviderSupport(root, "python", "pytest"))
 	require.NoError(t, CheckCIProviderSupport(root, "ruby", "rspec"))
 }
 

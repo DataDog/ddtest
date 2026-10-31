@@ -96,7 +96,7 @@ func ciProviderFailure(cmd *cobra.Command, structured bool, err error) error {
 // ciStatementFlags adds --ci-runtime and --ci-confirm, which state what the
 // CI configuration cannot show ddtest.
 func ciStatementFlags(command *cobra.Command, runtimes, facts *[]string) {
-	command.Flags().StringArrayVar(runtimes, "ci-runtime", nil, "Runtime of CI jobs whose configuration names none, as [<job>:]<runtime>=<version> (node, ruby); repeatable; only the user can state it")
+	command.Flags().StringArrayVar(runtimes, "ci-runtime", nil, "Runtime of CI jobs whose configuration names none, as [<job>:]<runtime>=<version> (node, python, ruby); repeatable; only the user can state it")
 	command.Flags().StringArrayVar(facts, "ci-confirm", nil, "CI fact the selected provider asks the user to confirm, as <fact>[=<value>]; repeatable")
 }
 

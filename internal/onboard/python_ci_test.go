@@ -129,7 +129,7 @@ func TestPythonCIReleaseAndMatrixValidation(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
 			contents := "jobs:\n  test:\n    strategy:\n      matrix:\n        python: ['" + tc.python + "']\n    steps:\n      - uses: actions/setup-python@v6\n        with:\n          python-version: ${{ matrix.python }}\n      - uses: datadog/test-visibility-github-action@v3\n        with:\n          languages: python\n          python-tracer-version: '" + tc.version + "'\n      - run: python -m pytest\n        env:\n          PYTEST_ADDOPTS: '" + tc.options + "'\n"
 			require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/test.yml"), []byte(contents), 0644))
-			check := checkPythonCIRuntimes(t.Context(), root, "4.16.0", func(_ context.Context, version string) (PythonRelease, error) {
+			check := checkPythonCIRuntimes(t.Context(), root, "4.16.0", "", func(_ context.Context, version string) (PythonRelease, error) {
 				return PythonRelease{version, ">=3.9,<3.15"}, nil
 			}, func(context.Context, string) (string, error) {
 				t.Fatal("explicit version must not resolve action default")
