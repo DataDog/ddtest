@@ -133,6 +133,36 @@ func TestJenkinsJavaScriptHandsOffToApply(t *testing.T) {
 	require.NotContains(t, result.Instruction, "ddtest onboard --apply")
 }
 
+// A plugin confirmed to report to another site than the selected one (DD_SITE
+// by default) is a setup onboard --apply refuses to leave, so onboarding
+// gives the instructions naming the mismatch instead of handing off to it.
+func TestJenkinsJavaScriptSiteMismatchIsNotHandedToApply(t *testing.T) {
+	jenkinsApplyRepository(t, "jest", "pipeline {\n  agent any\n"+jenkinsDatadogOption+"  stages { stage('Test') { steps { sh 'npm test' } } }\n}\n")
+	useCIStatements(t, []string{"node=22"}, "jenkins-plugin", "jenkins-plugin-mode=agentless:datadoghq.eu")
+	start := func(options StartOptions) AgentResult {
+		t.Helper()
+		var out bytes.Buffer
+		_ = StartWithOptions(&out, options)
+		var result AgentResult
+		require.NoError(t, json.Unmarshal(out.Bytes(), &result), out.String())
+		return result
+	}
+	mismatch := "The Datadog Jenkins plugin reports to datadoghq.eu (--ci-confirm jenkins-plugin-mode=agentless:datadoghq.eu), but the selected Datadog site is datadoghq.com"
+	t.Setenv("DD_SITE", "datadoghq.com")
+	for name, options := range map[string]StartOptions{"DD_SITE": {Format: "json"}, "--site": {Format: "json", Site: "datadoghq.com"}} {
+		result := start(options)
+		require.Equal(t, "ci_setup_required", result.Code, name)
+		require.Contains(t, result.Reason, mismatch, name)
+		require.Empty(t, result.NextCommand, name)
+		require.NotContains(t, result.Instruction, "ddtest onboard --apply", name)
+	}
+
+	t.Setenv("DD_SITE", "datadoghq.eu")
+	result := start(StartOptions{Format: "json"})
+	require.Equal(t, "ready", result.Status, "the plugin reports to the selected site")
+	require.Equal(t, []string{"onboard", "--framework", "jest", "--apply", "--yes"}, result.NextCommand[1:6])
+}
+
 // Ruby's agent handoff runs onboard --apply for the Jenkinsfile edit; once
 // the Jenkinsfile has it, the rest of the setup is the agent's.
 func TestJenkinsRubyHandsOffToApply(t *testing.T) {

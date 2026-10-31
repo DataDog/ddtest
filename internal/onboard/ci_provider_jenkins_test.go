@@ -590,11 +590,11 @@ func TestJenkinsInstructions(t *testing.T) {
 	ruby = rubyDiscovery{}.ciSetupRequest(root, "rspec", "datadoghq.com", jenkins{}.setupTerms())
 	require.Contains(t, ruby.Notes[0], "already pins datadog-ci 1.40.0")
 
-	require.True(t, providerAutomaticSetup(root, jenkins{}, javascriptDiscovery{}, "jest"), "onboard --apply enables the plugin")
-	require.False(t, providerAutomaticSetup(root, jenkins{}, javascriptDiscovery{}, "cucumber"))
-	require.True(t, providerAutomaticSetup(root, buildkite{}, javascriptDiscovery{}, "jest"))
+	require.True(t, providerAutomaticSetup(root, jenkins{}, javascriptDiscovery{}, "jest", ""), "onboard --apply enables the plugin")
+	require.False(t, providerAutomaticSetup(root, jenkins{}, javascriptDiscovery{}, "cucumber", ""))
+	require.True(t, providerAutomaticSetup(root, buildkite{}, javascriptDiscovery{}, "jest", ""))
 	writeFile(t, root, "Jenkinsfile", "@Library('lib') _\npipeline {\n  agent any\n  stages { stage('Test') { steps { sh 'npm test' } } }\n}\n")
-	require.False(t, providerAutomaticSetup(root, jenkins{}, javascriptDiscovery{}, "jest"), "a refused edit leaves the setup to the instructions")
+	require.False(t, providerAutomaticSetup(root, jenkins{}, javascriptDiscovery{}, "jest", ""), "a refused edit leaves the setup to the instructions")
 }
 
 // The committed fixture is ral-facilities/scigateway's declarative

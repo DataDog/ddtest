@@ -182,11 +182,12 @@ func writesPluginSetup(provider ciProvider, language string) bool {
 }
 
 // pluginSetupApplies reports whether the selected provider's plugin setup
-// can be written for framework in root: the edit is planned, or needs one
-// source edit first that its refusal names (see EditThenApplyGap). A refusal
-// leaves the setup to the instructions.
-func pluginSetupApplies(root, framework string) bool {
-	_, err := PlanProviderSetup(root, framework, "")
+// can be written for framework in root, reporting to site (empty: any): the
+// edit is planned, or needs one source edit first that its refusal names
+// (see EditThenApplyGap). A refusal, such as a plugin that reports to
+// another site than the selected one, leaves the setup to the instructions.
+func pluginSetupApplies(root, framework, site string) bool {
+	_, err := PlanProviderSetup(root, framework, site)
 	var edit *EditThenApplyGap
 	return err == nil || errors.As(err, &edit)
 }
