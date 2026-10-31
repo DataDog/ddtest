@@ -7,6 +7,7 @@ package testdrive
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -94,6 +95,32 @@ func TestWorkflowAsksToConfirmTheJenkinsPlugin(t *testing.T) {
 	require.Equal(t, []string{"ci_confirm:jenkins-plugin", "ci_confirm:jenkins-plugin-mode=agentless:<site>|agent"}, result.RequiredInput)
 	require.Empty(t, result.NextCommand)
 	require.Empty(t, result.ResumeCommand)
+	require.NoFileExists(t, filepath.Join(root, ".testoptimization", "testdrive.json"), "nothing ran")
+}
+
+// onboard --apply enables the Datadog Jenkins plugin, then asks the user to
+// confirm the plugin before anything runs; the edit stays listed.
+func TestWorkflowApplyEnablesTheJenkinsPluginThenAsksToConfirmIt(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"app","scripts":{"test":"jest"},"devDependencies":{"jest":"29.7.0"}}`)
+	requireWriteFile(t, filepath.Join(root, "Jenkinsfile"), "pipeline {\n  agent { label 'linux' }\n  stages { stage('Test') { steps { sh 'npx jest' } } }\n}\n")
+	onboard.UseCIProvider("jenkins")
+	t.Cleanup(func() { onboard.UseCIProvider("") })
+	stateCIRuntimes(t, "node=22")
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Jest{}, language: "javascript", tracerVersion: "6.22.0", executor: workflowCheckExecutor{}, nodeVersion: currentNodeVersion, allConfigurations: true}
+	drive.workflowSelect = func(context.Context, onboard.ValidationScope, bool) (string, error) { return "6.22.0", nil }
+	var output bytes.Buffer
+	require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Apply: true, Format: "json"}), "ci_setup_confirmation_required")
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result), output.String())
+	require.Equal(t, "ask_user", result.NextAction)
+	require.Equal(t, []string{"ci_confirm:jenkins-plugin", "ci_confirm:jenkins-plugin-mode=agentless:<site>|agent"}, result.RequiredInput)
+	require.Len(t, result.Changes, 2)
+	require.Contains(t, result.SetupDiff, "+  options {\n+    datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT']])\n+  }")
+	data, err := os.ReadFile(filepath.Join(root, "Jenkinsfile"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "datadog(testOptimization:")
 	require.NoFileExists(t, filepath.Join(root, ".testoptimization", "testdrive.json"), "nothing ran")
 }
 

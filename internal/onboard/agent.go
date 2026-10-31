@@ -196,6 +196,10 @@ type StartOptions struct {
 	AllowReviewedBuilds bool
 	// AcceptSubstituteRuntime is forwarded to the onboarding handoff.
 	AcceptSubstituteRuntime bool
+	// SetupApplied reports that onboard --apply just wrote the CI
+	// provider's plugin setup: the rest of the language's setup comes first,
+	// and the facts to confirm then come with validation.
+	SetupApplied bool
 }
 
 func Start(output io.Writer) error { return StartWithOptions(output, StartOptions{}) }
@@ -252,7 +256,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 			return errors.Join(required, WriteAgentResult(output, CIRuntimeRequiredResult(required)))
 		}
 		// Facts only the CI server shows come next, once the setup is there.
-		if required := RequiredCIConfirmations(root, detected.Name(), frameworkName); required != nil {
+		if required := RequiredCIConfirmations(root, detected.Name(), frameworkName); required != nil && (!options.SetupApplied || discoveryLanguageNamed(detected.Name()).ciSetupConfigured(root, frameworkName, options.Site)) {
 			if options.Human {
 				return fmt.Errorf("%w Rerun with --ci-confirm <fact>[=<value>] for each fact once you know it", required)
 			}
@@ -262,7 +266,14 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	automatic := discoveryLanguageAutomaticSetup(detected.Name())
 	if root, err := os.Getwd(); err == nil && automatic {
 		if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
-			automatic = providerAutomaticSetup(provider, discoveryLanguageNamed(detected.Name()), frameworkName)
+			// onboard --apply checks the edit against the site it reports to,
+			// DD_SITE by default; one it would refuse is left to the
+			// instructions, which name the problem.
+			site := options.Site
+			if site == "" {
+				site = os.Getenv("DD_SITE")
+			}
+			automatic = providerAutomaticSetup(root, provider, discoveryLanguageNamed(detected.Name()), frameworkName, site)
 		}
 	}
 	if !automatic && options.Site == "" {
@@ -275,6 +286,9 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input"}))
 	}
 	command := OnboardingCommand(frameworkName)
+	// The CI provider's plugin setup onboard --apply writes for a language
+	// whose own setup the agent applies.
+	apply := OnboardingCommand(frameworkName)
 	if !automatic {
 		// The agent applies CI setup by hand; validation runs through the coordinator.
 		command = DDTestCommand("testdrive", "--framework", frameworkName, "--all", "--agent", "--yes")
@@ -291,16 +305,21 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		if flag.value != "" && (automatic || flag.name != "format" || flag.value != "agent") {
 			command = append(command, "--"+flag.name, flag.value)
 		}
+		if flag.value != "" {
+			apply = append(apply, "--"+flag.name, flag.value)
+		}
 	}
 	if options.AllowReviewedBuilds {
 		command = append(command, "--allow-reviewed-builds")
+		apply = append(apply, "--allow-reviewed-builds")
 	}
 	if options.AcceptSubstituteRuntime {
 		command = append(command, "--accept-substitute-runtime")
+		apply = append(apply, "--accept-substitute-runtime")
 	}
 	notice := ExecutableFallbackNotice()
 	if !automatic {
-		return manualSetupHandoff(output, options, detected.Name(), frameworkName, command, notice)
+		return manualSetupHandoff(output, options, detected.Name(), frameworkName, command, apply, notice)
 	}
 	if options.Human {
 		text := humanOnboardingHandoff(frameworkName, command)
@@ -321,7 +340,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 // agent writes by hand. Once every discovered test step runs the Datadog
 // action, it hands off validation; until then it returns the setup
 // instructions with validation as resume_command. People get the guidance.
-func manualSetupHandoff(output io.Writer, options StartOptions, language, framework string, command []string, notice string) error {
+func manualSetupHandoff(output io.Writer, options StartOptions, language, framework string, command, apply []string, notice string) error {
 	if options.Human {
 		return Run(output)
 	}
@@ -359,13 +378,27 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 			Reason:        "ddtest cannot tell which " + framework + " tests these CI steps run, so it has no configuration to validate locally and will not prescribe CI setup for them. Ask the user and report their decision; do not edit CI before they approve it, and do not combine --command with --all: a single command cannot stand in for a CI step. " + AgentScope + " " + notice,
 		}))
 	}
+	if !options.SetupApplied && pluginSetupWritable(root, language, framework, options.Site) {
+		// ddtest writes the provider's part of the setup itself.
+		err := fmt.Errorf("CI setup is required before validation")
+		return errors.Join(err, WriteAgentResult(output, AgentResult{
+			Status: "needs_input", Phase: "onboarding", Code: "ci_setup_required", NextAction: "run_command", NextCommand: apply,
+			Reason: strings.TrimSpace("CI does not yet run the " + setup + " before every discovered " + framework + " test step, and onboard --apply writes it: run next_command once in the foreground and wait for its exit. It edits only the CI configuration, lists the changes, and returns the rest of the setup to apply and the validation command; it runs no tests. Do not edit the CI configuration yourself first. " + AgentScope + " " + notice),
+		}))
+	}
 	var guidance strings.Builder
 	if err := run(&guidance, &agentHandoff{site: options.Site}); err != nil {
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "scope_unresolved", Reason: err.Error(), NextAction: "supply_input"}))
 	}
 	reason := "CI does not yet run the " + setup + " before every discovered " + framework + " test step. Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
+	if options.SetupApplied {
+		reason = "onboard --apply wrote the " + setup + " (changes, setup_diff); do not edit it again. Apply only the rest of the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
+	}
 	if problems := existingSetupProblems(root, language, framework, options.Site); len(problems) > 0 {
 		reason += "The existing setup needs changes; fix it as the instructions show: " + strings.Join(problems, " ") + " "
+	}
+	if refusal := pluginSetupRefusal(root, framework); refusal != "" {
+		reason += "onboard --apply cannot write this setup (" + refusal + "), so apply it from the instructions. "
 	}
 	if len(unresolved) > 0 {
 		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers; tell the user now that they need a scope decision. ", len(unresolved))

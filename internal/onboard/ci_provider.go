@@ -142,6 +142,11 @@ type ciSetupRequest struct {
 	After []string
 	// Notes are language rules the instructions add after the step.
 	Notes []string
+	// Service is the service name a setup that names one reports under: the
+	// project's own name, empty when the language reads none.
+	Service string
+	// Framework is the framework whose tests the setup is for.
+	Framework string
 }
 
 // ciSetupTerms are how a provider without the shared workflow syntax names
@@ -597,10 +602,12 @@ func ProviderUnsupportedResult(err *CIProviderUnsupportedError) AgentResult {
 func CIProviderEditsSetup() bool { return activeOrDefaultCIProvider().editsSetup() }
 
 // providerAutomaticSetup reports whether onboard --apply writes framework's
-// setup on provider: the provider edits its configuration and the language
-// writes that framework's setup there.
-func providerAutomaticSetup(provider ciProvider, language discoveryLanguage, framework string) bool {
-	return provider.editsSetup() && language.automaticProviderSetup(framework)
+// setup on provider in root, reporting to site (empty: any): the provider
+// edits its configuration and the language writes that framework's setup
+// there. A plugin setup applies only where the provider can make the edit
+// and leave it complete for site; otherwise the instructions do.
+func providerAutomaticSetup(root string, provider ciProvider, language discoveryLanguage, framework, site string) bool {
+	return provider.editsSetup() && language.automaticProviderSetup(framework) && (!provider.setupTerms().Plugin || pluginSetupApplies(root, framework, site))
 }
 
 // testWorkflowsWithSetup lists the workflows whose jobs run framework's tests

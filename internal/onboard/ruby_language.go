@@ -224,7 +224,7 @@ func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 // rubyPluginSetupRequest is the Ruby part of a CI server plugin's setup: the
 // plugin uses the datadog-ci the root bundle pins, so the bundle pins it.
 func rubyPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
-	request := ciSetupRequest{Language: "ruby", Site: site}
+	request := ciSetupRequest{Language: "ruby", Site: site, Service: rubyGemspecName(root)}
 	pin := "Pin datadog-ci in the bundle: add gem \"datadog-ci\", \"<exact datadog-ci release>\", group: :test to the Gemfile at the checkout root (in a group the tests load; keep every other line) and run bundle lock, so Gemfile.lock pins it, then commit both. Use an exact release compatible with every instrumented Ruby, such as 1.42.0; when Gemfile.lock already locks datadog-ci, keep that release. The " + terms.Installer + " uses a datadog-ci the bundle already has; without one it runs bundle config set frozen false and bundle add datadog-ci on the agent, installing the latest release, which ddtest cannot validate."
 	if locked := rubyLockedTracer(root); locked != "" {
 		pin = "The Gemfile.lock at the checkout root already pins datadog-ci " + locked + ", which the " + terms.Installer + " uses as is and ddtest validates; keep it pinned, and keep the Gemfile and Gemfile.lock unchanged."
@@ -246,7 +246,29 @@ func rubyPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ci
 	return request
 }
 
-// Agents apply Ruby setup by hand on every provider.
+// rubyGemspecName is the gem name the only gemspec at the checkout root
+// sets literally, or empty.
+func rubyGemspecName(root string) string {
+	specs, _ := filepath.Glob(filepath.Join(root, "*.gemspec"))
+	if len(specs) != 1 {
+		return ""
+	}
+	data, err := os.ReadFile(specs[0])
+	if err != nil {
+		return ""
+	}
+	if match := rubyGemspecNameAssignment.FindSubmatch(data); match != nil {
+		return string(match[1])
+	}
+	return ""
+}
+
+// rubyGemspecNameAssignment is a gemspec's literal name assignment.
+var rubyGemspecNameAssignment = regexp.MustCompile(`(?m)^\s*\w+\.name\s*=\s*["']([A-Za-z0-9_.-]+)["']`)
+
+// Agents apply Ruby setup by hand on every provider; where the provider's
+// setup is a plugin, onboard --apply enables it (see
+// providerWritesPluginSetup) and the rest stays the agent's.
 func (rubyDiscovery) automaticProviderSetup(string) bool { return false }
 
 // rubyShellForkSetup is the Minitest fork setup for a setup that runs in the

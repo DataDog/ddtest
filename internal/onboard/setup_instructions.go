@@ -20,14 +20,17 @@ func providerSetupInstructions(root string, provider ciProvider, language, frame
 	if registered == nil {
 		return ""
 	}
+	selected := site
 	if site == "" {
 		site = defaultDatadogSite
 	}
 	var text strings.Builder
 	_, _ = fmt.Fprintf(&text, "\n# Enable Datadog Test Optimization for %s on %s\n\n", framework, provider.displayName())
-	automatic := providerAutomaticSetup(provider, registered, framework)
+	automatic := providerAutomaticSetup(root, provider, registered, framework, selected)
 	if automatic {
 		text.WriteString(strings.ReplaceAll(javascriptAutomaticSetup, "ddtest testdrive", "ddtest testdrive --framework "+framework) + "\n\n")
+	} else if pluginSetupWritable(root, language, framework, selected) {
+		text.WriteString("`ddtest onboard --apply` previews the edit that enables the " + provider.setupName() + " in the CI configuration, writing nothing, and `ddtest onboard --apply --yes` writes it; neither runs tests. Make the rest of the setup below yourself.\n\n")
 	}
 	text.WriteString(provider.setupInstructions(registered.ciSetupRequest(root, framework, site, provider.setupTerms())))
 	if site == defaultDatadogSite && !agent {

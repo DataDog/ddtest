@@ -457,7 +457,9 @@ func (r *jenkinsReader) pipeline(body *groovyBlock, scope jenkinsScope) jenkinsS
 			}
 		}
 	}
-	scope = r.directives(directives, scope, true)
+	environment := &jenkinsSlot{name: "environment"}
+	scope = r.directives(directives, scope, true, environment)
+	r.finish(environment)
 	if stages, ok := directives["stages"]; ok && stages.Closure != nil {
 		scope = r.stages(stages.Closure.Body, scope, false)
 	}
@@ -470,9 +472,11 @@ func (r *jenkinsReader) pipeline(body *groovyBlock, scope jenkinsScope) jenkinsS
 }
 
 // directives applies a pipeline's or stage's agent, environment, options,
-// tools, parameters and when to scope.
-func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenkinsScope, top bool) jenkinsScope {
-	return scope.with(func(next *jenkinsScope) {
+// tools, parameters and when to scope. The steps its environment values run
+// go to slot, whose scope becomes the one returned: Jenkins runs them on the
+// scope's agent when it enters the scope, before the scope's steps.
+func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenkinsScope, top bool, slot *jenkinsSlot) jenkinsScope {
+	result := scope.with(func(next *jenkinsScope) {
 		if parameters, ok := directives["parameters"]; ok && parameters.Closure != nil {
 			for _, statement := range parameters.Closure.Body.Statements {
 				call, ok := statement.(*groovyCall)
@@ -497,7 +501,14 @@ func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenk
 			next.agent = r.agent(agent, *next)
 		}
 		if environment, ok := directives["environment"]; ok && environment.Closure != nil {
-			r.environment(environment.Closure.Body, next, top)
+			if options, ok := directives["options"]; ok && top {
+				// The plugin sets its variables for the environment's steps
+				// too; the option is read again with the environment below.
+				if setup, found := r.pipelineSetup(options, *next); found {
+					next.setup = setup
+				}
+			}
+			r.environment(environment.Closure.Body, next, top, slot)
 		}
 		if tools, ok := directives["tools"]; ok && tools.Closure != nil {
 			for _, statement := range tools.Closure.Body.Statements {
@@ -506,16 +517,16 @@ func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenk
 				}
 			}
 		}
-		if options, ok := directives["options"]; ok && options.Closure != nil {
+		if options, ok := directives["options"]; ok && top {
+			if setup, found := r.pipelineSetup(options, *next); found {
+				next.setup = setup
+			}
+		} else if ok && options.Closure != nil {
 			for _, statement := range options.Closure.Body.Statements {
-				call, ok := statement.(*groovyCall)
-				if !ok || call.Name != "datadog" {
-					continue
-				}
-				if top {
-					next.setup = r.datadog(call, *next)
-				} else if _, _, has := jenkinsTestOptimization(call); has {
-					next.setupProblem = "The datadog(…) option at " + r.where(call) + " is in a stage's options; ddtest certifies the Datadog Jenkins plugin setup only in the pipeline's top-level options, which the plugin documents. Move it to the top-level options directive."
+				if call, ok := statement.(*groovyCall); ok && call.Name == "datadog" {
+					if _, _, has := jenkinsTestOptimization(call); has {
+						next.setupProblem = "The datadog(…) option at " + r.where(call) + " is in a stage's options; ddtest certifies the Datadog Jenkins plugin setup only in the pipeline's top-level options, which the plugin documents. Move it to the top-level options directive."
+					}
 				}
 			}
 		}
@@ -523,6 +534,27 @@ func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenk
 			next.disabled = true
 		}
 	})
+	// They run with the scope's agent and setup, which the directives after
+	// the environment complete.
+	slot.scope = result
+	if slot.job != nil {
+		slot.job.scope = result
+	}
+	return result
+}
+
+// pipelineSetup reads the datadog(…) option of a pipeline's top-level
+// options with scope; found reports one.
+func (r *jenkinsReader) pipelineSetup(options *groovyCall, scope jenkinsScope) (setup *jenkinsSetup, found bool) {
+	if options.Closure == nil {
+		return nil, false
+	}
+	for _, statement := range options.Closure.Body.Statements {
+		if call, ok := statement.(*groovyCall); ok && call.Name == "datadog" {
+			setup, found = r.datadog(call, scope), true
+		}
+	}
+	return setup, found
 }
 
 // jenkinsNeverWhen reports a when directive that can never pass: a literal
@@ -544,8 +576,10 @@ func jenkinsNeverWhen(body *groovyBlock) bool {
 	return false
 }
 
-// environment reads an environment directive.
-func (r *jenkinsReader) environment(body *groovyBlock, scope *jenkinsScope, top bool) {
+// environment reads an environment directive. Its values run what they
+// call, such as X = sh(script: 'git rev-parse HEAD', returnStdout: true),
+// to slot, in order; the value read from a command's output is unknown.
+func (r *jenkinsReader) environment(body *groovyBlock, scope *jenkinsScope, top bool, slot *jenkinsSlot) {
 	for _, statement := range body.Statements {
 		assign, ok := statement.(*groovyAssign)
 		if !ok {
@@ -554,6 +588,9 @@ func (r *jenkinsReader) environment(body *groovyBlock, scope *jenkinsScope, top 
 		name, isName := assign.Target.(*groovyName)
 		if !isName || len(name.Path) != 1 {
 			continue
+		}
+		if call, isCall := assign.Value.(*groovyCall); !isCall || call.Name != "credentials" {
+			r.expression(assign.Value, scope, slot)
 		}
 		r.assignEnvironment(name.Path[0], assign.Value, scope, "the environment directive at "+r.where(assign), !top)
 		scope.shadow[name.Path[0]] = true
@@ -757,11 +794,19 @@ func (r *jenkinsReader) stage(call *groovyCall, scope jenkinsScope) jenkinsScope
 		return scope
 	}
 	directives := jenkinsDirectives(call.Closure.Body)
-	inner := r.directives(directives, scope, false)
+	// A stage's environment runs before its steps, as part of its job; a
+	// stage of stages runs it once, before them.
+	slot := &jenkinsSlot{name: jobName(scope.stages, name, scope.suffix)}
+	if directives["steps"] == nil {
+		slot.name += " (environment)"
+	}
+	inner := r.directives(directives, scope, false, slot)
+	if directives["steps"] == nil {
+		r.finish(slot)
+	}
 	final := inner
 	switch {
 	case directives["steps"] != nil:
-		slot := &jenkinsSlot{name: jobName(scope.stages, name, scope.suffix), scope: inner}
 		if steps := directives["steps"]; steps.Closure != nil {
 			final = r.block(steps.Closure.Body, inner, slot)
 		}
@@ -777,9 +822,9 @@ func (r *jenkinsReader) stage(call *groovyCall, scope jenkinsScope) jenkinsScope
 		final = r.stages(directives["parallel"].Closure.Body, inner.with(func(next *jenkinsScope) { next.stages = append(next.stages, name) }), true)
 	}
 	if post, ok := directives["post"]; ok && directives["steps"] == nil {
-		slot := &jenkinsSlot{name: jobName(scope.stages, name, scope.suffix) + " (post)", scope: inner}
-		final = r.post(post, final, slot)
-		r.finish(slot)
+		postSlot := &jenkinsSlot{name: jobName(scope.stages, name, scope.suffix) + " (post)", scope: inner}
+		final = r.post(post, final, postSlot)
+		r.finish(postSlot)
 	}
 	switch {
 	case inner.disabled && !scope.disabled:
@@ -1023,7 +1068,9 @@ func (r *jenkinsReader) matrix(call *groovyCall, scope jenkinsScope) jenkinsScop
 				cellDirectives[key] = directive
 			}
 		}
-		cellScope = r.directives(cellDirectives, cellScope, false)
+		environment := &jenkinsSlot{name: strings.Join(scope.stages, " / ") + cellScope.suffix + " (environment)"}
+		cellScope = r.directives(cellDirectives, cellScope, false, environment)
+		r.finish(environment)
 		if stages, ok := directives["stages"]; ok && stages.Closure != nil && !cellScope.disabled {
 			paths = append(paths, r.persist(start, r.stages(stages.Closure.Body, cellScope, false), call.Closure.Body))
 		} else if stages, ok := directives["stages"]; ok && stages.Closure != nil {

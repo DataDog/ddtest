@@ -437,6 +437,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	return drive, nil
 }
 
+// FrameworkDisplayName names a framework in output, such as RSpec.
+func FrameworkDisplayName(name string) string { return displayName(name) }
+
 func displayName(name string) string {
 	for _, language := range validationLanguages {
 		if label := language.displayNames()[name]; label != "" {
