@@ -26,14 +26,52 @@ from model_auth import ModelLogin, login_directory, install_login, remove_login
 
 from isolation import Container, check_socket_budget, cleanup, environment, interrupted, mark_trial, trial_root, validate_image, check_interrupted, begin_teardown, termination_signal
 
+import user_answers
 
-EXCERPT_LIMIT = 4000
+
+# Characters kept of each text in activity.jsonl (--excerpt-limit). ddtest
+# results are single JSON documents that can exceed several thousand
+# characters; the excerpt keeps their start (status, code) and their end.
+EXCERPT_LIMIT = 64000
+# Once activity.jsonl holds ACTIVITY_BUDGET bytes, later texts keep only
+# REDUCED_EXCERPT_LIMIT characters, so the file stays bounded.
+REDUCED_EXCERPT_LIMIT = 4000
+ACTIVITY_BUDGET = 64 * 1024 * 1024
+# Setup command tails retained in run.json.
+COMMAND_TAIL_LIMIT = 4000
+excerpt_limit = EXCERPT_LIMIT
 LOGIN_SECRETS = set()
 
 
-def excerpt(value):
+def excerpt(value, limit=None):
     text = value if isinstance(value, str) else json.dumps(value)
-    return text if len(text) <= EXCERPT_LIMIT else "[truncated]\n" + text[-EXCERPT_LIMIT:]
+    limit = limit or excerpt_limit
+    if len(text) <= limit:
+        return text
+    head = limit // 2
+    return text[:head] + f"\n[truncated: {len(text) - limit} characters omitted]\n" + text[len(text) - (limit - head):]
+
+
+# A variable reference names a secret without containing it: $NAME, ${NAME},
+# ${{ secrets.NAME }}, $(command), or a lookup such as credentials('id'),
+# ENV['NAME'] or process.env.NAME whose literal ends at the quote.
+SECRET_REFERENCE = re.compile(r"\$|process\.env\.|os\.environ\b")
+SECRET_LOOKUP = re.compile(r"[A-Za-z_][\w.]*[(\[]")
+SECRET_ASSIGNMENT = re.compile(r"(?i)((?:\b[\w-]{0,80}(?:token|secret|password|api[_-]?key)|\bauthorization)[\"']?\s*[:=]\s*[\"']?)((?:bearer\s+)?)([^\s,;\"'}]+)")
+
+
+def redact_assignment(match):
+    prefix, bearer, value = match.groups()
+    if not bearer and (SECRET_REFERENCE.match(value) or
+                       SECRET_LOOKUP.fullmatch(value) and match.string[match.end():match.end() + 1] in ("'", '"')):
+        return match[0]
+    if match.string[:match.start()].endswith("${") and prefix.endswith(":"):
+        # Shell expansion ${NAME:-default}: only a literal default can be a value.
+        default = value.lstrip("-=?+")
+        if not default or SECRET_REFERENCE.match(default):
+            return match[0]
+        return prefix + value[:len(value) - len(default)] + "[REDACTED]"
+    return prefix + "[REDACTED]"
 
 
 def redact(value):
@@ -53,10 +91,9 @@ def redact(value):
             value = value.replace(secret, "[REDACTED]")
     value = re.sub(r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", "[REDACTED PRIVATE KEY]", value, flags=re.S)
     value = re.sub(r"\b(?:AKIA[A-Z0-9]{16}|(?:gh[pousr]_|github_pat_|npm_|sk-)[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b", "[REDACTED]", value)
-    # A GitHub Actions expression such as ${{ secrets.DD_API_KEY }} names a
-    # secret without containing it, so the workflow evidence keeps it intact.
-    value = re.sub(r"(?i)((?:\b[\w-]{0,80}(?:token|secret|password|api[_-]?key)|\bauthorization)[\"']?\s*[:=]\s*[\"']?)(?!\$\{\{)(?:bearer\s+)?[^\s,;\"'}]+", r"\1[REDACTED]", value)
-    return value
+    # References such as ${{ secrets.DD_API_KEY }} or ${DD_API_KEY:-} name a
+    # secret without containing it, so the CI evidence keeps them intact.
+    return SECRET_ASSIGNMENT.sub(redact_assignment, value)
 
 
 class LineRedactor:
@@ -129,6 +166,28 @@ def public_events(event, agent):
                    "permission_denials": excerpt(redact(event.get("permission_denials", [])))}
         else:
             yield {"type": "event", "event_type": kind, "subtype": event.get("subtype")}
+
+
+def observed_session(event, agent):
+    """The conversation a CLI event belongs to, so a reply can continue it."""
+    if agent == "codex":
+        return event.get("thread_id") if event.get("type") == "thread.started" else None
+    return event.get("session_id") if event.get("type") in ("system", "result") else None
+
+
+def tool_output(event, agent):
+    """The whole text a tool returned to the agent, before any excerpt."""
+    if agent == "codex":
+        item = event.get("item")
+        if event.get("type") == "item.completed" and isinstance(item, dict) and item.get("type") == "command_execution":
+            return item.get("aggregated_output")
+        return None
+    message = event.get("message") if event.get("type") == "user" else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return None
+    return "\n".join(user_answers.tool_output_text(block.get("content")) for block in content
+                     if isinstance(block, dict) and block.get("type") == "tool_result") or None
 
 
 class BackgroundCommands:
@@ -417,6 +476,14 @@ def agent_command(agent, model):
     return command
 
 
+def resume_command(agent, argv, session):
+    """Continue the same conversation; stdin becomes the user's next message."""
+    if agent == "codex":
+        # codex exec resume [OPTIONS] <SESSION_ID> -: exec options follow the subcommand.
+        return [*argv[:2], "resume", *argv[2:-1], session, "-"]
+    return [*argv, "--resume", session]
+
+
 def execute(command, cwd, env, timeout, on_line, prompt=None):
     """Bound attached Docker pipe reads; container teardown owns descendants."""
     check_interrupted()
@@ -474,10 +541,23 @@ def execute(command, cwd, env, timeout, on_line, prompt=None):
 
 
 def run(args):
+    global excerpt_limit
     if not math.isfinite(args.timeout) or args.timeout <= 0 or not args.ref or args.ref.startswith("-"):
         raise ValueError("Use a positive finite timeout and a ref that does not start with '-'")
     validate_image(getattr(args,"image",None))
     LOGIN_SECRETS.clear()
+    selected_limit = getattr(args, "excerpt_limit", None) or EXCERPT_LIMIT
+    if not 1000 <= selected_limit <= 1024 * 1024:
+        raise ValueError("--excerpt-limit must be between 1000 and 1048576 characters")
+    excerpt_limit = selected_limit
+    # Scripted answers are validated before any clone or model session.
+    answers = user_answers.load_answers(getattr(args, "user_answer", None), getattr(args, "user_answers", None))
+    max_user_turns = getattr(args, "max_user_turns", None) or 5
+    if max_user_turns < 1:
+        raise ValueError("--max-user-turns must be at least 1")
+    binstubs = list(getattr(args, "bundle_binstubs", None) or [])
+    if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", gem) for gem in binstubs):
+        raise ValueError("--bundle-binstubs takes a gem name, such as rspec-core")
     binary = args.ddtest.resolve(strict=True)
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError("--ddtest must be an executable file")
@@ -563,6 +643,12 @@ def run(args):
         zdotdir.mkdir(exist_ok=True)
         env["ZDOTDIR"] = str(zdotdir)
         env["PATH"] = str(node.parent) + os.pathsep + env.get("PATH", "")
+    bundle_bin = trial / "bundle-bin"
+    if binstubs:
+        # Bundler binstubs make the gems' executables (bare rspec) available
+        # like a CI image's, outside the ddtest folder the prompt names.
+        bundle_bin.mkdir()
+        env["PATH"] = str(bundle_bin) + os.pathsep + env.get("PATH", "")
     pnpm = getattr(args, "pnpm", None)
     tools = trial / "tools"
     if pnpm is not None:
@@ -595,6 +681,10 @@ def run(args):
         "npm_config_cache", "YARN_CACHE_FOLDER", "XDG_CACHE_HOME", "XDG_DATA_HOME",
         "XDG_STATE_HOME", "XDG_CONFIG_HOME", "PNPM_HOME", "TMPDIR",
         "CYPRESS_CACHE_FOLDER", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR", "PIP_CACHE_DIR", "UV_CACHE_DIR")}
+    manifest["user_answers"] = {"scripted": [answer["text"] for answer in answers], "max_turns": max_user_turns,
+                                "status": "not requested", "turns": []}
+    manifest["activity_excerpts"] = {"limit_characters": excerpt_limit, "budget_bytes": ACTIVITY_BUDGET,
+                                     "reduced_limit_characters": REDUCED_EXCERPT_LIMIT}
     manifest["private_caches"]["pnpm_store"] = str(pnpm_store)
     manifest["private_caches"]["pnpm_cache"] = str(pnpm_cache)
     if node is not None or python is not None:
@@ -605,6 +695,11 @@ def run(args):
     agent_errors = []
     agent_timed_out = False
     final_response = ""
+    # The agent's conversation, and the last ddtest result of the current turn.
+    session_id = None
+    last_result = None
+    agent_argvs = []
+    activity_bytes = 0
     background = BackgroundCommands()
     overrides = agent_environment(args.agent, args.timeout, framework)
     manifest["agent_environment"] = overrides
@@ -617,7 +712,8 @@ def run(args):
         return 1
 
     def emit(event):
-        nonlocal agent_failed, agent_completed
+        nonlocal agent_failed, agent_completed, activity_bytes
+        global excerpt_limit
         if event["type"] == "agent_error":
             agent_failed = True
             agent_errors.append(str(event.get("error", event.get("text", ""))))
@@ -629,9 +725,14 @@ def run(args):
                 if len(observations) < 20:
                     observations.append({"source": "public ddtest command output", "version": version})
         event = redact(event)
-        activity.write(json.dumps(event) + "\n")
+        encoded = json.dumps(event)
+        activity.write(encoded + "\n")
         activity.flush()
-        print(json.dumps(event), flush=True)
+        activity_bytes += len(encoded) + 1
+        if activity_bytes > ACTIVITY_BUDGET and excerpt_limit > REDUCED_EXCERPT_LIMIT:
+            excerpt_limit = REDUCED_EXCERPT_LIMIT
+            manifest["activity_excerpts"]["reduced_after_bytes"] = activity_bytes
+        print(encoded, flush=True)
 
     def command(argv, cwd=trial, agent=False, stdin=None, timeout=None, destination=None):
         nonlocal agent_failed
@@ -644,9 +745,9 @@ def run(args):
         line_redactor = LineRedactor()
 
         def line_received(line):
-            nonlocal tail, final_response
+            nonlocal tail, final_response, session_id, last_result
             clean_line = line_redactor(line) if not agent else redact(line)
-            tail = (tail + clean_line + "\n")[-EXCERPT_LIMIT:]
+            tail = (tail + clean_line + "\n")[-COMMAND_TAIL_LIMIT:]
             if not agent:
                 if destination is not None:
                     destination.write(clean_line+"\n")
@@ -668,6 +769,11 @@ def run(args):
                     final_response = event.get("result", "")
                 if args.agent == "claude":
                     background.observe(event)
+                session_id = observed_session(event, args.agent) or session_id
+                # Parse whole tool outputs, before excerpts can cut a ddtest result.
+                result = user_answers.agent_result(tool_output(event, args.agent))
+                if result is not None:
+                    last_result = result
                 for public in public_events(event, args.agent):
                     emit(public)
 
@@ -683,6 +789,27 @@ def run(args):
                 agent_errors.append(tail)
             raise RuntimeError(f"Command exited {record['exit_code']}: {shlex.join(argv)}")
         return tail.strip()
+
+    def answer_question(asked):
+        record = manifest["user_answers"]
+        turn = {"turn": len(record["turns"]) + 1, "asked_at": time.time(), "question": public_detail(asked),
+                "agent_message": excerpt(redact(final_response))}
+        record["turns"].append(turn)
+        emit({"type": "user_question", "turn": turn["turn"], "code": asked["code"], "required_input": asked["required_input"]})
+        composed = user_answers.reply(asked, answers)
+        turn.update(answers=composed["answers"], missing=composed["missing"])
+        stop = ("the scripted answers do not cover it" if composed["reply"] is None else
+                f"the limit of {max_user_turns} user replies was reached" if turn["turn"] > max_user_turns else
+                "the agent session id was not observed" if not session_id else None)
+        if stop:
+            record["status"] = "unanswered"
+            turn["unanswered"] = stop
+            emit({"type": "user_question_unanswered", "turn": turn["turn"], "reason": stop, "missing": composed["missing"]})
+            return None
+        turn.update(reply=composed["reply"], answered_at=time.time())
+        record["status"] = "answered"
+        emit({"type": "user_reply", "turn": turn["turn"], "text": composed["reply"], "answers": composed["answers"]})
+        return composed["reply"]
 
     login = ModelLogin(args.agent, home, LOGIN_SECRETS, getattr(args,"login_json",None), getattr(args,"existing_login",False))
     code = 1
@@ -761,6 +888,12 @@ def run(args):
             command([str(python), "-m", "venv", env["VIRTUAL_ENV"]])
         for setup in setup_commands:
             command(setup, cwd=checkout)
+        if binstubs:
+            manifest["failure_stage"] = "bundle_binstubs"
+            command(["env", f"BUNDLE_BIN={bundle_bin}", "bundle", "binstubs", *binstubs], cwd=checkout)
+            manifest["bundle_binstubs"] = {"directory": inside(bundle_bin), "gems": binstubs,
+                                           "executables": sorted(path.name for path in bundle_bin.iterdir())}
+            manifest.pop("failure_stage", None)
         if framework == "pytest":
             manifest["failure_stage"] = "python_environment"
             runtime = json.loads(command(["python", "-c", "import json, platform, sys; print(json.dumps({'executable': sys.executable, 'version': platform.python_version(), 'prefix': sys.prefix}))"]))
@@ -787,19 +920,32 @@ def run(args):
             if hasattr(container,"control"):
                 container.control("unpause",container.name)
         manifest["status"] = "agent_running"
-        command(agent_argv, cwd=checkout, agent=True, stdin=prompt)
-        if background.unfinished():
-            manifest["unfinished_background_commands"] = background.unfinished()
-            manifest["failure_kind"] = "infrastructure"
-            manifest["retry_recommended"] = True
-            raise RuntimeError("CLI exited with unfinished Bash tasks; local validation was interrupted, not completed")
-        if not agent_completed and not agent_failed:
-            raise RuntimeError("CLI exited without a recognized completion event; inspect the activity")
+        turn_argv, turn_input = agent_argv, prompt
+        while True:
+            agent_completed, last_result = False, None
+            agent_argvs.append(turn_argv)
+            command(turn_argv, cwd=checkout, agent=True, stdin=turn_input)
+            if background.unfinished():
+                manifest["unfinished_background_commands"] = background.unfinished()
+                manifest["failure_kind"] = "infrastructure"
+                manifest["retry_recommended"] = True
+                raise RuntimeError("CLI exited with unfinished Bash tasks; local validation was interrupted, not completed")
+            if not agent_completed and not agent_failed:
+                raise RuntimeError("CLI exited without a recognized completion event; inspect the activity")
+            if agent_failed:
+                break
+            # The turn ended at a question only the user can answer: reply in
+            # the same conversation, or stop and record the question.
+            asked = user_answers.question(last_result)
+            turn_input = answer_question(asked) if asked else None
+            if turn_input is None:
+                break
+            turn_argv = resume_command(args.agent, agent_argv, session_id)
         manifest["status"] = "agent_failed" if agent_failed else "completed"
         code = 1 if agent_failed else 0
     except (OSError, RuntimeError, TimeoutError, ValueError, KeyboardInterrupt, subprocess.SubprocessError) as error:
         manifest["status"] = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
-        agent_timed_out = isinstance(error, TimeoutError) and bool(manifest["commands"]) and manifest["commands"][-1]["argv"] == agent_argv
+        agent_timed_out = isinstance(error, TimeoutError) and bool(manifest["commands"]) and manifest["commands"][-1]["argv"] in agent_argvs
         if isinstance(error, TimeoutError) and manifest["commands"][-1]["argv"] == [args.agent, "--version"]:
             manifest["failure_kind"] = "infrastructure"
             manifest["failure_stage"] = "cli_startup"
@@ -807,7 +953,7 @@ def run(args):
         if manifest.get("failure_stage")=="model_authentication":
             manifest["failure_kind"]="authentication"
             manifest["retry_recommended"]=False
-        elif manifest.get("failure_stage") in ("runtime_readiness","storage_readiness","package_manager","python_environment"):
+        elif manifest.get("failure_stage") in ("runtime_readiness","storage_readiness","package_manager","python_environment","bundle_binstubs"):
             manifest["failure_kind"]="evaluator_environment"
             manifest["retry_recommended"]=False
         if manifest.get("status")=="preparing" and not manifest.get("failure_kind"):
@@ -973,7 +1119,16 @@ def main():
     parser.add_argument("--pnpm", help="Install this pnpm version privately for setup and the agent (e.g. the version the project's CI pins)")
     parser.add_argument("--output", type=Path, help="New directory for evaluator evidence")
     parser.add_argument("--model", help="Optional requested model; default is the CLI's configured model")
-    parser.add_argument("--timeout", type=float, default=1800, help="Seconds allowed per command")
+    parser.add_argument("--timeout", type=float, default=1800, help="Seconds allowed per command, each agent turn included")
+    parser.add_argument("--user-answer", action="append", default=[], metavar="KIND=VALUE",
+                        help="Repeatable scripted reply to a ddtest question only the user can answer: ci_runtime=<runtime>=<version>, "
+                             "ci_runtime=<workflow / job>:<runtime>=<version>, ci_confirm=<fact>[=<value>] or ci_provider=<provider>")
+    parser.add_argument("--user-answers", type=Path, help="File with one --user-answer value per line; blank lines and # comments are ignored")
+    parser.add_argument("--max-user-turns", type=int, default=5, help="Most scripted replies in one trial (default 5)")
+    parser.add_argument("--bundle-binstubs", action="append", default=[], metavar="GEM",
+                        help="Repeatable: after setup, write Bundler binstubs of this gem (such as rspec-core) to a private folder on PATH")
+    parser.add_argument("--excerpt-limit", type=int, default=EXCERPT_LIMIT,
+                        help=f"Characters kept of each text in activity.jsonl (default {EXCERPT_LIMIT}; start and end are kept)")
     args = parser.parse_args()
     if args.cleanup is not None:
         try:
