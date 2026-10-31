@@ -1,0 +1,8 @@
+steps:
+  - label: ":chrome: e2e"
+    command:
+      - npm ci
+      - npm run test:e2e
+    plugins:
+      - docker#v5.12.0:
+          image: cimg/node:22.11-browsers

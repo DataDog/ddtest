@@ -1,0 +1,15 @@
+{
+  "name": "circleci-cucumber-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "echo linted",
+    "test": "cucumber-js"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber": "11.0.1",
+    "@istanbuljs/esm-loader-hook": "0.3.0",
+    "nyc": "17.1.0"
+  }
+}

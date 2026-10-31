@@ -1,0 +1,25 @@
+# A Node.js service with Cucumber acceptance tests: lint, then a build and
+# the features in one job.
+stages:
+  - lint
+  - test
+
+default:
+  image: node:22
+  before_script:
+    - npm ci --no-audit
+
+lint:
+  stage: lint
+  script:
+    - npm run lint
+
+features:
+  stage: test
+  script:
+    - npm run build
+    - npm test
+  artifacts:
+    when: always
+    paths:
+      - coverage/

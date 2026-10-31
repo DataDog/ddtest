@@ -23,6 +23,9 @@ import (
 // keeps the original alias; arbitrary instrumentation overrides remain unresolved.
 const cucumberImpactedWorkaround = "DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false"
 
+// cucumberESMLoaderHook instruments native ESM Cucumber sources for coverage.
+const cucumberESMLoaderHook = "--experimental-loader @istanbuljs/esm-loader-hook"
+
 const cucumberScopedOptions = `NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}"`
 const cucumberInlineIstanbulOptions = `NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-} --experimental-loader @istanbuljs/esm-loader-hook"`
 

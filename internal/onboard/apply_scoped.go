@@ -87,7 +87,7 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 		}
 
 		if pkg.Type == "module" {
-			options += " --experimental-loader @istanbuljs/esm-loader-hook"
+			options += " " + cucumberESMLoaderHook
 		}
 	}
 	changed := false

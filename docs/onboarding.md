@@ -242,8 +242,10 @@ JavaScript test command of each test job, plus the `--import` loader export for
 Vitest and other ESM tests. It keeps every other line, and refuses entries that
 a template, `!reference` or anchor shares with a job that does not run the same
 tests. An edited included file is listed in the preview, since other projects
-may include it. Ruby, Cucumber and WebdriverIO setup is applied by the coding
-agent from `onboard --agent` instructions: for Ruby the script adds datadog-ci
+may include it. Cucumber and WebdriverIO get the scoped setup described in
+[Scoped setup outside GitHub Actions](#scoped-setup-outside-github-actions).
+Ruby setup is applied by the coding
+agent from `onboard --agent` instructions: the script adds datadog-ci
 to the CI bundle (no Gemfile edit) and replaces `RUBYOPT`, so existing Ruby
 options are re-added after it. Jobs whose image runs an engine datadog-ci does
 not instrument (JRuby, TruffleRuby, Ruby head) stay excluded.
@@ -340,8 +342,10 @@ declaration of an unsupported orb release; a test in a modeled orb job (such
 as `node/test`) takes the Datadog orb step through that job's steps
 parameter (`post_install_steps`), which ddtest asks for instead of editing.
 The inserted step follows the configuration's indentation. Applying again changes nothing.
-Ruby, Cucumber and WebdriverIO setup is applied by the coding agent from
-`onboard --agent` instructions: for Ruby the orb adds datadog-ci to the CI
+Cucumber and WebdriverIO get the scoped setup described in
+[Scoped setup outside GitHub Actions](#scoped-setup-outside-github-actions).
+Ruby setup is applied by the coding agent from
+`onboard --agent` instructions: the orb adds datadog-ci to the CI
 bundle and replaces `RUBYOPT`, so existing Ruby options are re-added after it
 through `$BASH_ENV`, and a `rake RUBYOPT=…` argument that would replace the
 preload is reported with the form that keeps it; Ruby 2.7 and 3.0 images get a `gem update --system` step,
@@ -483,8 +487,10 @@ key reaches the container, and keeps every other line. Commands shared through
 anchors (or a plugin configuration shared that way), folded commands, a test
 statement after another in one string, and commands a step that does not run
 the same tests also runs are refused; matrix combinations share one insertion.
-Applying again changes nothing. Ruby, Cucumber and WebdriverIO setup is applied
-by the coding agent from `onboard --agent` instructions; for Ruby the installer
+Applying again changes nothing. Cucumber and WebdriverIO get the scoped setup
+described in [Scoped setup outside GitHub Actions](#scoped-setup-outside-github-actions).
+Ruby setup is applied
+by the coding agent from `onboard --agent` instructions; the installer
 adds datadog-ci to the CI bundle and replaces `RUBYOPT`, so existing Ruby
 options are re-added after it, and Ruby 2.7 and 3.0 images get a `gem update
 --system` command, guarded on the image where a matrix shares the step.
@@ -700,6 +706,40 @@ RubyGems before 3.3.22.
 `onboard --agent` and `onboard --apply` return `ci_setup_required` with the
 instructions, and the coding agent applies them before the coordinated
 validation.
+
+### Scoped setup outside GitHub Actions
+
+On GitLab CI, CircleCI and Buildkite, `onboard --apply` sets up Cucumber and
+WebdriverIO the way it does on GitHub Actions: it edits the selected
+package-script leaves (see [Coverage and local developer
+commands](#coverage-and-local-developer-commands)) to start with
+`NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}"` (WebdriverIO:
+`DD_WDIO_NODE_OPTIONS`), and writes the provider's setup followed by one
+command that moves the preload the setup appended to `NODE_OPTIONS` into that
+variable, with the ESM loader and, for native ESM Cucumber, the Istanbul ESM
+loader:
+
+```sh
+if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export DD_CUCUMBER_NODE_OPTIONS="-r ${NODE_OPTIONS##*-r } --import $DD_TRACE_ESM_IMPORT" NODE_OPTIONS="${NODE_OPTIONS%-r *}"; fi
+```
+
+Outside GitHub Actions the installer exports `NODE_OPTIONS`, ending with its
+`-r` preload, and `DD_TRACE_ESM_IMPORT`, but not `DD_TRACE_PACKAGE`, so the
+command reads the preload's path after the last `-r ` and then removes it;
+ddtest's CI model evaluates these `${NAME%pattern}`/`${NAME##pattern}` forms.
+
+Only the scoped scripts then load the tracer: the job's other Node commands,
+such as builds or standalone WebDriver automation in the same script, keep
+their own `NODE_OPTIONS`. Without the API key or after a failed install the
+command changes nothing. GitLab and Buildkite run it inside the setup's key
+guard (Buildkite with `$$` escapes); CircleCI appends it to `$BASH_ENV` in a
+step after the orb. A job whose setup already leaves the preload in
+`NODE_OPTIONS` keeps it, since the scoped scripts still receive it; only the
+package scripts are edited. For native ESM Cucumber, which needs the Istanbul
+loader in the scoped variable, `onboard --apply` names the command to add after
+that setup instead. A job that sets `DD_CUCUMBER_NODE_OPTIONS` or
+`DD_WDIO_NODE_OPTIONS` itself is left for review. Jenkins jobs keep the
+manual setup until `onboard --apply` edits Jenkinsfiles.
 
 ## Coverage and local developer commands
 
