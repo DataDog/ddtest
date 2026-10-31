@@ -100,7 +100,7 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 	}
 	// The installer's agent, which a shell-sharing setup exported before the
 	// job's own options, is local validation's too.
-	return strings.Join(strings.Fields(strings.ReplaceAll(inherited, javaInstallerAgent, "")), " "), true, nil
+	return strings.TrimSpace(strings.ReplaceAll(inherited, javaInstallerAgent, "")), true, nil
 }
 
 // javaDeployCredentials are the environment variables that the job's

@@ -164,11 +164,17 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			continue
 		}
 		// A setup for several languages, run in the job's shell, exports each
-		// tracer's options for later commands; another language's options only
-		// instrument that language, and hold values only CI knows.
-		if len(frameworks) > 0 && otherLanguageSetupExport(discoveryLanguageFor(frameworks[0]), key) && strings.Contains(value, "${{") {
-			delete(env, key)
-			continue
+		// tracer's options for later commands; another language's export only
+		// instruments that language, and holds values only CI knows. The job's
+		// own options in the variable are kept.
+		if len(frameworks) > 0 {
+			if exported, ok := otherLanguageSetupExport(discoveryLanguageFor(frameworks[0]), key); ok && strings.Contains(value, exported) {
+				value = strings.TrimSpace(strings.ReplaceAll(value, exported, ""))
+				if value == "" {
+					delete(env, key)
+					continue
+				}
+			}
 		}
 		resolved, err := runtimeValue(value, row)
 		if err != nil && len(frameworks) > 0 && frameworks[0] == "cypress" {
@@ -482,17 +488,19 @@ func keptRuntimeRead(parameter *syntax.ParamExp) bool {
 	})
 }
 
-// otherLanguageSetupExport reports a variable the Datadog installer exports
-// for a language other than current.
-func otherLanguageSetupExport(current discoveryLanguage, key string) bool {
-	return slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {
+// otherLanguageSetupExport is what the Datadog installer exports into key
+// for a language other than current, without the job's own value.
+func otherLanguageSetupExport(current discoveryLanguage, key string) (string, bool) {
+	for _, language := range discoveryLanguages {
 		if current != nil && language.name() == current.name() {
-			return false
+			continue
 		}
 		exported, _ := language.setupShellExports(map[string]string{})
-		_, ok := exported[key]
-		return ok
-	})
+		if value, ok := exported[key]; ok && value != "" {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 // readsKeptRuntimeVariable reports a word that reads such a variable.

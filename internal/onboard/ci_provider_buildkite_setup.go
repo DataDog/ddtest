@@ -189,6 +189,7 @@ func buildkiteSetupAt(stmts []*syntax.Stmt, i int, known map[string]string) (set
 					snippet.languages = written
 				case buildkiteTracerVariable.MatchString(name):
 					snippet.tracers = append(snippet.tracers, name+"="+written)
+				case buildkiteBuildSystem.MatchString(name):
 				default:
 					continue
 				}
@@ -198,6 +199,15 @@ func buildkiteSetupAt(stmts []*syntax.Stmt, i int, known map[string]string) (set
 			}
 			return true
 		})
+	}
+	// The installer reads a build system setting the step exported before
+	// it, as export DD_INSTRUMENTATION_BUILD_SYSTEM_JAVA=all, too.
+	for name, value := range known {
+		if input, ok := buildkiteSetupInput(name); ok && buildkiteBuildSystem.MatchString(name) {
+			if _, set := setup.Inputs[input]; !set {
+				setup.Inputs[input] = value
+			}
+		}
 	}
 	text := shellText(core[len(core)-1])
 	if match := buildkiteInstallerURL.FindStringSubmatch(text); match != nil {

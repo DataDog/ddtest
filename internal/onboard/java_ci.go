@@ -331,19 +331,30 @@ func javaImageRuntime(image string) string {
 	if !tagged {
 		return ""
 	}
+	// An early-access build keeps its qualifier, which javaRuntimeProblem
+	// rejects, as openjdk:25-ea-jdk.
+	qualified := func(major string) string {
+		if javaEarlyAccessTag.MatchString(tag) {
+			return major + "-ea"
+		}
+		return major
+	}
 	if slices.Contains(javaImages, name) {
 		if match := javaImageVersion.FindStringSubmatch(tag); match != nil {
-			return match[1]
+			return qualified(match[1])
 		}
 		return ""
 	}
 	if name == "maven" || name == "gradle" {
 		if match := javaToolImageJDK.FindStringSubmatch(tag); match != nil {
-			return match[1]
+			return qualified(match[1])
 		}
 	}
 	return ""
 }
+
+// javaEarlyAccessTag is an image tag that names an early-access build.
+var javaEarlyAccessTag = regexp.MustCompile(`(?:^|[-._])ea(?:$|[-+._0-9])`)
 
 // javaUnknownRuntimeReason explains a test step whose JDK ddtest cannot read:
 // on GitHub Actions one no setup-java step selects, elsewhere the job image's

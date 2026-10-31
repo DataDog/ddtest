@@ -25,6 +25,9 @@ func TestJavaImageRuntime(t *testing.T) {
 		"eclipse-temurin:17-jdk":                    "17",
 		"ibm-semeru-runtimes:open-17-jdk":           "17",
 		"ibm-semeru-runtimes:open-21.0.4_7-jre":     "21",
+		"openjdk:25-ea-jdk":                         "25-ea",
+		"maven:3.9-eclipse-temurin-26-ea":           "26-ea",
+		"eclipse-temurin:21-jdk-alpine":             "21",
 		"eclipse-temurin:8u412-b08-jdk":             "8",
 		"docker.io/library/eclipse-temurin:21":      "21",
 		"openjdk:11-jdk-slim":                       "11",
@@ -172,6 +175,10 @@ func TestJavaBuildkiteSetupCompleteness(t *testing.T) {
 		{"complete", step(docker), "not checked", "Validate dd-java-agent 1.67.1 on Java 17"},
 		{"missing", strings.Replace(step(docker), snippet, "", 1), "inconclusive", "No Datadog setup snippet selects java"},
 		{"agent host", step(""), "inconclusive", "run them in an image whose name selects a JDK version"},
+		// A build system exported before the snippet moves the agent to
+		// JAVA_TOOL_OPTIONS, which a later replacement removes.
+		{"all build systems, replaced JAVA_TOOL_OPTIONS", strings.Replace(step(docker), snippet, "      - export DD_INSTRUMENTATION_BUILD_SYSTEM_JAVA=all\n"+snippet+"      - export JAVA_TOOL_OPTIONS=-Xmx1g\n", 1), "inconclusive", "replacing the -javaagent option"},
+		{"all build systems, extended JAVA_TOOL_OPTIONS", strings.Replace(step(docker), snippet, "      - export DD_INSTRUMENTATION_BUILD_SYSTEM_JAVA=all\n"+snippet+"      - export JAVA_TOOL_OPTIONS=\"$$JAVA_TOOL_OPTIONS -Xmx1g\"\n", 1), "not checked", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -187,10 +194,31 @@ func TestJavaBuildkiteSetupCompleteness(t *testing.T) {
 	}
 }
 
-// A setup for every language exports Java's JVM options too; they do not
-// reach another language's local replay.
+// A setup for every language exports Java's JVM options too; the installer's
+// part does not reach another language's local replay, the job's own does.
 func TestJavaSetupExportsStayOutOfOtherLanguagesReplays(t *testing.T) {
-	require.True(t, otherLanguageSetupExport(rubyDiscovery{}, "MAVEN_OPTS"))
-	require.False(t, otherLanguageSetupExport(javaDiscovery{}, "MAVEN_OPTS"))
-	require.False(t, otherLanguageSetupExport(rubyDiscovery{}, "BUNDLE_GEMFILE"))
+	exported, ok := otherLanguageSetupExport(rubyDiscovery{}, "MAVEN_OPTS")
+	require.True(t, ok)
+	require.Equal(t, javaInstallerAgent, exported)
+	_, ok = otherLanguageSetupExport(javaDiscovery{}, "MAVEN_OPTS")
+	require.False(t, ok)
+	_, ok = otherLanguageSetupExport(rubyDiscovery{}, "BUNDLE_GEMFILE")
+	require.False(t, ok)
+	replay := func(value string) map[string]string {
+		t.Helper()
+		_, env, err := resolveVariantStep(ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "bundle exec rspec", Env: map[string]string{"JAVA_TOOL_OPTIONS": value}}, map[string]any{"jvm": "-Xmx1g"}, "rspec")
+		require.NoError(t, err)
+		return env
+	}
+	require.NotContains(t, replay(javaInstallerAgent), "JAVA_TOOL_OPTIONS", "the installer's export alone is left out")
+	require.Equal(t, "-Dfile.encoding=UTF-8", replay(javaInstallerAgent + " -Dfile.encoding=UTF-8")["JAVA_TOOL_OPTIONS"], "the job's own options are kept")
+	require.Equal(t, "-Xmx1g", replay("${{ matrix.jvm }}")["JAVA_TOOL_OPTIONS"], "a job-owned matrix value is resolved, not dropped")
+}
+
+// The agent's carrier keeps the job's own options as written.
+func TestJavaReplayKeepsQuotedJVMOptions(t *testing.T) {
+	value, handled, err := javaDiscovery{}.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "JAVA_TOOL_OPTIONS", javaInstallerAgent+` -Dmessage="a  b"`)
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, `-Dmessage="a  b"`, value, "whitespace inside a quoted property survives")
 }
