@@ -2179,6 +2179,8 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 		added := r.add(slot, call, step)
 		if stepReason == "" && state.apply(command, mergeEnvironment(env, state.env)) {
 			added.Run = ""
+		} else if run, assigned, ok := foldCommandEnvironment(command, known, state.dialect.projectVariable); ok {
+			added.Run, added.Env = run, mergeEnvironment(added.Env, assigned)
 		}
 	}
 	if job := slot.job; job != nil && pathChange != "" && job.pathChange == "" {
@@ -2444,7 +2446,7 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 		current := setup.ciSetup()
 		problem := scope.setupProblem
 		if result.SetupUnsupported != "" {
-			problem = joinDiagnostic(problem, "This stage cannot use the Datadog Jenkins plugin: "+result.SetupUnsupported+". The user's options are to run its tests on a host agent (agent { label … }), or to set up Test Optimization in the container by hand, outside ddtest, which ddtest cannot validate.")
+			problem = joinDiagnostic(problem, "This stage cannot use the Datadog Jenkins plugin: "+result.SetupUnsupported+". The user's options are to run its tests on a host agent (agent { label … }), or, without the plugin, to set up Test Optimization in the container by hand (the tracer from the project's dependencies, loaded through the stage's environment), which ddtest then checks.")
 		}
 		if problem != "" && current.Problem == "" {
 			current.Problem = problem

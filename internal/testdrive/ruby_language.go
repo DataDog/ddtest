@@ -279,7 +279,10 @@ func (rubyLanguage) packageExclusions(t *Testdrive, ctx context.Context) (onboar
 	return t.rubyPackageExclusions(ctx), true
 }
 
-func (rubyLanguage) initialization(string, string) string {
+func (rubyLanguage) initialization(root, framework string) string {
+	if onboard.RubyCIHandWritten(root, framework) {
+		return "Keep the CI jobs' hand-written setup, which loads the datadog-ci release the bundle locks; preserve RUBYOPT and the original test command. Keep both reports excluded from Git and gem packaging."
+	}
 	setup := "the Ruby CI action"
 	if name := onboard.CIProviderSetupName(); name != "" {
 		setup = "the " + name

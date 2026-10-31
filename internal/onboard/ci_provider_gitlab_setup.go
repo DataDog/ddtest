@@ -280,6 +280,7 @@ var gitLabImageVariable = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?`)
 func (gitLabCI) setupTerms() ciSetupTerms {
 	return ciSetupTerms{
 		Installer:       "script",
+		SecretStore:     "a masked GitLab CI/CD variable (Settings > CI/CD > Variables) that reaches every branch whose pipelines run the tests",
 		Entry:           "the entry",
 		SetupEntry:      "the setup entry",
 		Later:           "later commands of the job",

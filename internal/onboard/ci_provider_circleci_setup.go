@@ -309,11 +309,12 @@ func circlePersist(command string) string {
 // The orb's step runs in its own shell and exports through $BASH_ENV.
 func (circleCI) setupTerms() ciSetupTerms {
 	return ciSetupTerms{
-		Installer:  "orb",
-		Entry:      "the orb step",
-		SetupEntry: "the Datadog orb step",
-		Later:      "later steps of the job",
-		Variables:  "the job's environment",
+		Installer:   "orb",
+		SecretStore: "the CircleCI project settings (Project Settings > Environment Variables) or a context every test job uses",
+		Entry:       "the orb step",
+		SetupEntry:  "the Datadog orb step",
+		Later:       "later steps of the job",
+		Variables:   "the job's environment",
 		Persist: func(command string) string {
 			return "a later step that appends it to $BASH_ENV, such as " + circlePersist(command)
 		},

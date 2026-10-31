@@ -87,6 +87,12 @@ func (pythonDiscovery) setupShellExports(map[string]string) (map[string]string, 
 }
 
 // Setup runs on GitHub Actions only.
+// Python and Java set up Test Optimization on GitHub Actions only, where
+// the setup is the Datadog action: there is no hand-written setup to read.
+func (pythonDiscovery) handWrittenSetup(string, ciProvider, ciWorkflow, runtimeJob, int, map[string]any, string, string) *handWrittenSetup {
+	return nil
+}
+
 func (pythonDiscovery) ciSetupRequest(string, string, string, ciSetupTerms) ciSetupRequest {
 	return ciSetupRequest{}
 }
@@ -99,6 +105,8 @@ func (pythonDiscovery) unsupportedImage(string) string { return "" }
 func (pythonDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) bool {
 	return false
 }
+
+func (pythonDiscovery) preloadVariable(string) bool { return false }
 
 func (pythonDiscovery) runtimeVariable(name string) bool {
 	return name == "PYTHONPATH" || name == "PYTHONHOME"

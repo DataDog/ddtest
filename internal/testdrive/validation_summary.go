@@ -45,13 +45,25 @@ type validationSummary struct {
 // in the selected CI provider's settings. What happens until it exists
 // depends on how the configuration guards the Datadog step: skipped by an
 // env.DD_API_KEY guard (the Cypress setup) or kept with continue-on-error.
+// Jobs that set up the tracer by hand read the key where the provider
+// stores secrets, without its setup.
 func apiKeyHumanAction(check *onboard.RuntimeCheck) string {
+	handWritten := false
 	if check != nil {
 		for _, job := range check.Jobs {
 			if job.Reason == onboard.GuardedActionBranch {
 				return onboard.CIProviderAPIKeyAction(true)
 			}
+			if job.Status != "excluded" {
+				if !onboard.HandWrittenSetupAction(job.Action) {
+					return onboard.CIProviderAPIKeyAction(false)
+				}
+				handWritten = true
+			}
 		}
+	}
+	if handWritten {
+		return onboard.CIProviderHandWrittenKeyAction()
 	}
 	return onboard.CIProviderAPIKeyAction(false)
 }

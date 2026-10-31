@@ -871,6 +871,9 @@ func (c *circleConfig) convert(invocation circleInvocation, definition *yaml.Nod
 	expander.expand(steps, scope, owner, "", 0)
 	expander.expand(invocation.post, &circleScope{matrix: invocation.matrix}, circleOwner{kind: "post-steps"}, "", 0)
 	converted := runtimeJob{Env: job.env, Image: job.image, ImageTemplate: job.template}
+	if job.keyProblem {
+		converted.KeyProblem = circleKeyWritten
+	}
 	converted.Steps = c.steps(job, raw)
 	return converted
 }
@@ -1322,6 +1325,10 @@ func circlePipeline(stmt *syntax.Stmt) bool {
 	return false
 }
 
+// circleKeyWritten is why a DD_API_KEY an environment mapping of the
+// configuration sets is not the key the project stores.
+const circleKeyWritten = "The job's configuration sets DD_API_KEY in an environment mapping, which CircleCI sets as written; never commit the key: remove it and store DD_API_KEY in the CircleCI project settings or a context."
+
 // circleUnfollowedBashEnv makes the steps after an unfollowed $BASH_ENV
 // write unresolved.
 const circleUnfollowedBashEnv = "an earlier step writes to $BASH_ENV in a way ddtest cannot follow, so this step's environment is unknown"
@@ -1596,6 +1603,8 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 			consumed, followed := circleFollowBashEnv(&state, run, mergeEnvironment(mergeEnvironment(job.env, item.env), state.env), deferredReads)
 			if consumed {
 				step.Run = ""
+			} else if folded, assigned, ok := foldCommandEnvironment(run, mergeEnvironment(mergeEnvironment(mergeEnvironment(job.env, item.env), state.env), state.references), state.dialect.projectVariable); ok {
+				step.Run, step.Env = folded, mergeEnvironment(step.Env, assigned)
 			}
 			if !followed {
 				// Later steps start from an environment ddtest doesn't know.

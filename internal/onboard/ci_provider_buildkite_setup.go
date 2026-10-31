@@ -271,6 +271,7 @@ func buildkiteSetupText(request ciSetupRequest, indent string) string {
 func (buildkite) setupTerms() ciSetupTerms {
 	return ciSetupTerms{
 		Installer:       "installer",
+		SecretStore:     buildkiteKeySources + " (never the pipeline YAML; a docker or docker-compose plugin passes it into the container through its environment list)",
 		Entry:           "the setup snippet",
 		SetupEntry:      "the Datadog setup snippet",
 		Later:           "later commands of the same step",

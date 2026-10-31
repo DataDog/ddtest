@@ -45,12 +45,17 @@ func (javascriptDiscovery) supportsCIProvider(provider string) bool {
 	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider || provider == jenkinsProvider
 }
 
-// Outside GitHub Actions the installer appends its require preload to the
-// current NODE_OPTIONS and exports the ESM loader path for an explicit
-// --import.
+// Outside GitHub Actions the installer (install_test_visibility_v15.sh, which
+// the GitLab setup script, the CircleCI orb and the Buildkite setup snippet
+// run) appends its require preload to the current NODE_OPTIONS and exports
+// the ESM loader path for an explicit --import. It exports DD_TRACE_PACKAGE
+// only on GitHub Actions, which cannot set NODE_OPTIONS: a later
+// $DD_TRACE_PACKAGE is empty here, so it stays unknown to the model.
+// ${{ env.DD_TRACE_PACKAGE }} in the exported NODE_OPTIONS stands for the
+// preload's path, which only CI knows.
 func (javascriptDiscovery) setupShellExports(current map[string]string) (map[string]string, map[string]string) {
 	options := strings.TrimSpace(current["NODE_OPTIONS"] + " -r ${{ env.DD_TRACE_PACKAGE }}")
-	return map[string]string{"NODE_OPTIONS": options}, map[string]string{"DD_TRACE_ESM_IMPORT": "${{ env.DD_TRACE_ESM_IMPORT }}", "DD_TRACE_PACKAGE": "${{ env.DD_TRACE_PACKAGE }}"}
+	return map[string]string{"NODE_OPTIONS": options}, map[string]string{"DD_TRACE_ESM_IMPORT": "${{ env.DD_TRACE_ESM_IMPORT }}"}
 }
 
 // On GitHub Actions onboard --apply owns the JavaScript setup check. Other
@@ -177,6 +182,9 @@ func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ci
 	if note := setupImageNote(root, "javascript", framework); note != "" {
 		request.Notes = append(request.Notes, note)
 	}
+	if note := handWrittenSetupNote(root, "javascript", framework, site); note != "" {
+		request.Notes = append(request.Notes, note)
+	}
 	if framework == "cucumber" {
 		request.Notes = append(request.Notes, "For Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false in "+terms.Variables+". This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected.")
 	}
@@ -198,6 +206,9 @@ func javascriptPluginSetupRequest(root, framework, site string, terms ciSetupTer
 	if note := setupUnsupportedNote(root, "javascript", framework); note != "" {
 		request.Notes = append(request.Notes, note)
 	}
+	if note := handWrittenSetupNote(root, "javascript", framework, site); note != "" {
+		request.Notes = append(request.Notes, note)
+	}
 	if framework == "cucumber" {
 		request.Notes = append(request.Notes, "For Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false in "+terms.Variables+". This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected.")
 	}
@@ -211,6 +222,8 @@ func (javascriptDiscovery) automaticProviderSetup(string) bool { return true }
 
 // Node versions no tracer supports are skipped through skipsUnsupportedNode.
 func (javascriptDiscovery) unsupportedImage(string) string { return "" }
+
+func (javascriptDiscovery) preloadVariable(name string) bool { return name == "NODE_OPTIONS" }
 
 func (javascriptDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"NODE_OPTIONS", "NODE_PATH", "NODE_ENV"}, name) || strings.HasPrefix(strings.ToLower(name), "npm_config_")

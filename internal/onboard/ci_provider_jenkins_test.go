@@ -540,7 +540,7 @@ func TestJenkinsContainerTestJobsAreUnsupported(t *testing.T) {
 	require.Equal(t, "unsupported", result.Status)
 	require.Equal(t, "ci_setup_unsupported", result.Code)
 	require.Contains(t, result.Reason, "every CI job that runs the tests is outside what the Datadog Jenkins plugin instruments. Jenkinsfile / Test: it runs in agent { docker { image 'node:22' } }")
-	require.Contains(t, result.Reason, "The user's options are to run those tests where the Datadog Jenkins plugin instruments them, or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate.")
+	require.Contains(t, result.Reason, "The user's options are to run those tests where the Datadog Jenkins plugin instruments them, or to set up Test Optimization for them by hand in the job itself (the tracer from the project's dependencies, loaded through the job's environment), which ddtest then checks like the Datadog Jenkins plugin.")
 	require.Contains(t, result.Instruction, "Report this result to the user with its reason and stop. Do not move tests between agents, edit CI, add a tracer or set up Test Optimization by hand")
 
 	var out bytes.Buffer

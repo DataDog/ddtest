@@ -39,6 +39,20 @@ func TestAPIKeyActionFollowsTheActionGuard(t *testing.T) {
 	require.Contains(t, onboard.CIProviderAPIKeyAction(true), "is skipped")
 }
 
+// A job that sets up the tracer by hand reads the key from the provider's
+// secrets without its setup, so the action names only where to store it.
+func TestAPIKeyActionForHandWrittenSetups(t *testing.T) {
+	onboard.UseCIProvider("gitlab")
+	t.Cleanup(func() { onboard.UseCIProvider("") })
+	handWritten := onboard.RuntimeFinding{Status: "compatible", Action: "hand-written dd-trace@5.40.0 setup (NODE_OPTIONS)"}
+	action := apiKeyHumanAction(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{handWritten, {Status: "excluded"}}})
+	require.Equal(t, onboard.CIProviderHandWrittenKeyAction(), action)
+	require.Contains(t, action, "Store DD_API_KEY in a masked GitLab CI/CD variable")
+	require.NotContains(t, action, "setup script")
+	mixed := apiKeyHumanAction(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{handWritten, {Status: "compatible", Action: "test-optimization-gitlab-script v1.2.10"}}})
+	require.Equal(t, onboard.CIProviderAPIKeyAction(false), mixed)
+}
+
 // A rerun-until-green must stay visible: trials reran an inconclusive
 // validation unchanged and the final report kept no trace of it.
 func TestHandoffListsEarlierStoppedAttempts(t *testing.T) {

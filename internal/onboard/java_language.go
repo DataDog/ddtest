@@ -139,6 +139,12 @@ func (javaDiscovery) setupShellExports(map[string]string) (map[string]string, ma
 }
 
 // Setup runs on GitHub Actions only.
+// Python and Java set up Test Optimization on GitHub Actions only, where
+// the setup is the Datadog action: there is no hand-written setup to read.
+func (javaDiscovery) handWrittenSetup(string, ciProvider, ciWorkflow, runtimeJob, int, map[string]any, string, string) *handWrittenSetup {
+	return nil
+}
+
 func (javaDiscovery) ciSetupRequest(string, string, string, ciSetupTerms) ciSetupRequest {
 	return ciSetupRequest{}
 }
@@ -146,6 +152,8 @@ func (javaDiscovery) ciSetupRequest(string, string, string, ciSetupTerms) ciSetu
 func (javaDiscovery) automaticProviderSetup(string) bool { return false }
 
 func (javaDiscovery) unsupportedImage(string) string { return "" }
+
+func (javaDiscovery) preloadVariable(string) bool { return false }
 
 func (javaDiscovery) runtimeVariable(name string) bool {
 	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"

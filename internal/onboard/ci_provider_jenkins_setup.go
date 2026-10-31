@@ -290,11 +290,12 @@ func (jenkins) apiKeyAction(bool) string {
 // the sh script that runs the tests.
 func (jenkins) setupTerms() ciSetupTerms {
 	return ciSetupTerms{
-		Installer:  "Datadog Jenkins plugin",
-		Entry:      "the datadog(testOptimization: …) option",
-		SetupEntry: "the datadog(testOptimization: …) option",
-		Later:      "every step of the pipeline",
-		Variables:  "the stage's environment directive",
+		Installer:   "Datadog Jenkins plugin",
+		SecretStore: "a Jenkins credential the stage binds (DD_API_KEY = credentials('<id>') in its environment directive, or withCredentials)",
+		Entry:       "the datadog(testOptimization: …) option",
+		SetupEntry:  "the datadog(testOptimization: …) option",
+		Later:       "every step of the pipeline",
+		Variables:   "the stage's environment directive",
 		Persist: func(command string) string {
 			return command + " inside the sh script that runs the tests, before the test command"
 		},
