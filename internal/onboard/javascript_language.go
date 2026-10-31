@@ -134,7 +134,7 @@ func javascriptPluginSetupRequest(root, framework, site string, terms ciSetupTer
 	if setupImportsESM(framework) || framework == "mocha" {
 		request.After = []string{pluginESMImportCommand}
 	}
-	request.Notes = append(request.Notes, "The "+terms.Installer+" installs the latest dd-trace release with the build agent's default npm when each build runs (it cannot pin a release) and prepends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". ddtest validates locally with the latest release and reports that it floats. The agents need npm on their default PATH, and the tests Node.js 18 or newer.",
+	request.Notes = append(request.Notes, "The "+terms.Installer+" installs the latest dd-trace release with the build agent's default npm when each build runs (it cannot pin a release) and prepends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". ddtest validates locally with the latest release and reports that it floats. The agents need npm on their default PATH, and the tests a Node version the latest dd-trace release supports (its package.json engines): ddtest checks the stated CI Node against the latest release, and a Node it excludes cannot use the "+terms.Installer+".",
 		"Set Node options inside the sh script that runs the tests (export NODE_OPTIONS=\"$NODE_OPTIONS ...\" before the test command): the "+terms.Installer+" sets NODE_OPTIONS once per build, so a NODE_OPTIONS in a stage's environment directive or withEnv is overwritten.")
 	if framework == "mocha" {
 		request.Notes = append(request.Notes, "Keep the ESM line only for Mocha ESM test files; CommonJS suites need only the preload.")
@@ -308,7 +308,7 @@ func (javascriptDiscovery) ciPluginComposes(key string) string {
 	if key != "NODE_OPTIONS" {
 		return ""
 	}
-	return "on each agent it sets NODE_OPTIONS for every step to its preload followed by the NODE_OPTIONS of the first step it configures there, so this value is lost, or, when its step is that first one, it reaches every later step on the agent. ddtest validates with the pipeline's NODE_OPTIONS"
+	return "on each agent it sets NODE_OPTIONS for every step to its preload followed by the NODE_OPTIONS of the first step it configures there, so this value is lost, or, when its step is that first one (on a fresh workspace, and so on every build of an ephemeral agent, the first step after the workspace exists), it reaches every later step on the agent. ddtest validates with the NODE_OPTIONS where the datadog option is (the pipeline's environment, or the stage's)"
 }
 
 // Node version managers: n 20, nvm use, fnm use, volta, nodenv, and
@@ -328,6 +328,12 @@ func (javascriptDiscovery) selectsShellRuntime(words []string) bool {
 		return len(words) > 1 && path.Base(words[1]) == "nvm.sh"
 	}
 	return false
+}
+
+// ciPluginContainerEffect: a real Jenkins run showed the plugin's
+// NODE_OPTIONS reaching docker.image(…).inside and agent { docker } steps.
+func (javascriptDiscovery) ciPluginContainerEffect() string {
+	return "for JavaScript, the plugin's NODE_OPTIONS preloads the dd-trace it installed into the workspace with the agent's npm, so Node processes in the container load it only by accident, because Jenkins mounts the workspace there at the same path (with another path, every Node process fails to start), and on an agent without npm the plugin sets nothing, so the tests run untraced without any error"
 }
 
 func (javascriptDiscovery) ciPluginExports(current map[string]string) (map[string]string, map[string]string) {

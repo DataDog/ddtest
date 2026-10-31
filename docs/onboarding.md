@@ -579,10 +579,11 @@ inside `sh`, whose tests run in a container ddtest cannot validate.
 
 The setup is the [Datadog Jenkins
 plugin](https://github.com/jenkinsci/datadog-plugin#test-optimization-configuration),
-enabled for the whole pipeline in the Jenkinsfile: `datadog(testOptimization:
+enabled in the Jenkinsfile: `datadog(testOptimization:
 [enabled: true, serviceName: '<service>', languages: ['JAVASCRIPT']])` (or
 `'RUBY'`; `testVisibility:` is its legacy name) in the declarative top-level
-`options`, or wrapping a scripted pipeline's `node` blocks. The plugin installs
+`options`, in a stage's `options`, or wrapping a scripted pipeline's `node`
+blocks. The plugin installs
 the tracer on the build agent when each step runs, with the agent's own
 toolchain, and sets the tracer's variables, `DD_API_KEY` and the site from its
 global configuration; the Jenkinsfile only enables it, so ddtest models it as a
@@ -598,20 +599,41 @@ reported), so ddtest adds them to each test step's environment: local
 validation replays them like any step variable, and one that turns the tracer
 or the framework's integration off (`DD_TRACE_ENABLED`, or
 `DD_TRACE_<FRAMEWORK>_ENABLED` such as `DD_TRACE_RSPEC_ENABLED`, set to
-`false`) is reported, not certified. A `datadog(…)` in a
-stage's `options` is not certified (the plugin documents the top-level option
-only), and a literal `DD_API_KEY` in an `environment` directive is refused; a
+`false`) is reported, not certified. A literal `DD_API_KEY` in an
+`environment` directive is refused; a
 `DD_API_KEY` credential binding, and a `NODE_OPTIONS` or `RUBYOPT` in a stage's
 `environment`, `withEnv`, an `env.X =` assignment or `additionalVariables`, are
 reported as overwritten by the plugin. The plugin replaces `RUBYOPT`; on each
 agent it sets `NODE_OPTIONS` for every step to its preload followed by the
 `NODE_OPTIONS` of the first step it configures there, so a narrower value is
-lost, or, when its step is that first one, reaches every later step. ddtest
-composes the preload with the pipeline's `environment` value and reports the
-narrower one. When the setup that is there
+lost, or, when its step is that first one, reaches every later step (on a
+fresh workspace, and so on every build of an ephemeral agent, the first step
+it configures is the first one after the workspace exists, which can be in
+that narrower scope). ddtest composes the preload with the `environment` value
+where the option is (the pipeline's, or for a stage-level option the stage's)
+and reports the narrower one. When the setup that is there
 is incomplete, `ci_setup_required` names why.
 
-The plugin does not instrument tests inside containers. Stages that run in
+A stage-level `options { datadog(testOptimization: …) }` is certified: the
+plugin's README documents only the top-level option, but a real Jenkins run
+(plugin 10.0.0) showed that it sets the tracer up for that stage, its nested
+stages and, in a `parallel` section, only its branch; `final_response` states
+that as a caveat. The plugin caches its variables per build, build agent and
+set of languages, not per option, so on an agent where several options for the
+same languages run, the `serviceName` and `additionalVariables` of every one
+after the first it configures are ignored. ddtest cannot tell which stages
+share an agent, so every `datadog(…)` option of a Jenkinsfile with the same
+languages (top-level, stage-level or a scripted wrap) must have the same
+arguments; otherwise each is a setup problem naming the others. A stage's
+`datadog(…)` without `testOptimization` (such as `datadog(collectLogs: true)`)
+keeps the setup around it.
+
+`final_response` also notes that until a build's workspace directory exists
+(the first steps of a build on a fresh agent or workspace), the plugin cannot
+configure the tracer: it logs `ERROR: [datadog]` with a stack trace for each
+such step and tries again at the next one, which is harmless.
+
+The plugin does not support tests inside containers. Stages that run in
 `agent { docker … }`, `dockerfile`, `kubernetes`, a `podTemplate`'s
 `node(POD_LABEL)` (or a `node` on its label), `docker.image(…).inside`, an
 image variable's `.inside` or `container(…)` are unsupported. A container
@@ -634,13 +656,28 @@ variables (`NODE_OPTIONS` with `-r` and the dd-trace it installed in the
 agent's workspace, `DD_TRACE_PATH`, `RUBYOPT=-rbundler/setup
 -rdatadog/ci/auto_instrument`) to its environment, while it installs the tracer
 (for Ruby, `bundle add` on the workspace Gemfile) only with the agent's own
-toolchain. In a container without that tracer or gem, any Node or Ruby process
-then fails to load it, tests or not. So a setup whose scope includes a job that
-runs steps in a container (an `agent { docker … }` stage, a container block,
-a `podTemplate` node) is a setup problem for every job in that scope, naming
-those jobs: run them on a host agent, or keep them out of the option's scope
-(in a scripted pipeline, wrap only the `node` blocks on host agents). A
-container stage that runs no steps does not count.
+toolchain. A real Jenkins run showed what that does, per language, and the
+setup problem says it for the languages the option enables:
+
+- JavaScript: Node processes in the container load the dd-trace the plugin
+  installed with the agent's npm only by accident, because Jenkins mounts the
+  workspace in the container at the same path (with another path, every Node
+  process fails to start); on an agent without npm the plugin sets nothing and
+  the tests run untraced without any error.
+- Ruby: `RUBYOPT` makes every Ruby process in the container fail to start,
+  `bundle install` and `bundle exec` included, which fails the build, because
+  `datadog-ci` was added to the agent's gems, not the container's; with
+  `datadog-ci` pinned in Gemfile.lock, the plugin's check on the agent never
+  passes, so the container gets no variables and the tests run untraced.
+
+So a setup whose scope includes a job that runs steps in a container (an
+`agent { docker … }` stage, a container block, a `podTemplate` node) is a
+setup problem for every job in that scope, naming those jobs: run them on a
+host agent, or keep them out of the option's scope (in a declarative pipeline,
+an `options { datadog(…) }` in each host-agent stage that runs the tests
+instead of the top-level one, every one with the same arguments; in a scripted
+pipeline, wrap only the `node` blocks on host agents). A container stage that
+runs no steps does not count.
 
 A host agent's runtime is never in the Jenkinsfile, so ddtest asks for it
 (`ci_runtime_required`, answered with `--ci-runtime`, naming the agent label
@@ -682,7 +719,12 @@ JavaScript: the plugin runs `npm install -g dd-trace` on every build and
 nothing can pin the release, so the JavaScript setup floats at the latest
 release, the one exception to the exact-release rule: ddtest checks the stated
 Node against the latest release, validates locally with it, and
-`final_response` names that release as a caveat. The plugin prepends its
+`final_response` names that release as a caveat. The plugin installs the
+latest release whatever Node the agent runs, so a stated Node outside the
+`engines` range of the latest release on the npm registry (Node 22 or newer
+since dd-trace 6) is a setup problem (`incomplete_ci_setup`, naming the release
+and its range), and `onboard --apply` refuses to enable the plugin for that
+job: no other release can be selected. The plugin prepends its
 preload to `NODE_OPTIONS` and exports `DD_TRACE_PATH`; for Vitest, Cucumber and
 ESM Mocha, the test's `sh` script registers the loader before the test command
 with `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-}
@@ -699,7 +741,12 @@ the setup is complete only when the Gemfile.lock at the checkout root pins
 plugin configures it from the checkout root, so a test step inside `dir(…)`,
 one with `BUNDLE_GEMFILE`, or a repository without a root Gemfile is a setup
 problem. The plugin replaces `RUBYOPT`, and refuses Ruby before 2.7 and
-RubyGems before 3.3.22.
+RubyGems before 3.3.22. With the pin, the plugin finds `datadog-ci` only once
+`bundle install` has run in the build: the steps before it get no Datadog
+variables (the plugin logs `ERROR: [datadog]` with a stack trace for each and
+tries again at the next step), and each attempt still runs `bundle config set
+frozen false`. `final_response` states both as a caveat, and the instructions
+tell the user these errors are expected.
 
 `onboard --apply` enables the plugin in every Jenkinsfile whose host-agent
 jobs run the tests; the only language input is the plugin's language token
@@ -709,7 +756,14 @@ repository's (its `origin` remote's name, or the checkout directory's). In a dec
 `datadog(testOptimization: [enabled: true, serviceName: '<service>', languages: [...]])`
 to the top-level `options` directive, creating the directive on its own lines
 after `agent` or `environment` (whichever comes last); an `options` written on
-one line takes it after a `;`. In a scripted pipeline it wraps each outermost
+one line takes it after a `;`. When the pipeline also runs steps in a
+container (any stage or container block), the top-level option would include
+them, so it adds the same option, with the same arguments, to the `options`
+of each stage that runs the tests on a host agent instead (created after the
+stage's `agent` or `environment` the same way), or merges into a stage's
+existing `datadog(…)`. The container test stages stay unsupported and are
+reported as blockers, so the result is not complete until they are set up
+another way. In a scripted pipeline it wraps each outermost
 `node` block that runs the tests in `datadog(testOptimization: […]) { … }`,
 indenting the block one step; lines inside multi-line strings keep their
 bytes. An existing `datadog(…)` call, in `options` or around the `node`, is
@@ -727,13 +781,17 @@ written. Applying again changes nothing (`… CI setup is already configured; no
 edits.`). It refuses, and onboarding gives the instructions instead with the
 reason: a Jenkinsfile that loads a shared library (`@Library`, `library …` or a
 `libraries` directive), a job that runs steps in a container within the
-option's scope (a whole declarative pipeline, or a wrapped `node`), a computed
+option's scope (a container block in a stage that runs the tests, or in a
+wrapped `node`), a top-level `datadog(testOptimization: …)` in a pipeline
+that runs steps in a container (move it to the host-agent stages), a stage
+written on one line, a JavaScript job whose stated Node the latest dd-trace
+does not support, a computed
 `options`, `datadog` or `testOptimization` argument (or a computed `enabled` or
 `languages` it would change), a `node` block with shell steps inside a `def`
 function of a scripted pipeline, several `datadog(…)` calls that differ in one
 `options` or that enclose the same tests, and a result that is still incomplete,
-such as one with `DD_API_KEY` in `additionalVariables` or a stage-level
-`datadog(…)`.
+such as one with `DD_API_KEY` in `additionalVariables` or options for the same
+languages with different arguments.
 
 JavaScript gets the automatic setup: `onboard --agent` hands off
 `onboard --apply --yes`, which previews nothing, writes the edit, and asks the

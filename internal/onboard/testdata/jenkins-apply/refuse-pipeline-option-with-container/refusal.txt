@@ -1,0 +1,1 @@
+Move the option into the options directive of each host-agent stage that runs the tests

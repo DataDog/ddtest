@@ -735,10 +735,13 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						continue
 					}
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: ruby, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive", Reason: rubyMissingSetupReason(provider)}
+					if job.SetupUnsupported != "" && setup == nil {
+						finding.Reason = unsupportedSetupReason(provider, job)
+					}
 					if setup != nil {
 						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem
 						if setup.Floating && tracer != "" {
-							finding.SetupCaveats = append(slices.Clone(setup.Caveats), "datadog-ci version: the "+setup.Reference+" uses the datadog-ci release the repository's Gemfile.lock pins ("+tracer+"), which ddtest validated; it installs the latest release instead if that pin is removed.")
+							finding.SetupCaveats = append(slices.Clone(setup.Caveats), "datadog-ci version: the "+setup.Reference+" uses the datadog-ci release the repository's Gemfile.lock pins ("+tracer+"), which ddtest validated; it installs the latest release instead if that pin is removed.", rubyPinnedPluginCaveat(setup.Reference))
 						}
 					}
 					if hostRuby {
@@ -953,6 +956,14 @@ func rubyLockedTracer(root string) string {
 		}
 	}
 	return ""
+}
+
+// rubyPinnedPluginCaveat is how a setup that installs datadog-ci only when
+// the bundle lacks it (the Datadog Jenkins plugin) behaves with the pin, as
+// a real Jenkins run showed: it finds the pinned gem only once bundle
+// install has run on the agent.
+func rubyPinnedPluginCaveat(reference string) string {
+	return "With datadog-ci pinned, the " + reference + " finds it only after bundle install has run in the build: the steps before it get no Datadog variables (for each one it logs ERROR: [datadog] with a stack trace and tries again at the next step), so instrumentation starts at the first step after bundle install, and each of those attempts still runs bundle config set frozen false, which writes BUNDLE_FROZEN: \"false\" to the workspace's .bundle/config (or ~/.bundle/config without one). The tests are instrumented when they run after bundle install."
 }
 
 // rubyFloatingTracerReason asks to pin datadog-ci in the bundle, which a

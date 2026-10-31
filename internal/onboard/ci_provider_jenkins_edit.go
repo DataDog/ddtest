@@ -19,8 +19,11 @@ import (
 // whose jobs run the tests: the only language input is the plugin's language
 // token (and the service name the language reads from its project). In a
 // declarative pipeline it adds datadog(testOptimization: …) to the top-level
-// options directive, creating the directive after agent or environment; in a
-// scripted pipeline it wraps each outermost node block that runs the tests.
+// options directive, creating the directive after agent or environment, or,
+// when the pipeline runs steps in containers, which that option's scope
+// would include, to the options of each stage that runs the tests on a host
+// agent; in a scripted pipeline it wraps each outermost node block that runs
+// the tests.
 // An existing datadog(…) call is merged instead: enabled: true, the language
 // added to languages, every other argument kept. Every edit is placed with
 // the parser's byte spans, keeps the file's indentation and line endings,
@@ -62,6 +65,11 @@ type jenkinsEditor struct {
 	edits     []jenkinsEdit
 	merged    map[*groovyCall]bool
 	wrapped   map[*groovyCall]bool
+	// containers are the jobs that run steps in a container, and staged the
+	// stages whose options ddtest enables the plugin in instead of the
+	// pipeline's.
+	containers []string
+	staged     map[*groovyCall]bool
 }
 
 // jenkinsShTarget is the sh call that runs a target job's first test
@@ -108,7 +116,7 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 		jobs[target.Workflow] = append(jobs[target.Workflow], target.Job)
 	}
 	if len(byFile) == 0 {
-		return nil, nil, &SetupGap{"Jenkins", "Every job that runs the tests runs in a container (" + strings.Join(containers, ", ") + "), which the Datadog Jenkins plugin does not instrument; ddtest does not enable it for them. The user's options are to run those tests on a host agent, or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate."}
+		return nil, nil, &SetupGap{"Jenkins", "Every job that runs the tests runs in a container (" + strings.Join(containers, ", ") + "), where " + jenkinsContainerUnsupported + "; ddtest does not enable it for them. The user's options are to run those tests on a host agent, or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate."}
 	}
 	var edits []setupEdit
 	for _, file := range slices.Sorted(maps.Keys(byFile)) {
@@ -117,7 +125,7 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 			return nil, nil, err
 		}
 		source := string(edit.before)
-		after, err := planJenkinsfileSetup(file, source, token, service, byFile[file])
+		after, err := planJenkinsfileSetup(file, source, token, service, byFile[file], jenkinsContainerJobs(workflows, file))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -131,6 +139,24 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 		edits = append(edits, edit)
 	}
 	return edits, nil, nil
+}
+
+// jenkinsContainerJobs are the jobs of a Jenkinsfile that run steps in a
+// container, which the plugin's scope must not include.
+func jenkinsContainerJobs(workflows []ciWorkflow, file string) []string {
+	var containers []string
+	for _, workflow := range workflows {
+		if workflow.Path != file {
+			continue
+		}
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if job.SetupUnsupported != "" && !disabledCondition(job.If) && slices.ContainsFunc(job.Steps, func(step runtimeStep) bool { return step.Setup == nil }) {
+				containers = append(containers, file+" / "+name)
+			}
+		}
+	}
+	return containers
 }
 
 // checkJenkinsfileSetup reads the edited Jenkinsfile again: it must keep
@@ -159,7 +185,7 @@ func checkJenkinsfileSetup(root string, provider ciProvider, workflows []ciWorkf
 		}
 	}
 	if len(containers) > 0 {
-		return &SetupGap{file, "ddtest does not enable the Datadog Jenkins plugin here: its option would also apply to " + strings.Join(containers, ", ") + ", which run steps in a container. The plugin sets its tracer variables in every step of its scope, container steps included, but installs the tracer only on the build agent, so processes in those containers, tests or not, can fail to load it. The user's options are to run those stages on a host agent, or to keep them out of the option's scope (in a scripted pipeline, a node block of their own outside the wrap), then rerun onboard --apply; or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate. Do not move stages without the user's approval."}
+		return &SetupGap{file, "ddtest does not enable the Datadog Jenkins plugin here: its option would also apply to " + strings.Join(containers, ", ") + ", which run steps in a container. The plugin sets its tracer variables in every step of its scope, container steps included, but installs the tracer only on the build agent, with the agent's toolchain. In those containers, " + jenkinsContainerEffects([]string{jenkinsPluginToken(setupActionLanguage(discoveryLanguageName(request.Framework)))}) + ". The user's options are to run those stages on a host agent, or to keep them out of the option's scope (a container block in a stage of its own, or in a scripted pipeline, a node block of its own outside the wrap), then rerun onboard --apply; or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate. Do not move stages without the user's approval."}
 	}
 	language := discoveryLanguageName(request.Framework)
 	for _, name := range jobs {
@@ -171,13 +197,17 @@ func checkJenkinsfileSetup(root string, provider ciProvider, workflows []ciWorkf
 }
 
 // planJenkinsfileSetup returns source with the plugin enabled for targets.
-func planJenkinsfileSetup(file, source, token, service string, targets []jenkinsShTarget) (string, error) {
+// containers are the jobs that run steps in a container: a declarative
+// pipeline with any then enables the plugin in the options of each stage
+// that runs the tests instead of the pipeline's, so its scope leaves them
+// out.
+func planJenkinsfileSetup(file, source, token, service string, targets []jenkinsShTarget, containers []string) (string, error) {
 	tree, err := parseGroovy(source)
 	if err != nil {
 		return "", &SetupGap{file, "The Jenkinsfile cannot be parsed: " + err.Error()}
 	}
 	tokens, _ := lexGroovy(source)
-	e := &jenkinsEditor{file: file, source: source, newline: "\n", tree: tree, token: token, service: service, merged: map[*groovyCall]bool{}, wrapped: map[*groovyCall]bool{}}
+	e := &jenkinsEditor{file: file, source: source, newline: "\n", tree: tree, token: token, service: service, containers: containers, merged: map[*groovyCall]bool{}, wrapped: map[*groovyCall]bool{}, staged: map[*groovyCall]bool{}}
 	if strings.Contains(source, "\r\n") {
 		e.newline = "\r\n"
 	}
@@ -330,7 +360,7 @@ func (e *jenkinsEditor) plan(targets []jenkinsShTarget) error {
 		}
 		for _, current := range calls {
 			var datadogs []*groovyCall
-			var node *groovyCall
+			var node, stage, staged *groovyCall
 			inPipeline := false
 			for _, ancestor := range current.ancestors {
 				if call, ok := jenkinsStep(ancestor, "datadog"); ok && call.Closure != nil {
@@ -338,6 +368,14 @@ func (e *jenkinsEditor) plan(targets []jenkinsShTarget) error {
 				}
 				if call, ok := jenkinsStep(ancestor, "node"); ok && node == nil {
 					node = call
+				}
+				if call, ok := jenkinsStep(ancestor, "stage"); ok && inPipeline && call.Closure != nil {
+					// The innermost stage, and the innermost one whose
+					// options enable the plugin already.
+					stage = call
+					if jenkinsStageDatadog(call) != nil {
+						staged = call
+					}
 				}
 				if ancestor == pipeline {
 					inPipeline = true
@@ -352,6 +390,14 @@ func (e *jenkinsEditor) plan(targets []jenkinsShTarget) error {
 				}
 			case pipeline != nil && !inPipeline:
 				return e.gap(current.call, "The tests of "+target.job+" run outside the declarative pipeline block, where its options do not apply.")
+			case staged != nil:
+				if err := e.merge(jenkinsStageDatadog(staged)); err != nil {
+					return err
+				}
+			case pipeline != nil && len(e.containers) > 0 && stage != nil:
+				if err := e.stageOptions(pipeline, stage); err != nil {
+					return err
+				}
 			case pipeline != nil:
 				options = true
 			case node == nil:
@@ -488,9 +534,54 @@ func (e *jenkinsEditor) inString(offset int) bool {
 	return slices.ContainsFunc(e.multiline, func(span groovySpan) bool { return offset > span.Start && offset < span.End })
 }
 
+// jenkinsStageDatadog is the datadog(…) call of a stage's options directive
+// that configures Test Optimization, or nil.
+func jenkinsStageDatadog(stage *groovyCall) *groovyCall {
+	options, ok := jenkinsDirectives(stage.Closure.Body)["options"]
+	if !ok || options.Closure == nil {
+		return nil
+	}
+	for _, statement := range options.Closure.Body.Statements {
+		if call, ok := jenkinsStep(statement, "datadog"); ok {
+			if _, _, configures := jenkinsTestOptimization(call); configures {
+				return call
+			}
+		}
+	}
+	return nil
+}
+
+// stageOptions enables the plugin in the options directive of a stage that
+// runs the tests, once per stage, because the pipeline runs steps in
+// containers, which the pipeline's option would include. A pipeline option
+// that already enables it keeps them in its scope, so the edit is refused.
+func (e *jenkinsEditor) stageOptions(pipeline, stage *groovyCall) error {
+	if e.staged[stage] {
+		return nil
+	}
+	e.staged[stage] = true
+	if options, ok := jenkinsDirectives(pipeline.Closure.Body)["options"]; ok && options.Closure != nil {
+		for _, statement := range options.Closure.Body.Statements {
+			if call, ok := jenkinsStep(statement, "datadog"); ok {
+				if _, _, configures := jenkinsTestOptimization(call); configures {
+					return e.gap(call, "The pipeline's datadog(…) option enables Test Optimization for every stage, including "+strings.Join(e.containers, ", ")+", which run steps in a container, where "+jenkinsContainerUnsupported+". Move the option into the options directive of each host-agent stage that runs the tests, every one with the same arguments, then rerun onboard --apply.")
+				}
+			}
+		}
+	}
+	return e.optionsIn(stage, "stage")
+}
+
 // options enables the plugin in the declarative pipeline's top-level options
 // directive, creating it after agent or environment.
 func (e *jenkinsEditor) options(pipeline *groovyCall) error {
+	return e.optionsIn(pipeline, "pipeline")
+}
+
+// optionsIn enables the plugin in the options directive of a pipeline or
+// stage block (what names it), creating the directive after agent or
+// environment.
+func (e *jenkinsEditor) optionsIn(pipeline *groovyCall, what string) error {
 	body := pipeline.Closure.Body
 	var options, anchor groovyNode
 	for _, statement := range body.Statements {
@@ -508,7 +599,7 @@ func (e *jenkinsEditor) options(pipeline *groovyCall) error {
 		switch name {
 		case "options":
 			if options != nil {
-				return e.gap(statement, "The pipeline has several options directives.")
+				return e.gap(statement, "The "+what+" has several options directives.")
 			}
 			options = statement
 		case "agent", "environment":
@@ -518,12 +609,12 @@ func (e *jenkinsEditor) options(pipeline *groovyCall) error {
 	if options != nil {
 		call, ok := options.(*groovyCall)
 		if !ok || call.Closure == nil || len(call.Args) > 0 {
-			return e.gap(options, "The pipeline's options directive is not a block ddtest can read.")
+			return e.gap(options, "The "+what+"'s options directive is not a block ddtest can read.")
 		}
 		return e.optionsBlock(call)
 	}
 	if len(body.Statements) == 0 || e.sameLine(pipeline.Closure.Start, pipeline.Closure.End-1) {
-		return e.gap(pipeline, "The pipeline block is written on one line, where ddtest cannot place an options directive.")
+		return e.gap(pipeline, "The "+what+" block is written on one line, where ddtest cannot place an options directive.")
 	}
 	first, _ := body.Statements[0].span()
 	if anchor != nil {
@@ -533,13 +624,13 @@ func (e *jenkinsEditor) options(pipeline *groovyCall) error {
 	block := sibling + "options {" + e.newline + sibling + e.unit(e.indent(pipeline.Start), sibling) + e.datadogCall() + e.newline + sibling + "}"
 	if anchor == nil {
 		if !e.startsLine(first) {
-			return e.gap(pipeline, "The pipeline's first directive does not start its line, where ddtest cannot place an options directive.")
+			return e.gap(pipeline, "The "+what+"'s first directive does not start its line, where ddtest cannot place an options directive.")
 		}
 		e.add(e.lineStart(first), e.lineStart(first), block+e.newline)
 		return nil
 	}
 	if _, end := anchor.span(); !e.endsLine(end) {
-		return e.gap(anchor, "Another statement follows the pipeline's agent or environment directive on its line, where ddtest cannot place an options directive.")
+		return e.gap(anchor, "Another statement follows the "+what+"'s agent or environment directive on its line, where ddtest cannot place an options directive.")
 	} else {
 		position := e.lineEnd(end)
 		e.add(position, position, e.newline+block)

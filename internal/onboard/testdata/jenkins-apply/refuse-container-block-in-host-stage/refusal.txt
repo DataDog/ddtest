@@ -1,0 +1,1 @@
+its option would also apply to Jenkinsfile / Test (docker.image('node:22').inside), which run steps in a container

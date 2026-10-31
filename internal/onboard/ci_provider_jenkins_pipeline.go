@@ -167,8 +167,9 @@ type jenkinsReader struct {
 	// the shell reads as the checkout (see jenkinsShellDialect), and the
 	// shared model's checkout expression in an environment value.
 	workspace string
-	// setups are the datadog(…) options whose scope includes container jobs.
-	setups []*jenkinsSetup
+	// setups are the datadog(…) options whose scope includes container jobs,
+	// and options every one the Jenkinsfile enables Test Optimization with.
+	setups, options []*jenkinsSetup
 	// cells counts the matrix cells expanded so far.
 	cells int
 }
@@ -207,6 +208,13 @@ func readJenkinsfile(root, file, source string) (ciWorkflow, error) {
 		for _, step := range setup.steps {
 			if step.Problem == "" {
 				step.Problem = setup.containerProblem()
+			}
+		}
+	}
+	for setup, problem := range jenkinsArgumentConflicts(r.options) {
+		for _, step := range setup.steps {
+			if step.Problem == "" {
+				step.Problem = problem
 			}
 		}
 	}
@@ -501,10 +509,10 @@ func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenk
 			next.agent = r.agent(agent, *next)
 		}
 		if environment, ok := directives["environment"]; ok && environment.Closure != nil {
-			if options, ok := directives["options"]; ok && top {
+			if options, ok := directives["options"]; ok {
 				// The plugin sets its variables for the environment's steps
 				// too; the option is read again with the environment below.
-				if setup, found := r.pipelineSetup(options, *next); found {
+				if setup, found := r.pipelineSetup(options, *next, !top); found {
 					next.setup = setup
 				}
 			}
@@ -517,16 +525,16 @@ func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenk
 				}
 			}
 		}
-		if options, ok := directives["options"]; ok && top {
-			if setup, found := r.pipelineSetup(options, *next); found {
+		if options, ok := directives["options"]; ok {
+			// A stage's datadog(…) option sets the plugin up for the steps of
+			// that stage and of the stages nested in it, as a real Jenkins
+			// run showed; the plugin then configures the tracer first inside
+			// the stage, so the stage's environment is what its NODE_OPTIONS
+			// composes with (see pluginExports).
+			if setup, found := r.pipelineSetup(options, *next, !top); found {
 				next.setup = setup
-			}
-		} else if ok && options.Closure != nil {
-			for _, statement := range options.Closure.Body.Statements {
-				if call, ok := statement.(*groovyCall); ok && call.Name == "datadog" {
-					if _, _, has := jenkinsTestOptimization(call); has {
-						next.setupProblem = "The datadog(…) option at " + r.where(call) + " is in a stage's options; ddtest certifies the Datadog Jenkins plugin setup only in the pipeline's top-level options, which the plugin documents. Move it to the top-level options directive."
-					}
+				if setup != nil && !top {
+					setup.base, setup.covered = maps.Clone(next.env), maps.Clone(next.overrides)
 				}
 			}
 		}
@@ -544,14 +552,21 @@ func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenk
 }
 
 // pipelineSetup reads the datadog(…) option of a pipeline's top-level
-// options with scope; found reports one.
-func (r *jenkinsReader) pipelineSetup(options *groovyCall, scope jenkinsScope) (setup *jenkinsSetup, found bool) {
+// options, or of a stage's (stage), with scope; found reports one. A
+// stage's datadog(…) without testOptimization keeps the setup around it.
+func (r *jenkinsReader) pipelineSetup(options *groovyCall, scope jenkinsScope, stage bool) (setup *jenkinsSetup, found bool) {
 	if options.Closure == nil {
 		return nil, false
 	}
 	for _, statement := range options.Closure.Body.Statements {
 		if call, ok := statement.(*groovyCall); ok && call.Name == "datadog" {
+			if _, _, configures := jenkinsTestOptimization(call); stage && !configures {
+				continue
+			}
 			setup, found = r.datadog(call, scope), true
+			if setup != nil {
+				setup.stage = stage
+			}
 		}
 	}
 	return setup, found
@@ -2160,6 +2175,13 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 		state.references = map[string]string{}
 	}
 	for key, where := range scope.overrides {
+		if scope.setup != nil && scope.setup.covered[key] == where {
+			// Set where the option is: the plugin composes with it.
+			if _, overridden := env[key]; overridden {
+				state.env[key] = env[key]
+			}
+			continue
+		}
 		if _, exported := exports[key]; exported {
 			r.review = append(r.review, r.file+": "+jenkinsOverwrittenExport(key, where))
 		}
@@ -2479,9 +2501,9 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 		if scope.agent.image == "" {
 			result.ImageProblem = "the job runs in " + scope.agent.describe + ", whose image ddtest does not read"
 		}
-		result.SetupUnsupported = "it runs in " + scope.agent.describe + ", a container: the Datadog Jenkins plugin installs the tracer on the build agent and does not instrument tests inside containers"
+		result.SetupUnsupported = "it runs in " + scope.agent.describe + ", a container: " + jenkinsContainerUnsupported
 		if slot.within != "" {
-			result.SetupUnsupported = "it runs in " + scope.agent.describe + ", a container inside " + slot.within + ", whose steps outside the container run on the build agent and are validated as that job: the Datadog Jenkins plugin installs the tracer on the build agent and does not instrument tests inside containers"
+			result.SetupUnsupported = "it runs in " + scope.agent.describe + ", a container inside " + slot.within + ", whose steps outside the container run on the build agent and are validated as that job: " + jenkinsContainerUnsupported
 		}
 	case "host":
 		result.Host = jenkinsHost(scope.agent, job.pathChange)
@@ -2556,6 +2578,9 @@ func (r *jenkinsReader) pluginExports(scope jenkinsScope) (map[string]string, ma
 	// every step after it: ddtest composes them with the pipeline's
 	// environment, and reports a narrower scope's value (see shell).
 	base := scope.pipelineEnv
+	if scope.setup.base != nil {
+		base = scope.setup.base
+	}
 	env, references := map[string]string{}, map[string]string{}
 	for _, language := range discoveryLanguages {
 		if !slices.Contains(scope.setup.languages, language.ciPluginLanguage()) {
