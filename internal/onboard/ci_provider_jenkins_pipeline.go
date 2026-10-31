@@ -54,6 +54,11 @@ type jenkinsAgent struct {
 	image, describe string
 	// problem is why ddtest cannot read the agent.
 	problem string
+	// dockerfile names the Dockerfile an agent { dockerfile … } builds the
+	// image from, which bash and downloader report installing Bash, and curl
+	// or wget, on top of image; imageProblem is why ddtest cannot read it.
+	dockerfile, imageProblem string
+	bash, downloader         bool
 }
 
 // jenkinsScope is what a Jenkinsfile construct selects for the steps inside it.
@@ -100,6 +105,9 @@ type jenkinsScope struct {
 	// ddtest cannot tell, such as env[name] = …: no variable of the build's
 	// environment is known after it.
 	envUnknown string
+	// pluginUnread names a datadog(…) call around the scope whose arguments
+	// ddtest cannot read, which may enable Test Optimization for it.
+	pluginUnread string
 }
 
 func (s jenkinsScope) with(change func(*jenkinsScope)) jenkinsScope {
@@ -170,6 +178,8 @@ type jenkinsReader struct {
 	// setups are the datadog(…) options whose scope includes container jobs,
 	// and options every one the Jenkinsfile enables Test Optimization with.
 	setups, options []*jenkinsSetup
+	// snippets are the setup snippets the Jenkinsfile's sh steps run.
+	snippets []*ciSetup
 	// cells counts the matrix cells expanded so far.
 	cells int
 }
@@ -215,6 +225,17 @@ func readJenkinsfile(root, file, source string) (ciWorkflow, error) {
 		for _, step := range setup.steps {
 			if step.Problem == "" {
 				step.Problem = problem
+			}
+		}
+	}
+	// A datadog(…) option elsewhere in the Jenkinsfile for a language a
+	// setup snippet installs runs beside it in the same workspace.
+	for _, snippet := range r.snippets {
+		for _, option := range r.options {
+			for _, token := range strings.Fields(snippet.Inputs["languages"]) {
+				if snippet.Beside == "" && slices.Contains(option.languages, jenkinsPluginToken(token)) {
+					snippet.Beside = "the " + jenkinsPluginReference + ", which the datadog(…) option at " + option.source + " enables"
+				}
 			}
 		}
 	}
@@ -531,6 +552,7 @@ func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenk
 			// run showed; the plugin then configures the tracer first inside
 			// the stage, so the stage's environment is what its NODE_OPTIONS
 			// composes with (see pluginExports).
+			next.pluginUnread = cmp.Or(r.unreadOption(options), next.pluginUnread)
 			if setup, found := r.pipelineSetup(options, *next, !top); found {
 				next.setup = setup
 				if setup != nil && !top {
@@ -570,6 +592,30 @@ func (r *jenkinsReader) pipelineSetup(options *groovyCall, scope jenkinsScope, s
 		}
 	}
 	return setup, found
+}
+
+// unreadOption names a datadog(…) call of an options directive whose
+// arguments ddtest cannot read (see jenkinsUnreadDatadog), or is empty.
+func (r *jenkinsReader) unreadOption(options *groovyCall) string {
+	if options.Closure == nil {
+		return ""
+	}
+	for _, statement := range options.Closure.Body.Statements {
+		if call, ok := statement.(*groovyCall); ok && call.Name == "datadog" && jenkinsUnreadDatadog(call) {
+			return "at " + r.where(call)
+		}
+	}
+	return ""
+}
+
+// jenkinsUnreadDatadog reports a datadog(…) call that may configure Test
+// Optimization in a way ddtest cannot read: without a testOptimization
+// argument, it passes arguments that are not named, such as a map variable.
+func jenkinsUnreadDatadog(call *groovyCall) bool {
+	if _, _, configures := jenkinsTestOptimization(call); configures {
+		return false
+	}
+	return slices.ContainsFunc(call.Args, func(arg groovyArg) bool { return arg.Name == "" })
 }
 
 // jenkinsNeverWhen reports a when directive that can never pass: a literal
@@ -616,7 +662,7 @@ func (r *jenkinsReader) environment(body *groovyBlock, scope *jenkinsScope, top 
 func (r *jenkinsReader) assignEnvironment(key string, node groovyNode, scope *jenkinsScope, where string, narrow bool) {
 	if call, ok := node.(*groovyCall); ok && call.Name == "credentials" {
 		scope.env[key] = jenkinsSecret(key)
-		if key == "DD_API_KEY" {
+		if key == "DD_API_KEY" && scope.setup != nil {
 			r.review = append(r.review, r.file+": "+where+" binds DD_API_KEY from a Jenkins credential; the Datadog Jenkins plugin overwrites DD_API_KEY with its own configured key, so this binding is not the key the tests report with.")
 		}
 		return
@@ -748,7 +794,7 @@ func (r *jenkinsReader) agent(call *groovyCall, scope jenkinsScope) jenkinsAgent
 			}
 			return jenkinsAgent{kind: "container", image: image, describe: "agent { docker { image '" + image + "' } }"}
 		case "dockerfile":
-			return jenkinsAgent{kind: "container", describe: "agent { dockerfile … }"}
+			return r.jenkinsDockerfileAgent(inner, scope)
 		case "kubernetes":
 			return jenkinsAgent{kind: "container", describe: "agent { kubernetes … }"}
 		}
@@ -1850,7 +1896,8 @@ func (r *jenkinsReader) call(call *groovyCall, scope *jenkinsScope, slot *jenkin
 			for _, match := range jenkinsCredentialVariable.FindAllStringSubmatch(text, -1) {
 				next.env[match[1]] = jenkinsSecret(match[1])
 				next.shadow[match[1]] = true
-				if match[1] == "DD_API_KEY" {
+				if match[1] == "DD_API_KEY" && next.setup != nil {
+					// Outside the plugin's scope it is the setup snippet's key.
 					r.review = append(r.review, r.file+": withCredentials at "+r.where(call)+" binds DD_API_KEY; the Datadog Jenkins plugin overwrites DD_API_KEY with its own configured key, so this binding is not the key the tests report with.")
 				}
 			}
@@ -1958,7 +2005,12 @@ func (r *jenkinsReader) call(call *groovyCall, scope *jenkinsScope, slot *jenkin
 		// docker.build(…).
 		r.inContainer(call, jenkinsAgent{kind: "container", describe: name + " (a Docker container)"}, scope, slot)
 	case name == "datadog":
-		body(outer.with(func(next *jenkinsScope) { next.setup = r.datadog(call, outer) }))
+		body(outer.with(func(next *jenkinsScope) {
+			next.setup = r.datadog(call, outer)
+			if unread := jenkinsUnreadDatadog(call); unread && next.setup == nil {
+				next.pluginUnread = "at " + r.where(call)
+			}
+		}))
 	case slices.Contains(jenkinsRepeatingWrappers, name):
 		repeat(outer)
 	case slices.Contains(jenkinsWrappers, name):
@@ -2215,7 +2267,8 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 	}
 	pathChange := scope.pathChange
 	selected := map[string]ciShellRuntime{}
-	for i, stmt := range file.Stmts {
+	for i := 0; i < len(file.Stmts); i++ {
+		stmt := file.Stmts[i]
 		known := mergeEnvironment(mergeEnvironment(env, state.env), state.references)
 		statement := strings.TrimSpace(jenkinsStatementText(script, file.Stmts, i))
 		step := runtimeStep{WorkingDirectory: state.directory, origin: jenkinsShellStep{call: call.Start, statement: int(stmt.Pos().Offset())}}
@@ -2223,6 +2276,46 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 			step.Env = maps.Clone(state.env)
 		}
 		stepReason := joinDiagnostic(reason, state.problem)
+		if setup, consumed, ok := snippetSetupAt(file.Stmts, i, known, jenkinsSnippetForm, jenkinsPluginResets()); ok {
+			// Datadog's installer, in the shape of the setup snippet or not.
+			if !setup.shaped {
+				// It may run anything, tests included: an unresolved
+				// statement, never a setup step that hides it.
+				end := len(script)
+				if i+consumed < len(file.Stmts) {
+					end = int(file.Stmts[i+consumed].Pos().Offset())
+				}
+				step.Run = strings.TrimSpace(script[stmt.Pos().Offset():end])
+				step.ResolutionError = joinDiagnostic(stepReason, setup.Problem)
+				r.add(slot, call, step)
+				i += consumed - 1
+				continue
+			}
+			key := known["DD_API_KEY"]
+			current, changed := state.env["DD_API_KEY"]
+			cleared := changed && current == ""
+			if setup.Problem == "" {
+				setup.Problem = r.snippetProblem(scope, setup, key, cleared, state.curl)
+			}
+			if scope.agent.kind == "container" && scope.agent.image == "" {
+				setup.Caveats = append(setup.Caveats, jenkinsUnreadImageCaveat(scope.agent))
+			}
+			if scope.setup == nil && !r.pluginMayReach(scope) {
+				setup.Caveats = append(setup.Caveats, jenkinsPluginOutsideCaveat)
+			}
+			step.ResolutionError = stepReason
+			step.Setup = &setup
+			r.add(slot, call, step)
+			r.snippets = append(r.snippets, &setup)
+			if setup.Supported && setup.Problem == "" && stepReason == "" {
+				state.applySetup(setup, mergeEnvironment(env, state.env))
+				for _, after := range setup.after {
+					state.statement(after, mergeEnvironment(mergeEnvironment(env, state.env), state.references))
+				}
+			}
+			i += consumed - 1
+			continue
+		}
 		if container := jenkinsContainerCommand(stmt); container != "" {
 			step.Run = statement
 			step.ResolutionError = joinDiagnostic(stepReason, "it runs "+container+": tests inside run in a container ddtest cannot validate, and the Datadog Jenkins plugin does not instrument them")
@@ -2230,6 +2323,7 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 			continue
 		}
 		command := gitLabResolveBranches(statement, known)
+		state.curl = state.curl || installsCurl(command)
 		if jenkinsChangesPath(stmt) {
 			pathChange = "the PATH the sh script at " + r.where(call) + " sets"
 		}
@@ -2501,16 +2595,22 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 	if scope.disabled {
 		result.If = "false"
 	}
+	container := scope.agent.kind == "container"
 	switch scope.agent.kind {
 	case "container":
+		// Its tests set Test Optimization up with the setup snippet.
+		result.SetupProvider = jenkinsContainer{reset: r.pluginMayReach(scope)}
 		result.Image = scope.agent.image
 		result.ImageTemplate = scope.agent.image
 		if scope.agent.image == "" {
-			result.ImageProblem = "the job runs in " + scope.agent.describe + ", whose image ddtest does not read"
-		}
-		result.SetupUnsupported = "it runs in " + scope.agent.describe + ", a container: " + jenkinsContainerUnsupported
-		if slot.within != "" {
-			result.SetupUnsupported = "it runs in " + scope.agent.describe + ", a container inside " + slot.within + ", whose steps outside the container run on the build agent and are validated as that job: " + jenkinsContainerUnsupported
+			// Its runtime is the user's to state, as a host agent's.
+			reason := "whose image ddtest does not read"
+			if scope.agent.imageProblem != "" {
+				reason = "where " + scope.agent.imageProblem
+			}
+			result.Host = "the container of " + scope.agent.describe + ", " + reason
+		} else {
+			result.SetupImageProblem = jenkinsImageSetupProblem(scope.agent, false)
 		}
 	case "host":
 		result.Host = jenkinsHost(scope.agent, job.pathChange)
@@ -2519,8 +2619,12 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 	if setup := scope.setup; setup != nil {
 		current := setup.ciSetup()
 		problem := scope.setupProblem
-		if result.SetupUnsupported != "" {
-			problem = joinDiagnostic(problem, "This stage cannot use the Datadog Jenkins plugin: "+result.SetupUnsupported+". The user's options are to run its tests on a host agent (agent { label … }), or to set up Test Optimization in the container by hand, outside ddtest, which ddtest cannot validate.")
+		if container {
+			within := ""
+			if slot.within != "" {
+				within = " inside " + slot.within
+			}
+			problem = joinDiagnostic(problem, "This stage cannot use the Datadog Jenkins plugin: it runs in "+scope.agent.describe+", a container"+within+": "+jenkinsContainerUnsupported+". Keep it out of the option's scope ("+jenkinsContainerRemedy+"), and set up its tests with the Datadog setup snippet instead, as ddtest's instructions show.")
 		}
 		if problem != "" && current.Problem == "" {
 			current.Problem = problem
@@ -2530,7 +2634,8 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 		}
 		setup.steps = append(setup.steps, &current)
 		steps = append([]runtimeStep{{Source: setup.source, Setup: &current}}, steps...)
-	} else if scope.setupProblem != "" {
+	} else if scope.setupProblem != "" && !container {
+		// A container stage's setup snippet reports its own.
 		steps = append([]runtimeStep{{Source: r.file, Setup: &ciSetup{Reference: jenkinsPluginReference, Pinned: true, Problem: scope.setupProblem, Inputs: map[string]string{}}}}, steps...)
 	}
 	for i := range steps {
@@ -2545,7 +2650,7 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 		name = job.name + " [" + strconv.Itoa(i) + "]"
 	}
 	r.workflow.Jobs[name] = result
-	if setup := scope.setup; setup != nil && result.SetupUnsupported != "" && !scope.disabled && len(job.steps) > 0 {
+	if setup := scope.setup; setup != nil && container && !scope.disabled && len(job.steps) > 0 {
 		setup.containers = append(setup.containers, r.file+" / "+name)
 		if !slices.Contains(r.setups, setup) {
 			r.setups = append(r.setups, setup)

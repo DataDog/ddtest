@@ -8,7 +8,6 @@ package onboard
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"maps"
 	"os"
@@ -223,12 +222,18 @@ func TestJenkinsAgentsAndContainers(t *testing.T) {
     }
   }
 }`)
+	// Container stages set up with the setup snippet; the user states the
+	// runtime of a container whose image ddtest cannot read.
 	docker := jobs["Docker"]
 	require.Equal(t, "node:22-alpine", docker.Image)
-	require.Contains(t, docker.SetupUnsupported, "it runs in agent { docker { image 'node:22-alpine' } }, a container: the Datadog Jenkins plugin installs the tracer only on the build agent, with the agent's toolchain, and does not support tests inside containers")
-	require.Contains(t, jobs["Dockerfile"].ImageProblem, "agent { dockerfile … }")
-	require.NotEmpty(t, jobs["Kubernetes"].SetupUnsupported)
-	require.Empty(t, jobs["Host"].SetupUnsupported)
+	require.Empty(t, docker.SetupUnsupported)
+	require.Equal(t, jenkinsContainer{}, docker.SetupProvider)
+	require.Contains(t, docker.SetupImageProblem, "The step's image node:22-alpine has no Bash, which the Datadog installer needs")
+	require.Equal(t, "the container of agent { dockerfile … } (Dockerfile), where its Dockerfile Dockerfile cannot be read", jobs["Dockerfile"].Host)
+	require.Empty(t, jobs["Dockerfile"].ImageProblem)
+	require.Equal(t, "the container of agent { kubernetes … }, whose image ddtest does not read", jobs["Kubernetes"].Host)
+	require.True(t, jenkinsContainerJob(jobs["Kubernetes"]))
+	require.False(t, jenkinsContainerJob(jobs["Host"]))
 	require.Equal(t, "the Jenkins agents labeled \"linux\", with the Jenkins tool nodejs 'NodeJS 22' (tools directive) on PATH", jobs["Host"].Host)
 	require.Equal(t, []string{"UNRESOLVED Jenkinsfile Nowhere: it runs under agent none, without an agent for shell steps"}, jenkinsRuns(jobs["Nowhere"]))
 	require.Equal(t, []string{"UNRESOLVED Jenkinsfile Windows: runs bat, a Windows command; ddtest does not set up or validate Windows agents"}, jenkinsRuns(jobs["Windows"]))
@@ -332,7 +337,7 @@ stage('Outside') {
 	inside := jobs["Test (docker.image('node:22').inside)"]
 	require.Equal(t, []string{"npm run e2e"}, jenkinsRuns(inside))
 	require.Equal(t, "node:22", inside.Image)
-	require.Contains(t, inside.SetupUnsupported, "it runs in docker.image('node:22').inside, a container inside Test, whose steps outside the container run on the build agent")
+	require.True(t, jenkinsContainerJob(inside), "its steps set up with the setup snippet")
 	require.Equal(t, []string{"npm run deploy", "npm run flaky", "npm run on-failure", "npm run all"}, jenkinsRuns(jobs["node (linux)"]), "a catch block can recover, so it is a possible passing path")
 	require.Equal(t, "the Jenkins agents labeled \"linux\"", jobs["node (linux)"].Host)
 	require.Equal(t, "any Jenkins agent (node, with no label)", jobs["Outside"].Host)
@@ -529,34 +534,34 @@ func TestJenkinsLanguageSupport(t *testing.T) {
 	}
 }
 
-// Every job running the tests in a container: the plugin cannot instrument
-// any, so ddtest reports the repository unsupported instead of prescribing.
-func TestJenkinsContainerTestJobsAreUnsupported(t *testing.T) {
+// Jobs running the tests in a container set Test Optimization up with the
+// setup snippet: a repository whose tests all run in containers is
+// supported, and validation names the snippet a container stage lacks.
+func TestJenkinsContainerTestJobsUseTheSetupSnippet(t *testing.T) {
 	root := jenkinsRepository(t, "pipeline {\n  agent { docker { image 'node:22' } }\n  stages {\n    stage('Test') { steps { sh 'npm test' } }\n  }\n}\n")
-	err := CheckCIProviderSupport(root, "javascript", "jest")
-	var unsupported *CIProviderUnsupportedError
-	require.ErrorAs(t, err, &unsupported)
-	result := ProviderUnsupportedResult(unsupported)
-	require.Equal(t, "unsupported", result.Status)
-	require.Equal(t, "ci_setup_unsupported", result.Code)
-	require.Contains(t, result.Reason, "every CI job that runs the tests is outside what the Datadog Jenkins plugin instruments. Jenkinsfile / Test: it runs in agent { docker { image 'node:22' } }")
-	require.Contains(t, result.Reason, "The user's options are to run those tests where the Datadog Jenkins plugin instruments them, or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate.")
-	require.Contains(t, result.Instruction, "Report this result to the user with its reason and stop. Do not move tests between agents, edit CI, add a tracer or set up Test Optimization by hand")
+	require.NoError(t, CheckCIProviderSupport(root, "javascript", "jest"))
+	groups := testJobSetups(root, jenkins{}, "javascript", "jest")
+	require.Len(t, groups, 1)
+	require.Equal(t, jenkinsContainer{}, groups[0].provider)
+	text := providerSetupInstructions(root, jenkins{}, "javascript", "jest", "datadoghq.eu", true)
+	require.Contains(t, text, "Set up Datadog Test Optimization in the stages that run the tests in a container (Jenkinsfile / Test) with Datadog's installer")
+	require.Contains(t, text, `if [ "${DD_API_KEY:+set}" = set ]; then`)
+	require.Contains(t, text, `export DD_TRACER_FOLDER="$PWD/.datadog-ci-container" DD_SITE="datadoghq.eu" DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER="jenkins"`)
+	require.Contains(t, text, "withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')])")
+	require.NotContains(t, text, "datadog(testOptimization:", "no stage runs on a host agent")
 
-	var out bytes.Buffer
-	require.Error(t, StartWithOptions(&out, StartOptions{Format: "json"}))
-	var started AgentResult
-	require.NoError(t, json.Unmarshal(out.Bytes(), &started), out.String())
-	require.Equal(t, "ci_setup_unsupported", started.Code)
-
-	// One host job is enough to set up; the container job stays reported.
+	// A host stage beside it gets the plugin; both mechanisms' instructions
+	// name their stages.
 	writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent none\n  stages {\n    stage('Docker') { agent { docker { image 'node:22' } }\n      steps { sh 'npm test' } }\n    stage('Host') { agent any\n      steps { sh 'npm test' } }\n  }\n}\n")
 	require.NoError(t, CheckCIProviderSupport(root, "javascript", "jest"))
+	text = providerSetupInstructions(root, jenkins{}, "javascript", "jest", "datadoghq.com", true)
+	require.Contains(t, text, "Set up Datadog Test Optimization in Jenkins for the stages that run the tests on a host agent (Jenkinsfile / Host) with the Datadog Jenkins plugin")
+	require.Contains(t, text, "in a container (Jenkinsfile / Docker) with Datadog's installer")
 	request := javascriptDiscovery{}.ciSetupRequest(root, "jest", "datadoghq.com", jenkins{}.setupTerms())
-	require.Contains(t, strings.Join(request.Notes, "\n"), "The Datadog Jenkins plugin cannot instrument these CI jobs, so ddtest reports them as unsupported and does not validate them; tell the user, and do not move their tests to other agents without the user's approval:\nJenkinsfile / Docker: it runs in agent { docker { image 'node:22' } }")
+	require.NotContains(t, strings.Join(request.Notes, "\n"), "cannot instrument these CI jobs")
 
-	// With the plugin on the host stage, validation names why the container
-	// stage stays a blocker.
+	// With the plugin on the host stage, validation names the snippet the
+	// container stage lacks.
 	writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent none\n  stages {\n    stage('Docker') { agent { docker { image 'node:22' } }\n      steps { sh 'npm test' } }\n    stage('Host') { agent any\n      "+strings.TrimSpace(strings.ReplaceAll(jenkinsDatadogOption, "\n", " "))+"\n      steps { sh 'npm test' } }\n  }\n}\n")
 	useCIStatements(t, []string{"node=22"})
 	checked := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
@@ -566,8 +571,7 @@ func TestJenkinsContainerTestJobsAreUnsupported(t *testing.T) {
 	for _, finding := range checked.Jobs {
 		reasons[finding.Job] = finding.Reason
 	}
-	require.Contains(t, reasons["Docker"], "This job cannot use the Datadog Jenkins plugin: it runs in agent { docker { image 'node:22' } }, a container: the Datadog Jenkins plugin installs the tracer only on the build agent")
-	require.Contains(t, reasons["Docker"], "or to set up Test Optimization for it by hand, outside ddtest, which ddtest cannot validate")
+	require.Equal(t, "No Datadog setup snippet selecting JavaScript runs before this test command. It is not validated as instrumented.", reasons["Docker"])
 	require.Equal(t, "Node 22 satisfies >=22.", reasons["Host"])
 }
 
@@ -790,18 +794,15 @@ func TestJenkinsPodTemplatesAreContainers(t *testing.T) {
   }
 }`)
 	pod := jobs["Pod"]
-	require.Equal(t, "it runs in node(POD_LABEL) of the Kubernetes podTemplate at Jenkinsfile:2, a container: the Datadog Jenkins plugin installs the tracer only on the build agent, with the agent's toolchain, and does not support tests inside containers", pod.SetupUnsupported)
-	require.Contains(t, pod.ImageProblem, "whose image ddtest does not read")
-	require.Empty(t, pod.Host)
+	require.True(t, jenkinsContainerJob(pod))
+	require.Equal(t, "the container of node(POD_LABEL) of the Kubernetes podTemplate at Jenkinsfile:2, whose image ddtest does not read", pod.Host, "the user states its runtime")
 	require.Contains(t, pod.Steps[0].Setup.Problem, "This stage cannot use the Datadog Jenkins plugin: it runs in node(POD_LABEL) of the Kubernetes podTemplate")
-	require.Contains(t, jobs["Labeled pod"].SetupUnsupported, "it runs in node('mypod') of the Kubernetes podTemplate at Jenkinsfile:7")
-	require.Empty(t, jobs["Host"].SetupUnsupported, "a node on another label is a host agent")
+	require.True(t, jenkinsContainerJob(jobs["Labeled pod"]))
+	require.False(t, jenkinsContainerJob(jobs["Host"]), "a node on another label is a host agent")
 	require.Equal(t, "the Jenkins agents labeled \"linux\"", jobs["Host"].Host)
 
 	root := jenkinsRepository(t, "podTemplate {\n  node(POD_LABEL) {\n    stage('Test') { sh 'npm test' }\n  }\n}\n")
-	var unsupported *CIProviderUnsupportedError
-	require.ErrorAs(t, CheckCIProviderSupport(root, "javascript", "jest"), &unsupported)
-	require.Contains(t, ProviderUnsupportedResult(unsupported).Reason, "Jenkinsfile / Test: it runs in node(POD_LABEL) of the Kubernetes podTemplate at Jenkinsfile:1")
+	require.NoError(t, CheckCIProviderSupport(root, "javascript", "jest"), "the setup snippet sets it up")
 }
 
 // The plugin sets additionalVariables after the pipeline's environment and
@@ -1035,29 +1036,19 @@ func TestJenkinsContainerBlocksAreTheirOwnJobs(t *testing.T) {
 	packaging := jobs["Test (docker.image('node:22').inside)"]
 	require.Equal(t, []string{"npm pack"}, jenkinsRuns(packaging))
 	require.Equal(t, "node:22", packaging.Image)
-	require.Contains(t, packaging.SetupUnsupported, "a container inside Test, whose steps outside the container run on the build agent and are validated as that job")
+	require.True(t, jenkinsContainerJob(packaging))
 	e2e := jobs["Test (container('node') of a Kubernetes pod)"]
 	require.Equal(t, []string{"npm run e2e"}, jenkinsRuns(e2e))
-	require.NotEmpty(t, e2e.ImageProblem)
+	require.Equal(t, "the container of container('node') of a Kubernetes pod, whose image ddtest does not read", e2e.Host)
 
-	// A host test next to a packaging container sets up; a test in the
-	// container is reported, naming the job it splits from.
-	root := jenkinsRepository(t, "pipeline {\n  agent any\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npm test'\n        script { docker.image('node:22').inside { sh 'npm pack' } }\n      }\n    }\n  }\n}\n")
+	// A test in the container block sets up with the snippet, as a job of
+	// its own beside the host steps.
+	root := jenkinsRepository(t, "pipeline {\n  agent any\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npm ci'\n        script { docker.image('node:22').inside { sh 'npm test' } }\n      }\n    }\n  }\n}\n")
 	require.NoError(t, CheckCIProviderSupport(root, "javascript", "jest"))
-	writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent any\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npm test'\n        script { docker.image('node:22').inside { sh 'npm test' } }\n      }\n    }\n  }\n}\n")
-	require.NoError(t, CheckCIProviderSupport(root, "javascript", "jest"))
-	request := javascriptDiscovery{}.ciSetupRequest(root, "jest", "datadoghq.com", jenkins{}.setupTerms())
-	require.Contains(t, strings.Join(request.Notes, "\n"), "Jenkinsfile / Test (docker.image('node:22').inside): it runs in docker.image('node:22').inside, a container inside Test, whose steps outside the container run on the build agent")
-	writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent any\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npm ci'\n        script { docker.image('node:22').inside { sh 'npm test' } }\n      }\n    }\n  }\n}\n")
-	var unsupported *CIProviderUnsupportedError
-	require.ErrorAs(t, CheckCIProviderSupport(root, "javascript", "jest"), &unsupported, "the only test runs in the container")
-	require.Contains(t, unsupported.Reason, "Jenkinsfile / Test (docker.image('node:22').inside)")
+	groups := testJobSetups(root, jenkins{}, "javascript", "jest")
+	require.Len(t, groups, 1)
+	require.Equal(t, []string{"Jenkinsfile / Test (docker.image('node:22').inside)"}, groups[0].jobs)
 
-	// Inside a job that already runs in a container, a container block
-	// stays part of it.
-	pod := jenkinsJobs(t, "pipeline {\n  agent { kubernetes { yaml 'pod.yaml' } }\n  stages { stage('K') { steps { container('node') { sh 'npm test' } } } }\n}\n")
-	require.Equal(t, []string{"npm test"}, jenkinsRuns(pod["K"]))
-	require.NotEmpty(t, pod["K"].SetupUnsupported)
 }
 
 // The arguments of a step that runs no command still run: echo sh(…) runs
@@ -1742,5 +1733,5 @@ func TestJenkinsRubyContainerJobReason(t *testing.T) {
 	writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent none\n  stages {\n    stage('Docker') { agent { docker { image 'ruby:3.3' } }\n      steps { sh 'bundle exec rake spec' } }\n  }\n}\n")
 	jobs := RubyCIConfigurationForSite(root, "rspec", "datadoghq.com").Jobs
 	require.Len(t, jobs, 1)
-	require.Contains(t, jobs[0].Reason, "This job cannot use the Datadog Jenkins plugin: it runs in agent { docker { image 'ruby:3.3' } }, a container")
+	require.Equal(t, "Run the Datadog setup snippet with an exact DD_SET_TRACER_VERSION_RUBY before this test command, in a job whose image selects a static Ruby version (such as ruby:3.3); validate other installs separately.", jobs[0].Reason, "the container stage's mechanism is the snippet")
 }

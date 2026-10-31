@@ -65,7 +65,14 @@ func TestJenkinsApplyGolden(t *testing.T) {
 			require.NoError(t, err)
 			framework := jenkinsApplyFramework(entry.Name())
 			root := jenkinsApplyRepository(t, framework, string(before))
-			plan, err := PlanProviderSetup(root, framework, "datadoghq.com")
+			// JavaScript's onboard --apply selects the tracer release a
+			// container stage's setup snippet installs; Ruby's is the one
+			// Gemfile.lock pins.
+			release := ""
+			if framework != "rspec" {
+				release = "6.22.0"
+			}
+			plan, err := planProviderSetup(root, framework, "datadoghq.com", release)
 			if refusal, readErr := os.ReadFile(filepath.Join(directory, "refusal.txt")); readErr == nil {
 				var gap *SetupGap
 				require.ErrorAs(t, err, &gap)
@@ -82,7 +89,7 @@ func TestJenkinsApplyGolden(t *testing.T) {
 
 			_, err = plan.Apply(true)
 			require.NoError(t, err)
-			again, err := PlanProviderSetup(root, framework, "datadoghq.com")
+			again, err := planProviderSetup(root, framework, "datadoghq.com", release)
 			require.NoError(t, err)
 			require.True(t, again.Configured(), "applying again changes nothing")
 			require.False(t, providerJobsMissingSetup(t, root, framework))
@@ -246,16 +253,41 @@ func TestJenkinsJavaScriptPlanCompletesTheOption(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, strings.Replace(stage, "enabled: false", "enabled: true", 1), after, "a stage-level option is completed in place")
 
-	mixed := "pipeline {\n  agent none\n  stages {\n    stage('Docker') {\n      agent { docker { image 'node:22' } }\n      steps { sh 'npm test' }\n    }\n    stage('Host') {\n      agent any\n      steps { sh 'npm test' }\n    }\n  }\n}\n"
+	// The container stage gets the setup snippet in its sh step, which
+	// withCredentials encloses: the plugin's key does not reach it.
+	mixed := "pipeline {\n  agent none\n  stages {\n    stage('Docker') {\n      agent { docker { image 'node:22' } }\n      steps {\n        sh 'npm test'\n      }\n    }\n    stage('Host') {\n      agent any\n      steps { sh 'npm test' }\n    }\n  }\n}\n"
 	after, err = plan("jest", mixed)
 	require.NoError(t, err)
+	snippet := jenkinsSnippet(jenkinsContainerRequest(t, "jest", "6.22.0"), false).shell()
 	staged := strings.Replace(mixed, "      agent any\n", "      agent any\n      options {\n        datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT']])\n      }\n", 1)
-	require.Equal(t, staged, after, "the host stage gets the option; the container stage stays out of its scope")
+	staged = strings.Replace(staged, "        sh 'npm test'\n", "        withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) {\n          sh '''\n            "+strings.ReplaceAll(snippet, "\n", "\n            ")+"\n            npm test\n          '''\n        }\n", 1)
+	require.Equal(t, staged, after, "the host stage gets the option; the container stage the snippet, outside its scope")
 	after, err = plan("jest", staged)
-	require.NoError(t, err, "applying again is configured, not refused for the container stage left")
-	require.Equal(t, staged, after)
-	_, err = plan("jest", strings.Replace(mixed, "      agent any\n", "      agent { docker { image 'node:22' } }\n", 1))
-	require.ErrorContains(t, err, "Every job that runs the tests runs in a container")
+	require.NoError(t, err)
+	require.Equal(t, staged, after, "applying again is configured")
+
+	// A one-line steps block leaves no line to enclose: the key binding is
+	// the user's, then onboard --apply writes the rest.
+	_, err = plan("jest", strings.Replace(mixed, "      steps {\n        sh 'npm test'\n      }\n", "      steps { sh 'npm test' }\n", 1))
+	var edit *EditThenApplyGap
+	require.ErrorAs(t, err, &edit)
+	require.ErrorContains(t, err, "DD_API_KEY does not reach this sh step")
+
+	// Containers alone get the snippet too.
+	containers := strings.Replace(mixed, "      agent any\n", "      agent { docker { image 'node:20' } }\n", 1)
+	after, err = plan("jest", strings.Replace(containers, "      steps { sh 'npm test' }\n", "      steps {\n        sh 'npm test'\n      }\n", 1))
+	require.NoError(t, err)
+	require.Equal(t, 2, strings.Count(after, "withCredentials("), after)
+	require.NotContains(t, after, "datadog(testOptimization")
+}
+
+// jenkinsContainerRequest is the setup a Jenkins container stage runs for
+// framework with tracer release.
+func jenkinsContainerRequest(t *testing.T, framework, release string) ciSetupRequest {
+	t.Helper()
+	request := discoveryLanguageFor(framework).ciSetupRequest(t.TempDir(), framework, "datadoghq.com", jenkinsContainer{}.setupTerms())
+	request.TracerVersion, request.Framework = release, framework
+	return request
 }
 
 // Without a project name, serviceName is the repository's: its origin

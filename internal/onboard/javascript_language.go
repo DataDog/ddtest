@@ -349,6 +349,12 @@ func (javascriptDiscovery) ciPluginContainerEffect() string {
 	return "for JavaScript, the plugin's NODE_OPTIONS preloads the dd-trace it installed into the workspace with the agent's npm, so Node processes in the container load it only by accident, because Jenkins mounts the workspace there at the same path (with another path, every Node process fails to start), and on an agent without npm the plugin sets nothing, so the tests run untraced without any error"
 }
 
+// ciPluginReset removes the plugin's preload, which DD_TRACE_PATH locates,
+// from NODE_OPTIONS (it prepends it), keeping the step's own options.
+func (javascriptDiscovery) ciPluginReset() string {
+	return `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS#"-r $DD_TRACE_PATH/ci/init"}"; unset DD_TRACE_PATH; fi`
+}
+
 func (javascriptDiscovery) ciPluginExports(current map[string]string) (map[string]string, map[string]string) {
 	options := strings.TrimSpace("-r ${{ env.DD_TRACE_PACKAGE }} " + current["NODE_OPTIONS"])
 	return map[string]string{"NODE_OPTIONS": options}, map[string]string{"DD_TRACE_PATH": "${{ env.DD_TRACE_PATH }}"}

@@ -8,6 +8,7 @@ package onboard
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -21,15 +22,55 @@ const (
 	buildkiteInstaller         = "install_test_visibility_v15.sh"
 	buildkiteInstallerChecksum = "e64a4a45e0b171f4294b9f949f7fc99946192f952a2d463c61fad3cb8b956a58"
 	buildkiteInstallerBase     = "https://install.datadoghq.com/scripts/"
-	// buildkiteInstallerProvider is the CI provider the tracers' telemetry
-	// records for an automatic installation, as the wrappers set gitlab or
-	// circleci.
-	buildkiteInstallerProvider = "buildkite"
 	// The installer's download and the KEY=VALUE lines it prints, in the
 	// .datadog folder it installs the tracers into.
 	buildkiteInstallerFile   = ".datadog/install_test_visibility.sh"
 	buildkiteInstallerOutput = ".datadog/test-optimization.env"
 )
+
+// snippetForm is what the setup snippet differs in between the providers
+// whose test steps run it (see buildkiteSnippet): the CI provider the
+// tracers' telemetry records for an automatic installation, as the
+// wrappers set gitlab or circleci; where it installs the tracers; and how
+// it tests for the key.
+type snippetForm struct {
+	provider string
+	// folder, when set, is the DD_TRACER_FOLDER the snippet exports as
+	// written, such as "$PWD/.datadog-ci-container": the installer installs
+	// the tracers there instead of its default .datadog, and the snippet
+	// keeps its download and output there too.
+	folder string
+	// keySet tests the key with [ "${DD_API_KEY:+set}" = set ], which a
+	// shell trace (sh -x) prints without the key's value; otherwise with
+	// [ -n "${DD_API_KEY:-}" ].
+	keySet bool
+}
+
+// buildkiteSnippetForm is the snippet Buildkite steps run.
+var buildkiteSnippetForm = snippetForm{provider: "buildkite"}
+
+// files are the installer's download and output paths as the snippet's
+// commands write them, and inside a double-quoted string.
+func (f snippetForm) files() (installer, output, quotedInstaller string) {
+	if f.folder == "" {
+		return buildkiteInstallerFile, buildkiteInstallerOutput, buildkiteInstallerFile
+	}
+	return `"$DD_TRACER_FOLDER/install_test_visibility.sh"`, `"$DD_TRACER_FOLDER/test-optimization.env"`, "$DD_TRACER_FOLDER/install_test_visibility.sh"
+}
+
+// checksumPattern matches the checksum line of the form's snippet.
+func (f snippetForm) checksumPattern() *regexp.Regexp {
+	_, _, file := f.files()
+	return regexp.MustCompile(`echo "([0-9a-f]*)  ` + regexp.QuoteMeta(file) + `"`)
+}
+
+// keyGuard is the condition of the snippet's guard.
+func (f snippetForm) keyGuard() string {
+	if f.keySet {
+		return `[ "${DD_API_KEY:+set}" = set ]`
+	}
+	return `[ -n "${DD_API_KEY:-}" ]`
+}
 
 // buildkiteMissingKeyMessage is what a step without DD_API_KEY logs: the
 // tests still run, untraced.
@@ -41,7 +82,6 @@ const buildkiteFailedInstallMessage = "Datadog Test Optimization could not be in
 
 var (
 	buildkiteInstallerURL      = regexp.MustCompile(`https://install\.datadoghq\.com/scripts/(install_test_visibility_v[0-9]+\.sh)`)
-	buildkiteInstallerSum      = regexp.MustCompile(`echo "([0-9a-f]*)  ` + regexp.QuoteMeta(buildkiteInstallerFile) + `"`)
 	buildkiteTracerVariable    = regexp.MustCompile(`^DD_SET_TRACER_VERSION_([A-Z]+)$`)
 	buildkiteInstallerMentions = regexp.MustCompile(`install\.datadoghq\.com/scripts/install_test_visibility`)
 )
@@ -85,6 +125,7 @@ func (buildkite) setupName() string { return "Datadog setup snippet" }
 
 // buildkiteSnippet is the setup snippet's variable parts, as shell words.
 type buildkiteSnippet struct {
+	form    snippetForm
 	guarded bool
 	// site and languages are words as written, such as "datadoghq.com".
 	site, languages string
@@ -94,6 +135,8 @@ type buildkiteSnippet struct {
 	installer, checksum string
 	// after are statements that run only with the setup, inside its guard.
 	after []string
+	// before are statements that run before it, whether or not it runs.
+	before []string
 }
 
 // shell writes the snippet as shell text, with a literal $ (pipeline
@@ -103,23 +146,28 @@ type buildkiteSnippet struct {
 func (s buildkiteSnippet) shell() string {
 	url := buildkiteInstallerBase + s.installer
 	install := append([]string{"DD_CIVISIBILITY_INSTRUMENTATION_LANGUAGES=" + s.languages}, s.tracers...)
+	file, output, quoted := s.form.files()
+	exports, folder := "export ", ".datadog"
+	if s.form.folder != "" {
+		exports, folder = `export DD_TRACER_FOLDER="`+s.form.folder+`" `, `"$DD_TRACER_FOLDER"`
+	}
 	core := []string{
-		"export DD_SITE=" + s.site + ` DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER="` + buildkiteInstallerProvider + `"`,
-		"if mkdir -p .datadog &&",
-		"  { curl -fsSL -o " + buildkiteInstallerFile + " " + url + " || wget -qO " + buildkiteInstallerFile + " " + url + "; } &&",
-		`  echo "` + s.checksum + "  " + buildkiteInstallerFile + `" | { sha256sum -c - || shasum -a 256 -c -; } >/dev/null 2>&1 &&`,
-		"  " + strings.Join(install, " ") + " bash " + buildkiteInstallerFile + " >" + buildkiteInstallerOutput + "; then",
+		exports + "DD_SITE=" + s.site + ` DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER="` + s.form.provider + `"`,
+		"if mkdir -p " + folder + " &&",
+		"  { curl -fsSL -o " + file + " " + url + " || wget -qO " + file + " " + url + "; } &&",
+		`  echo "` + s.checksum + "  " + quoted + `" | { sha256sum -c - || shasum -a 256 -c -; } >/dev/null 2>&1 &&`,
+		"  " + strings.Join(install, " ") + " bash " + file + " >" + output + "; then",
 		"  while IFS='=' read -r dd_name dd_value; do",
 		`    case "$dd_name" in '' | [0-9]* | *[!A-Za-z0-9_]*) ;; *) export "$dd_name=$dd_value" ;; esac`,
-		"  done <" + buildkiteInstallerOutput,
+		"  done <" + output,
 		"else",
 		`  echo "` + buildkiteFailedInstallMessage + `" >&2`,
 		"fi",
 	}
 	if !s.guarded {
-		return strings.Join(core, "\n")
+		return strings.Join(append(slices.Clone(s.before), core...), "\n")
 	}
-	lines := []string{`if [ -n "${DD_API_KEY:-}" ]; then`}
+	lines := append(slices.Clone(s.before), "if "+s.form.keyGuard()+"; then")
 	for _, line := range append(core, s.after...) {
 		lines = append(lines, "  "+line)
 	}
@@ -129,7 +177,12 @@ func (s buildkiteSnippet) shell() string {
 
 // buildkiteRequestSnippet is the snippet ddtest prescribes for request.
 func buildkiteRequestSnippet(request ciSetupRequest) buildkiteSnippet {
-	snippet := buildkiteSnippet{guarded: true, site: `"` + request.Site + `"`, languages: `"` + request.Language + `"`, installer: buildkiteInstaller, checksum: buildkiteInstallerChecksum, after: request.After}
+	return requestSnippet(request, buildkiteSnippetForm)
+}
+
+// requestSnippet is the snippet in form ddtest prescribes for request.
+func requestSnippet(request ciSetupRequest, form snippetForm) buildkiteSnippet {
+	snippet := buildkiteSnippet{form: form, guarded: true, site: `"` + request.Site + `"`, languages: `"` + request.Language + `"`, installer: buildkiteInstaller, checksum: buildkiteInstallerChecksum, after: request.After}
 	if request.TracerInput != "" {
 		snippet.tracers = []string{(buildkite{}).setupInput(request.TracerInput) + `="` + request.TracerVersion + `"`}
 	}
@@ -143,23 +196,48 @@ func buildkiteRequestSnippet(request ciSetupRequest) buildkiteSnippet {
 // statements it spans. A statement that runs the installer in another shape
 // is a setup with a problem, so the step's tests report it.
 func buildkiteSetupAt(stmts []*syntax.Stmt, i int, known map[string]string) (setup ciSetup, consumed int, ok bool) {
+	return snippetSetupAt(stmts, i, known, buildkiteSnippetForm, nil)
+}
+
+// snippetSetupAt recognizes the setup snippet in form starting at stmts[i],
+// as buildkiteSetupAt does. When it starts with statements of before, which
+// may run before the snippet, they are part of it: setup.before lists them.
+func snippetSetupAt(stmts []*syntax.Stmt, i int, known map[string]string, form snippetForm, before []string) (setup ciSetup, consumed int, ok bool) {
+	var prefix []string
+	for start := i; i < len(stmts) && len(before) > 0; i++ {
+		text := shellText(stmts[i])
+		if !slices.ContainsFunc(before, func(statement string) bool {
+			expected, parsed := parseCIShell(statement)
+			return parsed && len(expected.Stmts) == 1 && shellText(expected.Stmts[0]) == text
+		}) {
+			break
+		}
+		prefix = append(prefix, text)
+		consumed = i + 1 - start
+	}
+	if i >= len(stmts) {
+		return ciSetup{}, 0, false
+	}
 	mentions := func(stmt *syntax.Stmt) bool { return buildkiteInstallerMentions.MatchString(shellText(stmt)) }
 	_, export := stmts[i].Cmd.(*syntax.DeclClause)
 	unguarded := export && strings.Contains(shellText(stmts[i]), "DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER") && i+1 < len(stmts) && mentions(stmts[i+1])
 	if !mentions(stmts[i]) && !unguarded {
 		return ciSetup{}, 0, false
 	}
-	setup = ciSetup{Reference: "Datadog installer", Pinned: true, DefaultLatest: true, Inputs: map[string]string{"api_key": "$DD_API_KEY"}}
+	setup = ciSetup{Reference: "Datadog installer", Pinned: true, DefaultLatest: true, Inputs: map[string]string{"api_key": "$DD_API_KEY"}, before: prefix}
 	var core, after []*syntax.Stmt
 	guarded := false
-	if clause, isIf := stmts[i].Cmd.(*syntax.IfClause); isIf && gitLabKeyGuard(clause.Cond) == "DD_API_KEY" && clause.Else != nil && len(clause.Else.Cond) == 0 && len(clause.Then) >= 2 {
-		core, after, guarded, consumed = clause.Then[:2], clause.Then[2:], true, 1
+	if clause, isIf := stmts[i].Cmd.(*syntax.IfClause); isIf && (gitLabKeyGuard(clause.Cond) == "DD_API_KEY" || keySetGuard(clause.Cond)) && clause.Else != nil && len(clause.Else.Cond) == 0 && len(clause.Then) >= 2 {
+		core, after, guarded = clause.Then[:2], clause.Then[2:], true
+		consumed++
 	} else if unguarded {
-		core, consumed = stmts[i:i+2], 2
+		core = stmts[i : i+2]
+		consumed += 2
 	} else {
-		core, consumed = stmts[i:i+1], 1
+		core = stmts[i : i+1]
+		consumed++
 	}
-	snippet := buildkiteSnippet{guarded: guarded}
+	snippet := buildkiteSnippet{form: form, guarded: guarded, before: prefix}
 	for _, stmt := range core {
 		syntax.Walk(stmt, func(node syntax.Node) bool {
 			var assigns []*syntax.Assign
@@ -196,7 +274,7 @@ func buildkiteSetupAt(stmts []*syntax.Stmt, i int, known map[string]string) (set
 		snippet.installer = match[1]
 		setup.Reference = "Datadog installer " + match[1]
 	}
-	if match := buildkiteInstallerSum.FindStringSubmatch(text); match != nil {
+	if match := form.checksumPattern().FindStringSubmatch(text); match != nil {
 		snippet.checksum = match[1]
 	}
 	for _, stmt := range after {
@@ -207,10 +285,11 @@ func buildkiteSetupAt(stmts []*syntax.Stmt, i int, known map[string]string) (set
 	}
 	shaped := snippet.installer != "" && snippet.site != "" && snippet.languages != ""
 	if shaped {
+		start := i - len(prefix)
 		expected, parsed := parseCIShell(snippet.shell())
 		shaped = parsed && len(expected.Stmts) == consumed
 		for j := 0; shaped && j < consumed; j++ {
-			shaped = shellText(expected.Stmts[j]) == shellText(stmts[i+j])
+			shaped = shellText(expected.Stmts[j]) == shellText(stmts[start+j])
 		}
 	}
 	if !shaped {
@@ -223,7 +302,20 @@ func buildkiteSetupAt(stmts []*syntax.Stmt, i int, known map[string]string) (set
 	return setup, consumed, true
 }
 
+// keySetGuard reports the condition [ "${DD_API_KEY:+set}" = set ] (see
+// snippetForm.keySet).
+func keySetGuard(condition []*syntax.Stmt) bool {
+	expected, parsed := parseCIShell(snippetForm{keySet: true}.keyGuard())
+	return parsed && len(condition) == 1 && len(expected.Stmts) == 1 && shellText(condition[0]) == shellText(expected.Stmts[0])
+}
+
 func (b buildkite) setupProblem(setup ciSetup, tracerInput string, exact func(string) bool, example, site string) string {
+	return snippetSetupProblem(setup, tracerInput, exact, example, site)
+}
+
+// snippetSetupProblem is setupProblem for the setup snippet, whichever
+// provider's steps run it.
+func snippetSetupProblem(setup ciSetup, tracerInput string, exact func(string) bool, example, site string) string {
 	if setup.Problem != "" {
 		return setup.Problem
 	}
@@ -231,7 +323,7 @@ func (b buildkite) setupProblem(setup ciSetup, tracerInput string, exact func(st
 		return "The Datadog setup snippet runs " + setup.Reference + " without the pinned release and SHA256 ddtest validates; download " + buildkiteInstallerBase + buildkiteInstaller + " and check its SHA256 " + buildkiteInstallerChecksum + ", as ddtest's instructions show."
 	}
 	if tracer := setup.Inputs[tracerInput]; !exact(tracer) {
-		return "The Datadog setup snippet's " + b.setupInput(tracerInput) + " " + fmt.Sprintf("%q", tracer) + " is not an exact release; set an exact version such as " + example + "."
+		return "The Datadog setup snippet's " + (buildkite{}).setupInput(tracerInput) + " " + fmt.Sprintf("%q", tracer) + " is not an exact release; set an exact version such as " + example + "."
 	}
 	configured := setup.Inputs["site"]
 	if configured == "" {

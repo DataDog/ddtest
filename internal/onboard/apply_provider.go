@@ -29,9 +29,6 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 	}
 	request := language.ciSetupRequest(root, framework, site, provider.setupTerms())
 	request.TracerVersion, request.Framework = version, framework
-	// A CI server plugin's setup is one option the provider merges into, so
-	// one that differs is completed instead of left for review.
-	plugin := provider.setupTerms().Plugin
 	var targets, unsupported []ciSetupTarget
 	configured := 0
 	for _, workflow := range workflows {
@@ -41,6 +38,16 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				continue
 			}
 			location := workflow.Path + " / " + name
+			// The job's own setup mechanism, where the provider has several.
+			provider, request := setupProviderFor(provider, job), request
+			if job.SetupProvider != nil {
+				request = language.ciSetupRequest(root, framework, site, provider.setupTerms())
+				request.TracerVersion, request.Framework = version, framework
+			}
+			// A CI server plugin's setup is one option the provider merges
+			// into, so one that differs is completed instead of left for
+			// review.
+			plugin := provider.setupTerms().Plugin
 			first, setupIndex := -1, -1
 			var resolution commandResolution
 			var tests []TestCommand
@@ -225,7 +232,7 @@ func writesPluginSetup(provider ciProvider, language string) bool {
 // (see EditThenApplyGap). A refusal, such as a plugin that reports to
 // another site than the selected one, leaves the setup to the instructions.
 func pluginSetupApplies(root, framework, site string) bool {
-	_, err := PlanProviderSetup(root, framework, site)
+	_, err := planProviderSetup(root, framework, site, snippetProbeRelease)
 	var edit *EditThenApplyGap
 	return err == nil || errors.As(err, &edit)
 }
@@ -249,11 +256,33 @@ func pluginSetupRefusal(root, framework string) string {
 	if err != nil || !providerWritesPluginSetup(provider) {
 		return ""
 	}
-	_, err = PlanProviderSetup(root, framework, "")
+	// A language whose onboard --apply selects the tracer release a setup
+	// snippet installs is refused for other reasons only.
+	release := ""
+	if language := discoveryLanguageFor(framework); language != nil && language.automaticProviderSetup(framework) {
+		release = snippetProbeRelease
+	}
+	_, err = planProviderSetup(root, framework, "", release)
 	var gap *SetupGap
 	var edit *EditThenApplyGap
 	if errors.As(err, &gap) && !errors.As(err, &edit) {
 		return gap.Error()
+	}
+	return ""
+}
+
+// pluginSetupEditFirst is the source edit onboard --apply needs before it
+// writes the selected provider's plugin setup for framework in root (see
+// EditThenApplyGap); empty when it needs none, or cannot write it.
+func pluginSetupEditFirst(root, framework string) string {
+	provider, err := currentCIProvider(root)
+	if err != nil || !providerWritesPluginSetup(provider) {
+		return ""
+	}
+	_, err = PlanProviderSetup(root, framework, "")
+	var edit *EditThenApplyGap
+	if errors.As(err, &edit) {
+		return edit.Error()
 	}
 	return ""
 }
@@ -263,6 +292,18 @@ func pluginSetupRefusal(root, framework string) string {
 // reporting to site (empty: any), without changing the repository. A job
 // whose setup is already complete keeps it; one that differs is completed.
 func PlanProviderSetup(root, framework, site string) (*SetupPlan, error) {
+	return planProviderSetup(root, framework, site, "")
+}
+
+// snippetProbeRelease is the tracer release a plan that only checks whether
+// the plugin's setup can be written gives a setup snippet (see
+// pluginSetupApplies): onboard --apply selects the one it writes.
+const snippetProbeRelease = "0.0.0"
+
+// planProviderSetup is PlanProviderSetup, with release the tracer release
+// of the setup snippets a provider adds beside its plugin (see
+// jenkinsContainer); empty uses the one the project's dependencies pin.
+func planProviderSetup(root, framework, site, release string) (*SetupPlan, error) {
 	provider, err := currentCIProvider(root)
 	if err != nil {
 		return nil, err
@@ -278,6 +319,10 @@ func PlanProviderSetup(root, framework, site string) (*SetupPlan, error) {
 	// An empty site accepts any the setup reports to.
 	request := language.ciSetupRequest(root, framework, site, provider.setupTerms())
 	request.Framework = framework
+	if locked, ok := language.(ciLockedTracer); ok && release == "" {
+		release = locked.lockedTracer(root)
+	}
+	request.TracerVersion = release
 	var targets []ciSetupTarget
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
@@ -332,7 +377,7 @@ func providerJobSetupProblem(root string, provider ciProvider, workflow ciWorkfl
 		case setup == nil && other != nil:
 			return other.Problem
 		case setup == nil:
-			return "no " + provider.setupName() + " for the language runs before its tests."
+			return "no " + setupProviderFor(provider, job).setupName() + " for the language runs before its tests."
 		}
 		if problem := provider.setupProblem(*setup, "", func(string) bool { return true }, "", site); problem != "" {
 			return problem

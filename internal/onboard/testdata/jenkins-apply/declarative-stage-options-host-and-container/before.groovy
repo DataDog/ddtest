@@ -3,7 +3,9 @@ pipeline {
   stages {
     stage('Docker') {
       agent { docker { image 'node:22' } }
-      steps { sh 'npm test' }
+      steps {
+        sh 'npm test'
+      }
     }
     stage('Host') {
       agent { label 'linux' }

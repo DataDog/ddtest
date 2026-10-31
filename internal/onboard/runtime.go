@@ -178,6 +178,10 @@ type runtimeJob struct {
 	// instrument the job at all, such as a container the Datadog Jenkins
 	// plugin does not reach; such a job is never certified.
 	SetupUnsupported string `yaml:"-"`
+	// SetupProvider is the provider whose setup mechanism the job uses when
+	// it is not its provider's own, such as Datadog's installer in a Jenkins
+	// stage that runs in a container (see setupProviderFor); nil otherwise.
+	SetupProvider ciProvider `yaml:"-"`
 	// Host describes the agent a job without an image runs on, such as a
 	// Jenkins agent label, for the user who knows its runtime; empty uses
 	// the provider's generic description.
@@ -672,7 +676,7 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 			return finding
 		}
 		finding.Reason = "No Datadog JavaScript action runs before this test step for this matrix entry. It is not validated as instrumented."
-		if provider := activeOrDefaultCIProvider(); !provider.sharedSyntax() {
+		if provider := setupProviderFor(activeOrDefaultCIProvider(), job); !provider.sharedSyntax() {
 			finding.Reason = "No " + provider.setupName() + " selecting JavaScript runs before this test command. It is not validated as instrumented."
 			if job.SetupUnsupported != "" {
 				finding.Reason = unsupportedSetupReason(provider, job)
@@ -692,9 +696,10 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	}
 	finding.TracerFloating = finding.TracerRequested != "" && strings.TrimPrefix(finding.TracerRequested, "v") != requirement.Version
 	finding.Requirement = requirement.Node
+	finding.SetupCaveats = slices.Clone(state.caveats)
 	if state.floating {
 		// The exception to an exact release: the mechanism cannot pin one.
-		finding.SetupCaveats = append(slices.Clone(state.caveats), "dd-trace version: the "+state.action+" installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@"+requirement.Version+", the latest release when it ran. A later release can change behavior or drop support for the CI Node version.")
+		finding.SetupCaveats = append(finding.SetupCaveats, "dd-trace version: the "+state.action+" installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@"+requirement.Version+", the latest release when it ran. A later release can change behavior or drop support for the CI Node version.")
 	}
 	for _, entry := range resolution.Tests {
 		words, _ := shellquote.Split(entry.Command)
