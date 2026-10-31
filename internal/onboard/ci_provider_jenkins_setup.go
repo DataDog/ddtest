@@ -135,6 +135,15 @@ func jenkinsTestOptimization(call *groovyCall) (string, groovyNode, bool) {
 	return "", nil, false
 }
 
+// jenkinsPositionalArgs reports a call that passes an argument without a
+// name, other than its closure, such as datadog([collectLogs: true]).
+func jenkinsPositionalArgs(call *groovyCall) bool {
+	return slices.ContainsFunc(call.Args, func(arg groovyArg) bool {
+		_, closure := arg.Value.(*groovyClosure)
+		return arg.Name == "" && !closure
+	})
+}
+
 // datadog reads a datadog(…) call; nil when it does not configure Test
 // Optimization (such as datadog(collectLogs: true)).
 func (r *jenkinsReader) datadog(call *groovyCall, scope jenkinsScope) *jenkinsSetup {
@@ -144,6 +153,11 @@ func (r *jenkinsReader) datadog(call *groovyCall, scope jenkinsScope) *jenkinsSe
 	}
 	setup := &jenkinsSetup{source: r.where(call), variables: map[string]string{}}
 	fail := func(problem string) { setup.problems = append(setup.problems, problem) }
+	if jenkinsPositionalArgs(call) {
+		// Groovy passes the named arguments as one more map, and a Pipeline
+		// step takes a single one: Jenkins rejects the call.
+		fail("The datadog(…) call at " + setup.source + " passes a positional argument, such as a map, beside its named arguments, which Jenkins rejects; write every argument as a named one, such as datadog(collectLogs: true, " + key + ": [...]).")
+	}
 	options, literal := value.(*groovyMap)
 	if !literal {
 		fail("The datadog(" + key + ": …) option at " + setup.source + " is not a literal map, so ddtest cannot tell what it enables; write [enabled: true, serviceName: '<service>', languages: [...]] literally.")

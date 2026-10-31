@@ -121,6 +121,12 @@ type discoveryLanguage interface {
 	// exports with the job's own value, for a value a scope narrower than
 	// the pipeline sets; empty when the plugin replaces it.
 	ciPluginComposes(key string) string
+	// ciShellAfter reports whether a test step of job, which resolution
+	// resolved for framework, needs the commands that follow the setup in
+	// its own shell (ciSetupRequest.After) when the request has any, and
+	// explains one that needs them but does not have them in effect; problem
+	// is empty when it has.
+	ciShellAfter(workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string, resolution commandResolution) (needed bool, problem string)
 	// selectsShellRuntime reports a shell command, by its words, that
 	// selects another of the language's runtimes than the one on PATH, such
 	// as a version manager or the script that loads one.

@@ -170,5 +170,9 @@ func (javaDiscovery) ciPluginExports(map[string]string) (map[string]string, map[
 
 func (javaDiscovery) ciPluginComposes(string) string { return "" }
 
+func (javaDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string, commandResolution) (bool, string) {
+	return false, ""
+}
+
 // No shell runtime selection is modeled for this language.
 func (javaDiscovery) selectsShellRuntime([]string) bool { return false }

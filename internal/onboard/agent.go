@@ -204,6 +204,12 @@ type StartOptions struct {
 
 func Start(output io.Writer) error { return StartWithOptions(output, StartOptions{}) }
 
+// literalSite reports a site the handoff accepts: empty, or a literal
+// Datadog hostname.
+func literalSite(site string) bool {
+	return strings.Trim(site, "abcdefghijklmnopqrstuvwxyz0123456789.-") == ""
+}
+
 func StartWithOptions(output io.Writer, options StartOptions) error {
 	fail := func(code string, err error) error {
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: code, Reason: err.Error(), NextAction: "supply_input"}))
@@ -281,7 +287,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		// it into the action and the validation command records it.
 		options.Site = os.Getenv("DD_SITE")
 	}
-	if !automatic && strings.Trim(options.Site, "abcdefghijklmnopqrstuvwxyz0123456789.-") != "" {
+	if !automatic && !literalSite(options.Site) {
 		err := fmt.Errorf("site must be a literal Datadog hostname: %q", options.Site)
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input"}))
 	}

@@ -562,6 +562,11 @@ func (rubyDiscovery) ciPluginLanguage() string { return "RUBY" }
 // The Datadog Jenkins plugin replaces RUBYOPT.
 func (rubyDiscovery) ciPluginComposes(string) string { return "" }
 
+// Ruby's setup needs no command after it in the test's shell.
+func (rubyDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string, commandResolution) (bool, string) {
+	return false, ""
+}
+
 // Ruby version managers: rbenv, rvm, chruby, and sourcing the scripts that
 // load RVM or chruby.
 func (rubyDiscovery) selectsShellRuntime(words []string) bool {

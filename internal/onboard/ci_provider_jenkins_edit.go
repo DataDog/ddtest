@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // onboard --apply enables the Datadog Jenkins plugin in the Jenkinsfiles
@@ -64,12 +66,16 @@ type jenkinsEditor struct {
 	wrapped   map[*groovyCall]bool
 }
 
-// jenkinsShTarget is the sh call that runs a target job's first test
-// command, with the commands that must precede the test in its script.
+// jenkinsShTarget is a statement of an sh script that runs a target job's
+// tests: the sh call (its offset in the file) and the statement (its offset
+// in the script), with the commands that must precede it in that script.
+// Each sh step runs a shell of its own, so every one that runs the tests
+// needs them.
 type jenkinsShTarget struct {
-	job   string
-	line  int
-	after []string
+	job             string
+	line            int
+	call, statement int
+	after           []string
 }
 
 // planSetupEdits enables the Datadog Jenkins plugin for every target job, or
@@ -87,8 +93,10 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 	byFile := map[string][]jenkinsShTarget{}
 	jobs := map[string][]string{}
 	containers := []string{}
+	language := discoveryLanguageName(request.Framework)
 	for _, target := range targets {
-		job, step, ok := gitLabTarget(workflows, target)
+		job, _, ok := gitLabTarget(workflows, target)
+		workflow := jenkinsWorkflowAt(workflows, target.Workflow)
 		if !ok {
 			return nil, nil, &SetupGap{target.Workflow + " / " + target.Job, "The test step is not a Jenkinsfile sh step ddtest can edit."}
 		}
@@ -96,15 +104,25 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 			containers = append(containers, target.Workflow+" / "+target.Job)
 			continue
 		}
-		line, err := strconv.Atoi(step.Source[strings.LastIndex(step.Source, ":")+1:])
-		if err != nil || !strings.HasPrefix(step.Source, target.Workflow+":") {
-			return nil, nil, &SetupGap{target.Workflow + " / " + target.Job, "The test step's position in the Jenkinsfile could not be located."}
-		}
 		after := request.After
 		if target.After != nil {
 			after = target.After
 		}
-		byFile[target.Workflow] = append(byFile[target.Workflow], jenkinsShTarget{job: target.Job, line: line, after: after})
+		// The first test step, and every later one: each sh step is a
+		// shell of its own.
+		for i := target.Step; i < len(job.Steps); i++ {
+			current := job.Steps[i]
+			resolution := resolveTestStep(root, workflow, job, current, language, request.Framework)
+			if i > target.Step && !resolution.Matched {
+				continue
+			}
+			line, err := strconv.Atoi(current.Source[strings.LastIndex(current.Source, ":")+1:])
+			origin, located := current.origin.(jenkinsShellStep)
+			if err != nil || !located || !strings.HasPrefix(current.Source, target.Workflow+":") {
+				return nil, nil, &SetupGap{target.Workflow + " / " + target.Job, "The test step's position in the Jenkinsfile could not be located."}
+			}
+			byFile[target.Workflow] = append(byFile[target.Workflow], jenkinsShTarget{job: target.Job, line: line, call: origin.call, statement: origin.statement, after: jenkinsStepAfter(after, workflow, job, current, request.Framework, resolution)})
+		}
 		jobs[target.Workflow] = append(jobs[target.Workflow], target.Job)
 	}
 	if len(byFile) == 0 {
@@ -131,6 +149,30 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 		edits = append(edits, edit)
 	}
 	return edits, nil, nil
+}
+
+// jenkinsWorkflowAt is the workflow read from file.
+func jenkinsWorkflowAt(workflows []ciWorkflow, file string) ciWorkflow {
+	for _, workflow := range workflows {
+		if workflow.Path == file {
+			return workflow
+		}
+	}
+	return ciWorkflow{}
+}
+
+// jenkinsStepAfter is what must run before a test step of job in its sh
+// script: after, the commands that follow the setup, when the language
+// needs them for that step (see discoveryLanguage.ciShellAfter).
+func jenkinsStepAfter(after []string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string, resolution commandResolution) []string {
+	language := discoveryLanguageFor(framework)
+	if len(after) == 0 || language == nil {
+		return nil
+	}
+	if needed, _ := language.ciShellAfter(workflow, job, step, framework, resolution); !needed {
+		return nil
+	}
+	return after
 }
 
 // checkJenkinsfileSetup reads the edited Jenkinsfile again: it must keep
@@ -163,11 +205,38 @@ func checkJenkinsfileSetup(root string, provider ciProvider, workflows []ciWorkf
 	}
 	language := discoveryLanguageName(request.Framework)
 	for _, name := range jobs {
-		if problem := providerJobSetupProblem(root, provider, edited, name, language, request.Framework, request.Site); problem != "" {
+		problem := providerJobSetupProblem(root, provider, edited, name, language, request.Framework, request.Site)
+		if problem == "" {
+			problem = jenkinsAfterProblem(root, edited, name, language, request)
+		}
+		if problem != "" {
 			return gap(file + " / " + name + ": " + problem)
 		}
 	}
 	return nil
+}
+
+// jenkinsAfterProblem explains a test step of a job whose sh script does not
+// have the commands that follow the setup (request's After) in effect
+// before it, in its own shell; empty when every one that needs them does.
+// The reader follows the script's statements in order, so a command after
+// the test, in a comment, or undone before it, leaves the step without it.
+func jenkinsAfterProblem(root string, workflow ciWorkflow, name, language string, request ciSetupRequest) string {
+	registered := discoveryLanguageFor(request.Framework)
+	if len(request.After) == 0 || registered == nil {
+		return ""
+	}
+	job := workflow.Jobs[name]
+	for _, step := range job.Steps {
+		resolution := resolveTestStep(root, workflow, job, step, language, request.Framework)
+		if !resolution.Matched {
+			continue
+		}
+		if needed, problem := registered.ciShellAfter(workflow, job, step, request.Framework, resolution); needed && problem != "" {
+			return "the sh step at " + step.Source + " runs " + OneLineExcerpt(step.Run) + " without " + strings.Join(request.After, "; ") + " in effect before it in its shell: " + problem + "; add it inside that sh script, before the test command."
+		}
+	}
+	return ""
 }
 
 // planJenkinsfileSetup returns source with the plugin enabled for targets.
@@ -303,63 +372,64 @@ func (e *jenkinsEditor) plan(targets []jenkinsShTarget) error {
 			return e.gap(libraries, "The pipeline loads shared libraries (libraries directive), which may declare its options themselves; ddtest does not edit pipelines that use shared libraries.")
 		}
 	}
-	// The sh calls of each target line, with what encloses them.
+	// The sh calls, by their offset, with what encloses them: a target's
+	// call is the one its step was read from, whichever others share its
+	// line.
 	type located struct {
 		call      *groovyCall
 		ancestors []groovyNode
 	}
-	byLine := map[int][]located{}
+	byStart := map[int][]located{}
 	groovyVisit(e.tree, nil, func(node groovyNode, ancestors []groovyNode) {
 		if call, ok := jenkinsStep(node, "sh"); ok {
-			line := groovyLine(e.source, call.Start)
-			byLine[line] = append(byLine[line], located{call, ancestors})
+			byStart[call.Start] = append(byStart[call.Start], located{call, ancestors})
 		}
 	})
 	options := false
+	// The commands each sh call's script needs, and the statements they
+	// must precede.
 	esm := map[*groovyCall][]string{}
+	statements := map[*groovyCall][]int{}
 	for _, target := range targets {
-		calls := byLine[target.line]
-		if len(calls) == 0 {
-			return e.gap(nil, "The sh step of "+target.job+" at line "+strconv.Itoa(target.line)+" could not be located.")
+		calls := byStart[target.call]
+		if len(calls) != 1 {
+			return e.gap(nil, "The sh step of "+target.job+" at line "+strconv.Itoa(target.line)+" could not be located as one sh call in the Jenkinsfile, so ddtest cannot tell which one runs the tests.")
 		}
+		current := calls[0]
 		if len(target.after) > 0 {
-			if len(calls) > 1 {
-				return &EditThenApplyGap{SetupGap{e.file + ":" + strconv.Itoa(target.line), "Several sh steps share this line, so ddtest cannot tell which one runs the tests. Add these commands inside the sh script that runs the tests, before the test command, then rerun onboard --apply, which enables the Datadog Jenkins plugin:\n" + strings.Join(target.after, "\n")}}
-			}
-			esm[calls[0].call] = target.after
+			esm[current.call] = target.after
+			statements[current.call] = append(statements[current.call], target.statement)
 		}
-		for _, current := range calls {
-			var datadogs []*groovyCall
-			var node *groovyCall
-			inPipeline := false
-			for _, ancestor := range current.ancestors {
-				if call, ok := jenkinsStep(ancestor, "datadog"); ok && call.Closure != nil {
-					datadogs = append(datadogs, call)
-				}
-				if call, ok := jenkinsStep(ancestor, "node"); ok && node == nil {
-					node = call
-				}
-				if ancestor == pipeline {
-					inPipeline = true
-				}
+		var datadogs []*groovyCall
+		var node *groovyCall
+		inPipeline := false
+		for _, ancestor := range current.ancestors {
+			if call, ok := jenkinsStep(ancestor, "datadog"); ok && call.Closure != nil {
+				datadogs = append(datadogs, call)
 			}
-			switch {
-			case len(datadogs) > 1:
-				return e.gap(datadogs[1], "Several datadog(…) calls enclose the tests of "+target.job+"; ddtest cannot tell which arguments the plugin applies.")
-			case len(datadogs) == 1:
-				if err := e.merge(datadogs[0]); err != nil {
-					return err
-				}
-			case pipeline != nil && !inPipeline:
-				return e.gap(current.call, "The tests of "+target.job+" run outside the declarative pipeline block, where its options do not apply.")
-			case pipeline != nil:
-				options = true
-			case node == nil:
-				return e.gap(current.call, "The tests of "+target.job+" run outside a node block ddtest can wrap.")
-			default:
-				if err := e.wrap(node); err != nil {
-					return err
-				}
+			if call, ok := jenkinsStep(ancestor, "node"); ok && node == nil {
+				node = call
+			}
+			if ancestor == pipeline {
+				inPipeline = true
+			}
+		}
+		switch {
+		case len(datadogs) > 1:
+			return e.gap(datadogs[1], "Several datadog(…) calls enclose the tests of "+target.job+"; ddtest cannot tell which arguments the plugin applies.")
+		case len(datadogs) == 1:
+			if err := e.merge(datadogs[0]); err != nil {
+				return err
+			}
+		case pipeline != nil && !inPipeline:
+			return e.gap(current.call, "The tests of "+target.job+" run outside the declarative pipeline block, where its options do not apply.")
+		case pipeline != nil:
+			options = true
+		case node == nil:
+			return e.gap(current.call, "The tests of "+target.job+" run outside a node block ddtest can wrap.")
+		default:
+			if err := e.wrap(node); err != nil {
+				return err
 			}
 		}
 	}
@@ -369,7 +439,7 @@ func (e *jenkinsEditor) plan(targets []jenkinsShTarget) error {
 		}
 	}
 	for _, call := range slices.SortedFunc(maps.Keys(esm), func(a, b *groovyCall) int { return a.Start - b.Start }) {
-		if err := e.prepend(call, esm[call]); err != nil {
+		if err := e.prepend(call, esm[call], statements[call]); err != nil {
 			return err
 		}
 	}
@@ -599,7 +669,9 @@ func (e *jenkinsEditor) optionsBlock(options *groovyCall) error {
 }
 
 // wrap encloses a scripted node block in datadog(…) { … }, indenting its
-// lines one step; lines inside multi-line strings keep their bytes.
+// lines one step; lines inside multi-line strings keep their bytes. It only
+// inserts text, at line starts and around the block, so edits inside the
+// block (such as an sh script's loader line) compose with it.
 func (e *jenkinsEditor) wrap(node *groovyCall) error {
 	if e.wrapped[node] {
 		return nil
@@ -620,24 +692,23 @@ func (e *jenkinsEditor) wrap(node *groovyCall) error {
 	}
 	unit := e.unit(outer, inner)
 	start, end := e.lineStart(node.Start), e.lineEnd(node.End)
-	var text strings.Builder
-	text.WriteString(outer + "datadog(testOptimization: " + e.optionsMap() + ") {" + e.newline)
-	for offset := start; ; {
-		lineEnd := min(e.lineEnd(offset), end)
-		line := e.source[offset:lineEnd]
-		if strings.TrimSpace(line) != "" && !e.inString(offset) {
-			text.WriteString(unit)
+	e.add(start, start, outer+"datadog(testOptimization: "+e.optionsMap()+") {"+e.newline+unit)
+	for offset := strings.Index(e.source[start:end], "\n"); offset >= 0; {
+		line := start + offset + 1
+		next := strings.Index(e.source[line:end], "\n")
+		lineEnd := end
+		if next >= 0 {
+			lineEnd = line + next
 		}
-		text.WriteString(line)
-		if lineEnd >= end {
+		if strings.TrimSpace(e.source[line:lineEnd]) != "" && !e.inString(line) {
+			e.add(line, line, unit)
+		}
+		if next < 0 {
 			break
 		}
-		next := strings.Index(e.source[lineEnd:], "\n") + lineEnd + 1
-		text.WriteString(e.source[lineEnd:next])
-		offset = next
+		offset = line + next - start
 	}
-	text.WriteString(e.newline + outer + "}")
-	e.add(start, end, text.String())
+	e.add(end, end, e.newline+outer+"}")
 	return nil
 }
 
@@ -650,6 +721,11 @@ func (e *jenkinsEditor) merge(call *groovyCall) error {
 		return nil
 	}
 	e.merged[call] = true
+	if jenkinsPositionalArgs(call) {
+		// Its arguments are a map ddtest would have to read, and a named one
+		// beside it makes a call Jenkins rejects.
+		return e.gap(call, "The datadog(…) call has positional or computed arguments, so ddtest cannot safely merge the setup into it: Jenkins rejects a named testOptimization argument beside them. Write its arguments as named ones, such as datadog(collectLogs: true) { … }, then rerun onboard --apply.")
+	}
 	key, value, ok := jenkinsTestOptimization(call)
 	if !ok {
 		argument := "testOptimization: " + e.optionsMap()
@@ -769,7 +845,13 @@ func (e *jenkinsEditor) append(open, lastStart, lastEnd int, item string) {
 
 // prepend adds commands to the start of an sh step's script, which must be
 // a single-quoted literal: they then run in the test's shell, before it.
-func (e *jenkinsEditor) prepend(call *groovyCall, commands []string) error {
+// tests are the offsets in the script of the statements that run the tests;
+// commands that already run as statements of the script before every one
+// of them are kept as they are. One that only follows a test, sits in a
+// comment or runs inside another statement does not count: the commands
+// are added at the start, and the check of the edited Jenkinsfile then
+// requires them to take effect before every test.
+func (e *jenkinsEditor) prepend(call *groovyCall, commands []string, tests []int) error {
 	location := e.file + ":" + strconv.Itoa(groovyLine(e.source, call.Start))
 	manual := func(reason string) error {
 		return &EditThenApplyGap{SetupGap{location, reason + " Add these commands inside the sh script that runs the tests, before the test command, then rerun onboard --apply, which enables the Datadog Jenkins plugin:\n" + strings.Join(commands, "\n")}}
@@ -784,7 +866,11 @@ func (e *jenkinsEditor) prepend(call *groovyCall, commands []string) error {
 		return manual("The sh script that runs the tests is not a single-quoted string literal, which ddtest edits only.")
 	}
 	text, _ := script.Value.literal()
-	if !slices.ContainsFunc(commands, func(command string) bool { return !strings.Contains(text, command) }) {
+	file, parsed := parseCIShell(text)
+	if !parsed {
+		return manual("The sh script that runs the tests is not shell ddtest can parse, so it cannot tell whether these commands run before the test command.")
+	}
+	if jenkinsCommandsPrecede(file, commands, tests) {
 		return nil
 	}
 	if first, _, _ := strings.Cut(strings.TrimLeft(text, " \t\r\n"), "\n"); strings.HasPrefix(first, "#!") {
@@ -810,4 +896,34 @@ func (e *jenkinsEditor) prepend(call *groovyCall, commands []string) error {
 	}
 	e.add(content, content, strings.Join(commands, "; ")+"; ")
 	return nil
+}
+
+// jenkinsCommandsPrecede reports whether each of commands runs as a
+// top-level statement of an sh script before every statement at tests (its
+// offsets in the script): on its own, not negated, backgrounded or
+// redirected, as the shell parser reads it.
+func jenkinsCommandsPrecede(file *syntax.File, commands []string, tests []int) bool {
+	printed := func(command syntax.Command) string {
+		var text strings.Builder
+		if err := syntax.NewPrinter().Print(&text, command); err != nil {
+			return ""
+		}
+		return text.String()
+	}
+	for _, command := range commands {
+		parsed, ok := parseCIShell(command)
+		if !ok || len(parsed.Stmts) != 1 {
+			return false
+		}
+		want := printed(parsed.Stmts[0].Cmd)
+		for _, test := range tests {
+			if want == "" || !slices.ContainsFunc(file.Stmts, func(stmt *syntax.Stmt) bool {
+				plain := !stmt.Negated && !stmt.Background && !stmt.Coprocess && len(stmt.Redirs) == 0
+				return plain && int(stmt.Pos().Offset()) < test && printed(stmt.Cmd) == want
+			}) {
+				return false
+			}
+		}
+	}
+	return true
 }

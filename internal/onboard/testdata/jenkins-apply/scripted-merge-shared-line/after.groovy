@@ -1,0 +1,1 @@
+datadog(collectLogs: true, testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT']]) { node { stage('Test') { sh 'npm test' } } }; datadog(collectLogs: true) { node { stage('Deploy') { sh 'echo deploying' } } }

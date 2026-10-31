@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -158,4 +159,35 @@ func TestOnboardApplyOnJenkinsWritesThePluginSetupForRuby(t *testing.T) {
 	command.SetOut(&preview)
 	_ = command.ExecuteContext(t.Context())
 	require.True(t, strings.HasPrefix(preview.String(), "RSpec CI setup is already configured; no edits.\n"), preview.String())
+}
+
+// onboard --apply --command is rejected before any Jenkinsfile is written,
+// for JavaScript's automatic setup and Ruby's plugin setup alike.
+func TestOnboardApplyOnJenkinsRejectsCommandBeforeWriting(t *testing.T) {
+	for _, language := range []string{"javascript", "ruby"} {
+		t.Run(language, func(t *testing.T) {
+			ciProviderFixture(t)
+			t.Cleanup(func() { _ = onboard.UseCIStatements(nil, nil) })
+			require.NoError(t, os.RemoveAll(".github"))
+			jenkinsfile := "node {\n  stage('Test') {\n    sh 'npx vitest run'\n  }\n}\n"
+			runtime := "node=22"
+			if language == "ruby" {
+				require.NoError(t, os.Remove("package.json"))
+				require.NoError(t, os.WriteFile("Gemfile", []byte("source 'https://rubygems.org'\ngem 'rspec'\n"), 0600))
+				jenkinsfile = "node {\n  stage('Test') {\n    sh 'bundle exec rspec'\n  }\n}\n"
+				runtime = "ruby=3.3"
+			}
+			require.NoError(t, os.WriteFile("Jenkinsfile", []byte(jenkinsfile), 0600))
+			t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND", "npx vitest run test/one.test.js")
+			settings.Init()
+			result, err := runProtocolCommand(t, newOnboardCommand(nil), "--apply", "--yes", "--format", "json", "--ci-runtime", runtime)
+			require.Error(t, err)
+			require.Contains(t, []string{"invalid_options", "validation_preparation"}, result.Code, result.Reason)
+			require.Contains(t, result.Reason, "--command")
+			require.Empty(t, result.Changes)
+			data, err := os.ReadFile("Jenkinsfile")
+			require.NoError(t, err)
+			require.Equal(t, jenkinsfile, string(data), "nothing is written")
+		})
+	}
 }

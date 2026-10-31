@@ -311,6 +311,19 @@ func (javascriptDiscovery) ciPluginComposes(key string) string {
 	return "on each agent it sets NODE_OPTIONS for every step to its preload followed by the NODE_OPTIONS of the first step it configures there, so this value is lost, or, when its step is that first one, it reaches every later step on the agent. ddtest validates with the pipeline's NODE_OPTIONS"
 }
 
+// Every test step registers the ESM loader in its own shell, except Mocha's
+// CommonJS ones: the step's effective NODE_OPTIONS, as the shell's
+// statements before it leave it, must have the plugin's loader.
+func (javascriptDiscovery) ciShellAfter(workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string, resolution commandResolution) (bool, string) {
+	if framework == "mocha" && !slices.ContainsFunc(resolution.Tests, func(command TestCommand) bool { return command.mochaESM }) {
+		return false, ""
+	}
+	if checkJestBootstrap(workflow, job, step, nil, true) != "" {
+		return true, "its NODE_OPTIONS does not register the tracer's ESM loader (--import), so nothing between those commands and the test command may replace NODE_OPTIONS"
+	}
+	return true, ""
+}
+
 // Node version managers: n 20, nvm use, fnm use, volta, nodenv, and
 // sourcing nvm.sh, which selects nvm's default.
 func (javascriptDiscovery) selectsShellRuntime(words []string) bool {
