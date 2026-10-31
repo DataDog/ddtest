@@ -161,6 +161,12 @@ func (javascriptDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"NODE_OPTIONS", "NODE_PATH", "NODE_ENV"}, name) || strings.HasPrefix(strings.ToLower(name), "npm_config_")
 }
 
+// Cypress reads every CYPRESS_ variable as a configuration override, as
+// CYPRESS_BASE_URL or CYPRESS_SPEC_PATTERN.
+func (javascriptDiscovery) toolVariable(name string) bool {
+	return strings.HasPrefix(name, "CYPRESS_")
+}
+
 func (javascriptDiscovery) cacheVariable(name string) bool {
 	return slices.Contains([]string{"npm_config_store_dir", "PNPM_STORE_DIR", "PNPM_HOME"}, name)
 }

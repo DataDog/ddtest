@@ -153,7 +153,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	t.isolated = copyRoot != original
 	executor := t.executor
 	// Earlier setup must not inherit variables declared only on the test step.
-	t.executor = configurationExecutor{commandExecutor: executor, environment: isolatedCIEnvironment(nil, sourceRoot, checkout), without: item.WithoutSecrets}
+	t.executor = configurationExecutor{commandExecutor: executor, environment: isolatedCIEnvironment(nil, sourceRoot, checkout), without: item.WithoutCIValues}
 	if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration preparation failed; tests were not started."}
 		return result, err
@@ -182,7 +182,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if err := t.lang().prepareConfiguration(t, item, original, copyRoot); err != nil {
 		return result, err
 	}
-	t.executor = configurationExecutor{commandExecutor: executor, environment: t.configurationEnvironment, without: item.WithoutSecrets}
+	t.executor = configurationExecutor{commandExecutor: executor, environment: t.configurationEnvironment, without: item.WithoutCIValues}
 	directory, err := localSetupDirectory(copyRoot, item.Directory)
 	if err != nil {
 		return result, err

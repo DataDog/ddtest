@@ -71,7 +71,7 @@ func TestRubyReadinessRunsWithoutOmittedSecrets(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, "Gemfile.lock"), "installed lock\n")
 	executor := &rubyReadinessExecutor{}
 	drive := &Testdrive{repositoryRoot: root, executor: executor}
-	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", WithoutSecrets: []string{"GITHUB_TOKEN"}}}}
+	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", WithoutCIValues: []string{"GITHUB_TOKEN"}}}}
 	_, err := drive.rubyBundleReadiness(t.Context(), scope)
 	require.NoError(t, err)
 	require.Len(t, executor.environments, 1)

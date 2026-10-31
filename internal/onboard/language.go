@@ -76,6 +76,10 @@ type discoveryLanguage interface {
 	// runtimeVariable reports an environment variable the language's
 	// runtime or tools read, which images commonly export.
 	runtimeVariable(name string) bool
+	// toolVariable reports an environment variable that adds options or
+	// arguments to the language's build or test tools, as Maven's
+	// MAVEN_ARGS: CI's value for it decides what runs.
+	toolVariable(name string) bool
 	// outsideFrameworkJob reports whether a CI job, on one matrix row,
 	// cannot run framework's tests: nothing it runs (following package and
 	// repository scripts) mentions the framework. Such a job without the

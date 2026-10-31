@@ -815,15 +815,19 @@ configuration whose CI step reads a remote browser grid's credentials from CI
 secrets (Sauce Labs, BrowserStack, LambdaTest, TestingBot): setup instruments it
 like any other step, and it is reported as running only in CI once a local
 configuration of the same suite passed its paired comparison; without one, it
-blocks. A GitHub Actions variable that carries only a credential secret, such
-as `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` or a `SONAR_TOKEN` set on the test
-step, its job or an earlier setup step, is a caveat as well: local validation
-runs without it (a value the host exports is unset too) and names it. A
-credential is a variable whose name ends with TOKEN, SECRET, PASSWORD,
-PASSPHRASE, API_KEY, ACCESS_KEY, SECRET_KEY, PRIVATE_KEY, CREDENTIALS or AUTH.
-A command that reads such a variable, a secret used as a setting (such as
-`AUTH_MODE` or a URL) and a remote grid's key outside WebdriverIO still
-require review. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
+blocks. A CI variable whose value only CI provides, set on the test step, its
+job or an earlier setup step, is a caveat as well: a secret, whatever its name,
+as `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` or `API_URL: ${{ secrets.API_URL }}`,
+a CI context such as `${{ github.ref }}`, a step output, or a provider's
+predefined variable such as GitLab's `$CI_COMMIT_TAG`. Local validation runs
+without it (a value the host exports is unset too) and names it; both paired
+runs miss it alike. A command line that expands such a variable, a value the
+job's own commands compute (`export SUITE=$(cat ci/suite)`), and a variable
+that controls the runtime, the tools or the tracer still require review:
+`PATH`, `HOME`, the dynamic linker's, `DD_*`, and each language's runtime,
+cache and tool variables, such as `NODE_OPTIONS`, `CYPRESS_*`, `PYTHONPATH`,
+`PYTEST_ADDOPTS`, `RUBYOPT`, `BUNDLE_*`, `SPEC_OPTS`, `JAVA_TOOL_OPTIONS`,
+`MAVEN_ARGS` or `GRADLE_OPTS`. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
 settings that disable a tracer integration (such as
 `DD_TRACE_DISABLED_INSTRUMENTATIONS=router`) and lists earlier attempts of the
 same workflow that stopped before the final run. Re-running `--apply` on its own

@@ -152,7 +152,7 @@ func matchingConfigurationPreparation(scope onboard.ValidationScope, scopeErr er
 		}
 		candidate := entry
 		if found != nil {
-			candidate.WithoutSecrets = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(found.WithoutSecrets), entry.WithoutSecrets...))))
+			candidate.WithoutCIValues = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(found.WithoutCIValues), entry.WithoutCIValues...))))
 		}
 		found = &candidate
 	}
@@ -171,7 +171,7 @@ func adoptConfigurationPreparation(plan *onboard.TestCommand, entry onboard.Test
 	}
 	plan.Prerequisites = entry.Prerequisites
 	plan.Environment = mergeConfigurationEnvironment(entry.Environment, plan.Environment)
-	plan.WithoutSecrets = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(plan.WithoutSecrets), entry.WithoutSecrets...))))
+	plan.WithoutCIValues = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(plan.WithoutCIValues), entry.WithoutCIValues...))))
 }
 
 // Never guess between two CI variants with different environments. Omitted
@@ -189,7 +189,7 @@ func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr er
 			if !sameConfiguration(selected, entry) || !hostConfiguration(entry) || len(entry.UnvalidatedSetup) > 0 {
 				continue
 			}
-			without = slices.Compact(slices.Sorted(slices.Values(append(without, entry.WithoutSecrets...))))
+			without = slices.Compact(slices.Sorted(slices.Values(append(without, entry.WithoutCIValues...))))
 			candidate := mergeConfigurationEnvironment(entry.Environment, selected.Environment)
 			if matched && !maps.Equal(result, candidate) {
 				ambiguous = true

@@ -371,7 +371,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		}
 	}
 	var configurationEnvironment map[string]string
-	without := selectedPlan.WithoutSecrets
+	without := selectedPlan.WithoutCIValues
 	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
 		// A command matching a discovered CI configuration replays its environment,
 		// including the variables GitHub sets on every step, and its omitted secrets.

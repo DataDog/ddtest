@@ -152,6 +152,21 @@ func unresolvedCIValue(written string) string {
 
 var unresolvedCIMarker = regexp.MustCompile(`\$\{\{ unresolved ("(?:[^"\\]|\\.)*") \}\}`)
 
+// unresolvedCommandOutput reports a value holding an unresolvedCIValue marker
+// for the output of a command the job runs, as $(cat ci/suite): the job's own
+// logic computes it, unlike a value only CI provides.
+func unresolvedCommandOutput(value string) bool {
+	match := unresolvedCIMarker.FindStringSubmatch(value)
+	if match == nil {
+		return false
+	}
+	written, err := strconv.Unquote(match[1])
+	if err != nil {
+		written = match[1]
+	}
+	return strings.Contains(written, "$(") || strings.Contains(written, "`")
+}
+
 // unresolvedCIError explains a value holding an unresolvedCIValue marker.
 func unresolvedCIError(value string) error {
 	match := unresolvedCIMarker.FindStringSubmatch(value)

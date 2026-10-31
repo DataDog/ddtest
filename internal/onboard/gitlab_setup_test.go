@@ -671,7 +671,9 @@ func TestGitLabRenewedtabFixture(t *testing.T) {
 		require.Contains(t, review, want)
 	}
 	require.NotContains(t, review, "${{", "unresolved values are named by their CI text")
-	require.Contains(t, review, "its CI value renewedtab@$CI_COMMIT_TAG reads values only CI knows")
+	// VERSION, a value only CI knows, is left out, so the commands that expand
+	// it still need review.
+	require.Contains(t, review, "sentry-cli releases new ${VERSION}; CI parameter VERSION requires explicit environment review")
 	caveats := strings.Join(scope.Caveats, "\n")
 	for _, job := range []string{"chrome", "firefox", "sentry", "webext"} {
 		require.Contains(t, caveats, ".gitlab-ci.yml / "+job+": CI job without the Datadog setup that never runs mocha")

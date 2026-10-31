@@ -90,8 +90,8 @@ func TestEveryConfigurationCommandRunsWithoutOmittedSecrets(t *testing.T) {
 
 func TestFocusedCommandsKeepOmittedSecretsFromAdoptedOrAmbiguousConfigurations(t *testing.T) {
 	plan := onboard.TestCommand{Command: "npm test", Environment: map[string]string{"TZ": "UTC"}}
-	adoptConfigurationPreparation(&plan, onboard.TestCommand{Command: "npm test", Prerequisites: []onboard.BuildCommand{{Command: "npm run build"}}, Environment: map[string]string{"CI": "true"}, WithoutSecrets: []string{"SONAR_TOKEN"}})
-	require.Equal(t, []string{"SONAR_TOKEN"}, plan.WithoutSecrets, "adopted CI preparation brings its omitted secrets")
+	adoptConfigurationPreparation(&plan, onboard.TestCommand{Command: "npm test", Prerequisites: []onboard.BuildCommand{{Command: "npm run build"}}, Environment: map[string]string{"CI": "true"}, WithoutCIValues: []string{"SONAR_TOKEN"}})
+	require.Equal(t, []string{"SONAR_TOKEN"}, plan.WithoutCIValues, "adopted CI preparation brings its omitted secrets")
 	require.Equal(t, map[string]string{"CI": "true", "TZ": "UTC"}, plan.Environment)
 	require.Len(t, plan.Prerequisites, 1)
 

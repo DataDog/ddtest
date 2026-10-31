@@ -32,10 +32,11 @@ type TestCommand struct {
 	// secrets the entry reads. It runs only in CI: CI setup instruments it, and
 	// local validation reports it as a caveat instead of running it.
 	RemoteGrid string `json:"remote_grid,omitempty"`
-	// WithoutSecrets name the CI secret variables the entry's job sets for it
+	// WithoutCIValues name the variables the entry's job sets for it from values
+	// only CI provides
 	// or its setup. They never exist locally, so validation runs without them
 	// and reports each as a caveat.
-	WithoutSecrets                  []string          `json:"without_secrets,omitempty"`
+	WithoutCIValues                 []string          `json:"without_ci_values,omitempty"`
 	LocalOverrides                  []string          `json:"local_overrides,omitempty"`
 	ID                              string            `json:"id,omitempty"`
 	Services                        []ServiceCommand  `json:"services,omitempty"`
@@ -287,7 +288,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						continue
 					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
-					for _, secret := range resolved.WithoutSecrets {
+					for _, secret := range resolved.WithoutCIValues {
 						if !slices.Contains(withoutSecrets, secret) {
 							withoutSecrets = append(withoutSecrets, secret)
 						}
@@ -399,8 +400,8 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						entry.WindowsRunner = entry.CIInstrumentationExcluded && installerSkipped && windowsRow(job, row)
 						entry.RemoteGrid = resolved.RemoteGrid
 						if len(withoutSecrets) > 0 {
-							entry.WithoutSecrets = slices.Sorted(slices.Values(withoutSecrets))
-							caveat := location.String() + ": validated without the CI secrets " + strings.Join(entry.WithoutSecrets, ", ") + ", which exist only in CI; tests that read them ran locally without them, and CI runs them with the secrets."
+							entry.WithoutCIValues = slices.Sorted(slices.Values(withoutSecrets))
+							caveat := location.String() + ": validated without the CI values of " + strings.Join(entry.WithoutCIValues, ", ") + ", which only CI provides, as secrets, CI contexts or step outputs; tests that read them ran locally without them, and CI runs them with their values."
 							if !slices.Contains(scope.Caveats, caveat) {
 								scope.Caveats = append(scope.Caveats, caveat)
 							}
@@ -508,8 +509,8 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					} else {
 						scope.Commands[index].locations = append(scope.Commands[index].locations, entry.locations...)
 						// Each merged location's omitted secrets stay disclosed.
-						if len(entry.WithoutSecrets) > 0 {
-							scope.Commands[index].WithoutSecrets = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(scope.Commands[index].WithoutSecrets), entry.WithoutSecrets...))))
+						if len(entry.WithoutCIValues) > 0 {
+							scope.Commands[index].WithoutCIValues = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(scope.Commands[index].WithoutCIValues), entry.WithoutCIValues...))))
 						}
 						// Steps merged into one configuration keep every shared-step note.
 						for _, note := range entry.StepScopeNotes {
