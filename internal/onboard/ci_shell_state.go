@@ -8,6 +8,7 @@ package onboard
 import (
 	"maps"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -103,6 +104,12 @@ func ciShellWord(word *syntax.Word, known map[string]string, self, project strin
 				parts(part.Parts)
 			case *syntax.ParamExp:
 				name := part.Param.Value
+				if trimmed, ok := ciShellTrim(part, known, self, project); ok {
+					// ${NAME%pattern} and the like on a known value, as when a
+					// scoped preload moves the setup's out of NODE_OPTIONS.
+					text.WriteString(trimmed)
+					continue
+				}
 				if part.Index != nil || part.Slice != nil || part.Repl != nil || !ciEmptyDefault(part.Exp) || part.Excl || part.Length {
 					literal = false
 					text.WriteString("${" + name + "...}")
@@ -363,6 +370,80 @@ func ciStaticTest(condition []*syntax.Stmt, known map[string]string, project str
 		return words[0] != words[2], true
 	}
 	return false, false
+}
+
+// ciShellTrim evaluates ${NAME%pattern}, ${NAME%%pattern}, ${NAME#pattern}
+// and ${NAME##pattern} on a known value, for a pattern of literal text,
+// known values and unquoted * and ? wildcards.
+func ciShellTrim(part *syntax.ParamExp, known map[string]string, self, project string) (string, bool) {
+	if part.Exp == nil || part.Exp.Word == nil || part.Index != nil || part.Slice != nil || part.Repl != nil || part.Excl || part.Length {
+		return "", false
+	}
+	suffix := part.Exp.Op == syntax.RemSmallSuffix || part.Exp.Op == syntax.RemLargeSuffix
+	longest := part.Exp.Op == syntax.RemLargeSuffix || part.Exp.Op == syntax.RemLargePrefix
+	if !suffix && part.Exp.Op != syntax.RemSmallPrefix && part.Exp.Op != syntax.RemLargePrefix {
+		return "", false
+	}
+	value, set := known[part.Param.Value]
+	if !set {
+		return "", false
+	}
+	pattern, ok := ciShellPattern(part.Exp.Word, known, self, project)
+	if !ok {
+		return "", false
+	}
+	// Prefix and suffix lengths, shortest first.
+	lengths := make([]int, 0, len(value)+1)
+	for length := range len(value) + 1 {
+		lengths = append(lengths, length)
+	}
+	if longest {
+		slices.Reverse(lengths)
+	}
+	for _, length := range lengths {
+		if suffix && pattern.MatchString(value[len(value)-length:]) {
+			return value[:len(value)-length], true
+		}
+		if !suffix && pattern.MatchString(value[:length]) {
+			return value[length:], true
+		}
+	}
+	return value, true
+}
+
+// ciShellPattern is a shell pattern word as an anchored regular expression:
+// quoted text and known values match themselves, unquoted * and ? are
+// wildcards. Bracket expressions, escapes and unknown values are not read.
+func ciShellPattern(word *syntax.Word, known map[string]string, self, project string) (*regexp.Regexp, bool) {
+	var expression strings.Builder
+	for _, part := range word.Parts {
+		switch part := part.(type) {
+		case *syntax.Lit:
+			if strings.ContainsAny(part.Value, `[\`) {
+				return nil, false
+			}
+			for _, char := range part.Value {
+				switch char {
+				case '*':
+					expression.WriteString(".*")
+				case '?':
+					expression.WriteString(".")
+				default:
+					expression.WriteString(regexp.QuoteMeta(string(char)))
+				}
+			}
+		default:
+			// Quoted text and expansions match literally (an unquoted
+			// expansion's wildcards are refused).
+			value, literal := ciShellWord(&syntax.Word{Parts: []syntax.WordPart{part}}, known, self, project)
+			if _, unquoted := part.(*syntax.ParamExp); !literal || unquoted && strings.ContainsAny(value, `*?[\`) {
+				return nil, false
+			}
+			expression.WriteString(regexp.QuoteMeta(value))
+		}
+	}
+	pattern, err := regexp.Compile(`^(?s:` + expression.String() + `)$`)
+	return pattern, err == nil
 }
 
 // ciEmptyDefault reports no expansion operator, or ${NAME:-} (empty

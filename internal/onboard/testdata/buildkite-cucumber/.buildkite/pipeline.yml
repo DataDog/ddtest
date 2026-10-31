@@ -1,0 +1,15 @@
+steps:
+  - label: ":eslint: lint"
+    command: npm ci && npm run lint
+    plugins:
+      - docker#v5.12.0:
+          image: node:22
+
+  - label: ":cucumber: features"
+    command:
+      - npm ci
+      - npm run build
+      - npm test
+    plugins:
+      - docker#v5.12.0:
+          image: node:22

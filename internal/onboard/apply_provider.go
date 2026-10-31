@@ -24,9 +24,15 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 	if !provider.editsSetup() {
 		return nil, &SetupGap{provider.displayName(), "onboard --apply does not edit the " + provider.displayName() + " configuration. Add the " + provider.setupName() + " from onboard --agent instructions, then validate with testdrive --all."}
 	}
-	if !language.automaticProviderSetup(framework) {
-		return nil, &SetupGap{"CI initialization", framework + " initializes the tracer through package scripts, which onboard --apply does not edit on " + provider.displayName() + ". Add the setup from onboard --instructions manually, then validate with testdrive --all."}
+	// Cucumber and WebdriverIO load the tracer only in their package-script
+	// leaves, as on GitHub Actions: the scripts consume the scoped variable
+	// the setup's following command exports (see providerScopedCommand).
+	scoped := scopedEnvironment(framework)
+	edits, _, err := scopedSetupEdits(root, framework)
+	if err != nil {
+		return nil, err
 	}
+	impact, coverageAdded := scopedSetupImpact(edits, framework)
 	request := language.ciSetupRequest(root, framework, site, provider.setupTerms())
 	request.TracerVersion, request.Framework = version, framework
 	var targets, unsupported []ciSetupTarget
@@ -106,11 +112,15 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				})
 				shellSetups = live
 			}
-			if resolution.OtherFramework {
+			if resolution.OtherFramework && scoped == "NODE_OPTIONS" {
 				return nil, &SetupGap{location, "The test command also runs another framework; initialize only the selected framework explicitly."}
 			}
+			inherited := []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT", "DD_CIVISIBILITY_ENABLED", "DD_TRACE_ENABLED"}
+			if scoped != "NODE_OPTIONS" && setupIndex < 0 {
+				inherited = append(inherited, scoped)
+			}
 			for _, layer := range []map[string]string{workflow.Env, job.Env, job.Steps[first].Env} {
-				for _, key := range []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT", "DD_CIVISIBILITY_ENABLED", "DD_TRACE_ENABLED"} {
+				for _, key := range inherited {
 					if _, ok := layer[key]; ok {
 						return nil, &SetupGap{location, "Custom inherited instrumentation requires review: " + key}
 					}
@@ -181,6 +191,12 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				}
 			}
 			if complete && len(shellSetups) == 0 {
+				// A setup that leaves the preload in NODE_OPTIONS still reaches the
+				// scoped scripts; only the options the scoped variable adds, such
+				// as the Istanbul ESM loader, would be missing.
+				if _, exported := job.Steps[first].Env[scoped]; !exported && scopedProviderOptions(root, framework) != "" && !plugin {
+					return nil, &SetupGap{location, "The existing " + provider.setupName() + " leaves the tracer's preload in NODE_OPTIONS without the " + scopedProviderOptions(root, framework) + " native ESM coverage needs. Add " + provider.setupTerms().Persist(request.After[0]) + " right after it, then rerun onboard --apply; or review it manually without adding a second setup."}
+				}
 				configured++
 				continue
 			}
@@ -203,25 +219,27 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 	if len(targets) == 0 && configured == 0 {
 		return nil, &SetupGap{provider.displayName(), "No literal " + framework + " CI step found. Identify its real CI entry point before applying onboarding."}
 	}
-	var edits []setupEdit
-	var impact []string
 	if len(targets) > 0 {
-		var err error
-		if edits, impact, err = provider.planSetupEdits(root, workflows, targets, request); err != nil {
+		ciEdits, ciImpact, err := provider.planSetupEdits(root, workflows, targets, request)
+		if err != nil {
 			return nil, err
 		}
+		edits, impact = append(edits, ciEdits...), append(impact, ciImpact...)
 	}
 	var extra []string
 	if ignorer, ok := provider.(ciSetupIgnorer); ok {
 		extra = ignorer.setupIgnores(edits)
 	}
-	ignored, err := ignoreSetupEdits(root, false, extra...)
+	ignored, err := ignoreSetupEdits(root, coverageAdded, extra...)
 	if err != nil {
 		return nil, err
 	}
 	if len(edits) == 0 {
 		// Configured CI needs no ignore-only edit to be complete.
 		return &SetupPlan{root: root, impact: impact}, nil
+	}
+	if coverageAdded {
+		impact = append(impact, nycOutputImpact)
 	}
 	return &SetupPlan{root: root, edits: append(edits, ignored...), impact: impact}, nil
 }

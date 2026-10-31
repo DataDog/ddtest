@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -275,9 +276,10 @@ func TestGitLabApplyRefusesUnsafeEdits(t *testing.T) {
 	_, err = PlanJavaScriptSetup(root, "jest", "6.22.0", "datadoghq.com", ">=22")
 	var runtime *NodeRuntimeGap
 	require.ErrorAs(t, err, &runtime)
+	// Cucumber's package scripts get NYC coverage, as on GitHub Actions.
 	_, err = PlanJavaScriptSetup(root, "cucumber", "6.22.0", "datadoghq.com", "")
-	var gap *SetupGap
-	require.True(t, errors.As(err, &gap) && strings.Contains(gap.Reason, "package scripts"), err)
+	var dependency *SetupDependencyGap
+	require.True(t, errors.As(err, &dependency) && slices.Equal(dependency.Packages, []string{"nyc"}), err)
 }
 
 // The Node runtime check reads the image's Node and the setup script's
@@ -381,24 +383,19 @@ func TestGitLabRubyFixture(t *testing.T) {
 	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""), "the JRuby job stays excluded")
 }
 
-// Scoped JavaScript initialization is set up by hand on GitLab: onboarding
-// asks for the setup script, then hands off validation once it is complete.
-func TestGitLabCucumberSetupIsManual(t *testing.T) {
+// Scoped JavaScript initialization is applied on GitLab as on GitHub
+// Actions: onboarding hands off to onboard --apply, and a job already set up
+// by hand goes there too, so its package scripts are scoped.
+func TestGitLabCucumberSetupIsAutomatic(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "package.json", `{"scripts": {"test": "cucumber-js"}, "devDependencies": {"@cucumber/cucumber": "11.0.0"}}`)
 	writeFile(t, root, ".gitlab-ci.yml", "test:\n  image: node:22\n  script:\n    - npm test\n")
 	t.Chdir(root)
 	useCIProvider(t, "gitlab")
 	state, err := rubyAgentStart(t, StartOptions{Format: "json"})
-	require.Error(t, err)
-	require.Equal(t, "ci_setup_required", state.Code, state.Reason)
-	require.Contains(t, state.Instruction, `LANGUAGES="js"`)
-	require.Contains(t, state.Instruction, "DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false")
-	writeFile(t, root, ".gitlab-ci.yml", "test:\n  image: node:22\n  script:\n"+gitLabSetupEntry(gitLabJestSetup)+"    - "+esmImportCommand+"\n    - npm test\n")
-	state, err = rubyAgentStart(t, StartOptions{Format: "json"})
 	require.NoError(t, err, state.Reason)
 	require.Equal(t, "ready", state.Status)
-	require.Equal(t, []string{"testdrive", "--framework", "cucumber", "--all", "--agent", "--yes"}, state.NextCommand[1:7])
+	require.Equal(t, []string{"onboard", "--framework", "cucumber", "--apply"}, state.NextCommand[1:5])
 }
 
 // gitLabGuardedEntry is the setup entry ddtest writes: the README's entry

@@ -1,0 +1,25 @@
+version: 2.1
+
+jobs:
+  lint:
+    docker:
+      - image: cimg/node:22.11
+    steps:
+      - checkout
+      - run: npm ci
+      - run: npm run lint
+  features:
+    docker:
+      - image: cimg/node:22.11
+    steps:
+      - checkout
+      - run: npm ci
+      - run:
+          name: Features
+          command: npm test
+
+workflows:
+  main:
+    jobs:
+      - lint
+      - features
