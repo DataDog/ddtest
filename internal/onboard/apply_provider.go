@@ -6,10 +6,12 @@
 package onboard
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"slices"
 	"strings"
+	"time"
 )
 
 // planProviderJavaScriptSetup plans the JavaScript setup on a CI provider
@@ -30,7 +32,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 	// A CI server plugin's setup is one option the provider merges into, so
 	// one that differs is completed instead of left for review.
 	plugin := provider.setupTerms().Plugin
-	var targets []ciSetupTarget
+	var targets, unsupported []ciSetupTarget
 	configured := 0
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
@@ -86,6 +88,12 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			if UnsupportedNode(node) {
 				continue // No tracer release runs here; validation reports it as not tried.
 			}
+			if plugin && node != "" && job.SetupUnsupported == "" {
+				// The plugin installs the latest dd-trace whatever the Node.
+				if err := floatingNodeGap(root, provider, workflow, job, location, node); err != nil {
+					return nil, err
+				}
+			}
 			esm := len(request.After) > 0
 			if framework == "mocha" {
 				esm = false
@@ -132,8 +140,17 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 					continue
 				}
 			}
+			if job.SetupUnsupported != "" {
+				// The provider reports it; it decides the plan only when no
+				// other job runs the tests.
+				unsupported = append(unsupported, target)
+				continue
+			}
 			targets = append(targets, target)
 		}
+	}
+	if len(targets) == 0 && configured == 0 {
+		targets = unsupported
 	}
 	if len(targets) == 0 && configured == 0 {
 		return nil, &SetupGap{provider.displayName(), "No literal " + framework + " CI step found. Identify its real CI entry point before applying onboarding."}
@@ -155,6 +172,27 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 		return &SetupPlan{root: root, impact: impact}, nil
 	}
 	return &SetupPlan{root: root, edits: append(edits, ignored...), impact: impact}, nil
+}
+
+// floatingNodeGap refuses a CI server plugin's setup for a job whose Node
+// the latest dd-trace, which the plugin installs on every build, does not
+// support: no other release can be selected.
+func floatingNodeGap(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, location, node string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	latest, err := floatingTracerRequirement(ctx)
+	if err != nil {
+		return &SetupGap{location, "ddtest could not read the latest dd-trace release's Node requirement, which the " + provider.setupName() + " installs on every build: " + err.Error()}
+	}
+	condition, err := setupRuntimeCondition(root, workflow, job, latest.Node, false)
+	var runtimeGap *NodeRuntimeGap
+	switch {
+	case errors.As(err, &runtimeGap) || err == nil && condition != "":
+		return &SetupGap{location, floatingTracerNodeProblem(provider.setupName(), latest, node)}
+	case err != nil:
+		return &SetupGap{location, err.Error()}
+	}
+	return nil
 }
 
 // providerWritesPluginSetup reports whether onboard --apply writes the
