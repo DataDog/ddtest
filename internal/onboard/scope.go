@@ -344,6 +344,12 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					if conditionErr != nil && resolved.Run != "" && resolution.Reason == "" && !resolution.Matched && len(resolution.Builds) == 0 {
 						resolution.Review, resolution.Reason = true, "Condition affects only a recognized non-test command; review separately: "+conditionErr.Error()
 					}
+					// An action after the job's last test, as a report upload with
+					// if: always(), is not read either way: whether it runs cannot
+					// change a test that already ran.
+					if conditionErr != nil && resolved.Run == "" && i > lastTest && resolution.Reason == "" && !resolution.Matched && len(resolution.Builds) == 0 {
+						resolution.Review, resolution.Reason = true, "After the job's last "+framework+" test step, a condition that affects only an action outside the test path; review separately: "+conditionErr.Error()
+					}
 					if len(resolution.Builds) > 0 && (conditionErr != nil || envErr != nil) {
 						resolution.Review = false
 					}
