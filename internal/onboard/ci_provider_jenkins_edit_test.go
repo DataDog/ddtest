@@ -7,6 +7,7 @@ package onboard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -264,4 +265,120 @@ func TestJenkinsServiceNameFallsBackToTheRepository(t *testing.T) {
 		require.NoError(t, command.Run())
 	}
 	require.Equal(t, "web-app", service())
+}
+
+// jenkinsPlanAfter plans the JavaScript setup of a Jenkinsfile for framework
+// in root, returning the edited Jenkinsfile (unchanged when the plan edits
+// none).
+func jenkinsPlanAfter(t *testing.T, root, framework string) (string, error) {
+	t.Helper()
+	workflows, err := readProviderWorkflows(jenkins{}, root)
+	require.NoError(t, err)
+	setup, err := planProviderJavaScriptSetup(root, jenkins{}, workflows, framework, "6.22.0", "datadoghq.com", "")
+	if err != nil {
+		return "", err
+	}
+	for _, edit := range setup.edits {
+		if edit.path == "Jenkinsfile" {
+			return string(edit.after), nil
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(root, "Jenkinsfile"))
+	require.NoError(t, err)
+	return string(data), nil
+}
+
+// Each sh step runs a shell of its own, so the ESM loader goes into every
+// one that runs ESM tests: for Mocha, the ESM step even when a CommonJS one
+// runs first, and not the CommonJS one.
+func TestJenkinsESMLoaderInEveryTestShell(t *testing.T) {
+	root := jenkinsApplyRepository(t, "jest", "pipeline {\n  agent any\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npx nyc mocha test/unit.js'\n        sh 'npx nyc mocha test/esm.mjs'\n      }\n    }\n  }\n}\n")
+	writeFile(t, root, "package.json", `{"name": "app", "devDependencies": {"mocha": "11.0.0", "nyc": "17.0.0"}}`)
+	writeFile(t, root, "test/unit.js", "it('a', () => {})\n")
+	writeFile(t, root, "test/esm.mjs", "it('b', () => {})\n")
+	after, err := jenkinsPlanAfter(t, root, "mocha")
+	require.NoError(t, err)
+	require.Contains(t, after, "        sh 'npx nyc mocha test/unit.js'\n", "a CommonJS shell needs only the preload")
+	require.Contains(t, after, "        sh '"+pluginESMImportCommand+"; npx nyc mocha test/esm.mjs'\n")
+}
+
+// The check of an edited Jenkinsfile reads every test shell: a loader in
+// the first one only, or after the test command, is not a complete setup,
+// and onboard --apply completes it; one before the test command, after
+// other statements, is kept.
+func TestJenkinsSetupCheckReadsEveryTestShell(t *testing.T) {
+	pipeline := func(steps ...string) string {
+		return "pipeline {\n  agent any\n" + jenkinsDatadogOption + "  stages {\n    stage('Test') {\n      steps {\n        " + strings.Join(steps, "\n        ") + "\n      }\n    }\n  }\n}\n"
+	}
+	firstOnly := pipeline("sh '"+pluginESMImportCommand+"; npx vitest run --dir a'", "sh 'npx vitest run --dir b'")
+	root := jenkinsApplyRepository(t, "vitest", firstOnly)
+	workflows, err := readProviderWorkflows(jenkins{}, root)
+	require.NoError(t, err)
+	request := javascriptDiscovery{}.ciSetupRequest(root, "vitest", "datadoghq.com", jenkins{}.setupTerms())
+	request.Framework = "vitest"
+	err = checkJenkinsfileSetup(root, jenkins{}, workflows, "Jenkinsfile", firstOnly, []string{"Test"}, request)
+	require.ErrorContains(t, err, "the sh step at Jenkinsfile:10 runs npx vitest run --dir b without "+pluginESMImportCommand+" in effect before it in its shell")
+
+	// Validation reports the step as missing only the loader, which
+	// onboard --apply adds.
+	useCIStatements(t, []string{"node=22"})
+	result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "6.22.0", Node: ">=18"}, nil
+	}, "vitest")
+	var codes []string
+	for _, finding := range result.Jobs {
+		codes = append(codes, finding.Code)
+	}
+	require.Equal(t, []string{"", CodeMissingInitialization}, codes, result.Jobs)
+	require.Contains(t, result.Jobs[1].Reason, "does not register its ESM loader before the test command. Add "+pluginESMImportCommand)
+
+	after, err := jenkinsPlanAfter(t, root, "vitest")
+	require.NoError(t, err)
+	require.Equal(t, pipeline("sh '"+pluginESMImportCommand+"; npx vitest run --dir a'", "sh '"+pluginESMImportCommand+"; npx vitest run --dir b'"), after)
+
+	before := pipeline("sh '''\n          npm ci\n          " + pluginESMImportCommand + "\n          npx vitest run\n        '''")
+	writeFile(t, root, "Jenkinsfile", before)
+	after, err = jenkinsPlanAfter(t, root, "vitest")
+	require.NoError(t, err)
+	require.Equal(t, before, after, "a loader that runs before the test command is kept")
+	plan, err := PlanProviderSetup(root, "vitest", "datadoghq.com")
+	require.NoError(t, err)
+	require.True(t, plan.Configured())
+}
+
+// A datadog(…) call that passes a positional map beside named arguments is
+// one Jenkins rejects, so the reader never certifies it.
+func TestJenkinsDatadogMixedArgumentsAreNotCertified(t *testing.T) {
+	root := jenkinsApplyRepository(t, "jest", "datadog([collectLogs: true], testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT']]) {\n  node {\n    stage('Test') {\n      sh 'npm test'\n    }\n  }\n}\n")
+	workflows, err := readProviderWorkflows(jenkins{}, root)
+	require.NoError(t, err)
+	require.Len(t, workflows, 1)
+	problem := providerJobSetupProblem(root, jenkins{}, workflows[0], "Test", "javascript", "jest", "datadoghq.com")
+	require.Contains(t, problem, "The datadog(…) call at Jenkinsfile:1 passes a positional argument, such as a map, beside its named arguments, which Jenkins rejects")
+	_, err = PlanProviderSetup(root, "jest", "datadoghq.com")
+	require.ErrorContains(t, err, "positional or computed arguments")
+}
+
+// onboard --apply rejects options the handoff rejects before it writes the
+// Jenkinsfile.
+func TestJenkinsPluginApplyRejectsOptionsBeforeWriting(t *testing.T) {
+	jenkinsfile := "node {\n  stage('Test') {\n    sh 'bundle exec rake spec'\n  }\n}\n"
+	for name, options := range map[string]StartOptions{
+		"command": {Format: "json", Command: "bundle exec rspec"},
+		"site":    {Format: "json", Site: "datadoghq.com/evil"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := jenkinsApplyRepository(t, "rspec", jenkinsfile)
+			useCIStatements(t, []string{"ruby=3.3"})
+			var out bytes.Buffer
+			require.Error(t, ApplyPluginSetup(&out, options, PluginApplyOptions{AllowDirty: true}))
+			var result AgentResult
+			require.NoError(t, json.Unmarshal(out.Bytes(), &result), out.String())
+			require.Equal(t, "invalid_options", result.Code)
+			require.Empty(t, result.Changes)
+			data, err := os.ReadFile(filepath.Join(root, "Jenkinsfile"))
+			require.NoError(t, err)
+			require.Equal(t, jenkinsfile, string(data), "nothing is written")
+		})
+	}
 }

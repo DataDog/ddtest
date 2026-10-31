@@ -2103,6 +2103,13 @@ func (r *jenkinsReader) add(slot *jenkinsSlot, node groovyNode, step runtimeStep
 	return &slot.job.steps[len(slot.job.steps)-1]
 }
 
+// jenkinsShellStep is where a step of a Jenkinsfile sh script starts: the
+// sh call, and the statement's offset in its script.
+type jenkinsShellStep struct {
+	call      int
+	statement int
+}
+
 // jenkinsShellDialect is how sh scripts read: WORKSPACE is the checkout.
 var jenkinsShellDialect = ciShellDialect{label: "Jenkins sh script", projectVariable: "WORKSPACE"}
 
@@ -2189,7 +2196,7 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 	for i, stmt := range file.Stmts {
 		known := mergeEnvironment(mergeEnvironment(env, state.env), state.references)
 		statement := strings.TrimSpace(jenkinsStatementText(script, file.Stmts, i))
-		step := runtimeStep{WorkingDirectory: state.directory}
+		step := runtimeStep{WorkingDirectory: state.directory, origin: jenkinsShellStep{call: call.Start, statement: int(stmt.Pos().Offset())}}
 		if len(state.env) > 0 {
 			step.Env = maps.Clone(state.env)
 		}

@@ -1,0 +1,1 @@
+Jenkinsfile / Test: the sh step at Jenkinsfile:9 runs npx vitest run without

@@ -267,8 +267,8 @@ func PlanProviderSetup(root, framework, site string) (*SetupPlan, error) {
 
 // providerJobSetupProblem explains why a job of workflow does not run a
 // complete setup for language (see ciProvider.setupProblem, with site)
-// before its first command that runs framework's tests; empty when it does,
-// or runs none.
+// before every command that runs framework's tests; empty when it does, or
+// runs none.
 func providerJobSetupProblem(root string, provider ciProvider, workflow ciWorkflow, name, language, framework, site string) string {
 	job, ok := workflow.Jobs[name]
 	if !ok {
@@ -296,7 +296,9 @@ func providerJobSetupProblem(root string, provider ciProvider, workflow ciWorkfl
 		case setup == nil:
 			return "no " + provider.setupName() + " for the language runs before its tests."
 		}
-		return provider.setupProblem(*setup, "", func(string) bool { return true }, "", site)
+		if problem := provider.setupProblem(*setup, "", func(string) bool { return true }, "", site); problem != "" {
+			return problem
+		}
 	}
 	return ""
 }

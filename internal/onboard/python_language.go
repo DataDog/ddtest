@@ -132,5 +132,9 @@ func (pythonDiscovery) ciPluginExports(map[string]string) (map[string]string, ma
 
 func (pythonDiscovery) ciPluginComposes(string) string { return "" }
 
+func (pythonDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string, commandResolution) (bool, string) {
+	return false, ""
+}
+
 // No shell runtime selection is modeled for this language.
 func (pythonDiscovery) selectsShellRuntime([]string) bool { return false }

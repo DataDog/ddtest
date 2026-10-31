@@ -750,6 +750,12 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 				// Nothing custom to preserve: the step only lacks the action's preload.
 				finding.Code = CodeMissingInitialization
 				finding.Reason = "The Datadog action runs, but this test step sets no NODE_OPTIONS to load its preload. Add NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} (with --import ${{ env.DD_TRACE_ESM_IMPORT }} for ESM) to the step; ddtest onboard --apply can add it."
+			} else if (reason == unverifiedPreloadReason || reason == mochaESMImportReason) && setupExports(job, step, "DD_TRACE_PATH") && checkJestBootstrap(workflow, job, step, row, false) == "" {
+				// A setup that exports the tracer's package path (a CI server
+				// plugin) loads the preload; only the ESM loader line is
+				// missing from the test's shell, before the test command.
+				finding.Code = CodeMissingInitialization
+				finding.Reason = "The CI setup loads the tracer's preload, but this test step's shell does not register its ESM loader before the test command. Add " + pluginESMImportCommand + " to the step's script before the test command; ddtest onboard --apply can add it."
 			}
 		}
 	}

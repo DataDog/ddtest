@@ -690,7 +690,10 @@ with `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-
 --import $DD_TRACE_PATH/register.js"; fi`. `DD_TRACE_PATH` is a trusted loader
 path only in jobs the plugin sets up: the other providers' setups do not export
 it, so a `--import ${{ env.DD_TRACE_PATH }}/register.js` there is not the
-setup's loader.
+setup's loader. Each `sh` step is a shell of its own, so every one that runs
+those tests needs the line before its test command; a test whose shell has
+the plugin's preload but not the loader is `missing_initialization`, which
+`onboard --apply` completes.
 
 Ruby: the plugin uses a `datadog-ci` already in the bundle and otherwise runs
 `bundle config set frozen false` and `bundle add datadog-ci` on the agent, so
@@ -717,20 +720,30 @@ bytes. An existing `datadog(…)` call, in `options` or around the `node`, is
 merged instead: `testOptimization` is added, or in it (or in a legacy
 `testVisibility:`) `enabled` becomes `true` and the language joins
 `languages`, keeping `serviceName`, `additionalVariables`, `collectLogs`,
-`tags` and every other argument. For Vitest and ESM Mocha it also adds the
-`DD_TRACE_PATH` loader line at the start of the test's `sh` script when that
-script is a single-quoted literal; otherwise the result asks for that line
-(`ci_edit_required`) and resumes with `onboard --apply`. Edits use the parser's
+`tags` and every other argument. Each `sh` step runs a shell of its own, so
+for Vitest and ESM Mocha it also adds the `DD_TRACE_PATH` loader line at the
+start of every `sh` script that runs the tests (for Mocha, every one that runs
+ESM test files), unless the shell parser reads that line as a statement of
+the script before each of its test commands; one that only follows the test,
+sits in a comment or runs inside another statement does not count. That
+script must be a single-quoted literal; otherwise the result asks for that line
+(`ci_edit_required`) and resumes with `onboard --apply`. A target `sh` step is
+the call its test command was read from, by its position in the file, so other
+`sh` calls on the same line are left alone. Edits use the parser's
 byte spans and keep the file's indentation (tabs or spaces, and their width)
 and line endings; every other byte is unchanged. The edited Jenkinsfile is read
-again and must read as the same jobs, each with a complete setup, or nothing is
-written. Applying again changes nothing (`… CI setup is already configured; no
+again and must read as the same jobs, each with a complete setup before every
+test command (for ESM, the loader in effect in every test `sh` script), or
+nothing is written. Applying again changes nothing (`… CI setup is already configured; no
 edits.`). It refuses, and onboarding gives the instructions instead with the
 reason: a Jenkinsfile that loads a shared library (`@Library`, `library …` or a
 `libraries` directive), a job that runs steps in a container within the
 option's scope (a whole declarative pipeline, or a wrapped `node`), a computed
-`options`, `datadog` or `testOptimization` argument (or a computed `enabled` or
-`languages` it would change), a `node` block with shell steps inside a `def`
+`options` or `testOptimization` argument (or a computed `enabled` or
+`languages` it would change), a `datadog(…)` call with a positional or
+computed argument (such as `datadog([collectLogs: true])`, which Jenkins
+rejects once a named `testOptimization` joins it; ddtest never certifies a
+`datadog(…)` call that mixes the two), a `node` block with shell steps inside a `def`
 function of a scripted pipeline, several `datadog(…)` calls that differ in one
 `options` or that enclose the same tests, and a result that is still incomplete,
 such as one with `DD_API_KEY` in `additionalVariables` or a stage-level
@@ -747,7 +760,9 @@ Jenkinsfile edit, lists it in `changes` and `setup_diff` with an undo command,
 and returns the rest of the setup (the `datadog-ci` pin, the report exclusion)
 with the validation command as `resume_command`; validation then asks for the
 confirmations. Plain `onboard --apply` previews the Jenkinsfile diff and writes
-nothing; `--yes` writes it and prints the remaining instructions.
+nothing; `--yes` writes it and prints the remaining instructions. Options the
+handoff rejects, such as `--command`, are rejected before anything is
+written.
 
 ## Coverage and local developer commands
 

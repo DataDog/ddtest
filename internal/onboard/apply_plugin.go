@@ -41,6 +41,14 @@ func ApplyPluginSetup(output io.Writer, options StartOptions, apply PluginApplyO
 		options.Human = true
 	}
 	start := func() error { return StartWithOptions(output, options) }
+	site := options.Site
+	if site == "" {
+		site = os.Getenv("DD_SITE")
+	}
+	if options.Command != "" || !literalSite(site) {
+		// The handoff rejects these options; nothing is written first.
+		return start()
+	}
 	root, err := os.Getwd()
 	if err != nil {
 		return start()
@@ -52,10 +60,6 @@ func ApplyPluginSetup(output io.Writer, options StartOptions, apply PluginApplyO
 	framework, err := onboardingFramework(detected)
 	if err != nil || CheckCIProviderSupport(root, detected.Name(), framework) != nil || RequiredCIRuntimes(context.Background(), root, detected.Name(), framework) != nil {
 		return start()
-	}
-	site := options.Site
-	if site == "" {
-		site = os.Getenv("DD_SITE")
 	}
 	plan, err := PlanProviderSetup(root, framework, site)
 	if err != nil {
