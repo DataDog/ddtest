@@ -290,6 +290,8 @@ func TestJavaGradleChainsWithOneTestCommand(t *testing.T) {
 		"cd app && ./gradlew test",
 		"./gradlew && ./gradlew test",
 		"./gradlew assemble && make test",
+		"./gradlew -I ci.init.gradle assemble && ./gradlew test",
+		"./gradlew test jcstress -x test && ./gradlew :app:test",
 	} {
 		resolution := javaStep(t, root, run)
 		require.False(t, resolution.Matched, run)

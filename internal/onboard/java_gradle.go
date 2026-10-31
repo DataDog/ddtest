@@ -75,8 +75,10 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		return !gradle.Command(words) && !slices.Contains(javaShellBuiltins, words[0])
 	})
 	// Each command is classified against the build it selects. The commands
-	// that run no tests are kept, and uncertain notes one that may: a command
-	// without tasks, or one that requests tasks not known to run no tests.
+	// that run no tests are kept, and uncertain notes one that may, or that
+	// validation cannot leave out: a command without tasks, one that requests
+	// tasks not known to run no tests, and one whose options change the build
+	// it runs, as an init script, which may prepare what the tests need.
 	var tests []gradleRun
 	var others []string
 	excluded, uncertain := false, false
@@ -87,7 +89,8 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		// free of tests need no build read; a command without tasks runs the
 		// default tasks gradleNonTestStep checks.
 		if gradle.DryRun(args) || !slices.ContainsFunc(requested, func(task string) bool { return !gradle.NonTestTask(task) }) {
-			uncertain = uncertain || len(requested) == 0 && !gradle.DryRun(args)
+			_, reason := gradleInvokedDirectory(directory, args)
+			uncertain = uncertain || len(requested) == 0 && !gradle.DryRun(args) || reason != ""
 			others = append(others, shellquote.Join(words...))
 			continue
 		}
@@ -109,12 +112,14 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 			tests = append(tests, gradleRun{words: words, projects: projects, tasks: testTasks})
 			continue
 		case slices.ContainsFunc(requested, testTasks.Runs):
-			// Every test task it requests is excluded.
+			// Every test task it requests is excluded; its other tasks are
+			// classified as any command's.
 			excluded = true
+			fallthrough
 		default:
 			// A task that is neither a known test task nor conventionally free
 			// of tests may be one that build logic ddtest does not read declares.
-			unknown := slices.DeleteFunc(slices.Clone(requested), testTasks.NonTest)
+			unknown := slices.DeleteFunc(slices.Clone(requested), func(task string) bool { return testTasks.Runs(task) || testTasks.NonTest(task) })
 			if len(unknown) > 0 && testTasks.Unread {
 				return unresolvedCommand("Gradle task " + strings.Join(unknown, ", ") + " may be a test task declared by build logic ddtest does not read: " + step.Run)
 			}
