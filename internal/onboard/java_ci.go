@@ -314,9 +314,10 @@ var exactJavaRelease = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
 var (
 	// javaImages are the images whose tag starts with the JDK version, as
-	// eclipse-temurin:17-jdk, cimg/openjdk:17.0 or eclipse-temurin:8u412-b08-jdk.
+	// eclipse-temurin:17-jdk, cimg/openjdk:17.0 or eclipse-temurin:8u412-b08-jdk,
+	// after IBM Semeru's open- prefix, as ibm-semeru-runtimes:open-17-jdk.
 	javaImages       = []string{"eclipse-temurin", "openjdk", "amazoncorretto", "adoptopenjdk", "sapmachine", "ibm-semeru-runtimes", "zulu-openjdk", "liberica-openjdk-debian", "liberica-openjdk-alpine", "liberica-openjdk-centos"}
-	javaImageVersion = regexp.MustCompile(`^(?:1\.)?([0-9]+)(?:$|[.u_-])`)
+	javaImageVersion = regexp.MustCompile(`^(?:open-)?(?:1\.)?([0-9]+)(?:$|[.u_-])`)
 	// javaToolImageJDK is the JDK a build tool image's tag names, as
 	// maven:3.9-eclipse-temurin-21, maven:3-openjdk-11 or gradle:8.10.2-jdk17.
 	javaToolImageJDK = regexp.MustCompile(`(?:^|-)(?:eclipse-temurin|temurin|openjdk|jdk|amazoncorretto|corretto|sapmachine|ibm-semeru|semeru|graalvm-community|graalvm-ce|graalvm|zulu|liberica|ibmjava)-?([0-9]+)(?:$|[-._])`)

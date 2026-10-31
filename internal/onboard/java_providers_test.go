@@ -23,6 +23,8 @@ func TestJavaImageRuntime(t *testing.T) {
 		"gradle:8-jdk21-alpine":                     "21",
 		"gradle:jdk11":                              "11",
 		"eclipse-temurin:17-jdk":                    "17",
+		"ibm-semeru-runtimes:open-17-jdk":           "17",
+		"ibm-semeru-runtimes:open-21.0.4_7-jre":     "21",
 		"eclipse-temurin:8u412-b08-jdk":             "8",
 		"docker.io/library/eclipse-temurin:21":      "21",
 		"openjdk:11-jdk-slim":                       "11",
