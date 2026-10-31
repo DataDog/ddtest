@@ -87,7 +87,7 @@ func (t *Testdrive) rubyBundleReadiness(ctx context.Context, scope onboard.Valid
 				}
 				// The check runs without the configuration's omitted secrets, as
 				// its validation does: a Gemfile may read one.
-				executor := configurationExecutor{commandExecutor: t.executor, without: entry.WithoutSecrets}
+				executor := configurationExecutor{commandExecutor: t.executor, without: entry.WithoutCIValues}
 				_, checkErr = executor.CombinedOutputInDirectory(ctx, filepath.Join(root, entry.Directory), "bundle", []string{"check", "--dry-run"}, env)
 			}
 			if lockErr != nil || checkErr != nil {

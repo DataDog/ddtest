@@ -49,19 +49,18 @@ func TestRemoteGridSecretRequiresASecretReference(t *testing.T) {
 	require.Empty(t, remoteGridSecret("API_TOKEN", "${{ secrets.API_TOKEN }}"), "other secrets still need review")
 }
 
-// Other frameworks still demand review for the same secret: only WebdriverIO
-// can tell from its configuration that the run happens on the remote grid.
-func TestRemoteGridSecretsStillBlockOtherFrameworks(t *testing.T) {
+// Other frameworks treat the same secret as any value only CI provides: only
+// WebdriverIO can tell from its configuration that the run happens on the
+// remote grid, so elsewhere the tests run without it and the report says so.
+func TestRemoteGridSecretsOfOtherFrameworksAreValidatedWithout(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"test":"mocha"},"devDependencies":{"mocha":"11.0.0"}}`), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/ci.yaml"), []byte("jobs:\n  build:\n    steps:\n      - run: npm test\n        env:\n          SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}\n"), 0600))
 	scope, err := DiscoverValidationScope(root, "mocha")
 	require.NoError(t, err)
-	blocked := len(scope.Unresolved) > 0
-	for _, entry := range scope.Commands {
-		require.Empty(t, entry.RemoteGrid)
-		blocked = blocked || len(entry.UnvalidatedSetup) > 0
-	}
-	require.True(t, blocked, "an unresolvable secret still needs review outside WebdriverIO")
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Empty(t, scope.Commands[0].RemoteGrid)
+	require.Equal(t, []string{"SAUCE_ACCESS_KEY"}, scope.Commands[0].WithoutCIValues)
 }

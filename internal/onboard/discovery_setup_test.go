@@ -80,14 +80,20 @@ func TestScopeRetainsMutationsAndUnresolvedBuildInputs(t *testing.T) {
 		require.Len(t, scope.Commands, 1)
 		require.Contains(t, strings.Join(scope.Commands[0].UnvalidatedSetup, "\n"), command)
 	}
-	for _, input := range []string{"        env: {MODE: '${{ secrets.MODE }}'}", "        if: steps.setup.outputs.ready"} {
-		root := newJestRepository(t, "jobs:\n  tests:\n    steps:\n      - run: rollup -c\n"+input+"\n      - run: jest\n")
-		scope, err := DiscoverValidationScope(root, "jest")
-		require.NoError(t, err)
-		require.Len(t, scope.Commands, 1)
-		require.NotEmpty(t, scope.Unresolved)
-		require.NotEmpty(t, scope.Commands[0].UnvalidatedSetup)
-	}
+	// A build step whose condition only CI decides stays unresolved.
+	root := newJestRepository(t, "jobs:\n  tests:\n    steps:\n      - run: rollup -c\n        if: steps.setup.outputs.ready\n      - run: jest\n")
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.NotEmpty(t, scope.Unresolved)
+	require.NotEmpty(t, scope.Commands[0].UnvalidatedSetup)
+	// One that reads a value only CI provides runs without it, reported.
+	root = newJestRepository(t, "jobs:\n  tests:\n    steps:\n      - run: rollup -c\n        env: {MODE: '${{ secrets.MODE }}'}\n      - run: jest\n")
+	scope, err = DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Empty(t, scope.Unresolved)
+	require.Equal(t, []string{"MODE"}, scope.Commands[0].WithoutCIValues)
 }
 
 func TestCompositeSubstitutesExecutableInputFields(t *testing.T) {

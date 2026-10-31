@@ -434,6 +434,10 @@ func (rubyDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"RUBYOPT", "RUBYLIB", "GEM_HOME", "GEM_PATH"}, name) || strings.HasPrefix(name, "BUNDLE_")
 }
 
+func (rubyDiscovery) toolVariable(name string) bool {
+	return slices.Contains([]string{"SPEC_OPTS", "TESTOPTS", "TEST", "TESTS"}, name)
+}
+
 func (rubyDiscovery) cacheVariable(name string) bool {
 	return slices.Contains([]string{"BUNDLE_PATH", "GEM_HOME"}, name)
 }

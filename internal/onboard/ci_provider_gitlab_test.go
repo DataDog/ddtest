@@ -658,9 +658,9 @@ func TestGitLabComputedExportsStayUnresolved(t *testing.T) {
 	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "CI environment variable SUITE requires review")
 }
 
-// A job variable reading a value ddtest does not know never reaches the
-// tests as text.
-func TestGitLabUnknownVariableReadsStayUnresolved(t *testing.T) {
+// A job variable reading a value only CI knows, as a predefined variable,
+// never reaches the tests as text: they run without it and the report says so.
+func TestGitLabCIVariableReadsAreValidatedWithout(t *testing.T) {
 	root := newJestRepository(t, jestWorkflow)
 	writeFile(t, root, ".gitlab-ci.yml", "test:\n  image: node:22\n  variables:\n    TEST_MODE: $CI_PIPELINE_SOURCE\n    API_KEY: $DD_API_KEY\n  script:\n    - npx jest\n")
 	jobs, _ := gitLabJobs(t, root)
@@ -669,7 +669,10 @@ func TestGitLabUnknownVariableReadsStayUnresolved(t *testing.T) {
 	useCIProvider(t, "gitlab")
 	scope, err := DiscoverValidationScope(root, "jest")
 	require.NoError(t, err)
-	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "TEST_MODE requires review")
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, []string{"TEST_MODE"}, scope.Commands[0].WithoutCIValues)
+	require.NotContains(t, scope.Commands[0].Environment, "TEST_MODE")
 }
 
 func TestGitLabReferencedVariables(t *testing.T) {

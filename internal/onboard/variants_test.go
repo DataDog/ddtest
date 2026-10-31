@@ -104,7 +104,7 @@ func TestDiscoveryPreservesExplicitEmptyNodeOptions(t *testing.T) {
 	}
 }
 
-func TestCredentialSecretsAreValidatedWithoutAndReported(t *testing.T) {
+func TestUnresolvedCIValuesAreValidatedWithoutAndReported(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"test":"jest"}}`), 0600))
@@ -116,42 +116,48 @@ func TestCredentialSecretsAreValidatedWithoutAndReported(t *testing.T) {
 		require.NoError(t, err)
 		return scope
 	}
-	// A setup step's, the job's and the test step's own credentials.
-	for _, workflow := range []string{
-		"jobs:\n  test:\n    steps:\n      - run: npm ci\n        env: {NPM_TOKEN: '${{ secrets.NPM_TOKEN }}'}\n      - run: npm test\n",
-		"jobs:\n  test:\n    env: {NPM_TOKEN: '${{ secrets.ACCESS_TOKEN }}'}\n    steps:\n      - run: npm ci\n      - run: npm test\n",
-		"jobs:\n  test:\n    steps:\n      - run: npm ci\n      - run: npm test\n        env: {NPM_TOKEN: '${{ github.token }}'}\n",
+	// A setup step's, the job's and the test step's own values only CI knows:
+	// secrets, whatever their names, CI contexts and step outputs.
+	for workflow, name := range map[string]string{
+		"jobs:\n  test:\n    steps:\n      - run: npm ci\n        env: {NPM_TOKEN: '${{ secrets.NPM_TOKEN }}'}\n      - run: npm test\n":                     "NPM_TOKEN",
+		"jobs:\n  test:\n    env: {NPM_TOKEN: '${{ secrets.ACCESS_TOKEN }}'}\n    steps:\n      - run: npm ci\n      - run: npm test\n":                      "NPM_TOKEN",
+		"jobs:\n  test:\n    steps:\n      - run: npm ci\n      - run: npm test\n        env: {NPM_TOKEN: '${{ github.token }}'}\n":                          "NPM_TOKEN",
+		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {API_URL: '${{ secrets.API_URL }}'}\n":                                              "API_URL",
+		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {MAVEN_CENTRAL_USER_NEW: '${{ secrets.USER }}'}\n":                                  "MAVEN_CENTRAL_USER_NEW",
+		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {AUTH: 'Bearer ${{ secrets.TOKEN }}'}\n":                                            "AUTH",
+		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {CI_BRANCH: '${{ github.ref }}'}\n":                                                 "CI_BRANCH",
+		"jobs:\n  test:\n    steps:\n      - id: v\n        run: echo ok\n      - run: npm test\n        env: {VERSION: '${{ steps.v.outputs.version }}'}\n": "VERSION",
 	} {
 		scope := discover(workflow)
 		require.Len(t, scope.Commands, 1, workflow)
 		require.Empty(t, scope.Unresolved, workflow)
 		require.Empty(t, scope.Commands[0].UnvalidatedSetup, workflow)
-		require.Equal(t, []string{"NPM_TOKEN"}, scope.Commands[0].WithoutSecrets, workflow)
-		require.NotContains(t, scope.Commands[0].Environment, "NPM_TOKEN", "no secret reaches validation")
-		require.Contains(t, strings.Join(scope.Caveats, "\n"), "step 2 (npm test): validated without the CI secrets NPM_TOKEN", workflow)
+		require.Equal(t, []string{name}, scope.Commands[0].WithoutCIValues, workflow)
+		require.NotContains(t, scope.Commands[0].Environment, name, "no CI-only value reaches validation")
+		require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI values of "+name+", which only CI provides", workflow)
 	}
 	// A test step that sets the variable itself keeps its value, while the
 	// setup step that read the secret still ran without it.
 	scope := discover("jobs:\n  test:\n    steps:\n      - run: npm ci\n        env: {NPM_TOKEN: '${{ secrets.NPM_TOKEN }}'}\n      - run: npm test\n        env: {NPM_TOKEN: local-value}\n")
 	require.Len(t, scope.Commands, 1)
-	require.Equal(t, []string{"NPM_TOKEN"}, scope.Commands[0].WithoutSecrets)
+	require.Equal(t, []string{"NPM_TOKEN"}, scope.Commands[0].WithoutCIValues)
 	require.Equal(t, "local-value", scope.Commands[0].Environment["NPM_TOKEN"])
-	// Identical configurations merge, keeping every location's omitted secrets.
+	// Identical configurations merge, keeping every location's omitted values.
 	scope = discover("jobs:\n  plain:\n    steps:\n      - run: npm test\n  sonar:\n    steps:\n      - run: npm test\n        env: {SONAR_TOKEN: '${{ secrets.SONAR_TOKEN }}'}\n")
 	require.Len(t, scope.Commands, 1)
-	require.Equal(t, []string{"SONAR_TOKEN"}, scope.Commands[0].WithoutSecrets)
+	require.Equal(t, []string{"SONAR_TOKEN"}, scope.Commands[0].WithoutCIValues)
 	// A secret after the last test can't reach it.
 	scope = discover("jobs:\n  test:\n    steps:\n      - run: npm test\n      - run: npx codecov\n        env: {CODECOV_TOKEN: '${{ secrets.CODECOV_TOKEN }}'}\n")
 	require.Len(t, scope.Commands, 1)
-	require.Empty(t, scope.Commands[0].WithoutSecrets)
-	// A command that reads the credential, a secret used as a setting and a
-	// value that only contains a secret still require review.
+	require.Empty(t, scope.Commands[0].WithoutCIValues)
+	// A command line that expands the value, and a variable that controls the
+	// runtime or the tools, still require review.
 	for _, workflow := range []string{
 		"jobs:\n  test:\n    steps:\n      - run: npm test -- --token=$NPM_TOKEN\n        env: {NPM_TOKEN: '${{ secrets.NPM_TOKEN }}'}\n",
-		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {API_URL: '${{ secrets.API_URL }}'}\n",
-		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {AUTH_MODE: '${{ secrets.AUTH_MODE }}'}\n",
-		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {PASSWORD_POLICY: '${{ secrets.PASSWORD_POLICY }}'}\n",
-		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {AUTH: 'Bearer ${{ secrets.TOKEN }}'}\n",
+		"jobs:\n  test:\n    steps:\n      - run: npm test -- $FILTER\n        env: {FILTER: '${{ github.event.inputs.filter }}'}\n",
+		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {NODE_OPTIONS: '${{ secrets.NODE_OPTIONS }}'}\n",
+		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {npm_config_registry: '${{ secrets.REGISTRY }}'}\n",
+		"jobs:\n  test:\n    steps:\n      - run: npm test\n        env: {LD_PRELOAD: '${{ secrets.PRELOAD }}'}\n",
 	} {
 		scope := discover(workflow)
 		blocked := len(scope.Unresolved) > 0
@@ -162,11 +168,11 @@ func TestCredentialSecretsAreValidatedWithoutAndReported(t *testing.T) {
 	}
 }
 
-func TestCredentialNamesEndWithACredential(t *testing.T) {
-	for _, name := range []string{"GITHUB_TOKEN", "SONAR_TOKEN", "NPM_AUTH", "AUTH", "SONAR_LOGIN_PASSWORD", "AWS_SECRET_ACCESS_KEY", "CLIENT_SECRET", "GPG_PASSPHRASE", "OPENAI_API_KEY", "DJANGO_SECRET_KEY", "GOOGLE_CREDENTIALS"} {
-		require.True(t, credentialName.MatchString(name), name)
+func TestCIControlVariables(t *testing.T) {
+	for _, name := range []string{"PATH", "HOME", "LD_PRELOAD", "DD_SERVICE", "NODE_OPTIONS", "npm_config_registry", "PYTHONPATH", "PYTEST_ADDOPTS", "RUBYOPT", "BUNDLE_GEMFILE", "SPEC_OPTS", "JAVA_TOOL_OPTIONS", "MAVEN_ARGS", "GRADLE_OPTS", "GRADLE_USER_HOME"} {
+		require.True(t, ciControlVariable(name), name)
 	}
-	for _, name := range []string{"AUTH_MODE", "PASSWORD_POLICY", "TOKEN_URL", "API_URL", "OAUTH", "SECRETS_DIR"} {
-		require.False(t, credentialName.MatchString(name), name)
+	for _, name := range []string{"API_URL", "GITHUB_TOKEN", "CI_BRANCH", "MAVEN_CENTRAL_PASSWORD_NEW", "TEST_DB_URL", "AUTH_MODE"} {
+		require.False(t, ciControlVariable(name), name)
 	}
 }
