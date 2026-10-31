@@ -271,9 +271,11 @@ func TestPublicJestTwoPackageConfiguration(t *testing.T) {
 	}
 	// A focused nested invocation still reports correct paths; it cannot certify
 	// checkout CI from this package, so its separate CI finding remains incomplete.
+	// Its report is written at the checkout root, like every other run's.
 	data, err = command(filepath.Join(root, "packages/a"), binary, "testdrive", "--framework", "jest", "--yes")
 	require.Error(t, err, string(data))
-	nested := readValidationReport(t, filepath.Join(root, "packages/a"))
+	require.NoFileExists(t, validationPath(filepath.Join(root, "packages/a")))
+	nested := readValidationReport(t, root)
 	require.Equal(t, "compatible", nested.Compatibility.Status, string(data))
 	require.Len(t, nested.Features, 6)
 	for _, feature := range nested.Features {
