@@ -508,10 +508,13 @@ func trimBazelTemporarySources(args []string, start int, temp string) ([]string,
 	}
 	var original string
 	for i := 1; i < start; i++ {
-		if args[i] == "-trimpath" && i+1 < start {
+		// cmd/compile accepts either one or two leading dashes.
+		flag := strings.TrimPrefix(args[i], "-")
+		flag = strings.TrimPrefix(flag, "-")
+		if flag == "trimpath" && i+1 < start {
 			original = args[i+1]
 			i++
-		} else if value, ok := strings.CutPrefix(args[i], "-trimpath="); ok {
+		} else if value, ok := strings.CutPrefix(flag, "trimpath="); ok {
 			original = value
 		}
 	}

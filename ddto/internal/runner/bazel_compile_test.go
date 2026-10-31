@@ -150,6 +150,8 @@ func TestBazelEditedCopiesAreReproducible(t *testing.T) {
 		{name: "inside existing prefix", flags: []string{"-trimpath", rewrite}, nested: true},
 		{name: "last flag wins", flags: []string{"-trimpath=unused=>other", "-trimpath", rewrite}},
 		{name: "last equals flag wins", flags: []string{"-trimpath", "unused=>other", "-trimpath=" + rewrite}},
+		{name: "last double dash flag wins", flags: []string{"-trimpath=unused=>other", "--trimpath", rewrite}},
+		{name: "last double dash equals flag wins", flags: []string{"-trimpath", "unused=>other", "--trimpath=" + rewrite}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var archives [][]byte
