@@ -266,7 +266,14 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	automatic := discoveryLanguageAutomaticSetup(detected.Name())
 	if root, err := os.Getwd(); err == nil && automatic {
 		if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
-			automatic = providerAutomaticSetup(root, provider, discoveryLanguageNamed(detected.Name()), frameworkName)
+			// onboard --apply checks the edit against the site it reports to,
+			// DD_SITE by default; one it would refuse is left to the
+			// instructions, which name the problem.
+			site := options.Site
+			if site == "" {
+				site = os.Getenv("DD_SITE")
+			}
+			automatic = providerAutomaticSetup(root, provider, discoveryLanguageNamed(detected.Name()), frameworkName, site)
 		}
 	}
 	if !automatic && options.Site == "" {
