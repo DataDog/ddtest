@@ -49,11 +49,11 @@ func apiKeyHumanAction(check *onboard.RuntimeCheck) string {
 	if check != nil {
 		for _, job := range check.Jobs {
 			if job.Reason == onboard.GuardedActionBranch {
-				return onboard.CIProviderAPIKeyAction(true)
+				return onboard.CIProviderAPIKeyActionFor(check, true)
 			}
 		}
 	}
-	return onboard.CIProviderAPIKeyAction(false)
+	return onboard.CIProviderAPIKeyActionFor(check, false)
 }
 
 // featureCoverageBlocker is the summary line for incomplete feature results.

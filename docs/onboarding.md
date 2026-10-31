@@ -102,7 +102,8 @@ never fail onboarding.
 ### Runtimes and facts only the user can state
 
 Some CI jobs select no runtime ddtest can read: Jenkins stages on a host
-agent, Buildkite steps on the agent host, GitLab jobs without an `image`, CircleCI `machine` and `macos`
+agent or in a container whose image ddtest does not read (a Kubernetes pod's,
+or `docker.build(…)`'s), Buildkite steps on the agent host, GitLab jobs without an `image`, CircleCI `machine` and `macos`
 executors, GitHub self-hosted runners (a `self-hosted` label in any `runs-on`
 form, including `{group, labels}` and a runner a matrix row selects, such as
 `runs-on: ${{ matrix.os }}` with `os: [self-hosted, ubuntu-latest]`) without
@@ -151,7 +152,9 @@ an unknown runtime:
   installer step, nvm) and Ruby installers are compared by their numeric
   components, as before.
 - GitHub-hosted runners and job containers, and images ddtest cannot resolve,
-  keep their own findings: their runtime is in the configuration.
+  keep their own findings: their runtime is in the configuration (except a
+  Jenkins container's, above, whose image is configured outside the
+  Jenkinsfile).
 - The stated version goes through every check an image tag's goes through:
   the tracer's Node range (a major such as `22` resolves to its latest release,
   as `node:22` does), the ESM loader's Node range, the Ruby tracer's RubyGems
@@ -637,21 +640,68 @@ keeps the setup around it.
 configure the tracer: it logs `ERROR: [datadog]` with a stack trace for each
 such step and tries again at the next one, which is harmless.
 
-The plugin does not support tests inside containers. Stages that run in
-`agent { docker … }`, `dockerfile`, `kubernetes`, a `podTemplate`'s
-`node(POD_LABEL)` (or a `node` on its label), `docker.image(…).inside`, an
-image variable's `.inside` or `container(…)` are unsupported. A container
-block in a job on a host agent runs only its own steps in the container: they
-become a job of their own, named after the job and the container
-(`Test (docker.image('node:22').inside)`), and a test inside the container is
-reported, naming the job it splits from. When every job that runs the tests
-is unsupported, onboarding returns `status: unsupported` with
-`code: ci_setup_unsupported`, naming the jobs and the user's options (run the
-tests on a host agent, or set up Test Optimization in the container by hand,
-which ddtest cannot validate), with an instruction for the coding agent to
-report it and stop; otherwise the instructions name them and validation keeps
-them as blockers. An installer fallback for containers is not part of
-this provider.
+The plugin does not support tests inside containers, so stages that run in
+`agent { docker … }`, `agent { dockerfile … }`, `agent { kubernetes … }`, a
+`podTemplate`'s `node(POD_LABEL)` (or a `node` on its label),
+`docker.image(…).inside`, an image variable's `.inside` or `container(…)` set
+Test Optimization up with Datadog's installer instead: the setup snippet
+Buildkite steps run (see [Buildkite](#buildkite)), in the `sh` script that runs
+the tests, before the test command, since each `sh` starts a fresh shell. A
+container block in a job on a host agent runs only its own steps in the
+container: they become a job of their own, named after the job and the
+container (`Test (docker.image('node:22').inside)`). The snippet's Jenkins
+form differs from Buildkite's where Jenkins needs it:
+
+- It exports `DD_TRACER_FOLDER="$PWD/.datadog-ci-container"`, where the
+  installer installs the tracers and the snippet keeps its download and
+  output, so it never replaces the tracer the plugin installs in the
+  workspace's `.datadog` for the host stages of the same build (a real Jenkins
+  run showed the installer otherwise overwrites it, and later host stages then
+  run the snippet's release).
+- It tests the key with `[ "${DD_API_KEY:+set}" = set ]`, which Jenkins' shell
+  trace (`sh -x`) prints without the key's value.
+- No `$` is escaped: the `sh` script is a single-quoted Groovy string.
+- `DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER` is `jenkins`.
+
+The snippet is complete under Buildkite's rules: the pinned installer release
+and its SHA256, an exact tracer release, the selected site, and a runtime from
+the container's image. `agent { dockerfile … }` reads the base image of the
+Dockerfile it builds (`filename`, `dir`; a build argument `additionalBuildArgs`
+overrides is unknown), as Buildkite's Compose builds do. For an image ddtest
+does not read (a Kubernetes pod's, or `docker.build(…)`'s), the runtime is the
+user's to state with `--ci-runtime`, as a host agent's, and `final_response`
+says ddtest could not check that the image has Bash and curl or wget. An image
+known to lack Bash, or curl and wget (Alpine, an official `-slim` image without
+an install before the snippet), is a setup problem. `DD_API_KEY` must reach the
+`sh` step from a Jenkins credential, with
+`withCredentials([string(credentialsId: '…', variable: 'DD_API_KEY')]) { … }`
+around it or `DD_API_KEY = credentials('…')` in an `environment` directive: the
+plugin's own key reaches only the steps in its option's scope. A step the key
+does not reach, a literal key, or a key an earlier command of the script clears
+is a setup problem.
+
+The snippet must be the stage's only setup: a container stage within a
+`datadog(…)` option's scope is a setup problem (see below). When ddtest cannot
+prove the stage is outside every plugin scope, because a `datadog(…)` call it
+cannot read encloses it (one with computed `testOptimization` arguments, or
+arguments that are not named, such as a map variable), the snippet must start
+with the statements that remove the plugin's variables for its language (the
+preload the plugin prepends to `NODE_OPTIONS`, located by its `DD_TRACE_PATH`;
+the plugin's `RUBYOPT`), which the instructions then write. Otherwise
+`final_response` notes, as a caveat, that Test Optimization enabled in the
+job's configuration page instead of the Jenkinsfile would reach the container
+stages too. Ruby: when the Jenkinsfile also enables the plugin for Ruby, the
+plugin's `bundle add datadog-ci` on the agent would put the latest release in
+the shared Gemfile, which the installer then uses, so Gemfile.lock must pin
+`datadog-ci` at the snippet's `DD_SET_TRACER_VERSION_RUBY` (a setup problem
+otherwise, and the instructions say so).
+
+A pipeline with stages of both kinds gets the instructions of each mechanism,
+each naming its stages. The confirmations below are asked only for stages the
+plugin sets up, and `final_response`'s human action asks for the plugin's
+configuration, the credential the container stages bind (`datadog-api-key`,
+or the one the plugin already uses), or both. Tests that `docker run` starts
+in an `sh` script stay unresolved.
 
 The plugin's tracer variables still reach container steps: its step
 environment contributor configures every step in the option's scope for the
@@ -768,9 +818,7 @@ container (any stage or container block), the top-level option would include
 them, so it adds the same option, with the same arguments, to the `options`
 of each stage that runs the tests on a host agent instead (created after the
 stage's `agent` or `environment` the same way), or merges into a stage's
-existing `datadog(…)`. The container test stages stay unsupported and are
-reported as blockers, so the result is not complete until they are set up
-another way. In a scripted pipeline it wraps each outermost
+existing `datadog(…)`. In a scripted pipeline it wraps each outermost
 `node` block that runs the tests in `datadog(testOptimization: […]) { … }`,
 indenting the block one step; lines inside multi-line strings keep their
 bytes. An existing `datadog(…)` call, in `options` or around the `node`, is
@@ -792,7 +840,28 @@ and line endings; every other byte is unchanged. The edited Jenkinsfile is read
 again and must read as the same jobs, each with a complete setup before every
 test command (for ESM, the loader in effect in every test `sh` script), or
 nothing is written. Applying again changes nothing (`… CI setup is already configured; no
-edits.`). It refuses, and onboarding gives the instructions instead with the
+edits.`).
+
+In each container stage that runs the tests, `onboard --apply` adds the setup
+snippet to the `sh` step that runs them, before the test statement: a
+multi-line single-quoted script (`sh '''…'''`) gets the snippet's lines before
+the test's line, with its indentation, and a one-line `sh '…'` becomes a
+multi-line one, its statements before the test on a line of their own. The
+script must be a literal without escapes or a shebang, and the test statement
+must start a line of its own. When `DD_API_KEY` does not reach the step yet,
+it encloses the `sh` step in
+`withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) { … }`
+when the step is a statement on lines of its own; otherwise, as for a script
+it cannot edit, the result asks for the setup or the binding
+(`ci_edit_required`) and resumes with `onboard --apply`. The snippet installs
+the dd-trace release JavaScript's `onboard --apply` selects for the stage's
+Node, or the `datadog-ci` release Gemfile.lock pins for Ruby: without a pin,
+with host stages beside them, the result asks for the pin first
+(`ci_edit_required`); with container stages alone, the snippet stays the
+instructions'. A container stage that runs the snippet already is checked, not
+edited again, and the edited Jenkinsfile is read again like the plugin's edit.
+
+It refuses, and onboarding gives the instructions instead with the
 reason: a Jenkinsfile that loads a shared library (`@Library`, `library …` or a
 `libraries` directive), a job that runs steps in a container within the
 option's scope (a container block in a stage that runs the tests, or in a

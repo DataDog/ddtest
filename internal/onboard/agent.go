@@ -357,7 +357,7 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 	}
 	setup := "Datadog setup action"
 	if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
-		setup = provider.setupName()
+		setup = setupProviderNames(testJobSetups(root, provider, language, framework))
 	}
 	if registered := discoveryLanguageNamed(language); registered != nil && registered.ciSetupConfigured(root, framework, options.Site) {
 		return WriteAgentResult(output, AgentResult{
@@ -406,6 +406,8 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 	}
 	if refusal := pluginSetupRefusal(root, framework); refusal != "" {
 		reason += "onboard --apply cannot write this setup (" + refusal + "), so apply it from the instructions. "
+	} else if edit := pluginSetupEditFirst(root, framework); edit != "" && !discoveryLanguageAutomaticSetup(language) {
+		reason += "onboard --apply writes the CI configuration's part of this setup once one edit is made (" + edit + "): make it as the instructions show, then rerun onboard --agent. "
 	}
 	if len(unresolved) > 0 {
 		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers; tell the user now that they need a scope decision. ", len(unresolved))

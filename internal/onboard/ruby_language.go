@@ -214,6 +214,14 @@ func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 		"If a job or matrix entry runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), keep its tests running uninstrumented in a job without " + terms.Entry + "; ddtest reports such jobs as excluded. To split a shared matrix, exclude those entries from the instrumented job " + terms.MatrixExclusion + " and run them in that separate job. Report each exclusion and its reason; do not drop entries, guard the tests or change Ruby versions to obtain a pass. At least one compatible instrumented job is required.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
 	}
+	if terms.Beside != "" {
+		// The other mechanism's bundle add would change the release.
+		request.Notes[0] = "The build also runs " + terms.Beside + ", for Ruby in the same workspace, which runs bundle add datadog-ci there unless Gemfile.lock pins it, and the " + terms.Installer + " then uses the bundle's release: pin datadog-ci exactly in the Gemfile and Gemfile.lock, as the instructions for those stages show, and replace <exact datadog-ci release> with that release. Keep the existing Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments. In a mixed RSpec/Minitest repository, scope this change to " + framework + "."
+		if locked := rubyLockedTracer(root); locked != "" {
+			request.TracerVersion = locked
+			request.Notes[0] = "Gemfile.lock pins datadog-ci " + locked + ", which the " + terms.Installer + " uses as is, and the build also runs " + terms.Beside + ": keep the pin, and keep the Gemfile, Gemfile.lock, Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments unchanged. In a mixed RSpec/Minitest repository, scope this change to " + framework + "."
+		}
+	}
 	request.Notes = slices.DeleteFunc(request.Notes, func(note string) bool { return note == "" })
 	if framework == "minitest" {
 		request.Notes = append(request.Notes, rubyShellForkSetup(terms))
@@ -596,6 +604,15 @@ func (rubyDiscovery) selectsShellRuntime(words []string) bool {
 // reaching docker.image(…).inside steps.
 func (rubyDiscovery) ciPluginContainerEffect() string {
 	return "for Ruby, the plugin's RUBYOPT (" + rubyInstallerPreload + ") makes every Ruby process in the container fail to start, bundle install and bundle exec included, which fails the build, because the plugin adds datadog-ci to the agent's gems, not the container's; with datadog-ci pinned in Gemfile.lock, the plugin's check on the agent never passes, so the container gets no variables and the tests run untraced"
+}
+
+// lockedTracer is the datadog-ci release Gemfile.lock pins, which the
+// installer uses as is.
+func (rubyDiscovery) lockedTracer(root string) string { return rubyLockedTracer(root) }
+
+// ciPluginReset removes the plugin's RUBYOPT, which replaces the step's.
+func (rubyDiscovery) ciPluginReset() string {
+	return `if [ "${RUBYOPT:-}" = "` + rubyInstallerPreload + `" ]; then unset RUBYOPT; fi`
 }
 
 func (rubyDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {

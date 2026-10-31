@@ -101,6 +101,9 @@ type ciSetup struct {
 	// after are shell statements that run only with the setup, inside its
 	// guard.
 	after []*syntax.Stmt
+	// before are shell statements a setup snippet runs before itself,
+	// whether or not it installs anything (see snippetSetupAt).
+	before []string
 	// Inputs are the installer inputs keyed by the setup action's input
 	// names: languages, api_key, site and <language>-tracer-version. Values
 	// are verbatim; unresolved references stay as written.
@@ -120,6 +123,12 @@ type ciSetup struct {
 	// Caveats are what ddtest could not check about the mechanism, for
 	// final_response.
 	Caveats []string
+	// Beside names another Datadog setup mechanism the build enables for
+	// the same language in other jobs that share its workspace, such as the
+	// Datadog Jenkins plugin beside a container stage's setup snippet;
+	// languages whose tracer joins the project's dependencies check that it
+	// cannot change the release this setup installs.
+	Beside string
 	// Exports are the loader variables the mechanism sets for the steps
 	// after it besides the action's DD_TRACE_PACKAGE and DD_TRACE_ESM_IMPORT,
 	// such as the Datadog Jenkins plugin's DD_TRACE_PATH. A test step's
@@ -147,6 +156,9 @@ type ciSetupRequest struct {
 	Service string
 	// Framework is the framework whose tests the setup is for.
 	Framework string
+	// Jobs are the jobs the setup is for, when the provider sets its jobs up
+	// with several mechanisms (see runtimeJob.SetupProvider); empty for all.
+	Jobs []string
 }
 
 // ciSetupTerms are how a provider without the shared workflow syntax names
@@ -179,6 +191,11 @@ type ciSetupTerms struct {
 	// image, written as template, is image; empty when the template selects
 	// no image through a variable or parameter.
 	ImageGuard func(template, image, command string) string
+	// Beside names the provider's other setup mechanism that the same build
+	// runs for the language in other jobs of its workspace (see
+	// runtimeJob.SetupProvider), such as the Datadog Jenkins plugin beside
+	// container stages' setup snippet; empty when there is none.
+	Beside string
 	// Plugin reports a setup that is a CI server plugin, enabled in the
 	// configuration, that installs the tracers on the build agent and sets
 	// their variables for every step (the Datadog Jenkins plugin), instead of
@@ -224,6 +241,66 @@ func datadogSetup(step runtimeStep) (ciSetup, bool) {
 	return ciSetup{}, false
 }
 
+// setupProviderFor is the provider whose setup mechanism job uses: its
+// own, unless the job runs another of its mechanisms (see
+// runtimeJob.SetupProvider), whose names, inputs and instructions then
+// apply.
+func setupProviderFor(provider ciProvider, job runtimeJob) ciProvider {
+	if job.SetupProvider != nil {
+		return job.SetupProvider
+	}
+	return provider
+}
+
+// jobSetups are the jobs that set Test Optimization up with one of a
+// provider's mechanisms.
+type jobSetups struct {
+	provider ciProvider
+	jobs     []string
+}
+
+// testJobSetups groups the jobs that run framework's tests by the setup
+// mechanism each uses (see setupProviderFor), the provider's own first; a
+// provider with one mechanism, or no such job, gives that one alone.
+func testJobSetups(root string, provider ciProvider, language, framework string) []jobSetups {
+	groups := []jobSetups{{provider: provider}}
+	workflows, err := readProviderWorkflows(provider, root)
+	if err != nil {
+		return groups
+	}
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if disabledCondition(job.If) || !slices.ContainsFunc(job.Steps, func(step runtimeStep) bool {
+				return resolveTestStep(root, workflow, job, step, language, framework).Matched
+			}) {
+				continue
+			}
+			mechanism := setupProviderFor(provider, job)
+			i := slices.IndexFunc(groups, func(group jobSetups) bool { return group.provider == mechanism })
+			if i < 0 {
+				groups, i = append(groups, jobSetups{provider: mechanism}), len(groups)
+			}
+			groups[i].jobs = append(groups[i].jobs, workflow.Path+" / "+name)
+		}
+	}
+	if len(groups) > 1 && len(groups[0].jobs) == 0 {
+		groups = groups[1:]
+	}
+	return groups
+}
+
+// setupProviderNames names the setup mechanisms of groups.
+func setupProviderNames(groups []jobSetups) string {
+	names := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if name := group.provider.setupName(); !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, " or the ")
+}
+
 // setupSelectsLanguage reports whether setup installs the tracer of the
 // language named by its languages input, after resolving row's matrix values.
 func setupSelectsLanguage(setup ciSetup, row map[string]any, language string) (bool, error) {
@@ -263,6 +340,32 @@ func CIProviderTracerSetting(language, version string) string {
 // for the selected CI provider.
 func CIProviderAPIKeyAction(skipped bool) string {
 	return activeOrDefaultCIProvider().apiKeyAction(skipped)
+}
+
+// ciAPIKeyActions is a provider whose jobs set Test Optimization up with
+// several mechanisms (see runtimeJob.SetupProvider), each receiving the
+// API key its own way.
+type ciAPIKeyActions interface {
+	// apiKeyActions are the person's steps for the mechanisms named by
+	// references (ciSetup.Reference of the validated jobs' setups).
+	apiKeyActions(references []string, skipped bool) string
+}
+
+// CIProviderAPIKeyActionFor is CIProviderAPIKeyAction for the setups of
+// check's jobs, on a provider whose jobs use several mechanisms.
+func CIProviderAPIKeyActionFor(check *RuntimeCheck, skipped bool) string {
+	provider := activeOrDefaultCIProvider()
+	several, ok := provider.(ciAPIKeyActions)
+	if !ok || check == nil {
+		return provider.apiKeyAction(skipped)
+	}
+	var references []string
+	for _, job := range check.Jobs {
+		if job.Action != "" {
+			references = append(references, job.Action)
+		}
+	}
+	return several.apiKeyActions(references, skipped)
 }
 
 // CIProviderChoice is a user decision: several CI providers contain tests and

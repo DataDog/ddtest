@@ -86,30 +86,49 @@ type jenkinsShTarget struct {
 	after           []string
 }
 
-// planSetupEdits enables the Datadog Jenkins plugin for every target job, or
-// explains why it cannot do so safely. Jobs that run in containers, which
-// the plugin does not instrument, are left as they are.
+// jenkinsSnippetTarget is the sh step that runs a container job's first
+// test command, where the setup snippet goes: lines before the statement at
+// statement (an offset in its script), and wrap reports a step DD_API_KEY
+// does not reach yet, which withCredentials then encloses.
+type jenkinsSnippetTarget struct {
+	job       string
+	call      int
+	statement int
+	lines     []string
+	wrap      bool
+}
+
+// planSetupEdits sets up every target job, or explains why it cannot do so
+// safely: it enables the Datadog Jenkins plugin for the jobs on host agents,
+// and adds the setup snippet (see jenkinsContainer) to the sh step that runs
+// the tests of each job in a container.
 func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []ciSetupTarget, request ciSetupRequest) ([]setupEdit, []string, error) {
-	service := request.Service
-	if !jenkinsServiceName.MatchString(service) {
-		service = repositoryName(root)
-	}
-	if !jenkinsServiceName.MatchString(service) {
-		return nil, nil, &SetupGap{"Jenkins", "ddtest could not derive a service name for serviceName from the project or the checkout directory (" + strconv.Quote(service) + "); add the Datadog Jenkins plugin setup by hand with a serviceName of your choice, as onboard --instructions shows, then validate with testdrive --all."}
-	}
 	token := jenkinsPluginToken(request.Language)
 	byFile := map[string][]jenkinsShTarget{}
+	snippets := map[string][]jenkinsSnippetTarget{}
 	jobs := map[string][]string{}
-	containers := []string{}
 	language := discoveryLanguageName(request.Framework)
-	for _, target := range targets {
+	// The plugin set up on host stages runs beside the snippets.
+	plugin := slices.ContainsFunc(targets, func(target ciSetupTarget) bool {
 		job, _, ok := gitLabTarget(workflows, target)
+		return ok && !jenkinsContainerJob(job)
+	})
+	for _, target := range targets {
+		job, step, ok := gitLabTarget(workflows, target)
 		workflow := jenkinsWorkflowAt(workflows, target.Workflow)
 		if !ok {
 			return nil, nil, &SetupGap{target.Workflow + " / " + target.Job, "The test step is not a Jenkinsfile sh step ddtest can edit."}
 		}
-		if job.SetupUnsupported != "" {
-			containers = append(containers, target.Workflow+" / "+target.Job)
+		if jenkinsContainerJob(job) {
+			jobs[target.Workflow] = append(jobs[target.Workflow], target.Job)
+			if jenkinsSnippetBefore(job, target.Step) {
+				continue // Its setup is checked with the others below.
+			}
+			snippet, err := jenkinsContainerTarget(root, workflows, target, job, step, request, plugin)
+			if err != nil {
+				return nil, nil, err
+			}
+			snippets[target.Workflow] = append(snippets[target.Workflow], snippet)
 			continue
 		}
 		after := request.After
@@ -133,17 +152,21 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 		}
 		jobs[target.Workflow] = append(jobs[target.Workflow], target.Job)
 	}
-	if len(byFile) == 0 {
-		return nil, nil, &SetupGap{"Jenkins", "Every job that runs the tests runs in a container (" + strings.Join(containers, ", ") + "), where " + jenkinsContainerUnsupported + "; ddtest does not enable it for them. The user's options are to run those tests on a host agent, or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate."}
+	service := request.Service
+	if !jenkinsServiceName.MatchString(service) {
+		service = repositoryName(root)
+	}
+	if len(byFile) > 0 && !jenkinsServiceName.MatchString(service) {
+		return nil, nil, &SetupGap{"Jenkins", "ddtest could not derive a service name for serviceName from the project or the checkout directory (" + strconv.Quote(service) + "); add the Datadog Jenkins plugin setup by hand with a serviceName of your choice, as onboard --instructions shows, then validate with testdrive --all."}
 	}
 	var edits []setupEdit
-	for _, file := range slices.Sorted(maps.Keys(byFile)) {
+	for _, file := range slices.Sorted(maps.Keys(jobs)) {
 		edit, err := readSetupEdit(root, file)
 		if err != nil {
 			return nil, nil, err
 		}
 		source := string(edit.before)
-		after, err := planJenkinsfileSetup(file, source, token, service, byFile[file], jenkinsContainerJobs(workflows, file))
+		after, err := planJenkinsfileSetup(file, source, token, service, byFile[file], snippets[file], jenkinsContainerJobs(workflows, file))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -183,6 +206,71 @@ func jenkinsStepAfter(after []string, workflow ciWorkflow, job runtimeJob, step 
 	return after
 }
 
+// jenkinsContainerTarget plans the setup snippet for a container job's
+// first test step: the snippet for request's language in the Jenkins form,
+// installing request's tracer release (or the one the project's
+// dependencies pin), with the language's commands that follow the setup.
+// plugin reports host stages the plugin sets up beside it, whose own
+// install of a tracer the dependencies do not pin would change the release.
+func jenkinsContainerTarget(root string, workflows []ciWorkflow, target ciSetupTarget, job runtimeJob, step runtimeStep, request ciSetupRequest, plugin bool) (jenkinsSnippetTarget, error) {
+	location := target.Workflow + " / " + target.Job
+	origin, ok := step.origin.(jenkinsShellStep)
+	if !ok {
+		return jenkinsSnippetTarget{}, &SetupGap{location, "The test step's position in the Jenkinsfile could not be located."}
+	}
+	language := discoveryLanguageFor(request.Framework)
+	if language == nil {
+		return jenkinsSnippetTarget{}, &SetupGap{location, "ddtest cannot set up " + request.Framework + " in this container stage."}
+	}
+	container := setupProviderFor(jenkins{}, job).(jenkinsContainer)
+	site := request.Site
+	if site == "" {
+		site = defaultDatadogSite
+	}
+	snippet := language.ciSetupRequest(root, request.Framework, site, container.setupTerms())
+	snippet.Framework = request.Framework
+	if target.After != nil {
+		snippet.After = target.After
+	}
+	release := request.TracerVersion
+	if release == "" || strings.HasPrefix(release, "<") {
+		if locked, ok := language.(ciLockedTracer); ok {
+			release = locked.lockedTracer(root)
+		}
+	}
+	if release == "" || strings.HasPrefix(release, "<") {
+		reason := "The setup snippet for this container stage installs an exact tracer release, which ddtest selects only from the project's dependencies, and they pin none."
+		if plugin {
+			// The other mechanism of the build changes the release.
+			return jenkinsSnippetTarget{}, &EditThenApplyGap{SetupGap{location, reason + " Pin the tracer in the project's dependencies, as the setup instructions show, then rerun onboard --apply, which writes the snippet with that release."}}
+		}
+		return jenkinsSnippetTarget{}, &SetupGap{location, reason + " Add the setup snippet by hand with an exact release, as onboard --instructions shows, then validate with testdrive --all."}
+	}
+	snippet.TracerVersion = release
+	key := mergeEnvironment(job.Env, step.Env)["DD_API_KEY"]
+	if key != "" && key != jenkinsSecret("DD_API_KEY") {
+		return jenkinsSnippetTarget{}, &SetupGap{location, "DD_API_KEY reaches this stage from " + key + ", not from a Jenkins credential ddtest can see; bind it with withCredentials(" + jenkinsCredentialBinding + ") { … } or credentials('" + jenkinsCredentialID + "') instead, then rerun onboard --apply."}
+	}
+	return jenkinsSnippetTarget{job: target.Job, call: origin.call, statement: origin.statement, lines: strings.Split(jenkinsSnippet(snippet, container.reset).shell(), "\n"), wrap: key == ""}, nil
+}
+
+// jenkinsSnippetBefore reports a setup snippet among a container job's
+// steps before step: the job is set up already, completely or not, which
+// the edit then checks without adding a second one.
+func jenkinsSnippetBefore(job runtimeJob, step int) bool {
+	return slices.ContainsFunc(job.Steps[:step], func(current runtimeStep) bool {
+		return current.Setup != nil && jenkinsSnippetSetup(*current.Setup)
+	})
+}
+
+// ciLockedTracer is a language whose project dependencies can pin its
+// tracer, which a setup snippet then installs.
+type ciLockedTracer interface {
+	// lockedTracer is the exact release the dependencies at root pin, or
+	// empty.
+	lockedTracer(root string) string
+}
+
 // jenkinsContainerJobs are the jobs of a Jenkinsfile that run steps in a
 // container, which the plugin's scope must not include.
 func jenkinsContainerJobs(workflows []ciWorkflow, file string) []string {
@@ -193,7 +281,7 @@ func jenkinsContainerJobs(workflows []ciWorkflow, file string) []string {
 		}
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
-			if job.SetupUnsupported != "" && !disabledCondition(job.If) && slices.ContainsFunc(job.Steps, func(step runtimeStep) bool { return step.Setup == nil }) {
+			if jenkinsContainerJob(job) && !disabledCondition(job.If) && slices.ContainsFunc(job.Steps, func(step runtimeStep) bool { return step.Setup == nil }) {
 				containers = append(containers, file+" / "+name)
 			}
 		}
@@ -205,7 +293,7 @@ func jenkinsContainerJobs(workflows []ciWorkflow, file string) []string {
 // every job, and set up every target job completely.
 func checkJenkinsfileSetup(root string, provider ciProvider, workflows []ciWorkflow, file, source string, jobs []string, request ciSetupRequest) error {
 	gap := func(reason string) error {
-		return &SetupGap{file, "The planned edit would not leave a complete Datadog Jenkins plugin setup, so ddtest wrote nothing: " + reason + " Fix it, or add the setup by hand as onboard --instructions shows, then validate with testdrive --all."}
+		return &SetupGap{file, "The planned edit would not leave a complete Datadog setup, so ddtest wrote nothing: " + reason + " Fix it, or add the setup by hand as onboard --instructions shows, then validate with testdrive --all."}
 	}
 	edited, err := readJenkinsfile(root, file, source)
 	if err != nil {
@@ -222,7 +310,7 @@ func checkJenkinsfileSetup(root string, provider ciProvider, workflows []ciWorkf
 	var containers []string
 	for _, name := range slices.Sorted(maps.Keys(edited.Jobs)) {
 		job := edited.Jobs[name]
-		if job.SetupUnsupported != "" && !disabledCondition(job.If) && len(job.Steps) > 1 && job.Steps[0].Setup != nil {
+		if jenkinsContainerJob(job) && !disabledCondition(job.If) && len(job.Steps) > 1 && job.Steps[0].Setup != nil && !jenkinsSnippetSetup(*job.Steps[0].Setup) {
 			containers = append(containers, file+" / "+name)
 		}
 	}
@@ -270,7 +358,7 @@ func jenkinsAfterProblem(root string, workflow ciWorkflow, name, language string
 // pipeline with any then enables the plugin in the options of each stage
 // that runs the tests instead of the pipeline's, so its scope leaves them
 // out.
-func planJenkinsfileSetup(file, source, token, service string, targets []jenkinsShTarget, containers []string) (string, error) {
+func planJenkinsfileSetup(file, source, token, service string, targets []jenkinsShTarget, snippets []jenkinsSnippetTarget, containers []string) (string, error) {
 	tree, err := parseGroovy(source)
 	if err != nil {
 		return "", &SetupGap{file, "The Jenkinsfile cannot be parsed: " + err.Error()}
@@ -287,6 +375,11 @@ func planJenkinsfileSetup(file, source, token, service string, targets []jenkins
 	}
 	if err := e.plan(targets); err != nil {
 		return "", err
+	}
+	for _, snippet := range snippets {
+		if err := e.snippet(snippet); err != nil {
+			return "", err
+		}
 	}
 	return e.apply()
 }
@@ -1017,4 +1110,133 @@ func jenkinsCommandsPrecede(file *syntax.File, commands []string, tests []int) b
 		}
 	}
 	return true
+}
+
+// snippet adds the setup snippet to the sh step of target before its test
+// statement, and encloses the step in withCredentials when DD_API_KEY does
+// not reach it. The script must be a single-quoted string literal without
+// escapes, so its text is the source's: a multi-line one (sh ”'…”')
+// gets the snippet's lines before the test statement's line, with its
+// indentation; a one-line one (sh '…') becomes a multi-line one, its
+// statements before the test one on a line of their own.
+func (e *jenkinsEditor) snippet(target jenkinsSnippetTarget) error {
+	var call *groovyCall
+	var ancestors []groovyNode
+	groovyVisit(e.tree, nil, func(node groovyNode, enclosing []groovyNode) {
+		if current, ok := jenkinsStep(node, "sh"); ok && current.Start == target.call {
+			call, ancestors = current, enclosing
+		}
+	})
+	if call == nil {
+		return e.gap(nil, "The sh step of "+target.job+" could not be located.")
+	}
+	location := e.file + ":" + strconv.Itoa(groovyLine(e.source, call.Start))
+	manual := func(reason string) error {
+		return &EditThenApplyGap{SetupGap{location, reason + " Add the Datadog setup snippet to the sh script that runs the tests of " + target.job + ", before the test command, as onboard --instructions shows (with DD_API_KEY bound from a Jenkins credential), then rerun onboard --apply."}}
+	}
+	positional, named := jenkinsArgs(call)
+	node := firstNode(positional)
+	if value, ok := named["script"]; ok {
+		node = value
+	}
+	script, ok := node.(*groovyString)
+	if !ok || script.Value.quote != "'" && script.Value.quote != "'''" {
+		return manual("The sh script that runs the tests is not a single-quoted string literal, which ddtest edits only.")
+	}
+	quote := script.Value.quote
+	content, closing := script.Start+len(quote), script.End-len(quote)
+	raw := e.source[content:closing]
+	if text, literal := script.Value.literal(); !literal || text != raw {
+		return manual("The sh script that runs the tests has escape sequences, which ddtest does not rewrite.")
+	}
+	if first, _, _ := strings.Cut(strings.TrimLeft(raw, " \t\r\n"), "\n"); strings.HasPrefix(first, "#!") {
+		return manual("The sh script that runs the tests starts with a shebang, which ddtest does not edit.")
+	}
+	if slices.ContainsFunc(target.lines, func(line string) bool { return strings.Contains(line, "\\") || strings.Contains(line, "'''") }) {
+		return manual("The setup snippet cannot be written into a single-quoted string as it is.")
+	}
+	offset := target.statement
+	if offset < 0 || offset > len(raw) {
+		return e.gap(call, "The test command's position in the sh script of "+target.job+" could not be located.")
+	}
+	outer := e.indent(call.Start)
+	unit := e.unit(outer, "")
+	if target.wrap {
+		// The sh step moves one level in, into withCredentials.
+		outer += unit
+	}
+	inner := outer + unit
+	// The script with the snippet, and where it starts and ends in the file.
+	var literal string
+	lineStart := strings.LastIndex(raw[:offset], "\n") + 1
+	switch {
+	case quote == "'''" && lineStart > 0 && strings.TrimLeft(raw[lineStart:offset], " \t") == "":
+		indent := raw[lineStart:offset]
+		var lines strings.Builder
+		for _, line := range target.lines {
+			lines.WriteString(indent + line + e.newline)
+		}
+		literal = raw[:lineStart] + lines.String() + raw[lineStart:]
+	case quote == "'":
+		before := strings.TrimRight(raw[:offset], " \t")
+		before = strings.TrimSpace(strings.TrimSuffix(before, ";"))
+		if strings.HasSuffix(before, "&") {
+			return manual("The test command follows a background command (&) in its sh script.")
+		}
+		var lines strings.Builder
+		lines.WriteString(e.newline)
+		if before != "" {
+			lines.WriteString(inner + before + e.newline)
+		}
+		for _, line := range target.lines {
+			lines.WriteString(inner + line + e.newline)
+		}
+		lines.WriteString(inner + strings.TrimSpace(raw[offset:]) + e.newline + outer)
+		literal = lines.String()
+	default:
+		return manual("The test command does not start a line of its own in the sh script.")
+	}
+	text := "'''" + literal + "'''"
+	if !target.wrap {
+		e.add(script.Start, script.End, text)
+		return nil
+	}
+	// withCredentials encloses the sh step's lines, which must be a
+	// statement of their own.
+	statement := len(ancestors) > 0 && slices.ContainsFunc(blockStatements(ancestors[len(ancestors)-1]), func(node groovyNode) bool { return node == call })
+	if !statement || !e.startsLine(call.Start) || !e.endsLine(call.End) {
+		return manual("DD_API_KEY does not reach this sh step, and it is not a statement on lines of its own that ddtest can enclose in withCredentials(" + jenkinsCredentialBinding + ") { … }.")
+	}
+	start, end := e.lineStart(call.Start), e.lineEnd(call.End)
+	segment := e.source[start:script.Start] + text + e.source[script.End:end]
+	stringStart, stringEnd := script.Start-start, script.Start-start+len(text)
+	outer = e.indent(call.Start)
+	var wrapped strings.Builder
+	wrapped.WriteString(outer + "withCredentials(" + jenkinsCredentialBinding + ") {" + e.newline)
+	for offset := 0; offset < len(segment); {
+		next := strings.Index(segment[offset:], "\n")
+		line := segment[offset:]
+		if next >= 0 {
+			line = segment[offset : offset+next+1]
+		}
+		if strings.TrimSpace(line) != "" && (offset <= stringStart || offset >= stringEnd) {
+			wrapped.WriteString(unit)
+		}
+		wrapped.WriteString(line)
+		offset += len(line)
+	}
+	wrapped.WriteString(e.newline + outer + "}")
+	e.add(start, end, wrapped.String())
+	return nil
+}
+
+// blockStatements are the statements of a block, or of a closure's.
+func blockStatements(node groovyNode) []groovyNode {
+	switch node := node.(type) {
+	case *groovyBlock:
+		return node.Statements
+	case *groovyClosure:
+		return node.Body.Statements
+	}
+	return nil
 }
