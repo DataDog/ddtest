@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -224,7 +225,7 @@ func TestJenkinsAgentsAndContainers(t *testing.T) {
 }`)
 	docker := jobs["Docker"]
 	require.Equal(t, "node:22-alpine", docker.Image)
-	require.Contains(t, docker.SetupUnsupported, "it runs in agent { docker { image 'node:22-alpine' } }, a container: the Datadog Jenkins plugin installs the tracer on the build agent and does not instrument tests inside containers")
+	require.Contains(t, docker.SetupUnsupported, "it runs in agent { docker { image 'node:22-alpine' } }, a container: the Datadog Jenkins plugin installs the tracer only on the build agent, with the agent's toolchain, and does not support tests inside containers")
 	require.Contains(t, jobs["Dockerfile"].ImageProblem, "agent { dockerfile … }")
 	require.NotEmpty(t, jobs["Kubernetes"].SetupUnsupported)
 	require.Empty(t, jobs["Host"].SetupUnsupported)
@@ -413,8 +414,6 @@ func TestJenkinsSetupProblems(t *testing.T) {
 	workflow := jenkinsWorkflow(t, "pipeline {\n  agent any\n  environment { DD_API_KEY = credentials('dd') }\n"+jenkinsDatadogOption+"  stages { stage('T') { steps { sh 'npm test' } } }\n}\n")
 	require.Empty(t, workflow.Jobs["T"].Steps[0].Setup.Problem)
 	require.Contains(t, workflow.Review[0], "binds DD_API_KEY from a Jenkins credential; the Datadog Jenkins plugin overwrites DD_API_KEY")
-	jobs = jenkinsJobs(t, "pipeline {\n  agent any\n  stages {\n    stage('T') {\n      options { datadog(testOptimization: [enabled: true, serviceName: 'a', languages: ['JAVASCRIPT']]) }\n      steps { sh 'npm test' }\n    }\n  }\n}\n")
-	require.Contains(t, jobs["T"].Steps[0].Setup.Problem, "is in a stage's options; ddtest certifies the Datadog Jenkins plugin setup only in the pipeline's top-level options")
 	jobs = jenkinsJobs(t, "pipeline {\n  agent { docker { image 'node:22' } }\n"+jenkinsDatadogOption+"  stages { stage('T') { steps { sh 'npm test' } } }\n}\n")
 	require.Contains(t, jobs["T"].Steps[0].Setup.Problem, "This stage cannot use the Datadog Jenkins plugin: it runs in agent { docker { image 'node:22' } }")
 }
@@ -555,6 +554,21 @@ func TestJenkinsContainerTestJobsAreUnsupported(t *testing.T) {
 	require.NoError(t, CheckCIProviderSupport(root, "javascript", "jest"))
 	request := javascriptDiscovery{}.ciSetupRequest(root, "jest", "datadoghq.com", jenkins{}.setupTerms())
 	require.Contains(t, strings.Join(request.Notes, "\n"), "The Datadog Jenkins plugin cannot instrument these CI jobs, so ddtest reports them as unsupported and does not validate them; tell the user, and do not move their tests to other agents without the user's approval:\nJenkinsfile / Docker: it runs in agent { docker { image 'node:22' } }")
+
+	// With the plugin on the host stage, validation names why the container
+	// stage stays a blocker.
+	writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent none\n  stages {\n    stage('Docker') { agent { docker { image 'node:22' } }\n      steps { sh 'npm test' } }\n    stage('Host') { agent any\n      "+strings.TrimSpace(strings.ReplaceAll(jenkinsDatadogOption, "\n", " "))+"\n      steps { sh 'npm test' } }\n  }\n}\n")
+	useCIStatements(t, []string{"node=22"})
+	checked := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "6.23.0", Node: ">=22", Requested: "latest"}, nil
+	}, "jest")
+	reasons := map[string]string{}
+	for _, finding := range checked.Jobs {
+		reasons[finding.Job] = finding.Reason
+	}
+	require.Contains(t, reasons["Docker"], "This job cannot use the Datadog Jenkins plugin: it runs in agent { docker { image 'node:22' } }, a container: the Datadog Jenkins plugin installs the tracer only on the build agent")
+	require.Contains(t, reasons["Docker"], "or to set up Test Optimization for it by hand, outside ddtest, which ddtest cannot validate")
+	require.Equal(t, "Node 22 satisfies >=22.", reasons["Host"])
 }
 
 func TestJenkinsProviderChoice(t *testing.T) {
@@ -638,8 +652,9 @@ func TestJenkinsJavaScriptFixture(t *testing.T) {
 	require.True(t, unit.TracerFloating)
 	require.Equal(t, "dd-trace@6.22.0", unit.Tracer)
 	caveats := CISetupCaveats(&result)
-	require.Len(t, caveats, 2)
-	require.Contains(t, caveats[1], "dd-trace version: the Datadog Jenkins plugin installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@6.22.0")
+	require.Len(t, caveats, 3)
+	require.Contains(t, caveats[1], "the Datadog Jenkins plugin cannot configure the tracer: it logs ERROR: [datadog] with a stack trace")
+	require.Contains(t, caveats[2], "dd-trace version: the Datadog Jenkins plugin installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@6.22.0")
 
 	// additionalVariables that turn the Jest integration off reach the test.
 	writeFile(t, root, "Jenkinsfile", strings.Replace(string(jenkinsfile), "    agent { label 'sl7'}\n", "    agent { label 'sl7'}\n  options {\n    datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT'], additionalVariables: [DD_TRACE_JEST_ENABLED: 'false']])\n  }\n", 1))
@@ -715,7 +730,9 @@ func TestJenkinsRubyFixture(t *testing.T) {
 	require.Equal(t, "not checked", pinned.Status, pinned.Reason)
 	require.Equal(t, "1.42.0", pinned.TracerRequested)
 	require.Equal(t, "3.3", pinned.Runtime)
-	require.Contains(t, pinned.SetupCaveats[1], "uses the datadog-ci release the repository's Gemfile.lock pins (1.42.0)")
+	require.Contains(t, pinned.SetupCaveats[2], "uses the datadog-ci release the repository's Gemfile.lock pins (1.42.0)")
+	require.Contains(t, pinned.SetupCaveats[3], "the steps before it get no Datadog variables (for each one it logs ERROR: [datadog] with a stack trace and tries again at the next step)")
+	require.Contains(t, pinned.SetupCaveats[3], "still runs bundle config set frozen false")
 	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", "datadoghq.com"))
 
 	writeFile(t, root, "Jenkinsfile", strings.Replace(wrapped, "sh 'bundle exec rake spec'", "dir('sub') { sh 'bundle exec rake spec' }", 1))
@@ -773,7 +790,7 @@ func TestJenkinsPodTemplatesAreContainers(t *testing.T) {
   }
 }`)
 	pod := jobs["Pod"]
-	require.Equal(t, "it runs in node(POD_LABEL) of the Kubernetes podTemplate at Jenkinsfile:2, a container: the Datadog Jenkins plugin installs the tracer on the build agent and does not instrument tests inside containers", pod.SetupUnsupported)
+	require.Equal(t, "it runs in node(POD_LABEL) of the Kubernetes podTemplate at Jenkinsfile:2, a container: the Datadog Jenkins plugin installs the tracer only on the build agent, with the agent's toolchain, and does not support tests inside containers", pod.SetupUnsupported)
 	require.Contains(t, pod.ImageProblem, "whose image ddtest does not read")
 	require.Empty(t, pod.Host)
 	require.Contains(t, pod.Steps[0].Setup.Problem, "This stage cannot use the Datadog Jenkins plugin: it runs in node(POD_LABEL) of the Kubernetes podTemplate")
@@ -1211,7 +1228,8 @@ func TestJenkinsNodeOptionsUnderAStageOverride(t *testing.T) {
 	}
 	review := strings.Join(workflow.Review, "\n")
 	require.Contains(t, review, "NODE_OPTIONS set in the environment directive at Jenkinsfile:9 is overwritten by the Datadog Jenkins plugin: on each agent it sets NODE_OPTIONS for every step to its preload followed by the NODE_OPTIONS of the first step it configures there")
-	require.Contains(t, review, "ddtest validates with the pipeline's NODE_OPTIONS")
+	require.Contains(t, review, "on a fresh workspace, and so on every build of an ephemeral agent, the first step after the workspace exists), it reaches every later step on the agent")
+	require.Contains(t, review, "ddtest validates with the NODE_OPTIONS where the datadog option is")
 	require.Contains(t, review, "NODE_OPTIONS set in withEnv at Jenkinsfile:12")
 }
 
@@ -1231,7 +1249,11 @@ func TestJenkinsPluginScopeWithContainerJobs(t *testing.T) {
 	problem := setupProblem(mixed, "Host")
 	require.Contains(t, problem, "The datadog(testOptimization: …) option at Jenkinsfile:4 also applies to Jenkinsfile / Docker, which run steps in a container.")
 	require.Contains(t, problem, "sets its tracer variables (DD_TRACE_PATH, NODE_OPTIONS) in every step of its scope, container steps included, but installs the tracer only on the build agent")
-	require.Contains(t, problem, "tests or not")
+	require.Contains(t, problem, "for JavaScript, the plugin's NODE_OPTIONS preloads the dd-trace it installed into the workspace with the agent's npm, so Node processes in the container load it only by accident")
+	require.Contains(t, problem, "on an agent without npm the plugin sets nothing, so the tests run untraced without any error")
+	require.NotContains(t, problem, "for Ruby", "only the languages the option enables")
+	require.Contains(t, setupProblem(strings.ReplaceAll(mixed, "'JAVASCRIPT'", "'RUBY'"), "Host"), "for Ruby, the plugin's RUBYOPT (-rbundler/setup -rdatadog/ci/auto_instrument) makes every Ruby process in the container fail to start, bundle install and bundle exec included")
+	require.Contains(t, problem, "in a declarative pipeline, an options { datadog(…) } directive in each host-agent stage that runs the tests instead of the top-level one")
 	require.Contains(t, problem, "run those stages on a host agent, or keep them out of the option's scope")
 
 	split := "pipeline {\n  agent any\n" + jenkinsDatadogOption + "  stages {\n    stage('Test') { steps {\n      sh 'npm ci'\n      script { docker.image('node:22').inside { sh 'npm test' } }\n    } }\n  }\n}\n"
@@ -1582,4 +1604,143 @@ pipeline {
 		}
 		require.Equal(t, 1, tests)
 	}
+}
+
+// A stage's options { datadog(…) } sets the plugin up for that stage, its
+// nested stages and, in a parallel section, its branch only, as a real
+// Jenkins run showed; its NODE_OPTIONS composes with the stage's
+// environment. The plugin caches its variables per build, agent and
+// language set, so options for the same languages must agree.
+func TestJenkinsStageLevelOptions(t *testing.T) {
+	stageOption := func(service string) string {
+		return "options { datadog(testOptimization: [enabled: true, serviceName: '" + service + "', languages: ['JAVASCRIPT']]) }"
+	}
+	workflow := jenkinsWorkflow(t, `pipeline {
+  agent any
+  environment { NODE_OPTIONS = '--conditions=ci' }
+  stages {
+    stage('Before') { steps { sh 'npm test' } }
+    stage('Unit') {
+      environment { NODE_OPTIONS = '--max-old-space-size=4096' }
+      `+stageOption("app")+`
+      steps {
+        sh 'npm test'
+        withEnv(['NODE_OPTIONS=--trace-warnings']) { sh 'npm test' }
+      }
+    }
+    stage('Parent') {
+      `+stageOption("app")+`
+      stages { stage('Child') { steps { sh 'npm test' } } }
+    }
+    stage('Split') {
+      parallel {
+        stage('With') { `+stageOption("app")+`
+          steps { sh 'npm test' } }
+        stage('Without') { steps { sh 'npm test' } }
+      }
+    }
+  }
+}`)
+	for _, name := range []string{"Unit", "Parent / Child", "Split / With"} {
+		setup := workflow.Jobs[name].Steps[0].Setup
+		require.NotNil(t, setup, name)
+		require.Empty(t, setup.Problem, name)
+		require.Contains(t, strings.Join(setup.Caveats, "\n"), "is in a stage's options: the Datadog Jenkins plugin's README documents only the pipeline's top-level option", name)
+	}
+	for _, name := range []string{"Before", "Split / Without"} {
+		require.Nil(t, workflow.Jobs[name].Steps[0].Setup, name)
+	}
+	unit := workflow.Jobs["Unit"]
+	require.Equal(t, "-r ${{ env.DD_TRACE_PACKAGE }} --max-old-space-size=4096", unit.Steps[1].Env["NODE_OPTIONS"], "the stage's environment is where the plugin configures first")
+	review := strings.Join(workflow.Review, "\n")
+	require.NotContains(t, review, "environment directive at Jenkinsfile:7", "the option's own stage is not narrower")
+	require.Contains(t, review, "NODE_OPTIONS set in withEnv at Jenkinsfile:11 is overwritten by the Datadog Jenkins plugin")
+
+	conflicting := jenkinsJobs(t, `pipeline {
+  agent any
+  stages {
+    stage('A') { `+stageOption("app")+`
+      steps { sh 'npm test' } }
+    stage('B') { `+stageOption("web")+`
+      steps { sh 'npm test' } }
+    stage('C') { options { datadog(testOptimization: [enabled: true, serviceName: 'other', languages: ['RUBY']]) }
+      steps { sh 'bundle exec rspec' } }
+  }
+}`)
+	for _, name := range []string{"A", "B"} {
+		problem := conflicting[name].Steps[0].Setup.Problem
+		require.Contains(t, problem, "The datadog(testOptimization: …) options at Jenkinsfile:4 (serviceName \"app\", additionalVariables []) and Jenkinsfile:6 (serviceName \"web\", additionalVariables []) enable the same languages (JAVASCRIPT) with different arguments.", name)
+		require.Contains(t, problem, "the serviceName and additionalVariables of every option after the first it configures are ignored", name)
+	}
+	require.Empty(t, conflicting["C"].Steps[0].Setup.Problem, "another language set has its own variables")
+
+	nested := jenkinsJobs(t, "pipeline {\n  agent any\n"+jenkinsDatadogOption+"  stages {\n    stage('T') { options { datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT'], additionalVariables: [DD_ENV: 'ci']]) }\n      steps { sh 'npm test' } }\n  }\n}\n")
+	require.Contains(t, nested["T"].Steps[0].Setup.Problem, "additionalVariables [DD_ENV=ci]", "a stage option that differs from the pipeline's is ignored on a shared agent")
+
+	collect := jenkinsJobs(t, "pipeline {\n  agent any\n"+jenkinsDatadogOption+"  stages {\n    stage('T') { options { datadog(collectLogs: true) }\n      steps { sh 'npm test' } }\n  }\n}\n")
+	require.NotNil(t, collect["T"].Steps[0].Setup, "a stage's datadog(…) without testOptimization keeps the pipeline's setup")
+	require.Empty(t, collect["T"].Steps[0].Setup.Problem)
+
+	hostOnly := jenkinsJobs(t, "pipeline {\n  agent none\n  stages {\n    stage('Docker') { agent { docker { image 'node:22' } }\n      steps { sh 'npm run package' } }\n    stage('Host') { agent any\n      "+stageOption("app")+"\n      steps { sh 'npm test' } }\n  }\n}\n")
+	require.Empty(t, hostOnly["Host"].Steps[0].Setup.Problem, "a stage option keeps the container stage out of its scope")
+	require.Nil(t, hostOnly["Docker"].Steps[0].Setup)
+}
+
+// The plugin installs the latest dd-trace whatever the CI Node: a stated
+// Node the latest release's engines exclude is a setup problem, both in the
+// runtime check and before onboard --apply writes the option.
+func TestJenkinsFloatingTracerNodeRequirement(t *testing.T) {
+	root := jenkinsRepository(t, "pipeline {\n  agent { label 'sl7' }\n"+jenkinsDatadogOption+"  stages { stage('Unit') { steps { sh 'npm test' } } }\n}\n")
+	writeFile(t, root, "package.json", `{"name": "app", "scripts": {"test": "jest"}, "devDependencies": {"jest": "30.0.0"}}`)
+	useCIStatements(t, []string{"node=20"})
+	result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "6.23.0", Node: ">=22", Requested: "latest"}, nil
+	}, "jest")
+	require.Equal(t, StatusIncompatible, result.Status)
+	var unit RuntimeFinding
+	for _, finding := range result.Jobs {
+		if finding.Job == "Unit" {
+			unit = finding
+		}
+	}
+	require.Equal(t, CodeIncompleteCISetup, unit.Code)
+	require.Contains(t, unit.Reason, "The Datadog Jenkins plugin installs the latest dd-trace release (6.23.0) on every build, whatever Node the CI runs, and that release requires Node >=22 (its package.json engines), which Node 20 does not satisfy; the Datadog Jenkins plugin cannot install an older release.")
+
+	original := floatingTracerRequirement
+	t.Cleanup(func() { floatingTracerRequirement = original })
+	floatingTracerRequirement = func(context.Context) (tracerRequirement, error) {
+		return tracerRequirement{Version: "6.23.0", Node: ">=22", Requested: "latest"}, nil
+	}
+	writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent { label 'sl7' }\n  stages { stage('Unit') { steps { sh 'npm test' } } }\n}\n")
+	workflows, err := readProviderWorkflows(jenkins{}, root)
+	require.NoError(t, err)
+	_, err = planProviderJavaScriptSetup(root, jenkins{}, workflows, "jest", "5.134.0", "datadoghq.com", ">=18")
+	var gap *SetupGap
+	require.ErrorAs(t, err, &gap)
+	require.Contains(t, err.Error(), "Jenkinsfile / Unit")
+	require.Contains(t, err.Error(), "that release requires Node >=22 (its package.json engines), which Node 20 does not satisfy")
+
+	useCIStatements(t, []string{"node=22"})
+	workflows, err = readProviderWorkflows(jenkins{}, root)
+	require.NoError(t, err)
+	_, err = planProviderJavaScriptSetup(root, jenkins{}, workflows, "jest", "6.23.0", "datadoghq.com", ">=22")
+	require.NoError(t, err)
+
+	floatingTracerRequirement = func(context.Context) (tracerRequirement, error) {
+		return tracerRequirement{}, errors.New("registry unreachable")
+	}
+	_, err = planProviderJavaScriptSetup(root, jenkins{}, workflows, "jest", "6.23.0", "datadoghq.com", ">=22")
+	require.ErrorContains(t, err, "ddtest could not read the latest dd-trace release's Node requirement, which the Datadog Jenkins plugin installs on every build: registry unreachable")
+}
+
+// A Ruby test job in a container is reported with why the plugin cannot
+// set it up, not as a missing setup.
+func TestJenkinsRubyContainerJobReason(t *testing.T) {
+	root := copyFixture(t, "jenkins-ruby")
+	t.Chdir(root)
+	useCIProvider(t, "jenkins")
+	writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent none\n  stages {\n    stage('Docker') { agent { docker { image 'ruby:3.3' } }\n      steps { sh 'bundle exec rake spec' } }\n  }\n}\n")
+	jobs := RubyCIConfigurationForSite(root, "rspec", "datadoghq.com").Jobs
+	require.Len(t, jobs, 1)
+	require.Contains(t, jobs[0].Reason, "This job cannot use the Datadog Jenkins plugin: it runs in agent { docker { image 'ruby:3.3' } }, a container")
 }

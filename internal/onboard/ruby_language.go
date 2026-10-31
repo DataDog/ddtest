@@ -229,6 +229,7 @@ func rubyPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ci
 	if locked := rubyLockedTracer(root); locked != "" {
 		pin = "The Gemfile.lock at the checkout root already pins datadog-ci " + locked + ", which the " + terms.Installer + " uses as is and ddtest validates; keep it pinned, and keep the Gemfile and Gemfile.lock unchanged."
 	}
+	pin += " With the pin, the " + terms.Installer + " finds datadog-ci only once bundle install has run in the build: run bundle install in a step before the tests. The steps before it get no Datadog variables, and for each the " + terms.Installer + " logs ERROR: [datadog] with a stack trace and still runs bundle config set frozen false; tell the user these errors are expected."
 	request.Notes = []string{
 		pin,
 		"The " + terms.Installer + " configures datadog-ci from the checkout root with the build agent's default ruby and bundle, so keep the Gemfile at the checkout root and run the " + framework + " tests from there: not inside dir(…), and without BUNDLE_GEMFILE. Keep the existing bundle exec/binstub/Rake/Rails entry points and test arguments.",
@@ -236,7 +237,7 @@ func rubyPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ci
 		"The " + terms.Installer + " refuses Ruby older than 2.7 and RubyGems older than 3.3.22: on agents with Ruby 2.7 or 3.0, run gem update --system 3.4.22 on the agent (or in an earlier step) before the tests.",
 		rubyRakeOptionsNote(root),
 		setupUnsupportedNote(root, "ruby", framework),
-		"If a stage runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), tell the user: the " + terms.Installer + " instruments every stage of the pipeline, so it cannot leave that stage out. Report it; do not drop stages or change Ruby versions to obtain a pass.",
+		"If a stage runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), tell the user: the " + terms.Installer + " instruments every stage in its option's scope, so that stage stays out of it only when the option is in the stages' own options instead of the pipeline's. Report it; do not drop stages or change Ruby versions to obtain a pass.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
 	}
 	request.Notes = slices.DeleteFunc(request.Notes, func(note string) bool { return note == "" })
@@ -575,6 +576,12 @@ func (rubyDiscovery) selectsShellRuntime(words []string) bool {
 		return len(words) > 1 && slices.Contains([]string{"rvm", "rvm.sh", "chruby.sh", "auto.sh"}, path.Base(words[1]))
 	}
 	return false
+}
+
+// ciPluginContainerEffect: a real Jenkins run showed the plugin's RUBYOPT
+// reaching docker.image(…).inside steps.
+func (rubyDiscovery) ciPluginContainerEffect() string {
+	return "for Ruby, the plugin's RUBYOPT (" + rubyInstallerPreload + ") makes every Ruby process in the container fail to start, bundle install and bundle exec included, which fails the build, because the plugin adds datadog-ci to the agent's gems, not the container's; with datadog-ci pinned in Gemfile.lock, the plugin's check on the agent never passes, so the container gets no variables and the tests run untraced"
 }
 
 func (rubyDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {

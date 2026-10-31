@@ -240,8 +240,21 @@ func TestJenkinsJavaScriptPlanCompletesTheOption(t *testing.T) {
 	require.ErrorContains(t, err, "disables Test Optimization with DD_CIVISIBILITY_ENABLED=false")
 	require.ErrorContains(t, err, "so ddtest wrote nothing")
 
-	_, err = plan("jest", "pipeline {\n  agent any\n  stages {\n    stage('Test') {\n      options { datadog(testOptimization: [enabled: true, serviceName: 'web', languages: ['JAVASCRIPT']]) }\n      steps { sh 'npm test' }\n    }\n  }\n}\n")
-	require.ErrorContains(t, err, "is in a stage's options", "a stage-level option is never certified, so the edit is refused")
+	stage := "pipeline {\n  agent any\n  stages {\n    stage('Test') {\n      options { datadog(testOptimization: [enabled: false, serviceName: 'web', languages: ['JAVASCRIPT']]) }\n      steps { sh 'npm test' }\n    }\n  }\n}\n"
+	after, err = plan("jest", stage)
+	require.NoError(t, err)
+	require.Equal(t, strings.Replace(stage, "enabled: false", "enabled: true", 1), after, "a stage-level option is completed in place")
+
+	mixed := "pipeline {\n  agent none\n  stages {\n    stage('Docker') {\n      agent { docker { image 'node:22' } }\n      steps { sh 'npm test' }\n    }\n    stage('Host') {\n      agent any\n      steps { sh 'npm test' }\n    }\n  }\n}\n"
+	after, err = plan("jest", mixed)
+	require.NoError(t, err)
+	staged := strings.Replace(mixed, "      agent any\n", "      agent any\n      options {\n        datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT']])\n      }\n", 1)
+	require.Equal(t, staged, after, "the host stage gets the option; the container stage stays out of its scope")
+	after, err = plan("jest", staged)
+	require.NoError(t, err, "applying again is configured, not refused for the container stage left")
+	require.Equal(t, staged, after)
+	_, err = plan("jest", strings.Replace(mixed, "      agent any\n", "      agent { docker { image 'node:22' } }\n", 1))
+	require.ErrorContains(t, err, "Every job that runs the tests runs in a container")
 }
 
 // Without a project name, serviceName is the repository's: its origin
