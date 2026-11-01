@@ -381,6 +381,40 @@ func (r *jenkinsReader) reference(name string, scope jenkinsScope) (string, stri
 	return "", "${" + name + "}, which only the Jenkins build knows"
 }
 
+// image reads a container image, or "" when ddtest cannot tell it. An image
+// whose registry prefix only interpolates variables ddtest cannot resolve, as
+// "${REGISTRY}/node:22", keeps them as written, so the image readers use the
+// literal rest (see mirroredImage).
+func (r *jenkinsReader) image(node groovyNode, scope jenkinsScope) string {
+	image, problem := r.value(node, scope)
+	if problem == "" {
+		return image
+	}
+	written, ok := node.(*groovyString)
+	if !ok || written.Value.quote == "/" || written.Value.quote == "$/" {
+		return ""
+	}
+	var text strings.Builder
+	for _, part := range written.Value.parts {
+		if !part.interpolated {
+			text.WriteString(part.text)
+			continue
+		}
+		value, problem := r.reference(part.expr, scope)
+		if name := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(part.expr), "env."), "params."); problem != "" {
+			if !jenkinsVariableName.MatchString(name) {
+				return ""
+			}
+			value = "${" + name + "}"
+		}
+		text.WriteString(value)
+	}
+	if image = text.String(); mirroredImage(image) == image {
+		return ""
+	}
+	return image
+}
+
 // jenkinsUnknownVariable is the value of a Groovy variable ddtest cannot
 // tell, such as one a loop or a branch sets.
 func jenkinsUnknownVariable(name string) string {
@@ -679,17 +713,17 @@ func (r *jenkinsReader) agent(call *groovyCall, scope jenkinsScope) jenkinsAgent
 		case "docker":
 			image := ""
 			if len(positional) == 1 {
-				image, _ = r.value(positional[0], scope)
+				image = r.image(positional[0], scope)
 			}
 			if value, ok := named["image"]; ok {
-				image, _ = r.value(value, scope)
+				image = r.image(value, scope)
 			}
 			if inner.Closure != nil {
 				for _, item := range inner.Closure.Body.Statements {
 					if imageCall, ok := item.(*groovyCall); ok && imageCall.Name == "image" {
 						args, _ := jenkinsArgs(imageCall)
 						if len(args) == 1 {
-							image, _ = r.value(args[0], scope)
+							image = r.image(args[0], scope)
 						}
 					}
 				}
@@ -1975,7 +2009,7 @@ func (r *jenkinsReader) method(call *groovyCall, scope *jenkinsScope, slot *jenk
 	if receiver != nil && (receiver.Name == "docker.image" || receiver.Name == "docker.build") {
 		image := ""
 		if args, _ := jenkinsArgs(receiver); receiver.Name == "docker.image" && len(args) > 0 {
-			image, _ = r.value(args[0], outer)
+			image = r.image(args[0], outer)
 		}
 		switch call.Name {
 		case "inside":
@@ -2057,7 +2091,7 @@ func (r *jenkinsReader) add(slot *jenkinsSlot, node groovyNode, step runtimeStep
 }
 
 // jenkinsShellDialect is how sh scripts read: WORKSPACE is the checkout.
-var jenkinsShellDialect = ciShellDialect{label: "Jenkins sh script", projectVariable: "WORKSPACE"}
+var jenkinsShellDialect = ciShellDialect{label: "Jenkins sh script", projectVariable: "WORKSPACE", posix: true}
 
 // shell reads an sh step: each top-level statement of a literal script is
 // one step, sharing that script's shell.

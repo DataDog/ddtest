@@ -104,6 +104,11 @@ func (pythonDiscovery) runtimeVariable(name string) bool {
 	return name == "PYTHONPATH" || name == "PYTHONHOME"
 }
 
+// The interpreter, pip, uv and pytest read these.
+func (pythonDiscovery) toolVariable(name string) bool {
+	return slices.ContainsFunc([]string{"PYTHON", "PYTEST_", "PIP_", "UV_", "VIRTUAL_ENV", "COVERAGE_"}, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+}
+
 func (pythonDiscovery) cacheVariable(name string) bool {
 	return name == "PIP_TARGET" || name == "POETRY_VIRTUALENVS_PATH"
 }

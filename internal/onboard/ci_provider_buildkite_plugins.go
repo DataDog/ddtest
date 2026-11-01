@@ -156,6 +156,7 @@ func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkite
 		text, unknown := buildkiteInterpolate(text, scope.known)
 		return text, problem == "" && len(unknown) == 0 && !strings.Contains(text, "$")
 	}
+	mirrored := func(template string) (string, bool) { return buildkiteMirroredImage(template, scope, matrix) }
 	if image := gitLabScalar(fields["image"]); image != "" || scope.image != "" {
 		executor.template = image
 		if image == "" {
@@ -163,6 +164,9 @@ func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkite
 		}
 		var resolved bool
 		executor.image, resolved = value(&yaml.Node{Kind: yaml.ScalarNode, Value: executor.template})
+		if image, ok := mirrored(executor.template); !resolved && ok {
+			executor.image, resolved = image, true
+		}
 		if !resolved {
 			executor.image = ""
 			executor.imageProblem = "its image " + executor.template + " depends on a variable or matrix value ddtest cannot resolve"
@@ -187,7 +191,7 @@ func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkite
 		executor.pluginAliased = executor.pluginAliased || c.aliased[plugin.config]
 		switch name {
 		case "buildkite-plugins/docker":
-			c.docker(executor, plugin.config, value, env)
+			c.docker(executor, plugin.config, value, mirrored, env)
 		case "buildkite-plugins/docker-compose":
 			c.compose(executor, plugin.config, value, env)
 		default:
@@ -289,12 +293,15 @@ func buildkiteEntrypointProblem(node *yaml.Node, owner string) string {
 
 // docker reads the docker plugin: commands run in image, with the checkout
 // mounted at its working directory.
-func (c *buildkiteConfig) docker(executor *buildkiteExecutor, config *yaml.Node, value func(*yaml.Node) (string, bool), host map[string]string) {
+func (c *buildkiteConfig) docker(executor *buildkiteExecutor, config *yaml.Node, value func(*yaml.Node) (string, bool), mirrored func(string) (string, bool), host map[string]string) {
 	fields := gitLabMembers(config)
 	executor.plugin = config
 	executor.containerOptions(fields, "docker", value, host)
 	executor.template = gitLabScalar(fields["image"])
 	image, resolved := value(fields["image"])
+	if written, ok := mirrored(executor.template); !resolved && ok {
+		image, resolved = written, true
+	}
 	executor.image, executor.imageProblem = image, ""
 	switch {
 	case executor.template == "":
@@ -374,6 +381,10 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 		executor.template = gitLabScalar(definition["image"])
 		image, resolved := buildkiteComposeImage(executor.template, env)
 		executor.image = image
+		if !resolved && mirroredImage(executor.template) != executor.template && mirroredImage(image) != image {
+			// Only a registry prefix the environment supplies is unresolved.
+			resolved = true
+		}
 		if !resolved {
 			executor.image = ""
 			executor.imageProblem = "its Docker Compose service " + service + " image " + executor.template + " depends on a variable the step's env does not set, which the agent or a .env file may supply"
@@ -615,6 +626,19 @@ func (c *buildkiteConfig) composeVariable(executor *buildkiteExecutor, name, wri
 		value = unresolvedCIValue(written)
 	}
 	executor.env[name] = value
+}
+
+// buildkiteMirroredImage is an image whose only unresolved part is a
+// registry prefix pipeline upload interpolates from the agent's environment,
+// as ${REGISTRY}/node:22 (see mirroredImage), as interpolated. A prefix
+// escaped from upload ($$REGISTRY) is never expanded, so it is not one.
+func buildkiteMirroredImage(template string, scope buildkiteScope, matrix func(string) (string, string)) (string, bool) {
+	text, problem := matrix(template)
+	if problem != "" || mirroredImage(text) == text {
+		return "", false
+	}
+	text, _ = buildkiteInterpolate(text, scope.known)
+	return text, mirroredImage(text) != text
 }
 
 // buildkiteComposeVariable matches Compose's $NAME, ${NAME}, ${NAME:-x}

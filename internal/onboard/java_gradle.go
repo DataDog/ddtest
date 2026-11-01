@@ -130,6 +130,7 @@ func resolveGradleStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 	if len(omitted) > 0 {
 		notes = append(notes, "This CI step also runs "+strings.Join(omitted, ", ")+". Local validation runs only "+selected+", its test tasks, and never publishes artifacts. Report this to the user.")
 	}
+	notes = append(notes, outputPipeNotes(step.Run, selected)...)
 	if others := otherGradleFrameworkProjects(run.projects, framework); len(others) > 0 {
 		notes = append(notes, "This Gradle build also has project(s) "+strings.Join(others, ", ")+", which declare other test frameworks and no "+framework+" dependency. Whether this step runs their tests depends on the tasks it selects. Instrumenting this step reports any selected tests to Datadog too; local validation covers only the "+framework+" projects. Report this to the user.")
 	}

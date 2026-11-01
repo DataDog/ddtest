@@ -161,6 +161,12 @@ func (javascriptDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"NODE_OPTIONS", "NODE_PATH", "NODE_ENV"}, name) || strings.HasPrefix(strings.ToLower(name), "npm_config_")
 }
 
+// Node, the package managers and the JavaScript runners read these.
+func (javascriptDiscovery) toolVariable(name string) bool {
+	upper := strings.ToUpper(name)
+	return slices.ContainsFunc([]string{"NODE_", "NPM_", "YARN_", "PNPM_", "COREPACK_", "JEST_", "VITEST_", "MOCHA_", "CYPRESS_", "PLAYWRIGHT_", "WDIO_", "TS_NODE_"}, func(prefix string) bool { return strings.HasPrefix(upper, prefix) })
+}
+
 func (javascriptDiscovery) cacheVariable(name string) bool {
 	return slices.Contains([]string{"npm_config_store_dir", "PNPM_STORE_DIR", "PNPM_HOME"}, name)
 }
@@ -380,7 +386,7 @@ func javascriptImageRuntime(job runtimeJob) string {
 	if node := imageNode(job.Image); node != "" {
 		return node
 	}
-	if match := nodeImageTag.FindStringSubmatch(withImplicitTag(job.Image)); match != nil {
+	if match := nodeImageTag.FindStringSubmatch(withImplicitTag(mirroredImage(job.Image))); match != nil {
 		return match[1]
 	}
 	return ""

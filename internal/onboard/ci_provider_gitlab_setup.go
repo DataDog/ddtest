@@ -389,7 +389,7 @@ func gitLabResolveBranches(command string, known map[string]string) string {
 	if !ok || file.Stmts[0].Background || len(file.Stmts[0].Redirs) > 0 {
 		return command
 	}
-	branch, ok := ciStaticBranch(clause, known, "CI_PROJECT_DIR")
+	branch, ok := ciStaticBranch(clause, known, "CI_PROJECT_DIR", true)
 	if !ok {
 		return command
 	}

@@ -95,7 +95,22 @@ selected provider gets `ci_provider_unsupported` instead of instructions:
 JavaScript and Ruby support every provider, Python and Java GitHub Actions only.
 Other CI files (Travis CI, Azure Pipelines and others) are never parsed: when
 they mention the framework they are listed as outside this validation, and they
-never fail onboarding.
+never fail onboarding. `--ci-provider` is not `--platform`, which selects the
+language of the tests (`javascript`, `python`, `ruby`, `java`); a CI provider
+name given to `--platform` is rejected with a pointer to `--ci-provider`.
+
+On every provider, a test command whose output a step pipes only into output
+filters (`tee`, `cucumber-junit`, a TAP reporter such as `tap-xunit` or
+`faucet`, run directly, from `node_modules/.bin` or through `npx`, `yarn` or
+`pnpm exec`, with literal arguments and output redirected to files), as in
+`cucumber-js … --format json | cucumber-junit > report.xml` or `npx jest 2>&1
+| tee jest.log`, is validated as the test command alone. Without `set -o
+pipefail` the shell takes such a step's exit status from the pipeline's last
+command, so the configuration carries a caveat that failing tests may not fail
+the CI step; ddtest neither requires pipefail nor changes the step. Any other
+pipeline stays unresolved. Python interpreter options before `-m pytest` are
+read as Python reads them, clustered or not (`python -Im pytest`, `python -IBu
+-m pytest`, `python -X dev -W error -m pytest`).
 
 ### Runtimes and facts only the user can state
 
@@ -180,6 +195,18 @@ local`, string includes and `*` patterns), with `extends`, `!reference`,
 `default` and top-level defaults, `inherit`, `variables`, `parallel: matrix`,
 hidden template jobs and `before_script`/`script`. Script entries share one
 shell, so literal `export`, assignments and `cd` carry into later entries.
+An `if` whose `[ … ]`, `test` or Bash `[[ … ]]` condition reads only known
+values is followed; under a condition ddtest cannot decide (`if [[
+"$CI_COMMIT_BRANCH" == main ]]; then export SIMPLECOV=0; fi`), a variable it
+exports or assigns may or may not be set. Only what reads it is unresolved:
+a test step whose command line expands it, a value computed from it, or a
+variable the shell, runtime, package tools, test runner or tracer read
+(`RUBYOPT`, `NODE_OPTIONS`, `SPEC_OPTS`, `PYTEST_ADDOPTS` and the like).
+Otherwise the configuration is validated without it, and the report says so
+as a caveat. A `cd` inside such control flow still makes the later entries
+unresolved. The checkout, `$CI_PROJECT_DIR`, is a CI path too: a variable
+holding a path in it is left out of local runs in the same way, and findings
+write it as `$CI_PROJECT_DIR`.
 `parallel: matrix` entries that differ only by the variable selecting the
 job's `image:` (such as `RUBY_IMAGE`) share one local configuration, and each
 entry's runtime is still checked statically; an `if` on such a variable
@@ -213,10 +240,15 @@ then lists the steps it ran ("Reviewed preparation run (opted in with
 source edit first (such as wrapping a Mocha command with NYC), its result
 asks for that edit and resumes with `onboard --apply`. Anything ddtest cannot read locally stays an
 unresolved blocker: remote, project, template and
-component includes, include inputs and `spec:` headers, includes whose rules
+component includes, inputs of a local include and `spec:` headers, includes whose rules
 depend on the pipeline, triggers and child
-pipelines, unknown `extends`/`!reference` targets, `rules:variables`, state
-changed inside shell control flow, and tests in `after_script`.
+pipelines, unknown `extends`/`!reference` targets, `rules:variables`, a
+directory change inside shell control flow, and tests in `after_script`.
+Each is named after what ddtest could not read, such as `(unresolved include
+gitlab.com/org/ci/test@1.0)` or `(unresolved configuration ci/suite.yml)`,
+and ddtest never asks which runtime such configuration runs: it has no
+readable job to state one for. Inputs of a component GitLab only uses to
+scan, review or release add nothing to resolve.
 
 CI setup uses Datadog's GitLab setup script
 ([test-optimization-gitlab-script](https://github.com/DataDog/test-optimization-gitlab-script)),
@@ -235,7 +267,14 @@ curl, unless an earlier entry runs `apt-get install -y curl`) or on images
 ddtest cannot resolve (`image: $NODE_IMAGE`) are refused with that reason;
 other images are assumed to have both. Runtimes come from the job's `image:`
 (`node:22`, `ruby:3.3-slim`); floating tags such as `latest` stay
-inconclusive.
+inconclusive. An image behind a registry prefix that is only variables, such
+as the dependency proxy's `${GITLAB_DEPENDENCY_PROXY}ruby:3.3`,
+`$CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX/ruby:3.3` or
+`${REGISTRY}/library/node:22`, is read as the literal image after the prefix;
+CircleCI `docker` images (an unresolved `<< parameters.registry >>/` prefix),
+Buildkite step, `docker` plugin and Compose images and Jenkins `docker`
+agents read the same way. An image whose name or tag reads a variable
+(`${RUBY_IMAGE}:3.3`, `${REGISTRY}/ruby:${VERSION}`) is never guessed.
 
 `onboard --apply` inserts the script entry, as a block scalar, before the first
 JavaScript test command of each test job, plus the `--import` loader export for
@@ -518,7 +557,10 @@ but every `sh` starts a fresh shell. `sh 'x'`, `sh "x"`, triple-quoted scripts
 and `sh(script: …)` are read when the whole script is literal; a GString reads
 known values only: a literal `environment` value or `env.X =` assignment, a
 literal Groovy variable, a `parameters` default (`${params.X}`) and
-`${WORKSPACE}`. Top-level statements run in source order, so a literal `def`
+`${WORKSPACE}`, which findings write as `${WORKSPACE}`. An `environment` value
+holding a path in the workspace (`VENV_DIR = "${WORKSPACE}/venv"`) has no local
+equivalent: a step whose command line does not read it is validated without
+it, with a caveat. Top-level statements run in source order, so a literal `def`
 before `pipeline { … }` is visible inside it and one after it is not. An
 `env.X =` assignment (or `env['X'] =`, `env.setProperty('X', …)`) changes the
 build's value for the rest of the build, from
@@ -609,7 +651,10 @@ is incomplete, `ci_setup_required` names why.
 The plugin does not instrument tests inside containers. Stages that run in
 `agent { docker … }`, `dockerfile`, `kubernetes`, a `podTemplate`'s
 `node(POD_LABEL)` (or a `node` on its label), `docker.image(…).inside`, an
-image variable's `.inside` or `container(…)` are unsupported. A container
+image variable's `.inside` or `container(…)` are unsupported. A `docker`
+agent or `docker.image(…)` image whose registry prefix only interpolates
+variables ddtest cannot resolve (`"${REGISTRY}/node:22"`) is read as the
+literal image after the prefix. A container
 block in a job on a host agent runs only its own steps in the container: they
 become a job of their own, named after the job and the container
 (`Test (docker.image('node:22').inside)`), and a test inside the container is

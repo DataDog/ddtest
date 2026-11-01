@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"time"
 
@@ -141,7 +142,7 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 func init() {
 	rootCmd.SetVersionTemplate("{{ .Version }}\n")
 
-	rootCmd.PersistentFlags().String("platform", "", "Platform that runs tests (auto-detected when omitted)")
+	rootCmd.PersistentFlags().String("platform", "", "Language of the tests: "+strings.Join(platform.Names(), ", ")+" (auto-detected when omitted). Not the CI provider: select that with --ci-provider")
 	rootCmd.PersistentFlags().String("framework", "", "Test framework to use (auto-detected when omitted)")
 	rootCmd.PersistentFlags().Int("min-parallelism", defaultParallelism, "Minimum number of parallel test processes (default: number of physical CPUs)")
 	rootCmd.PersistentFlags().Int("max-parallelism", defaultParallelism, "Maximum number of parallel test processes (default: number of physical CPUs)")

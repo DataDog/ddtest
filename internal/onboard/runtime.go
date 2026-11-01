@@ -116,6 +116,10 @@ type runtimeStep struct {
 	// Setup is the Datadog setup this step runs, when its provider recognized
 	// one while reading the configuration (see ciProvider.setupStep).
 	Setup *ciSetup `yaml:"-"`
+	// LeftOut names, with why, the variables validation runs without: their
+	// CI values have no local equivalent (see ciOnlyValue), and neither the
+	// step's command line nor the runtime reads them.
+	LeftOut []string `yaml:"-"`
 	// Runtime holds the runtime versions this step selects for later steps,
 	// keyed by the language's installer token (js, ruby), as a known CI
 	// component such as a runtime installer reads them; an empty version
@@ -166,6 +170,10 @@ type runtimeJob struct {
 	Image string `yaml:"-"`
 	// ImageTemplate is the image as written, before variables are expanded.
 	ImageTemplate string `yaml:"-"`
+	// Unread marks a pseudo-job standing for configuration the provider
+	// could not read at all, such as a remote include: it has no runtime
+	// for the user to state, only its unresolved step.
+	Unread bool `yaml:"-"`
 	// ImageProblem explains why a provider that read the job's container
 	// cannot know its image, such as one built from a Dockerfile it could
 	// not resolve; empty when the image is known or there is no container.

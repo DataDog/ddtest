@@ -16,6 +16,9 @@ type commandFragment struct {
 	Words  []string
 	Reason string
 	Chain  int
+	// Pipe is the output filters, as written, that the command's output is
+	// piped into (see outputFilter); the fragment is the command alone.
+	Pipe string
 	// Patterns indexes Words that are unquoted pathname patterns, kept as
 	// written. The shell expands them in the command's working directory, so
 	// only a caller that knows that directory may accept the fragment.
@@ -41,6 +44,16 @@ func discoverCommands(command string) ([]commandFragment, error) {
 	visit = func(stmt *syntax.Stmt, depth int) error {
 		if depth > 16 || len(result) >= 64 || stmt.Background || stmt.Negated || stmt.Coprocess || stmt.Disown {
 			return fmt.Errorf("shell control flow requires review")
+		}
+		if head, filters, ok := outputPipeline(stmt); ok {
+			before := len(result)
+			if err := visit(head, depth+1); err != nil {
+				return err
+			}
+			for i := before; i < len(result); i++ {
+				result[i].Pipe = filters
+			}
+			return nil
 		}
 		if binary, ok := stmt.Cmd.(*syntax.BinaryCmd); ok {
 			if binary.Op != syntax.AndStmt || len(stmt.Redirs) != 0 {
@@ -81,6 +94,123 @@ func discoverCommands(command string) ([]commandFragment, error) {
 		}
 	}
 	return result, nil
+}
+
+// outputPipeline splits a pipeline whose later commands only format or save
+// the output of its first (see outputFilter), as in
+// cucumber-js | cucumber-junit > report.xml or npx jest 2>&1 | tee jest.log:
+// head is the first command, without a 2>&1 that only joins its error output
+// into the pipe, and filters the rest as written. Exit status is the
+// caller's to report: without pipefail the shell takes the pipeline's from
+// its last command.
+func outputPipeline(stmt *syntax.Stmt) (head *syntax.Stmt, filters string, ok bool) {
+	binary, isBinary := stmt.Cmd.(*syntax.BinaryCmd)
+	if !isBinary || binary.Op != syntax.Pipe && binary.Op != syntax.PipeAll || len(stmt.Redirs) != 0 || stmt.Background || stmt.Negated || stmt.Coprocess || stmt.Disown {
+		return nil, "", false
+	}
+	var elements []*syntax.Stmt
+	var flatten func(*syntax.Stmt) bool
+	flatten = func(element *syntax.Stmt) bool {
+		if inner, ok := element.Cmd.(*syntax.BinaryCmd); ok && (inner.Op == syntax.Pipe || inner.Op == syntax.PipeAll) && len(element.Redirs) == 0 && !element.Negated {
+			return flatten(inner.X) && flatten(inner.Y)
+		}
+		elements = append(elements, element)
+		return len(elements) <= 8
+	}
+	if !flatten(stmt) || len(elements) < 2 {
+		return nil, "", false
+	}
+	first := *elements[0]
+	first.Redirs = slices.DeleteFunc(slices.Clone(first.Redirs), joinsErrorOutput)
+	if _, isCall := first.Cmd.(*syntax.CallExpr); !isCall || len(first.Redirs) > 0 {
+		return nil, "", false
+	}
+	var written []string
+	for _, element := range elements[1:] {
+		if !outputFilter(element) {
+			return nil, "", false
+		}
+		written = append(written, shellText(element))
+	}
+	return &first, strings.Join(written, " | "), true
+}
+
+// joinsErrorOutput is 2>&1.
+func joinsErrorOutput(redirect *syntax.Redirect) bool {
+	return redirect.Op == syntax.DplOut && redirect.N != nil && redirect.N.Value == "2" && redirect.Word != nil && redirect.Word.Lit() == "1"
+}
+
+// outputFilter reports a pipeline command that only formats or saves the
+// output it reads, with literal arguments and any output redirected to a
+// file: tee, a Cucumber JUnit converter or a TAP reporter (tap-*, faucet),
+// run directly, from node_modules/.bin or through npx, yarn or pnpm exec.
+func outputFilter(stmt *syntax.Stmt) bool {
+	if stmt.Background || stmt.Negated || stmt.Coprocess || stmt.Disown {
+		return false
+	}
+	for _, redirect := range stmt.Redirs {
+		if joinsErrorOutput(redirect) {
+			continue
+		}
+		target, err := literalShellWord(redirect.Word)
+		if err != nil || target == "" || redirect.N != nil && redirect.N.Value != "1" && redirect.N.Value != "2" {
+			return false
+		}
+		if redirect.Op != syntax.RdrOut && redirect.Op != syntax.AppOut && redirect.Op != syntax.RdrClob {
+			return false
+		}
+	}
+	bare := *stmt
+	bare.Redirs = nil
+	words, patterns, err := literalCall(&bare)
+	if err != nil || len(patterns) > 0 || len(words) == 0 || strings.Contains(words[0], "=") {
+		return false
+	}
+	switch words[0] {
+	case "npx":
+		words = words[1:]
+		for len(words) > 0 && slices.Contains([]string{"--no-install", "--no", "-y", "--yes", "-q", "--quiet"}, words[0]) {
+			words = words[1:]
+		}
+	case "yarn", "pnpm":
+		words = words[1:]
+		if len(words) > 0 && words[0] == "exec" {
+			words = words[1:]
+		}
+	}
+	if len(words) == 0 {
+		return false
+	}
+	name := filepath.Base(words[0])
+	switch {
+	case name == "tee":
+		for _, arg := range words[1:] {
+			if strings.HasPrefix(arg, "-") && !slices.Contains([]string{"-a", "--append", "-i", "--ignore-interrupts", "-p"}, arg) {
+				return false
+			}
+		}
+		return true
+	case name == "cucumber-junit", name == "faucet", strings.HasPrefix(name, "tap-") && len(name) > len("tap-"):
+		return true
+	}
+	return false
+}
+
+// outputPipeNote is the caveat for a test command whose CI output is piped
+// into filters: validation runs the command alone, and CI's step status may
+// come from the last filter.
+func outputPipeNote(command, filters string) string {
+	return "This CI step pipes the output of " + command + " into " + filters + ", which only formats or saves it; local validation runs " + command + " without it. Unless the step's shell sets pipefail, CI takes the step's exit status from the pipeline's last command, not from the tests, so failing tests may not fail the step; instrumenting the step does not change that."
+}
+
+// outputPipeNotes is the caveat for a single-command step, run as command,
+// whose output CI pipes into filters, or nothing.
+func outputPipeNotes(run, command string) []string {
+	fragments, err := staticFragments(run)
+	if err != nil || len(fragments) != 1 || fragments[0].Pipe == "" {
+		return nil
+	}
+	return []string{outputPipeNote(command, fragments[0].Pipe)}
 }
 
 // Expand quoting/escapes from the parsed word, never variables or executable

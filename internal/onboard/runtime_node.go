@@ -285,7 +285,7 @@ var nodeImage = regexp.MustCompile(`^(?:(?:docker\.io/)?(?:library/)?node|cimg/n
 // imageNode is the Node.js version a CI job's container image selects, or ""
 // when the image has none or its tag floats (latest, lts, current).
 func imageNode(image string) string {
-	if match := nodeImage.FindStringSubmatch(strings.TrimSpace(image)); match != nil {
+	if match := nodeImage.FindStringSubmatch(mirroredImage(image)); match != nil {
 		return match[1]
 	}
 	return cypressContainerNode(image)

@@ -303,6 +303,14 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			setup = append(setup, "CI file or dependency changes require separate validation: "+shellCommand(words))
 		}
 		part := resolveJestWords(root, directory, words, stack, remaining, frameworks...)
+		if fragment.Pipe != "" {
+			// Package managers would append forwarded options to the last
+			// filter, not the tests.
+			part.SingleJest = false
+			for i := range part.Tests {
+				part.Tests[i].StepScopeNotes = append(part.Tests[i].StepScopeNotes, outputPipeNote(shellCommand(words), fragment.Pipe))
+			}
+		}
 		for i := range part.Tests {
 			part.Tests[i].Prerequisites = append(slices.Clone(result.Builds), part.Tests[i].Prerequisites...)
 			part.Tests[i].UnvalidatedSetup = append(slices.Clone(setup), part.Tests[i].UnvalidatedSetup...)
@@ -943,11 +951,21 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 
 // Reuse AST discovery for callers that require every command to be literal.
 func staticCommands(command string) ([][]string, error) {
+	fragments, err := staticFragments(command)
+	var commands [][]string
+	for _, fragment := range fragments {
+		commands = append(commands, fragment.Words)
+	}
+	return commands, err
+}
+
+// staticFragments are the literal commands of staticCommands, with the
+// output filters each is piped into.
+func staticFragments(command string) ([]commandFragment, error) {
 	fragments, err := discoverCommands(command)
 	if err != nil {
 		return nil, err
 	}
-	var commands [][]string
 	for _, fragment := range fragments {
 		if fragment.Reason != "" {
 			return nil, fmt.Errorf("%s", fragment.Reason)
@@ -956,9 +974,8 @@ func staticCommands(command string) ([][]string, error) {
 		if len(fragment.Patterns) > 0 {
 			return nil, fmt.Errorf("%s", "Unvalidated setup or command with dynamic shell syntax: "+fragment.Text)
 		}
-		commands = append(commands, fragment.Words)
 	}
-	return commands, nil
+	return fragments, nil
 }
 
 // Help, version and configuration output exit before running a suite,

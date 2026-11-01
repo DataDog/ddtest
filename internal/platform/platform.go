@@ -61,6 +61,22 @@ func isFallback(p Platform) bool {
 	return ok && fallback.fallback()
 }
 
+// Names lists the --platform values: the languages whose tests ddtest runs.
+func Names() []string { return []string{"javascript", "python", "ruby", "java"} }
+
+// CIProviderNames are the --ci-provider values, which are not platforms.
+var CIProviderNames = []string{"github", "gitlab", "circleci", "buildkite", "jenkins"}
+
+// UnsupportedPlatformError rejects a --platform value, listing the valid ones
+// and, since a CI provider is a common mistake, pointing to --ci-provider.
+func UnsupportedPlatformError(name string) error {
+	hint := "--platform selects the language of the tests; select a CI provider with --ci-provider."
+	if slices.Contains(CIProviderNames, strings.ToLower(name)) {
+		hint = name + " is a CI provider, not a platform: use --ci-provider " + strings.ToLower(name) + " instead (--platform selects the language of the tests)."
+	}
+	return fmt.Errorf("unsupported platform: %s; supported platforms: %s. %s", name, strings.Join(Names(), ", "), hint)
+}
+
 // DetectPlatform selects a platform without running commands or checking installed
 // runtimes/tracers. Selection uses the current directory and settings.
 func DetectPlatform() (Platform, error) {
@@ -74,7 +90,7 @@ func DetectPlatform() (Platform, error) {
 				return p, nil
 			}
 		}
-		return nil, fmt.Errorf("unsupported platform: %s", platformHint)
+		return nil, UnsupportedPlatformError(platformHint)
 	}
 	var candidates []Platform
 	for _, p := range platforms {

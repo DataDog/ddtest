@@ -151,6 +151,11 @@ func (javaDiscovery) runtimeVariable(name string) bool {
 	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"
 }
 
+// The JVM, Maven and Gradle read these.
+func (javaDiscovery) toolVariable(name string) bool {
+	return slices.Contains([]string{"JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"}, name) || slices.ContainsFunc([]string{"JAVA_", "MAVEN_", "GRADLE_", "M2_"}, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+}
+
 func (javaDiscovery) cacheVariable(name string) bool {
 	return name == "GRADLE_USER_HOME"
 }

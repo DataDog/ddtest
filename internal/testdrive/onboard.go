@@ -699,22 +699,22 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	var runtimeMetadata *platform.MetadataError
 	if errors.As(runErr, &runtimeMetadata) {
 		result.Capabilities = []string{workflowMetadataCapability(runtimeMetadata)}
-		result.JSONReport = validationPath(t.repositoryRoot)
+		result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 		return fail("blocked_environment", runtimeMetadata.Code, runErr.Error(), "Resolve only the named registry/storage capability, then rerun next_command. The failed attempt remains incomplete in json_report.")
 	}
 	var localRuntime *localRuntimeError
 	if errors.As(runErr, &localRuntime) {
 		result.Capabilities = []string{localRuntime.Capability()}
-		result.JSONReport = validationPath(t.repositoryRoot)
+		result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 		return fail("blocked_environment", "local_runtime_mismatch", runErr.Error(), "Provide only the named runtime: put an existing installation first on PATH (a version manager or a user-provided install), then run resume_command unchanged. Ask the user before downloading a runtime and never install one inside the repository. Do not change CI, the tracer or test scope to avoid this path.")
 	}
 	if workspace.FileDescriptorsExhausted(runErr) {
-		result.JSONReport = validationPath(t.repositoryRoot)
+		result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 		return fail("blocked_environment", fileDescriptorsExhaustedCode, runErr.Error(), "The host ran out of open file descriptors while isolating the checkout, often because other heavy processes share it. Wait for or stop those processes, or raise the open-file limit, then run next_command unchanged. If ddtest already edited CI, next_command recognizes those edits and makes no further change before validating again; do not edit or align them by hand. This says nothing about the tests or the tracer; do not change CI, the tracer or test scope.")
 	}
 	var supervision *processSupervisionError
 	if errors.As(runErr, &supervision) {
-		result.JSONReport = validationPath(t.repositoryRoot)
+		result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 		if supervision.Code == "unsupported_detached_spawn" {
 			return fail("unsupported", supervision.Code, supervision.Error(), "Preserve the original test command/configuration. This detached spawn cannot be supervised safely; it is not a pre-existing test failure or tracer comparison.")
 		}
@@ -755,9 +755,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	result.Fingerprint = before
 	result.Checks = workflow.Checks
-	result.JSONReport = validationPath(t.repositoryRoot)
+	result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 	if validation.HTMLReportCurrent {
-		result.HTMLReport = htmlReportPath(t.repositoryRoot)
+		result.HTMLReport = validation.htmlReportPath(t.repositoryRoot)
 	}
 	result.Instruction = "Validation finished for this source snapshot. Finish any source edits, then run next_command as the final check and report its factual response. Further source edits invalidate completion. ddtest has already checked its owned cleanup and report exclusions; do not repeat cache or package audits."
 	result.NextAction = "run_command"
@@ -772,6 +772,12 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			return fail("blocked_environment", "checkpoint_cleanup_failed", err.Error(), "Remove only the named owned checkpoint after restoring access.")
 		}
 		result.Status = "selected_passed"
+		if validation.KeptReport != "" {
+			// testdrive --report renders the kept --all report, not this run.
+			result.NextAction, result.NextCommand = "report_result", nil
+			result.FinalResponse = validation.Summary.FinalResponse
+			result.Instruction = "This run of one command passed. It was written beside the --all report " + validation.KeptReport + ", which it does not replace and which alone can certify onboarding. Report final_response unchanged; do not present this run as certification."
+		}
 		return onboard.RenderAgentResult(output, result, options.Format)
 	}
 	if workflowVerdict(validation) != "complete_locally" {
@@ -1110,6 +1116,13 @@ func workflowPreflight(ctx context.Context, run func() error) error {
 
 func readCurrentOnboardingResult(root string, started time.Time) (validationResult, error) {
 	var result validationResult
+	// A run of one command after an --all run writes beside that report.
+	if data, err := os.ReadFile(validationResult{KeptReport: validationPath("")}.jsonReportPath(root)); err == nil {
+		if json.Unmarshal(data, &result) == nil && !result.CheckOnly && !result.CompletedAt.Before(started) {
+			return result, nil
+		}
+		result = validationResult{}
+	}
 	data, err := os.ReadFile(validationPath(root))
 	if err != nil {
 		return result, err

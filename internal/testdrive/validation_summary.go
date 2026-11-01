@@ -488,16 +488,19 @@ func validationHandoff(result validationResult) string {
 		path = strings.NewReplacer("%", "%25", "<", "%3C", ">", "%3E", "\n", "%0A", "\r", "%0D").Replace(filepath.ToSlash(path))
 		return fmt.Sprintf("[%s](<%s>)", label, path)
 	}
-	if info, err := os.Stat(htmlReportPath(result.WorkingDirectory)); err == nil && info.Mode().IsRegular() {
+	if info, err := os.Stat(result.htmlReportPath(result.WorkingDirectory)); err == nil && info.Mode().IsRegular() {
 		label := "Open report"
 		if !result.HTMLReportCurrent {
 			label = "Previous HTML report (not regenerated)"
 		}
-		block.WriteString("\n" + link(label, htmlReportPath(result.WorkingDirectory)) + "\n")
+		block.WriteString("\n" + link(label, result.htmlReportPath(result.WorkingDirectory)) + "\n")
 	} else {
 		block.WriteString("\nHTML report unavailable.\n")
 	}
-	block.WriteString(link("Results JSON", validationPath(result.WorkingDirectory)))
+	block.WriteString(link("Results JSON", result.jsonReportPath(result.WorkingDirectory)))
+	if result.KeptReport != "" {
+		block.WriteString("\nThis run of one command did not replace the --all report, which stays at " + link("--all Results JSON", filepath.Join(result.WorkingDirectory, result.KeptReport)) + "; only that report can certify onboarding.")
+	}
 	if result.Cleanup != nil {
 		fmt.Fprintf(&block, "\nCleanup: %s (ddtest sessions only)", result.Cleanup.Status)
 		if result.Cleanup.Status != "passed" {
@@ -547,7 +550,7 @@ func briefValidationText(value string) string {
 // Use the current report as the source of final-answer facts, including all
 // repetitions. A later successful repetition must not erase an earlier crash.
 func validationFacts(result validationResult) []string {
-	facts := []string{"Report: .testoptimization/testdrive.json", "Session: " + result.Session}
+	facts := []string{"Report: " + filepath.ToSlash(result.jsonReportPath("")), "Session: " + result.Session}
 	appendRuns := func(label string, runs []runSummary) {
 		for _, run := range runs {
 			if !strings.HasPrefix(run.Name, "baseline") && !strings.HasPrefix(run.Name, "reporting-only") {

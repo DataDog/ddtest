@@ -239,6 +239,11 @@ type validationResult struct {
 	TelemetryOnly  bool `json:"telemetry_only,omitempty"`
 	SchemaVersion  int  `json:"schema_version"`
 	FocusedCommand bool `json:"focused_command,omitempty"`
+	// All marks a run of every discovered configuration (--all).
+	All bool `json:"all,omitempty"`
+	// KeptReport is the saved --all report this narrower run did not
+	// replace; its own results are beside it (see keepsSavedReport).
+	KeptReport string `json:"kept_report,omitempty"`
 	// A workflow gate stopped this attempt before any test command. The earlier
 	// execution and its HTML findings stay as history; the handoff is still invalidated.
 	StoppedBeforeExecution bool `json:"stopped_before_execution,omitempty"`
@@ -321,11 +326,61 @@ func validationPath(repositoryRoot string) string {
 	return filepath.Join(repositoryRoot, constants.PlanDirectory, validationFilename)
 }
 
+// focusedValidationFilename and focusedReportFilename hold a narrower run's
+// results when the saved report validated every discovered configuration,
+// so that a focused probe never replaces that report.
+const (
+	focusedValidationFilename = "testdrive-command.json"
+	focusedReportFilename     = "report-command.html"
+)
+
+// keepsSavedReport reports whether result, a run of one command, goes beside
+// the saved report instead of replacing it: that report is an --all run of
+// the same framework that executed tests. Another --all run, a configuration
+// check (which keeps executions as history) or a run after a focused one
+// replaces the saved report as before.
+func keepsSavedReport(root, framework string, result validationResult) bool {
+	if result.All || result.CheckOnly || result.Workflow != nil || result.KeptReport != "" {
+		return result.KeptReport != ""
+	}
+	previous, err := readPreviousValidation(root)
+	if err != nil || previous == nil || previous.Framework != framework || !hasValidationExecution(*previous) {
+		return false
+	}
+	// Reports from before All existed name --all in their workflow command.
+	return previous.All || previous.Workflow != nil && slices.Contains(previous.Workflow.ValidationCommand, "--all")
+}
+
+// keepSavedReport records on result that it goes beside the saved --all
+// report (see keepsSavedReport).
+func keepSavedReport(root, framework string, result *validationResult) {
+	if keepsSavedReport(root, framework, *result) {
+		result.KeptReport = filepath.ToSlash(validationPath(""))
+	}
+}
+
+// jsonReportPath is where result's JSON report is written under root.
+func (result validationResult) jsonReportPath(root string) string {
+	if result.KeptReport != "" {
+		return filepath.Join(root, constants.PlanDirectory, focusedValidationFilename)
+	}
+	return validationPath(root)
+}
+
+// htmlReportPath is where result's HTML report is written under root.
+func (result validationResult) htmlReportPath(root string) string {
+	if result.KeptReport != "" {
+		return filepath.Join(root, constants.PlanDirectory, focusedReportFilename)
+	}
+	return htmlReportPath(root)
+}
+
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
 	result.SchemaVersion = 1
+	keepSavedReport(repositoryRoot, result.Framework, &result)
 	if !result.CheckOnly && !result.StoppedBeforeExecution && !result.HTMLReportCurrent {
-		if info, err := os.Lstat(htmlReportPath(repositoryRoot)); err == nil && (info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
-			if err := os.Remove(htmlReportPath(repositoryRoot)); err != nil {
+		if info, err := os.Lstat(result.htmlReportPath(repositoryRoot)); err == nil && (info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
+			if err := os.Remove(result.htmlReportPath(repositoryRoot)); err != nil {
 				return err
 			}
 		}
@@ -341,10 +396,10 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		if err != nil {
 			return fmt.Errorf("encode testdrive results: %w", err)
 		}
-		if err := writeValidation(validationPath(repositoryRoot), append(data, '\n')); err != nil {
+		if err := writeValidation(result.jsonReportPath(repositoryRoot), append(data, '\n')); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(output, "\nResults JSON: %s\n", validationPath(""))
+		_, _ = fmt.Fprintf(output, "\nResults JSON: %s\n", result.jsonReportPath(""))
 		return nil
 	}
 	if err := checkCIPreservation(repositoryRoot, &result); err != nil {
@@ -369,12 +424,14 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	if err != nil {
 		return fmt.Errorf("encode validation results: %w", err)
 	}
-	path := validationPath(repositoryRoot)
+	path := result.jsonReportPath(repositoryRoot)
 	if err := writeValidation(path, append(data, '\n')); err != nil {
 		return err
 	}
 
-	if !result.CheckOnly && result.Workflow != nil {
+	// The receipt binds the report testdrive --report verifies, which a run
+	// beside the --all report leaves in place.
+	if !result.CheckOnly && result.Workflow != nil && result.KeptReport == "" {
 		if err := saveWorkflowReceipt(repositoryRoot, result); err != nil {
 			return fmt.Errorf("save private validation receipt: %w", err)
 		}
@@ -467,7 +524,10 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		}
 		_, _ = fmt.Fprintln(output, "Keep the earlier commands and feature results in retained_execution.result when reporting onboarding progress.")
 	}
-	_, _ = fmt.Fprintf(output, "Datadog library: %s\nResults JSON: %s\n", tracerDescription(result), validationPath(""))
+	_, _ = fmt.Fprintf(output, "Datadog library: %s\nResults JSON: %s\n", tracerDescription(result), result.jsonReportPath(""))
+	if result.KeptReport != "" {
+		_, _ = fmt.Fprintf(output, "Kept the --all report %s: this run of one command is written beside it and does not replace it. Rerun --all to replace that report.\n", result.KeptReport)
+	}
 	_, _ = fmt.Fprintln(output, "Keep this JSON report and the HTML findings report after cleanup, including when validation fails.")
 	if result.CheckOnly && result.ChecksPassed {
 		return nil

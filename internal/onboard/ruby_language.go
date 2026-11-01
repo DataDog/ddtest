@@ -434,6 +434,11 @@ func (rubyDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"RUBYOPT", "RUBYLIB", "GEM_HOME", "GEM_PATH"}, name) || strings.HasPrefix(name, "BUNDLE_")
 }
 
+// Ruby, Bundler, RubyGems, RSpec and Minitest read these.
+func (rubyDiscovery) toolVariable(name string) bool {
+	return slices.Contains([]string{"SPEC_OPTS", "TESTOPTS", "TEST", "SEED"}, name) || slices.ContainsFunc([]string{"RUBY", "BUNDLE_", "GEM_"}, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+}
+
 func (rubyDiscovery) cacheVariable(name string) bool {
 	return slices.Contains([]string{"BUNDLE_PATH", "GEM_HOME"}, name)
 }
@@ -584,7 +589,7 @@ func rubyImageSelection(job runtimeJob) string {
 	if version, engine := rubyImageRuntime(job.Image); version+engine != "" {
 		return version + engine
 	}
-	if match := rubyImage.FindStringSubmatch(withImplicitTag(job.Image)); match != nil {
+	if match := rubyImage.FindStringSubmatch(withImplicitTag(mirroredImage(job.Image))); match != nil {
 		return match[2]
 	}
 	return ""

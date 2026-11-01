@@ -405,6 +405,15 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 								scope.Caveats = append(scope.Caveats, caveat)
 							}
 						}
+						if len(resolved.LeftOut) > 0 {
+							caveat := location.String() + ": validated without the CI variables " + strings.Join(resolved.LeftOut, "; ") + ": they have no local value and the step's command line does not read them, so tests that read them ran locally without them; CI runs the tests with their CI values."
+							if len(resolved.LeftOut) == 1 {
+								caveat = location.String() + ": validated without the CI variable " + resolved.LeftOut[0] + ": it has no local value and the step's command line does not read it, so tests that read it ran locally without it; CI runs the tests with its CI value."
+							}
+							if !slices.Contains(scope.Caveats, caveat) {
+								scope.Caveats = append(scope.Caveats, caveat)
+							}
+						}
 						if framework == "mocha" && !entry.usesNYC && !entry.mochaIstanbul {
 							parts, err := staticCommands(entry.Command)
 							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {

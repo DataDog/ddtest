@@ -15,14 +15,15 @@ import (
 
 // Resolve only declared scalar environment values and simple parameter reads.
 // Never evaluate a command substitution or inherit the evaluator's environment.
-func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) (runtimeStep, map[string]string, error) {
+func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) (_ runtimeStep, _ map[string]string, err error) {
+	// Findings name values in the provider's own syntax.
+	defer func() { err = displayCIError(err) }()
 	// An action's environment is not inherited by subsequent run steps. Keep
 	// opaque actions outside local validation; do not demand their CI secrets.
 	cypressAction := len(frameworks) > 0 && frameworks[0] == "cypress" && strings.HasPrefix(strings.ToLower(step.Uses), "cypress-io/github-action@")
 	if step.Run == "" && step.Uses != "" && step.ResolutionError == "" && !cypressAction {
 		return step, nil, nil
 	}
-	var err error
 	step.Run, err = interpolateMatrix(step.Run, row)
 	if err != nil {
 		return step, nil, err
@@ -80,6 +81,15 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	}
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
+		// A variable the CI script sets only on some paths, or a path in the
+		// CI checkout, which local runs do not share, matters only to what
+		// reads it: validation runs without it unless the command line
+		// expands it or it controls the runtime, the tools or the tracer.
+		if reason := ciOnlyValue(value); reason != "" && !shellReads(step.Run, key) && !ciControlVariable(key) {
+			step.LeftOut = append(step.LeftOut, key+" ("+reason+")")
+			delete(env, key)
+			continue
+		}
 		if err := unresolvedCIError(value); err != nil && !strings.HasPrefix(key, "DD_") {
 			return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
 		}
@@ -225,6 +235,14 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	var commands []string
 	var visit func(*syntax.Stmt) bool
 	visit = func(stmt *syntax.Stmt) bool {
+		// Output filters after a command keep their literal text.
+		if head, filters, ok := outputPipeline(stmt); ok {
+			if !visit(head) || len(commands) == 0 {
+				return false
+			}
+			commands[len(commands)-1] += " | " + filters
+			return true
+		}
 		if len(stmt.Redirs) > 0 || stmt.Background || stmt.Negated || stmt.Coprocess {
 			return false
 		}
@@ -278,6 +296,50 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	// with && changes whether later tests run after a failed preparation.
 	step.Run = strings.Join(statements, "\n")
 	return step, env, nil
+}
+
+// ciOnlyValue says why a variable's CI value has no local equivalent that
+// validation may use: the script sets it only on some paths, or it is a path
+// in the CI checkout. It is "" for any other value.
+func ciOnlyValue(value string) string {
+	if _, conditional := conditionalCIStatement(value); conditional {
+		return "set only on some paths of the CI script, under conditions ddtest cannot decide"
+	}
+	if strings.Contains(value, ciProjectDirectory) && unresolvedCIError(value) == nil && strings.Count(value, "${{") == strings.Count(value, ciProjectDirectory) {
+		return "a path in the CI checkout, " + displayCIText(value)
+	}
+	return ""
+}
+
+// shellReads reports whether a shell command expands the variable name, or
+// may: a command ddtest cannot parse reads every variable.
+func shellReads(command, name string) bool {
+	file, ok := parseCIShell(command)
+	if !ok {
+		return true
+	}
+	reads := false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if parameter, ok := node.(*syntax.ParamExp); ok && parameter.Param != nil && parameter.Param.Value == name {
+			reads = true
+		}
+		return !reads
+	})
+	return reads
+}
+
+// ciControlVariable reports a variable the shell, the runtime, the package
+// tools, the test runners or the tracer read, which changes what runs.
+func ciControlVariable(name string) bool {
+	if ciRunnerExported(name, nil) || slices.Contains([]string{"BASH_ENV", "ENV", "SHELLOPTS", "CDPATH", "IFS"}, name) {
+		return true
+	}
+	if strings.HasPrefix(name, "LD_") || strings.HasPrefix(name, "DYLD_") {
+		return true
+	}
+	return slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {
+		return language.cacheVariable(name) || language.toolVariable(name)
+	})
 }
 
 func localPreparation(root, directory string, words []string) (BuildCommand, bool) {

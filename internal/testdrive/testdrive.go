@@ -673,11 +673,12 @@ func (t *Testdrive) publishCopiedRunReport(output io.Writer, result *validationR
 	if len(models) == 0 {
 		return nil
 	}
-	if err := writeHTMLReportFile(t.repositoryRoot, models[len(models)-1]); err != nil {
+	keepSavedReport(t.repositoryRoot, t.framework.Name(), result)
+	if err := writeHTMLReportFile(t.repositoryRoot, models[len(models)-1], *result); err != nil {
 		result.HTMLReportCurrent = false
 		return err
 	}
-	return announceHTMLReport(output, t.repositoryRoot, t.framework.Name())
+	return announceHTMLReport(output, t.repositoryRoot, t.framework.Name(), *result)
 }
 
 // setConfigurationScope credits this single run to the discovered

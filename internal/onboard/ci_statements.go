@@ -382,6 +382,9 @@ func runtimeHost(job runtimeJob, row map[string]any, runtime string) string {
 		return "the self-hosted runner " + strings.Join(labels, ", ")
 	}
 	switch {
+	case job.Unread:
+		// ddtest could not read the configuration: that is the finding.
+		return ""
 	case job.ImageProblem != "":
 		// Its image is in the configuration: the remedy is to make it readable.
 		return ""

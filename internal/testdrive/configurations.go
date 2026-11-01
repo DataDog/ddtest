@@ -246,10 +246,10 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		err = fmt.Errorf("no explicit %s CI invocations discovered; review discovery and use --command for local validation", t.framework.Name())
 	}
 	if err != nil {
-		result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Scope: &scope, Error: err.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Discovery failed; no test commands were executed."}}
+		result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, All: true, Scope: &scope, Error: err.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Discovery failed; no test commands were executed."}}
 		return errors.Join(err, finishValidation(output, t.repositoryRoot, result))
 	}
-	result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: "not selected", CheckOnly: t.checkOnly, Scope: &scope,
+	result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: "not selected", CheckOnly: t.checkOnly, All: true, Scope: &scope,
 		Compatibility: verdict{Status: "compatible", Reason: "Every discovered configuration passed its own paired comparison; configurations were not compared against each other."}, Cleanup: &verdict{Status: "passed", Reason: "Temporary sessions removed for all configurations."}}
 	var models []reportModel
 	var runErrors []error
@@ -500,7 +500,7 @@ func writeConfigurationHTML(output io.Writer, root string, models []reportModel)
 	if err := writeValidation(htmlReportPath(root), content.Bytes()); err != nil {
 		return err
 	}
-	return writeHTMLReportLink(output, root)
+	return writeHTMLReportLink(output, root, validationResult{All: true})
 }
 
 func offsetSuiteTests(suites []reportSuite, offset int) []reportSuite {

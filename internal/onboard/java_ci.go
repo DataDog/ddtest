@@ -122,6 +122,7 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if len(omitted) > 0 {
 		notes = append(notes, "This CI step also runs "+strings.Join(omitted, ", ")+". Local validation runs only "+selected+", the test lifecycle up to verify, and never installs or publishes artifacts. Report this to the user.")
 	}
+	notes = append(notes, outputPipeNotes(step.Run, selected)...)
 	if others := otherFrameworkModules(projects, framework); len(others) > 0 {
 		notes = append(notes, "This Maven reactor also declares module(s) "+strings.Join(others, ", ")+", which declare other test frameworks and no "+framework+" dependency. Whether this step runs their tests depends on its active profiles and reactor selectors. Instrumenting this step reports any selected tests to Datadog too; local validation covers only the "+framework+" modules. Report this to the user.")
 	}

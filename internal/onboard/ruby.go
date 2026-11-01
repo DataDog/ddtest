@@ -57,6 +57,9 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 				return commandResolution{Review: true, Reason: "Ruby maintenance task is outside test validation."}
 			}
 			if resolution, done := resolveRubyRakeTargets(root, directory, step.Run, parts[0], words, framework); done {
+				for i := range resolution.Tests {
+					resolution.Tests[i].StepScopeNotes = append(resolution.Tests[i].StepScopeNotes, outputPipeNotes(step.Run, resolution.Tests[i].Command)...)
+				}
 				return resolution
 			}
 		}
@@ -90,7 +93,8 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if err != nil || len(parts) != 1 || len(parts[0]) == 0 || strings.Contains(parts[0][0], "=") {
 		return unresolvedCommand("Ruby test entry point requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
 	}
-	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(parts[0]...)}}}
+	command := shellquote.Join(parts[0]...)
+	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: command, StepScopeNotes: outputPipeNotes(step.Run, command)}}}
 }
 
 // rubyArtifactCommands only create directories, move or copy files, or
@@ -1009,9 +1013,10 @@ var rubyImage = regexp.MustCompile(`^(?:cimg/|circleci/|(?:docker\.io/)?(?:libra
 // rubyImageRuntime is the Ruby version a CI job's image selects, or the
 // engine the tracer cannot instrument (JRuby, TruffleRuby, Ruby head). Both
 // are empty when the image selects no static Ruby: no image, another image,
-// a floating tag such as latest, or an unresolved variable.
+// a floating tag such as latest, or an unresolved variable other than a
+// registry prefix (see mirroredImage).
 func rubyImageRuntime(image string) (version, engine string) {
-	match := rubyImage.FindStringSubmatch(strings.TrimSpace(image))
+	match := rubyImage.FindStringSubmatch(mirroredImage(image))
 	if match == nil {
 		return "", ""
 	}

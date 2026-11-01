@@ -423,7 +423,8 @@ dynamic:
 	require.Equal(t, "packages/web/tests", last.WorkingDirectory)
 	require.Equal(t, map[string]string{"SUITE": "unit"}, last.Env, "LOCAL=1 stays a shell variable")
 	require.Empty(t, last.ResolutionError)
-	require.Contains(t, jobs["conditional"].Steps[1].ResolutionError, "exports variables conditionally")
+	require.Empty(t, jobs["conditional"].Steps[1].ResolutionError, "a conditional export only leaves its variable maybe set")
+	require.Equal(t, conditionalCIValue(`if [ -n "$CI" ]; then export SUITE=ci; fi`), jobs["conditional"].Steps[1].Env["SUITE"])
 	require.Contains(t, jobs["outside"].Steps[1].ResolutionError, "outside the repository")
 	require.Equal(t, unresolvedCIValue("$(…)"), jobs["dynamic"].Steps[1].Env["VERSION"], "a computed value stays unresolved")
 }
@@ -729,4 +730,42 @@ func TestGitLabReferencedVariablesWithIncludes(t *testing.T) {
 	jobs, _ := gitLabJobs(t, root)
 	require.Equal(t, map[string]string{"SUITE": "unit"}, jobs["test"].Env)
 	require.Empty(t, unresolved(t, root))
+}
+
+// The B03 shape: configuration ddtest cannot read is named after its
+// include, inputs of a component GitLab only uses to scan or release add no
+// gap, and nobody is asked which runtime unread configuration runs.
+func TestGitLabUnreadIncludesAreNamedAndNeedNoRuntime(t *testing.T) {
+	useCIProvider(t, "gitlab")
+	root := gitLabRubyRepository(t, `include:
+  - component: gitlab.com/gitlab-org/components/gem-release/gem-release@~latest
+    inputs:
+      smoke_test_script: "ruby -e 'puts 1'"
+  - component: gitlab.com/org/ruby/test@1.0
+    inputs:
+      stage: test
+  - local: ci/suite.yml
+    inputs:
+      suite: unit
+specs:
+  image: ruby:3.3
+  script:
+    - bundle exec rspec
+`)
+	writeFile(t, root, "ci/suite.yml", "spec:\n  inputs:\n    suite:\n---\nsuite:\n  image: ruby:3.3\n  script: [bundle exec rspec]\n")
+	jobs, _ := gitLabJobs(t, root)
+	var unread []string
+	for name, job := range jobs {
+		if job.Unread {
+			unread = append(unread, name)
+		}
+	}
+	require.ElementsMatch(t, []string{"(unresolved include gitlab.com/org/ruby/test@1.0)", "(unresolved include ci/suite.yml)", "(unresolved configuration ci/suite.yml)"}, unread)
+	require.NotContains(t, jobs, "(unresolved include gitlab.com/gitlab-org/components/gem-release/gem-release@~latest)", "inputs of a release component add no gap")
+	require.Contains(t, jobs["(unresolved include ci/suite.yml)"].Steps[0].ResolutionError, "include inputs make ci/suite.yml depend on values ddtest cannot supply")
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "ruby", "rspec"), "unread configuration has no runtime to ask for")
+	scope, err := DiscoverValidationScope(root, "rspec")
+	require.NoError(t, err)
+	require.Contains(t, strings.Join(scope.Unresolved, "\n"), ".gitlab-ci.yml / (unresolved include gitlab.com/org/ruby/test@1.0)")
+	require.NotContains(t, strings.Join(scope.Unresolved, "\n"), "(empty)")
 }
